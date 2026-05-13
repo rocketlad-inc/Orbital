@@ -1,0 +1,3731 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Orbital — Patched Conics Prototype (Step 3)</title>
+<style>
+  :root {
+    --bg: #0a0e14;
+    --bg-grid: #14202c;
+    --fg: #d8e4ee;
+    --fg-dim: #6b8195;
+    --fg-faint: #3a4a5a;
+    --accent: #ffb84d;
+    --friendly: #4ecdc4;
+    --friendly-dim: #2a7a73;
+    --hostile: #ff5e5e;
+    --orbit: #2d4255;
+    --orbit-projected: #ffb84d;
+    --star: #ffd180;
+    --panel-bg: rgba(10, 14, 20, 0.94);
+    --panel-border: #2a3d50;
+    --prograde: #6ee7b7;
+    --retrograde: #fda4af;
+    --radial-out: #67e8f9;
+    --radial-in: #c4b5fd;
+    --mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+    --display: 'Orbitron', 'Eurostile', system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--mono);
+    overflow: hidden;
+    user-select: none;
+  }
+
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  #canvas {
+    position: fixed; inset: 0;
+    z-index: 1;
+    cursor: crosshair;
+  }
+
+  .hud-top {
+    position: fixed; top: 16px; left: 16px; right: 16px;
+    z-index: 10;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    pointer-events: none;
+  }
+
+  .hud-block {
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    padding: 10px 14px;
+    font-size: 11px;
+    line-height: 1.5;
+    letter-spacing: 0.05em;
+    backdrop-filter: blur(8px);
+    pointer-events: auto;
+  }
+
+  .hud-block .label {
+    color: var(--fg-dim);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    margin-bottom: 4px;
+  }
+
+  .hud-block .value {
+    color: var(--fg);
+    font-size: 13px;
+  }
+
+  .title {
+    font-family: var(--display);
+    font-size: 15px;
+    letter-spacing: 0.25em;
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .subtitle {
+    color: var(--fg-dim);
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    margin-top: 2px;
+  }
+
+  .panel {
+    position: fixed;
+    z-index: 10;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    backdrop-filter: blur(8px);
+    font-size: 11px;
+  }
+
+  .panel-header {
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--panel-border);
+    background: rgba(255, 184, 77, 0.05);
+    color: var(--accent);
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .panel-body { padding: 12px 14px; }
+
+  .panel-close {
+    cursor: pointer;
+    color: var(--fg-dim);
+    background: none; border: none;
+    font-family: inherit; font-size: 12px;
+  }
+
+  .panel-close:hover { color: var(--accent); }
+
+  .row {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    color: var(--fg);
+  }
+
+  .row .k { color: var(--fg-dim); }
+  .row .v { color: var(--fg); font-weight: 500; }
+
+  .divider {
+    height: 1px;
+    background: var(--panel-border);
+    margin: 8px 0;
+  }
+
+  #roster {
+    top: 70px; right: 16px;
+    width: 220px;
+  }
+
+  .ship-row {
+    padding: 8px 14px;
+    cursor: pointer;
+    border-bottom: 1px solid rgba(42, 61, 80, 0.5);
+    transition: background 0.15s;
+  }
+
+  .ship-row:hover { background: rgba(78, 205, 196, 0.05); }
+  .ship-row.selected {
+    background: rgba(255, 184, 77, 0.08);
+    border-left: 2px solid var(--accent);
+    padding-left: 12px;
+  }
+  .ship-row:last-child { border-bottom: none; }
+  .ship-row .name { color: var(--friendly); font-size: 11px; }
+  .ship-row .info {
+    color: var(--fg-dim);
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    margin-top: 2px;
+  }
+
+  #ship-panel {
+    bottom: 16px; left: 16px;
+    width: 340px;
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
+  }
+
+  #inspector {
+    bottom: 16px; right: 16px;
+    width: 240px;
+  }
+
+  .section-label {
+    color: var(--fg-dim);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    margin-bottom: 6px;
+    margin-top: 8px;
+  }
+
+  .btn-primary {
+    width: 100%;
+    background: rgba(78, 205, 196, 0.08);
+    border: 1px solid var(--friendly);
+    color: var(--friendly);
+    padding: 10px;
+    margin-top: 6px;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+    font-weight: 600;
+  }
+
+  .btn-primary:hover { background: rgba(78, 205, 196, 0.18); }
+  .btn-primary:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  .btn-danger {
+    width: 100%;
+    background: rgba(255, 94, 94, 0.06);
+    border: 1px solid var(--hostile);
+    color: var(--hostile);
+    padding: 8px;
+    margin-top: 6px;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+
+  .btn-danger:hover { background: rgba(255, 94, 94, 0.15); }
+
+  #time-controls {
+    position: fixed;
+    top: 16px; left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    display: flex; gap: 4px;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    padding: 4px;
+    backdrop-filter: blur(8px);
+  }
+
+  .time-btn {
+    background: transparent; border: none;
+    color: var(--fg-dim);
+    padding: 6px 12px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    cursor: pointer;
+    transition: color 0.15s;
+  }
+
+  .time-btn:hover { color: var(--fg); }
+  .time-btn.active { color: var(--accent); }
+
+  .node-card {
+    background: rgba(255, 184, 77, 0.05);
+    border: 1px solid rgba(255, 184, 77, 0.3);
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    font-size: 10px;
+    cursor: pointer;
+  }
+
+  .node-card.upcoming {
+    border-color: var(--accent);
+    background: rgba(255, 184, 77, 0.08);
+  }
+
+  .node-card.committed {
+    border-color: var(--accent);
+    background: rgba(255, 184, 77, 0.1);
+  }
+
+  .node-card.planned {
+    border-style: dashed;
+    border-color: rgba(255, 184, 77, 0.4);
+    background: rgba(255, 184, 77, 0.03);
+  }
+  .node-card.planned.upcoming {
+    border-color: var(--accent);
+    background: rgba(255, 184, 77, 0.08);
+  }
+
+  .node-card.stale {
+    border-color: rgba(255, 94, 94, 0.3);
+    background: rgba(255, 94, 94, 0.04);
+    opacity: 0.7;
+  }
+  .node-card.stale .nc-title { color: var(--hostile); }
+
+  .node-card .nc-title {
+    color: var(--accent);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    margin-bottom: 4px;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .node-card .nc-vector {
+    display: flex; gap: 6px;
+    margin-top: 4px;
+    flex-wrap: wrap;
+  }
+
+  .vec-pill {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 2px;
+    font-size: 9px;
+    background: rgba(255,255,255,0.04);
+  }
+
+  .vec-pill.pg { color: var(--prograde); border: 1px solid rgba(110, 231, 183, 0.3); }
+  .vec-pill.rg { color: var(--retrograde); border: 1px solid rgba(253, 164, 175, 0.3); }
+  .vec-pill.ro { color: var(--radial-out); border: 1px solid rgba(103, 232, 249, 0.3); }
+  .vec-pill.ri { color: var(--radial-in); border: 1px solid rgba(196, 181, 253, 0.3); }
+
+  .help {
+    color: var(--fg-dim);
+    font-size: 9px;
+    line-height: 1.6;
+    letter-spacing: 0.05em;
+  }
+
+  #status {
+    position: fixed;
+    bottom: 16px; left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    padding: 8px 16px;
+    font-size: 11px;
+    color: var(--fg-dim);
+    letter-spacing: 0.1em;
+    backdrop-filter: blur(8px);
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+  }
+
+  #status.show { opacity: 1; }
+
+  .pulse {
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    margin-right: 6px;
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  .hidden { display: none !important; }
+
+  #legend {
+    position: fixed;
+    top: 70px; left: 16px;
+    z-index: 10;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    padding: 8px 12px;
+    font-size: 9px;
+    backdrop-filter: blur(8px);
+    line-height: 1.7;
+  }
+
+  #legend .legend-title {
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    margin-bottom: 4px;
+  }
+
+  #legend .legend-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .swatch {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+
+<div class="hud-top">
+  <div class="hud-block">
+    <div class="title">ORBITAL</div>
+    <div class="subtitle">PATCHED CONICS // STEP 3</div>
+  </div>
+  <div class="hud-block">
+    <div class="label">TICK</div>
+    <div class="value" id="tick-display">000.0</div>
+  </div>
+</div>
+
+<div id="time-controls">
+  <button class="time-btn active" data-speed="0">⏸ PAUSE</button>
+  <button class="time-btn" data-speed="1">▶ 1x</button>
+  <button class="time-btn" data-speed="4">▶▶ 4x</button>
+  <button class="time-btn" data-speed="16">▶▶▶ 16x</button>
+</div>
+
+<div id="legend">
+  <div class="legend-title">MANEUVER HANDLES</div>
+  <div class="legend-row"><span class="swatch" style="background: var(--prograde);"></span> Prograde · raises far side</div>
+  <div class="legend-row"><span class="swatch" style="background: var(--retrograde);"></span> Retrograde · lowers far side</div>
+  <div class="legend-row"><span class="swatch" style="background: var(--radial-out);"></span> Radial-out · rotates orbit</div>
+  <div class="legend-row"><span class="swatch" style="background: var(--radial-in);"></span> Radial-in · rotates orbit</div>
+  <div class="legend-title" style="margin-top: 8px;">CAMERA</div>
+  <div class="legend-row">Scroll · zoom</div>
+  <div class="legend-row">Right-drag · pan</div>
+  <div class="legend-row">F · focus on ship</div>
+  <div class="legend-row">Esc · view system</div>
+</div>
+
+<div id="roster" class="panel">
+  <div class="panel-header">SHIPS</div>
+  <div id="roster-body"></div>
+</div>
+
+<div id="inspector" class="panel hidden">
+  <div class="panel-header">
+    <span id="inspector-title">BODY</span>
+    <button class="panel-close" onclick="closeInspector()">✕</button>
+  </div>
+  <div class="panel-body" id="inspector-body"></div>
+</div>
+
+<div id="ship-panel" class="panel hidden">
+  <div class="panel-header">
+    <span id="ship-panel-title">SHIP</span>
+    <button class="panel-close" onclick="deselectShip()">✕</button>
+  </div>
+  <div class="panel-body" id="ship-panel-body"></div>
+</div>
+
+<div id="status"></div>
+
+<script>
+// ============================================================
+// ORBITAL — Step 2: KSP-style 2D Maneuver Nodes
+// ============================================================
+
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
+const TWO_PI = Math.PI * 2;
+
+let tick = 0;
+let simSpeed = 0;
+let lastFrameTime = performance.now();
+
+const camera = { x: 0, y: 0, scale: 1 };
+let viewTarget = null;
+let manualCamera = false;  // when true, camera does NOT auto-follow viewTarget
+let panState = null;       // { startX, startY, camX, camY }
+
+// ---------- BODIES ----------
+// soi = sphere of influence radius. Sol's SOI is effectively infinite.
+// mu = gravitational parameter (G·M). For Sol, derived from Inara's orbit
+// via Kepler 3rd: μ = 4π² · a³ / T². For other bodies, picked to give
+// pleasing characteristic orbital periods at typical mission altitudes.
+const BODIES = [
+  { id: 'sol', name: 'Sol', type: 'star', parent: null, radius: 28, soi: Infinity,
+    color: '#ffd180', orbitRadius: 0, orbitPeriod: 0, angle0: 0, resources: null },
+  { id: 'inara', name: 'Inara', type: 'terrestrial', parent: 'sol', radius: 6, soi: 40,
+    color: '#a89878', orbitRadius: 130, orbitPeriod: 88, angle0: 0.3,
+    resources: { fuel: 1, gold: 3, metal: 4, sci: 2 } },
+  { id: 'verda', name: 'Verda', type: 'terrestrial', parent: 'sol', radius: 7, soi: 50,
+    color: '#5fb079', orbitRadius: 210, orbitPeriod: 168, angle0: 1.7,
+    resources: { fuel: 2, gold: 4, metal: 3, sci: 5 } },
+  { id: 'rust', name: 'Rust', type: 'terrestrial', parent: 'sol', radius: 6, soi: 60,
+    color: '#c0664a', orbitRadius: 300, orbitPeriod: 320, angle0: 3.4,
+    resources: { fuel: 1, gold: 2, metal: 6, sci: 3 } },
+  { id: 'jove', name: 'Jove', type: 'gas-giant', parent: 'sol', radius: 14, soi: 100,
+    color: '#d4a574', orbitRadius: 460, orbitPeriod: 800, angle0: 5.2,
+    resources: { fuel: 6, gold: 2, metal: 1, sci: 1 } },
+];
+
+const byId = Object.fromEntries(BODIES.map(b => [b.id, b]));
+
+// Compute μ for each body.
+// Real solar systems have planet μ << star μ (Earth/Sun ratio ~3e-6).
+// We use a much smaller ratio for gameplay but enough that escaping a planet
+// doesn't automatically also exceed solar escape velocity.
+const MU_SOL = 4 * Math.PI * Math.PI * Math.pow(byId['inara'].orbitRadius, 3) / Math.pow(byId['inara'].orbitPeriod, 2);
+const MU_PLANET = 100;
+const MU_GAS_GIANT = 400;
+
+// Reset ship's reference orbit to match new MU.
+// Low orbit at r=28 around Inara has period T = 2π·√(28³/100) ≈ 93 ticks. Too slow!
+// Better: use r=15 as low orbit. T = 2π·√(15³/100) ≈ 36.5 ticks. Still slow.
+// Compromise: pick a μ that gives a 12-20 tick period at typical orbit radius.
+// At r=20: T = 12 means μ = 4π²·20³/12² ≈ 219.
+// We'll use μ_p = 200 for terrestrials and 600 for gas giants.
+
+function muOf(bodyId) {
+  if (bodyId === 'sol') return MU_SOL;
+  const body = byId[bodyId];
+  if (body && body.type === 'gas-giant') return 600;
+  return 200;
+}
+
+function bodyPosition(body, t) {
+  if (!body.parent) return { x: 0, y: 0 };
+  const parent = byId[body.parent];
+  const parentPos = bodyPosition(parent, t);
+  const angle = body.angle0 + (TWO_PI * t / body.orbitPeriod);
+  return {
+    x: parentPos.x + Math.cos(angle) * body.orbitRadius,
+    y: parentPos.y + Math.sin(angle) * body.orbitRadius,
+  };
+}
+
+// ---------- ORBIT MATH ----------
+// Stored as: rp, ra, omega (arg of periapsis), M0 (mean anomaly at epoch),
+// epoch, direction (+1 prograde, -1 retrograde), period, parentBodyId.
+// Uses uniform angular motion (simplified — not Kepler's 2nd law).
+
+function semiMajor(o) { return (o.rp + o.ra) / 2; }
+function eccentricity(o) { return (o.ra - o.rp) / (o.ra + o.rp); }
+
+function trueAnomalyAt(o, t) {
+  // Real Kepler's 2nd law: solve M = E - e·sin(E) for eccentric anomaly E,
+  // then convert E to true anomaly theta.
+  // M = mean anomaly = 2π · (t - epoch) / period + M0   (M0 is stored as the
+  //   true anomaly at epoch in our convention, which we convert via the
+  //   inverse mapping below — but for circular orbits M == E == theta).
+  //
+  // For circular orbits (e=0) the math degenerates to uniform motion, which
+  // is fine. For elliptical orbits we iterate Newton-Raphson.
+
+  const e = eccentricity(o);
+
+  // Convert stored M0 (which we set as true anomaly at epoch) to mean anomaly form.
+  // True -> Eccentric: tan(E/2) = sqrt((1-e)/(1+e)) · tan(theta/2)
+  // Eccentric -> Mean: M = E - e·sin(E)
+  let M0_mean;
+  if (e < 1e-9) {
+    M0_mean = o.M0;
+  } else {
+    const theta0 = o.M0;
+    const E0 = 2 * Math.atan2(
+      Math.sqrt(1 - e) * Math.sin(theta0 / 2),
+      Math.sqrt(1 + e) * Math.cos(theta0 / 2)
+    );
+    M0_mean = E0 - e * Math.sin(E0);
+  }
+
+  // Mean anomaly at time t
+  let M = M0_mean + TWO_PI * (t - o.epoch) / o.period;
+  // Normalize to [0, 2π)
+  M = ((M % TWO_PI) + TWO_PI) % TWO_PI;
+
+  // Solve Kepler's equation M = E - e·sin(E) by Newton-Raphson
+  let E = M; // initial guess
+  for (let i = 0; i < 20; i++) {
+    const f = E - e * Math.sin(E) - M;
+    const fp = 1 - e * Math.cos(E);
+    const dE = f / fp;
+    E -= dE;
+    if (Math.abs(dE) < 1e-10) break;
+  }
+
+  // Convert eccentric anomaly to true anomaly
+  // tan(theta/2) = sqrt((1+e)/(1-e)) · tan(E/2)
+  let theta;
+  if (e < 1e-9) {
+    theta = E;
+  } else {
+    theta = 2 * Math.atan2(
+      Math.sqrt(1 + e) * Math.sin(E / 2),
+      Math.sqrt(1 - e) * Math.cos(E / 2)
+    );
+    if (theta < 0) theta += TWO_PI;
+  }
+  return theta;
+}
+
+function radiusAt(o, theta) {
+  const a = semiMajor(o);
+  const e = eccentricity(o);
+  const p = a * (1 - e * e);
+  return p / (1 + e * Math.cos(theta));
+}
+
+function localPositionAt(o, t) {
+  const theta = trueAnomalyAt(o, t);
+  const r = radiusAt(o, theta);
+  const phi = o.omega + o.direction * theta;
+  return { x: r * Math.cos(phi), y: r * Math.sin(phi), theta, r, phi };
+}
+
+function velocityVectorsAt(o, t) {
+  const { theta, r, phi } = localPositionAt(o, t);
+  const a = semiMajor(o);
+  const e = eccentricity(o);
+  const p = a * (1 - e * e);
+  const drdtheta = (p * e * Math.sin(theta)) / Math.pow(1 + e * Math.cos(theta), 2);
+  const cosPhi = Math.cos(phi);
+  const sinPhi = Math.sin(phi);
+  const dxdtheta = drdtheta * cosPhi - r * sinPhi * o.direction;
+  const dydtheta = drdtheta * sinPhi + r * cosPhi * o.direction;
+  const tanLen = Math.sqrt(dxdtheta * dxdtheta + dydtheta * dydtheta);
+  const prograde = { x: dxdtheta / tanLen, y: dydtheta / tanLen };
+  const radialOut = { x: cosPhi, y: sinPhi };
+  return { prograde, radialOut, r, theta, phi };
+}
+
+function shipPositionWorld(ship, t) {
+  return orbitWorldPos(ship.orbit, t);
+}
+
+// ---------- PATCHED CONICS ----------
+// A trajectory is a sequence of arcs. Each arc is the ship's motion
+// around a single parent body over a finite time interval, ending when
+// the ship crosses an SOI boundary (or the projection budget runs out).
+//
+// arc = { orbit, parentBodyId, tStart, tEnd, endReason }
+//   endReason: 'exit' (left parent's SOI), 'enter' (entered child SOI), 'budget' (ran out)
+//
+// We compute trajectories by stepping forward in time, watching for the
+// first SOI event. When found, we bisect to refine, then re-anchor the
+// orbit to the new parent and recurse.
+
+const TRAJ_STEP = 0.5;        // ticks per step when scanning for SOI events
+const TRAJ_MAX_TICKS = 300;   // absolute cap on how far ahead we look
+const TRAJ_MAX_ARCS = 6;      // arc budget per trajectory
+const TRAJ_ORBITS_AHEAD = 1.5; // project at most 1.5 orbits of the current arc
+
+// Get the world-frame position of a ship on a specific orbit at time t.
+function orbitWorldPos(orbit, t) {
+  const parent = byId[orbit.parentBodyId];
+  const pPos = bodyPosition(parent, t);
+  const local = localPositionAt(orbit, t);
+  return { x: pPos.x + local.x, y: pPos.y + local.y };
+}
+
+// Velocity in world frame of a ship on an orbit at time t.
+// We approximate the parent body's velocity via finite differences.
+function orbitWorldVelocity(orbit, t) {
+  const dt = 0.01;
+  const p1 = orbitWorldPos(orbit, t);
+  const p2 = orbitWorldPos(orbit, t + dt);
+  return { x: (p2.x - p1.x) / dt, y: (p2.y - p1.y) / dt };
+}
+
+function bodyWorldVelocity(body, t) {
+  const dt = 0.01;
+  const p1 = bodyPosition(body, t);
+  const p2 = bodyPosition(body, t + dt);
+  return { x: (p2.x - p1.x) / dt, y: (p2.y - p1.y) / dt };
+}
+
+// Check which body's SOI contains a given world position.
+// Returns the deepest (smallest, most specific) SOI the point is inside of.
+// All bodies' SOIs are nested inside Sol's (infinite) SOI.
+function whichSOI(worldX, worldY, t, excludeId = null) {
+  // Check non-star bodies first; deepest SOI wins
+  let best = byId['sol'];
+  let bestRadius = Infinity;
+  for (const body of BODIES) {
+    if (body.id === 'sol') continue;
+    if (body.id === excludeId) continue;
+    const bp = bodyPosition(body, t);
+    const dx = worldX - bp.x, dy = worldY - bp.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < body.soi && body.soi < bestRadius) {
+      best = body;
+      bestRadius = body.soi;
+    }
+  }
+  return best;
+}
+
+// Given a position and velocity in world frame, plus a target parent body,
+// compute the orbit (around that parent) that this state vector represents.
+function orbitFromWorldState(worldX, worldY, worldVx, worldVy, parentBodyId, t, oldPeriod, oldA) {
+  const parent = byId[parentBodyId];
+  const pPos = bodyPosition(parent, t);
+  const pVel = bodyWorldVelocity(parent, t);
+  const rx = worldX - pPos.x;
+  const ry = worldY - pPos.y;
+  const vx = worldVx - pVel.x;
+  const vy = worldVy - pVel.y;
+
+  const r = Math.sqrt(rx * rx + ry * ry);
+  const vMag = Math.sqrt(vx * vx + vy * vy);
+  if (vMag < 1e-9 || r < 1e-9) return null;
+
+  const cross = rx * vy - ry * vx;
+  const direction = cross >= 0 ? 1 : -1;
+  const radialX = rx / r, radialY = ry / r;
+  const tangentX = -radialY * direction, tangentY = radialX * direction;
+  const vxu = vx / vMag, vyu = vy / vMag;
+  const sinGamma = vxu * radialX + vyu * radialY;
+  const cosGamma = vxu * tangentX + vyu * tangentY;
+  const gamma = Math.atan2(sinGamma, cosGamma);
+
+  // Gravitational parameter μ for the new parent.
+  // For Sol, derive from a known orbiting body: μ = 4π² · a³ / T²  with a = orbitRadius.
+  // For non-Sol parents, use a hard-coded characteristic (TS-01 reference orbit).
+  const mu = muOf(parentBodyId);
+
+  // Vis-viva: v² = μ · (2/r - 1/a)   =>   a = 1 / (2/r - v²/μ)
+  const energyTerm = 2 / r - (vMag * vMag) / mu;
+  let newA;
+  let isEscape = false;
+  if (energyTerm <= 0.0001) {
+    isEscape = true;
+    // For escape trajectories we don't model true hyperbolas. We approximate
+    // as a very wide ellipse. The multiplier needs to be small enough that
+    // eccentricity stays within our clamp range (<0.99); otherwise the orbit
+    // constructor produces inconsistent theta/radius pairs.
+    newA = r * 3;
+  } else {
+    newA = 1 / energyTerm;
+    newA = Math.max(15, newA);
+  }
+
+  // Solve polynomial for eccentricity (same as before)
+  const tanG = Math.tan(gamma);
+  const k = newA / r;
+  const f = (q) => {
+    const a1 = k * q - 1;
+    return a1 * a1 + tanG * tanG * k * k * q * q - (1 - q);
+  };
+
+  let q;
+  if (f(1) <= 0) q = 1;
+  else {
+    let qHigh = 1, qLow = 1;
+    const STEPS = 200;
+    let prev = f(1);
+    for (let i = 1; i <= STEPS; i++) {
+      const qi = 1 - i / STEPS;
+      const fi = f(qi);
+      if (fi <= 0 && prev > 0) {
+        qLow = qi;
+        qHigh = 1 - (i - 1) / STEPS;
+        break;
+      }
+      prev = fi;
+    }
+    for (let i = 0; i < 80; i++) {
+      const qm = (qLow + qHigh) / 2;
+      if (f(qm) > 0) qHigh = qm; else qLow = qm;
+      if (qHigh - qLow < 1e-12) break;
+    }
+    q = (qLow + qHigh) / 2;
+  }
+  const eSq = Math.max(0, Math.min(0.99, 1 - q));
+  const e = Math.sqrt(eSq);
+  const u = k * q - 1;
+  const w = tanG * k * q;
+  const theta = Math.atan2(w, u);
+  const rp = newA * (1 - e);
+  const ra = newA * (1 + e);
+  const phi = Math.atan2(ry, rx);
+  let omega = phi - direction * theta;
+  while (omega < 0) omega += TWO_PI;
+  while (omega >= TWO_PI) omega -= TWO_PI;
+
+  // Period from Kepler's 3rd law: T = 2π · √(a³ / μ)
+  const period = TWO_PI * Math.sqrt(newA * newA * newA / mu);
+
+  return {
+    rp, ra, omega,
+    M0: theta,
+    epoch: t,
+    direction,
+    period,
+    parentBodyId,
+  };
+}
+
+// Build the full trajectory of a ship starting from a base orbit at tStart,
+// applying any nodes whose t falls within the trajectory window.
+// Returns array of arcs.
+function computeTrajectory(baseOrbit, nodes, tStart) {
+  const arcs = [];
+  let currentOrbit = baseOrbit;
+  let tCursor = tStart;
+  const tEnd = tStart + TRAJ_MAX_TICKS;
+  const sortedNodes = [...nodes].filter(n => n.t >= tStart).sort((a, b) => a.t - b.t);
+  let nodeIdx = 0;
+
+  for (let arcCount = 0; arcCount < TRAJ_MAX_ARCS && tCursor < tEnd; arcCount++) {
+    // Walk forward in time on currentOrbit until either:
+    //   1. We exit currentOrbit.parentBodyId's SOI
+    //   2. We enter a child body's SOI
+    //   3. We hit the next maneuver node
+    //   4. We hit tEnd
+    let t = tCursor;
+    let event = null; // { type, t, bodyId }
+
+    const currentParent = byId[currentOrbit.parentBodyId];
+
+    // Per-arc budget: we project at most TRAJ_ORBITS_AHEAD * period of this arc.
+    // For very long-period escape orbits, we still cap at TRAJ_MAX_TICKS overall.
+    const arcBudget = Math.min(tEnd, tCursor + currentOrbit.period * TRAJ_ORBITS_AHEAD);
+
+    const nextNode = sortedNodes[nodeIdx];
+    const nodeT = nextNode ? nextNode.t : Infinity;
+
+    while (t < arcBudget && t < nodeT) {
+      const nextT = Math.min(t + TRAJ_STEP, arcBudget, nodeT);
+
+      // Position at nextT on currentOrbit
+      const pos = orbitWorldPos(currentOrbit, nextT);
+
+      // Check SOI containment relative to currentParent
+      if (currentParent.id !== 'sol') {
+        const pp = bodyPosition(currentParent, nextT);
+        const dx = pos.x - pp.x, dy = pos.y - pp.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > currentParent.soi) {
+          // Crossing OUT of currentParent's SOI. Bisect for exact crossing.
+          const tCross = bisectSOIExit(currentOrbit, currentParent, t, nextT);
+          event = { type: 'exit', t: tCross, fromBody: currentParent.id };
+          break;
+        }
+      }
+
+      // Check entry into any child body's SOI
+      // (For now, any non-Sol body whose SOI we cross)
+      let entered = null;
+      for (const body of BODIES) {
+        if (body.id === 'sol') continue;
+        if (body.id === currentOrbit.parentBodyId) continue;
+        // Only consider bodies whose parent matches the current frame.
+        // E.g. if currently around Sol, consider Inara/Verda/Rust/Jove.
+        // If currently around Inara, we don't have child bodies in this map.
+        if (body.parent !== currentOrbit.parentBodyId) continue;
+        const bp = bodyPosition(body, nextT);
+        const dx = pos.x - bp.x, dy = pos.y - bp.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < body.soi) {
+          const tEnter = bisectSOIEnter(currentOrbit, body, t, nextT);
+          if (!entered || tEnter < entered.t) {
+            entered = { type: 'enter', t: tEnter, intoBody: body.id };
+          }
+        }
+      }
+      if (entered) { event = entered; break; }
+
+      t = nextT;
+    }
+
+    if (event) {
+      // Close out the current arc at the event time
+      arcs.push({
+        orbit: currentOrbit,
+        tStart: tCursor,
+        tEnd: event.t,
+        endReason: event.type,
+      });
+
+      // Re-anchor: compute the new orbit relative to the new parent
+      const newParentId = event.type === 'exit' ? byId[event.fromBody].parent : event.intoBody;
+      const wp = orbitWorldPos(currentOrbit, event.t);
+      const wv = orbitWorldVelocity(currentOrbit, event.t);
+      const newOrbit = orbitFromWorldState(
+        wp.x, wp.y, wv.x, wv.y,
+        newParentId, event.t,
+        currentOrbit.period,
+        semiMajor(currentOrbit)
+      );
+      if (!newOrbit) {
+        // Edge case — can't compute a new orbit; abort projection
+        break;
+      }
+      currentOrbit = newOrbit;
+      tCursor = event.t;
+    } else if (t >= nodeT && nextNode) {
+      // We hit a maneuver node. Close the arc and apply the node.
+      arcs.push({
+        orbit: currentOrbit,
+        tStart: tCursor,
+        tEnd: nextNode.t,
+        endReason: 'node',
+      });
+      currentOrbit = applyNodeToOrbit(currentOrbit, nextNode);
+      tCursor = nextNode.t;
+      nodeIdx++;
+    } else {
+      // Budget exhausted with no event — close arc at arc budget.
+      arcs.push({
+        orbit: currentOrbit,
+        tStart: tCursor,
+        tEnd: arcBudget,
+        endReason: 'budget',
+      });
+      break;
+    }
+  }
+
+  return arcs;
+}
+
+function bisectSOIExit(orbit, parent, tA, tB) {
+  // tA: inside SOI, tB: outside SOI. Find crossing.
+  for (let i = 0; i < 30; i++) {
+    const tm = (tA + tB) / 2;
+    const pos = orbitWorldPos(orbit, tm);
+    const pp = bodyPosition(parent, tm);
+    const dx = pos.x - pp.x, dy = pos.y - pp.y;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    if (d < parent.soi) tA = tm; else tB = tm;
+    if (tB - tA < 1e-4) break;
+  }
+  return (tA + tB) / 2;
+}
+
+function bisectSOIEnter(orbit, body, tA, tB) {
+  // tA: outside body's SOI, tB: inside.
+  for (let i = 0; i < 30; i++) {
+    const tm = (tA + tB) / 2;
+    const pos = orbitWorldPos(orbit, tm);
+    const bp = bodyPosition(body, tm);
+    const dx = pos.x - bp.x, dy = pos.y - bp.y;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    if (d > body.soi) tA = tm; else tB = tm;
+    if (tB - tA < 1e-4) break;
+  }
+  return (tA + tB) / 2;
+}
+
+// ---------- ORBIT FROM STATE VECTOR ----------
+// Given a position (relative to focus) and a velocity direction at that point,
+// plus a target semi-major axis 'newA', compute the new orbital elements.
+function orbitFromStateVector(rx, ry, vx, vy, newA, parentBodyId, burnTime, oldPeriod, oldA) {
+  const r = Math.sqrt(rx * rx + ry * ry);
+  const vMag = Math.sqrt(vx * vx + vy * vy);
+  if (vMag < 1e-9 || r < 1e-9) return null;
+
+  // Direction sign from 2D cross product of position × velocity
+  const cross = rx * vy - ry * vx;
+  const direction = cross >= 0 ? 1 : -1;
+
+  // Flight path angle gamma = angle between velocity and local horizontal
+  const radialX = rx / r;
+  const radialY = ry / r;
+  const tangentX = -radialY * direction;
+  const tangentY = radialX * direction;
+  const vxu = vx / vMag;
+  const vyu = vy / vMag;
+  const sinGamma = vxu * radialX + vyu * radialY;
+  const cosGamma = vxu * tangentX + vyu * tangentY;
+  const gamma = Math.atan2(sinGamma, cosGamma);
+
+  // Clamp newA to sane values.
+  // Minimum: don't let periapsis dip inside the body's surface.
+  // Maximum: very generous — we want escapes to be reachable. Hyperbolic
+  // trajectories aren't modeled (we treat orbits as ellipses only), but
+  // a very large ellipse will quickly cross the SOI boundary, at which
+  // point patched conics takes over and re-anchors to a new parent.
+  const minA = Math.max(15, r * 0.55);
+  const maxA = r * 4;
+  newA = Math.max(minA, Math.min(maxA, newA));
+
+  // Solve for eccentricity given semi-major axis, r, gamma.
+  // Polynomial in q = 1 - e²:
+  //   (k·q - 1)² + tan²(γ)·k²·q² = 1 - q,   where k = a/r
+  // This polynomial has TWO roots in (0, 1] for typical burns; we want the one
+  // closest to q=1 (the lower-eccentricity solution that actually represents
+  // the resulting orbit, not the degenerate near-q=0 solution that places
+  // periapsis at the focus).
+  const tanG = Math.tan(gamma);
+  const k = newA / r;
+  const f = (q) => {
+    const a1 = k * q - 1;
+    return a1 * a1 + tanG * tanG * k * k * q * q - (1 - q);
+  };
+
+  let q;
+  if (f(1) <= 0) {
+    // f(1) <= 0 means a circular orbit at this r is energetically possible (e=0 valid)
+    q = 1;
+  } else {
+    // f(1) > 0 and f(0) <= 0. There's at least one root.
+    // Search for the LARGEST root in (0, 1) by walking down from q=1.
+    // Scan coarsely first to find the highest sign change.
+    let qHigh = 1;
+    let qLow = 1;
+    const STEPS = 200;
+    let prev = f(1);
+    for (let i = 1; i <= STEPS; i++) {
+      const qi = 1 - i / STEPS;
+      const fi = f(qi);
+      if (fi <= 0 && prev > 0) {
+        // Sign change between qi (now) and qi + 1/STEPS (prev)
+        qLow = qi;
+        qHigh = 1 - (i - 1) / STEPS;
+        break;
+      }
+      prev = fi;
+    }
+    // Refine with bisection. Invariant: f(qHigh) > 0, f(qLow) <= 0.
+    for (let i = 0; i < 80; i++) {
+      const qm = (qLow + qHigh) / 2;
+      const fv = f(qm);
+      if (fv > 0) qHigh = qm; else qLow = qm;
+      if (qHigh - qLow < 1e-12) break;
+    }
+    q = (qLow + qHigh) / 2;
+  }
+
+  const eSq = Math.max(0, Math.min(1, 1 - q));
+  const e = Math.sqrt(eSq);
+  // True anomaly at current point
+  const u = k * q - 1;
+  const w = tanG * k * q;
+  const theta = Math.atan2(w, u);
+  const rp = newA * (1 - e);
+  const ra = newA * (1 + e);
+  const phi = Math.atan2(ry, rx);
+  let omega = phi - direction * theta;
+  while (omega < 0) omega += TWO_PI;
+  while (omega >= TWO_PI) omega -= TWO_PI;
+  const newPeriod = oldPeriod * Math.pow(newA / oldA, 1.5);
+
+  return {
+    rp, ra, omega,
+    M0: theta,
+    epoch: burnTime,
+    direction,
+    period: newPeriod,
+    parentBodyId,
+  };
+}
+
+// ---------- SHIPS ----------
+const SHIPS = [
+  {
+    id: 'ts01',
+    name: 'TS-01 Wanderer',
+    parentBodyId: 'inara',
+    fuel: 100, maxFuel: 100,
+    orbit: {
+      rp: 15, ra: 15,
+      omega: 0, M0: 0, epoch: 0,
+      direction: 1,
+      period: 2 * Math.PI * Math.sqrt(15 * 15 * 15 / 200),
+      parentBodyId: 'inara',
+    },
+    nodes: [],
+  },
+  {
+    id: 'ts02',
+    name: 'TS-02 Comet',
+    parentBodyId: 'inara',
+    fuel: 100, maxFuel: 100,
+    orbit: {
+      rp: 12, ra: 28,
+      omega: Math.PI * 0.3,
+      M0: Math.PI * 0.6,
+      epoch: 0,
+      direction: 1,
+      period: 2 * Math.PI * Math.sqrt(20 * 20 * 20 / 200),
+      parentBodyId: 'inara',
+    },
+    nodes: [],
+  },
+];
+
+const shipById = Object.fromEntries(SHIPS.map(s => [s.id, s]));
+
+// ---------- MANEUVER PLANNERS (HOHMANN) ----------
+
+// Given a current orbit and a target r_p and r_a (in the same parent's frame),
+// compute the two Δv values needed for a two-burn Hohmann-style transition.
+// Returns { dv1, dv2, burn1Anchor, burn2Anchor } or null if not feasible.
+//
+// Strategy: the simplest correct approach is to burn at the existing periapsis
+// or apoapsis (whichever shares an apsis with the target). For arbitrary changes,
+// we go through a transfer ellipse whose first apsis = current periapsis and
+// second apsis = target apoapsis.
+function planOrbitChange(currentOrbit, targetRp, targetRa) {
+  if (targetRp > targetRa) { const tmp = targetRp; targetRp = targetRa; targetRa = tmp; }
+  if (targetRp <= 0) return null;
+  const mu = muOf(currentOrbit.parentBodyId);
+  const rpNow = currentOrbit.rp;
+  const raNow = currentOrbit.ra;
+
+  // Decide which apsis to burn first. We pick the apsis that the player would
+  // naturally hit sooner AND that gives us a clean transfer ellipse.
+  //
+  // Case A: target is purely "raise apoapsis" (rpNow == targetRp): one burn at periapsis.
+  // Case B: target is purely "lower apoapsis" (rpNow == targetRp, targetRa < raNow): one burn at periapsis.
+  // Case C: general: burn at current periapsis to set ra = targetRa, then at the new apoapsis raise rp = targetRp.
+  //
+  // We always go: burn 1 at current periapsis → transfer ellipse (rpNow × targetRa).
+  // Then burn 2 at apoapsis of transfer ellipse → final orbit (targetRp × targetRa).
+
+  const burn1Anchor = 'periapsis';
+  const burn2Anchor = 'apoapsis';
+
+  // Burn 1: at current periapsis, speed must change from v_at_pe_now to v_at_pe_transfer.
+  // Transfer ellipse: rp = rpNow, ra = targetRa, a = (rpNow + targetRa) / 2.
+  const aTransfer = (rpNow + targetRa) / 2;
+  const v1_before = Math.sqrt(mu * (2 / rpNow - 1 / semiMajor(currentOrbit)));
+  const v1_after = Math.sqrt(mu * (2 / rpNow - 1 / aTransfer));
+  const dv1 = v1_after - v1_before; // positive if raising apoapsis
+
+  // Burn 2: at apoapsis of transfer ellipse (= targetRa), speed must change to put
+  // periapsis at targetRp. Final orbit: a = (targetRp + targetRa) / 2.
+  const aFinal = (targetRp + targetRa) / 2;
+  const v2_before = Math.sqrt(mu * (2 / targetRa - 1 / aTransfer));
+  const v2_after = Math.sqrt(mu * (2 / targetRa - 1 / aFinal));
+  const dv2 = v2_after - v2_before;
+
+  return { dv1, dv2, burn1Anchor, burn2Anchor };
+}
+
+// Plan a Hohmann-style heliocentric transfer from the ship's current orbit
+// (which is in some planet's SOI) to encounter a target body and capture into a
+// roughly-circular orbit there at altitude rCapture.
+//
+// Phase angle is NOT enforced — we assume the player will time it well, OR we
+// just trust that the planner will produce burns whose result places the ship
+// at the target's orbital radius around Sol, and visualize accordingly. For a
+// correspondence game we want it to actually arrive, so we adjust the departure
+// time to satisfy phase angle.
+//
+// Returns { burns: [{ dv: {prograde, radial}, anchor, departureT? }] } or null.
+function planTransfer(ship, targetBodyId, rCapture) {
+  const target = byId[targetBodyId];
+  if (!target || target.id === 'sol') return null;
+  const fromBodyId = ship.orbit.parentBodyId;
+  const fromBody = byId[fromBodyId];
+
+  // We support only transfers between bodies that orbit Sol (e.g., Inara → Verda).
+  // Departing from Sol orbit directly would also work; arriving at a moon of Jove
+  // would need an extra leg we don't handle yet.
+  if (!fromBody.parent || fromBody.parent !== 'sol') return null;
+  if (target.parent !== 'sol') return null;
+  if (target.id === fromBodyId) return null;
+
+  rCapture = rCapture || (target.radius * 2 + 5); // default low orbit around target
+
+  const muSol = MU_SOL;
+  const muFrom = muOf(fromBodyId);
+  const muTarget = muOf(targetBodyId);
+
+  const r1 = fromBody.orbitRadius;  // heliocentric radius of departure body
+  const r2 = target.orbitRadius;     // heliocentric radius of target body
+
+  // Heliocentric Hohmann transfer ellipse
+  const aHelio = (r1 + r2) / 2;
+
+  // v at departure in heliocentric frame (at periapsis or apoapsis of transfer)
+  const vCircFrom = Math.sqrt(muSol / r1);   // heliocentric speed of departure body
+  const vTransferDeparture = Math.sqrt(muSol * (2 / r1 - 1 / aHelio));
+  const vCircTarget = Math.sqrt(muSol / r2);
+  const vTransferArrival = Math.sqrt(muSol * (2 / r2 - 1 / aHelio));
+
+  // Hyperbolic excess velocities at departure and arrival
+  const vInfDeparture = Math.abs(vTransferDeparture - vCircFrom);
+  const vInfArrival = Math.abs(vCircTarget - vTransferArrival);
+
+  // For the departure burn from inside fromBody's SOI at the ship's periapsis r_p_ship:
+  // We want a hyperbolic escape with v∞ = vInfDeparture.
+  // From vis-viva for the post-burn orbit at r_p: v² = v∞² + 2μ/r_p.
+  const rDep = ship.orbit.rp;
+  const vEscapeAtRp = Math.sqrt(vInfDeparture * vInfDeparture + 2 * muFrom / rDep);
+  // Ship's current speed at periapsis
+  const vShipAtRp = Math.sqrt(muFrom * (2 / rDep - 1 / semiMajor(ship.orbit)));
+  const dvDeparture = vEscapeAtRp - vShipAtRp; // prograde Δv
+
+  // Capture burn happens at PERIAPSIS of the approach orbit inside the target's SOI.
+  // This is where the ship is closest to the target — and slowing down here is
+  // hugely more efficient than slowing at the SOI boundary.
+  //
+  // Approach periapsis altitude depends on the geometry of the transfer; for a
+  // tangential Hohmann arrival, the patched-conics approach hyperbola has
+  // periapsis somewhere between the SOI boundary and the target's surface.
+  // We can't analytically know exactly where without doing the full state-vector
+  // math at SOI entry, but a reasonable estimate is r_p_approach ≈ rCapture (the
+  // player's chosen low-orbit altitude). We'll refine numerically in applyTransfer.
+  const rSoi = target.soi;
+  const rPeriApproach = rCapture; // assumed periapsis of approach hyperbola
+  // At periapsis of approach hyperbola: v² = v∞² + 2μ_target/r_p
+  const vAtPeriIn = Math.sqrt(vInfArrival * vInfArrival + 2 * muTarget / rPeriApproach);
+  // Target capture orbit: periapsis at rCapture (same as approach periapsis), apoapsis just below SOI.
+  const raPost = rSoi * 0.7;
+  const aPost = (rCapture + raPost) / 2;
+  const visVivaArg = 2 / rCapture - 1 / aPost;
+  const vAtPeriOut = visVivaArg > 0 ? Math.sqrt(muTarget * visVivaArg) : Math.sqrt(muTarget / aPost);
+  const dvCapture = vAtPeriIn - vAtPeriOut; // positive Δv = retrograde magnitude
+
+  // Phase angle timing: the departure burn must happen at a time when, after
+  // half a heliocentric transfer period, the target is exactly at the heliocentric
+  // position of the ship's arrival point.
+  const TTransferHalf = Math.PI * Math.sqrt(aHelio * aHelio * aHelio / muSol);
+  // Required lead angle (target ahead of departure body)
+  // Phase angle = π - ω_target * T_transfer_half
+  const omegaTarget = TWO_PI / target.orbitPeriod;
+  const requiredLeadAngle = Math.PI - omegaTarget * TTransferHalf;
+
+  // Find the next time t >= tick when (target.angle(t) - fromBody.angle(t)) ≡ requiredLeadAngle (mod 2π)
+  const omegaFrom = TWO_PI / fromBody.orbitPeriod;
+  // angle of body at t: angle0 + ω·t
+  // diff(t) = (target.angle0 + omegaTarget·t) - (fromBody.angle0 + omegaFrom·t)
+  //         = (target.angle0 - fromBody.angle0) + (omegaTarget - omegaFrom)·t
+  // want: diff(t) ≡ requiredLeadAngle (mod 2π)
+  const diff0 = target.angle0 - fromBody.angle0;
+  const dDiff = omegaTarget - omegaFrom; // negative if target is slower (Verda slower than Inara)
+  let tDeparture;
+  if (Math.abs(dDiff) < 1e-9) {
+    // Same angular speed → never aligns; bail out
+    tDeparture = tick;
+  } else {
+    // Solve: diff0 + dDiff * t ≡ requiredLeadAngle (mod 2π)
+    //  → t = (requiredLeadAngle - diff0) / dDiff + k·2π/dDiff
+    let tBase = (requiredLeadAngle - diff0) / dDiff;
+    const periodK = TWO_PI / Math.abs(dDiff);
+    // Find the smallest t >= tick
+    while (tBase < tick) tBase += periodK;
+    tDeparture = tBase;
+  }
+
+  return {
+    burns: [
+      { dv: { prograde: dvDeparture, radial: 0 }, anchor: 'periapsis', timing: tDeparture, label: `TRANSFER → ${target.name.toUpperCase()}` },
+      { dv: { prograde: -dvCapture, radial: 0 }, anchor: 'encounter', timing: null, label: `CAPTURE ${target.name.toUpperCase()}` },
+    ],
+    info: {
+      target: target.name,
+      fromBody: fromBody.name,
+      dvTotal: dvDeparture + dvCapture,
+      dvDeparture,
+      dvCapture,
+      transferHalfPeriod: TTransferHalf,
+      departureT: tDeparture,
+    },
+  };
+}
+
+// ---------- MANEUVER NODES ----------
+// Nodes are anchored to a logical position on the trajectory (periapsis or
+// apoapsis of the orbit they fire on). Time `t` is computed dynamically based
+// on prior plan state — when plan changes, all subsequent t's are recomputed.
+let nodeCounter = 1;
+function makeNode(anchor) {
+  return {
+    id: nodeCounter++,
+    anchor: anchor || 'periapsis', // 'periapsis' | 'apoapsis' | 'encounter' | 'exit' | 'absolute'
+    t: 0, // for 'absolute', set this directly; for others, recomputeNodeTimes sets it
+    dv: { prograde: 0, radial: 0 },
+    committed: false,
+    targetBodyId: null,
+  };
+}
+
+// Given an orbit and a reference time, find the next periapsis/apoapsis time.
+// In our Kepler model: at periapsis, true anomaly = 0. At apoapsis, theta = π.
+function nextApsisTime(orbit, fromTick, which) {
+  // For circular or near-circular orbits, every point is essentially an apsis.
+  // Use a small offset from "now" so the node has time to be planned/committed.
+  const e = eccentricity(orbit);
+  if (e < 1e-3) {
+    return fromTick + 1; // 1 tick in the future
+  }
+
+  const thetaNow = trueAnomalyAt(orbit, fromTick);
+  const thetaTarget = which === 'apoapsis' ? Math.PI : 0;
+
+  // How much further (in true anomaly) until we hit thetaTarget?
+  let deltaTheta = thetaTarget - thetaNow;
+  while (deltaTheta < 0) deltaTheta += TWO_PI;
+  if (deltaTheta < 1e-6) deltaTheta += TWO_PI; // skip if we're already at it
+
+  // For elliptical, sample forward until we cross thetaTarget
+  let tLow = fromTick;
+  let tHigh = fromTick + orbit.period * 1.01;
+  // Find a coarse bracket
+  const samples = 60;
+  let lastDiff = thetaNow - thetaTarget;
+  // Normalize lastDiff to [-π, π]
+  while (lastDiff > Math.PI) lastDiff -= TWO_PI;
+  while (lastDiff < -Math.PI) lastDiff += TWO_PI;
+  for (let i = 1; i <= samples; i++) {
+    const ti = fromTick + (i / samples) * orbit.period * 1.01;
+    let diff = trueAnomalyAt(orbit, ti) - thetaTarget;
+    while (diff > Math.PI) diff -= TWO_PI;
+    while (diff < -Math.PI) diff += TWO_PI;
+    if (Math.sign(diff) !== Math.sign(lastDiff) && Math.abs(lastDiff) < Math.PI / 2) {
+      tLow = fromTick + ((i - 1) / samples) * orbit.period * 1.01;
+      tHigh = ti;
+      break;
+    }
+    lastDiff = diff;
+  }
+  // Bisect
+  for (let i = 0; i < 30; i++) {
+    const tm = (tLow + tHigh) / 2;
+    let diff = trueAnomalyAt(orbit, tm) - thetaTarget;
+    while (diff > Math.PI) diff -= TWO_PI;
+    while (diff < -Math.PI) diff += TWO_PI;
+    if (diff < 0) tLow = tm; else tHigh = tm;
+    if (tHigh - tLow < 1e-4) break;
+  }
+  return (tLow + tHigh) / 2;
+}
+
+// Recompute node times in order. Each node's t depends on the orbit immediately
+// before it, which depends on all prior nodes' burns.
+// Find the next SOI event (exit or enter) from a given orbit and start time.
+// Returns { type: 'exit'|'enter', t, body, newOrbit } or null if none within budget.
+function findNextSOIEvent(orbit, fromTick, maxLookahead) {
+  const parent = byId[orbit.parentBodyId];
+  const stepSize = 0.5;
+  const limit = Math.min(maxLookahead, orbit.period * 2);
+  for (let dt = stepSize; dt <= limit; dt += stepSize) {
+    const t = fromTick + dt;
+    const pos = orbitWorldPos(orbit, t);
+    // Exit?
+    if (parent.id !== 'sol') {
+      const pp = bodyPosition(parent, t);
+      const dx = pos.x - pp.x, dy = pos.y - pp.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > parent.soi) {
+        const tExit = bisectSOIExit(orbit, parent, t - stepSize, t);
+        const newParentId = parent.parent;
+        const exitPos = orbitWorldPos(orbit, tExit);
+        const exitVel = orbitWorldVelocity(orbit, tExit);
+        const newOrbit = orbitFromWorldState(
+          exitPos.x, exitPos.y, exitVel.x, exitVel.y,
+          newParentId, tExit, orbit.period, semiMajor(orbit)
+        );
+        return { type: 'exit', t: tExit, body: parent, newOrbit };
+      }
+    }
+    // Enter?
+    for (const body of BODIES) {
+      if (body.id === 'sol' || body.id === parent.id) continue;
+      if (body.parent !== parent.id) continue;
+      const bp = bodyPosition(body, t);
+      const dx = pos.x - bp.x, dy = pos.y - bp.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < body.soi) {
+        const tEnter = bisectSOIEnter(orbit, body, t - stepSize, t);
+        const enterPos = orbitWorldPos(orbit, tEnter);
+        const enterVel = orbitWorldVelocity(orbit, tEnter);
+        const newOrbit = orbitFromWorldState(
+          enterPos.x, enterPos.y, enterVel.x, enterVel.y,
+          body.id, tEnter, orbit.period, semiMajor(orbit)
+        );
+        return { type: 'enter', t: tEnter, body, newOrbit };
+      }
+    }
+  }
+  return null;
+}
+
+function recomputeNodeTimes(ship) {
+  const sortedNodes = [...ship.nodes].sort((a, b) => a.id - b.id);
+  let cursorOrbit = ship.orbit;
+  let cursorTick = Math.max(tick, ship.orbit.epoch || 0);
+  for (const node of sortedNodes) {
+    if (node.anchor === 'periapsis' || node.anchor === 'apoapsis') {
+      node.t = nextApsisTime(cursorOrbit, cursorTick, node.anchor);
+    } else if (node.anchor === 'absolute') {
+      // t is pre-set; don't change it. But we still need to walk through any
+      // SOI transitions before this time.
+      let walkOrbit = cursorOrbit;
+      let walkTick = cursorTick;
+      for (let i = 0; i < 5 && walkTick < node.t - 1e-6; i++) {
+        const ev = findNextSOIEvent(walkOrbit, walkTick, Math.min(node.t - walkTick + 5, TRAJ_MAX_TICKS));
+        if (!ev || ev.t >= node.t) break;
+        if (!ev.newOrbit) break;
+        walkOrbit = ev.newOrbit;
+        walkTick = ev.t;
+      }
+      cursorOrbit = walkOrbit;
+    } else if (node.anchor === 'encounter' || node.anchor === 'exit') {
+      const target = node.anchor === 'encounter' ? 'enter' : 'exit';
+      let scanOrbit = cursorOrbit;
+      let scanTick = cursorTick;
+      let foundEvent = null;
+      const wantedBodyId = node.targetBodyId;
+      for (let i = 0; i < 10; i++) {
+        const ev = findNextSOIEvent(scanOrbit, scanTick, TRAJ_MAX_TICKS);
+        if (!ev) break;
+        const bodyMatches = !wantedBodyId || (ev.body && ev.body.id === wantedBodyId);
+        if (ev.type === target && bodyMatches) {
+          foundEvent = ev;
+          break;
+        }
+        if (!ev.newOrbit) break;
+        scanOrbit = ev.newOrbit;
+        scanTick = ev.t;
+      }
+      if (foundEvent) {
+        node.t = foundEvent.t;
+        cursorOrbit = foundEvent.newOrbit || cursorOrbit;
+      }
+    } else if (node.anchor === 'capture') {
+      // Walk through the encounter, then find the next periapsis in the target's frame.
+      // This is the BEST place to capture — closest approach to the target body.
+      let scanOrbit = cursorOrbit;
+      let scanTick = cursorTick;
+      let entered = false;
+      const wantedBodyId = node.targetBodyId;
+      for (let i = 0; i < 10; i++) {
+        const ev = findNextSOIEvent(scanOrbit, scanTick, TRAJ_MAX_TICKS);
+        if (!ev) break;
+        const bodyMatches = !wantedBodyId || (ev.body && ev.body.id === wantedBodyId);
+        if (ev.type === 'enter' && bodyMatches) {
+          // Switch to the target's frame
+          if (!ev.newOrbit) break;
+          scanOrbit = ev.newOrbit;
+          scanTick = ev.t;
+          entered = true;
+          break;
+        }
+        if (!ev.newOrbit) break;
+        scanOrbit = ev.newOrbit;
+        scanTick = ev.t;
+      }
+      if (entered) {
+        // Find periapsis in the new frame
+        const tPeri = nextApsisTime(scanOrbit, scanTick, 'periapsis');
+        node.t = tPeri;
+        cursorOrbit = scanOrbit;
+      }
+    }
+    cursorTick = node.t;
+    if (nodeDv(node) > 0) {
+      cursorOrbit = applyNodeToOrbit(cursorOrbit, node);
+    }
+  }
+  invalidateTrajectory(ship);
+}
+
+// ---------- HOHMANN TRANSFER PLANNER ----------
+// These functions compute "auto-planned" maneuvers using analytic Hohmann math.
+// They produce Δv values and node times that should reliably get the ship to
+// a target, without requiring the player to hand-tune handles.
+
+// Plan an orbital maneuver: change the current orbit's Pe/Ap to target values
+// within the same SOI. Returns array of {anchor, dv_prograde, expectedOrbit} or
+// {error: '...'}.
+function planOrbitalManeuver(ship, targetPe, targetAp) {
+  const orbit = ship.orbit;
+  const parentId = orbit.parentBodyId;
+  const parent = byId[parentId];
+  const mu = muOf(parentId);
+
+  if (targetPe > targetAp) [targetPe, targetAp] = [targetAp, targetPe];
+  if (targetPe < parent.radius + 1) return { error: `Pe must be > ${parent.radius + 1} (planet radius)` };
+  if (targetAp > parent.soi * 0.95) return { error: `Ap must be < ${(parent.soi * 0.95).toFixed(0)} (95% of SOI)` };
+
+  const currentPe = orbit.rp;
+  const currentAp = orbit.ra;
+
+  // If the current orbit already matches, nothing to do.
+  if (Math.abs(currentPe - targetPe) < 0.5 && Math.abs(currentAp - targetAp) < 0.5) {
+    return { error: 'Already at target orbit' };
+  }
+
+  // Decision: which burn first? We use a 2-burn Hohmann.
+  //   Phase 1: at one apsis of CURRENT orbit, burn to set up a transfer ellipse
+  //            whose other apsis is the FAR target apsis.
+  //   Phase 2: at that new apsis, burn to circularize/match the near target apsis.
+  //
+  // Specifically: if targetAp >= currentAp, burn at current periapsis to raise apoapsis
+  // to targetAp; then burn at the new apoapsis to raise periapsis to targetPe (or lower it if targetPe < currentPe).
+  // If targetAp < currentAp, burn at current apoapsis to lower periapsis to targetPe first.
+  //
+  // For simplicity we always use this pattern: burn at the apsis that needs to
+  // change first based on direction.
+
+  const steps = [];
+
+  // Step 1: burn at the apsis we want to keep (sort of). Actually: we burn at
+  // current periapsis if we want to raise the orbit; current apoapsis if lowering.
+  // The classical Hohmann is: burn at one apsis to set the OTHER apsis.
+  //
+  // Approach: burn at currentPe to set apoapsis to targetAp. This gives
+  // intermediate orbit (currentPe, targetAp). Then burn at targetAp to set
+  // periapsis to targetPe, giving (targetPe, targetAp).
+  //
+  // This works if currentPe is approximately preserved through step 1, which it
+  // is since we burn AT periapsis (purely prograde/retrograde at periapsis only
+  // changes the FAR side).
+
+  // Step 1: at current periapsis, Δv to raise/lower apoapsis to targetAp.
+  // Transfer ellipse 1: rp = currentPe, ra = targetAp
+  {
+    const r = currentPe;
+    const a_old = (currentPe + currentAp) / 2;
+    const a_new = (currentPe + targetAp) / 2;
+    const v_old = Math.sqrt(mu * (2 / r - 1 / a_old));
+    const v_new = Math.sqrt(mu * (2 / r - 1 / a_new));
+    const dv = v_new - v_old;
+    steps.push({
+      anchor: 'periapsis',
+      dv_prograde: dv,
+      label: `Adjust apoapsis to ${targetAp.toFixed(1)}`,
+      expectedPe: currentPe,
+      expectedAp: targetAp,
+    });
+  }
+
+  // Step 2: at the new apoapsis (= targetAp), Δv to raise/lower periapsis to targetPe.
+  {
+    const r = targetAp;
+    const a_old = (currentPe + targetAp) / 2; // After step 1
+    const a_new = (targetPe + targetAp) / 2;
+    const v_old = Math.sqrt(mu * (2 / r - 1 / a_old));
+    const v_new = Math.sqrt(mu * (2 / r - 1 / a_new));
+    const dv = v_new - v_old;
+    steps.push({
+      anchor: 'apoapsis',
+      dv_prograde: dv,
+      label: `Adjust periapsis to ${targetPe.toFixed(1)}`,
+      expectedPe: targetPe,
+      expectedAp: targetAp,
+    });
+  }
+
+  return { steps };
+}
+
+// Plan a transfer maneuver: send the ship from its current SOI to target body's
+// SOI. Returns { steps, transferTime, error }.
+function planTransferManeuver(ship, targetBodyId) {
+  const target = byId[targetBodyId];
+  if (!target) return { error: 'No target' };
+
+  const orbit = ship.orbit;
+  const currentParentId = orbit.parentBodyId;
+  const currentParent = byId[currentParentId];
+
+  // For now, support transfers from a planetary SOI to another planet's SOI
+  // (both around Sol), or between a planet's child moons (not implemented).
+  if (currentParentId === targetBodyId) return { error: 'Already at target' };
+
+  // Common case: ship around Inara/Verda/Rust/Jove (all children of Sol), target is another planet.
+  if (currentParent.parent !== 'sol' || target.parent !== 'sol') {
+    return { error: 'Transfer only supports planet-to-planet for now' };
+  }
+  if (currentParentId === 'sol') {
+    return { error: 'Ship must be in a planetary SOI to transfer' };
+  }
+
+  const mu_sol = MU_SOL;
+  const mu_origin = muOf(currentParentId);
+  const mu_target = muOf(targetBodyId);
+
+  const r1 = currentParent.orbitRadius;
+  const r2 = target.orbitRadius;
+  const a_transfer = (r1 + r2) / 2;
+
+  // Heliocentric speeds
+  const v1_circ = Math.sqrt(mu_sol / r1);
+  const v2_circ = Math.sqrt(mu_sol / r2);
+  const v1_trans = Math.sqrt(mu_sol * (2 / r1 - 1 / a_transfer));
+  const v2_trans = Math.sqrt(mu_sol * (2 / r2 - 1 / a_transfer));
+
+  // Hyperbolic excess velocities relative to origin/target
+  const v_inf_origin = Math.abs(v1_trans - v1_circ); // m/s at origin SOI boundary, in Sol's prograde direction
+  const v_inf_target = Math.abs(v2_circ - v2_trans); // m/s at target SOI boundary
+
+  // Determine whether this is an outbound (r2 > r1) or inbound transfer
+  const isOutbound = r2 > r1;
+
+  // Required Δv in origin's frame, at the ship's current periapsis altitude:
+  // From v at r_pe with sufficient energy to reach v_inf at infinity:
+  // 0.5·v_burn² − μ/r_pe = 0.5·v_inf²
+  // v_burn = √(v_inf² + 2μ/r_pe)
+  // Δv = v_burn − v_current_at_pe
+  const r_pe = orbit.rp;
+  const r_pe_circ_speed = Math.sqrt(mu_origin / r_pe); // if currently circular at pe
+  const a_current = (orbit.rp + orbit.ra) / 2;
+  const v_current_at_pe = Math.sqrt(mu_origin * (2 / r_pe - 1 / a_current));
+  const v_burn = Math.sqrt(v_inf_origin * v_inf_origin + 2 * mu_origin / r_pe);
+  const dv_injection = (isOutbound ? 1 : -1) * (v_burn - v_current_at_pe);
+
+  // Δv at the target encounter to capture:
+  // The ship arrives at target SOI with v_inf_target relative to target.
+  // To capture into a circular orbit at target altitude r2_pe (we pick a default like r2_pe = SOI/3):
+  // v_pe = √(v_inf² + 2μ_target/r2_pe)
+  // Capture circular speed: √(μ_target/r2_pe)
+  // Retrograde Δv = v_pe − v_circ_target
+  const r_target_pe = target.soi / 2;
+  const v_capture_pe = Math.sqrt(v_inf_target * v_inf_target + 2 * mu_target / r_target_pe);
+  const v_target_circ = Math.sqrt(mu_target / r_target_pe);
+  const dv_brake = v_capture_pe - v_target_circ;
+
+  // Transfer time (half-period of transfer ellipse)
+  const transferTime = Math.PI * Math.sqrt(Math.pow(a_transfer, 3) / mu_sol);
+
+  // Joint search: try many (burnTime, Δv) combinations, find the one that
+  // produces an actual encounter with target. We start with the analytic
+  // phase-angle guess and a Δv around the analytic value, then expand.
+  const omega_target = TWO_PI / target.orbitPeriod;
+  const omega_origin_body = TWO_PI / currentParent.orbitPeriod;
+
+  // The patched-conics simulator is too jittery to trust analytic Hohmann math
+  // alone. We do a numerical grid search: try many (burnTime, Δv) combinations
+  // and check whether each produces an actual capture into the target's SOI
+  // when run through the same chain logic the production code uses.
+  //
+  // We use the analytic values as the starting "guess" but search around them.
+
+  function trySimulate(burnTime, dv1, dv2) {
+    // Build a temporary nodes array and run through the same logic as production.
+    const tempNodes = [];
+    const inj = makeNode('absolute');
+    inj.dv.prograde = dv1;
+    inj.t = burnTime;
+    tempNodes.push(inj);
+    const brake = makeNode('capture');
+    brake.dv.prograde = dv2;
+    brake.targetBodyId = target.id;
+    tempNodes.push(brake);
+    // Use a temp ship-like object
+    const tempShip = { orbit: ship.orbit, nodes: tempNodes };
+    // Inline simulate (avoid mutating real ship's _trajectory cache via recomputeNodeTimes)
+    return simulateChain(tempShip, target);
+  }
+
+  // Returns post-capture orbit, or null if no capture
+  function simulateChain(tempShip, target) {
+    // This mirrors computeNodeChain + recomputeNodeTimes
+    const nodes = tempShip.nodes;
+    let cursorOrbit = tempShip.orbit;
+    let cursorTick = Math.max(tick, tempShip.orbit.epoch || 0);
+
+    // Node 1: absolute injection
+    const inj = nodes[0];
+    // Walk SOI events before inj.t (typically none, since we're inside Inara)
+    cursorTick = inj.t;
+    cursorOrbit = applyNodeToOrbit(cursorOrbit, inj);
+
+    // Node 2: capture — walk to encounter with target, advance to periapsis, brake
+    const brake = nodes[1];
+    let scanOrbit = cursorOrbit;
+    let scanTick = cursorTick;
+    let encounter = null;
+    for (let i = 0; i < 12; i++) {
+      const ev = findNextSOIEvent(scanOrbit, scanTick, TRAJ_MAX_TICKS);
+      if (!ev) break;
+      if (ev.type === 'enter' && ev.body && ev.body.id === target.id) {
+        encounter = ev;
+        break;
+      }
+      if (!ev.newOrbit) break;
+      scanOrbit = ev.newOrbit;
+      scanTick = ev.t;
+    }
+    if (!encounter || !encounter.newOrbit) return null;
+
+    // Periapsis inside target SOI
+    const tPeri = nextApsisTime(encounter.newOrbit, encounter.t, 'periapsis');
+    const brakeApplied = { id: 999, anchor: 'capture', t: tPeri, dv: { prograde: brake.dv.prograde, radial: 0 }, committed: false };
+    const postOrbit = applyNodeToOrbit(encounter.newOrbit, brakeApplied);
+    return postOrbit;
+  }
+
+  // Grid search over (burnTime, dv1). For each, find the best dv2 that captures
+  // into a low orbit.
+  const targetSOI = target.soi;
+  let bestPlan = null;
+  let bestPlanRa = Infinity;
+
+  // Search burnTime over a reasonable window (one synodic period at most)
+  const searchSpan = Math.min(currentParent.orbitPeriod * 3, target.orbitPeriod * 1.5);
+  const dtStep = 2;
+  // Search dv around analytic value
+  const dvStep = 0.05;
+  const dvRange = Math.abs(dv_injection) * 0.6;
+
+  for (let dt = 1.0; dt < searchSpan; dt += dtStep) {
+    const t_candidate = tick + dt;
+    // Try Δv around the analytic estimate
+    for (let dv = dv_injection - dvRange; dv <= dv_injection + dvRange; dv += dvStep) {
+      // Quick check: does this Δv produce ANY encounter with target?
+      // Use a fixed brake Δv first just to test encounter
+      const probe = trySimulate(t_candidate, dv, -dv_brake);
+      if (!probe) continue;
+      // If we got a capture (ra inside SOI), great. Otherwise we'll refine brake later.
+      if (probe.ra < targetSOI * 0.9 && probe.rp > 0) {
+        const score = probe.ra; // prefer tighter orbits
+        if (score < bestPlanRa) {
+          bestPlan = { burnT: t_candidate, dv: dv, brakeDv: -dv_brake, postOrbit: probe };
+          bestPlanRa = score;
+        }
+      }
+    }
+  }
+
+  // If no plan found, fall back to analytic at first phase-correct candidate
+  let bestBurnT;
+  let dv_injection_final;
+  let dv_brake_final;
+  if (bestPlan) {
+    bestBurnT = bestPlan.burnT;
+    dv_injection_final = bestPlan.dv;
+    dv_brake_final = -bestPlan.brakeDv; // brake is stored negative in plan; refineBrakeDv expects positive
+
+    // Refine brake more carefully now that we know injection works
+    const refinedBrake = refineBrakeDv(ship, dv_injection_final, bestBurnT, dv_brake_final, target);
+    if (refinedBrake !== null) {
+      dv_brake_final = refinedBrake;
+    }
+  } else {
+    bestBurnT = tick + 1;
+    dv_injection_final = dv_injection;
+    dv_brake_final = dv_brake;
+  }
+
+  // Plan generation
+  const steps = [];
+  steps.push({
+    anchor: 'absolute',
+    t: bestBurnT,
+    dv_prograde: dv_injection_final,
+    label: `Transfer burn — ${isOutbound ? 'outbound' : 'inbound'} Hohmann to ${target.name}`,
+  });
+  steps.push({
+    anchor: 'capture',
+    dv_prograde: -dv_brake_final, // retrograde
+    label: `Capture at ${target.name} — circularize at r ${r_target_pe.toFixed(0)}`,
+    expectedPe: r_target_pe * 0.7,
+    expectedAp: r_target_pe * 1.3,
+    targetBodyId: targetBodyId,
+  });
+
+  return {
+    steps,
+    transferTime,
+    targetName: target.name,
+    burnTimeHint: bestBurnT,
+    hasValidPlan: bestPlan !== null,
+  };
+}
+
+function refineBrakeDv(ship, injectionDv, injectionT, initialBrakeDv, target) {
+  // Simulate: inject, walk to encounter, advance to periapsis inside target SOI,
+  // apply brake, measure resulting ra. Bisect on brake magnitude.
+  function simulate(brakeDv) {
+    const injNode = makeNode('absolute');
+    injNode.dv.prograde = injectionDv;
+    injNode.t = injectionT;
+    const inaraPostOrbit = applyNodeToOrbit(ship.orbit, injNode);
+
+    // Walk to encounter with target
+    let scanOrbit = inaraPostOrbit;
+    let scanTick = injectionT;
+    let encounter = null;
+    for (let i = 0; i < 10; i++) {
+      const ev = findNextSOIEvent(scanOrbit, scanTick, TRAJ_MAX_TICKS);
+      if (!ev) break;
+      if (ev.type === 'enter' && ev.body && ev.body.id === target.id) {
+        encounter = ev;
+        break;
+      }
+      if (!ev.newOrbit) break;
+      scanOrbit = ev.newOrbit;
+      scanTick = ev.t;
+    }
+    if (!encounter || !encounter.newOrbit) return null;
+
+    // Find periapsis inside target SOI, apply brake there
+    const tPeri = nextApsisTime(encounter.newOrbit, encounter.t, 'periapsis');
+    const brakeNode = makeNode('absolute');
+    brakeNode.dv.prograde = -brakeDv;
+    brakeNode.t = tPeri;
+    const postBrakeOrbit = applyNodeToOrbit(encounter.newOrbit, brakeNode);
+    return postBrakeOrbit.ra;
+  }
+
+  const targetRa = target.soi * 0.6;
+  let lo = initialBrakeDv * 0.3;
+  let hi = initialBrakeDv * 3.0;
+  let lastResult = null;
+  for (let i = 0; i < 30; i++) {
+    const mid = (lo + hi) / 2;
+    const result = simulate(mid);
+    if (result === null) return null;
+    lastResult = { dv: mid, ra: result };
+    if (Math.abs(result - targetRa) / targetRa < 0.05) return mid;
+    if (result > targetRa) lo = mid;
+    else hi = mid;
+  }
+  return lastResult ? lastResult.dv : null;
+}
+
+
+// apoapsis (or periapsis for inbound) matches the target's orbital radius.
+// Returns the refined Δv, or null on failure.
+// Refine the injection Δv so the trajectory actually encounters the target body
+// (not just any SOI). Returns Δv or null if no encounter found.
+function refineInjectionDvForEncounter(ship, initialDv, burnT, target, isOutbound) {
+  // For each candidate Δv, simulate the trajectory and check whether the ship
+  // enters the target's SOI within the projection budget.
+  function simulate(dv) {
+    const node = makeNode('absolute');
+    node.dv.prograde = dv;
+    node.t = burnT;
+    const postOrbit = applyNodeToOrbit(ship.orbit, node);
+
+    // Walk forward through any SOI transitions; we want an 'enter' event into target.
+    let scanOrbit = postOrbit;
+    let scanTick = burnT;
+    for (let i = 0; i < 12; i++) {
+      const ev = findNextSOIEvent(scanOrbit, scanTick, TRAJ_MAX_TICKS);
+      if (!ev) return { miss: Infinity };
+      if (ev.type === 'enter' && ev.body && ev.body.id === target.id) {
+        return { encountered: true, dv };
+      }
+      if (!ev.newOrbit) return { miss: Infinity };
+      // Measure how close the post-event orbit's apoapsis/periapsis comes to target's radius
+      scanOrbit = ev.newOrbit;
+      scanTick = ev.t;
+    }
+    return { miss: Infinity };
+  }
+
+  // Try a range of Δv values around the analytic estimate; pick one that produces encounter.
+  // First, broad scan
+  const range = Math.abs(initialDv) * 1.0;
+  const lo = initialDv - range;
+  const hi = initialDv + range;
+  const steps = 40;
+  let firstHit = null;
+  let lastHit = null;
+  for (let i = 0; i <= steps; i++) {
+    const dv = lo + (i / steps) * (hi - lo);
+    const sim = simulate(dv);
+    if (sim.encountered) {
+      if (firstHit === null) firstHit = dv;
+      lastHit = dv;
+    }
+  }
+  if (firstHit !== null) {
+    // Use the middle of the encounter window — gives the most robust capture.
+    return (firstHit + lastHit) / 2;
+  }
+  return null;
+}
+
+// Old refineInjectionDv kept for compatibility but no longer used by transfer planner.
+function refineInjectionDv(ship, initialDv, targetRadius, isOutbound, burnT) {
+  function simulate(dv) {
+    const node = makeNode('absolute');
+    node.dv.prograde = dv;
+    node.t = burnT;
+    const postOrbit = applyNodeToOrbit(ship.orbit, node);
+    const ev = findNextSOIEvent(postOrbit, node.t, TRAJ_MAX_TICKS);
+    if (!ev || ev.type !== 'exit') return null;
+    if (!ev.newOrbit) return null;
+    return isOutbound ? ev.newOrbit.ra : ev.newOrbit.rp;
+  }
+
+  let lo = initialDv * 0.5;
+  let hi = initialDv * 2.0;
+  if (!isOutbound) { lo = initialDv * 2.0; hi = initialDv * 0.5; }
+
+  for (let i = 0; i < 25; i++) {
+    const mid = (lo + hi) / 2;
+    const result = simulate(mid);
+    if (result === null) {
+      if (Math.abs(mid) > Math.abs(initialDv) * 3) return null;
+      lo = mid;
+      continue;
+    }
+    const error = (result - targetRadius) / targetRadius;
+    if (Math.abs(error) < 0.02) return mid;
+    if (isOutbound) {
+      if (result > targetRadius) hi = mid;
+      else lo = mid;
+    } else {
+      if (result < targetRadius) hi = mid;
+      else lo = mid;
+    }
+  }
+  return (lo + hi) / 2;
+}
+
+
+// turn it into actual nodes on the ship. Replaces any existing uncommitted nodes.
+function applyPlanToShip(ship, plan) {
+  if (plan.error) return false;
+  if (!plan.steps || plan.steps.length === 0) return false;
+  ship.nodes = ship.nodes.filter(n => n.committed);
+  for (const step of plan.steps) {
+    const node = makeNode(step.anchor);
+    node.dv.prograde = step.dv_prograde;
+    if (step.targetBodyId) node.targetBodyId = step.targetBodyId;
+    if (step.anchor === 'absolute' && typeof step.t === 'number') {
+      node.t = step.t;
+    }
+    ship.nodes.push(node);
+  }
+  recomputeNodeTimes(ship);
+  return true;
+}
+
+
+function applyNodeToOrbit(orbit, node) {
+  const { prograde, radialOut } = velocityVectorsAt(orbit, node.t);
+  const local = localPositionAt(orbit, node.t);
+  const a = semiMajor(orbit);
+  const r = Math.sqrt(local.x * local.x + local.y * local.y);
+  // Use the parent body's actual gravitational parameter rather than deriving
+  // from the orbit's period — that derivation is unreliable for our pseudo-
+  // hyperbolic ellipses where the period is fake.
+  const mu = muOf(orbit.parentBodyId);
+  // Pre-burn speed via vis-viva, BUT clamp to non-negative argument (the fake
+  // hyperbolic 'a = r*50' produces 2/r - 1/a > 0 since r << 50*r, so this is safe).
+  const visVivaIn = 2 / r - 1 / a;
+  const speed = visVivaIn > 0 ? Math.sqrt(mu * visVivaIn) : 0;
+  // Pre-burn velocity in world frame
+  const oldVx = prograde.x * speed;
+  const oldVy = prograde.y * speed;
+  // Add Δv components (interpreted as world-frame components along prograde / radial-out)
+  const dvx = prograde.x * node.dv.prograde + radialOut.x * node.dv.radial;
+  const dvy = prograde.y * node.dv.prograde + radialOut.y * node.dv.radial;
+  const newVx = oldVx + dvx;
+  const newVy = oldVy + dvy;
+  const newSpeed = Math.sqrt(newVx * newVx + newVy * newVy);
+
+  // New semi-major axis from vis-viva:
+  //   v_new² = μ · (2/r - 1/a_new)   =>   a_new = 1 / (2/r - v_new²/μ)
+  const energyTerm = 2 / r - (newSpeed * newSpeed) / mu;
+  let newA;
+  if (energyTerm <= 0) {
+    // Escape velocity — model as a wide ellipse (multiplier kept small to
+    // avoid eccentricity clamping issues in orbitFromStateVector).
+    newA = r * 3;
+  } else {
+    newA = 1 / energyTerm;
+  }
+
+  const newOrbit = orbitFromStateVector(
+    local.x, local.y, newVx, newVy,
+    newA, orbit.parentBodyId, node.t, orbit.period, a
+  );
+  return newOrbit || orbit;
+}
+
+function getActiveOrbit(ship, t) {
+  // Rebuild trajectory if we don't have one, or if it's getting stale
+  // (sim time has caught up to most of the projected window).
+  let needsRebuild = !ship._trajectory;
+  if (ship._trajectory && ship._trajectory.length > 0) {
+    const last = ship._trajectory[ship._trajectory.length - 1];
+    const first = ship._trajectory[0];
+    const coverage = last.tEnd - first.tStart;
+    const consumed = t - first.tStart;
+    if (consumed > coverage * 0.8) needsRebuild = true;
+  }
+  if (needsRebuild) {
+    // Start projecting from current orbit's epoch, but never earlier than current tick
+    const epochStart = Math.max(ship.orbit.epoch || 0, t);
+    ship._trajectory = computeTrajectory(ship.orbit, ship.nodes, epochStart);
+  }
+
+  for (const arc of ship._trajectory) {
+    if (t >= arc.tStart && t <= arc.tEnd) return arc.orbit;
+  }
+  if (ship._trajectory.length > 0) return ship._trajectory[ship._trajectory.length - 1].orbit;
+  return ship.orbit;
+}
+
+function invalidateTrajectory(ship) {
+  ship._trajectory = null;
+}
+
+function shipPositionWorld(ship, t) {
+  return orbitWorldPos(ship.orbit, t);
+}
+
+function nodeBurnParent(ship, node) {
+  const orbit = preBurnOrbitForNode(ship, node);
+  return byId[orbit.parentBodyId];
+}
+
+function nodeDv(n) {
+  return Math.sqrt(n.dv.prograde * n.dv.prograde + n.dv.radial * n.dv.radial);
+}
+function nodeFuelCost(n) {
+  return Math.round(nodeDv(n) * 10);
+}
+
+// ---------- STATE ----------
+let selectedShipId = null;
+let selectedBodyId = null;
+let selectedNodeId = null;
+let dragging = null;
+let pickingTarget = false; // when true, next body click picks a transfer destination
+let orbitChangePanelOpen = false;
+let advancedStepsOpen = false;
+
+// ---------- RENDERING ----------
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+function worldToScreen(x, y) {
+  return {
+    x: canvas.width / 2 + (x - camera.x) * camera.scale,
+    y: canvas.height / 2 + (y - camera.y) * camera.scale,
+  };
+}
+
+function drawBody(body) {
+  const pos = bodyPosition(body, tick);
+  const s = worldToScreen(pos.x, pos.y);
+  const r = body.radius * camera.scale;
+
+  // SOI boundary (faint dashed circle), drawn before the body so it sits under it.
+  if (body.soi && body.soi !== Infinity) {
+    const soi = body.soi * camera.scale;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(78, 205, 196, 0.15)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 6]);
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, soi, 0, TWO_PI);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  if (body.type === 'star') {
+    const grd = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r * 4);
+    grd.addColorStop(0, 'rgba(255, 209, 128, 0.4)');
+    grd.addColorStop(0.5, 'rgba(255, 154, 60, 0.1)');
+    grd.addColorStop(1, 'rgba(255, 154, 60, 0)');
+    ctx.fillStyle = grd;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, r * 4, 0, TWO_PI);
+    ctx.fill();
+  }
+
+  ctx.fillStyle = body.color;
+  ctx.beginPath();
+  ctx.arc(s.x, s.y, r, 0, TWO_PI);
+  ctx.fill();
+
+  if (body.type === 'gas-giant') {
+    ctx.strokeStyle = 'rgba(212, 165, 116, 0.5)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.ellipse(s.x, s.y, r * 1.8, r * 0.4, 0, 0, TWO_PI);
+    ctx.stroke();
+  }
+
+  if (camera.scale > 0.4 || body.type === 'star' || body.parent === 'sol') {
+    ctx.fillStyle = body.id === selectedBodyId ? '#ffb84d' : '#8aa0b4';
+    ctx.font = '10px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(body.name.toUpperCase(), s.x, s.y + r + 14);
+  }
+
+  if (body.id === selectedBodyId) {
+    ctx.strokeStyle = '#ffb84d';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, r + 6, 0, TWO_PI);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+function drawBodyOrbit(body) {
+  if (!body.parent) return;
+  const parent = byId[body.parent];
+  const pp = bodyPosition(parent, tick);
+  const ps = worldToScreen(pp.x, pp.y);
+  ctx.strokeStyle = '#2d4255';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(ps.x, ps.y, body.orbitRadius * camera.scale, 0, TWO_PI);
+  ctx.stroke();
+}
+
+function drawOrbit(orbit, opts = {}) {
+  const parent = byId[orbit.parentBodyId];
+  const pPos = bodyPosition(parent, tick);
+  const ps = worldToScreen(pPos.x, pPos.y);
+  const a = semiMajor(orbit);
+  const e = eccentricity(orbit);
+  const b = a * Math.sqrt(1 - e * e);
+  const c = a * e;
+  const cx = ps.x - Math.cos(orbit.omega) * c * camera.scale;
+  const cy = ps.y - Math.sin(orbit.omega) * c * camera.scale;
+
+  ctx.save();
+  ctx.strokeStyle = opts.color || '#4a7090';
+  ctx.lineWidth = opts.lineWidth || 1.2;
+  if (opts.dashed) ctx.setLineDash([5, 5]);
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, a * camera.scale, b * camera.scale, orbit.omega, 0, TWO_PI);
+  ctx.stroke();
+  ctx.restore();
+
+  if (opts.markApsides) {
+    const peri = {
+      x: ps.x + Math.cos(orbit.omega) * orbit.rp * camera.scale,
+      y: ps.y + Math.sin(orbit.omega) * orbit.rp * camera.scale,
+    };
+    const apo = {
+      x: ps.x - Math.cos(orbit.omega) * orbit.ra * camera.scale,
+      y: ps.y - Math.sin(orbit.omega) * orbit.ra * camera.scale,
+    };
+    ctx.fillStyle = opts.color || '#4a7090';
+    ctx.font = '8px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.beginPath();
+    ctx.arc(peri.x, peri.y, 2.5, 0, TWO_PI);
+    ctx.fill();
+    ctx.fillText(`Pe ${orbit.rp.toFixed(0)}`, peri.x, peri.y - 6);
+    ctx.beginPath();
+    ctx.arc(apo.x, apo.y, 2.5, 0, TWO_PI);
+    ctx.fill();
+    ctx.fillText(`Ap ${orbit.ra.toFixed(0)}`, apo.x, apo.y - 6);
+  }
+}
+
+// Draw an arc of an orbit: trace the orbit path from tStart to tEnd as sampled points.
+// Useful when the ship doesn't traverse the full ellipse (e.g. exits SOI before
+// completing the orbit).
+function drawOrbitArc(orbit, tStart, tEnd, opts = {}) {
+  const parent = byId[orbit.parentBodyId];
+
+  ctx.save();
+  ctx.strokeStyle = opts.color || '#4a7090';
+  ctx.lineWidth = opts.lineWidth || 1.2;
+  if (opts.dashed) ctx.setLineDash([5, 5]);
+
+  const duration = tEnd - tStart;
+  const samples = Math.max(20, Math.min(200, Math.ceil(duration * 4)));
+  ctx.beginPath();
+  for (let i = 0; i <= samples; i++) {
+    const t = tStart + (i / samples) * duration;
+    const pPos = bodyPosition(parent, t);
+    const local = localPositionAt(orbit, t);
+    const s = worldToScreen(pPos.x + local.x, pPos.y + local.y);
+    if (i === 0) ctx.moveTo(s.x, s.y);
+    else ctx.lineTo(s.x, s.y);
+  }
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+
+  // Apsides only sensible for "full" orbits (the last arc, or arcs that
+  // aren't truncated by SOI events).
+  if (opts.markApsides && opts.fullEllipse) {
+    drawFullEllipse(orbit, opts);
+  }
+}
+
+// Draw the full ellipse of an orbit (used for the final, stable arc).
+function drawFullEllipse(orbit, opts = {}) {
+  const parent = byId[orbit.parentBodyId];
+  const pPos = bodyPosition(parent, tick);
+  const ps = worldToScreen(pPos.x, pPos.y);
+  const a = semiMajor(orbit);
+  const e = eccentricity(orbit);
+  const b = a * Math.sqrt(1 - e * e);
+  const c = a * e;
+  const cx = ps.x - Math.cos(orbit.omega) * c * camera.scale;
+  const cy = ps.y - Math.sin(orbit.omega) * c * camera.scale;
+
+  if (opts.markApsides) {
+    const peri = {
+      x: ps.x + Math.cos(orbit.omega) * orbit.rp * camera.scale,
+      y: ps.y + Math.sin(orbit.omega) * orbit.rp * camera.scale,
+    };
+    const apo = {
+      x: ps.x - Math.cos(orbit.omega) * orbit.ra * camera.scale,
+      y: ps.y - Math.sin(orbit.omega) * orbit.ra * camera.scale,
+    };
+    ctx.fillStyle = opts.color || '#4a7090';
+    ctx.font = '8px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.beginPath();
+    ctx.arc(peri.x, peri.y, 2.5, 0, TWO_PI);
+    ctx.fill();
+    ctx.fillText(`Pe ${orbit.rp.toFixed(0)}`, peri.x, peri.y - 6);
+    ctx.beginPath();
+    ctx.arc(apo.x, apo.y, 2.5, 0, TWO_PI);
+    ctx.fill();
+    ctx.fillText(`Ap ${orbit.ra.toFixed(0)}`, apo.x, apo.y - 6);
+  }
+}
+
+function drawShip(ship) {
+  const isSelected = ship.id === selectedShipId;
+
+  // 1) Draw the CURRENT orbit (the ship's actual orbit right now)
+  drawCurrentOrbit(ship, isSelected);
+
+  // 2) If selected, draw the full plan chain — every step's arc from start to end.
+  //    The arc following the selected step gets the brightest amber, others are dimmer.
+  if (isSelected && ship.nodes.length > 0) {
+    drawFullPlanChain(ship);
+  }
+
+  // 3) Ship marker + direction tick
+  const activeOrbit = ship.orbit;
+  const pos = orbitWorldPos(activeOrbit, tick);
+  const s = worldToScreen(pos.x, pos.y);
+  ctx.fillStyle = '#4ecdc4';
+  ctx.beginPath();
+  ctx.arc(s.x, s.y, isSelected ? 5 : 4, 0, TWO_PI);
+  ctx.fill();
+
+  const { prograde } = velocityVectorsAt(activeOrbit, tick);
+  ctx.strokeStyle = '#4ecdc4';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(s.x, s.y);
+  ctx.lineTo(s.x + prograde.x * 10, s.y + prograde.y * 10);
+  ctx.stroke();
+
+  ctx.fillStyle = isSelected ? '#ffb84d' : '#4ecdc4';
+  ctx.font = '9px "JetBrains Mono", monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText(ship.name.split(' ')[0], s.x + 8, s.y - 6);
+
+  // 4) Node diamonds
+  if (isSelected) drawNodes(ship);
+}
+
+// Draw the projection chain through all plan steps:
+//   ship.orbit → step1.postBurn → step2.postBurn → ...
+// Each segment ends either at the next node or at an SOI event.
+// Selected step's outgoing arc gets the brightest amber; others are dimmer.
+function drawFullPlanChain(ship) {
+  const chain = computeNodeChain(ship);
+  if (chain.length === 0) return;
+
+  // Build segments: for each "leg" of the journey, an orbit to draw between two times.
+  // Segment 0: ship.orbit from tick → chain[0].node.t  (or first SOI event before it)
+  // Segment i+1: chain[i].postBurnOrbit from chain[i].node.t → chain[i+1].node.t  (or first SOI event)
+  // Last segment: chain[last].postBurnOrbit from chain[last].node.t → forward (1.5 periods or first SOI event)
+
+  // We want each segment to be EITHER a clean ellipse (if no SOI event coming up within budget AND it's the focal segment)
+  // OR a partial arc.
+  // For simplicity, ALL segments are partial arcs (up to the next node or SOI event), and the last segment uses
+  // the full drawProjectedArcChain logic.
+
+  for (let i = 0; i < chain.length; i++) {
+    const startOrbit = i === 0 ? ship.orbit : chain[i - 1].postBurnOrbit;
+    const startTick = i === 0 ? Math.max(tick, ship.orbit.epoch || 0) : chain[i - 1].node.t;
+    const endTick = chain[i].node.t;
+
+    // Is this the segment leading into the selected step? brighten it.
+    const isLeadingToSelected = selectedNodeId !== null && chain[i].node.id === selectedNodeId;
+    const segColor = isLeadingToSelected ? '#ffb84d' : 'rgba(255, 184, 77, 0.5)';
+    const segWidth = isLeadingToSelected ? 1.4 : 1.1;
+    drawPlanSegment(startOrbit, startTick, endTick, segColor, segWidth);
+  }
+
+  // After the last node, draw forward into the future. We cap at 1 arc to keep
+  // the visualization focused on the immediate post-burn orbit — avoiding
+  // confusing chains of "and then re-encounter X, and then escape Y, ..."
+  const last = chain[chain.length - 1];
+  if (nodeDv(last.node) > 0) {
+    const isLastSelected = selectedNodeId === null || selectedNodeId === last.node.id;
+    const tailColor = isLastSelected ? '#ffb84d' : 'rgba(255, 184, 77, 0.5)';
+    drawProjectedArcChainColored(last.postBurnOrbit, last.node.t, 1, tailColor);
+  }
+}
+
+// Draw a partial arc segment, including SOI transitions during the segment.
+function drawPlanSegment(orbit, tStart, tEnd, color, lineWidth) {
+  let cursorOrbit = orbit;
+  let cursorTick = tStart;
+  for (let i = 0; i < 4 && cursorTick < tEnd - 1e-6; i++) {
+    const remaining = tEnd - cursorTick;
+    const ev = findNextSOIEvent(cursorOrbit, cursorTick, Math.min(remaining + 5, TRAJ_MAX_TICKS));
+    const segEnd = (ev && ev.t < tEnd) ? ev.t : tEnd;
+    drawOrbitArc(cursorOrbit, cursorTick, segEnd, {
+      color,
+      dashed: true,
+      lineWidth,
+    });
+    if (ev && ev.t < tEnd && ev.newOrbit) {
+      // Draw a small marker at the transition
+      const evPos = orbitWorldPos(cursorOrbit, ev.t);
+      const es = worldToScreen(evPos.x, evPos.y);
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(es.x, es.y, 3, 0, TWO_PI);
+      ctx.stroke();
+      ctx.restore();
+      cursorOrbit = ev.newOrbit;
+      cursorTick = ev.t;
+    } else {
+      break;
+    }
+  }
+}
+
+// Same as drawProjectedArcChain but with a custom color (for dimmer non-focal arcs)
+function drawProjectedArcChainColored(orbit, tStart, maxArcs, color) {
+  // Save original behavior by temporarily swapping color in helper. Easier to inline:
+  if (maxArcs <= 0) return;
+  const parent = byId[orbit.parentBodyId];
+  const tEnd = tStart + Math.min(orbit.period * 1.5, TRAJ_MAX_TICKS);
+
+  let exitTime = null;
+  let enterTime = null;
+  let enteredBody = null;
+  const stepSize = 0.5;
+  for (let t = tStart + stepSize; t <= tEnd; t += stepSize) {
+    const pos = orbitWorldPos(orbit, t);
+    if (parent.id !== 'sol') {
+      const pp = bodyPosition(parent, t);
+      const dx = pos.x - pp.x, dy = pos.y - pp.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > parent.soi) {
+        exitTime = bisectSOIExit(orbit, parent, t - stepSize, t);
+        break;
+      }
+    }
+    for (const body of BODIES) {
+      if (body.id === 'sol' || body.id === parent.id) continue;
+      if (body.parent !== parent.id) continue;
+      const bp = bodyPosition(body, t);
+      const dx = pos.x - bp.x, dy = pos.y - bp.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < body.soi) {
+        enterTime = bisectSOIEnter(orbit, body, t - stepSize, t);
+        enteredBody = body;
+        break;
+      }
+    }
+    if (enterTime) break;
+  }
+
+  const arcEnd = exitTime || enterTime || tEnd;
+  const isClosedFullOrbit = !exitTime && !enterTime && orbit.period < TRAJ_MAX_TICKS * 0.9;
+
+  if (isClosedFullOrbit) {
+    const pPos = bodyPosition(parent, tick);
+    const ps = worldToScreen(pPos.x, pPos.y);
+    const a = semiMajor(orbit);
+    const e = eccentricity(orbit);
+    const b = a * Math.sqrt(1 - e * e);
+    const c = a * e;
+    const cx = ps.x - Math.cos(orbit.omega) * c * camera.scale;
+    const cy = ps.y - Math.sin(orbit.omega) * c * camera.scale;
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.3;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, a * camera.scale, b * camera.scale, orbit.omega, 0, TWO_PI);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+
+    const peri = {
+      x: ps.x + Math.cos(orbit.omega) * orbit.rp * camera.scale,
+      y: ps.y + Math.sin(orbit.omega) * orbit.rp * camera.scale,
+    };
+    const apo = {
+      x: ps.x - Math.cos(orbit.omega) * orbit.ra * camera.scale,
+      y: ps.y - Math.sin(orbit.omega) * orbit.ra * camera.scale,
+    };
+    ctx.fillStyle = color;
+    ctx.font = '8px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.beginPath(); ctx.arc(peri.x, peri.y, 2.5, 0, TWO_PI); ctx.fill();
+    ctx.fillText(`Pe' ${orbit.rp.toFixed(0)} @${parent.name.toUpperCase()}`, peri.x, peri.y - 6);
+    ctx.beginPath(); ctx.arc(apo.x, apo.y, 2.5, 0, TWO_PI); ctx.fill();
+    ctx.fillText(`Ap' ${orbit.ra.toFixed(0)} @${parent.name.toUpperCase()}`, apo.x, apo.y - 6);
+    return;
+  }
+
+  drawOrbitArc(orbit, tStart, arcEnd, { color, dashed: true, lineWidth: 1.3 });
+
+  if (enterTime && enteredBody) {
+    const bp = bodyPosition(enteredBody, enterTime);
+    const bs = worldToScreen(bp.x, bp.y);
+    const br = enteredBody.radius * camera.scale;
+    if (enteredBody.soi && enteredBody.soi !== Infinity) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255, 184, 77, 0.3)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 4]);
+      ctx.beginPath();
+      ctx.arc(bs.x, bs.y, enteredBody.soi * camera.scale, 0, TWO_PI);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+    ctx.save();
+    ctx.globalAlpha = 0.4;
+    ctx.fillStyle = enteredBody.color;
+    ctx.beginPath();
+    ctx.arc(bs.x, bs.y, br, 0, TWO_PI);
+    ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = 'rgba(255, 184, 77, 0.7)';
+    ctx.font = '8px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(enteredBody.name.toUpperCase(), bs.x, bs.y + br + 12);
+
+    const encPos = orbitWorldPos(orbit, enterTime);
+    const es = worldToScreen(encPos.x, encPos.y);
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(es.x, es.y, 5, 0, TWO_PI);
+    ctx.stroke();
+    ctx.fillStyle = color;
+    ctx.font = '8px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(`ENCOUNTER ${enteredBody.name.toUpperCase()}`, es.x, es.y + 16);
+    ctx.fillText(`T+${(enterTime - tick).toFixed(1)}`, es.x, es.y - 10);
+    ctx.restore();
+    return;
+  }
+  if (exitTime) {
+    const exitPos = orbitWorldPos(orbit, exitTime);
+    const es = worldToScreen(exitPos.x, exitPos.y);
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(es.x, es.y, 5, 0, TWO_PI);
+    ctx.stroke();
+    ctx.fillStyle = color;
+    ctx.font = '8px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(`ESCAPES ${parent.name.toUpperCase()}`, es.x, es.y + 16);
+    ctx.fillText(`T+${(exitTime - tick).toFixed(1)}`, es.x, es.y - 10);
+    ctx.restore();
+    const newParentId = parent.parent;
+    if (!newParentId) return;
+    const wv = orbitWorldVelocity(orbit, exitTime);
+    const newOrbit = orbitFromWorldState(
+      exitPos.x, exitPos.y, wv.x, wv.y,
+      newParentId, exitTime, orbit.period, semiMajor(orbit)
+    );
+    if (newOrbit) {
+      drawProjectedArcChainColored(newOrbit, exitTime, maxArcs - 1, color);
+    }
+  }
+}
+
+// Draw the ship's current orbit (around its current parent body)
+function drawCurrentOrbit(ship, isSelected) {
+  const orbit = ship.orbit;
+  const parent = byId[orbit.parentBodyId];
+  const pPos = bodyPosition(parent, tick);
+  const ps = worldToScreen(pPos.x, pPos.y);
+  const a = semiMajor(orbit);
+  const e = eccentricity(orbit);
+  const b = a * Math.sqrt(1 - e * e);
+  const c = a * e;
+  const cx = ps.x - Math.cos(orbit.omega) * c * camera.scale;
+  const cy = ps.y - Math.sin(orbit.omega) * c * camera.scale;
+
+  const color = isSelected ? '#4ecdc4' : '#2a7a73';
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = isSelected ? 1.5 : 1.1;
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, a * camera.scale, b * camera.scale, orbit.omega, 0, TWO_PI);
+  ctx.stroke();
+  ctx.restore();
+
+  // Apsis markers for selected ship
+  if (isSelected) {
+    const peri = {
+      x: ps.x + Math.cos(orbit.omega) * orbit.rp * camera.scale,
+      y: ps.y + Math.sin(orbit.omega) * orbit.rp * camera.scale,
+    };
+    const apo = {
+      x: ps.x - Math.cos(orbit.omega) * orbit.ra * camera.scale,
+      y: ps.y - Math.sin(orbit.omega) * orbit.ra * camera.scale,
+    };
+    ctx.fillStyle = color;
+    ctx.font = '8px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.beginPath(); ctx.arc(peri.x, peri.y, 2.5, 0, TWO_PI); ctx.fill();
+    ctx.fillText(`Pe ${orbit.rp.toFixed(0)}`, peri.x, peri.y - 6);
+    ctx.beginPath(); ctx.arc(apo.x, apo.y, 2.5, 0, TWO_PI); ctx.fill();
+    ctx.fillText(`Ap ${orbit.ra.toFixed(0)}`, apo.x, apo.y - 6);
+  }
+}
+
+// Compute the orbit AFTER the given node fires. Walk forward through prior
+// nodes in plan order to build up the post-burn orbit, then return it along
+// with up to one SOI transition.
+// Walk through the plan, producing for each node:
+//   { node, preBurnOrbit, postBurnOrbit }
+// where preBurnOrbit is the orbit the node fires on (after walking through any
+// SOI transitions between this node and the previous one or ship start), and
+// postBurnOrbit is the orbit after the burn is applied.
+function computeNodeChain(ship) {
+  const sortedNodes = [...ship.nodes].sort((a, b) => a.id - b.id);
+  const chain = [];
+  let cursorOrbit = ship.orbit;
+  let cursorTick = Math.max(tick, ship.orbit.epoch || 0);
+  for (const node of sortedNodes) {
+    let walkOrbit = cursorOrbit;
+    let walkTick = cursorTick;
+    const targetType = node.anchor === 'encounter' ? 'enter' :
+                       node.anchor === 'exit' ? 'exit' :
+                       node.anchor === 'capture' ? 'enter' : null;
+    // For all anchor types, walk through intermediate SOI events. For encounter/exit
+    // we also consume the matching event at node.t. For 'capture', we MUST consume
+    // an 'enter' event before node.t (the periapsis comes after the entry).
+    for (let i = 0; i < 6 && walkTick < node.t - 1e-6; i++) {
+      const remaining = node.t - walkTick;
+      const ev = findNextSOIEvent(walkOrbit, walkTick, Math.min(remaining + 5, TRAJ_MAX_TICKS));
+      if (!ev) break;
+      const isAnchorMatch = (targetType && ev.type === targetType && Math.abs(ev.t - node.t) < 1.0);
+      const isIntermediate = ev.t < node.t - 1e-6;
+      if (!isAnchorMatch && !isIntermediate) break;
+      if (!ev.newOrbit) break;
+      walkOrbit = ev.newOrbit;
+      walkTick = ev.t;
+    }
+    const preBurnOrbit = walkOrbit;
+    const postBurnOrbit = nodeDv(node) > 0 ? applyNodeToOrbit(preBurnOrbit, node) : preBurnOrbit;
+    chain.push({ node, preBurnOrbit, postBurnOrbit });
+    cursorOrbit = postBurnOrbit;
+    cursorTick = node.t;
+  }
+  return chain;
+}
+
+function getOrbitAfterNode(ship, targetNode) {
+  const chain = computeNodeChain(ship);
+  for (const link of chain) {
+    if (link.node.id === targetNode.id) return link.postBurnOrbit;
+  }
+  return ship.orbit;
+}
+
+function preBurnOrbitForNode(ship, targetNode) {
+  const chain = computeNodeChain(ship);
+  for (const link of chain) {
+    if (link.node.id === targetNode.id) return link.preBurnOrbit;
+  }
+  return ship.orbit;
+}
+
+// Draw the orbit that results from the focused node, plus optionally one SOI
+// transition (the first one within ~1.5 orbits).
+function drawProjectedOrbitForNode(ship, node) {
+  const postOrbit = getOrbitAfterNode(ship, node);
+  if (nodeDv(node) <= 0) return;
+  // Draw the chain of arcs: post-burn orbit, optionally followed by post-exit orbit.
+  drawProjectedArcChain(postOrbit, node.t, 2);
+}
+
+// Recursively draw a chain of projected arcs in different SOIs, up to maxArcs deep.
+// Each arc may end in: exit (continue in new parent's frame), enter (stop, show encounter),
+// or budget exhaustion (full ellipse if closed, partial otherwise).
+function drawProjectedArcChain(orbit, tStart, maxArcs) {
+  if (maxArcs <= 0) return;
+  const parent = byId[orbit.parentBodyId];
+  const tEnd = tStart + Math.min(orbit.period * 1.5, TRAJ_MAX_TICKS);
+
+  let exitTime = null;
+  let enterTime = null;
+  let enteredBody = null;
+
+  const stepSize = 0.5;
+  for (let t = tStart + stepSize; t <= tEnd; t += stepSize) {
+    const pos = orbitWorldPos(orbit, t);
+    // Exit?
+    if (parent.id !== 'sol') {
+      const pp = bodyPosition(parent, t);
+      const dx = pos.x - pp.x, dy = pos.y - pp.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > parent.soi) {
+        exitTime = bisectSOIExit(orbit, parent, t - stepSize, t);
+        break;
+      }
+    }
+    // Enter?
+    for (const body of BODIES) {
+      if (body.id === 'sol' || body.id === parent.id) continue;
+      if (body.parent !== parent.id) continue;
+      const bp = bodyPosition(body, t);
+      const dx = pos.x - bp.x, dy = pos.y - bp.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < body.soi) {
+        enterTime = bisectSOIEnter(orbit, body, t - stepSize, t);
+        enteredBody = body;
+        break;
+      }
+    }
+    if (enterTime) break;
+  }
+
+  const arcEnd = exitTime || enterTime || tEnd;
+  const isClosedFullOrbit = !exitTime && !enterTime && orbit.period < TRAJ_MAX_TICKS * 0.9;
+
+  if (isClosedFullOrbit) {
+    // Full ellipse
+    const pPos = bodyPosition(parent, tick);
+    const ps = worldToScreen(pPos.x, pPos.y);
+    const a = semiMajor(orbit);
+    const e = eccentricity(orbit);
+    const b = a * Math.sqrt(1 - e * e);
+    const c = a * e;
+    const cx = ps.x - Math.cos(orbit.omega) * c * camera.scale;
+    const cy = ps.y - Math.sin(orbit.omega) * c * camera.scale;
+    ctx.save();
+    ctx.strokeStyle = '#ffb84d';
+    ctx.lineWidth = 1.3;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, a * camera.scale, b * camera.scale, orbit.omega, 0, TWO_PI);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+
+    const peri = {
+      x: ps.x + Math.cos(orbit.omega) * orbit.rp * camera.scale,
+      y: ps.y + Math.sin(orbit.omega) * orbit.rp * camera.scale,
+    };
+    const apo = {
+      x: ps.x - Math.cos(orbit.omega) * orbit.ra * camera.scale,
+      y: ps.y - Math.sin(orbit.omega) * orbit.ra * camera.scale,
+    };
+    ctx.fillStyle = '#ffb84d';
+    ctx.font = '8px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.beginPath(); ctx.arc(peri.x, peri.y, 2.5, 0, TWO_PI); ctx.fill();
+    ctx.fillText(`Pe' ${orbit.rp.toFixed(0)} @${parent.name.toUpperCase()}`, peri.x, peri.y - 6);
+    ctx.beginPath(); ctx.arc(apo.x, apo.y, 2.5, 0, TWO_PI); ctx.fill();
+    ctx.fillText(`Ap' ${orbit.ra.toFixed(0)} @${parent.name.toUpperCase()}`, apo.x, apo.y - 6);
+    return;
+  }
+
+  // Partial arc
+  drawOrbitArc(orbit, tStart, arcEnd, {
+    color: '#ffb84d',
+    dashed: true,
+    lineWidth: 1.3,
+  });
+
+  if (enterTime && enteredBody) {
+    // Encounter ghost body + ring
+    const bp = bodyPosition(enteredBody, enterTime);
+    const bs = worldToScreen(bp.x, bp.y);
+    const br = enteredBody.radius * camera.scale;
+    if (enteredBody.soi && enteredBody.soi !== Infinity) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255, 184, 77, 0.3)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 4]);
+      ctx.beginPath();
+      ctx.arc(bs.x, bs.y, enteredBody.soi * camera.scale, 0, TWO_PI);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+    ctx.save();
+    ctx.globalAlpha = 0.4;
+    ctx.fillStyle = enteredBody.color;
+    ctx.beginPath();
+    ctx.arc(bs.x, bs.y, br, 0, TWO_PI);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.fillStyle = 'rgba(255, 184, 77, 0.7)';
+    ctx.font = '8px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(enteredBody.name.toUpperCase(), bs.x, bs.y + br + 12);
+
+    const encPos = orbitWorldPos(orbit, enterTime);
+    const es = worldToScreen(encPos.x, encPos.y);
+    ctx.save();
+    ctx.strokeStyle = '#ffb84d';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(es.x, es.y, 5, 0, TWO_PI);
+    ctx.stroke();
+    ctx.fillStyle = '#ffb84d';
+    ctx.font = '8px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(`ENCOUNTER ${enteredBody.name.toUpperCase()}`, es.x, es.y + 16);
+    ctx.fillText(`T+${(enterTime - tick).toFixed(1)}`, es.x, es.y - 10);
+    ctx.restore();
+    // Stop chain at SOI entry — we don't draw inside the encountered body.
+    return;
+  }
+
+  if (exitTime) {
+    // Draw the exit marker, then recursively project in the new parent's frame.
+    const exitPos = orbitWorldPos(orbit, exitTime);
+    const es = worldToScreen(exitPos.x, exitPos.y);
+    ctx.save();
+    ctx.strokeStyle = '#ffb84d';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(es.x, es.y, 5, 0, TWO_PI);
+    ctx.stroke();
+    ctx.fillStyle = '#ffb84d';
+    ctx.font = '8px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(`ESCAPES ${parent.name.toUpperCase()}`, es.x, es.y + 16);
+    ctx.fillText(`T+${(exitTime - tick).toFixed(1)}`, es.x, es.y - 10);
+    ctx.restore();
+
+    // Compute the new orbit in the parent's parent frame (e.g. Inara -> Sol)
+    const newParentId = parent.parent;
+    if (!newParentId) return;
+    const wv = orbitWorldVelocity(orbit, exitTime);
+    const newOrbit = orbitFromWorldState(
+      exitPos.x, exitPos.y, wv.x, wv.y,
+      newParentId, exitTime, orbit.period, semiMajor(orbit)
+    );
+    if (newOrbit) {
+      drawProjectedArcChain(newOrbit, exitTime, maxArcs - 1);
+    }
+  }
+}
+
+function drawNodes(ship) {
+  const chain = computeNodeChain(ship);
+  for (const link of chain) {
+    const { node, preBurnOrbit: orbit } = link;
+    const parent = byId[orbit.parentBodyId];
+    const pPos = bodyPosition(parent, node.t);
+    const local = localPositionAt(orbit, node.t);
+    const s = worldToScreen(pPos.x + local.x, pPos.y + local.y);
+
+    const isSelectedNode = node.id === selectedNodeId;
+    const isCommitted = node.committed;
+
+    ctx.save();
+    ctx.translate(s.x, s.y);
+    ctx.rotate(Math.PI / 4);
+    if (isCommitted) {
+      ctx.fillStyle = isSelectedNode ? '#ffb84d' : 'rgba(255, 184, 77, 0.85)';
+      ctx.fillRect(-5, -5, 10, 10);
+      ctx.strokeStyle = '#ffb84d';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(-5, -5, 10, 10);
+    } else {
+      ctx.fillStyle = isSelectedNode ? 'rgba(255, 184, 77, 0.25)' : 'rgba(255, 184, 77, 0.08)';
+      ctx.fillRect(-5, -5, 10, 10);
+      ctx.strokeStyle = isSelectedNode ? '#ffb84d' : 'rgba(255, 184, 77, 0.55)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 2]);
+      ctx.strokeRect(-5, -5, 10, 10);
+      ctx.setLineDash([]);
+    }
+    ctx.restore();
+
+    ctx.fillStyle = isCommitted ? '#ffb84d' : 'rgba(255, 184, 77, 0.7)';
+    ctx.font = '9px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    let anchorLabel = '';
+    if (node.anchor === 'periapsis') anchorLabel = 'Pe';
+    else if (node.anchor === 'apoapsis') anchorLabel = 'Ap';
+    else if (node.anchor === 'encounter') anchorLabel = 'ENC';
+    else if (node.anchor === 'exit') anchorLabel = 'EXIT';
+    else if (node.anchor === 'capture') anchorLabel = 'CAP';
+    else if (node.anchor === 'absolute') anchorLabel = 'TX';
+    const label = (isCommitted ? '● ' : '◇ ') + `${anchorLabel} T+${(node.t - tick).toFixed(1)}`;
+    ctx.fillText(label, s.x, s.y - 12);
+
+    ctx.font = '7px "JetBrains Mono", monospace';
+    ctx.fillStyle = 'rgba(78, 205, 196, 0.85)';
+    ctx.fillText(`@${parent.name.toUpperCase()}`, s.x, s.y + 14);
+    ctx.fillStyle = isCommitted ? '#ffb84d' : 'rgba(255, 184, 77, 0.7)';
+    ctx.font = '9px "JetBrains Mono", monospace';
+
+    if (isSelectedNode) drawNodeHandles(node, orbit, s);
+  }
+}
+
+const HANDLE_SCREEN_LENGTH = 50;
+const HANDLE_DV_SCALE = 0.01;  // dv units per pixel — smaller burns are realistic
+
+function drawNodeHandles(node, orbit, screenPos) {
+  const { prograde, radialOut } = velocityVectorsAt(orbit, node.t);
+  const sx = screenPos.x, sy = screenPos.y;
+
+  const directions = {
+    prograde:    { x: prograde.x,   y: prograde.y,   cssVar: '--prograde',   label: 'PG' },
+    retrograde:  { x: -prograde.x,  y: -prograde.y,  cssVar: '--retrograde', label: 'RG' },
+    'radial-out':{ x: radialOut.x,  y: radialOut.y,  cssVar: '--radial-out', label: 'R+' },
+    'radial-in': { x: -radialOut.x, y: -radialOut.y, cssVar: '--radial-in',  label: 'R-' },
+  };
+  const dvAmount = {
+    prograde:     node.dv.prograde > 0 ?  node.dv.prograde : 0,
+    retrograde:   node.dv.prograde < 0 ? -node.dv.prograde : 0,
+    'radial-out': node.dv.radial   > 0 ?  node.dv.radial   : 0,
+    'radial-in':  node.dv.radial   < 0 ? -node.dv.radial   : 0,
+  };
+
+  for (const [key, dir] of Object.entries(directions)) {
+    const extra = dvAmount[key] / HANDLE_DV_SCALE;
+    const length = HANDLE_SCREEN_LENGTH + extra;
+    const ex = sx + dir.x * length;
+    const ey = sy + dir.y * length;
+    const cssColor = getComputedStyle(document.documentElement).getPropertyValue(dir.cssVar).trim();
+
+    ctx.strokeStyle = cssColor;
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash(dvAmount[key] > 0 ? [] : [3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(ex, ey);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = cssColor;
+    ctx.beginPath();
+    ctx.arc(ex, ey, 6, 0, TWO_PI);
+    ctx.fill();
+
+    ctx.fillStyle = '#0a0e14';
+    ctx.font = 'bold 8px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(dir.label, ex, ey);
+    ctx.textBaseline = 'alphabetic';
+
+    if (dvAmount[key] > 0) {
+      ctx.fillStyle = cssColor;
+      ctx.textAlign = 'center';
+      ctx.font = '9px "JetBrains Mono", monospace';
+      ctx.fillText(dvAmount[key].toFixed(1), ex + dir.x * 14, ey + dir.y * 14 + 3);
+    }
+  }
+}
+
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  for (const body of BODIES) drawBodyOrbit(body);
+  for (const body of BODIES) drawBody(body);
+  for (const ship of SHIPS) drawShip(ship);
+}
+
+// ---------- CAMERA ----------
+function focusSystem() {
+  viewTarget = 'system';
+  manualCamera = false;
+  camera.x = 0; camera.y = 0;
+  camera.scale = Math.min(canvas.width, canvas.height) / 1100;
+}
+
+function focusBody(bodyId) {
+  viewTarget = bodyId;
+  manualCamera = false;
+  const body = byId[bodyId];
+  const pos = bodyPosition(body, tick);
+  camera.x = pos.x; camera.y = pos.y;
+  let viewRadius;
+  if (body.id === 'sol') viewRadius = 600;
+  else if (body.soi && body.soi !== Infinity) viewRadius = body.soi * 1.4;
+  else viewRadius = 100;
+  camera.scale = Math.min(canvas.width, canvas.height) / (viewRadius * 2);
+}
+
+function updateCamera() {
+  if (manualCamera) return;
+  if (viewTarget && viewTarget !== 'system') {
+    const body = byId[viewTarget];
+    if (body) {
+      const pos = bodyPosition(body, tick);
+      camera.x = pos.x; camera.y = pos.y;
+    }
+  }
+}
+
+// ---------- HIT TESTS ----------
+function hitBody(sx, sy) {
+  for (let i = BODIES.length - 1; i >= 0; i--) {
+    const body = BODIES[i];
+    const pos = bodyPosition(body, tick);
+    const s = worldToScreen(pos.x, pos.y);
+    const r = Math.max(8, body.radius * camera.scale + 4);
+    const dx = sx - s.x, dy = sy - s.y;
+    if (dx * dx + dy * dy < r * r) return body.id;
+  }
+  return null;
+}
+
+function hitShip(sx, sy) {
+  for (const ship of SHIPS) {
+    const pos = shipPositionWorld(ship, tick);
+    const s = worldToScreen(pos.x, pos.y);
+    const dx = sx - s.x, dy = sy - s.y;
+    if (dx * dx + dy * dy < 100) return ship.id;
+  }
+  return null;
+}
+
+// Return the orbit a specific node fires on (its pre-burn orbit) — defined above
+// via computeNodeChain.
+
+function hitNode(sx, sy, ship) {
+  if (!ship) return null;
+  const chain = computeNodeChain(ship);
+  for (const link of chain) {
+    const { node, preBurnOrbit: orbit } = link;
+    const parent = byId[orbit.parentBodyId];
+    const pPos = bodyPosition(parent, node.t);
+    const local = localPositionAt(orbit, node.t);
+    const s = worldToScreen(pPos.x + local.x, pPos.y + local.y);
+    const dx = sx - s.x, dy = sy - s.y;
+    if (dx * dx + dy * dy < 100) return node.id;
+  }
+  return null;
+}
+
+function hitHandle(sx, sy, ship, node) {
+  if (!node) return null;
+  const orbit = preBurnOrbitForNode(ship, node);
+  const parent = byId[orbit.parentBodyId];
+  const pPos = bodyPosition(parent, node.t);
+  const local = localPositionAt(orbit, node.t);
+  const center = worldToScreen(pPos.x + local.x, pPos.y + local.y);
+  const { prograde, radialOut } = velocityVectorsAt(orbit, node.t);
+
+  const dvAmount = {
+    prograde:     node.dv.prograde > 0 ?  node.dv.prograde : 0,
+    retrograde:   node.dv.prograde < 0 ? -node.dv.prograde : 0,
+    'radial-out': node.dv.radial   > 0 ?  node.dv.radial   : 0,
+    'radial-in':  node.dv.radial   < 0 ? -node.dv.radial   : 0,
+  };
+  const dirs = {
+    prograde:    { x: prograde.x,   y: prograde.y },
+    retrograde:  { x: -prograde.x,  y: -prograde.y },
+    'radial-out':{ x: radialOut.x,  y: radialOut.y },
+    'radial-in': { x: -radialOut.x, y: -radialOut.y },
+  };
+  for (const [key, dir] of Object.entries(dirs)) {
+    const length = HANDLE_SCREEN_LENGTH + (dvAmount[key] / HANDLE_DV_SCALE);
+    const ex = center.x + dir.x * length;
+    const ey = center.y + dir.y * length;
+    const dx = sx - ex, dy = sy - ey;
+    if (dx * dx + dy * dy < 100) return key;
+  }
+  return null;
+}
+
+function hitOrbit(sx, sy, ship) {
+  if (!ship) return null;
+  const traj = ship._trajectory || (ship._trajectory = computeTrajectory(ship.orbit, ship.nodes, ship.orbit.epoch || 0));
+  let closest = null;
+  for (const arc of traj) {
+    if (arc.tEnd < tick) continue;
+    const tA = Math.max(arc.tStart, tick);
+    const tB = arc.tEnd;
+    const duration = tB - tA;
+    if (duration <= 0) continue;
+    const samples = Math.max(20, Math.min(150, Math.ceil(duration * 4)));
+    const parent = byId[arc.orbit.parentBodyId];
+    // Bias factor: prefer non-Sol (deeper) arcs by treating them as visually
+    // "closer". This means clicking on the trajectory inside Verda's SOI
+    // selects the Verda arc, not the Sol arc that passes through the same area.
+    const depthBias = parent.id === 'sol' ? 1.0 : 0.5;
+    for (let i = 0; i <= samples; i++) {
+      const sampleTick = tA + (i / samples) * duration;
+      const pPos = bodyPosition(parent, sampleTick);
+      const local = localPositionAt(arc.orbit, sampleTick);
+      const s = worldToScreen(pPos.x + local.x, pPos.y + local.y);
+      const dx = sx - s.x, dy = sy - s.y;
+      const d2 = (dx * dx + dy * dy) * depthBias;
+      if (d2 < 144 && (!closest || d2 < closest.d2)) {
+        closest = { t: sampleTick, d2 };
+      }
+    }
+  }
+  return closest ? closest.t : null;
+}
+
+// ---------- MOUSE HANDLING ----------
+canvas.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return; // only left-click for selection / handles
+  const rect = canvas.getBoundingClientRect();
+  const sx = e.clientX - rect.left;
+  const sy = e.clientY - rect.top;
+
+  const ship = shipById[selectedShipId];
+
+  // 1) Handle hit (must be first — handles overlap orbits)
+  if (ship && selectedNodeId) {
+    const node = ship.nodes.find(n => n.id === selectedNodeId);
+    if (node) {
+      const handle = hitHandle(sx, sy, ship, node);
+      if (handle) {
+        dragging = { kind: 'handle', handle, nodeId: node.id, shipId: ship.id };
+        return;
+      }
+    }
+  }
+
+  // 2) Node hit
+  if (ship) {
+    const nodeId = hitNode(sx, sy, ship);
+    if (nodeId !== null) {
+      selectedNodeId = nodeId;
+      renderShipPanel();
+      return;
+    }
+  }
+
+  // (Click-on-orbit placement removed. Use the "Add Step" buttons in the ship panel.)
+
+  // 4) Ship hit
+  const sid = hitShip(sx, sy);
+  if (sid) { selectShip(sid); return; }
+
+  // 5) Body hit
+  const bid = hitBody(sx, sy);
+  if (bid) {
+    if (pickingTarget && selectedShipId) {
+      // Confirm the target and plan a transfer
+      const ship = shipById[selectedShipId];
+      if (bid === ship.orbit.parentBodyId) {
+        flashStatus('CANNOT TRANSFER TO CURRENT PARENT');
+      } else if (bid === 'sol') {
+        flashStatus('CANNOT TRANSFER TO SOL');
+      } else {
+        pickingTarget = false;
+        applyTransfer(bid);
+      }
+      return;
+    }
+    selectBody(bid);
+    return;
+  }
+
+  // Cancel target picking on empty-area click
+  if (pickingTarget) {
+    pickingTarget = false;
+    flashStatus('TARGET SELECTION CANCELLED');
+    renderShipPanel();
+    return;
+  }
+
+  // 6) Empty: deselect node
+  if (selectedNodeId) { selectedNodeId = null; renderShipPanel(); }
+});
+
+canvas.addEventListener('mousemove', (e) => {
+  if (!dragging) return;
+  const rect = canvas.getBoundingClientRect();
+  const sx = e.clientX - rect.left;
+  const sy = e.clientY - rect.top;
+
+  if (dragging.kind === 'handle') {
+    const ship = shipById[dragging.shipId];
+    const node = ship.nodes.find(n => n.id === dragging.nodeId);
+    if (!node) return;
+
+    const orbit = preBurnOrbitForNode(ship, node);
+    const parent = byId[orbit.parentBodyId];
+    const pPos = bodyPosition(parent, node.t);
+    const local = localPositionAt(orbit, node.t);
+    const center = worldToScreen(pPos.x + local.x, pPos.y + local.y);
+    const { prograde, radialOut } = velocityVectorsAt(orbit, node.t);
+
+    const dx = sx - center.x, dy = sy - center.y;
+    let dirVec;
+    switch (dragging.handle) {
+      case 'prograde':   dirVec = prograde; break;
+      case 'retrograde': dirVec = { x: -prograde.x, y: -prograde.y }; break;
+      case 'radial-out': dirVec = radialOut; break;
+      case 'radial-in':  dirVec = { x: -radialOut.x, y: -radialOut.y }; break;
+    }
+    const proj = dx * dirVec.x + dy * dirVec.y;
+    const handleLen = Math.max(0, proj - HANDLE_SCREEN_LENGTH);
+    const dv = handleLen * HANDLE_DV_SCALE;
+
+    switch (dragging.handle) {
+      case 'prograde':   node.dv.prograde =  dv; break;
+      case 'retrograde': node.dv.prograde = -dv; break;
+      case 'radial-out': node.dv.radial   =  dv; break;
+      case 'radial-in':  node.dv.radial   = -dv; break;
+    }
+    // Subsequent nodes' apsis times depend on this node's burn. Recompute.
+    recomputeNodeTimes(ship);
+    renderShipPanel();
+  }
+});
+
+canvas.addEventListener('mouseup', (e) => {
+  dragging = null;
+  panState = null;
+});
+
+// Pan with right-click or middle-click drag
+canvas.addEventListener('mousedown', (e) => {
+  if (e.button === 2 || e.button === 1) {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    panState = {
+      startX: e.clientX - rect.left,
+      startY: e.clientY - rect.top,
+      camX: camera.x,
+      camY: camera.y,
+    };
+  }
+}, true); // capture phase so this runs before the main mousedown
+
+canvas.addEventListener('mousemove', (e) => {
+  if (!panState) return;
+  const rect = canvas.getBoundingClientRect();
+  const sx = e.clientX - rect.left;
+  const sy = e.clientY - rect.top;
+  const dx = sx - panState.startX;
+  const dy = sy - panState.startY;
+  camera.x = panState.camX - dx / camera.scale;
+  camera.y = panState.camY - dy / camera.scale;
+  manualCamera = true;
+});
+
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// Zoom with mouse wheel, anchored at cursor position
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const sx = e.clientX - rect.left;
+  const sy = e.clientY - rect.top;
+  // World point under cursor before zoom
+  const worldX = (sx - canvas.width / 2) / camera.scale + camera.x;
+  const worldY = (sy - canvas.height / 2) / camera.scale + camera.y;
+  // Zoom factor — wheel up = in
+  const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+  camera.scale = Math.max(0.005, Math.min(50, camera.scale * factor));
+  // Adjust camera so that worldX/worldY stays under the cursor
+  camera.x = worldX - (sx - canvas.width / 2) / camera.scale;
+  camera.y = worldY - (sy - canvas.height / 2) / camera.scale;
+  manualCamera = true;
+}, { passive: false });
+
+// Keyboard zoom
+window.addEventListener('keydown', (e) => {
+  if (e.key === '+' || e.key === '=') {
+    camera.scale = Math.min(50, camera.scale * 1.2);
+    manualCamera = true;
+  } else if (e.key === '-' || e.key === '_') {
+    camera.scale = Math.max(0.005, camera.scale / 1.2);
+    manualCamera = true;
+  } else if (e.key === 'f' || e.key === 'F') {
+    // 'f' to focus on selected ship's parent body
+    if (selectedShipId) {
+      const ship = shipById[selectedShipId];
+      focusBody(ship.orbit.parentBodyId);
+    }
+  } else if (e.key === 'Escape') {
+    focusSystem();
+  }
+});
+
+// ---------- SELECTION ----------
+function selectShip(id) {
+  selectedShipId = id;
+  selectedNodeId = null;
+  pickingTarget = false;
+  orbitChangePanelOpen = false;
+  advancedStepsOpen = false;
+  closeInspector();
+  const ship = shipById[id];
+  if (ship) focusBody(ship.orbit.parentBodyId);
+  renderRoster();
+  renderShipPanel();
+}
+
+function deselectShip() {
+  selectedShipId = null;
+  selectedNodeId = null;
+  document.getElementById('ship-panel').classList.add('hidden');
+  renderRoster();
+  focusSystem();
+}
+
+function selectBody(id) {
+  selectedBodyId = id;
+  renderInspector();
+}
+
+function closeInspector() {
+  selectedBodyId = null;
+  document.getElementById('inspector').classList.add('hidden');
+}
+
+function selectNode(id) {
+  selectedNodeId = id;
+  renderShipPanel();
+}
+
+function deleteNode(id) {
+  const ship = shipById[selectedShipId];
+  if (!ship) return;
+  ship.nodes = ship.nodes.filter(n => n.id !== id);
+  recomputeNodeTimes(ship);
+  if (selectedNodeId === id) selectedNodeId = null;
+  renderShipPanel();
+  flashStatus('STEP DELETED');
+}
+
+// ---------- UI ----------
+function renderRoster() {
+  const el = document.getElementById('roster-body');
+  el.innerHTML = SHIPS.map(s => {
+    const orbit = s.orbit;
+    const cls = s.id === selectedShipId ? 'ship-row selected' : 'ship-row';
+    return `
+      <div class="${cls}" onclick="selectShip('${s.id}')">
+        <div class="name">${s.name}</div>
+        <div class="info">${byId[s.parentBodyId].name.toUpperCase()} · Pe ${orbit.rp.toFixed(0)} · Ap ${orbit.ra.toFixed(0)}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderInspector() {
+  if (!selectedBodyId) return;
+  const body = byId[selectedBodyId];
+  document.getElementById('inspector').classList.remove('hidden');
+  document.getElementById('inspector-title').textContent = body.name.toUpperCase();
+  let html = `<div class="row"><span class="k">CLASS</span><span class="v">${body.type.replace('-', ' ').toUpperCase()}</span></div>`;
+  if (body.soi && body.soi !== Infinity) {
+    html += `<div class="row"><span class="k">SOI RADIUS</span><span class="v">${body.soi}</span></div>`;
+  }
+  if (body.resources) {
+    html += '<div class="divider"></div>';
+    html += '<div class="section-label">YIELD / TICK</div>';
+    html += `<div class="row"><span class="k">FUEL</span><span class="v">${body.resources.fuel}</span></div>`;
+    html += `<div class="row"><span class="k">GOLD</span><span class="v">${body.resources.gold}</span></div>`;
+    html += `<div class="row"><span class="k">METAL</span><span class="v">${body.resources.metal}</span></div>`;
+    html += `<div class="row"><span class="k">SCIENCE</span><span class="v">${body.resources.sci}</span></div>`;
+  }
+  html += `<div class="divider"></div>`;
+  html += `<button class="btn-primary" onclick="focusBody('${body.id}')">FOCUS CAMERA</button>`;
+  if (body.id !== 'sol') {
+    html += `<button class="btn-primary" style="margin-top:4px; background: rgba(255,184,77,0.06); border-color: var(--accent); color: var(--accent);" onclick="focusSystem()">VIEW SYSTEM</button>`;
+  }
+  document.getElementById('inspector-body').innerHTML = html;
+}
+
+function renderShipPanel() {
+  if (!selectedShipId) {
+    document.getElementById('ship-panel').classList.add('hidden');
+    return;
+  }
+  const ship = shipById[selectedShipId];
+  document.getElementById('ship-panel').classList.remove('hidden');
+  document.getElementById('ship-panel-title').textContent = ship.name.toUpperCase();
+
+  const orbit = ship.orbit;
+  const direction = orbit.direction === 1 ? 'PROGRADE' : 'RETROGRADE';
+  const sortedNodes = [...ship.nodes].sort((a, b) => a.id - b.id);
+  const totalFuel = sortedNodes.reduce((s, n) => s + nodeFuelCost(n), 0);
+
+  let html = `
+    <div class="row"><span class="k">PARENT</span><span class="v">${byId[orbit.parentBodyId].name.toUpperCase()}</span></div>
+    <div class="row"><span class="k">PERIAPSIS</span><span class="v">${orbit.rp.toFixed(1)}</span></div>
+    <div class="row"><span class="k">APOAPSIS</span><span class="v">${orbit.ra.toFixed(1)}</span></div>
+    <div class="row"><span class="k">PERIOD</span><span class="v">${orbit.period.toFixed(1)} TICKS</span></div>
+    <div class="row"><span class="k">FUEL</span><span class="v">${Math.round(ship.fuel)} / ${ship.maxFuel}</span></div>
+    <div class="divider"></div>
+  `;
+
+  // Plan steps (sequential)
+  html += `<div class="section-label">PLAN STEPS</div>`;
+
+  if (sortedNodes.length === 0) {
+    html += `<div class="help" style="margin-bottom:8px;">No steps yet. Click below to add your first burn.</div>`;
+  } else {
+    // Use the unified chain that walks through SOI transitions between burns.
+    const chain = computeNodeChain(ship);
+    for (let i = 0; i < chain.length; i++) {
+      const { node, preBurnOrbit, postBurnOrbit } = chain[i];
+      const isSelectedN = node.id === selectedNodeId;
+      const dv = nodeDv(node);
+      const fc = nodeFuelCost(node);
+      const burnParent = byId[preBurnOrbit.parentBodyId];
+
+      const anchorLabel = node.anchor === 'periapsis' ? 'PERIAPSIS' :
+                          node.anchor === 'apoapsis' ? 'APOAPSIS' :
+                          node.anchor === 'encounter' ? 'ENCOUNTER' :
+                          node.anchor === 'exit' ? 'SOI EXIT' :
+                          node.anchor === 'capture' ? 'CAPTURE (target Pe)' :
+                          node.anchor === 'absolute' ? 'TRANSFER DEPARTURE' : 'CUSTOM';
+
+      let pillsHtml = '';
+      if (node.dv.prograde > 0) pillsHtml += `<span class="vec-pill pg">PG +${node.dv.prograde.toFixed(1)}</span>`;
+      if (node.dv.prograde < 0) pillsHtml += `<span class="vec-pill rg">RG +${(-node.dv.prograde).toFixed(1)}</span>`;
+      if (node.dv.radial > 0)   pillsHtml += `<span class="vec-pill ro">R+ ${node.dv.radial.toFixed(1)}</span>`;
+      if (node.dv.radial < 0)   pillsHtml += `<span class="vec-pill ri">R- ${(-node.dv.radial).toFixed(1)}</span>`;
+      if (!pillsHtml) pillsHtml = `<span style="color: var(--fg-dim);">drag handles to set Δv</span>`;
+
+      const statusBadge = node.committed
+        ? `<span style="color: var(--accent);">● COMMITTED</span>`
+        : `<span style="color: var(--fg-dim);">◇ PLAN</span>`;
+      const cardCls = node.committed ? 'committed' : 'planned';
+
+      const canCommit = dv > 0 && !node.committed && ship.fuel >= fc;
+      const postParent = byId[postBurnOrbit.parentBodyId];
+      const postParentSOI = postParent.soi || Infinity;
+      const escapesAfterBurn = postBurnOrbit.ra > postParentSOI;
+      let resultLabel;
+      let resultColor = 'var(--fg-dim)';
+      if (dv <= 0) {
+        resultLabel = '→ no change';
+      } else if (escapesAfterBurn) {
+        resultLabel = `→ Pe ${postBurnOrbit.rp.toFixed(0)} · ESCAPES ${postParent.name.toUpperCase()} (ra ${postBurnOrbit.ra.toFixed(0)} > SOI ${postParentSOI})`;
+        resultColor = 'var(--hostile)';
+      } else {
+        resultLabel = `→ CAPTURED · Pe ${postBurnOrbit.rp.toFixed(0)} Ap ${postBurnOrbit.ra.toFixed(0)} (around ${postParent.name.toUpperCase()})`;
+        resultColor = 'var(--friendly)';
+      }
+
+      html += `
+        <div class="node-card ${cardCls} ${isSelectedN ? 'upcoming' : ''}" onclick="selectNode(${node.id})">
+          <div class="nc-title">
+            <span>STEP ${i + 1} · ${anchorLabel} · T+${(node.t - tick).toFixed(1)}</span>
+            <span>${statusBadge}</span>
+          </div>
+          <div class="row" style="font-size:9px; padding:2px 0;"><span class="k">BURN AROUND</span><span class="v" style="color: var(--friendly);">${burnParent.name.toUpperCase()}</span></div>
+          <div class="nc-vector">${pillsHtml}</div>
+          <div style="font-size:9px; color: ${resultColor}; margin-top:4px;">${resultLabel}</div>
+          ${isSelectedN ? `
+            <div style="display:flex; gap:4px; margin-top:6px;">
+              ${node.committed
+                ? `<button class="btn-danger" style="flex:1;" onclick="event.stopPropagation(); deleteNode(${node.id})">CANCEL</button>`
+                : `<button class="btn-primary" style="flex:1;" onclick="event.stopPropagation(); commitNode(${node.id})" ${canCommit ? '' : 'disabled'}>COMMIT</button>
+                   <button class="btn-danger" style="flex:1;" onclick="event.stopPropagation(); deleteNode(${node.id})">DELETE</button>`
+              }
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }
+
+    // Plan summary
+    if (totalFuel > 0) {
+      html += `<div class="row" style="margin-top:6px;"><span class="k">TOTAL PLAN FUEL</span><span class="v">${totalFuel}</span></div>`;
+    }
+  }
+
+  // Add-step section. Replaces hand-tuned per-anchor adds with two high-level
+  // maneuver planners: Transfer (heliocentric Hohmann to another body) and
+  // Orbit Change (adjust Pe/Ap within current SOI). Manual per-apsis adds are
+  // available behind an "Advanced" toggle.
+  html += `<div class="divider"></div>`;
+
+  if (pickingTarget) {
+    // Targeting mode
+    html += `<div class="section-label" style="color: var(--accent);">SELECT TARGET</div>`;
+    html += `<div class="help" style="margin-bottom:8px;">Click any planet on the map to plan a Hohmann transfer.</div>`;
+    html += `<button class="btn-danger" onclick="cancelTargetPicking()">CANCEL</button>`;
+  } else {
+    html += `<div class="section-label">PLAN A MANEUVER</div>`;
+    // Available bodies for transfer (must be different from current parent and not Sol)
+    const transferTargets = BODIES.filter(b => b.id !== 'sol' && b.id !== ship.orbit.parentBodyId && b.parent === 'sol');
+    if (transferTargets.length > 0) {
+      html += `<button class="btn-primary" style="margin-bottom:4px;" onclick="startTargetPicking()">⇒ TRANSFER TO ANOTHER BODY</button>`;
+    }
+    html += `<button class="btn-primary" onclick="openOrbitChangePanel()">↻ CHANGE ORBIT (Pe / Ap)</button>`;
+
+    // Inline orbit-change form when toggled
+    if (orbitChangePanelOpen) {
+      const orbit = ship.orbit;
+      html += `
+        <div style="margin-top:8px; padding:8px; border:1px solid var(--accent); background:rgba(255,184,77,0.04);">
+          <div class="row"><span class="k">CURRENT Pe</span><span class="v">${orbit.rp.toFixed(1)}</span></div>
+          <div class="row"><span class="k">CURRENT Ap</span><span class="v">${orbit.ra.toFixed(1)}</span></div>
+          <label style="font-size:10px; color: var(--fg-dim); display:block; margin-top:6px;">TARGET Pe:</label>
+          <input id="oc-rp" type="number" value="${orbit.rp.toFixed(0)}" style="width:100%; background:#000; color: var(--fg); border: 1px solid var(--accent); padding: 4px; font-family: inherit;">
+          <label style="font-size:10px; color: var(--fg-dim); display:block; margin-top:4px;">TARGET Ap:</label>
+          <input id="oc-ra" type="number" value="${orbit.ra.toFixed(0)}" style="width:100%; background:#000; color: var(--fg); border: 1px solid var(--accent); padding: 4px; font-family: inherit;">
+          <button class="btn-primary" style="margin-top:6px;" onclick="confirmOrbitChange()">COMPUTE BURNS</button>
+          <button class="btn-danger" style="margin-top:4px;" onclick="closeOrbitChangePanel()">CANCEL</button>
+        </div>
+      `;
+    }
+
+    // Advanced manual steps (collapsible)
+    if (advancedStepsOpen) {
+      // Determine the tail state (orbit + tick) at the end of the current plan.
+      let tailOrbit, tailTick;
+      if (sortedNodes.length === 0) {
+        tailOrbit = ship.orbit;
+        tailTick = Math.max(tick, ship.orbit.epoch || 0);
+      } else {
+        const chain = computeNodeChain(ship);
+        const lastLink = chain[chain.length - 1];
+        tailOrbit = lastLink.postBurnOrbit;
+        tailTick = lastLink.node.t;
+      }
+      let hasEncounter = false;
+      let hasExit = false;
+      let scanOrbit = tailOrbit;
+      let scanTick = tailTick;
+      for (let i = 0; i < 3; i++) {
+        const ev = findNextSOIEvent(scanOrbit, scanTick, TRAJ_MAX_TICKS);
+        if (!ev) break;
+        if (ev.type === 'enter') hasEncounter = true;
+        if (ev.type === 'exit') hasExit = true;
+        if (!ev.newOrbit) break;
+        scanOrbit = ev.newOrbit;
+        scanTick = ev.t;
+      }
+      html += `<div style="margin-top:10px; padding:6px; border:1px dashed var(--fg-dim);">`;
+      html += `<div class="section-label">ADVANCED · MANUAL STEPS</div>`;
+      html += `<button class="btn-primary" style="margin-bottom:4px;" onclick="addStep('periapsis')">+ AT NEXT PERIAPSIS</button>`;
+      html += `<button class="btn-primary" style="margin-bottom:4px;" onclick="addStep('apoapsis')">+ AT NEXT APOAPSIS</button>`;
+      if (hasEncounter) html += `<button class="btn-primary" style="margin-bottom:4px;" onclick="addStep('encounter')">+ AT NEXT ENCOUNTER</button>`;
+      if (hasExit) html += `<button class="btn-primary" onclick="addStep('exit')">+ AT NEXT SOI EXIT</button>`;
+      html += `<div class="help" style="margin-top:6px;">Drag handles on the diamond to set Δv after adding.</div>`;
+      html += `<button class="btn-danger" style="margin-top:6px;" onclick="toggleAdvancedSteps()">HIDE ADVANCED</button>`;
+      html += `</div>`;
+    } else {
+      html += `<div style="margin-top:8px; text-align:center;"><a href="#" onclick="event.preventDefault(); toggleAdvancedSteps()" style="color: var(--fg-dim); font-size:10px;">Show advanced manual steps</a></div>`;
+    }
+  }
+
+  if (sortedNodes.length > 0) {
+    const hasUncommitted = sortedNodes.some(n => !n.committed && nodeDv(n) > 0);
+    if (hasUncommitted) {
+      html += `<button class="btn-primary" style="margin-top:8px;" onclick="commitAllPlanned()">COMMIT ALL UNCOMMITTED</button>`;
+    }
+    html += `<button class="btn-danger" style="margin-top:4px;" onclick="clearAllSteps()">CLEAR ALL STEPS</button>`;
+  }
+
+  html += `<div class="help" style="margin-top:12px;">Pick a high-level maneuver. The system computes the burns automatically. Use advanced manual steps to fine-tune.</div>`;
+
+  document.getElementById('ship-panel-body').innerHTML = html;
+}
+
+function startTargetPicking() {
+  pickingTarget = true;
+  orbitChangePanelOpen = false;
+  renderShipPanel();
+  flashStatus('CLICK A PLANET ON THE MAP');
+}
+
+function cancelTargetPicking() {
+  pickingTarget = false;
+  renderShipPanel();
+  flashStatus('TARGET SELECTION CANCELLED');
+}
+
+function openOrbitChangePanel() {
+  orbitChangePanelOpen = true;
+  pickingTarget = false;
+  renderShipPanel();
+}
+
+function closeOrbitChangePanel() {
+  orbitChangePanelOpen = false;
+  renderShipPanel();
+}
+
+function toggleAdvancedSteps() {
+  advancedStepsOpen = !advancedStepsOpen;
+  renderShipPanel();
+}
+
+function confirmOrbitChange() {
+  const rpInput = document.getElementById('oc-rp');
+  const raInput = document.getElementById('oc-ra');
+  if (!rpInput || !raInput) return;
+  const targetRp = parseFloat(rpInput.value);
+  const targetRa = parseFloat(raInput.value);
+  if (!isFinite(targetRp) || !isFinite(targetRa) || targetRp <= 0 || targetRa <= 0) {
+    flashStatus('INVALID Pe / Ap VALUES');
+    return;
+  }
+  orbitChangePanelOpen = false;
+  applyOrbitChange(targetRp, targetRa);
+}
+
+function addStep(anchor) {
+  const ship = shipById[selectedShipId];
+  if (!ship) return;
+  const node = makeNode(anchor);
+  ship.nodes.push(node);
+  recomputeNodeTimes(ship);
+  selectedNodeId = node.id;
+  renderShipPanel();
+  const labels = {
+    periapsis: 'NEXT PERIAPSIS',
+    apoapsis: 'NEXT APOAPSIS',
+    encounter: 'NEXT ENCOUNTER',
+    exit: 'NEXT SOI EXIT',
+  };
+  if ((anchor === 'encounter' || anchor === 'exit') && node.t <= tick + 0.1) {
+    flashStatus(`NO ${labels[anchor]} FOUND IN PROJECTION — TRY MORE Δv FIRST`);
+  } else {
+    flashStatus(`STEP ADDED AT ${labels[anchor]}`);
+  }
+}
+
+// Compute and add nodes for an orbit-change maneuver (single SOI).
+function applyOrbitChange(targetRp, targetRa) {
+  const ship = shipById[selectedShipId];
+  if (!ship) return;
+  const plan = planOrbitalManeuver(ship, targetRp, targetRa);
+  if (plan.error) {
+    flashStatus(plan.error.toUpperCase());
+    return;
+  }
+  if (!applyPlanToShip(ship, plan)) {
+    flashStatus('CANNOT APPLY ORBIT CHANGE');
+    return;
+  }
+  selectedNodeId = ship.nodes[0]?.id ?? null;
+  renderShipPanel();
+  const totalDv = plan.steps.reduce((s, st) => s + Math.abs(st.dv_prograde), 0);
+  flashStatus(`ORBIT MANEUVER · 2 BURNS · Δv ${totalDv.toFixed(2)}`);
+}
+
+// Compute and add nodes for a Hohmann transfer to another body, then capture.
+function applyTransfer(targetBodyId) {
+  const ship = shipById[selectedShipId];
+  if (!ship) return;
+  const plan = planTransferManeuver(ship, targetBodyId);
+  if (plan.error) {
+    flashStatus(plan.error.toUpperCase());
+    return;
+  }
+  if (!applyPlanToShip(ship, plan)) {
+    flashStatus('CANNOT APPLY TRANSFER');
+    return;
+  }
+  selectedNodeId = ship.nodes[0]?.id ?? null;
+  renderShipPanel();
+  const target = byId[targetBodyId];
+  const totalDv = plan.steps.reduce((s, st) => s + Math.abs(st.dv_prograde), 0);
+  // Verify the plan actually captures by inspecting the chain
+  const chain = computeNodeChain(ship);
+  const captured = chain.length >= 2 &&
+                   chain[1].preBurnOrbit.parentBodyId === targetBodyId &&
+                   chain[1].postBurnOrbit.ra < target.soi;
+  if (captured) {
+    flashStatus(`TRANSFER → ${target.name.toUpperCase()} · Δv ${totalDv.toFixed(2)} · CAPTURED`);
+  } else {
+    flashStatus(`TRANSFER → ${target.name.toUpperCase()} · Δv ${totalDv.toFixed(2)} · CAPTURE UNCERTAIN`);
+  }
+}
+
+function clearAllSteps() {
+  const ship = shipById[selectedShipId];
+  if (!ship) return;
+  ship.nodes = [];
+  selectedNodeId = null;
+  invalidateTrajectory(ship);
+  renderShipPanel();
+  flashStatus('ALL STEPS CLEARED');
+}
+
+function commitNode(id) {
+  const ship = shipById[selectedShipId];
+  if (!ship) return;
+  const node = ship.nodes.find(n => n.id === id);
+  if (!node) return;
+  if (nodeDv(node) <= 0) {
+    flashStatus('CANNOT COMMIT · NO Δv SET');
+    return;
+  }
+  node.committed = true;
+  invalidateTrajectory(ship);
+  renderShipPanel();
+  flashStatus(`BURN COMMITTED · T+${(node.t - tick).toFixed(1)}`);
+}
+
+function commitAllPlanned() {
+  const ship = shipById[selectedShipId];
+  if (!ship) return;
+  let count = 0;
+  for (const n of ship.nodes) {
+    if (!n.committed && nodeDv(n) > 0) {
+      n.committed = true;
+      count++;
+    }
+  }
+  if (count > 0) {
+    invalidateTrajectory(ship);
+    renderShipPanel();
+    flashStatus(`${count} BURN${count > 1 ? 'S' : ''} COMMITTED`);
+  }
+}
+
+// ---------- EXECUTION ----------
+function checkNodeExecution() {
+  for (const ship of SHIPS) {
+    // 1) Check for SOI transitions: is the ship still inside its parent's SOI?
+    const parent = byId[ship.orbit.parentBodyId];
+    const shipPos = orbitWorldPos(ship.orbit, tick);
+    if (parent.id !== 'sol') {
+      const pp = bodyPosition(parent, tick);
+      const dx = shipPos.x - pp.x, dy = shipPos.y - pp.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > parent.soi) {
+        // Exit to parent of parent (Sol for planets)
+        const newParentId = parent.parent;
+        const wv = orbitWorldVelocity(ship.orbit, tick);
+        const newOrbit = orbitFromWorldState(
+          shipPos.x, shipPos.y, wv.x, wv.y,
+          newParentId, tick, ship.orbit.period, semiMajor(ship.orbit)
+        );
+        if (newOrbit) {
+          ship.orbit = newOrbit;
+          recomputeNodeTimes(ship);
+          flashStatus(`${ship.name.toUpperCase()} · ESCAPED ${parent.name.toUpperCase()} · NOW ORBITING ${byId[newParentId].name.toUpperCase()}`);
+        }
+      }
+    }
+    // Check entering any child body's SOI
+    for (const body of BODIES) {
+      if (body.id === 'sol' || body.id === ship.orbit.parentBodyId) continue;
+      if (body.parent !== ship.orbit.parentBodyId) continue;
+      const bp = bodyPosition(body, tick);
+      const dx = shipPos.x - bp.x, dy = shipPos.y - bp.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < body.soi) {
+        const wv = orbitWorldVelocity(ship.orbit, tick);
+        const newOrbit = orbitFromWorldState(
+          shipPos.x, shipPos.y, wv.x, wv.y,
+          body.id, tick, ship.orbit.period, semiMajor(ship.orbit)
+        );
+        if (newOrbit) {
+          ship.orbit = newOrbit;
+          recomputeNodeTimes(ship);
+          flashStatus(`${ship.name.toUpperCase()} · ENTERED ${body.name.toUpperCase()} SOI`);
+        }
+        break;
+      }
+    }
+
+    // 2) Fire committed nodes whose time has come
+    const sorted = [...ship.nodes].sort((a, b) => a.id - b.id);
+    for (const node of sorted) {
+      if (node.t <= tick && node.committed) {
+        const cost = nodeFuelCost(node);
+        if (ship.fuel >= cost) {
+          const oldOrbit = preBurnOrbitForNode(ship, node);
+          ship.orbit = applyNodeToOrbit(oldOrbit, node);
+          ship.fuel -= cost;
+          flashStatus(`${ship.name.toUpperCase()} · BURN · -${cost} FUEL`);
+        } else {
+          flashStatus(`${ship.name.toUpperCase()} · BURN SKIPPED · NO FUEL`);
+        }
+        ship.nodes = ship.nodes.filter(n => n.id !== node.id);
+        recomputeNodeTimes(ship);
+        if (selectedNodeId === node.id) selectedNodeId = null;
+      }
+    }
+  }
+}
+
+// ---------- STATUS ----------
+let statusTimer = null;
+function flashStatus(msg) {
+  const el = document.getElementById('status');
+  el.innerHTML = `<span class="pulse"></span>${msg}`;
+  el.classList.add('show');
+  clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+// ---------- LOOP ----------
+function loop(now) {
+  const dt = (now - lastFrameTime) / 1000;
+  lastFrameTime = now;
+
+  if (simSpeed > 0) {
+    tick += dt * simSpeed;
+    checkNodeExecution();
+    renderRoster();
+    if (selectedShipId) renderShipPanel();
+  }
+
+  updateCamera();
+  render();
+  document.getElementById('tick-display').textContent = tick.toFixed(1);
+  requestAnimationFrame(loop);
+}
+
+document.querySelectorAll('.time-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.time-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    simSpeed = parseInt(btn.dataset.speed);
+  });
+});
+
+// ---------- BOOT ----------
+focusBody('inara');
+renderRoster();
+flashStatus('READY · CLICK A SHIP TO PLAN MANEUVERS');
+requestAnimationFrame(loop);
+
+window.OS = { SHIPS, BODIES, byId, shipById, tick: () => tick };
+</script>
+
+</body>
+</html>
