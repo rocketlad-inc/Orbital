@@ -629,48 +629,41 @@ export function bisectSOIEnter(
 export function applyNodeToOrbit(
   preOrbit: OrbitElements,
   dv: number,
+  burnTime: number,
   bodies: Body[]
 ): OrbitElements {
-  // Get position at node time
-  const localPos = localPositionAt(preOrbit, preOrbit.epoch);
+  const localPos = localPositionAt(preOrbit, burnTime);
   const r = localPos.r;
 
-  // Get world position for re-anchoring
   const parentBody = bodies.find(b => b.id === preOrbit.parentBodyId);
   if (!parentBody) return preOrbit;
 
-  const parentPos = bodyPosition(parentBody, preOrbit.epoch, bodies);
+  const parentPos = bodyPosition(parentBody, burnTime, bodies);
   const worldPos = {
     x: parentPos.x + localPos.x,
     y: parentPos.y + localPos.y,
   };
 
-  // Current velocity magnitude and direction
   const mu = muOf(preOrbit.parentBodyId, bodies);
   const vMag = visVivaSpeed(mu, r, semiMajor(preOrbit));
-  const vel = velocityVectorsAt(preOrbit, preOrbit.epoch);
+  const vel = velocityVectorsAt(preOrbit, burnTime);
 
-  // Apply prograde burn (simplification: all burn is prograde)
   const vNewMag = vMag + dv;
 
-  // Get current world velocity
-  const currentWorldVel = orbitWorldVelocity(preOrbit, preOrbit.epoch, bodies);
+  const currentWorldVel = orbitWorldVelocity(preOrbit, burnTime, bodies);
 
-  // Apply delta-v in prograde direction
   const newWorldVx = currentWorldVel.x + vel.prograde.x * dv;
   const newWorldVy = currentWorldVel.y + vel.prograde.y * dv;
 
-  // Compute new semi-major axis
   const newA = semiMajorFromVisViva(mu, r, vNewMag);
 
-  // Re-compute orbit from new state vector
   const newOrbit = orbitFromWorldState(
     worldPos.x,
     worldPos.y,
     newWorldVx,
     newWorldVy,
     preOrbit.parentBodyId,
-    preOrbit.epoch,
+    burnTime,
     bodies,
     preOrbit.period,
     newA
@@ -822,8 +815,7 @@ export function computeTrajectory(
         tEnd: nextNode.t,
         endReason: 'node',
       });
-      currentOrbit = applyNodeToOrbit(currentOrbit, nextNode.dv, bodies);
-      currentOrbit = { ...currentOrbit, epoch: nextNode.t };
+      currentOrbit = applyNodeToOrbit(currentOrbit, nextNode.dv, nextNode.t, bodies);
       tCursor = nextNode.t;
       nodeIdx++;
     } else {

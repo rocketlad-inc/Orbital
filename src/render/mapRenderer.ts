@@ -132,11 +132,11 @@ export function drawOrbitEllipse(
   if (!parentBody) return;
 
   const parentPos = bodyPosition(parentBody, ctx.t, ctx.bodies);
-  worldToCanvas(parentPos.x, parentPos.y, ctx);
 
   const a = semiMajor(orbit);
   const e = eccentricity(orbit);
   const b = a * Math.sqrt(1 - e * e);
+  const c = a * e;
 
   if (isDashed) {
     ctx.ctx.setLineDash([5, 5]);
@@ -146,23 +146,22 @@ export function drawOrbitEllipse(
   ctx.ctx.lineWidth = width;
   ctx.ctx.beginPath();
 
-  // Draw ellipse using parametric form
+  const cosOmega = Math.cos(orbit.omega);
+  const sinOmega = Math.sin(orbit.omega);
+
   const steps = 100;
   for (let i = 0; i <= steps; i++) {
     const theta = (i / steps) * Math.PI * 2;
-    const cosTheta = Math.cos(theta);
-    const sinTheta = Math.sin(theta);
 
-    // Ellipse point in local coordinates
-    const localX = a * cosTheta;
-    const localY = b * sinTheta;
+    const localX = a * Math.cos(theta);
+    const localY = b * Math.sin(theta);
 
-    // Rotate by omega and translate
-    const rotX = localX * Math.cos(orbit.omega) - localY * Math.sin(orbit.omega);
-    const rotY = localX * Math.sin(orbit.omega) + localY * Math.cos(orbit.omega);
+    const rotX = localX * cosOmega - localY * sinOmega;
+    const rotY = localX * sinOmega + localY * cosOmega;
 
-    const worldX = parentPos.x + rotX;
-    const worldY = parentPos.y + rotY;
+    // Offset so parent body is at the focus, not ellipse center
+    const worldX = parentPos.x + rotX - c * cosOmega;
+    const worldY = parentPos.y + rotY - c * sinOmega;
     const canvasPos = worldToCanvas(worldX, worldY, ctx);
 
     if (i === 0) {
@@ -356,14 +355,12 @@ export function drawTrajectory(
     const parentBody = ctx.bodies.find(b => b.id === arc.orbit.parentBodyId);
     if (!parentBody) continue;
 
-    const parentPos = bodyPosition(parentBody, arc.tStart, ctx.bodies);
-
-    // Draw the arc as a sequence of line segments
     const steps = 50;
     let isFirstPoint = true;
 
     for (let i = 0; i <= steps; i++) {
       const t = arc.tStart + (arc.tEnd - arc.tStart) * (i / steps);
+      const parentPos = bodyPosition(parentBody, t, ctx.bodies);
       const localPos = localPositionAt(arc.orbit, t);
       const worldX = parentPos.x + localPos.x;
       const worldY = parentPos.y + localPos.y;
@@ -397,7 +394,7 @@ export function drawManeuverNode(
   const parentBody = ctx.bodies.find(b => b.id === arc.orbit.parentBodyId);
   if (!parentBody || t < arc.tStart || t > arc.tEnd) return;
 
-  const parentPos = bodyPosition(parentBody, arc.tStart, ctx.bodies);
+  const parentPos = bodyPosition(parentBody, t, ctx.bodies);
   const localPos = localPositionAt(arc.orbit, t);
   const worldX = parentPos.x + localPos.x;
   const worldY = parentPos.y + localPos.y;
