@@ -1197,7 +1197,7 @@ function planTransfer(ship, targetBodyId, rCapture) {
   // At periapsis of approach hyperbola: v² = v∞² + 2μ_target/r_p
   const vAtPeriIn = Math.sqrt(vInfArrival * vInfArrival + 2 * muTarget / rPeriApproach);
   // Target capture orbit: periapsis at rCapture (same as approach periapsis), apoapsis just below SOI.
-  const raPost = rSoi * 0.7;
+  const raPost = Math.min(rSoi * 0.3, target.radius * 10);
   const aPost = (rCapture + raPost) / 2;
   const visVivaArg = 2 / rCapture - 1 / aPost;
   const vAtPeriOut = visVivaArg > 0 ? Math.sqrt(muTarget * visVivaArg) : Math.sqrt(muTarget / aPost);
@@ -1540,7 +1540,8 @@ function planOrbitalManeuver(ship, targetPe, targetAp) {
 
 // Plan a transfer maneuver: send the ship from its current SOI to target body's
 // SOI. Returns { steps, transferTime, error }.
-function planTransferManeuver(ship, targetBodyId) {
+function planTransferManeuver(ship, targetBodyId, strategy) {
+  strategy = strategy || 'soonest';
   const target = byId[targetBodyId];
   if (!target) return { error: 'No target' };
 
@@ -1679,7 +1680,7 @@ function planTransferManeuver(ship, targetBodyId) {
   // into a low orbit.
   const targetSOI = target.soi;
   let bestPlan = null;
-  let bestPlanRa = Infinity;
+  let bestPlanScore = Infinity;
 
   // Search burnTime over a reasonable window (one synodic period at most)
   const searchSpan = Math.min(currentParent.orbitPeriod * 3, target.orbitPeriod * 1.5);
@@ -1690,21 +1691,23 @@ function planTransferManeuver(ship, targetBodyId) {
 
   for (let dt = 1.0; dt < searchSpan; dt += dtStep) {
     const t_candidate = tick + dt;
-    // Try Δv around the analytic estimate
     for (let dv = dv_injection - dvRange; dv <= dv_injection + dvRange; dv += dvStep) {
-      // Quick check: does this Δv produce ANY encounter with target?
-      // Use a fixed brake Δv first just to test encounter
       const probe = trySimulate(t_candidate, dv, -dv_brake);
       if (!probe) continue;
-      // If we got a capture (ra inside SOI), great. Otherwise we'll refine brake later.
       if (probe.ra < targetSOI * 0.9 && probe.rp > 0) {
-        const score = probe.ra; // prefer tighter orbits
-        if (score < bestPlanRa) {
+        let score;
+        if (strategy === 'soonest') {
+          score = t_candidate + probe.ra * 0.001;
+        } else {
+          score = Math.abs(dv) + dv_brake;
+        }
+        if (score < bestPlanScore) {
           bestPlan = { burnT: t_candidate, dv: dv, brakeDv: -dv_brake, postOrbit: probe };
-          bestPlanRa = score;
+          bestPlanScore = score;
         }
       }
     }
+    if (strategy === 'soonest' && bestPlan) break;
   }
 
   // If no plan found, fall back to analytic at first phase-correct candidate
@@ -1754,54 +1757,39 @@ function planTransferManeuver(ship, targetBodyId) {
 }
 
 function refineBrakeDv(ship, injectionDv, injectionT, initialBrakeDv, target) {
-  // Simulate: inject, walk to encounter, advance to periapsis inside target SOI,
-  // apply brake, measure resulting ra. Bisect on brake magnitude.
-  function simulate(brakeDv) {
-    const injNode = makeNode('absolute');
-    injNode.dv.prograde = injectionDv;
-    injNode.t = injectionT;
-    const inaraPostOrbit = applyNodeToOrbit(ship.orbit, injNode);
+  const injNode = makeNode('absolute');
+  injNode.dv.prograde = injectionDv;
+  injNode.t = injectionT;
+  const postInjOrbit = applyNodeToOrbit(ship.orbit, injNode);
 
-    // Walk to encounter with target
-    let scanOrbit = inaraPostOrbit;
-    let scanTick = injectionT;
-    let encounter = null;
-    for (let i = 0; i < 10; i++) {
-      const ev = findNextSOIEvent(scanOrbit, scanTick, TRAJ_MAX_TICKS);
-      if (!ev) break;
-      if (ev.type === 'enter' && ev.body && ev.body.id === target.id) {
-        encounter = ev;
-        break;
-      }
-      if (!ev.newOrbit) break;
-      scanOrbit = ev.newOrbit;
-      scanTick = ev.t;
+  let scanOrbit = postInjOrbit;
+  let scanTick = injectionT;
+  let encounter = null;
+  for (let i = 0; i < 10; i++) {
+    const ev = findNextSOIEvent(scanOrbit, scanTick, TRAJ_MAX_TICKS);
+    if (!ev) break;
+    if (ev.type === 'enter' && ev.body && ev.body.id === target.id) {
+      encounter = ev;
+      break;
     }
-    if (!encounter || !encounter.newOrbit) return null;
-
-    // Find periapsis inside target SOI, apply brake there
-    const tPeri = nextApsisTime(encounter.newOrbit, encounter.t, 'periapsis');
-    const brakeNode = makeNode('absolute');
-    brakeNode.dv.prograde = -brakeDv;
-    brakeNode.t = tPeri;
-    const postBrakeOrbit = applyNodeToOrbit(encounter.newOrbit, brakeNode);
-    return postBrakeOrbit.ra;
+    if (!ev.newOrbit) break;
+    scanOrbit = ev.newOrbit;
+    scanTick = ev.t;
   }
+  if (!encounter || !encounter.newOrbit) return initialBrakeDv;
 
-  const targetRa = target.soi * 0.6;
-  let lo = initialBrakeDv * 0.3;
-  let hi = initialBrakeDv * 3.0;
-  let lastResult = null;
-  for (let i = 0; i < 30; i++) {
-    const mid = (lo + hi) / 2;
-    const result = simulate(mid);
-    if (result === null) return null;
-    lastResult = { dv: mid, ra: result };
-    if (Math.abs(result - targetRa) / targetRa < 0.05) return mid;
-    if (result > targetRa) lo = mid;
-    else hi = mid;
-  }
-  return lastResult ? lastResult.dv : null;
+  const approachOrbit = encounter.newOrbit;
+  const tPeri = nextApsisTime(approachOrbit, encounter.t, 'periapsis');
+  const mu = muOf(target.id);
+  const a = semiMajor(approachOrbit);
+  const rPeri = approachOrbit.rp;
+  const visVivaArg = 2 / rPeri - 1 / a;
+  const vAtPeri = visVivaArg > 0 ? Math.sqrt(mu * visVivaArg) : Math.sqrt(mu / rPeri);
+  const targetRa = Math.min(target.soi * 0.3, target.radius * 10);
+  const aTarget = (rPeri + targetRa) / 2;
+  const vTarget = Math.sqrt(mu * (2 / rPeri - 1 / aTarget));
+  const exactBrake = vAtPeri - vTarget;
+  return exactBrake > 0 ? exactBrake : initialBrakeDv;
 }
 
 
@@ -2010,6 +1998,7 @@ let dragging = null;
 let pickingTarget = false; // when true, next body click picks a transfer destination
 let orbitChangePanelOpen = false;
 let advancedStepsOpen = false;
+let transferStrategy = 'soonest'; // 'soonest' | 'efficient'
 
 // ---------- RENDERING ----------
 function resize() {
@@ -3386,6 +3375,10 @@ function renderShipPanel() {
     // Available bodies for transfer (must be different from current parent and not Sol)
     const transferTargets = BODIES.filter(b => b.id !== 'sol' && b.id !== ship.orbit.parentBodyId && b.parent === 'sol');
     if (transferTargets.length > 0) {
+      html += `<div style="display:flex; gap:4px; margin-bottom:6px;">`;
+      html += `<button class="${transferStrategy === 'soonest' ? 'btn-primary' : 'btn-danger'}" style="flex:1; font-size:9px; padding:4px;" onclick="setTransferStrategy('soonest')">⏱ SOONEST</button>`;
+      html += `<button class="${transferStrategy === 'efficient' ? 'btn-primary' : 'btn-danger'}" style="flex:1; font-size:9px; padding:4px;" onclick="setTransferStrategy('efficient')">⚡ EFFICIENT</button>`;
+      html += `</div>`;
       html += `<button class="btn-primary" style="margin-bottom:4px;" onclick="startTargetPicking()">⇒ TRANSFER TO ANOTHER BODY</button>`;
     }
     html += `<button class="btn-primary" onclick="openOrbitChangePanel()">↻ CHANGE ORBIT (Pe / Ap)</button>`;
@@ -3484,6 +3477,11 @@ function closeOrbitChangePanel() {
   renderShipPanel();
 }
 
+function setTransferStrategy(s) {
+  transferStrategy = s;
+  renderShipPanel();
+}
+
 function toggleAdvancedSteps() {
   advancedStepsOpen = !advancedStepsOpen;
   renderShipPanel();
@@ -3547,7 +3545,7 @@ function applyOrbitChange(targetRp, targetRa) {
 function applyTransfer(targetBodyId) {
   const ship = shipById[selectedShipId];
   if (!ship) return;
-  const plan = planTransferManeuver(ship, targetBodyId);
+  const plan = planTransferManeuver(ship, targetBodyId, transferStrategy);
   if (plan.error) {
     flashStatus(plan.error.toUpperCase());
     return;
@@ -3565,10 +3563,11 @@ function applyTransfer(targetBodyId) {
   const captured = chain.length >= 2 &&
                    chain[1].preBurnOrbit.parentBodyId === targetBodyId &&
                    chain[1].postBurnOrbit.ra < target.soi;
+  const stratLabel = transferStrategy === 'soonest' ? 'SOONEST' : 'EFFICIENT';
   if (captured) {
-    flashStatus(`TRANSFER → ${target.name.toUpperCase()} · Δv ${totalDv.toFixed(2)} · CAPTURED`);
+    flashStatus(`TRANSFER → ${target.name.toUpperCase()} · Δv ${totalDv.toFixed(2)} · ${stratLabel} · CAPTURED`);
   } else {
-    flashStatus(`TRANSFER → ${target.name.toUpperCase()} · Δv ${totalDv.toFixed(2)} · CAPTURE UNCERTAIN`);
+    flashStatus(`TRANSFER → ${target.name.toUpperCase()} · Δv ${totalDv.toFixed(2)} · ${stratLabel} · CAPTURE UNCERTAIN`);
   }
 }
 
