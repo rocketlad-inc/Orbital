@@ -638,7 +638,7 @@ function shipPositionWorld(ship, t) {
 // orbit to the new parent and recurse.
 
 const TRAJ_STEP = 0.5;        // ticks per step when scanning for SOI events
-const TRAJ_MAX_TICKS = 300;   // absolute cap on how far ahead we look
+const TRAJ_MAX_TICKS = 1500;  // absolute cap on how far ahead we look
 const TRAJ_MAX_ARCS = 6;      // arc budget per trajectory
 const TRAJ_ORBITS_AHEAD = 1.5; // project at most 1.5 orbits of the current arc
 
@@ -2144,10 +2144,10 @@ function drawOrbitArc(orbit, tStart, tEnd, opts = {}) {
 
   const duration = tEnd - tStart;
   const samples = Math.max(20, Math.min(200, Math.ceil(duration * 4)));
+  const pPos = bodyPosition(parent, tick);
   ctx.beginPath();
   for (let i = 0; i <= samples; i++) {
     const t = tStart + (i / samples) * duration;
-    const pPos = bodyPosition(parent, t);
     const local = localPositionAt(orbit, t);
     const s = worldToScreen(pPos.x + local.x, pPos.y + local.y);
     if (i === 0) ctx.moveTo(s.x, s.y);
@@ -2848,10 +2848,39 @@ function drawNodeHandles(node, orbit, screenPos) {
   }
 }
 
+function drawGhostPlanets() {
+  for (const ship of SHIPS) {
+    for (const node of ship.nodes) {
+      if (!node.targetBodyId || node.t <= tick) continue;
+      const body = byId[node.targetBodyId];
+      if (!body || !body.orbitRadius) continue;
+      const futurePos = bodyPosition(body, node.t);
+      const s = worldToScreen(futurePos.x, futurePos.y);
+      const r = Math.max(body.radius * camera.scale, 3);
+      ctx.save();
+      ctx.globalAlpha = 0.3;
+      ctx.strokeStyle = body.color;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, r, 0, TWO_PI);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#8aa0b4';
+      ctx.globalAlpha = 0.5;
+      ctx.font = '9px "JetBrains Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${body.name.toUpperCase()} T+${(node.t - tick).toFixed(0)}`, s.x, s.y + r + 12);
+      ctx.restore();
+    }
+  }
+}
+
 function render() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   for (const body of BODIES) drawBodyOrbit(body);
   for (const body of BODIES) drawBody(body);
+  drawGhostPlanets();
   for (const ship of SHIPS) drawShip(ship);
 }
 
@@ -3321,8 +3350,12 @@ function renderShipPanel() {
       const escapesAfterBurn = postBurnOrbit.ra > postParentSOI;
       let resultLabel;
       let resultColor = 'var(--fg-dim)';
+      const crashesAfterBurn = postBurnOrbit.rp < postParent.radius;
       if (dv <= 0) {
         resultLabel = '→ no change';
+      } else if (crashesAfterBurn) {
+        resultLabel = `→ COLLISION · Pe ${postBurnOrbit.rp.toFixed(0)} < surface ${postParent.radius} of ${postParent.name.toUpperCase()}`;
+        resultColor = 'var(--hostile)';
       } else if (escapesAfterBurn) {
         resultLabel = `→ Pe ${postBurnOrbit.rp.toFixed(0)} · ESCAPES ${postParent.name.toUpperCase()} (ra ${postBurnOrbit.ra.toFixed(0)} > SOI ${postParentSOI})`;
         resultColor = 'var(--hostile)';
@@ -3591,6 +3624,8 @@ function commitNode(id) {
     return;
   }
   node.committed = true;
+  const nextUncommitted = ship.nodes.find(n => !n.committed && nodeDv(n) > 0);
+  if (nextUncommitted) selectedNodeId = nextUncommitted.id;
   invalidateTrajectory(ship);
   renderShipPanel();
   flashStatus(`BURN COMMITTED · T+${(node.t - tick).toFixed(1)}`);
@@ -3658,6 +3693,19 @@ function checkNodeExecution() {
         }
         break;
       }
+    }
+
+    // 1b) Surface collision: periapsis below parent's radius
+    if (parent.radius && ship.orbit.rp < parent.radius) {
+      ship.orbit.rp = parent.radius + 1;
+      ship.orbit.ra = parent.radius + 1;
+      ship.orbit.period = 1;
+      ship.nodes = [];
+      selectedNodeId = null;
+      ship.fuel = Math.max(0, ship.fuel - 20);
+      flashStatus(`${ship.name.toUpperCase()} · CRASHED INTO ${parent.name.toUpperCase()} · -20 FUEL`);
+      recomputeNodeTimes(ship);
+      continue;
     }
 
     // 2) Fire committed nodes whose time has come
