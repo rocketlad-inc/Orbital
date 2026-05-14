@@ -180,7 +180,30 @@ export function createScenario2(): GameState {
     ownedBy: 'enemy',
     fuel: 80,
     orbit: circularOrbitAround('verda', 15, -1),
-    orders: [],
+    orders: [
+      {
+        id: 'order-1',
+        type: 'transfer',
+        burnTime: 50,
+        deltav: 2.5,
+        prograde: 2.5,
+        radial: 0,
+        normal: 0,
+        status: 'planned',
+        capturedAtBody: 'inara',
+      },
+      {
+        id: 'order-2',
+        type: 'transfer',
+        burnTime: 120,
+        deltav: 1.8,
+        prograde: 1.8,
+        radial: 0,
+        normal: 0,
+        status: 'planned',
+        capturedAtBody: 'inara',
+      },
+    ],
   };
 
   return {

@@ -331,4 +331,8 @@ function drawHUD(ctx: RenderContext) {
   ctx.ctx.fillStyle = COLORS.fgFaint;
   ctx.ctx.font = '10px monospace';
   ctx.ctx.fillText('Right-drag: pan | Scroll: zoom | Click: select', 16, ctx.canvas.height - 32);
+
+  // Draw version
+  ctx.ctx.textAlign = 'right';
+  ctx.ctx.fillText('v0.1.0', ctx.canvas.width - 16, ctx.canvas.height - 16);
 }
