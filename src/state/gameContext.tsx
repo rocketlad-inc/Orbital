@@ -124,8 +124,7 @@ export function GameContextProvider({
           const wv = orbitWorldVelocity(orbit, tick, bodies);
           const newOrbit = orbitFromWorldState(
             shipPos.x, shipPos.y, wv.x, wv.y,
-            parent.parent, tick, bodies,
-            orbit.period, semiMajor(orbit)
+            parent.parent, tick, bodies
           );
           if (newOrbit) {
             orbit = newOrbit;
@@ -152,8 +151,7 @@ export function GameContextProvider({
           const wv = orbitWorldVelocity(orbit, tick, bodies);
           const newOrbit = orbitFromWorldState(
             shipPos.x, shipPos.y, wv.x, wv.y,
-            body.id, tick, bodies,
-            orbit.period, semiMajor(orbit)
+            body.id, tick, bodies
           );
           if (newOrbit) {
             orbit = newOrbit;

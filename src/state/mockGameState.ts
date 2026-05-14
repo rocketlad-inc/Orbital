@@ -205,14 +205,14 @@ export function createScenario1(): GameState {
   const ship1: Ship = {
     id: 'ship-alpha', name: 'Alpha', class: 'frigate',
     ownedBy: 'player', fuel: 100,
-    orbit: circularOrbitAround('earth', 10, 1),
+    orbit: circularOrbitAround('earth', 4, 1),
     orders: [],
   };
 
   const ship2: Ship = {
     id: 'ship-beta', name: 'Beta', class: 'cruiser',
     ownedBy: 'player', fuel: 150,
-    orbit: { ...circularOrbitAround('earth', 15, 1), M0: Math.PI },
+    orbit: { ...circularOrbitAround('earth', 4, 1), M0: Math.PI },
     orders: [],
   };
 

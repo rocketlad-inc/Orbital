@@ -197,14 +197,14 @@ export const ShipPanel: React.FC = () => {
             <div className="modal-body">
               <div className="target-list">
                 {gameState.bodies
-                  .filter((b) => b.parent === 'sol' && b.id !== ship.orbit.parentBodyId)
+                  .filter((b) => b.id !== 'sol' && b.id !== ship.orbit.parentBodyId)
                   .map((body) => (
                     <button
                       key={body.id}
                       className="target-button"
                       onClick={() => handleTransferManeuver(body.id)}
                     >
-                      {body.name}
+                      {body.name}{body.parent !== 'sol' ? ` (${body.parent})` : ''}
                     </button>
                   ))}
               </div>

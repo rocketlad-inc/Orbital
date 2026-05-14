@@ -678,14 +678,14 @@ function findNextSOIEvent(
       const newParentId = parent.parent || 'sol';
       const newOrbit = orbitFromWorldState(
         result.worldX, result.worldY, result.worldVx, result.worldVy,
-        newParentId, result.t, bodies, orbit.period, semiMajor(orbit)
+        newParentId, result.t, bodies
       );
       return { type: 'exit', t: result.t, body: parent, newOrbit };
     }
     if (result && result.entered && result.body) {
       const newOrbit = orbitFromWorldState(
         result.worldX, result.worldY, result.worldVx, result.worldVy,
-        result.body.id, result.t, bodies, orbit.period, semiMajor(orbit)
+        result.body.id, result.t, bodies
       );
       return { type: 'enter', t: result.t, body: result.body, newOrbit };
     }
@@ -712,7 +712,7 @@ function findNextSOIEvent(
         const exitVel = orbitWorldVelocity(orbit, tExit, bodies);
         const newOrbit = orbitFromWorldState(
           exitPos.x, exitPos.y, exitVel.x, exitVel.y,
-          newParentId, tExit, bodies, orbit.period, semiMajor(orbit)
+          newParentId, tExit, bodies
         );
         return { type: 'exit', t: tExit, body: parent, newOrbit };
       }
@@ -732,7 +732,7 @@ function findNextSOIEvent(
         const enterVel = orbitWorldVelocity(orbit, tEnter, bodies);
         const newOrbit = orbitFromWorldState(
           enterPos.x, enterPos.y, enterVel.x, enterVel.y,
-          body.id, tEnter, bodies, orbit.period, semiMajor(orbit)
+          body.id, tEnter, bodies
         );
         return { type: 'enter', t: tEnter, body, newOrbit };
       }
@@ -1560,9 +1560,7 @@ export function computeTrajectory(
           wv.y,
           parentOfParent,
           event.t,
-          bodies,
-          currentOrbit.period,
-          semiMajor(currentOrbit)
+          bodies
         );
         if (!newOrbit) break;
         currentOrbit = newOrbit;
@@ -1577,9 +1575,7 @@ export function computeTrajectory(
           wv.y,
           event!.intoBody,
           event!.t,
-          bodies,
-          currentOrbit.period,
-          semiMajor(currentOrbit)
+          bodies
         );
         if (!newOrbit) break;
         currentOrbit = newOrbit;
@@ -1621,3 +1617,4 @@ export function computeTrajectory(
 
   return arcs;
 }
+
