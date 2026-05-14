@@ -15,6 +15,8 @@ import {
   drawManeuverNodeLabel,
   drawEncounterMarker,
   drawSOIBoundary,
+  drawGhostPlanet,
+  drawArrivalOrbit,
   drawApsisMarkers,
   arcColor,
   RenderContext,
@@ -105,6 +107,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const nodes = ship.orders.map(order => ({
           t: order.burnTime,
           dv: order.deltav,
+          capturedAtBody: order.capturedAtBody,
         }));
 
         const trajectory = computeTrajectory(
@@ -150,8 +153,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           }
         }
 
-        // Draw maneuver node markers with info labels
+        // Draw maneuver node markers with info labels (skip capture nodes — they fire on SOI entry)
         for (const order of ship.orders) {
+          if (order.capturedAtBody) continue;
           const arcWithNode = trajectory.find(
             arc => order.burnTime >= arc.tStart && order.burnTime <= arc.tEnd
           );
@@ -175,18 +179,46 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           }
         }
 
-        // Draw post-burn orbit previews
-        for (const order of ship.orders) {
-          if (order.postOrbit) {
-            const isCommitted = order.status === 'committed';
-            drawOrbitEllipse(
-              order.postOrbit,
-              renderContext,
-              isCommitted ? COLORS.maneuverCommitted : COLORS.maneuverPlanned,
-              1.5,
-              !isCommitted
+        // Draw ghost planets at encounter positions and arrival orbits
+        for (let i = 0; i < trajectory.length; i++) {
+          const arc = trajectory[i];
+          const nextArc = trajectory[i + 1];
+
+          // At SOI entry: draw ghost planet at encounter time + arrival orbit
+          if (arc.endReason === 'enter' && nextArc) {
+            const targetBody = gameState.bodies.find(
+              b => b.id === nextArc.orbit.parentBodyId
             );
+            if (targetBody) {
+              drawGhostPlanet(
+                targetBody, arc.tEnd, gameState.currentTick, renderContext
+              );
+              drawArrivalOrbit(
+                nextArc.orbit, arc.tEnd, renderContext, COLORS.arcCapture
+              );
+            }
           }
+
+          // At SOI exit: draw ghost of the body being left
+          if (arc.endReason === 'exit' && nextArc) {
+            const exitBody = gameState.bodies.find(
+              b => b.id === arc.orbit.parentBodyId
+            );
+            if (exitBody && exitBody.id !== 'sol') {
+              drawGhostPlanet(
+                exitBody, arc.tEnd, gameState.currentTick, renderContext
+              );
+            }
+          }
+        }
+
+        // If the last arc ends at a different body than the ship started,
+        // show the final orbit there as the arrival preview
+        const lastArc = trajectory[trajectory.length - 1];
+        if (lastArc && lastArc.orbit.parentBodyId !== ship.orbit.parentBodyId) {
+          drawArrivalOrbit(
+            lastArc.orbit, lastArc.tStart, renderContext, COLORS.arcCapture, true
+          );
         }
       }
     }

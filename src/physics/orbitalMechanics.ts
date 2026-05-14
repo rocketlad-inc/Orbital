@@ -459,6 +459,30 @@ export function orbitWorldVelocity(
   t: number,
   bodies: Body[]
 ): { x: number; y: number } {
+  const es = (orbit as any).escapeState;
+  if (es) {
+    const mu = muOf(orbit.parentBodyId, bodies);
+    let rx = es.rx, ry = es.ry, vx = es.vx, vy = es.vy;
+    const h = 0.25;
+    const steps = Math.max(0, Math.ceil((t - es.t) / h));
+    for (let i = 0; i < steps; i++) {
+      const r = Math.sqrt(rx * rx + ry * ry);
+      if (r < 0.1) break;
+      const acc = -mu / (r * r * r);
+      const ax = acc * rx, ay = acc * ry;
+      rx += vx * h + 0.5 * ax * h * h;
+      ry += vy * h + 0.5 * ay * h * h;
+      const r2 = Math.sqrt(rx * rx + ry * ry);
+      const acc2 = -mu / (r2 * r2 * r2);
+      vx += 0.5 * (ax + acc2 * rx) * h;
+      vy += 0.5 * (ay + acc2 * ry) * h;
+    }
+    const parent = bodies.find(b => b.id === orbit.parentBodyId);
+    if (parent) {
+      const pVel = bodyWorldVelocity(parent, t, bodies);
+      return { x: pVel.x + vx, y: pVel.y + vy };
+    }
+  }
   const dt = 0.01;
   const p1 = orbitWorldPos(orbit, t, bodies);
   const p2 = orbitWorldPos(orbit, t + dt, bodies);
@@ -678,14 +702,14 @@ function findNextSOIEvent(
       const newParentId = parent.parent || 'sol';
       const newOrbit = orbitFromWorldState(
         result.worldX, result.worldY, result.worldVx, result.worldVy,
-        newParentId, result.t, bodies, orbit.period, semiMajor(orbit)
+        newParentId, result.t, bodies
       );
       return { type: 'exit', t: result.t, body: parent, newOrbit };
     }
     if (result && result.entered && result.body) {
       const newOrbit = orbitFromWorldState(
         result.worldX, result.worldY, result.worldVx, result.worldVy,
-        result.body.id, result.t, bodies, orbit.period, semiMajor(orbit)
+        result.body.id, result.t, bodies
       );
       return { type: 'enter', t: result.t, body: result.body, newOrbit };
     }
@@ -712,7 +736,7 @@ function findNextSOIEvent(
         const exitVel = orbitWorldVelocity(orbit, tExit, bodies);
         const newOrbit = orbitFromWorldState(
           exitPos.x, exitPos.y, exitVel.x, exitVel.y,
-          newParentId, tExit, bodies, orbit.period, semiMajor(orbit)
+          newParentId, tExit, bodies
         );
         return { type: 'exit', t: tExit, body: parent, newOrbit };
       }
@@ -732,7 +756,7 @@ function findNextSOIEvent(
         const enterVel = orbitWorldVelocity(orbit, tEnter, bodies);
         const newOrbit = orbitFromWorldState(
           enterPos.x, enterPos.y, enterVel.x, enterVel.y,
-          body.id, tEnter, bodies, orbit.period, semiMajor(orbit)
+          body.id, tEnter, bodies
         );
         return { type: 'enter', t: tEnter, body, newOrbit };
       }
@@ -847,7 +871,7 @@ export function planTransfer(
   targetBodyId: string,
   bodies: Body[],
   currentTick: number,
-  strategy: 'soonest' | 'cheapest' = 'soonest'
+  strategy: 'quickest' | 'soonest' | 'cheapest' = 'soonest'
 ): TransferPlan | null {
   const targetMaybe = bodies.find(b => b.id === targetBodyId);
   if (!targetMaybe) return null;
@@ -1060,6 +1084,27 @@ export function planTransfer(
       scanTick = ev.t;
     }
 
+    // If no encounter found via standard SOI check, do a near-miss sweep
+    // using a generous 1.3x SOI radius for the target
+    if (!encounter && scanOrbit.parentBodyId === (target.parent || 'sol')) {
+      const sweepStep = 0.5;
+      const sweepLimit = Math.min(simLookahead, scanOrbit.period * 2);
+      for (let dt = sweepStep; dt <= sweepLimit; dt += sweepStep) {
+        const t = scanTick + dt;
+        const pos = orbitWorldPos(scanOrbit, t, bodies);
+        const tp = bodyPosition(target, t, bodies);
+        const dist = Math.hypot(pos.x - tp.x, pos.y - tp.y);
+        if (dist < target.soi * 1.3) {
+          const vel = orbitWorldVelocity(scanOrbit, t, bodies);
+          const newOrbit = orbitFromWorldState(pos.x, pos.y, vel.x, vel.y, target.id, t, bodies);
+          if (newOrbit) {
+            encounter = { type: 'enter', t, body: target, newOrbit };
+          }
+          break;
+        }
+      }
+    }
+
     if (!encounter || !encounter.newOrbit) return null;
 
     // We found an encounter! Compute the capture burn dv.
@@ -1126,24 +1171,47 @@ export function planTransfer(
   const periodK = TWO_PI / Math.abs(dDiff);
   while (tPhase < currentTick) tPhase += periodK;
 
-  const dvStep = Math.max(0.005, (dv_max_search - dv_min_search) / 140);
-
   const shipPeriod = orbit.period;
-  const windowHalf = Math.max(shipPeriod * 2, 8);
-  const dtStep = Math.max(0.2, shipPeriod / 14);
-  const maxWindows = strategy === 'soonest' ? 2 : 4;
 
-  console.log(`[TRANSFER] Grid search: tPhase=${tPhase.toFixed(1)} windowHalf=${windowHalf.toFixed(1)} dtStep=${dtStep.toFixed(2)} dvStep=${dvStep.toFixed(4)}`);
+  // Build search windows: list of { tCenter, windowHalf, dvMin, dvMax }
+  type SearchWindow = { tCenter: number; windowHalf: number; dvMin: number; dvMax: number };
+  const windows: SearchWindow[] = [];
 
-  for (let w = 0; w < maxWindows && !bestPlan; w++) {
-    const tCenter = tPhase + w * periodK;
-    if (tCenter - currentTick > synodic * 2) break;
+  if (strategy === 'quickest') {
+    // Quick transfer: search near "now" with wider dv range
+    const quickWindowHalf = Math.max(shipPeriod * 3, 12);
+    const quickDvMax = Math.max(dv_max_search * 3, dv_min_search * 6);
+    windows.push({
+      tCenter: currentTick + quickWindowHalf,
+      windowHalf: quickWindowHalf,
+      dvMin: dv_min_search * 0.9,
+      dvMax: quickDvMax,
+    });
+  } else {
+    // Efficient / soonest: search around optimal Hohmann windows
+    const maxWindows = strategy === 'soonest' ? 2 : 4;
+    for (let w = 0; w < maxWindows; w++) {
+      const tCenter = tPhase + w * periodK;
+      if (tCenter - currentTick > synodic * 2) break;
+      windows.push({
+        tCenter,
+        windowHalf: Math.max(shipPeriod * 2, 8),
+        dvMin: dv_min_search * 0.95,
+        dvMax: dv_max_search,
+      });
+    }
+  }
 
-    for (let dt = -windowHalf; dt <= windowHalf; dt += dtStep) {
-      const t_candidate = tCenter + dt;
+  for (const win of windows) {
+    const dvRange = win.dvMax - win.dvMin;
+    const dvStep = Math.max(0.005, dvRange / 140);
+    const dtStep = Math.max(0.2, shipPeriod / 14);
+
+    for (let dt = -win.windowHalf; dt <= win.windowHalf; dt += dtStep) {
+      const t_candidate = win.tCenter + dt;
       if (t_candidate <= currentTick) continue;
 
-      for (let dvMag = dv_min_search * 0.95; dvMag <= dv_max_search; dvMag += dvStep) {
+      for (let dvMag = win.dvMin; dvMag <= win.dvMax; dvMag += dvStep) {
         const dv = (transferCase === 'to-moon' && !isOutbound) ? -dvMag : dvMag;
         const probe = simulateChain(dv, t_candidate);
         if (!probe) continue;
@@ -1151,7 +1219,9 @@ export function planTransfer(
         if (probe.rp > 0.5 && probe.ra < targetSOI * 0.95) {
           const actualBrake = (probe as any)._brakeDv || 0;
           let score: number;
-          if (strategy === 'soonest') {
+          if (strategy === 'quickest') {
+            score = t_candidate + Math.abs(dv) * 0.1;
+          } else if (strategy === 'soonest') {
             score = t_candidate + Math.abs(actualBrake) * 0.01;
           } else {
             score = Math.abs(dv) + Math.abs(actualBrake);
@@ -1162,8 +1232,9 @@ export function planTransfer(
           }
         }
       }
-      if (strategy === 'soonest' && bestPlan) break;
+      if ((strategy === 'quickest' || strategy === 'soonest') && bestPlan) break;
     }
+    if (bestPlan) break;
   }
 
   // ── Build the result ──
@@ -1389,8 +1460,6 @@ export function applyNodeToOrbit(
   const newVy = oldVy + dvy;
   const newSpeed = Math.sqrt(newVx * newVx + newVy * newVy);
 
-  console.log(`[APPLY_NODE] r=${r.toFixed(1)} speed=${speed.toFixed(3)} prograde=${node.prograde.toFixed(3)} radial=${node.radial.toFixed(3)} newSpeed=${newSpeed.toFixed(3)}`);
-
   // New semi-major axis from vis-viva:
   //   v_new² = μ · (2/r - 1/a_new)   =>   a_new = 1 / (2/r - v_new²/μ)
   const energyTerm = 2 / r - (newSpeed * newSpeed) / mu;
@@ -1415,7 +1484,6 @@ export function applyNodeToOrbit(
     (newOrbit as any).escapeState = { rx: local.x, ry: local.y, vx: newVx, vy: newVy, t: node.burnTime };
   }
 
-  console.log(`[APPLY_NODE] result: rp=${newOrbit.rp.toFixed(1)} ra=${newOrbit.ra.toFixed(1)} e=${eccentricity(newOrbit).toFixed(4)} period=${newOrbit.period.toFixed(1)}`);
   return newOrbit;
 }
 
@@ -1426,7 +1494,7 @@ export function applyNodeToOrbit(
  */
 export function computeTrajectory(
   baseOrbit: OrbitElements,
-  nodes: Array<{ t: number; dv: number; prograde?: number; radial?: number; burnTime?: number }>,
+  nodes: Array<{ t: number; dv: number; prograde?: number; radial?: number; burnTime?: number; capturedAtBody?: string }>,
   tStart: number,
   bodies: Body[]
 ): TrajectoryArc[] {
@@ -1464,10 +1532,11 @@ export function computeTrajectory(
       }
     }
 
-    // Arc budget: project at most TRAJ_ORBITS_AHEAD periods
-    const arcBudget = Math.min(tEnd, tCursor + currentOrbit.period * TRAJ_ORBITS_AHEAD);
     const nextNode = sortedNodes[nodeIdx];
     const nodeT = nextNode ? nextNode.t : Infinity;
+    // Arc budget: project at most TRAJ_ORBITS_AHEAD periods, but always reach the next node
+    const orbitBudget = tCursor + currentOrbit.period * TRAJ_ORBITS_AHEAD;
+    const arcBudget = Math.min(tEnd, nodeT < Infinity ? Math.max(orbitBudget, nodeT) : orbitBudget);
 
     while (t < arcBudget && t < nodeT) {
       const nextT = Math.min(t + TRAJ_STEP, arcBudget, nodeT);
@@ -1512,14 +1581,21 @@ export function computeTrajectory(
 
           // Flythrough check: compute orbit at SOI boundary
           // If orbit apoapsis extends past SOI, this is a grazing encounter — skip it
-          const wpTest = orbitWorldPos(currentOrbit, tEnter, bodies);
-          const wvTest = orbitWorldVelocity(currentOrbit, tEnter, bodies);
-          const testOrbit = orbitFromWorldState(wpTest.x, wpTest.y, wvTest.x, wvTest.y, body.id, tEnter, bodies);
-          if (testOrbit) {
-            const testE = eccentricity(testOrbit);
-            if (testE < 1 && testOrbit.ra > body.soi) {
-              skipSOIs.add(body.id);
-              continue;
+          // BUT: if there's a pending capture node for this body, always accept the encounter
+          const currentNodeIdx = nodeIdx;
+          const hasCapture = sortedNodes.some(
+            (n, idx) => idx >= currentNodeIdx && n.capturedAtBody === body.id
+          );
+          if (!hasCapture) {
+            const wpTest = orbitWorldPos(currentOrbit, tEnter, bodies);
+            const wvTest = orbitWorldVelocity(currentOrbit, tEnter, bodies);
+            const testOrbit = orbitFromWorldState(wpTest.x, wpTest.y, wvTest.x, wvTest.y, body.id, tEnter, bodies);
+            if (testOrbit) {
+              const testE = eccentricity(testOrbit);
+              if (testE < 1 && testOrbit.ra > body.soi) {
+                skipSOIs.add(body.id);
+                continue;
+              }
             }
           }
 
@@ -1560,9 +1636,7 @@ export function computeTrajectory(
           wv.y,
           parentOfParent,
           event.t,
-          bodies,
-          currentOrbit.period,
-          semiMajor(currentOrbit)
+          bodies
         );
         if (!newOrbit) break;
         currentOrbit = newOrbit;
@@ -1577,15 +1651,46 @@ export function computeTrajectory(
           wv.y,
           event!.intoBody,
           event!.t,
-          bodies,
-          currentOrbit.period,
-          semiMajor(currentOrbit)
+          bodies
         );
         if (!newOrbit) break;
-        currentOrbit = newOrbit;
+
+        // Check if there's a capture node for this body — consume it and
+        // create a stable circular orbit instead of the raw flyby trajectory
+        const capNodeIdx = nodeIdx;
+        const capIdx = sortedNodes.findIndex(
+          (n, idx) => idx >= capNodeIdx && n.capturedAtBody === event!.intoBody
+        );
+        if (capIdx >= 0) {
+          const targetBody = bodies.find(b => b.id === event!.intoBody);
+          const mu_cap = muOf(event!.intoBody!, bodies);
+          const local_cap = localPositionAt(newOrbit, event!.t);
+          const r_cap = Math.sqrt(local_cap.x * local_cap.x + local_cap.y * local_cap.y);
+          const capR = Math.min(r_cap, targetBody ? targetBody.soi * 0.8 : r_cap);
+          const omega_cap = Math.atan2(local_cap.y, local_cap.x);
+          currentOrbit = {
+            rp: capR,
+            ra: capR,
+            omega: omega_cap,
+            M0: 0,
+            epoch: event!.t,
+            direction: newOrbit.direction,
+            period: TWO_PI * Math.sqrt(capR * capR * capR / mu_cap),
+            parentBodyId: event!.intoBody!,
+          };
+          // Skip all nodes up to and including the capture node
+          nodeIdx = capIdx + 1;
+        } else {
+          currentOrbit = newOrbit;
+        }
         tCursor = event!.t;
       }
     } else if (t >= nodeT && nextNode) {
+      // Capture nodes are consumed on SOI entry, not at their scheduled time
+      if (nextNode.capturedAtBody) {
+        nodeIdx++;
+        continue;
+      }
       // Hit a maneuver node - close arc and apply node
       arcs.push({
         orbit: currentOrbit,
@@ -1621,3 +1726,4 @@ export function computeTrajectory(
 
   return arcs;
 }
+

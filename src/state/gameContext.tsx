@@ -11,7 +11,6 @@ import {
   bodyPosition,
   orbitFromWorldState,
   applyNodeToOrbit,
-  semiMajor,
   muOf,
   localPositionAt,
 } from '../physics/orbitalMechanics';
@@ -124,8 +123,7 @@ export function GameContextProvider({
           const wv = orbitWorldVelocity(orbit, tick, bodies);
           const newOrbit = orbitFromWorldState(
             shipPos.x, shipPos.y, wv.x, wv.y,
-            parent.parent, tick, bodies,
-            orbit.period, semiMajor(orbit)
+            parent.parent, tick, bodies
           );
           if (newOrbit) {
             orbit = newOrbit;
@@ -138,22 +136,30 @@ export function GameContextProvider({
       }
 
       // 2) SOI entry: check entering any child body's SOI
+      // Use a generous detection radius when the ship has a committed capture node
+      // for that body — compensates for small trajectory deviations from the planner
+      const captureTargets = new Set(
+        orders.filter(n => n.status === 'committed' && n.capturedAtBody).map(n => n.capturedAtBody!)
+      );
       const shipPos = orbitWorldPos(orbit, tick, bodies);
       for (const body of bodies) {
         if (body.id === 'sol' || body.id === orbit.parentBodyId) continue;
         if (body.parent !== orbit.parentBodyId) continue;
         // SOI grace: skip bodies we just exited to prevent oscillation
         if (soiGrace && tick < soiGrace && body.id === soiGraceBody) continue;
+        // During transfers, skip SOI entry for non-target bodies to prevent
+        // flyby encounters from corrupting the transfer trajectory
+        if (captureTargets.size > 0 && !captureTargets.has(body.id)) continue;
         const bp = bodyPosition(body, tick, bodies);
         const bdx = shipPos.x - bp.x;
         const bdy = shipPos.y - bp.y;
         const bdist = Math.sqrt(bdx * bdx + bdy * bdy);
-        if (bdist < body.soi) {
+        const effectiveSOI = captureTargets.has(body.id) ? body.soi * 1.3 : body.soi;
+        if (bdist < effectiveSOI) {
           const wv = orbitWorldVelocity(orbit, tick, bodies);
           const newOrbit = orbitFromWorldState(
             shipPos.x, shipPos.y, wv.x, wv.y,
-            body.id, tick, bodies,
-            orbit.period, semiMajor(orbit)
+            body.id, tick, bodies
           );
           if (newOrbit) {
             orbit = newOrbit;

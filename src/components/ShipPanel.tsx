@@ -26,8 +26,8 @@ export const ShipPanel: React.FC = () => {
     return null;
   }
 
-  const handleTransferManeuver = (targetBodyId: string) => {
-    const plan = planTransfer(ship.orbit, targetBodyId, gameState.bodies, gameState.currentTick);
+  const handleTransferManeuver = (targetBodyId: string, strategy: 'quickest' | 'soonest' = 'quickest') => {
+    const plan = planTransfer(ship.orbit, targetBodyId, gameState.bodies, gameState.currentTick, strategy);
     if (!plan) {
       alert('Cannot plan transfer to that target');
       return;
@@ -51,7 +51,7 @@ export const ShipPanel: React.FC = () => {
         radial: 0,
         normal: 0,
         status: 'planned',
-        // Only set capturedAtBody on the capture burn (not the departure burn)
+        label: burn.label,
         capturedAtBody: burn.capturedAtBody,
       };
       addManeuverNode(node);
@@ -135,34 +135,38 @@ export const ShipPanel: React.FC = () => {
             {ship.orders.length === 0 ? (
               <div className="no-orders">No planned maneuvers</div>
             ) : (
-              <div className="orders-list">
-                {ship.orders.map((order) => (
-                  <div key={order.id} className={`order-item status-${order.status}`}>
-                    <div className="order-info">
-                      <div className="order-type">{order.type.toUpperCase()}</div>
-                      <div className="order-details">
-                        Δv: {order.deltav.toFixed(2)} | T+{order.burnTime.toFixed(0)}
+              <>
+                <div className="orders-list">
+                  {ship.orders.map((order) => (
+                    <div key={order.id} className={`order-item status-${order.status}`}>
+                      <div className="order-info">
+                        <div className="order-type">{order.label || order.type.toUpperCase()}</div>
+                        <div className="order-details">
+                          Δv: {Math.abs(order.deltav).toFixed(2)} km/s | T+{order.burnTime.toFixed(0)}
+                        </div>
+                      </div>
+                      <div className="order-actions">
+                        <button
+                          className="delete-btn"
+                          onClick={() => deleteManeuverNode(order.id)}
+                        >
+                          ✕
+                        </button>
                       </div>
                     </div>
-                    <div className="order-actions">
-                      {order.status === 'planned' && (
-                        <button
-                          className="commit-btn"
-                          onClick={() => commitManeuverNode(order.id)}
-                        >
-                          COMMIT
-                        </button>
-                      )}
-                      <button
-                        className="delete-btn"
-                        onClick={() => deleteManeuverNode(order.id)}
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+                {ship.orders.some(o => o.status === 'planned') && (
+                  <button
+                    className="commit-all-btn"
+                    onClick={() => ship.orders.forEach(o => {
+                      if (o.status === 'planned') commitManeuverNode(o.id);
+                    })}
+                  >
+                    COMMIT ALL
+                  </button>
+                )}
+              </>
             )}
           </div>
 
@@ -197,15 +201,27 @@ export const ShipPanel: React.FC = () => {
             <div className="modal-body">
               <div className="target-list">
                 {gameState.bodies
-                  .filter((b) => b.parent === 'sol' && b.id !== ship.orbit.parentBodyId)
+                  .filter((b) => b.id !== 'sol' && b.id !== ship.orbit.parentBodyId)
                   .map((body) => (
-                    <button
-                      key={body.id}
-                      className="target-button"
-                      onClick={() => handleTransferManeuver(body.id)}
-                    >
-                      {body.name}
-                    </button>
+                    <div key={body.id} className="target-row">
+                      <span className="target-name">
+                        {body.name}{body.parent !== 'sol' ? ` (${body.parent})` : ''}
+                      </span>
+                      <div className="target-actions">
+                        <button
+                          className="target-btn target-btn-quick"
+                          onClick={() => handleTransferManeuver(body.id, 'quickest')}
+                        >
+                          QUICK
+                        </button>
+                        <button
+                          className="target-btn target-btn-efficient"
+                          onClick={() => handleTransferManeuver(body.id, 'soonest')}
+                        >
+                          EFFICIENT
+                        </button>
+                      </div>
+                    </div>
                   ))}
               </div>
             </div>

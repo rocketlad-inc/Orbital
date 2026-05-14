@@ -570,3 +570,112 @@ export function drawSOIBoundary(
   ctx.ctx.stroke();
   ctx.ctx.setLineDash([]);
 }
+
+/**
+ * Draw a ghost (semi-transparent) planet at a future position
+ * Shows where a body will be at a given time (encounter prediction)
+ */
+export function drawGhostPlanet(
+  body: Body,
+  futureT: number,
+  currentTick: number,
+  ctx: RenderContext,
+  color?: string
+) {
+  const pos = bodyPosition(body, futureT, ctx.bodies);
+  const canvasPos = worldToCanvas(pos.x, pos.y, ctx);
+  const radius = Math.max(3, body.radius * ctx.camera.scale);
+  const bodyColor = color || body.color || COLORS.planetDefault;
+
+  const c = ctx.ctx;
+  const prevAlpha = c.globalAlpha;
+
+  // Ghost body circle
+  c.globalAlpha = 0.35;
+  c.fillStyle = bodyColor;
+  c.beginPath();
+  c.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
+  c.fill();
+
+  // Ghost SOI boundary
+  if (body.soi > 0) {
+    const soiR = body.soi * ctx.camera.scale;
+    if (soiR > 5) {
+      c.globalAlpha = 0.2;
+      c.strokeStyle = withOpacity(COLORS.maneuverPlanned, 0.4);
+      c.lineWidth = 1;
+      c.setLineDash([3, 4]);
+      c.beginPath();
+      c.arc(canvasPos.x, canvasPos.y, soiR, 0, Math.PI * 2);
+      c.stroke();
+      c.setLineDash([]);
+    }
+  }
+
+  // Label with countdown
+  const ticksUntil = futureT - currentTick;
+  const label = ticksUntil > 0
+    ? `${body.name} T+${ticksUntil.toFixed(0)}`
+    : body.name;
+
+  c.globalAlpha = 0.55;
+  c.fillStyle = COLORS.fgDim;
+  c.font = '9px monospace';
+  c.textAlign = 'center';
+  c.textBaseline = 'top';
+  c.fillText(label, canvasPos.x, canvasPos.y + radius + 6);
+
+  c.globalAlpha = prevAlpha;
+}
+
+/**
+ * Draw the arrival orbit at the destination body (what the ship's orbit
+ * will look like after capture). Drawn relative to the destination body
+ * at the encounter time.
+ */
+export function drawArrivalOrbit(
+  orbit: OrbitElements,
+  futureT: number,
+  ctx: RenderContext,
+  color: string = COLORS.arcCapture,
+  isDashed: boolean = true
+) {
+  const parentBody = ctx.bodies.find(b => b.id === orbit.parentBodyId);
+  if (!parentBody) return;
+
+  const parentPos = bodyPosition(parentBody, futureT, ctx.bodies);
+  const a = semiMajor(orbit);
+  const e = eccentricity(orbit);
+  const b = a * Math.sqrt(1 - e * e);
+  const c_focal = a * e;
+  const cosOmega = Math.cos(orbit.omega);
+  const sinOmega = Math.sin(orbit.omega);
+
+  const gc = ctx.ctx;
+  const prevAlpha = gc.globalAlpha;
+  gc.globalAlpha = 0.5;
+
+  if (isDashed) gc.setLineDash([4, 4]);
+  gc.strokeStyle = color;
+  gc.lineWidth = 1.5;
+  gc.beginPath();
+
+  const steps = 80;
+  for (let i = 0; i <= steps; i++) {
+    const theta = (i / steps) * Math.PI * 2;
+    const localX = a * Math.cos(theta);
+    const localY = b * Math.sin(theta);
+    const rotX = localX * cosOmega - localY * sinOmega;
+    const rotY = localX * sinOmega + localY * cosOmega;
+    const worldX = parentPos.x + rotX - c_focal * cosOmega;
+    const worldY = parentPos.y + rotY - c_focal * sinOmega;
+    const cp = worldToCanvas(worldX, worldY, ctx);
+
+    if (i === 0) gc.moveTo(cp.x, cp.y);
+    else gc.lineTo(cp.x, cp.y);
+  }
+
+  gc.stroke();
+  gc.setLineDash([]);
+  gc.globalAlpha = prevAlpha;
+}

@@ -32,6 +32,7 @@ export interface ManeuverNode {
   radial: number;                      // radial component of burn
   normal: number;                      // normal component of burn
   status: 'planned' | 'committed' | 'executed';
+  label?: string;                      // human-readable burn label
 
   // Predicted outcome after burn
   preOrbit?: OrbitElements;            // orbit before burn
