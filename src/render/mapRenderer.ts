@@ -12,6 +12,7 @@ export interface RenderContext {
   camera: { x: number; y: number; scale: number; focusedBodyId?: string };
   t: number;
   bodies: Body[];
+  simSpeed?: number;
 }
 
 /**

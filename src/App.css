@@ -48,3 +48,49 @@ body {
   letter-spacing: 0.15em;
   margin-top: 2px;
 }
+
+/* Time controls bar */
+.time-controls {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(10, 14, 20, 0.85);
+  border: 1px solid rgba(255, 184, 77, 0.15);
+  padding: 4px;
+  backdrop-filter: blur(8px);
+}
+
+.time-btn {
+  background: transparent;
+  border: none;
+  color: #6b8195;
+  padding: 6px 12px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.time-btn:hover {
+  color: #d8e4ee;
+}
+
+.time-btn.active {
+  color: #ffb84d;
+}
+
+.time-tick {
+  color: #6b8195;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  padding: 6px 12px;
+  border-left: 1px solid rgba(255, 184, 77, 0.15);
+  white-space: nowrap;
+}

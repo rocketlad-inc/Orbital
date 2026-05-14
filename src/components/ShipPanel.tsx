@@ -33,7 +33,13 @@ export const ShipPanel: React.FC = () => {
       return;
     }
 
-    // Create two maneuver nodes from the plan
+    if (!plan.hasValidPlan) {
+      console.warn('[TRANSFER] Using analytic fallback — encounter not guaranteed');
+    }
+
+    // Create maneuver nodes from the plan
+    // Departure burn: normal node (fires at burnTime)
+    // Capture burn: has capturedAtBody (handled by game loop on SOI entry)
     plan.burns.forEach((burn) => {
       const node: ManeuverNode = {
         id: `node-${Date.now()}-${Math.random()}`,
@@ -45,7 +51,8 @@ export const ShipPanel: React.FC = () => {
         radial: 0,
         normal: 0,
         status: 'planned',
-        capturedAtBody: targetBodyId,
+        // Only set capturedAtBody on the capture burn (not the departure burn)
+        capturedAtBody: burn.capturedAtBody,
       };
       addManeuverNode(node);
     });
