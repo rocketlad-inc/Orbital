@@ -68,76 +68,77 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       drawBody(body, renderContext, isSelected, isHovered);
     }
 
-    // Draw ships
+    // Draw ship orbits and ships
     for (const ship of gameState.ships) {
       const isSelected = uiState.selectedShipId === ship.id;
-      drawShip(ship, renderContext, isSelected);
-    }
 
-    // Draw trajectories and maneuver nodes if ship is selected
-    if (uiState.selectedShipId) {
-      const ship = gameState.ships.find(s => s.id === uiState.selectedShipId);
-      if (ship) {
-        // Convert orders to node format for trajectory computation
+      // Always draw the ship's current orbit
+      drawOrbitEllipse(
+        ship.orbit,
+        renderContext,
+        isSelected ? COLORS.orbitCurrent : COLORS.orbitTrajectory,
+        isSelected ? 2 : 1
+      );
+
+      // Draw the ship marker
+      drawShip(ship, renderContext, isSelected);
+
+      // Draw maneuver trajectories for selected ship
+      if (isSelected && ship.orders.length > 0) {
         const nodes = ship.orders.map(order => ({
           t: order.burnTime,
           dv: order.deltav,
         }));
 
-        // Compute trajectory through current orbit and planned maneuvers
-        if (nodes.length > 0) {
-          const trajectory = computeTrajectory(
-            ship.orbit,
-            nodes,
-            gameState.currentTick,
-            gameState.bodies
+        const trajectory = computeTrajectory(
+          ship.orbit,
+          nodes,
+          gameState.currentTick,
+          gameState.bodies
+        );
+
+        for (const arc of trajectory) {
+          const isCommitted = ship.orders.some(
+            order =>
+              order.burnTime >= arc.tStart &&
+              order.burnTime <= arc.tEnd &&
+              order.status === 'committed'
           );
+          drawTrajectory(
+            [arc],
+            renderContext,
+            isCommitted ? COLORS.maneuverCommitted : COLORS.maneuverPlanned,
+            !isCommitted
+          );
+        }
 
-          // Draw trajectory
-          for (const arc of trajectory) {
-            const color =
-              ship.orders.some(
-                order =>
-                  order.burnTime >= arc.tStart &&
-                  order.burnTime <= arc.tEnd &&
-                  order.status === 'committed'
-              )
-                ? COLORS.maneuverCommitted
-                : COLORS.maneuverPlanned;
-            const isDashed =
-              !ship.orders.some(
-                order =>
-                  order.burnTime >= arc.tStart &&
-                  order.burnTime <= arc.tEnd &&
-                  order.status === 'committed'
-              );
-            drawTrajectory([arc], renderContext, color, isDashed);
-          }
-
-          // Draw maneuver node markers
-          for (const order of ship.orders) {
-            const arcWithNode = trajectory.find(
-              arc => order.burnTime >= arc.tStart && order.burnTime <= arc.tEnd
+        // Draw maneuver node markers
+        for (const order of ship.orders) {
+          const arcWithNode = trajectory.find(
+            arc => order.burnTime >= arc.tStart && order.burnTime <= arc.tEnd
+          );
+          if (arcWithNode) {
+            drawManeuverNode(
+              order.burnTime,
+              arcWithNode,
+              renderContext,
+              order.status === 'committed' ? COLORS.maneuverCommitted : COLORS.maneuverPlanned,
+              6
             );
-            if (arcWithNode) {
-              const color =
-                order.status === 'committed'
-                  ? COLORS.maneuverCommitted
-                  : COLORS.maneuverPlanned;
-              drawManeuverNode(order.burnTime, arcWithNode, renderContext, color, 6);
-            }
           }
-        } else if (ship.orders.length > 0) {
-          // If we have orders but no nodes set up yet, show post-burn orbits
-          for (const order of ship.orders) {
-            if (order.postOrbit) {
-              const color =
-                order.status === 'committed'
-                  ? COLORS.maneuverCommitted
-                  : COLORS.maneuverPlanned;
-              const isDashed = order.status !== 'committed';
-              drawOrbitEllipse(order.postOrbit, renderContext, color, 1.5, isDashed);
-            }
+        }
+
+        // Draw post-burn orbit previews
+        for (const order of ship.orders) {
+          if (order.postOrbit) {
+            const isCommitted = order.status === 'committed';
+            drawOrbitEllipse(
+              order.postOrbit,
+              renderContext,
+              isCommitted ? COLORS.maneuverCommitted : COLORS.maneuverPlanned,
+              1.5,
+              !isCommitted
+            );
           }
         }
       }

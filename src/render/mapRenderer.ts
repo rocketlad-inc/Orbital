@@ -46,9 +46,6 @@ export function canvasToWorld(
 export function clearCanvas(ctx: RenderContext) {
   ctx.ctx.fillStyle = COLORS.bg;
   ctx.ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-
-  // Draw subtle grid
-  drawGrid(ctx);
 }
 
 /**
