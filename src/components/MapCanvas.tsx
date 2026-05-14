@@ -28,7 +28,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   height = typeof window !== 'undefined' ? window.innerHeight : 800,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { gameState, camera, uiState, updateCamera, selectShip, selectBody, hoverBody } =
+  const { gameState, camera, uiState, updateCamera, selectShip, selectBody, hoverBody, focusBody } =
     useGameContext();
 
   const [panState, setPanState] = useState<{
@@ -250,6 +250,30 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     [gameState, camera, hoverBody]
   );
 
+  const handleDoubleClick = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      if (!canvasRef.current) return;
+
+      const rect = canvasRef.current.getBoundingClientRect();
+      const canvasX = e.clientX - rect.left;
+      const canvasY = e.clientY - rect.top;
+
+      // Check for body double-click to focus
+      for (const body of gameState.bodies) {
+        const bodyCanvasPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
+        const dist = Math.hypot(canvasX - bodyCanvasPos.x, canvasY - bodyCanvasPos.y);
+        const clickRadius = Math.max(8, body.radius! * camera.scale + 5);
+        if (dist < clickRadius) {
+          focusBody(body.id);
+          return;
+        }
+      }
+      // Double-click on empty space to unfocus
+      focusBody(undefined);
+    },
+    [gameState, camera, focusBody]
+  );
+
   // Render loop
   useEffect(() => {
     const animationFrame = requestAnimationFrame(() => {
@@ -272,6 +296,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       onContextMenu={(e) => e.preventDefault()}
       onWheel={handleWheel}
       onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
       className="map-canvas"
     />
   );
@@ -330,7 +355,21 @@ function drawHUD(ctx: RenderContext) {
   // Draw help text
   ctx.ctx.fillStyle = COLORS.fgFaint;
   ctx.ctx.font = '10px monospace';
-  ctx.ctx.fillText('Right-drag: pan | Scroll: zoom | Click: select', 16, ctx.canvas.height - 32);
+  ctx.ctx.fillText('Right-drag: pan | Scroll: zoom | Click: select | Double-click: focus', 16, ctx.canvas.height - 32);
+
+  // Draw focused body info if applicable
+  if (ctx.camera.focusedBodyId) {
+    const focusedBody = ctx.bodies.find(b => b.id === ctx.camera.focusedBodyId);
+    if (focusedBody) {
+      ctx.ctx.fillStyle = COLORS.accent;
+      ctx.ctx.font = 'bold 12px monospace';
+      ctx.ctx.textAlign = 'center';
+      ctx.ctx.fillText(`FOCUSED: ${focusedBody.name.toUpperCase()}`, ctx.canvas.width / 2, 32);
+      ctx.ctx.fillStyle = COLORS.fgDim;
+      ctx.ctx.font = '10px monospace';
+      ctx.ctx.fillText(`SOI: ${focusedBody.soi.toFixed(0)} km`, ctx.canvas.width / 2, 48);
+    }
+  }
 
   // Draw version
   ctx.ctx.textAlign = 'right';

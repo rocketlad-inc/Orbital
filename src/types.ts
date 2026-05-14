@@ -125,6 +125,7 @@ export interface CameraState {
   y: number;                            // center position y
   scale: number;                        // zoom level (pixels per game unit)
   zoomLevel: 1 | 2 | 3;                 // discrete zoom mode
+  focusedBodyId?: string;               // if set, camera centers on this body and shows local SOI
 }
 
 /**

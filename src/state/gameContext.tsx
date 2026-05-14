@@ -13,12 +13,14 @@ interface GameContextType {
 
   // Game state updates
   setGameState: (state: GameState) => void;
+  updateGameState: (partial: Partial<GameState>) => void;
   updateTick: (tick: number) => void;
   loadScenario: (type: ScenarioType) => void;
 
   // Camera updates
   updateCamera: (camera: Partial<CameraState>) => void;
   setZoomLevel: (level: 1 | 2 | 3) => void;
+  focusBody: (bodyId: string | undefined) => void;
 
   // UI updates
   selectShip: (shipId: string) => void;
@@ -69,6 +71,13 @@ export function GameContextProvider({
     setGameStateInternal(state);
   }, []);
 
+  const updateGameState = useCallback((partial: Partial<GameState>) => {
+    setGameStateInternal(prev => ({
+      ...prev,
+      ...partial,
+    }));
+  }, []);
+
   const updateTick = useCallback((tick: number) => {
     setGameStateInternal(prev => ({
       ...prev,
@@ -96,6 +105,31 @@ export function GameContextProvider({
   const setZoomLevel = useCallback((level: 1 | 2 | 3) => {
     setCameraInternal(prev => ({ ...prev, zoomLevel: level }));
   }, []);
+
+  const focusBody = useCallback((bodyId: string | undefined) => {
+    if (bodyId) {
+      const body = gameState.bodies.find(b => b.id === bodyId);
+      if (body) {
+        setCameraInternal(prev => ({
+          ...prev,
+          focusedBodyId: bodyId,
+          x: 0,
+          y: 0,
+          scale: 2,
+          zoomLevel: 2,
+        }));
+      }
+    } else {
+      setCameraInternal(prev => ({
+        ...prev,
+        focusedBodyId: undefined,
+        x: 0,
+        y: 0,
+        scale: 1,
+        zoomLevel: 1,
+      }));
+    }
+  }, [gameState.bodies]);
 
   const selectShip = useCallback((shipId: string) => {
     setUIStateInternal(prev => ({
@@ -195,10 +229,12 @@ export function GameContextProvider({
     camera,
     uiState,
     setGameState,
+    updateGameState,
     updateTick,
     loadScenario,
     updateCamera,
     setZoomLevel,
+    focusBody,
     selectShip,
     deselectShip,
     selectBody,
