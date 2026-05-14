@@ -183,6 +183,7 @@ export function createScenario2(): GameState {
     orders: [
       {
         id: 'order-1',
+        shipId: 'ship-enemy',
         type: 'transfer',
         burnTime: 50,
         deltav: 2.5,
@@ -194,6 +195,7 @@ export function createScenario2(): GameState {
       },
       {
         id: 'order-2',
+        shipId: 'ship-enemy',
         type: 'transfer',
         burnTime: 120,
         deltav: 1.8,
