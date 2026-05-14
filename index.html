@@ -638,7 +638,7 @@ function shipPositionWorld(ship, t) {
 // orbit to the new parent and recurse.
 
 const TRAJ_STEP = 0.5;        // ticks per step when scanning for SOI events
-const TRAJ_MAX_TICKS = 1500;  // absolute cap on how far ahead we look
+const TRAJ_MAX_TICKS = 600;   // absolute cap on how far ahead we look
 const TRAJ_MAX_ARCS = 6;      // arc budget per trajectory
 const TRAJ_ORBITS_AHEAD = 1.5; // project at most 1.5 orbits of the current arc
 
@@ -1662,6 +1662,9 @@ function planTransferManeuver(ship, targetBodyId, strategy) {
       if (ev.type === 'enter' && ev.body && ev.body.id === target.id) {
         encounter = ev;
         break;
+      }
+      if (ev.type === 'enter' && ev.body && ev.body.id !== target.id) {
+        return null;
       }
       if (!ev.newOrbit) break;
       scanOrbit = ev.newOrbit;
@@ -3373,13 +3376,9 @@ function renderShipPanel() {
           <div class="row" style="font-size:9px; padding:2px 0;"><span class="k">BURN AROUND</span><span class="v" style="color: var(--friendly);">${burnParent.name.toUpperCase()}</span></div>
           <div class="nc-vector">${pillsHtml}</div>
           <div style="font-size:9px; color: ${resultColor}; margin-top:4px;">${resultLabel}</div>
-          ${isSelectedN ? `
+          ${isSelectedN && node.committed ? `
             <div style="display:flex; gap:4px; margin-top:6px;">
-              ${node.committed
-                ? `<button class="btn-danger" style="flex:1;" onclick="event.stopPropagation(); deleteNode(${node.id})">CANCEL</button>`
-                : `<button class="btn-primary" style="flex:1;" onclick="event.stopPropagation(); commitNode(${node.id})" ${canCommit ? '' : 'disabled'}>COMMIT</button>
-                   <button class="btn-danger" style="flex:1;" onclick="event.stopPropagation(); deleteNode(${node.id})">DELETE</button>`
-              }
+              <button class="btn-danger" style="flex:1;" onclick="event.stopPropagation(); deleteNode(${node.id})">CANCEL</button>
             </div>
           ` : ''}
         </div>
