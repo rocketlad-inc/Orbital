@@ -13,12 +13,13 @@ Execution Order (Critical):
 3. Check SOI transitions (body arrivals)
 4. Execute standing orders (conditional automation)
 5. Accumulate resource production
-6. Apply treaty effects (check violations, apply penalties)
-7. Advance tech research
-8. Update reputation (decay, recovery)
-9. Generate chronicle entries
-10. Persist all state changes in atomic transaction
-11. Broadcast state delta to frontend
+6. Advance production queue (ship/development/research completion)
+7. Apply treaty effects (check violations, apply penalties)
+8. Advance tech research
+9. Update reputation (decay, recovery)
+10. Generate chronicle entries
+11. Persist all state changes in atomic transaction
+12. Broadcast state delta to frontend
 
 This ensures:
 - No timing conflicts (maneuvers complete before production)
@@ -38,6 +39,7 @@ from .standing_orders import tick_standing_orders
 from .treaties import tick_treaty_enforcement
 from .tech import tick_tech_research
 from .reputation import tick_reputation_update
+from .economy import tick_advance_production_queue
 from .errors import GameEngineError
 
 
@@ -151,16 +153,19 @@ def execute_tick(
         # 4. Accumulate resource production (uses body ownership)
         tick_resource_production(state, chronicle)
 
-        # 5. Apply treaty effects (check violations, penalties)
+        # 5. Advance production queue (ship/development/research completion)
+        production_completed = tick_advance_production_queue(state, chronicle)
+
+        # 6. Apply treaty effects (check violations, penalties)
         violations_count = tick_treaty_enforcement(state, chronicle)
 
-        # 6. Advance tech research
+        # 7. Advance tech research
         tech_completed = tick_tech_research(state, chronicle)
 
-        # 7. Update reputation (decay, recovery)
+        # 8. Update reputation (decay, recovery)
         tick_reputation_update(state, chronicle)
 
-        # 8. Increment tick counter
+        # 9. Increment tick counter
         state.current_tick = tick + 1
 
     except Exception as e:

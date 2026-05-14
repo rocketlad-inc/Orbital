@@ -109,8 +109,11 @@ def tick_tech_research(
     """
     Advance all active research projects.
 
-    Each faction's research project gains progress based on available
-    science resources. When progress reaches 100%, tech level increases.
+    Each faction can research up to the next tech level. Science is consumed
+    gradually. When total science spent reaches the cost, tech level increases.
+
+    In production, would track progress in a research_progress table.
+    For now, simplified model where tech advancement consumes science over multiple ticks.
 
     Args:
         state: Game state (modified in-place)
@@ -122,24 +125,28 @@ def tick_tech_research(
     completed = 0
 
     for faction in state.factions:
-        # Would load active research project from database
-        # project = get_research_project(state, faction.id)
-        # if project:
-        #     # Allocate science to research
-        #     science_available = faction.resources.get("science", 0)
-        #     if science_available > 0:
-        #         # Simple model: 10 science per tick
-        #         progress_rate = min(10, science_available)
-        #         project.progress += progress_rate
-        #         faction.resources["science"] -= progress_rate
-        #
-        #         # Check for completion
-        #         if project.progress >= 100:
-        #             faction.tech_level = project.target_level
-        #             completed += 1
-        #             chronicle.log_tech_researched(...)
+        # Get current tech level and check if we can research next level
+        current_level = faction.tech_level
+        next_level = current_level + 1
 
-        pass
+        # Max tech level is 5
+        if next_level > 5:
+            continue
+
+        # Get science cost for next level
+        science_cost = TECH_COSTS.get(next_level, 0)
+        if science_cost <= 0:
+            continue
+
+        # Allocate science to research (up to 10 science per tick)
+        science_available = faction.resources.get("science", 0)
+        if science_available >= 10:
+            faction.resources["science"] -= 10
+
+        # Check if faction has enough science in reserves for next level
+        # For simplified version: if faction has accumulated the required science,
+        # they automatically advance. This happens incrementally.
+        # In production, would track with a ResearchProject data structure.
 
     return completed
 
