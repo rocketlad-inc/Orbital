@@ -1,90 +1,171 @@
 // ============================================================
-// Mock Game State - Three Demo Scenarios
+// Mock Game State - Real Solar System (23 bodies)
+// Ported from HTML prototype (trusting-mahavira branch)
 // ============================================================
 
 import { Body, Ship, Faction, GameState, OrbitElements } from '../types';
 
-// Shared bodies across all scenarios
+const TWO_PI = 2 * Math.PI;
+
+// MU_SOL derived from Jupiter's orbit: 4π²·460³/800²
+const MU_SOL = 4 * Math.PI * Math.PI * Math.pow(460, 3) / Math.pow(800, 2);
+
+// Full solar system — 23 bodies matching the HTML prototype
 export const SHARED_BODIES: Body[] = [
+  // Star
   {
-    id: 'sol',
-    name: 'Sol',
-    type: 'star',
-    radius: 28,
-    soi: Infinity,
-    color: '#ffd180',
-    orbitRadius: 0,
-    orbitPeriod: 0,
-    angle0: 0,
+    id: 'sol', name: 'Sol', type: 'star',
+    radius: 10, soi: Infinity, mu: 0,
+    color: '#ffd180', orbitRadius: 0, orbitPeriod: 0, angle0: 0,
+  },
+  // Terrestrial planets
+  {
+    id: 'mercury', name: 'Mercury', type: 'terrestrial', parent: 'sol',
+    radius: 2, soi: 12, mu: 50, color: '#8c8680',
+    orbitRadius: 51.3, orbitPeriod: 29.8, angle0: 4.40,
+    resources: { fuel: 0, gold: 2, metal: 5, science: 1 },
   },
   {
-    id: 'inara',
-    name: 'Inara',
-    type: 'terrestrial',
-    parent: 'sol',
-    radius: 6,
-    soi: 40,
-    color: '#a89878',
-    orbitRadius: 130,
-    orbitPeriod: 88,
-    angle0: 0.3,
-    resources: { fuel: 6, gold: 2, metal: 5, science: 4 },
+    id: 'venus', name: 'Venus', type: 'terrestrial', parent: 'sol',
+    radius: 3, soi: 24, mu: 150, color: '#e8cda0',
+    orbitRadius: 95.9, orbitPeriod: 76.2, angle0: 3.18,
+    resources: { fuel: 1, gold: 1, metal: 3, science: 4 },
   },
   {
-    id: 'verda',
-    name: 'Verda',
-    type: 'terrestrial',
-    parent: 'sol',
-    radius: 7,
-    soi: 50,
-    color: '#5fb079',
-    orbitRadius: 210,
-    orbitPeriod: 168,
-    angle0: 1.7,
-    resources: { fuel: 5, gold: 3, metal: 4, science: 6 },
+    id: 'earth', name: 'Earth', type: 'terrestrial', parent: 'sol',
+    radius: 3, soi: 30, mu: 100, color: '#4a90d9',
+    orbitRadius: 132.6, orbitPeriod: 123.8, angle0: 1.75,
+    resources: { fuel: 3, gold: 2, metal: 3, science: 5 },
   },
   {
-    id: 'rust',
-    name: 'Rust',
-    type: 'terrestrial',
-    parent: 'sol',
-    radius: 6,
-    soi: 60,
-    color: '#c0664a',
-    orbitRadius: 300,
-    orbitPeriod: 320,
-    angle0: 3.4,
-    resources: { fuel: 2, gold: 1, metal: 7, science: 3 },
+    id: 'mars', name: 'Mars', type: 'terrestrial', parent: 'sol',
+    radius: 2.5, soi: 24, mu: 80, color: '#c1440e',
+    orbitRadius: 202.1, orbitPeriod: 233.1, angle0: 6.20,
+    resources: { fuel: 1, gold: 1, metal: 6, science: 3 },
+  },
+  // Earth's moon
+  {
+    id: 'luna', name: 'Luna', type: 'moon', parent: 'earth',
+    radius: 1.5, soi: 4, mu: 5, color: '#c0c0c0',
+    orbitRadius: 12, orbitPeriod: TWO_PI * Math.sqrt(1728 / 100), angle0: 0,
+    resources: { fuel: 0, gold: 0, metal: 2, science: 2 },
+  },
+  // Asteroid belt
+  {
+    id: 'ceres', name: 'Ceres', type: 'dwarf', parent: 'sol',
+    radius: 1.5, soi: 9, mu: 0.5, color: '#6b6b6b',
+    orbitRadius: 310, orbitPeriod: 443, angle0: 1.20,
+    resources: { fuel: 1, gold: 3, metal: 5, science: 1 },
+  },
+  // Gas giants
+  {
+    id: 'jupiter', name: 'Jupiter', type: 'gas_giant', parent: 'sol',
+    radius: 8, soi: 160, mu: 1000, color: '#d4a574',
+    orbitRadius: 460.0, orbitPeriod: 800.0, angle0: 0.60,
+    resources: { fuel: 6, gold: 1, metal: 1, science: 2 },
   },
   {
-    id: 'jove',
-    name: 'Jove',
-    type: 'gas_giant',
-    parent: 'sol',
-    radius: 14,
-    soi: 100,
-    color: '#d4a574',
-    orbitRadius: 460,
-    orbitPeriod: 800,
-    angle0: 5.2,
-    resources: { fuel: 8, gold: 1, metal: 2, science: 2 },
+    id: 'saturn', name: 'Saturn', type: 'gas_giant', parent: 'sol',
+    radius: 7, soi: 140, mu: 600, color: '#e8d5a3',
+    orbitRadius: 843.2, orbitPeriod: 1987, angle0: 0.87,
+    resources: { fuel: 5, gold: 2, metal: 1, science: 3 },
+  },
+  // Jupiter's Galilean moons
+  {
+    id: 'io', name: 'Io', type: 'moon', parent: 'jupiter',
+    radius: 1.5, soi: 5, mu: 5, color: '#e8d44d',
+    orbitRadius: 22, orbitPeriod: TWO_PI * Math.sqrt(10648 / 1000), angle0: 0,
+    resources: { fuel: 2, gold: 1, metal: 3, science: 2 },
+  },
+  {
+    id: 'europa', name: 'Europa', type: 'moon', parent: 'jupiter',
+    radius: 1.5, soi: 5, mu: 5, color: '#b8c8d8',
+    orbitRadius: 34, orbitPeriod: TWO_PI * Math.sqrt(39304 / 1000), angle0: 1.57,
+    resources: { fuel: 1, gold: 0, metal: 1, science: 6 },
+  },
+  {
+    id: 'ganymede', name: 'Ganymede', type: 'moon', parent: 'jupiter',
+    radius: 2, soi: 6, mu: 8, color: '#8a7e72',
+    orbitRadius: 50, orbitPeriod: TWO_PI * Math.sqrt(125000 / 1000), angle0: 3.14,
+    resources: { fuel: 1, gold: 2, metal: 4, science: 3 },
+  },
+  {
+    id: 'callisto', name: 'Callisto', type: 'moon', parent: 'jupiter',
+    radius: 2, soi: 6, mu: 6, color: '#5a5a5a',
+    orbitRadius: 75, orbitPeriod: TWO_PI * Math.sqrt(421875 / 1000), angle0: 4.71,
+    resources: { fuel: 0, gold: 3, metal: 3, science: 2 },
+  },
+  // Saturn's moons
+  {
+    id: 'enceladus', name: 'Enceladus', type: 'moon', parent: 'saturn',
+    radius: 1, soi: 3, mu: 2, color: '#f0f0f0',
+    orbitRadius: 20, orbitPeriod: TWO_PI * Math.sqrt(8000 / 600), angle0: 0,
+    resources: { fuel: 3, gold: 0, metal: 1, science: 6 },
+  },
+  {
+    id: 'rhea', name: 'Rhea', type: 'moon', parent: 'saturn',
+    radius: 1.5, soi: 4, mu: 4, color: '#a0a0a0',
+    orbitRadius: 37, orbitPeriod: TWO_PI * Math.sqrt(50653 / 600), angle0: 2.09,
+    resources: { fuel: 1, gold: 1, metal: 3, science: 2 },
+  },
+  {
+    id: 'titan', name: 'Titan', type: 'moon', parent: 'saturn',
+    radius: 2, soi: 7, mu: 10, color: '#cc9944',
+    orbitRadius: 65, orbitPeriod: TWO_PI * Math.sqrt(274625 / 600), angle0: 4.19,
+    resources: { fuel: 5, gold: 1, metal: 2, science: 5 },
+  },
+  // Ice giants
+  {
+    id: 'uranus', name: 'Uranus', type: 'ice_giant', parent: 'sol',
+    radius: 5, soi: 110, mu: 200, color: '#73c2d6',
+    orbitRadius: 1697, orbitPeriod: 5665, angle0: 5.47,
+    resources: { fuel: 4, gold: 1, metal: 2, science: 4 },
+  },
+  {
+    id: 'neptune', name: 'Neptune', type: 'ice_giant', parent: 'sol',
+    radius: 5, soi: 120, mu: 250, color: '#3366cc',
+    orbitRadius: 2659, orbitPeriod: 11114, angle0: 5.32,
+    resources: { fuel: 4, gold: 2, metal: 1, science: 5 },
+  },
+  // Uranus moons
+  {
+    id: 'titania', name: 'Titania', type: 'moon', parent: 'uranus',
+    radius: 1.5, soi: 5, mu: 4, color: '#909090',
+    orbitRadius: 35, orbitPeriod: TWO_PI * Math.sqrt(42875 / 200), angle0: 0,
+    resources: { fuel: 0, gold: 2, metal: 4, science: 2 },
+  },
+  {
+    id: 'oberon', name: 'Oberon', type: 'moon', parent: 'uranus',
+    radius: 1.5, soi: 5, mu: 4, color: '#888070',
+    orbitRadius: 50, orbitPeriod: TWO_PI * Math.sqrt(125000 / 200), angle0: 3.14,
+    resources: { fuel: 0, gold: 3, metal: 3, science: 2 },
+  },
+  // Neptune moon
+  {
+    id: 'triton', name: 'Triton', type: 'moon', parent: 'neptune',
+    radius: 1.5, soi: 5, mu: 5, color: '#b8d0e0',
+    orbitRadius: 45, orbitPeriod: TWO_PI * Math.sqrt(91125 / 250), angle0: 0,
+    resources: { fuel: 2, gold: 1, metal: 2, science: 5 },
+  },
+  // Outer dwarf planets
+  {
+    id: 'pluto', name: 'Pluto', type: 'dwarf', parent: 'sol',
+    radius: 1.5, soi: 12, mu: 2, color: '#c8b898',
+    orbitRadius: 3491, orbitPeriod: 16720, angle0: 4.17,
+    resources: { fuel: 0, gold: 4, metal: 2, science: 3 },
+  },
+  {
+    id: 'eris', name: 'Eris', type: 'dwarf', parent: 'sol',
+    radius: 1.5, soi: 9, mu: 1, color: '#e0e0e0',
+    orbitRadius: 5992, orbitPeriod: 37636, angle0: 1.80,
+    resources: { fuel: 0, gold: 5, metal: 1, science: 4 },
   },
 ];
 
 // Shared factions
 export const SHARED_FACTIONS: Faction[] = [
-  {
-    id: 'player',
-    name: 'Player',
-    color: '#ff4444',
-    isPlayer: true,
-  },
-  {
-    id: 'enemy',
-    name: 'Enemy',
-    color: '#888888',
-    isPlayer: false,
-  },
+  { id: 'player', name: 'Player', color: '#4ecdc4', isPlayer: true },
+  { id: 'enemy', name: 'Enemy', color: '#888888', isPlayer: false },
 ];
 
 // Helper to create a basic circular orbit at a given body
@@ -97,191 +178,130 @@ function circularOrbitAround(
   if (!body) throw new Error(`Body ${bodyId} not found`);
 
   const r = body.radius + altitude;
-  const mu = bodyId === 'sol' ? MU_SOL : (body.type === 'gas_giant' ? MU_GAS_GIANT : MU_PLANET);
+  let mu: number;
+  if (bodyId === 'sol') {
+    mu = MU_SOL;
+  } else if (body.mu != null && body.mu > 0) {
+    mu = body.mu;
+  } else {
+    mu = 100;
+  }
 
-  // For circular orbit: period = 2π√(r³/μ)
-  const period = 2 * Math.PI * Math.sqrt((r * r * r) / mu);
+  const period = TWO_PI * Math.sqrt((r * r * r) / mu);
 
   return {
-    rp: r,
-    ra: r,
-    omega: 0,
-    M0: 0,
-    epoch: 0,
-    direction,
-    period,
-    parentBodyId: bodyId,
+    rp: r, ra: r, omega: 0, M0: 0, epoch: 0,
+    direction, period, parentBodyId: bodyId,
   };
 }
 
-// Gravitational parameters (must match prototype values)
-const MU_SOL =
-  4 * Math.PI * Math.PI * Math.pow(130, 3) / Math.pow(88, 2);
-const MU_PLANET = 200;
-const MU_GAS_GIANT = 600;
-
 // ============================================================
-// SCENARIO 1: Two ships in low Inara orbit (player-controlled)
+// SCENARIO 1: Two ships in low Earth orbit
 // ============================================================
 export function createScenario1(): GameState {
   const bodies = SHARED_BODIES.map(b => ({ ...b }));
   const factions = SHARED_FACTIONS.map(f => ({ ...f }));
 
   const ship1: Ship = {
-    id: 'ship-alpha',
-    name: 'Alpha',
-    class: 'frigate',
-    ownedBy: 'player',
-    fuel: 100,
-    orbit: circularOrbitAround('inara', 10, 1),
+    id: 'ship-alpha', name: 'Alpha', class: 'frigate',
+    ownedBy: 'player', fuel: 100,
+    orbit: circularOrbitAround('earth', 10, 1),
     orders: [],
   };
 
   const ship2: Ship = {
-    id: 'ship-beta',
-    name: 'Beta',
-    class: 'cruiser',
-    ownedBy: 'player',
-    fuel: 150,
-    orbit: { ...circularOrbitAround('inara', 15, 1), M0: Math.PI },
+    id: 'ship-beta', name: 'Beta', class: 'cruiser',
+    ownedBy: 'player', fuel: 150,
+    orbit: { ...circularOrbitAround('earth', 15, 1), M0: Math.PI },
     orders: [],
   };
 
   return {
-    currentTick: 0,
-    bodies,
-    ships: [ship1, ship2],
-    factions,
-    orders: [],
+    currentTick: 0, bodies,
+    ships: [ship1, ship2], factions, orders: [],
   };
 }
 
 // ============================================================
-// SCENARIO 2: Player at Inara, Enemy at Verda (different orbits)
+// SCENARIO 2: Player at Earth, Enemy at Mars
 // ============================================================
 export function createScenario2(): GameState {
   const bodies = SHARED_BODIES.map(b => ({ ...b }));
   const factions = SHARED_FACTIONS.map(f => ({ ...f }));
 
   const playerShip: Ship = {
-    id: 'ship-player',
-    name: 'Flagship',
-    class: 'capital',
-    ownedBy: 'player',
-    fuel: 200,
-    orbit: circularOrbitAround('inara', 12, 1),
+    id: 'ship-player', name: 'Flagship', class: 'capital',
+    ownedBy: 'player', fuel: 200,
+    orbit: circularOrbitAround('earth', 12, 1),
     orders: [],
   };
 
   const enemyShip: Ship = {
-    id: 'ship-enemy',
-    name: 'Scout',
-    class: 'frigate',
-    ownedBy: 'enemy',
-    fuel: 80,
-    orbit: circularOrbitAround('verda', 15, -1),
+    id: 'ship-enemy', name: 'Scout', class: 'frigate',
+    ownedBy: 'enemy', fuel: 80,
+    orbit: circularOrbitAround('mars', 10, -1),
     orders: [
       {
-        id: 'order-1',
-        shipId: 'ship-enemy',
-        type: 'transfer',
-        burnTime: 50,
-        deltav: 2.5,
-        prograde: 2.5,
-        radial: 0,
-        normal: 0,
-        status: 'planned',
-        capturedAtBody: 'inara',
+        id: 'order-1', shipId: 'ship-enemy', type: 'transfer',
+        burnTime: 50, deltav: 2.5, prograde: 2.5, radial: 0, normal: 0,
+        status: 'planned', capturedAtBody: 'earth',
       },
       {
-        id: 'order-2',
-        shipId: 'ship-enemy',
-        type: 'transfer',
-        burnTime: 120,
-        deltav: 1.8,
-        prograde: 1.8,
-        radial: 0,
-        normal: 0,
-        status: 'planned',
-        capturedAtBody: 'inara',
+        id: 'order-2', shipId: 'ship-enemy', type: 'transfer',
+        burnTime: 200, deltav: 1.8, prograde: 1.8, radial: 0, normal: 0,
+        status: 'planned', capturedAtBody: 'earth',
       },
     ],
   };
 
   return {
-    currentTick: 0,
-    bodies,
-    ships: [playerShip, enemyShip],
-    factions,
-    orders: [],
+    currentTick: 0, bodies,
+    ships: [playerShip, enemyShip], factions, orders: [],
   };
 }
 
 // ============================================================
-// SCENARIO 3: Ship in transit with planned burns
+// SCENARIO 3: Ship in Earth→Mars Hohmann transfer
 // ============================================================
 export function createScenario3(): GameState {
   const bodies = SHARED_BODIES.map(b => ({ ...b }));
   const factions = SHARED_FACTIONS.map(f => ({ ...f }));
 
-  // Ship starting at Inara in heliocentric transfer toward Verda
-  // Approximate a Hohmann-like transfer by setting up a wide ellipse
   const transferOrbit: OrbitElements = {
-    rp: 130,        // perihelion at Inara
-    ra: 210,        // aphelion at Verda
-    omega: 0,
-    M0: 0,
-    epoch: 0,
-    direction: 1,
-    period: 2 * Math.PI * Math.sqrt(Math.pow((130 + 210) / 2, 3) / MU_SOL),
+    rp: 132.6,
+    ra: 202.1,
+    omega: 0, M0: 0, epoch: 0, direction: 1,
+    period: TWO_PI * Math.sqrt(Math.pow((132.6 + 202.1) / 2, 3) / MU_SOL),
     parentBodyId: 'sol',
   };
 
   const ship: Ship = {
-    id: 'ship-transit',
-    name: 'Explorer',
-    class: 'cruiser',
-    ownedBy: 'player',
-    fuel: 120,
+    id: 'ship-transit', name: 'Explorer', class: 'cruiser',
+    ownedBy: 'player', fuel: 120,
     orbit: transferOrbit,
     orders: [
       {
-        id: 'node-departure-burn',
-        shipId: 'ship-transit',
-        type: 'transfer',
-        burnTime: 5,
-        deltav: 2.5,
-        prograde: 2.3,
-        radial: 0.6,
-        normal: 0.2,
+        id: 'node-departure-burn', shipId: 'ship-transit', type: 'transfer',
+        burnTime: 5, deltav: 2.5, prograde: 2.3, radial: 0.6, normal: 0.2,
         status: 'committed',
-        preOrbit: circularOrbitAround('inara', 10, 1),
+        preOrbit: circularOrbitAround('earth', 10, 1),
         postOrbit: transferOrbit,
-        capturedAtBody: 'verda',
+        capturedAtBody: 'mars',
       },
       {
-        id: 'node-arrival-burn',
-        shipId: 'ship-transit',
-        type: 'transfer',
-        burnTime: 50,
-        deltav: 1.8,
-        prograde: -1.7,
-        radial: 0.3,
-        normal: 0.1,
+        id: 'node-arrival-burn', shipId: 'ship-transit', type: 'transfer',
+        burnTime: 80, deltav: 1.8, prograde: -1.7, radial: 0.3, normal: 0.1,
         status: 'planned',
         preOrbit: transferOrbit,
-        postOrbit: circularOrbitAround('verda', 12, 1),
-        capturedAtBody: 'verda',
+        postOrbit: circularOrbitAround('mars', 10, 1),
+        capturedAtBody: 'mars',
       },
     ],
   };
 
   return {
-    currentTick: 0,
-    bodies,
-    ships: [ship],
-    factions,
-    orders: ship.orders,
+    currentTick: 0, bodies,
+    ships: [ship], factions, orders: ship.orders,
   };
 }
 
@@ -290,19 +310,15 @@ export type ScenarioType = 1 | 2 | 3;
 
 export function getScenario(type: ScenarioType): GameState {
   switch (type) {
-    case 1:
-      return createScenario1();
-    case 2:
-      return createScenario2();
-    case 3:
-      return createScenario3();
-    default:
-      return createScenario1();
+    case 1: return createScenario1();
+    case 2: return createScenario2();
+    case 3: return createScenario3();
+    default: return createScenario1();
   }
 }
 
 export const SCENARIO_DESCRIPTIONS = {
-  1: 'Two ships at Inara (player-owned, basic positioning)',
-  2: 'Player at Inara, Enemy at Verda (faction colors)',
-  3: 'Ship in transit with planned burns (maneuver preview)',
+  1: 'Two ships at Earth (player-owned, basic positioning)',
+  2: 'Player at Earth, Enemy at Mars (faction colors)',
+  3: 'Earth→Mars transit with planned burns (maneuver preview)',
 } as const;

@@ -7,23 +7,25 @@ import { OrbitElements, Body, TrajectoryArc } from '../types';
 
 const TWO_PI = Math.PI * 2;
 
-// Gravitational parameters (G·M for each body)
-// These match the prototype values
+// Gravitational parameters — derived from Jupiter's orbit to match HTML prototype
 export const GRAVITATIONAL_PARAMS = {
-  SOL: 4 * Math.PI * Math.PI * Math.pow(130, 3) / Math.pow(88, 2),
-  PLANET: 200,     // terrestrial planets
-  GAS_GIANT: 600,  // gas giants
+  SOL: 4 * Math.PI * Math.PI * Math.pow(460, 3) / Math.pow(800, 2),
 } as const;
 
 /**
- * Get gravitational parameter μ for a body
+ * Get gravitational parameter μ for a body.
+ * Uses per-body mu field when available, falls back to type-based defaults.
  */
 export function muOf(bodyId: string, bodies: Body[]): number {
   if (bodyId === 'sol') return GRAVITATIONAL_PARAMS.SOL;
   const body = bodies.find(b => b.id === bodyId);
-  if (!body) return GRAVITATIONAL_PARAMS.PLANET;
-  if (body.type === 'gas_giant') return GRAVITATIONAL_PARAMS.GAS_GIANT;
-  return GRAVITATIONAL_PARAMS.PLANET;
+  if (!body) return 100;
+  if (body.mu != null && body.mu > 0) return body.mu;
+  if (body.type === 'gas_giant') return 1000;
+  if (body.type === 'ice_giant') return 200;
+  if (body.type === 'moon') return 5;
+  if (body.type === 'dwarf') return 1;
+  return 100;
 }
 
 /**
