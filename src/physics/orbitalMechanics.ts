@@ -770,13 +770,13 @@ export function computeTrajectory(
       arcs.push({
         orbit: currentOrbit,
         tStart: tCursor,
-        tEnd: event.t,
-        endReason: event.type,
+        tEnd: event!.t,
+        endReason: event!.type,
       });
 
       // Re-anchor: compute new orbit relative to new parent
-      if (event.type === 'exit' && event.fromBody) {
-        const parentOfParent = bodies.find(b => b.id === event.fromBody)?.parent;
+      if (event!.type === 'exit' && event!.fromBody) {
+        const parentOfParent = bodies.find(b => b.id === event!.fromBody)?.parent;
         if (!parentOfParent) break;
 
         const wp = orbitWorldPos(currentOrbit, event.t, bodies);
@@ -795,23 +795,23 @@ export function computeTrajectory(
         if (!newOrbit) break;
         currentOrbit = newOrbit;
         tCursor = event.t;
-      } else if (event.type === 'enter' && event.intoBody) {
-        const wp = orbitWorldPos(currentOrbit, event.t, bodies);
-        const wv = orbitWorldVelocity(currentOrbit, event.t, bodies);
+      } else if (event!.type === 'enter' && event!.intoBody) {
+        const wp = orbitWorldPos(currentOrbit, event!.t, bodies);
+        const wv = orbitWorldVelocity(currentOrbit, event!.t, bodies);
         const newOrbit = orbitFromWorldState(
           wp.x,
           wp.y,
           wv.x,
           wv.y,
-          event.intoBody,
-          event.t,
+          event!.intoBody,
+          event!.t,
           bodies,
           currentOrbit.period,
           semiMajor(currentOrbit)
         );
         if (!newOrbit) break;
         currentOrbit = newOrbit;
-        tCursor = event.t;
+        tCursor = event!.t;
       }
     } else if (t >= nodeT && nextNode) {
       // Hit a maneuver node - close arc and apply node
