@@ -33,7 +33,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   height = typeof window !== 'undefined' ? window.innerHeight : 800,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { gameState, camera, uiState, updateCamera, selectShip, selectBody, hoverBody, focusBody } =
+  const { gameState, camera, uiState, simSpeed, updateCamera, selectShip, selectBody, hoverBody, focusBody } =
     useGameContext();
 
   const [panState, setPanState] = useState<{
@@ -54,6 +54,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       camera: { x: camera.x, y: camera.y, scale: camera.scale, focusedBodyId: camera.focusedBodyId },
       t: gameState.currentTick,
       bodies: gameState.bodies,
+      simSpeed,
     };
 
     // Clear and draw background
@@ -192,7 +193,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
     // Draw HUD
     drawHUD(renderContext);
-  }, [gameState, camera, uiState]);
+  }, [gameState, camera, uiState, simSpeed]);
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -406,12 +407,13 @@ function getShipCanvasPos(
  * Draw HUD overlays
  */
 function drawHUD(ctx: RenderContext) {
-  // Draw tick counter
+  // Draw tick counter with sim speed
+  const speedLabel = ctx.simSpeed && ctx.simSpeed > 0 ? `${ctx.simSpeed}×` : 'PAUSED';
   ctx.ctx.fillStyle = COLORS.fgDim;
   ctx.ctx.font = '12px monospace';
   ctx.ctx.textAlign = 'left';
   ctx.ctx.textBaseline = 'top';
-  ctx.ctx.fillText(`Tick: ${ctx.t.toFixed(1)}`, 16, 16);
+  ctx.ctx.fillText(`Tick: ${ctx.t.toFixed(1)} | ${speedLabel}`, 16, 16);
 
   // Draw zoom level
   ctx.ctx.fillText(`Scale: ${ctx.camera.scale.toFixed(2)}x`, 16, 32);

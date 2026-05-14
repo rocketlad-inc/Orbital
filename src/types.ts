@@ -92,6 +92,10 @@ export interface Ship {
   // Maneuvers
   orders: ManeuverNode[];               // planned/committed burns for this ship
 
+  // SOI grace period: after exiting a body's SOI, ignore re-entry for 10 ticks
+  soiGrace?: number;                    // tick until which to ignore re-entry
+  soiGraceBody?: string;                // body ID to ignore during grace period
+
   // Display info
   isSelected?: boolean;
   color?: string;                       // override faction color if needed

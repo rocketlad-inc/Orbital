@@ -3,7 +3,7 @@
 // Extracted from the prototype and refactored for reuse
 // ============================================================
 
-import { OrbitElements, Body, TrajectoryArc } from '../types';
+import { OrbitElements, Body, TrajectoryArc, ManeuverNode } from '../types';
 
 const TWO_PI = Math.PI * 2;
 
@@ -45,42 +45,27 @@ export function eccentricity(orbit: OrbitElements): number {
  * Returns true anomaly θ
  */
 export function solveKepler(M: number, e: number): number {
-  if (e > 1) {
-    // Hyperbolic Kepler equation: M = e·sinh(H) - H
-    let H = M;
-    for (let i = 0; i < 30; i++) {
-      const f = e * Math.sinh(H) - H - M;
-      const fp = e * Math.cosh(H) - 1;
-      if (Math.abs(fp) < 1e-15) break;
-      const dH = f / fp;
-      H -= dH;
-      if (Math.abs(dH) < 1e-10) break;
-    }
-    // tan(θ/2) = sqrt((e+1)/(e-1)) · tanh(H/2)
-    const theta = 2 * Math.atan2(
-      Math.sqrt(e + 1) * Math.sinh(H / 2),
-      Math.sqrt(e - 1) * Math.cosh(H / 2)
-    );
-    return theta;
-  }
+  // Clamp eccentricity to elliptical range — we use fake large ellipses
+  // for escape trajectories instead of hyperbolic orbits
+  const eClamp = Math.min(e, 0.9999);
 
   // Elliptical Kepler equation: M = E - e·sin(E)
   let E = M;
   for (let i = 0; i < 20; i++) {
-    const f = E - e * Math.sin(E) - M;
-    const fp = 1 - e * Math.cos(E);
+    const f = E - eClamp * Math.sin(E) - M;
+    const fp = 1 - eClamp * Math.cos(E);
     const dE = f / fp;
     E -= dE;
     if (Math.abs(dE) < 1e-10) break;
   }
 
   let theta: number;
-  if (e < 1e-9) {
+  if (eClamp < 1e-9) {
     theta = E;
   } else {
     theta = 2 * Math.atan2(
-      Math.sqrt(1 + e) * Math.sin(E / 2),
-      Math.sqrt(1 - e) * Math.cos(E / 2)
+      Math.sqrt(1 + eClamp) * Math.sin(E / 2),
+      Math.sqrt(1 - eClamp) * Math.cos(E / 2)
     );
     if (theta < 0) theta += TWO_PI;
   }
@@ -91,20 +76,8 @@ export function solveKepler(M: number, e: number): number {
  * Get true anomaly at a given time
  */
 export function trueAnomalyAt(orbit: OrbitElements, t: number): number {
-  const e = eccentricity(orbit);
-
-  if (e > 1) {
-    // Hyperbolic orbit: convert M0 (true anomaly at epoch) to hyperbolic mean anomaly
-    const theta0 = orbit.M0;
-    const tanHalfTheta = Math.tan(theta0 / 2);
-    const tanHalfH = tanHalfTheta * Math.sqrt((e - 1) / (e + 1));
-    const H0 = 2 * Math.atanh(Math.max(-0.999, Math.min(0.999, tanHalfH)));
-    const M0_hyp = e * Math.sinh(H0) - H0;
-
-    // Hyperbolic mean anomaly increases monotonically (no wrapping)
-    const M = M0_hyp + TWO_PI * (t - orbit.epoch) / orbit.period;
-    return solveKepler(M, e);
-  }
+  // Clamp eccentricity to valid elliptical range (fake large ellipses cap at ~1.0)
+  const e = Math.min(eccentricity(orbit), 0.9999);
 
   // Elliptical: convert stored M0 (true anomaly at epoch) to mean anomaly form
   let M0_mean: number;
@@ -131,7 +104,7 @@ export function trueAnomalyAt(orbit: OrbitElements, t: number): number {
  */
 export function radiusAt(orbit: OrbitElements, theta: number): number {
   const a = semiMajor(orbit);
-  const e = eccentricity(orbit);
+  const e = Math.min(eccentricity(orbit), 0.9999);
   const p = a * (1 - e * e);
   return p / (1 + e * Math.cos(theta));
 }
@@ -274,6 +247,106 @@ export function semiMajorFromVisViva(
   return 1 / energyTerm;
 }
 
+// ---------- ORBIT FROM STATE VECTOR ----------
+// Given a position (relative to focus) and a velocity direction at that point,
+// plus a target semi-major axis 'newA', compute the new orbital elements.
+// Ported from HTML prototype — more numerically stable than re-deriving a from energy.
+export function orbitFromStateVector(
+  rx: number, ry: number,
+  vx: number, vy: number,
+  newA: number,
+  parentBodyId: string,
+  burnTime: number,
+  oldPeriod: number,
+  oldA: number
+): OrbitElements | null {
+  const r = Math.sqrt(rx * rx + ry * ry);
+  const vMag = Math.sqrt(vx * vx + vy * vy);
+  if (vMag < 1e-9 || r < 1e-9) return null;
+
+  // Direction sign from 2D cross product of position × velocity
+  const cross = rx * vy - ry * vx;
+  const direction: 1 | -1 = cross >= 0 ? 1 : -1;
+
+  // Flight path angle gamma = angle between velocity and local horizontal
+  const radialX = rx / r;
+  const radialY = ry / r;
+  const tangentX = -radialY * direction;
+  const tangentY = radialX * direction;
+  const vxu = vx / vMag;
+  const vyu = vy / vMag;
+  const sinGamma = vxu * radialX + vyu * radialY;
+  const cosGamma = vxu * tangentX + vyu * tangentY;
+  const gamma = Math.atan2(sinGamma, cosGamma);
+
+  // Clamp newA to sane values
+  const minA = Math.max(1, r * 0.55);
+  const maxA = r * 500;
+  newA = Math.max(minA, Math.min(maxA, newA));
+
+  // Solve for eccentricity given semi-major axis, r, gamma.
+  const tanG = Math.tan(gamma);
+  const k = newA / r;
+  const f = (q: number) => {
+    const a1 = k * q - 1;
+    return a1 * a1 + tanG * tanG * k * k * q * q - (1 - q);
+  };
+
+  let q: number;
+  if (f(1) <= 0) {
+    q = 1;
+  } else {
+    let qHigh = 1;
+    let qLow = 1;
+    const STEPS = 200;
+    let prev = f(1);
+    for (let i = 1; i <= STEPS; i++) {
+      const qi = 1 - i / STEPS;
+      const fi = f(qi);
+      if (fi <= 0 && prev > 0) {
+        qLow = qi;
+        qHigh = 1 - (i - 1) / STEPS;
+        break;
+      }
+      prev = fi;
+    }
+    for (let i = 0; i < 80; i++) {
+      const qm = (qLow + qHigh) / 2;
+      if (f(qm) > 0) qHigh = qm;
+      else qLow = qm;
+      if (qHigh - qLow < 1e-12) break;
+    }
+    q = (qLow + qHigh) / 2;
+  }
+
+  // Eccentricity clamping: allow up to 1.0 (matches HTML)
+  const eSq = Math.max(0, Math.min(1, 1 - q));
+  const e = Math.sqrt(eSq);
+
+  // True anomaly at current point
+  const u = k * q - 1;
+  const w = tanG * k * q;
+  const theta = Math.atan2(w, u);
+  const rp = newA * (1 - e);
+  const ra = newA * (1 + e);
+  const phi = Math.atan2(ry, rx);
+  let omega = phi - direction * theta;
+  while (omega < 0) omega += TWO_PI;
+  while (omega >= TWO_PI) omega -= TWO_PI;
+
+  // Period scaling: more stable than re-deriving from Kepler's 3rd law
+  const newPeriod = oldPeriod * Math.pow(newA / oldA, 1.5);
+
+  return {
+    rp, ra, omega,
+    M0: theta,
+    epoch: burnTime,
+    direction,
+    period: newPeriod,
+    parentBodyId,
+  };
+}
+
 /**
  * Check if a position is inside a body's SOI
  */
@@ -395,6 +468,7 @@ export function orbitWorldVelocity(
 /**
  * Convert world-frame state vector to orbit
  * Returns orbit elements or null if invalid
+ * Matches HTML prototype: uses fake large ellipses for escape trajectories
  */
 export function orbitFromWorldState(
   worldX: number,
@@ -422,7 +496,7 @@ export function orbitFromWorldState(
   if (vMag < 1e-9 || r < 1e-9) return null;
 
   const cross = rx * vy - ry * vx;
-  const direction = cross >= 0 ? 1 : -1;
+  const direction: 1 | -1 = cross >= 0 ? 1 : -1;
   const radialX = rx / r;
   const radialY = ry / r;
   const tangentX = -radialY * direction;
@@ -436,49 +510,16 @@ export function orbitFromWorldState(
   const mu = muOf(parentBodyId, bodies);
   const energyTerm = 2 / r - (vMag * vMag) / mu;
 
-  // Hyperbolic or near-parabolic: use direct state-vector computation
-  if (energyTerm < 0) {
-    const newA = 1 / energyTerm; // negative for hyperbolic
-    const h = Math.abs(cross);
-    const p = (h * h) / mu; // semi-latus rectum (always positive)
-    const eSq = 1 - p / newA; // > 1 since newA < 0
-    const e = Math.sqrt(Math.max(1.0001, eSq));
-    const rp = p / (1 + e);
-    const ra = p / (1 - e); // negative for hyperbolic
-
-    // True anomaly from orbit equation: r = p / (1 + e·cos(θ))
-    const cosTheta = Math.max(-1, Math.min(1, (p / r - 1) / e));
-    let theta = Math.acos(cosTheta);
-    // Sign from radial velocity: positive vr means moving away from periapsis
-    const vr = (rx * vx + ry * vy) / r;
-    if (vr < 0) theta = -theta;
-
-    const phi = Math.atan2(ry, rx);
-    let omega = phi - direction * theta;
-    while (omega < 0) omega += TWO_PI;
-    while (omega >= TWO_PI) omega -= TWO_PI;
-
-    // "Period" for mean motion: 2π·sqrt(|a|³/μ)
-    const absA = Math.abs(newA);
-    const period = TWO_PI * Math.sqrt((absA * absA * absA) / mu);
-
-    return {
-      rp, ra, omega,
-      M0: theta,
-      epoch: t,
-      direction,
-      period,
-      parentBodyId,
-    };
-  }
-
-  // Near-parabolic: use a large bound ellipse approximation
+  // Escape or near-parabolic: use fake large ellipse (matches HTML)
   let newA: number;
-  if (energyTerm < 0.0001) {
-    newA = r * 3;
+  let isEscape = false;
+  if (energyTerm <= 0.0001) {
+    isEscape = true;
+    const soiR = (parent.soi !== Infinity) ? parent.soi : r * 50;
+    newA = soiR * 50;
   } else {
     newA = 1 / energyTerm;
-    newA = Math.max(15, newA);
+    newA = Math.max(1, newA);
   }
 
   // Solve for eccentricity (elliptical iterative solver)
@@ -516,7 +557,8 @@ export function orbitFromWorldState(
     q = (qLow + qHigh) / 2;
   }
 
-  const eSq = Math.max(0, Math.min(0.99, 1 - q));
+  // Eccentricity clamping: allow up to 1.0 (matches HTML)
+  const eSq = Math.max(0, Math.min(1, 1 - q));
   const e = Math.sqrt(eSq);
   const u = k * q - 1;
   const w = tanG * k * q;
@@ -528,9 +570,15 @@ export function orbitFromWorldState(
   while (omega < 0) omega += TWO_PI;
   while (omega >= TWO_PI) omega -= TWO_PI;
 
-  const period = TWO_PI * Math.sqrt((newA * newA * newA) / mu);
+  // Period: use scaling approach when oldPeriod/oldA available, else Kepler's 3rd law
+  let period: number;
+  if (oldPeriod != null && oldA != null && oldA > 0) {
+    period = oldPeriod * Math.pow(newA / oldA, 1.5);
+  } else {
+    period = TWO_PI * Math.sqrt((newA * newA * newA) / mu);
+  }
 
-  return {
+  const result: OrbitElements = {
     rp, ra, omega,
     M0: theta,
     epoch: t,
@@ -538,15 +586,252 @@ export function orbitFromWorldState(
     period,
     parentBodyId,
   };
+
+  if (isEscape) {
+    // Store escape energy for patched conics (matches HTML)
+    (result as any).escapeEnergy = (vMag * vMag) / mu - 2 / r;
+  }
+
+  return result;
+}
+
+// ============================================================
+// Next-apsis-time solver (ported from HTML prototype)
+// ============================================================
+
+/**
+ * Find the next periapsis or apoapsis time after fromTick.
+ * For near-circular orbits, returns fromTick + 1 as a safe default.
+ */
+export function nextApsisTime(
+  orbit: OrbitElements,
+  fromTick: number,
+  which: 'periapsis' | 'apoapsis'
+): number {
+  const e = eccentricity(orbit);
+  if (e < 1e-3) {
+    return fromTick + 1;
+  }
+
+  const thetaTarget = which === 'apoapsis' ? Math.PI : 0;
+  const samples = 60;
+  let tLow = fromTick;
+  let tHigh = fromTick + orbit.period * 1.01;
+
+  let lastDiff = trueAnomalyAt(orbit, fromTick) - thetaTarget;
+  while (lastDiff > Math.PI) lastDiff -= TWO_PI;
+  while (lastDiff < -Math.PI) lastDiff += TWO_PI;
+
+  for (let i = 1; i <= samples; i++) {
+    const ti = fromTick + (i / samples) * orbit.period * 1.01;
+    let diff = trueAnomalyAt(orbit, ti) - thetaTarget;
+    while (diff > Math.PI) diff -= TWO_PI;
+    while (diff < -Math.PI) diff += TWO_PI;
+    if (Math.sign(diff) !== Math.sign(lastDiff) && Math.abs(lastDiff) < Math.PI / 2) {
+      tLow = fromTick + ((i - 1) / samples) * orbit.period * 1.01;
+      tHigh = ti;
+      break;
+    }
+    lastDiff = diff;
+  }
+
+  for (let i = 0; i < 30; i++) {
+    const tm = (tLow + tHigh) / 2;
+    let diff = trueAnomalyAt(orbit, tm) - thetaTarget;
+    while (diff > Math.PI) diff -= TWO_PI;
+    while (diff < -Math.PI) diff += TWO_PI;
+    if (diff < 0) tLow = tm; else tHigh = tm;
+    if (tHigh - tLow < 1e-4) break;
+  }
+  return (tLow + tHigh) / 2;
+}
+
+// ============================================================
+// SOI event detection (ported from HTML prototype)
+// ============================================================
+
+interface SOIEvent {
+  type: 'exit' | 'enter';
+  t: number;
+  body: Body;
+  newOrbit: OrbitElements | null;
 }
 
 /**
- * Plan a Hohmann transfer between two planets in same parent (Sol)
+ * Find the next SOI event (exit or enter) from a given orbit and start time.
+ * Returns the event with new orbit, or null if none within budget.
+ * Ported from HTML prototype's findNextSOIEvent.
+ */
+function findNextSOIEvent(
+  orbit: OrbitElements,
+  fromTick: number,
+  maxLookahead: number,
+  bodies: Body[]
+): SOIEvent | null {
+  const parent = bodies.find(b => b.id === orbit.parentBodyId);
+  if (!parent) return null;
+
+  // For escape orbits with escapeEnergy, use numerical integration
+  if ((orbit as any).escapeEnergy && parent.id !== 'sol') {
+    const result = propagateEscape(orbit, fromTick, Math.min(maxLookahead, 100), parent, bodies);
+    if (result && result.exited) {
+      const newParentId = parent.parent || 'sol';
+      const newOrbit = orbitFromWorldState(
+        result.worldX, result.worldY, result.worldVx, result.worldVy,
+        newParentId, result.t, bodies, orbit.period, semiMajor(orbit)
+      );
+      return { type: 'exit', t: result.t, body: parent, newOrbit };
+    }
+    if (result && result.entered && result.body) {
+      const newOrbit = orbitFromWorldState(
+        result.worldX, result.worldY, result.worldVx, result.worldVy,
+        result.body.id, result.t, bodies, orbit.period, semiMajor(orbit)
+      );
+      return { type: 'enter', t: result.t, body: result.body, newOrbit };
+    }
+    return null;
+  }
+
+  const stepSize = 0.5;
+  const limit = Math.min(maxLookahead, orbit.period * 2);
+
+  for (let dt = stepSize; dt <= limit; dt += stepSize) {
+    const t = fromTick + dt;
+    const pos = orbitWorldPos(orbit, t, bodies);
+
+    // Check SOI exit
+    if (parent.id !== 'sol') {
+      const pp = bodyPosition(parent, t, bodies);
+      const dx = pos.x - pp.x;
+      const dy = pos.y - pp.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > parent.soi) {
+        const tExit = bisectSOIExit(orbit, parent, t - stepSize, t, bodies);
+        const newParentId = parent.parent || 'sol';
+        const exitPos = orbitWorldPos(orbit, tExit, bodies);
+        const exitVel = orbitWorldVelocity(orbit, tExit, bodies);
+        const newOrbit = orbitFromWorldState(
+          exitPos.x, exitPos.y, exitVel.x, exitVel.y,
+          newParentId, tExit, bodies, orbit.period, semiMajor(orbit)
+        );
+        return { type: 'exit', t: tExit, body: parent, newOrbit };
+      }
+    }
+
+    // Check SOI entry into child bodies
+    for (const body of bodies) {
+      if (body.id === 'sol' || body.id === parent.id) continue;
+      if (body.parent !== parent.id) continue;
+      const bp = bodyPosition(body, t, bodies);
+      const dx = pos.x - bp.x;
+      const dy = pos.y - bp.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < body.soi) {
+        const tEnter = bisectSOIEnter(orbit, body, t - stepSize, t, bodies);
+        const enterPos = orbitWorldPos(orbit, tEnter, bodies);
+        const enterVel = orbitWorldVelocity(orbit, tEnter, bodies);
+        const newOrbit = orbitFromWorldState(
+          enterPos.x, enterPos.y, enterVel.x, enterVel.y,
+          body.id, tEnter, bodies, orbit.period, semiMajor(orbit)
+        );
+        return { type: 'enter', t: tEnter, body, newOrbit };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Numerically propagate an escape orbit using Verlet integration.
+ * Detects SOI exit and sibling body SOI entry.
+ * Ported from HTML prototype's propagateEscape.
+ */
+function propagateEscape(
+  orbit: OrbitElements,
+  fromTick: number,
+  maxTicks: number,
+  parent: Body,
+  bodies: Body[]
+): {
+  exited?: boolean;
+  entered?: boolean;
+  t: number;
+  body?: Body;
+  worldX: number;
+  worldY: number;
+  worldVx: number;
+  worldVy: number;
+} | null {
+  const mu = muOf(orbit.parentBodyId, bodies);
+  const es = (orbit as any).escapeState;
+  if (!es) return null;
+
+  let rx = es.rx, ry = es.ry, vx = es.vx, vy = es.vy;
+  const startT = es.t;
+  const h = 0.25; // integration step (ticks)
+  const endTime = fromTick + maxTicks;
+  const steps = Math.ceil((endTime - startT) / h);
+
+  for (let i = 1; i <= steps; i++) {
+    const t = startT + i * h;
+    const r = Math.sqrt(rx * rx + ry * ry);
+    if (r < 0.1) break;
+    const acc = -mu / (r * r * r);
+    const ax = acc * rx, ay = acc * ry;
+    rx += vx * h + 0.5 * ax * h * h;
+    ry += vy * h + 0.5 * ay * h * h;
+    const r2 = Math.sqrt(rx * rx + ry * ry);
+    const acc2 = -mu / (r2 * r2 * r2);
+    vx += 0.5 * (ax + acc2 * rx) * h;
+    vy += 0.5 * (ay + acc2 * ry) * h;
+
+    if (r2 > parent.soi) {
+      const pPos = bodyPosition(parent, t, bodies);
+      const pVel = bodyWorldVelocity(parent, t, bodies);
+      return {
+        exited: true, t,
+        worldX: pPos.x + rx, worldY: pPos.y + ry,
+        worldVx: pVel.x + vx, worldVy: pVel.y + vy,
+      };
+    }
+
+    // Check entering a sibling body's SOI
+    const pPos = bodyPosition(parent, t, bodies);
+    const worldX = pPos.x + rx, worldY = pPos.y + ry;
+    for (const body of bodies) {
+      if (body.id === 'sol' || body.id === parent.id) continue;
+      if (body.parent !== parent.id) continue;
+      const bp = bodyPosition(body, t, bodies);
+      const d = Math.sqrt((worldX - bp.x) ** 2 + (worldY - bp.y) ** 2);
+      if (d < body.soi) {
+        const pVel = bodyWorldVelocity(parent, t, bodies);
+        return {
+          entered: true, t, body,
+          worldX, worldY,
+          worldVx: pVel.x + vx, worldVy: pVel.y + vy,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+// ============================================================
+// Transfer Planner — Grid-search validated (ported from HTML)
+// ============================================================
+
+/**
+ * Plan a transfer maneuver: send a ship from its current SOI to a target body.
+ * Uses analytic Hohmann as initial guess, then grid-searches (burnTime, dv) pairs
+ * to find one that actually produces an SOI encounter via trajectory simulation.
+ *
+ * Returns { burns, target, fromBody, dvTotal, hasValidPlan } or null on error.
  */
 export interface TransferBurn {
   dv: number;
   timing: number; // tick time
   label: string;
+  capturedAtBody?: string; // set on capture burn
 }
 
 export interface TransferPlan {
@@ -554,69 +839,434 @@ export interface TransferPlan {
   target: string;
   fromBody: string;
   dvTotal: number;
+  hasValidPlan: boolean;
 }
 
 export function planTransfer(
   currentOrbit: OrbitElements,
   targetBodyId: string,
   bodies: Body[],
-  currentTick: number
+  currentTick: number,
+  strategy: 'soonest' | 'cheapest' = 'soonest'
 ): TransferPlan | null {
-  const target = bodies.find(b => b.id === targetBodyId);
-  const fromBody = bodies.find(b => b.id === currentOrbit.parentBodyId);
+  const targetMaybe = bodies.find(b => b.id === targetBodyId);
+  if (!targetMaybe) return null;
+  const target: Body = targetMaybe;  // narrow for use in closures
 
-  if (!target || !fromBody || target.id === 'sol' || !target.parent || !fromBody.parent) return null;
-  if (target.parent !== 'sol' || fromBody.parent !== 'sol' || target.id === currentOrbit.parentBodyId) return null;
+  const orbit = currentOrbit;
+  const currentParentId = orbit.parentBodyId;
+  const currentParent = bodies.find(b => b.id === currentParentId);
+  if (!currentParent) return null;
 
-  const muSol = GRAVITATIONAL_PARAMS.SOL;
-  const muFrom = muOf(currentOrbit.parentBodyId, bodies);
+  if (currentParentId === targetBodyId) return null; // Already at target
+  if (currentParentId === 'sol') return null; // Must be in a body's SOI
 
-  const r1 = fromBody.orbitRadius;
-  const r2 = target.orbitRadius;
-  const aHelio = (r1 + r2) / 2;
+  // ── Classify the transfer ──
+  type TransferCase = 'planet-planet' | 'to-moon' | 'moon-moon' | 'to-parent' | 'moon-to-planet';
+  let transferCase: TransferCase;
+  let commonParentId: string;
+  let originBody: Body | null = null;
+  let targetBody: Body = target;
 
-  const vCircFrom = Math.sqrt(muSol / r1);
-  const vTransferDeparture = Math.sqrt(muSol * (2 / r1 - 1 / aHelio));
-  const vCircTarget = Math.sqrt(muSol / r2);
-  const vTransferArrival = Math.sqrt(muSol * (2 / r2 - 1 / aHelio));
-
-  const vInfDeparture = Math.abs(vTransferDeparture - vCircFrom);
-
-  const rDep = currentOrbit.rp;
-  const vEscapeAtRp = Math.sqrt(vInfDeparture * vInfDeparture + 2 * muFrom / rDep);
-  const vShipAtRp = visVivaSpeed(muFrom, rDep, semiMajor(currentOrbit));
-  const dvDeparture = vEscapeAtRp - vShipAtRp;
-
-  // Heliocentric capture: match target planet's circular velocity
-  // For outer planet: ship is too slow at arrival → prograde burn (positive dv)
-  // For inner planet: ship is too fast at arrival → retrograde burn (negative dv)
-  const dvCaptureHelio = vCircTarget - vTransferArrival;
-
-  const TTransferHalf = Math.PI * Math.sqrt((aHelio * aHelio * aHelio) / muSol);
-  const omegaTarget = TWO_PI / target.orbitPeriod;
-  const requiredLeadAngle = Math.PI - omegaTarget * TTransferHalf;
-
-  const omegaFrom = TWO_PI / fromBody.orbitPeriod;
-  const diff0 = target.angle0! - fromBody.angle0!;
-  const dDiff = omegaTarget - omegaFrom;
-
-  let tDeparture = currentTick;
-  if (Math.abs(dDiff) > 1e-9) {
-    let tBase = (requiredLeadAngle - diff0) / dDiff;
-    const periodK = TWO_PI / Math.abs(dDiff);
-    while (tBase < currentTick) tBase += periodK;
-    tDeparture = tBase;
+  if (currentParent.parent === 'sol' && target.parent === 'sol') {
+    // Planet -> Planet
+    transferCase = 'planet-planet';
+    commonParentId = 'sol';
+    originBody = currentParent;
+    targetBody = target;
+  } else if (target.parent === currentParentId) {
+    // Planet -> Own Moon
+    transferCase = 'to-moon';
+    commonParentId = currentParentId;
+    originBody = null;
+    targetBody = target;
+  } else if (currentParent.parent && currentParent.parent !== 'sol' &&
+             target.parent === currentParent.parent) {
+    // Moon -> Sibling Moon
+    transferCase = 'moon-moon';
+    commonParentId = currentParent.parent;
+    originBody = currentParent;
+    targetBody = target;
+  } else if (target.id === currentParent.parent) {
+    // Moon -> Parent body (escape to parent)
+    transferCase = 'to-parent';
+    commonParentId = target.id;
+    originBody = currentParent;
+    targetBody = target;
+  } else if (currentParent.parent && currentParent.parent !== 'sol' && target.parent === 'sol') {
+    // Moon -> Different planet (cross-system via Sol)
+    transferCase = 'moon-to-planet';
+    commonParentId = 'sol';
+    originBody = bodies.find(b => b.id === currentParent.parent) || null;
+    targetBody = target;
+  } else if (currentParent.parent === 'sol' && target.parent && target.parent !== 'sol') {
+    // Planet -> Foreign moon: must transfer to moon's parent first
+    if (currentParentId === target.parent) {
+      transferCase = 'to-moon';
+      commonParentId = currentParentId;
+      originBody = null;
+      targetBody = target;
+    } else {
+      console.log(`[TRANSFER] Cannot transfer directly; go to ${target.parent} first`);
+      return null;
+    }
+  } else {
+    console.log('[TRANSFER] Unsupported transfer route');
+    return null;
   }
+
+  // ── Special case: escape to parent body ──
+  if (transferCase === 'to-parent') {
+    const mu_esc = muOf(currentParentId, bodies);
+    const r_pe_esc = orbit.rp;
+    const a_cur = semiMajor(orbit);
+    const v_cur = Math.sqrt(mu_esc * (2 / r_pe_esc - 1 / a_cur));
+    const v_esc = Math.sqrt(2 * mu_esc / r_pe_esc);
+    const dv_esc = (v_esc - v_cur) * 1.05;
+    const tBurn = Math.max(nextApsisTime(orbit, currentTick, 'periapsis'), currentTick + 0.5);
+
+    return {
+      burns: [{
+        dv: dv_esc,
+        timing: tBurn,
+        label: `Escape ${currentParent.name} → ${target.name} orbit`,
+      }],
+      target: target.name,
+      fromBody: currentParent.name,
+      dvTotal: Math.abs(dv_esc),
+      hasValidPlan: true,
+    };
+  }
+
+  // ── Hohmann parameters in common-parent frame ──
+  const mu_cp = muOf(commonParentId, bodies);
+  let r1: number, r2: number;
+  if (transferCase === 'to-moon') {
+    r1 = semiMajor(orbit);
+    r2 = targetBody.orbitRadius;
+  } else {
+    r1 = originBody!.orbitRadius;
+    r2 = targetBody.orbitRadius;
+  }
+  if (r1 <= 0 || r2 <= 0 || Math.abs(r1 - r2) < 0.1) return null;
+
+  const a_transfer = (r1 + r2) / 2;
+  const isOutbound = r2 > r1;
+
+  const v1_circ = Math.sqrt(mu_cp / r1);
+  const v2_circ = Math.sqrt(mu_cp / r2);
+  const v1_trans = Math.sqrt(mu_cp * (2 / r1 - 1 / a_transfer));
+  const v2_trans = Math.sqrt(mu_cp * (2 / r2 - 1 / a_transfer));
+  const v_inf_origin = Math.abs(v1_trans - v1_circ);
+  const v_inf_target = Math.abs(v2_circ - v2_trans);
+
+  const transferTime = Math.PI * Math.sqrt(Math.pow(a_transfer, 3) / mu_cp);
+
+  // ── Injection dv estimate (per transfer case) ──
+  const r_pe = orbit.rp;
+  const a_current = semiMajor(orbit);
+  let dv_injection: number;
+  let dv_min_search: number;
+  let dv_max_search: number;
+
+  if (transferCase === 'planet-planet') {
+    const mu_o = muOf(currentParentId, bodies);
+    const v_cur = Math.sqrt(mu_o * (2 / r_pe - 1 / a_current));
+    const v_b = Math.sqrt(v_inf_origin ** 2 + 2 * mu_o / r_pe);
+    dv_injection = (isOutbound ? 1 : -1) * (v_b - v_cur);
+    const v_esc = Math.sqrt(2 * mu_o / r_pe);
+    dv_min_search = v_esc - v_cur;
+    dv_max_search = Math.max(Math.abs(dv_injection) * 2.0, dv_min_search * 3.0);
+
+  } else if (transferCase === 'to-moon') {
+    const v_cur = Math.sqrt(mu_cp * (2 / r_pe - 1 / a_current));
+    const v_trans = Math.sqrt(Math.max(0, mu_cp * (2 / r_pe - 1 / a_transfer)));
+    dv_injection = (isOutbound ? 1 : -1) * (v_trans - v_cur);
+    dv_min_search = Math.max(0.01, Math.abs(dv_injection) * 0.3);
+    dv_max_search = Math.max(0.1, Math.abs(dv_injection) * 3.0);
+
+  } else if (transferCase === 'moon-moon') {
+    const mu_o = muOf(currentParentId, bodies);
+    const v_cur = Math.sqrt(mu_o * (2 / r_pe - 1 / a_current));
+    const v_b = Math.sqrt(v_inf_origin ** 2 + 2 * mu_o / r_pe);
+    dv_injection = (isOutbound ? 1 : -1) * (v_b - v_cur);
+    const v_esc = Math.sqrt(2 * mu_o / r_pe);
+    dv_min_search = v_esc - v_cur;
+    dv_max_search = Math.max(Math.abs(dv_injection) * 2.5, dv_min_search * 3.0);
+
+  } else /* moon-to-planet */ {
+    const mu_moon = muOf(currentParentId, bodies);
+    const pPlanet = bodies.find(b => b.id === currentParent.parent);
+    const mu_planet = pPlanet ? muOf(pPlanet.id, bodies) : mu_cp;
+    const r_moon_orb = currentParent.orbitRadius;
+    const v_needed = Math.sqrt(v_inf_origin ** 2 + 2 * mu_planet / r_moon_orb);
+    const v_moon_c = Math.sqrt(mu_planet / r_moon_orb);
+    const v_inf_m = Math.abs(v_needed - v_moon_c);
+    const v_cur = Math.sqrt(mu_moon * (2 / r_pe - 1 / a_current));
+    const v_b = Math.sqrt(v_inf_m ** 2 + 2 * mu_moon / r_pe);
+    dv_injection = (isOutbound ? 1 : -1) * (v_b - v_cur);
+    const v_esc = Math.sqrt(2 * mu_moon / r_pe);
+    dv_min_search = v_esc - v_cur;
+    dv_max_search = Math.max(Math.abs(dv_injection) * 2.5, dv_min_search * 4.0);
+  }
+
+  // ── Capture dv estimate (local SOI capture, not heliocentric) ──
+  const mu_capture = muOf(target.id, bodies);
+  const r_target_pe = target.soi / 2;
+  const v_capture_pe = Math.sqrt(v_inf_target ** 2 + 2 * mu_capture / r_target_pe);
+  const v_target_circ = Math.sqrt(mu_capture / r_target_pe);
+  const dv_brake = v_capture_pe - v_target_circ;
+
+  console.log(`[TRANSFER] Planning ${transferCase}: ${currentParent.name} → ${target.name}`);
+  console.log(`[TRANSFER] Hohmann estimate: dv_inj=${dv_injection.toFixed(3)} dv_brake=${dv_brake.toFixed(3)} transferTime=${transferTime.toFixed(1)}`);
+  console.log(`[TRANSFER] Search range: dv=[${dv_min_search.toFixed(3)}, ${dv_max_search.toFixed(3)}]`);
+
+  // ── Grid search: try (burnTime, dv) combinations and simulate ──
+  // Lookahead for SOI scanning
+  const simLookahead = Math.min(transferTime * 2 + 100, TRAJ_MAX_TICKS);
+
+  /**
+   * Simulate a departure burn and walk the SOI chain to find target encounter.
+   * Returns the post-capture orbit with _brakeDv attached, or null if no encounter.
+   */
+  function simulateChain(injectionDv: number, burnTime: number): (OrbitElements & { _brakeDv?: number }) | null {
+    // Build a temporary ManeuverNode for the injection burn
+    const injNode: ManeuverNode = {
+      id: '__grid_inj__', shipId: '', type: 'manual_burn',
+      burnTime,
+      deltav: injectionDv,
+      prograde: injectionDv,
+      radial: 0,
+      normal: 0,
+      status: 'planned',
+    };
+
+    const cursorOrbit = applyNodeToOrbit(orbit, injNode, bodies);
+
+    // Walk through SOI transitions looking for target encounter
+    let scanOrbit = cursorOrbit;
+    let scanTick = burnTime;
+    let encounter: SOIEvent | null = null;
+
+    for (let i = 0; i < 16; i++) {
+      const ev = findNextSOIEvent(scanOrbit, scanTick, simLookahead, bodies);
+      if (!ev) break;
+      if (ev.type === 'enter' && ev.body && ev.body.id === target.id) {
+        encounter = ev;
+        break;
+      }
+      if (!ev.newOrbit) break;
+      scanOrbit = ev.newOrbit;
+      scanTick = ev.t;
+    }
+
+    if (!encounter || !encounter.newOrbit) return null;
+
+    // We found an encounter! Compute the capture burn dv.
+    const encOrbit = encounter.newOrbit;
+    const tPeri = nextApsisTime(encOrbit, encounter.t, 'periapsis');
+    const mu_t = muOf(target.id, bodies);
+    const enc_a = semiMajor(encOrbit);
+    const v_pe = Math.sqrt(mu_t * (2 / encOrbit.rp - 1 / enc_a));
+    const v_circ = Math.sqrt(mu_t / encOrbit.rp);
+    const actualBrakeDv = -(v_pe - v_circ);
+
+    // Apply brake to see resulting orbit quality
+    const brakeNode: ManeuverNode = {
+      id: '__grid_brake__', shipId: '', type: 'manual_burn',
+      burnTime: tPeri,
+      deltav: actualBrakeDv,
+      prograde: actualBrakeDv,
+      radial: 0,
+      normal: 0,
+      status: 'planned',
+    };
+    const postOrbit = applyNodeToOrbit(encOrbit, brakeNode, bodies);
+    (postOrbit as any)._brakeDv = actualBrakeDv;
+    return postOrbit;
+  }
+
+  const targetSOI = target.soi;
+  let bestPlan: { burnT: number; dv: number; brakeDv: number; postOrbit: OrbitElements } | null = null;
+  let bestPlanScore = Infinity;
+
+  // ── Phase angle timing ──
+  let omega_o: number, omega_t: number, angle0_o: number, angle0_t: number;
+
+  if (transferCase === 'planet-planet') {
+    omega_o = TWO_PI / currentParent.orbitPeriod;
+    omega_t = TWO_PI / target.orbitPeriod;
+    angle0_o = currentParent.angle0;
+    angle0_t = target.angle0;
+  } else if (transferCase === 'to-moon') {
+    omega_o = TWO_PI / orbit.period;
+    omega_t = TWO_PI / target.orbitPeriod;
+    angle0_o = orbit.omega + orbit.M0 - (TWO_PI / orbit.period) * (orbit.epoch || 0);
+    angle0_t = target.angle0;
+  } else if (transferCase === 'moon-moon') {
+    omega_o = TWO_PI / originBody!.orbitPeriod;
+    omega_t = TWO_PI / targetBody.orbitPeriod;
+    angle0_o = originBody!.angle0;
+    angle0_t = targetBody.angle0;
+  } else /* moon-to-planet */ {
+    const pPlanet2 = bodies.find(b => b.id === currentParent.parent);
+    omega_o = TWO_PI / (pPlanet2 ? pPlanet2.orbitPeriod : 1000);
+    omega_t = TWO_PI / target.orbitPeriod;
+    angle0_o = pPlanet2 ? pPlanet2.angle0 : 0;
+    angle0_t = target.angle0;
+  }
+
+  const requiredLeadAngle = Math.PI - omega_t * transferTime;
+  const diff0 = angle0_t - angle0_o;
+  const dDiff = omega_t - omega_o;
+  const fallbackPeriod = (target.orbitPeriod || 1000) * 10;
+  const synodic = Math.abs(dDiff) > 1e-9 ? TWO_PI / Math.abs(dDiff) : fallbackPeriod;
+
+  let tPhase = (requiredLeadAngle - diff0) / dDiff;
+  const periodK = TWO_PI / Math.abs(dDiff);
+  while (tPhase < currentTick) tPhase += periodK;
+
+  const dvStep = Math.max(0.005, (dv_max_search - dv_min_search) / 140);
+
+  const shipPeriod = orbit.period;
+  const windowHalf = Math.max(shipPeriod * 2, 8);
+  const dtStep = Math.max(0.2, shipPeriod / 14);
+  const maxWindows = strategy === 'soonest' ? 2 : 4;
+
+  console.log(`[TRANSFER] Grid search: tPhase=${tPhase.toFixed(1)} windowHalf=${windowHalf.toFixed(1)} dtStep=${dtStep.toFixed(2)} dvStep=${dvStep.toFixed(4)}`);
+
+  for (let w = 0; w < maxWindows && !bestPlan; w++) {
+    const tCenter = tPhase + w * periodK;
+    if (tCenter - currentTick > synodic * 2) break;
+
+    for (let dt = -windowHalf; dt <= windowHalf; dt += dtStep) {
+      const t_candidate = tCenter + dt;
+      if (t_candidate <= currentTick) continue;
+
+      for (let dvMag = dv_min_search * 0.95; dvMag <= dv_max_search; dvMag += dvStep) {
+        const dv = (transferCase === 'to-moon' && !isOutbound) ? -dvMag : dvMag;
+        const probe = simulateChain(dv, t_candidate);
+        if (!probe) continue;
+
+        if (probe.rp > 0.5 && probe.ra < targetSOI * 0.95) {
+          const actualBrake = (probe as any)._brakeDv || 0;
+          let score: number;
+          if (strategy === 'soonest') {
+            score = t_candidate + Math.abs(actualBrake) * 0.01;
+          } else {
+            score = Math.abs(dv) + Math.abs(actualBrake);
+          }
+          if (score < bestPlanScore) {
+            bestPlan = { burnT: t_candidate, dv, brakeDv: actualBrake, postOrbit: probe };
+            bestPlanScore = score;
+          }
+        }
+      }
+      if (strategy === 'soonest' && bestPlan) break;
+    }
+  }
+
+  // ── Build the result ──
+  let bestBurnT: number;
+  let dv_injection_final: number;
+  let dv_brake_final: number;
+
+  if (bestPlan) {
+    bestBurnT = bestPlan.burnT;
+    dv_injection_final = bestPlan.dv;
+    dv_brake_final = Math.abs(bestPlan.brakeDv);
+
+    // Refine the brake dv with a fresh simulation
+    const refinedBrake = refineBrakeDv(orbit, dv_injection_final, bestBurnT, dv_brake_final, target, bodies);
+    if (refinedBrake !== null) {
+      dv_brake_final = refinedBrake;
+    }
+
+    console.log(`[TRANSFER] Grid search SUCCESS: burnT=${bestBurnT.toFixed(1)} dv=${dv_injection_final.toFixed(3)} brakeDv=${dv_brake_final.toFixed(3)}`);
+  } else {
+    // Fallback to analytic Hohmann estimate (may not produce encounter)
+    bestBurnT = currentTick + 1;
+    dv_injection_final = dv_injection;
+    dv_brake_final = dv_brake;
+    console.log('[TRANSFER] Grid search FAILED — using analytic fallback');
+  }
+
+  // Estimated arrival time
+  const arrivalTime = bestBurnT + transferTime;
 
   return {
     burns: [
-      { dv: dvDeparture, timing: tDeparture, label: `TRANSFER → ${target.name}` },
-      { dv: dvCaptureHelio, timing: tDeparture + TTransferHalf, label: `CAPTURE ${target.name}` },
+      {
+        dv: dv_injection_final,
+        timing: bestBurnT,
+        label: `Transfer burn — ${isOutbound ? 'outbound' : 'inbound'} to ${target.name}`,
+      },
+      {
+        dv: -dv_brake_final,  // retrograde
+        timing: arrivalTime,
+        label: `Capture at ${target.name}`,
+        capturedAtBody: targetBodyId,
+      },
     ],
     target: target.name,
-    fromBody: fromBody.name,
-    dvTotal: dvDeparture + Math.abs(dvCaptureHelio),
+    fromBody: currentParent.name,
+    dvTotal: Math.abs(dv_injection_final) + dv_brake_final,
+    hasValidPlan: bestPlan !== null,
   };
+}
+
+/**
+ * Refine the capture brake dv by re-simulating the injection and finding
+ * the exact encounter orbit's periapsis speed.
+ * Ported from HTML prototype's refineBrakeDv.
+ */
+function refineBrakeDv(
+  shipOrbit: OrbitElements,
+  injectionDv: number,
+  injectionT: number,
+  initialBrakeDv: number,
+  target: Body,
+  bodies: Body[]
+): number | null {
+  const injNode: ManeuverNode = {
+    id: '__refine_inj__', shipId: '', type: 'manual_burn',
+    burnTime: injectionT,
+    deltav: injectionDv,
+    prograde: injectionDv,
+    radial: 0,
+    normal: 0,
+    status: 'planned',
+  };
+  const postInjOrbit = applyNodeToOrbit(shipOrbit, injNode, bodies);
+
+  let scanOrbit = postInjOrbit;
+  let scanTick = injectionT;
+  let encounter: SOIEvent | null = null;
+
+  for (let i = 0; i < 10; i++) {
+    const ev = findNextSOIEvent(scanOrbit, scanTick, TRAJ_MAX_TICKS, bodies);
+    if (!ev) break;
+    if (ev.type === 'enter' && ev.body && ev.body.id === target.id) {
+      encounter = ev;
+      break;
+    }
+    if (!ev.newOrbit) break;
+    scanOrbit = ev.newOrbit;
+    scanTick = ev.t;
+  }
+  if (!encounter || !encounter.newOrbit) return initialBrakeDv;
+
+  const approachOrbit = encounter.newOrbit;
+  const mu = muOf(target.id, bodies);
+  const a = semiMajor(approachOrbit);
+  const rPeri = approachOrbit.rp;
+  const visVivaArg = 2 / rPeri - 1 / a;
+  const vAtPeri = visVivaArg > 0 ? Math.sqrt(mu * visVivaArg) : Math.sqrt(mu / rPeri);
+  const targetRa = Math.min(target.soi * 0.3, target.radius * 10);
+  const aTarget = (rPeri + targetRa) / 2;
+  const vTarget = Math.sqrt(mu * (2 / rPeri - 1 / aTarget));
+  const exactBrake = vAtPeri - vTarget;
+  return exactBrake > 0 ? exactBrake : initialBrakeDv;
 }
 
 /**
@@ -684,91 +1334,99 @@ export function bisectSOIEnter(
 }
 
 /**
- * Apply a maneuver node to an orbit to get the post-burn orbit
- * Simplified: assumes instantaneous burn at the current position
+ * Apply a maneuver node to an orbit to get the post-burn orbit.
+ * Matches HTML prototype: works in local frame with prograde + radial components,
+ * uses orbitFromStateVector with known semi-major axis.
+ *
+ * Supports two calling conventions:
+ *   applyNodeToOrbit(orbit, node, bodies)           — new (ManeuverNode with prograde/radial)
+ *   applyNodeToOrbit(orbit, dv, burnTime, bodies)   — legacy (scalar dv, prograde-only)
  */
 export function applyNodeToOrbit(
   preOrbit: OrbitElements,
-  dv: number,
-  burnTime: number,
-  bodies: Body[]
+  nodeOrDv: ManeuverNode | number,
+  bodiesOrBurnTime: Body[] | number,
+  legacyBodies?: Body[]
 ): OrbitElements {
-  const localPos = localPositionAt(preOrbit, burnTime);
-  const r = localPos.r;
-
-  const parentBody = bodies.find(b => b.id === preOrbit.parentBodyId);
-  if (!parentBody) return preOrbit;
-
-  const parentPos = bodyPosition(parentBody, burnTime, bodies);
-  const worldPos = {
-    x: parentPos.x + localPos.x,
-    y: parentPos.y + localPos.y,
-  };
-
-  const mu = muOf(preOrbit.parentBodyId, bodies);
-  const vMag = visVivaSpeed(mu, r, semiMajor(preOrbit));
-  const vel = velocityVectorsAt(preOrbit, burnTime);
-
-  const vNewMag = Math.max(0.01, vMag + dv);
-
-  const currentWorldVel = orbitWorldVelocity(preOrbit, burnTime, bodies);
-
-  const newWorldVx = currentWorldVel.x + vel.prograde.x * dv;
-  const newWorldVy = currentWorldVel.y + vel.prograde.y * dv;
-
-  // If post-burn velocity exceeds escape speed, re-anchor to grandparent
-  // Use patched-conics: V_infinity exits along parent's orbital prograde
-  const escapeCheck = 2 / r - (vNewMag * vNewMag) / mu;
-  if (escapeCheck <= 0 && parentBody.parent) {
-    const vEscape = Math.sqrt(2 * mu / r);
-    const vInfSq = vNewMag * vNewMag - vEscape * vEscape;
-    const vInfMag = vInfSq > 0 ? Math.sqrt(vInfSq) : 0;
-
-    const parentVel = bodyWorldVelocity(parentBody, burnTime, bodies);
-    const parentSpeed = Math.sqrt(parentVel.x * parentVel.x + parentVel.y * parentVel.y);
-    const parentPos = bodyPosition(parentBody, burnTime, bodies);
-
-    let helioVx: number, helioVy: number;
-    if (parentSpeed > 1e-9) {
-      helioVx = parentVel.x + vInfMag * (parentVel.x / parentSpeed);
-      helioVy = parentVel.y + vInfMag * (parentVel.y / parentSpeed);
-    } else {
-      helioVx = newWorldVx;
-      helioVy = newWorldVy;
-    }
-
-    const newOrbit = orbitFromWorldState(
-      parentPos.x, parentPos.y,
-      helioVx, helioVy,
-      parentBody.parent,
+  // Handle legacy calling convention: (orbit, dv, burnTime, bodies)
+  let node: ManeuverNode;
+  let bodies: Body[];
+  if (typeof nodeOrDv === 'number') {
+    const dv = nodeOrDv as number;
+    const burnTime = bodiesOrBurnTime as number;
+    bodies = legacyBodies!;
+    node = {
+      id: '', shipId: '', type: 'manual_burn',
       burnTime,
-      bodies
-    );
-    return newOrbit || preOrbit;
+      deltav: dv,
+      prograde: dv,
+      radial: 0,
+      normal: 0,
+      status: 'planned',
+    };
+  } else {
+    node = nodeOrDv as ManeuverNode;
+    bodies = bodiesOrBurnTime as Body[];
+  }
+  const { prograde, radialOut } = velocityVectorsAt(preOrbit, node.burnTime);
+  const local = localPositionAt(preOrbit, node.burnTime);
+  const a = semiMajor(preOrbit);
+  const r = Math.sqrt(local.x * local.x + local.y * local.y);
+  const mu = muOf(preOrbit.parentBodyId, bodies);
+
+  // Pre-burn speed via vis-viva, clamped to non-negative (safe for fake large ellipses)
+  const visVivaIn = 2 / r - 1 / a;
+  const speed = visVivaIn > 0 ? Math.sqrt(mu * visVivaIn) : 0;
+
+  // Pre-burn velocity in local frame (unit prograde * speed)
+  const oldVx = prograde.x * speed;
+  const oldVy = prograde.y * speed;
+
+  // Add delta-v components along prograde and radial-out directions
+  const dvx = prograde.x * node.prograde + radialOut.x * node.radial;
+  const dvy = prograde.y * node.prograde + radialOut.y * node.radial;
+  const newVx = oldVx + dvx;
+  const newVy = oldVy + dvy;
+  const newSpeed = Math.sqrt(newVx * newVx + newVy * newVy);
+
+  console.log(`[APPLY_NODE] r=${r.toFixed(1)} speed=${speed.toFixed(3)} prograde=${node.prograde.toFixed(3)} radial=${node.radial.toFixed(3)} newSpeed=${newSpeed.toFixed(3)}`);
+
+  // New semi-major axis from vis-viva:
+  //   v_new² = μ · (2/r - 1/a_new)   =>   a_new = 1 / (2/r - v_new²/μ)
+  const energyTerm = 2 / r - (newSpeed * newSpeed) / mu;
+  let newA: number;
+  if (energyTerm <= 0) {
+    // Escape trajectory — model as a very wide ellipse (matches HTML)
+    const parentBody = bodies.find(b => b.id === preOrbit.parentBodyId);
+    const soiR = (parentBody && parentBody.soi !== Infinity) ? parentBody.soi : r * 50;
+    newA = soiR * 50;
+  } else {
+    newA = 1 / energyTerm;
   }
 
-  const newOrbit = orbitFromWorldState(
-    worldPos.x,
-    worldPos.y,
-    newWorldVx,
-    newWorldVy,
-    preOrbit.parentBodyId,
-    burnTime,
-    bodies,
-    preOrbit.period,
-    semiMajorFromVisViva(mu, r, vNewMag)
+  const newOrbit = orbitFromStateVector(
+    local.x, local.y, newVx, newVy,
+    newA, preOrbit.parentBodyId, node.burnTime, preOrbit.period, a
   );
+  if (!newOrbit) return preOrbit;
 
-  return newOrbit || preOrbit;
+  if (energyTerm <= 0) {
+    (newOrbit as any).escapeEnergy = (newSpeed * newSpeed) / mu - 2 / r;
+    (newOrbit as any).escapeState = { rx: local.x, ry: local.y, vx: newVx, vy: newVy, t: node.burnTime };
+  }
+
+  console.log(`[APPLY_NODE] result: rp=${newOrbit.rp.toFixed(1)} ra=${newOrbit.ra.toFixed(1)} e=${eccentricity(newOrbit).toFixed(4)} period=${newOrbit.period.toFixed(1)}`);
+  return newOrbit;
 }
 
 /**
  * Compute trajectory: projects a ship's path through space following current orbit and nodes
  * Returns sequence of arcs, each describing motion within a single parent body's SOI
+ * Accepts nodes with burnTime/prograde/radial (ManeuverNode) or simple { t, dv } objects
  */
 export function computeTrajectory(
   baseOrbit: OrbitElements,
-  nodes: Array<{ t: number; dv: number }>,
+  nodes: Array<{ t: number; dv: number; prograde?: number; radial?: number; burnTime?: number }>,
   tStart: number,
   bodies: Body[]
 ): TrajectoryArc[] {
@@ -936,7 +1594,17 @@ export function computeTrajectory(
         endReason: 'node',
       });
       prevParentId = currentOrbit.parentBodyId;
-      currentOrbit = applyNodeToOrbit(currentOrbit, nextNode.dv, nextNode.t, bodies);
+      // Build a ManeuverNode-like object for the new applyNodeToOrbit signature
+      const nodeForApply: ManeuverNode = {
+        id: '', shipId: '', type: 'manual_burn',
+        burnTime: nextNode.burnTime ?? nextNode.t,
+        deltav: nextNode.dv,
+        prograde: nextNode.prograde ?? nextNode.dv,
+        radial: nextNode.radial ?? 0,
+        normal: 0,
+        status: 'planned',
+      };
+      currentOrbit = applyNodeToOrbit(currentOrbit, nodeForApply, bodies);
       tCursor = nextNode.t;
       nodeIdx++;
     } else {
