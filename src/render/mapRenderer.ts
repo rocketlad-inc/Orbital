@@ -9,7 +9,7 @@ import { COLORS } from './colors';
 export interface RenderContext {
   ctx: CanvasRenderingContext2D;
   canvas: HTMLCanvasElement;
-  camera: { x: number; y: number; scale: number };
+  camera: { x: number; y: number; scale: number; focusedBodyId?: string };
   t: number;
   bodies: Body[];
 }

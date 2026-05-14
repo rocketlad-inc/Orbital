@@ -46,7 +46,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     const renderContext: RenderContext = {
       ctx,
       canvas: canvasRef.current,
-      camera: { x: camera.x, y: camera.y, scale: camera.scale },
+      camera: { x: camera.x, y: camera.y, scale: camera.scale, focusedBodyId: camera.focusedBodyId },
       t: gameState.currentTick,
       bodies: gameState.bodies,
     };
@@ -361,7 +361,7 @@ function drawHUD(ctx: RenderContext) {
   if (ctx.camera.focusedBodyId) {
     const focusedBody = ctx.bodies.find(b => b.id === ctx.camera.focusedBodyId);
     if (focusedBody) {
-      ctx.ctx.fillStyle = COLORS.accent;
+      ctx.ctx.fillStyle = COLORS.info;
       ctx.ctx.font = 'bold 12px monospace';
       ctx.ctx.textAlign = 'center';
       ctx.ctx.fillText(`FOCUSED: ${focusedBody.name.toUpperCase()}`, ctx.canvas.width / 2, 32);
