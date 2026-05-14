@@ -3,7 +3,7 @@
 // ============================================================
 
 import { Body, Ship, OrbitElements, TrajectoryArc } from '../types';
-import { bodyPosition, localPositionAt, semiMajor, eccentricity } from '../physics/orbitalMechanics';
+import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt } from '../physics/orbitalMechanics';
 import { COLORS, withOpacity } from './colors';
 
 export interface RenderContext {
@@ -151,19 +151,46 @@ export function drawBody(
 
   const radius = Math.max(3, body.radius * ctx.camera.scale);
 
+  // Star glow effect (radial gradient around stars)
+  if (body.type === 'star') {
+    const glowRadius = radius * 4;
+    const grd = ctx.ctx.createRadialGradient(
+      canvasPos.x, canvasPos.y, 0,
+      canvasPos.x, canvasPos.y, glowRadius
+    );
+    grd.addColorStop(0, 'rgba(255, 209, 128, 0.4)');
+    grd.addColorStop(0.5, 'rgba(255, 154, 60, 0.1)');
+    grd.addColorStop(1, 'rgba(255, 154, 60, 0)');
+    ctx.ctx.fillStyle = grd;
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(canvasPos.x, canvasPos.y, glowRadius, 0, Math.PI * 2);
+    ctx.ctx.fill();
+  }
+
   // Draw body circle
   ctx.ctx.fillStyle = body.color || COLORS.planetDefault;
   ctx.ctx.beginPath();
   ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
   ctx.ctx.fill();
 
+  // Gas giant rings (ellipse around gas giants)
+  if (body.type === 'gas_giant') {
+    ctx.ctx.strokeStyle = withOpacity(body.color || COLORS.gasGiant, 0.5);
+    ctx.ctx.lineWidth = 1.5;
+    ctx.ctx.beginPath();
+    ctx.ctx.ellipse(canvasPos.x, canvasPos.y, radius * 1.8, radius * 0.4, 0, 0, Math.PI * 2);
+    ctx.ctx.stroke();
+  }
+
   // Draw selection/hover ring
   if (isSelected) {
-    ctx.ctx.strokeStyle = COLORS.info;
-    ctx.ctx.lineWidth = 2;
+    ctx.ctx.strokeStyle = COLORS.warning;
+    ctx.ctx.lineWidth = 1;
+    ctx.ctx.setLineDash([4, 4]);
     ctx.ctx.beginPath();
-    ctx.ctx.arc(canvasPos.x, canvasPos.y, radius + 4, 0, Math.PI * 2);
+    ctx.ctx.arc(canvasPos.x, canvasPos.y, radius + 6, 0, Math.PI * 2);
     ctx.ctx.stroke();
+    ctx.ctx.setLineDash([]);
   } else if (isHovered) {
     ctx.ctx.strokeStyle = COLORS.info;
     ctx.ctx.lineWidth = 1;
@@ -172,13 +199,14 @@ export function drawBody(
     ctx.ctx.stroke();
   }
 
-  // Draw label at larger zoom
-  if (ctx.camera.scale > 0.5) {
-    ctx.ctx.fillStyle = COLORS.fg;
-    ctx.ctx.font = '11px monospace';
+  // Draw label: always for Sol and direct children of Sol, otherwise at scale > 0.4
+  const alwaysShowLabel = body.type === 'star' || body.parent === 'sol';
+  if (alwaysShowLabel || ctx.camera.scale > 0.4) {
+    ctx.ctx.fillStyle = isSelected ? '#ffb84d' : '#8aa0b4';
+    ctx.ctx.font = '10px monospace';
     ctx.ctx.textAlign = 'center';
     ctx.ctx.textBaseline = 'top';
-    ctx.ctx.fillText(body.name, canvasPos.x, canvasPos.y + radius + 8);
+    ctx.ctx.fillText(body.name.toUpperCase(), canvasPos.x, canvasPos.y + radius + 14);
   }
 }
 
@@ -199,15 +227,24 @@ export function drawShip(
   const worldY = parentPos.y + localPos.y;
   const canvasPos = worldToCanvas(worldX, worldY, ctx);
 
-  // Get faction color
-  const factionColor = COLORS.playerFriendly; // TODO: get from faction
+  // Ship color: cyan for player ships (matching HTML prototype)
+  const shipColor = COLORS.neutral;
 
-  // Draw ship as small triangle
-  const shipSize = 4;
-  ctx.ctx.fillStyle = factionColor;
+  // Draw ship marker (circle)
+  const shipSize = isSelected ? 5 : 4;
+  ctx.ctx.fillStyle = shipColor;
   ctx.ctx.beginPath();
   ctx.ctx.arc(canvasPos.x, canvasPos.y, shipSize, 0, Math.PI * 2);
   ctx.ctx.fill();
+
+  // Draw velocity tick mark (line in prograde direction)
+  const vel = velocityVectorsAt(ship.orbit, ctx.t);
+  ctx.ctx.strokeStyle = shipColor;
+  ctx.ctx.lineWidth = 1.5;
+  ctx.ctx.beginPath();
+  ctx.ctx.moveTo(canvasPos.x, canvasPos.y);
+  ctx.ctx.lineTo(canvasPos.x + vel.prograde.x * 10, canvasPos.y + vel.prograde.y * 10);
+  ctx.ctx.stroke();
 
   // Draw selection indicator
   if (isSelected) {
@@ -218,14 +255,12 @@ export function drawShip(
     ctx.ctx.stroke();
   }
 
-  // Draw label at higher zoom
-  if (ctx.camera.scale > 1) {
-    ctx.ctx.fillStyle = COLORS.fg;
-    ctx.ctx.font = '9px monospace';
-    ctx.ctx.textAlign = 'center';
-    ctx.ctx.textBaseline = 'bottom';
-    ctx.ctx.fillText(ship.name, canvasPos.x, canvasPos.y - 8);
-  }
+  // Draw ship name label
+  ctx.ctx.fillStyle = isSelected ? '#ffb84d' : shipColor;
+  ctx.ctx.font = '9px monospace';
+  ctx.ctx.textAlign = 'left';
+  ctx.ctx.textBaseline = 'middle';
+  ctx.ctx.fillText(ship.name.split(' ')[0], canvasPos.x + 8, canvasPos.y - 6);
 }
 
 /**
@@ -362,15 +397,16 @@ export function drawManeuverNode(
   const worldY = parentPos.y + localPos.y;
   const canvasPos = worldToCanvas(worldX, worldY, ctx);
 
-  // Draw cross marker for maneuver node
+  // Draw diamond marker (rotated square) for maneuver node
+  ctx.ctx.save();
+  ctx.ctx.translate(canvasPos.x, canvasPos.y);
+  ctx.ctx.rotate(Math.PI / 4);
+  ctx.ctx.fillStyle = color;
+  ctx.ctx.fillRect(-size / 2, -size / 2, size, size);
   ctx.ctx.strokeStyle = color;
-  ctx.ctx.lineWidth = 2;
-  ctx.ctx.beginPath();
-  ctx.ctx.moveTo(canvasPos.x - size, canvasPos.y);
-  ctx.ctx.lineTo(canvasPos.x + size, canvasPos.y);
-  ctx.ctx.moveTo(canvasPos.x, canvasPos.y - size);
-  ctx.ctx.lineTo(canvasPos.x, canvasPos.y + size);
-  ctx.ctx.stroke();
+  ctx.ctx.lineWidth = 1.5;
+  ctx.ctx.strokeRect(-size / 2, -size / 2, size, size);
+  ctx.ctx.restore();
 }
 
 /**
@@ -460,6 +496,56 @@ export function drawManeuverNodeLabel(
 }
 
 /**
+ * Draw periapsis and apoapsis markers on a ship's current orbit
+ */
+export function drawApsisMarkers(
+  ship: Ship,
+  ctx: RenderContext
+) {
+  const parentBody = ctx.bodies.find(b => b.id === ship.orbit.parentBodyId);
+  if (!parentBody) return;
+
+  const parentPos = bodyPosition(parentBody, ctx.t, ctx.bodies);
+
+  const orbit = ship.orbit;
+  const cosOmega = Math.cos(orbit.omega);
+  const sinOmega = Math.sin(orbit.omega);
+
+  // Periapsis position: along omega direction at distance rp from parent
+  const periWorldX = parentPos.x + cosOmega * orbit.rp;
+  const periWorldY = parentPos.y + sinOmega * orbit.rp;
+  const periCanvas = worldToCanvas(periWorldX, periWorldY, ctx);
+
+  // Apoapsis position: opposite omega direction at distance ra from parent
+  const apoWorldX = parentPos.x - cosOmega * orbit.ra;
+  const apoWorldY = parentPos.y - sinOmega * orbit.ra;
+  const apoCanvas = worldToCanvas(apoWorldX, apoWorldY, ctx);
+
+  const orbitColor = COLORS.orbitCurrent;
+
+  // Draw periapsis dot and label
+  ctx.ctx.fillStyle = orbitColor;
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(periCanvas.x, periCanvas.y, 2.5, 0, Math.PI * 2);
+  ctx.ctx.fill();
+  ctx.ctx.font = '8px monospace';
+  ctx.ctx.textAlign = 'center';
+  ctx.ctx.textBaseline = 'bottom';
+  ctx.ctx.fillText(`Pe ${orbit.rp.toFixed(0)}`, periCanvas.x, periCanvas.y - 6);
+
+  // Draw apoapsis dot and label
+  ctx.ctx.fillStyle = orbitColor;
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(apoCanvas.x, apoCanvas.y, 2.5, 0, Math.PI * 2);
+  ctx.ctx.fill();
+  ctx.ctx.font = '8px monospace';
+  ctx.ctx.textAlign = 'center';
+  ctx.ctx.textBaseline = 'bottom';
+  ctx.ctx.fillText(`Ap ${orbit.ra.toFixed(0)}`, apoCanvas.x, apoCanvas.y - 6);
+
+}
+
+/**
  * Draw SOI boundary circle around a body
  */
 export function drawSOIBoundary(
@@ -475,9 +561,9 @@ export function drawSOIBoundary(
 
   if (soiRadius < 5) return;
 
-  ctx.ctx.strokeStyle = withOpacity(color, 0.25);
+  ctx.ctx.strokeStyle = withOpacity(color, 0.15);
   ctx.ctx.lineWidth = 1;
-  ctx.ctx.setLineDash([4, 6]);
+  ctx.ctx.setLineDash([3, 6]);
   ctx.ctx.beginPath();
   ctx.ctx.arc(canvasPos.x, canvasPos.y, soiRadius, 0, Math.PI * 2);
   ctx.ctx.stroke();
