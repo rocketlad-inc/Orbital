@@ -17,6 +17,7 @@ import {
   drawSOIBoundary,
   drawGhostPlanet,
   drawArrivalOrbit,
+  drawApsisMarkers,
   arcColor,
   RenderContext,
 } from '../render/mapRenderer';
@@ -68,15 +69,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
     }
 
-    // Draw SOI boundaries for selected/focused/hovered bodies
+    // Draw SOI boundaries for ALL non-star bodies (matching HTML prototype)
     for (const body of gameState.bodies) {
-      if (body.id === 'sol') continue;
-      const isFocused = camera.focusedBodyId === body.id;
-      const isSelected = uiState.selectedBodyId === body.id;
-      const isHovered = uiState.hoveredBodyId === body.id;
-      if (isFocused || isSelected || isHovered) {
-        drawSOIBoundary(body, renderContext);
-      }
+      if (body.type === 'star') continue;
+      drawSOIBoundary(body, renderContext);
     }
 
     // Draw bodies
@@ -100,6 +96,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
       // Draw the ship marker
       drawShip(ship, renderContext, isSelected);
+
+      // Draw apsis markers on selected ship's current orbit
+      if (isSelected) {
+        drawApsisMarkers(ship, renderContext);
+      }
 
       // Draw maneuver trajectories for selected ship
       if (isSelected && ship.orders.length > 0) {
@@ -260,11 +261,28 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   const handleWheel = useCallback(
     (e: React.WheelEvent<HTMLCanvasElement>) => {
       e.preventDefault();
-      const direction = e.deltaY > 0 ? -1 : 1;
-      const newScale = Math.max(0.1, Math.min(10, camera.scale * (1 + direction * 0.1)));
-      updateCamera({ scale: newScale });
+      if (!canvasRef.current) return;
+
+      const canvas = canvasRef.current;
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      // World point under cursor before zoom
+      const worldBeforeX = camera.x + (mouseX - canvas.width / 2) / camera.scale;
+      const worldBeforeY = camera.y + (mouseY - canvas.height / 2) / camera.scale;
+
+      // Zoom factor: wheel up = zoom in (matching HTML prototype)
+      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      const newScale = Math.max(0.005, Math.min(50, camera.scale * factor));
+
+      // Adjust camera so that the world point stays under the cursor
+      const newCamX = worldBeforeX - (mouseX - canvas.width / 2) / newScale;
+      const newCamY = worldBeforeY - (mouseY - canvas.height / 2) / newScale;
+
+      updateCamera({ x: newCamX, y: newCamY, scale: newScale });
     },
-    [camera.scale, updateCamera]
+    [camera.x, camera.y, camera.scale, updateCamera]
   );
 
   const handleClick = useCallback(
