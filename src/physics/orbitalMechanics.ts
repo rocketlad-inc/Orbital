@@ -459,6 +459,30 @@ export function orbitWorldVelocity(
   t: number,
   bodies: Body[]
 ): { x: number; y: number } {
+  const es = (orbit as any).escapeState;
+  if (es) {
+    const mu = muOf(orbit.parentBodyId, bodies);
+    let rx = es.rx, ry = es.ry, vx = es.vx, vy = es.vy;
+    const h = 0.25;
+    const steps = Math.max(0, Math.ceil((t - es.t) / h));
+    for (let i = 0; i < steps; i++) {
+      const r = Math.sqrt(rx * rx + ry * ry);
+      if (r < 0.1) break;
+      const acc = -mu / (r * r * r);
+      const ax = acc * rx, ay = acc * ry;
+      rx += vx * h + 0.5 * ax * h * h;
+      ry += vy * h + 0.5 * ay * h * h;
+      const r2 = Math.sqrt(rx * rx + ry * ry);
+      const acc2 = -mu / (r2 * r2 * r2);
+      vx += 0.5 * (ax + acc2 * rx) * h;
+      vy += 0.5 * (ay + acc2 * ry) * h;
+    }
+    const parent = bodies.find(b => b.id === orbit.parentBodyId);
+    if (parent) {
+      const pVel = bodyWorldVelocity(parent, t, bodies);
+      return { x: pVel.x + vx, y: pVel.y + vy };
+    }
+  }
   const dt = 0.01;
   const p1 = orbitWorldPos(orbit, t, bodies);
   const p2 = orbitWorldPos(orbit, t + dt, bodies);
@@ -847,7 +871,7 @@ export function planTransfer(
   targetBodyId: string,
   bodies: Body[],
   currentTick: number,
-  strategy: 'soonest' | 'cheapest' = 'soonest'
+  strategy: 'quickest' | 'soonest' | 'cheapest' = 'soonest'
 ): TransferPlan | null {
   const targetMaybe = bodies.find(b => b.id === targetBodyId);
   if (!targetMaybe) return null;
@@ -1060,6 +1084,30 @@ export function planTransfer(
       scanTick = ev.t;
     }
 
+    // If no encounter found via standard SOI check, do a near-miss sweep
+    // using a generous 1.3x SOI radius for the target
+    if (!encounter && scanOrbit.parentBodyId === (target.parent || 'sol')) {
+      const sweepStep = 0.5;
+      const sweepLimit = Math.min(simLookahead, scanOrbit.period * 2);
+      let closestDist = Infinity;
+      let closestT = 0;
+      for (let dt = sweepStep; dt <= sweepLimit; dt += sweepStep) {
+        const t = scanTick + dt;
+        const pos = orbitWorldPos(scanOrbit, t, bodies);
+        const tp = bodyPosition(target, t, bodies);
+        const dist = Math.hypot(pos.x - tp.x, pos.y - tp.y);
+        if (dist < closestDist) { closestDist = dist; closestT = t; }
+        if (dist < target.soi * 1.3) {
+          const vel = orbitWorldVelocity(scanOrbit, t, bodies);
+          const newOrbit = orbitFromWorldState(pos.x, pos.y, vel.x, vel.y, target.id, t, bodies);
+          if (newOrbit) {
+            encounter = { type: 'enter', t, body: target, newOrbit };
+          }
+          break;
+        }
+      }
+    }
+
     if (!encounter || !encounter.newOrbit) return null;
 
     // We found an encounter! Compute the capture burn dv.
@@ -1126,24 +1174,47 @@ export function planTransfer(
   const periodK = TWO_PI / Math.abs(dDiff);
   while (tPhase < currentTick) tPhase += periodK;
 
-  const dvStep = Math.max(0.005, (dv_max_search - dv_min_search) / 140);
-
   const shipPeriod = orbit.period;
-  const windowHalf = Math.max(shipPeriod * 2, 8);
-  const dtStep = Math.max(0.2, shipPeriod / 14);
-  const maxWindows = strategy === 'soonest' ? 2 : 4;
 
-  console.log(`[TRANSFER] Grid search: tPhase=${tPhase.toFixed(1)} windowHalf=${windowHalf.toFixed(1)} dtStep=${dtStep.toFixed(2)} dvStep=${dvStep.toFixed(4)}`);
+  // Build search windows: list of { tCenter, windowHalf, dvMin, dvMax }
+  type SearchWindow = { tCenter: number; windowHalf: number; dvMin: number; dvMax: number };
+  const windows: SearchWindow[] = [];
 
-  for (let w = 0; w < maxWindows && !bestPlan; w++) {
-    const tCenter = tPhase + w * periodK;
-    if (tCenter - currentTick > synodic * 2) break;
+  if (strategy === 'quickest') {
+    // Quick transfer: search near "now" with wider dv range
+    const quickWindowHalf = Math.max(shipPeriod * 3, 12);
+    const quickDvMax = Math.max(dv_max_search * 3, dv_min_search * 6);
+    windows.push({
+      tCenter: currentTick + quickWindowHalf,
+      windowHalf: quickWindowHalf,
+      dvMin: dv_min_search * 0.9,
+      dvMax: quickDvMax,
+    });
+  } else {
+    // Efficient / soonest: search around optimal Hohmann windows
+    const maxWindows = strategy === 'soonest' ? 2 : 4;
+    for (let w = 0; w < maxWindows; w++) {
+      const tCenter = tPhase + w * periodK;
+      if (tCenter - currentTick > synodic * 2) break;
+      windows.push({
+        tCenter,
+        windowHalf: Math.max(shipPeriod * 2, 8),
+        dvMin: dv_min_search * 0.95,
+        dvMax: dv_max_search,
+      });
+    }
+  }
 
-    for (let dt = -windowHalf; dt <= windowHalf; dt += dtStep) {
-      const t_candidate = tCenter + dt;
+  for (const win of windows) {
+    const dvRange = win.dvMax - win.dvMin;
+    const dvStep = Math.max(0.005, dvRange / 140);
+    const dtStep = Math.max(0.2, shipPeriod / 14);
+
+    for (let dt = -win.windowHalf; dt <= win.windowHalf; dt += dtStep) {
+      const t_candidate = win.tCenter + dt;
       if (t_candidate <= currentTick) continue;
 
-      for (let dvMag = dv_min_search * 0.95; dvMag <= dv_max_search; dvMag += dvStep) {
+      for (let dvMag = win.dvMin; dvMag <= win.dvMax; dvMag += dvStep) {
         const dv = (transferCase === 'to-moon' && !isOutbound) ? -dvMag : dvMag;
         const probe = simulateChain(dv, t_candidate);
         if (!probe) continue;
@@ -1151,7 +1222,9 @@ export function planTransfer(
         if (probe.rp > 0.5 && probe.ra < targetSOI * 0.95) {
           const actualBrake = (probe as any)._brakeDv || 0;
           let score: number;
-          if (strategy === 'soonest') {
+          if (strategy === 'quickest') {
+            score = t_candidate + Math.abs(dv) * 0.1;
+          } else if (strategy === 'soonest') {
             score = t_candidate + Math.abs(actualBrake) * 0.01;
           } else {
             score = Math.abs(dv) + Math.abs(actualBrake);
@@ -1162,8 +1235,9 @@ export function planTransfer(
           }
         }
       }
-      if (strategy === 'soonest' && bestPlan) break;
+      if ((strategy === 'quickest' || strategy === 'soonest') && bestPlan) break;
     }
+    if (bestPlan) break;
   }
 
   // ── Build the result ──

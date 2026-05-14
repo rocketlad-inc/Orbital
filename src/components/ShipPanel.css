@@ -332,6 +332,59 @@
   gap: 6px;
 }
 
+.target-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border: 1px solid #2a3d50;
+  border-radius: 2px;
+}
+
+.target-name {
+  color: #d8e4ee;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.target-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.target-btn {
+  padding: 5px 8px;
+  background: transparent;
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: 8px;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  transition: all 0.2s ease;
+}
+
+.target-btn-quick {
+  border: 1px solid #ffb84d;
+  color: #ffb84d;
+}
+
+.target-btn-quick:hover {
+  background: rgba(255, 184, 77, 0.2);
+}
+
+.target-btn-efficient {
+  border: 1px solid #4ecdc4;
+  color: #4ecdc4;
+}
+
+.target-btn-efficient:hover {
+  background: rgba(78, 205, 196, 0.2);
+}
+
 .target-button {
   padding: 10px 12px;
   background: transparent;
