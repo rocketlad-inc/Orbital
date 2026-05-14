@@ -221,7 +221,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       selectShip('');
       selectBody('');
     },
-    [gameState, camera, width, height, selectShip, selectBody]
+    [gameState, camera, selectShip, selectBody]
   );
 
   const handleMouseHover = useCallback(
