@@ -24,6 +24,13 @@ export const COLORS = {
   captureLabel: '#6ee7b7',          // green
   escapeLabel: '#ff5e5e',           // red
 
+  // Trajectory arc segments (KSP-style per-phase coloring)
+  arcTransfer: '#ffb84d',           // amber for heliocentric transfer
+  arcCapture: '#6ee7b7',            // green for entering target SOI
+  arcEscape: '#ff5e5e',             // red for leaving SOI
+  arcCoast: '#4ecdc4',              // cyan for coasting/captured orbit
+  soiBoundary: '#4ecdc4',           // cyan for SOI circle
+
   // Velocity vectors
   prograde: '#6ee7b7',              // green (raises apoapsis)
   retrograde: '#fda4af',            // pink (lowers apoapsis)

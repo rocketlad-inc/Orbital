@@ -4,7 +4,7 @@
 
 import { Body, Ship, OrbitElements, TrajectoryArc } from '../types';
 import { bodyPosition, localPositionAt, semiMajor, eccentricity } from '../physics/orbitalMechanics';
-import { COLORS } from './colors';
+import { COLORS, withOpacity } from './colors';
 
 export interface RenderContext {
   ctx: CanvasRenderingContext2D;
@@ -46,44 +46,6 @@ export function canvasToWorld(
 export function clearCanvas(ctx: RenderContext) {
   ctx.ctx.fillStyle = COLORS.bg;
   ctx.ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-}
-
-/**
- * Draw a subtle grid pattern
- */
-function drawGrid(ctx: RenderContext) {
-  const gridSize = 50;
-  const gridColor = COLORS.bgGrid;
-
-  ctx.ctx.strokeStyle = gridColor;
-  ctx.ctx.lineWidth = 0.5;
-
-  // Get world coordinates of canvas corners
-  const topLeft = canvasToWorld(0, 0, ctx);
-  const bottomRight = canvasToWorld(ctx.canvas.width, ctx.canvas.height, ctx);
-
-  const minWorldX = Math.floor(topLeft.x / gridSize) * gridSize;
-  const maxWorldX = Math.ceil(bottomRight.x / gridSize) * gridSize;
-  const minWorldY = Math.floor(topLeft.y / gridSize) * gridSize;
-  const maxWorldY = Math.ceil(bottomRight.y / gridSize) * gridSize;
-
-  // Draw vertical lines
-  for (let x = minWorldX; x <= maxWorldX; x += gridSize) {
-    const canvasPos = worldToCanvas(x, 0, ctx);
-    ctx.ctx.beginPath();
-    ctx.ctx.moveTo(canvasPos.x, 0);
-    ctx.ctx.lineTo(canvasPos.x, ctx.canvas.height);
-    ctx.ctx.stroke();
-  }
-
-  // Draw horizontal lines
-  for (let y = minWorldY; y <= maxWorldY; y += gridSize) {
-    const canvasPos = worldToCanvas(0, y, ctx);
-    ctx.ctx.beginPath();
-    ctx.ctx.moveTo(0, canvasPos.y);
-    ctx.ctx.lineTo(ctx.canvas.width, canvasPos.y);
-    ctx.ctx.stroke();
-  }
 }
 
 /**
@@ -409,4 +371,115 @@ export function drawManeuverNode(
   ctx.ctx.moveTo(canvasPos.x, canvasPos.y - size);
   ctx.ctx.lineTo(canvasPos.x, canvasPos.y + size);
   ctx.ctx.stroke();
+}
+
+/**
+ * Get the color for a trajectory arc based on its context
+ */
+export function arcColor(arc: TrajectoryArc, parentIsRoot: boolean): string {
+  if (arc.endReason === 'exit') return COLORS.arcEscape;
+  if (arc.endReason === 'enter') return parentIsRoot ? COLORS.arcTransfer : COLORS.arcCapture;
+  if (parentIsRoot) return COLORS.arcTransfer;
+  return COLORS.arcCoast;
+}
+
+/**
+ * Draw encounter/escape marker at an SOI transition point
+ */
+export function drawEncounterMarker(
+  arc: TrajectoryArc,
+  bodyName: string,
+  currentTick: number,
+  ctx: RenderContext
+) {
+  const parentBody = ctx.bodies.find(b => b.id === arc.orbit.parentBodyId);
+  if (!parentBody) return;
+
+  const t = arc.tEnd;
+  const parentPos = bodyPosition(parentBody, t, ctx.bodies);
+  const localPos = localPositionAt(arc.orbit, t);
+  const worldX = parentPos.x + localPos.x;
+  const worldY = parentPos.y + localPos.y;
+  const canvasPos = worldToCanvas(worldX, worldY, ctx);
+
+  const isEscape = arc.endReason === 'exit';
+  const color = isEscape ? COLORS.escapeLabel : COLORS.captureLabel;
+  const label = isEscape ? `${bodyName} Escape` : `${bodyName} Encounter`;
+
+  const ticksUntil = t - currentTick;
+  const countdown = ticksUntil > 0 ? ` T-${ticksUntil.toFixed(0)}` : '';
+
+  // Draw small diamond marker
+  const sz = 4;
+  ctx.ctx.fillStyle = color;
+  ctx.ctx.beginPath();
+  ctx.ctx.moveTo(canvasPos.x, canvasPos.y - sz);
+  ctx.ctx.lineTo(canvasPos.x + sz, canvasPos.y);
+  ctx.ctx.lineTo(canvasPos.x, canvasPos.y + sz);
+  ctx.ctx.lineTo(canvasPos.x - sz, canvasPos.y);
+  ctx.ctx.closePath();
+  ctx.ctx.fill();
+
+  // Draw label
+  ctx.ctx.fillStyle = color;
+  ctx.ctx.font = '10px monospace';
+  ctx.ctx.textAlign = 'left';
+  ctx.ctx.textBaseline = 'middle';
+  ctx.ctx.fillText(`${label}${countdown}`, canvasPos.x + 8, canvasPos.y);
+}
+
+/**
+ * Draw delta-v and countdown info near a maneuver node
+ */
+export function drawManeuverNodeLabel(
+  t: number,
+  arc: TrajectoryArc,
+  deltav: number,
+  currentTick: number,
+  ctx: RenderContext,
+  color: string = COLORS.info
+) {
+  const parentBody = ctx.bodies.find(b => b.id === arc.orbit.parentBodyId);
+  if (!parentBody || t < arc.tStart || t > arc.tEnd) return;
+
+  const parentPos = bodyPosition(parentBody, t, ctx.bodies);
+  const localPos = localPositionAt(arc.orbit, t);
+  const worldX = parentPos.x + localPos.x;
+  const worldY = parentPos.y + localPos.y;
+  const canvasPos = worldToCanvas(worldX, worldY, ctx);
+
+  const ticksUntil = t - currentTick;
+  const countdown = ticksUntil > 0 ? `T-${ticksUntil.toFixed(0)}` : 'NOW';
+
+  ctx.ctx.fillStyle = color;
+  ctx.ctx.font = '10px monospace';
+  ctx.ctx.textAlign = 'left';
+  ctx.ctx.textBaseline = 'bottom';
+  ctx.ctx.fillText(`Δv ${Math.abs(deltav).toFixed(2)} km/s`, canvasPos.x + 10, canvasPos.y - 4);
+  ctx.ctx.fillText(countdown, canvasPos.x + 10, canvasPos.y + 10);
+}
+
+/**
+ * Draw SOI boundary circle around a body
+ */
+export function drawSOIBoundary(
+  body: Body,
+  ctx: RenderContext,
+  color: string = COLORS.soiBoundary
+) {
+  if (!body.soi || body.soi <= 0) return;
+
+  const pos = bodyPosition(body, ctx.t, ctx.bodies);
+  const canvasPos = worldToCanvas(pos.x, pos.y, ctx);
+  const soiRadius = body.soi * ctx.camera.scale;
+
+  if (soiRadius < 5) return;
+
+  ctx.ctx.strokeStyle = withOpacity(color, 0.25);
+  ctx.ctx.lineWidth = 1;
+  ctx.ctx.setLineDash([4, 6]);
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, soiRadius, 0, Math.PI * 2);
+  ctx.ctx.stroke();
+  ctx.ctx.setLineDash([]);
 }

@@ -12,10 +12,14 @@ import {
   drawOrbitEllipse,
   drawTrajectory,
   drawManeuverNode,
+  drawManeuverNodeLabel,
+  drawEncounterMarker,
+  drawSOIBoundary,
+  arcColor,
   RenderContext,
 } from '../render/mapRenderer';
 import { computeTrajectory } from '../physics/orbitalMechanics';
-import { COLORS } from '../render/colors';
+import { COLORS, withOpacity } from '../render/colors';
 import './MapCanvas.css';
 
 interface MapCanvasProps {
@@ -54,10 +58,21 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // Clear and draw background
     clearCanvas(renderContext);
 
-    // Draw orbits for all bodies
+    // Draw orbits for all bodies (using each body's color at reduced opacity)
     for (const body of gameState.bodies) {
       if (body.parent) {
-        drawOrbit(body, renderContext);
+        drawOrbit(body, renderContext, withOpacity(body.color, 0.35));
+      }
+    }
+
+    // Draw SOI boundaries for selected/focused/hovered bodies
+    for (const body of gameState.bodies) {
+      if (body.id === 'sol') continue;
+      const isFocused = camera.focusedBodyId === body.id;
+      const isSelected = uiState.selectedBodyId === body.id;
+      const isHovered = uiState.hoveredBodyId === body.id;
+      if (isFocused || isSelected || isHovered) {
+        drawSOIBoundary(body, renderContext);
       }
     }
 
@@ -97,7 +112,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           gameState.bodies
         );
 
+        // Draw each arc with KSP-style per-segment coloring
         for (const arc of trajectory) {
+          const parentIsRoot = arc.orbit.parentBodyId === 'sol';
+          const color = arcColor(arc, parentIsRoot);
           const isCommitted = ship.orders.some(
             order =>
               order.burnTime >= arc.tStart &&
@@ -107,23 +125,50 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           drawTrajectory(
             [arc],
             renderContext,
-            isCommitted ? COLORS.maneuverCommitted : COLORS.maneuverPlanned,
+            color,
             !isCommitted
           );
+
+          // Draw encounter/escape markers at SOI transitions
+          if (arc.endReason === 'enter' || arc.endReason === 'exit') {
+            let markerBodyName = '';
+            if (arc.endReason === 'enter') {
+              const nextArc = trajectory[trajectory.indexOf(arc) + 1];
+              if (nextArc) {
+                const targetBody = gameState.bodies.find(b => b.id === nextArc.orbit.parentBodyId);
+                markerBodyName = targetBody?.name || '';
+              }
+            } else {
+              const parentBody = gameState.bodies.find(b => b.id === arc.orbit.parentBodyId);
+              markerBodyName = parentBody?.name || '';
+            }
+            if (markerBodyName) {
+              drawEncounterMarker(arc, markerBodyName, gameState.currentTick, renderContext);
+            }
+          }
         }
 
-        // Draw maneuver node markers
+        // Draw maneuver node markers with info labels
         for (const order of ship.orders) {
           const arcWithNode = trajectory.find(
             arc => order.burnTime >= arc.tStart && order.burnTime <= arc.tEnd
           );
           if (arcWithNode) {
+            const nodeColor = order.status === 'committed' ? COLORS.maneuverCommitted : COLORS.maneuverPlanned;
             drawManeuverNode(
               order.burnTime,
               arcWithNode,
               renderContext,
-              order.status === 'committed' ? COLORS.maneuverCommitted : COLORS.maneuverPlanned,
+              nodeColor,
               6
+            );
+            drawManeuverNodeLabel(
+              order.burnTime,
+              arcWithNode,
+              order.deltav,
+              gameState.currentTick,
+              renderContext,
+              nodeColor
             );
           }
         }
