@@ -3,7 +3,7 @@
 // ============================================================
 
 import { Body, Ship, OrbitElements, TrajectoryArc } from '../types';
-import { bodyPosition, localPositionAt, semiMajor, eccentricity, orbitWorldPos, velocityVectorsAt } from '../physics/orbitalMechanics';
+import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt } from '../physics/orbitalMechanics';
 import { COLORS, withOpacity } from './colors';
 
 export interface RenderContext {

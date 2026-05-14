@@ -1089,14 +1089,11 @@ export function planTransfer(
     if (!encounter && scanOrbit.parentBodyId === (target.parent || 'sol')) {
       const sweepStep = 0.5;
       const sweepLimit = Math.min(simLookahead, scanOrbit.period * 2);
-      let closestDist = Infinity;
-      let closestT = 0;
       for (let dt = sweepStep; dt <= sweepLimit; dt += sweepStep) {
         const t = scanTick + dt;
         const pos = orbitWorldPos(scanOrbit, t, bodies);
         const tp = bodyPosition(target, t, bodies);
         const dist = Math.hypot(pos.x - tp.x, pos.y - tp.y);
-        if (dist < closestDist) { closestDist = dist; closestT = t; }
         if (dist < target.soi * 1.3) {
           const vel = orbitWorldVelocity(scanOrbit, t, bodies);
           const newOrbit = orbitFromWorldState(pos.x, pos.y, vel.x, vel.y, target.id, t, bodies);
@@ -1585,8 +1582,9 @@ export function computeTrajectory(
           // Flythrough check: compute orbit at SOI boundary
           // If orbit apoapsis extends past SOI, this is a grazing encounter — skip it
           // BUT: if there's a pending capture node for this body, always accept the encounter
+          const currentNodeIdx = nodeIdx;
           const hasCapture = sortedNodes.some(
-            (n, idx) => idx >= nodeIdx && n.capturedAtBody === body.id
+            (n, idx) => idx >= currentNodeIdx && n.capturedAtBody === body.id
           );
           if (!hasCapture) {
             const wpTest = orbitWorldPos(currentOrbit, tEnter, bodies);
@@ -1659,8 +1657,9 @@ export function computeTrajectory(
 
         // Check if there's a capture node for this body — consume it and
         // create a stable circular orbit instead of the raw flyby trajectory
+        const capNodeIdx = nodeIdx;
         const capIdx = sortedNodes.findIndex(
-          (n, idx) => idx >= nodeIdx && n.capturedAtBody === event!.intoBody
+          (n, idx) => idx >= capNodeIdx && n.capturedAtBody === event!.intoBody
         );
         if (capIdx >= 0) {
           const targetBody = bodies.find(b => b.id === event!.intoBody);

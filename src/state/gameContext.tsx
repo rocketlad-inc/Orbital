@@ -11,7 +11,6 @@ import {
   bodyPosition,
   orbitFromWorldState,
   applyNodeToOrbit,
-  semiMajor,
   muOf,
   localPositionAt,
 } from '../physics/orbitalMechanics';
