@@ -794,6 +794,7 @@ export function computeTrajectory(
     // Only applies when the parent changed (escape from child → grandparent)
     const skipSOIs = new Set<string>();
     if (prevParentId && prevParentId !== currentOrbit.parentBodyId) {
+      // eslint-disable-next-line no-loop-func
       const prevBody = bodies.find(b => b.id === prevParentId);
       if (prevBody && prevBody.parent === currentOrbit.parentBodyId) {
         const arcStartPos = orbitWorldPos(currentOrbit, tCursor, bodies);
