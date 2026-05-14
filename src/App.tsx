@@ -15,7 +15,7 @@ function AppContent() {
     width: typeof window !== 'undefined' ? window.innerWidth : 1280,
     height: typeof window !== 'undefined' ? window.innerHeight : 800,
   });
-  const { gameState, updateGameState } = useGameContext();
+  const { gameState, updateTick } = useGameContext();
 
   useEffect(() => {
     const handleResize = () => {
@@ -30,7 +30,7 @@ function AppContent() {
   }, []);
 
   const handleSkipTick = () => {
-    updateGameState({ currentTick: gameState.currentTick + 1 });
+    updateTick(gameState.currentTick + 1);
   };
 
   return (
