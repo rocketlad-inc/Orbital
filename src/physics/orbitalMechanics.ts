@@ -710,6 +710,7 @@ export function computeTrajectory(
     let t = tCursor;
     let event: { type: 'exit' | 'enter' | 'node'; t: number; fromBody?: string; intoBody?: string } | null = null;
 
+    // eslint-disable-next-line no-loop-func
     const currentParent = bodies.find(b => b.id === currentOrbit.parentBodyId);
     if (!currentParent) break;
 

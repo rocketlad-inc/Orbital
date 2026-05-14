@@ -4,7 +4,7 @@
 
 import React, { useState } from 'react';
 import { useGameContext } from '../state/gameContext';
-import { Ship, ManeuverNode } from '../types';
+import { ManeuverNode } from '../types';
 import { planTransfer } from '../physics/orbitalMechanics';
 import './ShipPanel.css';
 
@@ -63,10 +63,6 @@ export const ShipPanel: React.FC = () => {
     }
 
     // Create two burns for circularization
-    const currentRadius = ship.orbit.rp;
-    const targetPe = pe;
-    const targetAp = ap;
-
     // First burn: raise/lower apoapsis
     const burn1: ManeuverNode = {
       id: `node-${Date.now()}-${Math.random()}`,

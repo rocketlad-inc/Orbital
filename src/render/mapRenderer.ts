@@ -61,9 +61,6 @@ function drawGrid(ctx: RenderContext) {
   ctx.ctx.strokeStyle = gridColor;
   ctx.ctx.lineWidth = 0.5;
 
-  const canvasCenterX = ctx.canvas.width / 2;
-  const canvasCenterY = ctx.canvas.height / 2;
-
   // Get world coordinates of canvas corners
   const topLeft = canvasToWorld(0, 0, ctx);
   const bottomRight = canvasToWorld(ctx.canvas.width, ctx.canvas.height, ctx);
@@ -138,7 +135,7 @@ export function drawOrbitEllipse(
   if (!parentBody) return;
 
   const parentPos = bodyPosition(parentBody, ctx.t, ctx.bodies);
-  const canvasParentPos = worldToCanvas(parentPos.x, parentPos.y, ctx);
+  worldToCanvas(parentPos.x, parentPos.y, ctx);
 
   const a = semiMajor(orbit);
   const e = eccentricity(orbit);

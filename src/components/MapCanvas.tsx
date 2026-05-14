@@ -196,10 +196,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const canvasX = e.clientX - rect.left;
       const canvasY = e.clientY - rect.top;
 
-      // Convert to world coordinates
-      const worldX = camera.x + (canvasX - width / 2) / camera.scale;
-      const worldY = camera.y + (canvasY - height / 2) / camera.scale;
-
       // Check for ship clicks
       for (const ship of gameState.ships) {
         const shipCanvasPos = getShipCanvasPos(ship, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
