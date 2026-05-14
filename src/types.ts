@@ -46,7 +46,8 @@ export interface ManeuverNode {
 export interface Body {
   id: string;
   name: string;
-  type: 'star' | 'terrestrial' | 'gas_giant' | 'moon' | 'asteroid' | 'lagrange';
+  type: 'star' | 'terrestrial' | 'gas_giant' | 'ice_giant' | 'moon' | 'dwarf' | 'asteroid' | 'lagrange';
+  mu?: number;                          // gravitational parameter (per-body override)
 
   // Orbital parameters (if not a star)
   parent?: string;                      // parent body id (null for Sol)
