@@ -1389,8 +1389,6 @@ export function applyNodeToOrbit(
   const newVy = oldVy + dvy;
   const newSpeed = Math.sqrt(newVx * newVx + newVy * newVy);
 
-  console.log(`[APPLY_NODE] r=${r.toFixed(1)} speed=${speed.toFixed(3)} prograde=${node.prograde.toFixed(3)} radial=${node.radial.toFixed(3)} newSpeed=${newSpeed.toFixed(3)}`);
-
   // New semi-major axis from vis-viva:
   //   v_new² = μ · (2/r - 1/a_new)   =>   a_new = 1 / (2/r - v_new²/μ)
   const energyTerm = 2 / r - (newSpeed * newSpeed) / mu;
@@ -1415,7 +1413,6 @@ export function applyNodeToOrbit(
     (newOrbit as any).escapeState = { rx: local.x, ry: local.y, vx: newVx, vy: newVy, t: node.burnTime };
   }
 
-  console.log(`[APPLY_NODE] result: rp=${newOrbit.rp.toFixed(1)} ra=${newOrbit.ra.toFixed(1)} e=${eccentricity(newOrbit).toFixed(4)} period=${newOrbit.period.toFixed(1)}`);
   return newOrbit;
 }
 
@@ -1426,7 +1423,7 @@ export function applyNodeToOrbit(
  */
 export function computeTrajectory(
   baseOrbit: OrbitElements,
-  nodes: Array<{ t: number; dv: number; prograde?: number; radial?: number; burnTime?: number }>,
+  nodes: Array<{ t: number; dv: number; prograde?: number; radial?: number; burnTime?: number; capturedAtBody?: string }>,
   tStart: number,
   bodies: Body[]
 ): TrajectoryArc[] {
@@ -1464,10 +1461,11 @@ export function computeTrajectory(
       }
     }
 
-    // Arc budget: project at most TRAJ_ORBITS_AHEAD periods
-    const arcBudget = Math.min(tEnd, tCursor + currentOrbit.period * TRAJ_ORBITS_AHEAD);
     const nextNode = sortedNodes[nodeIdx];
     const nodeT = nextNode ? nextNode.t : Infinity;
+    // Arc budget: project at most TRAJ_ORBITS_AHEAD periods, but always reach the next node
+    const orbitBudget = tCursor + currentOrbit.period * TRAJ_ORBITS_AHEAD;
+    const arcBudget = Math.min(tEnd, nodeT < Infinity ? Math.max(orbitBudget, nodeT) : orbitBudget);
 
     while (t < arcBudget && t < nodeT) {
       const nextT = Math.min(t + TRAJ_STEP, arcBudget, nodeT);
@@ -1512,14 +1510,20 @@ export function computeTrajectory(
 
           // Flythrough check: compute orbit at SOI boundary
           // If orbit apoapsis extends past SOI, this is a grazing encounter — skip it
-          const wpTest = orbitWorldPos(currentOrbit, tEnter, bodies);
-          const wvTest = orbitWorldVelocity(currentOrbit, tEnter, bodies);
-          const testOrbit = orbitFromWorldState(wpTest.x, wpTest.y, wvTest.x, wvTest.y, body.id, tEnter, bodies);
-          if (testOrbit) {
-            const testE = eccentricity(testOrbit);
-            if (testE < 1 && testOrbit.ra > body.soi) {
-              skipSOIs.add(body.id);
-              continue;
+          // BUT: if there's a pending capture node for this body, always accept the encounter
+          const hasCapture = sortedNodes.some(
+            (n, idx) => idx >= nodeIdx && n.capturedAtBody === body.id
+          );
+          if (!hasCapture) {
+            const wpTest = orbitWorldPos(currentOrbit, tEnter, bodies);
+            const wvTest = orbitWorldVelocity(currentOrbit, tEnter, bodies);
+            const testOrbit = orbitFromWorldState(wpTest.x, wpTest.y, wvTest.x, wvTest.y, body.id, tEnter, bodies);
+            if (testOrbit) {
+              const testE = eccentricity(testOrbit);
+              if (testE < 1 && testOrbit.ra > body.soi) {
+                skipSOIs.add(body.id);
+                continue;
+              }
             }
           }
 
@@ -1578,10 +1582,42 @@ export function computeTrajectory(
           bodies
         );
         if (!newOrbit) break;
-        currentOrbit = newOrbit;
+
+        // Check if there's a capture node for this body — consume it and
+        // create a stable circular orbit instead of the raw flyby trajectory
+        const capIdx = sortedNodes.findIndex(
+          (n, idx) => idx >= nodeIdx && n.capturedAtBody === event!.intoBody
+        );
+        if (capIdx >= 0) {
+          const targetBody = bodies.find(b => b.id === event!.intoBody);
+          const mu_cap = muOf(event!.intoBody!, bodies);
+          const local_cap = localPositionAt(newOrbit, event!.t);
+          const r_cap = Math.sqrt(local_cap.x * local_cap.x + local_cap.y * local_cap.y);
+          const capR = Math.min(r_cap, targetBody ? targetBody.soi * 0.8 : r_cap);
+          const omega_cap = Math.atan2(local_cap.y, local_cap.x);
+          currentOrbit = {
+            rp: capR,
+            ra: capR,
+            omega: omega_cap,
+            M0: 0,
+            epoch: event!.t,
+            direction: newOrbit.direction,
+            period: TWO_PI * Math.sqrt(capR * capR * capR / mu_cap),
+            parentBodyId: event!.intoBody!,
+          };
+          // Skip all nodes up to and including the capture node
+          nodeIdx = capIdx + 1;
+        } else {
+          currentOrbit = newOrbit;
+        }
         tCursor = event!.t;
       }
     } else if (t >= nodeT && nextNode) {
+      // Capture nodes are consumed on SOI entry, not at their scheduled time
+      if (nextNode.capturedAtBody) {
+        nodeIdx++;
+        continue;
+      }
       // Hit a maneuver node - close arc and apply node
       arcs.push({
         orbit: currentOrbit,

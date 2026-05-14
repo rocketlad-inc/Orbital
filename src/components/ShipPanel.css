@@ -180,6 +180,27 @@
   background: rgba(255, 94, 94, 0.2);
 }
 
+.commit-all-btn {
+  width: 100%;
+  padding: 8px;
+  margin-top: 6px;
+  background: rgba(255, 184, 77, 0.1);
+  border: 1px solid #ffb84d;
+  color: #ffb84d;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  border-radius: 2px;
+  transition: all 0.2s ease;
+}
+
+.commit-all-btn:hover {
+  background: rgba(255, 184, 77, 0.25);
+}
+
 .maneuver-buttons {
   display: grid;
   grid-template-columns: 1fr 1fr;

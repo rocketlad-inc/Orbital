@@ -135,34 +135,38 @@ export const ShipPanel: React.FC = () => {
             {ship.orders.length === 0 ? (
               <div className="no-orders">No planned maneuvers</div>
             ) : (
-              <div className="orders-list">
-                {ship.orders.map((order) => (
-                  <div key={order.id} className={`order-item status-${order.status}`}>
-                    <div className="order-info">
-                      <div className="order-type">{order.type.toUpperCase()}</div>
-                      <div className="order-details">
-                        Δv: {order.deltav.toFixed(2)} | T+{order.burnTime.toFixed(0)}
+              <>
+                <div className="orders-list">
+                  {ship.orders.map((order) => (
+                    <div key={order.id} className={`order-item status-${order.status}`}>
+                      <div className="order-info">
+                        <div className="order-type">{order.type.toUpperCase()}</div>
+                        <div className="order-details">
+                          Δv: {order.deltav.toFixed(2)} | T+{order.burnTime.toFixed(0)}
+                        </div>
+                      </div>
+                      <div className="order-actions">
+                        <button
+                          className="delete-btn"
+                          onClick={() => deleteManeuverNode(order.id)}
+                        >
+                          ✕
+                        </button>
                       </div>
                     </div>
-                    <div className="order-actions">
-                      {order.status === 'planned' && (
-                        <button
-                          className="commit-btn"
-                          onClick={() => commitManeuverNode(order.id)}
-                        >
-                          COMMIT
-                        </button>
-                      )}
-                      <button
-                        className="delete-btn"
-                        onClick={() => deleteManeuverNode(order.id)}
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+                {ship.orders.some(o => o.status === 'planned') && (
+                  <button
+                    className="commit-all-btn"
+                    onClick={() => ship.orders.forEach(o => {
+                      if (o.status === 'planned') commitManeuverNode(o.id);
+                    })}
+                  >
+                    COMMIT ALL
+                  </button>
+                )}
+              </>
             )}
           </div>
 
