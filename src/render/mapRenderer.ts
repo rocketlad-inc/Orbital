@@ -1245,3 +1245,96 @@ export function drawSettlement(
   }
 }
 
+// ============================================================
+// Fog of war rendering
+// ============================================================
+
+export interface GhostIntel {
+  x: number;
+  y: number;
+  tick: number;
+  shipClass: string;
+  ownedBy: string;
+}
+
+/**
+ * Draw a "last-known" ghost marker for a ship that's no longer in sensor
+ * range. The marker fades as the intel ages.
+ *
+ *   currentTick - intel.tick  →  age in ticks
+ *
+ * Opacity ramps from 60% (fresh) to ~0% at GHOST_LIFETIME.
+ */
+export function drawShipGhost(
+  intel: GhostIntel,
+  currentTick: number,
+  ghostLifetime: number,
+  factions: Faction[],
+  ctx: RenderContext,
+) {
+  const age = currentTick - intel.tick;
+  if (age >= ghostLifetime) return;
+
+  const freshness = 1 - age / ghostLifetime;
+  const opacity = 0.55 * freshness;
+
+  const faction = factions.find(f => f.id === intel.ownedBy);
+  const color = faction?.color || COLORS.fgDim;
+
+  const canvasPos = worldToCanvas(intel.x, intel.y, ctx);
+  const size = 4;
+
+  // Dashed outline circle
+  ctx.ctx.strokeStyle = withOpacity(color, opacity);
+  ctx.ctx.lineWidth = 1;
+  ctx.ctx.setLineDash([3, 3]);
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, size, 0, Math.PI * 2);
+  ctx.ctx.stroke();
+  ctx.ctx.setLineDash([]);
+
+  // Inner dot
+  ctx.ctx.fillStyle = withOpacity(color, opacity * 0.5);
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, size * 0.45, 0, Math.PI * 2);
+  ctx.ctx.fill();
+
+  // T-N timestamp label (only when fresh-ish to reduce clutter)
+  if (freshness > 0.4) {
+    ctx.ctx.fillStyle = withOpacity(color, opacity * 0.9);
+    ctx.ctx.font = '8px monospace';
+    ctx.ctx.textAlign = 'center';
+    ctx.ctx.textBaseline = 'top';
+    ctx.ctx.fillText(`T-${age.toFixed(0)}`, canvasPos.x, canvasPos.y + size + 4);
+  }
+}
+
+/**
+ * Draw a faint sensor-coverage circle around an asset. Used to hint the
+ * player at where their visibility extends.
+ */
+export function drawSensorRing(
+  worldPos: { x: number; y: number },
+  range: number,
+  sourceType: 'ship' | 'city' | 'station',
+  ctx: RenderContext,
+) {
+  const canvasPos = worldToCanvas(worldPos.x, worldPos.y, ctx);
+  const radius = range * ctx.camera.scale;
+  if (radius < 6) return; // too small to bother
+
+  const color = sourceType === 'station'
+    ? COLORS.info
+    : sourceType === 'city'
+      ? COLORS.warning
+      : COLORS.success;
+
+  ctx.ctx.strokeStyle = withOpacity(color, 0.08);
+  ctx.ctx.lineWidth = 1;
+  ctx.ctx.setLineDash([2, 5]);
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
+  ctx.ctx.stroke();
+  ctx.ctx.setLineDash([]);
+}
+

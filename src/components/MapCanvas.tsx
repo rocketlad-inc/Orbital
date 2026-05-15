@@ -14,9 +14,12 @@ import {
   drawGhostPlanet,
   drawTargetHighlight,
   drawSettlement,
+  drawShipGhost,
+  drawSensorRing,
   generateStarfield,
   drawStarfield,
   StarfieldCache,
+  GhostIntel,
   worldToCanvas,
   RenderContext,
 } from '../render/mapRenderer';
@@ -25,6 +28,7 @@ import { bodyPosition } from '../physics/orbitalMechanics';
 import { COLORS, withOpacity } from '../render/colors';
 import { shipWorldPosition } from '../game/combat';
 import { computeIncomingThreats, threatenedBodyIds } from '../game/threats';
+import { computeVisibility, factionSensorRings, GHOST_LIFETIME_TICKS } from '../game/visibility';
 import './MapCanvas.css';
 
 interface MapCanvasProps {
@@ -55,6 +59,21 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
   // Starfield: generated once and regenerated when canvas size changes
   const starfieldRef = useRef<StarfieldCache | null>(null);
+
+  // Fog of war: keep a rolling lastSeen map for the viewing faction
+  const lastSeenRef = useRef<Map<string, GhostIntel>>(new Map());
+
+  // Sensor coverage ring overlay toggle (V key)
+  const [showSensorRings, setShowSensorRings] = useState(false);
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      if (e.key === 'v' || e.key === 'V') setShowSensorRings(s => !s);
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, []);
 
 
   // Escape key cancels target selection
@@ -161,10 +180,39 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
     }
 
-    // Compute threats (hostile transits targeting player-owned bodies) and
-    // build the set of body ids to flag.
-    const threats = computeIncomingThreats(gameState, 'player');
+    // === Fog of war ============================================
+    // Recompute the player's visibility set each frame, carrying the
+    // previous lastSeen map forward so ghosts age naturally.
+    const visibility = computeVisibility(
+      'player',
+      gameState.ships,
+      gameState.settlements,
+      gameState.bodies,
+      gameState.currentTick,
+      lastSeenRef.current,
+    );
+    lastSeenRef.current = visibility.lastSeen;
+    const visibleShipIds = visibility.visibleShipIds;
+
+    // Compute threats (hostile transits targeting player-owned bodies) —
+    // but only include threats from ships the player can actually see.
+    const allThreats = computeIncomingThreats(gameState, 'player');
+    const threats = allThreats.filter(t => visibleShipIds.has(t.attackerShipId));
     const threatBodies = threatenedBodyIds(threats);
+
+    // Sensor coverage rings (V to toggle)
+    if (showSensorRings) {
+      const rings = factionSensorRings(
+        'player',
+        gameState.ships,
+        gameState.settlements,
+        gameState.bodies,
+        gameState.currentTick,
+      );
+      for (const r of rings) {
+        drawSensorRing(r.pos, r.range, r.sourceType, renderContext);
+      }
+    }
 
     // Draw bodies
     for (const body of gameState.bodies) {
@@ -197,6 +245,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
     // Draw ships
     for (const ship of gameState.ships) {
+      // Fog of war: skip enemy ships the player can't currently see
+      if (ship.ownedBy !== 'player' && !visibleShipIds.has(ship.id)) continue;
+
       const isSelected = uiState.selectedShipId === ship.id;
 
       if (ship.transfer) {
@@ -260,13 +311,22 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
     }
 
-    // Draw fleet bonds — faint lines connecting members of each fleet
+    // Draw fog-of-war ghosts for enemies currently out of sensor range but
+    // recently seen. Their lastSeen position fades over GHOST_LIFETIME_TICKS.
+    for (const [shipId, intel] of visibility.lastSeen) {
+      if (visibleShipIds.has(shipId)) continue;
+      drawShipGhost(intel, gameState.currentTick, GHOST_LIFETIME_TICKS, gameState.factions, renderContext);
+    }
+
+    // Draw fleet bonds — faint lines connecting members of each fleet.
+    // Skip invisible enemy ships so fleet structure doesn't leak through fog.
     for (const fleet of gameState.fleets) {
       if (fleet.shipIds.length < 2) continue;
       const positions: Array<{ x: number; y: number }> = [];
       for (const sid of fleet.shipIds) {
         const s = gameState.ships.find(sh => sh.id === sid);
         if (!s) continue;
+        if (s.ownedBy !== 'player' && !visibleShipIds.has(s.id)) continue;
         const wp = shipWorldPosition(s, gameState.currentTick, gameState.bodies);
         if (wp) positions.push(wp);
       }
@@ -301,7 +361,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     }
 
     drawHUD(renderContext, uiState.targetSelectionMode);
-  }, [gameState, camera, uiState, simSpeed, selectedSettlementId]);
+  }, [gameState, camera, uiState, simSpeed, selectedSettlementId, showSensorRings]);
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -331,11 +391,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     setPanState(null);
   }, []);
 
-  const handleWheel = useCallback(
-    (e: React.WheelEvent<HTMLCanvasElement>) => {
+  // React attaches wheel listeners as passive by default since v17, which
+  // makes preventDefault() a no-op and floods the console. Attach a native
+  // non-passive listener instead so the page doesn't scroll while zooming.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      if (!canvasRef.current) return;
-      const canvas = canvasRef.current;
       const rect = canvas.getBoundingClientRect();
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
@@ -346,9 +409,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const newCamX = worldBeforeX - (mouseX - canvas.width / 2) / newScale;
       const newCamY = worldBeforeY - (mouseY - canvas.height / 2) / newScale;
       updateCamera({ x: newCamX, y: newCamY, scale: newScale });
-    },
-    [camera.x, camera.y, camera.scale, updateCamera]
-  );
+    };
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', onWheel);
+  }, [camera.x, camera.y, camera.scale, updateCamera]);
 
   const handleClick = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
