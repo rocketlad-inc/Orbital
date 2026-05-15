@@ -347,22 +347,68 @@ export class Room {
       ]);
     }
 
-    // 2. Transfer arrivals. A committed node with anchor_kind='absolute'
-    //    and scheduled_t <= tick: warp the ship into a circular orbit
-    //    around target_body_id, deduct fuel_cost, mark node executed.
-    const nodes = (await this.env.DB
+    // 2a. Depart. A committed node whose scheduled_t has come up: stamp
+    //     committed_at_tick (in case it was force-fired without explicit
+    //     commit) and compute the Hohmann arrival tick. The SHIP STAYS
+    //     AT THE DEPARTURE BODY until 2b fires — that keeps the canvas
+    //     animating the in-flight ship along its bezier arc instead of
+    //     teleporting on burn.
+    const SOL_MU = 6003; // matches client GRAVITATIONAL_PARAMS.SOL
+    const departures = (await this.env.DB
       .prepare(
-        `SELECT id, ship_id, target_body_id, fuel_cost, scheduled_t
-           FROM game_ship_nodes
-          WHERE game_id = ?
-            AND status = 'committed'
-            AND scheduled_t <= ?
-          ORDER BY scheduled_t ASC`,
+        `SELECT n.id, n.ship_id, n.target_body_id, n.scheduled_t,
+                s.parent_body_id AS dep_body_id,
+                dep.orbit_radius AS dep_r,
+                arr.orbit_radius AS arr_r
+           FROM game_ship_nodes n
+           JOIN game_ships s ON s.id = n.ship_id
+           JOIN game_bodies dep ON dep.id = s.parent_body_id
+           JOIN game_bodies arr ON arr.id = n.target_body_id
+          WHERE n.game_id = ?
+            AND n.status = 'committed'
+            AND n.scheduled_t <= ?
+            AND n.target_body_id IS NOT NULL
+          ORDER BY n.scheduled_t ASC`,
       )
       .bind(gameId, tick)
       .all()).results ?? [];
 
-    for (const n of nodes) {
+    for (const d of departures) {
+      // Hohmann travel time t = π√(a³/μ), a = (r1+r2)/2.
+      const r1 = d.dep_r || 0;
+      const r2 = d.arr_r || 0;
+      const a = (r1 + r2) / 2;
+      const travelTime = a > 0 && SOL_MU > 0
+        ? Math.PI * Math.sqrt((a * a * a) / SOL_MU)
+        : 5;
+      const arrivalAtTick = Math.max(tick + 1, Math.ceil(d.scheduled_t + travelTime));
+      await this.env.DB
+        .prepare(
+          `UPDATE game_ship_nodes
+              SET status = 'in_transit',
+                  arrival_at_tick = ?
+            WHERE id = ?`,
+        )
+        .bind(arrivalAtTick, d.id)
+        .run();
+    }
+
+    // 2b. Arrive. An in_transit node whose arrival_at_tick has come up:
+    //     warp the ship to a circular orbit around target_body_id, mark
+    //     the node executed.
+    const arrivals = (await this.env.DB
+      .prepare(
+        `SELECT id, ship_id, target_body_id, arrival_at_tick
+           FROM game_ship_nodes
+          WHERE game_id = ?
+            AND status = 'in_transit'
+            AND arrival_at_tick IS NOT NULL
+            AND arrival_at_tick <= ?`,
+      )
+      .bind(gameId, tick)
+      .all()).results ?? [];
+
+    for (const n of arrivals) {
       if (!n.target_body_id) continue;
       const target = await this.env.DB
         .prepare('SELECT radius FROM game_bodies WHERE id = ?')
@@ -370,7 +416,6 @@ export class Room {
         .first();
       if (!target) continue;
       const rp = (target.radius || 4) + 4;
-      // Fuel was removed from the economy — no deduction on arrival.
       await this.env.DB.batch([
         this.env.DB
           .prepare(

@@ -162,13 +162,15 @@ async function handleGetState(req, env, ctx) {
   const nodes = (await env.DB
     .prepare(
       `SELECT n.id, n.ship_id, n.sequence, n.anchor_kind, n.anchor_body_id, n.target_body_id,
-              n.scheduled_t, n.dv_prograde, n.dv_normal, n.dv_radial, n.fuel_cost,
-              n.status, n.committed_at_tick
+              n.scheduled_t, n.arrival_at_tick,
+              n.dv_prograde, n.dv_normal, n.dv_radial, n.fuel_cost,
+              n.status, n.committed_at_tick,
+              s.parent_body_id AS departure_body_id
          FROM game_ship_nodes n
          JOIN game_ships s ON s.id = n.ship_id
         WHERE n.game_id = ?
           AND s.owner_faction_id = ?
-          AND n.status IN ('planned','committed')
+          AND n.status IN ('planned','committed','in_transit')
         ORDER BY n.ship_id, n.sequence`,
     )
     .bind(gameId, me.id)

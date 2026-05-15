@@ -13,8 +13,9 @@ import { GameContextProvider } from '../state/gameContext';
 import { MultiplayerActionsProvider } from './MultiplayerActionsContext';
 import {
   Body, Ship, Faction, GameState, OrbitElements, FactionResources, FactionTechStateBase,
-  Settlement, ManeuverNode,
+  Settlement, ManeuverNode, TransferArc,
 } from '../types';
+import { planBezierTransfer } from '../physics/bezierTransfer';
 
 // Shape of /api/games/:gid/state.
 interface ServerState {
@@ -109,12 +110,14 @@ interface ServerState {
     anchor_body_id: string | null;
     target_body_id: string | null;
     scheduled_t: number;
+    arrival_at_tick: number | null;
     dv_prograde: number;
     dv_normal: number;
     dv_radial: number;
     fuel_cost: number;
-    status: 'planned' | 'committed' | 'executed';
+    status: 'planned' | 'committed' | 'in_transit' | 'executed';
     committed_at_tick: number | null;
+    departure_body_id: string | null;
   }>;
 }
 
@@ -232,6 +235,12 @@ function nodeToClient(
   const dv = Math.sqrt(n.dv_prograde * n.dv_prograde
                      + n.dv_normal   * n.dv_normal
                      + n.dv_radial   * n.dv_radial);
+  // The client's ManeuverNode.status enum doesn't have 'in_transit' —
+  // that's a server-internal state. From the client's POV the burn has
+  // happened (the ship has a transfer arc); we keep the node marked
+  // 'committed' so the existing UI continues to render it.
+  const clientStatus: ManeuverNode['status'] =
+    n.status === 'in_transit' ? 'committed' : n.status;
   return {
     id: n.id,
     shipId: n.ship_id,
@@ -241,7 +250,7 @@ function nodeToClient(
     prograde: n.dv_prograde,
     radial: n.dv_radial,
     normal: n.dv_normal,
-    status: n.status,
+    status: clientStatus,
     label: n.target_body_id ? `→ ${n.target_body_id}` : undefined,
   };
 }
@@ -295,6 +304,37 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     for (const s of ships) {
       const list = byShip.get(s.id);
       if (list) s.orders = list;
+    }
+  }
+
+  // Reconstruct Bezier transfer arcs from in_transit / committed nodes so
+  // the canvas can animate ships along their curves between burn and
+  // arrival, and draw dashed preview arcs for committed-but-not-yet-fired
+  // departures. Without this, server-driven ships sit at the departure
+  // body for the whole Hohmann travel time and then teleport.
+  const shipById = new Map(ships.map(s => [s.id, s]));
+  for (const srvNode of (srv.nodes ?? [])) {
+    if (!srvNode.target_body_id) continue;
+    if (srvNode.status !== 'committed' && srvNode.status !== 'in_transit') continue;
+    const ship = shipById.get(srvNode.ship_id);
+    if (!ship) continue;
+    // planBezierTransfer adds a +5-tick launch buffer to currentTick;
+    // pass scheduled_t - 5 so the resulting arc.departureTime matches.
+    const pseudoNow = srvNode.scheduled_t - 5;
+    const arc: TransferArc | null = planBezierTransfer(
+      ship.orbit, srvNode.target_body_id, pseudoNow, bodies, 1.0,
+    );
+    if (!arc) continue;
+    // For an in_transit node, the server's authoritative arrival tick is
+    // arrival_at_tick — override the Hohmann-computed one so the canvas
+    // doesn't disagree with the server about when arrival fires.
+    if (srvNode.status === 'in_transit' && srvNode.arrival_at_tick != null) {
+      arc.arrivalTime = srvNode.arrival_at_tick;
+    }
+    if (srvNode.status === 'in_transit') {
+      ship.transfer = arc;
+    } else {
+      ship.pendingTransfer = arc;
     }
   }
 
