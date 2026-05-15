@@ -119,6 +119,17 @@ interface ServerState {
     committed_at_tick: number | null;
     departure_body_id: string | null;
   }>;
+  events?: Array<{
+    id: string;
+    tick_number: number;
+    kind: string;
+    actor_faction_id: string | null;
+    target_faction_id: string | null;
+    body_id: string | null;
+    ship_id: string | null;
+    payload: string;
+    created_at_ms: number;
+  }>;
 }
 
 // Map server body.type strings to client Body.type union.
@@ -338,6 +349,27 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     }
   }
 
+  // Server-side chronicle entries -> human-readable combat log.
+  const factionNameById = new Map(srv.factions.map(f => [f.id, f.name]));
+  const combatLog: string[] = (srv.events ?? [])
+    .slice()
+    .reverse()  // server returns newest first; we want chronological
+    .map(ev => {
+      let parsed: Record<string, unknown> = {};
+      try { parsed = JSON.parse(ev.payload || '{}'); } catch { /* ignore */ }
+      const t = `T+${ev.tick_number}`;
+      if (ev.kind === 'ship_destroyed') {
+        const name = (parsed.ship_name as string) ?? 'Unknown';
+        const cls = (parsed.ship_class as string) ?? 'ship';
+        const where = (parsed.body_name as string) ?? 'space';
+        const owner = ev.actor_faction_id
+          ? factionNameById.get(ev.actor_faction_id) ?? 'Unknown'
+          : 'Unknown';
+        return `${t}  ${owner}'s ${cls} ${name} destroyed at ${where}`;
+      }
+      return `${t}  ${ev.kind}`;
+    });
+
   return {
     currentTick: srv.game.current_tick,
     bodies,
@@ -349,7 +381,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     buildOrders: [],
     resources: { [PLAYER_TOKEN]: playerRes },
     factionTech: { [PLAYER_TOKEN]: emptyTech },
-    combatLog: [],
+    combatLog,
     lastHarvestTick: srv.game.current_tick,
   };
 }

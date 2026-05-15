@@ -157,6 +157,22 @@ async function handleGetState(req, env, ctx) {
     .bind(gameId, me.id)
     .all()).results ?? [];
 
+  // Recent public chronicle entries — combat results, key events. Surfaced
+  // as a combat log on the canvas. Capped at 30 so the snapshot stays
+  // small as the game ages.
+  const events = (await env.DB
+    .prepare(
+      `SELECT id, tick_number, kind, actor_faction_id, target_faction_id,
+              body_id, ship_id, payload, created_at_ms
+         FROM chronicle_entries
+        WHERE game_id = ?
+          AND visibility = 'public'
+        ORDER BY tick_number DESC, created_at_ms DESC
+        LIMIT 30`,
+    )
+    .bind(gameId)
+    .all()).results ?? [];
+
   // Only the caller's planned maneuvers are returned — opponents' burn
   // plans are private.
   const nodes = (await env.DB
@@ -212,6 +228,7 @@ async function handleGetState(req, env, ctx) {
     ships,
     settlements,
     nodes,
+    events,
   });
 }
 

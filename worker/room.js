@@ -552,6 +552,7 @@ export class Room {
 
     if (hpDeltas.size > 0) {
       const losses = [];
+      const lostShipRows = [];  // for chronicle entries
       for (const [shipId, dmg] of hpDeltas) {
         const cur = allShips.find(s => s.id === shipId);
         if (!cur) continue;
@@ -562,6 +563,7 @@ export class Room {
             .bind(tick, shipId)
             .run();
           losses.push(shipId);
+          lostShipRows.push(cur);
         } else {
           await this.env.DB
             .prepare('UPDATE game_ships SET hp = ? WHERE id = ?')
@@ -569,7 +571,41 @@ export class Room {
             .run();
         }
       }
-      if (losses.length) {
+
+      // Persist chronicle entries for destroyed ships so the canvas can
+      // show a combat log without relying on the transient WS broadcast.
+      if (lostShipRows.length) {
+        const now = Date.now();
+        for (const lost of lostShipRows) {
+          const ship = await this.env.DB
+            .prepare('SELECT name, ship_class, parent_body_id FROM game_ships WHERE id = ?')
+            .bind(lost.id).first();
+          const body = ship?.parent_body_id
+            ? await this.env.DB.prepare('SELECT name FROM game_bodies WHERE id = ?').bind(ship.parent_body_id).first()
+            : null;
+          const entryId = `c${tick}_${lost.id.slice(-8)}_${Math.random().toString(36).slice(2, 6)}`;
+          const payload = JSON.stringify({
+            ship_id: lost.id,
+            ship_name: ship?.name ?? 'Unknown',
+            ship_class: ship?.ship_class ?? 'unknown',
+            body_id: ship?.parent_body_id ?? null,
+            body_name: body?.name ?? 'unknown space',
+          });
+          try {
+            await this.env.DB
+              .prepare(
+                `INSERT INTO chronicle_entries
+                  (id, game_id, tick_number, kind, actor_faction_id, body_id, ship_id, payload, visibility, created_at_ms)
+                 VALUES (?, ?, ?, 'ship_destroyed', ?, ?, ?, ?, 'public', ?)`,
+              )
+              .bind(entryId, gameId, tick, lost.owner_faction_id ?? null,
+                    ship?.parent_body_id ?? null, lost.id, payload, now)
+              .run();
+          } catch (e) {
+            // chronicle log is best-effort; don't fail the whole tick.
+            console.error('chronicle insert failed', e);
+          }
+        }
         this.broadcast({ type: 'ships_destroyed', tick, ship_ids: losses });
       }
     }
