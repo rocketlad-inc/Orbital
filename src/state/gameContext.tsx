@@ -550,13 +550,15 @@ export function GameContextProvider({
     if (type === 'city' && !canHostCity(body)) return false;
     if (type === 'station' && !canHostStation(body)) return false;
 
-    // Require player ship in orbit at this body
-    const playerShipHere = gameState.ships.find(s =>
+    // Require a player FREIGHTER in orbit at this body — only freighters
+    // can deploy settlements (combat ships carry no construction materials).
+    const playerFreighterHere = gameState.ships.find(s =>
       s.ownedBy === 'player' &&
       !s.transfer &&
-      s.orbit.parentBodyId === bodyId
+      s.orbit.parentBodyId === bodyId &&
+      s.class === 'freighter'
     );
-    if (!playerShipHere) return false;
+    if (!playerFreighterHere) return false;
 
     // Resource cost
     const def = SETTLEMENT_DEFS[type];

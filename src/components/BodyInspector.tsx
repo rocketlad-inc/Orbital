@@ -181,10 +181,11 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
 
   const settlements = gameState.settlements.filter(s => s.bodyId === bodyId);
 
-  const playerShipHere = gameState.ships.find(s =>
-    s.ownedBy === 'player' && !s.transfer && s.orbit.parentBodyId === bodyId
+  // Only freighters can deliver settlement materials — combat ships can't deploy.
+  const playerFreighterHere = gameState.ships.find(s =>
+    s.ownedBy === 'player' && !s.transfer && s.orbit.parentBodyId === bodyId && s.class === 'freighter'
   );
-  const canBuildHere = !!playerShipHere;
+  const canBuildHere = !!playerFreighterHere;
 
   const cityAllowed = canHostCity(body);
   const stationAllowed = canHostStation(body);
@@ -300,7 +301,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
                 disabled={!canBuildHere || !canAffordCity}
                 onClick={() => handleStartDeploy('city')}
                 title={
-                  !canBuildHere ? 'Need a ship in orbit'
+                  !canBuildHere ? 'Need a freighter in orbit'
                   : !canAffordCity ? `Need ${SETTLEMENT_DEFS.city.cost.fuel}F/${SETTLEMENT_DEFS.city.cost.ore}O/${SETTLEMENT_DEFS.city.cost.credits}C`
                   : `Deploy a city (${SETTLEMENT_DEFS.city.cost.fuel}F/${SETTLEMENT_DEFS.city.cost.ore}O/${SETTLEMENT_DEFS.city.cost.credits}C)`
                 }
@@ -314,7 +315,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
                 disabled={!canBuildHere || !canAffordStation}
                 onClick={() => handleStartDeploy('station')}
                 title={
-                  !canBuildHere ? 'Need a ship in orbit'
+                  !canBuildHere ? 'Need a freighter in orbit'
                   : !canAffordStation ? `Need ${SETTLEMENT_DEFS.station.cost.fuel}F/${SETTLEMENT_DEFS.station.cost.ore}O/${SETTLEMENT_DEFS.station.cost.credits}C`
                   : `Deploy a station (${SETTLEMENT_DEFS.station.cost.fuel}F/${SETTLEMENT_DEFS.station.cost.ore}O/${SETTLEMENT_DEFS.station.cost.credits}C)`
                 }
@@ -325,7 +326,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
           </div>
 
           {!canBuildHere && (cityAllowed || stationAllowed) && (
-            <div className="deploy-hint">Send a ship to orbit to deploy</div>
+            <div className="deploy-hint">Send a freighter to orbit to deploy</div>
           )}
         </>
       )}
