@@ -74,19 +74,33 @@ async function handleGetState(req, env, ctx) {
     .bind(gameId)
     .all()).results ?? [];
 
-  // v1: return every ship. Fog-of-war happens client-side via the existing
-  // visibility helper. The server clip will move here once we trust the
-  // canvas to render only what arrives in the snapshot.
+  // Fog of war: caller sees all their own ships unconditionally, plus
+  // any opponent ship whose parent_body_id is a body where the caller
+  // either owns the body or has at least one of their own ships
+  // orbiting. Everything else is invisible. This is the minimum-viable
+  // "you can only see what your assets observe" rule — a sensor_coverage
+  // pass on tick can later widen this radius.
   const ships = (await env.DB
     .prepare(
-      `SELECT id, name, ship_class, owner_faction_id, parent_body_id,
+      `WITH my_presence AS (
+         SELECT DISTINCT parent_body_id AS bid
+           FROM game_ships
+          WHERE game_id = ?1 AND owner_faction_id = ?2 AND status = 'active'
+         UNION
+         SELECT id AS bid FROM game_bodies
+          WHERE game_id = ?1 AND owner_faction_id = ?2
+       )
+       SELECT id, name, ship_class, owner_faction_id, parent_body_id,
               orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
               fuel, fuel_max, hp, hp_max, damage_per_tick,
               status, built_at_tick
          FROM game_ships
-        WHERE game_id = ? AND status = 'active'`,
+        WHERE game_id = ?1
+          AND status = 'active'
+          AND (owner_faction_id = ?2
+               OR parent_body_id IN (SELECT bid FROM my_presence))`,
     )
-    .bind(gameId)
+    .bind(gameId, me.id)
     .all()).results ?? [];
 
   // Only the caller's planned maneuvers are returned — opponents' burn
