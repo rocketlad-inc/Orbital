@@ -92,6 +92,7 @@
 .resource-pill--fuel .resource-pill__label { color: #ffb84d; }
 .resource-pill--ore .resource-pill__label { color: #a0a0a0; }
 .resource-pill--credits .resource-pill__label { color: #ffd700; }
+.resource-pill--science .resource-pill__label { color: #6ee7b7; }
 .resource-pill--ships .resource-pill__label { color: #4ecdc4; }
 
 .top-bar__nav {

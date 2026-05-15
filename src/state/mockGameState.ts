@@ -202,14 +202,21 @@ function circularOrbitAround(
  * scenarios, so the first tick's mutation would leak into the template.
  */
 const DEFAULT_RESOURCES: Record<string, FactionResources> = {
-  player: { fuel: 100, ore: 200, credits: 150 },
-  enemy: { fuel: 100, ore: 200, credits: 150 },
+  player: { fuel: 100, ore: 200, credits: 150, science: 50 },
+  enemy: { fuel: 100, ore: 200, credits: 150, science: 50 },
 };
 
 function freshResources(): Record<string, FactionResources> {
   return {
     player: { ...DEFAULT_RESOURCES.player },
     enemy: { ...DEFAULT_RESOURCES.enemy },
+  };
+}
+
+function freshFactionTech(): GameState['factionTech'] {
+  return {
+    player: { levels: {}, researching: null, progress: 0 },
+    enemy:  { levels: {}, researching: null, progress: 0 },
   };
 }
 
@@ -254,6 +261,7 @@ export function createScenario1(): GameState {
     fleets: [], buildOrders: [], settlements: [],
     resources: freshResources(),
     combatLog: [], lastHarvestTick: 0,
+    factionTech: freshFactionTech(),
   };
 }
 
@@ -310,6 +318,7 @@ export function createScenario2(): GameState {
     fleets: [], buildOrders: [], settlements: [],
     resources: freshResources(),
     combatLog: [], lastHarvestTick: 0,
+    factionTech: freshFactionTech(),
   };
 }
 
@@ -338,9 +347,10 @@ export function createScenario3(): GameState {
   return {
     currentTick: 0, bodies, ships, factions, orders: [],
     fleets: [], buildOrders: [], settlements: [],
-    resources: { player: { fuel: 150, ore: 300, credits: 200 }, enemy: { fuel: 100, ore: 200, credits: 150 } },
+    resources: { player: { fuel: 150, ore: 300, credits: 200, science: 75 }, enemy: { fuel: 100, ore: 200, credits: 150, science: 50 } },
     combatLog: [],
     lastHarvestTick: 0,
+    factionTech: freshFactionTech(),
   };
 }
 
@@ -382,9 +392,10 @@ export function createScenario4(): GameState {
   return {
     currentTick: 0, bodies, ships, factions, orders: [],
     fleets: [], buildOrders: [], settlements: [],
-    resources: { player: { fuel: 80, ore: 150, credits: 100 }, enemy: { fuel: 120, ore: 250, credits: 200 } },
+    resources: { player: { fuel: 80, ore: 150, credits: 100, science: 50 }, enemy: { fuel: 120, ore: 250, credits: 200, science: 50 } },
     combatLog: [],
     lastHarvestTick: 0,
+    factionTech: freshFactionTech(),
   };
 }
 

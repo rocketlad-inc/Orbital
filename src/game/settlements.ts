@@ -114,7 +114,7 @@ export function createCity(
     population: 1,
     lastGrowthTick: tick,
     surfaceAngle: Math.random() * Math.PI * 2,
-    stockpile: { fuel: 0, ore: 0, credits: 0 },
+    stockpile: { fuel: 0, ore: 0, credits: 0, science: 0 },
     lastHarvestTick: tick,
   };
 }
@@ -139,7 +139,7 @@ export function createStation(
     population: 1,
     lastGrowthTick: tick,
     orbit: createCircularOrbit(body.id, altitude, tick, bodies),
-    stockpile: { fuel: 0, ore: 0, credits: 0 },
+    stockpile: { fuel: 0, ore: 0, credits: 0, science: 0 },
     lastHarvestTick: tick,
   };
 }
@@ -167,18 +167,19 @@ export function suggestSettlementName(
 export function settlementYield(
   settlement: Settlement,
   body: Body,
-): { fuel: number; ore: number; credits: number } {
-  if (body.id !== settlement.bodyId) return { fuel: 0, ore: 0, credits: 0 };
+): { fuel: number; ore: number; credits: number; science: number } {
+  if (body.id !== settlement.bodyId) return { fuel: 0, ore: 0, credits: 0, science: 0 };
   const base = bodyProductionRates(body);
   const mult = 1 + YIELD_MULT_PER_POP * (settlement.population - 1);
-  // Stations get a small science bonus (credits), cities a small ore bonus
+  // Stations boost science (orbital research platforms), cities boost ore.
   const typeMult = settlement.type === 'city'
-    ? { fuel: 1.0, ore: 1.2, credits: 0.9 }
-    : { fuel: 1.1, ore: 0.8, credits: 1.2 };
+    ? { fuel: 1.0, ore: 1.2, credits: 1.0, science: 0.8 }
+    : { fuel: 1.1, ore: 0.8, credits: 1.0, science: 1.4 };
   return {
     fuel: base.fuel * mult * typeMult.fuel,
     ore: base.ore * mult * typeMult.ore,
     credits: base.credits * mult * typeMult.credits,
+    science: base.science * mult * typeMult.science,
   };
 }
 
@@ -198,9 +199,12 @@ export function tickSettlements(
   bodies: Body[],
   ships: Ship[],
   tick: number,
-  factionPools: Record<string, { fuel: number; ore: number; credits: number }>,
+  factionPools: Record<string, { fuel: number; ore: number; credits: number; science: number }>,
+  /** Optional per-faction settlement-yield multiplier (Industry tech). Default 1.0. */
+  yieldMul: Record<string, number> = {},
 ): { settlements: Settlement[]; changed: boolean } {
   let changed = false;
+  const yieldMulOf = (fid: string) => yieldMul[fid] ?? 1;
 
   const updated = settlements.map(s => {
     let pop = s.population;
@@ -221,10 +225,12 @@ export function tickSettlements(
       const body = bodies.find(b => b.id === s.bodyId);
       if (body) {
         const y = settlementYield({ ...s, population: pop }, body);
+        const m = yieldMulOf(s.ownedBy);
         stockpile = {
-          fuel: stockpile.fuel + y.fuel,
-          ore: stockpile.ore + y.ore,
-          credits: stockpile.credits + y.credits,
+          fuel: stockpile.fuel + y.fuel * m,
+          ore: stockpile.ore + y.ore * m,
+          credits: stockpile.credits + y.credits * m,
+          science: stockpile.science + y.science * m,
         };
         lastHarvest = tick;
         dirty = true;
@@ -240,11 +246,11 @@ export function tickSettlements(
       sh.orbit.parentBodyId === s.bodyId
     );
 
-    if (ownerFreighters.length > 0 && (stockpile.fuel > 0 || stockpile.ore > 0 || stockpile.credits > 0)) {
+    if (ownerFreighters.length > 0 && (stockpile.fuel > 0 || stockpile.ore > 0 || stockpile.credits > 0 || stockpile.science > 0)) {
       // Lazily create a pool for owners we haven't seen yet (e.g. captured
       // settlements whose new owner has no entry in gameState.resources).
       if (!factionPools[s.ownedBy]) {
-        factionPools[s.ownedBy] = { fuel: 0, ore: 0, credits: 0 };
+        factionPools[s.ownedBy] = { fuel: 0, ore: 0, credits: 0, science: 0 };
       }
       const pool = factionPools[s.ownedBy];
       // Each freighter carries up to 5 of each per tick
@@ -252,15 +258,18 @@ export function tickSettlements(
       const moveFuel = Math.min(stockpile.fuel, capacity);
       const moveOre = Math.min(stockpile.ore, capacity);
       const moveCredits = Math.min(stockpile.credits, capacity);
+      const moveScience = Math.min(stockpile.science, capacity);
 
       pool.fuel += moveFuel;
       pool.ore += moveOre;
       pool.credits += moveCredits;
+      pool.science += moveScience;
 
       stockpile = {
         fuel: stockpile.fuel - moveFuel,
         ore: stockpile.ore - moveOre,
         credits: stockpile.credits - moveCredits,
+        science: stockpile.science - moveScience,
       };
       dirty = true;
     }

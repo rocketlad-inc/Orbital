@@ -56,7 +56,10 @@ export function autoCombatAtBodies(
   settlements: Settlement[],
   _bodies: Body[],
   tick: number,
+  /** Optional per-faction damage multiplier (Weapons tech). Default 1.0. */
+  damageMul: Record<string, number> = {},
 ): { ships: Ship[]; settlements: Settlement[]; log: string[] } {
+  const damageMulOf = (factionId: string) => damageMul[factionId] ?? 1;
   const log: string[] = [];
   const damageMap = new Map<string, number>();
   const shipLastCombat = new Map<string, number>();
@@ -99,14 +102,14 @@ export function autoCombatAtBodies(
       for (const target of localShips) {
         if (target.ownedBy === attacker.ownedBy) continue;
         const targetClass = getShipClass(target.class as ShipClassName);
-        const dmg = attackerClass.damagePerTick * (1 - targetClass.pdcRating);
+        const dmg = attackerClass.damagePerTick * damageMulOf(attacker.ownedBy) * (1 - targetClass.pdcRating);
         damageMap.set(target.id, (damageMap.get(target.id) || 0) + dmg);
         log.push(`${attacker.name} hits ${target.name} for ${dmg.toFixed(0)}`);
         fired = true;
       }
       for (const target of localSettlements) {
         if (target.ownedBy === attacker.ownedBy) continue;
-        const dmg = attackerClass.damagePerTick * (1 - SETTLEMENT_DEFS[target.type].pdcRating);
+        const dmg = attackerClass.damagePerTick * damageMulOf(attacker.ownedBy) * (1 - SETTLEMENT_DEFS[target.type].pdcRating);
         damageMap.set(target.id, (damageMap.get(target.id) || 0) + dmg);
         log.push(`${attacker.name} hits ${target.name} for ${dmg.toFixed(0)}`);
         fired = true;
@@ -125,7 +128,7 @@ export function autoCombatAtBodies(
       for (const target of localShips) {
         if (target.ownedBy === attacker.ownedBy) continue;
         const targetClass = getShipClass(target.class as ShipClassName);
-        const dmg = def.damagePerTick * (1 - targetClass.pdcRating);
+        const dmg = def.damagePerTick * damageMulOf(attacker.ownedBy) * (1 - targetClass.pdcRating);
         damageMap.set(target.id, (damageMap.get(target.id) || 0) + dmg);
         log.push(`${attacker.name} hits ${target.name} for ${dmg.toFixed(0)}`);
         fired = true;

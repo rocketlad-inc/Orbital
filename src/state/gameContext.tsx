@@ -10,7 +10,7 @@ import {
   canHostCity, canHostStation, SETTLEMENT_DEFS,
 } from '../game/settlements';
 import { tickMaintenance } from '../game/maintenance';
-import { TechId } from '../game/techs';
+import { TechId, TECH_DEFS } from '../game/techs';
 
 export const TICKS_PER_GAME_DAY = 24;
 const REAL_SECONDS_PER_GAME_DAY = 3600;
@@ -194,14 +194,26 @@ export function GameContextProvider({
     for (const [fid, fr] of Object.entries(prev.resources)) {
       factionPools[fid] = { ...fr };
     }
+    // Per-faction Industry-tech yield multiplier.
+    const yieldMul: Record<string, number> = {};
+    for (const [fid, ts] of Object.entries(prev.factionTech)) {
+      const lvl = ts.levels['industry'] ?? 0;
+      yieldMul[fid] = 1 + TECH_DEFS.industry.perLevel * lvl;
+    }
     const settlementsResult = tickSettlements(
-      prev.settlements, prev.bodies, updatedShips, newTime, factionPools,
+      prev.settlements, prev.bodies, updatedShips, newTime, factionPools, yieldMul,
     );
     let updatedSettlements = settlementsResult.settlements;
 
     // Auto-combat: every ship and combat-capable settlement fires once every
     // AUTO_COMBAT_INTERVAL ticks at every hostile combatant at the same body.
-    const combatResult = autoCombatAtBodies(updatedShips, updatedSettlements, prev.bodies, newTime);
+    // Apply per-faction Weapons-tech damage multiplier.
+    const damageMul: Record<string, number> = {};
+    for (const [fid, ts] of Object.entries(prev.factionTech)) {
+      const lvl = ts.levels['weapons'] ?? 0;
+      damageMul[fid] = 1 + TECH_DEFS.weapons.perLevel * lvl;
+    }
+    const combatResult = autoCombatAtBodies(updatedShips, updatedSettlements, prev.bodies, newTime, damageMul);
     updatedShips = combatResult.ships;
     updatedSettlements = combatResult.settlements;
     const combatNewLogs = combatResult.log;
@@ -519,9 +531,16 @@ export function GameContextProvider({
     const body = gameState.bodies.find(b => b.id === bodyId);
     if (!body || body.ownedBy !== 'player') return false;
 
+    // Apply Construction-tech cost discount (capped at 75% off).
+    const constructionLvl = gameState.factionTech.player?.levels['construction'] ?? 0;
+    const costMul = Math.max(0.25, 1 - TECH_DEFS.construction.perLevel * constructionLvl);
+    const fuelCost = Math.ceil(classDef.cost.fuel * costMul);
+    const oreCost = Math.ceil(classDef.cost.ore * costMul);
+    const creditCost = Math.ceil(classDef.cost.credits * costMul);
+
     // Check resources
     const res = gameState.resources['player'];
-    if (!res || res.fuel < classDef.cost.fuel || res.ore < classDef.cost.ore || res.credits < classDef.cost.credits) return false;
+    if (!res || res.fuel < fuelCost || res.ore < oreCost || res.credits < creditCost) return false;
 
     setGameStateInternal(prev => {
       const playerRes = prev.resources['player'];
@@ -544,15 +563,15 @@ export function GameContextProvider({
           ...prev.resources,
           player: {
             ...playerRes,
-            fuel: playerRes.fuel - classDef.cost.fuel,
-            ore: playerRes.ore - classDef.cost.ore,
-            credits: playerRes.credits - classDef.cost.credits,
+            fuel: playerRes.fuel - fuelCost,
+            ore: playerRes.ore - oreCost,
+            credits: playerRes.credits - creditCost,
           },
         },
       };
     });
     return true;
-  }, [gameState.bodies, gameState.resources]);
+  }, [gameState.bodies, gameState.resources, gameState.factionTech]);
 
   const cancelBuild = useCallback((buildOrderId: string) => {
     setGameStateInternal(prev => {

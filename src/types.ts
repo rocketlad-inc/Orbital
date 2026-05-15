@@ -145,6 +145,7 @@ export interface FactionResources {
   fuel: number;
   ore: number;
   credits: number;
+  science: number;
 }
 
 /**
@@ -171,9 +172,19 @@ export interface Settlement {
   orbit?: OrbitElements;              // station: orbit around body
 
   // Local stockpile — extracted resources awaiting freighter pickup
-  stockpile: { fuel: number; ore: number; credits: number };
+  stockpile: { fuel: number; ore: number; credits: number; science: number };
 
   lastHarvestTick: number;            // tick when stockpile last grew
+}
+
+/**
+ * Per-faction tech progress (forward-declared; the canonical shape lives
+ * in src/game/techs.ts).
+ */
+export interface FactionTechStateBase {
+  levels: Record<string, number>;
+  researching: string | null;
+  progress: number;
 }
 
 /**
@@ -189,6 +200,7 @@ export interface GameState {
   orders: ManeuverNode[];              // all maneuvers in the game
   buildOrders: BuildOrder[];           // ships under construction
   resources: Record<string, FactionResources>; // factionId → resources
+  factionTech: Record<string, FactionTechStateBase>; // factionId → tech progress
   combatLog: string[];                 // recent combat events
   lastHarvestTick: number;             // tick when resources were last collected
 }

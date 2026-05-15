@@ -8,6 +8,7 @@ import { TopBar, PanelId } from './components/TopBar';
 import { Outliner } from './components/Outliner';
 import { SettlementsPanel } from './components/SettlementsPanel';
 import { FleetPanel } from './components/FleetPanel';
+import { TechPanel } from './components/TechPanel';
 import { prewarmShipIcons } from './render/shipIconCache';
 import { COLORS } from './render/colors';
 import { AuthProvider, useAuth } from './multiplayer/AuthContext';
@@ -49,6 +50,7 @@ function SinglePlayerView({ onExit }: { onExit: () => void }) {
       if (e.key === 'Escape') setActivePanel(null);
       if (e.key === 's' || e.key === 'S') setActivePanel(p => (p === 'settlements' ? null : 'settlements'));
       if (e.key === 'f' || e.key === 'F') setActivePanel(p => (p === 'fleet' ? null : 'fleet'));
+      if (e.key === 'r' || e.key === 'R') setActivePanel(p => (p === 'research' ? null : 'research'));
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
@@ -67,6 +69,9 @@ function SinglePlayerView({ onExit }: { onExit: () => void }) {
         )}
         {activePanel === 'fleet' && (
           <FleetPanel onClose={() => setActivePanel(null)} />
+        )}
+        {activePanel === 'research' && (
+          <TechPanel onClose={() => setActivePanel(null)} />
         )}
 
         <ShipPanel />

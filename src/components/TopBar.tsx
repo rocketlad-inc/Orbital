@@ -8,7 +8,7 @@ import { useGameContext } from '../state/gameContext';
 import { useAuth } from '../multiplayer/AuthContext';
 import './TopBar.css';
 
-export type PanelId = 'settlements' | 'fleet' | null;
+export type PanelId = 'settlements' | 'fleet' | 'research' | null;
 
 interface TopBarProps {
   activePanel: PanelId;
@@ -140,6 +140,10 @@ export const TopBar: React.FC<TopBarProps> = ({ activePanel, onTogglePanel, onEx
             <div className="resource-pill__label">CR</div>
             <div className="resource-pill__value">{Math.round(playerResources.credits)}</div>
           </div>
+          <div className="resource-pill resource-pill--science">
+            <div className="resource-pill__label">SCI</div>
+            <div className="resource-pill__value">{Math.round(playerResources.science)}</div>
+          </div>
           <div className="resource-pill resource-pill--ships">
             <div className="resource-pill__label">SHIPS</div>
             <div className="resource-pill__value">{playerShips.length}</div>
@@ -161,6 +165,18 @@ export const TopBar: React.FC<TopBarProps> = ({ activePanel, onTogglePanel, onEx
         >
           Fleet
           <span className="badge">{playerShips.length}</span>
+        </button>
+        <button
+          className={`nav-button ${activePanel === 'research' ? 'active' : ''}`}
+          onClick={() => onTogglePanel(activePanel === 'research' ? null : 'research')}
+          title="Research tech tree"
+        >
+          Research
+          {(() => {
+            const lvls = gameState.factionTech?.player?.levels || {};
+            const total = Object.values(lvls).reduce((s, n) => s + (n ?? 0), 0);
+            return total > 0 ? <span className="badge">{total}</span> : null;
+          })()}
         </button>
       </div>
 
