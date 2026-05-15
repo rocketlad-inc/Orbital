@@ -8,7 +8,7 @@ import { useGameContext } from '../state/gameContext';
 import { useAuth } from '../multiplayer/AuthContext';
 import './TopBar.css';
 
-export type PanelId = 'settlements' | 'fleet' | 'research' | null;
+export type PanelId = 'settlements' | 'fleet' | 'research' | 'intel' | null;
 
 interface TopBarProps {
   activePanel: PanelId;
@@ -181,6 +181,13 @@ export const TopBar: React.FC<TopBarProps> = ({ activePanel, onTogglePanel, onEx
             const total = Object.values(lvls).reduce((s, n) => s + (n ?? 0), 0);
             return total > 0 ? <span className="badge">{total}</span> : null;
           })()}
+        </button>
+        <button
+          className={`nav-button ${activePanel === 'intel' ? 'active' : ''}`}
+          onClick={() => onTogglePanel(activePanel === 'intel' ? null : 'intel')}
+          title="Fog-of-war intel readout (I)"
+        >
+          Intel
         </button>
       </div>
 

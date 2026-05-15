@@ -40,6 +40,22 @@ const SOL_OCCLUSION_RADIUS = 35;
 /** Ticks a last-known ghost remains rendered before it fades to nothing. */
 export const GHOST_LIFETIME_TICKS = 50;
 
+/**
+ * Ticks after a burn during which a ship has an elevated thermal/EM
+ * signature. Engines flare; the plume is much easier to detect than a
+ * cold coasting hull.
+ */
+export const BURN_SIGNATURE_DURATION = 15;
+
+/**
+ * Maximum sensor-range multiplier applied immediately after a burn,
+ * decaying linearly to 1.0 over BURN_SIGNATURE_DURATION ticks. A boost
+ * of 2.5 means a corvette at peak burn flare is detectable from 375
+ * units instead of 150 — long-range scouting can pick up enemy
+ * transfers committing across the system.
+ */
+export const BURN_SIGNATURE_BOOST = 2.5;
+
 // === Geometry helpers ========================================
 
 /**
@@ -114,7 +130,7 @@ export function shipWorldPosition(ship: Ship, tick: number, bodies: Body[]): { x
  * an array of {pos, range} pairs evaluated at the current tick.
  */
 function factionSensors(
-  factionId: string,
+  viewerFactionIds: Set<string>,
   ships: Ship[],
   settlements: Settlement[],
   bodies: Body[],
@@ -123,20 +139,34 @@ function factionSensors(
   const sensors: Array<{ pos: { x: number; y: number }; range: number }> = [];
 
   for (const s of ships) {
-    if (s.ownedBy !== factionId) continue;
+    if (!viewerFactionIds.has(s.ownedBy)) continue;
     // Even ships in transit have working sensors.
     const range = SHIP_SENSOR_RANGE[s.class] ?? 25;
     sensors.push({ pos: shipWorldPosition(s, tick, bodies), range });
   }
 
   for (const st of settlements) {
-    if (st.ownedBy !== factionId) continue;
+    if (!viewerFactionIds.has(st.ownedBy)) continue;
     const range = SETTLEMENT_SENSOR_RANGE[st.type] ?? 40;
     const pos = settlementWorldPosition(st, tick, bodies);
     if (pos) sensors.push({ pos, range });
   }
 
   return sensors;
+}
+
+/**
+ * Multiplier on a target ship's effective detectability, based on how
+ * recently it burned its engines. Returns 1.0 for a cold coasting ship,
+ * up to BURN_SIGNATURE_BOOST immediately after a burn, decaying linearly
+ * over BURN_SIGNATURE_DURATION.
+ */
+export function burnSignatureFactor(ship: Ship, tick: number): number {
+  if (ship.lastBurnTick === undefined) return 1.0;
+  const age = tick - ship.lastBurnTick;
+  if (age < 0 || age >= BURN_SIGNATURE_DURATION) return 1.0;
+  const freshness = 1 - age / BURN_SIGNATURE_DURATION;
+  return 1 + (BURN_SIGNATURE_BOOST - 1) * freshness;
 }
 
 // === Visibility computation ==================================
@@ -153,16 +183,23 @@ export interface VisibilityResult {
 }
 
 /**
- * Compute what `viewerFactionId` can currently see.
+ * Compute what the viewer can currently see.
  *
- * Friendlies are always visible. Enemies are visible only if at least one of
- * the viewer's sensors has them in range AND no body blocks the line of sight.
+ * `viewerFactionIds` is the set of factions whose sensors and assets count as
+ * "ours" — typically the player plus any allied factions sharing intel via
+ * a defense or intel-share pact. Anything owned by a faction in this set is
+ * always visible. Anything else is visible only if at least one of the
+ * viewer's sensors has it in range AND no body blocks the line of sight.
+ *
+ * Recently-burning enemy ships (lastBurnTick within BURN_SIGNATURE_DURATION)
+ * have their effective detection range boosted by burnSignatureFactor — a
+ * hot exhaust plume is visible from much further away than a cold hull.
  *
  * Previous lastSeen entries are passed in so they can be carried forward
  * (and aged) when the ship is no longer directly visible.
  */
 export function computeVisibility(
-  viewerFactionId: string,
+  viewerFactionIds: Set<string>,
   ships: Ship[],
   settlements: Settlement[],
   bodies: Body[],
@@ -172,23 +209,25 @@ export function computeVisibility(
   const visibleShipIds = new Set<string>();
   const lastSeen = new Map<string, { x: number; y: number; tick: number; shipClass: string; ownedBy: string }>();
 
-  const sensors = factionSensors(viewerFactionId, ships, settlements, bodies, tick);
+  const sensors = factionSensors(viewerFactionIds, ships, settlements, bodies, tick);
 
   for (const ship of ships) {
-    // Friendlies always visible
-    if (ship.ownedBy === viewerFactionId) {
+    // Friendlies (own + allied) always visible
+    if (viewerFactionIds.has(ship.ownedBy)) {
       visibleShipIds.add(ship.id);
       continue;
     }
 
     const tp = shipWorldPosition(ship, tick, bodies);
+    const sigFactor = burnSignatureFactor(ship, tick);
 
     let seen = false;
     for (const s of sensors) {
       const dx = s.pos.x - tp.x;
       const dy = s.pos.y - tp.y;
       const d2 = dx * dx + dy * dy;
-      if (d2 > s.range * s.range) continue;
+      const effectiveRange = s.range * sigFactor;
+      if (d2 > effectiveRange * effectiveRange) continue;
       if (isOccluded(s.pos, tp, bodies, tick)) continue;
       seen = true;
       break;
@@ -215,6 +254,40 @@ export function computeVisibility(
   return { visibleShipIds, lastSeen };
 }
 
+// === Allied faction resolution ===============================
+
+/**
+ * Minimal Pact shape — duplicated here (rather than imported from the
+ * multiplayer API module) so this game-logic file stays free of UI deps.
+ */
+export interface PactLike {
+  kind: string;          // 'defense_pact' | 'intel_share' | 'nap' | ...
+  status: string;        // 'active' | 'expired' | 'broken'
+  counterparty_faction_ids: string[];
+}
+
+/**
+ * Build the set of factions whose sensors should count for `viewer`'s
+ * intel: the viewer itself plus anyone currently in a defense pact or
+ * an intel-share pact with them. Returns at minimum `{viewer}`.
+ *
+ * Pact data is optional — when no pacts are passed (e.g. single-player
+ * scenarios) the result is just the viewer alone.
+ */
+export function alliedFactions(viewer: string, pacts?: PactLike[]): Set<string> {
+  const out = new Set<string>([viewer]);
+  if (!pacts) return out;
+  for (const p of pacts) {
+    if (p.status !== 'active') continue;
+    if (p.kind !== 'defense_pact' && p.kind !== 'intel_share') continue;
+    if (!p.counterparty_faction_ids.includes(viewer)) continue;
+    for (const id of p.counterparty_faction_ids) {
+      if (id !== viewer) out.add(id);
+    }
+  }
+  return out;
+}
+
 // === Sensor range query (for rendering coverage rings) =======
 
 /**
@@ -222,7 +295,7 @@ export function computeVisibility(
  * drawing translucent coverage rings on the map.
  */
 export function factionSensorRings(
-  factionId: string,
+  viewerFactionIds: Set<string>,
   ships: Ship[],
   settlements: Settlement[],
   bodies: Body[],
@@ -231,13 +304,13 @@ export function factionSensorRings(
   const rings: Array<{ pos: { x: number; y: number }; range: number; sourceType: 'ship' | 'city' | 'station' }> = [];
 
   for (const s of ships) {
-    if (s.ownedBy !== factionId) continue;
+    if (!viewerFactionIds.has(s.ownedBy)) continue;
     const range = SHIP_SENSOR_RANGE[s.class] ?? 25;
     rings.push({ pos: shipWorldPosition(s, tick, bodies), range, sourceType: 'ship' });
   }
 
   for (const st of settlements) {
-    if (st.ownedBy !== factionId) continue;
+    if (!viewerFactionIds.has(st.ownedBy)) continue;
     const range = SETTLEMENT_SENSOR_RANGE[st.type] ?? 40;
     const pos = settlementWorldPosition(st, tick, bodies);
     if (pos) rings.push({ pos, range, sourceType: st.type });

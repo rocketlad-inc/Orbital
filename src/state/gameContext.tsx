@@ -121,6 +121,7 @@ export function GameContextProvider({
       let transfer = ship.transfer;
       let pendingTransfer = ship.pendingTransfer;
       let queuedTransfers = ship.queuedTransfers ? [...ship.queuedTransfers] : [];
+      let lastBurnTick = ship.lastBurnTick;
       let changed = false;
 
       if (transfer) {
@@ -129,6 +130,8 @@ export function GameContextProvider({
         while (transfer && tick >= transfer.arrivalTime) {
           const cost = Math.round(Math.abs(transfer.arrivalDv) * 10);
           fuel = Math.max(0, fuel - cost);
+          // Arrival burn: engines flare — visible to distant sensors.
+          lastBurnTick = tick;
 
           if (queuedTransfers.length > 0) {
             const nextArc = queuedTransfers.shift()!;
@@ -159,6 +162,8 @@ export function GameContextProvider({
               fuel = Math.max(0, fuel - cost);
               transfer = pendingTransfer;
               pendingTransfer = undefined;
+              // Departure burn: engines flare — boosts sensor signature briefly.
+              lastBurnTick = tick;
             }
             executedIds.push(node.id);
             changed = true;
@@ -174,7 +179,7 @@ export function GameContextProvider({
         // Don't store an empty queuedTransfers array — keep undefined so
         // ships without any queued legs stay clean.
         const nextQueued = queuedTransfers.length > 0 ? queuedTransfers : undefined;
-        return { ...ship, orbit, fuel, orders, transfer, pendingTransfer, queuedTransfers: nextQueued };
+        return { ...ship, orbit, fuel, orders, transfer, pendingTransfer, queuedTransfers: nextQueued, lastBurnTick };
       }
       return ship;
     });

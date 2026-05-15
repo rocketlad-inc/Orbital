@@ -111,6 +111,12 @@ export interface Ship {
   transfer?: TransferArc;               // currently in transit
   queuedTransfers?: TransferArc[];      // chained transfers waiting after current
 
+  // Burn signature: tick when the ship most recently fired its main engines
+  // (departure or arrival burn). Used by the fog-of-war visibility system —
+  // a hot exhaust plume is detectable from much further away than a coasting
+  // hull. Decays linearly over BURN_SIGNATURE_DURATION ticks.
+  lastBurnTick?: number;
+
   // Combat — tick when this ship last fired in auto-combat at its body
   lastCombatTick?: number;
 }

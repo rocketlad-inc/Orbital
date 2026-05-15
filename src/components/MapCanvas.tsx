@@ -19,7 +19,6 @@ import {
   generateStarfield,
   drawStarfield,
   StarfieldCache,
-  GhostIntel,
   worldToCanvas,
   RenderContext,
 } from '../render/mapRenderer';
@@ -28,7 +27,8 @@ import { bodyPosition } from '../physics/orbitalMechanics';
 import { COLORS, withOpacity } from '../render/colors';
 import { shipWorldPosition } from '../game/combat';
 import { computeIncomingThreats, threatenedBodyIds } from '../game/threats';
-import { computeVisibility, factionSensorRings, GHOST_LIFETIME_TICKS } from '../game/visibility';
+import { factionSensorRings, GHOST_LIFETIME_TICKS } from '../game/visibility';
+import { useVisibility } from '../state/visibilityContext';
 import './MapCanvas.css';
 
 interface MapCanvasProps {
@@ -60,8 +60,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // Starfield: generated once and regenerated when canvas size changes
   const starfieldRef = useRef<StarfieldCache | null>(null);
 
-  // Fog of war: keep a rolling lastSeen map for the viewing faction
-  const lastSeenRef = useRef<Map<string, GhostIntel>>(new Map());
+  // Fog of war: shared with the INTEL panel via VisibilityProvider. Falls
+  // back to "everything visible" if the provider isn't mounted (e.g. in
+  // some embedded multiplayer paths driven by server state).
+  const visibilityFromCtx = useVisibility();
 
   // Sensor coverage ring overlay toggle (V key)
   const [showSensorRings, setShowSensorRings] = useState(false);
@@ -181,18 +183,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     }
 
     // === Fog of war ============================================
-    // Recompute the player's visibility set each frame, carrying the
-    // previous lastSeen map forward so ghosts age naturally.
-    const visibility = computeVisibility(
-      'player',
-      gameState.ships,
-      gameState.settlements,
-      gameState.bodies,
-      gameState.currentTick,
-      lastSeenRef.current,
-    );
-    lastSeenRef.current = visibility.lastSeen;
-    const visibleShipIds = visibility.visibleShipIds;
+    // Visibility is computed once in VisibilityProvider so the INTEL panel
+    // and the canvas always agree on what's seen. Fall back to a synthetic
+    // "everything visible" set if the provider isn't mounted (some
+    // multiplayer paths drive fog server-side and skip the provider).
+    const visibility = visibilityFromCtx;
+    const visibleShipIds = visibility
+      ? visibility.visibleShipIds
+      : new Set(gameState.ships.map(s => s.id));
+    const lastSeen = visibility ? visibility.lastSeen : new Map();
 
     // Compute threats (hostile transits targeting player-owned bodies) —
     // but only include threats from ships the player can actually see.
@@ -203,7 +202,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // Sensor coverage rings (V to toggle)
     if (showSensorRings) {
       const rings = factionSensorRings(
-        'player',
+        new Set(['player']),
         gameState.ships,
         gameState.settlements,
         gameState.bodies,
@@ -313,7 +312,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
     // Draw fog-of-war ghosts for enemies currently out of sensor range but
     // recently seen. Their lastSeen position fades over GHOST_LIFETIME_TICKS.
-    for (const [shipId, intel] of visibility.lastSeen) {
+    for (const [shipId, intel] of lastSeen) {
       if (visibleShipIds.has(shipId)) continue;
       drawShipGhost(intel, gameState.currentTick, GHOST_LIFETIME_TICKS, gameState.factions, renderContext);
     }
@@ -361,7 +360,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     }
 
     drawHUD(renderContext, uiState.targetSelectionMode);
-  }, [gameState, camera, uiState, simSpeed, selectedSettlementId, showSensorRings]);
+  }, [gameState, camera, uiState, simSpeed, selectedSettlementId, showSensorRings, visibilityFromCtx]);
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
