@@ -141,3 +141,104 @@ export type SenateProposal = {
   votes?: { yea: number; nay: number; abstain: number };
   my_vote?: 'yea' | 'nay' | 'abstain' | null;
 };
+
+// ============================================================
+// Trades / Diplomacy
+// ============================================================
+
+export type ResourceBundle = {
+  metal: number;
+  fuel: number;
+  gold: number;
+  science: number;
+};
+
+export type PactKind = 'nap' | 'defense_pact' | 'intel_share';
+
+export const PACT_LABELS: Record<PactKind, string> = {
+  nap: 'Non-Aggression',
+  defense_pact: 'Defense',
+  intel_share: 'Research Sharing',
+};
+
+export type TradeStatus = 'open' | 'accepted' | 'declined' | 'cancelled' | 'countered';
+
+export type TradeOffer = {
+  id: string;
+  proposer_faction_id: string;
+  responder_faction_id: string;
+  status: TradeStatus;
+  offer: ResourceBundle;
+  request: ResourceBundle;
+  offer_pacts: PactKind[];
+  request_pacts: PactKind[];
+  parent_offer_id: string | null;
+  note: string | null;
+  created_at_tick: number;
+  created_at_ms: number;
+  resolved_at_ms: number | null;
+  resolved_by_faction_id: string | null;
+};
+
+export type Pact = {
+  id: string;
+  kind: PactKind;
+  status: 'active' | 'expired' | 'broken';
+  signed_at_tick: number;
+  expires_at_tick: number | null;
+  counterparty_faction_ids: string[];
+};
+
+export type ProposeTradeBody = {
+  responder_faction_id: string;
+  offer?: Partial<ResourceBundle>;
+  request?: Partial<ResourceBundle>;
+  offer_pacts?: PactKind[];
+  request_pacts?: PactKind[];
+  note?: string;
+};
+
+export function emptyBundle(): ResourceBundle {
+  return { metal: 0, fuel: 0, gold: 0, science: 0 };
+}
+
+export function tradesApi(gameId: string) {
+  return {
+    list(status?: TradeStatus, limit?: number) {
+      const params = new URLSearchParams();
+      if (status) params.set('status', status);
+      if (limit) params.set('limit', String(limit));
+      const qs = params.toString();
+      return apiFetch<{ trades: TradeOffer[]; caller_faction_id: string }>(
+        `/api/games/${gameId}/trades${qs ? '?' + qs : ''}`,
+      );
+    },
+    propose(body: ProposeTradeBody) {
+      return apiFetch<{ trade: TradeOffer }>(`/api/games/${gameId}/trades`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+    },
+    accept(tradeId: string) {
+      return apiFetch<{ trade: TradeOffer; treaties: { id: string; kind: PactKind }[] }>(
+        `/api/games/${gameId}/trades/${tradeId}/accept`,
+        { method: 'POST' },
+      );
+    },
+    decline(tradeId: string) {
+      return apiFetch<null>(`/api/games/${gameId}/trades/${tradeId}/decline`, { method: 'POST' });
+    },
+    cancel(tradeId: string) {
+      return apiFetch<null>(`/api/games/${gameId}/trades/${tradeId}/cancel`, { method: 'POST' });
+    },
+    counter(tradeId: string, body: Omit<ProposeTradeBody, 'responder_faction_id'>) {
+      return apiFetch<{ trade: TradeOffer }>(`/api/games/${gameId}/trades/${tradeId}/counter`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+    },
+    listPacts() {
+      return apiFetch<{ pacts: Pact[]; caller_faction_id: string }>(`/api/games/${gameId}/pacts`);
+    },
+  };
+}

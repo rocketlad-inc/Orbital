@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from './AuthContext';
 import { LobbyView } from './LobbyView';
 import { FactionPanel } from './FactionPanel';
 import { CommsPanel } from './CommsPanel';
 import { SenatePanel } from './SenatePanel';
+import { TradesPanel } from './TradesPanel';
+import { tradesApi } from './api';
 
 // Multiplayer overlay UI mounted alongside the existing single-player React
 // app. The dock exposes a right-side panel with Lobby / Faction / Comms /
@@ -15,7 +17,7 @@ import { SenatePanel } from './SenatePanel';
 // game canvas still runs against mockGameState. Wiring server-driven game
 // state is a follow-up integration task.
 
-type Tab = 'lobby' | 'faction' | 'comms' | 'senate';
+type Tab = 'lobby' | 'faction' | 'comms' | 'senate' | 'trades';
 
 interface MultiplayerShellProps {
   children: React.ReactNode;
@@ -27,6 +29,33 @@ export function MultiplayerShell({ children, onExit }: MultiplayerShellProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [tab, setTab] = useState<Tab>('lobby');
   const [gameId, setGameId] = useState<string | null>(null);
+  const [incomingTradeCount, setIncomingTradeCount] = useState(0);
+
+  // Poll for incoming trade count so the Trades tab can show a badge
+  // even when the user is on a different tab.
+  useEffect(() => {
+    if (!gameId) {
+      setIncomingTradeCount(0);
+      return;
+    }
+    const api = tradesApi(gameId);
+    let cancelled = false;
+    const tick = async () => {
+      const res = await api.list('open');
+      if (cancelled || !res.ok) return;
+      // Use any here because we don't have callerFactionId in scope; the
+      // server returns it but we just count where status='open' and the
+      // caller is the responder. The server scopes the list to caller, so
+      // any 'open' entries where proposer !== caller are incoming.
+      const callerFactionId = (res.data as any).caller_faction_id;
+      setIncomingTradeCount(
+        res.data.trades.filter((t) => t.responder_faction_id === callerFactionId).length,
+      );
+    };
+    tick();
+    const id = setInterval(tick, 10_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [gameId]);
 
   // MultiplayerShell is mounted only when AppShell has already authed the
   // user, so user should always be present here. Guard anyway.
@@ -66,6 +95,20 @@ export function MultiplayerShell({ children, onExit }: MultiplayerShellProps) {
                 disabled={!gameId}
                 onClick={() => gameId && setTab('senate')}
               >Senate</button>
+              <button
+                className={tab === 'trades' ? 'active' : ''}
+                disabled={!gameId}
+                onClick={() => gameId && setTab('trades')}
+                title={incomingTradeCount > 0 ? `${incomingTradeCount} incoming offer${incomingTradeCount > 1 ? 's' : ''}` : 'Trades'}
+              >
+                Trades{incomingTradeCount > 0 && (
+                  <span style={{
+                    marginLeft: 4, padding: '0 5px', fontSize: 9,
+                    background: '#ffb84d', color: '#0a0e14', borderRadius: 8,
+                    fontWeight: 700,
+                  }}>{incomingTradeCount}</span>
+                )}
+              </button>
             </div>
             <div className="mp-dock-body">
               {tab === 'lobby' && (
@@ -76,6 +119,7 @@ export function MultiplayerShell({ children, onExit }: MultiplayerShellProps) {
               {tab === 'faction' && gameId && <FactionPanel gameId={gameId} />}
               {tab === 'comms'   && gameId && <CommsPanel   gameId={gameId} />}
               {tab === 'senate'  && gameId && <SenatePanel  gameId={gameId} />}
+              {tab === 'trades'  && gameId && <TradesPanel  gameId={gameId} />}
             </div>
           </>
         )}

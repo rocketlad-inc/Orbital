@@ -287,8 +287,9 @@ import * as lobby   from './lobby.js';
 import * as factions from './factions.js';
 import * as messages from './messages.js';
 import * as senate  from './senate.js';
+import * as trades  from './trades.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {
