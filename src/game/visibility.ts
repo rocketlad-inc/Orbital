@@ -19,16 +19,16 @@ import { settlementWorldPosition } from './settlements';
 
 /** Sensor range per ship class. Solar system spans ~460 units. */
 export const SHIP_SENSOR_RANGE: Record<string, number> = {
-  corvette: 30,   // light scout
-  frigate: 40,    // balanced warship
-  destroyer: 35,  // heavy weapons, less sensor budget
-  freighter: 20,  // civilian
+  corvette: 150,   // light scout
+  frigate: 200,    // balanced warship
+  destroyer: 175,  // heavy weapons, less sensor budget
+  freighter: 100,  // civilian
 };
 
 /** Sensor range per settlement type. */
 export const SETTLEMENT_SENSOR_RANGE: Record<string, number> = {
-  city: 50,       // ground-based array, atmosphere limits it
-  station: 80,    // dedicated orbital sensor platform
+  city: 250,       // ground-based array — surveys its whole local neighborhood
+  station: 400,    // dedicated orbital platform — sees most of the inner system
 };
 
 /** Multiplier on body radius for occlusion (accounts for atmosphere/grazing). */
