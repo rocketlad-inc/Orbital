@@ -1,11 +1,14 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
-import { GameState, ManeuverNode, CameraState, MapUIState, Ship, Body, TransferArc, BuildOrder } from '../types';
+import { GameState, ManeuverNode, CameraState, MapUIState, Ship, Body, TransferArc, BuildOrder, SettlementType, FactionResources } from '../types';
 import { getScenario, ScenarioType } from './mockGameState';
 import { createCircularOrbit } from '../physics/orbitalMechanics';
 import { getShipClass, ShipClassName, SHIP_CLASSES } from '../game/shipClasses';
 import { formFleet, splitFromFleet } from '../game/fleet';
 import { checkCombatAtBodies, applyCombatResults } from '../game/combat';
-import { HARVEST_INTERVAL, bodyProductionRates } from '../game/economy';
+import {
+  createCity, createStation, tickSettlements,
+  canHostCity, canHostStation, SETTLEMENT_DEFS,
+} from '../game/settlements';
 
 export const TICKS_PER_GAME_DAY = 24;
 const REAL_SECONDS_PER_GAME_DAY = 3600;
@@ -51,6 +54,12 @@ interface GameContextType {
   disbandFleet: (fleetId: string) => void;
   removeFromFleet: (fleetId: string, shipId: string) => void;
   addToFleet: (fleetId: string, shipId: string) => void;
+
+  // Settlements
+  deploySettlement: (bodyId: string, type: SettlementType) => boolean;
+  damageSettlement: (settlementId: string, dmg: number) => void;
+  selectedSettlementId?: string;
+  selectSettlement: (id: string | undefined) => void;
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
@@ -78,6 +87,7 @@ export function GameContextProvider({
     transferTargetId: undefined,
   });
   const [simSpeed, setSimSpeedInternal] = useState<number>(0);
+  const [selectedSettlementId, setSelectedSettlementId] = useState<string | undefined>(undefined);
 
   // Ship state machine for Bezier transfers:
   //   orbiting (no transfer) → committed node fires → in_transit (transfer set)
@@ -184,38 +194,16 @@ export function GameContextProvider({
           buildOrders = buildOrders.filter(bo => newTime < bo.completeTick);
         }
 
-        // Resource harvesting — freighters at bodies collect resources
-        let updatedResources = { ...prev.resources };
-        let lastHarvestTick = prev.lastHarvestTick;
-        if (newTime - lastHarvestTick >= HARVEST_INTERVAL) {
-          lastHarvestTick = newTime;
-          for (const body of prev.bodies) {
-            if (!body.resources) continue;
-            const freightersHere = updatedShips.filter(
-              s => s.class === 'freighter' && !s.transfer && s.orbit.parentBodyId === body.id
-            );
-            if (freightersHere.length === 0) continue;
-
-            const byFaction = new Map<string, number>();
-            for (const f of freightersHere) {
-              byFaction.set(f.ownedBy, (byFaction.get(f.ownedBy) || 0) + 1);
-            }
-
-            const rates = bodyProductionRates(body);
-            for (const [factionId, count] of byFaction) {
-              const factionRes = updatedResources[factionId];
-              if (!factionRes) continue;
-              updatedResources = {
-                ...updatedResources,
-                [factionId]: {
-                  fuel: factionRes.fuel + rates.fuel * count,
-                  ore: factionRes.ore + rates.ore * count,
-                  credits: factionRes.credits + rates.credits * count,
-                },
-              };
-            }
-          }
+        // Settlement extraction + freighter offload
+        const factionPools: Record<string, FactionResources> = {};
+        for (const [fid, fr] of Object.entries(prev.resources)) {
+          factionPools[fid] = { ...fr };
         }
+        const settlementsResult = tickSettlements(
+          prev.settlements, prev.bodies, updatedShips, newTime, factionPools,
+        );
+        const updatedSettlements = settlementsResult.settlements;
+        const updatedResources = factionPools;
 
         // Check combat at bodies
         const combatResults = checkCombatAtBodies(updatedShips, prev.bodies);
@@ -226,13 +214,17 @@ export function GameContextProvider({
           return {
             ...prev, ships: updatedShips, orders: allOrders,
             currentTick: newTime, buildOrders, resources: updatedResources,
+            settlements: updatedSettlements,
             combatLog: [...prev.combatLog.slice(-20), ...newLogs],
-            lastHarvestTick,
           };
         }
 
         const allOrders = updatedShips.flatMap(s => s.orders);
-        return { ...prev, ships: updatedShips, orders: allOrders, currentTick: newTime, buildOrders, resources: updatedResources, lastHarvestTick };
+        return {
+          ...prev, ships: updatedShips, orders: allOrders,
+          currentTick: newTime, buildOrders, resources: updatedResources,
+          settlements: updatedSettlements,
+        };
       });
     }, 50);
 
@@ -249,41 +241,56 @@ export function GameContextProvider({
 
   const updateTick = useCallback((tick: number) => {
     setGameStateInternal(prev => {
-      const updatedShips = checkNodeExecution(prev.ships, prev.bodies, tick);
+      let updatedShips = checkNodeExecution(prev.ships, prev.bodies, tick);
 
-      // Resource harvesting (same logic as game loop)
-      let updatedResources = { ...prev.resources };
-      let lastHarvestTick = prev.lastHarvestTick;
-      if (tick - lastHarvestTick >= HARVEST_INTERVAL) {
-        lastHarvestTick = tick;
-        for (const body of prev.bodies) {
-          if (!body.resources) continue;
-          const freightersHere = updatedShips.filter(
-            s => s.class === 'freighter' && !s.transfer && s.orbit.parentBodyId === body.id
-          );
-          if (freightersHere.length === 0) continue;
-          const byFaction = new Map<string, number>();
-          for (const f of freightersHere) {
-            byFaction.set(f.ownedBy, (byFaction.get(f.ownedBy) || 0) + 1);
-          }
-          const rates = bodyProductionRates(body);
-          for (const [factionId, count] of byFaction) {
-            const factionRes = updatedResources[factionId];
-            if (!factionRes) continue;
-            updatedResources = {
-              ...updatedResources,
-              [factionId]: {
-                fuel: factionRes.fuel + rates.fuel * count,
-                ore: factionRes.ore + rates.ore * count,
-                credits: factionRes.credits + rates.credits * count,
-              },
-            };
-          }
-        }
+      // Process build orders
+      let buildOrders = prev.buildOrders;
+      const completedBuilds = buildOrders.filter(bo => tick >= bo.completeTick);
+      if (completedBuilds.length > 0) {
+        const newShips: Ship[] = completedBuilds.map(bo => {
+          const classDef = getShipClass(bo.shipClass as ShipClassName);
+          return {
+            id: `ship-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            name: bo.shipName,
+            class: bo.shipClass,
+            ownedBy: bo.ownedBy,
+            fuel: classDef.fuelCapacity,
+            hp: classDef.hp,
+            orbit: createCircularOrbit(bo.bodyId, 8, tick, prev.bodies),
+            orders: [],
+          };
+        });
+        updatedShips = [...updatedShips, ...newShips];
+        buildOrders = buildOrders.filter(bo => tick < bo.completeTick);
+      }
+
+      // Settlement extraction + freighter offload
+      const factionPools: Record<string, FactionResources> = {};
+      for (const [fid, fr] of Object.entries(prev.resources)) {
+        factionPools[fid] = { ...fr };
+      }
+      const settlementsResult = tickSettlements(
+        prev.settlements, prev.bodies, updatedShips, tick, factionPools,
+      );
+      const updatedSettlements = settlementsResult.settlements;
+      const updatedResources = factionPools;
+
+      // Check combat at bodies
+      const combatResults = checkCombatAtBodies(updatedShips, prev.bodies);
+      let combatLog = prev.combatLog;
+      if (combatResults.length > 0) {
+        updatedShips = applyCombatResults(updatedShips, combatResults);
+        const newLogs = combatResults.flatMap(r => r.log);
+        combatLog = [...combatLog.slice(-20), ...newLogs];
       }
 
       const allOrders = updatedShips.flatMap(s => s.orders);
-      return { ...prev, ships: updatedShips, orders: allOrders, currentTick: tick, resources: updatedResources, lastHarvestTick };
+      return {
+        ...prev, ships: updatedShips, orders: allOrders,
+        currentTick: tick, buildOrders, resources: updatedResources,
+        settlements: updatedSettlements,
+        combatLog,
+      };
     });
   }, [checkNodeExecution]);
 
@@ -302,6 +309,7 @@ export function GameContextProvider({
       maneuverMode: null,
       transferTargetId: undefined,
     });
+    setSelectedSettlementId(undefined);
   }, []);
 
   const updateCamera = useCallback((partial: Partial<CameraState>) => {
@@ -498,6 +506,79 @@ export function GameContextProvider({
     });
   }, []);
 
+  // ---- Settlements ----
+  const selectSettlement = useCallback((id: string | undefined) => {
+    setSelectedSettlementId(id);
+  }, []);
+
+  const deploySettlement = useCallback((bodyId: string, type: SettlementType): boolean => {
+    const body = gameState.bodies.find(b => b.id === bodyId);
+    if (!body) return false;
+
+    // Body type gate
+    if (type === 'city' && !canHostCity(body)) return false;
+    if (type === 'station' && !canHostStation(body)) return false;
+
+    // Require player ship in orbit at this body
+    const playerShipHere = gameState.ships.find(s =>
+      s.ownedBy === 'player' &&
+      !s.transfer &&
+      s.orbit.parentBodyId === bodyId
+    );
+    if (!playerShipHere) return false;
+
+    // Resource cost
+    const def = SETTLEMENT_DEFS[type];
+    const res = gameState.resources['player'];
+    if (!res || res.fuel < def.cost.fuel || res.ore < def.cost.ore || res.credits < def.cost.credits) {
+      return false;
+    }
+
+    setGameStateInternal(prev => {
+      const playerRes = prev.resources['player'];
+      if (!playerRes) return prev;
+
+      const settlement = type === 'city'
+        ? createCity(body, 'player', prev.currentTick)
+        : createStation(body, 'player', prev.currentTick, prev.bodies);
+
+      return {
+        ...prev,
+        settlements: [...prev.settlements, settlement],
+        resources: {
+          ...prev.resources,
+          player: {
+            fuel: playerRes.fuel - def.cost.fuel,
+            ore: playerRes.ore - def.cost.ore,
+            credits: playerRes.credits - def.cost.credits,
+          },
+        },
+      };
+    });
+    return true;
+  }, [gameState.bodies, gameState.ships, gameState.resources]);
+
+  const damageSettlement = useCallback((settlementId: string, dmg: number) => {
+    setGameStateInternal(prev => {
+      const target = prev.settlements.find(s => s.id === settlementId);
+      if (!target) return prev;
+      const newHp = target.hp - dmg;
+      if (newHp <= 0) {
+        return {
+          ...prev,
+          settlements: prev.settlements.filter(s => s.id !== settlementId),
+          combatLog: [...prev.combatLog.slice(-20), `${target.name} destroyed!`],
+        };
+      }
+      return {
+        ...prev,
+        settlements: prev.settlements.map(s =>
+          s.id === settlementId ? { ...s, hp: newHp } : s
+        ),
+      };
+    });
+  }, []);
+
   // ---- Fleet Management ----
   const createFleet = useCallback((name: string, shipIds: string[]) => {
     setGameStateInternal(prev => {
@@ -581,6 +662,8 @@ export function GameContextProvider({
     addManeuverNode, commitManeuverNode, deleteManeuverNode, setPendingTransfer, addQueuedTransfer,
     buildShip, cancelBuild,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
+    deploySettlement, damageSettlement,
+    selectedSettlementId, selectSettlement,
   };
 
   return (

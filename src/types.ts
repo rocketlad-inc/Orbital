@@ -149,6 +149,34 @@ export interface FactionResources {
 }
 
 /**
+ * Settlement: city or orbital station that extracts a body's resources
+ * into a local stockpile. Freighters carry stockpile to the global pool.
+ */
+export type SettlementType = 'city' | 'station';
+
+export interface Settlement {
+  id: string;
+  type: SettlementType;
+  name: string;
+  bodyId: string;                     // body it's on (city) or orbits (station)
+  ownedBy: string;                    // faction id
+
+  hp: number;
+  maxHp: number;
+
+  population: number;                 // starts at 1, +1 per growth interval
+  lastGrowthTick: number;             // tick when population last grew
+
+  surfaceAngle?: number;              // city: angle on body surface (radians)
+  orbit?: OrbitElements;              // station: orbit around body
+
+  // Local stockpile — extracted resources awaiting freighter pickup
+  stockpile: { fuel: number; ore: number; credits: number };
+
+  lastHarvestTick: number;            // tick when stockpile last grew
+}
+
+/**
  * Complete game state snapshot
  */
 export interface GameState {
@@ -157,6 +185,7 @@ export interface GameState {
   ships: Ship[];
   fleets: Fleet[];
   factions: Faction[];
+  settlements: Settlement[];           // cities and orbital stations
   orders: ManeuverNode[];              // all maneuvers in the game
   buildOrders: BuildOrder[];           // ships under construction
   resources: Record<string, FactionResources>; // factionId → resources

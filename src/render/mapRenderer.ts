@@ -2,7 +2,7 @@
 // Map Canvas Rendering - Draw the orbital system
 // ============================================================
 
-import { Body, Ship, OrbitElements, TrajectoryArc, TransferArc } from '../types';
+import { Body, Ship, OrbitElements, TrajectoryArc, TransferArc, Settlement, Faction } from '../types';
 import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt } from '../physics/orbitalMechanics';
 import { bezierPositionAt, bezierTangentAt, bezierPoints } from '../physics/bezierTransfer';
 import { COLORS, withOpacity } from './colors';
@@ -743,3 +743,198 @@ export function drawGhostPlanet(
   const etaLabel = eta > 0 ? ` T-${eta.toFixed(0)}` : '';
   ctx.ctx.fillText(`${body.name}${etaLabel}`, canvasPos.x, canvasPos.y + radius + 6);
 }
+
+// ============================================================
+// Settlement rendering
+// ============================================================
+
+function settlementColor(settlement: Settlement, factions: Faction[]): string {
+  const faction = factions.find(f => f.id === settlement.ownedBy);
+  return faction?.color || COLORS.neutral;
+}
+
+/**
+ * Draw a city: a small filled square mounted on the body's surface at
+ * `surfaceAngle`. Population indicated by stacked notches above marker.
+ */
+export function drawCity(
+  settlement: Settlement,
+  body: Body,
+  factions: Faction[],
+  ctx: RenderContext,
+  isSelected: boolean = false,
+) {
+  if (settlement.bodyId !== body.id) return;
+  const bodyPos = bodyPosition(body, ctx.t, ctx.bodies);
+  const angle = settlement.surfaceAngle ?? 0;
+  const surfaceR = body.radius;
+  const worldX = bodyPos.x + surfaceR * Math.cos(angle);
+  const worldY = bodyPos.y + surfaceR * Math.sin(angle);
+  const canvasPos = worldToCanvas(worldX, worldY, ctx);
+
+  const color = settlementColor(settlement, factions);
+  const size = Math.max(3, 4 * Math.min(1.5, Math.sqrt(ctx.camera.scale)));
+
+  // Outward orientation
+  const outwardX = Math.cos(angle);
+  const outwardY = Math.sin(angle);
+  const tipX = canvasPos.x + outwardX * size * 0.5;
+  const tipY = canvasPos.y + outwardY * size * 0.5;
+
+  ctx.ctx.fillStyle = color;
+  ctx.ctx.strokeStyle = '#0a0e14';
+  ctx.ctx.lineWidth = 1;
+  ctx.ctx.beginPath();
+  ctx.ctx.rect(tipX - size / 2, tipY - size / 2, size, size);
+  ctx.ctx.fill();
+  ctx.ctx.stroke();
+
+  // HP bar if damaged
+  if (settlement.hp < settlement.maxHp) {
+    const barW = size * 1.5;
+    const barH = 2;
+    const barX = tipX - barW / 2;
+    const barY = tipY - size - 5;
+    const hpFrac = Math.max(0, settlement.hp / settlement.maxHp);
+    ctx.ctx.fillStyle = '#2a3d50';
+    ctx.ctx.fillRect(barX, barY, barW, barH);
+    ctx.ctx.fillStyle = hpFrac > 0.5 ? COLORS.success : hpFrac > 0.25 ? COLORS.warning : COLORS.danger;
+    ctx.ctx.fillRect(barX, barY, barW * hpFrac, barH);
+  }
+
+  // Population pips
+  if (settlement.population > 1 && ctx.camera.scale > 0.7) {
+    const pipCount = Math.min(settlement.population, 5);
+    const pipSize = 1;
+    const pipSpacing = 3;
+    const pipsW = (pipCount - 1) * pipSpacing;
+    const pipY = tipY - size - 9;
+    ctx.ctx.fillStyle = color;
+    for (let i = 0; i < pipCount; i++) {
+      const px = tipX - pipsW / 2 + i * pipSpacing;
+      ctx.ctx.beginPath();
+      ctx.ctx.arc(px, pipY, pipSize, 0, Math.PI * 2);
+      ctx.ctx.fill();
+    }
+  }
+
+  if (isSelected) {
+    ctx.ctx.strokeStyle = COLORS.warning;
+    ctx.ctx.lineWidth = 1;
+    ctx.ctx.setLineDash([3, 3]);
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(tipX, tipY, size + 4, 0, Math.PI * 2);
+    ctx.ctx.stroke();
+    ctx.ctx.setLineDash([]);
+  }
+}
+
+/**
+ * Draw a station: a diamond marker on a thin orbital ring around the body.
+ */
+export function drawStation(
+  settlement: Settlement,
+  body: Body,
+  factions: Faction[],
+  ctx: RenderContext,
+  isSelected: boolean = false,
+) {
+  if (settlement.bodyId !== body.id || !settlement.orbit) return;
+  const bodyPos = bodyPosition(body, ctx.t, ctx.bodies);
+
+  const orbit = settlement.orbit;
+  const radius = (orbit.rp + orbit.ra) / 2;
+  const M = orbit.M0 + (2 * Math.PI * (ctx.t - orbit.epoch) / orbit.period) * orbit.direction;
+  const theta = M;
+  const localX = radius * Math.cos(theta);
+  const localY = radius * Math.sin(theta);
+  const worldX = bodyPos.x + localX;
+  const worldY = bodyPos.y + localY;
+  const canvasPos = worldToCanvas(worldX, worldY, ctx);
+
+  const color = settlementColor(settlement, factions);
+  const size = Math.max(3, 4 * Math.min(1.5, Math.sqrt(ctx.camera.scale)));
+
+  // Orbit ring at station altitude
+  const canvasBodyPos = worldToCanvas(bodyPos.x, bodyPos.y, ctx);
+  const orbitRpx = radius * ctx.camera.scale;
+  if (orbitRpx > 4) {
+    ctx.ctx.strokeStyle = withOpacity(color, 0.25);
+    ctx.ctx.lineWidth = 0.5;
+    ctx.ctx.setLineDash([2, 3]);
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(canvasBodyPos.x, canvasBodyPos.y, orbitRpx, 0, Math.PI * 2);
+    ctx.ctx.stroke();
+    ctx.ctx.setLineDash([]);
+  }
+
+  // Diamond
+  ctx.ctx.fillStyle = color;
+  ctx.ctx.strokeStyle = '#0a0e14';
+  ctx.ctx.lineWidth = 1;
+  ctx.ctx.beginPath();
+  ctx.ctx.moveTo(canvasPos.x, canvasPos.y - size);
+  ctx.ctx.lineTo(canvasPos.x + size, canvasPos.y);
+  ctx.ctx.lineTo(canvasPos.x, canvasPos.y + size);
+  ctx.ctx.lineTo(canvasPos.x - size, canvasPos.y);
+  ctx.ctx.closePath();
+  ctx.ctx.fill();
+  ctx.ctx.stroke();
+
+  // HP bar
+  if (settlement.hp < settlement.maxHp) {
+    const barW = size * 1.8;
+    const barH = 2;
+    const barX = canvasPos.x - barW / 2;
+    const barY = canvasPos.y - size - 5;
+    const hpFrac = Math.max(0, settlement.hp / settlement.maxHp);
+    ctx.ctx.fillStyle = '#2a3d50';
+    ctx.ctx.fillRect(barX, barY, barW, barH);
+    ctx.ctx.fillStyle = hpFrac > 0.5 ? COLORS.success : hpFrac > 0.25 ? COLORS.warning : COLORS.danger;
+    ctx.ctx.fillRect(barX, barY, barW * hpFrac, barH);
+  }
+
+  // Population pips
+  if (settlement.population > 1 && ctx.camera.scale > 0.7) {
+    const pipCount = Math.min(settlement.population, 5);
+    const pipSize = 1;
+    const pipSpacing = 3;
+    const pipsW = (pipCount - 1) * pipSpacing;
+    const pipY = canvasPos.y - size - 9;
+    ctx.ctx.fillStyle = color;
+    for (let i = 0; i < pipCount; i++) {
+      const px = canvasPos.x - pipsW / 2 + i * pipSpacing;
+      ctx.ctx.beginPath();
+      ctx.ctx.arc(px, pipY, pipSize, 0, Math.PI * 2);
+      ctx.ctx.fill();
+    }
+  }
+
+  if (isSelected) {
+    ctx.ctx.strokeStyle = COLORS.warning;
+    ctx.ctx.lineWidth = 1;
+    ctx.ctx.setLineDash([3, 3]);
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(canvasPos.x, canvasPos.y, size + 4, 0, Math.PI * 2);
+    ctx.ctx.stroke();
+    ctx.ctx.setLineDash([]);
+  }
+}
+
+/**
+ * Dispatch by settlement type
+ */
+export function drawSettlement(
+  settlement: Settlement,
+  body: Body,
+  factions: Faction[],
+  ctx: RenderContext,
+  isSelected: boolean = false,
+) {
+  if (settlement.type === 'city') {
+    drawCity(settlement, body, factions, ctx, isSelected);
+  } else {
+    drawStation(settlement, body, factions, ctx, isSelected);
+  }
+}
+

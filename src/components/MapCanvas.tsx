@@ -13,6 +13,7 @@ import {
   drawDepartureMarker,
   drawGhostPlanet,
   drawTargetHighlight,
+  drawSettlement,
   worldToCanvas,
   RenderContext,
 } from '../render/mapRenderer';
@@ -36,6 +37,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     gameState, camera, uiState, simSpeed,
     updateCamera, selectShip, selectBody, hoverBody, focusBody,
     setTargetSelectionMode,
+    selectedSettlementId,
   } = useGameContext();
 
   const [panState, setPanState] = useState<{
@@ -194,8 +196,21 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
     }
 
+    // Draw settlements (cities on body surface, stations in orbit)
+    for (const settlement of gameState.settlements) {
+      const body = gameState.bodies.find(b => b.id === settlement.bodyId);
+      if (!body) continue;
+      drawSettlement(
+        settlement,
+        body,
+        gameState.factions,
+        renderContext,
+        selectedSettlementId === settlement.id,
+      );
+    }
+
     drawHUD(renderContext, uiState.targetSelectionMode);
-  }, [gameState, camera, uiState, simSpeed]);
+  }, [gameState, camera, uiState, simSpeed, selectedSettlementId]);
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
