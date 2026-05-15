@@ -2,8 +2,9 @@
 // Map Canvas Rendering - Draw the orbital system
 // ============================================================
 
-import { Body, Ship, OrbitElements, TrajectoryArc } from '../types';
+import { Body, Ship, OrbitElements, TrajectoryArc, TransferArc } from '../types';
 import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt } from '../physics/orbitalMechanics';
+import { bezierPositionAt, bezierTangentAt, bezierPoints } from '../physics/bezierTransfer';
 import { COLORS, withOpacity } from './colors';
 
 export interface RenderContext {
@@ -571,111 +572,174 @@ export function drawSOIBoundary(
   ctx.ctx.setLineDash([]);
 }
 
-/**
- * Draw a ghost (semi-transparent) planet at a future position
- * Shows where a body will be at a given time (encounter prediction)
- */
-export function drawGhostPlanet(
-  body: Body,
-  futureT: number,
-  currentTick: number,
+export function drawBezierTrajectory(
+  arc: TransferArc,
   ctx: RenderContext,
-  color?: string
+  color: string = COLORS.arcTransfer,
+  isDashed: boolean = false
 ) {
-  const pos = bodyPosition(body, futureT, ctx.bodies);
-  const canvasPos = worldToCanvas(pos.x, pos.y, ctx);
-  const radius = Math.max(3, body.radius * ctx.camera.scale);
-  const bodyColor = color || body.color || COLORS.planetDefault;
+  const points = bezierPoints(arc, 80);
+  if (points.length < 2) return;
 
-  const c = ctx.ctx;
-  const prevAlpha = c.globalAlpha;
+  if (isDashed) ctx.ctx.setLineDash([5, 5]);
+  ctx.ctx.strokeStyle = color;
+  ctx.ctx.lineWidth = 1.5;
+  ctx.ctx.beginPath();
 
-  // Ghost body circle
-  c.globalAlpha = 0.35;
-  c.fillStyle = bodyColor;
-  c.beginPath();
-  c.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
-  c.fill();
-
-  // Ghost SOI boundary
-  if (body.soi > 0) {
-    const soiR = body.soi * ctx.camera.scale;
-    if (soiR > 5) {
-      c.globalAlpha = 0.2;
-      c.strokeStyle = withOpacity(COLORS.maneuverPlanned, 0.4);
-      c.lineWidth = 1;
-      c.setLineDash([3, 4]);
-      c.beginPath();
-      c.arc(canvasPos.x, canvasPos.y, soiR, 0, Math.PI * 2);
-      c.stroke();
-      c.setLineDash([]);
-    }
+  for (let i = 0; i < points.length; i++) {
+    const cp = worldToCanvas(points[i].x, points[i].y, ctx);
+    if (i === 0) ctx.ctx.moveTo(cp.x, cp.y);
+    else ctx.ctx.lineTo(cp.x, cp.y);
   }
 
-  // Label with countdown
-  const ticksUntil = futureT - currentTick;
-  const label = ticksUntil > 0
-    ? `${body.name} T+${ticksUntil.toFixed(0)}`
-    : body.name;
-
-  c.globalAlpha = 0.55;
-  c.fillStyle = COLORS.fgDim;
-  c.font = '9px monospace';
-  c.textAlign = 'center';
-  c.textBaseline = 'top';
-  c.fillText(label, canvasPos.x, canvasPos.y + radius + 6);
-
-  c.globalAlpha = prevAlpha;
+  ctx.ctx.stroke();
+  ctx.ctx.setLineDash([]);
 }
 
-/**
- * Draw the arrival orbit at the destination body (what the ship's orbit
- * will look like after capture). Drawn relative to the destination body
- * at the encounter time.
- */
-export function drawArrivalOrbit(
-  orbit: OrbitElements,
-  futureT: number,
+export function drawTransitShip(
+  ship: Ship,
   ctx: RenderContext,
-  color: string = COLORS.arcCapture,
-  isDashed: boolean = true
+  isSelected: boolean = false
 ) {
-  const parentBody = ctx.bodies.find(b => b.id === orbit.parentBodyId);
-  if (!parentBody) return;
+  if (!ship.transfer) return;
 
-  const parentPos = bodyPosition(parentBody, futureT, ctx.bodies);
-  const a = semiMajor(orbit);
-  const e = eccentricity(orbit);
-  const b = a * Math.sqrt(1 - e * e);
-  const c_focal = a * e;
-  const cosOmega = Math.cos(orbit.omega);
-  const sinOmega = Math.sin(orbit.omega);
+  const worldPos = bezierPositionAt(ship.transfer, ctx.t);
+  const canvasPos = worldToCanvas(worldPos.x, worldPos.y, ctx);
+  const shipColor = COLORS.neutral;
+  const shipSize = isSelected ? 5 : 4;
 
-  const gc = ctx.ctx;
-  const prevAlpha = gc.globalAlpha;
-  gc.globalAlpha = 0.5;
+  ctx.ctx.fillStyle = shipColor;
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, shipSize, 0, Math.PI * 2);
+  ctx.ctx.fill();
 
-  if (isDashed) gc.setLineDash([4, 4]);
-  gc.strokeStyle = color;
-  gc.lineWidth = 1.5;
-  gc.beginPath();
+  // Prograde tick from Bezier tangent
+  const tangent = bezierTangentAt(ship.transfer, ctx.t);
+  ctx.ctx.strokeStyle = shipColor;
+  ctx.ctx.lineWidth = 1.5;
+  ctx.ctx.beginPath();
+  ctx.ctx.moveTo(canvasPos.x, canvasPos.y);
+  ctx.ctx.lineTo(canvasPos.x + tangent.x * 10, canvasPos.y - tangent.y * 10);
+  ctx.ctx.stroke();
 
-  const steps = 80;
-  for (let i = 0; i <= steps; i++) {
-    const theta = (i / steps) * Math.PI * 2;
-    const localX = a * Math.cos(theta);
-    const localY = b * Math.sin(theta);
-    const rotX = localX * cosOmega - localY * sinOmega;
-    const rotY = localX * sinOmega + localY * cosOmega;
-    const worldX = parentPos.x + rotX - c_focal * cosOmega;
-    const worldY = parentPos.y + rotY - c_focal * sinOmega;
-    const cp = worldToCanvas(worldX, worldY, ctx);
-
-    if (i === 0) gc.moveTo(cp.x, cp.y);
-    else gc.lineTo(cp.x, cp.y);
+  if (isSelected) {
+    ctx.ctx.strokeStyle = COLORS.info;
+    ctx.ctx.lineWidth = 2;
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(canvasPos.x, canvasPos.y, shipSize + 4, 0, Math.PI * 2);
+    ctx.ctx.stroke();
   }
 
-  gc.stroke();
-  gc.setLineDash([]);
-  gc.globalAlpha = prevAlpha;
+  // Ship name
+  ctx.ctx.fillStyle = isSelected ? '#ffb84d' : shipColor;
+  ctx.ctx.font = '9px monospace';
+  ctx.ctx.textAlign = 'left';
+  ctx.ctx.textBaseline = 'middle';
+  ctx.ctx.fillText(ship.name.split(' ')[0], canvasPos.x + 8, canvasPos.y - 6);
+
+  // ETA label
+  if (isSelected) {
+    const eta = ship.transfer.arrivalTime - ctx.t;
+    if (eta > 0) {
+      ctx.ctx.fillStyle = COLORS.fgDim;
+      ctx.ctx.font = '8px monospace';
+      ctx.ctx.textAlign = 'left';
+      ctx.ctx.fillText(`ETA T-${eta.toFixed(0)}`, canvasPos.x + 8, canvasPos.y + 6);
+    }
+  }
+}
+
+export function drawDepartureMarker(
+  arc: TransferArc,
+  currentTick: number,
+  ctx: RenderContext,
+  color: string = COLORS.maneuverPlanned
+) {
+  const canvasPos = worldToCanvas(arc.p0.x, arc.p0.y, ctx);
+  const sz = 6;
+
+  ctx.ctx.save();
+  ctx.ctx.translate(canvasPos.x, canvasPos.y);
+  ctx.ctx.rotate(Math.PI / 4);
+  ctx.ctx.fillStyle = color;
+  ctx.ctx.fillRect(-sz / 2, -sz / 2, sz, sz);
+  ctx.ctx.strokeStyle = color;
+  ctx.ctx.lineWidth = 1.5;
+  ctx.ctx.strokeRect(-sz / 2, -sz / 2, sz, sz);
+  ctx.ctx.restore();
+
+  const ticksUntil = arc.departureTime - currentTick;
+  const countdown = ticksUntil > 0 ? `T-${ticksUntil.toFixed(0)}` : 'NOW';
+
+  ctx.ctx.fillStyle = color;
+  ctx.ctx.font = '10px monospace';
+  ctx.ctx.textAlign = 'left';
+  ctx.ctx.textBaseline = 'bottom';
+  ctx.ctx.fillText(`Δv ${arc.departureDv.toFixed(2)} km/s`, canvasPos.x + 10, canvasPos.y - 4);
+  ctx.ctx.fillText(countdown, canvasPos.x + 10, canvasPos.y + 10);
+}
+
+export function drawTargetHighlight(
+  body: Body,
+  ctx: RenderContext,
+  isHovered: boolean
+) {
+  const pos = bodyPosition(body, ctx.t, ctx.bodies);
+  const canvasPos = worldToCanvas(pos.x, pos.y, ctx);
+  const radius = Math.max(3, body.radius * ctx.camera.scale);
+
+  const ringRadius = radius + (isHovered ? 10 : 6);
+  const color = isHovered ? COLORS.warning : COLORS.info;
+
+  ctx.ctx.strokeStyle = withOpacity(color, isHovered ? 0.9 : 0.4);
+  ctx.ctx.lineWidth = isHovered ? 2.5 : 1.5;
+  ctx.ctx.setLineDash(isHovered ? [] : [4, 4]);
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, ringRadius, 0, Math.PI * 2);
+  ctx.ctx.stroke();
+  ctx.ctx.setLineDash([]);
+
+  if (isHovered) {
+    // Pulsing outer ring
+    ctx.ctx.strokeStyle = withOpacity(color, 0.3);
+    ctx.ctx.lineWidth = 1;
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(canvasPos.x, canvasPos.y, ringRadius + 4, 0, Math.PI * 2);
+    ctx.ctx.stroke();
+  }
+}
+
+export function drawGhostPlanet(
+  body: Body,
+  futureTime: number,
+  currentTick: number,
+  ctx: RenderContext
+) {
+  const pos = bodyPosition(body, futureTime, ctx.bodies);
+  const canvasPos = worldToCanvas(pos.x, pos.y, ctx);
+  const radius = Math.max(3, body.radius * ctx.camera.scale);
+
+  const opacity = 0.3;
+  ctx.ctx.fillStyle = withOpacity(body.color || COLORS.planetDefault, opacity);
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
+  ctx.ctx.fill();
+
+  // Dashed circle outline
+  ctx.ctx.strokeStyle = withOpacity(body.color || COLORS.planetDefault, opacity * 0.7);
+  ctx.ctx.lineWidth = 1;
+  ctx.ctx.setLineDash([3, 3]);
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, radius + 2, 0, Math.PI * 2);
+  ctx.ctx.stroke();
+  ctx.ctx.setLineDash([]);
+
+  // Label
+  ctx.ctx.fillStyle = withOpacity('#8aa0b4', opacity);
+  ctx.ctx.font = '9px monospace';
+  ctx.ctx.textAlign = 'center';
+  ctx.ctx.textBaseline = 'top';
+  const eta = futureTime - currentTick;
+  const etaLabel = eta > 0 ? ` T-${eta.toFixed(0)}` : '';
+  ctx.ctx.fillText(`${body.name}${etaLabel}`, canvasPos.x, canvasPos.y + radius + 6);
 }

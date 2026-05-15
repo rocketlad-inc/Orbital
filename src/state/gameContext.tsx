@@ -1,26 +1,11 @@
-// ============================================================
-// Game State Context - React Context for global game state
-// ============================================================
-
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
-import { GameState, ManeuverNode, CameraState, MapUIState, Ship, Body } from '../types';
+import { GameState, ManeuverNode, CameraState, MapUIState, Ship, Body, TransferArc } from '../types';
 import { getScenario, ScenarioType } from './mockGameState';
-import {
-  orbitWorldPos,
-  orbitWorldVelocity,
-  bodyPosition,
-  orbitFromWorldState,
-  applyNodeToOrbit,
-  muOf,
-  localPositionAt,
-} from '../physics/orbitalMechanics';
+import { createCircularOrbit } from '../physics/orbitalMechanics';
 
-// Time system: 1 tick = 1 game hour, 24 ticks = 1 game day
-// Default mapping: 1 real hour = 1 game day (configurable via REAL_SECONDS_PER_GAME_DAY)
 export const TICKS_PER_GAME_DAY = 24;
 const REAL_SECONDS_PER_GAME_DAY = 3600;
-const BASE_TICK_RATE = TICKS_PER_GAME_DAY / REAL_SECONDS_PER_GAME_DAY; // ~0.00667 ticks/sec
-const MAX_TICKS_PER_FRAME = 100;
+const BASE_TICK_RATE = TICKS_PER_GAME_DAY / REAL_SECONDS_PER_GAME_DAY;
 
 interface GameContextType {
   gameState: GameState;
@@ -28,19 +13,16 @@ interface GameContextType {
   uiState: MapUIState;
   simSpeed: number;
 
-  // Game state updates
   setGameState: (state: GameState) => void;
   updateGameState: (partial: Partial<GameState>) => void;
   updateTick: (tick: number) => void;
   setSimSpeed: (speed: number) => void;
   loadScenario: (type: ScenarioType) => void;
 
-  // Camera updates
   updateCamera: (camera: Partial<CameraState>) => void;
   setZoomLevel: (level: 1 | 2 | 3) => void;
   focusBody: (bodyId: string | undefined) => void;
 
-  // UI updates
   selectShip: (shipId: string) => void;
   deselectShip: () => void;
   selectBody: (bodyId: string) => void;
@@ -48,11 +30,13 @@ interface GameContextType {
   hoverBody: (bodyId: string | null) => void;
   setManeuverMode: (mode: 'transfer' | 'orbital_change' | null) => void;
   setTransferTarget: (bodyId: string | null) => void;
+  setTargetSelectionMode: (enabled: boolean) => void;
 
-  // Maneuver updates
   addManeuverNode: (node: ManeuverNode) => void;
   commitManeuverNode: (nodeId: string) => void;
   deleteManeuverNode: (nodeId: string) => void;
+  setPendingTransfer: (shipId: string, arc: TransferArc | undefined) => void;
+  addQueuedTransfer: (shipId: string, arc: TransferArc) => void;
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
@@ -69,14 +53,9 @@ export function GameContextProvider({
   const [gameState, setGameStateInternal] = useState<GameState>(
     getScenario(initialScenario)
   );
-
   const [camera, setCameraInternal] = useState<CameraState>({
-    x: 0,
-    y: 0,
-    scale: 1,
-    zoomLevel: 1,
+    x: 0, y: 0, scale: 1, zoomLevel: 1,
   });
-
   const [uiState, setUIStateInternal] = useState<MapUIState>({
     selectedShipId: undefined,
     selectedBodyId: undefined,
@@ -84,6 +63,98 @@ export function GameContextProvider({
     maneuverMode: null,
     transferTargetId: undefined,
   });
+  const [simSpeed, setSimSpeedInternal] = useState<number>(0);
+
+  // Ship state machine for Bezier transfers:
+  //   orbiting (no transfer) → committed node fires → in_transit (transfer set)
+  //   in_transit → arrivalTime reached → orbiting at destination
+  const checkNodeExecution = useCallback((ships: Ship[], bodies: Body[], tick: number): Ship[] => {
+    let mutated = false;
+    const updatedShips = ships.map(ship => {
+      let orbit = ship.orbit;
+      let fuel = ship.fuel;
+      let orders = ship.orders;
+      let transfer = ship.transfer;
+      let pendingTransfer = ship.pendingTransfer;
+      let queuedTransfers = ship.queuedTransfers ? [...ship.queuedTransfers] : [];
+      let changed = false;
+
+      if (transfer) {
+        if (tick >= transfer.arrivalTime) {
+          const cost = Math.round(Math.abs(transfer.arrivalDv) * 10);
+          fuel = Math.max(0, fuel - cost);
+
+          if (queuedTransfers.length > 0) {
+            // Chain into next queued transfer
+            const nextArc = queuedTransfers.shift()!;
+            const depCost = Math.round(Math.abs(nextArc.departureDv) * 10);
+            fuel = Math.max(0, fuel - depCost);
+            transfer = nextArc;
+            orbit = createCircularOrbit(nextArc.departureBodyId, 10, tick, bodies);
+          } else {
+            const arrBody = bodies.find(b => b.id === transfer!.arrivalBodyId);
+            const arrRadius = arrBody ? arrBody.radius + 4 : 10;
+            orbit = createCircularOrbit(transfer.arrivalBodyId, arrRadius, tick, bodies);
+            transfer = undefined;
+          }
+          changed = true;
+        }
+      } else {
+        // Ship is orbiting — check for departure burns
+        const sortedOrders = [...orders].sort((a, b) => a.burnTime - b.burnTime);
+        const executedIds: string[] = [];
+        for (const node of sortedOrders) {
+          if (node.status === 'committed' && node.burnTime <= tick) {
+            if (pendingTransfer && node.type === 'transfer') {
+              // Departure: switch to transit
+              const cost = Math.round(Math.abs(node.deltav) * 10);
+              fuel = Math.max(0, fuel - cost);
+              transfer = pendingTransfer;
+              pendingTransfer = undefined;
+            }
+            executedIds.push(node.id);
+            changed = true;
+          }
+        }
+        if (executedIds.length > 0) {
+          orders = orders.filter(o => !executedIds.includes(o.id));
+        }
+      }
+
+      if (changed) {
+        mutated = true;
+        return { ...ship, orbit, fuel, orders, transfer, pendingTransfer, queuedTransfers };
+      }
+      return ship;
+    });
+    return mutated ? updatedShips : ships;
+  }, []);
+
+  // Tick-based game loop
+  const lastTimeRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (simSpeed === 0) return;
+    lastTimeRef.current = performance.now();
+
+    const interval = setInterval(() => {
+      const now = performance.now();
+      const realDeltaSec = (now - lastTimeRef.current) / 1000;
+      lastTimeRef.current = now;
+
+      const cappedDelta = Math.min(realDeltaSec, 1.0);
+      const tickDelta = cappedDelta * BASE_TICK_RATE * simSpeed;
+
+      setGameStateInternal(prev => {
+        const newTime = prev.currentTick + tickDelta;
+        const updatedShips = checkNodeExecution(prev.ships, prev.bodies, newTime);
+        const allOrders = updatedShips.flatMap(s => s.orders);
+        return { ...prev, ships: updatedShips, orders: allOrders, currentTick: newTime };
+      });
+    }, 50);
+
+    return () => clearInterval(interval);
+  }, [simSpeed, checkNodeExecution]);
 
   const [simSpeed, setSimSpeedInternal] = useState<number>(0);
 
@@ -296,23 +367,24 @@ export function GameContextProvider({
   }, []);
 
   const updateGameState = useCallback((partial: Partial<GameState>) => {
-    setGameStateInternal(prev => ({
-      ...prev,
-      ...partial,
-    }));
+    setGameStateInternal(prev => ({ ...prev, ...partial }));
   }, []);
 
   const updateTick = useCallback((tick: number) => {
-    setGameStateInternal(prev => ({
-      ...prev,
-      currentTick: tick,
-    }));
+    setGameStateInternal(prev => {
+      const updatedShips = checkNodeExecution(prev.ships, prev.bodies, tick);
+      const allOrders = updatedShips.flatMap(s => s.orders);
+      return { ...prev, ships: updatedShips, orders: allOrders, currentTick: tick };
+    });
+  }, [checkNodeExecution]);
+
+  const setSimSpeed = useCallback((speed: number) => {
+    setSimSpeedInternal(speed);
   }, []);
 
   const loadScenario = useCallback((type: ScenarioType) => {
     setGameStateInternal(getScenario(type));
-    setSimSpeedInternal(0); // Pause on scenario load
-    // Reset camera and UI state
+    setSimSpeedInternal(0);
     setCameraInternal({ x: 0, y: 0, scale: 1, zoomLevel: 1 });
     setUIStateInternal({
       selectedShipId: undefined,
@@ -336,79 +408,44 @@ export function GameContextProvider({
       const body = gameState.bodies.find(b => b.id === bodyId);
       if (body) {
         setCameraInternal(prev => ({
-          ...prev,
-          focusedBodyId: bodyId,
-          x: 0,
-          y: 0,
-          scale: 2,
-          zoomLevel: 2,
+          ...prev, focusedBodyId: bodyId, x: 0, y: 0, scale: 2, zoomLevel: 2,
         }));
       }
     } else {
       setCameraInternal(prev => ({
-        ...prev,
-        focusedBodyId: undefined,
-        x: 0,
-        y: 0,
-        scale: 1,
-        zoomLevel: 1,
+        ...prev, focusedBodyId: undefined, x: 0, y: 0, scale: 1, zoomLevel: 1,
       }));
     }
   }, [gameState.bodies]);
 
   const selectShip = useCallback((shipId: string) => {
-    setUIStateInternal(prev => ({
-      ...prev,
-      selectedShipId: shipId,
-      selectedBodyId: undefined,
-    }));
+    setUIStateInternal(prev => ({ ...prev, selectedShipId: shipId, selectedBodyId: undefined }));
   }, []);
 
   const deselectShip = useCallback(() => {
-    setUIStateInternal(prev => ({
-      ...prev,
-      selectedShipId: undefined,
-    }));
+    setUIStateInternal(prev => ({ ...prev, selectedShipId: undefined }));
   }, []);
 
   const selectBody = useCallback((bodyId: string) => {
-    setUIStateInternal(prev => ({
-      ...prev,
-      selectedBodyId: bodyId,
-      selectedShipId: undefined,
-    }));
+    setUIStateInternal(prev => ({ ...prev, selectedBodyId: bodyId, selectedShipId: undefined }));
   }, []);
 
   const deselectBody = useCallback(() => {
-    setUIStateInternal(prev => ({
-      ...prev,
-      selectedBodyId: undefined,
-    }));
+    setUIStateInternal(prev => ({ ...prev, selectedBodyId: undefined }));
   }, []);
 
   const hoverBody = useCallback((bodyId: string | null) => {
+    setUIStateInternal(prev => ({ ...prev, hoveredBodyId: bodyId || undefined }));
+  }, []);
+
+  const setManeuverMode = useCallback((mode: 'transfer' | 'orbital_change' | null) => {
     setUIStateInternal(prev => ({
-      ...prev,
-      hoveredBodyId: bodyId || undefined,
+      ...prev, maneuverMode: mode, transferTargetId: mode ? prev.transferTargetId : undefined,
     }));
   }, []);
 
-  const setManeuverMode = useCallback(
-    (mode: 'transfer' | 'orbital_change' | null) => {
-      setUIStateInternal(prev => ({
-        ...prev,
-        maneuverMode: mode,
-        transferTargetId: mode ? prev.transferTargetId : undefined,
-      }));
-    },
-    []
-  );
-
   const setTransferTarget = useCallback((bodyId: string | null) => {
-    setUIStateInternal(prev => ({
-      ...prev,
-      transferTargetId: bodyId || undefined,
-    }));
+    setUIStateInternal(prev => ({ ...prev, transferTargetId: bodyId || undefined }));
   }, []);
 
   const addManeuverNode = useCallback((node: ManeuverNode) => {
@@ -427,12 +464,12 @@ export function GameContextProvider({
     setGameStateInternal(prev => ({
       ...prev,
       orders: prev.orders.map(order =>
-        order.id === nodeId ? { ...order, status: 'committed' } : order
+        order.id === nodeId ? { ...order, status: 'committed' as const } : order
       ),
       ships: prev.ships.map(ship => ({
         ...ship,
         orders: ship.orders.map(order =>
-          order.id === nodeId ? { ...order, status: 'committed' } : order
+          order.id === nodeId ? { ...order, status: 'committed' as const } : order
         ),
       })),
     }));
@@ -442,36 +479,55 @@ export function GameContextProvider({
     setGameStateInternal(prev => ({
       ...prev,
       orders: prev.orders.filter(order => order.id !== nodeId),
-      ships: prev.ships.map(ship => ({
-        ...ship,
-        orders: ship.orders.filter(order => order.id !== nodeId),
-      })),
+      ships: prev.ships.map(ship => {
+        const deletedOrder = ship.orders.find(o => o.id === nodeId);
+        const newOrders = ship.orders.filter(order => order.id !== nodeId);
+        const hasTransferOrders = newOrders.some(o => o.type === 'transfer');
+        return {
+          ...ship,
+          orders: newOrders,
+          pendingTransfer: (deletedOrder?.type === 'transfer' && !hasTransferOrders)
+            ? undefined
+            : ship.pendingTransfer,
+          queuedTransfers: (deletedOrder?.type === 'transfer' && !hasTransferOrders)
+            ? undefined
+            : ship.queuedTransfers,
+        };
+      }),
+    }));
+  }, []);
+
+  const setTargetSelectionMode = useCallback((enabled: boolean) => {
+    setUIStateInternal(prev => ({ ...prev, targetSelectionMode: enabled }));
+  }, []);
+
+  const setPendingTransfer = useCallback((shipId: string, arc: TransferArc | undefined) => {
+    setGameStateInternal(prev => ({
+      ...prev,
+      ships: prev.ships.map(ship =>
+        ship.id === shipId ? { ...ship, pendingTransfer: arc } : ship
+      ),
+    }));
+  }, []);
+
+  const addQueuedTransfer = useCallback((shipId: string, arc: TransferArc) => {
+    setGameStateInternal(prev => ({
+      ...prev,
+      ships: prev.ships.map(ship => {
+        if (ship.id !== shipId) return ship;
+        const queue = ship.queuedTransfers ? [...ship.queuedTransfers, arc] : [arc];
+        return { ...ship, queuedTransfers: queue };
+      }),
     }));
   }, []);
 
   const value: GameContextType = {
-    gameState,
-    camera,
-    uiState,
-    simSpeed,
-    setGameState,
-    updateGameState,
-    updateTick,
-    setSimSpeed,
-    loadScenario,
-    updateCamera,
-    setZoomLevel,
-    focusBody,
-    selectShip,
-    deselectShip,
-    selectBody,
-    deselectBody,
-    hoverBody,
-    setManeuverMode,
-    setTransferTarget,
-    addManeuverNode,
-    commitManeuverNode,
-    deleteManeuverNode,
+    gameState, camera, uiState, simSpeed,
+    setGameState, updateGameState, updateTick, setSimSpeed, loadScenario,
+    updateCamera, setZoomLevel, focusBody,
+    selectShip, deselectShip, selectBody, deselectBody, hoverBody,
+    setManeuverMode, setTransferTarget, setTargetSelectionMode,
+    addManeuverNode, commitManeuverNode, deleteManeuverNode, setPendingTransfer, addQueuedTransfer,
   };
 
   return (

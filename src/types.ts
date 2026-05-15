@@ -93,9 +93,10 @@ export interface Ship {
   // Maneuvers
   orders: ManeuverNode[];               // planned/committed burns for this ship
 
-  // SOI grace period: after exiting a body's SOI, ignore re-entry for 10 ticks
-  soiGrace?: number;                    // tick until which to ignore re-entry
-  soiGraceBody?: string;                // body ID to ignore during grace period
+  // Bezier transfer state
+  pendingTransfer?: TransferArc;        // planned but not yet departed
+  transfer?: TransferArc;               // currently in transit
+  queuedTransfers?: TransferArc[];      // chained transfers waiting after current
 
   // Display info
   isSelected?: boolean;
@@ -143,6 +144,26 @@ export interface MapUIState {
   hoveredBodyId?: string;
   maneuverMode?: 'transfer' | 'orbital_change' | null;
   transferTargetId?: string;            // when planning a transfer
+  targetSelectionMode?: boolean;        // true when picking a transfer target on the map
+}
+
+/**
+ * Bezier transfer arc: a precomputed cubic Bezier curve between two bodies.
+ * Hohmann math drives fuel cost and travel time; the curve is purely visual.
+ */
+export interface TransferArc {
+  id: string;
+  departureBodyId: string;
+  arrivalBodyId: string;
+  departureTime: number;
+  arrivalTime: number;
+  departureDv: number;
+  arrivalDv: number;
+  label: string;
+  p0: { x: number; y: number };
+  p3: { x: number; y: number };
+  cp1: { x: number; y: number };
+  cp2: { x: number; y: number };
 }
 
 /**

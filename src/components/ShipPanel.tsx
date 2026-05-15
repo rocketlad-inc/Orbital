@@ -1,117 +1,125 @@
-// ============================================================
-// ShipPanel - Ship information and maneuver controls
-// ============================================================
-
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { ManeuverNode } from '../types';
-import { planTransfer } from '../physics/orbitalMechanics';
+import { planBezierTransfer } from '../physics/bezierTransfer';
+import { createCircularOrbit } from '../physics/orbitalMechanics';
 import './ShipPanel.css';
 
 export const ShipPanel: React.FC = () => {
-  const { gameState, uiState, deselectShip, commitManeuverNode, deleteManeuverNode, addManeuverNode } =
-    useGameContext();
+  const {
+    gameState, uiState, deselectShip, setGameState,
+    commitManeuverNode, deleteManeuverNode, addManeuverNode,
+    setPendingTransfer, addQueuedTransfer, setTargetSelectionMode,
+  } = useGameContext();
 
   const [transferModalOpen, setTransferModalOpen] = useState(false);
-  const [orbitalModalOpen, setOrbitalModalOpen] = useState(false);
-  const [peInput, setPeInput] = useState('');
-  const [apInput, setApInput] = useState('');
 
-  if (!uiState.selectedShipId) {
-    return null;
-  }
+  const ship = uiState.selectedShipId
+    ? gameState.ships.find(s => s.id === uiState.selectedShipId) || null
+    : null;
 
-  const ship = gameState.ships.find(s => s.id === uiState.selectedShipId);
-  if (!ship) {
-    return null;
-  }
+  // Keep a ref to the latest transfer handler so the event listener always sees current state
+  const transferHandlerRef = useRef<(bodyId: string, strategy: 'quickest' | 'efficient') => void>(() => {});
 
-  const handleTransferManeuver = (targetBodyId: string, strategy: 'quickest' | 'soonest' = 'quickest') => {
-    const plan = planTransfer(ship.orbit, targetBodyId, gameState.bodies, gameState.currentTick, strategy);
-    if (!plan) {
-      alert('Cannot plan transfer to that target');
-      return;
+  useEffect(() => {
+    if (!ship) return;
+
+    transferHandlerRef.current = (targetBodyId: string, strategy: 'quickest' | 'efficient') => {
+      const queue = ship.queuedTransfers || [];
+      let chainTail: { bodyId: string; time: number } | null = null;
+      if (queue.length > 0) {
+        const last = queue[queue.length - 1];
+        chainTail = { bodyId: last.arrivalBodyId, time: last.arrivalTime };
+      } else if (ship.transfer) {
+        chainTail = { bodyId: ship.transfer.arrivalBodyId, time: ship.transfer.arrivalTime };
+      } else if (ship.pendingTransfer) {
+        chainTail = { bodyId: ship.pendingTransfer.arrivalBodyId, time: ship.pendingTransfer.arrivalTime };
+      }
+
+      if (chainTail) {
+        const tailBody = gameState.bodies.find(b => b.id === chainTail!.bodyId);
+        const arrRadius = tailBody ? tailBody.radius + 4 : 10;
+        const tempOrbit = createCircularOrbit(chainTail.bodyId, arrRadius, chainTail.time, gameState.bodies);
+        const arc = planBezierTransfer(tempOrbit, targetBodyId, chainTail.time, gameState.bodies, strategy);
+        if (!arc) return;
+        addQueuedTransfer(ship.id, arc);
+      } else {
+        const arc = planBezierTransfer(ship.orbit, targetBodyId, gameState.currentTick, gameState.bodies, strategy);
+        if (!arc) return;
+
+        const node: ManeuverNode = {
+          id: `node-${Date.now()}-${Math.random()}`,
+          shipId: ship.id,
+          type: 'transfer',
+          burnTime: arc.departureTime,
+          deltav: arc.departureDv,
+          prograde: arc.departureDv,
+          radial: 0,
+          normal: 0,
+          status: 'planned',
+          label: arc.label,
+        };
+
+        addManeuverNode(node);
+        setPendingTransfer(ship.id, arc);
+      }
+      setTransferModalOpen(false);
+      setTargetSelectionMode(false);
+    };
+  }, [ship, gameState, addManeuverNode, setPendingTransfer, addQueuedTransfer, setTargetSelectionMode]);
+
+  const handleTransferConfirmEvent = useCallback((e: Event) => {
+    const detail = (e as CustomEvent).detail;
+    if (detail?.bodyId && detail?.strategy) {
+      transferHandlerRef.current(detail.bodyId, detail.strategy);
     }
+  }, []);
 
-    if (!plan.hasValidPlan) {
-      console.warn('[TRANSFER] Using analytic fallback — encounter not guaranteed');
-    }
+  useEffect(() => {
+    window.addEventListener('orbital-transfer-confirm', handleTransferConfirmEvent);
+    return () => window.removeEventListener('orbital-transfer-confirm', handleTransferConfirmEvent);
+  }, [handleTransferConfirmEvent]);
 
-    // Create maneuver nodes from the plan
-    // Departure burn: normal node (fires at burnTime)
-    // Capture burn: has capturedAtBody (handled by game loop on SOI entry)
-    plan.burns.forEach((burn) => {
-      const node: ManeuverNode = {
-        id: `node-${Date.now()}-${Math.random()}`,
-        shipId: ship.id,
-        type: 'transfer',
-        burnTime: burn.timing,
-        deltav: burn.dv,
-        prograde: burn.dv,
-        radial: 0,
-        normal: 0,
-        status: 'planned',
-        label: burn.label,
-        capturedAtBody: burn.capturedAtBody,
-      };
-      addManeuverNode(node);
+  if (!ship) return null;
+
+  const handleTransferManeuver = (targetBodyId: string, strategy: 'quickest' | 'efficient' = 'quickest') => {
+    transferHandlerRef.current(targetBodyId, strategy);
+  };
+
+  const handleRemoveQueuedTransfer = (index: number) => {
+    const queue = ship.queuedTransfers || [];
+    if (index >= queue.length) return;
+    const newQueue = queue.slice(0, index);
+    setGameState({
+      ...gameState,
+      ships: gameState.ships.map(s =>
+        s.id === ship.id
+          ? { ...s, queuedTransfers: newQueue.length > 0 ? newQueue : undefined }
+          : s
+      ),
     });
-
-    setTransferModalOpen(false);
   };
 
-  const handleOrbitalManeuver = () => {
-    const pe = parseFloat(peInput);
-    const ap = parseFloat(apInput);
+  const hasExistingTransfer = !!(ship.transfer || ship.pendingTransfer);
 
-    if (isNaN(pe) || isNaN(ap) || pe < 1 || ap < pe) {
-      alert('Invalid Pe/Ap values');
-      return;
-    }
+  const locationLabel = ship.transfer
+    ? `→ ${gameState.bodies.find(b => b.id === ship.transfer!.arrivalBodyId)?.name || '?'}`
+    : ship.orbit.parentBodyId.toUpperCase();
 
-    // Create two burns for circularization
-    // First burn: raise/lower apoapsis
-    const burn1: ManeuverNode = {
-      id: `node-${Date.now()}-${Math.random()}`,
-      shipId: ship.id,
-      type: 'orbital_change',
-      burnTime: gameState.currentTick + 50,
-      deltav: 5.0, // Placeholder
-      prograde: 5.0,
-      radial: 0,
-      normal: 0,
-      status: 'planned',
-    };
+  const eta = ship.transfer
+    ? ship.transfer.arrivalTime - gameState.currentTick
+    : ship.pendingTransfer
+      ? ship.pendingTransfer.departureTime - gameState.currentTick
+      : null;
 
-    // Second burn: circularize at target
-    const burn2: ManeuverNode = {
-      id: `node-${Date.now()}-${Math.random()}`,
-      shipId: ship.id,
-      type: 'orbital_change',
-      burnTime: gameState.currentTick + 100,
-      deltav: 3.0, // Placeholder
-      prograde: 3.0,
-      radial: 0,
-      normal: 0,
-      status: 'planned',
-    };
-
-    addManeuverNode(burn1);
-    addManeuverNode(burn2);
-
-    setOrbitalModalOpen(false);
-    setPeInput('');
-    setApInput('');
-  };
+  const queuedTransfers = ship.queuedTransfers || [];
 
   return (
     <>
       <div className="ship-panel">
         <div className="panel-header">
           <span>SHIP: {ship.name}</span>
-          <button className="panel-close" onClick={deselectShip}>
-            ✕
-          </button>
+          <button className="panel-close" onClick={deselectShip}>✕</button>
         </div>
 
         <div className="panel-body">
@@ -126,17 +134,39 @@ export const ShipPanel: React.FC = () => {
             </div>
             <div className="stat-row">
               <span className="label">LOCATION</span>
-              <span className="value">{ship.orbit.parentBodyId.toUpperCase()}</span>
+              <span className="value">{locationLabel}</span>
             </div>
+            {ship.transfer && eta != null && eta > 0 && (
+              <div className="stat-row">
+                <span className="label">ETA</span>
+                <span className="value">T-{eta.toFixed(0)} ticks</span>
+              </div>
+            )}
+            {ship.pendingTransfer && !ship.transfer && (
+              <div className="stat-row">
+                <span className="label">STATUS</span>
+                <span className="value">TRANSFER PLANNED</span>
+              </div>
+            )}
           </div>
 
           <div className="maneuver-section">
             <div className="section-title">MANEUVER NODES</div>
-            {ship.orders.length === 0 ? (
+            {ship.orders.length === 0 && !ship.transfer && queuedTransfers.length === 0 ? (
               <div className="no-orders">No planned maneuvers</div>
             ) : (
               <>
                 <div className="orders-list">
+                  {ship.transfer && (
+                    <div className="order-item status-committed">
+                      <div className="order-info">
+                        <div className="order-type">{ship.transfer.label}</div>
+                        <div className="order-details">
+                          IN TRANSIT | Arr. Δv: {ship.transfer.arrivalDv.toFixed(2)} km/s
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   {ship.orders.map((order) => (
                     <div key={order.id} className={`order-item status-${order.status}`}>
                       <div className="order-info">
@@ -146,12 +176,20 @@ export const ShipPanel: React.FC = () => {
                         </div>
                       </div>
                       <div className="order-actions">
-                        <button
-                          className="delete-btn"
-                          onClick={() => deleteManeuverNode(order.id)}
-                        >
-                          ✕
-                        </button>
+                        <button className="delete-btn" onClick={() => deleteManeuverNode(order.id)}>✕</button>
+                      </div>
+                    </div>
+                  ))}
+                  {queuedTransfers.map((qt, i) => (
+                    <div key={qt.id} className="order-item status-queued">
+                      <div className="order-info">
+                        <div className="order-type">{qt.label}</div>
+                        <div className="order-details">
+                          QUEUED | Δv: {(qt.departureDv + qt.arrivalDv).toFixed(2)} km/s | T+{qt.departureTime.toFixed(0)}
+                        </div>
+                      </div>
+                      <div className="order-actions">
+                        <button className="delete-btn" onClick={() => handleRemoveQueuedTransfer(i)}>✕</button>
                       </div>
                     </div>
                   ))}
@@ -171,32 +209,22 @@ export const ShipPanel: React.FC = () => {
           </div>
 
           <div className="maneuver-buttons">
-            <button className="maneuver-btn" onClick={() => setTransferModalOpen(true)}>
-              ⇒ TRANSFER MANEUVER
+            <button className="maneuver-btn" onClick={() => setTargetSelectionMode(true)}>
+              {hasExistingTransfer ? '+ CHAIN' : 'TRANSFER'}
             </button>
-            <button className="maneuver-btn" onClick={() => setOrbitalModalOpen(true)}>
-              ↻ ORBITAL MANEUVER
+            <button className="maneuver-btn" onClick={() => setTransferModalOpen(true)}>
+              SHOW LIST
             </button>
           </div>
-
-          <details className="advanced-section">
-            <summary>Advanced Manual Steps</summary>
-            <div className="advanced-content">
-              <p>Manual step entry not yet implemented.</p>
-            </div>
-          </details>
         </div>
       </div>
 
-      {/* Transfer Target Modal */}
       {transferModalOpen && (
         <div className="modal-overlay" onClick={() => setTransferModalOpen(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>Select Transfer Target</h3>
-              <button className="modal-close" onClick={() => setTransferModalOpen(false)}>
-                ✕
-              </button>
+              <h3>{hasExistingTransfer ? 'Chain Transfer To' : 'Select Transfer Target'}</h3>
+              <button className="modal-close" onClick={() => setTransferModalOpen(false)}>✕</button>
             </div>
             <div className="modal-body">
               <div className="target-list">
@@ -216,55 +244,13 @@ export const ShipPanel: React.FC = () => {
                         </button>
                         <button
                           className="target-btn target-btn-efficient"
-                          onClick={() => handleTransferManeuver(body.id, 'soonest')}
+                          onClick={() => handleTransferManeuver(body.id, 'efficient')}
                         >
                           EFFICIENT
                         </button>
                       </div>
                     </div>
                   ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Orbital Maneuver Modal */}
-      {orbitalModalOpen && (
-        <div className="modal-overlay" onClick={() => setOrbitalModalOpen(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>Plan Orbital Maneuver</h3>
-              <button className="modal-close" onClick={() => setOrbitalModalOpen(false)}>
-                ✕
-              </button>
-            </div>
-            <div className="modal-body">
-              <div className="input-group">
-                <label>Periapsis (km)</label>
-                <input
-                  type="number"
-                  value={peInput}
-                  onChange={(e) => setPeInput(e.target.value)}
-                  placeholder="Periapsis radius"
-                />
-              </div>
-              <div className="input-group">
-                <label>Apoapsis (km)</label>
-                <input
-                  type="number"
-                  value={apInput}
-                  onChange={(e) => setApInput(e.target.value)}
-                  placeholder="Apoapsis radius"
-                />
-              </div>
-              <div className="modal-actions">
-                <button className="btn-primary" onClick={handleOrbitalManeuver}>
-                  Plan Maneuver
-                </button>
-                <button className="btn-secondary" onClick={() => setOrbitalModalOpen(false)}>
-                  Cancel
-                </button>
               </div>
             </div>
           </div>
