@@ -4,6 +4,7 @@ import { ManeuverNode } from '../types';
 import { planBezierTransfer } from '../physics/bezierTransfer';
 import { createCircularOrbit } from '../physics/orbitalMechanics';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
+import { shipDistance } from '../game/combat';
 import './ShipPanel.css';
 
 export const ShipPanel: React.FC = () => {
@@ -11,6 +12,7 @@ export const ShipPanel: React.FC = () => {
     gameState, uiState, deselectShip, setGameState,
     commitManeuverNode, deleteManeuverNode, addManeuverNode,
     setPendingTransfer, addQueuedTransfer, setTargetSelectionMode,
+    setEngagementTargetMode, engageTarget, disengageTarget,
   } = useGameContext();
 
   const [transferModalOpen, setTransferModalOpen] = useState(false);
@@ -80,6 +82,30 @@ export const ShipPanel: React.FC = () => {
     return () => window.removeEventListener('orbital-transfer-confirm', handleTransferConfirmEvent);
   }, [handleTransferConfirmEvent]);
 
+  // Listen for engagement-target confirmation from the map
+  const engageHandlerRef = useRef<(targetShipId: string) => void>(() => {});
+  useEffect(() => {
+    if (!ship) return;
+    engageHandlerRef.current = (targetShipId: string) => {
+      if (targetShipId === ship.id) return; // can't engage self
+      const target = gameState.ships.find(s => s.id === targetShipId);
+      if (!target || target.ownedBy === ship.ownedBy) return; // friendly fire blocked
+      engageTarget(ship.id, targetShipId);
+    };
+  }, [ship, gameState.ships, engageTarget]);
+
+  const handleEngageConfirmEvent = useCallback((e: Event) => {
+    const detail = (e as CustomEvent).detail;
+    if (detail?.shipId) {
+      engageHandlerRef.current(detail.shipId);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener('orbital-engage-confirm', handleEngageConfirmEvent);
+    return () => window.removeEventListener('orbital-engage-confirm', handleEngageConfirmEvent);
+  }, [handleEngageConfirmEvent]);
+
   if (!ship) return null;
 
   const handleTransferManeuver = (targetBodyId: string) => {
@@ -113,6 +139,17 @@ export const ShipPanel: React.FC = () => {
       : null;
 
   const queuedTransfers = ship.queuedTransfers || [];
+
+  // Engagement state
+  const shipClass = getShipClass(ship.class as ShipClassName);
+  const engagedTarget = ship.engagedTargetId
+    ? gameState.ships.find(s => s.id === ship.engagedTargetId)
+    : null;
+  const engagementDistance = engagedTarget
+    ? shipDistance(ship, engagedTarget, gameState.currentTick, gameState.bodies)
+    : null;
+  const inRange = engagementDistance != null && engagementDistance <= shipClass.range;
+  const canEngage = shipClass.range > 0 && shipClass.damagePerTick > 0;
 
   return (
     <>
@@ -213,6 +250,49 @@ export const ShipPanel: React.FC = () => {
               </>
             )}
           </div>
+
+          {canEngage && (
+            <div className="engagement-section">
+              <div className="section-title">COMBAT</div>
+              <div className="stat-row">
+                <span className="label">RANGE</span>
+                <span className="value">{shipClass.range}u</span>
+              </div>
+              <div className="stat-row">
+                <span className="label">DAMAGE</span>
+                <span className="value">{shipClass.damagePerTick}/tick</span>
+              </div>
+              {engagedTarget ? (
+                <>
+                  <div className="stat-row">
+                    <span className="label">TARGET</span>
+                    <span className="value" style={{ color: '#ff5e5e' }}>{engagedTarget.name}</span>
+                  </div>
+                  <div className="stat-row">
+                    <span className="label">DISTANCE</span>
+                    <span className="value" style={{ color: inRange ? '#4ecdc4' : '#ffb84d' }}>
+                      {engagementDistance!.toFixed(1)}u {inRange ? '(IN RANGE)' : '(OUT OF RANGE)'}
+                    </span>
+                  </div>
+                  <button
+                    className="maneuver-btn"
+                    style={{ borderColor: '#ff5e5e', color: '#ff5e5e' }}
+                    onClick={() => disengageTarget(ship.id)}
+                  >
+                    DISENGAGE
+                  </button>
+                </>
+              ) : (
+                <button
+                  className="maneuver-btn"
+                  style={{ borderColor: '#ff5e5e', color: '#ff5e5e' }}
+                  onClick={() => setEngagementTargetMode(true)}
+                >
+                  {uiState.engagementTargetMode ? 'CLICK TARGET ON MAP…' : 'ENGAGE TARGET'}
+                </button>
+              )}
+            </div>
+          )}
 
           <div className="maneuver-buttons">
             <button className="maneuver-btn" onClick={() => setTargetSelectionMode(true)}>

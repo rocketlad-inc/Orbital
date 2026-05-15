@@ -94,6 +94,18 @@
   font-weight: 600;
 }
 
+.engagement-section {
+  border-top: 1px solid #2a3d50;
+  padding-top: 10px;
+  margin-top: 10px;
+  margin-bottom: 10px;
+}
+
+.engagement-section .maneuver-btn {
+  margin-top: 8px;
+  width: 100%;
+}
+
 .no-orders {
   color: #6b8195;
   font-style: italic;

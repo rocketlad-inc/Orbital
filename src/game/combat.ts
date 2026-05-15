@@ -1,9 +1,14 @@
 // ============================================================
-// Combat System — Auto-resolve at bodies + intercept in transit
+// Combat System — Auto-resolve at bodies + player-initiated engagements
 // ============================================================
 
 import { Ship, Body } from '../types';
 import { getShipClass, ShipClassName } from './shipClasses';
+import { bodyPosition, localPositionAt } from '../physics/orbitalMechanics';
+import { bezierPositionAt } from '../physics/bezierTransfer';
+
+/** Ticks between damage applications during an active engagement */
+export const COMBAT_DAMAGE_INTERVAL = 5;
 
 export interface CombatResult {
   attackerLosses: string[];   // ship IDs destroyed
@@ -138,6 +143,127 @@ function distributeDamage(
       log.push(`${ship.name} took ${dmg.toFixed(0)} damage`);
     }
   }
+}
+
+/**
+ * Compute the world position of a ship at the given tick.
+ * Handles both orbiting ships (parent body + local orbit) and ships in transit (Bezier).
+ */
+export function shipWorldPosition(
+  ship: Ship,
+  tick: number,
+  bodies: Body[],
+): { x: number; y: number } | null {
+  if (ship.transfer) {
+    return bezierPositionAt(ship.transfer, tick);
+  }
+  const parent = bodies.find(b => b.id === ship.orbit.parentBodyId);
+  if (!parent) return null;
+  const parentPos = bodyPosition(parent, tick, bodies);
+  const localPos = localPositionAt(ship.orbit, tick);
+  return { x: parentPos.x + localPos.x, y: parentPos.y + localPos.y };
+}
+
+/**
+ * Compute the Euclidean distance between two ships in world space.
+ * Returns Infinity if either ship's position cannot be computed.
+ */
+export function shipDistance(
+  shipA: Ship,
+  shipB: Ship,
+  tick: number,
+  bodies: Body[],
+): number {
+  const posA = shipWorldPosition(shipA, tick, bodies);
+  const posB = shipWorldPosition(shipB, tick, bodies);
+  if (!posA || !posB) return Infinity;
+  return Math.hypot(posA.x - posB.x, posA.y - posB.y);
+}
+
+/**
+ * Process player-initiated engagements. For each ship with an active
+ * `engagedTargetId`, deal damage to the target if it's within range and
+ * the combat-damage cooldown has elapsed.
+ *
+ * Returns an updated ship array (with reduced HP, removed-if-destroyed ships,
+ * and cleared engagements where the target is gone) plus a combat log.
+ */
+export function processEngagements(
+  ships: Ship[],
+  bodies: Body[],
+  tick: number,
+): { ships: Ship[]; log: string[] } {
+  const log: string[] = [];
+  const damageMap = new Map<string, number>(); // shipId → total damage taken
+  const destroyed = new Set<string>();
+  const lastCombatUpdates = new Map<string, number>(); // shipId → new lastCombatTick
+
+  // Index ships for quick lookup
+  const byId = new Map<string, Ship>();
+  for (const s of ships) byId.set(s.id, s);
+
+  // First pass: compute damage from all active engagements
+  for (const attacker of ships) {
+    if (!attacker.engagedTargetId) continue;
+    const target = byId.get(attacker.engagedTargetId);
+    if (!target) continue; // target gone — will be cleared in second pass
+
+    const attackerClass = getShipClass(attacker.class as ShipClassName);
+    if (attackerClass.range <= 0 || attackerClass.damagePerTick <= 0) continue;
+
+    const lastFired = attacker.lastCombatTick ?? -Infinity;
+    if (tick - lastFired < COMBAT_DAMAGE_INTERVAL) continue;
+
+    const dist = shipDistance(attacker, target, tick, bodies);
+    if (dist > attackerClass.range) continue; // out of range — no damage this pass
+
+    // Deal damage, reduced by target's PDC
+    const targetClass = getShipClass(target.class as ShipClassName);
+    const dmg = attackerClass.damagePerTick * (1 - targetClass.pdcRating);
+    damageMap.set(target.id, (damageMap.get(target.id) || 0) + dmg);
+    lastCombatUpdates.set(attacker.id, tick);
+    log.push(`${attacker.name} hits ${target.name} for ${dmg.toFixed(0)} (${dist.toFixed(1)}u)`);
+  }
+
+  // Determine which ships are destroyed
+  for (const [shipId, dmg] of damageMap) {
+    const s = byId.get(shipId);
+    if (!s) continue;
+    const maxHp = getShipClass(s.class as ShipClassName).hp;
+    const currentHp = s.hp ?? maxHp;
+    if (dmg >= currentHp) {
+      destroyed.add(shipId);
+      log.push(`${s.name} destroyed!`);
+    }
+  }
+
+  // Second pass: build updated ship array
+  const updated = ships
+    .filter(s => !destroyed.has(s.id))
+    .map(s => {
+      let next = s;
+      // Apply damage
+      const dmg = damageMap.get(s.id);
+      if (dmg !== undefined) {
+        const maxHp = getShipClass(s.class as ShipClassName).hp;
+        const currentHp = s.hp ?? maxHp;
+        next = { ...next, hp: Math.max(0, currentHp - dmg) };
+      }
+      // Update lastCombatTick for ships that fired
+      const newLastCombat = lastCombatUpdates.get(s.id);
+      if (newLastCombat !== undefined) {
+        next = { ...next, lastCombatTick: newLastCombat };
+      }
+      // Clear engagement if target was destroyed or no longer exists
+      if (next.engagedTargetId) {
+        if (destroyed.has(next.engagedTargetId) || !byId.has(next.engagedTargetId)) {
+          next = { ...next, engagedTargetId: undefined };
+        }
+      }
+      return next;
+    });
+
+  return { ships: updated, log };
 }
 
 /**

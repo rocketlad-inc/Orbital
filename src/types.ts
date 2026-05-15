@@ -100,6 +100,10 @@ export interface Ship {
   transfer?: TransferArc;               // currently in transit
   queuedTransfers?: TransferArc[];      // chained transfers waiting after current
 
+  // Engagement state — player-initiated combat
+  engagedTargetId?: string;             // ship currently engaged with (firing on)
+  lastCombatTick?: number;              // tick when last damage was dealt
+
   // Display info
   isSelected?: boolean;
   color?: string;                       // override faction color if needed
@@ -214,6 +218,7 @@ export interface MapUIState {
   maneuverMode?: 'transfer' | 'orbital_change' | null;
   transferTargetId?: string;            // when planning a transfer
   targetSelectionMode?: boolean;        // true when picking a transfer target on the map
+  engagementTargetMode?: boolean;       // true when picking a combat target (ship) on the map
 }
 
 /**
