@@ -32,6 +32,7 @@ export interface ManeuverNode {
   radial: number;                      // radial component of burn
   normal: number;                      // normal component of burn
   status: 'planned' | 'committed' | 'executed';
+  label?: string;                      // human-readable burn label
 
   // Predicted outcome after burn
   preOrbit?: OrbitElements;            // orbit before burn
@@ -92,6 +93,10 @@ export interface Ship {
   // Maneuvers
   orders: ManeuverNode[];               // planned/committed burns for this ship
 
+  // Bezier transfer state
+  pendingTransfer?: TransferArc;        // planned but not yet departed
+  transfer?: TransferArc;               // currently in transit
+
   // Display info
   isSelected?: boolean;
   color?: string;                       // override faction color if needed
@@ -138,6 +143,25 @@ export interface MapUIState {
   hoveredBodyId?: string;
   maneuverMode?: 'transfer' | 'orbital_change' | null;
   transferTargetId?: string;            // when planning a transfer
+}
+
+/**
+ * Bezier transfer arc: a precomputed cubic Bezier curve between two bodies.
+ * Hohmann math drives fuel cost and travel time; the curve is purely visual.
+ */
+export interface TransferArc {
+  id: string;
+  departureBodyId: string;
+  arrivalBodyId: string;
+  departureTime: number;
+  arrivalTime: number;
+  departureDv: number;
+  arrivalDv: number;
+  label: string;
+  p0: { x: number; y: number };
+  p3: { x: number; y: number };
+  cp1: { x: number; y: number };
+  cp2: { x: number; y: number };
 }
 
 /**

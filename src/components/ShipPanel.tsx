@@ -1,110 +1,62 @@
-// ============================================================
-// ShipPanel - Ship information and maneuver controls
-// ============================================================
-
 import React, { useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { ManeuverNode } from '../types';
-import { planTransfer } from '../physics/orbitalMechanics';
+import { planBezierTransfer } from '../physics/bezierTransfer';
 import './ShipPanel.css';
 
 export const ShipPanel: React.FC = () => {
-  const { gameState, uiState, deselectShip, commitManeuverNode, deleteManeuverNode, addManeuverNode } =
-    useGameContext();
+  const {
+    gameState, uiState, deselectShip,
+    commitManeuverNode, deleteManeuverNode, addManeuverNode, setPendingTransfer,
+  } = useGameContext();
 
   const [transferModalOpen, setTransferModalOpen] = useState(false);
-  const [orbitalModalOpen, setOrbitalModalOpen] = useState(false);
-  const [peInput, setPeInput] = useState('');
-  const [apInput, setApInput] = useState('');
 
-  if (!uiState.selectedShipId) {
-    return null;
-  }
-
+  if (!uiState.selectedShipId) return null;
   const ship = gameState.ships.find(s => s.id === uiState.selectedShipId);
-  if (!ship) {
-    return null;
-  }
+  if (!ship) return null;
 
-  const handleTransferManeuver = (targetBodyId: string) => {
-    const plan = planTransfer(ship.orbit, targetBodyId, gameState.bodies, gameState.currentTick);
-    if (!plan) {
+  const handleTransferManeuver = (targetBodyId: string, strategy: 'quickest' | 'efficient' = 'quickest') => {
+    const arc = planBezierTransfer(ship.orbit, targetBodyId, gameState.currentTick, gameState.bodies, strategy);
+    if (!arc) {
       alert('Cannot plan transfer to that target');
       return;
     }
 
-    // Create two maneuver nodes from the plan
-    plan.burns.forEach((burn) => {
-      const node: ManeuverNode = {
-        id: `node-${Date.now()}-${Math.random()}`,
-        shipId: ship.id,
-        type: 'transfer',
-        burnTime: burn.timing,
-        deltav: burn.dv,
-        prograde: burn.dv,
-        radial: 0,
-        normal: 0,
-        status: 'planned',
-        capturedAtBody: targetBodyId,
-      };
-      addManeuverNode(node);
-    });
+    const node: ManeuverNode = {
+      id: `node-${Date.now()}-${Math.random()}`,
+      shipId: ship.id,
+      type: 'transfer',
+      burnTime: arc.departureTime,
+      deltav: arc.departureDv,
+      prograde: arc.departureDv,
+      radial: 0,
+      normal: 0,
+      status: 'planned',
+      label: arc.label,
+    };
 
+    addManeuverNode(node);
+    setPendingTransfer(ship.id, arc);
     setTransferModalOpen(false);
   };
 
-  const handleOrbitalManeuver = () => {
-    const pe = parseFloat(peInput);
-    const ap = parseFloat(apInput);
+  const locationLabel = ship.transfer
+    ? `→ ${gameState.bodies.find(b => b.id === ship.transfer!.arrivalBodyId)?.name || '?'}`
+    : ship.orbit.parentBodyId.toUpperCase();
 
-    if (isNaN(pe) || isNaN(ap) || pe < 1 || ap < pe) {
-      alert('Invalid Pe/Ap values');
-      return;
-    }
-
-    // Create two burns for circularization
-    // First burn: raise/lower apoapsis
-    const burn1: ManeuverNode = {
-      id: `node-${Date.now()}-${Math.random()}`,
-      shipId: ship.id,
-      type: 'orbital_change',
-      burnTime: gameState.currentTick + 50,
-      deltav: 5.0, // Placeholder
-      prograde: 5.0,
-      radial: 0,
-      normal: 0,
-      status: 'planned',
-    };
-
-    // Second burn: circularize at target
-    const burn2: ManeuverNode = {
-      id: `node-${Date.now()}-${Math.random()}`,
-      shipId: ship.id,
-      type: 'orbital_change',
-      burnTime: gameState.currentTick + 100,
-      deltav: 3.0, // Placeholder
-      prograde: 3.0,
-      radial: 0,
-      normal: 0,
-      status: 'planned',
-    };
-
-    addManeuverNode(burn1);
-    addManeuverNode(burn2);
-
-    setOrbitalModalOpen(false);
-    setPeInput('');
-    setApInput('');
-  };
+  const eta = ship.transfer
+    ? ship.transfer.arrivalTime - gameState.currentTick
+    : ship.pendingTransfer
+      ? ship.pendingTransfer.departureTime - gameState.currentTick
+      : null;
 
   return (
     <>
       <div className="ship-panel">
         <div className="panel-header">
           <span>SHIP: {ship.name}</span>
-          <button className="panel-close" onClick={deselectShip}>
-            ✕
-          </button>
+          <button className="panel-close" onClick={deselectShip}>✕</button>
         </div>
 
         <div className="panel-body">
@@ -119,129 +71,109 @@ export const ShipPanel: React.FC = () => {
             </div>
             <div className="stat-row">
               <span className="label">LOCATION</span>
-              <span className="value">{ship.orbit.parentBodyId.toUpperCase()}</span>
+              <span className="value">{locationLabel}</span>
             </div>
-          </div>
-
-          <div className="maneuver-section">
-            <div className="section-title">MANEUVER NODES</div>
-            {ship.orders.length === 0 ? (
-              <div className="no-orders">No planned maneuvers</div>
-            ) : (
-              <div className="orders-list">
-                {ship.orders.map((order) => (
-                  <div key={order.id} className={`order-item status-${order.status}`}>
-                    <div className="order-info">
-                      <div className="order-type">{order.type.toUpperCase()}</div>
-                      <div className="order-details">
-                        Δv: {order.deltav.toFixed(2)} | T+{order.burnTime.toFixed(0)}
-                      </div>
-                    </div>
-                    <div className="order-actions">
-                      {order.status === 'planned' && (
-                        <button
-                          className="commit-btn"
-                          onClick={() => commitManeuverNode(order.id)}
-                        >
-                          COMMIT
-                        </button>
-                      )}
-                      <button
-                        className="delete-btn"
-                        onClick={() => deleteManeuverNode(order.id)}
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  </div>
-                ))}
+            {ship.transfer && eta != null && eta > 0 && (
+              <div className="stat-row">
+                <span className="label">ETA</span>
+                <span className="value">T-{eta.toFixed(0)} ticks</span>
+              </div>
+            )}
+            {ship.pendingTransfer && !ship.transfer && (
+              <div className="stat-row">
+                <span className="label">STATUS</span>
+                <span className="value">TRANSFER PLANNED</span>
               </div>
             )}
           </div>
 
-          <div className="maneuver-buttons">
-            <button className="maneuver-btn" onClick={() => setTransferModalOpen(true)}>
-              ⇒ TRANSFER MANEUVER
-            </button>
-            <button className="maneuver-btn" onClick={() => setOrbitalModalOpen(true)}>
-              ↻ ORBITAL MANEUVER
-            </button>
+          <div className="maneuver-section">
+            <div className="section-title">MANEUVER NODES</div>
+            {ship.orders.length === 0 && !ship.transfer ? (
+              <div className="no-orders">No planned maneuvers</div>
+            ) : (
+              <>
+                <div className="orders-list">
+                  {ship.transfer && (
+                    <div className="order-item status-committed">
+                      <div className="order-info">
+                        <div className="order-type">{ship.transfer.label}</div>
+                        <div className="order-details">
+                          IN TRANSIT | Arr. Δv: {ship.transfer.arrivalDv.toFixed(2)} km/s
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {ship.orders.map((order) => (
+                    <div key={order.id} className={`order-item status-${order.status}`}>
+                      <div className="order-info">
+                        <div className="order-type">{order.label || order.type.toUpperCase()}</div>
+                        <div className="order-details">
+                          Δv: {Math.abs(order.deltav).toFixed(2)} km/s | T+{order.burnTime.toFixed(0)}
+                        </div>
+                      </div>
+                      <div className="order-actions">
+                        <button className="delete-btn" onClick={() => deleteManeuverNode(order.id)}>✕</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {ship.orders.some(o => o.status === 'planned') && (
+                  <button
+                    className="commit-all-btn"
+                    onClick={() => ship.orders.forEach(o => {
+                      if (o.status === 'planned') commitManeuverNode(o.id);
+                    })}
+                  >
+                    COMMIT ALL
+                  </button>
+                )}
+              </>
+            )}
           </div>
 
-          <details className="advanced-section">
-            <summary>Advanced Manual Steps</summary>
-            <div className="advanced-content">
-              <p>Manual step entry not yet implemented.</p>
+          {!ship.transfer && (
+            <div className="maneuver-buttons">
+              <button className="maneuver-btn" onClick={() => setTransferModalOpen(true)}>
+                ⇒ TRANSFER
+              </button>
             </div>
-          </details>
+          )}
         </div>
       </div>
 
-      {/* Transfer Target Modal */}
       {transferModalOpen && (
         <div className="modal-overlay" onClick={() => setTransferModalOpen(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3>Select Transfer Target</h3>
-              <button className="modal-close" onClick={() => setTransferModalOpen(false)}>
-                ✕
-              </button>
+              <button className="modal-close" onClick={() => setTransferModalOpen(false)}>✕</button>
             </div>
             <div className="modal-body">
               <div className="target-list">
                 {gameState.bodies
-                  .filter((b) => b.parent === 'sol' && b.id !== ship.orbit.parentBodyId)
+                  .filter((b) => b.id !== 'sol' && b.id !== ship.orbit.parentBodyId)
                   .map((body) => (
-                    <button
-                      key={body.id}
-                      className="target-button"
-                      onClick={() => handleTransferManeuver(body.id)}
-                    >
-                      {body.name}
-                    </button>
+                    <div key={body.id} className="target-row">
+                      <span className="target-name">
+                        {body.name}{body.parent !== 'sol' ? ` (${body.parent})` : ''}
+                      </span>
+                      <div className="target-actions">
+                        <button
+                          className="target-btn target-btn-quick"
+                          onClick={() => handleTransferManeuver(body.id, 'quickest')}
+                        >
+                          QUICK
+                        </button>
+                        <button
+                          className="target-btn target-btn-efficient"
+                          onClick={() => handleTransferManeuver(body.id, 'efficient')}
+                        >
+                          EFFICIENT
+                        </button>
+                      </div>
+                    </div>
                   ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Orbital Maneuver Modal */}
-      {orbitalModalOpen && (
-        <div className="modal-overlay" onClick={() => setOrbitalModalOpen(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>Plan Orbital Maneuver</h3>
-              <button className="modal-close" onClick={() => setOrbitalModalOpen(false)}>
-                ✕
-              </button>
-            </div>
-            <div className="modal-body">
-              <div className="input-group">
-                <label>Periapsis (km)</label>
-                <input
-                  type="number"
-                  value={peInput}
-                  onChange={(e) => setPeInput(e.target.value)}
-                  placeholder="Periapsis radius"
-                />
-              </div>
-              <div className="input-group">
-                <label>Apoapsis (km)</label>
-                <input
-                  type="number"
-                  value={apInput}
-                  onChange={(e) => setApInput(e.target.value)}
-                  placeholder="Apoapsis radius"
-                />
-              </div>
-              <div className="modal-actions">
-                <button className="btn-primary" onClick={handleOrbitalManeuver}>
-                  Plan Maneuver
-                </button>
-                <button className="btn-secondary" onClick={() => setOrbitalModalOpen(false)}>
-                  Cancel
-                </button>
               </div>
             </div>
           </div>

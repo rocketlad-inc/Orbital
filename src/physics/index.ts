@@ -32,3 +32,10 @@ export type {
   TransferBurn,
   TransferPlan,
 } from './orbitalMechanics';
+
+export {
+  planBezierTransfer,
+  bezierPositionAt,
+  bezierTangentAt,
+  bezierPoints,
+} from './bezierTransfer';

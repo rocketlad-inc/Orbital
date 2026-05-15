@@ -13,7 +13,29 @@
       "Bash(git commit *)",
       "Bash(python test_engine_comprehensive.py)",
       "Bash(npm run *)",
-      "Bash(npx wrangler *)"
+      "Bash(npx wrangler *)",
+      "Bash(netstat -ano)",
+      "PowerShell(Stop-Process -Id 16136 -Force)",
+      "Bash(powershell -Command \"Get-Content src\\\\physics\\\\orbitalMechanics.ts | Select-String 'APPLY_NODE'\")",
+      "Bash(powershell -Command \"Get-Content package.json | Select-String 'start'\")",
+      "Bash(kill %1)",
+      "PowerShell(Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue | Select-Object @{Name='PID';Expression={$_.OwningProcess}},@{Name='ProcessName';Expression={\\(Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue\\).Name}} | Format-Table)",
+      "Bash(env)",
+      "Bash(node -e \"console.log\\(require.resolve\\('./src/physics/orbitalMechanics'\\)\\)\")",
+      "Bash(powershell -Command \"Remove-Item -Recurse -Force node_modules\\\\.cache -ErrorAction SilentlyContinue; Write-Output 'cache cleared'\")",
+      "Bash(npx tsc *)",
+      "Bash(gh repo *)",
+      "Bash(where gh *)",
+      "Bash(git remote *)",
+      "Bash(git fetch *)",
+      "Bash(git ls-tree *)",
+      "Bash(git merge *)",
+      "Bash(npx wrangler@latest pages deploy build/ --project-name orbital)",
+      "Bash(node -e ' *)",
+      "PowerShell(Remove-Item \"$env:APPDATA\\\\npm\\\\node_modules\\\\wrangler\" -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue; Remove-Item \"$env:APPDATA\\\\npm\\\\wrangler\" -Force -ErrorAction SilentlyContinue; Remove-Item \"$env:APPDATA\\\\npm\\\\wrangler.cmd\" -Force -ErrorAction SilentlyContinue; Remove-Item \"$env:APPDATA\\\\npm\\\\wrangler.ps1\" -Force -ErrorAction SilentlyContinue; \"cleaned\")",
+      "Bash(wrangler pages *)",
+      "Bash(npx react-scripts *)",
+      "Bash(git status *)"
     ]
   }
 }

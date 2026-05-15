@@ -1,7 +1,3 @@
-// ============================================================
-// MapCanvas - Main orbital system visualization
-// ============================================================
-
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import {
@@ -10,16 +6,15 @@ import {
   drawBody,
   drawShip,
   drawOrbitEllipse,
-  drawTrajectory,
-  drawManeuverNode,
-  drawManeuverNodeLabel,
-  drawEncounterMarker,
   drawSOIBoundary,
   drawApsisMarkers,
-  arcColor,
+  drawBezierTrajectory,
+  drawTransitShip,
+  drawDepartureMarker,
+  drawGhostPlanet,
   RenderContext,
 } from '../render/mapRenderer';
-import { computeTrajectory } from '../physics/orbitalMechanics';
+import { bezierPositionAt } from '../physics/bezierTransfer';
 import { COLORS, withOpacity } from '../render/colors';
 import './MapCanvas.css';
 
@@ -33,7 +28,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   height = typeof window !== 'undefined' ? window.innerHeight : 800,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { gameState, camera, uiState, updateCamera, selectShip, selectBody, hoverBody, focusBody } =
+  const { gameState, camera, uiState, simSpeed, updateCamera, selectShip, selectBody, hoverBody, focusBody } =
     useGameContext();
 
   const [panState, setPanState] = useState<{
@@ -54,19 +49,19 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       camera: { x: camera.x, y: camera.y, scale: camera.scale, focusedBodyId: camera.focusedBodyId },
       t: gameState.currentTick,
       bodies: gameState.bodies,
+      simSpeed,
     };
 
-    // Clear and draw background
     clearCanvas(renderContext);
 
-    // Draw orbits for all bodies (using each body's color at reduced opacity)
+    // Draw orbits for all bodies
     for (const body of gameState.bodies) {
       if (body.parent) {
         drawOrbit(body, renderContext, withOpacity(body.color, 0.35));
       }
     }
 
-    // Draw SOI boundaries for ALL non-star bodies (matching HTML prototype)
+    // Draw SOI boundaries
     for (const body of gameState.bodies) {
       if (body.type === 'star') continue;
       drawSOIBoundary(body, renderContext);
@@ -79,125 +74,64 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       drawBody(body, renderContext, isSelected, isHovered);
     }
 
-    // Draw ship orbits and ships
+    // Draw ships
     for (const ship of gameState.ships) {
       const isSelected = uiState.selectedShipId === ship.id;
 
-      // Always draw the ship's current orbit
-      drawOrbitEllipse(
-        ship.orbit,
-        renderContext,
-        isSelected ? COLORS.orbitCurrent : COLORS.orbitTrajectory,
-        isSelected ? 2 : 1
-      );
+      if (ship.transfer) {
+        // Ship is in transit — draw Bezier trajectory and transit ship
+        drawBezierTrajectory(ship.transfer, renderContext, COLORS.arcTransfer, false);
+        drawTransitShip(ship, renderContext, isSelected);
 
-      // Draw the ship marker
-      drawShip(ship, renderContext, isSelected);
-
-      // Draw apsis markers on selected ship's current orbit
-      if (isSelected) {
-        drawApsisMarkers(ship, renderContext);
-      }
-
-      // Draw maneuver trajectories for selected ship
-      if (isSelected && ship.orders.length > 0) {
-        const nodes = ship.orders.map(order => ({
-          t: order.burnTime,
-          dv: order.deltav,
-        }));
-
-        const trajectory = computeTrajectory(
-          ship.orbit,
-          nodes,
-          gameState.currentTick,
-          gameState.bodies
+        // Ghost planet at arrival
+        const arrivalBody = gameState.bodies.find(b => b.id === ship.transfer!.arrivalBodyId);
+        if (arrivalBody) {
+          drawGhostPlanet(arrivalBody, ship.transfer.arrivalTime, gameState.currentTick, renderContext);
+        }
+      } else if (ship.pendingTransfer) {
+        // Ship has a planned transfer — draw orbit + preview
+        drawOrbitEllipse(
+          ship.orbit, renderContext,
+          isSelected ? COLORS.orbitCurrent : COLORS.orbitTrajectory,
+          isSelected ? 2 : 1
         );
+        drawShip(ship, renderContext, isSelected);
+        if (isSelected) drawApsisMarkers(ship, renderContext);
 
-        // Draw each arc with KSP-style per-segment coloring
-        for (const arc of trajectory) {
-          const parentIsRoot = arc.orbit.parentBodyId === 'sol';
-          const color = arcColor(arc, parentIsRoot);
-          const isCommitted = ship.orders.some(
-            order =>
-              order.burnTime >= arc.tStart &&
-              order.burnTime <= arc.tEnd &&
-              order.status === 'committed'
-          );
-          drawTrajectory(
-            [arc],
-            renderContext,
-            color,
-            !isCommitted
-          );
+        // Dashed preview of Bezier transfer
+        const nodeColor = ship.orders.some(o => o.type === 'transfer' && o.status === 'committed')
+          ? COLORS.maneuverCommitted
+          : COLORS.maneuverPlanned;
+        drawBezierTrajectory(ship.pendingTransfer, renderContext, nodeColor, true);
 
-          // Draw encounter/escape markers at SOI transitions
-          if (arc.endReason === 'enter' || arc.endReason === 'exit') {
-            let markerBodyName = '';
-            if (arc.endReason === 'enter') {
-              const nextArc = trajectory[trajectory.indexOf(arc) + 1];
-              if (nextArc) {
-                const targetBody = gameState.bodies.find(b => b.id === nextArc.orbit.parentBodyId);
-                markerBodyName = targetBody?.name || '';
-              }
-            } else {
-              const parentBody = gameState.bodies.find(b => b.id === arc.orbit.parentBodyId);
-              markerBodyName = parentBody?.name || '';
-            }
-            if (markerBodyName) {
-              drawEncounterMarker(arc, markerBodyName, gameState.currentTick, renderContext);
-            }
-          }
+        // Ghost planet at arrival
+        const arrivalBody = gameState.bodies.find(b => b.id === ship.pendingTransfer!.arrivalBodyId);
+        if (arrivalBody) {
+          drawGhostPlanet(arrivalBody, ship.pendingTransfer.arrivalTime, gameState.currentTick, renderContext);
         }
 
-        // Draw maneuver node markers with info labels
-        for (const order of ship.orders) {
-          const arcWithNode = trajectory.find(
-            arc => order.burnTime >= arc.tStart && order.burnTime <= arc.tEnd
-          );
-          if (arcWithNode) {
-            const nodeColor = order.status === 'committed' ? COLORS.maneuverCommitted : COLORS.maneuverPlanned;
-            drawManeuverNode(
-              order.burnTime,
-              arcWithNode,
-              renderContext,
-              nodeColor,
-              6
-            );
-            drawManeuverNodeLabel(
-              order.burnTime,
-              arcWithNode,
-              order.deltav,
-              gameState.currentTick,
-              renderContext,
-              nodeColor
-            );
-          }
+        // Departure marker
+        if (isSelected) {
+          drawDepartureMarker(ship.pendingTransfer, gameState.currentTick, renderContext, nodeColor);
         }
-
-        // Draw post-burn orbit previews
-        for (const order of ship.orders) {
-          if (order.postOrbit) {
-            const isCommitted = order.status === 'committed';
-            drawOrbitEllipse(
-              order.postOrbit,
-              renderContext,
-              isCommitted ? COLORS.maneuverCommitted : COLORS.maneuverPlanned,
-              1.5,
-              !isCommitted
-            );
-          }
-        }
+      } else {
+        // Normal orbiting ship
+        drawOrbitEllipse(
+          ship.orbit, renderContext,
+          isSelected ? COLORS.orbitCurrent : COLORS.orbitTrajectory,
+          isSelected ? 2 : 1
+        );
+        drawShip(ship, renderContext, isSelected);
+        if (isSelected) drawApsisMarkers(ship, renderContext);
       }
     }
 
-    // Draw HUD
     drawHUD(renderContext);
-  }, [gameState, camera, uiState]);
+  }, [gameState, camera, uiState, simSpeed]);
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       if (!canvasRef.current) return;
-
       if (panState) {
         const deltaX = e.clientX - panState.startX;
         const deltaY = e.clientY - panState.startY;
@@ -211,13 +145,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (e.button === 2) {
-      // Right-click: start pan
-      setPanState({
-        startX: e.clientX,
-        startY: e.clientY,
-        camX: camera.x,
-        camY: camera.y,
-      });
+      setPanState({ startX: e.clientX, startY: e.clientY, camX: camera.x, camY: camera.y });
     }
   }, [camera]);
 
@@ -229,24 +157,16 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     (e: React.WheelEvent<HTMLCanvasElement>) => {
       e.preventDefault();
       if (!canvasRef.current) return;
-
       const canvas = canvasRef.current;
       const rect = canvas.getBoundingClientRect();
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
-
-      // World point under cursor before zoom
       const worldBeforeX = camera.x + (mouseX - canvas.width / 2) / camera.scale;
       const worldBeforeY = camera.y + (mouseY - canvas.height / 2) / camera.scale;
-
-      // Zoom factor: wheel up = zoom in (matching HTML prototype)
       const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
       const newScale = Math.max(0.005, Math.min(50, camera.scale * factor));
-
-      // Adjust camera so that the world point stays under the cursor
       const newCamX = worldBeforeX - (mouseX - canvas.width / 2) / newScale;
       const newCamY = worldBeforeY - (mouseY - canvas.height / 2) / newScale;
-
       updateCamera({ x: newCamX, y: newCamY, scale: newScale });
     },
     [camera.x, camera.y, camera.scale, updateCamera]
@@ -255,33 +175,27 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   const handleClick = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       if (!canvasRef.current) return;
-
       const rect = canvasRef.current.getBoundingClientRect();
       const canvasX = e.clientX - rect.left;
       const canvasY = e.clientY - rect.top;
 
-      // Check for ship clicks
       for (const ship of gameState.ships) {
-        const shipCanvasPos = getShipCanvasPos(ship, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
-        const dist = Math.hypot(canvasX - shipCanvasPos.x, canvasY - shipCanvasPos.y);
-        if (dist < 10) {
+        const shipPos = getShipCanvasPos(ship, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
+        if (Math.hypot(canvasX - shipPos.x, canvasY - shipPos.y) < 10) {
           selectShip(ship.id);
           return;
         }
       }
 
-      // Check for body clicks
       for (const body of gameState.bodies) {
-        const bodyCanvasPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
-        const dist = Math.hypot(canvasX - bodyCanvasPos.x, canvasY - bodyCanvasPos.y);
+        const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
         const clickRadius = Math.max(8, body.radius! * camera.scale + 5);
-        if (dist < clickRadius) {
+        if (Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < clickRadius) {
           selectBody(body.id);
           return;
         }
       }
 
-      // Deselect if clicking empty space
       selectShip('');
       selectBody('');
     },
@@ -291,24 +205,18 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   const handleMouseHover = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       if (!canvasRef.current) return;
-
       const rect = canvasRef.current.getBoundingClientRect();
       const canvasX = e.clientX - rect.left;
       const canvasY = e.clientY - rect.top;
-
       let hoveredBodyId: string | null = null;
-
-      // Check for body hovers
       for (const body of gameState.bodies) {
-        const bodyCanvasPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
-        const dist = Math.hypot(canvasX - bodyCanvasPos.x, canvasY - bodyCanvasPos.y);
+        const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
         const hoverRadius = Math.max(8, body.radius! * camera.scale + 5);
-        if (dist < hoverRadius) {
+        if (Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < hoverRadius) {
           hoveredBodyId = body.id;
           break;
         }
       }
-
       hoverBody(hoveredBodyId);
     },
     [gameState, camera, hoverBody]
@@ -317,33 +225,27 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   const handleDoubleClick = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       if (!canvasRef.current) return;
-
       const rect = canvasRef.current.getBoundingClientRect();
       const canvasX = e.clientX - rect.left;
       const canvasY = e.clientY - rect.top;
-
-      // Check for body double-click to focus
       for (const body of gameState.bodies) {
-        const bodyCanvasPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
-        const dist = Math.hypot(canvasX - bodyCanvasPos.x, canvasY - bodyCanvasPos.y);
+        const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
         const clickRadius = Math.max(8, body.radius! * camera.scale + 5);
-        if (dist < clickRadius) {
+        if (Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < clickRadius) {
           focusBody(body.id);
           return;
         }
       }
-      // Double-click on empty space to unfocus
       focusBody(undefined);
     },
     [gameState, camera, focusBody]
   );
 
-  // Render loop
   useEffect(() => {
-    const animationFrame = requestAnimationFrame(() => {
-      render();
-    });
-    return () => cancelAnimationFrame(animationFrame);
+    let cancelled = false;
+    const frame = requestAnimationFrame(() => { if (!cancelled) render(); });
+    const fallback = setTimeout(() => { if (!cancelled) render(); }, 32);
+    return () => { cancelled = true; cancelAnimationFrame(frame); clearTimeout(fallback); };
   }, [render]);
 
   return (
@@ -351,10 +253,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       ref={canvasRef}
       width={width}
       height={height}
-      onMouseMove={(e) => {
-        handleMouseMove(e);
-        handleMouseHover(e);
-      }}
+      onMouseMove={(e) => { handleMouseMove(e); handleMouseHover(e); }}
       onMouseDown={handleMouseDown}
       onMouseUp={handleMouseUp}
       onContextMenu={(e) => e.preventDefault()}
@@ -366,62 +265,46 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   );
 };
 
-/**
- * Helper to get canvas position of a body
- */
 function getBodyCanvasPos(
-  body: any,
-  canvas: HTMLCanvasElement,
-  bodies: any[],
-  camera: any,
-  t: number
+  body: any, canvas: HTMLCanvasElement, bodies: any[], camera: any, t: number
 ): { x: number; y: number } {
-  // Import the physics function to get world position
   const { bodyPosition } = require('../physics/orbitalMechanics');
   const pos = bodyPosition(body, t, bodies);
-  const canvasX = canvas.width / 2 + (pos.x - camera.x) * camera.scale;
-  const canvasY = canvas.height / 2 + (pos.y - camera.y) * camera.scale;
-  return { x: canvasX, y: canvasY };
+  return {
+    x: canvas.width / 2 + (pos.x - camera.x) * camera.scale,
+    y: canvas.height / 2 + (pos.y - camera.y) * camera.scale,
+  };
 }
 
-/**
- * Helper to get canvas position of a ship
- */
 function getShipCanvasPos(
-  ship: any,
-  canvas: HTMLCanvasElement,
-  bodies: any[],
-  camera: any,
-  t: number
+  ship: any, canvas: HTMLCanvasElement, bodies: any[], camera: any, t: number
 ): { x: number; y: number } {
-  // Import the physics function to get world position
-  const { orbitWorldPos } = require('../physics/orbitalMechanics');
-  const pos = orbitWorldPos(ship.orbit, t, bodies);
-  const canvasX = canvas.width / 2 + (pos.x - camera.x) * camera.scale;
-  const canvasY = canvas.height / 2 + (pos.y - camera.y) * camera.scale;
-  return { x: canvasX, y: canvasY };
+  let pos;
+  if (ship.transfer) {
+    pos = bezierPositionAt(ship.transfer, t);
+  } else {
+    const { orbitWorldPos } = require('../physics/orbitalMechanics');
+    pos = orbitWorldPos(ship.orbit, t, bodies);
+  }
+  return {
+    x: canvas.width / 2 + (pos.x - camera.x) * camera.scale,
+    y: canvas.height / 2 + (pos.y - camera.y) * camera.scale,
+  };
 }
 
-/**
- * Draw HUD overlays
- */
 function drawHUD(ctx: RenderContext) {
-  // Draw tick counter
+  const speedLabel = ctx.simSpeed && ctx.simSpeed > 0 ? `${ctx.simSpeed}×` : 'PAUSED';
   ctx.ctx.fillStyle = COLORS.fgDim;
   ctx.ctx.font = '12px monospace';
   ctx.ctx.textAlign = 'left';
   ctx.ctx.textBaseline = 'top';
-  ctx.ctx.fillText(`Tick: ${ctx.t.toFixed(1)}`, 16, 16);
-
-  // Draw zoom level
+  ctx.ctx.fillText(`Tick: ${ctx.t.toFixed(1)} | ${speedLabel}`, 16, 16);
   ctx.ctx.fillText(`Scale: ${ctx.camera.scale.toFixed(2)}x`, 16, 32);
 
-  // Draw help text
   ctx.ctx.fillStyle = COLORS.fgFaint;
   ctx.ctx.font = '10px monospace';
   ctx.ctx.fillText('Right-drag: pan | Scroll: zoom | Click: select | Double-click: focus', 16, ctx.canvas.height - 32);
 
-  // Draw focused body info if applicable
   if (ctx.camera.focusedBodyId) {
     const focusedBody = ctx.bodies.find(b => b.id === ctx.camera.focusedBodyId);
     if (focusedBody) {
@@ -435,7 +318,6 @@ function drawHUD(ctx: RenderContext) {
     }
   }
 
-  // Draw version
   ctx.ctx.textAlign = 'right';
-  ctx.ctx.fillText('v0.1.0', ctx.canvas.width - 16, ctx.canvas.height - 16);
+  ctx.ctx.fillText('v0.2.0-bezier', ctx.canvas.width - 16, ctx.canvas.height - 16);
 }
