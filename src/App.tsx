@@ -28,7 +28,7 @@ const MODE_STORAGE_KEY = 'orbital.last_mode';
 // them ready (rather than briefly showing fallback dots).
 prewarmShipIcons([COLORS.neutral, COLORS.danger]);
 
-function SinglePlayerView({ onExit }: { onExit: () => void }) {
+function SinglePlayerView({ onExit, isMultiplayer = false }: { onExit: () => void; isMultiplayer?: boolean }) {
   const [windowSize, setWindowSize] = useState({
     width: typeof window !== 'undefined' ? window.innerWidth : 1280,
     height: typeof window !== 'undefined' ? window.innerHeight : 800,
@@ -62,7 +62,12 @@ function SinglePlayerView({ onExit }: { onExit: () => void }) {
       <div className="app">
         <MapCanvas width={windowSize.width} height={windowSize.height} />
 
-        <TopBar activePanel={activePanel} onTogglePanel={setActivePanel} onExitMode={onExit} />
+        <TopBar
+          activePanel={activePanel}
+          onTogglePanel={setActivePanel}
+          onExitMode={onExit}
+          hideSimControls={isMultiplayer}
+        />
         <Outliner />
 
         {activePanel === 'settlements' && (
@@ -77,7 +82,7 @@ function SinglePlayerView({ onExit }: { onExit: () => void }) {
 
         <ShipPanel />
         <BodyInspector />
-        <ScenarioSelector />
+        {!isMultiplayer && <ScenarioSelector />}
         <ThreatsPanel />
       </div>
     </GameContextProvider>
@@ -209,7 +214,7 @@ function AppShell() {
   return (
     <MultiplayerShell onExit={handleExitRoom} initialRoomId={selectedRoomId}>
       <GameContextProvider initialScenario={1}>
-        <SinglePlayerView onExit={handleExitMode} />
+        <SinglePlayerView onExit={handleExitMode} isMultiplayer />
       </GameContextProvider>
     </MultiplayerShell>
   );

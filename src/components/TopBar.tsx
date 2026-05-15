@@ -14,6 +14,10 @@ interface TopBarProps {
   activePanel: PanelId;
   onTogglePanel: (panel: PanelId) => void;
   onExitMode?: () => void;
+  /** Hide sim-speed buttons and tick-skip controls. Used in multiplayer:
+   *  the server dictates the tick rate set in the lobby, players can't
+   *  fast-forward or skip locally. */
+  hideSimControls?: boolean;
 }
 
 interface Alert {
@@ -25,7 +29,7 @@ interface Alert {
 
 const SIM_SPEEDS = [1, 10, 100, 1000, 10000, 100000];
 
-export const TopBar: React.FC<TopBarProps> = ({ activePanel, onTogglePanel, onExitMode }) => {
+export const TopBar: React.FC<TopBarProps> = ({ activePanel, onTogglePanel, onExitMode, hideSimControls = false }) => {
   const { gameState, simSpeed, setSimSpeed, updateTick, selectShip } = useGameContext();
   const { user, signOut } = useAuth();
   const [dismissedAlertIds, setDismissedAlertIds] = useState<Set<string>>(new Set());
@@ -185,24 +189,26 @@ export const TopBar: React.FC<TopBarProps> = ({ activePanel, onTogglePanel, onEx
           <div className="time-display__label">TICK</div>
           <div className="time-display__value">{tickStr}</div>
         </div>
-        <div className="sim-controls">
-          <button
-            className={`sim-btn ${simSpeed === 0 ? 'active' : ''}`}
-            onClick={() => setSimSpeed(0)}
-            title="Pause"
-          >⏸</button>
-          {SIM_SPEEDS.map(s => (
+        {!hideSimControls && (
+          <div className="sim-controls">
             <button
-              key={s}
-              className={`sim-btn ${simSpeed === s ? 'active' : ''}`}
-              onClick={() => setSimSpeed(s)}
-              title={`${s}× speed`}
-            >{s}×</button>
-          ))}
-          <button className="sim-btn" onClick={() => handleSkip(10)} title="Skip +10 ticks">+10</button>
-          <button className="sim-btn" onClick={() => handleSkip(100)} title="Skip +100 ticks">+100</button>
-          <button className="sim-btn" onClick={() => handleSkip(1000)} title="Skip +1000 ticks">+1K</button>
-        </div>
+              className={`sim-btn ${simSpeed === 0 ? 'active' : ''}`}
+              onClick={() => setSimSpeed(0)}
+              title="Pause"
+            >⏸</button>
+            {SIM_SPEEDS.map(s => (
+              <button
+                key={s}
+                className={`sim-btn ${simSpeed === s ? 'active' : ''}`}
+                onClick={() => setSimSpeed(s)}
+                title={`${s}× speed`}
+              >{s}×</button>
+            ))}
+            <button className="sim-btn" onClick={() => handleSkip(10)} title="Skip +10 ticks">+10</button>
+            <button className="sim-btn" onClick={() => handleSkip(100)} title="Skip +100 ticks">+100</button>
+            <button className="sim-btn" onClick={() => handleSkip(1000)} title="Skip +1000 ticks">+1K</button>
+          </div>
+        )}
       </div>
 
       <div className="top-bar__alerts">
