@@ -308,7 +308,39 @@ export async function seedGameWorld(env, gameId) {
 
   const stmts = [];
 
-  // 1) game_bodies — catalog order preserved so parents land before children.
+  // ORDERING NOTE: foreign keys are enforced per-statement (D1 default).
+  // - game_bodies.owner_faction_id REFERENCES game_factions(id)
+  // - game_bodies.parent_body_id   REFERENCES game_bodies(id)  (self)
+  // - game_factions.capital_body_id has NO FK declared (intentional, to
+  //   break the circular dependency).
+  // So we must insert factions BEFORE bodies (which carry owner ids), and
+  // catalog order must preserve parent-before-child within bodies.
+
+  // 1) game_factions — carries empire bio. capital_body_id is a free string
+  //    here; the body it points to is inserted in step 2 below.
+  for (const f of factionRows) {
+    stmts.push(
+      env.DB.prepare(
+        `INSERT INTO game_factions
+          (id, game_id, user_id, slot, name, color, status, bio,
+           capital_body_id, reputation, senate_weight,
+           metal, fuel, gold, science,
+           research_tech_id, research_progress, joined_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'active', ?,
+                 ?, 0, 1,
+                 ?, ?, ?, ?,
+                 NULL, 0, ?)`,
+      ).bind(
+        f.id, gameId, f.user_id, f.slot, f.name, f.color, f.bio,
+        f.capital_body_id,
+        STARTING_RESOURCES.metal, STARTING_RESOURCES.fuel,
+        STARTING_RESOURCES.gold, STARTING_RESOURCES.science,
+        now,
+      ),
+    );
+  }
+
+  // 2) game_bodies — catalog order preserved so parents land before children.
   for (const b of BODY_CATALOG) {
     const own = ownership.get(b.id);
     const isCapital = own ? own.isCapital : false;
@@ -337,29 +369,6 @@ export async function seedGameWorld(env, gameId) {
         0, yard,
         own ? 0 : null,
         own ? 0 : null,
-      ),
-    );
-  }
-
-  // 2) game_factions — carries empire bio.
-  for (const f of factionRows) {
-    stmts.push(
-      env.DB.prepare(
-        `INSERT INTO game_factions
-          (id, game_id, user_id, slot, name, color, status, bio,
-           capital_body_id, reputation, senate_weight,
-           metal, fuel, gold, science,
-           research_tech_id, research_progress, joined_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'active', ?,
-                 ?, 0, 1,
-                 ?, ?, ?, ?,
-                 NULL, 0, ?)`,
-      ).bind(
-        f.id, gameId, f.user_id, f.slot, f.name, f.color, f.bio,
-        f.capital_body_id,
-        STARTING_RESOURCES.metal, STARTING_RESOURCES.fuel,
-        STARTING_RESOURCES.gold, STARTING_RESOURCES.science,
-        now,
       ),
     );
   }
