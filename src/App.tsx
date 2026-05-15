@@ -263,19 +263,33 @@ function AppShell() {
           <SinglePlayerView onExit={handleExitMode} isMultiplayer />
         </MultiplayerGameProvider>
       ) : (
-        <div className="mp-overlay" style={{ background: 'transparent', pointerEvents: 'none' }}>
-          <div className="mp-card" style={{
-            textAlign: 'center',
+        // Pre-game backdrop. NOT using .mp-overlay because that class
+        // applies a backdrop-filter blur to everything beneath it,
+        // including the dock the user needs to reach. Just a flat
+        // dark canvas with a small banner that doesn't intercept clicks.
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: '#050810',
+          zIndex: 0,
+          pointerEvents: 'none',
+        }}>
+          <div style={{
+            position: 'absolute',
+            top: 60,
+            left: '50%',
+            transform: 'translateX(-50%)',
             color: 'var(--mp-fg-dim)',
-            pointerEvents: 'auto',
+            fontFamily: 'var(--mp-mono)',
+            fontSize: 11,
+            letterSpacing: '0.18em',
+            textAlign: 'center',
+            opacity: 0.75,
           }}>
-            <div style={{ color: 'var(--mp-accent)', marginBottom: 8, letterSpacing: '0.15em' }}>
-              LOBBY
+            <div style={{ color: 'var(--mp-accent)', fontSize: 13, marginBottom: 4 }}>
+              ◉ PRE-GAME LOBBY
             </div>
-            <div style={{ fontSize: 11 }}>
-              Use the dock to configure the match.<br />
-              The game canvas will appear once the host starts.
-            </div>
+            Use the dock on the right to configure the match.
           </div>
         </div>
       )}
