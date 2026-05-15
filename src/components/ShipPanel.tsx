@@ -5,6 +5,7 @@ import { planBezierTransfer } from '../physics/bezierTransfer';
 import { createCircularOrbit } from '../physics/orbitalMechanics';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { maintenanceRatesForShip } from '../game/maintenance';
+import { travelTimeModifier, FactionTechState } from '../game/techs';
 import { ShipIcon } from './ShipIcons';
 import './ShipPanel.css';
 
@@ -30,6 +31,10 @@ export const ShipPanel: React.FC = () => {
     if (!ship) return;
 
     transferHandlerRef.current = (targetBodyId: string) => {
+      // Apply player's Flight Dynamics tech to shrink Hohmann transit time.
+      const playerTech = gameState.factionTech?.[ship.ownedBy] as FactionTechState | undefined;
+      const travelTimeMul = travelTimeModifier(playerTech);
+
       const queue = ship.queuedTransfers || [];
       let chainTail: { bodyId: string; time: number } | null = null;
       if (queue.length > 0) {
@@ -45,11 +50,11 @@ export const ShipPanel: React.FC = () => {
         const tailBody = gameState.bodies.find(b => b.id === chainTail!.bodyId);
         const arrRadius = tailBody ? tailBody.radius + 4 : 10;
         const tempOrbit = createCircularOrbit(chainTail.bodyId, arrRadius, chainTail.time, gameState.bodies);
-        const arc = planBezierTransfer(tempOrbit, targetBodyId, chainTail.time, gameState.bodies);
+        const arc = planBezierTransfer(tempOrbit, targetBodyId, chainTail.time, gameState.bodies, travelTimeMul);
         if (!arc) return;
         addQueuedTransfer(ship.id, arc);
       } else {
-        const arc = planBezierTransfer(ship.orbit, targetBodyId, gameState.currentTick, gameState.bodies);
+        const arc = planBezierTransfer(ship.orbit, targetBodyId, gameState.currentTick, gameState.bodies, travelTimeMul);
         if (!arc) return;
 
         const node: ManeuverNode = {
@@ -77,7 +82,7 @@ export const ShipPanel: React.FC = () => {
               if (memberId === ship.id) continue;
               const member = gameState.ships.find(s => s.id === memberId);
               if (!member || member.transfer || member.pendingTransfer) continue;
-              const memberArc = planBezierTransfer(member.orbit, targetBodyId, gameState.currentTick, gameState.bodies);
+              const memberArc = planBezierTransfer(member.orbit, targetBodyId, gameState.currentTick, gameState.bodies, travelTimeMul);
               if (!memberArc) continue;
               const memberNode: ManeuverNode = {
                 id: `node-${Date.now()}-${Math.random()}`,

@@ -13,7 +13,26 @@
 import * as factions from './factions.js';
 
 const ROOM_ID_RE = /^[A-Za-z0-9_-]{6,32}$/;
-const ALLOWED_TICK_INTERVALS = new Set([60_000, 3_600_000, 86_400_000]);
+// Match-length range (in ticks). 500 is enough for an Earth->Neptune
+// Hohmann round trip even without Flight Dynamics tech.
+const MATCH_LENGTH_MIN = 10;
+const MATCH_LENGTH_MAX = 500;
+
+// Whitelist of tick intervals (real-world ms between automatic ticks).
+//   30s / 60s          — demo / live testing
+//   5min / 30min       — quick lunch-break or evening-session games
+//   1h / 6h / 12h      — async play at various paces
+//   24h                — design default ("one tick a day")
+const ALLOWED_TICK_INTERVALS = new Set([
+  30_000,
+  60_000,
+  300_000,
+  1_800_000,
+  3_600_000,
+  21_600_000,
+  43_200_000,
+  86_400_000,
+]);
 
 function json(data, init = {}) {
   const headers = new Headers(init.headers);
@@ -129,8 +148,8 @@ async function handleUpdateSettings(req, env, ctx) {
   }
   let totalTickTarget = null, tickIntervalMs = null;
   if (body.total_tick_target != null) {
-    if (!Number.isInteger(body.total_tick_target) || body.total_tick_target < 10 || body.total_tick_target > 80) {
-      return err(400, 'bad_request', 'total_tick_target must be an integer 10-80');
+    if (!Number.isInteger(body.total_tick_target) || body.total_tick_target < MATCH_LENGTH_MIN || body.total_tick_target > MATCH_LENGTH_MAX) {
+      return err(400, 'bad_request', `total_tick_target must be an integer ${MATCH_LENGTH_MIN}-${MATCH_LENGTH_MAX}`);
     }
     totalTickTarget = body.total_tick_target;
   }

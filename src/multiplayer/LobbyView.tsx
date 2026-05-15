@@ -2,11 +2,17 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, RoomSnapshot, RoomSummary } from './api';
 import { useAuth } from './AuthContext';
 
-// 24h / 1h / demo intervals — must match the worker's ALLOWED_TICK_INTERVALS.
+// Real-world time between automatic ticks. Must match the worker's
+// ALLOWED_TICK_INTERVALS — keep these two lists in sync.
 const TICK_INTERVAL_OPTIONS: Array<{ label: string; value: number }> = [
-  { label: '60s (demo)', value: 60_000 },
-  { label: '1h', value: 3_600_000 },
-  { label: '24h', value: 86_400_000 },
+  { label: '30s (rapid demo)',  value: 30_000 },
+  { label: '60s (demo)',         value: 60_000 },
+  { label: '5min (quick play)',  value: 300_000 },
+  { label: '30min (lunch break)', value: 1_800_000 },
+  { label: '1h (fast async)',    value: 3_600_000 },
+  { label: '6h (4×/day)',        value: 21_600_000 },
+  { label: '12h (2×/day)',       value: 43_200_000 },
+  { label: '24h (1×/day)',       value: 86_400_000 },
 ];
 
 interface Props {
@@ -338,14 +344,15 @@ function RoomDetail({
               />
             </div>
             <div style={{ flex: 1 }}>
-              <label className="mp-label">Ticks</label>
+              <label className="mp-label">Match length</label>
               <input
                 className="mp-input"
                 type="number"
                 min={10}
-                max={80}
+                max={500}
                 value={hostTicks}
                 onChange={(e) => setHostTicks(parseInt(e.target.value, 10) || 10)}
+                title="Total ticks before the match ends. Earth→Neptune Hohmann ≈ 410 ticks without Flight Dynamics tech."
               />
             </div>
           </div>

@@ -9,6 +9,9 @@ export function planBezierTransfer(
   targetBodyId: string,
   currentTick: number,
   bodies: Body[],
+  /** Optional multiplier (0..1) that reduces Hohmann travel time. Defaults
+   *  to 1.0 (no tech bonus). Used by the Flight Dynamics tech. */
+  travelTimeMultiplier: number = 1.0,
 ): TransferArc | null {
   const departureBody = bodies.find(b => b.id === shipOrbit.parentBodyId);
   const arrivalBody = bodies.find(b => b.id === targetBodyId);
@@ -80,7 +83,8 @@ export function planBezierTransfer(
 
   // Hohmann transfer math
   const a_transfer = (r1 + r2) / 2;
-  const travelTime = Math.PI * Math.sqrt(a_transfer * a_transfer * a_transfer / mu);
+  const baseTravelTime = Math.PI * Math.sqrt(a_transfer * a_transfer * a_transfer / mu);
+  const travelTime = baseTravelTime * Math.max(0.25, travelTimeMultiplier);
 
   // Vis-viva dv
   const v1_circ = Math.sqrt(mu / r1);

@@ -15,6 +15,7 @@ export type TechId =
   | 'weapons'        // ship firepower
   | 'armor'          // ship HP
   | 'propulsion'     // transfer fuel efficiency
+  | 'flight'         // transfer travel time
   | 'construction'   // ship build cost reduction
   | 'industry'       // settlement yield
   | 'sensors';       // SOI visibility radius
@@ -65,6 +66,16 @@ export const TECH_DEFS: Record<TechId, TechDef> = {
     baseCost: 35,
     costScaling: 1.6,
   },
+  flight: {
+    id: 'flight',
+    name: 'Flight Dynamics',
+    description: 'Advanced trajectory planning and high-thrust burns. Faster transits across the system.',
+    icon: '🛸',
+    perLevel: 0.06,
+    effectText: '-6% travel time',
+    baseCost: 50,
+    costScaling: 1.7,
+  },
   construction: {
     id: 'construction',
     name: 'Construction',
@@ -98,7 +109,7 @@ export const TECH_DEFS: Record<TechId, TechDef> = {
 };
 
 export const ALL_TECH_IDS: TechId[] = [
-  'weapons', 'armor', 'propulsion', 'construction', 'industry', 'sensors',
+  'weapons', 'armor', 'propulsion', 'flight', 'construction', 'industry', 'sensors',
 ];
 
 /**
@@ -156,6 +167,13 @@ export function hpModifier(state: FactionTechState | undefined): number {
 export function fuelCostModifier(state: FactionTechState | undefined): number {
   const reduction = effectAtLevel(TECH_DEFS.propulsion, techLevel(state, 'propulsion'));
   return Math.max(0.2, 1 - reduction);
+}
+
+/** Travel-time multiplier (lower = faster). Clamped at 0.25 of base so
+ *  even fully-maxed players still have to commit ticks to long voyages. */
+export function travelTimeModifier(state: FactionTechState | undefined): number {
+  const reduction = effectAtLevel(TECH_DEFS.flight, techLevel(state, 'flight'));
+  return Math.max(0.25, 1 - reduction);
 }
 
 /** Build-cost multiplier (lower = cheaper). Clamped at 0.25 of base. */
