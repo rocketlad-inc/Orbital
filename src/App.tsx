@@ -99,6 +99,11 @@ function AppShell() {
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(() => {
     return localStorage.getItem(ROOM_STORAGE_KEY);
   });
+  // Tracks whether the selected room has actually started a game. While
+  // null the player is still in the pre-game lobby and the canvas
+  // shouldn't poll /state (it'll 404 until seedGameWorld runs).
+  // 'missing' means /api/lobby/rooms/:id 404'd — room itself is gone.
+  const [roomGameId, setRoomGameId] = useState<string | null | 'missing'>(null);
   const [activeRooms, setActiveRooms] = useState<RoomSummary[] | null>(null);
   const [showAuth, setShowAuth] = useState(false);
 
@@ -159,8 +164,42 @@ function AppShell() {
 
   const handleEnterRoom = (roomId: string) => {
     setSelectedRoomId(roomId);
+    setRoomGameId(null);
     localStorage.setItem(ROOM_STORAGE_KEY, roomId);
   };
+
+  // Watch the selected room for game start. While roomGameId is null the
+  // lobby + dock are shown but the game canvas / MultiplayerGameProvider
+  // stays unmounted (there's no /state to poll yet). Once the host starts
+  // the match, /api/lobby/rooms/:id starts returning game_id and we mount
+  // the game provider. If the room itself disappears we route the user
+  // back to the lobby and clear the stored id.
+  useEffect(() => {
+    if (!selectedRoomId || !user) return;
+    let cancelled = false;
+    const poll = async () => {
+      const res = await apiFetch<{ game_id?: string | null; settings?: { game_id?: string | null } }>(`/api/lobby/rooms/${selectedRoomId}`);
+      if (cancelled) return;
+      if (res.ok) {
+        const gid = (res.data.settings?.game_id ?? res.data.game_id) || null;
+        setRoomGameId(gid);
+      } else if (res.status === 404) {
+        setRoomGameId('missing');
+      }
+    };
+    poll();
+    const t = setInterval(poll, 3000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [selectedRoomId, user]);
+
+  // If the room itself is gone, clear it and route back to the lobby.
+  useEffect(() => {
+    if (roomGameId === 'missing') {
+      handleExitRoom();
+      setRoomGameId(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomGameId]);
 
   const handleGuest = () => {
     setGuestMode(true);
@@ -212,11 +251,34 @@ function AppShell() {
     );
   }
 
+  // Pre-game (host still configuring / players still readying up): show
+  // just the dock + lobby tab; no game canvas yet because no /state row
+  // exists on the server. Once roomGameId is a real id, swap in the
+  // game provider which feeds the canvas.
+  const gameStarted = typeof roomGameId === 'string' && roomGameId.length > 0;
   return (
     <MultiplayerShell onExit={handleExitRoom} initialRoomId={selectedRoomId}>
-      <MultiplayerGameProvider gameId={selectedRoomId} onGameMissing={handleExitRoom}>
-        <SinglePlayerView onExit={handleExitMode} isMultiplayer />
-      </MultiplayerGameProvider>
+      {gameStarted ? (
+        <MultiplayerGameProvider gameId={roomGameId as string} onGameMissing={handleExitRoom}>
+          <SinglePlayerView onExit={handleExitMode} isMultiplayer />
+        </MultiplayerGameProvider>
+      ) : (
+        <div className="mp-overlay" style={{ background: 'transparent', pointerEvents: 'none' }}>
+          <div className="mp-card" style={{
+            textAlign: 'center',
+            color: 'var(--mp-fg-dim)',
+            pointerEvents: 'auto',
+          }}>
+            <div style={{ color: 'var(--mp-accent)', marginBottom: 8, letterSpacing: '0.15em' }}>
+              LOBBY
+            </div>
+            <div style={{ fontSize: 11 }}>
+              Use the dock to configure the match.<br />
+              The game canvas will appear once the host starts.
+            </div>
+          </div>
+        </div>
+      )}
     </MultiplayerShell>
   );
 }
