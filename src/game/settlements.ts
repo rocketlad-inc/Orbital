@@ -241,25 +241,28 @@ export function tickSettlements(
     );
 
     if (ownerFreighters.length > 0 && (stockpile.fuel > 0 || stockpile.ore > 0 || stockpile.credits > 0)) {
-      const pool = factionPools[s.ownedBy];
-      if (pool) {
-        // Each freighter carries up to 5 of each per tick
-        const capacity = ownerFreighters.length * 5;
-        const moveFuel = Math.min(stockpile.fuel, capacity);
-        const moveOre = Math.min(stockpile.ore, capacity);
-        const moveCredits = Math.min(stockpile.credits, capacity);
-
-        pool.fuel += moveFuel;
-        pool.ore += moveOre;
-        pool.credits += moveCredits;
-
-        stockpile = {
-          fuel: stockpile.fuel - moveFuel,
-          ore: stockpile.ore - moveOre,
-          credits: stockpile.credits - moveCredits,
-        };
-        dirty = true;
+      // Lazily create a pool for owners we haven't seen yet (e.g. captured
+      // settlements whose new owner has no entry in gameState.resources).
+      if (!factionPools[s.ownedBy]) {
+        factionPools[s.ownedBy] = { fuel: 0, ore: 0, credits: 0 };
       }
+      const pool = factionPools[s.ownedBy];
+      // Each freighter carries up to 5 of each per tick
+      const capacity = ownerFreighters.length * 5;
+      const moveFuel = Math.min(stockpile.fuel, capacity);
+      const moveOre = Math.min(stockpile.ore, capacity);
+      const moveCredits = Math.min(stockpile.credits, capacity);
+
+      pool.fuel += moveFuel;
+      pool.ore += moveOre;
+      pool.credits += moveCredits;
+
+      stockpile = {
+        fuel: stockpile.fuel - moveFuel,
+        ore: stockpile.ore - moveOre,
+        credits: stockpile.credits - moveCredits,
+      };
+      dirty = true;
     }
 
     if (dirty) {

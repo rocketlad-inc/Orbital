@@ -195,10 +195,23 @@ function circularOrbitAround(
   };
 }
 
+/**
+ * DEFAULT_RESOURCES is a TEMPLATE — use freshResources() to get a deep copy
+ * suitable for assignment into a new GameState. Don't spread DEFAULT_RESOURCES
+ * directly: shallow-copying it shares the inner per-faction objects across
+ * scenarios, so the first tick's mutation would leak into the template.
+ */
 const DEFAULT_RESOURCES: Record<string, FactionResources> = {
   player: { fuel: 100, ore: 200, credits: 150 },
   enemy: { fuel: 100, ore: 200, credits: 150 },
 };
+
+function freshResources(): Record<string, FactionResources> {
+  return {
+    player: { ...DEFAULT_RESOURCES.player },
+    enemy: { ...DEFAULT_RESOURCES.enemy },
+  };
+}
 
 function withOwnership(bodies: Body[]): Body[] {
   return bodies.map(b => {
@@ -239,7 +252,7 @@ export function createScenario1(): GameState {
   return {
     currentTick: 0, bodies, ships, factions, orders: [],
     fleets: [], buildOrders: [], settlements: [],
-    resources: { ...DEFAULT_RESOURCES },
+    resources: freshResources(),
     combatLog: [], lastHarvestTick: 0,
   };
 }
@@ -295,7 +308,7 @@ export function createScenario2(): GameState {
   return {
     currentTick: 0, bodies, ships, factions, orders: [],
     fleets: [], buildOrders: [], settlements: [],
-    resources: { ...DEFAULT_RESOURCES },
+    resources: freshResources(),
     combatLog: [], lastHarvestTick: 0,
   };
 }

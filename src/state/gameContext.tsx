@@ -100,12 +100,13 @@ export function GameContextProvider({
       let changed = false;
 
       if (transfer) {
-        if (tick >= transfer.arrivalTime) {
+        // Loop arrival processing so a single large tickDelta can chain
+        // through multiple queued legs (e.g. fast-forward through a patrol).
+        while (transfer && tick >= transfer.arrivalTime) {
           const cost = Math.round(Math.abs(transfer.arrivalDv) * 10);
           fuel = Math.max(0, fuel - cost);
 
           if (queuedTransfers.length > 0) {
-            // Chain into next queued transfer
             const nextArc = queuedTransfers.shift()!;
             const depCost = Math.round(Math.abs(nextArc.departureDv) * 10);
             fuel = Math.max(0, fuel - depCost);
@@ -114,9 +115,10 @@ export function GameContextProvider({
             const chainRadius = chainBody ? chainBody.radius + 4 : 10;
             orbit = createCircularOrbit(nextArc.departureBodyId, chainRadius, tick, bodies);
           } else {
-            const arrBody = bodies.find(b => b.id === transfer!.arrivalBodyId);
+            const arrBodyId = transfer.arrivalBodyId;
+            const arrBody = bodies.find(b => b.id === arrBodyId);
             const arrRadius = arrBody ? arrBody.radius + 4 : 10;
-            orbit = createCircularOrbit(transfer.arrivalBodyId, arrRadius, tick, bodies);
+            orbit = createCircularOrbit(arrBodyId, arrRadius, tick, bodies);
             transfer = undefined;
           }
           changed = true;
@@ -145,7 +147,10 @@ export function GameContextProvider({
 
       if (changed) {
         mutated = true;
-        return { ...ship, orbit, fuel, orders, transfer, pendingTransfer, queuedTransfers };
+        // Don't store an empty queuedTransfers array — keep undefined so
+        // ships without any queued legs stay clean.
+        const nextQueued = queuedTransfers.length > 0 ? queuedTransfers : undefined;
+        return { ...ship, orbit, fuel, orders, transfer, pendingTransfer, queuedTransfers: nextQueued };
       }
       return ship;
     });
@@ -196,6 +201,27 @@ export function GameContextProvider({
     updatedSettlements = combatResult.settlements;
     const combatNewLogs = combatResult.log;
 
+    // Prune destroyed ships from fleet membership. A fleet with <2 surviving
+    // ships dissolves; lead ship that died gets reassigned.
+    let updatedFleets = prev.fleets;
+    if (combatNewLogs.length > 0) {
+      const aliveIds = new Set(updatedShips.map(s => s.id));
+      updatedFleets = prev.fleets
+        .map(f => {
+          const survivors = f.shipIds.filter(id => aliveIds.has(id));
+          if (survivors.length === f.shipIds.length) return f;
+          const newLead = aliveIds.has(f.leadShipId) ? f.leadShipId : survivors[0];
+          return { ...f, shipIds: survivors, leadShipId: newLead };
+        })
+        .filter(f => f.shipIds.length >= 2);
+
+      // Detach fleetId from any ship whose fleet was dissolved
+      const survivingFleetIds = new Set(updatedFleets.map(f => f.id));
+      updatedShips = updatedShips.map(s =>
+        s.fleetId && !survivingFleetIds.has(s.fleetId) ? { ...s, fleetId: undefined } : s
+      );
+    }
+
     // Repair and refuel ships at owned bodies (after combat so dead ships are gone)
     updatedShips = tickMaintenance(updatedShips, updatedSettlements, prev.bodies, tickDelta);
 
@@ -212,6 +238,7 @@ export function GameContextProvider({
       buildOrders,
       resources: factionPools,
       settlements: updatedSettlements,
+      fleets: updatedFleets,
       combatLog,
     };
   }, [checkNodeExecution]);
@@ -261,6 +288,7 @@ export function GameContextProvider({
       selectedShipId: undefined,
       selectedBodyId: undefined,
       hoveredBodyId: undefined,
+      targetSelectionMode: false,
     });
     setSelectedSettlementId(undefined);
   }, []);

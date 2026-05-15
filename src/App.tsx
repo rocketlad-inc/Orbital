@@ -6,7 +6,7 @@ import { BodyInspector } from './components/BodyInspector';
 import { ScenarioSelector } from './components/ScenarioSelector';
 import './App.css';
 
-const SIM_SPEEDS = [0, 1, 10, 100, 1000, 10000];
+const SIM_SPEEDS = [0, 1, 10, 100, 1000, 10000, 100000];
 
 function AppContent() {
   const [windowSize, setWindowSize] = useState({
@@ -29,8 +29,8 @@ function AppContent() {
     setSimSpeed(next);
   };
 
-  const handleSkipTick = () => {
-    updateTick(gameState.currentTick + 10);
+  const skipTicks = (n: number) => {
+    updateTick(gameState.currentTick + n);
   };
 
   return (
@@ -44,14 +44,20 @@ function AppContent() {
         position: 'fixed', bottom: 20, right: 20,
         display: 'flex', gap: '8px', zIndex: 1000,
       }}>
-        <button onClick={cycleSpeed} style={btnStyle}>
-          {simSpeed === 0 ? '▶ PLAY' : `${simSpeed}×`}
+        <button onClick={cycleSpeed} style={btnStyle} title="Cycle simulation speed">
+          {simSpeed === 0 ? '▶ PLAY' : `${simSpeed.toLocaleString()}×`}
         </button>
-        <button onClick={() => setSimSpeed(0)} style={btnStyle} disabled={simSpeed === 0}>
+        <button onClick={() => setSimSpeed(0)} style={btnStyle} disabled={simSpeed === 0} title="Pause">
           ⏸ PAUSE
         </button>
-        <button onClick={handleSkipTick} style={btnStyle}>
+        <button onClick={() => skipTicks(10)} style={btnStyle} title="Skip 10 ticks">
           ⏭ +10
+        </button>
+        <button onClick={() => skipTicks(100)} style={btnStyle} title="Skip 100 ticks">
+          ⏭⏭ +100
+        </button>
+        <button onClick={() => skipTicks(1000)} style={btnStyle} title="Skip 1,000 ticks">
+          ⏭⏭⏭ +1K
         </button>
       </div>
 
