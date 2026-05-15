@@ -214,7 +214,7 @@ function AppShell() {
 
   return (
     <MultiplayerShell onExit={handleExitRoom} initialRoomId={selectedRoomId}>
-      <MultiplayerGameProvider gameId={selectedRoomId}>
+      <MultiplayerGameProvider gameId={selectedRoomId} onGameMissing={handleExitRoom}>
         <SinglePlayerView onExit={handleExitMode} isMultiplayer />
       </MultiplayerGameProvider>
     </MultiplayerShell>

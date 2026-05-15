@@ -187,15 +187,23 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
 interface Props {
   gameId: string;
   children: React.ReactNode;
+  /** Invoked when the server says the game no longer exists (404). The
+   *  parent clears the stored room id and routes back to the lobby. */
+  onGameMissing?: () => void;
 }
 
 const POLL_INTERVAL_MS = 1500;
 
-export function MultiplayerGameProvider({ gameId, children }: Props) {
+export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Props) {
   const [state, setState] = useState<GameState | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Set true when the server returns 404. Stops polling + offers an exit. */
+  const [missing, setMissing] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const inflightRef = useRef(false);
+  // Stable ref so the polling effect doesn't tear down each render.
+  const onGameMissingRef = useRef(onGameMissing);
+  useEffect(() => { onGameMissingRef.current = onGameMissing; }, [onGameMissing]);
 
   const fetchState = useCallback(async () => {
     if (inflightRef.current) return;
@@ -206,6 +214,10 @@ export function MultiplayerGameProvider({ gameId, children }: Props) {
         const next = serverToGameState(res.data, res.data.me.faction_id);
         setState(next);
         setError(null);
+      } else if (res.status === 404 || res.error?.code === 'not_found') {
+        // Game no longer exists on the server (deleted, expired, or stale
+        // room id in localStorage). Stop polling and surface a bounce-out.
+        setMissing(true);
       } else if (res.error?.code !== 'no_backend') {
         setError(res.error?.message ?? 'failed to load game state');
       }
@@ -214,15 +226,24 @@ export function MultiplayerGameProvider({ gameId, children }: Props) {
     }
   }, [gameId]);
 
-  // Polling loop
+  // Polling loop — halts when the game is missing so we don't spam 404s.
   useEffect(() => {
+    if (missing) return;
     fetchState();
     const id = setInterval(fetchState, POLL_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [fetchState]);
+  }, [fetchState, missing]);
 
-  // Room WS: refetch immediately on tick / settlement events.
+  // Auto-exit on missing after a brief pause so the user sees the message.
   useEffect(() => {
+    if (!missing) return;
+    const t = setTimeout(() => { onGameMissingRef.current?.(); }, 1200);
+    return () => clearTimeout(t);
+  }, [missing]);
+
+  // Room WS: refetch on tick / completion events. Skipped if missing.
+  useEffect(() => {
+    if (missing) return;
     const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${scheme}://${window.location.host}/api/rooms/${gameId}/ws`);
     wsRef.current = ws;
@@ -233,22 +254,47 @@ export function MultiplayerGameProvider({ gameId, children }: Props) {
       } catch { /* ignore non-json */ }
     });
     return () => { try { ws.close(); } catch {} wsRef.current = null; };
-  }, [gameId, fetchState]);
+  }, [gameId, fetchState, missing]);
 
   const status = useMemo(() => {
+    if (missing) return 'missing';
     if (state) return 'ready';
     if (error) return 'error';
     return 'loading';
-  }, [state, error]);
+  }, [state, error, missing]);
 
   if (status !== 'ready' || !state) {
     return (
       <div className="mp-overlay">
         <div className="mp-card" style={{ textAlign: 'center' }}>
-          {status === 'error' ? (
+          {status === 'missing' ? (
+            <>
+              <div style={{ color: 'var(--mp-accent)', marginBottom: 8 }}>
+                This game no longer exists
+              </div>
+              <div style={{ color: 'var(--mp-fg-dim)', fontSize: 11, marginBottom: 12 }}>
+                The room may have been deleted or the game expired.
+              </div>
+              <button
+                className="mp-submit"
+                onClick={() => onGameMissingRef.current?.()}
+                style={{ marginTop: 4 }}
+              >
+                Return to lobby
+              </button>
+            </>
+          ) : status === 'error' ? (
             <>
               <div style={{ color: 'var(--mp-hostile)', marginBottom: 8 }}>Couldn't load game state</div>
-              <div style={{ color: 'var(--mp-fg-dim)', fontSize: 11 }}>{error}</div>
+              <div style={{ color: 'var(--mp-fg-dim)', fontSize: 11, marginBottom: 12 }}>{error}</div>
+              {/* Safety net so the user is never permanently stuck. */}
+              <button
+                className="mp-submit"
+                onClick={() => onGameMissingRef.current?.()}
+                style={{ marginTop: 4 }}
+              >
+                Return to lobby
+              </button>
             </>
           ) : (
             <div style={{ color: 'var(--mp-fg-dim)' }}>Loading game…</div>
