@@ -6,6 +6,7 @@
 import React, { useMemo, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
+import { ShipIcon } from './ShipIcons';
 import './OverviewPanel.css';
 
 interface FleetPanelProps {
@@ -116,7 +117,10 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
         onClick={() => handleShipClick(ship.id)}
       >
         <td>
-          <div className="body-cell">
+          <div className="body-cell" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ color: '#4ecdc4', flexShrink: 0 }}>
+              <ShipIcon shipClass={ship.class as ShipClassName} size={20} />
+            </div>
             <div>
               <div className="body-cell__name">{ship.name}</div>
               <div className="body-cell__type">{def.displayName} · {ship.class}</div>

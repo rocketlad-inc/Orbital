@@ -5,6 +5,7 @@ import { planBezierTransfer } from '../physics/bezierTransfer';
 import { createCircularOrbit } from '../physics/orbitalMechanics';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { maintenanceRatesForShip } from '../game/maintenance';
+import { ShipIcon } from './ShipIcons';
 import './ShipPanel.css';
 
 export const ShipPanel: React.FC = () => {
@@ -204,7 +205,12 @@ export const ShipPanel: React.FC = () => {
           <div className="ship-stats">
             <div className="stat-row">
               <span className="label">CLASS</span>
-              <span className="value">{ship.class.toUpperCase()}</span>
+              <span className="value" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ color: '#4ecdc4', display: 'inline-flex' }}>
+                  <ShipIcon shipClass={ship.class as ShipClassName} size={16} />
+                </span>
+                {ship.class.toUpperCase()}
+              </span>
             </div>
             <div className="stat-row">
               <span className="label">HP</span>

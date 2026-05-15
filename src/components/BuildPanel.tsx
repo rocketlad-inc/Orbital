@@ -5,6 +5,7 @@
 import React, { useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { BUILDABLE_CLASSES, SHIP_CLASSES, ShipClassName } from '../game/shipClasses';
+import { ShipIcon } from './ShipIcons';
 import './BuildPanel.css';
 
 // Expanse-themed random ship names
@@ -101,7 +102,7 @@ export const BuildPanel: React.FC = () => {
           return (
             <div key={cls} className={`build-class-row ${!canAfford ? 'disabled' : ''}`}>
               <div className="class-info">
-                <span className="class-icon">{def.icon}</span>
+                <span className="class-icon"><ShipIcon shipClass={cls} size={16} /></span>
                 <span className="class-name">{def.displayName}</span>
               </div>
               <div className="class-stats">

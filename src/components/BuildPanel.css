@@ -139,6 +139,11 @@
 .class-icon {
   color: #ffb84d;
   font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
 }
 
 .class-name {

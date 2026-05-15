@@ -6,6 +6,7 @@
 import React, { useState, useMemo } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
+import { ShipIcon } from './ShipIcons';
 import './Outliner.css';
 
 export const Outliner: React.FC = () => {
@@ -153,7 +154,9 @@ export const Outliner: React.FC = () => {
                         className={`outliner__ship-row ${uiState.selectedShipId === ship.id ? 'selected' : ''}`}
                         onClick={(e) => { e.stopPropagation(); selectShip(ship.id); }}
                       >
-                        <span className="outliner__ship-class">{def.displayName.slice(0, 3)}</span>
+                        <span className="outliner__ship-class" title={def.displayName}>
+                          <ShipIcon shipClass={ship.class as ShipClassName} size={14} />
+                        </span>
                         <span className="outliner__ship-name">{ship.name}</span>
                         {lowFuel && <span className="outliner__ship-status outliner__ship-status--lowfuel">⛽</span>}
                         <span className={`outliner__hp-dot outliner__hp-dot--${hpClass(r)}`} title={`HP ${Math.round(r * 100)}%`} />
@@ -181,7 +184,9 @@ export const Outliner: React.FC = () => {
                   style={{ paddingLeft: 8 }}
                   onClick={() => selectShip(ship.id)}
                 >
-                  <span className="outliner__ship-class">{def.displayName.slice(0, 3)}</span>
+                  <span className="outliner__ship-class" title={def.displayName}>
+                    <ShipIcon shipClass={ship.class as ShipClassName} size={14} />
+                  </span>
                   <span className="outliner__ship-name">
                     {ship.name} → {target?.name || '?'} T-{Math.max(0, eta).toFixed(0)}
                   </span>
