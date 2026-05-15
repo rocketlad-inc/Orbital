@@ -171,6 +171,18 @@ const CARGO_SHIPS_PER_WORLD = 1;
 // Starter fleet template. ship_class is a free-form TEXT column in the
 // schema; 'frigate' = combat, 'cargo' = freight. Names are templates;
 // suffixed per body so each ship gets a unique label.
+// Combat stats by ship class. Mirrors src/game/shipClasses.ts on the
+// client side. Used both by seedGameWorld (starter fleet) and by the
+// Room DO tick resolver (build completions + combat resolution).
+export const SHIP_COMBAT_STATS = {
+  corvette:  { hp: 40,  damage_per_tick: 5 },
+  frigate:   { hp: 80,  damage_per_tick: 10 },
+  destroyer: { hp: 200, damage_per_tick: 18 },
+  freighter: { hp: 30,  damage_per_tick: 0 },
+  // Legacy alias used by the starter fleet.
+  cargo:     { hp: 30,  damage_per_tick: 0 },
+};
+
 const STARTER_FLEET = [
   { class: 'frigate', baseName: 'Vanguard', fuelMax: 800 },
   { class: 'frigate', baseName: 'Sentinel', fuelMax: 800 },
@@ -427,19 +439,23 @@ export async function seedGameWorld(env, gameId) {
         const omega = rand() * Math.PI * 2;
         const m0 = rand() * Math.PI * 2;
         const name = `${ship.baseName} of ${bodyTpl.name}`;
+        const stats = SHIP_COMBAT_STATS[ship.class] ?? { hp: 50, damage_per_tick: 0 };
         stmts.push(
           env.DB.prepare(
             `INSERT INTO game_ships
               (id, game_id, owner_faction_id, name, ship_class, parent_body_id,
                orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
-               fuel, fuel_max, status, built_at_tick)
+               fuel, fuel_max, status, built_at_tick,
+               hp, hp_max, damage_per_tick)
              VALUES (?, ?, ?, ?, ?, ?,
                      ?, ?, ?, ?, 0, 1,
-                     ?, ?, 'active', 0)`,
+                     ?, ?, 'active', 0,
+                     ?, ?, ?)`,
           ).bind(
             id, gameId, f.id, name, ship.class, parentBodyId,
             rp, ra, omega, m0,
             ship.fuelMax, ship.fuelMax,
+            stats.hp, stats.hp, stats.damage_per_tick,
           ),
         );
       });

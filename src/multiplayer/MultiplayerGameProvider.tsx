@@ -72,6 +72,9 @@ interface ServerState {
     orbit_direction: 1 | -1;
     fuel: number;
     fuel_max: number;
+    hp?: number;
+    hp_max?: number;
+    damage_per_tick?: number;
     status: string;
   }>;
 }
@@ -128,6 +131,7 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     class: (s.ship_class as Ship['class']),
     ownedBy: s.owner_faction_id,
     fuel: s.fuel,
+    hp: s.hp,
     orbit,
     orders: [],
   };

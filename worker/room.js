@@ -317,7 +317,11 @@ export class Room {
       if (!body) continue;
 
       const FUEL_MAX = { corvette: 80, frigate: 200, destroyer: 300, freighter: 400 };
+      const HP       = { corvette: 40, frigate: 80,  destroyer: 200, freighter: 30 };
+      const DMG      = { corvette: 5,  frigate: 10,  destroyer: 18,  freighter: 0 };
       const fuelMax = FUEL_MAX[b.ship_class] ?? 100;
+      const hp = HP[b.ship_class] ?? 50;
+      const dmg = DMG[b.ship_class] ?? 0;
       const rp = (body.radius || 4) + 4;
       const ra = rp; // circular orbit
       const shipId = `${gameId}:s${tick}_${b.id.slice(-6)}`;
@@ -330,11 +334,13 @@ export class Room {
               (id, game_id, owner_faction_id, name, ship_class,
                parent_body_id, orbit_rp, orbit_ra, orbit_omega,
                orbit_m0, orbit_epoch, orbit_direction,
-               fuel, fuel_max, status, built_at_tick)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 1, ?, ?, 'active', ?)`,
+               fuel, fuel_max, status, built_at_tick,
+               hp, hp_max, damage_per_tick)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 1, ?, ?, 'active', ?, ?, ?, ?)`,
           )
           .bind(shipId, gameId, b.faction_id, shipName, b.ship_class,
-                b.body_id, rp, ra, tick, fuelMax, fuelMax, tick),
+                b.body_id, rp, ra, tick, fuelMax, fuelMax, tick,
+                hp, hp, dmg),
         this.env.DB
           .prepare('DELETE FROM game_body_build_queue WHERE id = ?')
           .bind(b.id),
@@ -379,6 +385,67 @@ export class Room {
           .prepare("UPDATE game_ship_nodes SET status = 'executed', executed_at_tick = ? WHERE id = ?")
           .bind(tick, n.id),
       ]);
+    }
+
+    // 3. Combat. Find bodies where 2+ factions have ships. Each ship's
+    //    damage_per_tick is split evenly across hostile ships at the same
+    //    body. Ships at hp<=0 are marked destroyed.
+    //
+    //    Hostility is "anyone not me" for v1 — treaties (NAP/defense)
+    //    don't suppress combat yet. Easy to add by joining treaties.
+    const allShips = (await this.env.DB
+      .prepare(
+        `SELECT id, owner_faction_id, parent_body_id, hp, damage_per_tick
+           FROM game_ships
+          WHERE game_id = ? AND status = 'active'`,
+      )
+      .bind(gameId)
+      .all()).results ?? [];
+
+    // Group by body, then check for multiple factions present.
+    const byBody = new Map();
+    for (const s of allShips) {
+      if (!byBody.has(s.parent_body_id)) byBody.set(s.parent_body_id, []);
+      byBody.get(s.parent_body_id).push(s);
+    }
+
+    const hpDeltas = new Map(); // shipId -> total damage taken this tick
+    for (const [, ships] of byBody) {
+      const factions = new Set(ships.map(s => s.owner_faction_id));
+      if (factions.size < 2) continue;
+      for (const attacker of ships) {
+        if (!attacker.damage_per_tick || attacker.damage_per_tick <= 0) continue;
+        const targets = ships.filter(t => t.owner_faction_id !== attacker.owner_faction_id);
+        if (targets.length === 0) continue;
+        const split = attacker.damage_per_tick / targets.length;
+        for (const t of targets) {
+          hpDeltas.set(t.id, (hpDeltas.get(t.id) || 0) + split);
+        }
+      }
+    }
+
+    if (hpDeltas.size > 0) {
+      const losses = [];
+      for (const [shipId, dmg] of hpDeltas) {
+        const cur = allShips.find(s => s.id === shipId);
+        if (!cur) continue;
+        const newHp = Math.max(0, cur.hp - dmg);
+        if (newHp <= 0) {
+          await this.env.DB
+            .prepare("UPDATE game_ships SET hp = 0, status = 'destroyed', destroyed_at_tick = ? WHERE id = ?")
+            .bind(tick, shipId)
+            .run();
+          losses.push(shipId);
+        } else {
+          await this.env.DB
+            .prepare('UPDATE game_ships SET hp = ? WHERE id = ?')
+            .bind(newHp, shipId)
+            .run();
+        }
+      }
+      if (losses.length) {
+        this.broadcast({ type: 'ships_destroyed', tick, ship_ids: losses });
+      }
     }
   }
 }

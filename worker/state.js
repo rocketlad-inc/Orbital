@@ -81,7 +81,8 @@ async function handleGetState(req, env, ctx) {
     .prepare(
       `SELECT id, name, ship_class, owner_faction_id, parent_body_id,
               orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
-              fuel, fuel_max, status, built_at_tick
+              fuel, fuel_max, hp, hp_max, damage_per_tick,
+              status, built_at_tick
          FROM game_ships
         WHERE game_id = ? AND status = 'active'`,
     )
