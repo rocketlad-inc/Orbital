@@ -11,7 +11,9 @@
 
 const GAME_ID_RE = /^[A-Za-z0-9_-]{6,32}$/;
 const MSG_ID_RE  = /^[A-Za-z0-9_-]{6,64}$/;
-const FACTION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+// Faction IDs are formatted "${gameId}:f${slot}" (see seedGameWorld in
+// factions.js), so the regex must permit a colon. Allowed chars: A-Z a-z 0-9 _ - :
+const FACTION_ID_RE = /^[A-Za-z0-9_:-]{1,64}$/;
 
 const BODY_MIN = 1;
 const BODY_MAX = 4000;

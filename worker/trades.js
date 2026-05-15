@@ -17,7 +17,9 @@
 
 const GAME_ID_RE    = /^[A-Za-z0-9_-]{6,32}$/;
 const TRADE_ID_RE   = /^[A-Za-z0-9_-]{6,64}$/;
-const FACTION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+// Faction IDs are formatted "${gameId}:f${slot}" (see seedGameWorld in
+// factions.js), so the regex must permit a colon.
+const FACTION_ID_RE = /^[A-Za-z0-9_:-]{1,64}$/;
 
 const NOTE_MAX = 500;
 const PACT_KINDS = new Set(['nap', 'defense_pact', 'intel_share']);
