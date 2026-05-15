@@ -9,7 +9,6 @@ export function planBezierTransfer(
   targetBodyId: string,
   currentTick: number,
   bodies: Body[],
-  strategy: 'quickest' | 'efficient' = 'quickest'
 ): TransferArc | null {
   const departureBody = bodies.find(b => b.id === shipOrbit.parentBodyId);
   const arrivalBody = bodies.find(b => b.id === targetBodyId);
@@ -77,30 +76,7 @@ export function planBezierTransfer(
   const v2_trans = Math.sqrt(mu * (2 / r2 - 1 / a_transfer));
   const arrivalDv = Math.abs(v2_circ - v2_trans);
 
-  let departureTime: number;
-
-  if (strategy === 'quickest') {
-    departureTime = currentTick + 5;
-  } else {
-    const requiredPhaseAngle = Math.PI * (1 - Math.pow((r1 + r2) / (2 * r2), 1.5));
-    const currentDepAngle = depBody.angle0 + TWO_PI * currentTick / depBody.orbitPeriod;
-    const currentArrAngle = arrBody.angle0 + TWO_PI * currentTick / arrBody.orbitPeriod;
-    let currentPhase = ((currentArrAngle - currentDepAngle) % TWO_PI + TWO_PI) % TWO_PI;
-
-    const n1 = TWO_PI / depBody.orbitPeriod;
-    const n2 = TWO_PI / arrBody.orbitPeriod;
-    const synodicPeriod = TWO_PI / Math.abs(n1 - n2);
-
-    const phaseRate = n2 - n1;
-    let phaseDiff = ((requiredPhaseAngle - currentPhase) % TWO_PI + TWO_PI) % TWO_PI;
-    if (Math.abs(phaseRate) < 1e-12) {
-      departureTime = currentTick + 5;
-    } else {
-      let waitTime = phaseDiff / Math.abs(phaseRate);
-      if (waitTime < 5) waitTime += synodicPeriod;
-      departureTime = currentTick + waitTime;
-    }
-  }
+  const departureTime = currentTick + 5;
 
   const arrivalTime = departureTime + travelTime;
 

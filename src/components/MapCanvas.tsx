@@ -26,11 +26,6 @@ interface MapCanvasProps {
   height?: number;
 }
 
-interface PendingTarget {
-  bodyId: string;
-  canvasX: number;
-  canvasY: number;
-}
 
 export const MapCanvas: React.FC<MapCanvasProps> = ({
   width = typeof window !== 'undefined' ? window.innerWidth : 1280,
@@ -50,14 +45,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     camY: number;
   } | null>(null);
 
-  const [pendingTarget, setPendingTarget] = useState<PendingTarget | null>(null);
-
-  // Clear pending target when leaving target selection mode
-  useEffect(() => {
-    if (!uiState.targetSelectionMode) {
-      setPendingTarget(null);
-    }
-  }, [uiState.targetSelectionMode]);
 
   // Escape key cancels target selection
   useEffect(() => {
@@ -265,18 +252,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const canvasY = e.clientY - rect.top;
 
       if (uiState.targetSelectionMode) {
-        // In target selection: click a body to set pending target
         for (const body of gameState.bodies) {
           if (body.id === 'sol') continue;
           const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
           const clickRadius = Math.max(12, body.radius! * camera.scale + 8);
           if (Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < clickRadius) {
-            setPendingTarget({ bodyId: body.id, canvasX: bodyPos.x, canvasY: bodyPos.y });
+            window.dispatchEvent(new CustomEvent('orbital-transfer-confirm', {
+              detail: { bodyId: body.id },
+            }));
             return;
           }
         }
-        // Clicked empty space: clear pending target
-        setPendingTarget(null);
         return;
       }
 
@@ -350,148 +336,21 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     return () => { cancelled = true; cancelAnimationFrame(frame); clearTimeout(fallback); };
   }, [render]);
 
-  const pendingBody = pendingTarget ? gameState.bodies.find(b => b.id === pendingTarget.bodyId) : null;
-
   return (
-    <div style={{ position: 'relative' }}>
-      <canvas
-        ref={canvasRef}
-        width={width}
-        height={height}
-        onMouseMove={(e) => { handleMouseMove(e); handleMouseHover(e); }}
-        onMouseDown={handleMouseDown}
-        onMouseUp={handleMouseUp}
-        onContextMenu={(e) => e.preventDefault()}
-        onWheel={handleWheel}
-        onClick={handleClick}
-        onDoubleClick={handleDoubleClick}
-        className="map-canvas"
-        style={{ cursor: uiState.targetSelectionMode ? 'crosshair' : undefined }}
-      />
-
-      {uiState.targetSelectionMode && pendingTarget && pendingBody && (
-        <TargetConfirmation
-          body={pendingBody}
-          canvasX={pendingTarget.canvasX}
-          canvasY={pendingTarget.canvasY}
-          onConfirm={(strategy) => {
-            setPendingTarget(null);
-            // Dispatch custom event for ShipPanel to handle
-            window.dispatchEvent(new CustomEvent('orbital-transfer-confirm', {
-              detail: { bodyId: pendingTarget.bodyId, strategy },
-            }));
-          }}
-          onCancel={() => setPendingTarget(null)}
-        />
-      )}
-    </div>
-  );
-};
-
-interface TargetConfirmationProps {
-  body: { id: string; name: string };
-  canvasX: number;
-  canvasY: number;
-  onConfirm: (strategy: 'quickest' | 'efficient') => void;
-  onCancel: () => void;
-}
-
-const TargetConfirmation: React.FC<TargetConfirmationProps> = ({
-  body, canvasX, canvasY, onConfirm, onCancel,
-}) => {
-  const boxWidth = 180;
-  const boxHeight = 72;
-  let left = canvasX - boxWidth / 2;
-  let top = canvasY - boxHeight - 20;
-  if (top < 8) top = canvasY + 20;
-  if (left < 8) left = 8;
-  if (typeof window !== 'undefined' && left + boxWidth > window.innerWidth - 8) {
-    left = window.innerWidth - boxWidth - 8;
-  }
-
-  return (
-    <div
-      className="target-confirmation"
-      style={{
-        position: 'absolute',
-        left: `${left}px`,
-        top: `${top}px`,
-        width: `${boxWidth}px`,
-        background: 'rgba(10, 14, 20, 0.96)',
-        border: '1px solid #ffb84d',
-        borderRadius: '4px',
-        padding: '8px 10px',
-        zIndex: 100,
-        fontFamily: "'JetBrains Mono', monospace",
-        backdropFilter: 'blur(8px)',
-        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.4)',
-      }}
-      onClick={(e) => e.stopPropagation()}
-    >
-      <div style={{
-        color: '#d8e4ee',
-        fontSize: '10px',
-        textTransform: 'uppercase',
-        letterSpacing: '0.05em',
-        marginBottom: '6px',
-        textAlign: 'center',
-      }}>
-        Transfer to {body.name}?
-      </div>
-      <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
-        <button
-          onClick={() => onConfirm('quickest')}
-          style={{
-            background: 'transparent',
-            border: '1px solid #ffb84d',
-            color: '#ffb84d',
-            padding: '4px 8px',
-            borderRadius: '2px',
-            cursor: 'pointer',
-            fontSize: '8px',
-            fontWeight: 600,
-            fontFamily: "'JetBrains Mono', monospace",
-            textTransform: 'uppercase',
-          }}
-        >
-          QUICK
-        </button>
-        <button
-          onClick={() => onConfirm('efficient')}
-          style={{
-            background: 'transparent',
-            border: '1px solid #4ecdc4',
-            color: '#4ecdc4',
-            padding: '4px 8px',
-            borderRadius: '2px',
-            cursor: 'pointer',
-            fontSize: '8px',
-            fontWeight: 600,
-            fontFamily: "'JetBrains Mono', monospace",
-            textTransform: 'uppercase',
-          }}
-        >
-          EFFICIENT
-        </button>
-        <button
-          onClick={onCancel}
-          style={{
-            background: 'transparent',
-            border: '1px solid #6b8195',
-            color: '#6b8195',
-            padding: '4px 8px',
-            borderRadius: '2px',
-            cursor: 'pointer',
-            fontSize: '8px',
-            fontWeight: 600,
-            fontFamily: "'JetBrains Mono', monospace",
-            textTransform: 'uppercase',
-          }}
-        >
-          CANCEL
-        </button>
-      </div>
-    </div>
+    <canvas
+      ref={canvasRef}
+      width={width}
+      height={height}
+      onMouseMove={(e) => { handleMouseMove(e); handleMouseHover(e); }}
+      onMouseDown={handleMouseDown}
+      onMouseUp={handleMouseUp}
+      onContextMenu={(e) => e.preventDefault()}
+      onWheel={handleWheel}
+      onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
+      className="map-canvas"
+      style={{ cursor: uiState.targetSelectionMode ? 'crosshair' : undefined }}
+    />
   );
 };
 

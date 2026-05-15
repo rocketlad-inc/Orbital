@@ -18,13 +18,12 @@ export const ShipPanel: React.FC = () => {
     ? gameState.ships.find(s => s.id === uiState.selectedShipId) || null
     : null;
 
-  // Keep a ref to the latest transfer handler so the event listener always sees current state
-  const transferHandlerRef = useRef<(bodyId: string, strategy: 'quickest' | 'efficient') => void>(() => {});
+  const transferHandlerRef = useRef<(bodyId: string) => void>(() => {});
 
   useEffect(() => {
     if (!ship) return;
 
-    transferHandlerRef.current = (targetBodyId: string, strategy: 'quickest' | 'efficient') => {
+    transferHandlerRef.current = (targetBodyId: string) => {
       const queue = ship.queuedTransfers || [];
       let chainTail: { bodyId: string; time: number } | null = null;
       if (queue.length > 0) {
@@ -40,11 +39,11 @@ export const ShipPanel: React.FC = () => {
         const tailBody = gameState.bodies.find(b => b.id === chainTail!.bodyId);
         const arrRadius = tailBody ? tailBody.radius + 4 : 10;
         const tempOrbit = createCircularOrbit(chainTail.bodyId, arrRadius, chainTail.time, gameState.bodies);
-        const arc = planBezierTransfer(tempOrbit, targetBodyId, chainTail.time, gameState.bodies, strategy);
+        const arc = planBezierTransfer(tempOrbit, targetBodyId, chainTail.time, gameState.bodies);
         if (!arc) return;
         addQueuedTransfer(ship.id, arc);
       } else {
-        const arc = planBezierTransfer(ship.orbit, targetBodyId, gameState.currentTick, gameState.bodies, strategy);
+        const arc = planBezierTransfer(ship.orbit, targetBodyId, gameState.currentTick, gameState.bodies);
         if (!arc) return;
 
         const node: ManeuverNode = {
@@ -70,8 +69,8 @@ export const ShipPanel: React.FC = () => {
 
   const handleTransferConfirmEvent = useCallback((e: Event) => {
     const detail = (e as CustomEvent).detail;
-    if (detail?.bodyId && detail?.strategy) {
-      transferHandlerRef.current(detail.bodyId, detail.strategy);
+    if (detail?.bodyId) {
+      transferHandlerRef.current(detail.bodyId);
     }
   }, []);
 
@@ -82,8 +81,8 @@ export const ShipPanel: React.FC = () => {
 
   if (!ship) return null;
 
-  const handleTransferManeuver = (targetBodyId: string, strategy: 'quickest' | 'efficient' = 'quickest') => {
-    transferHandlerRef.current(targetBodyId, strategy);
+  const handleTransferManeuver = (targetBodyId: string) => {
+    transferHandlerRef.current(targetBodyId);
   };
 
   const handleRemoveQueuedTransfer = (index: number) => {
@@ -201,7 +200,7 @@ export const ShipPanel: React.FC = () => {
                       if (o.status === 'planned') commitManeuverNode(o.id);
                     })}
                   >
-                    COMMIT ALL
+                    ▶ COMMIT ALL
                   </button>
                 )}
               </>
@@ -231,25 +230,13 @@ export const ShipPanel: React.FC = () => {
                 {gameState.bodies
                   .filter((b) => b.id !== 'sol' && b.id !== ship.orbit.parentBodyId)
                   .map((body) => (
-                    <div key={body.id} className="target-row">
-                      <span className="target-name">
-                        {body.name}{body.parent !== 'sol' ? ` (${body.parent})` : ''}
-                      </span>
-                      <div className="target-actions">
-                        <button
-                          className="target-btn target-btn-quick"
-                          onClick={() => handleTransferManeuver(body.id, 'quickest')}
-                        >
-                          QUICK
-                        </button>
-                        <button
-                          className="target-btn target-btn-efficient"
-                          onClick={() => handleTransferManeuver(body.id, 'efficient')}
-                        >
-                          EFFICIENT
-                        </button>
-                      </div>
-                    </div>
+                    <button
+                      key={body.id}
+                      className="target-button"
+                      onClick={() => handleTransferManeuver(body.id)}
+                    >
+                      {body.name}{body.parent !== 'sol' ? ` (${body.parent})` : ''}
+                    </button>
                   ))}
               </div>
             </div>
