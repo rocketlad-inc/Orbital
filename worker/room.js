@@ -93,6 +93,12 @@ export class Room {
       meta.status = 'in_progress';
       await this.state.storage.put('meta', meta);
       this.broadcast({ type: 'game_started', ...body });
+      // Schedule the first tick. seedGameWorld already wrote next_tick_at
+      // into the games row; mirror that here so the DO alarm fires it.
+      const firstTickAt = (body.started_at ?? Date.now()) + (body.tick_interval_ms ?? 86400000);
+      try { await this.state.storage.setAlarm(firstTickAt); } catch (e) {
+        console.error('setAlarm failed', e);
+      }
       return new Response(null, { status: 204 });
     }
     if (url.pathname === '/connect') {
@@ -227,5 +233,55 @@ export class Room {
     for (const ws of this.state.getWebSockets()) {
       try { ws.send(text); } catch {}
     }
+  }
+
+  // ---------- Tick scheduler ----------
+  // Fires on the schedule established at /game-started. Each invocation
+  // advances current_tick by one in D1, logs a tick row, broadcasts to
+  // connected clients so they re-pull /state, and schedules the next.
+  //
+  // Resolution of in-tick effects (build queue completions, transfer
+  // arrivals, combat) is a future pass — for now this is purely a clock.
+  async alarm() {
+    const started = await this.state.storage.get('gameStarted');
+    if (!started?.gameId) return;
+    const gameId = started.gameId;
+
+    const game = await this.env.DB
+      .prepare('SELECT status, current_tick, total_tick_target, tick_interval_ms FROM games WHERE id = ?')
+      .bind(gameId)
+      .first();
+    if (!game) return;
+    if (game.status === 'completed' || game.status === 'abandoned') return;
+
+    const now = Date.now();
+    const nextTick = (game.current_tick ?? 0) + 1;
+
+    if (nextTick >= game.total_tick_target) {
+      await this.env.DB
+        .prepare("UPDATE games SET status = 'completed', current_tick = ?, completed_at = ?, next_tick_at = NULL WHERE id = ?")
+        .bind(nextTick, now, gameId)
+        .run();
+      this.broadcast({ type: 'game_completed', tick: nextTick });
+      return;
+    }
+
+    const interval = game.tick_interval_ms ?? 86_400_000;
+    const nextAt = now + interval;
+
+    await this.env.DB.batch([
+      this.env.DB
+        .prepare('UPDATE games SET current_tick = ?, next_tick_at = ? WHERE id = ?')
+        .bind(nextTick, nextAt, gameId),
+      this.env.DB
+        .prepare("INSERT OR REPLACE INTO game_ticks (game_id, tick_number, status, scheduled_at, started_at, completed_at) VALUES (?, ?, 'completed', ?, ?, ?)")
+        .bind(gameId, nextTick, now, now, now),
+    ]);
+
+    try { await this.state.storage.setAlarm(nextAt); } catch (e) {
+      console.error('setAlarm (reschedule) failed', e);
+    }
+
+    this.broadcast({ type: 'tick', tick: nextTick, next_tick_at: nextAt });
   }
 }
