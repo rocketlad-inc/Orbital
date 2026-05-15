@@ -6,6 +6,7 @@ import { createCircularOrbit } from '../physics/orbitalMechanics';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { shipDistance, shipWorldPosition } from '../game/combat';
 import { settlementWorldPosition } from '../game/settlements';
+import { maintenanceRatesForShip } from '../game/maintenance';
 import './ShipPanel.css';
 
 export const ShipPanel: React.FC = () => {
@@ -14,9 +15,12 @@ export const ShipPanel: React.FC = () => {
     commitManeuverNode, deleteManeuverNode, addManeuverNode,
     setPendingTransfer, addQueuedTransfer, setTargetSelectionMode,
     setEngagementTargetMode, engageTarget, disengageTarget,
+    createFleet, disbandFleet, removeFromFleet, addToFleet,
   } = useGameContext();
 
   const [transferModalOpen, setTransferModalOpen] = useState(false);
+  const [fleetModalOpen, setFleetModalOpen] = useState(false);
+  const [propagateTransferToFleet, setPropagateTransferToFleet] = useState(true);
 
   const ship = uiState.selectedShipId
     ? gameState.ships.find(s => s.id === uiState.selectedShipId) || null
@@ -65,11 +69,40 @@ export const ShipPanel: React.FC = () => {
 
         addManeuverNode(node);
         setPendingTransfer(ship.id, arc);
+
+        // Fleet propagation: if this ship is in a fleet and the player opted in,
+        // plan the same target transfer for every fleet member (each from its own orbit).
+        if (propagateTransferToFleet && ship.fleetId) {
+          const fleet = gameState.fleets.find(f => f.id === ship.fleetId);
+          if (fleet) {
+            for (const memberId of fleet.shipIds) {
+              if (memberId === ship.id) continue;
+              const member = gameState.ships.find(s => s.id === memberId);
+              if (!member || member.transfer || member.pendingTransfer) continue;
+              const memberArc = planBezierTransfer(member.orbit, targetBodyId, gameState.currentTick, gameState.bodies);
+              if (!memberArc) continue;
+              const memberNode: ManeuverNode = {
+                id: `node-${Date.now()}-${Math.random()}`,
+                shipId: member.id,
+                type: 'transfer',
+                burnTime: memberArc.departureTime,
+                deltav: memberArc.departureDv,
+                prograde: memberArc.departureDv,
+                radial: 0,
+                normal: 0,
+                status: 'planned',
+                label: memberArc.label,
+              };
+              addManeuverNode(memberNode);
+              setPendingTransfer(member.id, memberArc);
+            }
+          }
+        }
       }
       setTransferModalOpen(false);
       setTargetSelectionMode(false);
     };
-  }, [ship, gameState, addManeuverNode, setPendingTransfer, addQueuedTransfer, setTargetSelectionMode]);
+  }, [ship, gameState, addManeuverNode, setPendingTransfer, addQueuedTransfer, setTargetSelectionMode, propagateTransferToFleet]);
 
   const handleTransferConfirmEvent = useCallback((e: Event) => {
     const detail = (e as CustomEvent).detail;
@@ -132,6 +165,22 @@ export const ShipPanel: React.FC = () => {
     });
   };
 
+  const handleFormFleet = (peerIds: string[]) => {
+    if (peerIds.length === 0) return;
+    const allIds = [ship.id, ...peerIds];
+    // Auto-generate a fleet name like "Earth Group" from the parent body
+    const parent = gameState.bodies.find(b => b.id === ship.orbit.parentBodyId);
+    const name = `${parent?.name ?? 'Fleet'} Group`;
+    createFleet(name, allIds);
+    setFleetModalOpen(false);
+  };
+
+  const handleAddPeersToFleet = (peerIds: string[]) => {
+    if (!ship.fleetId) return;
+    for (const id of peerIds) addToFleet(ship.fleetId, id);
+    setFleetModalOpen(false);
+  };
+
   const hasExistingTransfer = !!(ship.transfer || ship.pendingTransfer);
 
   const locationLabel = ship.transfer
@@ -172,7 +221,33 @@ export const ShipPanel: React.FC = () => {
     }
   }
   const inRange = engagementDistance != null && engagementDistance <= shipClass.range;
+
+  // Maintenance — repair/refuel rates at current location
+  const maintenance = maintenanceRatesForShip(ship, gameState.bodies, gameState.settlements);
+  const maxHp = shipClass.hp;
+  const maxFuel = shipClass.fuelCapacity;
+  const currentHp = ship.hp ?? maxHp;
+  const hpAtMax = currentHp >= maxHp;
+  const fuelAtMax = ship.fuel >= maxFuel;
   const canEngage = shipClass.range > 0 && shipClass.damagePerTick > 0;
+
+  // Fleet — current fleet (if any) and ships eligible to fleet with at this body
+  const currentFleet = ship.fleetId
+    ? gameState.fleets.find(f => f.id === ship.fleetId) ?? null
+    : null;
+  const fleetMembers = currentFleet
+    ? gameState.ships.filter(s => currentFleet.shipIds.includes(s.id))
+    : [];
+  // Eligible peers: same faction, same parent body, not in transit, not this ship, not already in *this* fleet
+  const eligiblePeers = !ship.transfer
+    ? gameState.ships.filter(s =>
+        s.id !== ship.id &&
+        s.ownedBy === ship.ownedBy &&
+        s.orbit.parentBodyId === ship.orbit.parentBodyId &&
+        !s.transfer &&
+        s.fleetId !== ship.fleetId
+      )
+    : [];
 
   return (
     <>
@@ -190,13 +265,25 @@ export const ShipPanel: React.FC = () => {
             </div>
             <div className="stat-row">
               <span className="label">HP</span>
-              <span className="value" style={{ color: (ship.hp ?? getShipClass(ship.class as ShipClassName).hp) < getShipClass(ship.class as ShipClassName).hp * 0.3 ? '#ff5e5e' : undefined }}>
-                {ship.hp ?? getShipClass(ship.class as ShipClassName).hp}/{getShipClass(ship.class as ShipClassName).hp}
+              <span className="value" style={{ color: currentHp < maxHp * 0.3 ? '#ff5e5e' : undefined }}>
+                {currentHp.toFixed(0)}/{maxHp}
+                {maintenance.repairRate > 0 && !hpAtMax && (
+                  <span style={{ color: '#4ecdc4', marginLeft: 6, fontSize: '9px' }}>
+                    +{maintenance.repairRate}/t
+                  </span>
+                )}
               </span>
             </div>
             <div className="stat-row">
               <span className="label">FUEL</span>
-              <span className="value">{ship.fuel} kt</span>
+              <span className="value">
+                {ship.fuel.toFixed(0)}/{maxFuel} kt
+                {maintenance.refuelRate > 0 && !fuelAtMax && (
+                  <span style={{ color: '#ffb84d', marginLeft: 6, fontSize: '9px' }}>
+                    +{maintenance.refuelRate}/t
+                  </span>
+                )}
+              </span>
             </div>
             <div className="stat-row">
               <span className="label">LOCATION</span>
@@ -273,6 +360,61 @@ export const ShipPanel: React.FC = () => {
               </>
             )}
           </div>
+
+          {(currentFleet || eligiblePeers.length > 0) && (
+            <div className="fleet-section">
+              <div className="section-title">
+                FLEET{currentFleet ? `: ${currentFleet.name}` : ''}
+              </div>
+              {currentFleet ? (
+                <>
+                  <div className="fleet-members">
+                    {fleetMembers.map(m => (
+                      <div key={m.id} className="fleet-member">
+                        <span className="fleet-member-name">
+                          {m.id === currentFleet.leadShipId && '★ '}
+                          {m.name}
+                        </span>
+                        <span className="fleet-member-class">{m.class.toUpperCase()}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, marginTop: 6, color: '#8aa0b4' }}>
+                    <input
+                      type="checkbox"
+                      checked={propagateTransferToFleet}
+                      onChange={e => setPropagateTransferToFleet(e.target.checked)}
+                    />
+                    TRANSFER MOVES FLEET
+                  </label>
+                  <div className="fleet-buttons">
+                    {eligiblePeers.length > 0 && (
+                      <button className="maneuver-btn" onClick={() => setFleetModalOpen(true)}>
+                        + ADD SHIPS
+                      </button>
+                    )}
+                    <button
+                      className="maneuver-btn"
+                      onClick={() => removeFromFleet(currentFleet.id, ship.id)}
+                    >
+                      LEAVE
+                    </button>
+                    <button
+                      className="maneuver-btn"
+                      style={{ borderColor: '#ff5e5e', color: '#ff5e5e' }}
+                      onClick={() => disbandFleet(currentFleet.id)}
+                    >
+                      DISBAND
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <button className="maneuver-btn" onClick={() => setFleetModalOpen(true)}>
+                  FORM FLEET ({eligiblePeers.length} ship{eligiblePeers.length === 1 ? '' : 's'} available)
+                </button>
+              )}
+            </div>
+          )}
 
           {canEngage && (
             <div className="engagement-section">
@@ -358,6 +500,77 @@ export const ShipPanel: React.FC = () => {
           </div>
         </div>
       )}
+
+      {fleetModalOpen && (
+        <FleetFormationModal
+          mode={currentFleet ? 'add' : 'form'}
+          fleetName={currentFleet?.name}
+          peers={eligiblePeers}
+          onCancel={() => setFleetModalOpen(false)}
+          onConfirm={currentFleet ? handleAddPeersToFleet : handleFormFleet}
+        />
+      )}
     </>
+  );
+};
+
+interface FleetFormationModalProps {
+  mode: 'form' | 'add';
+  fleetName?: string;
+  peers: Array<{ id: string; name: string; class: string }>;
+  onCancel: () => void;
+  onConfirm: (ids: string[]) => void;
+}
+
+const FleetFormationModal: React.FC<FleetFormationModalProps> = ({ mode, fleetName, peers, onCancel, onConfirm }) => {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  const toggle = (id: string) => {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    setSelected(next);
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <h3>{mode === 'form' ? 'Form Fleet' : `Add to ${fleetName ?? 'Fleet'}`}</h3>
+          <button className="modal-close" onClick={onCancel}>✕</button>
+        </div>
+        <div className="modal-body">
+          {peers.length === 0 ? (
+            <div className="no-orders">No eligible ships at this location.</div>
+          ) : (
+            <div className="target-list" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {peers.map((p) => (
+                <label key={p.id} className="target-button" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', textAlign: 'left' }}>
+                  <input
+                    type="checkbox"
+                    checked={selected.has(p.id)}
+                    onChange={() => toggle(p.id)}
+                  />
+                  <span style={{ flex: 1 }}>{p.name}</span>
+                  <span style={{ color: '#6b8195', fontSize: 9 }}>{p.class.toUpperCase()}</span>
+                </label>
+              ))}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            <button
+              className="maneuver-btn"
+              disabled={selected.size === 0}
+              onClick={() => onConfirm(Array.from(selected))}
+              style={{ flex: 1 }}
+            >
+              {mode === 'form' ? 'FORM FLEET' : 'ADD'}
+            </button>
+            <button className="maneuver-btn" onClick={onCancel}>
+              CANCEL
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 };

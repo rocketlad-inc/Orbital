@@ -9,6 +9,7 @@ import {
   createCity, createStation, tickSettlements,
   canHostCity, canHostStation, SETTLEMENT_DEFS,
 } from '../game/settlements';
+import { tickMaintenance } from '../game/maintenance';
 
 export const TICKS_PER_GAME_DAY = 24;
 const REAL_SECONDS_PER_GAME_DAY = 3600;
@@ -224,6 +225,9 @@ export function GameContextProvider({
           updatedShips = applyCombatResults(updatedShips, combatResults);
         }
 
+        // Repair and refuel ships at owned bodies (after combat so dead ships are gone)
+        updatedShips = tickMaintenance(updatedShips, updatedSettlements, prev.bodies, tickDelta);
+
         const allLogs = [...engagementLogs, ...combatNewLogs];
         const allOrders = updatedShips.flatMap(s => s.orders);
         return {
@@ -248,6 +252,7 @@ export function GameContextProvider({
 
   const updateTick = useCallback((tick: number) => {
     setGameStateInternal(prev => {
+      const tickDelta = Math.max(0, tick - prev.currentTick);
       let updatedShips = checkNodeExecution(prev.ships, prev.bodies, tick);
 
       // Process build orders
@@ -296,6 +301,9 @@ export function GameContextProvider({
       if (combatResults.length > 0) {
         updatedShips = applyCombatResults(updatedShips, combatResults);
       }
+
+      // Repair and refuel ships at owned bodies
+      updatedShips = tickMaintenance(updatedShips, updatedSettlements, prev.bodies, tickDelta);
       const allNewLogs = [...engagementLogs, ...combatNewLogs];
       if (allNewLogs.length > 0) {
         combatLog = [...combatLog.slice(-20), ...allNewLogs];

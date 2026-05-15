@@ -202,6 +202,33 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
     }
 
+    // Draw fleet bonds — faint lines connecting members of each fleet
+    for (const fleet of gameState.fleets) {
+      if (fleet.shipIds.length < 2) continue;
+      const positions: Array<{ x: number; y: number }> = [];
+      for (const sid of fleet.shipIds) {
+        const s = gameState.ships.find(sh => sh.id === sid);
+        if (!s) continue;
+        const wp = shipWorldPosition(s, gameState.currentTick, gameState.bodies);
+        if (wp) positions.push(wp);
+      }
+      if (positions.length < 2) continue;
+      ctx.strokeStyle = withOpacity('#4ecdc4', 0.35);
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 3]);
+      // Star pattern: connect each ship to the first (lead) ship
+      const [lead, ...rest] = positions;
+      const leadCanvas = worldToCanvas(lead.x, lead.y, renderContext);
+      for (const p of rest) {
+        const pc = worldToCanvas(p.x, p.y, renderContext);
+        ctx.beginPath();
+        ctx.moveTo(leadCanvas.x, leadCanvas.y);
+        ctx.lineTo(pc.x, pc.y);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+
     // Draw engagement lines for all ships currently engaging a target (ship or settlement)
     for (const attacker of gameState.ships) {
       if (!attacker.engagedTargetId) continue;
