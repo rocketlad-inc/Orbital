@@ -218,7 +218,7 @@
   font-weight: 600;
 }
 
-.section-title {
+.landing .section-title {
   font-family: var(--display);
   font-size: clamp(28px, 4vw, 44px);
   letter-spacing: 0.05em;
@@ -227,7 +227,7 @@
   font-weight: 700;
 }
 
-.section-body {
+.landing .section-body {
   font-size: 14px;
   line-height: 1.8;
   color: var(--fg);
