@@ -5,7 +5,7 @@
 import { Body, Ship, OrbitElements, TrajectoryArc, TransferArc, Settlement, Faction } from '../types';
 import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt } from '../physics/orbitalMechanics';
 import { bezierPositionAt, bezierTangentAt, bezierPoints } from '../physics/bezierTransfer';
-import { COLORS, withOpacity } from './colors';
+import { COLORS, withOpacity, lighten, darken } from './colors';
 
 export interface RenderContext {
   ctx: CanvasRenderingContext2D;
@@ -48,6 +48,109 @@ export function canvasToWorld(
 export function clearCanvas(ctx: RenderContext) {
   ctx.ctx.fillStyle = COLORS.bg;
   ctx.ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+}
+
+// ============================================================
+// Starfield — procedural backdrop, cached to offscreen canvas
+// ============================================================
+
+export interface StarfieldCache {
+  canvas: HTMLCanvasElement;
+  width: number;
+  height: number;
+}
+
+/**
+ * Generate a starfield onto an offscreen canvas. Includes:
+ *  - Distant dim stars
+ *  - Mid-brightness stars
+ *  - Rare bright stars with subtle halos
+ *  - A few faint nebula blobs for color
+ */
+export function generateStarfield(width: number, height: number): StarfieldCache {
+  const off = document.createElement('canvas');
+  off.width = width;
+  off.height = height;
+  const ctx = off.getContext('2d');
+  if (!ctx) return { canvas: off, width, height };
+
+  // Nebula tinting (3 large faint blobs)
+  const nebulaHues = [
+    'rgba(80, 60, 130, 0.05)',  // purple
+    'rgba(60, 90, 150, 0.05)',  // blue
+    'rgba(140, 80, 90, 0.04)',  // dust red
+  ];
+  for (let i = 0; i < nebulaHues.length; i++) {
+    const cx = Math.random() * width;
+    const cy = Math.random() * height;
+    const r = 180 + Math.random() * 280;
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    g.addColorStop(0, nebulaHues[i]);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+  }
+
+  // Stars — density tuned to feel "deep space" without obscuring orbits
+  const starCount = Math.floor((width * height) / 700);
+  for (let i = 0; i < starCount; i++) {
+    const x = Math.random() * width;
+    const y = Math.random() * height;
+    const r = Math.random();
+
+    if (r > 0.985) {
+      // Rare bright star with halo
+      const haloR = 4.5;
+      const halo = ctx.createRadialGradient(x, y, 0, x, y, haloR);
+      halo.addColorStop(0, 'rgba(255, 240, 200, 0.45)');
+      halo.addColorStop(1, 'rgba(255, 240, 200, 0)');
+      ctx.fillStyle = halo;
+      ctx.fillRect(x - haloR, y - haloR, haloR * 2, haloR * 2);
+
+      ctx.fillStyle = 'rgba(255, 248, 220, 0.95)';
+      ctx.beginPath();
+      ctx.arc(x, y, 1.4, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (r > 0.93) {
+      ctx.fillStyle = `rgba(220, 230, 255, ${0.7 + Math.random() * 0.3})`;
+      ctx.beginPath();
+      ctx.arc(x, y, 1, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (r > 0.70) {
+      ctx.fillStyle = `rgba(200, 210, 225, ${0.4 + Math.random() * 0.3})`;
+      ctx.fillRect(x, y, 0.8, 0.8);
+    } else {
+      ctx.fillStyle = `rgba(170, 180, 200, ${0.18 + Math.random() * 0.22})`;
+      ctx.fillRect(x, y, 0.6, 0.6);
+    }
+  }
+
+  return { canvas: off, width, height };
+}
+
+/**
+ * Draw cached starfield with a tiny camera parallax — distant stars shift
+ * slowly when panning, giving a hint of depth without expensive recomputation.
+ */
+export function drawStarfield(cache: StarfieldCache | null, ctx: RenderContext) {
+  if (!cache) return;
+  const cw = ctx.canvas.width;
+  const ch = ctx.canvas.height;
+
+  // Parallax offset — small fraction of camera position
+  // Wrap so the field tiles seamlessly
+  const PARALLAX = 0.04;
+  let ox = (-ctx.camera.x * PARALLAX) % cache.width;
+  let oy = (-ctx.camera.y * PARALLAX) % cache.height;
+  if (ox > 0) ox -= cache.width;
+  if (oy > 0) oy -= cache.height;
+
+  // Tile to cover viewport
+  for (let x = ox; x < cw; x += cache.width) {
+    for (let y = oy; y < ch; y += cache.height) {
+      ctx.ctx.drawImage(cache.canvas, x, y);
+    }
+  }
 }
 
 /**
@@ -139,8 +242,209 @@ export function drawOrbitEllipse(
   ctx.ctx.setLineDash([]);
 }
 
+// ============================================================
+// Body rendering — sphere shading, atmospheres, bands, sun corona
+// ============================================================
+
+/** Compute light direction from the Sun toward the body, in canvas space. */
+function lightDirToBody(canvasPos: { x: number; y: number }, ctx: RenderContext): { x: number; y: number } {
+  const sol = ctx.bodies.find(b => b.id === 'sol');
+  if (!sol) return { x: -0.7, y: -0.7 }; // fallback: upper-left
+  const solWorld = bodyPosition(sol, ctx.t, ctx.bodies);
+  const solCanvas = worldToCanvas(solWorld.x, solWorld.y, ctx);
+  const dx = canvasPos.x - solCanvas.x;
+  const dy = canvasPos.y - solCanvas.y;
+  const len = Math.hypot(dx, dy) || 1;
+  return { x: dx / len, y: dy / len }; // unit vector pointing AWAY from sun
+}
+
+/** Draw 3D sphere shading: highlight on Sun-facing side, shadow on far side. */
+function drawSphereShading(
+  canvasPos: { x: number; y: number },
+  radius: number,
+  ctx: RenderContext,
+) {
+  // Light comes FROM the sun, so highlight is on the side facing it (-lightDir)
+  const ld = lightDirToBody(canvasPos, ctx);
+  const hx = canvasPos.x - ld.x * radius * 0.4;
+  const hy = canvasPos.y - ld.y * radius * 0.4;
+  const sx = canvasPos.x + ld.x * radius * 0.4;
+  const sy = canvasPos.y + ld.y * radius * 0.4;
+
+  // Highlight (sun-facing)
+  const highlight = ctx.ctx.createRadialGradient(hx, hy, 0, hx, hy, radius * 1.1);
+  highlight.addColorStop(0, 'rgba(255, 255, 255, 0.25)');
+  highlight.addColorStop(0.4, 'rgba(255, 255, 255, 0.06)');
+  highlight.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  ctx.ctx.fillStyle = highlight;
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
+  ctx.ctx.fill();
+
+  // Terminator/shadow (far-from-sun side)
+  const shadow = ctx.ctx.createRadialGradient(sx, sy, 0, sx, sy, radius * 1.3);
+  shadow.addColorStop(0, 'rgba(0, 0, 0, 0.55)');
+  shadow.addColorStop(0.5, 'rgba(0, 0, 0, 0.2)');
+  shadow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  ctx.ctx.fillStyle = shadow;
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
+  ctx.ctx.fill();
+}
+
+/** Sun: multi-layer corona, hot core, gentle pulse from simSpeed. */
+function drawStarBody(
+  body: Body,
+  canvasPos: { x: number; y: number },
+  radius: number,
+  ctx: RenderContext,
+) {
+  // Outer halo
+  const outerR = radius * 6.5;
+  const outer = ctx.ctx.createRadialGradient(
+    canvasPos.x, canvasPos.y, radius * 0.6,
+    canvasPos.x, canvasPos.y, outerR,
+  );
+  outer.addColorStop(0, 'rgba(255, 209, 128, 0.28)');
+  outer.addColorStop(0.4, 'rgba(255, 154, 60, 0.08)');
+  outer.addColorStop(1, 'rgba(255, 154, 60, 0)');
+  ctx.ctx.fillStyle = outer;
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, outerR, 0, Math.PI * 2);
+  ctx.ctx.fill();
+
+  // Mid corona
+  const midR = radius * 2.6;
+  const mid = ctx.ctx.createRadialGradient(
+    canvasPos.x, canvasPos.y, radius * 0.9,
+    canvasPos.x, canvasPos.y, midR,
+  );
+  mid.addColorStop(0, 'rgba(255, 220, 150, 0.55)');
+  mid.addColorStop(0.7, 'rgba(255, 180, 80, 0.1)');
+  mid.addColorStop(1, 'rgba(255, 154, 60, 0)');
+  ctx.ctx.fillStyle = mid;
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, midR, 0, Math.PI * 2);
+  ctx.ctx.fill();
+
+  // Hot core
+  const core = ctx.ctx.createRadialGradient(canvasPos.x, canvasPos.y, 0, canvasPos.x, canvasPos.y, radius);
+  core.addColorStop(0, '#fff8e0');
+  core.addColorStop(0.55, '#ffd180');
+  core.addColorStop(1, body.color || '#ffa940');
+  ctx.ctx.fillStyle = core;
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
+  ctx.ctx.fill();
+}
+
+/** Terrestrial / moon / dwarf / asteroid: atmosphere glow + sphere shading. */
+function drawPlanetBody(
+  body: Body,
+  canvasPos: { x: number; y: number },
+  radius: number,
+  ctx: RenderContext,
+) {
+  const color = body.color || COLORS.planetDefault;
+
+  // Atmosphere glow for terrestrial / ice giant
+  if ((body.type === 'terrestrial' || body.type === 'ice_giant') && radius > 3) {
+    const atmR = radius * 1.35;
+    const atm = ctx.ctx.createRadialGradient(
+      canvasPos.x, canvasPos.y, radius * 0.95,
+      canvasPos.x, canvasPos.y, atmR,
+    );
+    atm.addColorStop(0, withOpacity(lighten(color, 1.3), 0.35));
+    atm.addColorStop(1, withOpacity(color, 0));
+    ctx.ctx.fillStyle = atm;
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(canvasPos.x, canvasPos.y, atmR, 0, Math.PI * 2);
+    ctx.ctx.fill();
+  }
+
+  // Base disk
+  ctx.ctx.fillStyle = color;
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
+  ctx.ctx.fill();
+
+  // Sphere shading (only when big enough to see)
+  if (radius > 3.5) {
+    drawSphereShading(canvasPos, radius, ctx);
+  }
+}
+
+/** Gas giant: outer haze, horizontal cloud bands, sphere shading, refined ring. */
+function drawGasGiantBody(
+  body: Body,
+  canvasPos: { x: number; y: number },
+  radius: number,
+  ctx: RenderContext,
+) {
+  const color = body.color || COLORS.gasGiant;
+
+  // Outer atmospheric haze
+  const hazeR = radius * 1.4;
+  const haze = ctx.ctx.createRadialGradient(
+    canvasPos.x, canvasPos.y, radius * 0.95,
+    canvasPos.x, canvasPos.y, hazeR,
+  );
+  haze.addColorStop(0, withOpacity(lighten(color, 1.2), 0.3));
+  haze.addColorStop(1, withOpacity(color, 0));
+  ctx.ctx.fillStyle = haze;
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, hazeR, 0, Math.PI * 2);
+  ctx.ctx.fill();
+
+  // Base disk
+  ctx.ctx.fillStyle = color;
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
+  ctx.ctx.fill();
+
+  // Cloud bands (clipped horizontal stripes)
+  if (radius > 4) {
+    ctx.ctx.save();
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
+    ctx.ctx.clip();
+
+    const bandCount = 6;
+    const total = radius * 2;
+    for (let i = 0; i < bandCount; i++) {
+      const y0 = canvasPos.y - radius + (i / bandCount) * total;
+      const h = (total / bandCount) * 0.85;
+      const tint = i % 2 === 0 ? lighten(color, 1.18) : darken(color, 0.8);
+      ctx.ctx.fillStyle = withOpacity(tint, 0.55);
+      ctx.ctx.fillRect(canvasPos.x - radius, y0, radius * 2, h);
+    }
+
+    ctx.ctx.restore();
+  }
+
+  // Sphere shading
+  if (radius > 4) {
+    drawSphereShading(canvasPos, radius, ctx);
+  }
+
+  // Ring (existing ellipse, refined)
+  ctx.ctx.strokeStyle = withOpacity(lighten(color, 1.1), 0.55);
+  ctx.ctx.lineWidth = 1.5;
+  ctx.ctx.beginPath();
+  ctx.ctx.ellipse(canvasPos.x, canvasPos.y, radius * 1.95, radius * 0.42, 0, 0, Math.PI * 2);
+  ctx.ctx.stroke();
+
+  // Inner ring detail line
+  ctx.ctx.strokeStyle = withOpacity(color, 0.3);
+  ctx.ctx.lineWidth = 0.5;
+  ctx.ctx.beginPath();
+  ctx.ctx.ellipse(canvasPos.x, canvasPos.y, radius * 1.6, radius * 0.34, 0, 0, Math.PI * 2);
+  ctx.ctx.stroke();
+}
+
 /**
- * Draw a celestial body (circle with label)
+ * Draw a celestial body (circle with label) — enhanced with shading, glow,
+ * gas giant bands, and a multi-layer sun corona.
  */
 export function drawBody(
   body: Body,
@@ -150,38 +454,14 @@ export function drawBody(
 ) {
   const pos = bodyPosition(body, ctx.t, ctx.bodies);
   const canvasPos = worldToCanvas(pos.x, pos.y, ctx);
-
   const radius = Math.max(3, body.radius * ctx.camera.scale);
 
-  // Star glow effect (radial gradient around stars)
   if (body.type === 'star') {
-    const glowRadius = radius * 4;
-    const grd = ctx.ctx.createRadialGradient(
-      canvasPos.x, canvasPos.y, 0,
-      canvasPos.x, canvasPos.y, glowRadius
-    );
-    grd.addColorStop(0, 'rgba(255, 209, 128, 0.4)');
-    grd.addColorStop(0.5, 'rgba(255, 154, 60, 0.1)');
-    grd.addColorStop(1, 'rgba(255, 154, 60, 0)');
-    ctx.ctx.fillStyle = grd;
-    ctx.ctx.beginPath();
-    ctx.ctx.arc(canvasPos.x, canvasPos.y, glowRadius, 0, Math.PI * 2);
-    ctx.ctx.fill();
-  }
-
-  // Draw body circle
-  ctx.ctx.fillStyle = body.color || COLORS.planetDefault;
-  ctx.ctx.beginPath();
-  ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
-  ctx.ctx.fill();
-
-  // Gas giant rings (ellipse around gas giants)
-  if (body.type === 'gas_giant') {
-    ctx.ctx.strokeStyle = withOpacity(body.color || COLORS.gasGiant, 0.5);
-    ctx.ctx.lineWidth = 1.5;
-    ctx.ctx.beginPath();
-    ctx.ctx.ellipse(canvasPos.x, canvasPos.y, radius * 1.8, radius * 0.4, 0, 0, Math.PI * 2);
-    ctx.ctx.stroke();
+    drawStarBody(body, canvasPos, radius, ctx);
+  } else if (body.type === 'gas_giant') {
+    drawGasGiantBody(body, canvasPos, radius, ctx);
+  } else {
+    drawPlanetBody(body, canvasPos, radius, ctx);
   }
 
   // Draw selection/hover ring

@@ -15,6 +15,9 @@ import {
   drawTargetHighlight,
   drawSettlement,
   drawEngagement,
+  generateStarfield,
+  drawStarfield,
+  StarfieldCache,
   worldToCanvas,
   RenderContext,
 } from '../render/mapRenderer';
@@ -53,6 +56,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     camY: number;
   } | null>(null);
 
+  // Starfield: generated once and regenerated when canvas size changes
+  const starfieldRef = useRef<StarfieldCache | null>(null);
+
 
   // Escape key cancels target selection / engagement target mode
   useEffect(() => {
@@ -81,6 +87,21 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     };
 
     clearCanvas(renderContext);
+
+    // Starfield backdrop — regenerate if canvas dimensions changed
+    const canvasW = canvasRef.current.width;
+    const canvasH = canvasRef.current.height;
+    // Make starfield ~2x viewport so parallax has room to wrap
+    const desiredW = canvasW * 2;
+    const desiredH = canvasH * 2;
+    if (
+      !starfieldRef.current ||
+      starfieldRef.current.width !== desiredW ||
+      starfieldRef.current.height !== desiredH
+    ) {
+      starfieldRef.current = generateStarfield(desiredW, desiredH);
+    }
+    drawStarfield(starfieldRef.current, renderContext);
 
     // Draw orbits for all bodies
     for (const body of gameState.bodies) {
