@@ -72,6 +72,7 @@ function SinglePlayerView({ onExit }: { onExit: () => void }) {
 function AppShell() {
   const { user, loading } = useAuth();
   const [mode, setMode] = useState<GameMode | null>(null);
+  const [guestMode, setGuestMode] = useState(false);
   const [activeRooms, setActiveRooms] = useState<RoomSummary[] | null>(null);
 
   // When the user authenticates, fetch any rooms they're already a member of
@@ -118,7 +119,14 @@ function AppShell() {
 
   const handleExitMode = () => {
     setMode(null);
+    setGuestMode(false);
     localStorage.removeItem(MODE_STORAGE_KEY);
+  };
+
+  const handleGuest = () => {
+    setGuestMode(true);
+    setMode('singleplayer');
+    localStorage.setItem(MODE_STORAGE_KEY, 'singleplayer');
   };
 
   if (loading) {
@@ -129,8 +137,12 @@ function AppShell() {
     );
   }
 
-  if (!user) {
-    return <AuthOverlay onGuest={() => handlePickMode('singleplayer')} />;
+  if (!user && !guestMode) {
+    return <AuthOverlay onGuest={handleGuest} />;
+  }
+
+  if (guestMode) {
+    return <SinglePlayerView onExit={handleExitMode} />;
   }
 
   if (mode === null) {

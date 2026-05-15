@@ -9,8 +9,45 @@ import {
   clearedCookie,
   readSessionCookie,
 } from './auth.js';
+import { MIGRATIONS } from './_migrations_bundle.js';
 
 export { Room } from './room.js';
+
+// One-shot schema bootstrap. Idempotent — checks whether the `users` table
+// exists before doing anything. Splits each SQL file into individual
+// statements (SQLite/D1 requires one statement per prepare).
+async function handleInit(req, env) {
+  // Already initialized?
+  try {
+    await env.DB.prepare('SELECT 1 FROM users LIMIT 1').first();
+    return json({ ok: true, status: 'already_initialized' });
+  } catch (_) {
+    // not initialized — fall through
+  }
+
+  const applied = [];
+  for (const m of MIGRATIONS) {
+    const stmts = m.sql
+      .split(/;\s*(?:\r?\n|$)/)
+      .map(s => s.replace(/^\s*--.*$/gm, '').trim())
+      .filter(s => s.length > 0);
+    for (const stmt of stmts) {
+      try {
+        await env.DB.prepare(stmt).run();
+      } catch (e) {
+        return json({
+          ok: false,
+          migration: m.name,
+          statement: stmt.slice(0, 200),
+          error: String(e?.message || e),
+          applied,
+        }, { status: 500 });
+      }
+    }
+    applied.push(m.name);
+  }
+  return json({ ok: true, applied });
+}
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const ROOM_ID_RE = /^[A-Za-z0-9_-]{6,32}$/;
@@ -283,6 +320,8 @@ export default {
     const url = new URL(req.url);
 
     if (url.pathname.startsWith('/api/')) {
+      // one-shot bootstrap (idempotent; no-op once tables exist)
+      if (req.method === 'POST' && url.pathname === '/api/__init') return handleInit(req, env);
       // unauthenticated routes
       if (req.method === 'POST' && url.pathname === '/api/auth/signup') return handleSignup(req, env);
       if (req.method === 'POST' && url.pathname === '/api/auth/login') return handleLogin(req, env);
