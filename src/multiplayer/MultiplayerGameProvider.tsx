@@ -13,6 +13,7 @@ import { GameContextProvider } from '../state/gameContext';
 import { MultiplayerActionsProvider } from './MultiplayerActionsContext';
 import {
   Body, Ship, Faction, GameState, OrbitElements, FactionResources, FactionTechStateBase,
+  Settlement, ManeuverNode,
 } from '../types';
 
 // Shape of /api/games/:gid/state.
@@ -77,6 +78,44 @@ interface ServerState {
     damage_per_tick?: number;
     status: string;
   }>;
+  settlements?: Array<{
+    id: string;
+    body_id: string;
+    owner_faction_id: string;
+    type: 'city' | 'station';
+    name: string;
+    hp: number;
+    hp_max: number;
+    population: number;
+    surface_angle: number | null;
+    orbit_rp: number | null;
+    orbit_ra: number | null;
+    orbit_omega: number | null;
+    orbit_m0: number | null;
+    orbit_epoch: number | null;
+    stockpile_metal: number;
+    stockpile_fuel: number;
+    stockpile_gold: number;
+    stockpile_science: number;
+    created_at_tick: number;
+    last_growth_tick: number | null;
+    last_harvest_tick: number | null;
+  }>;
+  nodes?: Array<{
+    id: string;
+    ship_id: string;
+    sequence: number;
+    anchor_kind: string;
+    anchor_body_id: string | null;
+    target_body_id: string | null;
+    scheduled_t: number;
+    dv_prograde: number;
+    dv_normal: number;
+    dv_radial: number;
+    fuel_cost: number;
+    status: 'planned' | 'committed' | 'executed';
+    committed_at_tick: number | null;
+  }>;
 }
 
 // Map server body.type strings to client Body.type union.
@@ -137,6 +176,76 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
   };
 }
 
+function settlementToClient(
+  s: NonNullable<ServerState['settlements']>[number],
+  parentBodyMu: number,
+): Settlement {
+  // Station: rebuild a circular orbit Kepler element set so the renderer
+  // can draw it. City: keep surfaceAngle. Stockpile renames metal→ore,
+  // gold→credits to match client conventions.
+  const isStation = s.type === 'station';
+  let orbit: OrbitElements | undefined;
+  if (isStation && s.orbit_rp != null) {
+    const rp = s.orbit_rp;
+    const ra = s.orbit_ra ?? rp;
+    const a = (rp + ra) / 2;
+    const period = parentBodyMu > 0
+      ? 2 * Math.PI * Math.sqrt((a * a * a) / parentBodyMu)
+      : 0;
+    orbit = {
+      rp, ra,
+      omega: s.orbit_omega ?? 0,
+      M0: s.orbit_m0 ?? 0,
+      epoch: s.orbit_epoch ?? 0,
+      direction: 1,
+      period,
+      parentBodyId: s.body_id,
+    };
+  }
+  return {
+    id: s.id,
+    type: s.type,
+    name: s.name,
+    bodyId: s.body_id,
+    ownedBy: s.owner_faction_id,
+    hp: s.hp,
+    maxHp: s.hp_max,
+    population: s.population,
+    lastGrowthTick: s.last_growth_tick ?? s.created_at_tick,
+    surfaceAngle: s.surface_angle ?? undefined,
+    orbit,
+    stockpile: {
+      fuel: s.stockpile_fuel,
+      ore: s.stockpile_metal,        // server 'metal' -> client 'ore'
+      credits: s.stockpile_gold,     // server 'gold'  -> client 'credits'
+      science: s.stockpile_science,
+    },
+    lastHarvestTick: s.last_harvest_tick ?? s.created_at_tick,
+  };
+}
+
+function nodeToClient(
+  n: NonNullable<ServerState['nodes']>[number],
+): ManeuverNode {
+  // Server stores dv components separately; client's primary `deltav` is
+  // the magnitude, with prograde/normal/radial mirroring server columns.
+  const dv = Math.sqrt(n.dv_prograde * n.dv_prograde
+                     + n.dv_normal   * n.dv_normal
+                     + n.dv_radial   * n.dv_radial);
+  return {
+    id: n.id,
+    shipId: n.ship_id,
+    type: 'transfer',
+    burnTime: n.scheduled_t,
+    deltav: dv,
+    prograde: n.dv_prograde,
+    radial: n.dv_radial,
+    normal: n.dv_normal,
+    status: n.status,
+    label: n.target_body_id ? `→ ${n.target_body_id}` : undefined,
+  };
+}
+
 function serverToGameState(srv: ServerState, callerFactionId: string): GameState {
   const bodies = srv.bodies.map(bodyToClient);
   const muById = new Map(bodies.map(b => [b.id, b.mu ?? 0]));
@@ -168,14 +277,35 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
 
   const emptyTech: FactionTechStateBase = { levels: {}, researching: null, progress: 0 };
 
+  const settlements: Settlement[] = (srv.settlements ?? []).map(s => {
+    const settlement = settlementToClient(s, muById.get(s.body_id) ?? 0);
+    if (settlement.ownedBy === callerFactionId) settlement.ownedBy = PLAYER_TOKEN;
+    return settlement;
+  });
+
+  const orders: ManeuverNode[] = (srv.nodes ?? []).map(nodeToClient);
+
+  // Attach each caller's node to its ship.orders so per-ship UIs find them.
+  if (orders.length > 0) {
+    const byShip = new Map<string, ManeuverNode[]>();
+    for (const o of orders) {
+      if (!byShip.has(o.shipId)) byShip.set(o.shipId, []);
+      byShip.get(o.shipId)!.push(o);
+    }
+    for (const s of ships) {
+      const list = byShip.get(s.id);
+      if (list) s.orders = list;
+    }
+  }
+
   return {
     currentTick: srv.game.current_tick,
     bodies,
     ships,
     fleets: [],
     factions,
-    settlements: [],
-    orders: [],
+    settlements,
+    orders,
     buildOrders: [],
     resources: { [PLAYER_TOKEN]: playerRes },
     factionTech: { [PLAYER_TOKEN]: emptyTech },
