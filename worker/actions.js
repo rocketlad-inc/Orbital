@@ -171,6 +171,95 @@ async function handleQueueBuild(req, env, ctx) {
   }, { status: 201 });
 }
 
+// POST /api/games/:gameId/bodies/:bodyId/settlement
+// body: { type: 'city'|'station', name? }
+// Cost is fixed for v1: 30 metal, 20 fuel, 20 gold. Caller's faction must
+// have a freighter in orbit OR own the body, and resources to spare.
+const SETTLEMENT_COST = { fuel: 20, metal: 30, gold: 20 };
+
+async function handleDeploySettlement(req, env, ctx) {
+  const { gameId, bodyId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  if (!BODY_ID_RE.test(bodyId)) return err(400, 'bad_request', 'invalid body id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+  const type = body.type;
+  if (type !== 'city' && type !== 'station') return err(400, 'bad_request', "type must be 'city' or 'station'");
+
+  const bodyRow = await env.DB
+    .prepare('SELECT id, type, radius, owner_faction_id FROM game_bodies WHERE id = ? AND game_id = ?')
+    .bind(bodyId, gameId)
+    .first();
+  if (!bodyRow) return err(404, 'not_found', 'body not found');
+
+  // Surface settlements require a landable surface — no gas giants or the star.
+  if (type === 'city' && (bodyRow.type === 'star' || bodyRow.type === 'gas-giant' || bodyRow.type === 'ice-giant')) {
+    return err(409, 'no_surface', 'cannot found a city on this body type');
+  }
+
+  // Caller needs a ship orbiting here OR they already own the body.
+  const presence = await env.DB
+    .prepare(
+      `SELECT 1 AS x FROM game_ships
+        WHERE game_id = ? AND owner_faction_id = ? AND parent_body_id = ?
+          AND status = 'active'
+        LIMIT 1`,
+    )
+    .bind(gameId, me.id, bodyId)
+    .first();
+  if (!presence && bodyRow.owner_faction_id !== me.id) {
+    return err(403, 'no_presence', 'need a ship at this body to deploy');
+  }
+
+  if (me.fuel < SETTLEMENT_COST.fuel || me.metal < SETTLEMENT_COST.metal || me.gold < SETTLEMENT_COST.gold) {
+    return err(409, 'insufficient_resources',
+      `need ${SETTLEMENT_COST.metal}M ${SETTLEMENT_COST.fuel}F ${SETTLEMENT_COST.gold}G`);
+  }
+
+  const game = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
+  const tick = game?.current_tick ?? 0;
+
+  const name = (typeof body.name === 'string' && body.name.trim())
+    ? body.name.trim().slice(0, 40)
+    : (type === 'city' ? 'New City' : 'Station');
+
+  const id = `${bodyId}:${type[0]}${Date.now().toString(36)}`;
+  const hp = type === 'city' ? 100 : 60;
+
+  // Geometry: cities pick a random surface angle. Stations get a tight
+  // circular orbit just above body.radius.
+  const surfaceAngle = type === 'city' ? Math.random() * Math.PI * 2 : null;
+  const rp = type === 'station' ? (bodyRow.radius || 4) + 3 : null;
+
+  await env.DB.batch([
+    env.DB
+      .prepare(
+        `INSERT INTO game_settlements
+          (id, game_id, body_id, owner_faction_id, type, name,
+           hp, hp_max, population,
+           surface_angle, orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch,
+           created_at_tick)
+         VALUES (?, ?, ?, ?, ?, ?,
+                 ?, ?, 1,
+                 ?, ?, ?, 0, 0, ?,
+                 ?)`,
+      )
+      .bind(id, gameId, bodyId, me.id, type, name,
+            hp, hp,
+            surfaceAngle, rp, rp, tick,
+            tick),
+    env.DB
+      .prepare('UPDATE game_factions SET fuel = fuel - ?, metal = metal - ?, gold = gold - ? WHERE id = ?')
+      .bind(SETTLEMENT_COST.fuel, SETTLEMENT_COST.metal, SETTLEMENT_COST.gold, me.id),
+  ]);
+
+  return json({ settlement: { id, body_id: bodyId, type, name, hp, hp_max: hp } }, { status: 201 });
+}
+
 export const routes = [
   {
     method: 'POST',
@@ -183,5 +272,11 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/bodies\/(?<bodyId>[^/]+)\/build$/,
     auth: 'required',
     handle: handleQueueBuild,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/bodies\/(?<bodyId>[^/]+)\/settlement$/,
+    auth: 'required',
+    handle: handleDeploySettlement,
   },
 ];

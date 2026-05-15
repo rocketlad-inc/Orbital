@@ -103,6 +103,32 @@ async function handleGetState(req, env, ctx) {
     .bind(gameId, me.id)
     .all()).results ?? [];
 
+  // Settlements: caller sees their own + any at a body where they have
+  // presence (same fog rule as ships).
+  const settlements = (await env.DB
+    .prepare(
+      `WITH my_presence AS (
+         SELECT DISTINCT parent_body_id AS bid
+           FROM game_ships
+          WHERE game_id = ?1 AND owner_faction_id = ?2 AND status = 'active'
+         UNION
+         SELECT id AS bid FROM game_bodies
+          WHERE game_id = ?1 AND owner_faction_id = ?2
+       )
+       SELECT id, body_id, owner_faction_id, type, name,
+              hp, hp_max, population,
+              surface_angle, orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch,
+              stockpile_metal, stockpile_fuel, stockpile_gold, stockpile_science,
+              created_at_tick, last_growth_tick, last_harvest_tick
+         FROM game_settlements
+        WHERE game_id = ?1
+          AND destroyed_at_tick IS NULL
+          AND (owner_faction_id = ?2
+               OR body_id IN (SELECT bid FROM my_presence))`,
+    )
+    .bind(gameId, me.id)
+    .all()).results ?? [];
+
   // Only the caller's planned maneuvers are returned — opponents' burn
   // plans are private.
   const nodes = (await env.DB
@@ -154,6 +180,7 @@ async function handleGetState(req, env, ctx) {
     factions,
     bodies,
     ships,
+    settlements,
     nodes,
   });
 }
