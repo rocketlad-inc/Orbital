@@ -17,6 +17,7 @@ interface IconProps {
 
 const SVG = ({ size = 24, color, className, children }: IconProps & { children: React.ReactNode }) => (
   <svg
+    xmlns="http://www.w3.org/2000/svg"
     width={size}
     height={size}
     viewBox="0 0 32 32"
