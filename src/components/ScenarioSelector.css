@@ -19,6 +19,56 @@
   margin-bottom: 8px;
   font-family: 'JetBrains Mono', monospace;
   font-weight: 600;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.scenario-collapse {
+  background: transparent;
+  border: none;
+  color: #ffb84d;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 6px;
+  line-height: 1;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.scenario-collapse:hover {
+  color: #ffd180;
+}
+
+.scenario-btn.active {
+  border-color: #4ecdc4;
+  background: rgba(78, 205, 196, 0.08);
+}
+
+.scenario-btn.active .scenario-desc {
+  color: #4ecdc4;
+}
+
+.scenario-chip {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 100;
+  background: rgba(10, 14, 20, 0.94);
+  border: 1px solid #2a3d50;
+  border-radius: 4px;
+  padding: 6px 12px;
+  color: #ffb84d;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  transition: all 0.2s ease;
+}
+
+.scenario-chip:hover {
+  border-color: #ffb84d;
+  background: rgba(255, 184, 77, 0.08);
 }
 
 .scenario-list {

@@ -87,7 +87,6 @@ export interface Ship {
   // Current state
   fuel: number;                         // remaining fuel
   hp?: number;                          // current HP (undefined = full from class def)
-  fleetId?: string;                     // fleet this ship belongs to
 
   // Orbital position
   orbit: OrbitElements;                 // current orbit around parent body
@@ -99,10 +98,6 @@ export interface Ship {
   pendingTransfer?: TransferArc;        // planned but not yet departed
   transfer?: TransferArc;               // currently in transit
   queuedTransfers?: TransferArc[];      // chained transfers waiting after current
-
-  // Display info
-  isSelected?: boolean;
-  color?: string;                       // override faction color if needed
 }
 
 /**
@@ -113,17 +108,6 @@ export interface Faction {
   name: string;
   color: string;                        // hex color for faction assets
   isPlayer: boolean;
-}
-
-/**
- * Fleet: a group of ships that move and fight together
- */
-export interface Fleet {
-  id: string;
-  name: string;
-  shipIds: string[];
-  leadShipId: string;                   // the ship whose position represents the fleet
-  ownedBy: string;                      // faction id
 }
 
 /**
@@ -183,7 +167,6 @@ export interface GameState {
   currentTick: number;
   bodies: Body[];
   ships: Ship[];
-  fleets: Fleet[];
   factions: Faction[];
   settlements: Settlement[];           // cities and orbital stations
   orders: ManeuverNode[];              // all maneuvers in the game
@@ -211,8 +194,6 @@ export interface MapUIState {
   selectedShipId?: string;
   selectedBodyId?: string;
   hoveredBodyId?: string;
-  maneuverMode?: 'transfer' | 'orbital_change' | null;
-  transferTargetId?: string;            // when planning a transfer
   targetSelectionMode?: boolean;        // true when picking a transfer target on the map
 }
 

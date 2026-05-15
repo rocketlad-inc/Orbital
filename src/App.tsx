@@ -85,18 +85,19 @@ function AppContent() {
       {/* Combat Log */}
       {gameState.combatLog.length > 0 && (
         <div style={{
-          position: 'fixed', bottom: 60, left: 20,
-          maxWidth: '300px', maxHeight: '120px',
+          position: 'fixed', top: 60, left: 20,
+          width: '280px', maxHeight: '140px',
           overflow: 'auto', zIndex: 1000,
-          background: 'rgba(10, 14, 20, 0.9)',
+          background: 'rgba(10, 14, 20, 0.92)',
           border: '1px solid #ff5e5e',
           borderRadius: '4px',
           padding: '8px 12px',
           fontFamily: "'JetBrains Mono', monospace",
           fontSize: '10px',
           color: '#ff5e5e',
+          backdropFilter: 'blur(8px)',
         }}>
-          <div style={{ fontWeight: 'bold', marginBottom: '4px', color: '#ffb84d' }}>COMBAT LOG</div>
+          <div style={{ fontWeight: 'bold', marginBottom: '4px', color: '#ffb84d', letterSpacing: '0.1em' }}>COMBAT LOG</div>
           {gameState.combatLog.slice(-5).map((msg, i) => (
             <div key={i}>{msg}</div>
           ))}

@@ -46,8 +46,10 @@ export const BodyInspector: React.FC = () => {
         {body.resources && (() => {
           const production = bodyProductionRates(body);
           const hasProduction = production.fuel > 0 || production.ore > 0 || production.credits > 0;
+          const settlementsHere = gameState.settlements.filter(s => s.bodyId === body.id);
+          const playerSettlements = settlementsHere.filter(s => s.ownedBy === 'player');
           const freightersHere = gameState.ships.filter(
-            s => s.class === 'freighter' && !s.transfer && s.orbit.parentBodyId === body.id
+            s => s.class === 'freighter' && !s.transfer && s.orbit.parentBodyId === body.id && s.ownedBy === 'player'
           );
           return (
             <>
@@ -71,7 +73,7 @@ export const BodyInspector: React.FC = () => {
               </div>
               {hasProduction && (
                 <div className="production-summary">
-                  <div className="production-title">PRODUCTION / HARVEST</div>
+                  <div className="production-title">POTENTIAL YIELD / HARVEST</div>
                   <div className="production-rates">
                     {production.fuel > 0 && (
                       <span className="production-rate">+{production.fuel} FUEL</span>
@@ -84,9 +86,11 @@ export const BodyInspector: React.FC = () => {
                     )}
                   </div>
                   <div className="production-note">
-                    {freightersHere.length > 0
-                      ? `${freightersHere.length} freighter${freightersHere.length > 1 ? 's' : ''} harvesting (x${freightersHere.length})`
-                      : 'No freighters — send one to harvest'}
+                    {playerSettlements.length === 0
+                      ? 'Deploy a city or station below to start production'
+                      : freightersHere.length === 0
+                        ? `${playerSettlements.length} settlement${playerSettlements.length > 1 ? 's' : ''} extracting — send a freighter to ferry stockpile to fleet pool`
+                        : `${playerSettlements.length} settlement${playerSettlements.length > 1 ? 's' : ''} extracting · ${freightersHere.length} freighter${freightersHere.length > 1 ? 's' : ''} ferrying to fleet pool`}
                   </div>
                 </div>
               )}

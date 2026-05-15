@@ -35,7 +35,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const {
     gameState, camera, uiState, simSpeed,
-    updateCamera, selectShip, selectBody, hoverBody, focusBody,
+    updateCamera, selectShip, selectBody, deselectShip, deselectBody,
+    hoverBody, focusBody,
     setTargetSelectionMode,
     selectedSettlementId,
   } = useGameContext();
@@ -298,10 +299,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         }
       }
 
-      selectShip('');
-      selectBody('');
+      deselectShip();
+      deselectBody();
     },
-    [gameState, camera, uiState.targetSelectionMode, selectShip, selectBody]
+    [gameState, camera, uiState.targetSelectionMode, selectShip, selectBody, deselectShip, deselectBody]
   );
 
   const handleMouseHover = useCallback(

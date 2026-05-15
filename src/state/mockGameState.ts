@@ -238,7 +238,7 @@ export function createScenario1(): GameState {
 
   return {
     currentTick: 0, bodies, ships, factions, orders: [],
-    fleets: [], buildOrders: [], settlements: [],
+    buildOrders: [], settlements: [],
     resources: { ...DEFAULT_RESOURCES },
     combatLog: [], lastHarvestTick: 0,
   };
@@ -294,7 +294,7 @@ export function createScenario2(): GameState {
 
   return {
     currentTick: 0, bodies, ships, factions, orders: [],
-    fleets: [], buildOrders: [], settlements: [],
+    buildOrders: [], settlements: [],
     resources: { ...DEFAULT_RESOURCES },
     combatLog: [], lastHarvestTick: 0,
   };
@@ -324,7 +324,7 @@ export function createScenario3(): GameState {
 
   return {
     currentTick: 0, bodies, ships, factions, orders: [],
-    fleets: [], buildOrders: [], settlements: [],
+    buildOrders: [], settlements: [],
     resources: { player: { fuel: 150, ore: 300, credits: 200 }, enemy: { fuel: 100, ore: 200, credits: 150 } },
     combatLog: [],
     lastHarvestTick: 0,
@@ -368,7 +368,7 @@ export function createScenario4(): GameState {
 
   return {
     currentTick: 0, bodies, ships, factions, orders: [],
-    fleets: [], buildOrders: [], settlements: [],
+    buildOrders: [], settlements: [],
     resources: { player: { fuel: 80, ore: 150, credits: 100 }, enemy: { fuel: 120, ore: 250, credits: 200 } },
     combatLog: [],
     lastHarvestTick: 0,
