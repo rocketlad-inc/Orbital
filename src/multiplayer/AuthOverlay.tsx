@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from './AuthContext';
 import './multiplayer.css';
 
-export function AuthOverlay() {
+export function AuthOverlay({ onGuest }: { onGuest?: () => void }) {
   const { signIn, signUp } = useAuth();
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
@@ -82,6 +82,14 @@ export function AuthOverlay() {
 
         <div className="mp-error">{error || ''}</div>
       </form>
+      {onGuest && (
+        <button
+          className="mp-guest-btn"
+          onClick={onGuest}
+        >
+          Continue as Guest → Single Player
+        </button>
+      )}
     </div>
   );
 }

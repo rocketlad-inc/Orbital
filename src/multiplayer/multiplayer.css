@@ -88,6 +88,16 @@
 .mp-submit:disabled { opacity: 0.5; cursor: wait; }
 .mp-error { color: var(--mp-hostile); font-size: 11px; min-height: 16px; margin-top: 8px; }
 .mp-saved { color: var(--mp-friendly); font-size: 10px; }
+.mp-guest-btn {
+  margin-top: 12px;
+  background: none; border: 1px solid #2a3d50;
+  color: #6b8195; padding: 10px;
+  border-radius: 3px; width: 340px; max-width: 90vw;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; letter-spacing: 0.1em;
+  cursor: pointer; transition: all 0.15s ease;
+}
+.mp-guest-btn:hover { border-color: #4ecdc4; color: #4ecdc4; }
 
 /* ---- Top-right user pill ---- */
 .mp-user-pill {

@@ -130,7 +130,7 @@ function AppShell() {
   }
 
   if (!user) {
-    return <AuthOverlay />;
+    return <AuthOverlay onGuest={() => handlePickMode('singleplayer')} />;
   }
 
   if (mode === null) {
