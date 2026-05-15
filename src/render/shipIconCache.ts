@@ -15,6 +15,7 @@ type CacheKey = string;
 
 const ready = new Map<CacheKey, HTMLImageElement>();
 const loading = new Set<CacheKey>();
+const failed = new Set<CacheKey>();
 
 function key(shipClass: ShipIconClass, color: string): CacheKey {
   return `${shipClass}|${color}`;
@@ -33,22 +34,33 @@ export function getShipIconImage(
   const k = key(shipClass, color);
   const hit = ready.get(k);
   if (hit) return hit;
-  if (loading.has(k)) return null;
+  if (loading.has(k) || failed.has(k)) return null;
 
   loading.add(k);
-  const svgString = renderToStaticMarkup(
-    React.createElement(ShipIcon, { shipClass, color, size: ICON_RASTER_SIZE })
-  );
-  const dataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(svgString)}`;
-  const img = new Image();
-  img.onload = () => {
-    ready.set(k, img);
+  try {
+    const svgString = renderToStaticMarkup(
+      React.createElement(ShipIcon, { shipClass, color, size: ICON_RASTER_SIZE })
+    );
+    const dataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(svgString)}`;
+    const img = new Image();
+    img.onload = () => {
+      ready.set(k, img);
+      loading.delete(k);
+    };
+    img.onerror = (e) => {
+      // Failed once — don't retry every frame. Log so we can debug.
+      // eslint-disable-next-line no-console
+      console.warn('[shipIconCache] failed to rasterize', k, e);
+      loading.delete(k);
+      failed.add(k);
+    };
+    img.src = dataUrl;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[shipIconCache] renderToStaticMarkup threw for', k, err);
     loading.delete(k);
-  };
-  img.onerror = () => {
-    loading.delete(k);
-  };
-  img.src = dataUrl;
+    failed.add(k);
+  }
   return null;
 }
 
