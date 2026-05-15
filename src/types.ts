@@ -81,11 +81,13 @@ export interface Body {
 export interface Ship {
   id: string;
   name: string;
-  class: 'frigate' | 'cruiser' | 'capital' | 'stealth_runner';
+  class: 'corvette' | 'frigate' | 'destroyer' | 'freighter';
   ownedBy: string;                      // faction id
 
   // Current state
   fuel: number;                         // remaining fuel
+  hp?: number;                          // current HP (undefined = full from class def)
+  fleetId?: string;                     // fleet this ship belongs to
 
   // Orbital position
   orbit: OrbitElements;                 // current orbit around parent body
@@ -114,14 +116,51 @@ export interface Faction {
 }
 
 /**
+ * Fleet: a group of ships that move and fight together
+ */
+export interface Fleet {
+  id: string;
+  name: string;
+  shipIds: string[];
+  leadShipId: string;                   // the ship whose position represents the fleet
+  ownedBy: string;                      // faction id
+}
+
+/**
+ * Build order: a ship under construction at a body
+ */
+export interface BuildOrder {
+  id: string;
+  bodyId: string;                       // where the ship is being built
+  shipClass: 'corvette' | 'frigate' | 'destroyer' | 'freighter';
+  ownedBy: string;                      // faction that ordered it
+  startTick: number;                    // tick when construction started
+  completeTick: number;                 // tick when ship launches to orbit
+  shipName: string;                     // name for the new ship
+}
+
+/**
+ * Player/faction resources (stubbed global pool)
+ */
+export interface FactionResources {
+  fuel: number;
+  ore: number;
+  credits: number;
+}
+
+/**
  * Complete game state snapshot
  */
 export interface GameState {
   currentTick: number;
   bodies: Body[];
   ships: Ship[];
+  fleets: Fleet[];
   factions: Faction[];
   orders: ManeuverNode[];              // all maneuvers in the game
+  buildOrders: BuildOrder[];           // ships under construction
+  resources: Record<string, FactionResources>; // factionId → resources
+  combatLog: string[];                 // recent combat events
 }
 
 /**

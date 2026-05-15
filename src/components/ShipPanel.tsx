@@ -3,6 +3,7 @@ import { useGameContext } from '../state/gameContext';
 import { ManeuverNode } from '../types';
 import { planBezierTransfer } from '../physics/bezierTransfer';
 import { createCircularOrbit } from '../physics/orbitalMechanics';
+import { getShipClass, ShipClassName } from '../game/shipClasses';
 import './ShipPanel.css';
 
 export const ShipPanel: React.FC = () => {
@@ -126,6 +127,12 @@ export const ShipPanel: React.FC = () => {
             <div className="stat-row">
               <span className="label">CLASS</span>
               <span className="value">{ship.class.toUpperCase()}</span>
+            </div>
+            <div className="stat-row">
+              <span className="label">HP</span>
+              <span className="value" style={{ color: (ship.hp ?? getShipClass(ship.class as ShipClassName).hp) < getShipClass(ship.class as ShipClassName).hp * 0.3 ? '#ff5e5e' : undefined }}>
+                {ship.hp ?? getShipClass(ship.class as ShipClassName).hp}/{getShipClass(ship.class as ShipClassName).hp}
+              </span>
             </div>
             <div className="stat-row">
               <span className="label">FUEL</span>

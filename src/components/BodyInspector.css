@@ -83,6 +83,41 @@
   font-weight: 700;
 }
 
+/* Production Summary */
+.production-summary {
+  margin-bottom: 10px;
+  padding: 8px;
+  background: rgba(255, 184, 77, 0.06);
+  border: 1px solid rgba(255, 184, 77, 0.2);
+  border-radius: 2px;
+}
+
+.production-title {
+  font-size: 8px;
+  color: #ffb84d;
+  letter-spacing: 0.1em;
+  font-weight: bold;
+  margin-bottom: 4px;
+}
+
+.production-rates {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.production-rate {
+  color: #4ecdc4;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.production-note {
+  font-size: 8px;
+  color: #6b8195;
+  font-style: italic;
+}
+
 .body-info {
   display: flex;
   flex-direction: column;

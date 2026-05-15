@@ -1,0 +1,182 @@
+/* BuildPanel — Ship construction UI */
+
+.build-panel {
+  margin-top: 12px;
+  border-top: 1px solid #2a3d50;
+  padding-top: 10px;
+}
+
+.build-panel .section-title {
+  font-size: 10px;
+  color: #ffb84d;
+  letter-spacing: 0.1em;
+  margin-bottom: 8px;
+  font-weight: bold;
+}
+
+/* Build Queue */
+.build-queue {
+  margin-bottom: 10px;
+}
+
+.queue-label {
+  font-size: 9px;
+  color: #6b8195;
+  margin-bottom: 4px;
+}
+
+.build-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  font-size: 10px;
+}
+
+.build-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.build-name {
+  color: #d8e4ee;
+  font-weight: bold;
+}
+
+.build-class {
+  color: #6b8195;
+  font-size: 8px;
+}
+
+.build-progress-bar {
+  width: 50px;
+  height: 4px;
+  background: #1a2530;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.build-progress-fill {
+  height: 100%;
+  background: #4ecdc4;
+  transition: width 0.3s ease;
+}
+
+.build-eta {
+  color: #ffb84d;
+  font-size: 9px;
+  width: 35px;
+  text-align: right;
+}
+
+.build-cancel {
+  background: none;
+  border: none;
+  color: #ff5e5e;
+  cursor: pointer;
+  font-size: 10px;
+  padding: 2px 4px;
+}
+
+/* Ship Class List */
+.build-classes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.build-class-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  background: rgba(20, 32, 44, 0.6);
+  border: 1px solid #2a3d50;
+  border-radius: 3px;
+  font-size: 10px;
+}
+
+.build-class-row.disabled {
+  opacity: 0.4;
+}
+
+.class-info {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 75px;
+}
+
+.class-icon {
+  color: #ffb84d;
+  font-size: 12px;
+}
+
+.class-name {
+  color: #d8e4ee;
+  font-weight: bold;
+}
+
+.class-stats {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+
+.class-stats .stat {
+  color: #6b8195;
+  font-size: 9px;
+}
+
+.class-cost {
+  display: flex;
+  gap: 4px;
+}
+
+.cost-metal {
+  color: #a0a0a0;
+  font-size: 9px;
+}
+
+.cost-money {
+  color: #ffd700;
+  font-size: 9px;
+}
+
+.build-btn {
+  padding: 2px 8px;
+  background: rgba(78, 205, 196, 0.15);
+  color: #4ecdc4;
+  border: 1px solid #4ecdc4;
+  border-radius: 2px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  font-weight: bold;
+  cursor: pointer;
+  letter-spacing: 0.05em;
+}
+
+.build-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.build-btn:hover:not(:disabled) {
+  background: rgba(78, 205, 196, 0.3);
+}
+
+/* Resources Bar */
+.resources-bar {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid #1a2530;
+}
+
+.resources-bar .resource {
+  font-size: 9px;
+  color: #6b8195;
+  font-weight: bold;
+}
