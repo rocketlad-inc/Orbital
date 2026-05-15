@@ -4,8 +4,34 @@
 // ============================================================
 
 import { Body, Settlement, SettlementType, Ship } from '../types';
-import { createCircularOrbit } from '../physics/orbitalMechanics';
+import { createCircularOrbit, bodyPosition, localPositionAt } from '../physics/orbitalMechanics';
 import { bodyProductionRates } from './economy';
+
+/**
+ * World position of a settlement at a given tick.
+ * Cities sit on the surface of their host body (radius + surfaceAngle).
+ * Stations follow their orbit around the host.
+ */
+export function settlementWorldPosition(
+  settlement: Settlement,
+  tick: number,
+  bodies: Body[],
+): { x: number; y: number } | null {
+  const body = bodies.find(b => b.id === settlement.bodyId);
+  if (!body) return null;
+  const bodyPos = bodyPosition(body, tick, bodies);
+  if (settlement.type === 'city') {
+    const angle = settlement.surfaceAngle ?? 0;
+    return {
+      x: bodyPos.x + Math.cos(angle) * body.radius,
+      y: bodyPos.y + Math.sin(angle) * body.radius,
+    };
+  }
+  // Station
+  if (!settlement.orbit) return bodyPos;
+  const local = localPositionAt(settlement.orbit, tick);
+  return { x: bodyPos.x + local.x, y: bodyPos.y + local.y };
+}
 
 // === Balance constants ===
 
@@ -26,16 +52,26 @@ export const SETTLEMENT_DEFS: Record<SettlementType, {
   maxHp: number;
   cost: { fuel: number; ore: number; credits: number };
   displayName: string;
+  // Combat (defensive — settlements don't initiate, but fire on engagers in range)
+  range: number;          // engagement range in world units
+  damagePerTick: number;  // damage dealt to an attacker each COMBAT_DAMAGE_INTERVAL
+  pdcRating: number;      // 0-1, reduces incoming damage
 }> = {
   city: {
     maxHp: 200,
     cost: { fuel: 30, ore: 50, credits: 40 },
     displayName: 'City',
+    range: 8,        // ground-based PDC, short range
+    damagePerTick: 6,
+    pdcRating: 0.3,
   },
   station: {
     maxHp: 100,
     cost: { fuel: 50, ore: 30, credits: 60 },
     displayName: 'Station',
+    range: 12,       // orbital weapons platform, medium range
+    damagePerTick: 8,
+    pdcRating: 0.5,
   },
 };
 

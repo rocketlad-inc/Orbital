@@ -170,6 +170,7 @@ export interface Settlement {
 
   population: number;                 // starts at 1, +1 per growth interval
   lastGrowthTick: number;             // tick when population last grew
+  lastCombatTick?: number;            // tick when this settlement last returned fire
 
   surfaceAngle?: number;              // city: angle on body surface (radians)
   orbit?: OrbitElements;              // station: orbit around body

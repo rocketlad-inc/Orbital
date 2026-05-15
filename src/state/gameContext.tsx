@@ -207,12 +207,14 @@ export function GameContextProvider({
         const settlementsResult = tickSettlements(
           prev.settlements, prev.bodies, updatedShips, newTime, factionPools,
         );
-        const updatedSettlements = settlementsResult.settlements;
+        let updatedSettlements = settlementsResult.settlements;
         const updatedResources = factionPools;
 
         // Process player-initiated engagements (range-based damage every N ticks)
-        const engagementResult = processEngagements(updatedShips, prev.bodies, newTime);
+        // Targets can be ships OR settlements; settlements auto-retaliate.
+        const engagementResult = processEngagements(updatedShips, updatedSettlements, prev.bodies, newTime);
         updatedShips = engagementResult.ships;
+        updatedSettlements = engagementResult.settlements;
         const engagementLogs = engagementResult.log;
 
         // Check combat at bodies
@@ -277,12 +279,14 @@ export function GameContextProvider({
       const settlementsResult = tickSettlements(
         prev.settlements, prev.bodies, updatedShips, tick, factionPools,
       );
-      const updatedSettlements = settlementsResult.settlements;
+      let updatedSettlements = settlementsResult.settlements;
       const updatedResources = factionPools;
 
       // Process player-initiated engagements (range-based damage every N ticks)
-      const engagementResult = processEngagements(updatedShips, prev.bodies, tick);
+      // Targets can be ships OR settlements; settlements auto-retaliate.
+      const engagementResult = processEngagements(updatedShips, updatedSettlements, prev.bodies, tick);
       updatedShips = engagementResult.ships;
+      updatedSettlements = engagementResult.settlements;
       const engagementLogs = engagementResult.log;
 
       // Check combat at bodies

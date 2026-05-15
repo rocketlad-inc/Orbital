@@ -4,7 +4,8 @@ import { ManeuverNode } from '../types';
 import { planBezierTransfer } from '../physics/bezierTransfer';
 import { createCircularOrbit } from '../physics/orbitalMechanics';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
-import { shipDistance } from '../game/combat';
+import { shipDistance, shipWorldPosition } from '../game/combat';
+import { settlementWorldPosition } from '../game/settlements';
 import './ShipPanel.css';
 
 export const ShipPanel: React.FC = () => {
@@ -82,22 +83,27 @@ export const ShipPanel: React.FC = () => {
     return () => window.removeEventListener('orbital-transfer-confirm', handleTransferConfirmEvent);
   }, [handleTransferConfirmEvent]);
 
-  // Listen for engagement-target confirmation from the map
-  const engageHandlerRef = useRef<(targetShipId: string) => void>(() => {});
+  // Listen for engagement-target confirmation from the map (ship OR settlement)
+  const engageHandlerRef = useRef<(targetId: string, kind: 'ship' | 'settlement') => void>(() => {});
   useEffect(() => {
     if (!ship) return;
-    engageHandlerRef.current = (targetShipId: string) => {
-      if (targetShipId === ship.id) return; // can't engage self
-      const target = gameState.ships.find(s => s.id === targetShipId);
-      if (!target || target.ownedBy === ship.ownedBy) return; // friendly fire blocked
-      engageTarget(ship.id, targetShipId);
+    engageHandlerRef.current = (targetId: string, kind: 'ship' | 'settlement') => {
+      if (targetId === ship.id) return; // can't engage self
+      if (kind === 'ship') {
+        const target = gameState.ships.find(s => s.id === targetId);
+        if (!target || target.ownedBy === ship.ownedBy) return; // friendly fire blocked
+      } else {
+        const settlement = gameState.settlements.find(st => st.id === targetId);
+        if (!settlement || settlement.ownedBy === ship.ownedBy) return;
+      }
+      engageTarget(ship.id, targetId);
     };
-  }, [ship, gameState.ships, engageTarget]);
+  }, [ship, gameState.ships, gameState.settlements, engageTarget]);
 
   const handleEngageConfirmEvent = useCallback((e: Event) => {
     const detail = (e as CustomEvent).detail;
-    if (detail?.shipId) {
-      engageHandlerRef.current(detail.shipId);
+    if (detail?.targetId && detail?.targetKind) {
+      engageHandlerRef.current(detail.targetId, detail.targetKind);
     }
   }, []);
 
@@ -140,14 +146,31 @@ export const ShipPanel: React.FC = () => {
 
   const queuedTransfers = ship.queuedTransfers || [];
 
-  // Engagement state
+  // Engagement state — target may be a ship OR a settlement
   const shipClass = getShipClass(ship.class as ShipClassName);
-  const engagedTarget = ship.engagedTargetId
+  const engagedShip = ship.engagedTargetId
     ? gameState.ships.find(s => s.id === ship.engagedTargetId)
     : null;
-  const engagementDistance = engagedTarget
-    ? shipDistance(ship, engagedTarget, gameState.currentTick, gameState.bodies)
+  const engagedSettlement = !engagedShip && ship.engagedTargetId
+    ? gameState.settlements.find(st => st.id === ship.engagedTargetId)
     : null;
+  const engagedTargetName = engagedShip?.name ?? engagedSettlement?.name ?? null;
+  const engagedTargetKind: 'ship' | 'settlement' | null = engagedShip
+    ? 'ship'
+    : engagedSettlement
+      ? 'settlement'
+      : null;
+
+  let engagementDistance: number | null = null;
+  if (engagedShip) {
+    engagementDistance = shipDistance(ship, engagedShip, gameState.currentTick, gameState.bodies);
+  } else if (engagedSettlement) {
+    const aPos = shipWorldPosition(ship, gameState.currentTick, gameState.bodies);
+    const tPos = settlementWorldPosition(engagedSettlement, gameState.currentTick, gameState.bodies);
+    if (aPos && tPos) {
+      engagementDistance = Math.hypot(aPos.x - tPos.x, aPos.y - tPos.y);
+    }
+  }
   const inRange = engagementDistance != null && engagementDistance <= shipClass.range;
   const canEngage = shipClass.range > 0 && shipClass.damagePerTick > 0;
 
@@ -262,18 +285,23 @@ export const ShipPanel: React.FC = () => {
                 <span className="label">DAMAGE</span>
                 <span className="value">{shipClass.damagePerTick}/tick</span>
               </div>
-              {engagedTarget ? (
+              {engagedTargetName ? (
                 <>
                   <div className="stat-row">
                     <span className="label">TARGET</span>
-                    <span className="value" style={{ color: '#ff5e5e' }}>{engagedTarget.name}</span>
-                  </div>
-                  <div className="stat-row">
-                    <span className="label">DISTANCE</span>
-                    <span className="value" style={{ color: inRange ? '#4ecdc4' : '#ffb84d' }}>
-                      {engagementDistance!.toFixed(1)}u {inRange ? '(IN RANGE)' : '(OUT OF RANGE)'}
+                    <span className="value" style={{ color: '#ff5e5e' }}>
+                      {engagedTargetName}
+                      {engagedTargetKind === 'settlement' && ' ⚑'}
                     </span>
                   </div>
+                  {engagementDistance != null && (
+                    <div className="stat-row">
+                      <span className="label">DISTANCE</span>
+                      <span className="value" style={{ color: inRange ? '#4ecdc4' : '#ffb84d' }}>
+                        {engagementDistance.toFixed(1)}u {inRange ? '(IN RANGE)' : '(OUT OF RANGE)'}
+                      </span>
+                    </div>
+                  )}
                   <button
                     className="maneuver-btn"
                     style={{ borderColor: '#ff5e5e', color: '#ff5e5e' }}
@@ -288,7 +316,7 @@ export const ShipPanel: React.FC = () => {
                   style={{ borderColor: '#ff5e5e', color: '#ff5e5e' }}
                   onClick={() => setEngagementTargetMode(true)}
                 >
-                  {uiState.engagementTargetMode ? 'CLICK TARGET ON MAP…' : 'ENGAGE TARGET'}
+                  {uiState.engagementTargetMode ? 'CLICK SHIP OR SETTLEMENT…' : 'ENGAGE TARGET'}
                 </button>
               )}
             </div>

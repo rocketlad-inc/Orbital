@@ -2,10 +2,11 @@
 // Combat System — Auto-resolve at bodies + player-initiated engagements
 // ============================================================
 
-import { Ship, Body } from '../types';
+import { Ship, Body, Settlement } from '../types';
 import { getShipClass, ShipClassName } from './shipClasses';
 import { bodyPosition, localPositionAt } from '../physics/orbitalMechanics';
 import { bezierPositionAt } from '../physics/bezierTransfer';
+import { settlementWorldPosition, SETTLEMENT_DEFS } from './settlements';
 
 /** Ticks between damage applications during an active engagement */
 export const COMBAT_DAMAGE_INTERVAL = 5;
@@ -180,33 +181,66 @@ export function shipDistance(
   return Math.hypot(posA.x - posB.x, posA.y - posB.y);
 }
 
+/** A target can be either a Ship or a Settlement */
+function targetWorldPosition(
+  target: Ship | Settlement,
+  tick: number,
+  bodies: Body[],
+): { x: number; y: number } | null {
+  // Settlements have a `type` of 'city' or 'station'; ships have a `class`
+  if ('class' in target) {
+    return shipWorldPosition(target as Ship, tick, bodies);
+  }
+  return settlementWorldPosition(target as Settlement, tick, bodies);
+}
+
+function targetName(target: Ship | Settlement): string {
+  return target.name;
+}
+
+function targetPdc(target: Ship | Settlement): number {
+  if ('class' in target) {
+    return getShipClass((target as Ship).class as ShipClassName).pdcRating;
+  }
+  return SETTLEMENT_DEFS[(target as Settlement).type].pdcRating;
+}
+
 /**
  * Process player-initiated engagements. For each ship with an active
- * `engagedTargetId`, deal damage to the target if it's within range and
- * the combat-damage cooldown has elapsed.
+ * `engagedTargetId`, deal damage to the target (ship OR settlement) if it's
+ * within range and the combat-damage cooldown has elapsed. Settlements that
+ * are attacked fire back automatically at any in-range attacker.
  *
- * Returns an updated ship array (with reduced HP, removed-if-destroyed ships,
- * and cleared engagements where the target is gone) plus a combat log.
+ * Returns updated ships and settlements (with applied damage and dead entities
+ * removed) plus a combat log.
  */
 export function processEngagements(
   ships: Ship[],
+  settlements: Settlement[],
   bodies: Body[],
   tick: number,
-): { ships: Ship[]; log: string[] } {
+): { ships: Ship[]; settlements: Settlement[]; log: string[] } {
   const log: string[] = [];
-  const damageMap = new Map<string, number>(); // shipId → total damage taken
-  const destroyed = new Set<string>();
-  const lastCombatUpdates = new Map<string, number>(); // shipId → new lastCombatTick
+  const damageMap = new Map<string, number>();              // id → damage taken (ship or settlement)
+  const destroyedShips = new Set<string>();
+  const destroyedSettlements = new Set<string>();
+  const lastCombatUpdates = new Map<string, number>();      // attacker shipId → new lastCombatTick
 
-  // Index ships for quick lookup
-  const byId = new Map<string, Ship>();
-  for (const s of ships) byId.set(s.id, s);
+  // Build a combined target index by id (ships AND settlements)
+  const shipsById = new Map<string, Ship>();
+  for (const s of ships) shipsById.set(s.id, s);
+  const settlementsById = new Map<string, Settlement>();
+  for (const st of settlements) settlementsById.set(st.id, st);
 
-  // First pass: compute damage from all active engagements
+  const findTarget = (id: string): Ship | Settlement | null => {
+    return shipsById.get(id) ?? settlementsById.get(id) ?? null;
+  };
+
+  // First pass: ship attackers fire on their target (ship or settlement)
   for (const attacker of ships) {
     if (!attacker.engagedTargetId) continue;
-    const target = byId.get(attacker.engagedTargetId);
-    if (!target) continue; // target gone — will be cleared in second pass
+    const target = findTarget(attacker.engagedTargetId);
+    if (!target) continue;
 
     const attackerClass = getShipClass(attacker.class as ShipClassName);
     if (attackerClass.range <= 0 || attackerClass.damagePerTick <= 0) continue;
@@ -214,56 +248,122 @@ export function processEngagements(
     const lastFired = attacker.lastCombatTick ?? -Infinity;
     if (tick - lastFired < COMBAT_DAMAGE_INTERVAL) continue;
 
-    const dist = shipDistance(attacker, target, tick, bodies);
-    if (dist > attackerClass.range) continue; // out of range — no damage this pass
+    const attackerPos = shipWorldPosition(attacker, tick, bodies);
+    const targetPos = targetWorldPosition(target, tick, bodies);
+    if (!attackerPos || !targetPos) continue;
+    const dist = Math.hypot(attackerPos.x - targetPos.x, attackerPos.y - targetPos.y);
+    if (dist > attackerClass.range) continue;
 
-    // Deal damage, reduced by target's PDC
-    const targetClass = getShipClass(target.class as ShipClassName);
-    const dmg = attackerClass.damagePerTick * (1 - targetClass.pdcRating);
+    const dmg = attackerClass.damagePerTick * (1 - targetPdc(target));
     damageMap.set(target.id, (damageMap.get(target.id) || 0) + dmg);
     lastCombatUpdates.set(attacker.id, tick);
-    log.push(`${attacker.name} hits ${target.name} for ${dmg.toFixed(0)} (${dist.toFixed(1)}u)`);
+    log.push(`${attacker.name} hits ${targetName(target)} for ${dmg.toFixed(0)} (${dist.toFixed(1)}u)`);
   }
 
-  // Determine which ships are destroyed
-  for (const [shipId, dmg] of damageMap) {
-    const s = byId.get(shipId);
-    if (!s) continue;
-    const maxHp = getShipClass(s.class as ShipClassName).hp;
-    const currentHp = s.hp ?? maxHp;
-    if (dmg >= currentHp) {
-      destroyed.add(shipId);
-      log.push(`${s.name} destroyed!`);
+  // Second pass: settlements auto-retaliate against any ship that has them as a target
+  // Use a per-settlement lastCombatTick (stored on the settlement)
+  const settlementLastCombat = new Map<string, number>();
+  for (const settlement of settlements) {
+    // Find any ship engaging this settlement
+    const attackers = ships.filter(s => s.engagedTargetId === settlement.id);
+    if (attackers.length === 0) continue;
+
+    const def = SETTLEMENT_DEFS[settlement.type];
+    if (def.range <= 0 || def.damagePerTick <= 0) continue;
+
+    const lastFired = settlement.lastCombatTick ?? -Infinity;
+    if (tick - lastFired < COMBAT_DAMAGE_INTERVAL) continue;
+
+    const settlementPos = settlementWorldPosition(settlement, tick, bodies);
+    if (!settlementPos) continue;
+
+    // Settlement fires at the closest in-range attacker
+    let bestTarget: Ship | null = null;
+    let bestDist = Infinity;
+    for (const a of attackers) {
+      const aPos = shipWorldPosition(a, tick, bodies);
+      if (!aPos) continue;
+      const d = Math.hypot(aPos.x - settlementPos.x, aPos.y - settlementPos.y);
+      if (d <= def.range && d < bestDist) {
+        bestDist = d;
+        bestTarget = a;
+      }
+    }
+    if (!bestTarget) continue;
+
+    const targetClass = getShipClass(bestTarget.class as ShipClassName);
+    const dmg = def.damagePerTick * (1 - targetClass.pdcRating);
+    damageMap.set(bestTarget.id, (damageMap.get(bestTarget.id) || 0) + dmg);
+    settlementLastCombat.set(settlement.id, tick);
+    log.push(`${settlement.name} returns fire on ${bestTarget.name} for ${dmg.toFixed(0)} (${bestDist.toFixed(1)}u)`);
+  }
+
+  // Determine destruction
+  for (const [id, dmg] of damageMap) {
+    const ship = shipsById.get(id);
+    if (ship) {
+      const maxHp = getShipClass(ship.class as ShipClassName).hp;
+      const currentHp = ship.hp ?? maxHp;
+      if (dmg >= currentHp) {
+        destroyedShips.add(id);
+        log.push(`${ship.name} destroyed!`);
+      }
+      continue;
+    }
+    const settlement = settlementsById.get(id);
+    if (settlement) {
+      if (dmg >= settlement.hp) {
+        destroyedSettlements.add(id);
+        log.push(`${settlement.name} destroyed!`);
+      }
     }
   }
 
-  // Second pass: build updated ship array
-  const updated = ships
-    .filter(s => !destroyed.has(s.id))
+  // Build updated ship array
+  const updatedShips = ships
+    .filter(s => !destroyedShips.has(s.id))
     .map(s => {
       let next = s;
-      // Apply damage
       const dmg = damageMap.get(s.id);
       if (dmg !== undefined) {
         const maxHp = getShipClass(s.class as ShipClassName).hp;
         const currentHp = s.hp ?? maxHp;
         next = { ...next, hp: Math.max(0, currentHp - dmg) };
       }
-      // Update lastCombatTick for ships that fired
       const newLastCombat = lastCombatUpdates.get(s.id);
       if (newLastCombat !== undefined) {
         next = { ...next, lastCombatTick: newLastCombat };
       }
-      // Clear engagement if target was destroyed or no longer exists
+      // Clear engagement if target is gone (ship or settlement)
       if (next.engagedTargetId) {
-        if (destroyed.has(next.engagedTargetId) || !byId.has(next.engagedTargetId)) {
+        const targetGone =
+          destroyedShips.has(next.engagedTargetId) ||
+          destroyedSettlements.has(next.engagedTargetId) ||
+          (!shipsById.has(next.engagedTargetId) && !settlementsById.has(next.engagedTargetId));
+        if (targetGone) {
           next = { ...next, engagedTargetId: undefined };
         }
       }
       return next;
     });
 
-  return { ships: updated, log };
+  // Build updated settlement array
+  const updatedSettlements = settlements
+    .filter(st => !destroyedSettlements.has(st.id))
+    .map(st => {
+      let next = st;
+      const dmg = damageMap.get(st.id);
+      if (dmg !== undefined) {
+        next = { ...next, hp: Math.max(0, st.hp - dmg) };
+      }
+      const newLastCombat = settlementLastCombat.get(st.id);
+      if (newLastCombat !== undefined) {
+        next = { ...next, lastCombatTick: newLastCombat };
+      }
+      return next;
+    });
+
+  return { ships: updatedShips, settlements: updatedSettlements, log };
 }
 
 /**
