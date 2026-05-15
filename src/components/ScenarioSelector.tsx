@@ -18,7 +18,7 @@ export const ScenarioSelector: React.FC = () => {
     <div className="scenario-selector">
       <div className="scenario-header">SELECT SCENARIO</div>
       <div className="scenario-list">
-        {[1, 2, 3].map((num) => (
+        {[1, 2, 3, 4].map((num) => (
           <button
             key={num}
             className="scenario-btn"

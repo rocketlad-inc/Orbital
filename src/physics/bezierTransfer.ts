@@ -21,7 +21,22 @@ export function planBezierTransfer(
   let depBody: Body, arrBody: Body;
   let mu = MU_SUN;
 
-  if (depParent === 'sol' && arrParent === 'sol') {
+  // Planet → own moon (ship orbits Jupiter, target is Europa)
+  if (departureBody.id === arrParent) {
+    mu = muOf(departureBody.id, bodies);
+    r1 = (shipOrbit.rp + shipOrbit.ra) / 2;
+    r2 = arrivalBody.orbitRadius;
+    depBody = departureBody;
+    arrBody = arrivalBody;
+  // Moon → own parent planet (ship orbits Europa, target is Jupiter)
+  } else if (arrivalBody.id === depParent) {
+    const parentPlanet = arrivalBody;
+    mu = muOf(parentPlanet.id, bodies);
+    r1 = departureBody.orbitRadius;
+    r2 = (parentPlanet.radius + 4);
+    depBody = departureBody;
+    arrBody = arrivalBody;
+  } else if (depParent === 'sol' && arrParent === 'sol') {
     r1 = departureBody.orbitRadius;
     r2 = arrivalBody.orbitRadius;
     depBody = departureBody;
@@ -80,16 +95,18 @@ export function planBezierTransfer(
 
   const arrivalTime = departureTime + travelTime;
 
-  // For same-parent moons, use the actual moon bodies for control points
-  // For cross-system moons, use actual moons for endpoints but parent tangents
+  const isLocalTransfer = departureBody.id === arrParent || arrivalBody.id === depParent;
   const isSameParentMoons = depParent === arrParent && depParent !== 'sol';
   const isCrossSystemMoons = depParent !== 'sol' && arrParent !== 'sol' && depParent !== arrParent;
 
   let controlPoints;
-  if (isSameParentMoons) {
+  if (isLocalTransfer || isSameParentMoons) {
+    const parentId = departureBody.id === arrParent ? departureBody.id
+      : arrivalBody.id === depParent ? arrivalBody.id
+      : depParent!;
     controlPoints = computeBezierControlPointsLocal(
       departureBody, arrivalBody, departureTime, arrivalTime, bodies,
-      bodies.find(b => b.id === depParent)!
+      bodies.find(b => b.id === parentId)!
     );
   } else if (isCrossSystemMoons) {
     controlPoints = computeBezierControlPointsCrossSystem(
@@ -164,19 +181,33 @@ function computeBezierControlPointsLocal(
   const p0 = bodyPosition(departureBody, departureTime, bodies);
   const p3 = bodyPosition(arrivalBody, arrivalTime, bodies);
 
-  // Tangents relative to parent planet
-  const depAngle = departureBody.angle0 + TWO_PI * departureTime / departureBody.orbitPeriod;
-  const depTangent = { x: -Math.sin(depAngle), y: Math.cos(depAngle) };
-
-  const arrAngle = arrivalBody.angle0 + TWO_PI * arrivalTime / arrivalBody.orbitPeriod;
-  const arrTangent = { x: -Math.sin(arrAngle), y: Math.cos(arrAngle) };
-
   const dx = p3.x - p0.x;
   const dy = p3.y - p0.y;
   const dist = Math.sqrt(dx * dx + dy * dy);
   const armLength = dist * 0.4;
 
-  const outbound = arrivalBody.orbitRadius >= departureBody.orbitRadius;
+  const depIsMoon = departureBody.parent === parentPlanet.id;
+  const arrIsMoon = arrivalBody.parent === parentPlanet.id;
+
+  let depTangent: { x: number; y: number };
+  if (depIsMoon) {
+    const depAngle = departureBody.angle0 + TWO_PI * departureTime / departureBody.orbitPeriod;
+    depTangent = { x: -Math.sin(depAngle), y: Math.cos(depAngle) };
+  } else {
+    const perp = { x: -dy / dist, y: dx / dist };
+    depTangent = perp;
+  }
+
+  let arrTangent: { x: number; y: number };
+  if (arrIsMoon) {
+    const arrAngle = arrivalBody.angle0 + TWO_PI * arrivalTime / arrivalBody.orbitPeriod;
+    arrTangent = { x: -Math.sin(arrAngle), y: Math.cos(arrAngle) };
+  } else {
+    const perp = { x: dy / dist, y: -dx / dist };
+    arrTangent = perp;
+  }
+
+  const outbound = (arrIsMoon ? arrivalBody.orbitRadius : 0) >= (depIsMoon ? departureBody.orbitRadius : 0);
 
   const cp1 = {
     x: p0.x + depTangent.x * armLength,

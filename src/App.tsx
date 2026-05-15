@@ -55,9 +55,57 @@ function AppContent() {
         </button>
       </div>
 
+      {/* Resource HUD */}
+      {gameState.resources['player'] && (
+        <div style={{
+          position: 'fixed', top: 12, right: 20,
+          display: 'flex', gap: '16px', zIndex: 1000,
+          background: 'rgba(10, 14, 20, 0.9)',
+          border: '1px solid #2a3d50',
+          borderRadius: '4px',
+          padding: '6px 14px',
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: '11px',
+        }}>
+          <span style={{ color: '#ffb84d' }}>
+            FUEL: <strong style={{ color: '#d8e4ee' }}>{gameState.resources['player'].fuel}</strong>
+          </span>
+          <span style={{ color: '#a0a0a0' }}>
+            ORE: <strong style={{ color: '#d8e4ee' }}>{gameState.resources['player'].ore}</strong>
+          </span>
+          <span style={{ color: '#ffd700' }}>
+            CR: <strong style={{ color: '#d8e4ee' }}>{gameState.resources['player'].credits}</strong>
+          </span>
+          <span style={{ color: '#6b8195' }}>
+            SHIPS: <strong style={{ color: '#d8e4ee' }}>{gameState.ships.filter(s => s.ownedBy === 'player').length}</strong>
+          </span>
+        </div>
+      )}
+
+      {/* Combat Log */}
+      {gameState.combatLog.length > 0 && (
+        <div style={{
+          position: 'fixed', bottom: 60, left: 20,
+          maxWidth: '300px', maxHeight: '120px',
+          overflow: 'auto', zIndex: 1000,
+          background: 'rgba(10, 14, 20, 0.9)',
+          border: '1px solid #ff5e5e',
+          borderRadius: '4px',
+          padding: '8px 12px',
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: '10px',
+          color: '#ff5e5e',
+        }}>
+          <div style={{ fontWeight: 'bold', marginBottom: '4px', color: '#ffb84d' }}>COMBAT LOG</div>
+          {gameState.combatLog.slice(-5).map((msg, i) => (
+            <div key={i}>{msg}</div>
+          ))}
+        </div>
+      )}
+
       <div className="hud-title">
         <div className="title">ORBITAL</div>
-        <div className="subtitle">BEZIER TRANSFER PROTOTYPE</div>
+        <div className="subtitle">SHIP SYSTEMS PROTOTYPE</div>
       </div>
     </div>
   );

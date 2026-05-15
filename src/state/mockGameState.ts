@@ -3,7 +3,7 @@
 // Ported from HTML prototype (trusting-mahavira branch)
 // ============================================================
 
-import { Body, Ship, Faction, GameState, OrbitElements } from '../types';
+import { Body, Ship, Faction, GameState, OrbitElements, FactionResources } from '../types';
 
 const TWO_PI = 2 * Math.PI;
 
@@ -195,130 +195,200 @@ function circularOrbitAround(
   };
 }
 
+const DEFAULT_RESOURCES: Record<string, FactionResources> = {
+  player: { fuel: 100, ore: 200, credits: 150 },
+  enemy: { fuel: 100, ore: 200, credits: 150 },
+};
+
+function withOwnership(bodies: Body[]): Body[] {
+  return bodies.map(b => {
+    if (b.id === 'earth' || b.id === 'luna') return { ...b, ownedBy: 'player' };
+    if (b.id === 'mars') return { ...b, ownedBy: 'enemy' };
+    return { ...b };
+  });
+}
+
 // ============================================================
-// SCENARIO 1: Two ships in low Earth orbit
+// SCENARIO 1: Rocinante and Donnager at Earth
 // ============================================================
 export function createScenario1(): GameState {
-  const bodies = SHARED_BODIES.map(b => ({ ...b }));
+  const bodies = withOwnership(SHARED_BODIES);
   const factions = SHARED_FACTIONS.map(f => ({ ...f }));
 
-  const ship1: Ship = {
-    id: 'ship-alpha', name: 'Alpha', class: 'frigate',
-    ownedBy: 'player', fuel: 100,
-    orbit: circularOrbitAround('earth', 4, 1),
-    orders: [],
-  };
-
-  const ship2: Ship = {
-    id: 'ship-beta', name: 'Beta', class: 'cruiser',
-    ownedBy: 'player', fuel: 150,
-    orbit: { ...circularOrbitAround('earth', 4, 1), M0: Math.PI },
-    orders: [],
-  };
+  const ships: Ship[] = [
+    {
+      id: 'ship-roci', name: 'Rocinante', class: 'corvette',
+      ownedBy: 'player', fuel: 80,
+      orbit: circularOrbitAround('earth', 10, 1),
+      orders: [],
+    },
+    {
+      id: 'ship-donnager', name: 'Donnager', class: 'frigate',
+      ownedBy: 'player', fuel: 120,
+      orbit: { ...circularOrbitAround('earth', 15, 1), M0: Math.PI },
+      orders: [],
+    },
+    {
+      id: 'ship-canterbury', name: 'Canterbury', class: 'freighter',
+      ownedBy: 'player', fuel: 100,
+      orbit: { ...circularOrbitAround('earth', 18, 1), M0: Math.PI * 1.5 },
+      orders: [],
+    },
+  ];
 
   return {
-    currentTick: 0, bodies,
-    ships: [ship1, ship2], factions, orders: [],
+    currentTick: 0, bodies, ships, factions, orders: [],
+    fleets: [], buildOrders: [],
+    resources: { ...DEFAULT_RESOURCES },
+    combatLog: [],
   };
 }
 
 // ============================================================
-// SCENARIO 2: Player at Earth, Enemy at Mars
+// SCENARIO 2: Fleet combat — Player at Earth vs Enemy at Mars
 // ============================================================
 export function createScenario2(): GameState {
-  const bodies = SHARED_BODIES.map(b => ({ ...b }));
+  const bodies = withOwnership(SHARED_BODIES);
   const factions = SHARED_FACTIONS.map(f => ({ ...f }));
 
-  const playerShip: Ship = {
-    id: 'ship-player', name: 'Flagship', class: 'capital',
-    ownedBy: 'player', fuel: 200,
-    orbit: circularOrbitAround('earth', 12, 1),
-    orders: [],
-  };
-
-  const enemyShip: Ship = {
-    id: 'ship-enemy', name: 'Scout', class: 'frigate',
-    ownedBy: 'enemy', fuel: 80,
-    orbit: circularOrbitAround('mars', 10, -1),
-    orders: [
-      {
-        id: 'order-1', shipId: 'ship-enemy', type: 'transfer',
-        burnTime: 50, deltav: 2.5, prograde: 2.5, radial: 0, normal: 0,
-        status: 'planned', capturedAtBody: 'earth',
-      },
-      {
-        id: 'order-2', shipId: 'ship-enemy', type: 'transfer',
-        burnTime: 200, deltav: 1.8, prograde: 1.8, radial: 0, normal: 0,
-        status: 'planned', capturedAtBody: 'earth',
-      },
-    ],
-  };
+  const ships: Ship[] = [
+    // Player fleet at Earth
+    {
+      id: 'ship-roci', name: 'Rocinante', class: 'corvette',
+      ownedBy: 'player', fuel: 80,
+      orbit: circularOrbitAround('earth', 10, 1),
+      orders: [],
+    },
+    {
+      id: 'ship-donnager', name: 'Donnager', class: 'destroyer',
+      ownedBy: 'player', fuel: 150,
+      orbit: { ...circularOrbitAround('earth', 14, 1), M0: Math.PI * 0.5 },
+      orders: [],
+    },
+    {
+      id: 'ship-canterbury', name: 'Canterbury', class: 'freighter',
+      ownedBy: 'player', fuel: 100,
+      orbit: { ...circularOrbitAround('earth', 18, 1), M0: Math.PI },
+      orders: [],
+    },
+    // Enemy fleet at Mars
+    {
+      id: 'ship-phantom', name: 'Phantom', class: 'corvette',
+      ownedBy: 'enemy', fuel: 80,
+      orbit: circularOrbitAround('mars', 10, -1),
+      orders: [],
+    },
+    {
+      id: 'ship-wraith', name: 'Wraith', class: 'corvette',
+      ownedBy: 'enemy', fuel: 80,
+      orbit: { ...circularOrbitAround('mars', 12, -1), M0: Math.PI },
+      orders: [],
+    },
+    {
+      id: 'ship-scirocco', name: 'Scirocco', class: 'frigate',
+      ownedBy: 'enemy', fuel: 120,
+      orbit: { ...circularOrbitAround('mars', 15, -1), M0: Math.PI * 0.5 },
+      orders: [],
+    },
+  ];
 
   return {
-    currentTick: 0, bodies,
-    ships: [playerShip, enemyShip], factions, orders: [],
+    currentTick: 0, bodies, ships, factions, orders: [],
+    fleets: [], buildOrders: [],
+    resources: { ...DEFAULT_RESOURCES },
+    combatLog: [],
   };
 }
 
 // ============================================================
-// SCENARIO 3: Ship in Earth→Mars Hohmann transfer
+// SCENARIO 3: Trade route — Freighter at Earth, build corvette escort
 // ============================================================
 export function createScenario3(): GameState {
-  const bodies = SHARED_BODIES.map(b => ({ ...b }));
+  const bodies = withOwnership(SHARED_BODIES);
   const factions = SHARED_FACTIONS.map(f => ({ ...f }));
 
-  const transferOrbit: OrbitElements = {
-    rp: 132.6,
-    ra: 202.1,
-    omega: 0, M0: 0, epoch: 0, direction: 1,
-    period: TWO_PI * Math.sqrt(Math.pow((132.6 + 202.1) / 2, 3) / MU_SOL),
-    parentBodyId: 'sol',
-  };
-
-  const ship: Ship = {
-    id: 'ship-transit', name: 'Explorer', class: 'cruiser',
-    ownedBy: 'player', fuel: 120,
-    orbit: transferOrbit,
-    orders: [
-      {
-        id: 'node-departure-burn', shipId: 'ship-transit', type: 'transfer',
-        burnTime: 5, deltav: 2.5, prograde: 2.3, radial: 0.6, normal: 0.2,
-        status: 'committed',
-        preOrbit: circularOrbitAround('earth', 10, 1),
-        postOrbit: transferOrbit,
-        capturedAtBody: 'mars',
-      },
-      {
-        id: 'node-arrival-burn', shipId: 'ship-transit', type: 'transfer',
-        burnTime: 80, deltav: 1.8, prograde: -1.7, radial: 0.3, normal: 0.1,
-        status: 'planned',
-        preOrbit: transferOrbit,
-        postOrbit: circularOrbitAround('mars', 10, 1),
-        capturedAtBody: 'mars',
-      },
-    ],
-  };
+  const ships: Ship[] = [
+    {
+      id: 'ship-canterbury', name: 'Canterbury', class: 'freighter',
+      ownedBy: 'player', fuel: 100,
+      orbit: circularOrbitAround('earth', 12, 1),
+      orders: [],
+    },
+    {
+      id: 'ship-escort', name: 'Tachi', class: 'corvette',
+      ownedBy: 'player', fuel: 80,
+      orbit: { ...circularOrbitAround('earth', 14, 1), M0: Math.PI },
+      orders: [],
+    },
+  ];
 
   return {
-    currentTick: 0, bodies,
-    ships: [ship], factions, orders: ship.orders,
+    currentTick: 0, bodies, ships, factions, orders: [],
+    fleets: [], buildOrders: [],
+    resources: { player: { fuel: 150, ore: 300, credits: 200 }, enemy: { fuel: 100, ore: 200, credits: 150 } },
+    combatLog: [],
+  };
+}
+
+// ============================================================
+// SCENARIO 4: Jupiter system — Belter outpost
+// ============================================================
+export function createScenario4(): GameState {
+  const bodies = SHARED_BODIES.map(b => {
+    if (b.id === 'earth' || b.id === 'luna') return { ...b, ownedBy: 'player' };
+    if (b.id === 'mars' || b.id === 'ceres') return { ...b, ownedBy: 'enemy' };
+    if (b.id === 'ganymede') return { ...b, ownedBy: 'player' };
+    return { ...b };
+  });
+  const factions = SHARED_FACTIONS.map(f => ({ ...f }));
+
+  const ships: Ship[] = [
+    // Player ships at Ganymede
+    {
+      id: 'ship-roci', name: 'Rocinante', class: 'corvette',
+      ownedBy: 'player', fuel: 80,
+      orbit: circularOrbitAround('ganymede', 6, 1),
+      orders: [],
+    },
+    {
+      id: 'ship-somnambulist', name: 'Somnambulist', class: 'freighter',
+      ownedBy: 'player', fuel: 100,
+      orbit: { ...circularOrbitAround('ganymede', 8, 1), M0: Math.PI },
+      orders: [],
+    },
+    // Enemy ships at Ceres
+    {
+      id: 'ship-behemoth', name: 'Behemoth', class: 'destroyer',
+      ownedBy: 'enemy', fuel: 150,
+      orbit: circularOrbitAround('ceres', 5, -1),
+      orders: [],
+    },
+  ];
+
+  return {
+    currentTick: 0, bodies, ships, factions, orders: [],
+    fleets: [], buildOrders: [],
+    resources: { player: { fuel: 80, ore: 150, credits: 100 }, enemy: { fuel: 120, ore: 250, credits: 200 } },
+    combatLog: [],
   };
 }
 
 // Export a scenario selector
-export type ScenarioType = 1 | 2 | 3;
+export type ScenarioType = 1 | 2 | 3 | 4;
 
 export function getScenario(type: ScenarioType): GameState {
   switch (type) {
     case 1: return createScenario1();
     case 2: return createScenario2();
     case 3: return createScenario3();
+    case 4: return createScenario4();
     default: return createScenario1();
   }
 }
 
 export const SCENARIO_DESCRIPTIONS = {
-  1: 'Two ships at Earth (player-owned, basic positioning)',
-  2: 'Player at Earth, Enemy at Mars (faction colors)',
-  3: 'Earth→Mars transit with planned burns (maneuver preview)',
+  1: 'Rocinante and Donnager at Earth',
+  2: 'Fleet combat — Player vs Enemy',
+  3: 'Trade route — Freighter with escort',
+  4: 'Jupiter system — Belter outpost',
 } as const;
