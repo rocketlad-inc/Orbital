@@ -27,7 +27,10 @@ interface ServerState {
     tick_interval_ms: number;
     next_tick_at: number | null;
     started_at: number | null;
+    completed_at?: number | null;
     map_seed: string;
+    winner_faction_id?: string | null;
+    victory_type?: string | null;
   };
   me: {
     faction_id: string;
@@ -396,8 +399,18 @@ interface Props {
 
 const POLL_INTERVAL_MS = 1500;
 
+interface GameMeta {
+  status: string;
+  winnerFactionId: string | null;
+  winnerName: string | null;
+  victoryType: string | null;
+  myFactionId: string;
+  factions: ServerState['factions'];
+}
+
 export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Props) {
   const [state, setState] = useState<GameState | null>(null);
+  const [meta, setMeta] = useState<GameMeta | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** Set true when the server returns 404. Stops polling + offers an exit. */
   const [missing, setMissing] = useState(false);
@@ -415,6 +428,17 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
       if (res.ok) {
         const next = serverToGameState(res.data, res.data.me.faction_id);
         setState(next);
+        const winnerName = res.data.game.winner_faction_id
+          ? (res.data.factions.find(f => f.id === res.data.game.winner_faction_id)?.name ?? null)
+          : null;
+        setMeta({
+          status: res.data.game.status,
+          winnerFactionId: res.data.game.winner_faction_id ?? null,
+          winnerName,
+          victoryType: res.data.game.victory_type ?? null,
+          myFactionId: res.data.me.faction_id,
+          factions: res.data.factions,
+        });
         setError(null);
       } else if (res.status === 404 || res.error?.code === 'not_found') {
         // Game no longer exists on the server (deleted, expired, or stale
@@ -506,10 +530,63 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
     );
   }
 
+  const gameOver = meta?.status === 'completed';
+  const iWon = gameOver && meta?.winnerFactionId === meta?.myFactionId;
+
   return (
     <GameContextProvider externalState={state} externallyControlled>
       <MultiplayerActionsProvider gameId={gameId}>
         {children}
+        {gameOver && (
+          <div
+            className="mp-overlay"
+            style={{
+              background: 'rgba(5, 8, 12, 0.86)',
+              zIndex: 6000,
+              flexDirection: 'column',
+              gap: 16,
+            }}
+          >
+            <div style={{
+              fontFamily: 'Orbitron, system-ui, sans-serif',
+              fontSize: 28,
+              letterSpacing: '0.32em',
+              color: iWon ? 'var(--mp-friendly)' : 'var(--mp-accent)',
+              textShadow: iWon
+                ? '0 0 24px rgba(78,205,196,0.4)'
+                : '0 0 24px rgba(255,184,77,0.4)',
+            }}>
+              {iWon ? 'VICTORY' : 'GAME OVER'}
+            </div>
+            <div style={{
+              fontFamily: 'var(--mp-mono)',
+              fontSize: 13,
+              color: 'var(--mp-fg)',
+              letterSpacing: '0.12em',
+              textAlign: 'center',
+            }}>
+              {meta?.winnerName ? (
+                <>
+                  <div style={{ color: 'var(--mp-accent)', marginBottom: 6 }}>
+                    {meta.winnerName} {iWon ? '(you)' : ''} wins
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--mp-fg-dim)' }}>
+                    Victory type: {meta.victoryType ?? 'hegemony'}
+                  </div>
+                </>
+              ) : (
+                <div style={{ color: 'var(--mp-fg-dim)' }}>No winner declared</div>
+              )}
+            </div>
+            <button
+              className="mp-submit"
+              style={{ width: 'auto', padding: '10px 24px', marginTop: 12 }}
+              onClick={() => onGameMissingRef.current?.()}
+            >
+              Return to lobby
+            </button>
+          </div>
+        )}
       </MultiplayerActionsProvider>
     </GameContextProvider>
   );

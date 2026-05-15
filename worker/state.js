@@ -32,7 +32,8 @@ async function handleGetState(req, env, ctx) {
   const game = await env.DB
     .prepare(
       `SELECT id, status, current_tick, total_tick_target, tick_interval_ms,
-              next_tick_at, started_at, map_seed
+              next_tick_at, started_at, completed_at, map_seed,
+              winner_faction_id, victory_type
          FROM games WHERE id = ?`,
     )
     .bind(gameId)
@@ -201,7 +202,10 @@ async function handleGetState(req, env, ctx) {
       tick_interval_ms: game.tick_interval_ms,
       next_tick_at: game.next_tick_at,
       started_at: game.started_at,
+      completed_at: game.completed_at,
       map_seed: game.map_seed,
+      winner_faction_id: game.winner_faction_id,
+      victory_type: game.victory_type,
     },
     me: {
       faction_id: me.id,

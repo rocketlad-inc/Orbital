@@ -261,11 +261,57 @@ export class Room {
     const nextTick = (game.current_tick ?? 0) + 1;
 
     if (nextTick >= game.total_tick_target) {
+      // Compute winner — most owned bodies wins; tie-break by total
+      // resource value (metal + fuel + gold + science).
+      const scores = (await this.env.DB
+        .prepare(
+          `SELECT f.id, f.name,
+                  (SELECT COUNT(*) FROM game_bodies b
+                    WHERE b.game_id = f.game_id AND b.owner_faction_id = f.id) AS worlds,
+                  (f.metal + f.fuel + f.gold + f.science) AS wealth
+             FROM game_factions f
+            WHERE f.game_id = ? AND f.status = 'active'
+            ORDER BY worlds DESC, wealth DESC, f.slot ASC`,
+        )
+        .bind(gameId)
+        .all()).results ?? [];
+
+      const winner = scores[0] ?? null;
+      const victoryType = scores.length > 1 && winner && winner.worlds > (scores[1].worlds ?? 0)
+        ? 'hegemony'
+        : 'last_standing';
+
       await this.env.DB
-        .prepare("UPDATE games SET status = 'completed', current_tick = ?, completed_at = ?, next_tick_at = NULL WHERE id = ?")
-        .bind(nextTick, now, gameId)
+        .prepare(
+          `UPDATE games
+              SET status = 'completed', current_tick = ?, completed_at = ?,
+                  next_tick_at = NULL, winner_faction_id = ?, victory_type = ?
+            WHERE id = ?`,
+        )
+        .bind(nextTick, now, winner?.id ?? null, winner ? victoryType : 'abandoned', gameId)
         .run();
-      this.broadcast({ type: 'game_completed', tick: nextTick });
+
+      if (winner) {
+        try {
+          const entryId = `c${nextTick}_victory_${Math.random().toString(36).slice(2, 6)}`;
+          await this.env.DB
+            .prepare(
+              `INSERT INTO chronicle_entries
+                (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
+               VALUES (?, ?, ?, 'victory', ?, ?, 'public', ?)`,
+            )
+            .bind(entryId, gameId, nextTick, winner.id,
+                  JSON.stringify({ victory_type: victoryType, worlds: winner.worlds, wealth: winner.wealth, scores }),
+                  now)
+            .run();
+        } catch (e) { console.error('victory chronicle failed', e); }
+      }
+
+      this.broadcast({
+        type: 'game_completed', tick: nextTick,
+        winner_faction_id: winner?.id ?? null,
+        victory_type: winner ? victoryType : 'abandoned',
+      });
       return;
     }
 
