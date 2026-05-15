@@ -236,12 +236,15 @@ export class Room {
   }
 
   // ---------- Tick scheduler ----------
-  // Fires on the schedule established at /game-started. Each invocation
-  // advances current_tick by one in D1, logs a tick row, broadcasts to
-  // connected clients so they re-pull /state, and schedules the next.
+  // Fires on the schedule established at /game-started. Each tick:
+  //   1. compute nextTick = current_tick + 1
+  //   2. RESOLVE everything scheduled for ticks up to and including nextTick:
+  //        - build queue completions  -> new game_ships row, queue row deleted
+  //        - committed maneuver nodes -> ship parent + orbit updated, fuel
+  //          deducted, node marked 'executed'
+  //   3. write current_tick = nextTick, log a game_ticks row, broadcast.
   //
-  // Resolution of in-tick effects (build queue completions, transfer
-  // arrivals, combat) is a future pass — for now this is purely a clock.
+  // Combat resolution + body-yield harvesting are still future work.
   async alarm() {
     const started = await this.state.storage.get('gameStarted');
     if (!started?.gameId) return;
@@ -266,6 +269,13 @@ export class Room {
       return;
     }
 
+    // ----- resolve scheduled events for [prev+1 .. nextTick] -----
+    try {
+      await this.resolveTick(gameId, nextTick);
+    } catch (e) {
+      console.error('resolveTick failed', e);
+    }
+
     const interval = game.tick_interval_ms ?? 86_400_000;
     const nextAt = now + interval;
 
@@ -283,5 +293,92 @@ export class Room {
     }
 
     this.broadcast({ type: 'tick', tick: nextTick, next_tick_at: nextAt });
+  }
+
+  async resolveTick(gameId, tick) {
+    // 1. Build completions. Each row spawns one ship in a small circular
+    //    orbit around the building body.
+    const builds = (await this.env.DB
+      .prepare(
+        `SELECT id, body_id, faction_id, ship_class, completes_at_tick
+           FROM game_body_build_queue
+          WHERE game_id = ?
+            AND cancelled_at_tick IS NULL
+            AND completes_at_tick <= ?`,
+      )
+      .bind(gameId, tick)
+      .all()).results ?? [];
+
+    for (const b of builds) {
+      const body = await this.env.DB
+        .prepare('SELECT radius, mu FROM game_bodies WHERE id = ?')
+        .bind(b.body_id)
+        .first();
+      if (!body) continue;
+
+      const FUEL_MAX = { corvette: 80, frigate: 200, destroyer: 300, freighter: 400 };
+      const fuelMax = FUEL_MAX[b.ship_class] ?? 100;
+      const rp = (body.radius || 4) + 4;
+      const ra = rp; // circular orbit
+      const shipId = `${gameId}:s${tick}_${b.id.slice(-6)}`;
+      const shipName = `${b.ship_class.charAt(0).toUpperCase()}${b.ship_class.slice(1)} T${tick}`;
+
+      await this.env.DB.batch([
+        this.env.DB
+          .prepare(
+            `INSERT INTO game_ships
+              (id, game_id, owner_faction_id, name, ship_class,
+               parent_body_id, orbit_rp, orbit_ra, orbit_omega,
+               orbit_m0, orbit_epoch, orbit_direction,
+               fuel, fuel_max, status, built_at_tick)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 1, ?, ?, 'active', ?)`,
+          )
+          .bind(shipId, gameId, b.faction_id, shipName, b.ship_class,
+                b.body_id, rp, ra, tick, fuelMax, fuelMax, tick),
+        this.env.DB
+          .prepare('DELETE FROM game_body_build_queue WHERE id = ?')
+          .bind(b.id),
+      ]);
+    }
+
+    // 2. Transfer arrivals. A committed node with anchor_kind='absolute'
+    //    and scheduled_t <= tick: warp the ship into a circular orbit
+    //    around target_body_id, deduct fuel_cost, mark node executed.
+    const nodes = (await this.env.DB
+      .prepare(
+        `SELECT id, ship_id, target_body_id, fuel_cost, scheduled_t
+           FROM game_ship_nodes
+          WHERE game_id = ?
+            AND status = 'committed'
+            AND scheduled_t <= ?
+          ORDER BY scheduled_t ASC`,
+      )
+      .bind(gameId, tick)
+      .all()).results ?? [];
+
+    for (const n of nodes) {
+      if (!n.target_body_id) continue;
+      const target = await this.env.DB
+        .prepare('SELECT radius FROM game_bodies WHERE id = ?')
+        .bind(n.target_body_id)
+        .first();
+      if (!target) continue;
+      const rp = (target.radius || 4) + 4;
+      await this.env.DB.batch([
+        this.env.DB
+          .prepare(
+            `UPDATE game_ships
+                SET parent_body_id = ?,
+                    orbit_rp = ?, orbit_ra = ?, orbit_omega = 0,
+                    orbit_m0 = 0, orbit_epoch = ?, orbit_direction = 1,
+                    fuel = MAX(0, fuel - ?)
+              WHERE id = ?`,
+          )
+          .bind(n.target_body_id, rp, rp, tick, n.fuel_cost || 0, n.ship_id),
+        this.env.DB
+          .prepare("UPDATE game_ship_nodes SET status = 'executed', executed_at_tick = ? WHERE id = ?")
+          .bind(tick, n.id),
+      ]);
+    }
   }
 }
