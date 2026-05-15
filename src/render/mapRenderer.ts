@@ -679,6 +679,36 @@ export function drawDepartureMarker(
   ctx.ctx.fillText(countdown, canvasPos.x + 10, canvasPos.y + 10);
 }
 
+export function drawTargetHighlight(
+  body: Body,
+  ctx: RenderContext,
+  isHovered: boolean
+) {
+  const pos = bodyPosition(body, ctx.t, ctx.bodies);
+  const canvasPos = worldToCanvas(pos.x, pos.y, ctx);
+  const radius = Math.max(3, body.radius * ctx.camera.scale);
+
+  const ringRadius = radius + (isHovered ? 10 : 6);
+  const color = isHovered ? COLORS.warning : COLORS.info;
+
+  ctx.ctx.strokeStyle = withOpacity(color, isHovered ? 0.9 : 0.4);
+  ctx.ctx.lineWidth = isHovered ? 2.5 : 1.5;
+  ctx.ctx.setLineDash(isHovered ? [] : [4, 4]);
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, ringRadius, 0, Math.PI * 2);
+  ctx.ctx.stroke();
+  ctx.ctx.setLineDash([]);
+
+  if (isHovered) {
+    // Pulsing outer ring
+    ctx.ctx.strokeStyle = withOpacity(color, 0.3);
+    ctx.ctx.lineWidth = 1;
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(canvasPos.x, canvasPos.y, ringRadius + 4, 0, Math.PI * 2);
+    ctx.ctx.stroke();
+  }
+}
+
 export function drawGhostPlanet(
   body: Body,
   futureTime: number,

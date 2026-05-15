@@ -1,45 +1,106 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { ManeuverNode } from '../types';
 import { planBezierTransfer } from '../physics/bezierTransfer';
+import { createCircularOrbit } from '../physics/orbitalMechanics';
 import './ShipPanel.css';
 
 export const ShipPanel: React.FC = () => {
   const {
-    gameState, uiState, deselectShip,
-    commitManeuverNode, deleteManeuverNode, addManeuverNode, setPendingTransfer,
+    gameState, uiState, deselectShip, setGameState,
+    commitManeuverNode, deleteManeuverNode, addManeuverNode,
+    setPendingTransfer, addQueuedTransfer, setTargetSelectionMode,
   } = useGameContext();
 
   const [transferModalOpen, setTransferModalOpen] = useState(false);
 
-  if (!uiState.selectedShipId) return null;
-  const ship = gameState.ships.find(s => s.id === uiState.selectedShipId);
+  const ship = uiState.selectedShipId
+    ? gameState.ships.find(s => s.id === uiState.selectedShipId) || null
+    : null;
+
+  // Keep a ref to the latest transfer handler so the event listener always sees current state
+  const transferHandlerRef = useRef<(bodyId: string, strategy: 'quickest' | 'efficient') => void>(() => {});
+
+  useEffect(() => {
+    if (!ship) return;
+
+    transferHandlerRef.current = (targetBodyId: string, strategy: 'quickest' | 'efficient') => {
+      const queue = ship.queuedTransfers || [];
+      let chainTail: { bodyId: string; time: number } | null = null;
+      if (queue.length > 0) {
+        const last = queue[queue.length - 1];
+        chainTail = { bodyId: last.arrivalBodyId, time: last.arrivalTime };
+      } else if (ship.transfer) {
+        chainTail = { bodyId: ship.transfer.arrivalBodyId, time: ship.transfer.arrivalTime };
+      } else if (ship.pendingTransfer) {
+        chainTail = { bodyId: ship.pendingTransfer.arrivalBodyId, time: ship.pendingTransfer.arrivalTime };
+      }
+
+      if (chainTail) {
+        const tailBody = gameState.bodies.find(b => b.id === chainTail!.bodyId);
+        const arrRadius = tailBody ? tailBody.radius + 4 : 10;
+        const tempOrbit = createCircularOrbit(chainTail.bodyId, arrRadius, chainTail.time, gameState.bodies);
+        const arc = planBezierTransfer(tempOrbit, targetBodyId, chainTail.time, gameState.bodies, strategy);
+        if (!arc) return;
+        addQueuedTransfer(ship.id, arc);
+      } else {
+        const arc = planBezierTransfer(ship.orbit, targetBodyId, gameState.currentTick, gameState.bodies, strategy);
+        if (!arc) return;
+
+        const node: ManeuverNode = {
+          id: `node-${Date.now()}-${Math.random()}`,
+          shipId: ship.id,
+          type: 'transfer',
+          burnTime: arc.departureTime,
+          deltav: arc.departureDv,
+          prograde: arc.departureDv,
+          radial: 0,
+          normal: 0,
+          status: 'planned',
+          label: arc.label,
+        };
+
+        addManeuverNode(node);
+        setPendingTransfer(ship.id, arc);
+      }
+      setTransferModalOpen(false);
+      setTargetSelectionMode(false);
+    };
+  }, [ship, gameState, addManeuverNode, setPendingTransfer, addQueuedTransfer, setTargetSelectionMode]);
+
+  const handleTransferConfirmEvent = useCallback((e: Event) => {
+    const detail = (e as CustomEvent).detail;
+    if (detail?.bodyId && detail?.strategy) {
+      transferHandlerRef.current(detail.bodyId, detail.strategy);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener('orbital-transfer-confirm', handleTransferConfirmEvent);
+    return () => window.removeEventListener('orbital-transfer-confirm', handleTransferConfirmEvent);
+  }, [handleTransferConfirmEvent]);
+
   if (!ship) return null;
 
   const handleTransferManeuver = (targetBodyId: string, strategy: 'quickest' | 'efficient' = 'quickest') => {
-    const arc = planBezierTransfer(ship.orbit, targetBodyId, gameState.currentTick, gameState.bodies, strategy);
-    if (!arc) {
-      alert('Cannot plan transfer to that target');
-      return;
-    }
-
-    const node: ManeuverNode = {
-      id: `node-${Date.now()}-${Math.random()}`,
-      shipId: ship.id,
-      type: 'transfer',
-      burnTime: arc.departureTime,
-      deltav: arc.departureDv,
-      prograde: arc.departureDv,
-      radial: 0,
-      normal: 0,
-      status: 'planned',
-      label: arc.label,
-    };
-
-    addManeuverNode(node);
-    setPendingTransfer(ship.id, arc);
-    setTransferModalOpen(false);
+    transferHandlerRef.current(targetBodyId, strategy);
   };
+
+  const handleRemoveQueuedTransfer = (index: number) => {
+    const queue = ship.queuedTransfers || [];
+    if (index >= queue.length) return;
+    const newQueue = queue.slice(0, index);
+    setGameState({
+      ...gameState,
+      ships: gameState.ships.map(s =>
+        s.id === ship.id
+          ? { ...s, queuedTransfers: newQueue.length > 0 ? newQueue : undefined }
+          : s
+      ),
+    });
+  };
+
+  const hasExistingTransfer = !!(ship.transfer || ship.pendingTransfer);
 
   const locationLabel = ship.transfer
     ? `→ ${gameState.bodies.find(b => b.id === ship.transfer!.arrivalBodyId)?.name || '?'}`
@@ -50,6 +111,8 @@ export const ShipPanel: React.FC = () => {
     : ship.pendingTransfer
       ? ship.pendingTransfer.departureTime - gameState.currentTick
       : null;
+
+  const queuedTransfers = ship.queuedTransfers || [];
 
   return (
     <>
@@ -89,7 +152,7 @@ export const ShipPanel: React.FC = () => {
 
           <div className="maneuver-section">
             <div className="section-title">MANEUVER NODES</div>
-            {ship.orders.length === 0 && !ship.transfer ? (
+            {ship.orders.length === 0 && !ship.transfer && queuedTransfers.length === 0 ? (
               <div className="no-orders">No planned maneuvers</div>
             ) : (
               <>
@@ -117,6 +180,19 @@ export const ShipPanel: React.FC = () => {
                       </div>
                     </div>
                   ))}
+                  {queuedTransfers.map((qt, i) => (
+                    <div key={qt.id} className="order-item status-queued">
+                      <div className="order-info">
+                        <div className="order-type">{qt.label}</div>
+                        <div className="order-details">
+                          QUEUED | Δv: {(qt.departureDv + qt.arrivalDv).toFixed(2)} km/s | T+{qt.departureTime.toFixed(0)}
+                        </div>
+                      </div>
+                      <div className="order-actions">
+                        <button className="delete-btn" onClick={() => handleRemoveQueuedTransfer(i)}>✕</button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
                 {ship.orders.some(o => o.status === 'planned') && (
                   <button
@@ -132,13 +208,14 @@ export const ShipPanel: React.FC = () => {
             )}
           </div>
 
-          {!ship.transfer && (
-            <div className="maneuver-buttons">
-              <button className="maneuver-btn" onClick={() => setTransferModalOpen(true)}>
-                ⇒ TRANSFER
-              </button>
-            </div>
-          )}
+          <div className="maneuver-buttons">
+            <button className="maneuver-btn" onClick={() => setTargetSelectionMode(true)}>
+              {hasExistingTransfer ? '+ CHAIN' : 'TRANSFER'}
+            </button>
+            <button className="maneuver-btn" onClick={() => setTransferModalOpen(true)}>
+              SHOW LIST
+            </button>
+          </div>
         </div>
       </div>
 
@@ -146,7 +223,7 @@ export const ShipPanel: React.FC = () => {
         <div className="modal-overlay" onClick={() => setTransferModalOpen(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>Select Transfer Target</h3>
+              <h3>{hasExistingTransfer ? 'Chain Transfer To' : 'Select Transfer Target'}</h3>
               <button className="modal-close" onClick={() => setTransferModalOpen(false)}>✕</button>
             </div>
             <div className="modal-body">

@@ -127,6 +127,12 @@
   background: rgba(110, 231, 183, 0.05);
 }
 
+.order-item.status-queued {
+  border-color: #6b8195;
+  background: rgba(107, 129, 149, 0.05);
+  border-style: dashed;
+}
+
 .order-info {
   flex: 1;
 }

@@ -30,11 +30,13 @@ interface GameContextType {
   hoverBody: (bodyId: string | null) => void;
   setManeuverMode: (mode: 'transfer' | 'orbital_change' | null) => void;
   setTransferTarget: (bodyId: string | null) => void;
+  setTargetSelectionMode: (enabled: boolean) => void;
 
   addManeuverNode: (node: ManeuverNode) => void;
   commitManeuverNode: (nodeId: string) => void;
   deleteManeuverNode: (nodeId: string) => void;
   setPendingTransfer: (shipId: string, arc: TransferArc | undefined) => void;
+  addQueuedTransfer: (shipId: string, arc: TransferArc) => void;
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
@@ -74,17 +76,27 @@ export function GameContextProvider({
       let orders = ship.orders;
       let transfer = ship.transfer;
       let pendingTransfer = ship.pendingTransfer;
+      let queuedTransfers = ship.queuedTransfers ? [...ship.queuedTransfers] : [];
       let changed = false;
 
       if (transfer) {
-        // Ship is in transit — check for arrival
         if (tick >= transfer.arrivalTime) {
-          const arrBody = bodies.find(b => b.id === transfer!.arrivalBodyId);
-          const arrRadius = arrBody ? arrBody.radius + 4 : 10;
-          orbit = createCircularOrbit(transfer.arrivalBodyId, arrRadius, tick, bodies);
           const cost = Math.round(Math.abs(transfer.arrivalDv) * 10);
           fuel = Math.max(0, fuel - cost);
-          transfer = undefined;
+
+          if (queuedTransfers.length > 0) {
+            // Chain into next queued transfer
+            const nextArc = queuedTransfers.shift()!;
+            const depCost = Math.round(Math.abs(nextArc.departureDv) * 10);
+            fuel = Math.max(0, fuel - depCost);
+            transfer = nextArc;
+            orbit = createCircularOrbit(nextArc.departureBodyId, 10, tick, bodies);
+          } else {
+            const arrBody = bodies.find(b => b.id === transfer!.arrivalBodyId);
+            const arrRadius = arrBody ? arrBody.radius + 4 : 10;
+            orbit = createCircularOrbit(transfer.arrivalBodyId, arrRadius, tick, bodies);
+            transfer = undefined;
+          }
           changed = true;
         }
       } else {
@@ -111,7 +123,7 @@ export function GameContextProvider({
 
       if (changed) {
         mutated = true;
-        return { ...ship, orbit, fuel, orders, transfer, pendingTransfer };
+        return { ...ship, orbit, fuel, orders, transfer, pendingTransfer, queuedTransfers };
       }
       return ship;
     });
@@ -264,7 +276,6 @@ export function GameContextProvider({
       ships: prev.ships.map(ship => {
         const deletedOrder = ship.orders.find(o => o.id === nodeId);
         const newOrders = ship.orders.filter(order => order.id !== nodeId);
-        // Clear pendingTransfer if deleting a transfer node and no transfer nodes remain
         const hasTransferOrders = newOrders.some(o => o.type === 'transfer');
         return {
           ...ship,
@@ -272,9 +283,16 @@ export function GameContextProvider({
           pendingTransfer: (deletedOrder?.type === 'transfer' && !hasTransferOrders)
             ? undefined
             : ship.pendingTransfer,
+          queuedTransfers: (deletedOrder?.type === 'transfer' && !hasTransferOrders)
+            ? undefined
+            : ship.queuedTransfers,
         };
       }),
     }));
+  }, []);
+
+  const setTargetSelectionMode = useCallback((enabled: boolean) => {
+    setUIStateInternal(prev => ({ ...prev, targetSelectionMode: enabled }));
   }, []);
 
   const setPendingTransfer = useCallback((shipId: string, arc: TransferArc | undefined) => {
@@ -286,13 +304,24 @@ export function GameContextProvider({
     }));
   }, []);
 
+  const addQueuedTransfer = useCallback((shipId: string, arc: TransferArc) => {
+    setGameStateInternal(prev => ({
+      ...prev,
+      ships: prev.ships.map(ship => {
+        if (ship.id !== shipId) return ship;
+        const queue = ship.queuedTransfers ? [...ship.queuedTransfers, arc] : [arc];
+        return { ...ship, queuedTransfers: queue };
+      }),
+    }));
+  }, []);
+
   const value: GameContextType = {
     gameState, camera, uiState, simSpeed,
     setGameState, updateGameState, updateTick, setSimSpeed, loadScenario,
     updateCamera, setZoomLevel, focusBody,
     selectShip, deselectShip, selectBody, deselectBody, hoverBody,
-    setManeuverMode, setTransferTarget,
-    addManeuverNode, commitManeuverNode, deleteManeuverNode, setPendingTransfer,
+    setManeuverMode, setTransferTarget, setTargetSelectionMode,
+    addManeuverNode, commitManeuverNode, deleteManeuverNode, setPendingTransfer, addQueuedTransfer,
   };
 
   return (

@@ -96,6 +96,7 @@ export interface Ship {
   // Bezier transfer state
   pendingTransfer?: TransferArc;        // planned but not yet departed
   transfer?: TransferArc;               // currently in transit
+  queuedTransfers?: TransferArc[];      // chained transfers waiting after current
 
   // Display info
   isSelected?: boolean;
@@ -143,6 +144,7 @@ export interface MapUIState {
   hoveredBodyId?: string;
   maneuverMode?: 'transfer' | 'orbital_change' | null;
   transferTargetId?: string;            // when planning a transfer
+  targetSelectionMode?: boolean;        // true when picking a transfer target on the map
 }
 
 /**

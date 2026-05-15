@@ -12,9 +12,12 @@ import {
   drawTransitShip,
   drawDepartureMarker,
   drawGhostPlanet,
+  drawTargetHighlight,
+  worldToCanvas,
   RenderContext,
 } from '../render/mapRenderer';
 import { bezierPositionAt } from '../physics/bezierTransfer';
+import { bodyPosition } from '../physics/orbitalMechanics';
 import { COLORS, withOpacity } from '../render/colors';
 import './MapCanvas.css';
 
@@ -23,13 +26,22 @@ interface MapCanvasProps {
   height?: number;
 }
 
+interface PendingTarget {
+  bodyId: string;
+  canvasX: number;
+  canvasY: number;
+}
+
 export const MapCanvas: React.FC<MapCanvasProps> = ({
   width = typeof window !== 'undefined' ? window.innerWidth : 1280,
   height = typeof window !== 'undefined' ? window.innerHeight : 800,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { gameState, camera, uiState, simSpeed, updateCamera, selectShip, selectBody, hoverBody, focusBody } =
-    useGameContext();
+  const {
+    gameState, camera, uiState, simSpeed,
+    updateCamera, selectShip, selectBody, hoverBody, focusBody,
+    setTargetSelectionMode,
+  } = useGameContext();
 
   const [panState, setPanState] = useState<{
     startX: number;
@@ -37,6 +49,26 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     camX: number;
     camY: number;
   } | null>(null);
+
+  const [pendingTarget, setPendingTarget] = useState<PendingTarget | null>(null);
+
+  // Clear pending target when leaving target selection mode
+  useEffect(() => {
+    if (!uiState.targetSelectionMode) {
+      setPendingTarget(null);
+    }
+  }, [uiState.targetSelectionMode]);
+
+  // Escape key cancels target selection
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && uiState.targetSelectionMode) {
+        setTargetSelectionMode(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [uiState.targetSelectionMode, setTargetSelectionMode]);
 
   const render = useCallback(() => {
     if (!canvasRef.current) return;
@@ -67,6 +99,42 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       drawSOIBoundary(body, renderContext);
     }
 
+    // Draw target selection highlights
+    if (uiState.targetSelectionMode) {
+      for (const body of gameState.bodies) {
+        if (body.id === 'sol') continue;
+        const isHovered = uiState.hoveredBodyId === body.id;
+        drawTargetHighlight(body, renderContext, isHovered);
+      }
+
+      // Draw dashed line from selected ship to hovered body
+      if (uiState.hoveredBodyId && uiState.selectedShipId) {
+        const ship = gameState.ships.find(s => s.id === uiState.selectedShipId);
+        const hovBody = gameState.bodies.find(b => b.id === uiState.hoveredBodyId);
+        if (ship && hovBody) {
+          let shipWorldPos;
+          if (ship.transfer) {
+            shipWorldPos = bezierPositionAt(ship.transfer, gameState.currentTick);
+          } else {
+            const { orbitWorldPos } = require('../physics/orbitalMechanics');
+            shipWorldPos = orbitWorldPos(ship.orbit, gameState.currentTick, gameState.bodies);
+          }
+          const bodyWorldPos = bodyPosition(hovBody, gameState.currentTick, gameState.bodies);
+          const shipCanvas = worldToCanvas(shipWorldPos.x, shipWorldPos.y, renderContext);
+          const bodyCanvas = worldToCanvas(bodyWorldPos.x, bodyWorldPos.y, renderContext);
+
+          ctx.strokeStyle = withOpacity(COLORS.warning, 0.3);
+          ctx.lineWidth = 1;
+          ctx.setLineDash([6, 6]);
+          ctx.beginPath();
+          ctx.moveTo(shipCanvas.x, shipCanvas.y);
+          ctx.lineTo(bodyCanvas.x, bodyCanvas.y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+    }
+
     // Draw bodies
     for (const body of gameState.bodies) {
       const isSelected = uiState.selectedBodyId === body.id;
@@ -79,17 +147,24 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const isSelected = uiState.selectedShipId === ship.id;
 
       if (ship.transfer) {
-        // Ship is in transit — draw Bezier trajectory and transit ship
         drawBezierTrajectory(ship.transfer, renderContext, COLORS.arcTransfer, false);
         drawTransitShip(ship, renderContext, isSelected);
 
-        // Ghost planet at arrival
         const arrivalBody = gameState.bodies.find(b => b.id === ship.transfer!.arrivalBodyId);
         if (arrivalBody) {
           drawGhostPlanet(arrivalBody, ship.transfer.arrivalTime, gameState.currentTick, renderContext);
         }
+
+        if (ship.queuedTransfers) {
+          for (const qt of ship.queuedTransfers) {
+            drawBezierTrajectory(qt, renderContext, COLORS.fgDim, true);
+            const qtArrBody = gameState.bodies.find(b => b.id === qt.arrivalBodyId);
+            if (qtArrBody) {
+              drawGhostPlanet(qtArrBody, qt.arrivalTime, gameState.currentTick, renderContext);
+            }
+          }
+        }
       } else if (ship.pendingTransfer) {
-        // Ship has a planned transfer — draw orbit + preview
         drawOrbitEllipse(
           ship.orbit, renderContext,
           isSelected ? COLORS.orbitCurrent : COLORS.orbitTrajectory,
@@ -98,24 +173,30 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         drawShip(ship, renderContext, isSelected);
         if (isSelected) drawApsisMarkers(ship, renderContext);
 
-        // Dashed preview of Bezier transfer
         const nodeColor = ship.orders.some(o => o.type === 'transfer' && o.status === 'committed')
           ? COLORS.maneuverCommitted
           : COLORS.maneuverPlanned;
         drawBezierTrajectory(ship.pendingTransfer, renderContext, nodeColor, true);
 
-        // Ghost planet at arrival
         const arrivalBody = gameState.bodies.find(b => b.id === ship.pendingTransfer!.arrivalBodyId);
         if (arrivalBody) {
           drawGhostPlanet(arrivalBody, ship.pendingTransfer.arrivalTime, gameState.currentTick, renderContext);
         }
 
-        // Departure marker
         if (isSelected) {
           drawDepartureMarker(ship.pendingTransfer, gameState.currentTick, renderContext, nodeColor);
         }
+
+        if (ship.queuedTransfers) {
+          for (const qt of ship.queuedTransfers) {
+            drawBezierTrajectory(qt, renderContext, COLORS.fgDim, true);
+            const qtArrBody = gameState.bodies.find(b => b.id === qt.arrivalBodyId);
+            if (qtArrBody) {
+              drawGhostPlanet(qtArrBody, qt.arrivalTime, gameState.currentTick, renderContext);
+            }
+          }
+        }
       } else {
-        // Normal orbiting ship
         drawOrbitEllipse(
           ship.orbit, renderContext,
           isSelected ? COLORS.orbitCurrent : COLORS.orbitTrajectory,
@@ -126,7 +207,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
     }
 
-    drawHUD(renderContext);
+    drawHUD(renderContext, uiState.targetSelectionMode);
   }, [gameState, camera, uiState, simSpeed]);
 
   const handleMouseMove = useCallback(
@@ -145,9 +226,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (e.button === 2) {
+      if (uiState.targetSelectionMode) {
+        setTargetSelectionMode(false);
+        return;
+      }
       setPanState({ startX: e.clientX, startY: e.clientY, camX: camera.x, camY: camera.y });
     }
-  }, [camera]);
+  }, [camera, uiState.targetSelectionMode, setTargetSelectionMode]);
 
   const handleMouseUp = useCallback(() => {
     setPanState(null);
@@ -179,6 +264,22 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const canvasX = e.clientX - rect.left;
       const canvasY = e.clientY - rect.top;
 
+      if (uiState.targetSelectionMode) {
+        // In target selection: click a body to set pending target
+        for (const body of gameState.bodies) {
+          if (body.id === 'sol') continue;
+          const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
+          const clickRadius = Math.max(12, body.radius! * camera.scale + 8);
+          if (Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < clickRadius) {
+            setPendingTarget({ bodyId: body.id, canvasX: bodyPos.x, canvasY: bodyPos.y });
+            return;
+          }
+        }
+        // Clicked empty space: clear pending target
+        setPendingTarget(null);
+        return;
+      }
+
       for (const ship of gameState.ships) {
         const shipPos = getShipCanvasPos(ship, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
         if (Math.hypot(canvasX - shipPos.x, canvasY - shipPos.y) < 10) {
@@ -199,7 +300,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       selectShip('');
       selectBody('');
     },
-    [gameState, camera, selectShip, selectBody]
+    [gameState, camera, uiState.targetSelectionMode, selectShip, selectBody]
   );
 
   const handleMouseHover = useCallback(
@@ -224,6 +325,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
   const handleDoubleClick = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
+      if (uiState.targetSelectionMode) return;
       if (!canvasRef.current) return;
       const rect = canvasRef.current.getBoundingClientRect();
       const canvasX = e.clientX - rect.left;
@@ -238,7 +340,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
       focusBody(undefined);
     },
-    [gameState, camera, focusBody]
+    [gameState, camera, focusBody, uiState.targetSelectionMode]
   );
 
   useEffect(() => {
@@ -248,20 +350,148 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     return () => { cancelled = true; cancelAnimationFrame(frame); clearTimeout(fallback); };
   }, [render]);
 
+  const pendingBody = pendingTarget ? gameState.bodies.find(b => b.id === pendingTarget.bodyId) : null;
+
   return (
-    <canvas
-      ref={canvasRef}
-      width={width}
-      height={height}
-      onMouseMove={(e) => { handleMouseMove(e); handleMouseHover(e); }}
-      onMouseDown={handleMouseDown}
-      onMouseUp={handleMouseUp}
-      onContextMenu={(e) => e.preventDefault()}
-      onWheel={handleWheel}
-      onClick={handleClick}
-      onDoubleClick={handleDoubleClick}
-      className="map-canvas"
-    />
+    <div style={{ position: 'relative' }}>
+      <canvas
+        ref={canvasRef}
+        width={width}
+        height={height}
+        onMouseMove={(e) => { handleMouseMove(e); handleMouseHover(e); }}
+        onMouseDown={handleMouseDown}
+        onMouseUp={handleMouseUp}
+        onContextMenu={(e) => e.preventDefault()}
+        onWheel={handleWheel}
+        onClick={handleClick}
+        onDoubleClick={handleDoubleClick}
+        className="map-canvas"
+        style={{ cursor: uiState.targetSelectionMode ? 'crosshair' : undefined }}
+      />
+
+      {uiState.targetSelectionMode && pendingTarget && pendingBody && (
+        <TargetConfirmation
+          body={pendingBody}
+          canvasX={pendingTarget.canvasX}
+          canvasY={pendingTarget.canvasY}
+          onConfirm={(strategy) => {
+            setPendingTarget(null);
+            // Dispatch custom event for ShipPanel to handle
+            window.dispatchEvent(new CustomEvent('orbital-transfer-confirm', {
+              detail: { bodyId: pendingTarget.bodyId, strategy },
+            }));
+          }}
+          onCancel={() => setPendingTarget(null)}
+        />
+      )}
+    </div>
+  );
+};
+
+interface TargetConfirmationProps {
+  body: { id: string; name: string };
+  canvasX: number;
+  canvasY: number;
+  onConfirm: (strategy: 'quickest' | 'efficient') => void;
+  onCancel: () => void;
+}
+
+const TargetConfirmation: React.FC<TargetConfirmationProps> = ({
+  body, canvasX, canvasY, onConfirm, onCancel,
+}) => {
+  const boxWidth = 180;
+  const boxHeight = 72;
+  let left = canvasX - boxWidth / 2;
+  let top = canvasY - boxHeight - 20;
+  if (top < 8) top = canvasY + 20;
+  if (left < 8) left = 8;
+  if (typeof window !== 'undefined' && left + boxWidth > window.innerWidth - 8) {
+    left = window.innerWidth - boxWidth - 8;
+  }
+
+  return (
+    <div
+      className="target-confirmation"
+      style={{
+        position: 'absolute',
+        left: `${left}px`,
+        top: `${top}px`,
+        width: `${boxWidth}px`,
+        background: 'rgba(10, 14, 20, 0.96)',
+        border: '1px solid #ffb84d',
+        borderRadius: '4px',
+        padding: '8px 10px',
+        zIndex: 100,
+        fontFamily: "'JetBrains Mono', monospace",
+        backdropFilter: 'blur(8px)',
+        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.4)',
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div style={{
+        color: '#d8e4ee',
+        fontSize: '10px',
+        textTransform: 'uppercase',
+        letterSpacing: '0.05em',
+        marginBottom: '6px',
+        textAlign: 'center',
+      }}>
+        Transfer to {body.name}?
+      </div>
+      <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+        <button
+          onClick={() => onConfirm('quickest')}
+          style={{
+            background: 'transparent',
+            border: '1px solid #ffb84d',
+            color: '#ffb84d',
+            padding: '4px 8px',
+            borderRadius: '2px',
+            cursor: 'pointer',
+            fontSize: '8px',
+            fontWeight: 600,
+            fontFamily: "'JetBrains Mono', monospace",
+            textTransform: 'uppercase',
+          }}
+        >
+          QUICK
+        </button>
+        <button
+          onClick={() => onConfirm('efficient')}
+          style={{
+            background: 'transparent',
+            border: '1px solid #4ecdc4',
+            color: '#4ecdc4',
+            padding: '4px 8px',
+            borderRadius: '2px',
+            cursor: 'pointer',
+            fontSize: '8px',
+            fontWeight: 600,
+            fontFamily: "'JetBrains Mono', monospace",
+            textTransform: 'uppercase',
+          }}
+        >
+          EFFICIENT
+        </button>
+        <button
+          onClick={onCancel}
+          style={{
+            background: 'transparent',
+            border: '1px solid #6b8195',
+            color: '#6b8195',
+            padding: '4px 8px',
+            borderRadius: '2px',
+            cursor: 'pointer',
+            fontSize: '8px',
+            fontWeight: 600,
+            fontFamily: "'JetBrains Mono', monospace",
+            textTransform: 'uppercase',
+          }}
+        >
+          CANCEL
+        </button>
+      </div>
+    </div>
   );
 };
 
@@ -292,7 +522,7 @@ function getShipCanvasPos(
   };
 }
 
-function drawHUD(ctx: RenderContext) {
+function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
   const speedLabel = ctx.simSpeed && ctx.simSpeed > 0 ? `${ctx.simSpeed}×` : 'PAUSED';
   ctx.ctx.fillStyle = COLORS.fgDim;
   ctx.ctx.font = '12px monospace';
@@ -305,16 +535,26 @@ function drawHUD(ctx: RenderContext) {
   ctx.ctx.font = '10px monospace';
   ctx.ctx.fillText('Right-drag: pan | Scroll: zoom | Click: select | Double-click: focus', 16, ctx.canvas.height - 32);
 
+  if (targetSelectionMode) {
+    ctx.ctx.fillStyle = COLORS.warning;
+    ctx.ctx.font = 'bold 12px monospace';
+    ctx.ctx.textAlign = 'center';
+    ctx.ctx.fillText('SELECT TARGET BODY', ctx.canvas.width / 2, 16);
+    ctx.ctx.fillStyle = COLORS.fgDim;
+    ctx.ctx.font = '10px monospace';
+    ctx.ctx.fillText('Click a body to transfer | ESC to cancel | Right-click to cancel', ctx.canvas.width / 2, 32);
+  }
+
   if (ctx.camera.focusedBodyId) {
     const focusedBody = ctx.bodies.find(b => b.id === ctx.camera.focusedBodyId);
     if (focusedBody) {
       ctx.ctx.fillStyle = COLORS.info;
       ctx.ctx.font = 'bold 12px monospace';
       ctx.ctx.textAlign = 'center';
-      ctx.ctx.fillText(`FOCUSED: ${focusedBody.name.toUpperCase()}`, ctx.canvas.width / 2, 32);
+      ctx.ctx.fillText(`FOCUSED: ${focusedBody.name.toUpperCase()}`, ctx.canvas.width / 2, targetSelectionMode ? 52 : 32);
       ctx.ctx.fillStyle = COLORS.fgDim;
       ctx.ctx.font = '10px monospace';
-      ctx.ctx.fillText(`SOI: ${focusedBody.soi.toFixed(0)} km`, ctx.canvas.width / 2, 48);
+      ctx.ctx.fillText(`SOI: ${focusedBody.soi.toFixed(0)} km`, ctx.canvas.width / 2, targetSelectionMode ? 68 : 48);
     }
   }
 
