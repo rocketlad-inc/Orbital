@@ -146,7 +146,6 @@ export function GameContextProvider({
 
   // Tick-based game loop
   const lastTimeRef = useRef<number>(0);
-  const lastHarvestTickRef = useRef<number>(0);
 
   useEffect(() => {
     if (simSpeed === 0) return;
@@ -187,17 +186,16 @@ export function GameContextProvider({
 
         // Resource harvesting — freighters at bodies collect resources
         let updatedResources = { ...prev.resources };
-        if (newTime - lastHarvestTickRef.current >= HARVEST_INTERVAL) {
-          lastHarvestTickRef.current = newTime;
+        let lastHarvestTick = prev.lastHarvestTick;
+        if (newTime - lastHarvestTick >= HARVEST_INTERVAL) {
+          lastHarvestTick = newTime;
           for (const body of prev.bodies) {
             if (!body.resources) continue;
-            // Find freighters orbiting this body (not in transit)
             const freightersHere = updatedShips.filter(
               s => s.class === 'freighter' && !s.transfer && s.orbit.parentBodyId === body.id
             );
             if (freightersHere.length === 0) continue;
 
-            // Group freighters by faction
             const byFaction = new Map<string, number>();
             for (const f of freightersHere) {
               byFaction.set(f.ownedBy, (byFaction.get(f.ownedBy) || 0) + 1);
@@ -229,11 +227,12 @@ export function GameContextProvider({
             ...prev, ships: updatedShips, orders: allOrders,
             currentTick: newTime, buildOrders, resources: updatedResources,
             combatLog: [...prev.combatLog.slice(-20), ...newLogs],
+            lastHarvestTick,
           };
         }
 
         const allOrders = updatedShips.flatMap(s => s.orders);
-        return { ...prev, ships: updatedShips, orders: allOrders, currentTick: newTime, buildOrders, resources: updatedResources };
+        return { ...prev, ships: updatedShips, orders: allOrders, currentTick: newTime, buildOrders, resources: updatedResources, lastHarvestTick };
       });
     }, 50);
 
@@ -251,8 +250,40 @@ export function GameContextProvider({
   const updateTick = useCallback((tick: number) => {
     setGameStateInternal(prev => {
       const updatedShips = checkNodeExecution(prev.ships, prev.bodies, tick);
+
+      // Resource harvesting (same logic as game loop)
+      let updatedResources = { ...prev.resources };
+      let lastHarvestTick = prev.lastHarvestTick;
+      if (tick - lastHarvestTick >= HARVEST_INTERVAL) {
+        lastHarvestTick = tick;
+        for (const body of prev.bodies) {
+          if (!body.resources) continue;
+          const freightersHere = updatedShips.filter(
+            s => s.class === 'freighter' && !s.transfer && s.orbit.parentBodyId === body.id
+          );
+          if (freightersHere.length === 0) continue;
+          const byFaction = new Map<string, number>();
+          for (const f of freightersHere) {
+            byFaction.set(f.ownedBy, (byFaction.get(f.ownedBy) || 0) + 1);
+          }
+          const rates = bodyProductionRates(body);
+          for (const [factionId, count] of byFaction) {
+            const factionRes = updatedResources[factionId];
+            if (!factionRes) continue;
+            updatedResources = {
+              ...updatedResources,
+              [factionId]: {
+                fuel: factionRes.fuel + rates.fuel * count,
+                ore: factionRes.ore + rates.ore * count,
+                credits: factionRes.credits + rates.credits * count,
+              },
+            };
+          }
+        }
+      }
+
       const allOrders = updatedShips.flatMap(s => s.orders);
-      return { ...prev, ships: updatedShips, orders: allOrders, currentTick: tick };
+      return { ...prev, ships: updatedShips, orders: allOrders, currentTick: tick, resources: updatedResources, lastHarvestTick };
     });
   }, [checkNodeExecution]);
 
