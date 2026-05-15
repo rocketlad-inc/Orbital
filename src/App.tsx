@@ -10,6 +10,7 @@ import { SettlementsPanel } from './components/SettlementsPanel';
 import { FleetPanel } from './components/FleetPanel';
 import { AuthProvider, useAuth } from './multiplayer/AuthContext';
 import { AuthOverlay } from './multiplayer/AuthOverlay';
+import { Landing } from './components/Landing';
 import { ModePicker, GameMode } from './ModePicker';
 import { MultiplayerShell } from './multiplayer/MultiplayerShell';
 import { apiFetch, RoomSummary } from './multiplayer/api';
@@ -73,6 +74,7 @@ function AppShell() {
   const { user, loading } = useAuth();
   const [mode, setMode] = useState<GameMode | null>(null);
   const [activeRooms, setActiveRooms] = useState<RoomSummary[] | null>(null);
+  const [showAuth, setShowAuth] = useState(false);
 
   // When the user authenticates, fetch any rooms they're already a member of
   // so the mode picker can offer a "resume" shortcut.
@@ -130,6 +132,10 @@ function AppShell() {
   }
 
   if (!user) {
+    // Show landing first; clicking Login (or any CTA) reveals the auth overlay.
+    if (!showAuth) {
+      return <Landing onSignIn={() => setShowAuth(true)} />;
+    }
     return <AuthOverlay />;
   }
 
