@@ -1,7 +1,7 @@
 .scenario-selector {
   position: fixed;
-  top: 16px;
-  right: 16px;
+  top: 52px;
+  right: 264px;  /* leave room for outliner */
   z-index: 100;
   background: rgba(10, 14, 20, 0.94);
   border: 1px solid #2a3d50;

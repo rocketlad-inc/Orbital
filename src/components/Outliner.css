@@ -1,0 +1,203 @@
+/* ============================================================
+   Outliner — right-side persistent list of bodies & ships
+   ============================================================ */
+
+.outliner {
+  position: fixed;
+  top: 52px;
+  right: 8px;
+  bottom: 8px;
+  width: 240px;
+  z-index: 80;
+  background: rgba(10, 14, 20, 0.94);
+  border: 1px solid #2a3d50;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: #d8e4ee;
+  display: flex;
+  flex-direction: column;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  transition: width 0.2s ease, transform 0.2s ease;
+}
+
+.outliner--collapsed {
+  width: 32px;
+}
+
+.outliner__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid #2a3d50;
+  background: rgba(78, 205, 196, 0.05);
+}
+
+.outliner__title {
+  font-size: 9px;
+  font-weight: 700;
+  color: #4ecdc4;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.outliner__toggle {
+  background: none;
+  border: none;
+  color: #4ecdc4;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.outliner__toggle:hover {
+  color: #6ee7b7;
+}
+
+.outliner__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 4px;
+}
+
+.outliner--collapsed .outliner__body,
+.outliner--collapsed .outliner__title {
+  display: none;
+}
+
+.outliner__section {
+  margin-bottom: 10px;
+}
+
+.outliner__section-title {
+  font-size: 8px;
+  font-weight: 700;
+  color: #6b8195;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  margin-bottom: 2px;
+}
+
+.outliner__group {
+  margin-bottom: 4px;
+}
+
+.outliner__body-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+  border-radius: 2px;
+  transition: background 0.1s ease;
+}
+
+.outliner__body-row:hover {
+  background: rgba(78, 205, 196, 0.08);
+}
+
+.outliner__body-row.selected {
+  background: rgba(78, 205, 196, 0.18);
+  outline: 1px solid #4ecdc4;
+}
+
+.outliner__body-icon {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.outliner__body-name {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 600;
+  color: #d8e4ee;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.outliner__body-count {
+  font-size: 9px;
+  color: #6b8195;
+  padding: 1px 6px;
+  background: rgba(107, 129, 149, 0.15);
+  border-radius: 8px;
+}
+
+.outliner__ship-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 22px;
+  cursor: pointer;
+  border-radius: 2px;
+  transition: background 0.1s ease;
+  font-size: 10px;
+  color: #a8b8c8;
+}
+
+.outliner__ship-row:hover {
+  background: rgba(255, 184, 77, 0.08);
+  color: #ffb84d;
+}
+
+.outliner__ship-row.selected {
+  background: rgba(255, 184, 77, 0.18);
+  color: #ffb84d;
+  outline: 1px solid #ffb84d;
+}
+
+.outliner__ship-class {
+  font-size: 8px;
+  color: #6b8195;
+  text-transform: uppercase;
+  margin-right: 4px;
+  letter-spacing: 0.05em;
+}
+
+.outliner__ship-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.outliner__ship-status {
+  font-size: 8px;
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+
+.outliner__ship-status--transit {
+  color: #4ecdc4;
+  background: rgba(78, 205, 196, 0.12);
+}
+
+.outliner__ship-status--lowfuel {
+  color: #ff5e5e;
+  background: rgba(255, 94, 94, 0.12);
+}
+
+.outliner__empty {
+  font-size: 9px;
+  color: #6b8195;
+  font-style: italic;
+  padding: 4px 12px;
+}
+
+.outliner__hp-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.outliner__hp-dot--good { background: #6ee7b7; }
+.outliner__hp-dot--mid { background: #ffb84d; }
+.outliner__hp-dot--low { background: #ff5e5e; }

@@ -1,13 +1,15 @@
 .body-inspector {
   position: fixed;
   bottom: 16px;
-  right: 16px;
+  right: 264px;  /* leave room for outliner */
   z-index: 90;
   background: rgba(10, 14, 20, 0.96);
   border: 1px solid #2a3d50;
   border-radius: 4px;
   backdrop-filter: blur(8px);
   min-width: 280px;
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
 }
 
