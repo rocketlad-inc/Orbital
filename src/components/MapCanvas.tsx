@@ -515,7 +515,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       onMouseDown={handleMouseDown}
       onMouseUp={handleMouseUp}
       onContextMenu={(e) => e.preventDefault()}
-      onWheel={handleWheel}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
       className="map-canvas"
