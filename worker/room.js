@@ -370,17 +370,17 @@ export class Room {
         .first();
       if (!target) continue;
       const rp = (target.radius || 4) + 4;
+      // Fuel was removed from the economy — no deduction on arrival.
       await this.env.DB.batch([
         this.env.DB
           .prepare(
             `UPDATE game_ships
                 SET parent_body_id = ?,
                     orbit_rp = ?, orbit_ra = ?, orbit_omega = 0,
-                    orbit_m0 = 0, orbit_epoch = ?, orbit_direction = 1,
-                    fuel = MAX(0, fuel - ?)
+                    orbit_m0 = 0, orbit_epoch = ?, orbit_direction = 1
               WHERE id = ?`,
           )
-          .bind(n.target_body_id, rp, rp, tick, n.fuel_cost || 0, n.ship_id),
+          .bind(n.target_body_id, rp, rp, tick, n.ship_id),
         this.env.DB
           .prepare("UPDATE game_ship_nodes SET status = 'executed', executed_at_tick = ? WHERE id = ?")
           .bind(tick, n.id),

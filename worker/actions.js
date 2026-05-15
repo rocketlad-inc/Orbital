@@ -76,8 +76,10 @@ async function handleCommitTransfer(req, env, ctx) {
   const dvP = Number(body.dv_prograde ?? 0);
   const dvN = Number(body.dv_normal ?? 0);
   const dvR = Number(body.dv_radial ?? 0);
+  // Fuel was removed from the game economy. We still accept the field
+  // and store it on the node so the existing schema works, but we no
+  // longer reject a burn for insufficient fuel.
   const fuelCost = Math.max(0, Number(body.fuel_cost ?? 0));
-  if (fuelCost > ship.fuel) return err(409, 'insufficient_fuel', 'not enough fuel for this burn');
 
   // Find next sequence for this ship.
   const last = await env.DB
@@ -131,8 +133,9 @@ async function handleQueueBuild(req, env, ctx) {
     return err(409, 'no_shipyard', 'body has no shipyard (need shipyard_level >= 1)');
   }
 
-  if (me.fuel < cost.fuel || me.metal < cost.metal || me.gold < cost.gold) {
-    return err(409, 'insufficient_resources', `need ${cost.metal}M ${cost.fuel}F ${cost.gold}G`);
+  // Fuel was removed from the economy; only metal + gold are spent on builds.
+  if (me.metal < cost.metal || me.gold < cost.gold) {
+    return err(409, 'insufficient_resources', `need ${cost.metal}M ${cost.gold}G`);
   }
 
   const game = await env.DB
@@ -154,10 +157,10 @@ async function handleQueueBuild(req, env, ctx) {
       .bind(orderId, gameId, bodyId, me.id, shipClass, startTick, completeTick),
     env.DB
       .prepare(
-        `UPDATE game_factions SET fuel = fuel - ?, metal = metal - ?, gold = gold - ?
+        `UPDATE game_factions SET metal = metal - ?, gold = gold - ?
           WHERE id = ?`,
       )
-      .bind(cost.fuel, cost.metal, cost.gold, me.id),
+      .bind(cost.metal, cost.gold, me.id),
   ]);
 
   return json({
@@ -173,9 +176,9 @@ async function handleQueueBuild(req, env, ctx) {
 
 // POST /api/games/:gameId/bodies/:bodyId/settlement
 // body: { type: 'city'|'station', name? }
-// Cost is fixed for v1: 30 metal, 20 fuel, 20 gold. Caller's faction must
-// have a freighter in orbit OR own the body, and resources to spare.
-const SETTLEMENT_COST = { fuel: 20, metal: 30, gold: 20 };
+// Cost is fixed for v1: 30 metal, 20 gold (fuel was removed from the
+// economy). Caller's faction must have a ship in orbit OR own the body.
+const SETTLEMENT_COST = { metal: 30, gold: 20 };
 
 async function handleDeploySettlement(req, env, ctx) {
   const { gameId, bodyId } = ctx.params;
@@ -215,9 +218,9 @@ async function handleDeploySettlement(req, env, ctx) {
     return err(403, 'no_presence', 'need a ship at this body to deploy');
   }
 
-  if (me.fuel < SETTLEMENT_COST.fuel || me.metal < SETTLEMENT_COST.metal || me.gold < SETTLEMENT_COST.gold) {
+  if (me.metal < SETTLEMENT_COST.metal || me.gold < SETTLEMENT_COST.gold) {
     return err(409, 'insufficient_resources',
-      `need ${SETTLEMENT_COST.metal}M ${SETTLEMENT_COST.fuel}F ${SETTLEMENT_COST.gold}G`);
+      `need ${SETTLEMENT_COST.metal}M ${SETTLEMENT_COST.gold}G`);
   }
 
   const game = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
@@ -253,8 +256,8 @@ async function handleDeploySettlement(req, env, ctx) {
             surfaceAngle, rp, rp, tick,
             tick),
     env.DB
-      .prepare('UPDATE game_factions SET fuel = fuel - ?, metal = metal - ?, gold = gold - ? WHERE id = ?')
-      .bind(SETTLEMENT_COST.fuel, SETTLEMENT_COST.metal, SETTLEMENT_COST.gold, me.id),
+      .prepare('UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ?')
+      .bind(SETTLEMENT_COST.metal, SETTLEMENT_COST.gold, me.id),
   ]);
 
   return json({ settlement: { id, body_id: bodyId, type, name, hp, hp_max: hp } }, { status: 201 });
