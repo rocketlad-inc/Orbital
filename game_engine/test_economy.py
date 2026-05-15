@@ -67,7 +67,7 @@ def game_state():
         development_level=2,
         resources={"metal": 100, "fuel": 50, "gold": 20, "science": 30},
     )
-    state.bodies["earth"] = earth
+    state.bodies.append(earth)
 
     mars = Body(
         id="mars",
@@ -83,9 +83,17 @@ def game_state():
         development_level=1,
         resources={"metal": 80, "fuel": 30, "gold": 15, "science": 20},
     )
-    state.bodies["mars"] = mars
+    state.bodies.append(mars)
 
     return state
+
+
+def _earth(state):
+    return next(b for b in state.bodies if b.id == "earth")
+
+
+def _mars(state):
+    return next(b for b in state.bodies if b.id == "mars")
 
 
 @pytest.fixture
@@ -130,7 +138,7 @@ class TestShipProduction:
     def test_complete_ship_production(self, game_state, chronicle):
         """Test completing ship production."""
         faction = game_state.factions[0]
-        body = game_state.bodies["earth"]
+        body = _earth(game_state)
 
         success, ship = complete_ship_production(
             game_state, faction, ShipClass.CRUISER, body, "queue_1", chronicle
@@ -149,7 +157,7 @@ class TestBodyDevelopment:
     def test_upgrade_body_development(self, game_state, chronicle):
         """Test upgrading a body's development level."""
         faction = game_state.factions[0]
-        body = game_state.bodies["earth"]
+        body = _earth(game_state)
         initial_level = body.development_level
 
         # Ensure faction has enough resources
@@ -166,7 +174,7 @@ class TestBodyDevelopment:
     def test_upgrade_insufficient_resources(self, game_state, chronicle):
         """Test upgrade with insufficient resources."""
         faction = game_state.factions[0]
-        body = game_state.bodies["earth"]
+        body = _earth(game_state)
         faction.resources["gold"] = 50  # Less than upgrade cost
 
         success, queue_id = upgrade_body_development(
@@ -179,7 +187,7 @@ class TestBodyDevelopment:
     def test_complete_body_development(self, game_state, chronicle):
         """Test completing a body development upgrade."""
         faction = game_state.factions[0]
-        body = game_state.bodies["earth"]
+        body = _earth(game_state)
         initial_level = body.development_level
 
         success = complete_body_development(
@@ -192,7 +200,7 @@ class TestBodyDevelopment:
     def test_max_development_level(self, game_state, chronicle):
         """Test that development can't exceed level 5."""
         faction = game_state.factions[0]
-        body = game_state.bodies["earth"]
+        body = _earth(game_state)
         body.development_level = 5
 
         success = complete_body_development(
@@ -209,7 +217,7 @@ class TestFuelTransfer:
     def test_transfer_fuel(self, game_state, chronicle):
         """Test transferring fuel from body to ship."""
         faction = game_state.factions[0]
-        body = game_state.bodies["earth"]
+        body = _earth(game_state)
 
         # Create a ship
         orbit = OrbitElements(
@@ -224,7 +232,7 @@ class TestFuelTransfer:
             fuel=100.0,
             orbit=orbit,
         )
-        game_state.ships["ship_1"] = ship
+        game_state.ships.append(ship)
 
         initial_body_fuel = body.resources["fuel"]
         initial_ship_fuel = ship.fuel
@@ -241,7 +249,7 @@ class TestFuelTransfer:
     def test_transfer_more_than_body_has(self, game_state, chronicle):
         """Test transferring more fuel than body has."""
         faction = game_state.factions[0]
-        body = game_state.bodies["earth"]
+        body = _earth(game_state)
 
         orbit = OrbitElements(
             rp=100.0, ra=100.0, omega=0.0, M0=0.0, epoch=0,
@@ -255,7 +263,7 @@ class TestFuelTransfer:
             fuel=100.0,
             orbit=orbit,
         )
-        game_state.ships["ship_1"] = ship
+        game_state.ships.append(ship)
 
         success = transfer_fuel(
             game_state, faction, ship.id, body.id, 1000.0, chronicle
@@ -267,7 +275,7 @@ class TestFuelTransfer:
         """Test transferring from body owned by different faction."""
         faction_a = game_state.factions[0]
         faction_b = game_state.factions[1]
-        body = game_state.bodies["earth"]  # Owned by faction_a
+        body = _earth(game_state)
 
         orbit = OrbitElements(
             rp=100.0, ra=100.0, omega=0.0, M0=0.0, epoch=0,
@@ -281,7 +289,7 @@ class TestFuelTransfer:
             fuel=100.0,
             orbit=orbit,
         )
-        game_state.ships["ship_2"] = ship
+        game_state.ships.append(ship)
 
         success = transfer_fuel(
             game_state, faction_b, ship.id, body.id, 50.0, chronicle

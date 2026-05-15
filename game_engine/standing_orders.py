@@ -49,7 +49,6 @@ class StandingOrder:
     """
     id: str
     faction_id: str
-    enabled: bool = True
 
     # Condition
     condition_type: OrderCondition
@@ -58,6 +57,8 @@ class StandingOrder:
     # Action
     action_type: OrderAction
     action_data: Dict[str, Any]
+
+    enabled: bool = True
 
 
 def evaluate_condition(

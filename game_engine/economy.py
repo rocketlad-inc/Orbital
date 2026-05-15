@@ -23,6 +23,14 @@ from .resources import deduct_resources, add_resources
 from .chronicle import Chronicle
 
 
+def _find_ship(state: GameState, ship_id: str) -> Optional[Ship]:
+    return next((s for s in state.ships if s.id == ship_id), None)
+
+
+def _find_body(state: GameState, body_id: str) -> Optional[Body]:
+    return next((b for b in state.bodies if b.id == body_id), None)
+
+
 # Development upgrade costs: {level: {resource: cost}}
 DEVELOPMENT_COSTS = {
     0: {"metal": 200, "gold": 100},      # level 0 -> 1
@@ -119,20 +127,25 @@ def complete_ship_production(
     if not design:
         return False, None
 
-    # Create ship with initial fuel
+    # Create ship in a low orbit around the body it was built at.
+    # rp/ra slightly larger than body's surface radius for a sensible default.
     ship_id = str(uuid.uuid4())
+    parking_alt = body.radius + 2.0
+    initial_orbit = OrbitElements(
+        rp=parking_alt, ra=parking_alt, omega=0.0, M0=0.0, epoch=state.current_tick,
+        direction=1, period=10.0, parent_body_id=body.id,
+    )
     ship = Ship(
         id=ship_id,
         name=f"{faction.name} {ship_class.value.title()}",
         class_type=ship_class,
         owned_by=faction.id,
         fuel=design.max_fuel,
-        orbit=body.orbit if hasattr(body, 'orbit') else None,
+        orbit=initial_orbit,
     )
 
-    # Add to game state
-    if ship_id not in state.ships:
-        state.ships[ship_id] = ship
+    if not any(s.id == ship_id for s in state.ships):
+        state.ships.append(ship)
 
     # Log completion
     chronicle.log_event(
@@ -260,8 +273,8 @@ def transfer_fuel(
         Success
     """
     # Validate entities exist and faction owns both
-    ship = state.ships.get(ship_id)
-    body = state.bodies.get(body_id)
+    ship = _find_ship(state, ship_id)
+    body = _find_body(state, body_id)
 
     if not ship or not body:
         return False
@@ -273,10 +286,11 @@ def transfer_fuel(
     if body.resources.get("fuel", 0) < amount:
         return False
 
-    # Check ship has capacity
-    if ship.fuel + amount > ship.max_fuel:
-        # Transfer only what fits
-        amount = ship.max_fuel - ship.fuel
+    # Check ship has capacity (max_fuel comes from the ship design)
+    design = SHIP_DESIGNS.get(ship.class_type)
+    max_fuel = design.max_fuel if design else float("inf")
+    if ship.fuel + amount > max_fuel:
+        amount = max_fuel - ship.fuel
 
     # Transfer
     body.resources["fuel"] = body.resources.get("fuel", 0) - amount
