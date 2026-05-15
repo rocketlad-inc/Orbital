@@ -337,16 +337,21 @@ async function handleLobbySnapshot(_req, env, ctx) {
 
   // Enrich the DO member list with the empire identity recorded in D1.
   const idRows = await env.DB
-    .prepare('SELECT user_id, empire_name, bio FROM room_members WHERE room_id = ?')
+    .prepare('SELECT user_id, empire_name, bio, chosen_starting_body FROM room_members WHERE room_id = ?')
     .bind(roomId)
     .all();
   const identityByUser = new Map(
-    (idRows.results ?? []).map(r => [r.user_id, { empire_name: r.empire_name, bio: r.bio }]),
+    (idRows.results ?? []).map(r => [r.user_id, {
+      empire_name: r.empire_name,
+      bio: r.bio,
+      chosen_starting_body: r.chosen_starting_body,
+    }]),
   );
   const enrichedMembers = (snap.members ?? []).map(m => ({
     ...m,
     empire_name: identityByUser.get(m.userId)?.empire_name ?? null,
     bio: identityByUser.get(m.userId)?.bio ?? null,
+    chosen_starting_body: identityByUser.get(m.userId)?.chosen_starting_body ?? null,
   }));
 
   return json({
@@ -356,6 +361,9 @@ async function handleLobbySnapshot(_req, env, ctx) {
     ready: snap.ready ?? {},
     game_started: settings.game_id != null,
     game_id: settings.game_id,
+    // Catalog of bodies players can pick as their capital. Currently
+    // every terrestrial planet plus the larger moons.
+    starting_body_options: factions.STARTING_BODY_OPTIONS,
   });
 }
 
@@ -402,6 +410,23 @@ async function handlePatchMe(req, env, ctx) {
       args.push(trimmed);
     }
   }
+  if (body.chosen_starting_body !== undefined) {
+    if (body.chosen_starting_body === null || body.chosen_starting_body === '') {
+      sets.push('chosen_starting_body = NULL');
+    } else {
+      if (!factions.isValidStartingBody(body.chosen_starting_body)) {
+        return err(400, 'bad_request', 'invalid starting body');
+      }
+      // Reject if another member of this room already claimed it.
+      const taken = await env.DB
+        .prepare('SELECT 1 AS x FROM room_members WHERE room_id = ? AND chosen_starting_body = ? AND user_id != ?')
+        .bind(roomId, body.chosen_starting_body, ctx.session.user_id)
+        .first();
+      if (taken) return err(409, 'body_taken', 'another player already chose that body');
+      sets.push('chosen_starting_body = ?');
+      args.push(body.chosen_starting_body);
+    }
+  }
   if (!sets.length) return err(400, 'bad_request', 'nothing to update');
 
   args.push(roomId, ctx.session.user_id);
@@ -411,7 +436,7 @@ async function handlePatchMe(req, env, ctx) {
     .run();
 
   const row = await env.DB
-    .prepare('SELECT empire_name, bio FROM room_members WHERE room_id = ? AND user_id = ?')
+    .prepare('SELECT empire_name, bio, chosen_starting_body FROM room_members WHERE room_id = ? AND user_id = ?')
     .bind(roomId, ctx.session.user_id)
     .first();
   return json({ identity: row });

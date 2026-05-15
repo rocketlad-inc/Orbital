@@ -317,6 +317,14 @@ function RoomDetail({
             </button>
             <span className="mp-saved" style={{ marginLeft: 8 }}>{savedFlash || ''}</span>
           </div>
+
+          <StartingBodyPicker
+            roomId={roomId}
+            snap={snap}
+            myUserId={user?.id}
+            onSaved={refresh}
+            onError={setError}
+          />
         </>
       )}
 
@@ -404,5 +412,93 @@ function RoomDetail({
 
       <div className="mp-error">{error || ''}</div>
     </div>
+  );
+}
+
+// ---------- Starting body picker ----------
+
+function StartingBodyPicker({
+  roomId, snap, myUserId, onSaved, onError,
+}: {
+  roomId: string;
+  snap: RoomSnapshot;
+  myUserId?: string;
+  onSaved: () => void;
+  onError: (msg: string | null) => void;
+}) {
+  const options = snap.starting_body_options ?? [];
+  if (!options.length) return null;
+
+  const me = myUserId ? snap.members.find(m => m.userId === myUserId) : undefined;
+  const myChoice = me?.chosen_starting_body ?? null;
+  // Map of body id -> userId who claimed it (so we can show "taken").
+  const claimedBy = new Map<string, string>();
+  for (const m of snap.members) {
+    if (m.chosen_starting_body) claimedBy.set(m.chosen_starting_body, m.userId);
+  }
+
+  async function pick(bodyId: string | null) {
+    onError(null);
+    const res = await apiFetch(`/api/lobby/rooms/${roomId}/me`, {
+      method: 'PATCH',
+      body: JSON.stringify({ chosen_starting_body: bodyId }),
+    });
+    if (!res.ok) {
+      onError(res.error?.message ?? 'Could not pick body');
+      return;
+    }
+    onSaved();
+  }
+
+  return (
+    <>
+      <div className="mp-section-title" style={{ marginTop: 12 }}>
+        Starting capital
+      </div>
+      <div className="mp-empty" style={{ fontSize: 10, marginBottom: 6, padding: '0 2px' }}>
+        Pick the world your faction starts on. First-come first-served — pick early.
+      </div>
+      <div className="lobby-body-grid">
+        {options.map(opt => {
+          const taken = claimedBy.get(opt.id);
+          const isMine = taken === myUserId;
+          const isTaken = !!taken && !isMine;
+          const ownerName = taken
+            ? (snap.members.find(m => m.userId === taken)?.displayName ?? 'someone')
+            : null;
+          return (
+            <button
+              key={opt.id}
+              className={`lobby-body-card ${isMine ? 'is-mine' : ''} ${isTaken ? 'is-taken' : ''}`}
+              disabled={isTaken}
+              onClick={() => pick(isMine ? null : opt.id)}
+              title={
+                isMine ? 'Click to un-claim'
+                : isTaken ? `Claimed by ${ownerName}`
+                : 'Click to claim'
+              }
+            >
+              <div className="lobby-body-card__name">{opt.name}</div>
+              <div className="lobby-body-card__sub">
+                {opt.type}{opt.parent && opt.parent !== 'sol' ? ` · ${opt.parent}` : ''}
+              </div>
+              <div className="lobby-body-card__yields">
+                {opt.yield.metal > 0 && <span>M{opt.yield.metal}</span>}
+                {opt.yield.fuel > 0 && <span>F{opt.yield.fuel}</span>}
+                {opt.yield.gold > 0 && <span>G{opt.yield.gold}</span>}
+                {opt.yield.science > 0 && <span>S{opt.yield.science}</span>}
+              </div>
+              {isMine && <div className="lobby-body-card__tag">✓ yours</div>}
+              {isTaken && <div className="lobby-body-card__tag is-taken">{ownerName}</div>}
+            </button>
+          );
+        })}
+      </div>
+      {!myChoice && (
+        <div className="mp-empty" style={{ fontSize: 10, marginTop: 4, padding: '0 2px', fontStyle: 'italic' }}>
+          No choice = the host will auto-assign you a world.
+        </div>
+      )}
+    </>
   );
 }

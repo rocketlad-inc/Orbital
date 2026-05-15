@@ -669,4 +669,9 @@ ALTER TABLE rooms ADD COLUMN password_hash TEXT;
 
 CREATE UNIQUE INDEX idx_rooms_invite_code ON rooms(invite_code) WHERE invite_code IS NOT NULL;
 ` },
+  { name: "0008_starting_body.sql", sql: `-- Per-member chosen starting body. References a template id from the
+-- worker's BODY_CATALOG (e.g. 'inara', 'verda', 'rust'). Null means
+-- auto-assign at game start (the legacy behavior).
+ALTER TABLE room_members ADD COLUMN chosen_starting_body TEXT;
+` },
 ];

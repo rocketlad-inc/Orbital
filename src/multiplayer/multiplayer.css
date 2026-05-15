@@ -904,3 +904,66 @@
   font-size: 10px;
   color: var(--mp-friendly);
 }
+
+/* ---- Starting-body picker (in-room lobby) ---- */
+.lobby-body-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  margin-top: 6px;
+}
+.lobby-body-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: rgba(10, 14, 20, 0.5);
+  border: 1px solid var(--mp-border);
+  border-radius: 3px;
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--mp-fg);
+  font-family: var(--mp-mono);
+  transition: all 0.12s ease;
+}
+.lobby-body-card:hover:not(:disabled) {
+  border-color: var(--mp-friendly);
+  background: rgba(78, 205, 196, 0.06);
+}
+.lobby-body-card.is-mine {
+  border-color: var(--mp-accent);
+  background: rgba(255, 184, 77, 0.08);
+}
+.lobby-body-card.is-taken {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.lobby-body-card__name {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--mp-accent);
+  letter-spacing: 0.03em;
+}
+.lobby-body-card.is-mine .lobby-body-card__name { color: var(--mp-accent); }
+.lobby-body-card__sub {
+  font-size: 9px;
+  color: var(--mp-fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.lobby-body-card__yields {
+  display: flex;
+  gap: 6px;
+  font-size: 9px;
+  color: var(--mp-friendly);
+  margin-top: 1px;
+}
+.lobby-body-card__tag {
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mp-accent);
+  font-weight: 600;
+  margin-top: 2px;
+}
+.lobby-body-card__tag.is-taken { color: var(--mp-fg-dim); }

@@ -60,6 +60,15 @@ export type RoomMember = {
   displayName: string;
   empire_name?: string | null;
   bio?: string | null;
+  chosen_starting_body?: string | null;
+};
+
+export type StartingBodyOption = {
+  id: string;
+  name: string;
+  type: 'terrestrial' | 'moon';
+  parent: string | null;
+  yield: { metal: number; fuel: number; gold: number; science: number };
 };
 
 export type RoomSettings = {
@@ -84,6 +93,7 @@ export type RoomSnapshot = {
   ready: Record<string, boolean>;
   game_started: boolean;
   game_id: string | null;
+  starting_body_options?: StartingBodyOption[];
 };
 
 export type Faction = {

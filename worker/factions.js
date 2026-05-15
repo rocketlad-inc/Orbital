@@ -121,6 +121,24 @@ const BODY_CATALOG = [
 // Eligible worlds for ownership = everything that isn't the star (16 worlds).
 // 2 worlds/player × 8 players = 16. Caps at 8 players × 2 worlds for v1.
 
+// Subset of BODY_CATALOG that players may pick as their starting capital
+// in the lobby. Sticking to terrestrials + larger named moons keeps the
+// menu manageable and avoids highly-asymmetric starts on tiny asteroids.
+export const STARTING_BODY_OPTIONS = BODY_CATALOG
+  .filter(b => b.type === 'terrestrial' || b.type === 'moon')
+  .map(b => ({
+    id: b.id,
+    name: b.name,
+    type: b.type,
+    parent: b.parent,
+    yield: b.yield,
+  }));
+
+const STARTING_BODY_IDS = new Set(STARTING_BODY_OPTIONS.map(b => b.id));
+export function isValidStartingBody(id) {
+  return typeof id === 'string' && STARTING_BODY_IDS.has(id);
+}
+
 const FACTION_NAMES = [
   'Inaran Republic',
   'Verdan Concord',
@@ -243,10 +261,10 @@ export async function seedGameWorld(env, gameId) {
     return { ok: true, alreadySeeded: true };
   }
 
-  // Pull lobby identity (empire_name, bio) alongside the member roster.
+  // Pull lobby identity (empire_name, bio, chosen capital) alongside roster.
   const members = await env.DB
     .prepare(
-      `SELECT user_id, joined_at, empire_name, bio
+      `SELECT user_id, joined_at, empire_name, bio, chosen_starting_body
          FROM room_members
         WHERE room_id = ?
         ORDER BY joined_at ASC, user_id ASC`,
@@ -291,18 +309,42 @@ export async function seedGameWorld(env, gameId) {
     };
   });
 
-  // World assignment: first WORLDS_PER_PLAYER slots from the shuffled list
-  // for each faction in slot order. First assigned world = capital.
-  // ownership map: body_template_id -> { factionId, isCapital }
-  const ownership = new Map();
+  // World assignment. Players who chose a starting body in the lobby get
+  // that body as their capital; everyone else falls back to the deterministic
+  // shuffle. Then each player gets (WORLDS_PER_PLAYER - 1) extra worlds
+  // drawn from whatever's left in shuffled order.
+  const claimed = new Set();
+  // First pass: validate + reserve chosen capitals.
   factionRows.forEach((f, idx) => {
-    const start = idx * WORLDS_PER_PLAYER;
-    const myWorlds = shuffled.slice(start, start + WORLDS_PER_PLAYER);
-    f.worlds = myWorlds.map(b => b.id);
-    f.capital_template_id = myWorlds[0].id;
-    f.capital_body_id = bodyRowIdFor(myWorlds[0].id);
-    myWorlds.forEach((b, wIdx) => {
-      ownership.set(b.id, { factionId: f.id, isCapital: wIdx === 0 });
+    const choice = memberRows[idx].chosen_starting_body;
+    if (choice && STARTING_BODY_IDS.has(choice) && !claimed.has(choice)) {
+      f.capital_template_id = choice;
+      claimed.add(choice);
+    }
+  });
+  // Second pass: anyone without a choice gets the first un-claimed shuffled body.
+  const fallbackPool = shuffled.filter(b => !claimed.has(b.id));
+  let fallbackIdx = 0;
+  factionRows.forEach(f => {
+    if (!f.capital_template_id) {
+      const pick = fallbackPool[fallbackIdx++];
+      f.capital_template_id = pick.id;
+      claimed.add(pick.id);
+    }
+  });
+  // Build the ownership map: capital first, then fill remaining worlds.
+  const ownership = new Map();
+  const remainingPool = shuffled.filter(b => !claimed.has(b.id));
+  let remIdx = 0;
+  factionRows.forEach(f => {
+    const myWorlds = [f.capital_template_id];
+    while (myWorlds.length < WORLDS_PER_PLAYER) {
+      myWorlds.push(remainingPool[remIdx++].id);
+    }
+    f.worlds = myWorlds;
+    f.capital_body_id = bodyRowIdFor(f.capital_template_id);
+    myWorlds.forEach((tplId, wIdx) => {
+      ownership.set(tplId, { factionId: f.id, isCapital: wIdx === 0 });
     });
   });
 
