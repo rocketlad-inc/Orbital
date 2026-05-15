@@ -1,6 +1,8 @@
 // Password hashing + session helpers. Uses Web Crypto only (works on Workers).
 
-const PBKDF2_ITERS = 210_000;
+// Cloudflare Workers cap PBKDF2 iterations at 100,000. The stored hash
+// embeds the iter count so older rows verify against whatever they used.
+const PBKDF2_ITERS = 100_000;
 const PBKDF2_HASH = 'SHA-256';
 const SALT_BYTES = 16;
 const KEY_BYTES = 32;
