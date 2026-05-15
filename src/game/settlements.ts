@@ -100,12 +100,13 @@ export function createCity(
   body: Body,
   ownerId: string,
   tick: number,
+  name?: string,
 ): Settlement {
   const def = SETTLEMENT_DEFS.city;
   return {
     id: `settlement-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     type: 'city',
-    name: nextSettlementName('city', body),
+    name: name?.trim() || nextSettlementName('city', body),
     bodyId: body.id,
     ownedBy: ownerId,
     hp: def.maxHp,
@@ -123,13 +124,14 @@ export function createStation(
   ownerId: string,
   tick: number,
   bodies: Body[],
+  name?: string,
 ): Settlement {
   const def = SETTLEMENT_DEFS.station;
   const altitude = body.radius + STATION_ALTITUDE;
   return {
     id: `settlement-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     type: 'station',
-    name: nextSettlementName('station', body),
+    name: name?.trim() || nextSettlementName('station', body),
     bodyId: body.id,
     ownedBy: ownerId,
     hp: def.maxHp,
@@ -140,6 +142,20 @@ export function createStation(
     stockpile: { fuel: 0, ore: 0, credits: 0 },
     lastHarvestTick: tick,
   };
+}
+
+/**
+ * Suggest a default name for a new settlement based on body and existing count.
+ */
+export function suggestSettlementName(
+  body: Body,
+  type: SettlementType,
+  existing: Settlement[],
+): string {
+  const countAtBody = existing.filter(s => s.bodyId === body.id && s.type === type).length;
+  const suffix = type === 'city' ? 'City' : 'Station';
+  if (countAtBody === 0) return `${body.name} ${suffix}`;
+  return `${body.name} ${suffix} ${countAtBody + 1}`;
 }
 
 // === Yield ===

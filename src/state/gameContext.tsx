@@ -61,7 +61,7 @@ interface GameContextType {
   addToFleet: (fleetId: string, shipId: string) => void;
 
   // Settlements
-  deploySettlement: (bodyId: string, type: SettlementType) => boolean;
+  deploySettlement: (bodyId: string, type: SettlementType, name?: string) => boolean;
   damageSettlement: (settlementId: string, dmg: number) => void;
   selectedSettlementId?: string;
   selectSettlement: (id: string | undefined) => void;
@@ -547,7 +547,7 @@ export function GameContextProvider({
     setSelectedSettlementId(id);
   }, []);
 
-  const deploySettlement = useCallback((bodyId: string, type: SettlementType): boolean => {
+  const deploySettlement = useCallback((bodyId: string, type: SettlementType, name?: string): boolean => {
     const body = gameState.bodies.find(b => b.id === bodyId);
     if (!body) return false;
 
@@ -575,8 +575,8 @@ export function GameContextProvider({
       if (!playerRes) return prev;
 
       const settlement = type === 'city'
-        ? createCity(body, 'player', prev.currentTick)
-        : createStation(body, 'player', prev.currentTick, prev.bodies);
+        ? createCity(body, 'player', prev.currentTick, name)
+        : createStation(body, 'player', prev.currentTick, prev.bodies, name);
 
       return {
         ...prev,
