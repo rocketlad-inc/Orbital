@@ -72,10 +72,23 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     const ctx = canvasRef.current.getContext('2d');
     if (!ctx) return;
 
+    // When a body is focused, recompute its world position each frame so
+    // the camera tracks it as it orbits.
+    let camX = camera.x;
+    let camY = camera.y;
+    if (camera.focusedBodyId) {
+      const focusedBody = gameState.bodies.find(b => b.id === camera.focusedBodyId);
+      if (focusedBody) {
+        const pos = bodyPosition(focusedBody, gameState.currentTick, gameState.bodies);
+        camX = pos.x;
+        camY = pos.y;
+      }
+    }
+
     const renderContext: RenderContext = {
       ctx,
       canvas: canvasRef.current,
-      camera: { x: camera.x, y: camera.y, scale: camera.scale, focusedBodyId: camera.focusedBodyId },
+      camera: { x: camX, y: camY, scale: camera.scale, focusedBodyId: camera.focusedBodyId },
       t: gameState.currentTick,
       bodies: gameState.bodies,
       simSpeed,

@@ -13,7 +13,7 @@ import { SettlementType } from '../types';
 import './BodyInspector.css';
 
 export const BodyInspector: React.FC = () => {
-  const { gameState, uiState, deselectBody } = useGameContext();
+  const { gameState, camera, uiState, deselectBody, focusBody } = useGameContext();
 
   if (!uiState.selectedBodyId) {
     return null;
@@ -33,13 +33,25 @@ export const BodyInspector: React.FC = () => {
     s => !s.transfer && s.orbit.parentBodyId === body.id
   );
 
+  const isFocused = camera.focusedBodyId === body.id;
+  const toggleFocus = () => focusBody(isFocused ? undefined : body.id);
+
   return (
     <div className="body-inspector">
       <div className="panel-header">
         <span>{body.name.toUpperCase()}</span>
-        <button className="panel-close" onClick={deselectBody}>
-          ✕
-        </button>
+        <div className="panel-header-actions">
+          <button
+            className={`panel-focus ${isFocused ? 'active' : ''}`}
+            onClick={toggleFocus}
+            title={isFocused ? 'Stop following' : 'Camera follows this body'}
+          >
+            {isFocused ? '◉ FOLLOWING' : '○ FOLLOW'}
+          </button>
+          <button className="panel-close" onClick={deselectBody}>
+            ✕
+          </button>
+        </div>
       </div>
 
       <div className="panel-body">

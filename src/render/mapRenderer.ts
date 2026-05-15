@@ -509,8 +509,8 @@ export function drawShip(
   const worldY = parentPos.y + localPos.y;
   const canvasPos = worldToCanvas(worldX, worldY, ctx);
 
-  // Ship color: cyan for player ships (matching HTML prototype)
-  const shipColor = COLORS.neutral;
+  // Faction-colored: cyan for player, red for enemy.
+  const shipColor = ship.ownedBy === 'enemy' ? COLORS.danger : COLORS.neutral;
 
   // Draw ship marker (circle)
   const shipSize = isSelected ? 5 : 4;
@@ -885,7 +885,7 @@ export function drawTransitShip(
 
   const worldPos = bezierPositionAt(ship.transfer, ctx.t);
   const canvasPos = worldToCanvas(worldPos.x, worldPos.y, ctx);
-  const shipColor = COLORS.neutral;
+  const shipColor = ship.ownedBy === 'enemy' ? COLORS.danger : COLORS.neutral;
   const shipSize = isSelected ? 5 : 4;
 
   ctx.ctx.fillStyle = shipColor;

@@ -47,6 +47,36 @@
   background: rgba(78, 205, 196, 0.2);
 }
 
+.body-inspector .panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.body-inspector .panel-focus {
+  background: transparent;
+  border: 1px solid #2a3d50;
+  color: #6b8195;
+  cursor: pointer;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  padding: 3px 8px;
+  border-radius: 2px;
+  transition: all 0.15s ease;
+}
+
+.body-inspector .panel-focus:hover {
+  border-color: #4ecdc4;
+  color: #4ecdc4;
+}
+
+.body-inspector .panel-focus.active {
+  border-color: #ffb84d;
+  color: #ffb84d;
+  background: rgba(255, 184, 77, 0.08);
+}
+
 .body-inspector .panel-body {
   padding: 12px;
   font-size: 10px;
