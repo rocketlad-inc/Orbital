@@ -20,7 +20,7 @@
     {
       "binding": "DB",
       "database_name": "orbital",
-      "database_id": "REPLACE_WITH_D1_ID",
+      "database_id": "7f45ec95-b890-49fc-aee5-90f06afb0bea",
       "migrations_dir": "migrations"
     }
   ],
