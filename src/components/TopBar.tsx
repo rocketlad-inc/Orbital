@@ -6,6 +6,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { useAuth } from '../multiplayer/AuthContext';
+import { FUEL_ENABLED } from '../game/featureFlags';
 import './TopBar.css';
 
 export type PanelId = 'settlements' | 'fleet' | 'research' | null;
@@ -81,15 +82,17 @@ export const TopBar: React.FC<TopBarProps> = ({ activePanel, onTogglePanel, onEx
       }
     }
 
-    // Low fuel ships
-    for (const ship of playerShips) {
-      if (ship.fuel < 20) {
-        out.push({
-          id: `lowfuel-${ship.id}`,
-          level: 'warn',
-          text: `${ship.name} low fuel (${ship.fuel})`,
-          onClick: () => selectShip(ship.id),
-        });
+    // Low fuel ships — suppressed while fuel is cached as a concept.
+    if (FUEL_ENABLED) {
+      for (const ship of playerShips) {
+        if (ship.fuel < 20) {
+          out.push({
+            id: `lowfuel-${ship.id}`,
+            level: 'warn',
+            text: `${ship.name} low fuel (${ship.fuel})`,
+            onClick: () => selectShip(ship.id),
+          });
+        }
       }
     }
 
@@ -132,10 +135,12 @@ export const TopBar: React.FC<TopBarProps> = ({ activePanel, onTogglePanel, onEx
 
       {playerResources && (
         <div className="top-bar__resources">
-          <div className="resource-pill resource-pill--fuel">
-            <div className="resource-pill__label">FUEL</div>
-            <div className="resource-pill__value">{Math.round(playerResources.fuel)}</div>
-          </div>
+          {FUEL_ENABLED && (
+            <div className="resource-pill resource-pill--fuel">
+              <div className="resource-pill__label">FUEL</div>
+              <div className="resource-pill__value">{Math.round(playerResources.fuel)}</div>
+            </div>
+          )}
           <div className="resource-pill resource-pill--ore">
             <div className="resource-pill__label">ORE</div>
             <div className="resource-pill__value">{Math.round(playerResources.ore)}</div>

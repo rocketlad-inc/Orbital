@@ -11,6 +11,7 @@ import {
 } from '../game/settlements';
 import { SettlementType } from '../types';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { FUEL_ENABLED } from '../game/featureFlags';
 import './BodyInspector.css';
 
 export const BodyInspector: React.FC = () => {
@@ -67,10 +68,12 @@ export const BodyInspector: React.FC = () => {
           return (
             <>
               <div className="resources-grid">
-                <div className="resource-item">
-                  <div className="resource-label">FUEL</div>
-                  <div className="resource-value">{body.resources.fuel}</div>
-                </div>
+                {FUEL_ENABLED && (
+                  <div className="resource-item">
+                    <div className="resource-label">FUEL</div>
+                    <div className="resource-value">{body.resources.fuel}</div>
+                  </div>
+                )}
                 <div className="resource-item">
                   <div className="resource-label">GOLD</div>
                   <div className="resource-value">{body.resources.gold}</div>
@@ -88,7 +91,7 @@ export const BodyInspector: React.FC = () => {
                 <div className="production-summary">
                   <div className="production-title">POTENTIAL YIELD / HARVEST</div>
                   <div className="production-rates">
-                    {production.fuel > 0 && (
+                    {FUEL_ENABLED && production.fuel > 0 && (
                       <span className="production-rate">+{production.fuel} FUEL</span>
                     )}
                     {production.ore > 0 && (
@@ -195,11 +198,11 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
 
   const playerRes = gameState.resources['player'];
   const canAffordCity = playerRes
-    && playerRes.fuel >= SETTLEMENT_DEFS.city.cost.fuel
+    && (!FUEL_ENABLED || playerRes.fuel >= SETTLEMENT_DEFS.city.cost.fuel)
     && playerRes.ore >= SETTLEMENT_DEFS.city.cost.ore
     && playerRes.credits >= SETTLEMENT_DEFS.city.cost.credits;
   const canAffordStation = playerRes
-    && playerRes.fuel >= SETTLEMENT_DEFS.station.cost.fuel
+    && (!FUEL_ENABLED || playerRes.fuel >= SETTLEMENT_DEFS.station.cost.fuel)
     && playerRes.ore >= SETTLEMENT_DEFS.station.cost.ore
     && playerRes.credits >= SETTLEMENT_DEFS.station.cost.credits;
 
@@ -246,7 +249,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
         const isSelected = selectedSettlementId === s.id;
         const yieldRate = settlementYield(s, body);
         const yieldStr = [
-          yieldRate.fuel > 0.05 ? `+${yieldRate.fuel.toFixed(1)}F` : null,
+          FUEL_ENABLED && yieldRate.fuel > 0.05 ? `+${yieldRate.fuel.toFixed(1)}F` : null,
           yieldRate.ore > 0.05 ? `+${yieldRate.ore.toFixed(1)}O` : null,
           yieldRate.credits > 0.05 ? `+${yieldRate.credits.toFixed(1)}C` : null,
         ].filter(Boolean).join(' ');
@@ -268,7 +271,9 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
               </div>
               {(s.stockpile.fuel > 0 || s.stockpile.ore > 0 || s.stockpile.credits > 0) && (
                 <div className="settlement-stockpile">
-                  STOCK: {Math.round(s.stockpile.fuel)}F {Math.round(s.stockpile.ore)}O {Math.round(s.stockpile.credits)}C
+                  STOCK:
+                  {FUEL_ENABLED && <> {Math.round(s.stockpile.fuel)}F</>}
+                  {' '}{Math.round(s.stockpile.ore)}O {Math.round(s.stockpile.credits)}C
                 </div>
               )}
             </div>
@@ -306,11 +311,13 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
                 className="deploy-btn"
                 disabled={!canBuildHere || !canAffordCity}
                 onClick={() => handleStartDeploy('city')}
-                title={
-                  !canBuildHere ? 'Need a freighter in orbit'
-                  : !canAffordCity ? `Need ${SETTLEMENT_DEFS.city.cost.fuel}F/${SETTLEMENT_DEFS.city.cost.ore}O/${SETTLEMENT_DEFS.city.cost.credits}C`
-                  : `Deploy a city (${SETTLEMENT_DEFS.city.cost.fuel}F/${SETTLEMENT_DEFS.city.cost.ore}O/${SETTLEMENT_DEFS.city.cost.credits}C)`
-                }
+                title={(() => {
+                  const c = SETTLEMENT_DEFS.city.cost;
+                  const fuelPart = FUEL_ENABLED ? `${c.fuel}F/` : '';
+                  if (!canBuildHere) return 'Need a freighter in orbit';
+                  if (!canAffordCity) return `Need ${fuelPart}${c.ore}O/${c.credits}C`;
+                  return `Deploy a city (${fuelPart}${c.ore}O/${c.credits}C)`;
+                })()}
               >
                 ■ DEPLOY CITY
               </button>
@@ -320,11 +327,13 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
                 className="deploy-btn"
                 disabled={!canBuildHere || !canAffordStation}
                 onClick={() => handleStartDeploy('station')}
-                title={
-                  !canBuildHere ? 'Need a freighter in orbit'
-                  : !canAffordStation ? `Need ${SETTLEMENT_DEFS.station.cost.fuel}F/${SETTLEMENT_DEFS.station.cost.ore}O/${SETTLEMENT_DEFS.station.cost.credits}C`
-                  : `Deploy a station (${SETTLEMENT_DEFS.station.cost.fuel}F/${SETTLEMENT_DEFS.station.cost.ore}O/${SETTLEMENT_DEFS.station.cost.credits}C)`
-                }
+                title={(() => {
+                  const c = SETTLEMENT_DEFS.station.cost;
+                  const fuelPart = FUEL_ENABLED ? `${c.fuel}F/` : '';
+                  if (!canBuildHere) return 'Need a freighter in orbit';
+                  if (!canAffordStation) return `Need ${fuelPart}${c.ore}O/${c.credits}C`;
+                  return `Deploy a station (${fuelPart}${c.ore}O/${c.credits}C)`;
+                })()}
               >
                 ◆ DEPLOY STATION
               </button>

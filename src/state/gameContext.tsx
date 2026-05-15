@@ -11,6 +11,7 @@ import {
 } from '../game/settlements';
 import { tickMaintenance } from '../game/maintenance';
 import { TechId, TECH_DEFS } from '../game/techs';
+import { FUEL_ENABLED } from '../game/featureFlags';
 
 export const TICKS_PER_GAME_DAY = 24;
 const REAL_SECONDS_PER_GAME_DAY = 3600;
@@ -127,13 +128,17 @@ export function GameContextProvider({
         // Loop arrival processing so a single large tickDelta can chain
         // through multiple queued legs (e.g. fast-forward through a patrol).
         while (transfer && tick >= transfer.arrivalTime) {
-          const cost = Math.round(Math.abs(transfer.arrivalDv) * 10);
-          fuel = Math.max(0, fuel - cost);
+          if (FUEL_ENABLED) {
+            const cost = Math.round(Math.abs(transfer.arrivalDv) * 10);
+            fuel = Math.max(0, fuel - cost);
+          }
 
           if (queuedTransfers.length > 0) {
             const nextArc = queuedTransfers.shift()!;
-            const depCost = Math.round(Math.abs(nextArc.departureDv) * 10);
-            fuel = Math.max(0, fuel - depCost);
+            if (FUEL_ENABLED) {
+              const depCost = Math.round(Math.abs(nextArc.departureDv) * 10);
+              fuel = Math.max(0, fuel - depCost);
+            }
             transfer = nextArc;
             const chainBody = bodies.find(b => b.id === nextArc.departureBodyId);
             const chainRadius = chainBody ? chainBody.radius + 4 : 10;
@@ -155,8 +160,10 @@ export function GameContextProvider({
           if (node.status === 'committed' && node.burnTime <= tick) {
             if (pendingTransfer && node.type === 'transfer') {
               // Departure: switch to transit
-              const cost = Math.round(Math.abs(node.deltav) * 10);
-              fuel = Math.max(0, fuel - cost);
+              if (FUEL_ENABLED) {
+                const cost = Math.round(Math.abs(node.deltav) * 10);
+                fuel = Math.max(0, fuel - cost);
+              }
               transfer = pendingTransfer;
               pendingTransfer = undefined;
             }
@@ -557,7 +564,7 @@ export function GameContextProvider({
     // Apply Construction-tech cost discount (capped at 75% off).
     const constructionLvl = gameState.factionTech.player?.levels['construction'] ?? 0;
     const costMul = Math.max(0.25, 1 - TECH_DEFS.construction.perLevel * constructionLvl);
-    const fuelCost = Math.ceil(classDef.cost.fuel * costMul);
+    const fuelCost = FUEL_ENABLED ? Math.ceil(classDef.cost.fuel * costMul) : 0;
     const oreCost = Math.ceil(classDef.cost.ore * costMul);
     const creditCost = Math.ceil(classDef.cost.credits * costMul);
 
@@ -645,10 +652,11 @@ export function GameContextProvider({
     );
     if (!playerFreighterHere) return false;
 
-    // Resource cost
+    // Resource cost (fuel is gated by the feature flag while it's parked)
     const def = SETTLEMENT_DEFS[type];
+    const fuelCost = FUEL_ENABLED ? def.cost.fuel : 0;
     const res = gameState.resources['player'];
-    if (!res || res.fuel < def.cost.fuel || res.ore < def.cost.ore || res.credits < def.cost.credits) {
+    if (!res || res.fuel < fuelCost || res.ore < def.cost.ore || res.credits < def.cost.credits) {
       return false;
     }
 
@@ -667,7 +675,7 @@ export function GameContextProvider({
           ...prev.resources,
           player: {
             ...playerRes,
-            fuel: playerRes.fuel - def.cost.fuel,
+            fuel: playerRes.fuel - fuelCost,
             ore: playerRes.ore - def.cost.ore,
             credits: playerRes.credits - def.cost.credits,
           },

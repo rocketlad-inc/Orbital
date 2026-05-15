@@ -6,6 +6,7 @@
 import React, { useMemo, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
+import { FUEL_ENABLED } from '../game/featureFlags';
 import { ShipIcon } from './ShipIcons';
 import './OverviewPanel.css';
 
@@ -137,7 +138,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           )}
         </td>
         <td>{renderHpBar(ship)}</td>
-        <td>{renderFuelBar(ship)}</td>
+        {FUEL_ENABLED && <td>{renderFuelBar(ship)}</td>}
       </tr>
     );
   };
@@ -183,7 +184,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                       <th>Status</th>
                       <th>Destination</th>
                       <th>HP</th>
-                      <th>Fuel</th>
+                      {FUEL_ENABLED && <th>Fuel</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -220,7 +221,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                         <th>Status</th>
                         <th>Location</th>
                         <th>HP</th>
-                        <th>Fuel</th>
+                        {FUEL_ENABLED && <th>Fuel</th>}
                       </tr>
                     </thead>
                     <tbody>

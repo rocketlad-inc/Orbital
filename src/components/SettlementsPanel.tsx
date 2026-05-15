@@ -7,6 +7,7 @@
 import React, { useMemo, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { settlementYield, SETTLEMENT_DEFS } from '../game/settlements';
+import { FUEL_ENABLED } from '../game/featureFlags';
 import './OverviewPanel.css';
 
 interface SettlementsPanelProps {
@@ -106,8 +107,12 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
             {playerStats.total > 0 && (
               <>
                 {' · stockpile '}
-                <span style={{ color: '#ffb84d' }}>{Math.floor(playerStats.stockpile.fuel)}F</span>
-                {' '}
+                {FUEL_ENABLED && (
+                  <>
+                    <span style={{ color: '#ffb84d' }}>{Math.floor(playerStats.stockpile.fuel)}F</span>
+                    {' '}
+                  </>
+                )}
                 <span style={{ color: '#a0a0a0' }}>{Math.floor(playerStats.stockpile.ore)}O</span>
                 {' '}
                 <span style={{ color: '#ffd700' }}>{Math.floor(playerStats.stockpile.credits)}C</span>
@@ -197,9 +202,11 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
                     <td className="col-num">{s.population}</td>
                     <td>
                       <div className="prod-rates">
-                        <span className={`prod-rate ${yields.fuel > 0 ? 'prod-rate--fuel' : 'prod-rate--zero'}`}>
-                          {yields.fuel > 0 ? `+${yields.fuel.toFixed(1)}` : '—'} fuel
-                        </span>
+                        {FUEL_ENABLED && (
+                          <span className={`prod-rate ${yields.fuel > 0 ? 'prod-rate--fuel' : 'prod-rate--zero'}`}>
+                            {yields.fuel > 0 ? `+${yields.fuel.toFixed(1)}` : '—'} fuel
+                          </span>
+                        )}
                         <span className={`prod-rate ${yields.ore > 0 ? 'prod-rate--ore' : 'prod-rate--zero'}`}>
                           {yields.ore > 0 ? `+${yields.ore.toFixed(1)}` : '—'} ore
                         </span>
@@ -211,7 +218,7 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
                     <td>
                       {hasStockpile ? (
                         <div className="prod-rates">
-                          {s.stockpile.fuel > 0 && (
+                          {FUEL_ENABLED && s.stockpile.fuel > 0 && (
                             <span className="prod-rate prod-rate--fuel">{Math.floor(s.stockpile.fuel)}F</span>
                           )}
                           {s.stockpile.ore > 0 && (

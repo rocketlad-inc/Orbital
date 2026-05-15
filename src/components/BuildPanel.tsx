@@ -6,6 +6,7 @@ import React, { useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { BUILDABLE_CLASSES, SHIP_CLASSES, ShipClassName } from '../game/shipClasses';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { FUEL_ENABLED } from '../game/featureFlags';
 import { ShipIcon } from './ShipIcons';
 import './BuildPanel.css';
 
@@ -105,7 +106,9 @@ export const BuildPanel: React.FC = () => {
       <div className="build-classes">
         {BUILDABLE_CLASSES.map(cls => {
           const def = SHIP_CLASSES[cls];
-          const canAfford = playerRes.fuel >= def.cost.fuel && playerRes.ore >= def.cost.ore && playerRes.credits >= def.cost.credits;
+          const canAfford = (!FUEL_ENABLED || playerRes.fuel >= def.cost.fuel)
+            && playerRes.ore >= def.cost.ore
+            && playerRes.credits >= def.cost.credits;
           return (
             <div key={cls} className={`build-class-row ${!canAfford ? 'disabled' : ''}`}>
               <div className="class-info">
@@ -134,7 +137,9 @@ export const BuildPanel: React.FC = () => {
       </div>
 
       <div className="resources-bar">
-        <span className="resource">FUEL: {Math.round(playerRes.fuel)}</span>
+        {FUEL_ENABLED && (
+          <span className="resource">FUEL: {Math.round(playerRes.fuel)}</span>
+        )}
         <span className="resource">ORE: {Math.round(playerRes.ore)}</span>
         <span className="resource">CR: {Math.round(playerRes.credits)}</span>
       </div>

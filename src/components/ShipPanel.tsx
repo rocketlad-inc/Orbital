@@ -7,6 +7,7 @@ import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { maintenanceRatesForShip } from '../game/maintenance';
 import { travelTimeModifier, FactionTechState } from '../game/techs';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { FUEL_ENABLED } from '../game/featureFlags';
 import { ShipIcon } from './ShipIcons';
 import './ShipPanel.css';
 
@@ -256,17 +257,19 @@ export const ShipPanel: React.FC = () => {
                 )}
               </span>
             </div>
-            <div className="stat-row">
-              <span className="label">FUEL</span>
-              <span className="value">
-                {ship.fuel.toFixed(0)}/{maxFuel} kt
-                {maintenance.refuelRate > 0 && !fuelAtMax && (
-                  <span style={{ color: '#ffb84d', marginLeft: 6, fontSize: '9px' }}>
-                    +{maintenance.refuelRate}/t
-                  </span>
-                )}
-              </span>
-            </div>
+            {FUEL_ENABLED && (
+              <div className="stat-row">
+                <span className="label">FUEL</span>
+                <span className="value">
+                  {ship.fuel.toFixed(0)}/{maxFuel} kt
+                  {maintenance.refuelRate > 0 && !fuelAtMax && (
+                    <span style={{ color: '#ffb84d', marginLeft: 6, fontSize: '9px' }}>
+                      +{maintenance.refuelRate}/t
+                    </span>
+                  )}
+                </span>
+              </div>
+            )}
             <div className="stat-row">
               <span className="label">LOCATION</span>
               <span className="value">{locationLabel}</span>

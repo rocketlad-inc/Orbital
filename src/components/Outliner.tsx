@@ -6,6 +6,7 @@
 import React, { useState, useMemo } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
+import { FUEL_ENABLED } from '../game/featureFlags';
 import { ShipIcon } from './ShipIcons';
 import './Outliner.css';
 
@@ -147,7 +148,7 @@ export const Outliner: React.FC = () => {
                   {ships.map(ship => {
                     const def = getShipClass(ship.class as ShipClassName);
                     const r = hpRatio(ship);
-                    const lowFuel = ship.fuel < 20;
+                    const lowFuel = FUEL_ENABLED && ship.fuel < 20;
                     return (
                       <div
                         key={ship.id}
