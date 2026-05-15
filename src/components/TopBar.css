@@ -297,6 +297,10 @@
   font-family: 'JetBrains Mono', monospace;
   box-shadow: 8px 0 24px rgba(0, 0, 0, 0.5);
   animation: side-menu-slide 0.22s cubic-bezier(0.2, 0.7, 0.2, 1);
+  /* On very short viewports, scroll the whole panel rather than just
+     the nav region — that way the user always starts at the top and
+     no row is half-clipped. */
+  overflow-y: auto;
 }
 @keyframes side-menu-slide {
   from { transform: translateX(-100%); }
@@ -365,25 +369,24 @@
 }
 
 .side-menu__nav {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px 12px;
+  /* The whole .side-menu is the scroll container now; nav just lays out. */
+  padding: 10px 12px;
 }
 .side-menu__group-label {
   font-size: 9px;
   letter-spacing: 0.22em;
   color: #6b8195;
-  padding: 12px 8px 6px;
+  padding: 8px 8px 4px;
   text-transform: uppercase;
 }
-.side-menu__group-label:first-child { padding-top: 0; }
+.side-menu__group-label:first-child { padding-top: 2px; }
 
 .side-menu__item {
   display: flex;
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 9px 12px;
+  padding: 8px 12px;
   margin-bottom: 2px;
   background: transparent;
   border: 1px solid transparent;
