@@ -18,6 +18,7 @@ import { Landing } from './components/Landing';
 import { ModePicker, GameMode } from './ModePicker';
 import { MultiplayerShell } from './multiplayer/MultiplayerShell';
 import { MultiplayerLobby } from './multiplayer/MultiplayerLobby';
+import { MultiplayerGameProvider } from './multiplayer/MultiplayerGameProvider';
 import { apiFetch, RoomSummary } from './multiplayer/api';
 import './multiplayer/multiplayer.css';
 import './App.css';
@@ -213,9 +214,9 @@ function AppShell() {
 
   return (
     <MultiplayerShell onExit={handleExitRoom} initialRoomId={selectedRoomId}>
-      <GameContextProvider initialScenario={1}>
+      <MultiplayerGameProvider gameId={selectedRoomId}>
         <SinglePlayerView onExit={handleExitMode} isMultiplayer />
-      </GameContextProvider>
+      </MultiplayerGameProvider>
     </MultiplayerShell>
   );
 }

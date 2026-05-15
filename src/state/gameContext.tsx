@@ -70,15 +70,34 @@ const GameContext = createContext<GameContextType | undefined>(undefined);
 interface GameContextProviderProps {
   children: React.ReactNode;
   initialScenario?: ScenarioType;
+  /**
+   * If set, the provider treats this as the authoritative source of game
+   * state — it replaces local state whenever the prop reference changes
+   * and skips the local sim interval. Used by MultiplayerGameProvider
+   * to drive the canvas from server snapshots.
+   */
+  externalState?: GameState | null;
+  /**
+   * When true, suppress the local 60Hz sim loop. Required in multiplayer
+   * where the server's tick scheduler is authoritative.
+   */
+  externallyControlled?: boolean;
 }
 
 export function GameContextProvider({
   children,
   initialScenario = 1,
+  externalState,
+  externallyControlled = false,
 }: GameContextProviderProps) {
   const [gameState, setGameStateInternal] = useState<GameState>(
-    getScenario(initialScenario)
+    () => externalState ?? getScenario(initialScenario)
   );
+
+  // Replace gameState whenever the external snapshot changes reference.
+  useEffect(() => {
+    if (externalState) setGameStateInternal(externalState);
+  }, [externalState]);
   const [camera, setCameraInternal] = useState<CameraState>({
     x: 0, y: 0, scale: 1, zoomLevel: 1,
   });
@@ -300,6 +319,10 @@ export function GameContextProvider({
   const lastTimeRef = useRef<number>(0);
 
   useEffect(() => {
+    // In multiplayer the server's Room-DO alarm advances time. The local
+    // sim loop is suppressed so the canvas can't drift away from the
+    // server's authoritative tick.
+    if (externallyControlled) return;
     if (simSpeed === 0) return;
     lastTimeRef.current = performance.now();
 
@@ -315,7 +338,7 @@ export function GameContextProvider({
     }, 50);
 
     return () => clearInterval(interval);
-  }, [simSpeed, advanceToTick]);
+  }, [simSpeed, advanceToTick, externallyControlled]);
 
   const setGameState = useCallback((state: GameState) => {
     setGameStateInternal(state);
