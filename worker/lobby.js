@@ -53,7 +53,7 @@ async function loadRoomSettings(env, roomId) {
   // Settings live partly on the rooms row and partly in a small JSON blob
   // hosted in the Room DO. We surface a flat object for the UI.
   const room = await env.DB
-    .prepare('SELECT id, name, host_id, status, max_players FROM rooms WHERE id = ?')
+    .prepare('SELECT id, name, host_id, status, max_players, invite_code, password_hash FROM rooms WHERE id = ?')
     .bind(roomId)
     .first();
   if (!room) return null;
@@ -71,6 +71,8 @@ async function loadRoomSettings(env, roomId) {
     host_id: room.host_id,
     status: room.status,
     max_players: room.max_players,
+    invite_code: room.invite_code ?? null,
+    has_password: !!room.password_hash,
     total_tick_target: game?.total_tick_target ?? cfg.total_tick_target ?? 42,
     tick_interval_ms: game?.tick_interval_ms ?? cfg.tick_interval_ms ?? 86_400_000,
     game_id: game?.id ?? null,

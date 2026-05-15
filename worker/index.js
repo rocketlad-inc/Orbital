@@ -13,20 +13,52 @@ import { MIGRATIONS } from './_migrations_bundle.js';
 
 export { Room } from './room.js';
 
-// One-shot schema bootstrap. Idempotent — checks whether the `users` table
-// exists before doing anything. Splits each SQL file into individual
-// statements (SQLite/D1 requires one statement per prepare).
+// Tracks which migrations have been applied so /api/__init can be re-run
+// safely to apply just the new ones. D1 manages this internally when
+// wrangler is used; this is the same idea, in worker code, for the
+// win32/arm64 case where wrangler can't run locally.
+async function ensureMigrationsTable(db) {
+  await db
+    .prepare('CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)')
+    .run();
+}
+
 async function handleInit(req, env) {
-  // Already initialized?
-  try {
-    await env.DB.prepare('SELECT 1 FROM users LIMIT 1').first();
-    return json({ ok: true, status: 'already_initialized' });
-  } catch (_) {
-    // not initialized — fall through
+  await ensureMigrationsTable(env.DB);
+
+  // Backfill: if the users table exists but _migrations is empty, this DB
+  // was initialized before tracking was added. Mark every existing migration
+  // up to the latest known schema as applied so we don't try to re-run them.
+  const trackedCount = await env.DB.prepare('SELECT COUNT(*) AS c FROM _migrations').first();
+  if ((trackedCount?.c ?? 0) === 0) {
+    try {
+      await env.DB.prepare('SELECT 1 FROM users LIMIT 1').first();
+      // users exists -> backfill the migrations that must have produced it
+      const knownPriorMigrations = [
+        '0001_init.sql',
+        '0002_rooms.sql',
+        '0003_game_state.sql',
+        '0004_senate_effects.sql',
+        '0005_empire_identity_and_starter_fleet.sql',
+      ];
+      const now = Date.now();
+      for (const name of knownPriorMigrations) {
+        await env.DB
+          .prepare('INSERT OR IGNORE INTO _migrations (name, applied_at) VALUES (?, ?)')
+          .bind(name, now)
+          .run();
+      }
+    } catch (_) {
+      // users doesn't exist yet — fresh DB, nothing to backfill
+    }
   }
 
-  const applied = [];
+  const applied = await env.DB.prepare('SELECT name FROM _migrations').all();
+  const done = new Set((applied.results ?? []).map(r => r.name));
+
+  const newlyApplied = [];
   for (const m of MIGRATIONS) {
+    if (done.has(m.name)) continue;
     const stmts = m.sql
       .split(/;\s*(?:\r?\n|$)/)
       .map(s => s.replace(/^\s*--.*$/gm, '').trim())
@@ -40,13 +72,17 @@ async function handleInit(req, env) {
           migration: m.name,
           statement: stmt.slice(0, 200),
           error: String(e?.message || e),
-          applied,
+          newlyApplied,
         }, { status: 500 });
       }
     }
-    applied.push(m.name);
+    await env.DB
+      .prepare('INSERT INTO _migrations (name, applied_at) VALUES (?, ?)')
+      .bind(m.name, Date.now())
+      .run();
+    newlyApplied.push(m.name);
   }
-  return json({ ok: true, applied });
+  return json({ ok: true, newlyApplied, alreadyApplied: [...done] });
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -69,6 +105,16 @@ function newRoomId() {
   let s = '';
   for (const b of bytes) s += String.fromCharCode(b);
   return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// 8-char shareable code; alphabet excludes lookalikes (0/O, 1/I) so it's
+// readable when typed by hand.
+function newInviteCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  let out = '';
+  for (const b of bytes) out += alphabet[b % alphabet.length];
+  return out;
 }
 
 // ---------- auth ----------
@@ -161,6 +207,7 @@ async function handleListRooms(_req, env) {
   const rows = await env.DB
     .prepare(
       `SELECT r.id, r.name, r.status, r.max_players, r.created_at, r.host_id, u.display_name AS host_name,
+              (r.password_hash IS NOT NULL) AS has_password,
               (SELECT COUNT(*) FROM room_members m WHERE m.room_id = r.id) AS member_count
        FROM rooms r JOIN users u ON u.id = r.host_id
        WHERE r.status != 'closed'
@@ -168,7 +215,8 @@ async function handleListRooms(_req, env) {
        LIMIT 50`,
     )
     .all();
-  return json({ rooms: rows.results ?? [] });
+  const rooms = (rows.results ?? []).map(r => ({ ...r, has_password: !!r.has_password }));
+  return json({ rooms });
 }
 
 // Rooms the current user is a member of, with each room's current game
@@ -179,6 +227,8 @@ async function handleListMyRooms(_req, env, session) {
   const rows = await env.DB
     .prepare(
       `SELECT r.id, r.name, r.status, r.max_players, r.host_id, u.display_name AS host_name,
+              r.invite_code,
+              (r.password_hash IS NOT NULL) AS has_password,
               (SELECT COUNT(*) FROM room_members m2 WHERE m2.room_id = r.id) AS member_count,
               g.id AS game_id, g.status AS game_status
        FROM room_members rm
@@ -192,7 +242,8 @@ async function handleListMyRooms(_req, env, session) {
     )
     .bind(session.user_id)
     .all();
-  return json({ rooms: rows.results ?? [] });
+  const rooms = (rows.results ?? []).map(r => ({ ...r, has_password: !!r.has_password }));
+  return json({ rooms });
 }
 
 async function handleCreateRoom(req, env, session) {
@@ -204,13 +255,22 @@ async function handleCreateRoom(req, env, session) {
   const maxPlayers = Number.isInteger(body?.max_players) ? body.max_players : 4;
   if (maxPlayers < 2 || maxPlayers > 8) return err(400, 'bad_request', 'max_players must be 2-8');
 
+  // Optional room password — if set, joiners must provide it.
+  let passwordHash = null;
+  if (typeof body?.password === 'string' && body.password.length > 0) {
+    if (body.password.length < 4) return err(400, 'bad_request', 'password must be at least 4 characters');
+    if (body.password.length > 100) return err(400, 'bad_request', 'password too long');
+    passwordHash = await hashPassword(body.password);
+  }
+
   const id = newRoomId();
+  const inviteCode = newInviteCode();
   const now = Date.now();
 
   await env.DB.batch([
     env.DB
-      .prepare('INSERT INTO rooms (id, name, host_id, status, max_players, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .bind(id, rawName, session.user_id, 'lobby', maxPlayers, now, now),
+      .prepare('INSERT INTO rooms (id, name, host_id, status, max_players, created_at, updated_at, invite_code, password_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(id, rawName, session.user_id, 'lobby', maxPlayers, now, now, inviteCode, passwordHash),
     env.DB
       .prepare('INSERT INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)')
       .bind(id, session.user_id, now),
@@ -225,22 +285,44 @@ async function handleCreateRoom(req, env, session) {
     }),
   });
 
-  return json({ room: { id, name: rawName, host_id: session.user_id, status: 'lobby', max_players: maxPlayers } }, { status: 201 });
+  return json({
+    room: {
+      id,
+      name: rawName,
+      host_id: session.user_id,
+      status: 'lobby',
+      max_players: maxPlayers,
+      invite_code: inviteCode,
+      has_password: !!passwordHash,
+    },
+  }, { status: 201 });
 }
 
 async function handleJoinRoom(req, env, session, roomId) {
   if (!ROOM_ID_RE.test(roomId)) return err(400, 'bad_request', 'invalid room id');
-  const room = await env.DB.prepare('SELECT id, max_players, status FROM rooms WHERE id = ?').bind(roomId).first();
+  const room = await env.DB
+    .prepare('SELECT id, max_players, status, password_hash FROM rooms WHERE id = ?')
+    .bind(roomId)
+    .first();
   if (!room) return err(404, 'not_found', 'room not found');
   if (room.status === 'closed') return err(409, 'room_closed', 'room is closed');
 
-  const count = await env.DB.prepare('SELECT COUNT(*) AS c FROM room_members WHERE room_id = ?').bind(roomId).first();
   const already = await env.DB
     .prepare('SELECT 1 AS x FROM room_members WHERE room_id = ? AND user_id = ?')
     .bind(roomId, session.user_id)
     .first();
 
+  // Password gate: only enforce for users not already in the room.
+  if (!already && room.password_hash) {
+    const body = await readJson(req);
+    const supplied = typeof body?.password === 'string' ? body.password : '';
+    if (!supplied) return err(401, 'password_required', 'room is password-protected');
+    const ok = await verifyPassword(supplied, room.password_hash);
+    if (!ok) return err(403, 'bad_password', 'incorrect password');
+  }
+
   if (!already) {
+    const count = await env.DB.prepare('SELECT COUNT(*) AS c FROM room_members WHERE room_id = ?').bind(roomId).first();
     if ((count?.c ?? 0) >= room.max_players) return err(403, 'room_full', 'room is full');
     await env.DB
       .prepare('INSERT INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)')
@@ -249,7 +331,26 @@ async function handleJoinRoom(req, env, session, roomId) {
     await env.DB.prepare('UPDATE rooms SET updated_at = ? WHERE id = ?').bind(Date.now(), roomId).run();
   }
 
-  return json({ ok: true });
+  return json({ ok: true, room_id: roomId });
+}
+
+// Join by invite code — frontend-facing convenience that resolves the
+// 8-char code to a room id and then runs the same join logic.
+async function handleJoinByCode(req, env, session) {
+  const body = await readJson(req);
+  const code = typeof body?.code === 'string' ? body.code.trim().toUpperCase() : '';
+  if (!code) return err(400, 'bad_request', 'invite code required');
+  if (!/^[A-Z2-9]{8}$/.test(code)) return err(400, 'bad_request', 'invalid invite code format');
+  const room = await env.DB.prepare('SELECT id FROM rooms WHERE invite_code = ?').bind(code).first();
+  if (!room) return err(404, 'not_found', 'no room with that code');
+  // Reuse the same join handler — re-stringify the body so password (if any)
+  // is preserved in the inner readJson.
+  const inner = new Request(req.url, {
+    method: 'POST',
+    headers: req.headers,
+    body: JSON.stringify({ password: body?.password }),
+  });
+  return handleJoinRoom(inner, env, session, room.id);
 }
 
 async function handleRoomSnapshot(_req, env, _session, roomId) {
@@ -349,6 +450,7 @@ export default {
 
       if (req.method === 'GET'  && url.pathname === '/api/rooms') return handleListRooms(req, env);
       if (req.method === 'POST' && url.pathname === '/api/rooms') return handleCreateRoom(req, env, session);
+      if (req.method === 'POST' && url.pathname === '/api/rooms/join-by-code') return handleJoinByCode(req, env, session);
       if (req.method === 'GET'  && url.pathname === '/api/users/me/rooms') return handleListMyRooms(req, env, session);
 
       const joinMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)\/join$/);
