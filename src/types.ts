@@ -76,6 +76,17 @@ export interface Body {
 }
 
 /**
+ * Fleet: a group of ships that move and fight together
+ */
+export interface Fleet {
+  id: string;
+  name: string;
+  shipIds: string[];
+  leadShipId: string;                   // the ship whose position represents the fleet
+  ownedBy: string;                      // faction id
+}
+
+/**
  * A starship under player or enemy control
  */
 export interface Ship {
@@ -87,6 +98,7 @@ export interface Ship {
   // Current state
   fuel: number;                         // remaining fuel
   hp?: number;                          // current HP (undefined = full from class def)
+  fleetId?: string;                     // fleet this ship belongs to (if any)
 
   // Orbital position
   orbit: OrbitElements;                 // current orbit around parent body
@@ -98,6 +110,10 @@ export interface Ship {
   pendingTransfer?: TransferArc;        // planned but not yet departed
   transfer?: TransferArc;               // currently in transit
   queuedTransfers?: TransferArc[];      // chained transfers waiting after current
+
+  // Engagement state — player-initiated combat
+  engagedTargetId?: string;             // ship currently engaged with (firing on)
+  lastCombatTick?: number;              // tick when last damage was dealt
 }
 
 /**
@@ -150,6 +166,7 @@ export interface Settlement {
 
   population: number;                 // starts at 1, +1 per growth interval
   lastGrowthTick: number;             // tick when population last grew
+  lastCombatTick?: number;            // tick when this settlement last returned fire
 
   surfaceAngle?: number;              // city: angle on body surface (radians)
   orbit?: OrbitElements;              // station: orbit around body
@@ -167,6 +184,7 @@ export interface GameState {
   currentTick: number;
   bodies: Body[];
   ships: Ship[];
+  fleets: Fleet[];
   factions: Faction[];
   settlements: Settlement[];           // cities and orbital stations
   orders: ManeuverNode[];              // all maneuvers in the game
@@ -195,6 +213,7 @@ export interface MapUIState {
   selectedBodyId?: string;
   hoveredBodyId?: string;
   targetSelectionMode?: boolean;        // true when picking a transfer target on the map
+  engagementTargetMode?: boolean;       // true when picking a combat target (ship) on the map
 }
 
 /**

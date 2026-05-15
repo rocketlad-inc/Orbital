@@ -14,12 +14,16 @@ import {
   drawGhostPlanet,
   drawTargetHighlight,
   drawSettlement,
+  drawEngagement,
   worldToCanvas,
   RenderContext,
 } from '../render/mapRenderer';
 import { bezierPositionAt } from '../physics/bezierTransfer';
 import { bodyPosition } from '../physics/orbitalMechanics';
 import { COLORS, withOpacity } from '../render/colors';
+import { shipWorldPosition } from '../game/combat';
+import { getShipClass, ShipClassName } from '../game/shipClasses';
+import { settlementWorldPosition, SETTLEMENT_DEFS } from '../game/settlements';
 import './MapCanvas.css';
 
 interface MapCanvasProps {
@@ -38,6 +42,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     updateCamera, selectShip, selectBody, deselectShip, deselectBody,
     hoverBody, focusBody,
     setTargetSelectionMode,
+    setEngagementTargetMode,
     selectedSettlementId,
   } = useGameContext();
 
@@ -49,16 +54,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   } | null>(null);
 
 
-  // Escape key cancels target selection
+  // Escape key cancels target selection / engagement target mode
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && uiState.targetSelectionMode) {
-        setTargetSelectionMode(false);
+      if (e.key === 'Escape') {
+        if (uiState.targetSelectionMode) setTargetSelectionMode(false);
+        if (uiState.engagementTargetMode) setEngagementTargetMode(false);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [uiState.targetSelectionMode, setTargetSelectionMode]);
+  }, [uiState.targetSelectionMode, uiState.engagementTargetMode, setTargetSelectionMode, setEngagementTargetMode]);
 
   const render = useCallback(() => {
     if (!canvasRef.current) return;
@@ -197,6 +203,69 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
     }
 
+    // Draw fleet bonds — faint lines connecting members of each fleet
+    for (const fleet of gameState.fleets) {
+      if (fleet.shipIds.length < 2) continue;
+      const positions: Array<{ x: number; y: number }> = [];
+      for (const sid of fleet.shipIds) {
+        const s = gameState.ships.find(sh => sh.id === sid);
+        if (!s) continue;
+        const wp = shipWorldPosition(s, gameState.currentTick, gameState.bodies);
+        if (wp) positions.push(wp);
+      }
+      if (positions.length < 2) continue;
+      ctx.strokeStyle = withOpacity('#4ecdc4', 0.35);
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 3]);
+      // Star pattern: connect each ship to the first (lead) ship
+      const [lead, ...rest] = positions;
+      const leadCanvas = worldToCanvas(lead.x, lead.y, renderContext);
+      for (const p of rest) {
+        const pc = worldToCanvas(p.x, p.y, renderContext);
+        ctx.beginPath();
+        ctx.moveTo(leadCanvas.x, leadCanvas.y);
+        ctx.lineTo(pc.x, pc.y);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+
+    // Draw engagement lines for all ships currently engaging a target (ship or settlement)
+    for (const attacker of gameState.ships) {
+      if (!attacker.engagedTargetId) continue;
+      const targetShip = gameState.ships.find(s => s.id === attacker.engagedTargetId);
+      const targetSettlement = !targetShip
+        ? gameState.settlements.find(st => st.id === attacker.engagedTargetId)
+        : null;
+      if (!targetShip && !targetSettlement) continue;
+
+      const aPos = shipWorldPosition(attacker, gameState.currentTick, gameState.bodies);
+      const tPos = targetShip
+        ? shipWorldPosition(targetShip, gameState.currentTick, gameState.bodies)
+        : settlementWorldPosition(targetSettlement!, gameState.currentTick, gameState.bodies);
+      if (!aPos || !tPos) continue;
+
+      const attackerClass = getShipClass(attacker.class as ShipClassName);
+      const dist = Math.hypot(aPos.x - tPos.x, aPos.y - tPos.y);
+      const inRange = dist <= attackerClass.range;
+      drawEngagement(aPos, tPos, attackerClass.range, inRange, renderContext);
+
+      // If target is a settlement, also draw its return-fire range ring
+      if (targetSettlement) {
+        const sdef = SETTLEMENT_DEFS[targetSettlement.type];
+        if (sdef.range > 0) {
+          const sCanvas = worldToCanvas(tPos.x, tPos.y, renderContext);
+          ctx.strokeStyle = withOpacity('#ff8a4d', 0.25);
+          ctx.lineWidth = 1;
+          ctx.setLineDash([2, 4]);
+          ctx.beginPath();
+          ctx.arc(sCanvas.x, sCanvas.y, sdef.range * camera.scale, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+    }
+
     // Draw settlements (cities on body surface, stations in orbit)
     for (const settlement of gameState.settlements) {
       const body = gameState.bodies.find(b => b.id === settlement.bodyId);
@@ -210,7 +279,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       );
     }
 
-    drawHUD(renderContext, uiState.targetSelectionMode);
+    drawHUD(renderContext, uiState.targetSelectionMode, uiState.engagementTargetMode);
   }, [gameState, camera, uiState, simSpeed, selectedSettlementId]);
 
   const handleMouseMove = useCallback(
@@ -282,6 +351,39 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         return;
       }
 
+      // Engagement target mode: click a ship OR settlement to engage it
+      if (uiState.engagementTargetMode) {
+        // Ships first
+        for (const ship of gameState.ships) {
+          const shipPos = getShipCanvasPos(ship, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
+          if (Math.hypot(canvasX - shipPos.x, canvasY - shipPos.y) < 12) {
+            window.dispatchEvent(new CustomEvent('orbital-engage-confirm', {
+              detail: { targetId: ship.id, targetKind: 'ship' },
+            }));
+            return;
+          }
+        }
+        // Then settlements
+        for (const settlement of gameState.settlements) {
+          const wp = settlementWorldPosition(settlement, gameState.currentTick, gameState.bodies);
+          if (!wp) continue;
+          const cp = worldToCanvas(wp.x, wp.y, {
+            canvas: canvasRef.current,
+            camera,
+            ctx: canvasRef.current.getContext('2d')!,
+            t: gameState.currentTick,
+            bodies: gameState.bodies,
+          });
+          if (Math.hypot(canvasX - cp.x, canvasY - cp.y) < 14) {
+            window.dispatchEvent(new CustomEvent('orbital-engage-confirm', {
+              detail: { targetId: settlement.id, targetKind: 'settlement' },
+            }));
+            return;
+          }
+        }
+        return;
+      }
+
       for (const ship of gameState.ships) {
         const shipPos = getShipCanvasPos(ship, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
         if (Math.hypot(canvasX - shipPos.x, canvasY - shipPos.y) < 10) {
@@ -302,7 +404,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       deselectShip();
       deselectBody();
     },
-    [gameState, camera, uiState.targetSelectionMode, selectShip, selectBody, deselectShip, deselectBody]
+    [gameState, camera, uiState.targetSelectionMode, uiState.engagementTargetMode, selectShip, selectBody, deselectShip, deselectBody]
   );
 
   const handleMouseHover = useCallback(
@@ -397,7 +499,7 @@ function getShipCanvasPos(
   };
 }
 
-function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
+function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean, engagementTargetMode?: boolean) {
   const speedLabel = ctx.simSpeed && ctx.simSpeed > 0 ? `${ctx.simSpeed}×` : 'PAUSED';
   ctx.ctx.fillStyle = COLORS.fgDim;
   ctx.ctx.font = '12px monospace';
@@ -418,6 +520,16 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
     ctx.ctx.fillStyle = COLORS.fgDim;
     ctx.ctx.font = '10px monospace';
     ctx.ctx.fillText('Click a body to transfer | ESC to cancel | Right-click to cancel', ctx.canvas.width / 2, 32);
+  }
+
+  if (engagementTargetMode) {
+    ctx.ctx.fillStyle = '#ff5e5e';
+    ctx.ctx.font = 'bold 12px monospace';
+    ctx.ctx.textAlign = 'center';
+    ctx.ctx.fillText('SELECT TARGET', ctx.canvas.width / 2, 16);
+    ctx.ctx.fillStyle = COLORS.fgDim;
+    ctx.ctx.font = '10px monospace';
+    ctx.ctx.fillText('Click an enemy ship or settlement to engage | ESC to cancel', ctx.canvas.width / 2, 32);
   }
 
   if (ctx.camera.focusedBodyId) {

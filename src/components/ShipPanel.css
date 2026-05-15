@@ -94,6 +94,64 @@
   font-weight: 600;
 }
 
+.engagement-section {
+  border-top: 1px solid #2a3d50;
+  padding-top: 10px;
+  margin-top: 10px;
+  margin-bottom: 10px;
+}
+
+.engagement-section .maneuver-btn {
+  margin-top: 8px;
+  width: 100%;
+}
+
+.fleet-section {
+  border-top: 1px solid #2a3d50;
+  padding-top: 10px;
+  margin-top: 10px;
+  margin-bottom: 10px;
+}
+
+.fleet-members {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 4px;
+}
+
+.fleet-member {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 6px;
+  background: rgba(20, 32, 44, 0.6);
+  border: 1px solid #2a3d50;
+  border-radius: 2px;
+  font-size: 10px;
+}
+
+.fleet-member-name {
+  color: #d8e4ee;
+}
+
+.fleet-member-class {
+  color: #6b8195;
+  font-size: 9px;
+}
+
+.fleet-buttons {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.fleet-buttons .maneuver-btn {
+  flex: 1;
+  min-width: 60px;
+}
+
 .no-orders {
   color: #6b8195;
   font-style: italic;

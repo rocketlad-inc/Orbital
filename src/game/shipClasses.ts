@@ -10,9 +10,11 @@ export interface ShipClassDef {
   description: string;
 
   // Combat stats
-  firepower: number;    // damage per combat tick
+  firepower: number;    // damage per combat tick (used in auto-resolve combat at bodies)
   hp: number;           // hit points
   pdcRating: number;    // point-defense coverage (0-1), reduces incoming damage
+  range: number;        // engagement range in world units (0 = no combat capability)
+  damagePerTick: number; // damage dealt per COMBAT_DAMAGE_INTERVAL ticks during engagement
 
   // Movement
   fuelCapacity: number;
@@ -42,6 +44,8 @@ const CORVETTE: ShipClassDef = {
   firepower: 8,
   hp: 40,
   pdcRating: 0.2,
+  range: 8,
+  damagePerTick: 5,
   fuelCapacity: 80,
   speedModifier: 0.7,
   cargoCapacity: 0,
@@ -63,6 +67,8 @@ const FRIGATE: ShipClassDef = {
   firepower: 18,
   hp: 100,
   pdcRating: 0.4,
+  range: 14,
+  damagePerTick: 10,
   fuelCapacity: 120,
   speedModifier: 1.0,
   cargoCapacity: 0,
@@ -84,6 +90,8 @@ const DESTROYER: ShipClassDef = {
   firepower: 35,
   hp: 200,
   pdcRating: 0.6,
+  range: 22,
+  damagePerTick: 18,
   fuelCapacity: 150,
   speedModifier: 1.4,
   cargoCapacity: 0,
@@ -105,6 +113,8 @@ const FREIGHTER: ShipClassDef = {
   firepower: 0,
   hp: 60,
   pdcRating: 0.1,
+  range: 0,
+  damagePerTick: 0,
   fuelCapacity: 100,
   speedModifier: 1.3,
   cargoCapacity: 50,

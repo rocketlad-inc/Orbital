@@ -2,12 +2,12 @@
 // BodyInspector - Resource readout + build UI for selected body
 // ============================================================
 
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { BuildPanel } from './BuildPanel';
 import { bodyProductionRates } from '../game/economy';
 import {
-  canHostCity, canHostStation, SETTLEMENT_DEFS, settlementYield,
+  canHostCity, canHostStation, SETTLEMENT_DEFS, settlementYield, suggestSettlementName,
 } from '../game/settlements';
 import { SettlementType } from '../types';
 import './BodyInspector.css';
@@ -146,7 +146,25 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
     gameState, deploySettlement, selectSettlement, selectedSettlementId,
   } = useGameContext();
 
+  // Inline name prompt state — when set, shows naming form for that type
+  const [namingType, setNamingType] = useState<SettlementType | null>(null);
+  const [draftName, setDraftName] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+
   const body = gameState.bodies.find(b => b.id === bodyId);
+
+  // Auto-focus and seed default name when prompt opens
+  useEffect(() => {
+    if (namingType && body) {
+      setDraftName(suggestSettlementName(body, namingType, gameState.settlements));
+      // Focus & select after a tick so the input is rendered
+      setTimeout(() => {
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      }, 0);
+    }
+  }, [namingType, body, gameState.settlements]);
+
   if (!body) return null;
 
   const settlements = gameState.settlements.filter(s => s.bodyId === bodyId);
@@ -169,15 +187,38 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
     && playerRes.ore >= SETTLEMENT_DEFS.station.cost.ore
     && playerRes.credits >= SETTLEMENT_DEFS.station.cost.credits;
 
-  const handleDeploy = (type: SettlementType) => {
-    deploySettlement(bodyId, type);
+  const handleStartDeploy = (type: SettlementType) => {
+    setNamingType(type);
+  };
+
+  const handleConfirm = () => {
+    if (!namingType) return;
+    const name = draftName.trim();
+    deploySettlement(bodyId, namingType, name || undefined);
+    setNamingType(null);
+    setDraftName('');
+  };
+
+  const handleCancel = () => {
+    setNamingType(null);
+    setDraftName('');
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleConfirm();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      handleCancel();
+    }
   };
 
   return (
     <div className="settlements-section">
       <div className="section-title">SETTLEMENTS</div>
 
-      {settlements.length === 0 && (
+      {settlements.length === 0 && !namingType && (
         <div className="no-orders">No settlements at this body</div>
       )}
 
@@ -216,39 +257,65 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
         );
       })}
 
-      <div className="deploy-buttons">
-        {cityAllowed && (
-          <button
-            className="deploy-btn"
-            disabled={!canBuildHere || !canAffordCity}
-            onClick={() => handleDeploy('city')}
-            title={
-              !canBuildHere ? 'Need a ship in orbit'
-              : !canAffordCity ? `Need ${SETTLEMENT_DEFS.city.cost.fuel}F/${SETTLEMENT_DEFS.city.cost.ore}O/${SETTLEMENT_DEFS.city.cost.credits}C`
-              : `Deploy a city (${SETTLEMENT_DEFS.city.cost.fuel}F/${SETTLEMENT_DEFS.city.cost.ore}O/${SETTLEMENT_DEFS.city.cost.credits}C)`
-            }
-          >
-            ■ DEPLOY CITY
-          </button>
-        )}
-        {stationAllowed && (
-          <button
-            className="deploy-btn"
-            disabled={!canBuildHere || !canAffordStation}
-            onClick={() => handleDeploy('station')}
-            title={
-              !canBuildHere ? 'Need a ship in orbit'
-              : !canAffordStation ? `Need ${SETTLEMENT_DEFS.station.cost.fuel}F/${SETTLEMENT_DEFS.station.cost.ore}O/${SETTLEMENT_DEFS.station.cost.credits}C`
-              : `Deploy a station (${SETTLEMENT_DEFS.station.cost.fuel}F/${SETTLEMENT_DEFS.station.cost.ore}O/${SETTLEMENT_DEFS.station.cost.credits}C)`
-            }
-          >
-            ◆ DEPLOY STATION
-          </button>
-        )}
-      </div>
+      {namingType ? (
+        <div className="deploy-prompt">
+          <div className="deploy-prompt-label">
+            NAME YOUR {namingType === 'city' ? 'CITY' : 'STATION'}
+          </div>
+          <input
+            ref={inputRef}
+            className="deploy-name-input"
+            type="text"
+            value={draftName}
+            maxLength={32}
+            onChange={(e) => setDraftName(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={`e.g. ${suggestSettlementName(body, namingType, gameState.settlements)}`}
+          />
+          <div className="deploy-prompt-actions">
+            <button className="btn-confirm" onClick={handleConfirm}>
+              {namingType === 'city' ? '■ FOUND CITY' : '◆ LAUNCH STATION'}
+            </button>
+            <button className="btn-cancel" onClick={handleCancel}>CANCEL</button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="deploy-buttons">
+            {cityAllowed && (
+              <button
+                className="deploy-btn"
+                disabled={!canBuildHere || !canAffordCity}
+                onClick={() => handleStartDeploy('city')}
+                title={
+                  !canBuildHere ? 'Need a ship in orbit'
+                  : !canAffordCity ? `Need ${SETTLEMENT_DEFS.city.cost.fuel}F/${SETTLEMENT_DEFS.city.cost.ore}O/${SETTLEMENT_DEFS.city.cost.credits}C`
+                  : `Deploy a city (${SETTLEMENT_DEFS.city.cost.fuel}F/${SETTLEMENT_DEFS.city.cost.ore}O/${SETTLEMENT_DEFS.city.cost.credits}C)`
+                }
+              >
+                ■ DEPLOY CITY
+              </button>
+            )}
+            {stationAllowed && (
+              <button
+                className="deploy-btn"
+                disabled={!canBuildHere || !canAffordStation}
+                onClick={() => handleStartDeploy('station')}
+                title={
+                  !canBuildHere ? 'Need a ship in orbit'
+                  : !canAffordStation ? `Need ${SETTLEMENT_DEFS.station.cost.fuel}F/${SETTLEMENT_DEFS.station.cost.ore}O/${SETTLEMENT_DEFS.station.cost.credits}C`
+                  : `Deploy a station (${SETTLEMENT_DEFS.station.cost.fuel}F/${SETTLEMENT_DEFS.station.cost.ore}O/${SETTLEMENT_DEFS.station.cost.credits}C)`
+                }
+              >
+                ◆ DEPLOY STATION
+              </button>
+            )}
+          </div>
 
-      {!canBuildHere && (cityAllowed || stationAllowed) && (
-        <div className="deploy-hint">Send a ship to orbit to deploy</div>
+          {!canBuildHere && (cityAllowed || stationAllowed) && (
+            <div className="deploy-hint">Send a ship to orbit to deploy</div>
+          )}
+        </>
       )}
     </div>
   );

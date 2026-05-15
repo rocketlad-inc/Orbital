@@ -3,11 +3,13 @@ import { GameState, ManeuverNode, CameraState, MapUIState, Ship, Body, TransferA
 import { getScenario, ScenarioType } from './mockGameState';
 import { createCircularOrbit } from '../physics/orbitalMechanics';
 import { getShipClass, ShipClassName, SHIP_CLASSES } from '../game/shipClasses';
-import { checkCombatAtBodies, applyCombatResults } from '../game/combat';
+import { formFleet, splitFromFleet } from '../game/fleet';
+import { checkCombatAtBodies, applyCombatResults, processEngagements } from '../game/combat';
 import {
   createCity, createStation, tickSettlements,
   canHostCity, canHostStation, SETTLEMENT_DEFS,
 } from '../game/settlements';
+import { tickMaintenance } from '../game/maintenance';
 
 export const TICKS_PER_GAME_DAY = 24;
 const REAL_SECONDS_PER_GAME_DAY = 3600;
@@ -34,6 +36,11 @@ interface GameContextType {
   deselectBody: () => void;
   hoverBody: (bodyId: string | null) => void;
   setTargetSelectionMode: (enabled: boolean) => void;
+  setEngagementTargetMode: (enabled: boolean) => void;
+
+  // Combat engagement
+  engageTarget: (shipId: string, targetShipId: string) => void;
+  disengageTarget: (shipId: string) => void;
 
   addManeuverNode: (node: ManeuverNode) => void;
   commitManeuverNode: (nodeId: string) => void;
@@ -45,8 +52,14 @@ interface GameContextType {
   buildShip: (bodyId: string, shipClass: ShipClassName, name: string) => boolean;
   cancelBuild: (buildOrderId: string) => void;
 
+  // Fleet management
+  createFleet: (name: string, shipIds: string[]) => void;
+  disbandFleet: (fleetId: string) => void;
+  removeFromFleet: (fleetId: string, shipId: string) => void;
+  addToFleet: (fleetId: string, shipId: string) => void;
+
   // Settlements
-  deploySettlement: (bodyId: string, type: SettlementType) => boolean;
+  deploySettlement: (bodyId: string, type: SettlementType, name?: string) => boolean;
   damageSettlement: (settlementId: string, dmg: number) => void;
   selectedSettlementId?: string;
   selectSettlement: (id: string | undefined) => void;
@@ -147,6 +160,7 @@ export function GameContextProvider({
   // Single source of truth for advancing the game state to a target tick.
   // Used by both the realtime setInterval loop and the +10 skip button.
   const advanceToTick = useCallback((prev: GameState, newTime: number): GameState => {
+    const tickDelta = Math.max(0, newTime - prev.currentTick);
     let updatedShips = checkNodeExecution(prev.ships, prev.bodies, newTime);
 
     // Process build orders
@@ -178,16 +192,29 @@ export function GameContextProvider({
     const settlementsResult = tickSettlements(
       prev.settlements, prev.bodies, updatedShips, newTime, factionPools,
     );
-    const updatedSettlements = settlementsResult.settlements;
+    let updatedSettlements = settlementsResult.settlements;
 
-    // Check combat at bodies
+    // Process player-initiated engagements (range-based damage).
+    // Targets can be ships or settlements; settlements auto-retaliate.
+    const engagementResult = processEngagements(updatedShips, updatedSettlements, prev.bodies, newTime);
+    updatedShips = engagementResult.ships;
+    updatedSettlements = engagementResult.settlements;
+    const engagementLogs = engagementResult.log;
+
+    // Check combat at co-located bodies
     const combatResults = checkCombatAtBodies(updatedShips, prev.bodies);
-    let combatLog = prev.combatLog;
+    const combatNewLogs = combatResults.flatMap(r => r.log);
     if (combatResults.length > 0) {
       updatedShips = applyCombatResults(updatedShips, combatResults);
-      const newLogs = combatResults.flatMap(r => r.log);
-      combatLog = [...prev.combatLog.slice(-20), ...newLogs];
     }
+
+    // Repair and refuel ships at owned bodies (after combat so dead ships are gone)
+    updatedShips = tickMaintenance(updatedShips, updatedSettlements, prev.bodies, tickDelta);
+
+    const allNewLogs = [...engagementLogs, ...combatNewLogs];
+    const combatLog = allNewLogs.length > 0
+      ? [...prev.combatLog.slice(-20), ...allNewLogs]
+      : prev.combatLog;
 
     const allOrders = updatedShips.flatMap(s => s.orders);
     return {
@@ -343,6 +370,89 @@ export function GameContextProvider({
     setUIStateInternal(prev => ({ ...prev, targetSelectionMode: enabled }));
   }, []);
 
+  const setEngagementTargetMode = useCallback((enabled: boolean) => {
+    setUIStateInternal(prev => ({ ...prev, engagementTargetMode: enabled }));
+  }, []);
+
+  const engageTarget = useCallback((shipId: string, targetShipId: string) => {
+    setGameStateInternal(prev => ({
+      ...prev,
+      ships: prev.ships.map(s => s.id === shipId ? { ...s, engagedTargetId: targetShipId } : s),
+    }));
+    setUIStateInternal(prev => ({ ...prev, engagementTargetMode: false }));
+  }, []);
+
+  const disengageTarget = useCallback((shipId: string) => {
+    setGameStateInternal(prev => ({
+      ...prev,
+      ships: prev.ships.map(s => s.id === shipId ? { ...s, engagedTargetId: undefined } : s),
+    }));
+  }, []);
+
+  // ---- Fleet Management ----
+  const createFleet = useCallback((name: string, shipIds: string[]) => {
+    setGameStateInternal(prev => {
+      const fleet = formFleet(name, shipIds, prev.ships);
+      if (!fleet) return prev;
+      return {
+        ...prev,
+        fleets: [...prev.fleets, fleet],
+        ships: prev.ships.map(s =>
+          shipIds.includes(s.id) ? { ...s, fleetId: fleet.id } : s
+        ),
+      };
+    });
+  }, []);
+
+  const disbandFleet = useCallback((fleetId: string) => {
+    setGameStateInternal(prev => ({
+      ...prev,
+      fleets: prev.fleets.filter(f => f.id !== fleetId),
+      ships: prev.ships.map(s =>
+        s.fleetId === fleetId ? { ...s, fleetId: undefined } : s
+      ),
+    }));
+  }, []);
+
+  const removeFromFleet = useCallback((fleetId: string, shipId: string) => {
+    setGameStateInternal(prev => {
+      const fleet = prev.fleets.find(f => f.id === fleetId);
+      if (!fleet) return prev;
+      const updated = splitFromFleet(fleet, shipId);
+      return {
+        ...prev,
+        fleets: updated
+          ? prev.fleets.map(f => f.id === fleetId ? updated : f)
+          : prev.fleets.filter(f => f.id !== fleetId),
+        ships: prev.ships.map(s => {
+          if (s.id === shipId) return { ...s, fleetId: undefined };
+          if (!updated && s.fleetId === fleetId) return { ...s, fleetId: undefined };
+          return s;
+        }),
+      };
+    });
+  }, []);
+
+  const addToFleet = useCallback((fleetId: string, shipId: string) => {
+    setGameStateInternal(prev => {
+      const fleet = prev.fleets.find(f => f.id === fleetId);
+      if (!fleet) return prev;
+      const ship = prev.ships.find(s => s.id === shipId);
+      if (!ship || ship.transfer || ship.ownedBy !== fleet.ownedBy) return prev;
+      const leadShip = prev.ships.find(s => s.id === fleet.leadShipId);
+      if (!leadShip || ship.orbit.parentBodyId !== leadShip.orbit.parentBodyId) return prev;
+      return {
+        ...prev,
+        fleets: prev.fleets.map(f =>
+          f.id === fleetId ? { ...f, shipIds: [...f.shipIds, shipId] } : f
+        ),
+        ships: prev.ships.map(s =>
+          s.id === shipId ? { ...s, fleetId: fleetId } : s
+        ),
+      };
+    });
+  }, []);
+
   const setPendingTransfer = useCallback((shipId: string, arc: TransferArc | undefined) => {
     setGameStateInternal(prev => ({
       ...prev,
@@ -436,7 +546,7 @@ export function GameContextProvider({
     setSelectedSettlementId(id);
   }, []);
 
-  const deploySettlement = useCallback((bodyId: string, type: SettlementType): boolean => {
+  const deploySettlement = useCallback((bodyId: string, type: SettlementType, name?: string): boolean => {
     const body = gameState.bodies.find(b => b.id === bodyId);
     if (!body) return false;
 
@@ -464,8 +574,8 @@ export function GameContextProvider({
       if (!playerRes) return prev;
 
       const settlement = type === 'city'
-        ? createCity(body, 'player', prev.currentTick)
-        : createStation(body, 'player', prev.currentTick, prev.bodies);
+        ? createCity(body, 'player', prev.currentTick, name)
+        : createStation(body, 'player', prev.currentTick, prev.bodies, name);
 
       return {
         ...prev,
@@ -509,9 +619,11 @@ export function GameContextProvider({
     setGameState, updateGameState, updateTick, setSimSpeed, loadScenario,
     updateCamera, focusBody,
     selectShip, deselectShip, selectBody, deselectBody, hoverBody,
-    setTargetSelectionMode,
+    setTargetSelectionMode, setEngagementTargetMode,
     addManeuverNode, commitManeuverNode, deleteManeuverNode, setPendingTransfer, addQueuedTransfer,
     buildShip, cancelBuild,
+    createFleet, disbandFleet, removeFromFleet, addToFleet,
+    engageTarget, disengageTarget,
     deploySettlement, damageSettlement,
     selectedSettlementId, selectSettlement,
   };

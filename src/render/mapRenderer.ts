@@ -709,6 +709,54 @@ export function drawTargetHighlight(
   }
 }
 
+/**
+ * Draw an engagement: line from attacker to target. Solid red if in range,
+ * dashed amber if out of range. Also draws a range ring around the attacker.
+ */
+export function drawEngagement(
+  attackerPos: { x: number; y: number },
+  targetPos: { x: number; y: number },
+  range: number,
+  inRange: boolean,
+  ctx: RenderContext,
+) {
+  const a = worldToCanvas(attackerPos.x, attackerPos.y, ctx);
+  const t = worldToCanvas(targetPos.x, targetPos.y, ctx);
+
+  // Range ring around attacker
+  ctx.ctx.strokeStyle = withOpacity(inRange ? '#ff5e5e' : '#ffb84d', 0.25);
+  ctx.ctx.lineWidth = 1;
+  ctx.ctx.setLineDash([3, 3]);
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(a.x, a.y, range * ctx.camera.scale, 0, Math.PI * 2);
+  ctx.ctx.stroke();
+  ctx.ctx.setLineDash([]);
+
+  // Line to target
+  ctx.ctx.strokeStyle = inRange ? '#ff5e5e' : withOpacity('#ffb84d', 0.6);
+  ctx.ctx.lineWidth = inRange ? 1.5 : 1;
+  if (!inRange) ctx.ctx.setLineDash([6, 4]);
+  ctx.ctx.beginPath();
+  ctx.ctx.moveTo(a.x, a.y);
+  ctx.ctx.lineTo(t.x, t.y);
+  ctx.ctx.stroke();
+  ctx.ctx.setLineDash([]);
+
+  // Target reticle
+  ctx.ctx.strokeStyle = inRange ? '#ff5e5e' : '#ffb84d';
+  ctx.ctx.lineWidth = 1.5;
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(t.x, t.y, 10, 0, Math.PI * 2);
+  ctx.ctx.stroke();
+  // Crosshair
+  ctx.ctx.beginPath();
+  ctx.ctx.moveTo(t.x - 14, t.y); ctx.ctx.lineTo(t.x - 6, t.y);
+  ctx.ctx.moveTo(t.x + 6, t.y);  ctx.ctx.lineTo(t.x + 14, t.y);
+  ctx.ctx.moveTo(t.x, t.y - 14); ctx.ctx.lineTo(t.x, t.y - 6);
+  ctx.ctx.moveTo(t.x, t.y + 6);  ctx.ctx.lineTo(t.x, t.y + 14);
+  ctx.ctx.stroke();
+}
+
 export function drawGhostPlanet(
   body: Body,
   futureTime: number,
