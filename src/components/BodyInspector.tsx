@@ -89,8 +89,8 @@ export const BodyInspector: React.FC = () => {
                     {playerSettlements.length === 0
                       ? 'Deploy a city or station below to start production'
                       : freightersHere.length === 0
-                        ? `${playerSettlements.length} settlement${playerSettlements.length > 1 ? 's' : ''} extracting — send a freighter to ferry stockpile to fleet pool`
-                        : `${playerSettlements.length} settlement${playerSettlements.length > 1 ? 's' : ''} extracting · ${freightersHere.length} freighter${freightersHere.length > 1 ? 's' : ''} ferrying to fleet pool`}
+                        ? `${playerSettlements.length} settlement${playerSettlements.length > 1 ? 's' : ''} extracting — send a freighter here to ferry the stockpile to your resources (top-right)`
+                        : `${playerSettlements.length} settlement${playerSettlements.length > 1 ? 's' : ''} extracting · ${freightersHere.length} freighter${freightersHere.length > 1 ? 's' : ''} ferrying to your resources`}
                   </div>
                 </div>
               )}
