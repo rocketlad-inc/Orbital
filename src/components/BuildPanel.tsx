@@ -27,6 +27,7 @@ function getRandomName(shipClass: ShipClassName, existingNames: string[]): strin
 export const BuildPanel: React.FC = () => {
   const { gameState, uiState, buildShip, cancelBuild } = useGameContext();
   const [, setSelectedClass] = useState<ShipClassName | null>(null);
+  const [customName, setCustomName] = useState<string>('');
 
   if (!uiState.selectedBodyId) return null;
 
@@ -43,10 +44,14 @@ export const BuildPanel: React.FC = () => {
   const existingShipNames = gameState.ships.map(s => s.name);
 
   const handleBuild = (shipClass: ShipClassName) => {
-    const name = getRandomName(shipClass, existingShipNames);
+    // Custom name takes precedence; fall back to a random pool name
+    const trimmed = customName.trim();
+    const name = trimmed.length > 0
+      ? trimmed
+      : getRandomName(shipClass, existingShipNames);
     const success = buildShip(body.id, shipClass, name);
-    if (!success) {
-      // Could show error feedback
+    if (success) {
+      setCustomName('');
     }
     setSelectedClass(null);
   };
@@ -54,6 +59,17 @@ export const BuildPanel: React.FC = () => {
   return (
     <div className="build-panel">
       <div className="section-title">SHIPYARD</div>
+
+      <div className="build-name-row">
+        <input
+          type="text"
+          className="build-name-input"
+          placeholder="Custom name (optional)"
+          value={customName}
+          onChange={(e) => setCustomName(e.target.value)}
+          maxLength={32}
+        />
+      </div>
 
       {activeBuildOrders.length > 0 && (
         <div className="build-queue">

@@ -14,6 +14,34 @@
   font-weight: bold;
 }
 
+/* Custom-name input */
+.build-name-row {
+  margin-bottom: 8px;
+}
+
+.build-name-input {
+  width: 100%;
+  background: rgba(10, 14, 20, 0.8);
+  border: 1px solid #2a3d50;
+  border-radius: 3px;
+  color: #d8e4ee;
+  padding: 5px 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.build-name-input:focus {
+  border-color: #4ecdc4;
+  background: rgba(15, 22, 30, 0.95);
+}
+
+.build-name-input::placeholder {
+  color: #6b8195;
+  font-style: italic;
+}
+
 /* Build Queue */
 .build-queue {
   margin-bottom: 10px;
