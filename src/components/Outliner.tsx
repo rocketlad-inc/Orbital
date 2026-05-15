@@ -9,7 +9,10 @@ import { getShipClass, ShipClassName } from '../game/shipClasses';
 import './Outliner.css';
 
 export const Outliner: React.FC = () => {
-  const { gameState, uiState, selectShip, selectBody, focusBody } = useGameContext();
+  const {
+    gameState, uiState, selectShip, selectBody, focusBody,
+    selectSettlement, selectedSettlementId,
+  } = useGameContext();
   const [collapsed, setCollapsed] = useState(false);
 
   const playerShips = useMemo(
@@ -17,7 +20,12 @@ export const Outliner: React.FC = () => {
     [gameState.ships]
   );
 
-  // Bodies of interest: owned by player OR have player ships orbiting
+  const playerSettlements = useMemo(
+    () => gameState.settlements.filter(s => s.ownedBy === 'player'),
+    [gameState.settlements]
+  );
+
+  // Bodies of interest: owned, have player ships, or have player settlements
   const tracked = useMemo(() => {
     const bodyIds = new Set<string>();
     for (const b of gameState.bodies) {
@@ -26,24 +34,40 @@ export const Outliner: React.FC = () => {
     for (const s of playerShips) {
       if (!s.transfer) bodyIds.add(s.orbit.parentBodyId);
     }
+    for (const s of playerSettlements) {
+      bodyIds.add(s.bodyId);
+    }
     return gameState.bodies
       .filter(b => bodyIds.has(b.id))
       .sort((a, b) => {
-        // Player-owned first, then by name
         if (a.ownedBy === 'player' && b.ownedBy !== 'player') return -1;
         if (b.ownedBy === 'player' && a.ownedBy !== 'player') return 1;
         return a.name.localeCompare(b.name);
       });
-  }, [gameState.bodies, playerShips]);
+  }, [gameState.bodies, playerShips, playerSettlements]);
 
   const inTransit = useMemo(() => playerShips.filter(s => s.transfer), [playerShips]);
 
   const shipsAt = (bodyId: string) =>
     playerShips.filter(s => !s.transfer && s.orbit.parentBodyId === bodyId);
 
+  const settlementsAt = (bodyId: string) =>
+    playerSettlements.filter(s => s.bodyId === bodyId);
+
   const handleBodyClick = (bodyId: string) => {
     selectBody(bodyId);
     focusBody(bodyId);
+  };
+
+  const handleSettlementClick = (settlementId: string, bodyId: string) => {
+    selectSettlement(settlementId);
+    selectBody(bodyId);
+    focusBody(bodyId);
+  };
+
+  const settlementHpClass = (s: { hp: number; maxHp: number }) => {
+    const r = s.hp / s.maxHp;
+    return r > 0.66 ? 'good' : r > 0.33 ? 'mid' : 'low';
   };
 
   const hpRatio = (ship: { hp?: number; class: string }) => {
@@ -87,7 +111,9 @@ export const Outliner: React.FC = () => {
           ) : (
             tracked.map(body => {
               const ships = shipsAt(body.id);
+              const settlements = settlementsAt(body.id);
               const isOwned = body.ownedBy === 'player';
+              const totalUnder = ships.length + settlements.length;
               return (
                 <div className="outliner__group" key={body.id}>
                   <div
@@ -101,10 +127,22 @@ export const Outliner: React.FC = () => {
                     <span className="outliner__body-name">
                       {body.name}{isOwned ? ' ★' : ''}
                     </span>
-                    {ships.length > 0 && (
-                      <span className="outliner__body-count">{ships.length}</span>
+                    {totalUnder > 0 && (
+                      <span className="outliner__body-count">{totalUnder}</span>
                     )}
                   </div>
+                  {settlements.map(s => (
+                    <div
+                      key={s.id}
+                      className={`outliner__ship-row ${selectedSettlementId === s.id ? 'selected' : ''}`}
+                      onClick={(e) => { e.stopPropagation(); handleSettlementClick(s.id, body.id); }}
+                      title={`${s.type} · pop ${s.population} · HP ${s.hp}/${s.maxHp}`}
+                    >
+                      <span className="outliner__ship-class">{s.type === 'city' ? '⌂' : '◇'}</span>
+                      <span className="outliner__ship-name">{s.name}</span>
+                      <span className={`outliner__hp-dot outliner__hp-dot--${settlementHpClass(s)}`} />
+                    </div>
+                  ))}
                   {ships.map(ship => {
                     const def = getShipClass(ship.class as ShipClassName);
                     const r = hpRatio(ship);

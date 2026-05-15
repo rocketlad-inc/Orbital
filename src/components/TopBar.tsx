@@ -127,7 +127,7 @@ export const TopBar: React.FC<TopBarProps> = ({ activePanel, onTogglePanel }) =>
           onClick={() => onTogglePanel(activePanel === 'settlements' ? null : 'settlements')}
         >
           Settlements
-          <span className="badge">{gameState.bodies.filter(b => b.ownedBy === 'player' || gameState.ships.some(s => s.ownedBy === 'player' && !s.transfer && s.orbit.parentBodyId === b.id)).length}</span>
+          <span className="badge">{gameState.settlements.filter(s => s.ownedBy === 'player').length}</span>
         </button>
         <button
           className={`nav-button ${activePanel === 'fleet' ? 'active' : ''}`}
