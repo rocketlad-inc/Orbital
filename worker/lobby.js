@@ -13,10 +13,11 @@
 import * as factions from './factions.js';
 
 const ROOM_ID_RE = /^[A-Za-z0-9_-]{6,32}$/;
-// Match-length range (in ticks). 500 is enough for an Earth->Neptune
-// Hohmann round trip even without Flight Dynamics tech.
+// Match-length range (in ticks). 10,000 leaves room for multi-year
+// epic campaigns even on long tick intervals; Earth->Neptune Hohmann is
+// only ~410 ticks at base flight speeds.
 const MATCH_LENGTH_MIN = 10;
-const MATCH_LENGTH_MAX = 500;
+const MATCH_LENGTH_MAX = 10_000;
 
 // Whitelist of tick intervals (real-world ms between automatic ticks).
 //   30s / 60s          — demo / live testing

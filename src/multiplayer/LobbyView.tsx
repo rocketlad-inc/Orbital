@@ -349,7 +349,7 @@ function RoomDetail({
                 className="mp-input"
                 type="number"
                 min={10}
-                max={500}
+                max={10000}
                 value={hostTicks}
                 onChange={(e) => setHostTicks(parseInt(e.target.value, 10) || 10)}
                 title="Total ticks before the match ends. Earth→Neptune Hohmann ≈ 410 ticks without Flight Dynamics tech."
