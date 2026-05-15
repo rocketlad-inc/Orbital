@@ -1,0 +1,305 @@
+/* Multiplayer overlay styles. Scoped under `.mp-*` so the rest of the app
+   keeps its own typography. Drops onto a dark background and uses the
+   same accent / panel colors as the prototype. */
+
+:root {
+  --mp-bg: #0a0e14;
+  --mp-bg-panel: rgba(10, 14, 20, 0.94);
+  --mp-fg: #d8e4ee;
+  --mp-fg-dim: #6b8195;
+  --mp-border: #2a3d50;
+  --mp-accent: #ffb84d;
+  --mp-friendly: #4ecdc4;
+  --mp-hostile: #ff5e5e;
+  --mp-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+}
+
+/* ---- Full-screen auth overlay ---- */
+.mp-overlay {
+  position: fixed; inset: 0;
+  background: rgba(5, 8, 12, 0.92);
+  backdrop-filter: blur(6px);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 5000;
+  font-family: var(--mp-mono);
+}
+.mp-card {
+  width: 340px;
+  background: var(--mp-bg-panel);
+  border: 1px solid var(--mp-border);
+  padding: 24px;
+  color: var(--mp-fg);
+}
+.mp-title {
+  font-family: 'Orbitron', system-ui, sans-serif;
+  font-size: 18px;
+  letter-spacing: 0.25em;
+  color: var(--mp-accent);
+  margin: 0;
+}
+.mp-subtitle {
+  color: var(--mp-fg-dim);
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  margin: 4px 0 16px;
+}
+.mp-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+.mp-tab {
+  flex: 1;
+  background: transparent;
+  border: 1px solid var(--mp-border);
+  color: var(--mp-fg-dim);
+  padding: 8px;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.mp-tab.active { color: var(--mp-accent); border-color: var(--mp-accent); }
+.mp-label {
+  display: block;
+  font-size: 9px;
+  color: var(--mp-fg-dim);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  margin: 12px 0 4px;
+}
+.mp-input, .mp-textarea, .mp-select {
+  width: 100%;
+  background: var(--mp-bg);
+  border: 1px solid var(--mp-border);
+  color: var(--mp-fg);
+  font: inherit;
+  font-size: 12px;
+  padding: 8px 10px;
+  box-sizing: border-box;
+}
+.mp-input:focus, .mp-textarea:focus, .mp-select:focus { outline: none; border-color: var(--mp-accent); }
+.mp-textarea { resize: vertical; min-height: 60px; max-height: 160px; }
+.mp-submit {
+  width: 100%; margin-top: 16px;
+  background: var(--mp-accent); color: var(--mp-bg);
+  border: none; padding: 10px;
+  font: inherit; font-weight: 600;
+  font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase;
+  cursor: pointer;
+}
+.mp-submit:disabled { opacity: 0.5; cursor: wait; }
+.mp-error { color: var(--mp-hostile); font-size: 11px; min-height: 16px; margin-top: 8px; }
+.mp-saved { color: var(--mp-friendly); font-size: 10px; }
+
+/* ---- Top-right user pill ---- */
+.mp-user-pill {
+  position: fixed; top: 12px; right: 12px;
+  z-index: 4000;
+  background: var(--mp-bg-panel);
+  border: 1px solid var(--mp-border);
+  padding: 6px 10px;
+  display: flex; gap: 8px; align-items: center;
+  font-family: var(--mp-mono);
+  font-size: 11px;
+  color: var(--mp-fg);
+}
+.mp-user-pill .who { color: var(--mp-friendly); }
+.mp-user-pill button {
+  background: transparent;
+  border: 1px solid var(--mp-border);
+  color: var(--mp-fg-dim);
+  font: inherit;
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.mp-user-pill button:hover { color: var(--mp-accent); border-color: var(--mp-accent); }
+
+/* ---- Right-side multiplayer dock ---- */
+.mp-dock {
+  position: fixed;
+  top: 60px; right: 12px; bottom: 12px;
+  width: 360px;
+  z-index: 3000;
+  background: var(--mp-bg-panel);
+  border: 1px solid var(--mp-border);
+  font-family: var(--mp-mono);
+  color: var(--mp-fg);
+  display: flex; flex-direction: column;
+}
+.mp-dock.collapsed { width: 44px; }
+.mp-dock.collapsed .mp-dock-body, .mp-dock.collapsed .mp-tablist { display: none; }
+
+.mp-dock-head {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--mp-border);
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--mp-accent);
+}
+.mp-dock-head button {
+  background: transparent;
+  border: 1px solid var(--mp-border);
+  color: var(--mp-fg-dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+.mp-tablist {
+  display: flex; gap: 0;
+  border-bottom: 1px solid var(--mp-border);
+}
+.mp-tablist button {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--mp-fg-dim);
+  padding: 8px 4px;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.mp-tablist button.active {
+  color: var(--mp-accent);
+  border-bottom-color: var(--mp-accent);
+}
+
+.mp-dock-body { flex: 1; overflow-y: auto; padding: 10px 12px; }
+.mp-section-title {
+  font-size: 9px;
+  color: var(--mp-fg-dim);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  margin: 8px 0 6px;
+}
+
+.mp-row { display: flex; gap: 6px; align-items: center; }
+.mp-list-row {
+  padding: 8px 10px;
+  border: 1px solid var(--mp-border);
+  margin-bottom: 6px;
+  display: flex; justify-content: space-between; align-items: center;
+  cursor: pointer;
+  font-size: 11px;
+}
+.mp-list-row:hover { border-color: var(--mp-accent); }
+.mp-list-row .meta { color: var(--mp-fg-dim); font-size: 9px; letter-spacing: 0.1em; }
+.mp-empty { color: var(--mp-fg-dim); font-size: 11px; padding: 20px 0; text-align: center; }
+
+/* presence */
+.mp-presence-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 0;
+  font-size: 11px;
+}
+.mp-presence-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--mp-border);
+}
+.mp-presence-dot.online { background: var(--mp-friendly); }
+.mp-presence-row .empire {
+  display: block;
+  font-size: 10px;
+  color: var(--mp-accent);
+  margin-left: 12px;
+}
+.mp-presence-row .bio {
+  display: block;
+  font-size: 10px;
+  color: rgba(255,255,255,0.55);
+  font-style: italic;
+  margin-left: 12px;
+}
+
+/* faction swatch */
+.mp-swatch {
+  display: inline-block;
+  width: 10px; height: 10px;
+  margin-right: 6px;
+  border-radius: 2px;
+  vertical-align: middle;
+}
+
+.mp-host-tag {
+  font-size: 8px;
+  letter-spacing: 0.15em;
+  background: var(--mp-accent);
+  color: var(--mp-bg);
+  padding: 1px 4px;
+  margin-left: 4px;
+}
+
+.mp-kick {
+  font-size: 9px;
+  padding: 2px 6px;
+  background: transparent;
+  border: 1px solid var(--mp-border);
+  color: var(--mp-fg-dim);
+  cursor: pointer;
+  margin-left: auto;
+}
+.mp-kick:hover { color: var(--mp-hostile); border-color: var(--mp-hostile); }
+
+/* chat / log */
+.mp-log {
+  flex: 1;
+  overflow-y: auto;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.mp-chat-line { margin-bottom: 4px; }
+.mp-chat-line .who { color: var(--mp-accent); margin-right: 6px; }
+.mp-chat-line.system { color: var(--mp-fg-dim); font-style: italic; }
+
+/* tile grid for resources */
+.mp-resource-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin: 6px 0;
+}
+.mp-resource-tile {
+  background: var(--mp-bg);
+  border: 1px solid var(--mp-border);
+  padding: 6px 8px;
+  text-align: center;
+}
+.mp-resource-tile .label {
+  font-size: 8px;
+  letter-spacing: 0.15em;
+  color: var(--mp-fg-dim);
+  text-transform: uppercase;
+}
+.mp-resource-tile .value { font-size: 14px; color: var(--mp-fg); }
+
+/* senate proposal */
+.mp-proposal {
+  border: 1px solid var(--mp-border);
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  font-size: 11px;
+}
+.mp-proposal .ptitle { color: var(--mp-fg); font-weight: 600; margin-bottom: 4px; }
+.mp-proposal .pmeta { color: var(--mp-fg-dim); font-size: 9px; letter-spacing: 0.1em; margin-bottom: 4px; }
+.mp-proposal .psummary { color: var(--mp-fg-dim); margin-bottom: 6px; }
+.mp-vote-row { display: flex; gap: 4px; margin-top: 4px; }
+.mp-vote-btn {
+  flex: 1;
+  background: transparent;
+  border: 1px solid var(--mp-border);
+  color: var(--mp-fg-dim);
+  padding: 4px;
+  font: inherit; font-size: 10px;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  cursor: pointer;
+}
+.mp-vote-btn.yea.mine { color: var(--mp-friendly); border-color: var(--mp-friendly); }
+.mp-vote-btn.nay.mine { color: var(--mp-hostile); border-color: var(--mp-hostile); }
+.mp-vote-btn.abstain.mine { color: var(--mp-accent); border-color: var(--mp-accent); }

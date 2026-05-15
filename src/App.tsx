@@ -4,6 +4,7 @@ import { MapCanvas } from './components/MapCanvas';
 import { ShipPanel } from './components/ShipPanel';
 import { BodyInspector } from './components/BodyInspector';
 import { ScenarioSelector } from './components/ScenarioSelector';
+import { MultiplayerShell } from './multiplayer/MultiplayerShell';
 import './App.css';
 
 const SIM_SPEEDS = [0, 1, 10, 100, 1000, 10000];
@@ -78,9 +79,11 @@ const btnStyle: React.CSSProperties = {
 
 export function App() {
   return (
-    <GameContextProvider initialScenario={1}>
-      <AppContent />
-    </GameContextProvider>
+    <MultiplayerShell>
+      <GameContextProvider initialScenario={1}>
+        <AppContent />
+      </GameContextProvider>
+    </MultiplayerShell>
   );
 }
 
