@@ -111,9 +111,8 @@ export interface Ship {
   transfer?: TransferArc;               // currently in transit
   queuedTransfers?: TransferArc[];      // chained transfers waiting after current
 
-  // Engagement state — player-initiated combat
-  engagedTargetId?: string;             // ship currently engaged with (firing on)
-  lastCombatTick?: number;              // tick when last damage was dealt
+  // Combat — tick when this ship last fired in auto-combat at its body
+  lastCombatTick?: number;
 }
 
 /**
@@ -213,7 +212,6 @@ export interface MapUIState {
   selectedBodyId?: string;
   hoveredBodyId?: string;
   targetSelectionMode?: boolean;        // true when picking a transfer target on the map
-  engagementTargetMode?: boolean;       // true when picking a combat target (ship) on the map
 }
 
 /**

@@ -4,7 +4,7 @@ import { getScenario, ScenarioType } from './mockGameState';
 import { createCircularOrbit } from '../physics/orbitalMechanics';
 import { getShipClass, ShipClassName, SHIP_CLASSES } from '../game/shipClasses';
 import { formFleet, splitFromFleet } from '../game/fleet';
-import { checkCombatAtBodies, applyCombatResults, processEngagements } from '../game/combat';
+import { autoCombatAtBodies } from '../game/combat';
 import {
   createCity, createStation, tickSettlements,
   canHostCity, canHostStation, SETTLEMENT_DEFS,
@@ -36,11 +36,6 @@ interface GameContextType {
   deselectBody: () => void;
   hoverBody: (bodyId: string | null) => void;
   setTargetSelectionMode: (enabled: boolean) => void;
-  setEngagementTargetMode: (enabled: boolean) => void;
-
-  // Combat engagement
-  engageTarget: (shipId: string, targetShipId: string) => void;
-  disengageTarget: (shipId: string) => void;
 
   addManeuverNode: (node: ManeuverNode) => void;
   commitManeuverNode: (nodeId: string) => void;
@@ -194,26 +189,18 @@ export function GameContextProvider({
     );
     let updatedSettlements = settlementsResult.settlements;
 
-    // Process player-initiated engagements (range-based damage).
-    // Targets can be ships or settlements; settlements auto-retaliate.
-    const engagementResult = processEngagements(updatedShips, updatedSettlements, prev.bodies, newTime);
-    updatedShips = engagementResult.ships;
-    updatedSettlements = engagementResult.settlements;
-    const engagementLogs = engagementResult.log;
-
-    // Check combat at co-located bodies
-    const combatResults = checkCombatAtBodies(updatedShips, prev.bodies);
-    const combatNewLogs = combatResults.flatMap(r => r.log);
-    if (combatResults.length > 0) {
-      updatedShips = applyCombatResults(updatedShips, combatResults);
-    }
+    // Auto-combat: every ship and combat-capable settlement fires once every
+    // AUTO_COMBAT_INTERVAL ticks at every hostile combatant at the same body.
+    const combatResult = autoCombatAtBodies(updatedShips, updatedSettlements, prev.bodies, newTime);
+    updatedShips = combatResult.ships;
+    updatedSettlements = combatResult.settlements;
+    const combatNewLogs = combatResult.log;
 
     // Repair and refuel ships at owned bodies (after combat so dead ships are gone)
     updatedShips = tickMaintenance(updatedShips, updatedSettlements, prev.bodies, tickDelta);
 
-    const allNewLogs = [...engagementLogs, ...combatNewLogs];
-    const combatLog = allNewLogs.length > 0
-      ? [...prev.combatLog.slice(-20), ...allNewLogs]
+    const combatLog = combatNewLogs.length > 0
+      ? [...prev.combatLog.slice(-20), ...combatNewLogs]
       : prev.combatLog;
 
     const allOrders = updatedShips.flatMap(s => s.orders);
@@ -368,25 +355,6 @@ export function GameContextProvider({
 
   const setTargetSelectionMode = useCallback((enabled: boolean) => {
     setUIStateInternal(prev => ({ ...prev, targetSelectionMode: enabled }));
-  }, []);
-
-  const setEngagementTargetMode = useCallback((enabled: boolean) => {
-    setUIStateInternal(prev => ({ ...prev, engagementTargetMode: enabled }));
-  }, []);
-
-  const engageTarget = useCallback((shipId: string, targetShipId: string) => {
-    setGameStateInternal(prev => ({
-      ...prev,
-      ships: prev.ships.map(s => s.id === shipId ? { ...s, engagedTargetId: targetShipId } : s),
-    }));
-    setUIStateInternal(prev => ({ ...prev, engagementTargetMode: false }));
-  }, []);
-
-  const disengageTarget = useCallback((shipId: string) => {
-    setGameStateInternal(prev => ({
-      ...prev,
-      ships: prev.ships.map(s => s.id === shipId ? { ...s, engagedTargetId: undefined } : s),
-    }));
   }, []);
 
   // ---- Fleet Management ----
@@ -619,11 +587,10 @@ export function GameContextProvider({
     setGameState, updateGameState, updateTick, setSimSpeed, loadScenario,
     updateCamera, focusBody,
     selectShip, deselectShip, selectBody, deselectBody, hoverBody,
-    setTargetSelectionMode, setEngagementTargetMode,
+    setTargetSelectionMode,
     addManeuverNode, commitManeuverNode, deleteManeuverNode, setPendingTransfer, addQueuedTransfer,
     buildShip, cancelBuild,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
-    engageTarget, disengageTarget,
     deploySettlement, damageSettlement,
     selectedSettlementId, selectSettlement,
   };
