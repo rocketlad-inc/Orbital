@@ -12,6 +12,7 @@ export type PanelId = 'settlements' | 'fleet' | null;
 interface TopBarProps {
   activePanel: PanelId;
   onTogglePanel: (panel: PanelId) => void;
+  onExitMode?: () => void;
 }
 
 interface Alert {
@@ -23,7 +24,7 @@ interface Alert {
 
 const SIM_SPEEDS = [1, 10, 100, 1000, 10000, 100000];
 
-export const TopBar: React.FC<TopBarProps> = ({ activePanel, onTogglePanel }) => {
+export const TopBar: React.FC<TopBarProps> = ({ activePanel, onTogglePanel, onExitMode }) => {
   const { gameState, simSpeed, setSimSpeed, updateTick, selectShip } = useGameContext();
   const [dismissedAlertIds, setDismissedAlertIds] = useState<Set<string>>(new Set());
 
@@ -99,6 +100,15 @@ export const TopBar: React.FC<TopBarProps> = ({ activePanel, onTogglePanel }) =>
         <div className="top-bar__title-main">ORBITAL</div>
         <div className="top-bar__title-sub">v0.3</div>
       </div>
+      {onExitMode && (
+        <button
+          className="top-bar__exit"
+          onClick={onExitMode}
+          title="Return to mode picker"
+        >
+          ← Menu
+        </button>
+      )}
 
       {playerResources && (
         <div className="top-bar__resources">

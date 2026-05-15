@@ -1,0 +1,490 @@
+-- ============================================================================
+-- Orbital — Game State Schema (v1, alpha-target)
+-- ============================================================================
+--
+-- This migration adds the per-match game state on top of the existing
+-- accounts (0001) and lobby/room (0002) layers. It targets the asynchronous
+-- daily-tick strategy game described in design doc v0.3.
+--
+-- KEY MODELING DECISIONS (read first):
+--
+--   1. Room vs. game. A `rooms` row (from 0002) is a lobby seat plan; when
+--      the host starts the match, a `games` row is created with id == room id.
+--      The room continues to exist so the lobby can show finished matches
+--      and so post-game chronicle viewing has a stable join target.
+--
+--   2. Game-room as the tenancy boundary. Every gameplay row carries
+--      `game_id` and almost every query is scoped by it. The `Room` Durable
+--      Object owns the live working copy of state and writes through to D1
+--      on tick commit; D1 is the source of truth for everything that
+--      survives DO eviction.
+--
+--   3. Factions are first-class. A player joins a game by claiming exactly
+--      one faction (1:1 user<->faction within a game). A faction can also be
+--      AI-controlled (user_id NULL) or vacated/eliminated. Faction id is
+--      the identity used by every other gameplay row (ownership, treaties,
+--      senate votes, message authorship). Do NOT key gameplay rows on
+--      user_id directly — that breaks AI/observer cases.
+--
+--   4. Per-game bodies. Bodies are not global seed data. They are copied
+--      into `game_bodies` at game start so variant maps are possible and
+--      so per-game state (ownership, development, resources) lives on the
+--      same row that defines orbital geometry.
+--
+--   5. Keplerian orbits. Both bodies and ships store orbits as classical
+--      elements (rp, ra, omega, M0, epoch, direction). This matches the
+--      current prototype's patched-conics sim. If the engine ever moves to
+--      RK4 N-body, add `state_vector_*` columns rather than restructuring.
+--
+--   6. Sensor visibility as stored projection. `sensor_coverage` materializes
+--      "faction F can see body B at level L" so reads of bodies/ships can
+--      be filtered with a single join. The tick processor recomputes this
+--      table at the end of each tick.
+--
+--   7. Per-tick snapshots. `game_snapshots` stores a JSON dump of derived
+--      state per tick for rollback and for the chronicle viewer. Authoritative
+--      *live* state is the relational tables, not the snapshot blob.
+--
+--   8. Order intent. Most "orders" are state mutations directly visible on
+--      domain rows (e.g. node.committed = 1, faction.research_queue, ship
+--      build queue rows). The generic `pending_orders` table is for
+--      cross-cutting actions that don't fit a single domain table
+--      (e.g. sigint scans, signed declarations queued for tick boundary).
+--
+--   9. Reserved-for-v2 tables. `standing_orders` is defined here even
+--      though v1 alpha won't implement the if-then engine, so the v2
+--      migration is additive (no rename/restructure). Similarly,
+--      `messages.claimed_sender_faction_id` is reserved so the v2 forgery
+--      mechanic doesn't require a column rename.
+--
+--   10. Time. The unit of game time is `tick_number` (0-indexed). Wall-clock
+--       timestamps are stored as INTEGER ms since epoch. Never confuse the
+--       two: gameplay logic operates in ticks; the scheduler operates in ms.
+--
+-- ============================================================================
+-- SECTION 1 — Games, ticks, factions, players
+-- ============================================================================
+
+-- One row per started match. The room (0002) is the lobby; a game is the
+-- match itself. game.id == room.id so post-game viewing can join either way.
+CREATE TABLE games (
+  id                  TEXT PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
+  status              TEXT NOT NULL DEFAULT 'setup',
+    -- 'setup'      : host is configuring map/factions, lobby open
+    -- 'active'     : ticks are running
+    -- 'completed'  : a victory condition triggered; chronicle finalized
+    -- 'abandoned'  : host or system ended without a victor
+  victory_type        TEXT,                -- NULL until completed; 'hegemony'|'political'|'last_standing'|'secret'|'abandoned'
+  winner_faction_id   TEXT,                -- FK declared below (circular; enforced via trigger if needed)
+  map_seed            TEXT NOT NULL,       -- deterministic body-generation seed; allows reproducibility
+  current_tick        INTEGER NOT NULL DEFAULT 0,
+  total_tick_target   INTEGER NOT NULL DEFAULT 42,   -- design doc target: 30-45 ticks
+  tick_interval_ms    INTEGER NOT NULL DEFAULT 86400000,  -- 24h; configurable for fast-tick demo games
+  next_tick_at        INTEGER,             -- scheduled wall-clock ms; NULL while paused/setup
+  senate_period_ticks INTEGER NOT NULL DEFAULT 7,
+  created_at          INTEGER NOT NULL,
+  started_at          INTEGER,
+  completed_at        INTEGER
+);
+
+CREATE INDEX idx_games_status_next ON games(status, next_tick_at);
+
+-- Tick log. One row per executed (or scheduled) tick. The tick processor
+-- inserts a row with status='scheduled', flips it to 'processing' while
+-- running, and 'completed' on success. Provides a join target for events.
+CREATE TABLE game_ticks (
+  game_id        TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  tick_number    INTEGER NOT NULL,
+  status         TEXT NOT NULL DEFAULT 'scheduled',  -- 'scheduled'|'processing'|'completed'|'failed'
+  scheduled_at   INTEGER NOT NULL,
+  started_at     INTEGER,
+  completed_at   INTEGER,
+  error          TEXT,
+  PRIMARY KEY (game_id, tick_number)
+);
+
+CREATE INDEX idx_ticks_schedule ON game_ticks(status, scheduled_at);
+
+-- A faction is a seat in a specific game. Bound to a user (or AI) and a
+-- capital body (loss-of-capital = elimination per design). The four
+-- resource columns are the per-faction stockpile.
+CREATE TABLE game_factions (
+  id                 TEXT PRIMARY KEY,
+  game_id            TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  user_id            TEXT REFERENCES users(id) ON DELETE SET NULL,  -- NULL = AI or vacated seat
+  slot              INTEGER NOT NULL,            -- 0..N-1, stable seat number for UI ordering
+  name              TEXT NOT NULL,               -- in-game faction name (e.g. "Verdan Concord")
+  color             TEXT NOT NULL,               -- hex; used by renderer + chronicle
+  status            TEXT NOT NULL DEFAULT 'active',  -- 'active'|'eliminated'|'observer'|'vacated'
+  capital_body_id   TEXT,                        -- FK to game_bodies(id); set at game start
+  reputation        INTEGER NOT NULL DEFAULT 0,
+  senate_weight     INTEGER NOT NULL DEFAULT 1,  -- recomputed each tick; observers = 0.5 (stored *2 if needed)
+  metal             INTEGER NOT NULL DEFAULT 0,
+  fuel              INTEGER NOT NULL DEFAULT 0,
+  gold              INTEGER NOT NULL DEFAULT 0,
+  science           INTEGER NOT NULL DEFAULT 0,
+  research_tech_id  TEXT,                        -- currently-researching tech; NULL = idle
+  research_progress INTEGER NOT NULL DEFAULT 0,  -- science accumulated toward research_tech_id
+  joined_at         INTEGER NOT NULL,
+  eliminated_at_tick INTEGER,
+  UNIQUE (game_id, slot),
+  UNIQUE (game_id, user_id)                      -- a user can only hold one seat per game
+);
+
+CREATE INDEX idx_factions_game ON game_factions(game_id);
+CREATE INDEX idx_factions_user ON game_factions(user_id);
+
+-- ============================================================================
+-- SECTION 2 — Bodies (per-game) and ownership
+-- ============================================================================
+
+-- Bodies are per-game so variant maps and dynamic per-body state share a row.
+-- Geometry columns mirror the prototype's BODIES[] entries. Resource yield
+-- columns are the per-tick production from this body when developed.
+CREATE TABLE game_bodies (
+  id              TEXT PRIMARY KEY,
+  game_id         TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  template_id     TEXT NOT NULL,            -- references seed catalog in code (e.g. 'sol','inara'); not a FK
+  name            TEXT NOT NULL,
+  type            TEXT NOT NULL,            -- 'star'|'terrestrial'|'gas-giant'|'moon'|'asteroid'|'lagrange'
+  parent_body_id  TEXT REFERENCES game_bodies(id),   -- NULL for the system primary
+  radius          REAL NOT NULL,            -- physical radius (sim units)
+  soi             REAL,                     -- sphere of influence radius; NULL for the star
+  mu              REAL NOT NULL,            -- gravitational parameter
+  orbit_radius    REAL,                     -- semi-major axis around parent
+  orbit_period    REAL,                     -- ticks or sim-time-units; defined by engine convention
+  angle0          REAL,                     -- mean anomaly at epoch 0
+  color           TEXT NOT NULL,
+  -- per-tick base resource yield when fully developed (level 3); scaled by development_level
+  yield_metal     INTEGER NOT NULL DEFAULT 0,
+  yield_fuel      INTEGER NOT NULL DEFAULT 0,
+  yield_gold      INTEGER NOT NULL DEFAULT 0,
+  yield_science   INTEGER NOT NULL DEFAULT 0,
+  -- per-game mutable state
+  owner_faction_id    TEXT REFERENCES game_factions(id) ON DELETE SET NULL,
+  development_level   INTEGER NOT NULL DEFAULT 0,    -- 0=unclaimed,1=claimed flag,2=outpost,3=developed base
+  fortification_level INTEGER NOT NULL DEFAULT 0,
+  shipyard_level      INTEGER NOT NULL DEFAULT 0,
+  claimed_at_tick     INTEGER,
+  developed_at_tick   INTEGER
+);
+
+CREATE INDEX idx_bodies_game ON game_bodies(game_id);
+CREATE INDEX idx_bodies_owner ON game_bodies(owner_faction_id);
+CREATE INDEX idx_bodies_parent ON game_bodies(parent_body_id);
+
+-- Now that game_bodies exists, declare the deferred faction->capital FK
+-- as an index-only contract (SQLite does not support late ADD CONSTRAINT;
+-- the relationship is enforced in application code).
+CREATE INDEX idx_factions_capital ON game_factions(capital_body_id);
+
+-- Build queue on a body's shipyard. One row per ordered ship; consumed when
+-- the tick processor completes construction.
+CREATE TABLE game_body_build_queue (
+  id                  TEXT PRIMARY KEY,
+  game_id             TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  body_id             TEXT NOT NULL REFERENCES game_bodies(id) ON DELETE CASCADE,
+  faction_id          TEXT NOT NULL REFERENCES game_factions(id) ON DELETE CASCADE,
+  ship_class          TEXT NOT NULL,        -- 'frigate'|'cruiser'|'capital'|'stealth'
+  queued_at_tick      INTEGER NOT NULL,
+  completes_at_tick   INTEGER NOT NULL,
+  cancelled_at_tick   INTEGER
+);
+
+CREATE INDEX idx_build_queue_completion ON game_body_build_queue(game_id, completes_at_tick)
+  WHERE cancelled_at_tick IS NULL;
+
+-- Body development queue (claim -> outpost -> developed). Similar shape;
+-- separate table because development is independent of ship construction.
+CREATE TABLE game_body_development (
+  id                  TEXT PRIMARY KEY,
+  game_id             TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  body_id             TEXT NOT NULL REFERENCES game_bodies(id) ON DELETE CASCADE,
+  faction_id          TEXT NOT NULL REFERENCES game_factions(id) ON DELETE CASCADE,
+  target_level        INTEGER NOT NULL,     -- 1, 2, or 3
+  started_at_tick     INTEGER NOT NULL,
+  completes_at_tick   INTEGER NOT NULL,
+  cancelled_at_tick   INTEGER
+);
+
+CREATE INDEX idx_development_completion ON game_body_development(game_id, completes_at_tick)
+  WHERE cancelled_at_tick IS NULL;
+
+-- ============================================================================
+-- SECTION 3 — Ships and maneuver nodes
+-- ============================================================================
+
+-- A ship lives in a parent body's SOI with a Keplerian orbit around it.
+-- Orbits change discretely on burns; between burns the engine integrates
+-- the analytical Kepler orbit.
+CREATE TABLE game_ships (
+  id              TEXT PRIMARY KEY,
+  game_id         TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  owner_faction_id TEXT NOT NULL REFERENCES game_factions(id) ON DELETE CASCADE,
+  name            TEXT NOT NULL,
+  ship_class      TEXT NOT NULL,            -- 'frigate'|'cruiser'|'capital'|'stealth'
+  parent_body_id  TEXT NOT NULL REFERENCES game_bodies(id) ON DELETE CASCADE,
+  -- current orbit (around parent_body_id); updated whenever a node executes
+  orbit_rp        REAL NOT NULL,
+  orbit_ra        REAL NOT NULL,
+  orbit_omega     REAL NOT NULL,            -- argument of periapsis (rad)
+  orbit_m0        REAL NOT NULL,            -- mean anomaly at epoch
+  orbit_epoch     REAL NOT NULL,            -- sim time at which m0 applies
+  orbit_direction INTEGER NOT NULL DEFAULT 1, -- +1 prograde, -1 retrograde
+  -- resources
+  fuel            REAL NOT NULL,
+  fuel_max        REAL NOT NULL,
+  -- status
+  status          TEXT NOT NULL DEFAULT 'active',  -- 'active'|'destroyed'|'mothballed'
+  built_at_tick   INTEGER NOT NULL,
+  destroyed_at_tick INTEGER
+);
+
+CREATE INDEX idx_ships_game ON game_ships(game_id);
+CREATE INDEX idx_ships_owner ON game_ships(owner_faction_id);
+CREATE INDEX idx_ships_parent ON game_ships(parent_body_id);
+
+-- Maneuver nodes — the planned/committed/executed lifecycle for ship burns.
+-- The renderer in the prototype already understands this exact shape.
+CREATE TABLE game_ship_nodes (
+  id              TEXT PRIMARY KEY,
+  game_id         TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  ship_id         TEXT NOT NULL REFERENCES game_ships(id) ON DELETE CASCADE,
+  sequence        INTEGER NOT NULL,         -- ordering within the ship's plan; 0,1,2...
+  anchor_kind     TEXT NOT NULL,            -- 'periapsis'|'apoapsis'|'encounter'|'capture'|'exit'|'absolute'
+  anchor_body_id  TEXT REFERENCES game_bodies(id),   -- the body the anchor is relative to, if applicable
+  target_body_id  TEXT REFERENCES game_bodies(id),   -- destination body for transfer/capture nodes
+  scheduled_t     REAL NOT NULL,            -- sim time at which the burn fires
+  dv_prograde     REAL NOT NULL DEFAULT 0,
+  dv_normal       REAL NOT NULL DEFAULT 0,
+  dv_radial       REAL NOT NULL DEFAULT 0,
+  fuel_cost       REAL NOT NULL,            -- precomputed; the source of truth for fuel accounting at execute
+  status          TEXT NOT NULL DEFAULT 'planned', -- 'planned'|'committed'|'executed'|'cancelled'|'failed'
+  committed_at_tick INTEGER,
+  executed_at_tick  INTEGER,
+  UNIQUE (ship_id, sequence)
+);
+
+CREATE INDEX idx_nodes_ship ON game_ship_nodes(ship_id, sequence);
+CREATE INDEX idx_nodes_due  ON game_ship_nodes(game_id, status, scheduled_t);
+
+-- ============================================================================
+-- SECTION 4 — Sensors, visibility, intelligence
+-- ============================================================================
+
+-- Per-faction view of bodies. Recomputed by the tick processor. The renderer
+-- joins ships/bodies to this for fog-of-war. Coverage levels:
+--   0 = unknown          (faction has no info; body invisible in UI)
+--   1 = ephemeris        (orbit known, no current ship traffic visible)
+--   2 = patrol           (ships in this SOI visible; trajectories shown)
+--   3 = full intel       (build queue + development visible too)
+CREATE TABLE sensor_coverage (
+  game_id     TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  faction_id  TEXT NOT NULL REFERENCES game_factions(id) ON DELETE CASCADE,
+  body_id     TEXT NOT NULL REFERENCES game_bodies(id) ON DELETE CASCADE,
+  level       INTEGER NOT NULL,
+  updated_at_tick INTEGER NOT NULL,
+  PRIMARY KEY (game_id, faction_id, body_id)
+);
+
+CREATE INDEX idx_sensor_faction ON sensor_coverage(faction_id, body_id);
+
+-- Sigint records — generated when sensors detect *that* a message was sent,
+-- without revealing content. v2 may extend with partial-decrypt fields.
+CREATE TABLE sigint_events (
+  id              TEXT PRIMARY KEY,
+  game_id         TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  observer_faction_id TEXT NOT NULL REFERENCES game_factions(id) ON DELETE CASCADE,
+  detected_at_tick INTEGER NOT NULL,
+  source_body_id  TEXT REFERENCES game_bodies(id),
+  dest_body_id    TEXT REFERENCES game_bodies(id),
+  signal_kind     TEXT NOT NULL              -- 'transmission'|'broadcast'|'narrowbeam'
+);
+
+CREATE INDEX idx_sigint_observer ON sigint_events(observer_faction_id, detected_at_tick);
+
+-- ============================================================================
+-- SECTION 5 — Diplomacy: treaties + senate
+-- ============================================================================
+
+-- Treaties are public game objects with finite duration in ticks.
+CREATE TABLE treaties (
+  id              TEXT PRIMARY KEY,
+  game_id         TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  kind            TEXT NOT NULL,            -- 'nap'|'defense_pact'|'trade'|'intel_share'|'demilitarization'
+  status          TEXT NOT NULL DEFAULT 'proposed',  -- 'proposed'|'active'|'expired'|'broken'|'cancelled'
+  proposed_at_tick INTEGER NOT NULL,
+  signed_at_tick  INTEGER,
+  expires_at_tick INTEGER,                  -- NULL = open-ended
+  broken_at_tick  INTEGER,
+  breaker_faction_id TEXT REFERENCES game_factions(id),
+  terms           TEXT NOT NULL DEFAULT '{}'  -- JSON; e.g. tariff rates, demilitarized bodies
+);
+
+CREATE INDEX idx_treaties_game_status ON treaties(game_id, status);
+
+-- M2M: signatories of a treaty. The treaty becomes 'active' once every
+-- signatory row has signed_at_tick set.
+CREATE TABLE treaty_signatories (
+  treaty_id   TEXT NOT NULL REFERENCES treaties(id) ON DELETE CASCADE,
+  faction_id  TEXT NOT NULL REFERENCES game_factions(id) ON DELETE CASCADE,
+  signed_at_tick INTEGER,
+  PRIMARY KEY (treaty_id, faction_id)
+);
+
+-- Senate proposals run weekly (every senate_period_ticks). Lifecycle:
+-- proposed -> debating -> voting -> resolved.
+CREATE TABLE senate_proposals (
+  id                 TEXT PRIMARY KEY,
+  game_id            TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  proposer_faction_id TEXT REFERENCES game_factions(id),  -- NULL for system-generated
+  kind               TEXT NOT NULL,         -- 'trade'|'military'|'scientific'|'recognition'|'sanction'|'crisis'
+  title              TEXT NOT NULL,
+  summary            TEXT NOT NULL,
+  payload            TEXT NOT NULL DEFAULT '{}',  -- JSON; structure depends on kind
+  status             TEXT NOT NULL DEFAULT 'debating', -- 'debating'|'voting'|'passed'|'failed'|'withdrawn'
+  proposed_at_tick   INTEGER NOT NULL,
+  vote_opens_at_tick INTEGER NOT NULL,
+  vote_closes_at_tick INTEGER NOT NULL,
+  resolved_at_tick   INTEGER,
+  -- if passed, the modifier applies for the design-doc default of 7 ticks
+  effect_until_tick  INTEGER
+);
+
+CREATE INDEX idx_senate_status ON senate_proposals(game_id, status, vote_closes_at_tick);
+
+CREATE TABLE senate_votes (
+  proposal_id TEXT NOT NULL REFERENCES senate_proposals(id) ON DELETE CASCADE,
+  faction_id  TEXT NOT NULL REFERENCES game_factions(id) ON DELETE CASCADE,
+  vote        TEXT NOT NULL,                -- 'yea'|'nay'|'abstain'
+  weight      INTEGER NOT NULL,             -- snapshot of senate_weight at vote time
+  cast_at_tick INTEGER NOT NULL,
+  PRIMARY KEY (proposal_id, faction_id)
+);
+
+-- ============================================================================
+-- SECTION 6 — Technology
+-- ============================================================================
+
+-- Per-faction tech progress. The tech catalog itself (ids, costs, branches,
+-- prerequisites) lives in worker code as static seed data. This table just
+-- records what each faction has unlocked.
+CREATE TABLE faction_techs (
+  game_id     TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  faction_id  TEXT NOT NULL REFERENCES game_factions(id) ON DELETE CASCADE,
+  tech_id     TEXT NOT NULL,                -- e.g. 'prop.high_isp', 'sensors.deep_array'
+  status      TEXT NOT NULL,                -- 'researching'|'completed'
+  started_at_tick   INTEGER NOT NULL,
+  completed_at_tick INTEGER,
+  PRIMARY KEY (game_id, faction_id, tech_id)
+);
+
+CREATE INDEX idx_faction_techs_status ON faction_techs(game_id, faction_id, status);
+
+-- ============================================================================
+-- SECTION 7 — Messages and chronicle
+-- ============================================================================
+
+-- Messages are faction-to-faction (or broadcast). A signed message carries
+-- the cryptographic guarantee that the named sender produced it. v2 forgery
+-- introduces a distinction between claimed and actual sender; for v1 the
+-- two columns hold the same value but exist now to avoid migration churn.
+CREATE TABLE messages (
+  id                 TEXT PRIMARY KEY,
+  game_id            TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  actual_sender_faction_id  TEXT NOT NULL REFERENCES game_factions(id) ON DELETE CASCADE,
+  claimed_sender_faction_id TEXT NOT NULL REFERENCES game_factions(id) ON DELETE CASCADE,
+  scope              TEXT NOT NULL,         -- 'dm'|'group'|'broadcast'
+  body               TEXT NOT NULL,
+  signed             INTEGER NOT NULL DEFAULT 0,  -- 0/1; if 1, signature verifiable from public state
+  sent_at_tick       INTEGER NOT NULL,
+  sent_at_ms         INTEGER NOT NULL
+);
+
+CREATE INDEX idx_messages_game_tick ON messages(game_id, sent_at_tick DESC);
+
+-- Recipients for dm/group; for broadcast, no rows are inserted and the
+-- message is visible to every faction by virtue of scope.
+CREATE TABLE message_recipients (
+  message_id  TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  faction_id  TEXT NOT NULL REFERENCES game_factions(id) ON DELETE CASCADE,
+  read_at_ms  INTEGER,
+  PRIMARY KEY (message_id, faction_id)
+);
+
+-- Append-only event log. Every significant game event writes one row here.
+-- This is the artifact players keep at end of match; UI is the chronicle viewer.
+CREATE TABLE chronicle_entries (
+  id                 TEXT PRIMARY KEY,
+  game_id            TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  tick_number        INTEGER NOT NULL,
+  kind               TEXT NOT NULL,         -- 'treaty_signed'|'treaty_broken'|'declaration'|'senate_vote'|
+                                            -- 'battle'|'body_claimed'|'body_developed'|'ship_built'|
+                                            -- 'ship_destroyed'|'faction_eliminated'|'tech_completed'|
+                                            -- 'victory'|'game_started'|'game_ended'
+  actor_faction_id   TEXT REFERENCES game_factions(id),
+  target_faction_id  TEXT REFERENCES game_factions(id),
+  body_id            TEXT REFERENCES game_bodies(id),
+  ship_id            TEXT REFERENCES game_ships(id),
+  payload            TEXT NOT NULL DEFAULT '{}',  -- JSON; freeform per kind
+  visibility         TEXT NOT NULL DEFAULT 'public',  -- 'public' | JSON array of faction ids
+  created_at_ms      INTEGER NOT NULL
+);
+
+CREATE INDEX idx_chronicle_game_tick ON chronicle_entries(game_id, tick_number, id);
+CREATE INDEX idx_chronicle_kind ON chronicle_entries(game_id, kind);
+
+-- ============================================================================
+-- SECTION 8 — Orders, snapshots, reserved v2
+-- ============================================================================
+
+-- Catch-all for cross-cutting orders that don't fit a single domain table.
+-- Most orders are NOT here — committing a maneuver is a node status flip,
+-- queuing a build is a row in game_body_build_queue, voting is a row in
+-- senate_votes. Use this only for actions that don't have a natural home.
+CREATE TABLE pending_orders (
+  id              TEXT PRIMARY KEY,
+  game_id         TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  faction_id      TEXT NOT NULL REFERENCES game_factions(id) ON DELETE CASCADE,
+  kind            TEXT NOT NULL,             -- 'sigint_scan'|'signed_declaration'|'custom'
+  payload         TEXT NOT NULL DEFAULT '{}',
+  submitted_at_ms INTEGER NOT NULL,
+  target_tick     INTEGER NOT NULL,          -- the tick at which this is resolved
+  status          TEXT NOT NULL DEFAULT 'pending', -- 'pending'|'applied'|'rejected'|'cancelled'
+  applied_at_tick INTEGER,
+  rejection_reason TEXT
+);
+
+CREATE INDEX idx_orders_target_tick ON pending_orders(game_id, target_tick, status);
+
+-- Reserved for v2 standing-orders engine. Schema is defined now so the v2
+-- migration is additive. No worker code should read/write this table in v1.
+CREATE TABLE standing_orders (
+  id              TEXT PRIMARY KEY,
+  game_id         TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  faction_id      TEXT NOT NULL REFERENCES game_factions(id) ON DELETE CASCADE,
+  trigger_kind    TEXT NOT NULL,
+  trigger_payload TEXT NOT NULL DEFAULT '{}',
+  action_kind     TEXT NOT NULL,
+  action_payload  TEXT NOT NULL DEFAULT '{}',
+  enabled         INTEGER NOT NULL DEFAULT 1,
+  created_at_tick INTEGER NOT NULL,
+  last_fired_tick INTEGER
+);
+
+CREATE INDEX idx_standing_orders_faction ON standing_orders(game_id, faction_id, enabled);
+
+-- Per-tick snapshot for rollback / chronicle replay. JSON blob; lossy and
+-- not authoritative. The relational rows are the source of truth.
+CREATE TABLE game_snapshots (
+  game_id        TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  tick_number    INTEGER NOT NULL,
+  state_blob     TEXT NOT NULL,             -- JSON dump of derived per-faction views
+  bytes          INTEGER NOT NULL,          -- length of state_blob; for storage telemetry
+  created_at_ms  INTEGER NOT NULL,
+  PRIMARY KEY (game_id, tick_number)
+);
+
+-- ============================================================================
+-- END
+-- ============================================================================

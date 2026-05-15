@@ -4,6 +4,7 @@
   "private": true,
   "dependencies": {
     "ajv": "^8.20.0",
+    "http-proxy-middleware": "^2.0.6",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-scripts": "5.0.1",
@@ -13,7 +14,10 @@
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "worker:dev": "wrangler dev",
+    "db:migrate:local": "wrangler d1 migrations apply orbital --local",
+    "db:migrate:remote": "wrangler d1 migrations apply orbital"
   },
   "eslintConfig": {
     "extends": [

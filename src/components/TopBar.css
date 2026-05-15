@@ -251,3 +251,20 @@
   from { opacity: 0; transform: translateY(-6px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+.top-bar__exit {
+  background: transparent;
+  border: 1px solid #2a3d50;
+  color: #6b8195;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  border-radius: 2px;
+  margin-left: 4px;
+}
+.top-bar__exit:hover {
+  border-color: #ffb84d;
+  color: #ffb84d;
+}
