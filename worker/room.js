@@ -424,6 +424,87 @@ export class Room {
       }
     }
 
+    // 3.5 Yield harvest. Every SETTLEMENT_HARVEST_INTERVAL=10 ticks, each
+    //     settlement converts its body's yield into stockpile, scaled by
+    //     population and the settlement type's bias (cities -> metal,
+    //     stations -> science).
+    const HARVEST_INTERVAL = 10;
+    const settlements = (await this.env.DB
+      .prepare(
+        `SELECT s.id, s.body_id, s.type, s.population, s.last_harvest_tick,
+                b.yield_metal, b.yield_fuel, b.yield_gold, b.yield_science
+           FROM game_settlements s
+           JOIN game_bodies b ON b.id = s.body_id
+          WHERE s.game_id = ? AND s.destroyed_at_tick IS NULL`,
+      )
+      .bind(gameId)
+      .all()).results ?? [];
+
+    for (const s of settlements) {
+      const last = s.last_harvest_tick ?? 0;
+      if (tick - last < HARVEST_INTERVAL) continue;
+      const popMult = 1 + 0.1 * Math.max(0, (s.population ?? 1) - 1);
+      const typeMult = s.type === 'city'
+        ? { metal: 1.2, fuel: 1.0, gold: 1.0, science: 0.8 }
+        : { metal: 0.8, fuel: 1.1, gold: 1.0, science: 1.4 };
+      const addMetal   = Math.round(s.yield_metal   * popMult * typeMult.metal);
+      const addFuel    = Math.round(s.yield_fuel    * popMult * typeMult.fuel);
+      const addGold    = Math.round(s.yield_gold    * popMult * typeMult.gold);
+      const addScience = Math.round(s.yield_science * popMult * typeMult.science);
+      await this.env.DB
+        .prepare(
+          `UPDATE game_settlements
+              SET stockpile_metal   = stockpile_metal   + ?,
+                  stockpile_fuel    = stockpile_fuel    + ?,
+                  stockpile_gold    = stockpile_gold    + ?,
+                  stockpile_science = stockpile_science + ?,
+                  last_harvest_tick = ?
+            WHERE id = ?`,
+        )
+        .bind(addMetal, addFuel, addGold, addScience, tick, s.id)
+        .run();
+    }
+
+    // 3.6 Stockpile offload. If a player's freighter is in orbit at a
+    //     body where they own a settlement, sweep the settlement's stockpile
+    //     into the owning faction's resources. Mirrors the client behavior.
+    const offloads = (await this.env.DB
+      .prepare(
+        `SELECT DISTINCT s.id AS sid, s.owner_faction_id AS fid,
+                s.stockpile_metal AS m, s.stockpile_fuel AS f,
+                s.stockpile_gold AS g, s.stockpile_science AS sci
+           FROM game_settlements s
+           JOIN game_ships sh ON sh.parent_body_id = s.body_id
+                              AND sh.owner_faction_id = s.owner_faction_id
+                              AND sh.ship_class = 'freighter'
+                              AND sh.status = 'active'
+          WHERE s.game_id = ?
+            AND s.destroyed_at_tick IS NULL
+            AND (s.stockpile_metal + s.stockpile_fuel + s.stockpile_gold + s.stockpile_science) > 0`,
+      )
+      .bind(gameId)
+      .all()).results ?? [];
+
+    for (const o of offloads) {
+      await this.env.DB.batch([
+        this.env.DB
+          .prepare(
+            `UPDATE game_factions
+                SET metal = metal + ?, fuel = fuel + ?, gold = gold + ?, science = science + ?
+              WHERE id = ?`,
+          )
+          .bind(o.m, o.f, o.g, o.sci, o.fid),
+        this.env.DB
+          .prepare(
+            `UPDATE game_settlements
+                SET stockpile_metal = 0, stockpile_fuel = 0,
+                    stockpile_gold = 0, stockpile_science = 0
+              WHERE id = ?`,
+          )
+          .bind(o.sid),
+      ]);
+    }
+
     if (hpDeltas.size > 0) {
       const losses = [];
       for (const [shipId, dmg] of hpDeltas) {

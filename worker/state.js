@@ -62,17 +62,45 @@ async function handleGetState(req, env, ctx) {
     .bind(gameId)
     .all()).results ?? [];
 
-  const bodies = (await env.DB
+  const bodiesRaw = (await env.DB
     .prepare(
-      `SELECT id, template_id, name, type, parent_body_id, radius, soi, mu,
+      `WITH my_presence AS (
+         SELECT DISTINCT parent_body_id AS bid
+           FROM game_ships
+          WHERE game_id = ?1 AND owner_faction_id = ?2 AND status = 'active'
+         UNION
+         SELECT id AS bid FROM game_bodies
+          WHERE game_id = ?1 AND owner_faction_id = ?2
+       )
+       SELECT id, template_id, name, type, parent_body_id, radius, soi, mu,
               orbit_radius, orbit_period, angle0, color,
               yield_metal, yield_fuel, yield_gold, yield_science,
-              owner_faction_id, development_level, fortification_level, shipyard_level
+              owner_faction_id, development_level, fortification_level, shipyard_level,
+              (id IN (SELECT bid FROM my_presence)) AS visible_to_me
          FROM game_bodies
-        WHERE game_id = ?`,
+        WHERE game_id = ?1`,
     )
-    .bind(gameId)
+    .bind(gameId, me.id)
     .all()).results ?? [];
+
+  // Body geometry is physical reality, always visible. But who owns a
+  // world is intel — mask owner_faction_id (and the development levels
+  // that follow from it) on bodies the caller hasn't actually scouted.
+  // The caller's own worlds are always 'visible_to_me=1' via the CTE.
+  const bodies = bodiesRaw.map(b => {
+    if (b.visible_to_me) {
+      const { visible_to_me, ...rest } = b;
+      return rest;
+    }
+    const { visible_to_me, owner_faction_id, development_level, fortification_level, shipyard_level, ...rest } = b;
+    return {
+      ...rest,
+      owner_faction_id: null,
+      development_level: 0,
+      fortification_level: 0,
+      shipyard_level: 0,
+    };
+  });
 
   // Fog of war: caller sees all their own ships unconditionally, plus
   // any opponent ship whose parent_body_id is a body where the caller

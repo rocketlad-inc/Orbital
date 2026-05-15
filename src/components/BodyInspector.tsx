@@ -10,6 +10,7 @@ import {
   canHostCity, canHostStation, SETTLEMENT_DEFS, settlementYield, suggestSettlementName,
 } from '../game/settlements';
 import { SettlementType } from '../types';
+import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import './BodyInspector.css';
 
 export const BodyInspector: React.FC = () => {
@@ -157,6 +158,8 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
   const {
     gameState, deploySettlement, selectSettlement, selectedSettlementId,
   } = useGameContext();
+  // Non-null only in multiplayer: mirror the local deploy to the server.
+  const mpActions = useMultiplayerActions();
 
   // Inline name prompt state — when set, shows naming form for that type
   const [namingType, setNamingType] = useState<SettlementType | null>(null);
@@ -208,6 +211,9 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
     if (!namingType) return;
     const name = draftName.trim();
     deploySettlement(bodyId, namingType, name || undefined);
+    if (mpActions) {
+      mpActions.deploySettlement({ bodyId, type: namingType, name: name || undefined });
+    }
     setNamingType(null);
     setDraftName('');
   };

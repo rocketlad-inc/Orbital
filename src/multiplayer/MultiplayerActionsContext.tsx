@@ -25,12 +25,20 @@ export interface BuildIntent {
   shipName?: string;
 }
 
+export interface SettlementIntent {
+  bodyId: string;
+  type: 'city' | 'station';
+  name?: string;
+}
+
 export interface MultiplayerActions {
   gameId: string;
   /** Post a committed maneuver node to the server. Resolves true on success. */
   transfer: (intent: TransferIntent) => Promise<boolean>;
   /** Queue a ship build. Resolves true on success. */
   build: (intent: BuildIntent) => Promise<boolean>;
+  /** Deploy a city or station at a body. */
+  deploySettlement: (intent: SettlementIntent) => Promise<boolean>;
 }
 
 const MultiplayerActionsContext = createContext<MultiplayerActions | null>(null);
@@ -68,6 +76,16 @@ export function MultiplayerActionsProvider({
       });
       if (!res.ok) {
         console.warn('build failed', res.error);
+      }
+      return res.ok;
+    },
+    async deploySettlement(intent) {
+      const res = await apiFetch(`/api/games/${gameId}/bodies/${encodeURIComponent(intent.bodyId)}/settlement`, {
+        method: 'POST',
+        body: JSON.stringify({ type: intent.type, name: intent.name }),
+      });
+      if (!res.ok) {
+        console.warn('deploySettlement failed', res.error);
       }
       return res.ok;
     },

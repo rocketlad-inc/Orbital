@@ -5,7 +5,7 @@ import { FactionPanel } from './FactionPanel';
 import { CommsPanel } from './CommsPanel';
 import { SenatePanel } from './SenatePanel';
 import { TradesPanel } from './TradesPanel';
-import { tradesApi } from './api';
+import { tradesApi, apiFetch, RoomSnapshot } from './api';
 
 // Multiplayer overlay UI mounted alongside the existing single-player React
 // app. The dock exposes a right-side panel with Lobby / Faction / Comms /
@@ -30,6 +30,31 @@ export function MultiplayerShell({ children, onExit, initialRoomId }: Multiplaye
   const [collapsed, setCollapsed] = useState(false);
   const [tab, setTab] = useState<Tab>('lobby');
   const [gameId, setGameId] = useState<string | null>(null);
+
+  // If the player arrives in a room where a game is already active and the
+  // tab is still 'lobby' (which is now hidden), jump them to Faction so
+  // they're not staring at a blank dock body.
+  useEffect(() => {
+    if (gameId && tab === 'lobby') setTab('faction');
+  }, [gameId, tab]);
+
+  // Detect game_id by polling the room snapshot ourselves rather than
+  // relying on LobbyView mounting — that tab is hidden once a game has
+  // started, but a returning player still needs to discover it.
+  useEffect(() => {
+    if (!initialRoomId || gameId) return;
+    let cancelled = false;
+    const poll = async () => {
+      const res = await apiFetch<RoomSnapshot>(`/api/lobby/rooms/${initialRoomId}`);
+      if (cancelled) return;
+      if (res.ok && res.data.game_id) {
+        setGameId(res.data.game_id);
+      }
+    };
+    poll();
+    const id = setInterval(poll, 5000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [initialRoomId, gameId]);
   const [incomingTradeCount, setIncomingTradeCount] = useState(0);
 
   // Poll for incoming trade count so the Trades tab can show a badge
@@ -80,7 +105,12 @@ export function MultiplayerShell({ children, onExit, initialRoomId }: Multiplaye
         {!collapsed && (
           <>
             <div className="mp-tablist">
-              <button className={tab === 'lobby' ? 'active' : ''} onClick={() => setTab('lobby')}>Lobby</button>
+              {/* Lobby only matters while the host is still setting up. Once a
+                  game has started the room is frozen; hide the tab so it
+                  can't drag the player back into a screen that doesn't apply. */}
+              {!gameId && (
+                <button className={tab === 'lobby' ? 'active' : ''} onClick={() => setTab('lobby')}>Lobby</button>
+              )}
               <button
                 className={tab === 'faction' ? 'active' : ''}
                 disabled={!gameId}
