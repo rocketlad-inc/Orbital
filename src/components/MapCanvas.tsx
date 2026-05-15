@@ -24,6 +24,7 @@ import { bezierPositionAt } from '../physics/bezierTransfer';
 import { bodyPosition } from '../physics/orbitalMechanics';
 import { COLORS, withOpacity } from '../render/colors';
 import { shipWorldPosition } from '../game/combat';
+import { computeIncomingThreats, threatenedBodyIds } from '../game/threats';
 import './MapCanvas.css';
 
 interface MapCanvasProps {
@@ -160,11 +161,38 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
     }
 
+    // Compute threats (hostile transits targeting player-owned bodies) and
+    // build the set of body ids to flag.
+    const threats = computeIncomingThreats(gameState, 'player');
+    const threatBodies = threatenedBodyIds(threats);
+
     // Draw bodies
     for (const body of gameState.bodies) {
       const isSelected = uiState.selectedBodyId === body.id;
       const isHovered = uiState.hoveredBodyId === body.id;
       drawBody(body, renderContext, isSelected, isHovered);
+
+      // Pulsing red threat ring around threatened bodies.
+      if (threatBodies.has(body.id)) {
+        const wp = bodyPosition(body, gameState.currentTick, gameState.bodies);
+        const cp = worldToCanvas(wp.x, wp.y, renderContext);
+        const baseR = Math.max(8, body.radius * camera.scale + 10);
+        // Use real time, not tick, so the pulse is steady at any sim speed.
+        const pulse = 0.55 + 0.45 * Math.sin(performance.now() / 320);
+        ctx.strokeStyle = withOpacity('#ff3030', 0.45 + 0.35 * pulse);
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        ctx.arc(cp.x, cp.y, baseR + 4 * pulse, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        // "THREAT" label
+        ctx.fillStyle = '#ff5e5e';
+        ctx.font = 'bold 9px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText('⚠ THREAT', cp.x, cp.y - baseR - 6);
+      }
     }
 
     // Draw ships

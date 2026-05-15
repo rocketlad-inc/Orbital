@@ -9,6 +9,7 @@ import { Outliner } from './components/Outliner';
 import { SettlementsPanel } from './components/SettlementsPanel';
 import { FleetPanel } from './components/FleetPanel';
 import { TechPanel } from './components/TechPanel';
+import { ThreatsPanel } from './components/ThreatsPanel';
 import { prewarmShipIcons } from './render/shipIconCache';
 import { COLORS } from './render/colors';
 import { AuthProvider, useAuth } from './multiplayer/AuthContext';
@@ -77,6 +78,7 @@ function SinglePlayerView({ onExit }: { onExit: () => void }) {
         <ShipPanel />
         <BodyInspector />
         <ScenarioSelector />
+        <ThreatsPanel />
       </div>
     </GameContextProvider>
   );
