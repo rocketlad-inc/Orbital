@@ -213,3 +213,39 @@
   color: #6b8195;
   font-weight: bold;
 }
+
+/* Shipyard offline (no station deployed here) */
+.shipyard-offline {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 16px 12px;
+  background: rgba(107, 129, 149, 0.05);
+  border: 1px dashed #2a3d50;
+  border-radius: 3px;
+  margin-bottom: 8px;
+}
+
+.shipyard-offline .offline-icon {
+  font-size: 24px;
+  color: #6b8195;
+  opacity: 0.5;
+}
+
+.shipyard-offline .offline-text {
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  color: #6b8195;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.shipyard-offline .offline-hint {
+  font-size: 9px;
+  color: #6b8195;
+  font-style: italic;
+  text-align: center;
+  line-height: 1.5;
+  max-width: 220px;
+}

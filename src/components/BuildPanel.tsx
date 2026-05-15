@@ -33,7 +33,7 @@ export const BuildPanel: React.FC = () => {
   if (!uiState.selectedBodyId) return null;
 
   const body = gameState.bodies.find(b => b.id === uiState.selectedBodyId);
-  if (!body || body.ownedBy !== 'player') return null;
+  if (!body) return null;
 
   // Can only build on terrestrial, dwarf, or moon bodies
   if (body.type === 'star' || body.type === 'gas_giant' || body.type === 'ice_giant') return null;
@@ -41,8 +41,53 @@ export const BuildPanel: React.FC = () => {
   const playerRes = gameState.resources['player'];
   if (!playerRes) return null;
 
+  // Shipyards require a player-owned station at this body. Stations house
+  // the orbital construction docks.
+  const hasPlayerStation = gameState.settlements.some(
+    s => s.bodyId === body.id && s.ownedBy === 'player' && s.type === 'station',
+  );
+
   const activeBuildOrders = gameState.buildOrders.filter(bo => bo.bodyId === body.id);
   const existingShipNames = gameState.ships.map(s => s.name);
+
+  // Without a station here, render a stub explaining why the shipyard is offline
+  // — still surface active build orders if any exist (e.g. from before destruction).
+  if (!hasPlayerStation) {
+    return (
+      <div className="build-panel">
+        <div className="section-title">SHIPYARD</div>
+        <div className="shipyard-offline">
+          <div className="offline-icon">◆</div>
+          <div className="offline-text">SHIPYARD OFFLINE</div>
+          <div className="offline-hint">
+            Deploy a station at this body to bring construction docks online.
+          </div>
+        </div>
+        {activeBuildOrders.length > 0 && (
+          <div className="build-queue">
+            <div className="queue-label">BUILDING (orphaned)</div>
+            {activeBuildOrders.map(bo => {
+              const progress = (gameState.currentTick - bo.startTick) / (bo.completeTick - bo.startTick);
+              const remaining = Math.max(0, bo.completeTick - gameState.currentTick);
+              return (
+                <div key={bo.id} className="build-item">
+                  <div className="build-info">
+                    <span className="build-name">{bo.shipName}</span>
+                    <span className="build-class">{bo.shipClass.toUpperCase()}</span>
+                  </div>
+                  <div className="build-progress-bar">
+                    <div className="build-progress-fill" style={{ width: `${Math.min(100, progress * 100)}%` }} />
+                  </div>
+                  <div className="build-eta">T-{remaining.toFixed(0)}</div>
+                  <button className="build-cancel" onClick={() => cancelBuild(bo.id)}>✕</button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   const handleBuild = (shipClass: ShipClassName) => {
     // Custom name takes precedence; fall back to a random pool name

@@ -527,9 +527,15 @@ export function GameContextProvider({
     const classDef = SHIP_CLASSES[shipClass];
     if (!classDef) return false;
 
-    // Check if body is owned by the player
     const body = gameState.bodies.find(b => b.id === bodyId);
-    if (!body || body.ownedBy !== 'player') return false;
+    if (!body) return false;
+
+    // Shipyards require a player-owned station at this body — the station
+    // houses the construction docks. Without it, no ships can be ordered.
+    const hasPlayerStation = gameState.settlements.some(
+      s => s.bodyId === bodyId && s.ownedBy === 'player' && s.type === 'station',
+    );
+    if (!hasPlayerStation) return false;
 
     // Apply Construction-tech cost discount (capped at 75% off).
     const constructionLvl = gameState.factionTech.player?.levels['construction'] ?? 0;
@@ -571,7 +577,7 @@ export function GameContextProvider({
       };
     });
     return true;
-  }, [gameState.bodies, gameState.resources, gameState.factionTech]);
+  }, [gameState.bodies, gameState.resources, gameState.factionTech, gameState.settlements]);
 
   const cancelBuild = useCallback((buildOrderId: string) => {
     setGameStateInternal(prev => {
