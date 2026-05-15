@@ -161,6 +161,7 @@ export interface GameState {
   buildOrders: BuildOrder[];           // ships under construction
   resources: Record<string, FactionResources>; // factionId → resources
   combatLog: string[];                 // recent combat events
+  lastHarvestTick: number;             // tick when resources were last collected
 }
 
 /**
