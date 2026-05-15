@@ -3,8 +3,9 @@
 // Title | Resources | Nav buttons | Time / Sim controls | Alerts
 // ============================================================
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
+import { useAuth } from '../multiplayer/AuthContext';
 import './TopBar.css';
 
 export type PanelId = 'settlements' | 'fleet' | null;
@@ -26,7 +27,17 @@ const SIM_SPEEDS = [1, 10, 100, 1000, 10000, 100000];
 
 export const TopBar: React.FC<TopBarProps> = ({ activePanel, onTogglePanel, onExitMode }) => {
   const { gameState, simSpeed, setSimSpeed, updateTick, selectShip } = useGameContext();
+  const { user, signOut } = useAuth();
   const [dismissedAlertIds, setDismissedAlertIds] = useState<Set<string>>(new Set());
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  // Esc closes the drawer
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menuOpen]);
 
   const playerResources = gameState.resources['player'];
   const playerShips = useMemo(
@@ -96,18 +107,23 @@ export const TopBar: React.FC<TopBarProps> = ({ activePanel, onTogglePanel, onEx
 
   return (
     <div className="top-bar">
-      <div className="top-bar__title">
+      <button
+        className="top-bar__title"
+        onClick={() => setMenuOpen(true)}
+        title="Open menu"
+        aria-label="Open menu"
+      >
         <div className="top-bar__title-main">ORBITAL</div>
-        <div className="top-bar__title-sub">v0.3</div>
-      </div>
-      {onExitMode && (
-        <button
-          className="top-bar__exit"
-          onClick={onExitMode}
-          title="Return to mode picker"
-        >
-          ← Menu
-        </button>
+        <div className="top-bar__title-sub">v0.3 · menu</div>
+      </button>
+
+      {menuOpen && (
+        <SideMenu
+          onClose={() => setMenuOpen(false)}
+          onExitMode={onExitMode}
+          user={user}
+          onSignOut={signOut}
+        />
       )}
 
       {playerResources && (
@@ -190,5 +206,75 @@ export const TopBar: React.FC<TopBarProps> = ({ activePanel, onTogglePanel, onEx
         ))}
       </div>
     </div>
+  );
+};
+
+// ----------------------------------------------------------------
+// Side drawer: slides in from the left when the logo is clicked.
+// Houses navigation actions (Back to Menu, Sign Out) and identity
+// so the in-game top bar stays focused on resources + sim controls.
+// ----------------------------------------------------------------
+
+interface SideMenuProps {
+  onClose: () => void;
+  onExitMode?: () => void;
+  user: { display_name: string; email: string } | null;
+  onSignOut: () => Promise<void> | void;
+}
+
+const SideMenu: React.FC<SideMenuProps> = ({ onClose, onExitMode, user, onSignOut }) => {
+  return (
+    <>
+      <div className="side-menu__backdrop" onClick={onClose} />
+      <aside className="side-menu" role="dialog" aria-label="Menu">
+        <header className="side-menu__head">
+          <div>
+            <div className="side-menu__brand">ORBITAL</div>
+            <div className="side-menu__brand-sub">v0.3 alpha</div>
+          </div>
+          <button className="side-menu__close" onClick={onClose} title="Close (Esc)">×</button>
+        </header>
+
+        <section className="side-menu__identity">
+          <div className="side-menu__identity-label">SIGNED IN AS</div>
+          <div className="side-menu__identity-name">
+            {user ? (user.display_name || user.email) : 'Guest'}
+          </div>
+          {user && <div className="side-menu__identity-sub">{user.email}</div>}
+        </section>
+
+        <nav className="side-menu__nav">
+          <div className="side-menu__group-label">GAME</div>
+          {onExitMode && (
+            <button
+              className="side-menu__item"
+              onClick={() => { onClose(); onExitMode(); }}
+            >
+              <span className="side-menu__item-icon">←</span>
+              <span className="side-menu__item-label">Back to Menu</span>
+              <span className="side-menu__item-hint">Exit this session</span>
+            </button>
+          )}
+
+          {user && (
+            <>
+              <div className="side-menu__group-label">ACCOUNT</div>
+              <button
+                className="side-menu__item side-menu__item--danger"
+                onClick={async () => { onClose(); await onSignOut(); }}
+              >
+                <span className="side-menu__item-icon">⏏</span>
+                <span className="side-menu__item-label">Sign Out</span>
+                <span className="side-menu__item-hint">End your session</span>
+              </button>
+            </>
+          )}
+        </nav>
+
+        <footer className="side-menu__foot">
+          <span>Press <kbd>Esc</kbd> to close</span>
+        </footer>
+      </aside>
+    </>
   );
 };

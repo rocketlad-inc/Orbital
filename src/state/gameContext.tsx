@@ -10,6 +10,7 @@ import {
   canHostCity, canHostStation, SETTLEMENT_DEFS,
 } from '../game/settlements';
 import { tickMaintenance } from '../game/maintenance';
+import { TechId } from '../game/techs';
 
 export const TICKS_PER_GAME_DAY = 24;
 const REAL_SECONDS_PER_GAME_DAY = 3600;
@@ -58,6 +59,10 @@ interface GameContextType {
   damageSettlement: (settlementId: string, dmg: number) => void;
   selectedSettlementId?: string;
   selectSettlement: (id: string | undefined) => void;
+
+  // Research / tech tree
+  startResearch: (techId: TechId) => void;
+  cancelResearch: () => void;
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
@@ -225,6 +230,41 @@ export function GameContextProvider({
     // Repair and refuel ships at owned bodies (after combat so dead ships are gone)
     updatedShips = tickMaintenance(updatedShips, updatedSettlements, prev.bodies, tickDelta);
 
+    // Research drain — for each faction with a queued tech, pour available
+    // science into the research bar; level up when full. Excess rolls into the
+    // next level so a stockpile can finish multiple cheap levels in one tick.
+    const updatedTech: typeof prev.factionTech = {};
+    for (const [fid, ts0] of Object.entries(prev.factionTech)) {
+      let ts = ts0;
+      if (!ts.researching) { updatedTech[fid] = ts; continue; }
+      const techId = ts.researching as TechId;
+      const def = TECH_DEFS[techId];
+      if (!def) { updatedTech[fid] = ts; continue; }
+      const pool = factionPools[fid];
+      let available = pool ? pool.science : 0;
+      if (available <= 0) { updatedTech[fid] = ts; continue; }
+
+      let progress = ts.progress;
+      let levels = { ...ts.levels };
+      let iters = 0;
+      while (available > 0 && iters++ < 100) {
+        const curLevel = levels[techId] ?? 0;
+        const cost = Math.ceil(def.baseCost * Math.pow(curLevel + 1, def.costScaling));
+        const need = cost - progress;
+        const spend = Math.min(available, need);
+        progress += spend;
+        available -= spend;
+        if (progress >= cost) {
+          levels[techId] = curLevel + 1;
+          progress = 0;
+        } else {
+          break;
+        }
+      }
+      if (pool) pool.science = available;
+      updatedTech[fid] = { ...ts, levels, progress, researching: ts.researching };
+    }
+
     const combatLog = combatNewLogs.length > 0
       ? [...prev.combatLog.slice(-20), ...combatNewLogs]
       : prev.combatLog;
@@ -237,6 +277,7 @@ export function GameContextProvider({
       currentTick: newTime,
       buildOrders,
       resources: factionPools,
+      factionTech: updatedTech,
       settlements: updatedSettlements,
       fleets: updatedFleets,
       combatLog,
@@ -524,6 +565,7 @@ export function GameContextProvider({
       const updatedResources = factionRes ? {
         ...prev.resources,
         [bo.ownedBy]: {
+          ...factionRes,
           fuel: factionRes.fuel + classDef.cost.fuel,
           ore: factionRes.ore + classDef.cost.ore,
           credits: factionRes.credits + classDef.cost.credits,
@@ -614,6 +656,32 @@ export function GameContextProvider({
     });
   }, []);
 
+  const startResearch = useCallback((techId: TechId) => {
+    setGameStateInternal(prev => {
+      const cur = prev.factionTech.player ?? { levels: {}, researching: null, progress: 0 };
+      return {
+        ...prev,
+        factionTech: {
+          ...prev.factionTech,
+          player: { ...cur, researching: techId, progress: 0 },
+        },
+      };
+    });
+  }, []);
+
+  const cancelResearch = useCallback(() => {
+    setGameStateInternal(prev => {
+      const cur = prev.factionTech.player ?? { levels: {}, researching: null, progress: 0 };
+      return {
+        ...prev,
+        factionTech: {
+          ...prev.factionTech,
+          player: { ...cur, researching: null, progress: 0 },
+        },
+      };
+    });
+  }, []);
+
   const value: GameContextType = {
     gameState, camera, uiState, simSpeed,
     setGameState, updateGameState, updateTick, setSimSpeed, loadScenario,
@@ -625,6 +693,7 @@ export function GameContextProvider({
     createFleet, disbandFleet, removeFromFleet, addToFleet,
     deploySettlement, damageSettlement,
     selectedSettlementId, selectSettlement,
+    startResearch, cancelResearch,
   };
 
   return (

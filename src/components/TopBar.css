@@ -27,8 +27,23 @@
   display: flex;
   flex-direction: column;
   line-height: 1;
-  padding-right: 12px;
+  padding: 4px 12px 4px 4px;
+  margin-right: 4px;
+  border: none;
   border-right: 1px solid #2a3d50;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease;
+  border-radius: 2px 0 0 2px;
+}
+.top-bar__title:hover {
+  background: rgba(255, 184, 77, 0.06);
+}
+.top-bar__title:hover .top-bar__title-sub {
+  color: #ffb84d;
 }
 
 .top-bar__title-main {
@@ -252,19 +267,173 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
-.top-bar__exit {
+/* =================================================================
+   Side menu (drawer opened by clicking the ORBITAL logo)
+   ================================================================= */
+.side-menu__backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(3px);
+  z-index: 4990;
+  animation: side-menu-fade 0.18s ease;
+}
+@keyframes side-menu-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.side-menu {
+  position: fixed;
+  top: 0; bottom: 0; left: 0;
+  width: 320px;
+  max-width: 92vw;
+  background: linear-gradient(180deg, #0c1119 0%, #060a12 100%);
+  border-right: 1px solid #2a3d50;
+  z-index: 5000;
+  display: flex;
+  flex-direction: column;
+  color: #d8e4ee;
+  font-family: 'JetBrains Mono', monospace;
+  box-shadow: 8px 0 24px rgba(0, 0, 0, 0.5);
+  animation: side-menu-slide 0.22s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+@keyframes side-menu-slide {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(0); }
+}
+
+.side-menu__head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 22px 20px;
+  border-bottom: 1px solid #2a3d50;
+}
+.side-menu__brand {
+  font-family: 'Orbitron', 'JetBrains Mono', monospace;
+  font-size: 18px;
+  letter-spacing: 0.28em;
+  font-weight: 700;
+  color: #ffb84d;
+}
+.side-menu__brand-sub {
+  font-size: 9px;
+  color: #6b8195;
+  letter-spacing: 0.2em;
+  margin-top: 4px;
+  text-transform: uppercase;
+}
+.side-menu__close {
   background: transparent;
   border: 1px solid #2a3d50;
   color: #6b8195;
-  padding: 4px 10px;
-  font: inherit;
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  cursor: pointer;
+  width: 28px; height: 28px;
   border-radius: 2px;
-  margin-left: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  transition: all 0.15s ease;
 }
-.top-bar__exit:hover {
-  border-color: #ffb84d;
+.side-menu__close:hover {
+  border-color: #ff5e5e;
+  color: #ff5e5e;
+}
+
+.side-menu__identity {
+  padding: 18px 20px;
+  border-bottom: 1px solid #2a3d50;
+  background: rgba(78, 205, 196, 0.04);
+}
+.side-menu__identity-label {
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: #6b8195;
+  margin-bottom: 6px;
+}
+.side-menu__identity-name {
+  font-size: 14px;
+  color: #d8e4ee;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.side-menu__identity-sub {
+  font-size: 10px;
+  color: #6b8195;
+  margin-top: 3px;
+  letter-spacing: 0.04em;
+}
+
+.side-menu__nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 12px;
+}
+.side-menu__group-label {
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: #6b8195;
+  padding: 12px 8px 6px;
+  text-transform: uppercase;
+}
+.side-menu__group-label:first-child { padding-top: 0; }
+
+.side-menu__item {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 0 12px;
+  width: 100%;
+  padding: 12px 14px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: #d8e4ee;
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.side-menu__item:hover {
+  background: rgba(78, 205, 196, 0.06);
+  border-color: rgba(78, 205, 196, 0.4);
+}
+.side-menu__item--danger:hover {
+  background: rgba(255, 94, 94, 0.06);
+  border-color: rgba(255, 94, 94, 0.4);
+  color: #ff8a8a;
+}
+.side-menu__item-icon {
+  grid-row: span 2;
+  font-size: 16px;
   color: #ffb84d;
+  text-align: center;
+}
+.side-menu__item--danger .side-menu__item-icon { color: #ff5e5e; }
+.side-menu__item-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+.side-menu__item-hint {
+  font-size: 9px;
+  color: #6b8195;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.side-menu__foot {
+  padding: 14px 20px;
+  border-top: 1px solid #2a3d50;
+  color: #6b8195;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+}
+.side-menu__foot kbd {
+  font-family: inherit;
+  background: rgba(78, 205, 196, 0.1);
+  border: 1px solid rgba(78, 205, 196, 0.3);
+  padding: 1px 6px;
+  border-radius: 2px;
+  color: #4ecdc4;
 }
