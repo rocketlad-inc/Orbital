@@ -104,15 +104,15 @@ export const TopBar: React.FC<TopBarProps> = ({ activePanel, onTogglePanel }) =>
         <div className="top-bar__resources">
           <div className="resource-pill resource-pill--fuel">
             <div className="resource-pill__label">FUEL</div>
-            <div className="resource-pill__value">{playerResources.fuel}</div>
+            <div className="resource-pill__value">{Math.round(playerResources.fuel)}</div>
           </div>
           <div className="resource-pill resource-pill--ore">
             <div className="resource-pill__label">ORE</div>
-            <div className="resource-pill__value">{playerResources.ore}</div>
+            <div className="resource-pill__value">{Math.round(playerResources.ore)}</div>
           </div>
           <div className="resource-pill resource-pill--credits">
             <div className="resource-pill__label">CR</div>
-            <div className="resource-pill__value">{playerResources.credits}</div>
+            <div className="resource-pill__value">{Math.round(playerResources.credits)}</div>
           </div>
           <div className="resource-pill resource-pill--ships">
             <div className="resource-pill__label">SHIPS</div>

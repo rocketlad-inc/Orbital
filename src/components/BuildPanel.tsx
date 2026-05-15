@@ -126,9 +126,9 @@ export const BuildPanel: React.FC = () => {
       </div>
 
       <div className="resources-bar">
-        <span className="resource">FUEL: {playerRes.fuel}</span>
-        <span className="resource">ORE: {playerRes.ore}</span>
-        <span className="resource">CR: {playerRes.credits}</span>
+        <span className="resource">FUEL: {Math.round(playerRes.fuel)}</span>
+        <span className="resource">ORE: {Math.round(playerRes.ore)}</span>
+        <span className="resource">CR: {Math.round(playerRes.credits)}</span>
       </div>
     </div>
   );

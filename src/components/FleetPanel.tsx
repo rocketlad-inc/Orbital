@@ -71,7 +71,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
             style={{ width: `${ratio * 100}%` }}
           />
         </div>
-        <span className="status-bar__text">{hp}/{def.hp}</span>
+        <span className="status-bar__text">{Math.round(hp)}/{def.hp}</span>
       </div>
     );
   };
@@ -88,7 +88,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
             style={{ width: `${Math.min(100, ratio * 100)}%` }}
           />
         </div>
-        <span className="status-bar__text">{ship.fuel}</span>
+        <span className="status-bar__text">{Math.round(ship.fuel)}</span>
       </div>
     );
   };
