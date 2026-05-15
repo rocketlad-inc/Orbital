@@ -320,6 +320,20 @@ export default {
     const url = new URL(req.url);
 
     if (url.pathname.startsWith('/api/')) {
+      try {
+        return await this._dispatch(req, env, url);
+      } catch (e) {
+        return json(
+          { error: { code: 'worker_exception', message: String(e?.message || e), stack: String(e?.stack || '').slice(0, 1000) } },
+          { status: 500 },
+        );
+      }
+    }
+
+    return env.ASSETS.fetch(req);
+  },
+
+  async _dispatch(req, env, url) {
       // one-shot bootstrap (idempotent; no-op once tables exist)
       if (req.method === 'POST' && url.pathname === '/api/__init') return handleInit(req, env);
       // unauthenticated routes
@@ -350,8 +364,5 @@ export default {
       if (featureResponse) return featureResponse;
 
       return err(404, 'not_found', 'no such endpoint');
-    }
-
-    return env.ASSETS.fetch(req);
   },
 };
