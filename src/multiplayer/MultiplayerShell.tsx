@@ -22,9 +22,10 @@ type Tab = 'lobby' | 'faction' | 'comms' | 'senate' | 'trades';
 interface MultiplayerShellProps {
   children: React.ReactNode;
   onExit?: () => void;
+  initialRoomId?: string | null;
 }
 
-export function MultiplayerShell({ children, onExit }: MultiplayerShellProps) {
+export function MultiplayerShell({ children, onExit, initialRoomId }: MultiplayerShellProps) {
   const { user, signOut } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
   const [tab, setTab] = useState<Tab>('lobby');
@@ -113,6 +114,7 @@ export function MultiplayerShell({ children, onExit }: MultiplayerShellProps) {
             <div className="mp-dock-body">
               {tab === 'lobby' && (
                 <LobbyView
+                  initialRoomId={initialRoomId ?? null}
                   onEnterGame={(_, gid) => { setGameId(gid); setTab('faction'); }}
                 />
               )}

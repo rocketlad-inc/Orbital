@@ -12,6 +12,7 @@ import { AuthProvider, useAuth } from './multiplayer/AuthContext';
 import { AuthOverlay } from './multiplayer/AuthOverlay';
 import { ModePicker, GameMode } from './ModePicker';
 import { MultiplayerShell } from './multiplayer/MultiplayerShell';
+import { MultiplayerLobby } from './multiplayer/MultiplayerLobby';
 import { apiFetch, RoomSummary } from './multiplayer/api';
 import './multiplayer/multiplayer.css';
 import './App.css';
@@ -69,10 +70,15 @@ function SinglePlayerView({ onExit }: { onExit: () => void }) {
   );
 }
 
+const ROOM_STORAGE_KEY = 'orbital.last_room';
+
 function AppShell() {
   const { user, loading } = useAuth();
   const [mode, setMode] = useState<GameMode | null>(null);
   const [guestMode, setGuestMode] = useState(false);
+  const [selectedRoomId, setSelectedRoomId] = useState<string | null>(() => {
+    return localStorage.getItem(ROOM_STORAGE_KEY);
+  });
   const [activeRooms, setActiveRooms] = useState<RoomSummary[] | null>(null);
 
   // When the user authenticates, fetch any rooms they're already a member of
@@ -120,7 +126,19 @@ function AppShell() {
   const handleExitMode = () => {
     setMode(null);
     setGuestMode(false);
+    setSelectedRoomId(null);
     localStorage.removeItem(MODE_STORAGE_KEY);
+    localStorage.removeItem(ROOM_STORAGE_KEY);
+  };
+
+  const handleExitRoom = () => {
+    setSelectedRoomId(null);
+    localStorage.removeItem(ROOM_STORAGE_KEY);
+  };
+
+  const handleEnterRoom = (roomId: string) => {
+    setSelectedRoomId(roomId);
+    localStorage.setItem(ROOM_STORAGE_KEY, roomId);
   };
 
   const handleGuest = () => {
@@ -158,9 +176,18 @@ function AppShell() {
     return <SinglePlayerView onExit={handleExitMode} />;
   }
 
-  // multiplayer
+  // multiplayer — lobby first, then in-room shell
+  if (!selectedRoomId) {
+    return (
+      <MultiplayerLobby
+        onEnterRoom={handleEnterRoom}
+        onExit={handleExitMode}
+      />
+    );
+  }
+
   return (
-    <MultiplayerShell onExit={handleExitMode}>
+    <MultiplayerShell onExit={handleExitRoom} initialRoomId={selectedRoomId}>
       <GameContextProvider initialScenario={1}>
         <SinglePlayerView onExit={handleExitMode} />
       </GameContextProvider>

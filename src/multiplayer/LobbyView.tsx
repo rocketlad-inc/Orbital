@@ -11,10 +11,11 @@ const TICK_INTERVAL_OPTIONS: Array<{ label: string; value: number }> = [
 
 interface Props {
   onEnterGame: (roomId: string, gameId: string) => void;
+  initialRoomId?: string | null;
 }
 
-export function LobbyView({ onEnterGame }: Props) {
-  const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
+export function LobbyView({ onEnterGame, initialRoomId }: Props) {
+  const [activeRoomId, setActiveRoomId] = useState<string | null>(initialRoomId ?? null);
 
   return activeRoomId
     ? <RoomDetail
@@ -242,12 +243,33 @@ function RoomDetail({
     refresh();
   }
 
+  const inviteCode = snap.settings.invite_code;
+  const formattedInvite = inviteCode ? inviteCode.match(/.{1,4}/g)?.join('-') : null;
+
+  function copyInvite() {
+    if (!inviteCode) return;
+    navigator.clipboard.writeText(inviteCode).catch(() => { /* ignore */ });
+    setSavedFlash('copied');
+    setTimeout(() => setSavedFlash(null), 1500);
+  }
+
   return (
     <div>
       <div className="mp-row" style={{ justifyContent: 'space-between' }}>
         <div className="mp-section-title" style={{ margin: 0 }}>{snap.settings.name}</div>
         <button className="mp-kick" onClick={onLeave}>Back</button>
       </div>
+
+      {inviteCode && !started && (
+        <div className="mp-invite-strip" onClick={copyInvite} title="Click to copy invite code">
+          <span className="mp-invite-strip__label">INVITE</span>
+          <span className="mp-invite-strip__code">{formattedInvite}</span>
+          {snap.settings.has_password && (
+            <span className="mp-invite-strip__lock" title="Password-protected">🔒</span>
+          )}
+          {savedFlash === 'copied' && <span className="mp-invite-strip__flash">✓ copied</span>}
+        </div>
+      )}
 
       <div className="mp-section-title">Status</div>
       <div className="mp-row" style={{ justifyContent: 'space-between' }}>
