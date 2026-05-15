@@ -5,6 +5,7 @@
 import React, { useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { BUILDABLE_CLASSES, SHIP_CLASSES, ShipClassName } from '../game/shipClasses';
+import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { ShipIcon } from './ShipIcons';
 import './BuildPanel.css';
 
@@ -27,6 +28,7 @@ function getRandomName(shipClass: ShipClassName, existingNames: string[]): strin
 
 export const BuildPanel: React.FC = () => {
   const { gameState, uiState, buildShip, cancelBuild } = useGameContext();
+  const mpActions = useMultiplayerActions();
   const [, setSelectedClass] = useState<ShipClassName | null>(null);
   const [customName, setCustomName] = useState<string>('');
 
@@ -53,6 +55,11 @@ export const BuildPanel: React.FC = () => {
     const success = buildShip(body.id, shipClass, name);
     if (success) {
       setCustomName('');
+      // Multiplayer: server is the authority for resource deduction +
+      // queue persistence. Post intent so it shows up next /state.
+      if (mpActions) {
+        mpActions.build({ bodyId: body.id, shipClass, shipName: name });
+      }
     }
     setSelectedClass(null);
   };

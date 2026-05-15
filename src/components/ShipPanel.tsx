@@ -6,6 +6,7 @@ import { createCircularOrbit } from '../physics/orbitalMechanics';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { maintenanceRatesForShip } from '../game/maintenance';
 import { travelTimeModifier, FactionTechState } from '../game/techs';
+import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { ShipIcon } from './ShipIcons';
 import './ShipPanel.css';
 
@@ -16,6 +17,11 @@ export const ShipPanel: React.FC = () => {
     setPendingTransfer, addQueuedTransfer, setTargetSelectionMode,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
   } = useGameContext();
+
+  // In multiplayer this is non-null and we post intent to the server in
+  // addition to mutating local state (so the UI feels responsive while
+  // waiting for the next /state poll to reconcile).
+  const mpActions = useMultiplayerActions();
 
   const [transferModalOpen, setTransferModalOpen] = useState(false);
   const [fleetModalOpen, setFleetModalOpen] = useState(false);
@@ -73,6 +79,19 @@ export const ShipPanel: React.FC = () => {
         addManeuverNode(node);
         setPendingTransfer(ship.id, arc);
 
+        // Multiplayer: post the maneuver to the server so the Room DO tick
+        // resolver can execute it on schedule. The local state above keeps
+        // the UI responsive until the next /state poll reconciles.
+        if (mpActions) {
+          mpActions.transfer({
+            shipId: ship.id,
+            targetBodyId: arc.arrivalBodyId,
+            scheduledT: arc.departureTime,
+            dvPrograde: arc.departureDv,
+            fuelCost: Math.round(Math.abs(arc.departureDv) * 10),
+          });
+        }
+
         // Fleet propagation: if this ship is in a fleet and the player opted in,
         // plan the same target transfer for every fleet member (each from its own orbit).
         if (propagateTransferToFleet && ship.fleetId) {
@@ -98,6 +117,15 @@ export const ShipPanel: React.FC = () => {
               };
               addManeuverNode(memberNode);
               setPendingTransfer(member.id, memberArc);
+              if (mpActions) {
+                mpActions.transfer({
+                  shipId: member.id,
+                  targetBodyId: memberArc.arrivalBodyId,
+                  scheduledT: memberArc.departureTime,
+                  dvPrograde: memberArc.departureDv,
+                  fuelCost: Math.round(Math.abs(memberArc.departureDv) * 10),
+                });
+              }
             }
           }
         }
@@ -105,7 +133,7 @@ export const ShipPanel: React.FC = () => {
       setTransferModalOpen(false);
       setTargetSelectionMode(false);
     };
-  }, [ship, gameState, addManeuverNode, setPendingTransfer, addQueuedTransfer, setTargetSelectionMode, propagateTransferToFleet]);
+  }, [ship, gameState, addManeuverNode, setPendingTransfer, addQueuedTransfer, setTargetSelectionMode, propagateTransferToFleet, mpActions]);
 
   const handleTransferConfirmEvent = useCallback((e: Event) => {
     const detail = (e as CustomEvent).detail;

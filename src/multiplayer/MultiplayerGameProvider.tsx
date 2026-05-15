@@ -10,6 +10,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from './api';
 import { GameContextProvider } from '../state/gameContext';
+import { MultiplayerActionsProvider } from './MultiplayerActionsContext';
 import {
   Body, Ship, Faction, GameState, OrbitElements, FactionResources, FactionTechStateBase,
 } from '../types';
@@ -255,7 +256,9 @@ export function MultiplayerGameProvider({ gameId, children }: Props) {
 
   return (
     <GameContextProvider externalState={state} externallyControlled>
-      {children}
+      <MultiplayerActionsProvider gameId={gameId}>
+        {children}
+      </MultiplayerActionsProvider>
     </GameContextProvider>
   );
 }
