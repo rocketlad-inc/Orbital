@@ -8,6 +8,8 @@ import { TopBar, PanelId } from './components/TopBar';
 import { Outliner } from './components/Outliner';
 import { SettlementsPanel } from './components/SettlementsPanel';
 import { FleetPanel } from './components/FleetPanel';
+import { prewarmShipIcons } from './render/shipIconCache';
+import { COLORS } from './render/colors';
 import { AuthProvider, useAuth } from './multiplayer/AuthContext';
 import { AuthOverlay } from './multiplayer/AuthOverlay';
 import { Landing } from './components/Landing';
@@ -19,6 +21,10 @@ import './multiplayer/multiplayer.css';
 import './App.css';
 
 const MODE_STORAGE_KEY = 'orbital.last_mode';
+
+// Kick off icon rasterization at module load so the first map paint has
+// them ready (rather than briefly showing fallback dots).
+prewarmShipIcons([COLORS.neutral, COLORS.danger]);
 
 function SinglePlayerView({ onExit }: { onExit: () => void }) {
   const [windowSize, setWindowSize] = useState({

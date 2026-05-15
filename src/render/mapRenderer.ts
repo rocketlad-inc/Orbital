@@ -6,6 +6,8 @@ import { Body, Ship, OrbitElements, TrajectoryArc, TransferArc, Settlement, Fact
 import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt } from '../physics/orbitalMechanics';
 import { bezierPositionAt, bezierTangentAt, bezierPoints } from '../physics/bezierTransfer';
 import { COLORS, withOpacity, lighten, darken } from './colors';
+import { getShipIconImage } from './shipIconCache';
+import { ShipIconClass } from '../components/ShipIcons';
 
 export interface RenderContext {
   ctx: CanvasRenderingContext2D;
@@ -512,28 +514,41 @@ export function drawShip(
   // Faction-colored: cyan for player, red for enemy.
   const shipColor = ship.ownedBy === 'enemy' ? COLORS.danger : COLORS.neutral;
 
-  // Draw ship marker (circle)
-  const shipSize = isSelected ? 5 : 4;
-  ctx.ctx.fillStyle = shipColor;
-  ctx.ctx.beginPath();
-  ctx.ctx.arc(canvasPos.x, canvasPos.y, shipSize, 0, Math.PI * 2);
-  ctx.ctx.fill();
-
-  // Draw velocity tick mark (line in prograde direction)
+  // Velocity vector — used both to rotate the icon and as a fallback tick.
   const vel = velocityVectorsAt(ship.orbit, ctx.t);
-  ctx.ctx.strokeStyle = shipColor;
-  ctx.ctx.lineWidth = 1.5;
-  ctx.ctx.beginPath();
-  ctx.ctx.moveTo(canvasPos.x, canvasPos.y);
-  ctx.ctx.lineTo(canvasPos.x + vel.prograde.x * 10, canvasPos.y + vel.prograde.y * 10);
-  ctx.ctx.stroke();
+  const heading = Math.atan2(vel.prograde.y, vel.prograde.x);
+
+  const iconSize = isSelected ? 22 : 18;
+  const icon = getShipIconImage(ship.class as ShipIconClass, shipColor);
+  if (icon) {
+    // Draw the icon rotated to face the velocity direction.
+    ctx.ctx.save();
+    ctx.ctx.translate(canvasPos.x, canvasPos.y);
+    ctx.ctx.rotate(heading);
+    ctx.ctx.drawImage(icon, -iconSize / 2, -iconSize / 2, iconSize, iconSize);
+    ctx.ctx.restore();
+  } else {
+    // Icon still rasterizing — fall back to the original dot + tick so the
+    // map never appears empty.
+    const shipSize = isSelected ? 5 : 4;
+    ctx.ctx.fillStyle = shipColor;
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(canvasPos.x, canvasPos.y, shipSize, 0, Math.PI * 2);
+    ctx.ctx.fill();
+    ctx.ctx.strokeStyle = shipColor;
+    ctx.ctx.lineWidth = 1.5;
+    ctx.ctx.beginPath();
+    ctx.ctx.moveTo(canvasPos.x, canvasPos.y);
+    ctx.ctx.lineTo(canvasPos.x + vel.prograde.x * 10, canvasPos.y + vel.prograde.y * 10);
+    ctx.ctx.stroke();
+  }
 
   // Draw selection indicator
   if (isSelected) {
     ctx.ctx.strokeStyle = COLORS.info;
     ctx.ctx.lineWidth = 2;
     ctx.ctx.beginPath();
-    ctx.ctx.arc(canvasPos.x, canvasPos.y, shipSize + 4, 0, Math.PI * 2);
+    ctx.ctx.arc(canvasPos.x, canvasPos.y, iconSize / 2 + 4, 0, Math.PI * 2);
     ctx.ctx.stroke();
   }
 
@@ -542,7 +557,7 @@ export function drawShip(
   ctx.ctx.font = '9px monospace';
   ctx.ctx.textAlign = 'left';
   ctx.ctx.textBaseline = 'middle';
-  ctx.ctx.fillText(ship.name.split(' ')[0], canvasPos.x + 8, canvasPos.y - 6);
+  ctx.ctx.fillText(ship.name.split(' ')[0], canvasPos.x + iconSize / 2 + 4, canvasPos.y - 6);
 }
 
 /**
@@ -886,27 +901,39 @@ export function drawTransitShip(
   const worldPos = bezierPositionAt(ship.transfer, ctx.t);
   const canvasPos = worldToCanvas(worldPos.x, worldPos.y, ctx);
   const shipColor = ship.ownedBy === 'enemy' ? COLORS.danger : COLORS.neutral;
-  const shipSize = isSelected ? 5 : 4;
 
-  ctx.ctx.fillStyle = shipColor;
-  ctx.ctx.beginPath();
-  ctx.ctx.arc(canvasPos.x, canvasPos.y, shipSize, 0, Math.PI * 2);
-  ctx.ctx.fill();
-
-  // Prograde tick from Bezier tangent
+  // Bezier tangent gives the heading. Note: bezierTangentAt uses screen-y
+  // convention (positive y = up), so flip the y component for canvas angle.
   const tangent = bezierTangentAt(ship.transfer, ctx.t);
-  ctx.ctx.strokeStyle = shipColor;
-  ctx.ctx.lineWidth = 1.5;
-  ctx.ctx.beginPath();
-  ctx.ctx.moveTo(canvasPos.x, canvasPos.y);
-  ctx.ctx.lineTo(canvasPos.x + tangent.x * 10, canvasPos.y - tangent.y * 10);
-  ctx.ctx.stroke();
+  const heading = Math.atan2(-tangent.y, tangent.x);
+
+  const iconSize = isSelected ? 22 : 18;
+  const icon = getShipIconImage(ship.class as ShipIconClass, shipColor);
+  if (icon) {
+    ctx.ctx.save();
+    ctx.ctx.translate(canvasPos.x, canvasPos.y);
+    ctx.ctx.rotate(heading);
+    ctx.ctx.drawImage(icon, -iconSize / 2, -iconSize / 2, iconSize, iconSize);
+    ctx.ctx.restore();
+  } else {
+    const shipSize = isSelected ? 5 : 4;
+    ctx.ctx.fillStyle = shipColor;
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(canvasPos.x, canvasPos.y, shipSize, 0, Math.PI * 2);
+    ctx.ctx.fill();
+    ctx.ctx.strokeStyle = shipColor;
+    ctx.ctx.lineWidth = 1.5;
+    ctx.ctx.beginPath();
+    ctx.ctx.moveTo(canvasPos.x, canvasPos.y);
+    ctx.ctx.lineTo(canvasPos.x + tangent.x * 10, canvasPos.y - tangent.y * 10);
+    ctx.ctx.stroke();
+  }
 
   if (isSelected) {
     ctx.ctx.strokeStyle = COLORS.info;
     ctx.ctx.lineWidth = 2;
     ctx.ctx.beginPath();
-    ctx.ctx.arc(canvasPos.x, canvasPos.y, shipSize + 4, 0, Math.PI * 2);
+    ctx.ctx.arc(canvasPos.x, canvasPos.y, iconSize / 2 + 4, 0, Math.PI * 2);
     ctx.ctx.stroke();
   }
 
@@ -915,7 +942,7 @@ export function drawTransitShip(
   ctx.ctx.font = '9px monospace';
   ctx.ctx.textAlign = 'left';
   ctx.ctx.textBaseline = 'middle';
-  ctx.ctx.fillText(ship.name.split(' ')[0], canvasPos.x + 8, canvasPos.y - 6);
+  ctx.ctx.fillText(ship.name.split(' ')[0], canvasPos.x + iconSize / 2 + 4, canvasPos.y - 6);
 
   // ETA label
   if (isSelected) {

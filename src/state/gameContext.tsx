@@ -502,6 +502,7 @@ export function GameContextProvider({
         resources: {
           ...prev.resources,
           player: {
+            ...playerRes,
             fuel: playerRes.fuel - classDef.cost.fuel,
             ore: playerRes.ore - classDef.cost.ore,
             credits: playerRes.credits - classDef.cost.credits,
@@ -581,6 +582,7 @@ export function GameContextProvider({
         resources: {
           ...prev.resources,
           player: {
+            ...playerRes,
             fuel: playerRes.fuel - def.cost.fuel,
             ore: playerRes.ore - def.cost.ore,
             credits: playerRes.credits - def.cost.credits,
