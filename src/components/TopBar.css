@@ -305,8 +305,9 @@
 
 .side-menu__head {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 22px 20px;
+  padding: 16px 20px;
   border-bottom: 1px solid #2a3d50;
+  flex-shrink: 0;
 }
 .side-menu__brand {
   font-family: 'Orbitron', 'JetBrains Mono', monospace;
@@ -339,9 +340,10 @@
 }
 
 .side-menu__identity {
-  padding: 18px 20px;
+  padding: 12px 20px;
   border-bottom: 1px solid #2a3d50;
   background: rgba(78, 205, 196, 0.04);
+  flex-shrink: 0;
 }
 .side-menu__identity-label {
   font-size: 9px;
@@ -377,13 +379,12 @@
 .side-menu__group-label:first-child { padding-top: 0; }
 
 .side-menu__item {
-  display: grid;
-  grid-template-columns: 28px 1fr;
-  grid-template-rows: auto auto;
+  display: flex;
   align-items: center;
-  gap: 0 12px;
+  gap: 10px;
   width: 100%;
-  padding: 12px 14px;
+  padding: 9px 12px;
+  margin-bottom: 2px;
   background: transparent;
   border: 1px solid transparent;
   border-radius: 3px;
@@ -394,6 +395,7 @@
   text-align: left;
   cursor: pointer;
   transition: all 0.12s ease;
+  min-height: 0;
 }
 .side-menu__item:hover {
   background: rgba(78, 205, 196, 0.06);
@@ -405,30 +407,39 @@
   color: #ff8a8a;
 }
 .side-menu__item-icon {
-  grid-row: span 2;
-  font-size: 16px;
+  font-size: 14px;
   color: #ffb84d;
   text-align: center;
+  width: 18px;
+  flex-shrink: 0;
+  line-height: 1;
 }
 .side-menu__item--danger .side-menu__item-icon { color: #ff5e5e; }
 .side-menu__item-label {
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.05em;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .side-menu__item-hint {
   font-size: 9px;
   color: #6b8195;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .side-menu__foot {
-  padding: 14px 20px;
+  padding: 10px 20px;
   border-top: 1px solid #2a3d50;
   color: #6b8195;
   font-size: 10px;
   letter-spacing: 0.05em;
+  flex-shrink: 0;
 }
 .side-menu__foot kbd {
   font-family: inherit;
