@@ -20,7 +20,6 @@ export {
   planTransfer,
   bisectSOIExit,
   bisectSOIEnter,
-  orbitFromStateVector,
   applyNodeToOrbit,
   computeTrajectory,
   GRAVITATIONAL_PARAMS,

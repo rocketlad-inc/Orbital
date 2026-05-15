@@ -7,8 +7,6 @@ import {
   drawShip,
   drawOrbitEllipse,
   drawSOIBoundary,
-  drawGhostPlanet,
-  drawArrivalOrbit,
   drawApsisMarkers,
   drawBezierTrajectory,
   drawTransitShip,
