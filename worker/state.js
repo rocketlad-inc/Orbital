@@ -1,0 +1,153 @@
+// GET /api/games/:gameId/state — full renderer snapshot.
+//
+// Returns everything the client map canvas needs to draw a frame:
+//   game     — id, status, ticks, schedule
+//   me       — caller's faction (resources, tech, capital)
+//   factions — public info on every faction (id, name, color, slot)
+//   bodies   — all bodies in this game (orbit elements + ownership + yields)
+//   ships    — all ships (clipped to caller's faction + opponents in caller's SOIs
+//              once fog-of-war is wired through here; v1 returns ALL ships so
+//              the renderer can paint a complete picture)
+//   nodes    — planned/committed maneuvers for caller's ships only
+//
+// Polled by the client (~once per second when in a game). When we move the
+// renderer to be server-authoritative this is the source of truth; the
+// client never persists game state, only intent.
+
+const GAME_ID_RE = /^[A-Za-z0-9_-]{6,32}$/;
+
+function json(data, init = {}) {
+  const headers = new Headers(init.headers);
+  headers.set('content-type', 'application/json');
+  return new Response(JSON.stringify(data), { ...init, headers });
+}
+function err(status, code, message) {
+  return json({ error: { code, message } }, { status });
+}
+
+async function handleGetState(req, env, ctx) {
+  const gameId = ctx.params.gameId;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const game = await env.DB
+    .prepare(
+      `SELECT id, status, current_tick, total_tick_target, tick_interval_ms,
+              next_tick_at, started_at, map_seed
+         FROM games WHERE id = ?`,
+    )
+    .bind(gameId)
+    .first();
+  if (!game) return err(404, 'not_found', 'game not found');
+
+  // Caller must be a member of the game.
+  const me = await env.DB
+    .prepare(
+      `SELECT id, slot, name, color, status,
+              capital_body_id, metal, fuel, gold, science,
+              research_tech_id, research_progress, reputation, senate_weight
+         FROM game_factions
+        WHERE game_id = ? AND user_id = ?`,
+    )
+    .bind(gameId, ctx.session.user_id)
+    .first();
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const factions = (await env.DB
+    .prepare(
+      `SELECT id, slot, name, color, status, capital_body_id, senate_weight, reputation
+         FROM game_factions
+        WHERE game_id = ?
+        ORDER BY slot ASC`,
+    )
+    .bind(gameId)
+    .all()).results ?? [];
+
+  const bodies = (await env.DB
+    .prepare(
+      `SELECT id, template_id, name, type, parent_body_id, radius, soi, mu,
+              orbit_radius, orbit_period, angle0, color,
+              yield_metal, yield_fuel, yield_gold, yield_science,
+              owner_faction_id, development_level, fortification_level, shipyard_level
+         FROM game_bodies
+        WHERE game_id = ?`,
+    )
+    .bind(gameId)
+    .all()).results ?? [];
+
+  // v1: return every ship. Fog-of-war happens client-side via the existing
+  // visibility helper. The server clip will move here once we trust the
+  // canvas to render only what arrives in the snapshot.
+  const ships = (await env.DB
+    .prepare(
+      `SELECT id, name, ship_class, owner_faction_id, parent_body_id,
+              orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
+              fuel, fuel_max, status, built_at_tick
+         FROM game_ships
+        WHERE game_id = ? AND status = 'active'`,
+    )
+    .bind(gameId)
+    .all()).results ?? [];
+
+  // Only the caller's planned maneuvers are returned — opponents' burn
+  // plans are private.
+  const nodes = (await env.DB
+    .prepare(
+      `SELECT n.id, n.ship_id, n.sequence, n.anchor_kind, n.anchor_body_id, n.target_body_id,
+              n.scheduled_t, n.dv_prograde, n.dv_normal, n.dv_radial, n.fuel_cost,
+              n.status, n.committed_at_tick
+         FROM game_ship_nodes n
+         JOIN game_ships s ON s.id = n.ship_id
+        WHERE n.game_id = ?
+          AND s.owner_faction_id = ?
+          AND n.status IN ('planned','committed')
+        ORDER BY n.ship_id, n.sequence`,
+    )
+    .bind(gameId, me.id)
+    .all()).results ?? [];
+
+  return json({
+    game: {
+      id: game.id,
+      status: game.status,
+      current_tick: game.current_tick,
+      total_tick_target: game.total_tick_target,
+      tick_interval_ms: game.tick_interval_ms,
+      next_tick_at: game.next_tick_at,
+      started_at: game.started_at,
+      map_seed: game.map_seed,
+    },
+    me: {
+      faction_id: me.id,
+      slot: me.slot,
+      name: me.name,
+      color: me.color,
+      status: me.status,
+      capital_body_id: me.capital_body_id,
+      resources: {
+        metal: me.metal,
+        fuel: me.fuel,
+        gold: me.gold,
+        science: me.science,
+      },
+      research: {
+        tech_id: me.research_tech_id,
+        progress: me.research_progress,
+      },
+      reputation: me.reputation,
+      senate_weight: me.senate_weight,
+    },
+    factions,
+    bodies,
+    ships,
+    nodes,
+  });
+}
+
+export const routes = [
+  {
+    method: 'GET',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/state$/,
+    auth: 'required',
+    handle: handleGetState,
+  },
+];
