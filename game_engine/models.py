@@ -29,6 +29,54 @@ class ShipClass(str, Enum):
     STEALTH_RUNNER = "stealth_runner"
 
 
+@dataclass
+class ShipDesign:
+    """Blueprint for a ship class with resource costs and build time."""
+    class_type: ShipClass
+    metal_cost: int
+    fuel_cost: int
+    gold_cost: int
+    build_ticks: int
+    max_fuel: float
+
+
+# Ship production designs
+SHIP_DESIGNS = {
+    ShipClass.FRIGATE: ShipDesign(
+        class_type=ShipClass.FRIGATE,
+        metal_cost=100,
+        fuel_cost=50,
+        gold_cost=10,
+        build_ticks=5,
+        max_fuel=500.0,
+    ),
+    ShipClass.CRUISER: ShipDesign(
+        class_type=ShipClass.CRUISER,
+        metal_cost=200,
+        fuel_cost=150,
+        gold_cost=25,
+        build_ticks=10,
+        max_fuel=1000.0,
+    ),
+    ShipClass.CAPITAL: ShipDesign(
+        class_type=ShipClass.CAPITAL,
+        metal_cost=400,
+        fuel_cost=300,
+        gold_cost=60,
+        build_ticks=15,
+        max_fuel=2000.0,
+    ),
+    ShipClass.STEALTH_RUNNER: ShipDesign(
+        class_type=ShipClass.STEALTH_RUNNER,
+        metal_cost=150,
+        fuel_cost=100,
+        gold_cost=30,
+        build_ticks=8,
+        max_fuel=300.0,
+    ),
+}
+
+
 class ManeuverType(str, Enum):
     """Types of maneuvers."""
     TRANSFER = "transfer"
@@ -132,8 +180,9 @@ class Body:
         "science": 0,
     })
 
-    # Ownership
+    # Ownership & Development
     owned_by: Optional[str] = None
+    development_level: int = 1  # Infrastructure level (0-5)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization."""
