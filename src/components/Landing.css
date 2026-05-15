@@ -1,0 +1,415 @@
+/* ============================================================
+   Landing page — dark space marketing page shown before sign-in
+   Uses the same accent palette as the in-game panels.
+   ============================================================ */
+
+.landing {
+  --bg: #0a0e14;
+  --fg: #d8e4ee;
+  --fg-dim: #6b8195;
+  --fg-faint: #3a4a5a;
+  --border: #2a3d50;
+  --accent: #ffb84d;
+  --accent-bright: #ffd180;
+  --friendly: #4ecdc4;
+  --friendly-bright: #6ee7b7;
+  --mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  --display: 'Orbitron', system-ui, sans-serif;
+
+  position: relative;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--mono);
+  overflow-x: hidden;
+}
+
+/* Starfield canvas pinned behind everything */
+.landing-starfield {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100vh;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* === Nav === */
+.landing-nav {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 18px 36px;
+  border-bottom: 1px solid rgba(42, 61, 80, 0.5);
+  background: rgba(10, 14, 20, 0.4);
+  backdrop-filter: blur(6px);
+}
+
+.landing-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-glyph {
+  color: var(--accent);
+  font-size: 22px;
+  text-shadow: 0 0 12px rgba(255, 184, 77, 0.5);
+}
+
+.brand-text {
+  font-family: var(--display);
+  font-size: 18px;
+  letter-spacing: 0.3em;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.landing-login-btn {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  padding: 8px 22px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 0 0 rgba(255, 184, 77, 0);
+}
+
+.landing-login-btn:hover {
+  background: rgba(255, 184, 77, 0.15);
+  box-shadow: 0 0 18px rgba(255, 184, 77, 0.3);
+  color: var(--accent-bright);
+}
+
+/* === Hero === */
+.landing-hero {
+  position: relative;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 100px 24px 60px;
+}
+
+.hero-eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.4em;
+  color: var(--friendly);
+  margin-bottom: 24px;
+}
+
+.hero-title {
+  font-family: var(--display);
+  font-size: clamp(64px, 12vw, 144px);
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  color: var(--fg);
+  margin: 0 0 24px;
+  text-shadow:
+    0 0 32px rgba(255, 184, 77, 0.2),
+    0 0 80px rgba(78, 205, 196, 0.15);
+  background: linear-gradient(135deg, var(--fg) 0%, var(--accent) 50%, var(--fg) 100%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.hero-tagline {
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--fg);
+  max-width: 560px;
+  margin: 0 0 36px;
+  letter-spacing: 0.02em;
+}
+
+.hero-cta {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 60px;
+}
+
+.cta-primary {
+  background: linear-gradient(135deg, rgba(255, 184, 77, 0.95), rgba(255, 140, 0, 0.85));
+  border: 1px solid var(--accent);
+  color: var(--bg);
+  padding: 14px 32px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.25em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow:
+    0 0 24px rgba(255, 184, 77, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+
+.cta-primary:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 4px 32px rgba(255, 184, 77, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.cta-secondary {
+  color: var(--friendly);
+  text-decoration: none;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  padding: 12px 18px;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.2s ease;
+}
+
+.cta-secondary:hover {
+  border-bottom-color: var(--friendly);
+}
+
+/* Hero mock illustration */
+.hero-mock {
+  width: 100%;
+  max-width: 720px;
+  margin-top: 40px;
+}
+
+.hero-mock-svg {
+  width: 100%;
+  height: auto;
+  filter: drop-shadow(0 0 60px rgba(78, 205, 196, 0.08));
+}
+
+.mock-label {
+  font-family: var(--mono);
+  font-size: 8px;
+  fill: var(--fg-dim);
+  letter-spacing: 0.15em;
+}
+
+.mock-label-sm {
+  font-family: var(--mono);
+  font-size: 7px;
+  fill: var(--friendly);
+  letter-spacing: 0.1em;
+}
+
+/* === Sections === */
+.landing-section {
+  position: relative;
+  z-index: 5;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 80px 36px;
+}
+
+.section-eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.35em;
+  color: var(--friendly);
+  margin-bottom: 16px;
+  font-weight: 600;
+}
+
+.section-title {
+  font-family: var(--display);
+  font-size: clamp(28px, 4vw, 44px);
+  letter-spacing: 0.05em;
+  color: var(--fg);
+  margin: 0 0 32px;
+  font-weight: 700;
+}
+
+.section-body {
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--fg);
+  max-width: 720px;
+}
+
+.section-body p {
+  margin: 0 0 16px;
+}
+
+.section-body strong {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* === Features === */
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.feature-card {
+  padding: 24px;
+  background: rgba(10, 14, 20, 0.6);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(4px);
+}
+
+.feature-card:hover {
+  border-color: var(--friendly);
+  background: rgba(78, 205, 196, 0.04);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.feature-icon {
+  font-size: 28px;
+  color: var(--accent);
+  margin-bottom: 16px;
+  text-shadow: 0 0 16px rgba(255, 184, 77, 0.4);
+}
+
+.feature-title {
+  font-size: 13px;
+  letter-spacing: 0.15em;
+  color: var(--fg);
+  text-transform: uppercase;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.feature-body {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--fg-dim);
+}
+
+/* === Screenshots === */
+.screenshots-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+}
+
+.screenshot-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.screenshot-frame {
+  position: relative;
+  aspect-ratio: 400 / 240;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.4),
+    inset 0 0 60px rgba(78, 205, 196, 0.03);
+  transition: all 0.2s ease;
+}
+
+.screenshot-card:hover .screenshot-frame {
+  border-color: var(--friendly);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.5),
+    0 0 24px rgba(78, 205, 196, 0.15);
+  transform: translateY(-2px);
+}
+
+.screenshot-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.ss-label {
+  font-family: var(--mono);
+  font-size: 6px;
+  fill: var(--fg-dim);
+  letter-spacing: 0.15em;
+}
+
+.ss-info {
+  font-family: var(--mono);
+  font-size: 7px;
+  fill: var(--fg);
+  letter-spacing: 0.1em;
+}
+
+.ss-info-sm {
+  font-family: var(--mono);
+  font-size: 5.5px;
+  fill: var(--fg-dim);
+  letter-spacing: 0.1em;
+}
+
+.screenshot-caption {
+  font-size: 12px;
+  color: var(--fg-dim);
+  line-height: 1.5;
+  padding: 0 4px;
+}
+
+/* === CTA section === */
+.landing-cta-section {
+  text-align: center;
+  padding: 100px 36px;
+}
+
+.cta-title {
+  font-family: var(--display);
+  font-size: clamp(24px, 3.5vw, 36px);
+  letter-spacing: 0.05em;
+  color: var(--fg);
+  margin: 0 0 32px;
+}
+
+.cta-large {
+  padding: 18px 48px;
+  font-size: 13px;
+}
+
+.cta-sub {
+  margin-top: 20px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  letter-spacing: 0.15em;
+}
+
+/* === Footer === */
+.landing-footer {
+  position: relative;
+  z-index: 5;
+  border-top: 1px solid var(--border);
+  padding: 24px 36px;
+  text-align: center;
+  background: rgba(10, 14, 20, 0.6);
+  backdrop-filter: blur(4px);
+}
+
+.footer-line {
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  color: var(--fg-faint);
+}
+
+/* === Responsive === */
+@media (max-width: 640px) {
+  .landing-nav {
+    padding: 14px 18px;
+  }
+
+  .landing-section {
+    padding: 50px 18px;
+  }
+
+  .hero-cta {
+    flex-direction: column;
+  }
+}

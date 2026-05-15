@@ -10,6 +10,7 @@ import { SettlementsPanel } from './components/SettlementsPanel';
 import { FleetPanel } from './components/FleetPanel';
 import { AuthProvider, useAuth } from './multiplayer/AuthContext';
 import { AuthOverlay } from './multiplayer/AuthOverlay';
+import { Landing } from './components/Landing';
 import { ModePicker, GameMode } from './ModePicker';
 import { MultiplayerShell } from './multiplayer/MultiplayerShell';
 import { MultiplayerLobby } from './multiplayer/MultiplayerLobby';
@@ -80,6 +81,7 @@ function AppShell() {
     return localStorage.getItem(ROOM_STORAGE_KEY);
   });
   const [activeRooms, setActiveRooms] = useState<RoomSummary[] | null>(null);
+  const [showAuth, setShowAuth] = useState(false);
 
   // When the user authenticates, fetch any rooms they're already a member of
   // so the mode picker can offer a "resume" shortcut.
@@ -155,7 +157,12 @@ function AppShell() {
     );
   }
 
+  // Unauthenticated, not yet in guest mode: show landing first, then auth overlay.
+  // The auth overlay still offers a "continue as guest" path.
   if (!user && !guestMode) {
+    if (!showAuth) {
+      return <Landing onSignIn={() => setShowAuth(true)} />;
+    }
     return <AuthOverlay onGuest={handleGuest} />;
   }
 
