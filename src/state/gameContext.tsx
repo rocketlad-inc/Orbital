@@ -173,6 +173,8 @@ export function GameContextProvider({
         // Ship is orbiting — check for departure burns
         const sortedOrders = [...orders].sort((a, b) => a.burnTime - b.burnTime);
         const executedIds: string[] = [];
+        const expiredPlannedIds: string[] = [];
+        let discardedTransferPlan = false;
         for (const node of sortedOrders) {
           if (node.status === 'committed' && node.burnTime <= tick) {
             if (pendingTransfer && node.type === 'transfer') {
@@ -184,10 +186,24 @@ export function GameContextProvider({
             }
             executedIds.push(node.id);
             changed = true;
+          } else if (node.status === 'planned' && node.burnTime < tick) {
+            // Planned (uncommitted) node whose burn window already
+            // passed. The player never committed it, so the plan is
+            // stale — drop it so it stops cluttering the order list
+            // and so its dashed Bezier preview disappears from the
+            // map. Pending transfer state attached to it is cleared
+            // alongside.
+            expiredPlannedIds.push(node.id);
+            if (node.type === 'transfer') discardedTransferPlan = true;
+            changed = true;
           }
         }
-        if (executedIds.length > 0) {
-          orders = orders.filter(o => !executedIds.includes(o.id));
+        const removeIds = new Set([...executedIds, ...expiredPlannedIds]);
+        if (removeIds.size > 0) {
+          orders = orders.filter(o => !removeIds.has(o.id));
+        }
+        if (discardedTransferPlan) {
+          pendingTransfer = undefined;
         }
       }
 
