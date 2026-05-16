@@ -67,6 +67,30 @@
   font-weight: 700;
 }
 
+.landing-nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.landing-nav-link {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  padding: 8px 18px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.landing-nav-link:hover {
+  border-color: var(--friendly);
+  color: var(--friendly);
+}
+
 .landing-login-btn {
   background: transparent;
   border: 1px solid var(--accent);

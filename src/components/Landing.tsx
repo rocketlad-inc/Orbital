@@ -8,9 +8,11 @@ import './Landing.css';
 interface LandingProps {
   /** Triggered by the Login button or any CTA. Reveals the auth overlay. */
   onSignIn: () => void;
+  /** Open the playtest-knobs sandbox. */
+  onShowTunables?: () => void;
 }
 
-export const Landing: React.FC<LandingProps> = ({ onSignIn }) => {
+export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables }) => {
   const starfieldRef = useRef<HTMLCanvasElement>(null);
 
   // Draw a procedural starfield as a backdrop, redraw on resize.
@@ -89,9 +91,16 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn }) => {
           <span className="brand-glyph">◉</span>
           <span className="brand-text">ORBITAL</span>
         </div>
-        <button className="landing-login-btn" onClick={onSignIn}>
-          LOGIN
-        </button>
+        <div className="landing-nav-actions">
+          {onShowTunables && (
+            <button className="landing-nav-link" onClick={onShowTunables}>
+              TUNABLES
+            </button>
+          )}
+          <button className="landing-login-btn" onClick={onSignIn}>
+            LOGIN
+          </button>
+        </div>
       </header>
 
       {/* Hero */}

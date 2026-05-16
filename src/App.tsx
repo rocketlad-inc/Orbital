@@ -16,6 +16,7 @@ import { COLORS } from './render/colors';
 import { AuthProvider, useAuth } from './multiplayer/AuthContext';
 import { AuthOverlay } from './multiplayer/AuthOverlay';
 import { Landing } from './components/Landing';
+import { TunablesPage } from './components/TunablesPage';
 import { ModePicker, GameMode } from './ModePicker';
 import { MultiplayerShell } from './multiplayer/MultiplayerShell';
 import { MultiplayerLobby } from './multiplayer/MultiplayerLobby';
@@ -146,6 +147,7 @@ function AppShell() {
   const [roomHostId, setRoomHostId] = useState<string | null>(null);
   const [activeRooms, setActiveRooms] = useState<RoomSummary[] | null>(null);
   const [showAuth, setShowAuth] = useState(false);
+  const [showTunables, setShowTunables] = useState(false);
 
   // When the user authenticates, fetch any rooms they're already a member of
   // so the mode picker can offer a "resume" shortcut.
@@ -208,6 +210,59 @@ function AppShell() {
     localStorage.setItem(ROOM_STORAGE_KEY, roomId);
   };
 
+  // Invite-link fast path: if the URL has ?invite=XXXX and the user is
+  // already logged in, redeem the code straight to a room and skip the
+  // lobby "enter code" screen entirely. We strip the param after the
+  // attempt so a page refresh doesn't keep trying. If the join needs a
+  // password or fails for any other reason, we fall through to the
+  // normal lobby — its JoinByCode block still reads the param via
+  // window.location.search (or by initial state), so the user lands on
+  // a pre-filled form rather than an error.
+  const inviteRedeemedRef = React.useRef(false);
+  useEffect(() => {
+    if (inviteRedeemedRef.current) return;
+    if (!user) return; // wait for auth — guests don't have a multiplayer session
+    const params = new URLSearchParams(window.location.search);
+    const invite = params.get('invite');
+    if (!invite) return;
+    const clean = invite.replace(/[^A-Z2-9]/gi, '').toUpperCase();
+    if (clean.length !== 8) return;
+
+    inviteRedeemedRef.current = true;
+    (async () => {
+      const res = await apiFetch<{ ok: true; room_id: string }>('/api/rooms/join-by-code', {
+        method: 'POST',
+        body: JSON.stringify({ code: clean }),
+      });
+      if (res.ok) {
+        // Strip the invite param so refreshes / shares don't re-redeem.
+        const url = new URL(window.location.href);
+        url.searchParams.delete('invite');
+        window.history.replaceState({}, '', url.toString());
+
+        setMode('multiplayer');
+        localStorage.setItem(MODE_STORAGE_KEY, 'multiplayer');
+        setSelectedRoomId(res.data.room_id);
+        setRoomGameId(null);
+        localStorage.setItem(ROOM_STORAGE_KEY, res.data.room_id);
+        return;
+      }
+      // Password-protected or otherwise needs interactive input — drop
+      // the user on the multiplayer lobby with the code still in the
+      // URL so JoinByCode pre-fills the form. Don't strip the param.
+      if (res.error?.code === 'password_required' || res.error?.code === 'bad_password') {
+        setMode('multiplayer');
+        localStorage.setItem(MODE_STORAGE_KEY, 'multiplayer');
+        return;
+      }
+      // Other errors (invalid / expired code, room full, etc.): clear
+      // the param and let the user see the lobby normally.
+      const url = new URL(window.location.href);
+      url.searchParams.delete('invite');
+      window.history.replaceState({}, '', url.toString());
+    })();
+  }, [user]);
+
   // Watch the selected room for game start. While roomGameId is null the
   // lobby + dock are shown but the game canvas / MultiplayerGameProvider
   // stays unmounted (there's no /state to poll yet). Once the host starts
@@ -261,9 +316,18 @@ function AppShell() {
 
   // Unauthenticated, not yet in guest mode: show landing first, then auth overlay.
   // The auth overlay still offers a "continue as guest" path.
+  // The Tunables sandbox is reachable from the landing nav and bypasses auth.
   if (!user && !guestMode) {
+    if (showTunables) {
+      return <TunablesPage onBack={() => setShowTunables(false)} />;
+    }
     if (!showAuth) {
-      return <Landing onSignIn={() => setShowAuth(true)} />;
+      return (
+        <Landing
+          onSignIn={() => setShowAuth(true)}
+          onShowTunables={() => setShowTunables(true)}
+        />
+      );
     }
     return <AuthOverlay onGuest={handleGuest} />;
   }
