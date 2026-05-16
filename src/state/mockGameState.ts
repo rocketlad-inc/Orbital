@@ -54,12 +54,38 @@ export const SHARED_BODIES: Body[] = [
     orbitRadius: 20, orbitPeriod: TWO_PI * Math.sqrt(8000 / 100), angle0: 0,
     resources: { fuel: 0, gold: 0, metal: 2, science: 2 },
   },
-  // Asteroid belt
+  // Asteroid belt — five bodies share the 310-radius orbit, spaced 72°
+  // apart so the belt feels populated and ships can resource-hop between
+  // them without leaving the ring.
   {
     id: 'ceres', name: 'Ceres', type: 'dwarf', parent: 'sol',
     radius: 1.5, soi: 9, mu: 0.5, color: '#6b6b6b',
     orbitRadius: 310, orbitPeriod: 443, angle0: 1.20,
     resources: { fuel: 1, gold: 3, metal: 5, science: 1 },
+  },
+  {
+    id: 'vesta', name: 'Vesta', type: 'dwarf', parent: 'sol',
+    radius: 1, soi: 6, mu: 0.3, color: '#a89888',
+    orbitRadius: 310, orbitPeriod: 443, angle0: 2.46,
+    resources: { fuel: 0, gold: 2, metal: 6, science: 1 },
+  },
+  {
+    id: 'pallas', name: 'Pallas', type: 'dwarf', parent: 'sol',
+    radius: 1, soi: 5, mu: 0.25, color: '#80706a',
+    orbitRadius: 310, orbitPeriod: 443, angle0: 3.71,
+    resources: { fuel: 0, gold: 1, metal: 5, science: 2 },
+  },
+  {
+    id: 'hygiea', name: 'Hygiea', type: 'dwarf', parent: 'sol',
+    radius: 1, soi: 5, mu: 0.2, color: '#75655a',
+    orbitRadius: 310, orbitPeriod: 443, angle0: 4.97,
+    resources: { fuel: 1, gold: 1, metal: 5, science: 1 },
+  },
+  {
+    id: 'juno', name: 'Juno', type: 'dwarf', parent: 'sol',
+    radius: 1, soi: 5, mu: 0.2, color: '#aa9070',
+    orbitRadius: 310, orbitPeriod: 443, angle0: 6.23,
+    resources: { fuel: 0, gold: 3, metal: 4, science: 1 },
   },
   // Gas giants
   {
@@ -133,7 +159,25 @@ export const SHARED_BODIES: Body[] = [
     orbitRadius: 1500, orbitPeriod: 4710, angle0: 5.32,
     resources: { fuel: 4, gold: 2, metal: 1, science: 5 },
   },
-  // Uranus moons
+  // Uranus moons — five-moon system (Miranda inner, Oberon outer).
+  {
+    id: 'miranda', name: 'Miranda', type: 'moon', parent: 'uranus',
+    radius: 1, soi: 3, mu: 1.5, color: '#a8a8a8',
+    orbitRadius: 12, orbitPeriod: TWO_PI * Math.sqrt(1728 / 200), angle0: 0.78,
+    resources: { fuel: 0, gold: 1, metal: 3, science: 2 },
+  },
+  {
+    id: 'ariel', name: 'Ariel', type: 'moon', parent: 'uranus',
+    radius: 1, soi: 4, mu: 2.5, color: '#b0a898',
+    orbitRadius: 18, orbitPeriod: TWO_PI * Math.sqrt(5832 / 200), angle0: 2.10,
+    resources: { fuel: 0, gold: 2, metal: 3, science: 2 },
+  },
+  {
+    id: 'umbriel', name: 'Umbriel', type: 'moon', parent: 'uranus',
+    radius: 1, soi: 4, mu: 3, color: '#6a655e',
+    orbitRadius: 26, orbitPeriod: TWO_PI * Math.sqrt(17576 / 200), angle0: 4.60,
+    resources: { fuel: 0, gold: 1, metal: 4, science: 1 },
+  },
   {
     id: 'titania', name: 'Titania', type: 'moon', parent: 'uranus',
     radius: 1.5, soi: 5, mu: 4, color: '#909090',
@@ -146,15 +190,28 @@ export const SHARED_BODIES: Body[] = [
     orbitRadius: 50, orbitPeriod: TWO_PI * Math.sqrt(125000 / 200), angle0: 3.14,
     resources: { fuel: 0, gold: 3, metal: 3, science: 2 },
   },
-  // Neptune moon
+  // Neptune moons — Proteus inner, Triton mid, Nereid outer.
+  {
+    id: 'proteus', name: 'Proteus', type: 'moon', parent: 'neptune',
+    radius: 1, soi: 4, mu: 3, color: '#7a7a7a',
+    orbitRadius: 28, orbitPeriod: TWO_PI * Math.sqrt(21952 / 250), angle0: 1.20,
+    resources: { fuel: 1, gold: 1, metal: 3, science: 2 },
+  },
   {
     id: 'triton', name: 'Triton', type: 'moon', parent: 'neptune',
     radius: 1.5, soi: 5, mu: 5, color: '#b8d0e0',
     orbitRadius: 45, orbitPeriod: TWO_PI * Math.sqrt(91125 / 250), angle0: 0,
     resources: { fuel: 2, gold: 1, metal: 2, science: 5 },
   },
+  {
+    id: 'nereid', name: 'Nereid', type: 'moon', parent: 'neptune',
+    radius: 1, soi: 4, mu: 2, color: '#aab8c4',
+    orbitRadius: 78, orbitPeriod: TWO_PI * Math.sqrt(474552 / 250), angle0: 3.95,
+    resources: { fuel: 1, gold: 2, metal: 2, science: 3 },
+  },
   // Outer dwarf planets — compressed proportionally with Uranus/Neptune
   // so the trans-Neptunian neighborhood is still distinct but reachable.
+  // Kuiper belt is metal-rich late-game territory.
   {
     id: 'pluto', name: 'Pluto', type: 'dwarf', parent: 'sol',
     radius: 1.5, soi: 12, mu: 2, color: '#c8b898',
@@ -162,10 +219,40 @@ export const SHARED_BODIES: Body[] = [
     resources: { fuel: 0, gold: 4, metal: 2, science: 3 },
   },
   {
+    id: 'charon', name: 'Charon', type: 'moon', parent: 'pluto',
+    radius: 1, soi: 3, mu: 1, color: '#9a8c7c',
+    orbitRadius: 6, orbitPeriod: TWO_PI * Math.sqrt(216 / 2), angle0: 0,
+    resources: { fuel: 0, gold: 1, metal: 6, science: 2 },
+  },
+  {
+    id: 'haumea', name: 'Haumea', type: 'dwarf', parent: 'sol',
+    radius: 1, soi: 7, mu: 0.8, color: '#d8d0c0',
+    orbitRadius: 2050, orbitPeriod: 7520, angle0: 0.95,
+    resources: { fuel: 0, gold: 2, metal: 6, science: 2 },
+  },
+  {
+    id: 'makemake', name: 'Makemake', type: 'dwarf', parent: 'sol',
+    radius: 1, soi: 7, mu: 0.8, color: '#c89868',
+    orbitRadius: 2200, orbitPeriod: 8360, angle0: 3.30,
+    resources: { fuel: 0, gold: 3, metal: 5, science: 2 },
+  },
+  {
+    id: 'quaoar', name: 'Quaoar', type: 'dwarf', parent: 'sol',
+    radius: 1, soi: 6, mu: 0.6, color: '#a09080',
+    orbitRadius: 2100, orbitPeriod: 7800, angle0: 5.10,
+    resources: { fuel: 0, gold: 2, metal: 6, science: 1 },
+  },
+  {
     id: 'eris', name: 'Eris', type: 'dwarf', parent: 'sol',
     radius: 1.5, soi: 9, mu: 1, color: '#e0e0e0',
     orbitRadius: 2400, orbitPeriod: 9560, angle0: 1.80,
     resources: { fuel: 0, gold: 5, metal: 1, science: 4 },
+  },
+  {
+    id: 'sedna', name: 'Sedna', type: 'dwarf', parent: 'sol',
+    radius: 1, soi: 8, mu: 0.7, color: '#b06040',
+    orbitRadius: 3500, orbitPeriod: 16800, angle0: 2.55,
+    resources: { fuel: 0, gold: 3, metal: 7, science: 3 },
   },
 ];
 
