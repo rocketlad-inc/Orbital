@@ -1,3 +1,18 @@
+// Transit-time reference (at the default 7.5 min/tick cadence — see
+// DESIGN.md "Time and pacing"):
+//
+//   Earth ↔ Luna       ~3   ticks    ~22 min real
+//   Earth ↔ Mars       ~158 ticks    ~20 h
+//   Earth ↔ Jupiter    ~290 ticks    ~1.5 real days  (design target)
+//   Earth ↔ Saturn     ~584 ticks    ~3 days
+//   Earth ↔ Neptune    ~410 ticks    ~2.1 days
+//
+// These derive from the Hohmann formula t = π·√(a³/μ) with
+// MU_SUN = GRAVITATIONAL_PARAMS.SOL ≈ 3940 and the body orbit_radius /
+// orbitRadius values shared between client (src/state/mockGameState.ts)
+// and server (worker/factions.js BODY_CATALOG). If those numbers
+// change, recompute the transit table in DESIGN.md.
+
 import { OrbitElements, Body, TransferArc } from '../types';
 import { bodyPosition, muOf, GRAVITATIONAL_PARAMS } from './orbitalMechanics';
 

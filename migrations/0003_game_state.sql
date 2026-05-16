@@ -78,8 +78,16 @@ CREATE TABLE games (
   winner_faction_id   TEXT,                -- FK declared below (circular; enforced via trigger if needed)
   map_seed            TEXT NOT NULL,       -- deterministic body-generation seed; allows reproducibility
   current_tick        INTEGER NOT NULL DEFAULT 0,
-  total_tick_target   INTEGER NOT NULL DEFAULT 42,   -- design doc target: 30-45 ticks
-  tick_interval_ms    INTEGER NOT NULL DEFAULT 86400000,  -- 24h; configurable for fast-tick demo games
+  -- Match length and cadence. The schema defaults below are historical
+  -- (the 0003 migration shipped with a 42-tick / 24h-per-tick "one move
+  -- per day" design); the live defaults are now supplied explicitly by
+  -- worker/lobby.js (DEFAULT_TOTAL_TICK_TARGET=4000,
+  -- DEFAULT_TICK_INTERVAL_MS=450_000) so every newly-created match uses
+  -- the current pace: 7.5 min/tick × 4000 ticks ≈ a 21-day game with
+  -- Earth→Jupiter transits ≈ 1.5 real days. See DESIGN.md "Time and
+  -- pacing" for the rationale.
+  total_tick_target   INTEGER NOT NULL DEFAULT 4000,     -- design pace: 3-week match
+  tick_interval_ms    INTEGER NOT NULL DEFAULT 450000,   -- 7.5 min/tick; lobby.js may override
   next_tick_at        INTEGER,             -- scheduled wall-clock ms; NULL while paused/setup
   senate_period_ticks INTEGER NOT NULL DEFAULT 7,
   created_at          INTEGER NOT NULL,

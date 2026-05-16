@@ -2,9 +2,12 @@
 
 A real-time, asynchronous, server-authoritative orbital-strategy game. Players
 control a faction in a 23-body solar system. Time advances on a fixed
-wall-clock interval the host chooses (30 seconds to 24 hours per tick).
-Players issue orders — transfers, builds, settlement deploys, research,
-diplomacy — and the server's tick scheduler resolves them.
+wall-clock interval the host chooses — anywhere from 30 seconds for a demo
+to 24 hours for a multi-week Diplomacy-style game. The **default cadence
+is 7.5 minutes per tick**, which puts an Earth → Jupiter transit at
+roughly 1.5 real days and runs a full 4000-tick match in about 3 real
+weeks. Players issue orders — transfers, builds, settlement deploys,
+research, diplomacy — and the server's tick scheduler resolves them.
 
 Single-player mode runs entirely client-side against `mockGameState`.
 Multiplayer mode runs server-authoritative; the client is a renderer
@@ -295,9 +298,34 @@ follows.
 |---|---|---|---|
 | Min match length | `worker/lobby.js MATCH_LENGTH_MIN` | 10 ticks | |
 | Max match length | `worker/lobby.js MATCH_LENGTH_MAX` | 10,000 ticks | Earth→Neptune Hohmann ≈ 410 ticks |
-| Allowed tick intervals | `worker/lobby.js ALLOWED_TICK_INTERVALS` | 30s / 60s / 5m / 30m / 1h / 6h / 12h / 24h | Frontend must mirror in `src/multiplayer/LobbyView.tsx TICK_INTERVAL_OPTIONS` |
-| Default tick interval | `worker/lobby.js handleStart` (`tick_interval_ms = 86_400_000`) | 24h | Falls back to this if host didn't pick one |
-| Default match length | `worker/lobby.js handleStart` (`total_tick_target = 42`) | 42 ticks | |
+| Allowed tick intervals | `worker/lobby.js ALLOWED_TICK_INTERVALS` | 30s / 60s / 5m / **7.5m** / 30m / 1h / 6h / 12h / 24h | Frontend must mirror in `src/multiplayer/LobbyView.tsx TICK_INTERVAL_OPTIONS` |
+| Default tick interval | `worker/lobby.js DEFAULT_TICK_INTERVAL_MS` | **7.5 min (450 000 ms)** | Falls back to this if host didn't pick one |
+| Default match length | `worker/lobby.js DEFAULT_TOTAL_TICK_TARGET` | **4000 ticks (~21 real days)** | A 3-week game at the reference cadence |
+
+### Time and pacing
+
+The reference cadence is **7.5 real minutes per tick**, and the default
+match length is **4000 ticks (~21 real days, 3 weeks)**. These two
+numbers are linked: at this cadence the in-game travel times feel
+intentional rather than instantaneous.
+
+| Transit (Hohmann) | Game ticks | Real time at 7.5 min/tick |
+|---|---|---|
+| Earth ↔ Luna       | ~3       | ~22 min |
+| Earth ↔ Mars       | ~158     | ~20 h (0.8 day) |
+| Earth ↔ Jupiter    | ~290     | ~36 h (**1.5 days**) |
+| Earth ↔ Saturn     | ~584     | ~73 h (3 days) |
+| Earth ↔ Neptune    | ~410     | ~51 h (2.1 days) |
+
+The Hohmann math lives in `src/physics/bezierTransfer.ts`
+(`planBezierTransfer`); ticks are derived from `π · √(a³/μ)` using
+`GRAVITATIONAL_PARAMS.SOL` ≈ 3940 and the body
+`orbit_radius`/`orbitRadius` values shared between client and server.
+
+Single-player runs at the same 7.5 min/tick base rate at 1× sim speed
+(`MS_PER_TICK_AT_1X` in `src/state/gameContext.tsx`). The TopBar speed
+buttons multiply this; `100_000×` lets a full match replay in a few
+real minutes on fast-forward.
 
 ### Faction & seeding
 
