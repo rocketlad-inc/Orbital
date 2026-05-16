@@ -10,6 +10,7 @@ import { SettlementsPanel } from './components/SettlementsPanel';
 import { FleetPanel } from './components/FleetPanel';
 import { TechPanel } from './components/TechPanel';
 import { ThreatsPanel } from './components/ThreatsPanel';
+import { TouchOnboarding } from './components/TouchOnboarding';
 import { prewarmShipIcons } from './render/shipIconCache';
 import { COLORS } from './render/colors';
 import { AuthProvider, useAuth } from './multiplayer/AuthContext';
@@ -22,6 +23,7 @@ import { MultiplayerGameProvider } from './multiplayer/MultiplayerGameProvider';
 import { apiFetch, RoomSummary } from './multiplayer/api';
 import './multiplayer/multiplayer.css';
 import './App.css';
+import './styles/mobile.css';
 
 const MODE_STORAGE_KEY = 'orbital.last_mode';
 
@@ -85,6 +87,7 @@ function SinglePlayerView({ onExit, isMultiplayer = false }: { onExit: () => voi
         <BodyInspector />
         {!isMultiplayer && <ScenarioSelector />}
         <ThreatsPanel />
+        <TouchOnboarding />
       </div>
     </GameContextProvider>
   );

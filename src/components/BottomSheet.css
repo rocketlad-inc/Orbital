@@ -1,0 +1,106 @@
+/* ============================================================
+   BottomSheet — slide-up panel for mobile.
+   ============================================================ */
+
+.bottom-sheet__scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
+  z-index: 5500;
+  animation: bottom-sheet-fade 0.18s ease;
+}
+
+@keyframes bottom-sheet-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.bottom-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5510;
+  max-height: 78vh;
+  background: linear-gradient(180deg, #0e1620 0%, #060a12 100%);
+  border-top: 1px solid #2a3d50;
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  font-family: 'JetBrains Mono', monospace;
+  color: #d8e4ee;
+  animation: bottom-sheet-rise 0.24s cubic-bezier(0.2, 0.7, 0.2, 1);
+  /* Respect the iOS home-indicator safe area */
+  padding-bottom: env(safe-area-inset-bottom, 0);
+  transition: transform 0.06s linear;
+  touch-action: pan-y;
+}
+
+@keyframes bottom-sheet-rise {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+
+.bottom-sheet__handle-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 16px 8px;
+  border-bottom: 1px solid #2a3d50;
+  cursor: grab;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.bottom-sheet__handle {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 44px;
+  height: 4px;
+  border-radius: 2px;
+  background: #2a3d50;
+}
+
+.bottom-sheet__title {
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  color: #ffb84d;
+  font-weight: 600;
+  text-transform: uppercase;
+  margin-top: 8px;
+}
+
+.bottom-sheet__close {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-25%);
+  width: 36px;
+  height: 36px;
+  border: 1px solid #2a3d50;
+  border-radius: 4px;
+  background: transparent;
+  color: #d8e4ee;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bottom-sheet__close:active {
+  background: rgba(255, 94, 94, 0.12);
+  border-color: #ff5e5e;
+  color: #ff5e5e;
+}
+
+.bottom-sheet__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px 24px;
+  -webkit-overflow-scrolling: touch;
+}

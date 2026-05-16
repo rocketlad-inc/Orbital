@@ -42,6 +42,7 @@ export const ThreatsPanel: React.FC = () => {
 
   return (
     <div
+      className="threats-panel"
       style={{
         position: 'fixed',
         top: 56,

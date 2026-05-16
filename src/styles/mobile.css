@@ -1,0 +1,170 @@
+/* ============================================================
+   Mobile-first overrides. Loaded globally; rules only apply at
+   the mobile breakpoint or when the primary pointer is coarse.
+   "When in doubt, go mobile" — generous breakpoint at 1024px.
+   ============================================================ */
+
+/* === Activated by viewport width (so dragging a desktop window
+       narrow flips to mobile too) === */
+
+/* Always-on nav-button label visibility: full width shows label, icon is
+   hidden. Mobile flips this. */
+.nav-button__icon { display: none; font-size: 14px; line-height: 1; }
+.nav-button__label { display: inline; }
+
+@media (max-width: 1023px) {
+  /* Tap targets: nothing below 32px on the short side; aim for 44px on
+     primary actions. We bump padding rather than font size so layouts
+     don't reflow as drastically. */
+  body {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Generic button bump — applies to buttons that don't already have
+     mobile-aware sizing. Specific components (TopBar nav, BuildPanel
+     build button) override below. */
+  button {
+    min-height: 36px;
+  }
+
+  /* The desktop floating panels are heavy when forced onto a small
+     screen. Hide them so the BottomSheet wrappers take over. */
+  .ship-panel,
+  .body-inspector,
+  .scenario-selector {
+    /* Hidden by default; BottomSheet wrappers will re-show inside the
+       sheet. We use display:none to make sure no portion peeks behind
+       a sheet. */
+    display: none !important;
+  }
+
+  /* When a ship-panel etc. is inside a bottom sheet, undo the hide. */
+  .bottom-sheet__body .ship-panel,
+  .bottom-sheet__body .body-inspector,
+  .bottom-sheet__body .scenario-selector {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* === TopBar: icon-only nav buttons, drop low-priority bits === */
+  .nav-button__icon { display: inline; }
+  .nav-button__label { display: none; }
+  .nav-button {
+    padding: 6px 10px;
+    min-width: 40px;
+  }
+
+  /* Title shrinks: drop subtitle */
+  .top-bar__title-sub { display: none; }
+  .top-bar__title { padding-right: 8px; }
+  .top-bar__title-main { font-size: 12px; letter-spacing: 0.1em; }
+
+  /* Resource bar: keep fuel/ore/credits, drop science + ships count */
+  .resource-pill--science,
+  .resource-pill--ships {
+    display: none;
+  }
+  .top-bar__resources { gap: 8px; padding-right: 8px; }
+  .resource-pill__label { font-size: 7px; }
+  .resource-pill__value { font-size: 12px; }
+
+  /* Time display: hide on small screens; tick visible elsewhere if needed */
+  .top-bar__time .time-display {
+    display: none;
+  }
+
+  /* Sim controls: keep only essentials — pause, 1×, 100×, 10000× */
+  .sim-controls .sim-btn { padding: 6px 8px; min-width: 36px; }
+  .sim-controls .sim-btn[title="10× speed"],
+  .sim-controls .sim-btn[title="1000× speed"],
+  .sim-controls .sim-btn[title="100000× speed"],
+  .sim-controls .sim-btn[title="Skip +100 ticks"],
+  .sim-controls .sim-btn[title="Skip +1000 ticks"] {
+    display: none;
+  }
+
+  /* Alerts row: hide on tight viewports — the ThreatsPanel/sheets handle this */
+  .top-bar__alerts { display: none; }
+}
+
+/* ThreatsPanel: anchor to top-LEFT-edge below the TopBar on mobile, full
+   width minus a margin. Avoids stacking on top of the resource pills. */
+@media (max-width: 1023px) {
+  .threats-panel {
+    top: auto !important;
+    bottom: 20px !important;
+    left: 12px !important;
+    right: 12px !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: 38vh !important;
+  }
+}
+
+/* Even tighter for narrow phones */
+@media (max-width: 480px) {
+  .top-bar { padding: 0 8px; gap: 8px; }
+  .resource-pill--credits { display: none; }
+  .nav-button { padding: 6px 8px; min-width: 36px; }
+}
+
+/* === Coarse-pointer specific (touch input regardless of viewport) === */
+
+@media (pointer: coarse) {
+  /* Bigger build buttons */
+  .build-btn,
+  .nav-button,
+  .sim-btn,
+  .maneuver-btn,
+  .deploy-btn {
+    min-height: 40px;
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  /* Form inputs (custom name, etc.) get touch-friendly height */
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="number"],
+  textarea,
+  select {
+    min-height: 40px;
+    font-size: 14px; /* 14+ stops iOS from auto-zooming on focus */
+  }
+
+  /* Hover affordances are useless and noisy on touch. */
+  .nav-button:hover,
+  .sim-btn:hover,
+  .maneuver-btn:hover {
+    background: transparent !important;
+    color: inherit !important;
+    border-color: inherit !important;
+  }
+
+  /* Active feedback substitutes for hover. */
+  .nav-button:active,
+  .sim-btn:active,
+  .maneuver-btn:active,
+  .build-btn:active {
+    transform: scale(0.97);
+  }
+}
+
+/* === iOS / Android safe areas: respect notches and home indicators === */
+
+@supports (padding: env(safe-area-inset-top)) {
+  .top-bar {
+    padding-left: max(16px, env(safe-area-inset-left));
+    padding-right: max(16px, env(safe-area-inset-right));
+    padding-top: env(safe-area-inset-top);
+    height: calc(44px + env(safe-area-inset-top));
+  }
+}
