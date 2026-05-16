@@ -10,7 +10,6 @@ import { SettlementsPanel } from './components/SettlementsPanel';
 import { FleetPanel } from './components/FleetPanel';
 import { TechPanel } from './components/TechPanel';
 import { ThreatsPanel } from './components/ThreatsPanel';
-import { TouchOnboarding } from './components/TouchOnboarding';
 import { prewarmShipIcons } from './render/shipIconCache';
 import { COLORS } from './render/colors';
 import { AuthProvider, useAuth } from './multiplayer/AuthContext';
@@ -99,7 +98,6 @@ function SinglePlayerView({
         <BodyInspector />
         {!isMultiplayer && <ScenarioSelector />}
         <ThreatsPanel />
-        <TouchOnboarding />
       </div>
     </GameContextProvider>
   );
