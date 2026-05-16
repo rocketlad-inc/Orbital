@@ -63,6 +63,13 @@ async function handleGetState(req, env, ctx) {
     .bind(gameId)
     .all()).results ?? [];
 
+  // Sensor-radius fog. The caller "sees" a body if any of the following:
+  //   (1) presence — they own it OR a ship of theirs is orbiting it
+  //   (2) sibling-by-parent — it's a moon of a body in (1), so a ship at
+  //       Jupiter naturally sees the Galilean moons
+  //   (3) parent-by-child — it's the parent of a body in (1), so a ship
+  //       at Luna can see Earth. We exclude Sol from this expansion (a
+  //       ship at any planet shouldn't auto-illuminate the whole system).
   const bodiesRaw = (await env.DB
     .prepare(
       `WITH my_presence AS (
@@ -72,12 +79,33 @@ async function handleGetState(req, env, ctx) {
          UNION
          SELECT id AS bid FROM game_bodies
           WHERE game_id = ?1 AND owner_faction_id = ?2
+       ),
+       visible_bodies AS (
+         -- (1) presence
+         SELECT bid FROM my_presence
+         UNION
+         -- (2) moons of presence bodies
+         SELECT id FROM game_bodies
+          WHERE game_id = ?1
+            AND parent_body_id IN (SELECT bid FROM my_presence)
+         UNION
+         -- (3) parent of presence body, only if that parent is itself
+         --     a non-star (parent_body_id IS NOT NULL on the parent)
+         SELECT p.id FROM game_bodies p
+          WHERE p.game_id = ?1
+            AND p.parent_body_id IS NOT NULL
+            AND p.id IN (
+              SELECT parent_body_id FROM game_bodies
+               WHERE game_id = ?1
+                 AND id IN (SELECT bid FROM my_presence)
+                 AND parent_body_id IS NOT NULL
+            )
        )
        SELECT id, template_id, name, type, parent_body_id, radius, soi, mu,
               orbit_radius, orbit_period, angle0, color,
               yield_metal, yield_fuel, yield_gold, yield_science,
               owner_faction_id, development_level, fortification_level, shipyard_level,
-              (id IN (SELECT bid FROM my_presence)) AS visible_to_me
+              (id IN (SELECT bid FROM visible_bodies)) AS visible_to_me
          FROM game_bodies
         WHERE game_id = ?1`,
     )
@@ -103,12 +131,9 @@ async function handleGetState(req, env, ctx) {
     };
   });
 
-  // Fog of war: caller sees all their own ships unconditionally, plus
-  // any opponent ship whose parent_body_id is a body where the caller
-  // either owns the body or has at least one of their own ships
-  // orbiting. Everything else is invisible. This is the minimum-viable
-  // "you can only see what your assets observe" rule — a sensor_coverage
-  // pass on tick can later widen this radius.
+  // Ship fog — same visibility set as the body select above (presence +
+  // moons-of-presence + planet-of-moon-presence). Caller's own ships are
+  // always visible regardless.
   const ships = (await env.DB
     .prepare(
       `WITH my_presence AS (
@@ -118,6 +143,21 @@ async function handleGetState(req, env, ctx) {
          UNION
          SELECT id AS bid FROM game_bodies
           WHERE game_id = ?1 AND owner_faction_id = ?2
+       ),
+       visible_bodies AS (
+         SELECT bid FROM my_presence
+         UNION
+         SELECT id FROM game_bodies
+          WHERE game_id = ?1 AND parent_body_id IN (SELECT bid FROM my_presence)
+         UNION
+         SELECT p.id FROM game_bodies p
+          WHERE p.game_id = ?1 AND p.parent_body_id IS NOT NULL
+            AND p.id IN (
+              SELECT parent_body_id FROM game_bodies
+               WHERE game_id = ?1
+                 AND id IN (SELECT bid FROM my_presence)
+                 AND parent_body_id IS NOT NULL
+            )
        )
        SELECT id, name, ship_class, owner_faction_id, parent_body_id,
               orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
@@ -127,13 +167,12 @@ async function handleGetState(req, env, ctx) {
         WHERE game_id = ?1
           AND status = 'active'
           AND (owner_faction_id = ?2
-               OR parent_body_id IN (SELECT bid FROM my_presence))`,
+               OR parent_body_id IN (SELECT bid FROM visible_bodies))`,
     )
     .bind(gameId, me.id)
     .all()).results ?? [];
 
-  // Settlements: caller sees their own + any at a body where they have
-  // presence (same fog rule as ships).
+  // Settlements: same visibility set as ships/bodies above.
   const settlements = (await env.DB
     .prepare(
       `WITH my_presence AS (
@@ -143,6 +182,21 @@ async function handleGetState(req, env, ctx) {
          UNION
          SELECT id AS bid FROM game_bodies
           WHERE game_id = ?1 AND owner_faction_id = ?2
+       ),
+       visible_bodies AS (
+         SELECT bid FROM my_presence
+         UNION
+         SELECT id FROM game_bodies
+          WHERE game_id = ?1 AND parent_body_id IN (SELECT bid FROM my_presence)
+         UNION
+         SELECT p.id FROM game_bodies p
+          WHERE p.game_id = ?1 AND p.parent_body_id IS NOT NULL
+            AND p.id IN (
+              SELECT parent_body_id FROM game_bodies
+               WHERE game_id = ?1
+                 AND id IN (SELECT bid FROM my_presence)
+                 AND parent_body_id IS NOT NULL
+            )
        )
        SELECT id, body_id, owner_faction_id, type, name,
               hp, hp_max, population,
@@ -153,7 +207,7 @@ async function handleGetState(req, env, ctx) {
         WHERE game_id = ?1
           AND destroyed_at_tick IS NULL
           AND (owner_faction_id = ?2
-               OR body_id IN (SELECT bid FROM my_presence))`,
+               OR body_id IN (SELECT bid FROM visible_bodies))`,
     )
     .bind(gameId, me.id)
     .all()).results ?? [];
