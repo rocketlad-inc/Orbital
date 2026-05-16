@@ -15,11 +15,13 @@ export const MOBILE_BREAKPOINT_PX = 1024;
 
 function evaluate(): boolean {
   if (typeof window === 'undefined') return false;
-  // Coarse pointer = primary input is touch or stylus → always mobile.
-  const coarse = window.matchMedia?.('(pointer: coarse)').matches ?? false;
-  // Narrow viewport → mobile even on a desktop browser shrunk down.
-  const narrow = window.innerWidth < MOBILE_BREAKPOINT_PX;
-  return coarse || narrow;
+  // Width-only. Must match mobile.css `@media (max-width: 1023px)` exactly,
+  // or you get split-brain layouts where the JS thinks "mobile" and renders
+  // a bottom-sheet wrapper while the CSS thinks "desktop" and keeps the
+  // floating panel — two copies of the same UI plus a scrim that blocks
+  // canvas clicks. Touch-target expansion still uses isCoarsePointer()
+  // directly, which is the correct check for that concern.
+  return window.innerWidth < MOBILE_BREAKPOINT_PX;
 }
 
 /**

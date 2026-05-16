@@ -34,16 +34,10 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
   const [dragY, setDragY] = useState(0);
   const dragStart = useRef<number | null>(null);
 
-  // Lock body scroll while a sheet is open on mobile so the page doesn't
-  // bounce behind the sheet.
-  useEffect(() => {
-    if (!isMobile || !open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [isMobile, open]);
+  // Body-scroll lock intentionally NOT applied: the map canvas is the
+  // primary content and the sheet is a non-modal dock that the player
+  // should be able to interact with WHILE still tapping bodies/ships on
+  // the map (e.g. to plan a transfer target while a ship is selected).
 
   // Esc to close
   useEffect(() => {
@@ -82,18 +76,16 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
     setDragY(0);
   };
 
+  // No scrim — the map underneath stays fully interactive so the player
+  // can keep clicking planets / ships while the sheet is open. aria-modal
+  // is false for the same reason: this is a dock, not a modal.
   return (
     <>
-      <div
-        className="bottom-sheet__scrim"
-        onClick={onClose}
-        aria-hidden
-      />
       <div
         className="bottom-sheet"
         ref={sheetRef}
         role="dialog"
-        aria-modal="true"
+        aria-modal="false"
         aria-label={title ?? 'Panel'}
         style={{ transform: dragY > 0 ? `translateY(${dragY}px)` : undefined }}
       >

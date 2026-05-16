@@ -1,28 +1,16 @@
 /* ============================================================
-   BottomSheet — slide-up panel for mobile.
+   BottomSheet — non-modal slide-up dock for mobile.
+   No scrim: the map underneath stays fully interactive so the
+   player can keep tapping bodies/ships while a panel is open.
    ============================================================ */
-
-.bottom-sheet__scrim {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(2px);
-  z-index: 5500;
-  animation: bottom-sheet-fade 0.18s ease;
-}
-
-@keyframes bottom-sheet-fade {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
 
 .bottom-sheet {
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
-  z-index: 5510;
-  max-height: 78vh;
+  z-index: 1080;            /* Above corner clusters, below true modals */
+  max-height: 55vh;         /* Capped so the top half of the map stays visible */
   background: linear-gradient(180deg, #0e1620 0%, #060a12 100%);
   border-top: 1px solid #2a3d50;
   border-radius: 16px 16px 0 0;
