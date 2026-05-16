@@ -1,3 +1,5 @@
+import { recomputeBodyOwnership } from './factions.js';
+
 // Room Durable Object. One instance per game room, keyed by room id.
 // Uses the WebSocket Hibernation API so idle rooms cost nothing.
 //
@@ -610,7 +612,9 @@ export class Room {
     // Chronicle each destroyed settlement so the log surfaces it.
     if (destroyedSettlements.length) {
       const now = Date.now();
+      const touchedBodies = new Set();
       for (const s of destroyedSettlements) {
+        touchedBodies.add(s.body_id);
         const body = await this.env.DB
           .prepare('SELECT name FROM game_bodies WHERE id = ?')
           .bind(s.body_id).first();
@@ -629,6 +633,14 @@ export class Room {
             .bind(id, gameId, tick, s.owner_faction_id, s.body_id, payload, now)
             .run();
         } catch (e) { console.error('settlement chronicle failed', e); }
+      }
+
+      // Each touched body may have had ownership shift (the destroyed
+      // settlement was its only one; or the destroyed faction's last;
+      // or an opposing faction now has more). Recompute.
+      for (const bodyId of touchedBodies) {
+        try { await recomputeBodyOwnership(this.env.DB, gameId, bodyId); }
+        catch (e) { console.error('recomputeBodyOwnership failed', e); }
       }
     }
 

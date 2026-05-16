@@ -156,6 +156,35 @@ const BODY_CATALOG = [
 // Eligible worlds for ownership = everything that isn't the star (16 worlds).
 // 2 worlds/player × 8 players = 16. Caps at 8 players × 2 worlds for v1.
 
+// Body ownership tracks settlements: the faction with the most active
+// settlements at a body owns it. Ties (or zero settlements) leave the
+// current owner unchanged — your claim isn't abandoned just because
+// you're temporarily undefended. Call this after any settlement
+// deploy/destroy that touches `bodyId`.
+//
+// Returns the new owner_faction_id (or null if no change was applied).
+export async function recomputeBodyOwnership(db, gameId, bodyId) {
+  const rows = await db
+    .prepare(
+      `SELECT owner_faction_id AS fid, COUNT(*) AS n
+         FROM game_settlements
+        WHERE game_id = ? AND body_id = ? AND destroyed_at_tick IS NULL
+        GROUP BY owner_faction_id
+        ORDER BY n DESC`,
+    )
+    .bind(gameId, bodyId)
+    .all();
+  const tally = rows.results ?? [];
+  if (tally.length === 0) return null;                        // no settlements → no change
+  if (tally.length >= 2 && tally[0].n === tally[1].n) return null; // contested tie → no change
+  const newOwner = tally[0].fid;
+  await db
+    .prepare('UPDATE game_bodies SET owner_faction_id = ? WHERE id = ? AND game_id = ?')
+    .bind(newOwner, bodyId, gameId)
+    .run();
+  return newOwner;
+}
+
 // Subset of BODY_CATALOG that players may pick as their starting capital
 // in the lobby. Sticking to terrestrials + larger named moons keeps the
 // menu manageable and avoids highly-asymmetric starts on tiny asteroids.

@@ -1,3 +1,5 @@
+import { recomputeBodyOwnership } from './factions.js';
+
 // Player-action endpoints: things the client wants the server to remember.
 //
 // The tick resolver (Room DO alarm) will eventually execute these on
@@ -259,6 +261,10 @@ async function handleDeploySettlement(req, env, ctx) {
       .prepare('UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ?')
       .bind(SETTLEMENT_COST.metal, SETTLEMENT_COST.gold, me.id),
   ]);
+
+  // Body ownership = "faction with the most settlements here". The brand
+  // new settlement may have just tipped the balance — recompute.
+  await recomputeBodyOwnership(env.DB, gameId, bodyId);
 
   return json({ settlement: { id, body_id: bodyId, type, name, hp, hp_max: hp } }, { status: 201 });
 }
