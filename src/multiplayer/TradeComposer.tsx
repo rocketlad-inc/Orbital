@@ -24,7 +24,9 @@ type Mode =
 type Side = 'offer' | 'request';
 
 const PACT_KINDS_ORDER: PactKind[] = ['nap', 'defense_pact', 'intel_share'];
-const RESOURCE_KEYS: Array<keyof ResourceBundle> = ['metal', 'fuel', 'gold', 'science'];
+// Fuel was removed from the economy. The schema column stays so we don't
+// need a migration, but the trade composer no longer offers it as a knob.
+const RESOURCE_KEYS: Array<keyof ResourceBundle> = ['metal', 'gold', 'science'];
 const RESOURCE_LABELS: Record<keyof ResourceBundle, string> = {
   metal: 'Metal', fuel: 'Fuel', gold: 'Gold', science: 'Science',
 };

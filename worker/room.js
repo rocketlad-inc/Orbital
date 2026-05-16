@@ -103,6 +103,17 @@ export class Room {
       }
       return new Response(null, { status: 204 });
     }
+    if (url.pathname === '/notify' && req.method === 'POST') {
+      // Best-effort fan-out: feature modules (trades, messages, etc.)
+      // post a JSON payload here and we broadcast it to every connected
+      // WS client. Used so a player accepting/declining a trade triggers
+      // an immediate refresh on the proposer's screen without waiting
+      // for the next /list poll.
+      let payload;
+      try { payload = await req.json(); } catch { payload = null; }
+      if (payload) this.broadcast(payload);
+      return new Response(null, { status: 204 });
+    }
     if (url.pathname === '/destroy' && req.method === 'POST') {
       // Host deleted the room. Tell every connected client the room is
       // gone, close their sockets, cancel pending alarms, and wipe DO
