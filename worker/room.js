@@ -353,8 +353,39 @@ export class Room {
   //
   // Combat resolution + body-yield harvesting are still future work.
   async alarm() {
-    const started = await this.state.storage.get('gameStarted');
-    if (!started?.gameId) return;
+    let started = await this.state.storage.get('gameStarted');
+    if (!started?.gameId) {
+      // The DO got recycled / migrated / freshly-deployed and lost its
+      // `gameStarted` flag. Without it the DO can't know its own roomId,
+      // so it can't recover on its own. Try to self-heal: scan active
+      // games and look for the one whose idFromName equals this DO's id.
+      // If we find a match, re-hydrate storage and continue. This is the
+      // overnight-stall recovery path; the cron trigger normally beats
+      // us to it but this works even without external pokes.
+      const myIdHex = (this.state.id?.toString?.() ?? '').toLowerCase();
+      const candidates = await this.env.DB
+        .prepare("SELECT id, total_tick_target, tick_interval_ms, started_at FROM games WHERE status = 'active' LIMIT 200")
+        .all();
+      let match = null;
+      for (const row of (candidates.results ?? [])) {
+        try {
+          const candId = this.env.ROOM.idFromName(row.id).toString().toLowerCase();
+          if (candId === myIdHex) { match = row; break; }
+        } catch {}
+      }
+      if (!match) {
+        console.warn('alarm fired with no gameStarted storage AND no D1 match; DO is orphaned', { myIdHex });
+        return;
+      }
+      started = {
+        gameId: match.id,
+        total_tick_target: match.total_tick_target,
+        tick_interval_ms: match.tick_interval_ms,
+        started_at: match.started_at,
+      };
+      await this.state.storage.put('gameStarted', started);
+      console.log('alarm self-healed gameStarted from D1', { gameId: started.gameId });
+    }
     const gameId = started.gameId;
 
     const game = await this.env.DB

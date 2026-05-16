@@ -494,7 +494,44 @@ async function handleForceTick(_req, env, ctx) {
     next_tick_at: after?.next_tick_at ?? game.next_tick_at,
     advanced: (after?.current_tick ?? 0) > (game.current_tick ?? 0),
     bodies_added: bodiesAdded,
+    tick_interval_ms: game.tick_interval_ms ?? null,
   });
+}
+
+/**
+ * PATCH /api/lobby/rooms/:roomId/tick-interval — host-only. Change the
+ * tick cadence of an already-started game. Re-arms next_tick_at to
+ * Date.now() + new_interval so the next tick fires according to the
+ * new pace rather than the one set at start.
+ *
+ * Body: { tick_interval_ms: number }   (must be in ALLOWED_TICK_INTERVALS)
+ */
+async function handleChangeTickInterval(req, env, ctx) {
+  const roomId = ctx.params.roomId;
+  const g = await requireHost(env, roomId, ctx.session);
+  if (g.error) return g.error;
+  let body;
+  try { body = await req.json(); } catch { return err(400, 'bad_request', 'invalid json'); }
+  const newInterval = body?.tick_interval_ms;
+  if (!Number.isInteger(newInterval) || !ALLOWED_TICK_INTERVALS.has(newInterval)) {
+    return err(400, 'bad_request', `tick_interval_ms must be one of ${[...ALLOWED_TICK_INTERVALS].join(', ')}`);
+  }
+  const game = await env.DB
+    .prepare('SELECT id, status FROM games WHERE id = ?')
+    .bind(roomId).first();
+  if (!game) return err(404, 'not_found', 'no game in this room yet');
+  if (game.status !== 'active') return err(409, 'not_active', `game is ${game.status}`);
+
+  const nextAt = Date.now() + newInterval;
+  await env.DB
+    .prepare('UPDATE games SET tick_interval_ms = ?, next_tick_at = ? WHERE id = ?')
+    .bind(newInterval, nextAt, roomId)
+    .run();
+  // The cron-driven scheduled handler in worker/index.js picks up the new
+  // next_tick_at within ~1 minute, so we don't need to round-trip the DO
+  // to re-arm. The DO's own alarm will be re-armed naturally on its next
+  // tick fire.
+  return json({ ok: true, tick_interval_ms: newInterval, next_tick_at: nextAt });
 }
 
 export const routes = [
@@ -505,5 +542,6 @@ export const routes = [
   { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/kick$/, auth: 'required', handle: handleKick },
   { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/start$/, auth: 'required', handle: handleStart },
   { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/force-tick$/, auth: 'required', handle: handleForceTick },
+  { method: 'PATCH',pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/tick-interval$/, auth: 'required', handle: handleChangeTickInterval },
   { method: 'PATCH',pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/me$/, auth: 'required', handle: handlePatchMe },
 ];

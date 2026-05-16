@@ -420,9 +420,27 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         setTargetSelectionMode(false);
         return;
       }
-      setPanState({ startX: e.clientX, startY: e.clientY, camX: camera.x, camY: camera.y });
+      // Seed the pan from the *effective* camera position (the world point
+      // currently under the crosshair). If a focused body is sticky from
+      // an earlier focusBody / initialFocus, camera.x/.y still holds the
+      // pre-focus origin (0,0) and the user would see the camera jump back
+      // to origin on the first mouse move. Snapshot the focused-body world
+      // pos instead, then clear focusedBodyId so the render stops snapping.
+      let startCamX = camera.x;
+      let startCamY = camera.y;
+      if (camera.focusedBodyId) {
+        const focused = gameState.bodies.find(b => b.id === camera.focusedBodyId);
+        if (focused) {
+          const { bodyPosition } = require('../physics/orbitalMechanics');
+          const pos = bodyPosition(focused, gameState.currentTick, gameState.bodies);
+          startCamX = pos.x;
+          startCamY = pos.y;
+        }
+        updateCamera({ x: startCamX, y: startCamY, focusedBodyId: undefined });
+      }
+      setPanState({ startX: e.clientX, startY: e.clientY, camX: startCamX, camY: startCamY });
     }
-  }, [camera, uiState.targetSelectionMode, setTargetSelectionMode]);
+  }, [camera, gameState.bodies, gameState.currentTick, uiState.targetSelectionMode, setTargetSelectionMode, updateCamera]);
 
   const handleMouseUp = useCallback(() => {
     setPanState(null);
@@ -669,14 +687,37 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   );
 };
 
+/**
+ * The "effective" camera center. When the camera is locked onto a body
+ * via camera.focusedBodyId, the render loop overrides camera.x/.y with
+ * that body's current world position so the body stays under the
+ * crosshair. Hit-tests need to do the same math or canvas positions
+ * computed from the raw camera will diverge from what the user sees —
+ * which is how a click anywhere ended up landing on Sol (which sits at
+ * world 0,0, matching camera.x/.y when the camera state hadn't been
+ * panned away from origin).
+ */
+function effectiveCamera(camera: any, bodies: any[], t: number): { x: number; y: number; scale: number } {
+  if (camera.focusedBodyId) {
+    const focused = bodies.find((b: any) => b.id === camera.focusedBodyId);
+    if (focused) {
+      const { bodyPosition } = require('../physics/orbitalMechanics');
+      const pos = bodyPosition(focused, t, bodies);
+      return { x: pos.x, y: pos.y, scale: camera.scale };
+    }
+  }
+  return { x: camera.x, y: camera.y, scale: camera.scale };
+}
+
 function getBodyCanvasPos(
   body: any, canvas: HTMLCanvasElement, bodies: any[], camera: any, t: number
 ): { x: number; y: number } {
   const { bodyPosition } = require('../physics/orbitalMechanics');
   const pos = bodyPosition(body, t, bodies);
+  const cam = effectiveCamera(camera, bodies, t);
   return {
-    x: canvas.width / 2 + (pos.x - camera.x) * camera.scale,
-    y: canvas.height / 2 + (pos.y - camera.y) * camera.scale,
+    x: canvas.width / 2 + (pos.x - cam.x) * cam.scale,
+    y: canvas.height / 2 + (pos.y - cam.y) * cam.scale,
   };
 }
 
@@ -690,9 +731,10 @@ function getShipCanvasPos(
     const { orbitWorldPos } = require('../physics/orbitalMechanics');
     pos = orbitWorldPos(ship.orbit, t, bodies);
   }
+  const cam = effectiveCamera(camera, bodies, t);
   return {
-    x: canvas.width / 2 + (pos.x - camera.x) * camera.scale,
-    y: canvas.height / 2 + (pos.y - camera.y) * camera.scale,
+    x: canvas.width / 2 + (pos.x - cam.x) * cam.scale,
+    y: canvas.height / 2 + (pos.y - cam.y) * cam.scale,
   };
 }
 
