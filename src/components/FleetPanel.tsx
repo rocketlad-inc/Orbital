@@ -7,6 +7,10 @@ import React, { useMemo, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { ShipIcon } from './ShipIcons';
+import { planBezierTransfer } from '../physics/bezierTransfer';
+import { travelTimeModifier, FactionTechState } from '../game/techs';
+import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { ManeuverNode } from '../types';
 import './OverviewPanel.css';
 
 interface FleetPanelProps {
@@ -16,8 +20,17 @@ interface FleetPanelProps {
 type Filter = 'all' | 'player' | 'enemy';
 
 export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
-  const { gameState, selectShip, focusBody, uiState } = useGameContext();
+  const {
+    gameState, selectShip, focusBody, uiState,
+    addManeuverNode, setPendingTransfer,
+  } = useGameContext();
+  const mpActions = useMultiplayerActions();
   const [filter, setFilter] = useState<Filter>('player');
+  // Bulk-select set: ship ids the player has checked for a bulk
+  // maneuver action. Only player-owned ships can join the set.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkTarget, setBulkTarget] = useState<string>('');
+  const [bulkError, setBulkError] = useState<string | null>(null);
 
   const ships = useMemo(() => {
     return gameState.ships.filter(s => {
@@ -51,6 +64,88 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
 
   const handleBodyClick = (bodyId: string) => {
     focusBody(bodyId);
+  };
+
+  const toggleSelected = (shipId: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(shipId)) next.delete(shipId);
+      else next.add(shipId);
+      return next;
+    });
+  };
+
+  // Set of player ships currently eligible for a bulk transfer
+  // (orbiting, with no pending or in-flight transfer already attached).
+  const bulkEligibleIds = useMemo(() => {
+    return new Set(
+      gameState.ships
+        .filter(s => s.ownedBy === 'player' && !s.transfer && !s.pendingTransfer)
+        .map(s => s.id)
+    );
+  }, [gameState.ships]);
+
+  const visibleSelected = useMemo(
+    () => Array.from(selectedIds).filter(id => bulkEligibleIds.has(id)),
+    [selectedIds, bulkEligibleIds]
+  );
+
+  // Bodies the player can route to (everything except Sol).
+  const transferTargets = useMemo(
+    () => gameState.bodies.filter(b => b.id !== 'sol').sort((a, b) => a.name.localeCompare(b.name)),
+    [gameState.bodies]
+  );
+
+  const issueBulkTransfer = () => {
+    setBulkError(null);
+    if (!bulkTarget) { setBulkError('Pick a destination'); return; }
+    const target = gameState.bodies.find(b => b.id === bulkTarget);
+    if (!target) { setBulkError('Unknown destination'); return; }
+    if (visibleSelected.length === 0) { setBulkError('No eligible ships selected'); return; }
+
+    const playerTech = gameState.factionTech?.player as FactionTechState | undefined;
+    const travelMul = travelTimeModifier(playerTech);
+    let issued = 0;
+    for (const sid of visibleSelected) {
+      const ship = gameState.ships.find(s => s.id === sid);
+      if (!ship) continue;
+      const arc = planBezierTransfer(ship.orbit, bulkTarget, gameState.currentTick, gameState.bodies, travelMul);
+      if (!arc) continue;
+      const node: ManeuverNode = {
+        id: `node-${Date.now()}-${Math.random()}`,
+        shipId: ship.id,
+        type: 'transfer',
+        burnTime: arc.departureTime,
+        deltav: arc.departureDv,
+        prograde: arc.departureDv,
+        radial: 0,
+        normal: 0,
+        status: 'planned',
+        label: arc.label,
+      };
+      addManeuverNode(node);
+      setPendingTransfer(ship.id, arc);
+      if (mpActions) {
+        mpActions.transfer({
+          shipId: ship.id,
+          targetBodyId: arc.arrivalBodyId,
+          scheduledT: arc.departureTime,
+          dvPrograde: arc.departureDv,
+          fuelCost: Math.round(Math.abs(arc.departureDv) * 10),
+        });
+      }
+      issued += 1;
+    }
+    if (issued === 0) setBulkError('Could not plan a transfer for any selected ship');
+    else {
+      setSelectedIds(new Set());
+      setBulkTarget('');
+    }
+  };
+
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+    setBulkError(null);
   };
 
   const ownerBadge = (ownedBy: string) => {
@@ -110,12 +205,27 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
       statusBadge = <span className="status-badge status-badge--orbiting">Orbiting</span>;
     }
 
+    const eligible = bulkEligibleIds.has(ship.id);
+    const checked = selectedIds.has(ship.id);
     return (
       <tr
         key={ship.id}
         className={isSelected ? 'selected' : ''}
         onClick={() => handleShipClick(ship.id)}
       >
+        <td onClick={(e) => e.stopPropagation()} style={{ width: 32, textAlign: 'center' }}>
+          {eligible ? (
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={() => toggleSelected(ship.id)}
+              title="Add to bulk selection"
+              style={{ cursor: 'pointer' }}
+            />
+          ) : (
+            <span title="Not eligible (not player-owned, or already in transit/planned)" style={{ opacity: 0.25 }}>—</span>
+          )}
+        </td>
         <td>
           <div className="body-cell" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <div style={{ color: '#4ecdc4', flexShrink: 0 }}>
@@ -142,6 +252,20 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     );
   };
 
+  const tableHead = (locationLabel: string) => (
+    <thead>
+      <tr>
+        <th style={{ width: 32 }}></th>
+        <th>Ship</th>
+        <th>Owner</th>
+        <th>Status</th>
+        <th>{locationLabel}</th>
+        <th>HP</th>
+        <th>Fuel</th>
+      </tr>
+    </thead>
+  );
+
   return (
     <div className="overview-panel">
       <div className="overview-panel__header">
@@ -164,6 +288,41 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
         ))}
       </div>
 
+      {visibleSelected.length > 0 && (
+        <div className="fleet-bulk-bar">
+          <div className="fleet-bulk-bar__count">
+            {visibleSelected.length} ship{visibleSelected.length === 1 ? '' : 's'} selected
+          </div>
+          <div className="fleet-bulk-bar__actions">
+            <label className="fleet-bulk-bar__label">Transfer all to</label>
+            <select
+              className="fleet-bulk-bar__select"
+              value={bulkTarget}
+              onChange={(e) => setBulkTarget(e.target.value)}
+            >
+              <option value="">Select destination…</option>
+              {transferTargets.map(b => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
+            </select>
+            <button
+              className="fleet-bulk-bar__btn fleet-bulk-bar__btn--primary"
+              onClick={issueBulkTransfer}
+              disabled={!bulkTarget}
+            >
+              Issue {visibleSelected.length} orders
+            </button>
+            <button
+              className="fleet-bulk-bar__btn"
+              onClick={clearSelection}
+            >
+              Clear
+            </button>
+          </div>
+          {bulkError && <div className="fleet-bulk-bar__error">{bulkError}</div>}
+        </div>
+      )}
+
       <div className="overview-panel__body">
         {ships.length === 0 ? (
           <div className="overview-empty">No ships match the current filter.</div>
@@ -176,16 +335,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                   <span className="overview-section__count">{inTransit.length} ships</span>
                 </div>
                 <table className="overview-table">
-                  <thead>
-                    <tr>
-                      <th>Ship</th>
-                      <th>Owner</th>
-                      <th>Status</th>
-                      <th>Destination</th>
-                      <th>HP</th>
-                      <th>Fuel</th>
-                    </tr>
-                  </thead>
+                  {tableHead('Destination')}
                   <tbody>
                     {inTransit.map(renderShipRow)}
                   </tbody>
@@ -213,16 +363,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                     <span className="overview-section__count">{bodyShips.length} ships</span>
                   </div>
                   <table className="overview-table">
-                    <thead>
-                      <tr>
-                        <th>Ship</th>
-                        <th>Owner</th>
-                        <th>Status</th>
-                        <th>Location</th>
-                        <th>HP</th>
-                        <th>Fuel</th>
-                      </tr>
-                    </thead>
+                    {tableHead('Location')}
                     <tbody>
                       {bodyShips.map(renderShipRow)}
                     </tbody>
