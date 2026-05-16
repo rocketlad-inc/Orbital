@@ -8,6 +8,7 @@ import { maintenanceRatesForShip } from '../game/maintenance';
 import { travelTimeModifier, FactionTechState } from '../game/techs';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { ShipIcon } from './ShipIcons';
+import { BottomSheet } from './BottomSheet';
 import './ShipPanel.css';
 
 export const ShipPanel: React.FC = () => {
@@ -228,6 +229,7 @@ export const ShipPanel: React.FC = () => {
 
   return (
     <>
+      <BottomSheet open={true} onClose={deselectShip} title={`Ship: ${ship.name}`}>
       <div className="ship-panel">
         <div className="panel-header">
           <span>SHIP: {ship.name}</span>
@@ -425,6 +427,7 @@ export const ShipPanel: React.FC = () => {
           </div>
         </div>
       </div>
+      </BottomSheet>
 
       {transferModalOpen && (
         <div className="modal-overlay" onClick={() => setTransferModalOpen(false)}>

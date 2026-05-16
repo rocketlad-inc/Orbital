@@ -29,7 +29,14 @@ import { COLORS, withOpacity } from '../render/colors';
 import { shipWorldPosition } from '../game/combat';
 import { computeIncomingThreats, threatenedBodyIds } from '../game/threats';
 import { computeVisibility, factionSensorRings, GHOST_LIFETIME_TICKS } from '../game/visibility';
+import { useCanvasTouchInput } from '../hooks/useCanvasTouchInput';
+import { isCoarsePointer } from '../hooks/useIsMobile';
 import './MapCanvas.css';
+
+/** Extra hit-radius padding when the primary input is touch. Apple/Material
+ *  guidelines recommend ~44px tap targets; we widen the click radius rather
+ *  than enlarge the rendered icon. */
+const TOUCH_HIT_PADDING = isCoarsePointer() ? 16 : 0;
 
 interface MapCanvasProps {
   width?: number;
@@ -414,18 +421,18 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     return () => canvas.removeEventListener('wheel', onWheel);
   }, [camera.x, camera.y, camera.scale, updateCamera]);
 
-  const handleClick = useCallback(
-    (e: React.MouseEvent<HTMLCanvasElement>) => {
+  // Shared tap/click logic — called by both the mouse onClick handler and
+  // the touch-input layer. Hit radii are padded on coarse-pointer devices
+  // (mobile/tablet) so fingers can reliably grab ships and bodies.
+  const handleTapAt = useCallback(
+    (canvasX: number, canvasY: number) => {
       if (!canvasRef.current) return;
-      const rect = canvasRef.current.getBoundingClientRect();
-      const canvasX = e.clientX - rect.left;
-      const canvasY = e.clientY - rect.top;
 
       if (uiState.targetSelectionMode) {
         for (const body of gameState.bodies) {
           if (body.id === 'sol') continue;
           const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
-          const clickRadius = Math.max(12, body.radius! * camera.scale + 8);
+          const clickRadius = Math.max(12, body.radius! * camera.scale + 8) + TOUCH_HIT_PADDING;
           if (Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < clickRadius) {
             window.dispatchEvent(new CustomEvent('orbital-transfer-confirm', {
               detail: { bodyId: body.id },
@@ -438,7 +445,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
       for (const ship of gameState.ships) {
         const shipPos = getShipCanvasPos(ship, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
-        if (Math.hypot(canvasX - shipPos.x, canvasY - shipPos.y) < 10) {
+        if (Math.hypot(canvasX - shipPos.x, canvasY - shipPos.y) < 10 + TOUCH_HIT_PADDING) {
           selectShip(ship.id);
           return;
         }
@@ -446,7 +453,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
       for (const body of gameState.bodies) {
         const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
-        const clickRadius = Math.max(8, body.radius! * camera.scale + 5);
+        const clickRadius = Math.max(8, body.radius! * camera.scale + 5) + TOUCH_HIT_PADDING;
         if (Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < clickRadius) {
           selectBody(body.id);
           return;
@@ -457,6 +464,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       deselectBody();
     },
     [gameState, camera, uiState.targetSelectionMode, selectShip, selectBody, deselectShip, deselectBody]
+  );
+
+  const handleClick = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      if (!canvasRef.current) return;
+      const rect = canvasRef.current.getBoundingClientRect();
+      handleTapAt(e.clientX - rect.left, e.clientY - rect.top);
+    },
+    [handleTapAt]
   );
 
   const handleMouseHover = useCallback(
@@ -479,16 +495,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     [gameState, camera, hoverBody]
   );
 
-  const handleDoubleClick = useCallback(
-    (e: React.MouseEvent<HTMLCanvasElement>) => {
+  // Shared focus-on-tap logic — called by both onDoubleClick and the
+  // touch input layer's double-tap.
+  const handleFocusAt = useCallback(
+    (canvasX: number, canvasY: number) => {
       if (uiState.targetSelectionMode) return;
       if (!canvasRef.current) return;
-      const rect = canvasRef.current.getBoundingClientRect();
-      const canvasX = e.clientX - rect.left;
-      const canvasY = e.clientY - rect.top;
       for (const body of gameState.bodies) {
         const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
-        const clickRadius = Math.max(8, body.radius! * camera.scale + 5);
+        const clickRadius = Math.max(8, body.radius! * camera.scale + 5) + TOUCH_HIT_PADDING;
         if (Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < clickRadius) {
           focusBody(body.id);
           return;
@@ -498,6 +513,25 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     },
     [gameState, camera, focusBody, uiState.targetSelectionMode]
   );
+
+  const handleDoubleClick = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      if (!canvasRef.current) return;
+      const rect = canvasRef.current.getBoundingClientRect();
+      handleFocusAt(e.clientX - rect.left, e.clientY - rect.top);
+    },
+    [handleFocusAt]
+  );
+
+  // Touch gesture layer: single-finger pan, two-finger pinch zoom,
+  // tap-to-select, double-tap-to-focus. Mouse events above are untouched.
+  useCanvasTouchInput({
+    canvasRef,
+    camera,
+    updateCamera,
+    onTap: handleTapAt,
+    onDoubleTap: handleFocusAt,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -518,7 +552,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
       className="map-canvas"
-      style={{ cursor: uiState.targetSelectionMode ? 'crosshair' : undefined }}
+      style={{
+        cursor: uiState.targetSelectionMode ? 'crosshair' : undefined,
+        // Block native page scroll/zoom on touch so our gesture layer owns
+        // the canvas entirely.
+        touchAction: 'none',
+      }}
     />
   );
 };

@@ -11,6 +11,7 @@ import {
 } from '../game/settlements';
 import { SettlementType } from '../types';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { BottomSheet } from './BottomSheet';
 import './BodyInspector.css';
 
 export const BodyInspector: React.FC = () => {
@@ -38,6 +39,7 @@ export const BodyInspector: React.FC = () => {
   const toggleFocus = () => focusBody(isFocused ? undefined : body.id);
 
   return (
+    <BottomSheet open={true} onClose={deselectBody} title={body.name.toUpperCase()}>
     <div className="body-inspector">
       <div className="panel-header">
         <span>{body.name.toUpperCase()}</span>
@@ -147,6 +149,7 @@ export const BodyInspector: React.FC = () => {
         <BuildPanel />
       </div>
     </div>
+    </BottomSheet>
   );
 };
 

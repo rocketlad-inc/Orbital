@@ -159,23 +159,31 @@ export const TopBar: React.FC<TopBarProps> = ({ activePanel, onTogglePanel, onEx
         <button
           className={`nav-button ${activePanel === 'settlements' ? 'active' : ''}`}
           onClick={() => onTogglePanel(activePanel === 'settlements' ? null : 'settlements')}
+          title="Settlements"
+          aria-label="Settlements"
         >
-          Settlements
+          <span className="nav-button__icon" aria-hidden>⌂</span>
+          <span className="nav-button__label">Settlements</span>
           <span className="badge">{gameState.settlements.filter(s => s.ownedBy === 'player').length}</span>
         </button>
         <button
           className={`nav-button ${activePanel === 'fleet' ? 'active' : ''}`}
           onClick={() => onTogglePanel(activePanel === 'fleet' ? null : 'fleet')}
+          title="Fleet"
+          aria-label="Fleet"
         >
-          Fleet
+          <span className="nav-button__icon" aria-hidden>◈</span>
+          <span className="nav-button__label">Fleet</span>
           <span className="badge">{playerShips.length}</span>
         </button>
         <button
           className={`nav-button ${activePanel === 'research' ? 'active' : ''}`}
           onClick={() => onTogglePanel(activePanel === 'research' ? null : 'research')}
           title="Research tech tree"
+          aria-label="Research"
         >
-          Research
+          <span className="nav-button__icon" aria-hidden>⚛</span>
+          <span className="nav-button__label">Research</span>
           {(() => {
             const lvls = gameState.factionTech?.player?.levels || {};
             const total = Object.values(lvls).reduce((s, n) => s + (n ?? 0), 0);
