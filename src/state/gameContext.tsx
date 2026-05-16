@@ -82,6 +82,12 @@ interface GameContextProviderProps {
    * where the server's tick scheduler is authoritative.
    */
   externallyControlled?: boolean;
+  /**
+   * If set, focus the camera on this body once the body exists in
+   * gameState. Used by MultiplayerGameProvider to drop the player at
+   * their capital instead of staring at Sol on first load.
+   */
+  initialFocusBodyId?: string | null;
 }
 
 export function GameContextProvider({
@@ -89,6 +95,7 @@ export function GameContextProvider({
   initialScenario = 1,
   externalState,
   externallyControlled = false,
+  initialFocusBodyId = null,
 }: GameContextProviderProps) {
   const [gameState, setGameStateInternal] = useState<GameState>(
     () => externalState ?? getScenario(initialScenario)
@@ -98,6 +105,21 @@ export function GameContextProvider({
   useEffect(() => {
     if (externalState) setGameStateInternal(externalState);
   }, [externalState]);
+
+  // One-shot: focus the camera on the requested body the first time
+  // that body shows up in gameState. Used by MultiplayerGameProvider
+  // to land the player at their capital instead of at Sol.
+  const initialFocusAppliedRef = useRef(false);
+  useEffect(() => {
+    if (initialFocusAppliedRef.current) return;
+    if (!initialFocusBodyId) return;
+    const exists = gameState.bodies.some(b => b.id === initialFocusBodyId);
+    if (!exists) return;
+    initialFocusAppliedRef.current = true;
+    setCameraInternal(prev => ({
+      ...prev, focusedBodyId: initialFocusBodyId, x: 0, y: 0, scale: 2, zoomLevel: 2,
+    }));
+  }, [initialFocusBodyId, gameState.bodies]);
   const [camera, setCameraInternal] = useState<CameraState>({
     x: 0, y: 0, scale: 1, zoomLevel: 1,
   });

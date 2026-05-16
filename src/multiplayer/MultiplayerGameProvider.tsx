@@ -413,6 +413,8 @@ interface GameMeta {
   winnerName: string | null;
   victoryType: string | null;
   myFactionId: string;
+  /** Caller's capital body id (per-game id like "<gameId>:earth"). */
+  capitalBodyId: string | null;
   factions: ServerState['factions'];
 }
 
@@ -445,6 +447,7 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
           winnerName,
           victoryType: res.data.game.victory_type ?? null,
           myFactionId: res.data.me.faction_id,
+          capitalBodyId: res.data.me.capital_body_id ?? null,
           factions: res.data.factions,
         });
         setError(null);
@@ -541,8 +544,14 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
   const gameOver = meta?.status === 'completed';
   const iWon = gameOver && meta?.winnerFactionId === meta?.myFactionId;
 
+  // Pass caller's capital body id so the canvas auto-pans there on
+  // first load instead of staring at Sol.
   return (
-    <GameContextProvider externalState={state} externallyControlled>
+    <GameContextProvider
+      externalState={state}
+      externallyControlled
+      initialFocusBodyId={meta?.capitalBodyId ?? null}
+    >
       <MultiplayerActionsProvider gameId={gameId}>
         {children}
         {gameOver && (
