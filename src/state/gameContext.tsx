@@ -333,8 +333,6 @@ export function GameContextProvider({
         // Ship is orbiting — check for departure burns
         const sortedOrders = [...orders].sort((a, b) => a.burnTime - b.burnTime);
         const executedIds: string[] = [];
-        const expiredPlannedIds: string[] = [];
-        let discardedTransferPlan = false;
         for (const node of sortedOrders) {
           if (node.status === 'committed' && node.burnTime <= tick) {
             if (pendingTransfer && node.type === 'transfer') {
@@ -346,24 +344,20 @@ export function GameContextProvider({
             }
             executedIds.push(node.id);
             changed = true;
-          } else if (node.status === 'planned' && node.burnTime < tick) {
-            // Planned (uncommitted) node whose burn window already
-            // passed. The player never committed it, so the plan is
-            // stale — drop it so it stops cluttering the order list
-            // and so its dashed Bezier preview disappears from the
-            // map. Pending transfer state attached to it is cleared
-            // alongside.
-            expiredPlannedIds.push(node.id);
-            if (node.type === 'transfer') discardedTransferPlan = true;
-            changed = true;
           }
+          // NOTE: previously we also auto-expired planned nodes whose burn
+          // window had passed. That made the COMMIT button disappear at
+          // higher sim speeds — the 5-tick launch buffer flies by in
+          // seconds at 10×+ and the player loses the ability to commit
+          // the plan they just drew. Planned nodes now persist until the
+          // player explicitly commits or deletes them. If a planned
+          // transfer is committed after its original departure window,
+          // commitManeuverNode refreshes the arc to depart at currentTick+5
+          // before flipping status. See the "stale arc refresh" block in
+          // commitManeuverNode.
         }
-        const removeIds = new Set([...executedIds, ...expiredPlannedIds]);
-        if (removeIds.size > 0) {
-          orders = orders.filter(o => !removeIds.has(o.id));
-        }
-        if (discardedTransferPlan) {
-          pendingTransfer = undefined;
+        if (executedIds.length > 0) {
+          orders = orders.filter(o => !executedIds.includes(o.id));
         }
       }
 
@@ -758,23 +752,64 @@ export function GameContextProvider({
   const commitManeuverNode = useCallback((nodeId: string) => {
     setGameStateInternal(prev => {
       const order = prev.orders.find(o => o.id === nodeId);
-      if (order) {
-        const ship = prev.ships.find(s => s.id === order.shipId);
-        logger.info('ACTION', `Committed ${order.type}: ${ship?.name ?? order.shipId}`, {
-          burnTime: Math.round(order.burnTime),
-        });
+      if (!order) return prev;
+      const ship = prev.ships.find(s => s.id === order.shipId);
+      logger.info('ACTION', `Committed ${order.type}: ${ship?.name ?? order.shipId}`, {
+        burnTime: Math.round(order.burnTime),
+      });
+
+      // Stale-arc refresh: a planned transfer that's been sitting around
+      // can have a burn time in the past (the player drew the arc, then
+      // ran the sim forward at 100× before clicking COMMIT). In that
+      // case, recompute the bezier arc from the ship's current orbit so
+      // the transfer launches in the near future instead of being
+      // "already supposed to have happened". Without this refresh the
+      // commit path triggers an immediate departure with a stale arc
+      // pointing at where the target body USED to be.
+      const tick = prev.currentTick;
+      let refreshedArc: TransferArc | undefined;
+      let refreshedNode = { ...order, status: 'committed' as const };
+      if (
+        order.type === 'transfer' &&
+        order.burnTime < tick + 1 &&
+        ship?.pendingTransfer
+      ) {
+        const playerTech = prev.factionTech?.[ship.ownedBy];
+        const mul = playerTech ? Math.max(0.2, 1 - (TECH_DEFS.propulsion.perLevel * (playerTech.levels.propulsion ?? 0))) : 1;
+        const fresh = planBezierTransfer(
+          ship.orbit,
+          ship.pendingTransfer.arrivalBodyId,
+          tick,
+          prev.bodies,
+          mul,
+        );
+        if (fresh) {
+          refreshedArc = fresh;
+          refreshedNode = {
+            ...refreshedNode,
+            burnTime: fresh.departureTime,
+            deltav: fresh.departureDv,
+            prograde: fresh.departureDv,
+            label: fresh.label,
+          };
+        }
       }
+
       return {
-      ...prev,
-      orders: prev.orders.map(order =>
-        order.id === nodeId ? { ...order, status: 'committed' as const } : order
-      ),
-      ships: prev.ships.map(ship => ({
-        ...ship,
-        orders: ship.orders.map(order =>
-          order.id === nodeId ? { ...order, status: 'committed' as const } : order
+        ...prev,
+        orders: prev.orders.map(o =>
+          o.id === nodeId ? refreshedNode : o
         ),
-      })),
+        ships: prev.ships.map(s => {
+          if (s.id !== order.shipId) return s;
+          return {
+            ...s,
+            orders: s.orders.map(o =>
+              o.id === nodeId ? refreshedNode : o
+            ),
+            pendingTransfer: refreshedArc ?? s.pendingTransfer,
+          };
+        }),
       };
     });
   }, []);
