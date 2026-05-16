@@ -121,6 +121,8 @@ function RoomDetail({
   const [snap, setSnap] = useState<RoomSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  // Bumped to force-reconnect the room WS (e.g. after a stale-socket send).
+  const [wsTick, setWsTick] = useState(0);
 
   // Empire identity form state (controlled; pre-fill from snap on first load).
   const [empireName, setEmpireName] = useState('');
@@ -147,23 +149,35 @@ function RoomDetail({
   }, [refresh]);
 
   // Open the lobby WebSocket so the server registers presence + chat works.
+  // Auto-reconnects on unexpected close (hibernation, network blip).
   useEffect(() => {
     const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${scheme}://${window.location.host}/api/rooms/${roomId}/ws`);
     wsRef.current = ws;
     let pingTimer: number | undefined;
+    let cancelled = false;
+    let reconnectTimer: number | undefined;
     ws.addEventListener('open', () => {
       pingTimer = window.setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping', t: Date.now() }));
       }, 25_000);
     });
     ws.addEventListener('message', () => refresh()); // any server message triggers re-poll
+    ws.addEventListener('close', () => {
+      if (cancelled) return;
+      // Backoff via setTimeout to avoid hot-looping on server-side rejections.
+      reconnectTimer = window.setTimeout(() => {
+        if (!cancelled) setWsTick((n) => n + 1);
+      }, 1500);
+    });
     return () => {
+      cancelled = true;
       if (pingTimer) clearInterval(pingTimer);
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       try { ws.close(); } catch { /* noop */ }
       wsRef.current = null;
     };
-  }, [roomId, refresh]);
+  }, [roomId, refresh, wsTick]);
 
   // When we get a game_id, jump out to the game view.
   useEffect(() => {
@@ -236,8 +250,26 @@ function RoomDetail({
   }
 
   function toggleReady() {
-    if (!user || !wsRef.current) return;
-    wsRef.current.send(JSON.stringify({ type: 'ready', ready: !myReady }));
+    if (!user) return;
+    const ws = wsRef.current;
+    // The cached ref can point at a socket that's already closing or
+    // closed (server hibernated, network blip, host-deletion notice
+    // racing the click). Calling .send() on a dead socket throws
+    // "WebSocket is already in CLOSING or CLOSED state" and the click
+    // does nothing — guard explicitly and kick the reconnect counter
+    // so the useEffect below opens a fresh socket.
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify({ type: 'ready', ready: !myReady }));
+        return;
+      } catch (e) {
+        console.warn('ready send failed, will reconnect', e);
+      }
+    }
+    // Dead socket. Bump the reconnect counter so the WS effect tears
+    // down + recreates. The user can click Ready Up again once the new
+    // socket opens — typically <500ms.
+    setWsTick((n) => n + 1);
   }
 
   async function kick(uid: string, name: string) {
