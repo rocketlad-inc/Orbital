@@ -262,7 +262,7 @@ function TradeList({
   showStatus?: boolean;
 }) {
   if (!trades.length) {
-    return <div className="mp-empty" style={{ textAlign: 'center', padding: 16, color: '#6b8195' }}>{emptyText}</div>;
+    return <div className="mp-empty" style={{ textAlign: 'center', padding: 16, color: '#8a9fb3' }}>{emptyText}</div>;
   }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -310,7 +310,7 @@ function TradeCard({
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, alignItems: 'center' }}>
-        <div style={{ fontSize: 10, color: '#6b8195' }}>
+        <div style={{ fontSize: 10, color: '#8a9fb3' }}>
           {isMineOutgoing ? 'To' : 'From'}{' '}
           <span style={{ color: otherParty?.color ?? '#d8e4ee', fontWeight: 600 }}>
             {otherParty?.name ?? 'unknown'}
@@ -329,7 +329,7 @@ function TradeCard({
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 8, alignItems: 'center' }}>
         <Side label="You give" bundle={youGive} pacts={youGivePacts} align="left" />
-        <div style={{ color: '#6b8195', fontSize: 14 }}>⇄</div>
+        <div style={{ color: '#8a9fb3', fontSize: 14 }}>⇄</div>
         <Side label="You receive" bundle={theyGive} pacts={theyGivePacts} align="right" />
       </div>
 
@@ -340,7 +340,7 @@ function TradeCard({
       )}
 
       {trade.parent_offer_id && (
-        <div style={{ marginTop: 4, fontSize: 9, color: '#6b8195' }}>
+        <div style={{ marginTop: 4, fontSize: 9, color: '#8a9fb3' }}>
           ↳ counter-offer
         </div>
       )}
@@ -367,13 +367,13 @@ function Side({
   return (
     <div style={{ textAlign: align }}>
       <div style={{
-        fontSize: 8, color: '#6b8195', letterSpacing: '0.08em',
+        fontSize: 8, color: '#8a9fb3', letterSpacing: '0.08em',
         textTransform: 'uppercase', marginBottom: 2,
       }}>
         {label}
       </div>
       {empty ? (
-        <div style={{ fontSize: 10, color: '#6b8195', fontStyle: 'italic' }}>nothing</div>
+        <div style={{ fontSize: 10, color: '#8a9fb3', fontStyle: 'italic' }}>nothing</div>
       ) : (
         <>
           {keys.map((k) => (
@@ -399,7 +399,7 @@ function PactsList({
   factionsById: Map<string, Faction>;
 }) {
   if (!pacts.length) {
-    return <div className="mp-empty" style={{ textAlign: 'center', padding: 16, color: '#6b8195' }}>No active pacts.</div>;
+    return <div className="mp-empty" style={{ textAlign: 'center', padding: 16, color: '#8a9fb3' }}>No active pacts.</div>;
   }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -427,7 +427,7 @@ function PactsList({
               );
             })}
           </div>
-          <div style={{ fontSize: 9, color: '#6b8195', marginTop: 2 }}>
+          <div style={{ fontSize: 9, color: '#8a9fb3', marginTop: 2 }}>
             Signed T+{p.signed_at_tick}
             {p.expires_at_tick != null && ` · expires T+${p.expires_at_tick}`}
           </div>
@@ -441,7 +441,7 @@ function statusColor(status: string): string {
   switch (status) {
     case 'accepted': return '#6ee7b7';
     case 'declined': return '#ff5e5e';
-    case 'cancelled': return '#6b8195';
+    case 'cancelled': return '#8a9fb3';
     case 'countered': return '#ffb84d';
     default: return '#a8b8c8';
   }

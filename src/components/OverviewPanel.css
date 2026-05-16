@@ -53,7 +53,7 @@
 
 .overview-panel__title-sub {
   font-size: 9px;
-  color: #6b8195;
+  color: #8a9fb3;
   letter-spacing: 0.1em;
   margin-top: 3px;
 }
@@ -61,7 +61,7 @@
 .overview-panel__close {
   background: none;
   border: 1px solid #2a3d50;
-  color: #6b8195;
+  color: #8a9fb3;
   cursor: pointer;
   font-size: 14px;
   padding: 0;
@@ -87,7 +87,7 @@
 .filter-chip {
   background: transparent;
   border: 1px solid #2a3d50;
-  color: #6b8195;
+  color: #8a9fb3;
   padding: 4px 10px;
   border-radius: 12px;
   cursor: pointer;
@@ -128,7 +128,7 @@
   font-weight: 700;
   font-size: 9px;
   letter-spacing: 0.12em;
-  color: #6b8195;
+  color: #8a9fb3;
   text-transform: uppercase;
   padding: 6px 10px;
   border-bottom: 1px solid #2a3d50;
@@ -166,7 +166,7 @@
 }
 
 .overview-table .col-muted {
-  color: #6b8195;
+  color: #8a9fb3;
   font-size: 10px;
 }
 
@@ -196,7 +196,7 @@
 
 .body-cell__type {
   font-size: 8px;
-  color: #6b8195;
+  color: #8a9fb3;
   text-transform: uppercase;
   letter-spacing: 0.1em;
 }
@@ -227,8 +227,8 @@
 
 .owner-badge--neutral {
   background: rgba(107, 129, 149, 0.15);
-  color: #6b8195;
-  border: 1px solid #6b8195;
+  color: #8a9fb3;
+  border: 1px solid #8a9fb3;
 }
 
 /* ---- Production rates ---- */
@@ -306,14 +306,14 @@
 
 .overview-section__count {
   font-size: 9px;
-  color: #6b8195;
+  color: #8a9fb3;
   letter-spacing: 0.1em;
 }
 
 .overview-empty {
   text-align: center;
   padding: 32px;
-  color: #6b8195;
+  color: #8a9fb3;
   font-style: italic;
   font-size: 11px;
 }
@@ -332,8 +332,8 @@
 
 .status-badge--orbiting {
   background: rgba(107, 129, 149, 0.15);
-  color: #6b8195;
-  border: 1px solid #6b8195;
+  color: #8a9fb3;
+  border: 1px solid #8a9fb3;
 }
 
 .status-badge--transit {
@@ -384,7 +384,7 @@
   margin-left: auto;
 }
 .fleet-bulk-bar__label {
-  color: #8a9aac;
+  color: #a5b7ca;
   font-size: 10px;
   letter-spacing: 0.08em;
   text-transform: uppercase;

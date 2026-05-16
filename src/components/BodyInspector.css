@@ -56,7 +56,7 @@
 .body-inspector .panel-focus {
   background: transparent;
   border: 1px solid #2a3d50;
-  color: #6b8195;
+  color: #8a9fb3;
   cursor: pointer;
   font-family: 'JetBrains Mono', monospace;
   font-size: 9px;
@@ -102,7 +102,7 @@
 }
 
 .resource-label {
-  color: #6b8195;
+  color: #8a9fb3;
   font-size: 8px;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -146,7 +146,7 @@
 
 .production-note {
   font-size: 8px;
-  color: #6b8195;
+  color: #8a9fb3;
   font-style: italic;
 }
 
@@ -163,7 +163,7 @@
 }
 
 .info-row .label {
-  color: #6b8195;
+  color: #8a9fb3;
   text-transform: uppercase;
   letter-spacing: 0.1em;
   font-size: 8px;
@@ -194,7 +194,7 @@
 }
 
 .settlements-section .no-orders {
-  color: #6b8195;
+  color: #8a9fb3;
   font-style: italic;
   font-size: 9px;
   margin-left: 4px;
@@ -235,7 +235,7 @@
   display: flex;
   gap: 8px;
   font-size: 8px;
-  color: #6b8195;
+  color: #8a9fb3;
 }
 
 .settlement-stats .yield {
@@ -278,12 +278,12 @@
   opacity: 0.4;
   cursor: not-allowed;
   border-color: #2a3d50;
-  color: #6b8195;
+  color: #8a9fb3;
 }
 
 .deploy-hint {
   font-size: 8px;
-  color: #6b8195;
+  color: #8a9fb3;
   font-style: italic;
   text-align: center;
   margin-top: 2px;
@@ -357,7 +357,7 @@
 .deploy-prompt-actions .btn-cancel {
   background: transparent;
   border: 1px solid #2a3d50;
-  color: #6b8195;
+  color: #8a9fb3;
   padding: 6px 4px;
   border-radius: 2px;
   cursor: pointer;
@@ -370,6 +370,6 @@
 }
 
 .deploy-prompt-actions .btn-cancel:hover {
-  border-color: #6b8195;
+  border-color: #8a9fb3;
   color: #d8e4ee;
 }

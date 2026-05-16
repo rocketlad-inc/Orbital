@@ -411,7 +411,7 @@ export const ShipPanel: React.FC = () => {
                 <span className="label">CADENCE</span>
                 <span className="value">every 20 ticks</span>
               </div>
-              <div className="stat-row" style={{ fontSize: '9px', color: '#6b8195', fontStyle: 'italic' }}>
+              <div className="stat-row" style={{ fontSize: '9px', color: '#8a9fb3', fontStyle: 'italic' }}>
                 Auto-fires at any hostile sharing this body.
               </div>
             </div>
@@ -505,7 +505,7 @@ const FleetFormationModal: React.FC<FleetFormationModalProps> = ({ mode, fleetNa
                     onChange={() => toggle(p.id)}
                   />
                   <span style={{ flex: 1 }}>{p.name}</span>
-                  <span style={{ color: '#6b8195', fontSize: 9 }}>{p.class.toUpperCase()}</span>
+                  <span style={{ color: '#8a9fb3', fontSize: 9 }}>{p.class.toUpperCase()}</span>
                 </label>
               ))}
             </div>

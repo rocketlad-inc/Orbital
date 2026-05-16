@@ -75,7 +75,7 @@
 .outliner__section-title {
   font-size: 8px;
   font-weight: 700;
-  color: #6b8195;
+  color: #8a9fb3;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   padding: 4px 8px;
@@ -123,7 +123,7 @@
 
 .outliner__body-count {
   font-size: 9px;
-  color: #6b8195;
+  color: #8a9fb3;
   padding: 1px 6px;
   background: rgba(107, 129, 149, 0.15);
   border-radius: 8px;
@@ -154,7 +154,7 @@
 
 .outliner__ship-class {
   font-size: 8px;
-  color: #6b8195;
+  color: #8a9fb3;
   text-transform: uppercase;
   margin-right: 4px;
   letter-spacing: 0.05em;
@@ -185,7 +185,7 @@
 
 .outliner__empty {
   font-size: 9px;
-  color: #6b8195;
+  color: #8a9fb3;
   font-style: italic;
   padding: 4px 12px;
 }

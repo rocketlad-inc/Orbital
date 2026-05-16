@@ -38,7 +38,7 @@
 }
 
 .build-name-input::placeholder {
-  color: #6b8195;
+  color: #8a9fb3;
   font-style: italic;
 }
 
@@ -49,7 +49,7 @@
 
 .queue-label {
   font-size: 9px;
-  color: #6b8195;
+  color: #8a9fb3;
   margin-bottom: 4px;
 }
 
@@ -73,7 +73,7 @@
 }
 
 .build-class {
-  color: #6b8195;
+  color: #8a9fb3;
   font-size: 8px;
 }
 
@@ -158,7 +158,7 @@
 }
 
 .class-stats .stat {
-  color: #6b8195;
+  color: #8a9fb3;
   font-size: 9px;
 }
 
@@ -210,6 +210,6 @@
 
 .resources-bar .resource {
   font-size: 9px;
-  color: #6b8195;
+  color: #8a9fb3;
   font-weight: bold;
 }

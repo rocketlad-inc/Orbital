@@ -70,7 +70,7 @@
 }
 
 .stat-row .label {
-  color: #6b8195;
+  color: #8a9fb3;
   text-transform: uppercase;
   letter-spacing: 0.1em;
   font-size: 9px;
@@ -136,7 +136,7 @@
 }
 
 .fleet-member-class {
-  color: #6b8195;
+  color: #8a9fb3;
   font-size: 9px;
 }
 
@@ -153,7 +153,7 @@
 }
 
 .no-orders {
-  color: #6b8195;
+  color: #8a9fb3;
   font-style: italic;
   font-size: 9px;
   margin-left: 8px;
@@ -186,7 +186,7 @@
 }
 
 .order-item.status-queued {
-  border-color: #6b8195;
+  border-color: #8a9fb3;
   background: rgba(107, 129, 149, 0.05);
   border-style: dashed;
 }
@@ -203,7 +203,7 @@
 }
 
 .order-details {
-  color: #6b8195;
+  color: #8a9fb3;
   font-size: 8px;
   margin-top: 2px;
 }
@@ -305,7 +305,7 @@
 }
 
 .advanced-section summary {
-  color: #6b8195;
+  color: #8a9fb3;
   font-size: 9px;
   cursor: pointer;
   text-transform: uppercase;
@@ -323,7 +323,7 @@
   padding: 6px;
   background: rgba(78, 205, 196, 0.05);
   border-radius: 2px;
-  color: #6b8195;
+  color: #8a9fb3;
   font-size: 9px;
 }
 
@@ -434,7 +434,7 @@
 }
 
 .input-group label {
-  color: #6b8195;
+  color: #8a9fb3;
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -458,7 +458,7 @@
 }
 
 .input-group input::placeholder {
-  color: #6b8195;
+  color: #8a9fb3;
 }
 
 .modal-actions {
@@ -496,7 +496,7 @@
 
 .btn-secondary {
   background: transparent;
-  color: #6b8195;
+  color: #8a9fb3;
   border: 1px solid #2a3d50;
 }
 

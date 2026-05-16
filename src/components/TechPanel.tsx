@@ -113,7 +113,7 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                   <div className="tech-card__effect-label">Current</div>
                   <div className="tech-card__effect-value">
                     {lvl === 0 ? (
-                      <span style={{ color: '#6b8195' }}>no bonus</span>
+                      <span style={{ color: '#8a9fb3' }}>no bonus</span>
                     ) : (
                       <span style={{ color: '#6ee7b7' }}>
                         +{(effectAtLevel(def, lvl) * 100).toFixed(0)}% effect
@@ -123,7 +123,7 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                 </div>
 
                 <div className="tech-card__cost">
-                  <span style={{ color: '#6b8195' }}>Lv {lvl + 1} cost</span>
+                  <span style={{ color: '#8a9fb3' }}>Lv {lvl + 1} cost</span>
                   <span style={{ color: cost <= playerScience ? '#6ee7b7' : '#ffb84d' }}>
                     {cost} sci
                   </span>

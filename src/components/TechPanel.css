@@ -67,7 +67,7 @@
 
 .tech-active__bar-text {
   font-size: 9px;
-  color: #6b8195;
+  color: #8a9fb3;
   margin-top: 3px;
   letter-spacing: 0.05em;
 }
@@ -180,7 +180,7 @@
 
 .tech-card__effect-label {
   font-size: 8px;
-  color: #6b8195;
+  color: #8a9fb3;
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
@@ -232,5 +232,5 @@
   opacity: 0.4;
   cursor: not-allowed;
   border-color: #2a3d50;
-  color: #6b8195;
+  color: #8a9fb3;
 }

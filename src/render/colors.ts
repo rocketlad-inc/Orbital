@@ -7,7 +7,7 @@ export const COLORS = {
   bg: '#0a0e14',
   bgGrid: '#14202c',
   fg: '#d8e4ee',
-  fgDim: '#6b8195',
+  fgDim: '#8a9fb3',
   fgFaint: '#3a4a5a',
   panelBg: 'rgba(10, 14, 20, 0.94)',
   panelBorder: '#2a3d50',
