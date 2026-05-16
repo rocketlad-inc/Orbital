@@ -101,6 +101,18 @@ export class Room {
       }
       return new Response(null, { status: 204 });
     }
+    if (url.pathname === '/destroy' && req.method === 'POST') {
+      // Host deleted the room. Tell every connected client the room is
+      // gone, close their sockets, cancel pending alarms, and wipe DO
+      // storage so a stale DO doesn't keep ticking a deleted game.
+      this.broadcast({ type: 'room_deleted' });
+      for (const ws of this.state.getWebSockets()) {
+        try { ws.close(4002, 'room_deleted'); } catch {}
+      }
+      try { await this.state.storage.deleteAlarm(); } catch {}
+      try { await this.state.storage.deleteAll(); } catch {}
+      return new Response(null, { status: 204 });
+    }
     if (url.pathname === '/connect') {
       if (req.headers.get('upgrade') !== 'websocket') {
         return new Response('expected websocket', { status: 426 });

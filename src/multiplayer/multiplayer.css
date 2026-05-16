@@ -967,3 +967,36 @@
   margin-top: 2px;
 }
 .lobby-body-card__tag.is-taken { color: var(--mp-fg-dim); }
+
+/* Host-only delete button stacked over their own room cards. */
+.mp-room-card-wrap {
+  position: relative;
+}
+.mp-room-card__delete {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 11px;
+  border: 1px solid var(--mp-border);
+  background: rgba(10, 14, 20, 0.7);
+  color: var(--mp-fg-dim);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mp-room-card__delete:hover:not(:disabled) {
+  background: var(--mp-hostile);
+  color: var(--mp-bg);
+  border-color: var(--mp-hostile);
+}
+.mp-room-card__delete:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}

@@ -298,6 +298,24 @@ async function handleCreateRoom(req, env, session) {
   }, { status: 201 });
 }
 
+// DELETE /api/rooms/:roomId — only the host can delete a room. Cascades
+// through FKs in D1 so room_members, games (and their dependents:
+// game_factions, game_bodies, game_ships, game_settlements, treaties,
+// senate_proposals, chronicle_entries, etc.) all go with it.
+async function handleDeleteRoom(req, env, session, roomId) {
+  if (!ROOM_ID_RE.test(roomId)) return err(400, 'bad_request', 'invalid room id');
+  const room = await env.DB.prepare('SELECT id, host_id FROM rooms WHERE id = ?').bind(roomId).first();
+  if (!room) return err(404, 'not_found', 'room not found');
+  if (room.host_id !== session.user_id) return err(403, 'not_host', 'only the host can delete this room');
+
+  await env.DB.prepare('DELETE FROM rooms WHERE id = ?').bind(roomId).run();
+  // Best-effort: tell the Room DO to close any open sockets and forget itself.
+  try {
+    await roomStub(env, roomId).fetch('https://room/destroy', { method: 'POST' });
+  } catch { /* DO eviction is fine */ }
+  return json({ ok: true });
+}
+
 async function handleJoinRoom(req, env, session, roomId) {
   if (!ROOM_ID_RE.test(roomId)) return err(400, 'bad_request', 'invalid room id');
   const room = await env.DB
@@ -460,6 +478,7 @@ export default {
 
       const snapMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)$/);
       if (snapMatch && req.method === 'GET') return handleRoomSnapshot(req, env, session, snapMatch[1]);
+      if (snapMatch && req.method === 'DELETE') return handleDeleteRoom(req, env, session, snapMatch[1]);
 
       const wsMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)\/ws$/);
       if (wsMatch) return handleRoomConnect(req, env, session, wsMatch[1]);

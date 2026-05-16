@@ -72,7 +72,14 @@ export function MultiplayerLobby({ onEnterRoom, onExit }: Props) {
       </nav>
 
       <main className="mp-lobby__main">
-        {tab === 'my'     && <MyGamesPanel rooms={myRooms} onEnter={onEnterRoom} />}
+        {tab === 'my'     && (
+          <MyGamesPanel
+            rooms={myRooms}
+            onEnter={onEnterRoom}
+            onChanged={refreshMyRooms}
+            myUserId={user?.id}
+          />
+        )}
         {tab === 'browse' && <BrowsePanel onEnter={onEnterRoom} />}
         {tab === 'create' && <CreatePanel onCreated={onEnterRoom} />}
         {tab === 'code'   && <JoinByCodePanel onJoined={onEnterRoom} />}
@@ -97,8 +104,16 @@ function TabButton({
 // ---------- My Games ----------
 
 function MyGamesPanel({
-  rooms, onEnter,
-}: { rooms: RoomSummary[] | null; onEnter: (id: string) => void }) {
+  rooms, onEnter, onChanged, myUserId,
+}: {
+  rooms: RoomSummary[] | null;
+  onEnter: (id: string) => void;
+  onChanged: () => void;
+  myUserId?: string;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
   if (rooms === null) {
     return <div className="mp-lobby__loading">Loading…</div>;
   }
@@ -116,12 +131,49 @@ function MyGamesPanel({
       r.game_status === 'active' ? 0 : r.game_status ? 1 : 2;
     return score(a) - score(b);
   });
+
+  async function deleteRoom(r: RoomSummary) {
+    if (!window.confirm(`Delete room "${r.name}"? This permanently removes the room and any game in it.`)) return;
+    setError(null);
+    setBusyId(r.id);
+    const res = await apiFetch(`/api/rooms/${r.id}`, { method: 'DELETE' });
+    setBusyId(null);
+    if (!res.ok) {
+      setError(res.error?.message ?? 'Could not delete room');
+      return;
+    }
+    onChanged();
+  }
+
   return (
     <section className="mp-lobby__section">
       <div className="mp-lobby__section-title">Resume your campaigns</div>
       <div className="mp-room-grid">
-        {sorted.map(r => <RoomCard key={r.id} room={r} onClick={() => onEnter(r.id)} variant="my" />)}
+        {sorted.map(r => {
+          const iAmHost = !!myUserId && r.host_id === myUserId;
+          return (
+            <div key={r.id} className="mp-room-card-wrap">
+              <RoomCard
+                room={r}
+                onClick={() => onEnter(r.id)}
+                variant="my"
+                loading={busyId === r.id}
+              />
+              {iAmHost && (
+                <button
+                  className="mp-room-card__delete"
+                  onClick={(e) => { e.stopPropagation(); deleteRoom(r); }}
+                  disabled={busyId === r.id}
+                  title="Delete this room (host only)"
+                >
+                  {busyId === r.id ? '…' : '✕'}
+                </button>
+              )}
+            </div>
+          );
+        })}
       </div>
+      {error && <div className="mp-error" style={{ marginTop: 12 }}>{error}</div>}
     </section>
   );
 }
