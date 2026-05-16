@@ -250,12 +250,42 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
     }
 
+    // Build a co-orbit formation map: ships sharing the same parent body
+    // and a similar orbital radius (bucketed) get fanned out perpendicular
+    // to their velocity so the cluster reads as a formation instead of a
+    // single overlapping dot. Only orbiting ships are bucketed — ships in
+    // transit follow their Bezier arc and don't stack.
+    const formationMap = new Map<string, { index: number; total: number }>();
+    {
+      const buckets = new Map<string, string[]>();
+      for (const s of gameState.ships) {
+        if (s.transfer) continue;
+        if (s.ownedBy !== 'player' && !visibleShipIds.has(s.id)) continue;
+        // Bucket by parent + coarse orbital radius so two ships intended to
+        // share an orbit cluster together even if their semi-major axes
+        // differ by sub-unit rounding. Use (rp+ra)/2 as the SMA proxy.
+        const sma = ((s.orbit.rp ?? 0) + (s.orbit.ra ?? 0)) / 2;
+        const key = `${s.orbit.parentBodyId}|${Math.round(sma)}`;
+        const list = buckets.get(key) || [];
+        list.push(s.id);
+        buckets.set(key, list);
+      }
+      for (const list of buckets.values()) {
+        if (list.length < 2) continue;
+        list.sort();  // stable order so a ship's lane doesn't jitter frame-to-frame
+        list.forEach((sid, i) => {
+          formationMap.set(sid, { index: i, total: list.length });
+        });
+      }
+    }
+
     // Draw ships
     for (const ship of gameState.ships) {
       // Fog of war: skip enemy ships the player can't currently see
       if (ship.ownedBy !== 'player' && !visibleShipIds.has(ship.id)) continue;
 
       const isSelected = uiState.selectedShipId === ship.id;
+      const formation = formationMap.get(ship.id);
 
       if (ship.transfer) {
         drawBezierTrajectory(ship.transfer, renderContext, COLORS.arcTransfer, false);
@@ -281,7 +311,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           isSelected ? COLORS.orbitCurrent : COLORS.orbitTrajectory,
           isSelected ? 2 : 1
         );
-        drawShip(ship, renderContext, isSelected);
+        drawShip(ship, renderContext, isSelected, formation);
         if (isSelected) drawApsisMarkers(ship, renderContext);
 
         const nodeColor = ship.orders.some(o => o.type === 'transfer' && o.status === 'committed')
@@ -313,7 +343,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           isSelected ? COLORS.orbitCurrent : COLORS.orbitTrajectory,
           isSelected ? 2 : 1
         );
-        drawShip(ship, renderContext, isSelected);
+        drawShip(ship, renderContext, isSelected, formation);
         if (isSelected) drawApsisMarkers(ship, renderContext);
       }
     }

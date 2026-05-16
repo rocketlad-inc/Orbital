@@ -500,7 +500,8 @@ export function drawBody(
 export function drawShip(
   ship: Ship,
   ctx: RenderContext,
-  isSelected: boolean = false
+  isSelected: boolean = false,
+  formation?: { index: number; total: number }
 ) {
   const parentBody = ctx.bodies.find(b => b.id === ship.orbit.parentBodyId);
   if (!parentBody) return;
@@ -509,7 +510,7 @@ export function drawShip(
   const localPos = localPositionAt(ship.orbit, ctx.t);
   const worldX = parentPos.x + localPos.x;
   const worldY = parentPos.y + localPos.y;
-  const canvasPos = worldToCanvas(worldX, worldY, ctx);
+  let canvasPos = worldToCanvas(worldX, worldY, ctx);
 
   // Faction-colored: cyan for player, red for enemy.
   const shipColor = ship.ownedBy === 'enemy' ? COLORS.danger : COLORS.neutral;
@@ -517,6 +518,21 @@ export function drawShip(
   // Velocity vector — used both to rotate the icon and as a fallback tick.
   const vel = velocityVectorsAt(ship.orbit, ctx.t);
   const heading = Math.atan2(vel.prograde.y, vel.prograde.x);
+
+  // When several ships share the same orbit they stack at exactly the
+  // same canvas pixel — invisible to the player. Spread them perpendicular
+  // to the orbit's velocity direction by a few canvas pixels each so a
+  // cluster of N reads as a small formation rather than a single dot.
+  if (formation && formation.total > 1) {
+    const perpX = -Math.sin(heading);
+    const perpY =  Math.cos(heading);
+    const spacing = 12;
+    const lane = formation.index - (formation.total - 1) / 2;
+    canvasPos = {
+      x: canvasPos.x + perpX * lane * spacing,
+      y: canvasPos.y + perpY * lane * spacing,
+    };
+  }
 
   const iconSize = isSelected ? 22 : 18;
   const icon = getShipIconImage(ship.class as ShipIconClass, shipColor);
