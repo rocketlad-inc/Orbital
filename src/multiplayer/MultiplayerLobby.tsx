@@ -113,6 +113,11 @@ function MyGamesPanel({
 }) {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Optimistic: once the user clicks Delete and the server returns OK,
+  // the card should disappear immediately. We can't mutate the parent's
+  // `rooms` prop, but we can locally hide any id in this Set until the
+  // next refetch arrives with the actual list.
+  const [locallyDeleted, setLocallyDeleted] = useState<Set<string>>(new Set());
 
   if (rooms === null) {
     return <div className="mp-lobby__loading">Loading…</div>;
@@ -126,7 +131,18 @@ function MyGamesPanel({
     );
   }
   // Sort: active games first, then lobby, then anything else.
-  const sorted = [...rooms].sort((a, b) => {
+  // Filter out optimistically-deleted rooms even if the server hasn't
+  // refetched yet (or if there's some caching layer that returns stale).
+  const visibleRooms = rooms.filter(r => !locallyDeleted.has(r.id));
+  if (visibleRooms.length === 0) {
+    return (
+      <EmptyState
+        title="You haven't joined any games yet"
+        hint="Browse open rooms, create your own, or paste an invite code from a friend."
+      />
+    );
+  }
+  const sorted = [...visibleRooms].sort((a, b) => {
     const score = (r: RoomSummary) =>
       r.game_status === 'active' ? 0 : r.game_status ? 1 : 2;
     return score(a) - score(b);
@@ -142,6 +158,13 @@ function MyGamesPanel({
       setError(res.error?.message ?? 'Could not delete room');
       return;
     }
+    // Hide the card immediately so users don't keep seeing a ghost
+    // entry while the refetch is in flight.
+    setLocallyDeleted(prev => {
+      const next = new Set(prev);
+      next.add(r.id);
+      return next;
+    });
     onChanged();
   }
 
