@@ -1,3 +1,3 @@
 export { GameContextProvider, useGameContext } from './gameContext';
-export { getScenario, createScenario1, createScenario2, createScenario3, SCENARIO_DESCRIPTIONS, SHARED_BODIES, SHARED_FACTIONS } from './mockGameState';
-export type { ScenarioType } from './mockGameState';
+export { SHARED_BODIES, MU_SOL } from './mockGameState';
+export { setupSinglePlayer, computeWinner, getStartingBodyOptions } from './singlePlayerSetup';

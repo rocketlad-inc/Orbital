@@ -1,6 +1,10 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { GameState, ManeuverNode, CameraState, MapUIState, Ship, Body, TransferArc, BuildOrder, SettlementType, FactionResources } from '../types';
-import { getScenario, ScenarioType } from './mockGameState';
+// Scenarios were removed when single-player switched to SinglePlayerSetup.
+// GameContextProvider now requires either an initialState (single-player,
+// seeded by setupSinglePlayer) or an externalState (multiplayer, server-
+// driven). The fallback empty state below is only hit if neither prop is
+// passed, which would be a programming error rather than a play state.
 import { createCircularOrbit } from '../physics/orbitalMechanics';
 import { getShipClass, ShipClassName, SHIP_CLASSES } from '../game/shipClasses';
 import { formFleet, splitFromFleet } from '../game/fleet';
@@ -144,7 +148,6 @@ interface GameContextType {
   updateGameState: (partial: Partial<GameState>) => void;
   updateTick: (tick: number) => void;
   setSimSpeed: (speed: number) => void;
-  loadScenario: (type: ScenarioType) => void;
 
   updateCamera: (camera: Partial<CameraState>) => void;
   focusBody: (bodyId: string | undefined) => void;
@@ -187,10 +190,10 @@ const GameContext = createContext<GameContextType | undefined>(undefined);
 
 interface GameContextProviderProps {
   children: React.ReactNode;
-  initialScenario?: ScenarioType;
   /**
-   * Seeded single-player state from SinglePlayerSetup. Takes precedence
-   * over initialScenario but yields to externalState when present.
+   * Seeded single-player state from SinglePlayerSetup. One of `initialState`
+   * or `externalState` should always be provided; if neither is, the
+   * provider falls back to an empty world (programming-error path).
    */
   initialState?: GameState;
   /**
@@ -213,16 +216,36 @@ interface GameContextProviderProps {
   initialFocusBodyId?: string | null;
 }
 
+/** Empty fallback GameState — only hit if a GameContextProvider is mounted
+ *  without either initialState or externalState (programming error). */
+function emptyGameState(): GameState {
+  return {
+    currentTick: 0,
+    bodies: [],
+    ships: [],
+    fleets: [],
+    factions: [],
+    settlements: [],
+    orders: [],
+    buildOrders: [],
+    resources: {},
+    factionTech: {},
+    combatLog: [],
+    lastHarvestTick: 0,
+    aiActivityLog: [],
+    status: 'lobby',
+  };
+}
+
 export function GameContextProvider({
   children,
-  initialScenario = 1,
   initialState,
   externalState,
   externallyControlled = false,
   initialFocusBodyId = null,
 }: GameContextProviderProps) {
   const [gameState, setGameStateInternal] = useState<GameState>(
-    () => externalState ?? initialState ?? getScenario(initialScenario)
+    () => externalState ?? initialState ?? emptyGameState()
   );
 
   // Replace gameState whenever the external snapshot changes reference.
@@ -622,19 +645,6 @@ export function GameContextProvider({
     setSimSpeedInternal(speed);
   }, []);
 
-  const loadScenario = useCallback((type: ScenarioType) => {
-    setGameStateInternal(getScenario(type));
-    setSimSpeedInternal(0);
-    setCameraInternal({ x: 0, y: 0, scale: 1, zoomLevel: 1 });
-    setUIStateInternal({
-      selectedShipId: undefined,
-      selectedBodyId: undefined,
-      hoveredBodyId: undefined,
-      targetSelectionMode: false,
-    });
-    setSelectedSettlementId(undefined);
-  }, []);
-
   const updateCamera = useCallback((partial: Partial<CameraState>) => {
     setCameraInternal(prev => ({ ...prev, ...partial }));
   }, []);
@@ -992,7 +1002,7 @@ export function GameContextProvider({
 
   const value: GameContextType = {
     gameState, camera, uiState, simSpeed,
-    setGameState, updateGameState, updateTick, setSimSpeed, loadScenario,
+    setGameState, updateGameState, updateTick, setSimSpeed,
     updateCamera, focusBody,
     selectShip, deselectShip, selectBody, deselectBody, hoverBody,
     setTargetSelectionMode,

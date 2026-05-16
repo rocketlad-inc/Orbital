@@ -1,15 +1,24 @@
 // ============================================================
-// Mock Game State - Real Solar System (23 bodies)
-// Ported from HTML prototype (trusting-mahavira branch)
+// Solar System Catalog — 23 bodies in the playable solar system.
+//
+// Originally seeded the four hardcoded "scenarios" used to demo the
+// game before AI existed. Those scenarios are gone now (replaced by
+// SinglePlayerSetup); this file is the canonical body catalog and
+// nothing more. Mirrors worker/factions.js BODY_CATALOG (server side).
+//
+// Consumers:
+//   - src/state/singlePlayerSetup.ts — reads SHARED_BODIES to seed
+//     new single-player campaigns and lists starting capitals
+//   - src/state/index.ts — re-exports SHARED_BODIES
 // ============================================================
 
-import { Body, Ship, Faction, GameState, OrbitElements, FactionResources, Settlement } from '../types';
-import { createStation } from '../game/settlements';
+import { Body } from '../types';
 
 const TWO_PI = 2 * Math.PI;
 
 // MU_SOL derived from Jupiter's orbit: 4π²·460³/800²
-const MU_SOL = 4 * Math.PI * Math.PI * Math.pow(460, 3) / Math.pow(800, 2);
+// Kept exported in case the orbital-mechanics code wants the same value.
+export const MU_SOL = 4 * Math.PI * Math.PI * Math.pow(460, 3) / Math.pow(800, 2);
 
 // Full solar system — 23 bodies matching the HTML prototype
 export const SHARED_BODIES: Body[] = [
@@ -257,271 +266,8 @@ export const SHARED_BODIES: Body[] = [
   },
 ];
 
-// Shared factions
-export const SHARED_FACTIONS: Faction[] = [
-  { id: 'player', name: 'Player', color: '#4ecdc4', isPlayer: true },
-  // Enemy is AI-driven in single-player scenarios. Run by src/game/factionAI.ts.
-  { id: 'enemy', name: 'Enemy', color: '#ff5e5e', isPlayer: false, isAI: true },
-];
-
-// Helper to create a basic circular orbit at a given body
-function circularOrbitAround(
-  bodyId: string,
-  altitude: number,
-  direction: 1 | -1 = 1
-): OrbitElements {
-  const body = SHARED_BODIES.find(b => b.id === bodyId);
-  if (!body) throw new Error(`Body ${bodyId} not found`);
-
-  const r = body.radius + altitude;
-  let mu: number;
-  if (bodyId === 'sol') {
-    mu = MU_SOL;
-  } else if (body.mu != null && body.mu > 0) {
-    mu = body.mu;
-  } else {
-    mu = 100;
-  }
-
-  const period = TWO_PI * Math.sqrt((r * r * r) / mu);
-
-  return {
-    rp: r, ra: r, omega: 0, M0: 0, epoch: 0,
-    direction, period, parentBodyId: bodyId,
-  };
-}
-
-/**
- * DEFAULT_RESOURCES is a TEMPLATE — use freshResources() to get a deep copy
- * suitable for assignment into a new GameState. Don't spread DEFAULT_RESOURCES
- * directly: shallow-copying it shares the inner per-faction objects across
- * scenarios, so the first tick's mutation would leak into the template.
- */
-const DEFAULT_RESOURCES: Record<string, FactionResources> = {
-  player: { fuel: 100, ore: 200, credits: 150, science: 50 },
-  enemy: { fuel: 100, ore: 200, credits: 150, science: 50 },
-};
-
-function freshResources(): Record<string, FactionResources> {
-  return {
-    player: { ...DEFAULT_RESOURCES.player },
-    enemy: { ...DEFAULT_RESOURCES.enemy },
-  };
-}
-
-function freshFactionTech(): GameState['factionTech'] {
-  return {
-    player: { levels: {}, researching: null, progress: 0 },
-    enemy:  { levels: {}, researching: null, progress: 0 },
-  };
-}
-
-function withOwnership(bodies: Body[]): Body[] {
-  return bodies.map(b => {
-    if (b.id === 'earth' || b.id === 'luna') return { ...b, ownedBy: 'player' };
-    if (b.id === 'mars') return { ...b, ownedBy: 'enemy' };
-    return { ...b };
-  });
-}
-
-// ============================================================
-// SCENARIO 1: Rocinante and Donnager at Earth
-// ============================================================
-export function createScenario1(): GameState {
-  const bodies = withOwnership(SHARED_BODIES);
-  const factions = SHARED_FACTIONS.map(f => ({ ...f }));
-
-  const ships: Ship[] = [
-    {
-      id: 'ship-roci', name: 'Rocinante', class: 'corvette',
-      ownedBy: 'player', fuel: 80,
-      orbit: circularOrbitAround('earth', 10, 1),
-      orders: [],
-    },
-    {
-      id: 'ship-donnager', name: 'Donnager', class: 'frigate',
-      ownedBy: 'player', fuel: 120,
-      orbit: { ...circularOrbitAround('earth', 15, 1), M0: Math.PI },
-      orders: [],
-    },
-    {
-      id: 'ship-canterbury', name: 'Canterbury', class: 'freighter',
-      ownedBy: 'player', fuel: 100,
-      orbit: { ...circularOrbitAround('earth', 18, 1), M0: Math.PI * 1.5 },
-      orders: [],
-    },
-  ];
-
-  return {
-    currentTick: 0, bodies, ships, factions, orders: [],
-    fleets: [], buildOrders: [], settlements: [],
-    resources: freshResources(),
-    combatLog: [], lastHarvestTick: 0,
-    factionTech: freshFactionTech(),
-  };
-}
-
-// ============================================================
-// SCENARIO 2: Fleet combat — Player at Earth vs Enemy at Mars
-// ============================================================
-export function createScenario2(): GameState {
-  const bodies = withOwnership(SHARED_BODIES);
-  const factions = SHARED_FACTIONS.map(f => ({ ...f }));
-
-  const ships: Ship[] = [
-    // Player fleet at Earth
-    {
-      id: 'ship-roci', name: 'Rocinante', class: 'corvette',
-      ownedBy: 'player', fuel: 80,
-      orbit: circularOrbitAround('earth', 10, 1),
-      orders: [],
-    },
-    {
-      id: 'ship-donnager', name: 'Donnager', class: 'destroyer',
-      ownedBy: 'player', fuel: 150,
-      orbit: { ...circularOrbitAround('earth', 14, 1), M0: Math.PI * 0.5 },
-      orders: [],
-    },
-    {
-      id: 'ship-canterbury', name: 'Canterbury', class: 'freighter',
-      ownedBy: 'player', fuel: 100,
-      orbit: { ...circularOrbitAround('earth', 18, 1), M0: Math.PI },
-      orders: [],
-    },
-    // Enemy fleet at Mars — same shape as player so the AI has a real economy
-    {
-      id: 'ship-phantom', name: 'Phantom', class: 'corvette',
-      ownedBy: 'enemy', fuel: 80,
-      orbit: circularOrbitAround('mars', 10, -1),
-      orders: [],
-    },
-    {
-      id: 'ship-wraith', name: 'Wraith', class: 'frigate',
-      ownedBy: 'enemy', fuel: 120,
-      orbit: { ...circularOrbitAround('mars', 14, -1), M0: Math.PI },
-      orders: [],
-    },
-    {
-      id: 'ship-rove', name: 'Rove', class: 'freighter',
-      ownedBy: 'enemy', fuel: 100,
-      orbit: { ...circularOrbitAround('mars', 18, -1), M0: Math.PI * 0.5 },
-      orders: [],
-    },
-  ];
-
-  // Pre-deploy a station at each faction's capital so both can build ships
-  // (the shipyard requires a station at the body) and the AI has an economic
-  // toehold to start from.
-  const earthBody = bodies.find(b => b.id === 'earth')!;
-  const marsBody = bodies.find(b => b.id === 'mars')!;
-  const settlements: Settlement[] = [
-    createStation(earthBody, 'player', 0, bodies, 'Tycho Station'),
-    createStation(marsBody, 'enemy', 0, bodies, 'Hellas Yards'),
-  ];
-
-  return {
-    currentTick: 0, bodies, ships, factions, orders: [],
-    fleets: [], buildOrders: [], settlements,
-    resources: freshResources(),
-    combatLog: [], lastHarvestTick: 0,
-    factionTech: freshFactionTech(),
-    aiActivityLog: [],
-  };
-}
-
-// ============================================================
-// SCENARIO 3: Trade route — Freighter at Earth, build corvette escort
-// ============================================================
-export function createScenario3(): GameState {
-  const bodies = withOwnership(SHARED_BODIES);
-  const factions = SHARED_FACTIONS.map(f => ({ ...f }));
-
-  const ships: Ship[] = [
-    {
-      id: 'ship-canterbury', name: 'Canterbury', class: 'freighter',
-      ownedBy: 'player', fuel: 100,
-      orbit: circularOrbitAround('earth', 12, 1),
-      orders: [],
-    },
-    {
-      id: 'ship-escort', name: 'Tachi', class: 'corvette',
-      ownedBy: 'player', fuel: 80,
-      orbit: { ...circularOrbitAround('earth', 14, 1), M0: Math.PI },
-      orders: [],
-    },
-  ];
-
-  return {
-    currentTick: 0, bodies, ships, factions, orders: [],
-    fleets: [], buildOrders: [], settlements: [],
-    resources: { player: { fuel: 150, ore: 300, credits: 200, science: 75 }, enemy: { fuel: 100, ore: 200, credits: 150, science: 50 } },
-    combatLog: [],
-    lastHarvestTick: 0,
-    factionTech: freshFactionTech(),
-  };
-}
-
-// ============================================================
-// SCENARIO 4: Jupiter system — Belter outpost
-// ============================================================
-export function createScenario4(): GameState {
-  const bodies = SHARED_BODIES.map(b => {
-    if (b.id === 'earth' || b.id === 'luna') return { ...b, ownedBy: 'player' };
-    if (b.id === 'mars' || b.id === 'ceres') return { ...b, ownedBy: 'enemy' };
-    if (b.id === 'ganymede') return { ...b, ownedBy: 'player' };
-    return { ...b };
-  });
-  const factions = SHARED_FACTIONS.map(f => ({ ...f }));
-
-  const ships: Ship[] = [
-    // Player ships at Ganymede
-    {
-      id: 'ship-roci', name: 'Rocinante', class: 'corvette',
-      ownedBy: 'player', fuel: 80,
-      orbit: circularOrbitAround('ganymede', 6, 1),
-      orders: [],
-    },
-    {
-      id: 'ship-somnambulist', name: 'Somnambulist', class: 'freighter',
-      ownedBy: 'player', fuel: 100,
-      orbit: { ...circularOrbitAround('ganymede', 8, 1), M0: Math.PI },
-      orders: [],
-    },
-    // Enemy ships at Ceres
-    {
-      id: 'ship-behemoth', name: 'Behemoth', class: 'destroyer',
-      ownedBy: 'enemy', fuel: 150,
-      orbit: circularOrbitAround('ceres', 5, -1),
-      orders: [],
-    },
-  ];
-
-  return {
-    currentTick: 0, bodies, ships, factions, orders: [],
-    fleets: [], buildOrders: [], settlements: [],
-    resources: { player: { fuel: 80, ore: 150, credits: 100, science: 50 }, enemy: { fuel: 120, ore: 250, credits: 200, science: 50 } },
-    combatLog: [],
-    lastHarvestTick: 0,
-    factionTech: freshFactionTech(),
-  };
-}
-
-// Export a scenario selector
-export type ScenarioType = 1 | 2 | 3 | 4;
-
-export function getScenario(type: ScenarioType): GameState {
-  switch (type) {
-    case 1: return createScenario1();
-    case 2: return createScenario2();
-    case 3: return createScenario3();
-    case 4: return createScenario4();
-    default: return createScenario1();
-  }
-}
-
-export const SCENARIO_DESCRIPTIONS = {
-  1: 'Rocinante and Donnager at Earth',
-  2: 'Fleet combat — Player vs Enemy',
-  3: 'Trade route — Freighter with escort',
-  4: 'Jupiter system — Belter outpost',
-} as const;
+// (Everything below — SHARED_FACTIONS, getScenario, createScenario1-4,
+// freshResources/Tech, withOwnership, ScenarioType, SCENARIO_DESCRIPTIONS —
+// was removed when single-player switched to SinglePlayerSetup. Factions
+// are now created dynamically from the setup screen by
+// src/state/singlePlayerSetup.ts.)
