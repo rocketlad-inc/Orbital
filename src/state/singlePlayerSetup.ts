@@ -210,8 +210,16 @@ export function setupSinglePlayer(config: SinglePlayerConfig): GameState {
     // Starter fleet — 3 ships per capital. Class HP comes from
     // SHIP_CLASSES so we don't hardcode it here. Spread out in low
     // orbit, alternating direction so they don't all stack.
+    //
+    // Altitude is body-scaled (not absolute): a moon like Callisto has
+    // radius 2 / SOI 6, so a hardcoded altitude of 18 would orbit the
+    // ship 3× past the SOI boundary and visually fling it across the
+    // viewport. Scaling by body.radius keeps ships hugging their
+    // capital regardless of body size: each ship sits at ~2×, 2.7×,
+    // 3.3× the body radius — clearly inside the SOI for every
+    // playable body and reading as "low orbit" in the renderer.
     STARTER_FLEET.forEach((spec, i) => {
-      const altitude = 10 + i * 4;
+      const altitude = capital.radius * 2 + (i * capital.radius * 0.7);
       const initialAngle = (i * 2 * Math.PI) / STARTER_FLEET.length;
       const dir: 1 | -1 = i % 2 === 0 ? 1 : -1;
       const ship: Ship = {

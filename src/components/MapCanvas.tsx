@@ -606,7 +606,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
       for (const ship of gameState.ships) {
         const shipPos = getShipCanvasPos(ship, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
-        if (Math.hypot(canvasX - shipPos.x, canvasY - shipPos.y) < 10 + TOUCH_HIT_PADDING) {
+        // Match the rendered icon footprint (18px → 22px when selected). The
+        // old 10px target was tighter than the icon itself, so dead-center
+        // clicks on the visible icon could still miss. Now anything that
+        // visually overlaps the icon registers.
+        if (Math.hypot(canvasX - shipPos.x, canvasY - shipPos.y) < 14 + TOUCH_HIT_PADDING) {
           selectShip(ship.id);
           return;
         }
