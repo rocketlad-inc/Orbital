@@ -546,33 +546,57 @@ function RoomCard({
 }) {
   const inGame = room.game_status === 'active';
   const isWaiting = !room.game_status || room.game_status !== 'active';
+
+  // Dot meter: ●●●○○ for 3/5 — easier to scan than "3/5".
+  const seats = Array.from({ length: room.max_players }, (_, i) => i < room.member_count);
+
+  // Tick-rate label so players see the cadence before joining. Server
+  // stores ms — show as "1m" / "30s" / "5m" etc.
+  const tickLabel = formatTickRate(room.tick_interval_ms);
+
   return (
     <button className={`mp-room-card ${inGame ? 'is-active' : ''}`} onClick={onClick} disabled={loading}>
       <div className="mp-room-card__head">
         <span className="mp-room-card__name">{room.name}</span>
-        <span className="mp-room-card__count">
-          {room.member_count}/{room.max_players}
+        <span className={`mp-room-card__pill ${inGame ? 'is-active' : 'is-lobby'}`}>
+          {inGame ? '● Live' : isWaiting ? '○ Lobby' : room.game_status}
         </span>
       </div>
-      <div className="mp-room-card__meta">
-        <span>host · {room.host_name}</span>
-        {room.has_password && <span className="mp-room-card__tag">🔒 password</span>}
+
+      <div className="mp-room-card__seats" title={`${room.member_count} of ${room.max_players} players`}>
+        {seats.map((filled, i) => (
+          <span key={i} className={`mp-room-card__seat ${filled ? 'is-filled' : ''}`} />
+        ))}
+        <span className="mp-room-card__seats-count">{room.member_count}/{room.max_players}</span>
       </div>
-      <div className="mp-room-card__status">
-        {inGame
-          ? <span className="mp-room-card__status-active">● In progress</span>
-          : isWaiting
-            ? <span className="mp-room-card__status-lobby">○ Lobby</span>
-            : <span>{room.game_status}</span>}
-        {variant === 'browse' && !inGame && (
-          <span className="mp-room-card__cta">{loading ? 'Joining…' : 'Join →'}</span>
-        )}
-        {variant === 'my' && (
-          <span className="mp-room-card__cta">Resume →</span>
-        )}
+
+      <div className="mp-room-card__meta">
+        <span className="mp-room-card__host">host · {room.host_name}</span>
+        <span className="mp-room-card__meta-tags">
+          {tickLabel && <span className="mp-room-card__tag mp-room-card__tag--neutral">{tickLabel}</span>}
+          {room.has_password && <span className="mp-room-card__tag" title="Password-protected">🔒</span>}
+        </span>
+      </div>
+
+      <div className="mp-room-card__foot">
+        <span className="mp-room-card__cta">
+          {loading
+            ? (variant === 'my' ? 'Resuming…' : 'Joining…')
+            : variant === 'my'
+              ? 'Resume →'
+              : inGame ? 'Spectate →' : 'Join →'}
+        </span>
       </div>
     </button>
   );
+}
+
+function formatTickRate(ms?: number): string | null {
+  if (!ms || ms <= 0) return null;
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s tick`;
+  const m = Math.round(s / 60);
+  return `${m}m tick`;
 }
 
 function EmptyState({ title, hint }: { title: string; hint: string }) {
