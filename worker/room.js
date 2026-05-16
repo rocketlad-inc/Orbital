@@ -103,6 +103,62 @@ export class Room {
       }
       return new Response(null, { status: 204 });
     }
+    if (url.pathname === '/tick-now' && req.method === 'POST') {
+      // Catch-up endpoint. Called from:
+      //   - state.js handleGetState as a self-heal when /state notices
+      //     next_tick_at has passed (covers missed CF DO alarms).
+      //   - The worker's /force-tick admin endpoint (host-only).
+      //
+      // Body: { force?: boolean }
+      //   force=false (default) — only fires if next_tick_at < now; this
+      //     is what the self-heal uses, so calling /tick-now twice in
+      //     quick succession won't double-advance.
+      //   force=true — fires unconditionally (admin tool). Ticks may
+      //     burst-fire if a host repeatedly clicks Force.
+      const body = await req.json().catch(() => ({}));
+      const force = !!body?.force;
+      const started = await this.state.storage.get('gameStarted');
+      if (!started?.gameId) return new Response(null, { status: 204 });
+
+      const game = await this.env.DB
+        .prepare('SELECT next_tick_at, status, tick_interval_ms FROM games WHERE id = ?')
+        .bind(started.gameId).first();
+      if (!game) return new Response(null, { status: 204 });
+      if (game.status === 'completed' || game.status === 'abandoned') {
+        return new Response(null, { status: 204 });
+      }
+
+      const now = Date.now();
+      const due = game.next_tick_at != null && game.next_tick_at <= now;
+      if (!force && !due) {
+        // Nothing to do — and if the alarm got lost since the last call
+        // (next_tick_at in the future, but DO didn't wake), re-arm it
+        // here so future /tick-now or natural alarm fires.
+        if (game.next_tick_at) {
+          try { await this.state.storage.setAlarm(game.next_tick_at); } catch {}
+        }
+        return new Response(null, { status: 204 });
+      }
+
+      try {
+        await this.alarm();
+      } catch (e) {
+        console.error('manual tick failed', e);
+        return new Response(JSON.stringify({ error: String(e?.message || e) }), {
+          status: 500,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      // Re-arm the alarm after firing so the next tick fires on schedule.
+      const after = await this.env.DB
+        .prepare('SELECT next_tick_at, status FROM games WHERE id = ?')
+        .bind(started.gameId).first();
+      if (after && after.status === 'active' && after.next_tick_at) {
+        try { await this.state.storage.setAlarm(after.next_tick_at); }
+        catch (e) { console.error('rearm setAlarm failed', e); }
+      }
+      return new Response(null, { status: 204 });
+    }
     if (url.pathname === '/notify' && req.method === 'POST') {
       // Best-effort fan-out: feature modules (trades, messages, etc.)
       // post a JSON payload here and we broadcast it to every connected

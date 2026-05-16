@@ -442,6 +442,29 @@ async function handlePatchMe(req, env, ctx) {
   return json({ identity: row });
 }
 
+// POST /api/lobby/rooms/:roomId/force-tick — host-only manual tick. Useful
+// when a Cloudflare alarm has stalled, or when the host wants to fast-
+// forward a game (e.g. demos, debugging). Bypasses the next_tick_at gate
+// by passing { force: true } to the Room DO.
+async function handleForceTick(_req, env, ctx) {
+  const roomId = ctx.params.roomId;
+  const g = await requireHost(env, roomId, ctx.session);
+  if (g.error) return g.error;
+  const game = await env.DB.prepare('SELECT status FROM games WHERE id = ?').bind(roomId).first();
+  if (!game) return err(404, 'not_found', 'no game in this room yet');
+  if (game.status !== 'active') return err(409, 'not_active', `game is ${game.status}`);
+  try {
+    await roomStub(env, roomId).fetch('https://room/tick-now', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ force: true }),
+    });
+  } catch (e) {
+    return err(500, 'tick_failed', String(e?.message || e));
+  }
+  return json({ ok: true });
+}
+
 export const routes = [
   { method: 'GET',  pattern: '/api/lobby/rooms', auth: 'required', handle: handleListLobbyRooms },
   { method: 'GET',  pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)$/, auth: 'required', handle: handleLobbySnapshot },
@@ -449,5 +472,6 @@ export const routes = [
   { method: 'PATCH',pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/settings$/, auth: 'required', handle: handleUpdateSettings },
   { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/kick$/, auth: 'required', handle: handleKick },
   { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/start$/, auth: 'required', handle: handleStart },
+  { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/force-tick$/, auth: 'required', handle: handleForceTick },
   { method: 'PATCH',pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/me$/, auth: 'required', handle: handlePatchMe },
 ];
