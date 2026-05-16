@@ -10,6 +10,7 @@ import {
   readSessionCookie,
 } from './auth.js';
 import { MIGRATIONS } from './_migrations_bundle.js';
+import { GIT_SHA, BUILT_AT } from './_version.js';
 
 export { Room } from './room.js';
 
@@ -517,6 +518,13 @@ export default {
   },
 
   async _dispatch(req, env, url) {
+      // Version probe — unauthenticated. Returns the git SHA + build time
+      // the worker bundle was produced from, so a smoke test can answer
+      // "is my latest fix actually deployed?" without needing to inspect
+      // bundled JS.
+      if (req.method === 'GET' && url.pathname === '/api/_version') {
+        return json({ git_sha: GIT_SHA, built_at: BUILT_AT });
+      }
       // one-shot bootstrap (idempotent; no-op once tables exist)
       if (req.method === 'POST' && url.pathname === '/api/__init') return handleInit(req, env);
       // unauthenticated routes
