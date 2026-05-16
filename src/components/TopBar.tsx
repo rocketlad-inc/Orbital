@@ -341,6 +341,48 @@ const SideMenu: React.FC<SideMenuProps> = ({
 }) => {
   const [forceTickBusy, setForceTickBusy] = useState(false);
   const [forceTickStatus, setForceTickStatus] = useState<string | null>(null);
+  const [intervalBusy, setIntervalBusy] = useState(false);
+  const [intervalStatus, setIntervalStatus] = useState<string | null>(null);
+
+  // Host can change the tick cadence on an in-flight game. Mirrors
+  // worker/lobby.js ALLOWED_TICK_INTERVALS — any value not in this set is
+  // rejected by the server.
+  const TICK_INTERVAL_OPTIONS: Array<{ label: string; value: number }> = [
+    { label: '30s',  value:    30_000 },
+    { label: '1m',   value:    60_000 },
+    { label: '5m',   value:   300_000 },
+    { label: '30m',  value: 1_800_000 },
+    { label: '1h',   value: 3_600_000 },
+    { label: '6h',   value: 21_600_000 },
+    { label: '12h',  value: 43_200_000 },
+    { label: '24h',  value: 86_400_000 },
+  ];
+
+  async function setTickInterval(ms: number, label: string) {
+    if (!adminGameId || intervalBusy) return;
+    setIntervalBusy(true);
+    setIntervalStatus(null);
+    try {
+      const { apiFetch } = await import('../multiplayer/api');
+      const res = await apiFetch<{ tick_interval_ms?: number; next_tick_at?: number }>(
+        `/api/lobby/rooms/${adminGameId}/tick-interval`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ tick_interval_ms: ms }),
+        },
+      );
+      if (!res.ok) {
+        setIntervalStatus(res.error?.message ?? `Failed (${res.status})`);
+      } else {
+        setIntervalStatus(`✓ Now ticking every ${label}`);
+      }
+    } catch (e) {
+      setIntervalStatus(`Network error: ${(e as Error)?.message || 'unknown'}`);
+    } finally {
+      setIntervalBusy(false);
+      setTimeout(() => setIntervalStatus(null), 4000);
+    }
+  }
 
   async function forceTick() {
     if (!adminGameId || forceTickBusy) return;
@@ -453,6 +495,30 @@ const SideMenu: React.FC<SideMenuProps> = ({
                 </span>
                 <span className="side-menu__item-hint">Advance one tick now</span>
               </button>
+              <div className="side-menu__item side-menu__item--block">
+                <span className="side-menu__item-icon">⏱</span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
+                  <span className="side-menu__item-label" style={{ marginBottom: 2 }}>
+                    {intervalStatus ?? (intervalBusy ? 'Updating…' : 'Tick Speed')}
+                  </span>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {TICK_INTERVAL_OPTIONS.map(opt => (
+                      <button
+                        key={opt.value}
+                        className="side-menu__pill"
+                        onClick={() => setTickInterval(opt.value, opt.label)}
+                        disabled={intervalBusy}
+                        title={`${opt.label} per tick`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="side-menu__item-hint" style={{ marginTop: 2 }}>
+                    Cadence applies on next tick
+                  </span>
+                </div>
+              </div>
             </>
           )}
 

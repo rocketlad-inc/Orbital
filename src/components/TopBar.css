@@ -419,6 +419,37 @@
   line-height: 1;
 }
 .side-menu__item--danger .side-menu__item-icon { color: #ff5e5e; }
+
+/* Multi-line item (used for the tick-interval pill row): top-align icon,
+   let content stack vertically. */
+.side-menu__item--block {
+  align-items: flex-start;
+}
+.side-menu__item--block .side-menu__item-icon {
+  padding-top: 2px;
+}
+
+.side-menu__pill {
+  background: transparent;
+  border: 1px solid #2a3d50;
+  color: #d8e4ee;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  padding: 3px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+.side-menu__pill:hover:not(:disabled) {
+  border-color: #4ecdc4;
+  color: #4ecdc4;
+  background: rgba(78, 205, 196, 0.08);
+}
+.side-menu__pill:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .side-menu__item-label {
   font-size: 12px;
   font-weight: 600;

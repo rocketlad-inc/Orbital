@@ -418,7 +418,22 @@ function matchPattern(pattern, pathname) {
   }
   const m = pathname.match(pattern);
   if (!m) return null;
-  return m.groups ?? { _match: m };
+  // pct-decode named captures. The route patterns capture raw pathname
+  // segments; without decoding, IDs containing `:` (game-namespaced
+  // body/ship ids like `Reemucleoytj:s0_io_1`) arrive at handlers as
+  // `Reemucleoytj%3As0_io_1` and fail the SHIP_ID_RE / BODY_ID_RE
+  // checks (the % char isn't in those character classes). Decoding
+  // here means each handler can ignore the encoding question.
+  const groups = m.groups ?? { _match: m };
+  if (m.groups) {
+    const decoded = {};
+    for (const [k, v] of Object.entries(m.groups)) {
+      try { decoded[k] = typeof v === 'string' ? decodeURIComponent(v) : v; }
+      catch { decoded[k] = v; }
+    }
+    return decoded;
+  }
+  return groups;
 }
 
 async function dispatchFeatureRoute(req, env, url, session) {
