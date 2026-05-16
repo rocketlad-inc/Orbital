@@ -70,6 +70,16 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // Fog of war: keep a rolling lastSeen map for the viewing faction
   const lastSeenRef = useRef<Map<string, GhostIntel>>(new Map());
 
+  // Damage flash bookkeeping. Two refs:
+  //   prevDamageTick   — last lastDamagedTick value we saw per entity
+  //   damageFlashStart — performance.now() when we first observed that tick
+  // Each frame we walk ships + settlements; when lastDamagedTick changes
+  // for an id, we stamp a fresh wall-clock time. The renderer reads the
+  // stamp via RenderContext.damageFlashStart and fades the halo over
+  // DAMAGE_FLASH_DURATION_MS regardless of sim speed.
+  const prevDamageTickRef = useRef<Map<string, number>>(new Map());
+  const damageFlashStartRef = useRef<Map<string, number>>(new Map());
+
   // Sensor coverage ring overlay toggle (V key)
   const [showSensorRings, setShowSensorRings] = useState(false);
   useEffect(() => {
@@ -112,6 +122,30 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
     }
 
+    // === Damage flash bookkeeping ===
+    // Walk every ship + settlement; whenever an entity's lastDamagedTick
+    // differs from what we remembered last frame, stamp a fresh
+    // wall-clock time. The renderer fades the halo from there.
+    const nowMs = performance.now();
+    for (const ship of gameState.ships) {
+      const cur = ship.lastDamagedTick;
+      if (cur === undefined) continue;
+      const prev = prevDamageTickRef.current.get(ship.id);
+      if (prev !== cur) {
+        prevDamageTickRef.current.set(ship.id, cur);
+        damageFlashStartRef.current.set(ship.id, nowMs);
+      }
+    }
+    for (const settlement of gameState.settlements) {
+      const cur = settlement.lastDamagedTick;
+      if (cur === undefined) continue;
+      const prev = prevDamageTickRef.current.get(settlement.id);
+      if (prev !== cur) {
+        prevDamageTickRef.current.set(settlement.id, cur);
+        damageFlashStartRef.current.set(settlement.id, nowMs);
+      }
+    }
+
     const renderContext: RenderContext = {
       ctx,
       canvas: canvasRef.current,
@@ -119,6 +153,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       t: gameState.currentTick,
       bodies: gameState.bodies,
       simSpeed,
+      damageFlashStart: damageFlashStartRef.current,
+      nowMs,
     };
 
     clearCanvas(renderContext);

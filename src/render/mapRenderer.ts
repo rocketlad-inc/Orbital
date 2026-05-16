@@ -16,6 +16,14 @@ export interface RenderContext {
   t: number;
   bodies: Body[];
   simSpeed?: number;
+  /** Wall-clock ms (performance.now()) captured at the moment the
+   *  renderer first observed each entity's current lastDamagedTick.
+   *  Keyed by ship/settlement id. Populated by MapCanvas pre-render
+   *  pass; consumed by drawDamageFlash. */
+  damageFlashStart?: Map<string, number>;
+  /** Wall-clock ms for the current frame — passed to drawDamageFlash
+   *  so all flashes age consistently within one frame. */
+  nowMs?: number;
 }
 
 /**
@@ -56,34 +64,36 @@ export function clearCanvas(ctx: RenderContext) {
 // Damage flash — shared overlay for ships + settlements.
 // ============================================================
 
-/** Ticks the red damage halo remains visible after a hit. Short enough
- *  that simultaneous hits feel distinct, long enough to register at the
- *  default sim speed. */
-export const DAMAGE_FLASH_DURATION = 4;
+/** Real-world milliseconds the red damage halo remains visible after a
+ *  hit. Tied to wall clock, not game ticks — at default sim speed one
+ *  tick is ~150 real seconds, so tick-based timing would leave glows
+ *  on the map for minutes. 500ms is a satisfying blip. */
+export const DAMAGE_FLASH_DURATION_MS = 500;
 
 /**
  * Render a brief red glow around a damaged ship/settlement marker.
- * `lastDamagedTick` is stamped by autoCombatAtBodies whenever damage
- * lands; the renderer reads it each frame and ramps a radial-gradient
- * halo from full intensity (just hit) to nothing (DAMAGE_FLASH_DURATION
- * ticks later).
  *
- * Call this BEFORE drawing the ship/settlement icon so the icon sits
- * on top of the glow at full opacity.
+ * `damageStartMs` is a wall-clock `performance.now()` stamp from the
+ * frame the renderer first noticed a new `lastDamagedTick` value on
+ * this entity (tracked outside the renderer; see MapCanvas's
+ * damageFlashStart ref). Wall-clock keeps the visual duration
+ * consistent across every sim speed.
+ *
+ * Call BEFORE drawing the entity's icon so the icon sits on top.
  */
 export function drawDamageFlash(
   canvasPos: { x: number; y: number },
   baseRadius: number,
-  lastDamagedTick: number | undefined,
-  currentTick: number,
+  damageStartMs: number | undefined,
+  nowMs: number,
   ctx: RenderContext,
 ) {
-  if (lastDamagedTick === undefined) return;
-  const age = currentTick - lastDamagedTick;
-  if (age < 0 || age >= DAMAGE_FLASH_DURATION) return;
+  if (damageStartMs === undefined) return;
+  const age = nowMs - damageStartMs;
+  if (age < 0 || age >= DAMAGE_FLASH_DURATION_MS) return;
 
-  const freshness = 1 - age / DAMAGE_FLASH_DURATION;
-  // Halo expands slightly as it fades (subtle "shockwave" feel)
+  const freshness = 1 - age / DAMAGE_FLASH_DURATION_MS;
+  // Halo expands slightly as it fades — subtle "shockwave" feel
   const haloR = baseRadius * (2.5 + (1 - freshness) * 1.5);
 
   const grad = ctx.ctx.createRadialGradient(
@@ -584,7 +594,8 @@ export function drawShip(
   const iconSize = isSelected ? 22 : 18;
 
   // Damage flash sits beneath the icon so the icon stays at full opacity.
-  drawDamageFlash(canvasPos, iconSize / 2, ship.lastDamagedTick, ctx.t, ctx);
+  const flashStart = ctx.damageFlashStart?.get(ship.id);
+  drawDamageFlash(canvasPos, iconSize / 2, flashStart, ctx.nowMs ?? 0, ctx);
 
   const icon = getShipIconImage(ship.class as ShipIconClass, shipColor);
   if (icon) {
@@ -978,7 +989,8 @@ export function drawTransitShip(
 
   // Damage flash beneath the icon — works the same way for transit ships
   // since combat can hit a ship on its arrival tick.
-  drawDamageFlash(canvasPos, iconSize / 2, ship.lastDamagedTick, ctx.t, ctx);
+  const flashStartT = ctx.damageFlashStart?.get(ship.id);
+  drawDamageFlash(canvasPos, iconSize / 2, flashStartT, ctx.nowMs ?? 0, ctx);
 
   const icon = getShipIconImage(ship.class as ShipIconClass, shipColor);
   if (icon) {
@@ -1161,7 +1173,8 @@ export function drawCity(
   const tipY = canvasPos.y + outwardY * size * 0.5;
 
   // Damage flash underneath the marker
-  drawDamageFlash({ x: tipX, y: tipY }, size, settlement.lastDamagedTick, ctx.t, ctx);
+  const flashStartC = ctx.damageFlashStart?.get(settlement.id);
+  drawDamageFlash({ x: tipX, y: tipY }, size, flashStartC, ctx.nowMs ?? 0, ctx);
 
   ctx.ctx.fillStyle = color;
   ctx.ctx.strokeStyle = '#0a0e14';
@@ -1251,7 +1264,8 @@ export function drawStation(
   }
 
   // Damage flash underneath the diamond
-  drawDamageFlash(canvasPos, size, settlement.lastDamagedTick, ctx.t, ctx);
+  const flashStartS = ctx.damageFlashStart?.get(settlement.id);
+  drawDamageFlash(canvasPos, size, flashStartS, ctx.nowMs ?? 0, ctx);
 
   // Diamond
   ctx.ctx.fillStyle = color;
