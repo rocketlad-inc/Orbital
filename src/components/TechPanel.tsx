@@ -23,6 +23,11 @@ interface TechPanelProps {
 export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
   const { gameState, startResearch, cancelResearch } = useGameContext();
   const mpActions = useMultiplayerActions();
+  // Set of tech ids currently in flight (POSTed but /state hasn't yet
+  // reconciled). Prevents the double-click race that fired multiple
+  // research requests and made the second one bounce with a stale
+  // 409 'insufficient_resources' even though the user saw enough science.
+  const [inFlight, setInFlight] = React.useState<Set<TechId>>(new Set());
   const tech = gameState.factionTech.player ?? { levels: {}, researching: null, progress: 0 };
   const playerScience = gameState.resources.player?.science ?? 0;
 
@@ -126,27 +131,56 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
 
                 <button
                   className={`tech-card__action ${isActive ? 'active' : ''}`}
-                  onClick={() => {
+                  onClick={async () => {
                     if (mpActions) {
                       // Multiplayer: instant repeatables. Server is the
-                      // authority on cost and current level — the local
-                      // call also fires to keep single-player happy and
-                      // give optimistic feedback while /state catches up.
-                      mpActions.research({ techId: id });
+                      // authority on cost and current level.
+                      //
+                      // Guard against double-click: track in-flight techIds
+                      // in a Set, refuse to fire a second request for the
+                      // same tech until /state has reconciled (the await
+                      // returns then the polling interval kicks in).
+                      if (inFlight.has(id)) return;
+                      // Belt-and-suspenders science check using whatever
+                      // /state most recently delivered. Avoids the round
+                      // trip when we already know it'll 409.
+                      if (cost > playerScience) return;
+                      setInFlight(prev => new Set(prev).add(id));
+                      try {
+                        await mpActions.research({ techId: id });
+                      } finally {
+                        // Brief delay so the next /state poll (1.5s) lands
+                        // before we let another click through — otherwise a
+                        // fast clicker would burn through stale science.
+                        setTimeout(() => {
+                          setInFlight(prev => {
+                            const next = new Set(prev);
+                            next.delete(id);
+                            return next;
+                          });
+                        }, 1800);
+                      }
                       return;
                     }
                     if (isActive) cancelResearch();
                     else startResearch(id);
                   }}
-                  disabled={!mpActions && (isQueued && !isActive)}
+                  disabled={
+                    (!mpActions && isQueued && !isActive)
+                    || (!!mpActions && (inFlight.has(id) || cost > playerScience))
+                  }
                   title={
                     mpActions
-                      ? `Spend ${cost} science to advance ${TECH_DEFS[id].name}`
+                      ? (cost > playerScience
+                        ? `Not enough science (need ${cost})`
+                        : inFlight.has(id)
+                          ? 'Researching…'
+                          : `Spend ${cost} science to advance ${TECH_DEFS[id].name}`)
                       : isQueued ? 'Cancel current research first' : (isActive ? 'Cancel research' : 'Research this tech next')
                   }
                 >
                   {mpActions
-                    ? `Research (${cost} sci)`
+                    ? (inFlight.has(id) ? '…' : `Research (${cost} sci)`)
                     : isActive ? 'Researching…' : isQueued ? 'Queue full' : 'Research'}
                 </button>
               </div>
