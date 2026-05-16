@@ -13,6 +13,7 @@ import { tickMaintenance } from '../game/maintenance';
 import { TechId, TECH_DEFS } from '../game/techs';
 import { runFactionAI, shouldRunAI } from '../game/factionAI';
 import { planBezierTransfer } from '../physics/bezierTransfer';
+import { computeWinner } from './singlePlayerSetup';
 import type { AIActivityEntry } from '../types';
 
 // === AI intent application helpers ===========================
@@ -188,6 +189,11 @@ interface GameContextProviderProps {
   children: React.ReactNode;
   initialScenario?: ScenarioType;
   /**
+   * Seeded single-player state from SinglePlayerSetup. Takes precedence
+   * over initialScenario but yields to externalState when present.
+   */
+  initialState?: GameState;
+  /**
    * If set, the provider treats this as the authoritative source of game
    * state — it replaces local state whenever the prop reference changes
    * and skips the local sim interval. Used by MultiplayerGameProvider
@@ -210,12 +216,13 @@ interface GameContextProviderProps {
 export function GameContextProvider({
   children,
   initialScenario = 1,
+  initialState,
   externalState,
   externallyControlled = false,
   initialFocusBodyId = null,
 }: GameContextProviderProps) {
   const [gameState, setGameStateInternal] = useState<GameState>(
-    () => externalState ?? getScenario(initialScenario)
+    () => externalState ?? initialState ?? getScenario(initialScenario)
   );
 
   // Replace gameState whenever the external snapshot changes reference.
@@ -339,6 +346,11 @@ export function GameContextProvider({
   // Single source of truth for advancing the game state to a target tick.
   // Used by both the realtime setInterval loop and the +10 skip button.
   const advanceToTick = useCallback((prev: GameState, newTime: number): GameState => {
+    // If the match is already complete, freeze time. The VictoryOverlay
+    // is showing and the player can either start a new campaign or back
+    // out — we shouldn't keep advancing ticks behind the modal.
+    if (prev.status === 'completed') return prev;
+
     const tickDelta = Math.max(0, newTime - prev.currentTick);
     let updatedShips = checkNodeExecution(prev.ships, prev.bodies, newTime);
 
@@ -524,6 +536,32 @@ export function GameContextProvider({
     }
 
     const allOrders = updatedShips.flatMap(s => s.orders);
+
+    // === Victory check ===
+    // If a match-length goal is set and we've reached or passed it, compute
+    // the winner and flip status to 'completed'. The next render shows the
+    // VictoryOverlay; advanceToTick early-exits while completed so time
+    // stops advancing. (The 'completed' early-exit above guarantees prev.status
+    // is not yet 'completed' here, but we re-check to satisfy TS narrowing.)
+    let nextStatus: GameState['status'] = prev.status;
+    let winnerFactionId = prev.winnerFactionId;
+    let victoryType = prev.victoryType;
+    if (prev.totalTickTarget && newTime >= prev.totalTickTarget) {
+      const post: GameState = {
+        ...prev,
+        ships: updatedShips,
+        settlements: updatedSettlements,
+        resources: factionPools,
+        factions: updatedFactions,
+      };
+      const win = computeWinner(post);
+      if (win) {
+        nextStatus = 'completed';
+        winnerFactionId = win.factionId;
+        victoryType = win.victoryType;
+      }
+    }
+
     return {
       ...prev,
       ships: updatedShips,
@@ -537,6 +575,9 @@ export function GameContextProvider({
       factions: updatedFactions,
       combatLog,
       aiActivityLog,
+      status: nextStatus,
+      winnerFactionId,
+      victoryType,
     };
   }, [checkNodeExecution]);
 

@@ -1,0 +1,495 @@
+/* ============================================================
+   SinglePlayerSetup — new campaign configuration
+   ============================================================ */
+
+.sp-setup {
+  --bg: #0a0e14;
+  --fg: #d8e4ee;
+  --fg-dim: #8a9fb3;
+  --fg-faint: #4a5a6a;
+  --border: #2a3d50;
+  --accent: #ffb84d;
+  --friendly: #4ecdc4;
+  --danger: #ff5e5e;
+  --mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  --display: 'Orbitron', system-ui, sans-serif;
+
+  min-height: 100vh;
+  background: var(--bg);
+  background-image:
+    radial-gradient(ellipse 1200px 700px at 20% -10%, rgba(80, 60, 130, 0.05), transparent),
+    radial-gradient(ellipse 900px 600px at 80% 30%, rgba(60, 90, 150, 0.05), transparent);
+  color: var(--fg);
+  font-family: var(--mono);
+  padding-bottom: 60px;
+}
+
+/* === Top nav === */
+.sp-setup-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 36px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(10, 14, 20, 0.85);
+  backdrop-filter: blur(6px);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.sp-setup-back {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  padding: 8px 18px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.sp-setup-back:hover { border-color: var(--friendly); color: var(--friendly); }
+
+.sp-setup-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sp-setup-brand .brand-glyph {
+  color: var(--accent);
+  font-size: 18px;
+  text-shadow: 0 0 12px rgba(255, 184, 77, 0.5);
+}
+
+.sp-setup-brand .brand-text {
+  font-family: var(--display);
+  font-size: 14px;
+  letter-spacing: 0.25em;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+/* === Intro === */
+.sp-setup-intro {
+  max-width: 880px;
+  margin: 48px auto 32px;
+  padding: 0 36px;
+}
+
+.sp-setup-intro h1 {
+  font-family: var(--display);
+  font-size: 32px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  margin: 0 0 12px;
+  background: linear-gradient(135deg, var(--fg) 0%, var(--accent) 50%, var(--fg) 100%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.sp-setup-intro p {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--fg-dim);
+  max-width: 720px;
+  margin: 0;
+}
+
+/* === Sections === */
+.sp-setup-section {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 28px 36px;
+  border-top: 1px solid var(--border);
+}
+
+.sp-setup-section-head {
+  margin-bottom: 18px;
+}
+
+.sp-setup-eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.35em;
+  color: var(--friendly);
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+.sp-setup-section-head h2 {
+  font-family: var(--display);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  margin: 0 0 6px;
+  color: var(--fg);
+}
+
+.sp-setup-section-desc {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-dim);
+  max-width: 720px;
+  margin: 0;
+}
+
+/* === Faction card === */
+.sp-faction-card {
+  background: rgba(10, 14, 20, 0.6);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 20px;
+  margin-bottom: 12px;
+}
+
+.sp-faction-card--player {
+  border-color: var(--friendly);
+  box-shadow: 0 0 20px rgba(78, 205, 196, 0.08);
+}
+
+.sp-faction-card--ai {
+  border-color: rgba(255, 94, 94, 0.4);
+}
+
+.sp-ai-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.sp-ai-tag {
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.sp-ai-remove {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  padding: 4px 10px;
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  font-family: var(--mono);
+  cursor: pointer;
+  border-radius: 2px;
+  transition: all 0.15s ease;
+}
+.sp-ai-remove:hover { border-color: var(--danger); color: var(--danger); }
+
+/* === Faction editor (name + color) === */
+.sp-faction-editor {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  margin-bottom: 16px;
+}
+
+@media (max-width: 720px) {
+  .sp-faction-editor { grid-template-columns: 1fr; }
+}
+
+.sp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sp-field label {
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: var(--fg-dim);
+  font-weight: 600;
+}
+
+.sp-field input[type="text"] {
+  background: rgba(10, 14, 20, 0.6);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  padding: 8px 10px;
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 12px;
+  transition: border-color 0.15s ease;
+}
+
+.sp-field input[type="text"]:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.sp-color-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sp-color-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  padding: 0;
+}
+
+.sp-color-swatch:hover {
+  transform: scale(1.1);
+}
+
+.sp-color-swatch.active {
+  border-color: var(--fg);
+  box-shadow: 0 0 12px currentColor;
+}
+
+/* === Body grid === */
+.sp-body-picker-title {
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: var(--fg-dim);
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.sp-body-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.sp-body-card {
+  background: rgba(10, 14, 20, 0.6);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: left;
+  font-family: var(--mono);
+  color: var(--fg);
+  position: relative;
+}
+
+.sp-body-card:hover:not(:disabled) {
+  border-color: var(--friendly);
+  background: rgba(78, 205, 196, 0.05);
+}
+
+.sp-body-card.is-mine {
+  background: rgba(78, 205, 196, 0.08);
+}
+
+.sp-body-card.is-taken {
+  opacity: 0.35;
+  cursor: not-allowed;
+  background: rgba(10, 14, 20, 0.3);
+}
+
+.sp-body-card-name {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--fg);
+  margin-bottom: 2px;
+}
+
+.sp-body-card-type {
+  font-size: 9px;
+  color: var(--fg-dim);
+  letter-spacing: 0.1em;
+  text-transform: capitalize;
+  margin-bottom: 8px;
+}
+
+.sp-body-card-yields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 9px;
+  letter-spacing: 0.05em;
+}
+
+.sp-body-card-yields span {
+  padding: 1px 4px;
+  border-radius: 2px;
+  font-weight: 600;
+}
+
+.sp-body-card-yields .y-m { color: #a89878; background: rgba(168, 152, 120, 0.1); }
+.sp-body-card-yields .y-f { color: #ffb84d; background: rgba(255, 184, 77, 0.1); }
+.sp-body-card-yields .y-g { color: #ffd700; background: rgba(255, 215, 0, 0.08); }
+.sp-body-card-yields .y-s { color: #67e8f9; background: rgba(103, 232, 249, 0.1); }
+
+.sp-body-card-tag {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  font-size: 8px;
+  letter-spacing: 0.15em;
+  font-weight: 700;
+}
+
+.sp-body-card-tag.is-taken {
+  color: var(--fg-faint);
+}
+
+/* === Add AI button === */
+.sp-add-ai {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--fg-dim);
+  padding: 14px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.25em;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+  margin-top: 8px;
+}
+
+.sp-add-ai:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(255, 184, 77, 0.04);
+}
+
+/* === Match length === */
+.sp-match-length {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.sp-match-preset {
+  background: rgba(10, 14, 20, 0.6);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+  font-family: var(--mono);
+}
+
+.sp-match-preset:hover {
+  border-color: var(--friendly);
+}
+
+.sp-match-preset.active {
+  border-color: var(--accent);
+  background: rgba(255, 184, 77, 0.06);
+  box-shadow: 0 0 12px rgba(255, 184, 77, 0.15);
+}
+
+.sp-match-preset-label {
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: var(--fg);
+  font-weight: 700;
+}
+
+.sp-match-preset-ticks {
+  font-size: 14px;
+  color: var(--accent);
+  font-weight: 700;
+  margin-top: 4px;
+}
+
+.sp-match-preset-hint {
+  font-size: 9px;
+  color: var(--fg-dim);
+  letter-spacing: 0.05em;
+  margin-top: 4px;
+}
+
+.sp-match-custom {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.sp-match-custom input {
+  background: rgba(10, 14, 20, 0.6);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  padding: 6px 10px;
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 12px;
+  width: 100px;
+}
+
+.sp-match-custom input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* === Footer / begin === */
+.sp-setup-foot {
+  max-width: 1100px;
+  margin: 40px auto 0;
+  padding: 32px 36px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+}
+
+.sp-setup-error {
+  color: var(--danger);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  margin-bottom: 16px;
+  padding: 8px 16px;
+  background: rgba(255, 94, 94, 0.08);
+  border: 1px solid rgba(255, 94, 94, 0.3);
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.sp-begin {
+  background: linear-gradient(135deg, rgba(255, 184, 77, 0.95), rgba(255, 140, 0, 0.85));
+  border: 1px solid var(--accent);
+  color: var(--bg);
+  padding: 16px 48px;
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow:
+    0 0 32px rgba(255, 184, 77, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+.sp-begin:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow:
+    0 4px 40px rgba(255, 184, 77, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.sp-begin:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.sp-begin-sub {
+  margin-top: 14px;
+  font-size: 10px;
+  color: var(--fg-dim);
+  letter-spacing: 0.2em;
+}

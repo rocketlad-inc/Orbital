@@ -1,0 +1,173 @@
+/* ============================================================
+   VictoryOverlay — full-screen end-of-match panel
+   ============================================================ */
+
+.victory-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 8, 12, 0.92);
+  backdrop-filter: blur(8px);
+  z-index: 6000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  color: #d8e4ee;
+  animation: victory-fade-in 0.4s ease-out;
+}
+
+@keyframes victory-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.victory-card {
+  width: 540px;
+  max-width: 92vw;
+  background: rgba(10, 14, 20, 0.98);
+  border: 1px solid #2a3d50;
+  border-radius: 4px;
+  padding: 32px 36px;
+  box-shadow: 0 16px 64px rgba(0, 0, 0, 0.6);
+  animation: victory-slide-in 0.5s ease-out;
+}
+
+@keyframes victory-slide-in {
+  from { transform: translateY(20px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+
+.victory-banner {
+  font-family: 'Orbitron', system-ui, sans-serif;
+  font-size: 42px;
+  font-weight: 900;
+  letter-spacing: 0.25em;
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.victory-banner.won {
+  color: #ffb84d;
+  text-shadow: 0 0 24px rgba(255, 184, 77, 0.4);
+}
+
+.victory-banner.lost {
+  color: #ff5e5e;
+  text-shadow: 0 0 24px rgba(255, 94, 94, 0.3);
+}
+
+.victory-winner {
+  text-align: center;
+  margin-bottom: 28px;
+  padding-bottom: 20px;
+  border-bottom: 1px dashed #2a3d50;
+}
+
+.victory-winner-eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  color: #4ecdc4;
+  margin-bottom: 8px;
+}
+
+.victory-winner-name {
+  font-family: 'Orbitron', system-ui, sans-serif;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  margin-bottom: 6px;
+}
+
+.victory-winner-blurb {
+  font-size: 11px;
+  color: #8a9fb3;
+  font-style: italic;
+  letter-spacing: 0.05em;
+}
+
+.victory-stats {
+  margin-bottom: 24px;
+}
+
+.victory-stats-head,
+.victory-stat-row {
+  display: grid;
+  grid-template-columns: 1fr 60px 60px 80px;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+}
+
+.victory-stats-head {
+  padding: 8px 0;
+  border-bottom: 1px solid #2a3d50;
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  color: #8a9fb3;
+  font-weight: 600;
+}
+
+.victory-stat-row {
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(42, 61, 80, 0.4);
+}
+
+.victory-stat-row.is-winner {
+  background: rgba(255, 184, 77, 0.04);
+  padding-left: 8px;
+  padding-right: 8px;
+  margin: 0 -8px;
+}
+
+.victory-stat-name {
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  font-size: 12px;
+}
+
+.victory-stat-num {
+  font-weight: 600;
+  text-align: right;
+  color: #d8e4ee;
+}
+
+.victory-stats-head span:not(:first-child),
+.victory-stat-row .victory-stat-num {
+  text-align: right;
+}
+
+.victory-footer {
+  margin-top: 24px;
+  text-align: center;
+}
+
+.victory-footer-meta {
+  font-size: 10px;
+  color: #8a9fb3;
+  letter-spacing: 0.1em;
+  margin-bottom: 16px;
+}
+
+.victory-button {
+  background: linear-gradient(135deg, rgba(255, 184, 77, 0.95), rgba(255, 140, 0, 0.85));
+  border: 1px solid #ffb84d;
+  color: #0a0e14;
+  padding: 14px 32px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.25em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow:
+    0 0 24px rgba(255, 184, 77, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+.victory-button:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 4px 32px rgba(255, 184, 77, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}

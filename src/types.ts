@@ -222,6 +222,33 @@ export interface GameState {
   combatLog: string[];                 // recent combat events
   lastHarvestTick: number;             // tick when resources were last collected
   aiActivityLog?: AIActivityEntry[];   // optional — rolling log of recent AI decisions
+
+  // Match shape — populated in single-player by setup, in multiplayer by
+  // the server. When status === 'completed' the game ends and the
+  // VictoryOverlay renders.
+  status?: 'lobby' | 'active' | 'completed' | 'abandoned';
+  totalTickTarget?: number;            // tick at which the game ends
+  winnerFactionId?: string;            // set when status flips to 'completed'
+  victoryType?: 'hegemony' | 'wealth' | 'tiebreak';
+}
+
+/**
+ * Single-player setup config — captured from the SinglePlayerSetup screen
+ * and consumed by setupSinglePlayer() to seed an initial GameState.
+ */
+export interface SinglePlayerConfig {
+  player: {
+    factionName: string;
+    color: string;
+    startingBodyId: string;
+  };
+  aiOpponents: Array<{
+    factionName: string;
+    color: string;
+    startingBodyId: string;
+  }>;
+  totalTickTarget: number;             // match length
+  mapSeed?: string;                    // optional seed for repeatability
 }
 
 /**

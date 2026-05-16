@@ -3,7 +3,6 @@ import { GameContextProvider } from './state/gameContext';
 import { MapCanvas } from './components/MapCanvas';
 import { ShipPanel } from './components/ShipPanel';
 import { BodyInspector } from './components/BodyInspector';
-import { ScenarioSelector } from './components/ScenarioSelector';
 import { TopBar, PanelId } from './components/TopBar';
 import { Outliner } from './components/Outliner';
 import { SettlementsPanel } from './components/SettlementsPanel';
@@ -12,6 +11,10 @@ import { TechPanel } from './components/TechPanel';
 import { ThreatsPanel } from './components/ThreatsPanel';
 import { AIActivityFeed } from './components/AIActivityFeed';
 import { MobileSimControls } from './components/MobileSimControls';
+import { SinglePlayerSetup } from './components/SinglePlayerSetup';
+import { VictoryOverlay } from './components/VictoryOverlay';
+import { setupSinglePlayer } from './state/singlePlayerSetup';
+import type { GameState, SinglePlayerConfig } from './types';
 import { prewarmShipIcons } from './render/shipIconCache';
 import { COLORS } from './render/colors';
 import { AuthProvider, useAuth } from './multiplayer/AuthContext';
@@ -110,7 +113,6 @@ function GameUI({
 
       <ShipPanel />
       <BodyInspector />
-      {!isMultiplayer && <ScenarioSelector />}
       <ThreatsPanel />
       {!isMultiplayer && <AIActivityFeed />}
       <MobileSimControls hideSimControls={isMultiplayer} />
@@ -119,13 +121,35 @@ function GameUI({
 }
 
 /**
- * Single-player entry: mounts the local-scenario GameContextProvider
- * and renders the shared GameUI inside it.
+ * Single-player entry. State machine:
+ *   'setup'   → SinglePlayerSetup screen (configure faction + AI + match)
+ *   'playing' → GameUI with the seeded GameState
+ *
+ * The victory overlay renders on top of GameUI when the match completes;
+ * its "New Campaign" button returns the player to 'setup'.
  */
 function SinglePlayerView({ onExit }: { onExit: () => void }) {
+  const [phase, setPhase] = useState<'setup' | 'playing'>('setup');
+  const [seededState, setSeededState] = useState<GameState | null>(null);
+
+  const handleBegin = (config: SinglePlayerConfig) => {
+    setSeededState(setupSinglePlayer(config));
+    setPhase('playing');
+  };
+
+  const handleNewGame = () => {
+    setSeededState(null);
+    setPhase('setup');
+  };
+
+  if (phase === 'setup' || !seededState) {
+    return <SinglePlayerSetup onBegin={handleBegin} onCancel={onExit} />;
+  }
+
   return (
-    <GameContextProvider initialScenario={1}>
+    <GameContextProvider initialState={seededState}>
       <GameUI onExit={onExit} />
+      <VictoryOverlay onNewGame={handleNewGame} />
     </GameContextProvider>
   );
 }
