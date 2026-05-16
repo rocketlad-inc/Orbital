@@ -421,6 +421,83 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     return () => canvas.removeEventListener('wheel', onWheel);
   }, [camera.x, camera.y, camera.scale, updateCamera]);
 
+  // Arrow keys / WASD pan the camera at a constant on-screen speed
+  // (independent of zoom). Held keys produce smooth motion via rAF;
+  // multiple keys combine on diagonals. Skipped when the user is
+  // typing in a text field or when a modifier is held (so browser
+  // shortcuts still work).
+  useEffect(() => {
+    const heldKeys = new Set<string>();
+    let rafId: number | null = null;
+    let lastTime: number | null = null;
+
+    const PAN_PIXELS_PER_SEC = 600;
+
+    const isTextField = (el: EventTarget | null): boolean => {
+      const t = el as HTMLElement | null;
+      if (!t) return false;
+      const tag = t.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || t.isContentEditable;
+    };
+
+    const tick = (now: number) => {
+      if (heldKeys.size === 0) { rafId = null; lastTime = null; return; }
+      const dt = lastTime == null ? 0 : (now - lastTime) / 1000;
+      lastTime = now;
+
+      let dx = 0, dy = 0;
+      if (heldKeys.has('w') || heldKeys.has('arrowup'))    dy -= 1;
+      if (heldKeys.has('s') || heldKeys.has('arrowdown'))  dy += 1;
+      if (heldKeys.has('a') || heldKeys.has('arrowleft'))  dx -= 1;
+      if (heldKeys.has('d') || heldKeys.has('arrowright')) dx += 1;
+
+      if (dx !== 0 || dy !== 0) {
+        const len = Math.hypot(dx, dy);
+        dx /= len; dy /= len;
+        // Convert "on-screen pixels per second" to world-space pan
+        // by dividing by current scale so the pan feels constant
+        // regardless of zoom level.
+        const worldStep = (PAN_PIXELS_PER_SEC * dt) / camera.scale;
+        // Read previous camera fresh from updateCamera's closure each
+        // frame so we keep momentum even as state batches.
+        updateCamera({
+          x: camera.x + dx * worldStep,
+          y: camera.y + dy * worldStep,
+          focusedBodyId: undefined,
+        });
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (isTextField(e.target)) return;
+      const k = e.key.toLowerCase();
+      if (!['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) return;
+      e.preventDefault();
+      if (heldKeys.has(k)) return;
+      heldKeys.add(k);
+      if (rafId == null) rafId = requestAnimationFrame(tick);
+    };
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      const k = e.key.toLowerCase();
+      heldKeys.delete(k);
+    };
+
+    const onBlur = () => { heldKeys.clear(); };
+
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+      if (rafId != null) cancelAnimationFrame(rafId);
+    };
+  }, [camera.x, camera.y, camera.scale, updateCamera]);
+
   // Shared tap/click logic — called by both the mouse onClick handler and
   // the touch-input layer. Hit radii are padded on coarse-pointer devices
   // (mobile/tablet) so fingers can reliably grab ships and bodies.
