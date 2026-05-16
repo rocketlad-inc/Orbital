@@ -21,14 +21,23 @@ const DEFAULTS = {
   // Faction & seeding
   worldsPerFaction: 2,
   maxPlayers: 4,
+  // Starting conditions
+  startingMetal: 100,
+  startingFuel: 200,
+  startingGold: 50,
+  combatShipsPerWorld: 2,
+  cargoShipsPerWorld: 1,
+  starterCityHp: 100,
   // Ship combat
   corvetteHp: 40, corvetteDmg: 5,
   frigateHp: 80,  frigateDmg: 10,
   destroyerHp: 200, destroyerDmg: 18,
+  freighterHp: 60, freighterDmg: 0,
   // Build economy
   corvetteMetal: 15, corvetteBuildTicks: 30,
   frigateMetal: 30,  frigateBuildTicks: 60,
   destroyerMetal: 60, destroyerBuildTicks: 120,
+  freighterMetal: 20, freighterBuildTicks: 45,
   // Settlements
   settlementCost: 30,
   cityHp: 100, stationHp: 60,
@@ -39,7 +48,7 @@ const DEFAULTS = {
   popMax: 10,
   popMultiplierPerLevel: 0.1,
   settlementCombatDmg: 4,
-  // Tech
+  // Tech cost curves
   weaponsBaseCost: 40, weaponsScaling: 1.7,
   armorBaseCost: 40, armorScaling: 1.7,
   propulsionBaseCost: 35, propulsionScaling: 1.6,
@@ -47,10 +56,35 @@ const DEFAULTS = {
   constructionBaseCost: 50, constructionScaling: 1.8,
   industryBaseCost: 45, industryScaling: 1.7,
   sensorsBaseCost: 30, sensorsScaling: 1.5,
+  // Tech effect magnitudes (per level)
+  weaponsPerLevel: 0.10,     // +10% firepower
+  armorPerLevel: 0.08,       // +8% HP
+  propulsionPerLevel: 0.06,  // -6% transfer Δv cost
+  flightPerLevel: 0.06,      // -6% travel time
+  constructionPerLevel: 0.05,// -5% build cost
+  industryPerLevel: 0.10,    // +10% settlement yield
+  sensorsPerLevel: 0.12,     // +12% sensor range
   // Physics
   solMu: 6003,
-  // Fog of war
-  baseSensorRange: 200,
+  // Fog of war: sensor ranges per asset
+  corvetteSensor: 150,
+  frigateSensor: 200,
+  destroyerSensor: 175,
+  freighterSensor: 100,
+  citySensor: 250,
+  baseSensorRange: 400,       // station sensor range
+  ghostLifetimeTicks: 50,     // ticks a last-known ghost stays visible
+  burnSignatureDuration: 15,  // ticks of boosted visibility after a burn
+  burnSignatureBoost: 2.5,    // sensor-range multiplier at the moment of burn
+  // Combat cadence + maintenance
+  autoCombatInterval: 20,     // ticks between auto-fire volleys
+  repairPerTickAtCity: 2,     // HP/tick restored to ships at a city
+  // AI behavior
+  aiDecisionInterval: 50,
+  aiActionBudget: 2,
+  aiTargetFleetSize: 5,
+  aiExpansionTargetColonies: 2,
+  aiDefenseShipsPerBody: 1,
   // VFX
   damageFlashMs: 500,
 };
@@ -112,6 +146,46 @@ const TUNABLE_FILES: Record<keyof typeof DEFAULTS, string> = {
   baseSensorRange:       'src/game/visibility.ts SETTLEMENT_SENSOR_RANGE.station',
   // VFX
   damageFlashMs:         'src/render/mapRenderer.ts DAMAGE_FLASH_DURATION_MS',
+  // === Newly added ===
+  // Starting conditions
+  startingMetal:         'worker/factions.js STARTING_RESOURCES.metal',
+  startingFuel:          'worker/factions.js STARTING_RESOURCES.fuel',
+  startingGold:          'worker/factions.js STARTING_RESOURCES.gold',
+  combatShipsPerWorld:   'worker/factions.js COMBAT_SHIPS_PER_WORLD',
+  cargoShipsPerWorld:    'worker/factions.js CARGO_SHIPS_PER_WORLD',
+  starterCityHp:         'worker/factions.js STARTER_CITY_HP',
+  // Freighter (was missing)
+  freighterHp:           'worker/factions.js SHIP_COMBAT_STATS.freighter.hp + src/game/shipClasses.ts FREIGHTER.hp',
+  freighterDmg:          'worker/factions.js SHIP_COMBAT_STATS.freighter.damage_per_tick',
+  freighterMetal:        'worker/actions.js SHIP_BUILD_COST.freighter.metal',
+  freighterBuildTicks:   'worker/actions.js SHIP_BUILD_COST.freighter.build_ticks',
+  // Tech effect magnitudes
+  weaponsPerLevel:       'src/game/techs.ts TECH_DEFS.weapons.perLevel',
+  armorPerLevel:         'src/game/techs.ts TECH_DEFS.armor.perLevel',
+  propulsionPerLevel:    'src/game/techs.ts TECH_DEFS.propulsion.perLevel',
+  flightPerLevel:        'src/game/techs.ts TECH_DEFS.flight.perLevel',
+  constructionPerLevel:  'src/game/techs.ts TECH_DEFS.construction.perLevel',
+  industryPerLevel:      'src/game/techs.ts TECH_DEFS.industry.perLevel',
+  sensorsPerLevel:       'src/game/techs.ts TECH_DEFS.sensors.perLevel',
+  // Sensor ranges per class
+  corvetteSensor:        'src/game/visibility.ts SHIP_SENSOR_RANGE.corvette',
+  frigateSensor:         'src/game/visibility.ts SHIP_SENSOR_RANGE.frigate',
+  destroyerSensor:       'src/game/visibility.ts SHIP_SENSOR_RANGE.destroyer',
+  freighterSensor:       'src/game/visibility.ts SHIP_SENSOR_RANGE.freighter',
+  citySensor:            'src/game/visibility.ts SETTLEMENT_SENSOR_RANGE.city',
+  // Fog of war timings
+  ghostLifetimeTicks:    'src/game/visibility.ts GHOST_LIFETIME_TICKS',
+  burnSignatureDuration: 'src/game/visibility.ts BURN_SIGNATURE_DURATION',
+  burnSignatureBoost:    'src/game/visibility.ts BURN_SIGNATURE_BOOST',
+  // Combat cadence + maintenance
+  autoCombatInterval:    'src/game/combat.ts AUTO_COMBAT_INTERVAL (mirrored in worker/room.js)',
+  repairPerTickAtCity:   'src/game/maintenance.ts REPAIR_PER_TICK_CITY',
+  // AI behavior
+  aiDecisionInterval:    'src/game/factionAI.ts AI_DECISION_INTERVAL',
+  aiActionBudget:        'src/game/factionAI.ts ACTION_BUDGET',
+  aiTargetFleetSize:     'src/game/factionAI.ts TARGET_FLEET_SIZE',
+  aiExpansionTargetColonies: 'src/game/factionAI.ts EXPANSION_TARGET_COLONIES',
+  aiDefenseShipsPerBody: 'src/game/factionAI.ts DEFENSE_SHIPS_PER_BODY',
 };
 
 const TICK_INTERVAL_OPTIONS = [
@@ -203,6 +277,25 @@ export const TunablesPage: React.FC<TunablesPageProps> = ({ onBack }) => {
         </p>
       </div>
 
+      {/* ===== Economy & Flow — primer diagrams ===== */}
+      <Section
+        eyebrow="00 · PRIMER"
+        title="How the economy works"
+        description="Three diagrams showing the resource loop, the build dependency graph, and where everything comes from. Read this first if the sliders below feel disconnected — it's the mental model the rest of the page tunes."
+      >
+        <ResourceFlowDiagram />
+        <DependencyDiagram />
+        <YieldSinkDiagram
+          cityM={v.cityMetalBias}
+          cityS={v.cityScienceBias}
+          stationF={v.stationFuelBias}
+          stationS={v.stationScienceBias}
+          popMultPerLevel={v.popMultiplierPerLevel}
+          popMax={v.popMax}
+          harvestInterval={v.harvestInterval}
+        />
+      </Section>
+
       {/* ===== Time & Tempo ===== */}
       <Section
         eyebrow="01 · TIME"
@@ -232,8 +325,8 @@ export const TunablesPage: React.FC<TunablesPageProps> = ({ onBack }) => {
       {/* ===== Match shape ===== */}
       <Section
         eyebrow="02 · MATCH SHAPE"
-        title="Players and worlds"
-        description="How many factions in a room and what they start with."
+        title="Players, worlds, and starter loadout"
+        description="How many factions in a room, what they start with, and what arrives in their orbit on tick 0."
       >
         <div className="section-grid">
           <div className="section-controls">
@@ -259,9 +352,60 @@ export const TunablesPage: React.FC<TunablesPageProps> = ({ onBack }) => {
               file="worker/factions.js WORLDS_PER_PLAYER"
               notes="Capital + extras. With 22 worlds and 8 players × 4 = 32, the seeder runs out."
             />
+            <Slider
+              label="Starter combat ships per world"
+              value={v.combatShipsPerWorld}
+              min={0} max={6} step={1}
+              displayValue={`${v.combatShipsPerWorld}`}
+              onChange={x => set('combatShipsPerWorld', x)}
+              file="worker/factions.js COMBAT_SHIPS_PER_WORLD"
+              notes="Frigates spawned at each owned body on game start."
+            />
+            <Slider
+              label="Starter freighters per world"
+              value={v.cargoShipsPerWorld}
+              min={0} max={4} step={1}
+              displayValue={`${v.cargoShipsPerWorld}`}
+              onChange={x => set('cargoShipsPerWorld', x)}
+              file="worker/factions.js CARGO_SHIPS_PER_WORLD"
+            />
+            <Slider
+              label="Starter city HP"
+              value={v.starterCityHp}
+              min={20} max={500} step={10}
+              displayValue={`${v.starterCityHp}`}
+              onChange={x => set('starterCityHp', x)}
+              file="worker/factions.js STARTER_CITY_HP"
+            />
+            <Slider
+              label="Starting metal"
+              value={v.startingMetal} min={0} max={1000} step={10}
+              onChange={x => set('startingMetal', x)}
+              file="worker/factions.js STARTING_RESOURCES.metal"
+            />
+            <Slider
+              label="Starting fuel"
+              value={v.startingFuel} min={0} max={1000} step={10}
+              onChange={x => set('startingFuel', x)}
+              file="worker/factions.js STARTING_RESOURCES.fuel"
+            />
+            <Slider
+              label="Starting gold"
+              value={v.startingGold} min={0} max={1000} step={5}
+              onChange={x => set('startingGold', x)}
+              file="worker/factions.js STARTING_RESOURCES.gold"
+            />
           </div>
           <div className="section-visual">
             <FactionGrid maxPlayers={v.maxPlayers} worldsPerFaction={v.worldsPerFaction} />
+            <StarterLoadoutSummary
+              combatShips={v.combatShipsPerWorld}
+              cargoShips={v.cargoShipsPerWorld}
+              cityHp={v.starterCityHp}
+              metal={v.startingMetal}
+              fuel={v.startingFuel}
+              gold={v.startingGold}
+            />
           </div>
         </div>
       </Section>
@@ -280,6 +424,10 @@ export const TunablesPage: React.FC<TunablesPageProps> = ({ onBack }) => {
             <Slider label="Frigate damage" value={v.frigateDmg} min={1} max={50} step={1} onChange={x => set('frigateDmg', x)} />
             <Slider label="Destroyer HP" value={v.destroyerHp} min={50} max={800} step={10} onChange={x => set('destroyerHp', x)} />
             <Slider label="Destroyer damage" value={v.destroyerDmg} min={1} max={80} step={1} onChange={x => set('destroyerDmg', x)} />
+            <Slider label="Freighter HP" value={v.freighterHp} min={10} max={200} step={5} onChange={x => set('freighterHp', x)}
+              notes="No combat damage by design — cargo class only." />
+            <Slider label="Freighter damage" value={v.freighterDmg} min={0} max={20} step={1} onChange={x => set('freighterDmg', x)}
+              notes="0 = pacifist. Set non-zero to give freighters self-defense bite." />
           </div>
           <div className="section-visual">
             <ShipStatBars
@@ -305,6 +453,8 @@ export const TunablesPage: React.FC<TunablesPageProps> = ({ onBack }) => {
             <Slider label="Frigate build ticks" value={v.frigateBuildTicks} min={10} max={400} step={10} onChange={x => set('frigateBuildTicks', x)} />
             <Slider label="Destroyer metal" value={v.destroyerMetal} min={1} max={400} step={1} onChange={x => set('destroyerMetal', x)} />
             <Slider label="Destroyer build ticks" value={v.destroyerBuildTicks} min={20} max={800} step={20} onChange={x => set('destroyerBuildTicks', x)} />
+            <Slider label="Freighter metal" value={v.freighterMetal} min={1} max={100} step={1} onChange={x => set('freighterMetal', x)} />
+            <Slider label="Freighter build ticks" value={v.freighterBuildTicks} min={5} max={200} step={5} onChange={x => set('freighterBuildTicks', x)} />
           </div>
           <div className="section-visual">
             <BuildEconomyChart
@@ -355,13 +505,13 @@ export const TunablesPage: React.FC<TunablesPageProps> = ({ onBack }) => {
       >
         <div className="section-grid">
           <div className="section-controls">
-            <TechRow techId="weapons" label="Weapons (+10% firepower)" base={v.weaponsBaseCost} scaling={v.weaponsScaling} onBase={x => set('weaponsBaseCost', x)} onScaling={x => set('weaponsScaling', x)} />
-            <TechRow techId="armor" label="Armor (+8% HP)" base={v.armorBaseCost} scaling={v.armorScaling} onBase={x => set('armorBaseCost', x)} onScaling={x => set('armorScaling', x)} />
-            <TechRow techId="propulsion" label="Propulsion (−6% Δv)" base={v.propulsionBaseCost} scaling={v.propulsionScaling} onBase={x => set('propulsionBaseCost', x)} onScaling={x => set('propulsionScaling', x)} />
-            <TechRow techId="flight" label="Flight (−6% travel time)" base={v.flightBaseCost} scaling={v.flightScaling} onBase={x => set('flightBaseCost', x)} onScaling={x => set('flightScaling', x)} />
-            <TechRow techId="construction" label="Construction (−5% build cost)" base={v.constructionBaseCost} scaling={v.constructionScaling} onBase={x => set('constructionBaseCost', x)} onScaling={x => set('constructionScaling', x)} />
-            <TechRow techId="industry" label="Industry (+10% yield)" base={v.industryBaseCost} scaling={v.industryScaling} onBase={x => set('industryBaseCost', x)} onScaling={x => set('industryScaling', x)} />
-            <TechRow techId="sensors" label="Sensors (+12% range)" base={v.sensorsBaseCost} scaling={v.sensorsScaling} onBase={x => set('sensorsBaseCost', x)} onScaling={x => set('sensorsScaling', x)} />
+            <TechRow techId="weapons"      label={`Weapons (+${(v.weaponsPerLevel*100).toFixed(0)}% firepower)`}     base={v.weaponsBaseCost}     scaling={v.weaponsScaling}     perLevel={v.weaponsPerLevel}      onBase={x => set('weaponsBaseCost', x)}     onScaling={x => set('weaponsScaling', x)}     onPerLevel={x => set('weaponsPerLevel', x)} />
+            <TechRow techId="armor"        label={`Armor (+${(v.armorPerLevel*100).toFixed(0)}% HP)`}                 base={v.armorBaseCost}       scaling={v.armorScaling}       perLevel={v.armorPerLevel}        onBase={x => set('armorBaseCost', x)}       onScaling={x => set('armorScaling', x)}       onPerLevel={x => set('armorPerLevel', x)} />
+            <TechRow techId="propulsion"   label={`Propulsion (−${(v.propulsionPerLevel*100).toFixed(0)}% Δv)`}        base={v.propulsionBaseCost}  scaling={v.propulsionScaling}  perLevel={v.propulsionPerLevel}   onBase={x => set('propulsionBaseCost', x)}  onScaling={x => set('propulsionScaling', x)}  onPerLevel={x => set('propulsionPerLevel', x)} />
+            <TechRow techId="flight"       label={`Flight (−${(v.flightPerLevel*100).toFixed(0)}% travel time)`}      base={v.flightBaseCost}      scaling={v.flightScaling}      perLevel={v.flightPerLevel}       onBase={x => set('flightBaseCost', x)}      onScaling={x => set('flightScaling', x)}      onPerLevel={x => set('flightPerLevel', x)} />
+            <TechRow techId="construction" label={`Construction (−${(v.constructionPerLevel*100).toFixed(0)}% build cost)`} base={v.constructionBaseCost} scaling={v.constructionScaling} perLevel={v.constructionPerLevel} onBase={x => set('constructionBaseCost', x)} onScaling={x => set('constructionScaling', x)} onPerLevel={x => set('constructionPerLevel', x)} />
+            <TechRow techId="industry"     label={`Industry (+${(v.industryPerLevel*100).toFixed(0)}% yield)`}        base={v.industryBaseCost}    scaling={v.industryScaling}    perLevel={v.industryPerLevel}     onBase={x => set('industryBaseCost', x)}    onScaling={x => set('industryScaling', x)}    onPerLevel={x => set('industryPerLevel', x)} />
+            <TechRow techId="sensors"      label={`Sensors (+${(v.sensorsPerLevel*100).toFixed(0)}% range)`}          base={v.sensorsBaseCost}     scaling={v.sensorsScaling}     perLevel={v.sensorsPerLevel}      onBase={x => set('sensorsBaseCost', x)}     onScaling={x => set('sensorsScaling', x)}     onPerLevel={x => set('sensorsPerLevel', x)} />
           </div>
           <div className="section-visual">
             <TechCostCurve
@@ -379,39 +529,157 @@ export const TunablesPage: React.FC<TunablesPageProps> = ({ onBack }) => {
         </div>
       </Section>
 
-      {/* ===== Physics & sensors ===== */}
+      {/* ===== Physics ===== */}
       <Section
         eyebrow="07 · PHYSICS"
-        title="Gravity and sensor reach"
-        description="The Sun's gravitational parameter drives every Hohmann calculation. Sensor range is the radius your assets can see hostile ships through."
+        title="Orbital gravity"
+        description="The Sun's gravitational parameter drives every Hohmann calculation. Higher μ = faster transfers and tighter Δv budgets."
       >
         <div className="section-grid">
           <div className="section-controls">
             <Slider
               label="Sol μ (gravitational parameter)"
               value={v.solMu}
-              min={1000}
-              max={20_000}
-              step={100}
+              min={1000} max={20_000} step={100}
               displayValue={v.solMu.toFixed(0)}
               onChange={x => set('solMu', x)}
               file="worker/room.js SOL_MU"
-              notes="Default ≈ 6003 from Jupiter calibration. Higher μ = faster transfers."
-            />
-            <Slider
-              label="Base sensor range (station)"
-              value={v.baseSensorRange}
-              min={50}
-              max={600}
-              step={10}
-              displayValue={`${v.baseSensorRange}u`}
-              onChange={x => set('baseSensorRange', x)}
-              file="src/game/visibility.ts SETTLEMENT_SENSOR_RANGE"
-              notes="Solar system spans ~460u. Station at 400u sees most of the inner system."
+              notes="Default ≈ 6003 from Jupiter calibration."
             />
           </div>
           <div className="section-visual">
             <SensorRangePreview range={v.baseSensorRange} />
+          </div>
+        </div>
+      </Section>
+
+      {/* ===== Fog of war ===== */}
+      <Section
+        eyebrow="08 · FOG OF WAR"
+        title="Sensors and intel"
+        description="Sensor range per asset class, how long stale intel ghosts linger, and how much burning engines amplify your signature."
+      >
+        <div className="section-grid">
+          <div className="section-controls">
+            <Slider label="Corvette sensor range" value={v.corvetteSensor} min={20} max={600} step={10}
+              displayValue={`${v.corvetteSensor}u`} onChange={x => set('corvetteSensor', x)}
+              file="src/game/visibility.ts SHIP_SENSOR_RANGE.corvette" />
+            <Slider label="Frigate sensor range" value={v.frigateSensor} min={20} max={600} step={10}
+              displayValue={`${v.frigateSensor}u`} onChange={x => set('frigateSensor', x)} />
+            <Slider label="Destroyer sensor range" value={v.destroyerSensor} min={20} max={600} step={10}
+              displayValue={`${v.destroyerSensor}u`} onChange={x => set('destroyerSensor', x)} />
+            <Slider label="Freighter sensor range" value={v.freighterSensor} min={20} max={600} step={10}
+              displayValue={`${v.freighterSensor}u`} onChange={x => set('freighterSensor', x)} />
+            <Slider label="City sensor range" value={v.citySensor} min={50} max={600} step={10}
+              displayValue={`${v.citySensor}u`} onChange={x => set('citySensor', x)}
+              file="src/game/visibility.ts SETTLEMENT_SENSOR_RANGE.city" />
+            <Slider label="Station sensor range" value={v.baseSensorRange} min={50} max={800} step={10}
+              displayValue={`${v.baseSensorRange}u`} onChange={x => set('baseSensorRange', x)}
+              file="src/game/visibility.ts SETTLEMENT_SENSOR_RANGE.station"
+              notes="Station is the longest-range platform; ~400u sees most of the inner system." />
+            <Slider label="Ghost lifetime" value={v.ghostLifetimeTicks} min={5} max={200} step={5}
+              displayValue={`${v.ghostLifetimeTicks} ticks`}
+              onChange={x => set('ghostLifetimeTicks', x)}
+              file="src/game/visibility.ts GHOST_LIFETIME_TICKS"
+              notes="How long a last-known position stays visible after a ship leaves sensor range." />
+            <Slider label="Burn signature duration" value={v.burnSignatureDuration} min={1} max={60} step={1}
+              displayValue={`${v.burnSignatureDuration} ticks`}
+              onChange={x => set('burnSignatureDuration', x)}
+              file="src/game/visibility.ts BURN_SIGNATURE_DURATION"
+              notes="How many ticks a ship is extra-visible after firing engines." />
+            <Slider label="Burn signature boost" value={v.burnSignatureBoost} min={1} max={6} step={0.1}
+              displayValue={`×${v.burnSignatureBoost.toFixed(1)}`}
+              onChange={x => set('burnSignatureBoost', x)}
+              file="src/game/visibility.ts BURN_SIGNATURE_BOOST"
+              notes="Sensor-range multiplier at the moment of burn. Decays linearly to 1.0." />
+          </div>
+          <div className="section-visual">
+            <SensorComparisonBars
+              ships={{ corvette: v.corvetteSensor, frigate: v.frigateSensor, destroyer: v.destroyerSensor, freighter: v.freighterSensor }}
+              settlements={{ city: v.citySensor, station: v.baseSensorRange }}
+            />
+          </div>
+        </div>
+      </Section>
+
+      {/* ===== Combat cadence + maintenance ===== */}
+      <Section
+        eyebrow="09 · COMBAT & MAINTENANCE"
+        title="Tempo of war and repair"
+        description="How often colocated ships exchange volleys, and how fast ships parked at a friendly city heal."
+      >
+        <div className="section-grid">
+          <div className="section-controls">
+            <Slider label="Auto-combat interval"
+              value={v.autoCombatInterval} min={1} max={100} step={1}
+              displayValue={`${v.autoCombatInterval} ticks`}
+              onChange={x => set('autoCombatInterval', x)}
+              file="src/game/combat.ts AUTO_COMBAT_INTERVAL"
+              notes="Ticks between volleys. Lower = faster fights." />
+            <Slider label="Repair / tick at a city"
+              value={v.repairPerTickAtCity} min={0} max={20} step={1}
+              displayValue={`${v.repairPerTickAtCity} HP`}
+              onChange={x => set('repairPerTickAtCity', x)}
+              file="src/game/maintenance.ts REPAIR_PER_TICK_CITY" />
+          </div>
+          <div className="section-visual">
+            <CombatTempoCard
+              autoCombatInterval={v.autoCombatInterval}
+              repairPerTick={v.repairPerTickAtCity}
+              tickIntervalMs={v.tickIntervalMs}
+              destroyerDmg={v.destroyerDmg}
+              frigateHp={v.frigateHp}
+            />
+          </div>
+        </div>
+      </Section>
+
+      {/* ===== AI behavior ===== */}
+      <Section
+        eyebrow="10 · AI BEHAVIOR"
+        title="How AI factions play"
+        description="The phased utility-AI from src/game/factionAI.ts. Phase weights (EXP/DEF/AGR) aren't on this page — edit them in code — but every gate that triggers a phase transition is."
+      >
+        <div className="section-grid">
+          <div className="section-controls">
+            <Slider label="Decision cycle interval"
+              value={v.aiDecisionInterval} min={5} max={500} step={5}
+              displayValue={`${v.aiDecisionInterval} ticks`}
+              onChange={x => set('aiDecisionInterval', x)}
+              file="src/game/factionAI.ts AI_DECISION_INTERVAL"
+              notes="Lower = more reactive but noisier." />
+            <Slider label="Action budget"
+              value={v.aiActionBudget} min={1} max={6} step={1}
+              displayValue={`${v.aiActionBudget}`}
+              onChange={x => set('aiActionBudget', x)}
+              file="src/game/factionAI.ts ACTION_BUDGET" />
+            <Slider label="Target fleet size"
+              value={v.aiTargetFleetSize} min={1} max={20} step={1}
+              displayValue={`${v.aiTargetFleetSize} combat ships`}
+              onChange={x => set('aiTargetFleetSize', x)}
+              file="src/game/factionAI.ts TARGET_FLEET_SIZE" />
+            <Slider label="Expansion target (colonies)"
+              value={v.aiExpansionTargetColonies} min={1} max={6} step={1}
+              displayValue={`${v.aiExpansionTargetColonies} colonies`}
+              onChange={x => set('aiExpansionTargetColonies', x)}
+              file="src/game/factionAI.ts EXPANSION_TARGET_COLONIES"
+              notes="Settled bodies the AI wants before leaving EXPANSION phase." />
+            <Slider label="Defense floor (ships per body)"
+              value={v.aiDefenseShipsPerBody} min={0} max={5} step={1}
+              displayValue={`${v.aiDefenseShipsPerBody} ship/body`}
+              onChange={x => set('aiDefenseShipsPerBody', x)}
+              file="src/game/factionAI.ts DEFENSE_SHIPS_PER_BODY"
+              notes="Required combat garrison at every owned body before AGGRESSION unlocks." />
+          </div>
+          <div className="section-visual">
+            <AIPhaseCard
+              decisionInterval={v.aiDecisionInterval}
+              actionBudget={v.aiActionBudget}
+              targetFleet={v.aiTargetFleetSize}
+              expansionTarget={v.aiExpansionTargetColonies}
+              defenseFloor={v.aiDefenseShipsPerBody}
+              tickIntervalMs={v.tickIntervalMs}
+            />
           </div>
         </div>
       </Section>
@@ -517,16 +785,32 @@ interface TechRowProps {
   label: string;
   base: number;
   scaling: number;
+  /** Magnitude of the tech's per-level effect (e.g. 0.10 = +10%/level).
+   *  Surfaced as its own slider so the sandbox can tune both the cost
+   *  curve and the payoff side-by-side. */
+  perLevel: number;
   onBase: (v: number) => void;
   onScaling: (v: number) => void;
+  onPerLevel: (v: number) => void;
 }
 
-const TechRow: React.FC<TechRowProps> = ({ label, base, scaling, onBase, onScaling }) => (
+const TechRow: React.FC<TechRowProps> = ({
+  label, base, scaling, perLevel, onBase, onScaling, onPerLevel,
+}) => (
   <div className="tun-tech-row">
     <div className="tun-tech-label">{label}</div>
     <div className="tun-tech-controls">
       <Slider label="base cost" value={base} min={1} max={500} step={1} onChange={onBase} />
       <Slider label="scaling" value={scaling} min={1.0} max={3.0} step={0.05} displayValue={scaling.toFixed(2)} onChange={onScaling} />
+      <Slider
+        label="per level"
+        value={perLevel}
+        min={0}
+        max={0.5}
+        step={0.01}
+        displayValue={`${(perLevel * 100).toFixed(0)}%`}
+        onChange={onPerLevel}
+      />
     </div>
   </div>
 );
@@ -1019,3 +1303,330 @@ const DamageFlashPreview: React.FC<{ durationMs: number }> = ({ durationMs }) =>
     </div>
   );
 };
+
+// ============================================================
+// Placeholder primers — referenced from the page above
+// (sections 00 PRIMER and 02 FACTIONS) but never implemented;
+// the build broke without these. Minimal labeled cards that
+// surface the relevant numbers without the full visualization.
+// ============================================================
+
+/**
+ * Resource flow diagram — left to right: body yields → settlement stockpile
+ * → freighter → faction pool → spent on builds + tech.
+ *
+ * Inline SVG with named boxes + labeled arrows. Static (no slider deps);
+ * just explains the loop.
+ */
+const ResourceFlowDiagram: React.FC = () => (
+  <div className="vis-flow">
+    <div className="vis-flow-title">RESOURCE FLOW</div>
+    <svg viewBox="0 0 720 200" className="vis-flow-svg">
+      {/* Boxes */}
+      <FlowNode x={20}  y={70} w={120} h={60} title="BODY" sub="metal · fuel · gold · science" color="#a89878" />
+      <FlowNode x={180} y={70} w={130} h={60} title="SETTLEMENT" sub="harvests every N ticks" color="#ff8c69" />
+      <FlowNode x={350} y={70} w={120} h={60} title="FREIGHTER" sub="ferries to pool" color="#4ecdc4" />
+      <FlowNode x={510} y={70} w={130} h={60} title="FACTION POOL" sub="metal · fuel · gold · sci" color="#ffb84d" />
+      {/* Spend lanes */}
+      <FlowNode x={550} y={5}  w={130} h={36} title="→ SHIP BUILDS" sub="metal + gold"     color="#67e8f9" small />
+      <FlowNode x={550} y={160} w={130} h={36} title="→ SETTLEMENTS" sub="metal + gold"    color="#67e8f9" small />
+      <FlowNode x={50}  y={155} w={180} h={36} title="→ TECH" sub="science (from yield)"  color="#67e8f9" small />
+      {/* Arrows */}
+      <FlowArrow x1={140} y1={100} x2={180} y2={100} label={`× pop mult`} />
+      <FlowArrow x1={310} y1={100} x2={350} y2={100} label={`when freighter at body`} />
+      <FlowArrow x1={470} y1={100} x2={510} y2={100} />
+      {/* Pool → spends */}
+      <FlowArrow x1={615} y1={70} x2={615} y2={41}  vertical />
+      <FlowArrow x1={615} y1={130} x2={615} y2={160} vertical />
+      {/* Tech feedback — pool reaches back to settlement (industry) */}
+      <FlowArrow x1={550} y1={172} x2={230} y2={172} label="science earns industry / yield buff" reverse />
+    </svg>
+  </div>
+);
+
+/**
+ * Build-dependency diagram. Arrow tail = prerequisite, arrow head = unlock.
+ */
+const DependencyDiagram: React.FC = () => (
+  <div className="vis-flow">
+    <div className="vis-flow-title">BUILD DEPENDENCIES</div>
+    <svg viewBox="0 0 720 180" className="vis-flow-svg">
+      <FlowNode x={20}  y={70}  w={120} h={50} title="STATION" sub="orbital shipyard" color="#4ecdc4" />
+      <FlowNode x={200} y={20}  w={130} h={50} title="SHIPS" sub="corvette · frigate · destroyer · freighter" color="#ffb84d" small />
+      <FlowNode x={20}  y={20}  w={120} h={36} title="FREIGHTER" sub="needed to deploy" color="#4ecdc4" small />
+      <FlowNode x={200} y={120} w={130} h={50} title="SETTLEMENTS" sub="city · station" color="#ffb84d" small />
+      <FlowNode x={380} y={70}  w={120} h={50} title="SCIENCE" sub="from settlement yield" color="#67e8f9" />
+      <FlowNode x={550} y={70}  w={150} h={50} title="TECH LEVELS" sub="weapons · armor · …" color="#ec407a" />
+      {/* Arrows */}
+      <FlowArrow x1={140} y1={88} x2={200} y2={50}  label="enables" />
+      <FlowArrow x1={140} y1={40} x2={200} y2={135} label="enables" />
+      <FlowArrow x1={330} y1={140} x2={380} y2={105} label="harvests" />
+      <FlowArrow x1={500} y1={95} x2={550} y2={95}  label="spends" />
+      <text x={360} y={172} className="vis-flow-note" textAnchor="middle">
+        TECH boosts: firepower (weapons) · HP (armor) · build cost (construction) · yield (industry) · sensor range (sensors)
+      </text>
+    </svg>
+  </div>
+);
+
+// (Original FlowNode + FlowArrow primitives are defined further down,
+// alongside the per-section visual cards. Duplicates were removed here
+// to satisfy the TS no-duplicate-declaration check.)
+
+// ============================================================
+// Per-section visualization cards
+// ============================================================
+
+interface SensorComparisonProps {
+  ships: { corvette: number; frigate: number; destroyer: number; freighter: number };
+  settlements: { city: number; station: number };
+}
+
+/**
+ * Horizontal bar chart comparing sensor range across every asset class.
+ * Bars are scaled by the highest range so even a 600u station fits.
+ */
+const SensorComparisonBars: React.FC<SensorComparisonProps> = ({ ships, settlements }) => {
+  const rows = [
+    { name: 'Freighter', value: ships.freighter, color: '#a89878' },
+    { name: 'Corvette',  value: ships.corvette,  color: '#4ecdc4' },
+    { name: 'Destroyer', value: ships.destroyer, color: '#ff5e5e' },
+    { name: 'Frigate',   value: ships.frigate,   color: '#ffb84d' },
+    { name: 'City',      value: settlements.city,    color: '#6ee7b7' },
+    { name: 'Station',   value: settlements.station, color: '#67e8f9' },
+  ];
+  const max = Math.max(...rows.map(r => r.value));
+  return (
+    <div className="vis-sensor-bars">
+      <div className="vis-bar-header">SENSOR RANGE BY ASSET</div>
+      {rows.map(r => (
+        <div className="vis-bar-row" key={r.name}>
+          <span className="vis-bar-name" style={{ color: r.color }}>{r.name}</span>
+          <div className="vis-bar-cell" style={{ flex: 1 }}>
+            <div className="vis-bar-track">
+              <div className="vis-bar-fill" style={{ width: `${(r.value / max) * 100}%`, background: r.color }} />
+            </div>
+            <span className="vis-bar-num">{r.value}u</span>
+          </div>
+        </div>
+      ))}
+      <div className="vis-derived">
+        Solar system spans ~460u. Station at {settlements.station}u sees{' '}
+        {settlements.station >= 460
+          ? <span className="vis-good">the whole inner system</span>
+          : <span className="vis-warn">~{Math.round((settlements.station / 460) * 100)}% of it</span>}.
+      </div>
+    </div>
+  );
+};
+
+interface CombatTempoProps {
+  autoCombatInterval: number;
+  repairPerTick: number;
+  tickIntervalMs: number;
+  destroyerDmg: number;
+  frigateHp: number;
+}
+
+/** Derived stats card for the combat section — translates the cadence
+ *  numbers into a wall-clock expectation. */
+const CombatTempoCard: React.FC<CombatTempoProps> = ({
+  autoCombatInterval, repairPerTick, tickIntervalMs, destroyerDmg, frigateHp,
+}) => {
+  // Wall-clock time for one volley
+  const volleyMs = autoCombatInterval * tickIntervalMs;
+  const volleyStr = volleyMs < 60_000
+    ? `${(volleyMs / 1000).toFixed(0)}s`
+    : volleyMs < 3_600_000
+      ? `${(volleyMs / 60_000).toFixed(1)}m`
+      : volleyMs < 86_400_000
+        ? `${(volleyMs / 3_600_000).toFixed(1)}h`
+        : `${(volleyMs / 86_400_000).toFixed(1)}d`;
+  // Damage per volley to a frigate, time-to-kill estimate
+  const ttk = destroyerDmg > 0 ? Math.ceil(frigateHp / destroyerDmg) : Infinity;
+  return (
+    <div className="vis-card">
+      <div className="vis-bar-header">DERIVED</div>
+      <div className="vis-card-row">
+        <span>Wall-clock per volley</span>
+        <strong>{volleyStr}</strong>
+      </div>
+      <div className="vis-card-row">
+        <span>Destroyer-vs-Frigate TTK</span>
+        <strong>{Number.isFinite(ttk) ? `${ttk} volleys` : '—'}</strong>
+      </div>
+      <div className="vis-card-row">
+        <span>Frigate full-heal at city</span>
+        <strong>{repairPerTick > 0 ? `${Math.ceil(frigateHp / repairPerTick)} ticks` : '—'}</strong>
+      </div>
+    </div>
+  );
+};
+
+interface AIPhaseCardProps {
+  decisionInterval: number;
+  actionBudget: number;
+  targetFleet: number;
+  expansionTarget: number;
+  defenseFloor: number;
+  tickIntervalMs: number;
+}
+
+/** AI phase summary — explains what triggers each transition. */
+const AIPhaseCard: React.FC<AIPhaseCardProps> = ({
+  decisionInterval, actionBudget, targetFleet, expansionTarget, defenseFloor, tickIntervalMs,
+}) => {
+  const wallClock = decisionInterval * tickIntervalMs;
+  const wallStr = wallClock < 60_000
+    ? `${(wallClock / 1000).toFixed(0)}s`
+    : wallClock < 3_600_000
+      ? `${(wallClock / 60_000).toFixed(1)}m`
+      : `${(wallClock / 3_600_000).toFixed(1)}h`;
+  return (
+    <div className="vis-card">
+      <div className="vis-bar-header">AI PHASE GATES</div>
+      <div className="vis-card-row">
+        <span style={{ color: '#6ee7b7' }}>EXPANSION</span>
+        <strong>colonies &lt; {expansionTarget}</strong>
+      </div>
+      <div className="vis-card-row">
+        <span style={{ color: '#ffb84d' }}>DEFENSE</span>
+        <strong>any body has &lt; {defenseFloor} combat ship</strong>
+      </div>
+      <div className="vis-card-row">
+        <span style={{ color: '#ff5e5e' }}>AGGRESSION</span>
+        <strong>all defended, fleet → {targetFleet}</strong>
+      </div>
+      <div className="vis-derived">
+        Decision every {decisionInterval} ticks ≈ {wallStr} wall-clock · up to{' '}
+        <strong>{actionBudget}</strong> action{actionBudget === 1 ? '' : 's'} per cycle
+      </div>
+    </div>
+  );
+};
+
+const YieldSinkDiagram: React.FC<{
+  cityM: number;
+  cityS: number;
+  stationF: number;
+  stationS: number;
+  popMultPerLevel: number;
+  popMax: number;
+  harvestInterval: number;
+}> = ({ cityM, cityS, stationF, stationS, popMultPerLevel, popMax, harvestInterval }) => (
+  <div className="vis-card">
+    <div className="vis-caption">
+      <strong>Yield biases</strong>
+      <span className="vis-caption-dim">
+        {' · '}city M×{cityM.toFixed(2)} S×{cityS.toFixed(2)}
+        {' · '}station F×{stationF.toFixed(2)} S×{stationS.toFixed(2)}
+        {' · '}pop +{(popMultPerLevel * 100).toFixed(0)}%/lvl → max ×{(1 + popMultPerLevel * popMax).toFixed(2)}
+        {' · '}harvest every {harvestInterval}t
+      </span>
+    </div>
+  </div>
+);
+
+const StarterLoadoutSummary: React.FC<{
+  combatShips: number;
+  cargoShips: number;
+  cityHp: number;
+  metal: number;
+  fuel: number;
+  gold: number;
+}> = ({ combatShips, cargoShips, cityHp, metal, fuel, gold }) => (
+  <div className="vis-card">
+    <div className="vis-caption">
+      <strong>Per-faction starter loadout</strong>
+      <span className="vis-caption-dim">
+        {' · '}{combatShips} combat + {cargoShips} cargo
+        {' · '}city HP {cityHp}
+        {' · '}pool M{metal} F{fuel} G{gold}
+      </span>
+    </div>
+  </div>
+);
+
+// ============================================================
+// SVG diagram primitives used by ResourceFlowDiagram and
+// DependencyDiagram above. Each component is one positioned
+// shape inside the parent <svg>, so the call site fully drives
+// layout via x/y/w/h.
+// ============================================================
+
+interface FlowNodeProps {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  title: string;
+  sub?: string;
+  color: string;
+  small?: boolean;
+}
+
+const FlowNode: React.FC<FlowNodeProps> = ({ x, y, w, h, title, sub, color, small }) => {
+  const titleSize = small ? 8 : 11;
+  const subSize = small ? 6 : 8;
+  const titleY = sub ? y + h / 2 - 2 : y + h / 2 + titleSize / 3;
+  return (
+    <g>
+      <rect
+        x={x} y={y} width={w} height={h} rx={4}
+        fill="rgba(10,14,20,0.6)" stroke={color} strokeWidth={1.5}
+      />
+      <text
+        x={x + w / 2} y={titleY} textAnchor="middle"
+        fill={color} fontSize={titleSize} fontWeight={600}
+        fontFamily="JetBrains Mono, monospace"
+      >
+        {title}
+      </text>
+      {sub && (
+        <text
+          x={x + w / 2} y={y + h / 2 + subSize + 2} textAnchor="middle"
+          fill="#a5b7ca" fontSize={subSize}
+          fontFamily="JetBrains Mono, monospace"
+        >
+          {sub}
+        </text>
+      )}
+    </g>
+  );
+};
+
+interface FlowArrowProps {
+  x1: number; y1: number; x2: number; y2: number;
+  label?: string;
+  vertical?: boolean;
+  /** Render the arrowhead at the start (x1/y1) instead of the end —
+   *  used for feedback loops where the arrow points "back" upstream. */
+  reverse?: boolean;
+}
+
+const FlowArrow: React.FC<FlowArrowProps> = ({ x1, y1, x2, y2, label, vertical, reverse }) => {
+  const ax = reverse ? x1 : x2;
+  const ay = reverse ? y1 : y2;
+  const lineColor = '#67e8f9';
+  const head = vertical
+    ? [`${ax - 4},${ay + (reverse ? 6 : -6)}`, `${ax + 4},${ay + (reverse ? 6 : -6)}`]
+    : [`${ax + (reverse ? 6 : -6)},${ay - 4}`, `${ax + (reverse ? 6 : -6)},${ay + 4}`];
+  const labelX = (x1 + x2) / 2;
+  const labelY = (y1 + y2) / 2 - (vertical ? 0 : 6);
+  return (
+    <g>
+      <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={lineColor} strokeWidth={1.2} opacity={0.7} />
+      <polygon points={`${ax},${ay} ${head.join(' ')}`} fill={lineColor} opacity={0.85} />
+      {label && (
+        <text
+          x={labelX} y={labelY} textAnchor="middle"
+          fill="#8a9fb3" fontSize={7}
+          fontFamily="JetBrains Mono, monospace"
+        >
+          {label}
+        </text>
+      )}
+    </g>
+  );
+};
+

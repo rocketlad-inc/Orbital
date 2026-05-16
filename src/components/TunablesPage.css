@@ -676,3 +676,86 @@
   background: rgba(255, 184, 77, 0.15);
   box-shadow: 0 0 18px rgba(255, 184, 77, 0.3);
 }
+
+/* === Flow diagrams (ECONOMY & FLOW section) === */
+.vis-flow {
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  background: rgba(10, 14, 20, 0.6);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.vis-flow-title {
+  font-size: 9px;
+  letter-spacing: 0.25em;
+  color: var(--fg-dim);
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.vis-flow-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.vis-flow-arrow-label {
+  font-family: var(--mono);
+  font-size: 8px;
+  fill: var(--fg-dim);
+  letter-spacing: 0.05em;
+}
+
+.vis-flow-note {
+  font-family: var(--mono);
+  font-size: 8px;
+  fill: var(--fg-faint);
+  font-style: italic;
+}
+
+.vis-flow-sub-text {
+  font-family: var(--mono);
+  font-size: 8px;
+  fill: var(--fg-dim);
+  letter-spacing: 0.04em;
+}
+
+/* === Generic value card (combat tempo, AI phase) === */
+.vis-card {
+  padding: 12px;
+  background: rgba(10, 14, 20, 0.6);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-family: var(--mono);
+  margin-bottom: 8px;
+}
+
+.vis-card-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(42, 61, 80, 0.4);
+}
+
+.vis-card-row:last-child {
+  border-bottom: none;
+}
+
+.vis-card-row strong {
+  color: var(--fg);
+  font-weight: 700;
+}
+
+.vis-card-row span:first-child {
+  color: var(--fg-dim);
+}
+
+/* === Sensor comparison bars (also fits the existing .vis-bar-* classes) === */
+.vis-sensor-bars {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
