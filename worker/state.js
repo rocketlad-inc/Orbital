@@ -40,6 +40,25 @@ async function handleGetState(req, env, ctx) {
     .first();
   if (!game) return err(404, 'not_found', 'game not found');
 
+  // Self-heal: Cloudflare DO alarms have been observed to occasionally
+  // not fire on time (game frozen for 2h with no ticks during testing).
+  // When /state notices the wall clock has passed next_tick_at by a
+  // healthy margin, nudge the Room DO via /tick-now (no-op if not
+  // actually due). Fire-and-forget — we don't await it so /state stays
+  // snappy. The nudge re-arms setAlarm so future ticks fire on schedule.
+  if (
+    game.status === 'active'
+    && game.next_tick_at != null
+    && Date.now() > game.next_tick_at + 1000  // 1s grace
+  ) {
+    const stub = env.ROOM.get(env.ROOM.idFromName(game.id));
+    stub.fetch('https://room/tick-now', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ force: false }),
+    }).catch(() => { /* swallow — best-effort */ });
+  }
+
   // Caller must be a member of the game.
   const me = await env.DB
     .prepare(
