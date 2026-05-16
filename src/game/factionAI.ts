@@ -37,8 +37,82 @@ const SCORE_THRESHOLD = 0.5;
 /** Soft target for fleet size. Above this, building more is deprioritized. */
 const TARGET_FLEET_SIZE = 5;
 
-// (THREAT_SHIP_THRESHOLD was reserved for a future threat-response heuristic;
-//  removed from v1 to keep the surface minimal.)
+// === Strategic phase model ===================================
+//
+// The AI moves through three phases based on its current footprint
+// and threats. Each phase applies different weight multipliers to
+// the utility-scored candidate actions, so the same brain naturally
+// shifts focus:
+//
+//   EXPANSION → bias build/deploy/transfer-freighter, suppress combat
+//   DEFENSE   → bias combat-ship builds + transfers to own bodies,
+//               suppress expansion and offensive transfers
+//   AGGRESSION → bias destroyer builds + transfers to enemy bodies
+//
+// Phase is recomputed each cycle from raw state, so the AI can fall
+// back from AGGRESSION to DEFENSE if a colony comes under attack, or
+// back to EXPANSION if its colonies are wiped out.
+
+export type AIPhase = 'expansion' | 'defense' | 'aggression';
+
+/** Minimum colonies (distinct settled bodies) before the AI even
+ *  considers leaving expansion phase. First goal is more colonies. */
+const EXPANSION_TARGET_COLONIES = 2;
+
+/** Minimum combat ships parked at each owned body before defense
+ *  phase considers itself "complete" and graduates to aggression. */
+const DEFENSE_SHIPS_PER_BODY = 1;
+
+interface PhaseWeights {
+  // Build category multipliers — applied to per-class build scores
+  freighterBuild: number;
+  combatShipBuild: number;
+  destroyerBuild: number;    // separate so aggression can prefer heavies
+  // Deploy multiplier
+  settlementDeploy: number;
+  // Transfer multipliers
+  freighterTransfer: number; // sending a freighter to colonize
+  transferToOwn: number;     // sending a combat ship to defend my body
+  transferToEnemy: number;   // sending a combat ship to attack an enemy body
+}
+
+const PHASE_WEIGHTS: Record<AIPhase, PhaseWeights> = {
+  // Phase 1: grow the empire. Freighters and settlements dominate.
+  // Building combat ships is allowed but de-prioritized so the resource
+  // pool funnels into colonization first.
+  expansion: {
+    freighterBuild: 2.0,
+    combatShipBuild: 0.4,
+    destroyerBuild: 0.2,
+    settlementDeploy: 1.8,
+    freighterTransfer: 2.5,
+    transferToOwn: 0.3,
+    transferToEnemy: 0.1,    // never attack while expanding
+  },
+  // Phase 2: hold what we've got. Combat-ship pump on, sending them
+  // out to defend colonies. Settlement deploys throttled — we're not
+  // grabbing more ground until what we have is secure.
+  defense: {
+    freighterBuild: 0.5,
+    combatShipBuild: 1.8,
+    destroyerBuild: 1.2,
+    settlementDeploy: 0.3,
+    freighterTransfer: 0.4,
+    transferToOwn: 2.5,      // defending my bodies is the goal
+    transferToEnemy: 0.3,    // not yet
+  },
+  // Phase 3: take the fight outward. Heavy hitters preferred, plus
+  // a freighter chain for resupply. Offensive transfers dominate.
+  aggression: {
+    freighterBuild: 1.0,     // keep the supply line alive
+    combatShipBuild: 1.5,
+    destroyerBuild: 1.8,
+    settlementDeploy: 0.6,
+    freighterTransfer: 0.8,
+    transferToOwn: 0.5,      // defenders stay put, the rest go forward
+    transferToEnemy: 2.5,    // hunt
+  },
+};
 
 // === Public API ==============================================
 
@@ -82,7 +156,7 @@ export function runFactionAI(
     .slice(0, ACTION_BUDGET);
 
   const notes = top.length === 0
-    ? [`${ctx.faction.name}: standing by`]
+    ? [`[${phaseTag(ctx.phase)}] ${ctx.faction.name}: standing by`]
     : top.map(intent => describeIntent(intent, ctx));
 
   return { intents: top, notes };
@@ -111,6 +185,51 @@ interface AIContext {
   ownedBodyIds: Set<string>;          // bodies I have a settlement on
   hostileShips: Ship[];               // any ship not owned by me
   bodyIdToHostileShips: Map<string, Ship[]>;  // for threat assessment
+
+  // Strategic phase + the weight table to apply this cycle
+  phase: AIPhase;
+  weights: PhaseWeights;
+}
+
+/**
+ * Decide which phase a faction is currently in. Pure function of its
+ * own state — colonies held, combat ships, and whether any of its
+ * settlements have hostiles bearing down on them.
+ */
+function determinePhase(
+  mySettlements: Settlement[],
+  myShips: Ship[],
+  bodyIdToHostileShips: Map<string, Ship[]>,
+): AIPhase {
+  // EXPANSION → not enough colonies yet AND nothing's on fire.
+  // If a colony is being attacked, jump straight to defense even if
+  // we're still expanding by colony count.
+  const underAttack = mySettlements.some(s => {
+    const hostiles = bodyIdToHostileShips.get(s.bodyId)?.length ?? 0;
+    return hostiles > 0;
+  });
+  const distinctColonyBodies = new Set(mySettlements.map(s => s.bodyId)).size;
+  if (distinctColonyBodies < EXPANSION_TARGET_COLONIES && !underAttack) {
+    return 'expansion';
+  }
+
+  // DEFENSE → each colony body needs at least DEFENSE_SHIPS_PER_BODY combat
+  // ships parked at it. Once that floor is met everywhere, graduate.
+  const combatShipsAtBody = new Map<string, number>();
+  for (const ship of myShips) {
+    if (ship.transfer || ship.class === 'freighter') continue;
+    const bodyId = ship.orbit.parentBodyId;
+    combatShipsAtBody.set(bodyId, (combatShipsAtBody.get(bodyId) ?? 0) + 1);
+  }
+  const undefended = mySettlements.filter(s =>
+    (combatShipsAtBody.get(s.bodyId) ?? 0) < DEFENSE_SHIPS_PER_BODY
+  );
+  if (undefended.length > 0) {
+    return 'defense';
+  }
+
+  // AGGRESSION → all colonies defended, time to go forward.
+  return 'aggression';
 }
 
 function buildContext(state: GameState, factionId: string, tick: number): AIContext | null {
@@ -146,6 +265,8 @@ function buildContext(state: GameState, factionId: string, tick: number): AICont
     bodyIdToHostileShips.get(bodyId)!.push(ship);
   }
 
+  const phase = determinePhase(mySettlements, myShips, bodyIdToHostileShips);
+
   return {
     factionId,
     faction: { name: faction.name, color: faction.color },
@@ -163,6 +284,8 @@ function buildContext(state: GameState, factionId: string, tick: number): AICont
     ownedBodyIds,
     hostileShips,
     bodyIdToHostileShips,
+    phase,
+    weights: PHASE_WEIGHTS[phase],
   };
 }
 
@@ -217,20 +340,26 @@ function generateBuildCandidates(ctx: AIContext): AIActionIntent[] {
         if (freighterCount === 0) { score += 5; reason = 'first freighter'; }
         else if (freighterCount < 2 && fleetSize > 3) { score += 1.5; reason = 'second freighter'; }
         else { score += 0.2; reason = 'extra freighter'; }
+        score *= ctx.weights.freighterBuild;
       } else if (cls === 'corvette') {
         score += fleetGap * 1.2;
         reason = combatShipCount === 0 ? 'no combat ships' : 'expand light fleet';
+        score *= ctx.weights.combatShipBuild;
       } else if (cls === 'frigate') {
         score += fleetGap * 1.5;
         if (combatShipCount >= 2) score += 1;  // upgrade past corvette spam
         reason = 'mainline warship';
+        score *= ctx.weights.combatShipBuild;
       } else if (cls === 'destroyer') {
         score += fleetGap * 1.0;
         if (combatShipCount >= 3) score += 1.5;  // late-game heavy hitter
         reason = 'heavy hitter';
+        score *= ctx.weights.destroyerBuild;
       }
 
-      // Cost penalty: avoid emptying the treasury
+      // Cost penalty: avoid emptying the treasury. Applied after phase
+      // multipliers so the AI still respects its bank even when a phase
+      // strongly favors a class.
       const cost = SHIP_CLASSES[cls].cost;
       const oreShare = cost.ore / Math.max(1, ctx.resources.ore);
       score -= oreShare * 2;
@@ -296,6 +425,9 @@ function generateDeployCandidates(ctx: AIContext): AIActionIntent[] {
                       + (body.resources?.science ?? 0);
     score += totalYield * 0.15;
 
+    // Phase weight — expansion favors deploys, defense/aggression throttle them
+    score *= ctx.weights.settlementDeploy;
+
     // Penalize contested bodies (hostile ships present)
     const hostiles = ctx.bodyIdToHostileShips.get(bodyId)?.length ?? 0;
     score -= hostiles * 2;
@@ -322,13 +454,11 @@ function generateTransferCandidates(ctx: AIContext): AIActionIntent[] {
   const out: AIActionIntent[] = [];
   if (ctx.myCombatShipsIdle.length === 0 && ctx.myFreightersIdle.length === 0) return out;
 
-  // Candidate target bodies: hostile-owned ones (for combat ships), unowned (for freighters)
-  // For v1 simplicity, also rotate idle ships to defend known threatened bodies.
-
-  // 1. Send freighters to bodies where I don't have a settlement yet
+  // === 1. Freighter colonization runs ===
+  // Send freighters to high-yield bodies we don't already settle. Phase
+  // weight here is the difference between aggressive colonization
+  // (expansion) and merely topping up a supply chain (aggression).
   for (const freighter of ctx.myFreightersIdle.slice(0, 1)) {
-    // Find a high-yield body I don't already have a settlement on,
-    // that's different from where the freighter currently is.
     const candidates = ctx.state.bodies.filter(b => {
       if (b.type === 'star') return false;
       if (b.id === freighter.orbit.parentBodyId) return false;
@@ -338,7 +468,6 @@ function generateTransferCandidates(ctx: AIContext): AIActionIntent[] {
 
     if (candidates.length === 0) continue;
 
-    // Pick highest yield
     candidates.sort((a, b) => {
       const yA = (a.resources?.metal ?? 0) + (a.resources?.fuel ?? 0) + (a.resources?.gold ?? 0) + (a.resources?.science ?? 0);
       const yB = (b.resources?.metal ?? 0) + (b.resources?.fuel ?? 0) + (b.resources?.gold ?? 0) + (b.resources?.science ?? 0);
@@ -350,36 +479,61 @@ function generateTransferCandidates(ctx: AIContext): AIActionIntent[] {
       kind: 'transfer',
       shipId: freighter.id,
       targetBodyId: target.id,
-      score: 2.5,
-      reason: `send freighter to colonize ${target.name}`,
+      score: 2.5 * ctx.weights.freighterTransfer,
+      reason: `[${ctx.phase}] send freighter to colonize ${target.name}`,
     });
   }
 
-  // 2. Send combat ships to contest hostile concentrations
+  // === 2. Combat-ship redeployment ===
+  // Two flavors: defending an owned body, or attacking an enemy concentration.
+  // Each is scored separately and gets its own phase multiplier — so in
+  // DEFENSE the AI sends ships home, in AGGRESSION it sends them to enemies,
+  // and in EXPANSION both are heavily suppressed (the AI hoards its fleet).
   for (const ship of ctx.myCombatShipsIdle.slice(0, 2)) {
-    // Where are hostile ships? Pick the most threatening cluster I'm not already at.
-    let best: { bodyId: string; bodyName: string; threat: number } | null = null;
+    // Best defensive target: an owned body with hostiles, that the ship
+    // isn't already at.
+    let bestDef: { bodyId: string; bodyName: string; threat: number } | null = null;
+    // Best offensive target: an enemy concentration NOT on one of my bodies.
+    let bestAtk: { bodyId: string; bodyName: string; threat: number } | null = null;
+
     for (const [bodyId, hostiles] of ctx.bodyIdToHostileShips) {
-      if (bodyId === ship.orbit.parentBodyId) continue;  // already there
+      if (bodyId === ship.orbit.parentBodyId) continue;
       const body = ctx.state.bodies.find(b => b.id === bodyId);
       if (!body) continue;
       const threat = hostiles.length;
-      // Bonus if this body has my settlement — go defend it
       const isMine = ctx.ownedBodyIds.has(bodyId);
-      const score = threat * (isMine ? 3 : 1);
-      if (!best || score > best.threat) {
-        best = { bodyId, bodyName: body.name, threat: score };
+
+      if (isMine) {
+        if (!bestDef || threat > bestDef.threat) {
+          bestDef = { bodyId, bodyName: body.name, threat };
+        }
+      } else {
+        if (!bestAtk || threat > bestAtk.threat) {
+          bestAtk = { bodyId, bodyName: body.name, threat };
+        }
       }
     }
-    if (!best) continue;
 
-    out.push({
-      kind: 'transfer',
-      shipId: ship.id,
-      targetBodyId: best.bodyId,
-      score: 1.5 + best.threat * 0.4,
-      reason: `intercept hostiles at ${best.bodyName}`,
-    });
+    // Emit each candidate independently with its own phase weight applied.
+    // The overall scoring pass picks the winner.
+    if (bestDef) {
+      out.push({
+        kind: 'transfer',
+        shipId: ship.id,
+        targetBodyId: bestDef.bodyId,
+        score: (1.5 + bestDef.threat * 0.6) * ctx.weights.transferToOwn,
+        reason: `[${ctx.phase}] defend ${bestDef.bodyName}`,
+      });
+    }
+    if (bestAtk) {
+      out.push({
+        kind: 'transfer',
+        shipId: ship.id,
+        targetBodyId: bestAtk.bodyId,
+        score: (1.5 + bestAtk.threat * 0.4) * ctx.weights.transferToEnemy,
+        reason: `[${ctx.phase}] attack ${bestAtk.bodyName}`,
+      });
+    }
   }
 
   return out;
@@ -450,27 +604,40 @@ function generateSettlementName(type: 'city' | 'station', bodyName: string): str
 
 // === Activity-feed messages ==================================
 
+/** Compact 3-letter phase tag for the activity feed. */
+function phaseTag(phase: AIPhase): string {
+  switch (phase) {
+    case 'expansion':  return 'EXP';
+    case 'defense':    return 'DEF';
+    case 'aggression': return 'AGR';
+  }
+}
+
 function describeIntent(intent: AIActionIntent, ctx: AIContext): string {
+  const tag = `[${phaseTag(ctx.phase)}]`;
   switch (intent.kind) {
     case 'build_ship': {
       const body = ctx.state.bodies.find(b => b.id === intent.bodyId);
-      return `${ctx.faction.name}: building ${intent.shipClass} "${intent.name}" at ${body?.name ?? intent.bodyId} (${intent.reason})`;
+      return `${tag} ${ctx.faction.name}: building ${intent.shipClass} "${intent.name}" at ${body?.name ?? intent.bodyId} (${intent.reason})`;
     }
     case 'deploy_settlement': {
       const body = ctx.state.bodies.find(b => b.id === intent.bodyId);
       const glyph = intent.settlementType === 'city' ? '■' : '◆';
-      return `${ctx.faction.name}: deploying ${glyph} "${intent.name}" on ${body?.name ?? intent.bodyId} (${intent.reason})`;
+      return `${tag} ${ctx.faction.name}: deploying ${glyph} "${intent.name}" on ${body?.name ?? intent.bodyId} (${intent.reason})`;
     }
     case 'transfer': {
       const ship = ctx.state.ships.find(s => s.id === intent.shipId);
       const target = ctx.state.bodies.find(b => b.id === intent.targetBodyId);
-      return `${ctx.faction.name}: ${ship?.name ?? 'ship'} → ${target?.name ?? intent.targetBodyId} — ${intent.reason}`;
+      // Transfer reason already includes the phase tag (see generator);
+      // strip the duplicate so the message doesn't double up.
+      const reason = intent.reason.replace(/^\[(EXP|DEF|AGR|expansion|defense|aggression)\]\s*/, '');
+      return `${tag} ${ctx.faction.name}: ${ship?.name ?? 'ship'} → ${target?.name ?? intent.targetBodyId} — ${reason}`;
     }
     case 'research': {
-      return `${ctx.faction.name}: researching ${intent.reason}`;
+      return `${tag} ${ctx.faction.name}: researching ${intent.reason}`;
     }
     case 'idle':
-      return `${ctx.faction.name}: ${intent.reason}`;
+      return `${tag} ${ctx.faction.name}: ${intent.reason}`;
   }
 }
 
