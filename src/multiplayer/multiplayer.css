@@ -88,6 +88,16 @@
 .mp-submit:disabled { opacity: 0.5; cursor: wait; }
 .mp-error { color: var(--mp-hostile); font-size: 11px; min-height: 16px; margin-top: 8px; }
 .mp-saved { color: var(--mp-friendly); font-size: 10px; }
+
+/* Vertical stack for the auth form + guest button. mp-overlay centers
+   this single child; the column flex puts the guest option beneath the
+   sign-in card instead of beside it. */
+.mp-auth-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
 .mp-guest-btn {
   margin-top: 12px;
   background: none; border: 1px solid #2a3d50;

@@ -24,72 +24,78 @@ export function AuthOverlay({ onGuest }: { onGuest?: () => void }) {
 
   return (
     <div className="mp-overlay">
-      <form className="mp-card" onSubmit={onSubmit}>
-        <h1 className="mp-title">ORBITAL</h1>
-        <div className="mp-subtitle">SIGN IN TO COMMAND</div>
+      {/* Stack the auth card and the guest button vertically. mp-overlay
+          centers its single child; the column wrapper lets the guest
+          button sit cleanly underneath the form rather than to its side. */}
+      <div className="mp-auth-stack">
+        <form className="mp-card" onSubmit={onSubmit}>
+          <h1 className="mp-title">ORBITAL</h1>
+          <div className="mp-subtitle">SIGN IN TO COMMAND</div>
 
-        <div className="mp-tabs">
+          <div className="mp-tabs">
+            <button
+              type="button"
+              className={`mp-tab ${mode === 'login' ? 'active' : ''}`}
+              onClick={() => { setMode('login'); setError(null); }}
+            >Sign in</button>
+            <button
+              type="button"
+              className={`mp-tab ${mode === 'signup' ? 'active' : ''}`}
+              onClick={() => { setMode('signup'); setError(null); }}
+            >Create account</button>
+          </div>
+
+          {mode === 'signup' && (
+            <>
+              <label className="mp-label">Call sign</label>
+              <input
+                className="mp-input"
+                type="text"
+                maxLength={40}
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                autoComplete="nickname"
+              />
+            </>
+          )}
+
+          <label className="mp-label">Email</label>
+          <input
+            className="mp-input"
+            type="email"
+            required
+            autoComplete="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+
+          <label className="mp-label">Password</label>
+          <input
+            className="mp-input"
+            type="password"
+            required
+            minLength={8}
+            autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+
+          <button className="mp-submit" type="submit" disabled={busy}>
+            {mode === 'signup' ? 'Create account' : 'Sign in'}
+          </button>
+
+          <div className="mp-error">{error || ''}</div>
+        </form>
+        {onGuest && (
           <button
             type="button"
-            className={`mp-tab ${mode === 'login' ? 'active' : ''}`}
-            onClick={() => { setMode('login'); setError(null); }}
-          >Sign in</button>
-          <button
-            type="button"
-            className={`mp-tab ${mode === 'signup' ? 'active' : ''}`}
-            onClick={() => { setMode('signup'); setError(null); }}
-          >Create account</button>
-        </div>
-
-        {mode === 'signup' && (
-          <>
-            <label className="mp-label">Call sign</label>
-            <input
-              className="mp-input"
-              type="text"
-              maxLength={40}
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              autoComplete="nickname"
-            />
-          </>
+            className="mp-guest-btn"
+            onClick={onGuest}
+          >
+            Continue as Guest → Single Player
+          </button>
         )}
-
-        <label className="mp-label">Email</label>
-        <input
-          className="mp-input"
-          type="email"
-          required
-          autoComplete="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
-
-        <label className="mp-label">Password</label>
-        <input
-          className="mp-input"
-          type="password"
-          required
-          minLength={8}
-          autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
-
-        <button className="mp-submit" type="submit" disabled={busy}>
-          {mode === 'signup' ? 'Create account' : 'Sign in'}
-        </button>
-
-        <div className="mp-error">{error || ''}</div>
-      </form>
-      {onGuest && (
-        <button
-          className="mp-guest-btn"
-          onClick={onGuest}
-        >
-          Continue as Guest → Single Player
-        </button>
-      )}
+      </div>
     </div>
   );
 }
