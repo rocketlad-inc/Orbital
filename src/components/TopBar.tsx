@@ -41,6 +41,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   const { user, signOut } = useAuth();
   const [dismissedAlertIds, setDismissedAlertIds] = useState<Set<string>>(new Set());
   const [menuOpen, setMenuOpen] = useState(false);
+  const [logOpen, setLogOpen] = useState(false);
 
   // Esc closes the drawer
   useEffect(() => {
@@ -243,8 +244,62 @@ export const TopBar: React.FC<TopBarProps> = ({
             >×</button>
           </div>
         ))}
+        {gameState.combatLog.length > 0 && (
+          <button
+            className="top-bar__log-toggle"
+            onClick={() => setLogOpen(true)}
+            title="Open full event log"
+          >
+            ☰ Log ({gameState.combatLog.length})
+          </button>
+        )}
       </div>
+
+      {logOpen && (
+        <EventLogPanel
+          entries={gameState.combatLog}
+          onClose={() => setLogOpen(false)}
+        />
+      )}
     </div>
+  );
+};
+
+// Full chronicle history. The top-bar ticker only shows the last 2-4
+// entries to stay compact; this drawer surfaces the full server-pushed
+// combatLog (gameState.combatLog) in chronological order.
+const EventLogPanel: React.FC<{
+  entries: string[];
+  onClose: () => void;
+}> = ({ entries, onClose }) => {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <>
+      <div className="event-log__backdrop" onClick={onClose} />
+      <aside className="event-log">
+        <header className="event-log__head">
+          <div className="event-log__title">EVENT LOG</div>
+          <button className="event-log__close" onClick={onClose} title="Close (Esc)">×</button>
+        </header>
+        <div className="event-log__body">
+          {entries.length === 0 ? (
+            <div className="event-log__empty">No events yet. Combat results and game milestones will appear here.</div>
+          ) : (
+            entries.map((entry, i) => (
+              <div key={i} className="event-log__row">{entry}</div>
+            ))
+          )}
+        </div>
+        <footer className="event-log__foot">
+          {entries.length} entries · Press <kbd>Esc</kbd> to close
+        </footer>
+      </aside>
+    </>
   );
 };
 
