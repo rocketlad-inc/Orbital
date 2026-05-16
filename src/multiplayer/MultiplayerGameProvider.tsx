@@ -39,6 +39,7 @@ interface ServerState {
     color: string;
     capital_body_id: string | null;
     resources: { metal: number; fuel: number; gold: number; science: number };
+    tech_levels?: Record<string, number>;
   };
   factions: Array<{
     id: string; slot: number; name: string; color: string; status: string;
@@ -298,7 +299,14 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     science: srv.me.resources.science,
   };
 
-  const emptyTech: FactionTechStateBase = { levels: {}, researching: null, progress: 0 };
+  // Carry the server's authoritative tech levels into the existing
+  // client GameState shape so TechPanel keeps reading from the same
+  // place in single-player and multiplayer.
+  const playerTech: FactionTechStateBase = {
+    levels: srv.me.tech_levels ?? {},
+    researching: null,
+    progress: 0,
+  };
 
   const settlements: Settlement[] = (srv.settlements ?? []).map(s => {
     const settlement = settlementToClient(s, muById.get(s.body_id) ?? 0);
@@ -383,7 +391,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     orders,
     buildOrders: [],
     resources: { [PLAYER_TOKEN]: playerRes },
-    factionTech: { [PLAYER_TOKEN]: emptyTech },
+    factionTech: { [PLAYER_TOKEN]: playerTech },
     combatLog,
     lastHarvestTick: srv.game.current_tick,
   };

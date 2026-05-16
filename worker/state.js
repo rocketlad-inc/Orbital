@@ -53,6 +53,13 @@ async function handleGetState(req, env, ctx) {
     .first();
   if (!me) return err(403, 'not_member', 'not in this game');
 
+  // Caller's tech levels, keyed by tech_id.
+  const techRows = (await env.DB
+    .prepare('SELECT tech_id, level FROM faction_techs WHERE game_id = ? AND faction_id = ?')
+    .bind(gameId, me.id)
+    .all()).results ?? [];
+  const tech_levels = Object.fromEntries(techRows.map(r => [r.tech_id, r.level]));
+
   const factions = (await env.DB
     .prepare(
       `SELECT id, slot, name, color, status, capital_body_id, senate_weight, reputation
@@ -278,6 +285,7 @@ async function handleGetState(req, env, ctx) {
         tech_id: me.research_tech_id,
         progress: me.research_progress,
       },
+      tech_levels,
       reputation: me.reputation,
       senate_weight: me.senate_weight,
     },

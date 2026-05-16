@@ -12,6 +12,7 @@ import {
   ALL_TECH_IDS, TECH_DEFS, TechId,
   effectAtLevel, nextLevelCost,
 } from '../game/techs';
+import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import './OverviewPanel.css';
 import './TechPanel.css';
 
@@ -21,6 +22,7 @@ interface TechPanelProps {
 
 export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
   const { gameState, startResearch, cancelResearch } = useGameContext();
+  const mpActions = useMultiplayerActions();
   const tech = gameState.factionTech.player ?? { levels: {}, researching: null, progress: 0 };
   const playerScience = gameState.resources.player?.science ?? 0;
 
@@ -124,11 +126,28 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
 
                 <button
                   className={`tech-card__action ${isActive ? 'active' : ''}`}
-                  onClick={() => isActive ? cancelResearch() : startResearch(id)}
-                  disabled={isQueued && !isActive}
-                  title={isQueued ? 'Cancel current research first' : (isActive ? 'Cancel research' : 'Research this tech next')}
+                  onClick={() => {
+                    if (mpActions) {
+                      // Multiplayer: instant repeatables. Server is the
+                      // authority on cost and current level — the local
+                      // call also fires to keep single-player happy and
+                      // give optimistic feedback while /state catches up.
+                      mpActions.research({ techId: id });
+                      return;
+                    }
+                    if (isActive) cancelResearch();
+                    else startResearch(id);
+                  }}
+                  disabled={!mpActions && (isQueued && !isActive)}
+                  title={
+                    mpActions
+                      ? `Spend ${cost} science to advance ${TECH_DEFS[id].name}`
+                      : isQueued ? 'Cancel current research first' : (isActive ? 'Cancel research' : 'Research this tech next')
+                  }
                 >
-                  {isActive ? 'Researching…' : isQueued ? 'Queue full' : 'Research'}
+                  {mpActions
+                    ? `Research (${cost} sci)`
+                    : isActive ? 'Researching…' : isQueued ? 'Queue full' : 'Research'}
                 </button>
               </div>
             );

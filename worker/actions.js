@@ -263,6 +263,89 @@ async function handleDeploySettlement(req, env, ctx) {
   return json({ settlement: { id, body_id: bodyId, type, name, hp, hp_max: hp } }, { status: 201 });
 }
 
+// Mirror of src/game/techs.ts TECH_DEFS. Server-authoritative so a client
+// can't lie about cost. costForNext(level) = ceil(baseCost * (level+1)^scaling).
+const TECH_DEFS = {
+  weapons:      { baseCost: 40, costScaling: 1.7 },
+  armor:        { baseCost: 40, costScaling: 1.7 },
+  propulsion:   { baseCost: 35, costScaling: 1.6 },
+  flight:       { baseCost: 50, costScaling: 1.7 },
+  construction: { baseCost: 50, costScaling: 1.8 },
+  industry:     { baseCost: 45, costScaling: 1.7 },
+  sensors:      { baseCost: 30, costScaling: 1.5 },
+};
+
+function techCostForNext(level, def) {
+  return Math.ceil(def.baseCost * Math.pow(level + 1, def.costScaling));
+}
+
+// POST /api/games/:gameId/research
+// body: { tech_id }
+// Spends science to bump faction_techs.level by 1 for the chosen tech.
+// Stellaris-repeatables pattern: instant research, exponential cost.
+async function handleResearch(req, env, ctx) {
+  const { gameId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+  const techId = body.tech_id;
+  if (typeof techId !== 'string' || !TECH_DEFS[techId]) {
+    return err(400, 'bad_request', 'invalid tech_id');
+  }
+
+  const cur = await env.DB
+    .prepare('SELECT level FROM faction_techs WHERE game_id = ? AND faction_id = ? AND tech_id = ?')
+    .bind(gameId, me.id, techId)
+    .first();
+  const curLevel = cur?.level ?? 0;
+  const cost = techCostForNext(curLevel, TECH_DEFS[techId]);
+
+  if ((me.science ?? 0) < cost) {
+    return err(409, 'insufficient_resources', `need ${cost} science for ${techId} level ${curLevel + 1}`);
+  }
+
+  const game = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
+  const tick = game?.current_tick ?? 0;
+
+  if (cur) {
+    await env.DB.batch([
+      env.DB
+        .prepare(
+          `UPDATE faction_techs SET level = level + 1, status = 'completed', completed_at_tick = ?
+            WHERE game_id = ? AND faction_id = ? AND tech_id = ?`,
+        )
+        .bind(tick, gameId, me.id, techId),
+      env.DB
+        .prepare('UPDATE game_factions SET science = science - ? WHERE id = ?')
+        .bind(cost, me.id),
+    ]);
+  } else {
+    await env.DB.batch([
+      env.DB
+        .prepare(
+          `INSERT INTO faction_techs
+            (game_id, faction_id, tech_id, status, level, started_at_tick, completed_at_tick)
+           VALUES (?, ?, ?, 'completed', 1, ?, ?)`,
+        )
+        .bind(gameId, me.id, techId, tick, tick),
+      env.DB
+        .prepare('UPDATE game_factions SET science = science - ? WHERE id = ?')
+        .bind(cost, me.id),
+    ]);
+  }
+
+  return json({
+    tech_id: techId,
+    level: curLevel + 1,
+    cost_paid: cost,
+    next_cost: techCostForNext(curLevel + 1, TECH_DEFS[techId]),
+  }, { status: 201 });
+}
+
 export const routes = [
   {
     method: 'POST',
@@ -281,5 +364,11 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/bodies\/(?<bodyId>[^/]+)\/settlement$/,
     auth: 'required',
     handle: handleDeploySettlement,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/research$/,
+    auth: 'required',
+    handle: handleResearch,
   },
 ];

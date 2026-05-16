@@ -31,6 +31,10 @@ export interface SettlementIntent {
   name?: string;
 }
 
+export interface ResearchIntent {
+  techId: string;
+}
+
 export interface MultiplayerActions {
   gameId: string;
   /** Post a committed maneuver node to the server. Resolves true on success. */
@@ -39,6 +43,8 @@ export interface MultiplayerActions {
   build: (intent: BuildIntent) => Promise<boolean>;
   /** Deploy a city or station at a body. */
   deploySettlement: (intent: SettlementIntent) => Promise<boolean>;
+  /** Spend science to advance a tech level. Server is authoritative on cost. */
+  research: (intent: ResearchIntent) => Promise<boolean>;
 }
 
 const MultiplayerActionsContext = createContext<MultiplayerActions | null>(null);
@@ -86,6 +92,16 @@ export function MultiplayerActionsProvider({
       });
       if (!res.ok) {
         console.warn('deploySettlement failed', res.error);
+      }
+      return res.ok;
+    },
+    async research(intent) {
+      const res = await apiFetch(`/api/games/${gameId}/research`, {
+        method: 'POST',
+        body: JSON.stringify({ tech_id: intent.techId }),
+      });
+      if (!res.ok) {
+        console.warn('research failed', res.error);
       }
       return res.ok;
     },
