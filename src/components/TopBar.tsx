@@ -151,6 +151,8 @@ export const TopBar: React.FC<TopBarProps> = ({
             const lvls = gameState.factionTech?.player?.levels || {};
             return Object.values(lvls).reduce((s, n) => s + (n ?? 0), 0);
           })()}
+          currentTick={cur}
+          totalTickTarget={total}
         />
       )}
 
@@ -337,6 +339,10 @@ interface SideMenuProps {
   playerShipCount?: number;
   settlementCount?: number;
   researchTotal?: number;
+  /** Match-length admin needs the current tick + total so the +N
+   *  buttons can be enforced > current_tick without a server round-trip. */
+  currentTick?: number;
+  totalTickTarget?: number;
 }
 
 const SideMenu: React.FC<SideMenuProps> = ({
@@ -344,6 +350,7 @@ const SideMenu: React.FC<SideMenuProps> = ({
   adminGameId = null, isHost = false,
   activePanel, onTogglePanel,
   playerShipCount = 0, settlementCount = 0, researchTotal = 0,
+  currentTick = 0, totalTickTarget,
 }) => {
   const [forceTickBusy, setForceTickBusy] = useState(false);
   const [forceTickStatus, setForceTickStatus] = useState<string | null>(null);
@@ -396,10 +403,8 @@ const SideMenu: React.FC<SideMenuProps> = ({
     setIntervalStatus(null);
     try {
       const { apiFetch } = await import('../multiplayer/api');
-      // Read the current target locally — server validates the result is
-      // > current_tick anyway, so we don't need to round-trip a GET.
-      const current = (gameState as any).totalTickTarget ?? 42;
-      const newTotal = Math.max(Math.floor(gameState.currentTick) + 1, current + delta);
+      const current = totalTickTarget ?? 42;
+      const newTotal = Math.max(Math.floor(currentTick) + 1, current + delta);
       const res = await apiFetch<{ total_tick_target?: number }>(
         `/api/lobby/rooms/${adminGameId}/match-length`,
         {
@@ -552,6 +557,33 @@ const SideMenu: React.FC<SideMenuProps> = ({
                   </div>
                   <span className="side-menu__item-hint" style={{ marginTop: 2 }}>
                     Cadence applies on next tick
+                  </span>
+                </div>
+              </div>
+              <div className="side-menu__item side-menu__item--block">
+                <span className="side-menu__item-icon">∞</span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
+                  <span className="side-menu__item-label" style={{ marginBottom: 2 }}>
+                    Match Length
+                  </span>
+                  <div style={{ fontSize: 10, color: '#8a9fb3', letterSpacing: '0.05em' }}>
+                    Currently T+{currentTick} / {totalTickTarget ?? '?'}
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {[10, 50, 100, 500].map(n => (
+                      <button
+                        key={n}
+                        className="side-menu__pill"
+                        onClick={() => extendMatchLength(n)}
+                        disabled={intervalBusy}
+                        title={`Extend match by ${n} ticks`}
+                      >
+                        +{n}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="side-menu__item-hint" style={{ marginTop: 2 }}>
+                    Adds to the current target; can't shrink below T+N
                   </span>
                 </div>
               </div>

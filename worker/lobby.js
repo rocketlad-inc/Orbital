@@ -534,6 +534,41 @@ async function handleChangeTickInterval(req, env, ctx) {
   return json({ ok: true, tick_interval_ms: newInterval, next_tick_at: nextAt });
 }
 
+/**
+ * PATCH /api/lobby/rooms/:roomId/match-length — host-only. Extend (or
+ * shrink, with safety) the total_tick_target of an in-flight game.
+ * Mostly used to keep a playtest going past the 42-tick default
+ * without having to restart. Server only accepts values strictly
+ * greater than current_tick so the host can't accidentally instant-
+ * end the game by setting it below the present.
+ *
+ * Body: { total_tick_target: number }   (10..10000, must be > current_tick)
+ */
+async function handleChangeMatchLength(req, env, ctx) {
+  const roomId = ctx.params.roomId;
+  const g = await requireHost(env, roomId, ctx.session);
+  if (g.error) return g.error;
+  let body;
+  try { body = await req.json(); } catch { return err(400, 'bad_request', 'invalid json'); }
+  const newTotal = body?.total_tick_target;
+  if (!Number.isInteger(newTotal) || newTotal < MATCH_LENGTH_MIN || newTotal > MATCH_LENGTH_MAX) {
+    return err(400, 'bad_request', `total_tick_target must be an integer ${MATCH_LENGTH_MIN}-${MATCH_LENGTH_MAX}`);
+  }
+  const game = await env.DB
+    .prepare('SELECT id, status, current_tick FROM games WHERE id = ?')
+    .bind(roomId).first();
+  if (!game) return err(404, 'not_found', 'no game in this room yet');
+  if (game.status !== 'active') return err(409, 'not_active', `game is ${game.status}`);
+  if (newTotal <= (game.current_tick ?? 0)) {
+    return err(400, 'bad_request', `total_tick_target must be greater than current tick (${game.current_tick})`);
+  }
+  await env.DB
+    .prepare('UPDATE games SET total_tick_target = ? WHERE id = ?')
+    .bind(newTotal, roomId)
+    .run();
+  return json({ ok: true, total_tick_target: newTotal, current_tick: game.current_tick });
+}
+
 export const routes = [
   { method: 'GET',  pattern: '/api/lobby/rooms', auth: 'required', handle: handleListLobbyRooms },
   { method: 'GET',  pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)$/, auth: 'required', handle: handleLobbySnapshot },
@@ -543,5 +578,6 @@ export const routes = [
   { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/start$/, auth: 'required', handle: handleStart },
   { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/force-tick$/, auth: 'required', handle: handleForceTick },
   { method: 'PATCH',pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/tick-interval$/, auth: 'required', handle: handleChangeTickInterval },
+  { method: 'PATCH',pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/match-length$/, auth: 'required', handle: handleChangeMatchLength },
   { method: 'PATCH',pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/me$/, auth: 'required', handle: handlePatchMe },
 ];

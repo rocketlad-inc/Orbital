@@ -431,6 +431,10 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
 
   return {
     currentTick: srv.game.current_tick,
+    // Carry the match length through so the TopBar tick display can show
+    // "T+N / total" and the player knows when the game's about to end
+    // by victory clock instead of being surprised by it.
+    totalTickTarget: srv.game.total_tick_target,
     bodies,
     ships,
     fleets: [],

@@ -169,6 +169,23 @@
   color: #d8e4ee;
 }
 
+/* Ending-soon variant — flashes the tick counter amber once the match
+   is past 80% of its total_tick_target so the host has a visible cue
+   before the natural end. Pre-fix, victory hit at T+42 with zero
+   warning. */
+.time-display--ending .time-display__label {
+  color: #ffb84d;
+  font-weight: 700;
+  animation: tick-ending-pulse 1.6s ease-in-out infinite;
+}
+.time-display--ending .time-display__value {
+  color: #ffb84d;
+}
+@keyframes tick-ending-pulse {
+  0%, 100% { opacity: 0.6; }
+  50%      { opacity: 1; }
+}
+
 .sim-controls {
   display: flex;
   gap: 4px;
