@@ -455,6 +455,52 @@ export default {
     return env.ASSETS.fetch(req);
   },
 
+  /**
+   * Cron-driven tick advancer. Cloudflare DO `setAlarm` is supposed to
+   * wake hibernating DOs but in practice we've seen long-idle games
+   * stall overnight when nobody's polling /state. This wakes every
+   * minute, scans active games whose next_tick_at has passed, and
+   * pokes each one's Room DO via /tick-now. The DO itself decides
+   * whether to actually fire (it bails if next_tick_at hasn't passed),
+   * so this is safe to run aggressively.
+   *
+   * Wired up via `triggers.crons` in wrangler.jsonc.
+   */
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil((async () => {
+      try {
+        const now = Date.now();
+        const due = await env.DB
+          .prepare(
+            `SELECT id FROM games
+              WHERE status = 'active'
+                AND next_tick_at IS NOT NULL
+                AND next_tick_at <= ?`,
+          )
+          .bind(now)
+          .all();
+        const rows = due.results ?? [];
+        if (rows.length === 0) return;
+        // Fan out to each due game's DO. Don't await sequentially —
+        // pokes are best-effort; one slow DO shouldn't block the rest.
+        await Promise.all(rows.map(async (r) => {
+          try {
+            const stub = env.ROOM.get(env.ROOM.idFromName(r.id));
+            await stub.fetch('https://room/tick-now', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ force: false, gameId: r.id }),
+            });
+          } catch (e) {
+            console.error(`cron tick poke failed for ${r.id}`, e);
+          }
+        }));
+      } catch (e) {
+        console.error('scheduled tick advancer failed', e);
+      }
+    })());
+  },
+
   async _dispatch(req, env, url) {
       // one-shot bootstrap (idempotent; no-op once tables exist)
       if (req.method === 'POST' && url.pathname === '/api/__init') return handleInit(req, env);

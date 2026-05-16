@@ -58,11 +58,24 @@ export const ShipPanel: React.FC = () => {
         const arrRadius = tailBody ? tailBody.radius + 4 : 10;
         const tempOrbit = createCircularOrbit(chainTail.bodyId, arrRadius, chainTail.time, gameState.bodies);
         const arc = planBezierTransfer(tempOrbit, targetBodyId, chainTail.time, gameState.bodies, travelTimeMul);
-        if (!arc) return;
+        if (!arc) {
+          console.warn('[transfer] planBezierTransfer returned null (chain)', {
+            from: chainTail.bodyId, to: targetBodyId,
+            knownBodies: gameState.bodies.map(b => b.id),
+          });
+          return;
+        }
         addQueuedTransfer(ship.id, arc);
       } else {
         const arc = planBezierTransfer(ship.orbit, targetBodyId, gameState.currentTick, gameState.bodies, travelTimeMul);
-        if (!arc) return;
+        if (!arc) {
+          console.warn('[transfer] planBezierTransfer returned null', {
+            shipId: ship.id,
+            from: ship.orbit.parentBodyId, to: targetBodyId,
+            knownBodies: gameState.bodies.map(b => ({ id: b.id, parent: b.parent })),
+          });
+          return;
+        }
 
         const node: ManeuverNode = {
           id: `node-${Date.now()}-${Math.random()}`,
