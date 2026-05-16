@@ -92,19 +92,13 @@ export const ShipPanel: React.FC = () => {
 
         addManeuverNode(node);
         setPendingTransfer(ship.id, arc);
-
-        // Multiplayer: post the maneuver to the server so the Room DO tick
-        // resolver can execute it on schedule. The local state above keeps
-        // the UI responsive until the next /state poll reconciles.
-        if (mpActions) {
-          mpActions.transfer({
-            shipId: ship.id,
-            targetBodyId: arc.arrivalBodyId,
-            scheduledT: arc.departureTime,
-            dvPrograde: arc.departureDv,
-            fuelCost: Math.round(Math.abs(arc.departureDv) * 10),
-          });
-        }
+        // NOTE: do NOT post mpActions.transfer() here. The server records
+        // every transfer it sees as 'committed' (no 'planned' state on the
+        // server side), which made every plan auto-commit at the next
+        // /state poll (~1.5s) regardless of whether the user clicked
+        // Commit. The post now happens in commitTransferLocal() below,
+        // wired to the COMMIT button so plan/commit stays a deliberate
+        // two-step action — matching the single-player UX.
 
         // Fleet propagation: if this ship is in a fleet and the player opted in,
         // plan the same target transfer for every fleet member (each from its own orbit).
@@ -131,15 +125,11 @@ export const ShipPanel: React.FC = () => {
               };
               addManeuverNode(memberNode);
               setPendingTransfer(member.id, memberArc);
-              if (mpActions) {
-                mpActions.transfer({
-                  shipId: member.id,
-                  targetBodyId: memberArc.arrivalBodyId,
-                  scheduledT: memberArc.departureTime,
-                  dvPrograde: memberArc.departureDv,
-                  fuelCost: Math.round(Math.abs(memberArc.departureDv) * 10),
-                });
-              }
+              // mpActions.transfer() is deliberately omitted here too —
+              // fleet members get their own planned node and will be
+              // posted together when the leader hits Commit (each
+              // member's node carries enough state for commitTransferLocal
+              // to recover the arc).
             }
           }
         }
@@ -165,6 +155,34 @@ export const ShipPanel: React.FC = () => {
 
   const handleTransferManeuver = (targetBodyId: string) => {
     transferHandlerRef.current(targetBodyId);
+  };
+
+  /**
+   * Commit a planned transfer locally + post the intent to the server
+   * (multiplayer only). This is the deliberate two-step action: planning
+   * a transfer creates a `planned` node with a dashed preview arc; the
+   * user has to explicitly commit before the burn schedules on the
+   * server. Previously the server post happened at plan time, which
+   * made every transfer auto-fire ~1.5s later when /state polled back
+   * the server's 'committed' record.
+   */
+  const commitTransferLocal = (node: ManeuverNode, owningShip: typeof ship) => {
+    commitManeuverNode(node.id);
+    if (!mpActions) return;
+    // Recover the arc that produced this node from the ship's pending
+    // transfer state (set at plan time). For queued transfers the arc
+    // came from queuedTransfers — but for now we only post the head
+    // of the chain; the rest will be posted as each one becomes the
+    // committed pending transfer on subsequent arrivals.
+    const arc = owningShip.pendingTransfer;
+    if (!arc) return;
+    mpActions.transfer({
+      shipId: owningShip.id,
+      targetBodyId: arc.arrivalBodyId,
+      scheduledT: arc.departureTime,
+      dvPrograde: arc.departureDv,
+      fuelCost: Math.round(Math.abs(arc.departureDv) * 10),
+    });
   };
 
   const handleRemoveQueuedTransfer = (index: number) => {
@@ -347,9 +365,17 @@ export const ShipPanel: React.FC = () => {
                 {ship.orders.some(o => o.status === 'planned') && (
                   <button
                     className="commit-all-btn"
-                    onClick={() => ship.orders.forEach(o => {
-                      if (o.status === 'planned') commitManeuverNode(o.id);
-                    })}
+                    onClick={() => {
+                      // Commit each planned node. In MP commitTransferLocal
+                      // also posts the intent to the server; in SP it's
+                      // just a local status flip via commitManeuverNode.
+                      // Walk a snapshot of orders so the loop is stable
+                      // even if state mutates between iterations.
+                      const planned = ship.orders.filter(o => o.status === 'planned');
+                      for (const o of planned) {
+                        commitTransferLocal(o, ship);
+                      }
+                    }}
                   >
                     ▶ COMMIT ALL
                   </button>
