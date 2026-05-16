@@ -1000,3 +1000,51 @@
   opacity: 0.5;
   cursor: wait;
 }
+
+/* ---- Pre-game READY button. Sits in the room-detail status row;
+   needs to read as the primary action, since it's what gates the
+   match starting. Loud + animated when not ready, calm green tick
+   once you've confirmed. ---- */
+.mp-ready-btn {
+  background: linear-gradient(135deg, rgba(255, 184, 77, 0.95), rgba(255, 140, 0, 0.9));
+  border: 1px solid var(--mp-accent);
+  color: var(--mp-bg);
+  font-family: var(--mp-mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  padding: 8px 18px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  box-shadow:
+    0 0 16px rgba(255, 184, 77, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  animation: mp-ready-pulse 2.2s ease-in-out infinite;
+}
+.mp-ready-btn:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 4px 20px rgba(255, 184, 77, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+.mp-ready-btn:active {
+  transform: translateY(0);
+}
+.mp-ready-btn.is-ready {
+  background: transparent;
+  border-color: var(--mp-friendly);
+  color: var(--mp-friendly);
+  box-shadow: 0 0 14px rgba(78, 205, 196, 0.3);
+  animation: none;
+}
+.mp-ready-btn.is-ready:hover {
+  background: rgba(78, 205, 196, 0.1);
+}
+@keyframes mp-ready-pulse {
+  0%, 100% { box-shadow: 0 0 16px rgba(255, 184, 77, 0.4),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.18); }
+  50%      { box-shadow: 0 0 26px rgba(255, 184, 77, 0.7),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.22); }
+}

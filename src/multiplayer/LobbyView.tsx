@@ -285,8 +285,11 @@ function RoomDetail({
             : `Lobby · ${snap.members.length}/${snap.settings.max_players} · ${Object.values(snap.ready).filter(Boolean).length} ready`}
         </span>
         {!started && (
-          <button className="mp-kick" onClick={toggleReady}>
-            {myReady ? 'Unready' : 'Ready'}
+          <button
+            className={`mp-ready-btn ${myReady ? 'is-ready' : ''}`}
+            onClick={toggleReady}
+          >
+            {myReady ? '✓ Ready' : 'Ready Up'}
           </button>
         )}
       </div>
