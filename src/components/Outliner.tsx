@@ -3,10 +3,11 @@
 // Grouped by body, with separate "In Transit" section.
 // ============================================================
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { ShipIcon } from './ShipIcons';
+import { useIsMobile } from '../hooks/useIsMobile';
 import './Outliner.css';
 
 export const Outliner: React.FC = () => {
@@ -14,7 +15,25 @@ export const Outliner: React.FC = () => {
     gameState, uiState, selectShip, selectBody, focusBody,
     selectSettlement, selectedSettlementId,
   } = useGameContext();
-  const [collapsed, setCollapsed] = useState(false);
+  const isMobile = useIsMobile();
+  // Default collapsed on mobile so it doesn't eat the whole screen.
+  const [collapsed, setCollapsed] = useState<boolean>(() => isMobile);
+
+  // If the viewport flips between mobile and desktop (rotation, devtools),
+  // re-apply the sensible default.
+  useEffect(() => {
+    setCollapsed(isMobile);
+  }, [isMobile]);
+
+  // Escape closes the outliner on mobile (matches other drawer patterns).
+  useEffect(() => {
+    if (!isMobile || collapsed) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setCollapsed(true);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isMobile, collapsed]);
 
   const playerShips = useMemo(
     () => gameState.ships.filter(s => s.ownedBy === 'player'),
@@ -81,28 +100,44 @@ export const Outliner: React.FC = () => {
     r > 0.66 ? 'good' : r > 0.33 ? 'mid' : 'low';
 
   if (collapsed) {
+    const trackedCount = tracked.length + inTransit.length;
     return (
       <div className="outliner outliner--collapsed">
         <div className="outliner__header">
           <button
             className="outliner__toggle"
             onClick={() => setCollapsed(false)}
-            title="Expand outliner"
-          >‹</button>
+            title="Show holdings"
+            aria-label="Show holdings"
+          >
+            {isMobile ? '☰' : '‹'}
+            {isMobile && trackedCount > 0 && (
+              <span className="outliner__toggle-badge">{trackedCount}</span>
+            )}
+          </button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="outliner">
+    <>
+      {isMobile && (
+        <div
+          className="outliner__scrim"
+          onClick={() => setCollapsed(true)}
+          aria-hidden
+        />
+      )}
+      <div className={`outliner${isMobile ? ' outliner--mobile' : ''}`}>
       <div className="outliner__header">
         <span className="outliner__title">Outliner</span>
         <button
           className="outliner__toggle"
           onClick={() => setCollapsed(true)}
           title="Collapse"
-        >›</button>
+          aria-label="Close"
+        >{isMobile ? '✕' : '›'}</button>
       </div>
       <div className="outliner__body">
         <div className="outliner__section">
@@ -198,5 +233,6 @@ export const Outliner: React.FC = () => {
         )}
       </div>
     </div>
+    </>
   );
 };

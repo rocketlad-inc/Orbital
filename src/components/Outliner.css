@@ -201,3 +201,121 @@
 .outliner__hp-dot--good { background: #6ee7b7; }
 .outliner__hp-dot--mid { background: #ffb84d; }
 .outliner__hp-dot--low { background: #ff5e5e; }
+
+/* ============================================================
+   Mobile: collapsed state becomes a floating toggle button.
+   Expanded state slides in as a near-full-width overlay drawer
+   with a tap-to-dismiss scrim behind it.
+   ============================================================ */
+
+.outliner__toggle-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  background: #4ecdc4;
+  color: #0a0e14;
+  border-radius: 8px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.4;
+  vertical-align: 1px;
+}
+
+.outliner__scrim {
+  display: none;
+}
+
+@media (max-width: 1023px) {
+  /* Collapsed pill — bigger tap target, sits below the TopBar */
+  .outliner.outliner--collapsed {
+    width: auto;
+    top: 56px;
+    right: 12px;
+    bottom: auto;
+    background: rgba(10, 14, 20, 0.94);
+    border: 1px solid #4ecdc4;
+    border-radius: 22px;
+    padding: 0;
+  }
+  .outliner.outliner--collapsed .outliner__header {
+    border-bottom: none;
+    padding: 0;
+    background: transparent;
+  }
+  .outliner.outliner--collapsed .outliner__toggle {
+    font-size: 18px;
+    line-height: 1;
+    padding: 8px 14px;
+    min-height: 40px;
+    min-width: 48px;
+    display: inline-flex;
+    align-items: center;
+    color: #4ecdc4;
+  }
+
+  /* Expanded as drawer — slide from the right, near-full width, with scrim */
+  .outliner.outliner--mobile {
+    top: 0;
+    bottom: 0;
+    right: 0;
+    width: min(360px, 88vw);
+    border-radius: 0;
+    border-right: none;
+    border-top: none;
+    border-bottom: none;
+    z-index: 5520;
+    padding-top: env(safe-area-inset-top, 0);
+    padding-bottom: env(safe-area-inset-bottom, 0);
+    animation: outliner-slide-in 0.22s cubic-bezier(0.2, 0.7, 0.2, 1);
+  }
+  .outliner.outliner--mobile .outliner__header {
+    padding: 14px 14px;
+  }
+  .outliner.outliner--mobile .outliner__title {
+    font-size: 11px;
+  }
+  .outliner.outliner--mobile .outliner__toggle {
+    font-size: 18px;
+    line-height: 1;
+    min-width: 40px;
+    min-height: 40px;
+  }
+  .outliner.outliner--mobile .outliner__body {
+    padding: 6px 6px;
+  }
+
+  /* Slightly bigger rows for touch */
+  .outliner.outliner--mobile .outliner__body-row,
+  .outliner.outliner--mobile .outliner__ship-row {
+    padding-top: 8px;
+    padding-bottom: 8px;
+    min-height: 38px;
+  }
+  .outliner.outliner--mobile .outliner__ship-row {
+    padding-left: 28px;
+  }
+  .outliner.outliner--mobile .outliner__body-name,
+  .outliner.outliner--mobile .outliner__ship-name {
+    font-size: 13px;
+  }
+
+  .outliner__scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(2px);
+    z-index: 5510;
+    animation: outliner-fade 0.18s ease;
+  }
+}
+
+@keyframes outliner-slide-in {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+
+@keyframes outliner-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
