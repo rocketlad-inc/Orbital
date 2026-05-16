@@ -185,13 +185,33 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
   return {
     id: s.id,
     name: s.name,
-    class: (s.ship_class as Ship['class']),
+    class: translateShipClass(s.ship_class),
     ownedBy: s.owner_faction_id,
     fuel: s.fuel,
     hp: s.hp,
     orbit,
     orders: [],
   };
+}
+
+// Server-to-client ship-class translation. The worker uses an older
+// naming scheme ('cargo' for haulers, etc.); the client's class system
+// only knows corvette / frigate / destroyer / freighter. Map unknown
+// or legacy names onto the closest client class so renderers and panels
+// (which all call getShipClass) don't crash the React tree.
+function translateShipClass(serverClass: string): Ship['class'] {
+  switch (serverClass) {
+    case 'corvette':
+    case 'frigate':
+    case 'destroyer':
+    case 'freighter':
+      return serverClass;
+    case 'cargo':
+    case 'hauler':
+      return 'freighter';
+    default:
+      return 'frigate';
+  }
 }
 
 function settlementToClient(

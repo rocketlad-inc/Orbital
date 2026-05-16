@@ -135,9 +135,19 @@ export const SHIP_CLASSES: Record<ShipClassName, ShipClassDef> = {
 /** All buildable ship classes in display order */
 export const BUILDABLE_CLASSES: ShipClassName[] = ['corvette', 'frigate', 'destroyer', 'freighter'];
 
-/** Get class definition, throws if invalid */
-export function getShipClass(name: ShipClassName): ShipClassDef {
-  const def = SHIP_CLASSES[name];
-  if (!def) throw new Error(`Unknown ship class: ${name}`);
-  return def;
+/**
+ * Get class definition. Never throws — an unknown class returns the
+ * frigate def with a console warning, so a single bad ship from the
+ * server can't crash the whole React tree (which previously happened
+ * when the worker spawned legacy 'cargo'-class ships). Server-side
+ * names should be translated at the network boundary; this fallback
+ * is a defense-in-depth safety net.
+ */
+export function getShipClass(name: ShipClassName | string): ShipClassDef {
+  const def = SHIP_CLASSES[name as ShipClassName];
+  if (def) return def;
+  if (typeof console !== 'undefined') {
+    console.warn(`Unknown ship class: ${name} — falling back to frigate`);
+  }
+  return FRIGATE;
 }
