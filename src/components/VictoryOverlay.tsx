@@ -104,7 +104,6 @@ export const VictoryOverlay: React.FC<Props> = ({ onNewGame }) => {
         <div className="victory-footer">
           <div className="victory-footer-meta">
             Match ended at T+{Math.floor(gameState.currentTick)}
-            {gameState.totalTickTarget && ` of T+${gameState.totalTickTarget}`}
           </div>
           <button className="victory-button" onClick={onNewGame}>
             ▶ NEW CAMPAIGN

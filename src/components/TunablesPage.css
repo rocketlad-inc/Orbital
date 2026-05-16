@@ -44,7 +44,7 @@
   z-index: 10;
 }
 
-.tunables-back, .tunables-reset {
+.tunables-back, .tunables-reset, .tunables-export {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--fg-dim);
@@ -57,8 +57,19 @@
   transition: all 0.15s ease;
 }
 
-.tunables-back:hover { border-color: var(--friendly); color: var(--friendly); }
-.tunables-reset:hover { border-color: var(--accent); color: var(--accent); }
+.tunables-back:hover   { border-color: var(--friendly); color: var(--friendly); }
+.tunables-reset:hover  { border-color: var(--accent);   color: var(--accent); }
+.tunables-export:hover {
+  border-color: var(--friendly);
+  color: var(--friendly);
+  box-shadow: 0 0 12px rgba(78, 205, 196, 0.2);
+}
+
+.tunables-nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 
 .tunables-brand {
   display: flex;
@@ -345,6 +356,21 @@
 .vis-solar-system {
   width: 100%;
   aspect-ratio: 16 / 10;
+  background: #0a0e14;
+  border-radius: 3px;
+  display: block;
+}
+
+/* --- Damage flash preview --- */
+.vis-flash-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vis-flash-canvas {
+  width: 100%;
+  aspect-ratio: 16 / 6;
   background: #0a0e14;
   border-radius: 3px;
   display: block;

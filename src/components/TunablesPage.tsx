@@ -18,7 +18,6 @@ interface TunablesPageProps {
 const DEFAULTS = {
   // Match shape
   tickIntervalMs: 60_000,        // 1 minute default for preview (real default = 24h)
-  matchLength: 200,
   // Faction & seeding
   worldsPerFaction: 2,
   maxPlayers: 4,
@@ -52,6 +51,68 @@ const DEFAULTS = {
   solMu: 6003,
   // Fog of war
   baseSensorRange: 200,
+  // VFX
+  damageFlashMs: 500,
+};
+
+/**
+ * Maps every tunable in DEFAULTS to the file + constant that actually
+ * owns it in the codebase. Used by the export so when you upload the
+ * JSON back, the file paths tell us exactly where to apply each value.
+ */
+const TUNABLE_FILES: Record<keyof typeof DEFAULTS, string> = {
+  tickIntervalMs:        'worker/lobby.js handleStart tick_interval_ms',
+  matchLength:           'worker/lobby.js MATCH_LENGTH_MIN/MAX',
+  worldsPerFaction:      'worker/factions.js WORLDS_PER_PLAYER',
+  maxPlayers:            'worker/index.js handleCreateRoom',
+  // Ship combat
+  corvetteHp:            'worker/factions.js SHIP_COMBAT_STATS.corvette.hp',
+  corvetteDmg:           'worker/factions.js SHIP_COMBAT_STATS.corvette.damage_per_tick',
+  frigateHp:             'worker/factions.js SHIP_COMBAT_STATS.frigate.hp',
+  frigateDmg:            'worker/factions.js SHIP_COMBAT_STATS.frigate.damage_per_tick',
+  destroyerHp:           'worker/factions.js SHIP_COMBAT_STATS.destroyer.hp',
+  destroyerDmg:          'worker/factions.js SHIP_COMBAT_STATS.destroyer.damage_per_tick',
+  // Build economy
+  corvetteMetal:         'worker/actions.js SHIP_BUILD_COST.corvette.metal',
+  corvetteBuildTicks:    'worker/actions.js SHIP_BUILD_COST.corvette.build_ticks',
+  frigateMetal:          'worker/actions.js SHIP_BUILD_COST.frigate.metal',
+  frigateBuildTicks:     'worker/actions.js SHIP_BUILD_COST.frigate.build_ticks',
+  destroyerMetal:        'worker/actions.js SHIP_BUILD_COST.destroyer.metal',
+  destroyerBuildTicks:   'worker/actions.js SHIP_BUILD_COST.destroyer.build_ticks',
+  // Settlements
+  settlementCost:        'worker/actions.js SETTLEMENT_COST.metal',
+  cityHp:                'worker/actions.js handleDeploySettlement city hp',
+  stationHp:             'worker/actions.js handleDeploySettlement station hp',
+  cityMetalBias:         'worker/room.js resolveTick city M bias',
+  cityScienceBias:       'worker/room.js resolveTick city S bias',
+  stationFuelBias:       'worker/room.js resolveTick station F bias',
+  stationScienceBias:    'worker/room.js resolveTick station S bias',
+  popGrowthInterval:     'worker/room.js POP_GROWTH_INTERVAL',
+  harvestInterval:       'worker/room.js HARVEST_INTERVAL',
+  popMax:                'worker/room.js POP_MAX',
+  popMultiplierPerLevel: 'worker/room.js settlement pop multiplier',
+  settlementCombatDmg:   'worker/room.js SETTLEMENT_INCOMING_DAMAGE_PER_HOSTILE_SHIP',
+  // Tech
+  weaponsBaseCost:       'worker/actions.js TECH_DEFS.weapons.baseCost',
+  weaponsScaling:        'worker/actions.js TECH_DEFS.weapons.costScaling',
+  armorBaseCost:         'worker/actions.js TECH_DEFS.armor.baseCost',
+  armorScaling:          'worker/actions.js TECH_DEFS.armor.costScaling',
+  propulsionBaseCost:    'worker/actions.js TECH_DEFS.propulsion.baseCost',
+  propulsionScaling:     'worker/actions.js TECH_DEFS.propulsion.costScaling',
+  flightBaseCost:        'worker/actions.js TECH_DEFS.flight.baseCost',
+  flightScaling:         'worker/actions.js TECH_DEFS.flight.costScaling',
+  constructionBaseCost:  'worker/actions.js TECH_DEFS.construction.baseCost',
+  constructionScaling:   'worker/actions.js TECH_DEFS.construction.costScaling',
+  industryBaseCost:      'worker/actions.js TECH_DEFS.industry.baseCost',
+  industryScaling:       'worker/actions.js TECH_DEFS.industry.costScaling',
+  sensorsBaseCost:       'worker/actions.js TECH_DEFS.sensors.baseCost',
+  sensorsScaling:        'worker/actions.js TECH_DEFS.sensors.costScaling',
+  // Physics
+  solMu:                 'worker/room.js SOL_MU (mirrored in src/physics/orbitalMechanics.ts GRAVITATIONAL_PARAMS.SOL)',
+  // Fog of war
+  baseSensorRange:       'src/game/visibility.ts SETTLEMENT_SENSOR_RANGE.station',
+  // VFX
+  damageFlashMs:         'src/render/mapRenderer.ts DAMAGE_FLASH_DURATION_MS',
 };
 
 const TICK_INTERVAL_OPTIONS = [
@@ -79,6 +140,44 @@ export const TunablesPage: React.FC<TunablesPageProps> = ({ onBack }) => {
 
   const reset = () => setV(DEFAULTS);
 
+  /**
+   * Bundle the current slider values + their file/constant locations into
+   * a JSON file and trigger a browser download. Upload the file back to
+   * Claude in chat and ask for the values to be applied — the fileMap
+   * tells the maintainer exactly which file + constant each value owns.
+   */
+  const exportTunables = () => {
+    const payload = {
+      schema: 'orbital-tunables-v1',
+      exportedAt: new Date().toISOString(),
+      summary: {
+        totalKnobs: Object.keys(v).length,
+        changedFromDefault: Object.keys(v).filter(
+          k => v[k as keyof typeof DEFAULTS] !== DEFAULTS[k as keyof typeof DEFAULTS],
+        ),
+      },
+      values: v,
+      defaults: DEFAULTS,
+      fileMap: TUNABLE_FILES,
+      notes: [
+        'Each key in `values` maps to a file location via `fileMap`.',
+        'Compare against `defaults` to see what the player tuned.',
+        'Apply changed values to the listed files to make them live.',
+      ],
+    };
+    const json = JSON.stringify(payload, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    a.href = url;
+    a.download = `orbital-tunables-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="tunables-page">
       <header className="tunables-nav">
@@ -87,7 +186,12 @@ export const TunablesPage: React.FC<TunablesPageProps> = ({ onBack }) => {
           <span className="brand-glyph">◉</span>
           <span className="brand-text">ORBITAL · TUNABLES</span>
         </div>
-        <button className="tunables-reset" onClick={reset}>RESET</button>
+        <div className="tunables-nav-actions">
+          <button className="tunables-export" onClick={exportTunables} title="Download these values as JSON">
+            ⤓ EXPORT
+          </button>
+          <button className="tunables-reset" onClick={reset}>RESET</button>
+        </div>
       </header>
 
       <div className="tunables-intro">
@@ -320,6 +424,32 @@ export const TunablesPage: React.FC<TunablesPageProps> = ({ onBack }) => {
           </div>
           <div className="section-visual">
             <SensorRangePreview range={v.baseSensorRange} />
+          </div>
+        </div>
+      </Section>
+
+      {/* ===== VFX ===== */}
+      <Section
+        eyebrow="08 · VFX"
+        title="Visual effects"
+        description="Tuning for cosmetic effects that don't change gameplay. The live preview on the right pulses at the chosen interval so you can feel the duration before exporting."
+      >
+        <div className="section-grid">
+          <div className="section-controls">
+            <Slider
+              label="Damage flash duration"
+              value={v.damageFlashMs}
+              min={100}
+              max={2000}
+              step={50}
+              displayValue={`${v.damageFlashMs}ms`}
+              onChange={x => set('damageFlashMs', x)}
+              file="src/render/mapRenderer.ts DAMAGE_FLASH_DURATION_MS"
+              notes="Wall-clock duration of the red halo when a ship/settlement takes damage. Tied to real time, not game ticks, so it feels the same at any sim speed."
+            />
+          </div>
+          <div className="section-visual">
+            <DamageFlashPreview durationMs={v.damageFlashMs} />
           </div>
         </div>
       </Section>
@@ -810,6 +940,93 @@ const SensorRangePreview: React.FC<{ range: number }> = ({ range }) => {
         {' '}{range >= 70 ? <span className="vis-good">Mercury (70u)</span> : <span className="vis-warn">nothing inward</span>},
         {' '}{range >= 70 ? <span className="vis-good">Mars at closest (~70u)</span> : <span className="vis-warn">never Mars</span>},
         {' '}and {range >= 328 ? <span className="vis-good">Jupiter sometimes</span> : <span className="vis-warn">never Jupiter</span>}.
+      </div>
+    </div>
+  );
+};
+
+/** Live preview of the damage flash. Fires a fresh halo every
+ *  (durationMs × 1.6) so the user can see one flash complete before the
+ *  next starts. Uses the same shape + opacity ramp as drawDamageFlash so
+ *  what you preview is what you get in-game. */
+const DamageFlashPreview: React.FC<{ durationMs: number }> = ({ durationMs }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  // Pull durationMs through a ref so the rAF closure stays fresh without
+  // tearing down the effect every slider tick.
+  const durationRef = useRef(durationMs);
+  useEffect(() => { durationRef.current = durationMs; }, [durationMs]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = canvas.clientWidth * dpr;
+    canvas.height = canvas.clientHeight * dpr;
+    ctx.scale(dpr, dpr);
+    const W = canvas.clientWidth;
+    const H = canvas.clientHeight;
+
+    let raf: number;
+    let lastFireMs = performance.now();
+
+    const render = (nowMs: number) => {
+      // Background
+      ctx.fillStyle = '#0a0e14';
+      ctx.fillRect(0, 0, W, H);
+
+      const dur = durationRef.current;
+      // Refire every dur × 1.6 so each flash gets to complete before the next
+      if (nowMs - lastFireMs > dur * 1.6) lastFireMs = nowMs;
+      const age = nowMs - lastFireMs;
+
+      // Layout: three ship-marker positions across the strip
+      const cy = H / 2;
+      const positions = [W * 0.25, W * 0.5, W * 0.75];
+      const baseR = 14;
+
+      for (const cx of positions) {
+        // Flash halo (same math as drawDamageFlash)
+        if (age < dur) {
+          const freshness = 1 - age / dur;
+          const haloR = baseR * (2.5 + (1 - freshness) * 1.5);
+          const grad = ctx.createRadialGradient(cx, cy, baseR * 0.6, cx, cy, haloR);
+          grad.addColorStop(0, `rgba(255, 90, 90, ${0.55 * freshness})`);
+          grad.addColorStop(0.6, `rgba(255, 60, 60, ${0.25 * freshness})`);
+          grad.addColorStop(1, 'rgba(255, 60, 60, 0)');
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          ctx.arc(cx, cy, haloR, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Ship "icon" — a small cyan triangle so the flash has something
+        // to wrap around
+        ctx.fillStyle = '#4ecdc4';
+        ctx.strokeStyle = '#0a0e14';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(cx + 8, cy);
+        ctx.lineTo(cx - 5, cy - 5);
+        ctx.lineTo(cx - 5, cy + 5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+
+      raf = requestAnimationFrame(render);
+    };
+    raf = requestAnimationFrame(render);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  return (
+    <div className="vis-flash-wrap">
+      <canvas ref={canvasRef} className="vis-flash-canvas" />
+      <div className="vis-caption">
+        Flash duration: <strong>{durationMs}ms</strong>
+        <span className="vis-caption-dim"> · loops at {(durationMs * 1.6 / 1000).toFixed(2)}s</span>
       </div>
     </div>
   );
