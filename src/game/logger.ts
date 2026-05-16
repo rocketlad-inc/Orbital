@@ -249,6 +249,64 @@ if (typeof window !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
     logger.info('SYSTEM', `Tab ${document.visibilityState}`);
   });
+
+  // ----------------------------------------------------------------
+  // Mirror console.error / console.warn into the logger so dev-time
+  // warnings (React invariants, deprecation notices, "Cannot read X
+  // of undefined" from third-party libs) show up in the exported log.
+  // The original console methods are preserved so DevTools still
+  // shows them with the right source-map links.
+  //
+  // Guards:
+  //  - In-flight flag prevents recursion if logger code itself ever
+  //    triggers a console call.
+  //  - Bursts are rate-limited per second to avoid React StrictMode
+  //    double-render warnings flooding the buffer.
+  // ----------------------------------------------------------------
+  const origError = console.error.bind(console);
+  const origWarn = console.warn.bind(console);
+  let inFlight = false;
+  let lastBucketSec = 0;
+  let bucketCount = 0;
+  const PER_SECOND_CAP = 20;
+
+  function captureConsole(level: 'ERROR' | 'WARN', args: unknown[]) {
+    if (inFlight) return;
+    inFlight = true;
+    try {
+      // Rate-limit so a render-loop warning storm doesn't fill the ring.
+      const sec = Math.floor(Date.now() / 1000);
+      if (sec !== lastBucketSec) { lastBucketSec = sec; bucketCount = 0; }
+      bucketCount++;
+      if (bucketCount > PER_SECOND_CAP) {
+        if (bucketCount === PER_SECOND_CAP + 1) {
+          logger.log(level, 'SYSTEM', `console.${level.toLowerCase()} rate-limited (>${PER_SECOND_CAP}/s)`);
+        }
+        return;
+      }
+      const msg = args.map(a => {
+        if (a instanceof Error) return a.message;
+        if (typeof a === 'string') return a;
+        try { return JSON.stringify(a); } catch { return String(a); }
+      }).join(' ').slice(0, 800);
+      const errorArg = args.find((a): a is Error => a instanceof Error);
+      logger.log(level, 'SYSTEM', `console.${level.toLowerCase()}: ${msg}`, errorArg?.stack ? {
+        stack: errorArg.stack.slice(0, 400),
+      } : undefined);
+    } finally {
+      inFlight = false;
+    }
+  }
+
+  console.error = (...args: unknown[]) => {
+    captureConsole('ERROR', args);
+    origError(...args);
+  };
+  console.warn = (...args: unknown[]) => {
+    captureConsole('WARN', args);
+    origWarn(...args);
+  };
+
   // Initial entry
   logger.info('SESSION', 'Logger initialized', {
     href: window.location.href,

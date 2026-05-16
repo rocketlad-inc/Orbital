@@ -27,6 +27,7 @@ import { MultiplayerLobby } from './multiplayer/MultiplayerLobby';
 import { MultiplayerGameProvider } from './multiplayer/MultiplayerGameProvider';
 import { apiFetch, RoomSummary } from './multiplayer/api';
 import { logger } from './game/logger';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import './multiplayer/multiplayer.css';
 import './App.css';
 import './styles/mobile.css';
@@ -450,9 +451,11 @@ function AppShell() {
 
 export function App() {
   return (
-    <AuthProvider>
-      <AppShell />
-    </AuthProvider>
+    <ErrorBoundary scope="App">
+      <AuthProvider>
+        <AppShell />
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
 
