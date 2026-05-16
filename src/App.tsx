@@ -31,7 +31,17 @@ const MODE_STORAGE_KEY = 'orbital.last_mode';
 // them ready (rather than briefly showing fallback dots).
 prewarmShipIcons([COLORS.neutral, COLORS.danger]);
 
-function SinglePlayerView({ onExit, isMultiplayer = false }: { onExit: () => void; isMultiplayer?: boolean }) {
+function SinglePlayerView({
+  onExit,
+  isMultiplayer = false,
+  adminGameId,
+  isHost,
+}: {
+  onExit: () => void;
+  isMultiplayer?: boolean;
+  adminGameId?: string | null;
+  isHost?: boolean;
+}) {
   const [windowSize, setWindowSize] = useState({
     width: typeof window !== 'undefined' ? window.innerWidth : 1280,
     height: typeof window !== 'undefined' ? window.innerHeight : 800,
@@ -70,6 +80,8 @@ function SinglePlayerView({ onExit, isMultiplayer = false }: { onExit: () => voi
           onTogglePanel={setActivePanel}
           onExitMode={onExit}
           hideSimControls={isMultiplayer}
+          adminGameId={adminGameId ?? null}
+          isHost={!!isHost}
         />
         <Outliner />
 
@@ -107,6 +119,9 @@ function AppShell() {
   // shouldn't poll /state (it'll 404 until seedGameWorld runs).
   // 'missing' means /api/lobby/rooms/:id 404'd — room itself is gone.
   const [roomGameId, setRoomGameId] = useState<string | null | 'missing'>(null);
+  // Host id of the selected room, so the in-game side-menu can render
+  // an admin-only Settings section (force tick, etc.).
+  const [roomHostId, setRoomHostId] = useState<string | null>(null);
   const [activeRooms, setActiveRooms] = useState<RoomSummary[] | null>(null);
   const [showAuth, setShowAuth] = useState(false);
 
@@ -181,11 +196,15 @@ function AppShell() {
     if (!selectedRoomId || !user) return;
     let cancelled = false;
     const poll = async () => {
-      const res = await apiFetch<{ game_id?: string | null; settings?: { game_id?: string | null } }>(`/api/lobby/rooms/${selectedRoomId}`);
+      const res = await apiFetch<{
+        game_id?: string | null;
+        settings?: { game_id?: string | null; host_id?: string | null };
+      }>(`/api/lobby/rooms/${selectedRoomId}`);
       if (cancelled) return;
       if (res.ok) {
         const gid = (res.data.settings?.game_id ?? res.data.game_id) || null;
         setRoomGameId(gid);
+        setRoomHostId(res.data.settings?.host_id ?? null);
       } else if (res.status === 404) {
         setRoomGameId('missing');
       }
@@ -263,7 +282,12 @@ function AppShell() {
     <MultiplayerShell onExit={handleExitRoom} initialRoomId={selectedRoomId}>
       {gameStarted ? (
         <MultiplayerGameProvider gameId={roomGameId as string} onGameMissing={handleExitRoom}>
-          <SinglePlayerView onExit={handleExitMode} isMultiplayer />
+          <SinglePlayerView
+            onExit={handleExitMode}
+            isMultiplayer
+            adminGameId={roomGameId as string}
+            isHost={!!user && roomHostId === user.id}
+          />
         </MultiplayerGameProvider>
       ) : (
         // Pre-game backdrop. NOT using .mp-overlay because that class

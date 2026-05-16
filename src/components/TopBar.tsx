@@ -18,6 +18,10 @@ interface TopBarProps {
    *  the server dictates the tick rate set in the lobby, players can't
    *  fast-forward or skip locally. */
   hideSimControls?: boolean;
+  /** Room/game id for the side-menu admin section (host-only). When set
+   *  and isHost is true, the menu shows Force-Tick controls. */
+  adminGameId?: string | null;
+  isHost?: boolean;
 }
 
 interface Alert {
@@ -29,7 +33,10 @@ interface Alert {
 
 const SIM_SPEEDS = [1, 10, 100, 1000, 10000, 100000];
 
-export const TopBar: React.FC<TopBarProps> = ({ activePanel, onTogglePanel, onExitMode, hideSimControls = false }) => {
+export const TopBar: React.FC<TopBarProps> = ({
+  activePanel, onTogglePanel, onExitMode, hideSimControls = false,
+  adminGameId = null, isHost = false,
+}) => {
   const { gameState, simSpeed, setSimSpeed, updateTick, selectShip } = useGameContext();
   const { user, signOut } = useAuth();
   const [dismissedAlertIds, setDismissedAlertIds] = useState<Set<string>>(new Set());
@@ -127,6 +134,8 @@ export const TopBar: React.FC<TopBarProps> = ({ activePanel, onTogglePanel, onEx
           onExitMode={onExitMode}
           user={user}
           onSignOut={signOut}
+          adminGameId={adminGameId}
+          isHost={isHost}
         />
       )}
 
@@ -250,9 +259,36 @@ interface SideMenuProps {
   onExitMode?: () => void;
   user: { display_name: string; email: string } | null;
   onSignOut: () => Promise<void> | void;
+  /** When set + isHost, the menu shows admin controls (force tick, etc.). */
+  adminGameId?: string | null;
+  isHost?: boolean;
 }
 
-const SideMenu: React.FC<SideMenuProps> = ({ onClose, onExitMode, user, onSignOut }) => {
+const SideMenu: React.FC<SideMenuProps> = ({
+  onClose, onExitMode, user, onSignOut,
+  adminGameId = null, isHost = false,
+}) => {
+  const [forceTickBusy, setForceTickBusy] = useState(false);
+  const [forceTickStatus, setForceTickStatus] = useState<string | null>(null);
+
+  async function forceTick() {
+    if (!adminGameId || forceTickBusy) return;
+    setForceTickBusy(true);
+    setForceTickStatus(null);
+    try {
+      // Lazy-import apiFetch to avoid polluting TopBar's module graph
+      // for single-player builds that don't need multiplayer code paths.
+      const { apiFetch } = await import('../multiplayer/api');
+      const res = await apiFetch(`/api/lobby/rooms/${adminGameId}/force-tick`, { method: 'POST' });
+      setForceTickStatus(res.ok ? '✓ Tick forced' : (res.error?.message ?? 'Failed'));
+    } catch (e) {
+      setForceTickStatus('Failed');
+    } finally {
+      setForceTickBusy(false);
+      setTimeout(() => setForceTickStatus(null), 2500);
+    }
+  }
+
   return (
     <>
       <div className="side-menu__backdrop" onClick={onClose} />
@@ -284,6 +320,23 @@ const SideMenu: React.FC<SideMenuProps> = ({ onClose, onExitMode, user, onSignOu
               <span className="side-menu__item-label">Back to Menu</span>
               <span className="side-menu__item-hint">Exit this session</span>
             </button>
+          )}
+
+          {isHost && adminGameId && (
+            <>
+              <div className="side-menu__group-label">HOST ADMIN</div>
+              <button
+                className="side-menu__item"
+                onClick={forceTick}
+                disabled={forceTickBusy}
+              >
+                <span className="side-menu__item-icon">⏭</span>
+                <span className="side-menu__item-label">
+                  {forceTickStatus ?? (forceTickBusy ? 'Ticking…' : 'Force Tick')}
+                </span>
+                <span className="side-menu__item-hint">Advance one tick now</span>
+              </button>
+            </>
           )}
 
           {user && (
