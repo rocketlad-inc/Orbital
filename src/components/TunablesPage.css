@@ -13,7 +13,14 @@
   --mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
   --display: 'Orbitron', system-ui, sans-serif;
 
-  min-height: 100vh;
+  /* Own the viewport height and provide our own scroll context. Global
+     `html, body { overflow: hidden }` in App.css blocks page scrolling
+     (needed for the in-game canvas), so any full-page screen taller
+     than the viewport must scroll internally. */
+  height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+
   background: var(--bg);
   background-image:
     radial-gradient(ellipse 1000px 600px at 20% 0%, rgba(80, 60, 130, 0.05), transparent),

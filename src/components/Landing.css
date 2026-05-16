@@ -16,12 +16,17 @@
   --mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
   --display: 'Orbitron', system-ui, sans-serif;
 
+  /* Own the viewport height and provide our own scroll context. Global
+     `html, body { overflow: hidden }` in App.css blocks page scrolling
+     (needed for the in-game canvas), so any full-page screen taller
+     than the viewport must scroll internally. */
   position: relative;
-  min-height: 100vh;
+  height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
   background: var(--bg);
   color: var(--fg);
   font-family: var(--mono);
-  overflow-x: hidden;
 }
 
 /* Starfield canvas pinned behind everything */
