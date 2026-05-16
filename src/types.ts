@@ -113,6 +113,9 @@ export interface Ship {
 
   // Combat — tick when this ship last fired in auto-combat at its body
   lastCombatTick?: number;
+  // Combat — tick when this ship last TOOK damage. Used by the renderer
+  // to flash the ship marker briefly so the player sees hits land.
+  lastDamagedTick?: number;
 }
 
 /**
@@ -185,6 +188,7 @@ export interface Settlement {
   population: number;                 // starts at 1, +1 per growth interval
   lastGrowthTick: number;             // tick when population last grew
   lastCombatTick?: number;            // tick when this settlement last returned fire
+  lastDamagedTick?: number;           // tick when this settlement last TOOK damage
 
   surfaceAngle?: number;              // city: angle on body surface (radians)
   orbit?: OrbitElements;              // station: orbit around body

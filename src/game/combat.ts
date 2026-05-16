@@ -158,7 +158,8 @@ export function autoCombatAtBodies(
     }
   }
 
-  // Apply damage and stamp lastCombatTick
+  // Apply damage and stamp lastCombatTick (fired) + lastDamagedTick (took hits).
+  // lastDamagedTick drives the per-tick red flash overlay in the renderer.
   const updatedShips = ships
     .filter(s => !destroyedShips.has(s.id))
     .map(s => {
@@ -167,7 +168,7 @@ export function autoCombatAtBodies(
       if (dmg !== undefined) {
         const maxHp = getShipClass(s.class as ShipClassName).hp;
         const currentHp = s.hp ?? maxHp;
-        next = { ...next, hp: Math.max(0, currentHp - dmg) };
+        next = { ...next, hp: Math.max(0, currentHp - dmg), lastDamagedTick: tick };
       }
       const lc = shipLastCombat.get(s.id);
       if (lc !== undefined) next = { ...next, lastCombatTick: lc };
@@ -180,7 +181,7 @@ export function autoCombatAtBodies(
       let next = st;
       const dmg = damageMap.get(st.id);
       if (dmg !== undefined) {
-        next = { ...next, hp: Math.max(0, st.hp - dmg) };
+        next = { ...next, hp: Math.max(0, st.hp - dmg), lastDamagedTick: tick };
       }
       const lc = settlementLastCombat.get(st.id);
       if (lc !== undefined) next = { ...next, lastCombatTick: lc };

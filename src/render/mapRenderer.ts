@@ -53,6 +53,53 @@ export function clearCanvas(ctx: RenderContext) {
 }
 
 // ============================================================
+// Damage flash — shared overlay for ships + settlements.
+// ============================================================
+
+/** Ticks the red damage halo remains visible after a hit. Short enough
+ *  that simultaneous hits feel distinct, long enough to register at the
+ *  default sim speed. */
+export const DAMAGE_FLASH_DURATION = 4;
+
+/**
+ * Render a brief red glow around a damaged ship/settlement marker.
+ * `lastDamagedTick` is stamped by autoCombatAtBodies whenever damage
+ * lands; the renderer reads it each frame and ramps a radial-gradient
+ * halo from full intensity (just hit) to nothing (DAMAGE_FLASH_DURATION
+ * ticks later).
+ *
+ * Call this BEFORE drawing the ship/settlement icon so the icon sits
+ * on top of the glow at full opacity.
+ */
+export function drawDamageFlash(
+  canvasPos: { x: number; y: number },
+  baseRadius: number,
+  lastDamagedTick: number | undefined,
+  currentTick: number,
+  ctx: RenderContext,
+) {
+  if (lastDamagedTick === undefined) return;
+  const age = currentTick - lastDamagedTick;
+  if (age < 0 || age >= DAMAGE_FLASH_DURATION) return;
+
+  const freshness = 1 - age / DAMAGE_FLASH_DURATION;
+  // Halo expands slightly as it fades (subtle "shockwave" feel)
+  const haloR = baseRadius * (2.5 + (1 - freshness) * 1.5);
+
+  const grad = ctx.ctx.createRadialGradient(
+    canvasPos.x, canvasPos.y, baseRadius * 0.6,
+    canvasPos.x, canvasPos.y, haloR,
+  );
+  grad.addColorStop(0, `rgba(255, 90, 90, ${0.55 * freshness})`);
+  grad.addColorStop(0.6, `rgba(255, 60, 60, ${0.25 * freshness})`);
+  grad.addColorStop(1, 'rgba(255, 60, 60, 0)');
+  ctx.ctx.fillStyle = grad;
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, haloR, 0, Math.PI * 2);
+  ctx.ctx.fill();
+}
+
+// ============================================================
 // Starfield — procedural backdrop, cached to offscreen canvas
 // ============================================================
 
@@ -535,6 +582,10 @@ export function drawShip(
   }
 
   const iconSize = isSelected ? 22 : 18;
+
+  // Damage flash sits beneath the icon so the icon stays at full opacity.
+  drawDamageFlash(canvasPos, iconSize / 2, ship.lastDamagedTick, ctx.t, ctx);
+
   const icon = getShipIconImage(ship.class as ShipIconClass, shipColor);
   if (icon) {
     // Draw the icon rotated to face the velocity direction.
@@ -924,6 +975,11 @@ export function drawTransitShip(
   const heading = Math.atan2(-tangent.y, tangent.x);
 
   const iconSize = isSelected ? 22 : 18;
+
+  // Damage flash beneath the icon — works the same way for transit ships
+  // since combat can hit a ship on its arrival tick.
+  drawDamageFlash(canvasPos, iconSize / 2, ship.lastDamagedTick, ctx.t, ctx);
+
   const icon = getShipIconImage(ship.class as ShipIconClass, shipColor);
   if (icon) {
     ctx.ctx.save();
@@ -1104,6 +1160,9 @@ export function drawCity(
   const tipX = canvasPos.x + outwardX * size * 0.5;
   const tipY = canvasPos.y + outwardY * size * 0.5;
 
+  // Damage flash underneath the marker
+  drawDamageFlash({ x: tipX, y: tipY }, size, settlement.lastDamagedTick, ctx.t, ctx);
+
   ctx.ctx.fillStyle = color;
   ctx.ctx.strokeStyle = '#0a0e14';
   ctx.ctx.lineWidth = 1;
@@ -1190,6 +1249,9 @@ export function drawStation(
     ctx.ctx.stroke();
     ctx.ctx.setLineDash([]);
   }
+
+  // Damage flash underneath the diamond
+  drawDamageFlash(canvasPos, size, settlement.lastDamagedTick, ctx.t, ctx);
 
   // Diamond
   ctx.ctx.fillStyle = color;
