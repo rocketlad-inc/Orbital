@@ -556,14 +556,83 @@ export class Room {
       }
     }
 
+    // 3.4 Settlement combat. Hostile ships orbiting the same body as a
+    //     settlement chip away at its hp every tick. Peace pacts still
+    //     suppress (same `peace` set as ship combat). Cities and stations
+    //     can't fight back yet — that's a follow-up.
+    const SETTLEMENT_INCOMING_DAMAGE_PER_HOSTILE_SHIP = 4;
+    const livingSettlements = (await this.env.DB
+      .prepare(
+        `SELECT id, body_id, owner_faction_id, type, hp, hp_max
+           FROM game_settlements
+          WHERE game_id = ? AND destroyed_at_tick IS NULL`,
+      )
+      .bind(gameId)
+      .all()).results ?? [];
+
+    const destroyedSettlements = [];
+    for (const s of livingSettlements) {
+      const shipsHere = byBody.get(s.body_id) ?? [];
+      const hostiles = shipsHere.filter(sh =>
+        sh.owner_faction_id !== s.owner_faction_id
+        && !peace.has(pairKey(sh.owner_faction_id, s.owner_faction_id))
+        && (sh.damage_per_tick ?? 0) > 0,
+      );
+      if (hostiles.length === 0) continue;
+      const incoming = hostiles.length * SETTLEMENT_INCOMING_DAMAGE_PER_HOSTILE_SHIP;
+      const newHp = Math.max(0, s.hp - incoming);
+      if (newHp <= 0) {
+        await this.env.DB
+          .prepare('UPDATE game_settlements SET hp = 0, destroyed_at_tick = ?, last_combat_tick = ? WHERE id = ?')
+          .bind(tick, tick, s.id)
+          .run();
+        destroyedSettlements.push(s);
+      } else {
+        await this.env.DB
+          .prepare('UPDATE game_settlements SET hp = ?, last_combat_tick = ? WHERE id = ?')
+          .bind(newHp, tick, s.id)
+          .run();
+      }
+    }
+
+    // Chronicle each destroyed settlement so the log surfaces it.
+    if (destroyedSettlements.length) {
+      const now = Date.now();
+      for (const s of destroyedSettlements) {
+        const body = await this.env.DB
+          .prepare('SELECT name FROM game_bodies WHERE id = ?')
+          .bind(s.body_id).first();
+        const id = `c${tick}_setl_${s.id.slice(-6)}_${Math.random().toString(36).slice(2, 6)}`;
+        const payload = JSON.stringify({
+          settlement_id: s.id, settlement_type: s.type,
+          body_id: s.body_id, body_name: body?.name ?? '?',
+        });
+        try {
+          await this.env.DB
+            .prepare(
+              `INSERT INTO chronicle_entries
+                (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+               VALUES (?, ?, ?, 'settlement_destroyed', ?, ?, ?, 'public', ?)`,
+            )
+            .bind(id, gameId, tick, s.owner_faction_id, s.body_id, payload, now)
+            .run();
+        } catch (e) { console.error('settlement chronicle failed', e); }
+      }
+    }
+
     // 3.5 Yield harvest. Every SETTLEMENT_HARVEST_INTERVAL=10 ticks, each
     //     settlement converts its body's yield into stockpile, scaled by
     //     population and the settlement type's bias (cities -> metal,
     //     stations -> science).
+    //     Also: every POP_GROWTH_INTERVAL=20 ticks, settlement population
+    //     grows by 1 (capped at POP_MAX). Growing populations harvest more
+    //     because the popMult above scales with population.
     const HARVEST_INTERVAL = 10;
+    const POP_GROWTH_INTERVAL = 20;
+    const POP_MAX = 10;
     const settlements = (await this.env.DB
       .prepare(
-        `SELECT s.id, s.body_id, s.type, s.population, s.last_harvest_tick,
+        `SELECT s.id, s.body_id, s.type, s.population, s.last_harvest_tick, s.last_growth_tick,
                 b.yield_metal, b.yield_fuel, b.yield_gold, b.yield_science
            FROM game_settlements s
            JOIN game_bodies b ON b.id = s.body_id
@@ -571,6 +640,23 @@ export class Room {
       )
       .bind(gameId)
       .all()).results ?? [];
+
+    // Population growth pass — independent of harvest cadence.
+    for (const s of settlements) {
+      const lastGrowth = s.last_growth_tick ?? 0;
+      if (tick - lastGrowth < POP_GROWTH_INTERVAL) continue;
+      if ((s.population ?? 1) >= POP_MAX) {
+        // Even at cap, update last_growth_tick so we don't burn cycles.
+        await this.env.DB
+          .prepare('UPDATE game_settlements SET last_growth_tick = ? WHERE id = ?')
+          .bind(tick, s.id).run();
+        continue;
+      }
+      await this.env.DB
+        .prepare('UPDATE game_settlements SET population = population + 1, last_growth_tick = ? WHERE id = ?')
+        .bind(tick, s.id).run();
+      s.population = (s.population ?? 1) + 1;  // keep local copy in sync for harvest pass below
+    }
 
     for (const s of settlements) {
       const last = s.last_harvest_tick ?? 0;
