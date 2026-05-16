@@ -229,10 +229,14 @@ const FACTION_COLORS = [
 
 const STARTING_RESOURCES = { metal: 100, fuel: 200, gold: 50, science: 0 };
 const HOME_DEVELOPMENT_LEVEL = 3;       // capital
-const SECONDARY_DEVELOPMENT_LEVEL = 2;  // second assigned world (outpost)
-const WORLDS_PER_PLAYER = 2;
+const SECONDARY_DEVELOPMENT_LEVEL = 2;  // unused now that WORLDS_PER_PLAYER = 1
+// One world per faction (the capital). Each capital gets the starter
+// fleet + an auto-deployed city so the body is immediately owned and
+// visible from tick 0.
+const WORLDS_PER_PLAYER = 1;
 const COMBAT_SHIPS_PER_WORLD = 2;
 const CARGO_SHIPS_PER_WORLD = 1;
+const STARTER_CITY_HP = 100;
 
 // Starter fleet template. ship_class is a free-form TEXT column in the
 // schema; 'frigate' = combat, 'cargo' = freight. Names are templates;
@@ -526,6 +530,38 @@ export async function seedGameWorld(env, gameId) {
         );
       });
     }
+  }
+
+  // 3b) game_settlements — auto-deploy a city at each faction's capital
+  //     so the body is owned + visible from tick 0 and players don't
+  //     have to manually plant a flag before harvest starts. The
+  //     starter city has pop 1; growth + harvest passes pick up from
+  //     there normally.
+  for (const f of factionRows) {
+    const capTpl = f.capital_template_id;
+    const bodyTpl = BODY_CATALOG.find(b => b.id === capTpl);
+    if (!bodyTpl) continue;
+    const cityId = `${gameId}:c${f.slot}_${capTpl}`;
+    // Surface angle is random per faction so cities don't all stack at 0.
+    const surfaceAngle = rand() * Math.PI * 2;
+    stmts.push(
+      env.DB.prepare(
+        `INSERT INTO game_settlements
+          (id, game_id, body_id, owner_faction_id, type, name,
+           hp, hp_max, population,
+           surface_angle, orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch,
+           created_at_tick, last_growth_tick, last_harvest_tick)
+         VALUES (?, ?, ?, ?, 'city', ?,
+                 ?, ?, 1,
+                 ?, NULL, NULL, NULL, NULL, NULL,
+                 0, 0, 0)`,
+      ).bind(
+        cityId, gameId, bodyRowIdFor(capTpl), f.id,
+        `${f.name} Capital`,
+        STARTER_CITY_HP, STARTER_CITY_HP,
+        surfaceAngle,
+      ),
+    );
   }
 
   // 4) flip game status to active.
