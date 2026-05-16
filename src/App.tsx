@@ -10,6 +10,7 @@ import { SettlementsPanel } from './components/SettlementsPanel';
 import { FleetPanel } from './components/FleetPanel';
 import { TechPanel } from './components/TechPanel';
 import { ThreatsPanel } from './components/ThreatsPanel';
+import { MobileSimControls } from './components/MobileSimControls';
 import { prewarmShipIcons } from './render/shipIconCache';
 import { COLORS } from './render/colors';
 import { AuthProvider, useAuth } from './multiplayer/AuthContext';
@@ -30,7 +31,19 @@ const MODE_STORAGE_KEY = 'orbital.last_mode';
 // them ready (rather than briefly showing fallback dots).
 prewarmShipIcons([COLORS.neutral, COLORS.danger]);
 
-function SinglePlayerView({
+/**
+ * The in-game UI: canvas, top bar, side panels, etc.
+ *
+ * Critical: this component does NOT mount its own GameContextProvider —
+ * it just reads from whichever provider is already mounted above. That
+ * way the same UI works for both single-player (where SinglePlayerView
+ * wraps it in a local-scenario provider) and multiplayer (where
+ * MultiplayerGameProvider wraps it in a server-state provider). Earlier
+ * versions mounted a second provider here, which shadowed the MP one
+ * and made the canvas render Scenario 1 (three ships around Earth) on
+ * top of the multiplayer game — a confusing playtest blocker.
+ */
+function GameUI({
   onExit,
   isMultiplayer = false,
   adminGameId,
@@ -70,35 +83,46 @@ function SinglePlayerView({
   }, []);
 
   return (
+    <div className="app">
+      <MapCanvas width={windowSize.width} height={windowSize.height} />
+
+      <TopBar
+        activePanel={activePanel}
+        onTogglePanel={setActivePanel}
+        onExitMode={onExit}
+        hideSimControls={isMultiplayer}
+        adminGameId={adminGameId ?? null}
+        isHost={!!isHost}
+      />
+      <Outliner />
+
+      {activePanel === 'settlements' && (
+        <SettlementsPanel onClose={() => setActivePanel(null)} />
+      )}
+      {activePanel === 'fleet' && (
+        <FleetPanel onClose={() => setActivePanel(null)} />
+      )}
+      {activePanel === 'research' && (
+        <TechPanel onClose={() => setActivePanel(null)} />
+      )}
+
+      <ShipPanel />
+      <BodyInspector />
+      {!isMultiplayer && <ScenarioSelector />}
+      <ThreatsPanel />
+      <MobileSimControls hideSimControls={isMultiplayer} />
+    </div>
+  );
+}
+
+/**
+ * Single-player entry: mounts the local-scenario GameContextProvider
+ * and renders the shared GameUI inside it.
+ */
+function SinglePlayerView({ onExit }: { onExit: () => void }) {
+  return (
     <GameContextProvider initialScenario={1}>
-      <div className="app">
-        <MapCanvas width={windowSize.width} height={windowSize.height} />
-
-        <TopBar
-          activePanel={activePanel}
-          onTogglePanel={setActivePanel}
-          onExitMode={onExit}
-          hideSimControls={isMultiplayer}
-          adminGameId={adminGameId ?? null}
-          isHost={!!isHost}
-        />
-        <Outliner />
-
-        {activePanel === 'settlements' && (
-          <SettlementsPanel onClose={() => setActivePanel(null)} />
-        )}
-        {activePanel === 'fleet' && (
-          <FleetPanel onClose={() => setActivePanel(null)} />
-        )}
-        {activePanel === 'research' && (
-          <TechPanel onClose={() => setActivePanel(null)} />
-        )}
-
-        <ShipPanel />
-        <BodyInspector />
-        {!isMultiplayer && <ScenarioSelector />}
-        <ThreatsPanel />
-      </div>
+      <GameUI onExit={onExit} />
     </GameContextProvider>
   );
 }
@@ -280,7 +304,11 @@ function AppShell() {
     <MultiplayerShell onExit={handleExitRoom} initialRoomId={selectedRoomId}>
       {gameStarted ? (
         <MultiplayerGameProvider gameId={roomGameId as string} onGameMissing={handleExitRoom}>
-          <SinglePlayerView
+          {/* MultiplayerGameProvider already mounts its own GameContextProvider
+              fed by server state. Render GameUI directly — wrapping it in
+              SinglePlayerView would mount a second (local-scenario) context
+              that shadows the MP one and renders Scenario 1 on top. */}
+          <GameUI
             onExit={handleExitMode}
             isMultiplayer
             adminGameId={roomGameId as string}
