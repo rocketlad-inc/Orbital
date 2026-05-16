@@ -1048,3 +1048,51 @@
   50%      { box-shadow: 0 0 26px rgba(255, 184, 77, 0.7),
                         inset 0 1px 0 rgba(255, 255, 255, 0.22); }
 }
+
+/* ---- Notification toasts (top-right). Triggered by Room DO /notify
+   broadcasts received over the room WebSocket. Auto-dismiss after 5s. ---- */
+.mp-toasts {
+  position: fixed;
+  top: 56px;
+  right: 16px;
+  z-index: 5500;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none;
+  max-width: 320px;
+}
+.mp-toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 3px;
+  border: 1px solid var(--mp-border);
+  background: rgba(10, 14, 20, 0.95);
+  font-family: var(--mp-mono);
+  font-size: 11px;
+  color: var(--mp-fg);
+  letter-spacing: 0.04em;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.6);
+  animation: mp-toast-slide 0.22s ease-out;
+  pointer-events: auto;
+}
+@keyframes mp-toast-slide {
+  from { opacity: 0; transform: translateX(20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.mp-toast__icon {
+  font-size: 14px;
+  width: 18px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.mp-toast__text { flex: 1; }
+.mp-toast--trade   { border-left: 3px solid var(--mp-accent); }
+.mp-toast--trade .mp-toast__icon { color: var(--mp-accent); }
+.mp-toast--message { border-left: 3px solid var(--mp-friendly); }
+.mp-toast--message .mp-toast__icon { color: var(--mp-friendly); }
+.mp-toast--combat  { border-left: 3px solid var(--mp-hostile); }
+.mp-toast--combat .mp-toast__icon { color: var(--mp-hostile); }
+.mp-toast--tick { border-left: 3px solid var(--mp-fg-dim); }

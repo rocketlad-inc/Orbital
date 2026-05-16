@@ -56,6 +56,11 @@ export function MultiplayerShell({ children, onExit, initialRoomId }: Multiplaye
     return () => { cancelled = true; clearInterval(id); };
   }, [initialRoomId, gameId]);
   const [incomingTradeCount, setIncomingTradeCount] = useState(0);
+  const [unreadMessages, setUnreadMessages] = useState(0);
+  // Transient toast notifications fanned out of the room WebSocket.
+  // Each has a unique id so React can key it and a setTimeout dismisses
+  // it after a few seconds.
+  const [toasts, setToasts] = useState<Array<{ id: string; text: string; kind: 'trade' | 'message' | 'tick' | 'combat' }>>([]);
 
   // Poll for incoming trade count so the Trades tab can show a badge
   // even when the user is on a different tab.
@@ -83,6 +88,71 @@ export function MultiplayerShell({ children, onExit, initialRoomId }: Multiplaye
     return () => { cancelled = true; clearInterval(id); };
   }, [gameId]);
 
+  // Poll unread message count for the Comms tab badge.
+  useEffect(() => {
+    if (!gameId) {
+      setUnreadMessages(0);
+      return;
+    }
+    let cancelled = false;
+    const tick = async () => {
+      const res = await apiFetch<{ unread: number }>(`/api/games/${gameId}/messages/unread-count`);
+      if (cancelled || !res.ok) return;
+      setUnreadMessages(res.data.unread ?? 0);
+    };
+    tick();
+    const id = setInterval(tick, 10_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [gameId]);
+
+  // Clear the unread badge when the user opens Comms — they're reading
+  // them now. (Server-side read_at_ms is set when CommsPanel marks
+  // individual messages read; this is just optimistic UI.)
+  useEffect(() => {
+    if (tab === 'comms') setUnreadMessages(0);
+  }, [tab]);
+
+  // Listen on the room WebSocket for push events (trade / message /
+  // tick / ships_destroyed) and surface them as toasts. The /notify
+  // endpoint on the Room DO fans these out to all connected sockets.
+  useEffect(() => {
+    if (!gameId) return;
+    const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const ws = new WebSocket(`${scheme}://${window.location.host}/api/rooms/${gameId}/ws`);
+    const pushToast = (kind: 'trade' | 'message' | 'tick' | 'combat', text: string) => {
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      setToasts((cur) => [...cur, { id, text, kind }]);
+      // Auto-dismiss
+      setTimeout(() => {
+        setToasts((cur) => cur.filter((t) => t.id !== id));
+      }, 5000);
+    };
+    ws.addEventListener('message', (ev) => {
+      try {
+        const m = JSON.parse(ev.data);
+        if (m?.kind === 'trade') {
+          if (m.event === 'proposed') {
+            pushToast('trade', 'New trade offer received');
+            setIncomingTradeCount((n) => n + 1);
+          } else if (m.event === 'accepted') {
+            pushToast('trade', 'Trade accepted');
+          } else if (m.event === 'declined') {
+            pushToast('trade', 'Trade declined');
+          } else if (m.event === 'countered') {
+            pushToast('trade', 'Counter-offer received');
+          }
+        } else if (m?.kind === 'message') {
+          pushToast('message', 'New message in Comms');
+          setUnreadMessages((n) => n + 1);
+        } else if (m?.type === 'ships_destroyed') {
+          pushToast('combat', `${(m.ship_ids?.length ?? 1)} ship(s) destroyed`);
+        }
+        // 'tick' events fire every tick; too noisy for a toast. Skip.
+      } catch { /* ignore non-json */ }
+    });
+    return () => { try { ws.close(); } catch {} };
+  }, [gameId]);
+
   // MultiplayerShell is mounted only when AppShell has already authed the
   // user, so user should always be present here. Guard anyway.
   if (!user) return <>{children}</>;
@@ -90,6 +160,18 @@ export function MultiplayerShell({ children, onExit, initialRoomId }: Multiplaye
   return (
     <>
       {children}
+      {toasts.length > 0 && (
+        <div className="mp-toasts">
+          {toasts.map(t => (
+            <div key={t.id} className={`mp-toast mp-toast--${t.kind}`}>
+              <span className="mp-toast__icon">
+                {t.kind === 'trade' ? '⚖' : t.kind === 'message' ? '✉' : t.kind === 'combat' ? '✸' : '◷'}
+              </span>
+              <span className="mp-toast__text">{t.text}</span>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="mp-user-pill">
         {onExit && (
           <button onClick={onExit} title="Back to mode picker">← Menu</button>
@@ -120,7 +202,16 @@ export function MultiplayerShell({ children, onExit, initialRoomId }: Multiplaye
                 className={tab === 'comms' ? 'active' : ''}
                 disabled={!gameId}
                 onClick={() => gameId && setTab('comms')}
-              >Comms</button>
+                title={unreadMessages > 0 ? `${unreadMessages} unread message${unreadMessages > 1 ? 's' : ''}` : 'Comms'}
+              >
+                Comms{unreadMessages > 0 && (
+                  <span style={{
+                    marginLeft: 4, padding: '0 5px', fontSize: 9,
+                    background: '#4ecdc4', color: '#0a0e14', borderRadius: 8,
+                    fontWeight: 700,
+                  }}>{unreadMessages}</span>
+                )}
+              </button>
               <button
                 className={tab === 'senate' ? 'active' : ''}
                 disabled={!gameId}
