@@ -6,6 +6,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { useAuth } from '../multiplayer/AuthContext';
+import { logger } from '../game/logger';
 import './TopBar.css';
 
 export type PanelId = 'settlements' | 'fleet' | 'research' | null;
@@ -114,8 +115,13 @@ export const TopBar: React.FC<TopBarProps> = ({
 
   const handleSkip = (n: number) => updateTick(gameState.currentTick + n);
 
-  // Format tick as T+NNNN (and game days if non-trivial)
-  const tickStr = `T+${Math.floor(gameState.currentTick)}`;
+  // Format tick as "T+NNNN / TOTAL" when we know the match length,
+  // otherwise just T+NNNN. Flag endingSoon at 80% so the host has a
+  // visible cue before the tick countdown ends the game.
+  const cur = Math.floor(gameState.currentTick);
+  const total = gameState.totalTickTarget;
+  const tickStr = total ? `T+${cur} / ${total}` : `T+${cur}`;
+  const endingSoon = total ? cur >= total * 0.8 : false;
 
   return (
     <div className="top-bar">
@@ -211,8 +217,8 @@ export const TopBar: React.FC<TopBarProps> = ({
       </div>
 
       <div className="top-bar__time">
-        <div className="time-display">
-          <div className="time-display__label">TICK</div>
+        <div className={`time-display${endingSoon ? ' time-display--ending' : ''}`}>
+          <div className="time-display__label">{endingSoon ? 'TICK · ENDING' : 'TICK'}</div>
           <div className="time-display__value">{tickStr}</div>
         </div>
         {!hideSimControls && (
@@ -384,6 +390,36 @@ const SideMenu: React.FC<SideMenuProps> = ({
     }
   }
 
+  async function extendMatchLength(delta: number) {
+    if (!adminGameId || intervalBusy) return;
+    setIntervalBusy(true);
+    setIntervalStatus(null);
+    try {
+      const { apiFetch } = await import('../multiplayer/api');
+      // Read the current target locally — server validates the result is
+      // > current_tick anyway, so we don't need to round-trip a GET.
+      const current = (gameState as any).totalTickTarget ?? 42;
+      const newTotal = Math.max(Math.floor(gameState.currentTick) + 1, current + delta);
+      const res = await apiFetch<{ total_tick_target?: number }>(
+        `/api/lobby/rooms/${adminGameId}/match-length`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ total_tick_target: newTotal }),
+        },
+      );
+      if (!res.ok) {
+        setIntervalStatus(res.error?.message ?? `Failed (${res.status})`);
+      } else {
+        setIntervalStatus(`✓ Match length → ${res.data?.total_tick_target ?? newTotal}`);
+      }
+    } catch (e) {
+      setIntervalStatus(`Network error: ${(e as Error)?.message || 'unknown'}`);
+    } finally {
+      setIntervalBusy(false);
+      setTimeout(() => setIntervalStatus(null), 4000);
+    }
+  }
+
   async function forceTick() {
     if (!adminGameId || forceTickBusy) return;
     setForceTickBusy(true);
@@ -521,6 +557,21 @@ const SideMenu: React.FC<SideMenuProps> = ({
               </div>
             </>
           )}
+
+          <div className="side-menu__group-label">DIAGNOSTICS</div>
+          <button
+            className="side-menu__item"
+            onClick={() => {
+              // Don't close the drawer — the user might want to inspect more
+              // afterwards, and a download doesn't navigate.
+              logger.info('SYSTEM', 'User exported game log');
+              logger.downloadText();
+            }}
+          >
+            <span className="side-menu__item-icon">⤓</span>
+            <span className="side-menu__item-label">Download Log</span>
+            <span className="side-menu__item-hint">{logger.count()} entries</span>
+          </button>
 
           {user && (
             <>

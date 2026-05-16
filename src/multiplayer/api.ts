@@ -2,9 +2,18 @@
 // production; in dev the CRA proxy (src/setupProxy.js) forwards /api/* to
 // wrangler dev.
 
+import { logger } from '../game/logger';
+
 export type ApiResult<T> =
   | { ok: true; status: number; data: T }
   | { ok: false; status: number; error: { code: string; message: string } | null };
+
+/** GETs to these endpoints are high-frequency polls — log only failures
+ *  to keep the diagnostic log readable. Writes/non-200s are always logged. */
+const SILENT_GET_PREFIXES = [
+  '/api/lobby/rooms/',  // /state polling
+  '/api/users/me/rooms', // my-rooms refresh
+];
 
 export async function apiFetch<T = unknown>(
   path: string,
@@ -14,10 +23,15 @@ export async function apiFetch<T = unknown>(
   if (init.body && !headers.has('content-type')) {
     headers.set('content-type', 'application/json');
   }
+  const method = (init.method ?? 'GET').toUpperCase();
+  const t0 = performance.now();
   let res: Response;
   try {
     res = await fetch(path, { credentials: 'same-origin', ...init, headers });
-  } catch {
+  } catch (e) {
+    logger.error('API', `${method} ${path} — network error`, {
+      ms: Math.round(performance.now() - t0),
+    });
     return { ok: false, status: 0, error: { code: 'network_error', message: 'Network error' } };
   }
   // The dev server falls back to index.html for unknown routes, which would
@@ -25,11 +39,26 @@ export async function apiFetch<T = unknown>(
   // worker-less dev mode reads as "unauthenticated" instead of crashing.
   const ct = res.headers.get('content-type') || '';
   if (!ct.includes('application/json')) {
+    logger.warn('API', `${method} ${path} — non-JSON response`, {
+      status: res.status, ms: Math.round(performance.now() - t0),
+    });
     return { ok: false, status: res.status, error: { code: 'no_backend', message: 'Multiplayer backend not running' } };
   }
   let data: any = null;
   try { data = await res.json(); } catch { /* empty body */ }
-  if (res.ok) return { ok: true, status: res.status, data: data as T };
+  const ms = Math.round(performance.now() - t0);
+  if (res.ok) {
+    // Silence chatty successful polls; log everything else.
+    const silent = method === 'GET' && SILENT_GET_PREFIXES.some(p => path.startsWith(p));
+    if (!silent) logger.info('API', `${method} ${path} ${res.status}`, { ms });
+    return { ok: true, status: res.status, data: data as T };
+  }
+  const errCode = data?.error?.code ?? 'unknown';
+  const errMsg = data?.error?.message ?? '';
+  const level = res.status >= 500 ? 'error' : 'warn';
+  logger[level]('API', `${method} ${path} ${res.status} ${errCode}`, {
+    ms, error: errMsg || undefined,
+  });
   return { ok: false, status: res.status, error: data?.error ?? null };
 }
 

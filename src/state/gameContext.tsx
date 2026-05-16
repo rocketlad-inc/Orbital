@@ -9,6 +9,7 @@ import { createCircularOrbit } from '../physics/orbitalMechanics';
 import { getShipClass, ShipClassName, SHIP_CLASSES } from '../game/shipClasses';
 import { formFleet, splitFromFleet } from '../game/fleet';
 import { autoCombatAtBodies } from '../game/combat';
+import { logger } from '../game/logger';
 import {
   createCity, createStation, tickSettlements,
   canHostCity, canHostStation, SETTLEMENT_DEFS,
@@ -375,7 +376,30 @@ export function GameContextProvider({
     if (prev.status === 'completed') return prev;
 
     const tickDelta = Math.max(0, newTime - prev.currentTick);
-    let updatedShips = checkNodeExecution(prev.ships, prev.bodies, newTime);
+    // Keep logger's tick context fresh so every entry below has the right T+
+    logger.setCurrentTick(newTime);
+
+    // Detect transfer arrivals (ships that had a transfer last frame but
+    // not this frame) BEFORE checkNodeExecution mutates them, so we can
+    // log meaningful arrival events.
+    const updatedShips0 = checkNodeExecution(prev.ships, prev.bodies, newTime);
+    if (updatedShips0 !== prev.ships) {
+      const prevById = new Map(prev.ships.map(s => [s.id, s]));
+      for (const s of updatedShips0) {
+        const before = prevById.get(s.id);
+        if (!before) continue;
+        if (before.transfer && !s.transfer) {
+          // Just arrived (or chained to next leg). transfer was cleared.
+          logger.info('SIM', `Transfer arrived: ${s.name} → ${s.orbit.parentBodyId}`);
+        } else if (before.pendingTransfer && !s.pendingTransfer && s.transfer) {
+          // Departure burn fired
+          logger.info('SIM', `Transfer departed: ${s.name} → ${s.transfer.arrivalBodyId}`, {
+            arrival: Math.round(s.transfer.arrivalTime),
+          });
+        }
+      }
+    }
+    let updatedShips = updatedShips0;
 
     // Process build orders
     let buildOrders = prev.buildOrders;
@@ -383,6 +407,9 @@ export function GameContextProvider({
     if (completedBuilds.length > 0) {
       const newShips: Ship[] = completedBuilds.map(bo => {
         const classDef = getShipClass(bo.shipClass as ShipClassName);
+        logger.info('SIM', `Build complete: ${bo.shipName} (${bo.shipClass}) at ${bo.bodyId}`, {
+          ownedBy: bo.ownedBy,
+        });
         return {
           id: `ship-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           name: bo.shipName,
@@ -426,6 +453,13 @@ export function GameContextProvider({
     updatedShips = combatResult.ships;
     updatedSettlements = combatResult.settlements;
     const combatNewLogs = combatResult.log;
+    // Mirror each combat line into the categorized logger so it shows up in
+    // the exported .txt with the right tick + category.
+    for (const line of combatNewLogs) {
+      const isKill = /destroyed!/.test(line);
+      if (isKill) logger.error('COMBAT', line);
+      else logger.info('COMBAT', line);
+    }
 
     // Prune destroyed ships from fleet membership. A fleet with <2 surviving
     // ships dissolves; lead ship that died gets reassigned.
@@ -582,7 +616,26 @@ export function GameContextProvider({
         nextStatus = 'completed';
         winnerFactionId = win.factionId;
         victoryType = win.victoryType;
+        logger.info('SYSTEM', `Match completed: ${win.factionId} won via ${win.victoryType}`);
       }
+    }
+
+    // Sample a tick snapshot every ~25 simulated ticks so the log has
+    // periodic economy/fleet checkpoints to read between events.
+    const SNAPSHOT_INTERVAL = 25;
+    if (Math.floor(newTime / SNAPSHOT_INTERVAL) > Math.floor(prev.currentTick / SNAPSHOT_INTERVAL)) {
+      const player = factionPools['player'];
+      const playerShips = updatedShips.filter(s => s.ownedBy === 'player').length;
+      const playerSettlements = updatedSettlements.filter(s => s.ownedBy === 'player').length;
+      logger.info('TICK', `snapshot`, {
+        ships: playerShips,
+        settlements: playerSettlements,
+        fuel: player ? Math.round(player.fuel) : null,
+        ore: player ? Math.round(player.ore) : null,
+        cr: player ? Math.round(player.credits) : null,
+        sci: player ? Math.round(player.science) : null,
+        builds: buildOrders.length,
+      });
     }
 
     return {
@@ -685,19 +738,33 @@ export function GameContextProvider({
   }, []);
 
   const addManeuverNode = useCallback((node: ManeuverNode) => {
-    setGameStateInternal(prev => ({
-      ...prev,
-      orders: [...prev.orders, node],
-      ships: prev.ships.map(ship =>
-        ship.id === node.shipId
-          ? { ...ship, orders: [...ship.orders, node] }
-          : ship
-      ),
-    }));
+    setGameStateInternal(prev => {
+      const ship = prev.ships.find(s => s.id === node.shipId);
+      logger.info('ACTION', `Planned ${node.type}: ${ship?.name ?? node.shipId} ${node.label ? `(${node.label})` : ''}`, {
+        burnTime: Math.round(node.burnTime), deltav: +node.deltav.toFixed(2),
+      });
+      return {
+        ...prev,
+        orders: [...prev.orders, node],
+        ships: prev.ships.map(ship =>
+          ship.id === node.shipId
+            ? { ...ship, orders: [...ship.orders, node] }
+            : ship
+        ),
+      };
+    });
   }, []);
 
   const commitManeuverNode = useCallback((nodeId: string) => {
-    setGameStateInternal(prev => ({
+    setGameStateInternal(prev => {
+      const order = prev.orders.find(o => o.id === nodeId);
+      if (order) {
+        const ship = prev.ships.find(s => s.id === order.shipId);
+        logger.info('ACTION', `Committed ${order.type}: ${ship?.name ?? order.shipId}`, {
+          burnTime: Math.round(order.burnTime),
+        });
+      }
+      return {
       ...prev,
       orders: prev.orders.map(order =>
         order.id === nodeId ? { ...order, status: 'committed' as const } : order
@@ -708,7 +775,8 @@ export function GameContextProvider({
           order.id === nodeId ? { ...order, status: 'committed' as const } : order
         ),
       })),
-    }));
+      };
+    });
   }, []);
 
   const deleteManeuverNode = useCallback((nodeId: string) => {
@@ -824,11 +892,17 @@ export function GameContextProvider({
   // ---- Ship Building ----
   const buildShip = useCallback((bodyId: string, shipClass: ShipClassName, name: string): boolean => {
     const classDef = SHIP_CLASSES[shipClass];
-    if (!classDef) return false;
+    if (!classDef) {
+      logger.warn('ACTION', `buildShip: unknown class`, { shipClass });
+      return false;
+    }
 
     // Check if body is owned by the player
     const body = gameState.bodies.find(b => b.id === bodyId);
-    if (!body || body.ownedBy !== 'player') return false;
+    if (!body || body.ownedBy !== 'player') {
+      logger.warn('ACTION', `buildShip: body not player-owned`, { bodyId, ownedBy: body?.ownedBy });
+      return false;
+    }
 
     // Apply Construction-tech cost discount (capped at 75% off).
     const constructionLvl = gameState.factionTech.player?.levels['construction'] ?? 0;
@@ -839,7 +913,18 @@ export function GameContextProvider({
 
     // Check resources
     const res = gameState.resources['player'];
-    if (!res || res.fuel < fuelCost || res.ore < oreCost || res.credits < creditCost) return false;
+    if (!res || res.fuel < fuelCost || res.ore < oreCost || res.credits < creditCost) {
+      logger.warn('ACTION', `buildShip: insufficient resources`, {
+        shipClass, bodyId, name,
+        need: { fuel: fuelCost, ore: oreCost, credits: creditCost },
+        have: res ? { fuel: res.fuel, ore: res.ore, credits: res.credits } : null,
+      });
+      return false;
+    }
+    logger.info('ACTION', `Built ${name} (${shipClass}) at ${body.name}`, {
+      cost: { fuel: -fuelCost, ore: -oreCost, credits: -creditCost },
+      buildTime: classDef.buildTime,
+    });
 
     setGameStateInternal(prev => {
       const playerRes = prev.resources['player'];
@@ -876,6 +961,7 @@ export function GameContextProvider({
     setGameStateInternal(prev => {
       const bo = prev.buildOrders.find(b => b.id === buildOrderId);
       if (!bo) return prev;
+      logger.info('ACTION', `Cancelled build: ${bo.shipName} (${bo.shipClass}) at ${bo.bodyId}`);
 
       // Refund resources
       const classDef = SHIP_CLASSES[bo.shipClass as ShipClassName];
@@ -905,11 +991,17 @@ export function GameContextProvider({
 
   const deploySettlement = useCallback((bodyId: string, type: SettlementType, name?: string): boolean => {
     const body = gameState.bodies.find(b => b.id === bodyId);
-    if (!body) return false;
+    if (!body) { logger.warn('ACTION', `deploySettlement: unknown body`, { bodyId }); return false; }
 
     // Body type gate
-    if (type === 'city' && !canHostCity(body)) return false;
-    if (type === 'station' && !canHostStation(body)) return false;
+    if (type === 'city' && !canHostCity(body)) {
+      logger.warn('ACTION', `deploySettlement: ${body.name} can't host a city`, { bodyType: body.type });
+      return false;
+    }
+    if (type === 'station' && !canHostStation(body)) {
+      logger.warn('ACTION', `deploySettlement: ${body.name} can't host a station`, { bodyType: body.type });
+      return false;
+    }
 
     // Require a player FREIGHTER in orbit at this body — only freighters
     // can deploy settlements (combat ships carry no construction materials).
@@ -919,14 +1011,25 @@ export function GameContextProvider({
       s.orbit.parentBodyId === bodyId &&
       s.class === 'freighter'
     );
-    if (!playerFreighterHere) return false;
+    if (!playerFreighterHere) {
+      logger.warn('ACTION', `deploySettlement: no freighter at ${body.name}`);
+      return false;
+    }
 
     // Resource cost
     const def = SETTLEMENT_DEFS[type];
     const res = gameState.resources['player'];
     if (!res || res.fuel < def.cost.fuel || res.ore < def.cost.ore || res.credits < def.cost.credits) {
+      logger.warn('ACTION', `deploySettlement: insufficient resources`, {
+        type, body: body.name,
+        need: def.cost,
+        have: res ? { fuel: res.fuel, ore: res.ore, credits: res.credits } : null,
+      });
       return false;
     }
+    logger.info('ACTION', `Deployed ${type} at ${body.name}${name ? ` (${name})` : ''}`, {
+      cost: { fuel: -def.cost.fuel, ore: -def.cost.ore, credits: -def.cost.credits },
+    });
 
     setGameStateInternal(prev => {
       const playerRes = prev.resources['player'];

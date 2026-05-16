@@ -26,6 +26,7 @@ import { MultiplayerShell } from './multiplayer/MultiplayerShell';
 import { MultiplayerLobby } from './multiplayer/MultiplayerLobby';
 import { MultiplayerGameProvider } from './multiplayer/MultiplayerGameProvider';
 import { apiFetch, RoomSummary } from './multiplayer/api';
+import { logger } from './game/logger';
 import './multiplayer/multiplayer.css';
 import './App.css';
 import './styles/mobile.css';
@@ -182,6 +183,7 @@ function AppShell() {
       setActiveRooms(null);
       return;
     }
+    logger.setSession({ playerName: user.display_name || user.email });
     let cancelled = false;
     (async () => {
       const res = await apiFetch<{ rooms: RoomSummary[] }>('/api/users/me/rooms');
@@ -215,9 +217,13 @@ function AppShell() {
   const handlePickMode = (m: GameMode) => {
     setMode(m);
     localStorage.setItem(MODE_STORAGE_KEY, m);
+    logger.setSession({ mode: m });
+    logger.info('SYSTEM', `Mode selected: ${m}`);
   };
 
   const handleExitMode = () => {
+    logger.info('SYSTEM', 'Exiting mode → mode picker');
+    logger.setSession({ mode: 'unknown', roomId: null, gameId: null });
     setMode(null);
     setGuestMode(false);
     setSelectedRoomId(null);
@@ -232,6 +238,8 @@ function AppShell() {
 
   const handleEnterRoom = (roomId: string) => {
     setSelectedRoomId(roomId);
+    logger.setSession({ roomId });
+    logger.info('SYSTEM', `Entered room`, { roomId });
     setRoomGameId(null);
     localStorage.setItem(ROOM_STORAGE_KEY, roomId);
   };
