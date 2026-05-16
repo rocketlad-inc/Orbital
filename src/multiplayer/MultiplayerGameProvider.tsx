@@ -143,13 +143,33 @@ function mapBodyType(t: string): Body['type'] {
   return (t as Body['type']);
 }
 
+/**
+ * Server-side body IDs are namespaced per game as "<gameId>:<localId>"
+ * (e.g. "Reemucleoytj:sol", "Reemucleoytj:jupiter"). The rest of the
+ * client codebase compares body IDs against the unprefixed literals
+ * 'sol', 'jupiter', etc. — most notably in physics/bezierTransfer.ts
+ * where the whole intra/inter-system planner branches on
+ * depParent === 'sol'. When the gameId prefix is left intact every
+ * branch falls through and planBezierTransfer returns null, which is
+ * why destination clicks in multiplayer silently did nothing.
+ *
+ * Strip the prefix once at the deserialization boundary so every
+ * downstream consumer sees the same simple IDs as in single-player.
+ */
+function stripGameId(id: string | null | undefined): string | undefined {
+  if (id == null) return undefined;
+  const colon = id.indexOf(':');
+  return colon === -1 ? id : id.slice(colon + 1);
+}
+
 function bodyToClient(b: ServerState['bodies'][number]): Body {
+  const localId = stripGameId(b.id) ?? b.id;
   return {
-    id: b.id,
+    id: localId,
     name: b.name,
     type: mapBodyType(b.type),
     mu: b.mu || undefined,
-    parent: b.parent_body_id ?? undefined,
+    parent: stripGameId(b.parent_body_id),
     orbitRadius: b.orbit_radius ?? 0,
     orbitPeriod: b.orbit_period ?? 0,
     angle0: b.angle0 ?? 0,
@@ -180,7 +200,7 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     epoch: s.orbit_epoch,
     direction: s.orbit_direction,
     period,
-    parentBodyId: s.parent_body_id,
+    parentBodyId: stripGameId(s.parent_body_id) ?? s.parent_body_id,
   };
   return {
     id: s.id,
@@ -222,6 +242,7 @@ function settlementToClient(
   // can draw it. City: keep surfaceAngle. Stockpile renames metal→ore,
   // gold→credits to match client conventions.
   const isStation = s.type === 'station';
+  const localBodyId = stripGameId(s.body_id) ?? s.body_id;
   let orbit: OrbitElements | undefined;
   if (isStation && s.orbit_rp != null) {
     const rp = s.orbit_rp;
@@ -237,14 +258,14 @@ function settlementToClient(
       epoch: s.orbit_epoch ?? 0,
       direction: 1,
       period,
-      parentBodyId: s.body_id,
+      parentBodyId: localBodyId,
     };
   }
   return {
     id: s.id,
     type: s.type,
     name: s.name,
-    bodyId: s.body_id,
+    bodyId: localBodyId,
     ownedBy: s.owner_faction_id,
     hp: s.hp,
     maxHp: s.hp_max,
@@ -292,8 +313,14 @@ function nodeToClient(
 
 function serverToGameState(srv: ServerState, callerFactionId: string): GameState {
   const bodies = srv.bodies.map(bodyToClient);
+  // muById is keyed on the stripped local body id (matching what
+  // bodyToClient produces). Strip server-side references before lookup
+  // so we don't pass mu=0 into Kepler's 3rd law and end up with NaN
+  // periods.
   const muById = new Map(bodies.map(b => [b.id, b.mu ?? 0]));
-  const ships = srv.ships.map(s => shipToClient(s, muById.get(s.parent_body_id) ?? 0));
+  const muOf = (rawId: string | null | undefined) =>
+    muById.get(stripGameId(rawId) ?? '') ?? 0;
+  const ships = srv.ships.map(s => shipToClient(s, muOf(s.parent_body_id)));
 
   // Tag the caller's faction as the "player" so all the existing client
   // code that checks ownedBy === 'player' keeps working without rewrites.
@@ -329,7 +356,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   };
 
   const settlements: Settlement[] = (srv.settlements ?? []).map(s => {
-    const settlement = settlementToClient(s, muById.get(s.body_id) ?? 0);
+    const settlement = settlementToClient(s, muOf(s.body_id));
     if (settlement.ownedBy === callerFactionId) settlement.ownedBy = PLAYER_TOKEN;
     return settlement;
   });
@@ -363,8 +390,9 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     // planBezierTransfer adds a +5-tick launch buffer to currentTick;
     // pass scheduled_t - 5 so the resulting arc.departureTime matches.
     const pseudoNow = srvNode.scheduled_t - 5;
+    const targetLocalId = stripGameId(srvNode.target_body_id) ?? srvNode.target_body_id;
     const arc: TransferArc | null = planBezierTransfer(
-      ship.orbit, srvNode.target_body_id, pseudoNow, bodies, 1.0,
+      ship.orbit, targetLocalId, pseudoNow, bodies, 1.0,
     );
     if (!arc) continue;
     // For an in_transit node, the server's authoritative arrival tick is
@@ -467,7 +495,7 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
           winnerName,
           victoryType: res.data.game.victory_type ?? null,
           myFactionId: res.data.me.faction_id,
-          capitalBodyId: res.data.me.capital_body_id ?? null,
+          capitalBodyId: stripGameId(res.data.me.capital_body_id) ?? null,
           factions: res.data.factions,
         });
         setError(null);

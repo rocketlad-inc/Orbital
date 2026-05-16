@@ -52,13 +52,22 @@ const MultiplayerActionsContext = createContext<MultiplayerActions | null>(null)
 export function MultiplayerActionsProvider({
   gameId, children,
 }: { gameId: string; children: React.ReactNode }) {
-  const value = useMemo<MultiplayerActions>(() => ({
+  const value = useMemo<MultiplayerActions>(() => {
+    // The client stores body IDs in the unprefixed form ('jupiter', 'sol')
+    // after MultiplayerGameProvider strips the "<gameId>:" namespace at the
+    // deserialization boundary. The server still expects the namespaced
+    // form on every action endpoint, so re-attach the prefix on the way out.
+    // Pass-through if the caller already gave us a fully-qualified id.
+    const qualify = (id: string): string =>
+      id.includes(':') ? id : `${gameId}:${id}`;
+
+    return ({
     gameId,
     async transfer(intent) {
       const res = await apiFetch(`/api/games/${gameId}/ships/${encodeURIComponent(intent.shipId)}/transfer`, {
         method: 'POST',
         body: JSON.stringify({
-          target_body_id: intent.targetBodyId,
+          target_body_id: qualify(intent.targetBodyId),
           scheduled_t: intent.scheduledT,
           dv_prograde: intent.dvPrograde,
           dv_normal: intent.dvNormal ?? 0,
@@ -73,7 +82,7 @@ export function MultiplayerActionsProvider({
       return res.ok;
     },
     async build(intent) {
-      const res = await apiFetch(`/api/games/${gameId}/bodies/${encodeURIComponent(intent.bodyId)}/build`, {
+      const res = await apiFetch(`/api/games/${gameId}/bodies/${encodeURIComponent(qualify(intent.bodyId))}/build`, {
         method: 'POST',
         body: JSON.stringify({
           ship_class: intent.shipClass,
@@ -86,7 +95,7 @@ export function MultiplayerActionsProvider({
       return res.ok;
     },
     async deploySettlement(intent) {
-      const res = await apiFetch(`/api/games/${gameId}/bodies/${encodeURIComponent(intent.bodyId)}/settlement`, {
+      const res = await apiFetch(`/api/games/${gameId}/bodies/${encodeURIComponent(qualify(intent.bodyId))}/settlement`, {
         method: 'POST',
         body: JSON.stringify({ type: intent.type, name: intent.name }),
       });
@@ -105,7 +114,8 @@ export function MultiplayerActionsProvider({
       }
       return res.ok;
     },
-  }), [gameId]);
+    });
+  }, [gameId]);
 
   return (
     <MultiplayerActionsContext.Provider value={value}>

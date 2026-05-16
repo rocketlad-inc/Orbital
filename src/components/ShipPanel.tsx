@@ -440,15 +440,28 @@ export const ShipPanel: React.FC = () => {
               <div className="target-list">
                 {gameState.bodies
                   .filter((b) => b.id !== 'sol' && b.id !== ship.orbit.parentBodyId)
-                  .map((body) => (
-                    <button
-                      key={body.id}
-                      className="target-button"
-                      onClick={() => handleTransferManeuver(body.id)}
-                    >
-                      {body.name}{body.parent !== 'sol' ? ` (${body.parent})` : ''}
-                    </button>
-                  ))}
+                  .map((body) => {
+                    // Show "Ganymede (Jupiter)" — i.e. the parent body's
+                    // display name, not its raw id. The previous code just
+                    // dropped body.parent in, which read fine in single-player
+                    // (where ids are slugs) but produced "(Reemucleoytj:jupiter)"
+                    // in multiplayer where ids carry the gameId namespace.
+                    const parentBody = body.parent
+                      ? gameState.bodies.find(b => b.id === body.parent)
+                      : null;
+                    const parentLabel = parentBody && parentBody.id !== 'sol'
+                      ? ` (${parentBody.name})`
+                      : '';
+                    return (
+                      <button
+                        key={body.id}
+                        className="target-button"
+                        onClick={() => handleTransferManeuver(body.id)}
+                      >
+                        {body.name}{parentLabel}
+                      </button>
+                    );
+                  })}
               </div>
             </div>
           </div>
