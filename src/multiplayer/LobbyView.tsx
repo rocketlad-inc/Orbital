@@ -4,16 +4,24 @@ import { useAuth } from './AuthContext';
 
 // Real-world time between automatic ticks. Must match the worker's
 // ALLOWED_TICK_INTERVALS — keep these two lists in sync.
+//
+// Pace design (see DESIGN.md "Time and pacing"): the reference cadence is
+// 7.5 min/tick, which gives an Earth→Jupiter Hohmann transfer of ~1.5
+// real days and a 4000-tick match of ~21 real days (3 weeks).
 const TICK_INTERVAL_OPTIONS: Array<{ label: string; value: number }> = [
-  { label: '30s (rapid demo)',  value: 30_000 },
-  { label: '60s (demo)',         value: 60_000 },
-  { label: '5min (quick play)',  value: 300_000 },
-  { label: '30min (lunch break)', value: 1_800_000 },
-  { label: '1h (fast async)',    value: 3_600_000 },
-  { label: '6h (4×/day)',        value: 21_600_000 },
-  { label: '12h (2×/day)',       value: 43_200_000 },
-  { label: '24h (1×/day)',       value: 86_400_000 },
+  { label: '30s (rapid demo)',     value: 30_000 },
+  { label: '60s (demo)',           value: 60_000 },
+  { label: '5min (quick play)',    value: 300_000 },
+  { label: '7.5min (3-week match · DEFAULT)', value: 450_000 },
+  { label: '30min (lunch break)',  value: 1_800_000 },
+  { label: '1h (fast async)',      value: 3_600_000 },
+  { label: '6h (4×/day)',          value: 21_600_000 },
+  { label: '12h (2×/day)',         value: 43_200_000 },
+  { label: '24h (1×/day)',         value: 86_400_000 },
 ];
+
+/** Reference default — see comment above. Matches worker/lobby.js. */
+const DEFAULT_TICK_INTERVAL_MS = 450_000;
 
 interface Props {
   onEnterGame: (roomId: string, gameId: string) => void;
@@ -133,8 +141,7 @@ function RoomDetail({
   // Host settings
   const [hostName, setHostName] = useState('');
   const [hostMax, setHostMax] = useState(4);
-  const [hostTicks, setHostTicks] = useState(42);
-  const [hostInterval, setHostInterval] = useState(86_400_000);
+  const [hostInterval, setHostInterval] = useState(DEFAULT_TICK_INTERVAL_MS);
   const settingsInitedRef = useRef(false);
 
   const refresh = useCallback(async () => {
@@ -200,7 +207,6 @@ function RoomDetail({
     if (!snap || settingsInitedRef.current) return;
     setHostName(snap.settings.name);
     setHostMax(snap.settings.max_players);
-    setHostTicks(snap.settings.total_tick_target);
     setHostInterval(snap.settings.tick_interval_ms);
     settingsInitedRef.current = true;
   }, [snap]);
@@ -234,7 +240,6 @@ function RoomDetail({
       body: JSON.stringify({
         name: hostName,
         max_players: hostMax,
-        total_tick_target: hostTicks,
         tick_interval_ms: hostInterval,
       }),
     });
@@ -313,7 +318,7 @@ function RoomDetail({
       <div className="mp-row" style={{ justifyContent: 'space-between' }}>
         <span style={{ fontSize: 11 }}>
           {started
-            ? `In progress · tick ${snap.settings.current_tick ?? 0}/${snap.settings.total_tick_target}`
+            ? `In progress · tick ${snap.settings.current_tick ?? 0}`
             : `Lobby · ${snap.members.length}/${snap.settings.max_players} · ${Object.values(snap.ready).filter(Boolean).length} ready`}
         </span>
         {!started && (
@@ -384,18 +389,6 @@ function RoomDetail({
                 max={8}
                 value={hostMax}
                 onChange={(e) => setHostMax(parseInt(e.target.value, 10) || 2)}
-              />
-            </div>
-            <div style={{ flex: 1 }}>
-              <label className="mp-label">Match length</label>
-              <input
-                className="mp-input"
-                type="number"
-                min={10}
-                max={10000}
-                value={hostTicks}
-                onChange={(e) => setHostTicks(parseInt(e.target.value, 10) || 10)}
-                title="Total ticks before the match ends. Earth→Neptune Hohmann ≈ 410 ticks without Flight Dynamics tech."
               />
             </div>
           </div>

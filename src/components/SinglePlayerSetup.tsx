@@ -13,7 +13,6 @@ import {
   SP_FACTION_NAMES,
   SP_FACTION_COLORS,
   SP_MAX_AI_OPPONENTS,
-  SP_DEFAULT_MATCH_LENGTH,
 } from '../state/singlePlayerSetup';
 import './SinglePlayerSetup.css';
 
@@ -27,13 +26,6 @@ interface FactionDraft {
   color: string;
   startingBodyId: string;
 }
-
-const MATCH_LENGTH_PRESETS = [
-  { label: 'Short', ticks: 100, hint: '~quick game' },
-  { label: 'Standard', ticks: 200, hint: 'default' },
-  { label: 'Long', ticks: 500, hint: 'full campaign' },
-  { label: 'Marathon', ticks: 1000, hint: 'epic' },
-];
 
 export const SinglePlayerSetup: React.FC<Props> = ({ onBegin, onCancel }) => {
   const options = useMemo(() => getStartingBodyOptions(), []);
@@ -55,8 +47,6 @@ export const SinglePlayerSetup: React.FC<Props> = ({ onBegin, onCancel }) => {
       startingBodyId: marsDefault,
     },
   ]);
-
-  const [matchLength, setMatchLength] = useState<number>(SP_DEFAULT_MATCH_LENGTH);
 
   // === Body picker logic ===
 
@@ -112,7 +102,6 @@ export const SinglePlayerSetup: React.FC<Props> = ({ onBegin, onCancel }) => {
     const config: SinglePlayerConfig = {
       player,
       aiOpponents,
-      totalTickTarget: matchLength,
     };
     onBegin(config);
   };
@@ -153,8 +142,7 @@ export const SinglePlayerSetup: React.FC<Props> = ({ onBegin, onCancel }) => {
         <p>
           Configure your faction and the AI opponents you'll face. Each faction
           spawns with a capital, a starter station + city, and a small fleet.
-          Match length sets the tick goal — whoever holds the most worlds at
-          T+{matchLength} wins.
+          Games run as long as you keep playing — there's no tick countdown.
         </p>
       </div>
 
@@ -231,43 +219,6 @@ export const SinglePlayerSetup: React.FC<Props> = ({ onBegin, onCancel }) => {
         )}
       </section>
 
-      {/* === Match settings === */}
-      <section className="sp-setup-section">
-        <div className="sp-setup-section-head">
-          <div className="sp-setup-eyebrow">03 · MATCH</div>
-          <h2>Match length</h2>
-          <p className="sp-setup-section-desc">
-            Ticks until the campaign ends. Whoever controls the most bodies
-            wins; ties go to total wealth.
-          </p>
-        </div>
-        <div className="sp-match-length">
-          {MATCH_LENGTH_PRESETS.map(preset => (
-            <button
-              key={preset.ticks}
-              className={`sp-match-preset ${matchLength === preset.ticks ? 'active' : ''}`}
-              onClick={() => setMatchLength(preset.ticks)}
-            >
-              <div className="sp-match-preset-label">{preset.label}</div>
-              <div className="sp-match-preset-ticks">{preset.ticks} ticks</div>
-              <div className="sp-match-preset-hint">{preset.hint}</div>
-            </button>
-          ))}
-        </div>
-        <div className="sp-match-custom">
-          <label>or custom:</label>
-          <input
-            type="number"
-            min={50}
-            max={5000}
-            step={50}
-            value={matchLength}
-            onChange={e => setMatchLength(Math.max(50, Math.min(5000, Number(e.target.value) || 0)))}
-          />
-          <span>ticks</span>
-        </div>
-      </section>
-
       {/* === Begin === */}
       <footer className="sp-setup-foot">
         {validationError && (
@@ -281,7 +232,7 @@ export const SinglePlayerSetup: React.FC<Props> = ({ onBegin, onCancel }) => {
           ▶ BEGIN CAMPAIGN
         </button>
         <div className="sp-begin-sub">
-          {1 + aiOpponents.length} factions · {matchLength}-tick match
+          {1 + aiOpponents.length} factions
         </div>
       </footer>
     </div>

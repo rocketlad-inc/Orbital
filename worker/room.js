@@ -6,8 +6,8 @@ import { recomputeBodyOwnership } from './factions.js';
 // State model (kept in DO storage so we survive eviction):
 //   meta: { id, name, hostId, status, maxPlayers, createdAt }
 //   members: Map<userId, { userId, displayName }>  -- everyone with a seat
-//   settings: { total_tick_target, tick_interval_ms }  -- host-edited pre-start config
-//   gameStarted: { gameId, total_tick_target, tick_interval_ms, started_at } | null
+//   settings: { tick_interval_ms }  -- host-edited pre-start config
+//   gameStarted: { gameId, tick_interval_ms, started_at } | null
 //
 // Per-connection state lives on the WebSocket's attachment:
 //   { userId, displayName }
@@ -60,7 +60,7 @@ export class Room {
       let metaChanged = false;
       if (typeof body.name === 'string') { meta.name = body.name; metaChanged = true; }
       if (Number.isInteger(body.maxPlayers)) { meta.maxPlayers = body.maxPlayers; metaChanged = true; }
-      if (Number.isInteger(body.total_tick_target)) settings.total_tick_target = body.total_tick_target;
+      // total_tick_target was removed — games run indefinitely.
       if (Number.isInteger(body.tick_interval_ms)) settings.tick_interval_ms = body.tick_interval_ms;
       if (metaChanged) await this.state.storage.put('meta', meta);
       await this.state.storage.put('settings', settings);
@@ -126,13 +126,12 @@ export class Room {
       // { gameId } in the body so we can bootstrap storage from D1.
       if (!started?.gameId && hintedGameId) {
         const row = await this.env.DB
-          .prepare(`SELECT id AS gameId, total_tick_target, tick_interval_ms, started_at
+          .prepare(`SELECT id AS gameId, tick_interval_ms, started_at
                       FROM games WHERE id = ?`)
           .bind(hintedGameId).first();
         if (row) {
           started = {
             gameId: row.gameId,
-            total_tick_target: row.total_tick_target,
             tick_interval_ms: row.tick_interval_ms,
             started_at: row.started_at,
           };
@@ -364,7 +363,7 @@ export class Room {
       // us to it but this works even without external pokes.
       const myIdHex = (this.state.id?.toString?.() ?? '').toLowerCase();
       const candidates = await this.env.DB
-        .prepare("SELECT id, total_tick_target, tick_interval_ms, started_at FROM games WHERE status = 'active' LIMIT 200")
+        .prepare("SELECT id, tick_interval_ms, started_at FROM games WHERE status = 'active' LIMIT 200")
         .all();
       let match = null;
       for (const row of (candidates.results ?? [])) {
@@ -379,7 +378,6 @@ export class Room {
       }
       started = {
         gameId: match.id,
-        total_tick_target: match.total_tick_target,
         tick_interval_ms: match.tick_interval_ms,
         started_at: match.started_at,
       };
@@ -389,7 +387,7 @@ export class Room {
     const gameId = started.gameId;
 
     const game = await this.env.DB
-      .prepare('SELECT status, current_tick, total_tick_target, tick_interval_ms FROM games WHERE id = ?')
+      .prepare('SELECT status, current_tick, tick_interval_ms FROM games WHERE id = ?')
       .bind(gameId)
       .first();
     if (!game) return;
@@ -398,60 +396,10 @@ export class Room {
     const now = Date.now();
     const nextTick = (game.current_tick ?? 0) + 1;
 
-    if (nextTick >= game.total_tick_target) {
-      // Compute winner — most owned bodies wins; tie-break by total
-      // resource value (metal + fuel + gold + science).
-      const scores = (await this.env.DB
-        .prepare(
-          `SELECT f.id, f.name,
-                  (SELECT COUNT(*) FROM game_bodies b
-                    WHERE b.game_id = f.game_id AND b.owner_faction_id = f.id) AS worlds,
-                  (f.metal + f.fuel + f.gold + f.science) AS wealth
-             FROM game_factions f
-            WHERE f.game_id = ? AND f.status = 'active'
-            ORDER BY worlds DESC, wealth DESC, f.slot ASC`,
-        )
-        .bind(gameId)
-        .all()).results ?? [];
-
-      const winner = scores[0] ?? null;
-      const victoryType = scores.length > 1 && winner && winner.worlds > (scores[1].worlds ?? 0)
-        ? 'hegemony'
-        : 'last_standing';
-
-      await this.env.DB
-        .prepare(
-          `UPDATE games
-              SET status = 'completed', current_tick = ?, completed_at = ?,
-                  next_tick_at = NULL, winner_faction_id = ?, victory_type = ?
-            WHERE id = ?`,
-        )
-        .bind(nextTick, now, winner?.id ?? null, winner ? victoryType : 'abandoned', gameId)
-        .run();
-
-      if (winner) {
-        try {
-          const entryId = `c${nextTick}_victory_${Math.random().toString(36).slice(2, 6)}`;
-          await this.env.DB
-            .prepare(
-              `INSERT INTO chronicle_entries
-                (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
-               VALUES (?, ?, ?, 'victory', ?, ?, 'public', ?)`,
-            )
-            .bind(entryId, gameId, nextTick, winner.id,
-                  JSON.stringify({ victory_type: victoryType, worlds: winner.worlds, wealth: winner.wealth, scores }),
-                  now)
-            .run();
-        } catch (e) { console.error('victory chronicle failed', e); }
-      }
-
-      this.broadcast({
-        type: 'game_completed', tick: nextTick,
-        winner_faction_id: winner?.id ?? null,
-        victory_type: winner ? victoryType : 'abandoned',
-      });
-      return;
-    }
+    // Games run indefinitely. Tick-countdown victory was removed; the
+    // games table still carries a total_tick_target column for schema
+    // compatibility (NOT NULL DEFAULT 42) but the alarm no longer reads
+    // it, no endpoint serves it, and no client surface displays it.
 
     // ----- resolve scheduled events for [prev+1 .. nextTick] -----
     try {

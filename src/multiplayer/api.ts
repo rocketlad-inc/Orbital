@@ -78,7 +78,6 @@ export type RoomSummary = {
   member_count: number;
   invite_code?: string | null;
   has_password?: boolean;
-  total_tick_target?: number;
   tick_interval_ms?: number;
   game_id?: string | null;
   game_status?: string | null;
@@ -108,7 +107,6 @@ export type RoomSettings = {
   max_players: number;
   invite_code?: string | null;
   has_password?: boolean;
-  total_tick_target: number;
   tick_interval_ms: number;
   game_id: string | null;
   game_status: string | null;

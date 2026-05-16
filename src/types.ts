@@ -228,10 +228,10 @@ export interface GameState {
   aiActivityLog?: AIActivityEntry[];   // optional — rolling log of recent AI decisions
 
   // Match shape — populated in single-player by setup, in multiplayer by
-  // the server. When status === 'completed' the game ends and the
-  // VictoryOverlay renders.
+  // the server. Games run indefinitely now; `status` only flips to
+  // 'completed' via host-initiated abandon. The tick-countdown win
+  // condition (`totalTickTarget`) was removed.
   status?: 'lobby' | 'active' | 'completed' | 'abandoned';
-  totalTickTarget?: number;            // tick at which the game ends
   winnerFactionId?: string;            // set when status flips to 'completed'
   victoryType?: 'hegemony' | 'wealth' | 'tiebreak';
 }
@@ -251,7 +251,6 @@ export interface SinglePlayerConfig {
     color: string;
     startingBodyId: string;
   }>;
-  totalTickTarget: number;             // match length
   mapSeed?: string;                    // optional seed for repeatability
 }
 

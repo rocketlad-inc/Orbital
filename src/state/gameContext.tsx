@@ -18,7 +18,6 @@ import { tickMaintenance } from '../game/maintenance';
 import { TechId, TECH_DEFS } from '../game/techs';
 import { runFactionAI, shouldRunAI } from '../game/factionAI';
 import { planBezierTransfer } from '../physics/bezierTransfer';
-import { computeWinner } from './singlePlayerSetup';
 import type { AIActivityEntry } from '../types';
 
 // === AI intent application helpers ===========================
@@ -135,9 +134,22 @@ function classifyNote(intents: import('../game/factionAI').AIActionIntent[]): AI
   return 'idle';
 }
 
-export const TICKS_PER_GAME_DAY = 24;
-const REAL_SECONDS_PER_GAME_DAY = 3600;
-const BASE_TICK_RATE = TICKS_PER_GAME_DAY / REAL_SECONDS_PER_GAME_DAY;
+// ----------------------------------------------------------------
+// Single-player tick pacing — see DESIGN.md "Time and pacing".
+//
+// At 1× sim speed, one tick passes every 7.5 real minutes — matching
+// the multiplayer reference cadence (worker/lobby.js
+// DEFAULT_TICK_INTERVAL_MS = 450_000). Earth→Jupiter Hohmann (~290
+// ticks at our physics) is therefore ~1.5 real days at 1×, and a
+// 4000-tick match is the design "3-week" length.
+//
+// Players spend most single-player time at 10× – 1000×; the 100_000×
+// cap (see TopBar SIM_SPEEDS) lets a full game replay in a few real
+// minutes on fast-forward.
+// ----------------------------------------------------------------
+export const MS_PER_TICK_AT_1X = 450_000;        // 7.5 real minutes per tick at 1×
+export const TICKS_PER_GAME_DAY = (24 * 60 * 60 * 1000) / MS_PER_TICK_AT_1X; // = 192
+const BASE_TICK_RATE = 1000 / MS_PER_TICK_AT_1X; // ticks per real second at 1×
 
 interface GameContextType {
   gameState: GameState;
@@ -600,25 +612,13 @@ export function GameContextProvider({
     // VictoryOverlay; advanceToTick early-exits while completed so time
     // stops advancing. (The 'completed' early-exit above guarantees prev.status
     // is not yet 'completed' here, but we re-check to satisfy TS narrowing.)
-    let nextStatus: GameState['status'] = prev.status;
-    let winnerFactionId = prev.winnerFactionId;
-    let victoryType = prev.victoryType;
-    if (prev.totalTickTarget && newTime >= prev.totalTickTarget) {
-      const post: GameState = {
-        ...prev,
-        ships: updatedShips,
-        settlements: updatedSettlements,
-        resources: factionPools,
-        factions: updatedFactions,
-      };
-      const win = computeWinner(post);
-      if (win) {
-        nextStatus = 'completed';
-        winnerFactionId = win.factionId;
-        victoryType = win.victoryType;
-        logger.info('SYSTEM', `Match completed: ${win.factionId} won via ${win.victoryType}`);
-      }
-    }
+    // Tick-countdown victory was removed — games run indefinitely. Status
+    // only flips to 'completed' if some other path sets it (none today;
+    // host-abandon is the only out). Leaving the placeholders so the
+    // existing VictoryOverlay wiring keeps compiling.
+    const nextStatus: GameState['status'] = prev.status;
+    const winnerFactionId = prev.winnerFactionId;
+    const victoryType = prev.victoryType;
 
     // Sample a tick snapshot every ~25 simulated ticks so the log has
     // periodic economy/fleet checkpoints to read between events.

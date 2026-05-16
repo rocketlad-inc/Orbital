@@ -52,9 +52,6 @@ export const SP_FACTION_COLORS = [
 // engine itself can handle up to (FACTION_NAMES.length - 1).
 export const SP_MAX_AI_OPPONENTS = 7;
 
-/** Default match length. 200 ticks ≈ enough to reach Saturn and back. */
-export const SP_DEFAULT_MATCH_LENGTH = 200;
-
 /**
  * Subset of SHARED_BODIES that's a valid starting capital. Terrestrial +
  * moons only — keeps the menu manageable and avoids absurd starts on
@@ -245,57 +242,11 @@ export function setupSinglePlayer(config: SinglePlayerConfig): GameState {
     lastHarvestTick: 0,
     aiActivityLog: [],
     status: 'active',
-    totalTickTarget: config.totalTickTarget,
+    // No totalTickTarget — games run indefinitely, ended only by
+    // host abandon. The tick-countdown victory was removed.
   };
 }
 
-// === Victory check ===========================================
-
-/**
- * Compute the winner at game end. Mirrors worker/room.js alarm() victory
- * logic: most owned bodies → most wealth → lowest slot.
- */
-export function computeWinner(state: GameState): {
-  factionId: string;
-  victoryType: 'hegemony' | 'wealth' | 'tiebreak';
-} | null {
-  if (state.factions.length === 0) return null;
-
-  // 1. Count owned bodies per faction (via settlement ownership)
-  const bodyOwnership = new Map<string, Set<string>>(); // factionId → bodyIds
-  for (const f of state.factions) bodyOwnership.set(f.id, new Set());
-  for (const s of state.settlements) {
-    bodyOwnership.get(s.ownedBy)?.add(s.bodyId);
-  }
-
-  const bodyCounts = state.factions.map(f => ({
-    factionId: f.id,
-    count: bodyOwnership.get(f.id)?.size ?? 0,
-  }));
-
-  // Find max
-  const maxBodies = Math.max(...bodyCounts.map(b => b.count));
-  const topByBodies = bodyCounts.filter(b => b.count === maxBodies);
-
-  if (topByBodies.length === 1 && maxBodies > 0) {
-    return { factionId: topByBodies[0].factionId, victoryType: 'hegemony' };
-  }
-
-  // 2. Tiebreaker — most total wealth
-  const wealthOf = (fid: string): number => {
-    const r = state.resources[fid];
-    if (!r) return 0;
-    return r.fuel + r.ore + r.credits + r.science;
-  };
-  const tied = topByBodies.length > 1 ? topByBodies : bodyCounts;
-  const wealths = tied.map(b => ({ factionId: b.factionId, wealth: wealthOf(b.factionId) }));
-  const maxWealth = Math.max(...wealths.map(w => w.wealth));
-  const topByWealth = wealths.filter(w => w.wealth === maxWealth);
-
-  if (topByWealth.length === 1) {
-    return { factionId: topByWealth[0].factionId, victoryType: 'wealth' };
-  }
-
-  // 3. Final tiebreak — first faction in the list (slot 0)
-  return { factionId: topByWealth[0].factionId, victoryType: 'tiebreak' };
-}
+// Tick-countdown victory was removed — games run indefinitely. If a
+// win-condition heuristic ever returns it'll live here next to the
+// status enum, but for now there's no natural end to compute against.

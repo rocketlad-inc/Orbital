@@ -62,7 +62,6 @@ const DEFAULTS = {
  */
 const TUNABLE_FILES: Record<keyof typeof DEFAULTS, string> = {
   tickIntervalMs:        'worker/lobby.js handleStart tick_interval_ms',
-  matchLength:           'worker/lobby.js MATCH_LENGTH_MIN/MAX',
   worldsPerFaction:      'worker/factions.js WORLDS_PER_PLAYER',
   maxPlayers:            'worker/index.js handleCreateRoom',
   // Ship combat
@@ -222,17 +221,6 @@ export const TunablesPage: React.FC<TunablesPageProps> = ({ onBack }) => {
               onChange={x => set('tickIntervalMs', snapToTickInterval(x))}
               file="worker/lobby.js handleStart"
               notes="30s → 24h. Server hibernates between ticks; longer interval = lower CF cost."
-            />
-            <Slider
-              label="Match length"
-              value={v.matchLength}
-              min={10}
-              max={10_000}
-              step={10}
-              displayValue={`${v.matchLength} ticks`}
-              onChange={x => set('matchLength', x)}
-              file="worker/lobby.js MATCH_LENGTH_MIN/MAX"
-              notes="Earth → Neptune Hohmann ≈ 410 ticks. Default 42 (douglas adams choice)."
             />
           </div>
           <div className="section-visual">

@@ -115,13 +115,8 @@ export const TopBar: React.FC<TopBarProps> = ({
 
   const handleSkip = (n: number) => updateTick(gameState.currentTick + n);
 
-  // Format tick as "T+NNNN / TOTAL" when we know the match length,
-  // otherwise just T+NNNN. Flag endingSoon at 80% so the host has a
-  // visible cue before the tick countdown ends the game.
-  const cur = Math.floor(gameState.currentTick);
-  const total = gameState.totalTickTarget;
-  const tickStr = total ? `T+${cur} / ${total}` : `T+${cur}`;
-  const endingSoon = total ? cur >= total * 0.8 : false;
+  // Games run indefinitely — no tick countdown to surface.
+  const tickStr = `T+${Math.floor(gameState.currentTick)}`;
 
   return (
     <div className="top-bar">
@@ -151,8 +146,6 @@ export const TopBar: React.FC<TopBarProps> = ({
             const lvls = gameState.factionTech?.player?.levels || {};
             return Object.values(lvls).reduce((s, n) => s + (n ?? 0), 0);
           })()}
-          currentTick={cur}
-          totalTickTarget={total}
         />
       )}
 
@@ -219,8 +212,8 @@ export const TopBar: React.FC<TopBarProps> = ({
       </div>
 
       <div className="top-bar__time">
-        <div className={`time-display${endingSoon ? ' time-display--ending' : ''}`}>
-          <div className="time-display__label">{endingSoon ? 'TICK · ENDING' : 'TICK'}</div>
+        <div className="time-display">
+          <div className="time-display__label">TICK</div>
           <div className="time-display__value">{tickStr}</div>
         </div>
         {!hideSimControls && (
@@ -339,10 +332,6 @@ interface SideMenuProps {
   playerShipCount?: number;
   settlementCount?: number;
   researchTotal?: number;
-  /** Match-length admin needs the current tick + total so the +N
-   *  buttons can be enforced > current_tick without a server round-trip. */
-  currentTick?: number;
-  totalTickTarget?: number;
 }
 
 const SideMenu: React.FC<SideMenuProps> = ({
@@ -350,7 +339,6 @@ const SideMenu: React.FC<SideMenuProps> = ({
   adminGameId = null, isHost = false,
   activePanel, onTogglePanel,
   playerShipCount = 0, settlementCount = 0, researchTotal = 0,
-  currentTick = 0, totalTickTarget,
 }) => {
   const [forceTickBusy, setForceTickBusy] = useState(false);
   const [forceTickStatus, setForceTickStatus] = useState<string | null>(null);
@@ -397,33 +385,7 @@ const SideMenu: React.FC<SideMenuProps> = ({
     }
   }
 
-  async function extendMatchLength(delta: number) {
-    if (!adminGameId || intervalBusy) return;
-    setIntervalBusy(true);
-    setIntervalStatus(null);
-    try {
-      const { apiFetch } = await import('../multiplayer/api');
-      const current = totalTickTarget ?? 42;
-      const newTotal = Math.max(Math.floor(currentTick) + 1, current + delta);
-      const res = await apiFetch<{ total_tick_target?: number }>(
-        `/api/lobby/rooms/${adminGameId}/match-length`,
-        {
-          method: 'PATCH',
-          body: JSON.stringify({ total_tick_target: newTotal }),
-        },
-      );
-      if (!res.ok) {
-        setIntervalStatus(res.error?.message ?? `Failed (${res.status})`);
-      } else {
-        setIntervalStatus(`✓ Match length → ${res.data?.total_tick_target ?? newTotal}`);
-      }
-    } catch (e) {
-      setIntervalStatus(`Network error: ${(e as Error)?.message || 'unknown'}`);
-    } finally {
-      setIntervalBusy(false);
-      setTimeout(() => setIntervalStatus(null), 4000);
-    }
-  }
+
 
   async function forceTick() {
     if (!adminGameId || forceTickBusy) return;
@@ -557,33 +519,6 @@ const SideMenu: React.FC<SideMenuProps> = ({
                   </div>
                   <span className="side-menu__item-hint" style={{ marginTop: 2 }}>
                     Cadence applies on next tick
-                  </span>
-                </div>
-              </div>
-              <div className="side-menu__item side-menu__item--block">
-                <span className="side-menu__item-icon">∞</span>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
-                  <span className="side-menu__item-label" style={{ marginBottom: 2 }}>
-                    Match Length
-                  </span>
-                  <div style={{ fontSize: 10, color: '#8a9fb3', letterSpacing: '0.05em' }}>
-                    Currently T+{currentTick} / {totalTickTarget ?? '?'}
-                  </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                    {[10, 50, 100, 500].map(n => (
-                      <button
-                        key={n}
-                        className="side-menu__pill"
-                        onClick={() => extendMatchLength(n)}
-                        disabled={intervalBusy}
-                        title={`Extend match by ${n} ticks`}
-                      >
-                        +{n}
-                      </button>
-                    ))}
-                  </div>
-                  <span className="side-menu__item-hint" style={{ marginTop: 2 }}>
-                    Adds to the current target; can't shrink below T+N
                   </span>
                 </div>
               </div>

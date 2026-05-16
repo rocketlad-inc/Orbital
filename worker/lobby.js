@@ -13,27 +13,42 @@
 import * as factions from './factions.js';
 
 const ROOM_ID_RE = /^[A-Za-z0-9_-]{6,32}$/;
-// Match-length range (in ticks). 10,000 leaves room for multi-year
-// epic campaigns even on long tick intervals; Earth->Neptune Hohmann is
-// only ~410 ticks at base flight speeds.
-const MATCH_LENGTH_MIN = 10;
-const MATCH_LENGTH_MAX = 10_000;
 
 // Whitelist of tick intervals (real-world ms between automatic ticks).
-//   30s / 60s          — demo / live testing
-//   5min / 30min       — quick lunch-break or evening-session games
-//   1h / 6h / 12h      — async play at various paces
-//   24h                — design default ("one tick a day")
+//
+// PACE DESIGN — see DESIGN.md "Time and pacing".
+//
+// The reference cadence is 7.5 min/tick (450_000 ms). At that rate:
+//   • Earth → Jupiter Hohmann transfer (~290 ticks under current physics)
+//     takes ~1.5 real days — a transit feels like a meaningful commitment.
+//   • A 4000-tick match runs ~21 real days (3 weeks), which is the
+//     design target for a full game.
+//
+// Other intervals stay available for testing or alternative paces:
+//   30s / 60s            — demo / live testing
+//   5min                 — quick play (Earth-Jupiter ≈ 24h)
+//   7.5min (DEFAULT)     — design pace, 3-week match
+//   30min                — lunch-break sessions
+//   1h / 6h / 12h        — async play at slower paces
+//   24h                  — turn-based "one tick a day"
 const ALLOWED_TICK_INTERVALS = new Set([
   30_000,
   60_000,
   300_000,
+  450_000,
   1_800_000,
   3_600_000,
   21_600_000,
   43_200_000,
   86_400_000,
 ]);
+
+/** Reference tick cadence — see ALLOWED_TICK_INTERVALS comment above. */
+const DEFAULT_TICK_INTERVAL_MS = 450_000;
+// total_tick_target was removed — games run indefinitely. No match-length
+// constants live here anymore. The schema's games.total_tick_target column
+// is left in place for backward compatibility (NOT NULL DEFAULT 42) and
+// is no longer read by alarm() or surfaced by any client UI.
 
 function json(data, init = {}) {
   const headers = new Headers(init.headers);
@@ -78,11 +93,11 @@ async function loadRoomSettings(env, roomId) {
     .first();
   if (!room) return null;
   const game = await env.DB
-    .prepare('SELECT id, status, current_tick, total_tick_target, tick_interval_ms, started_at FROM games WHERE id = ?')
+    .prepare('SELECT id, status, current_tick, tick_interval_ms, started_at FROM games WHERE id = ?')
     .bind(roomId)
     .first();
-  // Pull pre-start config (total_tick_target, tick_interval_ms) from the DO
-  // so the host can edit it before a games row exists.
+  // Pull pre-start tick cadence config from the DO so the host can edit it
+  // before a games row exists. (total_tick_target was removed.)
   const cfgRes = await roomStub(env, roomId).fetch('https://room/settings');
   const cfg = cfgRes.ok ? await cfgRes.json() : {};
   return {
@@ -93,8 +108,7 @@ async function loadRoomSettings(env, roomId) {
     max_players: room.max_players,
     invite_code: room.invite_code ?? null,
     has_password: !!room.password_hash,
-    total_tick_target: game?.total_tick_target ?? cfg.total_tick_target ?? 42,
-    tick_interval_ms: game?.tick_interval_ms ?? cfg.tick_interval_ms ?? 86_400_000,
+    tick_interval_ms: game?.tick_interval_ms ?? cfg.tick_interval_ms ?? DEFAULT_TICK_INTERVAL_MS,
     game_id: game?.id ?? null,
     game_status: game?.status ?? null,
     game_started_at: game?.started_at ?? null,
@@ -147,19 +161,16 @@ async function handleUpdateSettings(req, env, ctx) {
     }
     updates.max_players = body.max_players;
   }
-  let totalTickTarget = null, tickIntervalMs = null;
-  if (body.total_tick_target != null) {
-    if (!Number.isInteger(body.total_tick_target) || body.total_tick_target < MATCH_LENGTH_MIN || body.total_tick_target > MATCH_LENGTH_MAX) {
-      return err(400, 'bad_request', `total_tick_target must be an integer ${MATCH_LENGTH_MIN}-${MATCH_LENGTH_MAX}`);
-    }
-    totalTickTarget = body.total_tick_target;
-  }
+  // Tick cadence and match length — host can edit before game start. See
+  // DESIGN.md "Time and pacing" for the reference defaults.
+  let tickIntervalMs = null;
   if (body.tick_interval_ms != null) {
     if (!ALLOWED_TICK_INTERVALS.has(body.tick_interval_ms)) {
-      return err(400, 'bad_request', 'tick_interval_ms must be 60000, 3600000, or 86400000');
+      return err(400, 'bad_request', 'tick_interval_ms must be one of the allowed cadences');
     }
     tickIntervalMs = body.tick_interval_ms;
   }
+  // total_tick_target removed — silently ignored if a client still sends it.
 
   const now = Date.now();
   if (updates.name != null || updates.max_players != null) {
@@ -178,7 +189,6 @@ async function handleUpdateSettings(req, env, ctx) {
     body: JSON.stringify({
       name: updates.name ?? undefined,
       maxPlayers: updates.max_players ?? undefined,
-      total_tick_target: totalTickTarget ?? undefined,
       tick_interval_ms: tickIntervalMs ?? undefined,
     }),
   });
@@ -231,14 +241,15 @@ async function handleStart(_req, env, ctx) {
   const count = await env.DB.prepare('SELECT COUNT(*) AS c FROM room_members WHERE room_id = ?').bind(roomId).first();
   if ((count?.c ?? 0) < 2) return err(409, 'too_few_players', 'need at least 2 players to start');
 
-  // Pull configured tick settings from the DO (the host may have edited them).
-  let total_tick_target = 42;
-  let tick_interval_ms = 86_400_000;
+  // Pull configured tick cadence and match length from the DO (the host may
+  // have edited them in the lobby). Defaults come from DESIGN.md: 7.5 min
+  // per tick × 4000 ticks ≈ a 3-week match with ~1.5-day Earth-Jupiter
+  // transits.
+  let tick_interval_ms = DEFAULT_TICK_INTERVAL_MS;
   try {
     const cfgRes = await roomStub(env, roomId).fetch('https://room/settings');
     if (cfgRes.ok) {
       const cfg = await cfgRes.json();
-      if (Number.isInteger(cfg.total_tick_target)) total_tick_target = cfg.total_tick_target;
       if (ALLOWED_TICK_INTERVALS.has(cfg.tick_interval_ms)) tick_interval_ms = cfg.tick_interval_ms;
     }
   } catch {}
@@ -246,13 +257,15 @@ async function handleStart(_req, env, ctx) {
   const map_seed = b64url(crypto.getRandomValues(new Uint8Array(16)));
   const now = Date.now();
 
+  // games.total_tick_target is NOT NULL DEFAULT 42 in the schema; we leave
+  // the column to the default rather than carry a value through the app.
   await env.DB.batch([
     env.DB
       .prepare(
-        `INSERT INTO games (id, status, map_seed, current_tick, total_tick_target, tick_interval_ms, created_at, started_at)
-         VALUES (?, 'setup', ?, 0, ?, ?, ?, ?)`,
+        `INSERT INTO games (id, status, map_seed, current_tick, tick_interval_ms, created_at, started_at)
+         VALUES (?, 'setup', ?, 0, ?, ?, ?)`,
       )
-      .bind(roomId, map_seed, total_tick_target, tick_interval_ms, now, now),
+      .bind(roomId, map_seed, tick_interval_ms, now, now),
     env.DB
       .prepare("UPDATE rooms SET status = 'in_progress', updated_at = ? WHERE id = ?")
       .bind(now, roomId),
@@ -273,7 +286,7 @@ async function handleStart(_req, env, ctx) {
 
   await roomStub(env, roomId).fetch('https://room/game-started', {
     method: 'POST',
-    body: JSON.stringify({ gameId: roomId, total_tick_target, tick_interval_ms, started_at: now }),
+    body: JSON.stringify({ gameId: roomId, tick_interval_ms, started_at: now }),
   });
 
   const settings = await loadRoomSettings(env, roomId);
@@ -290,7 +303,7 @@ async function handleListLobbyRooms(_req, env, _ctx) {
               u.display_name AS host_name,
               (SELECT COUNT(*) FROM room_members m WHERE m.room_id = r.id) AS member_count,
               g.id AS game_id, g.status AS game_status,
-              g.total_tick_target, g.tick_interval_ms, g.started_at
+              g.tick_interval_ms, g.started_at
        FROM rooms r
        JOIN users u ON u.id = r.host_id
        LEFT JOIN games g ON g.id = r.id
@@ -300,23 +313,21 @@ async function handleListLobbyRooms(_req, env, _ctx) {
     )
     .all();
 
-  // For unstarted rooms, fetch DO-side config in parallel so the UI can show
-  // tick-target / interval even before the game is created.
+  // For unstarted rooms, fetch DO-side tick-cadence config so the UI can
+  // show it before the game is created.
   const out = [];
   for (const r of rows.results ?? []) {
-    let total_tick_target = r.total_tick_target ?? null;
     let tick_interval_ms = r.tick_interval_ms ?? null;
     if (!r.game_id) {
       try {
         const cfgRes = await roomStub(env, r.id).fetch('https://room/settings');
         if (cfgRes.ok) {
           const cfg = await cfgRes.json();
-          total_tick_target = cfg.total_tick_target ?? total_tick_target;
           tick_interval_ms = cfg.tick_interval_ms ?? tick_interval_ms;
         }
       } catch {}
     }
-    out.push({ ...r, total_tick_target, tick_interval_ms });
+    out.push({ ...r, tick_interval_ms });
   }
   return json({ rooms: out });
 }
@@ -534,41 +545,6 @@ async function handleChangeTickInterval(req, env, ctx) {
   return json({ ok: true, tick_interval_ms: newInterval, next_tick_at: nextAt });
 }
 
-/**
- * PATCH /api/lobby/rooms/:roomId/match-length — host-only. Extend (or
- * shrink, with safety) the total_tick_target of an in-flight game.
- * Mostly used to keep a playtest going past the 42-tick default
- * without having to restart. Server only accepts values strictly
- * greater than current_tick so the host can't accidentally instant-
- * end the game by setting it below the present.
- *
- * Body: { total_tick_target: number }   (10..10000, must be > current_tick)
- */
-async function handleChangeMatchLength(req, env, ctx) {
-  const roomId = ctx.params.roomId;
-  const g = await requireHost(env, roomId, ctx.session);
-  if (g.error) return g.error;
-  let body;
-  try { body = await req.json(); } catch { return err(400, 'bad_request', 'invalid json'); }
-  const newTotal = body?.total_tick_target;
-  if (!Number.isInteger(newTotal) || newTotal < MATCH_LENGTH_MIN || newTotal > MATCH_LENGTH_MAX) {
-    return err(400, 'bad_request', `total_tick_target must be an integer ${MATCH_LENGTH_MIN}-${MATCH_LENGTH_MAX}`);
-  }
-  const game = await env.DB
-    .prepare('SELECT id, status, current_tick FROM games WHERE id = ?')
-    .bind(roomId).first();
-  if (!game) return err(404, 'not_found', 'no game in this room yet');
-  if (game.status !== 'active') return err(409, 'not_active', `game is ${game.status}`);
-  if (newTotal <= (game.current_tick ?? 0)) {
-    return err(400, 'bad_request', `total_tick_target must be greater than current tick (${game.current_tick})`);
-  }
-  await env.DB
-    .prepare('UPDATE games SET total_tick_target = ? WHERE id = ?')
-    .bind(newTotal, roomId)
-    .run();
-  return json({ ok: true, total_tick_target: newTotal, current_tick: game.current_tick });
-}
-
 export const routes = [
   { method: 'GET',  pattern: '/api/lobby/rooms', auth: 'required', handle: handleListLobbyRooms },
   { method: 'GET',  pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)$/, auth: 'required', handle: handleLobbySnapshot },
@@ -578,6 +554,5 @@ export const routes = [
   { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/start$/, auth: 'required', handle: handleStart },
   { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/force-tick$/, auth: 'required', handle: handleForceTick },
   { method: 'PATCH',pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/tick-interval$/, auth: 'required', handle: handleChangeTickInterval },
-  { method: 'PATCH',pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/match-length$/, auth: 'required', handle: handleChangeMatchLength },
   { method: 'PATCH',pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/me$/, auth: 'required', handle: handlePatchMe },
 ];
