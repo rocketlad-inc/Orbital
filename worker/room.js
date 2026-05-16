@@ -482,8 +482,11 @@ export class Room {
     //    damage_per_tick is split evenly across hostile ships at the same
     //    body. Ships at hp<=0 are marked destroyed.
     //
-    //    Hostility is "anyone not me" for v1 — treaties (NAP/defense)
-    //    don't suppress combat yet. Easy to add by joining treaties.
+    //    Hostility is now treaty-aware: an active NAP (non-aggression pact)
+    //    or defense_pact between two factions suppresses damage between
+    //    them. An "active" treaty has status='active', broken_at_tick IS
+    //    NULL, and (expires_at_tick IS NULL OR expires_at_tick > tick),
+    //    with BOTH sides as signed signatories.
     const allShips = (await this.env.DB
       .prepare(
         `SELECT id, owner_faction_id, parent_body_id, hp, damage_per_tick
@@ -492,6 +495,40 @@ export class Room {
       )
       .bind(gameId)
       .all()).results ?? [];
+
+    // Build a fast at-peace lookup: pacts.has(fA + '|' + fB) === true iff
+    // they have an active NAP/defense pact (unordered key).
+    const peaceRows = (await this.env.DB
+      .prepare(
+        `SELECT t.id, t.kind, ts.faction_id
+           FROM treaties t
+           JOIN treaty_signatories ts ON ts.treaty_id = t.id
+          WHERE t.game_id = ?
+            AND t.status = 'active'
+            AND t.broken_at_tick IS NULL
+            AND ts.signed_at_tick IS NOT NULL
+            AND t.kind IN ('nap', 'defense_pact')
+            AND (t.expires_at_tick IS NULL OR t.expires_at_tick > ?)`,
+      )
+      .bind(gameId, tick)
+      .all()).results ?? [];
+
+    // Group signatories by treaty id; then for each treaty emit every
+    // unordered pair into a Set.
+    const treatyToFactions = new Map();
+    for (const r of peaceRows) {
+      if (!treatyToFactions.has(r.id)) treatyToFactions.set(r.id, []);
+      treatyToFactions.get(r.id).push(r.faction_id);
+    }
+    const peace = new Set();
+    const pairKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+    for (const sigs of treatyToFactions.values()) {
+      for (let i = 0; i < sigs.length; i++) {
+        for (let j = i + 1; j < sigs.length; j++) {
+          peace.add(pairKey(sigs[i], sigs[j]));
+        }
+      }
+    }
 
     // Group by body, then check for multiple factions present.
     const byBody = new Map();
@@ -506,7 +543,11 @@ export class Room {
       if (factions.size < 2) continue;
       for (const attacker of ships) {
         if (!attacker.damage_per_tick || attacker.damage_per_tick <= 0) continue;
-        const targets = ships.filter(t => t.owner_faction_id !== attacker.owner_faction_id);
+        // Only target ships from factions we're at war with (no peace pact).
+        const targets = ships.filter(t =>
+          t.owner_faction_id !== attacker.owner_faction_id
+          && !peace.has(pairKey(attacker.owner_faction_id, t.owner_faction_id)),
+        );
         if (targets.length === 0) continue;
         const split = attacker.damage_per_tick / targets.length;
         for (const t of targets) {
