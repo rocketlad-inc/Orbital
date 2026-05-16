@@ -137,6 +137,14 @@ export const TopBar: React.FC<TopBarProps> = ({
           onSignOut={signOut}
           adminGameId={adminGameId}
           isHost={isHost}
+          activePanel={activePanel}
+          onTogglePanel={onTogglePanel}
+          playerShipCount={playerShips.length}
+          settlementCount={gameState.settlements.filter(s => s.ownedBy === 'player').length}
+          researchTotal={(() => {
+            const lvls = gameState.factionTech?.player?.levels || {};
+            return Object.values(lvls).reduce((s, n) => s + (n ?? 0), 0);
+          })()}
         />
       )}
 
@@ -317,11 +325,19 @@ interface SideMenuProps {
   /** When set + isHost, the menu shows admin controls (force tick, etc.). */
   adminGameId?: string | null;
   isHost?: boolean;
+  /** Panel state + toggle — drives the mobile-only Panels group below. */
+  activePanel?: PanelId;
+  onTogglePanel?: (panel: PanelId) => void;
+  playerShipCount?: number;
+  settlementCount?: number;
+  researchTotal?: number;
 }
 
 const SideMenu: React.FC<SideMenuProps> = ({
   onClose, onExitMode, user, onSignOut,
   adminGameId = null, isHost = false,
+  activePanel, onTogglePanel,
+  playerShipCount = 0, settlementCount = 0, researchTotal = 0,
 }) => {
   const [forceTickBusy, setForceTickBusy] = useState(false);
   const [forceTickStatus, setForceTickStatus] = useState<string | null>(null);
@@ -334,13 +350,24 @@ const SideMenu: React.FC<SideMenuProps> = ({
       // Lazy-import apiFetch to avoid polluting TopBar's module graph
       // for single-player builds that don't need multiplayer code paths.
       const { apiFetch } = await import('../multiplayer/api');
-      const res = await apiFetch(`/api/lobby/rooms/${adminGameId}/force-tick`, { method: 'POST' });
-      setForceTickStatus(res.ok ? '✓ Tick forced' : (res.error?.message ?? 'Failed'));
+      const res = await apiFetch<{ current_tick?: number; advanced?: boolean }>(
+        `/api/lobby/rooms/${adminGameId}/force-tick`,
+        { method: 'POST' },
+      );
+      if (!res.ok) {
+        setForceTickStatus(res.error?.message ?? `Failed (${res.status})`);
+      } else if (res.data?.advanced === false) {
+        // Worker returned 200 but the tick didn't actually move — usually
+        // means the DO bailed (no game / status mismatch). Surface that.
+        setForceTickStatus('No change — check server logs');
+      } else {
+        setForceTickStatus(`✓ Tick → T+${res.data?.current_tick ?? '?'}`);
+      }
     } catch (e) {
-      setForceTickStatus('Failed');
+      setForceTickStatus(`Network error: ${(e as Error)?.message || 'unknown'}`);
     } finally {
       setForceTickBusy(false);
-      setTimeout(() => setForceTickStatus(null), 2500);
+      setTimeout(() => setForceTickStatus(null), 4000);
     }
   }
 
@@ -365,6 +392,36 @@ const SideMenu: React.FC<SideMenuProps> = ({
         </section>
 
         <nav className="side-menu__nav">
+          {onTogglePanel && (
+            <div className="side-menu__panels-mobile">
+              <div className="side-menu__group-label">PANELS</div>
+              <button
+                className={`side-menu__item${activePanel === 'settlements' ? ' side-menu__item--active' : ''}`}
+                onClick={() => { onClose(); onTogglePanel(activePanel === 'settlements' ? null : 'settlements'); }}
+              >
+                <span className="side-menu__item-icon">⌂</span>
+                <span className="side-menu__item-label">Settlements</span>
+                <span className="side-menu__item-hint">{settlementCount}</span>
+              </button>
+              <button
+                className={`side-menu__item${activePanel === 'fleet' ? ' side-menu__item--active' : ''}`}
+                onClick={() => { onClose(); onTogglePanel(activePanel === 'fleet' ? null : 'fleet'); }}
+              >
+                <span className="side-menu__item-icon">◈</span>
+                <span className="side-menu__item-label">Fleet</span>
+                <span className="side-menu__item-hint">{playerShipCount}</span>
+              </button>
+              <button
+                className={`side-menu__item${activePanel === 'research' ? ' side-menu__item--active' : ''}`}
+                onClick={() => { onClose(); onTogglePanel(activePanel === 'research' ? null : 'research'); }}
+              >
+                <span className="side-menu__item-icon">⚛</span>
+                <span className="side-menu__item-label">Research</span>
+                <span className="side-menu__item-hint">{researchTotal || 'lvl 0'}</span>
+              </button>
+            </div>
+          )}
+
           <div className="side-menu__group-label">GAME</div>
           {onExitMode && (
             <button

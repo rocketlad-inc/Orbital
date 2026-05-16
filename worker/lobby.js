@@ -450,19 +450,36 @@ async function handleForceTick(_req, env, ctx) {
   const roomId = ctx.params.roomId;
   const g = await requireHost(env, roomId, ctx.session);
   if (g.error) return g.error;
-  const game = await env.DB.prepare('SELECT status FROM games WHERE id = ?').bind(roomId).first();
+  const game = await env.DB
+    .prepare('SELECT id, status, current_tick, next_tick_at FROM games WHERE id = ?')
+    .bind(roomId).first();
   if (!game) return err(404, 'not_found', 'no game in this room yet');
   if (game.status !== 'active') return err(409, 'not_active', `game is ${game.status}`);
   try {
-    await roomStub(env, roomId).fetch('https://room/tick-now', {
+    // Pass gameId in the body so the DO can self-heal its `gameStarted`
+    // storage if it was recycled or never received /game-started.
+    const r = await roomStub(env, roomId).fetch('https://room/tick-now', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ force: true }),
+      body: JSON.stringify({ force: true, gameId: roomId }),
     });
+    if (!r.ok && r.status !== 204) {
+      const text = await r.text().catch(() => '');
+      return err(r.status || 500, 'tick_failed', text || `room responded ${r.status}`);
+    }
   } catch (e) {
     return err(500, 'tick_failed', String(e?.message || e));
   }
-  return json({ ok: true });
+  // Read back the new tick so the host UI can show what actually moved.
+  const after = await env.DB
+    .prepare('SELECT current_tick, next_tick_at FROM games WHERE id = ?')
+    .bind(roomId).first();
+  return json({
+    ok: true,
+    current_tick: after?.current_tick ?? game.current_tick,
+    next_tick_at: after?.next_tick_at ?? game.next_tick_at,
+    advanced: (after?.current_tick ?? 0) > (game.current_tick ?? 0),
+  });
 }
 
 export const routes = [

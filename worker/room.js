@@ -117,8 +117,34 @@ export class Room {
       //     burst-fire if a host repeatedly clicks Force.
       const body = await req.json().catch(() => ({}));
       const force = !!body?.force;
-      const started = await this.state.storage.get('gameStarted');
-      if (!started?.gameId) return new Response(null, { status: 204 });
+      const hintedGameId = typeof body?.gameId === 'string' ? body.gameId : null;
+      let started = await this.state.storage.get('gameStarted');
+
+      // Self-heal: when the DO was recycled or the room predates the
+      // /game-started write, the storage flag is missing but D1 still
+      // has the game row. The lobby's /force-tick endpoint passes
+      // { gameId } in the body so we can bootstrap storage from D1.
+      if (!started?.gameId && hintedGameId) {
+        const row = await this.env.DB
+          .prepare(`SELECT id AS gameId, total_tick_target, tick_interval_ms, started_at
+                      FROM games WHERE id = ?`)
+          .bind(hintedGameId).first();
+        if (row) {
+          started = {
+            gameId: row.gameId,
+            total_tick_target: row.total_tick_target,
+            tick_interval_ms: row.tick_interval_ms,
+            started_at: row.started_at,
+          };
+          await this.state.storage.put('gameStarted', started);
+        }
+      }
+      if (!started?.gameId) {
+        return new Response(JSON.stringify({ error: 'no_game_for_do' }), {
+          status: 409,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
 
       const game = await this.env.DB
         .prepare('SELECT next_tick_at, status, tick_interval_ms FROM games WHERE id = ?')
