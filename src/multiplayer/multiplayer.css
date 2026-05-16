@@ -602,6 +602,12 @@
   display: flex; flex-direction: column; gap: 10px;
   min-height: 148px;
   position: relative;
+  /* Without this the <button> shrinks to its content width, leaving the
+     wrap (and therefore the absolutely-positioned host-only delete X)
+     anchored to the grid cell's right edge — i.e. floating ~100px past
+     the visible card. Forcing 100% width pins the card to the grid cell
+     and keeps the X inside the card's top-right corner. */
+  width: 100%;
 }
 .mp-room-card::before {
   /* Subtle gradient sheen — keeps the row of cards from feeling flat
