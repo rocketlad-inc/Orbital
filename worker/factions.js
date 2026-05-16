@@ -31,29 +31,31 @@ const BODY_CATALOG = [
     yield: { metal: 0, fuel: 0, gold: 0, science: 0 } },
 
   // ---- inner terrestrials ----
+  // Scaled up ~1.4x on orbit and ~1.8x on SOI to give ships room to
+  // orbit without overlapping moons. Periods recomputed per Kepler.
   { id: 'mercury', name: 'Mercury', type: 'terrestrial', parent: 'sol',
-    radius: 2, soi: 12, mu: 50,
-    orbit_radius: 51.3, orbit_period: 29.8, angle0: 4.40,
+    radius: 2, soi: 22, mu: 50,
+    orbit_radius: 72, orbit_period: 49, angle0: 4.40,
     color: '#8c8680',
     yield: { metal: 5, fuel: 0, gold: 2, science: 1 } },
   { id: 'venus', name: 'Venus', type: 'terrestrial', parent: 'sol',
-    radius: 3, soi: 24, mu: 150,
-    orbit_radius: 95.9, orbit_period: 76.2, angle0: 3.18,
+    radius: 3, soi: 43, mu: 150,
+    orbit_radius: 134, orbit_period: 126, angle0: 3.18,
     color: '#e8cda0',
     yield: { metal: 3, fuel: 1, gold: 1, science: 4 } },
   { id: 'earth', name: 'Earth', type: 'terrestrial', parent: 'sol',
-    radius: 3, soi: 30, mu: 100,
-    orbit_radius: 132.6, orbit_period: 123.8, angle0: 1.75,
+    radius: 3, soi: 54, mu: 100,
+    orbit_radius: 186, orbit_period: 205, angle0: 1.75,
     color: '#4a90d9',
     yield: { metal: 3, fuel: 3, gold: 2, science: 5 } },
   { id: 'luna', name: 'Luna', type: 'moon', parent: 'earth',
-    radius: 1.5, soi: 4, mu: 5,
-    orbit_radius: 12, orbit_period: TWO_PI * Math.sqrt(1728 / 100), angle0: 0,
+    radius: 1.5, soi: 8, mu: 5,
+    orbit_radius: 20, orbit_period: TWO_PI * Math.sqrt(8000 / 100), angle0: 0,
     color: '#c0c0c0',
     yield: { metal: 2, fuel: 0, gold: 0, science: 2 } },
   { id: 'mars', name: 'Mars', type: 'terrestrial', parent: 'sol',
-    radius: 2.5, soi: 24, mu: 80,
-    orbit_radius: 202.1, orbit_period: 233.1, angle0: 6.20,
+    radius: 2.5, soi: 43, mu: 80,
+    orbit_radius: 283, orbit_period: 386, angle0: 6.20,
     color: '#c1440e',
     yield: { metal: 6, fuel: 1, gold: 1, science: 3 } },
 
@@ -113,9 +115,10 @@ const BODY_CATALOG = [
     yield: { metal: 2, fuel: 5, gold: 1, science: 5 } },
 
   // ---- ice giants ----
+  // Outer system compressed ~35-45% so 200-tick matches can reach them.
   { id: 'uranus', name: 'Uranus', type: 'ice-giant', parent: 'sol',
     radius: 5, soi: 110, mu: 200,
-    orbit_radius: 1697, orbit_period: 5665, angle0: 5.47,
+    orbit_radius: 1100, orbit_period: 2960, angle0: 5.47,
     color: '#73c2d6',
     yield: { metal: 2, fuel: 4, gold: 1, science: 4 } },
   { id: 'titania', name: 'Titania', type: 'moon', parent: 'uranus',
@@ -131,7 +134,7 @@ const BODY_CATALOG = [
 
   { id: 'neptune', name: 'Neptune', type: 'ice-giant', parent: 'sol',
     radius: 5, soi: 120, mu: 250,
-    orbit_radius: 2659, orbit_period: 11114, angle0: 5.32,
+    orbit_radius: 1500, orbit_period: 4710, angle0: 5.32,
     color: '#3366cc',
     yield: { metal: 1, fuel: 4, gold: 2, science: 5 } },
   { id: 'triton', name: 'Triton', type: 'moon', parent: 'neptune',
@@ -141,14 +144,16 @@ const BODY_CATALOG = [
     yield: { metal: 2, fuel: 2, gold: 1, science: 5 } },
 
   // ---- outer dwarf planets ----
+  // Compressed in proportion with the ice giants so the Kuiper region
+  // is still distinct from Neptune but reachable.
   { id: 'pluto', name: 'Pluto', type: 'dwarf', parent: 'sol',
     radius: 1.5, soi: 12, mu: 2,
-    orbit_radius: 3491, orbit_period: 16720, angle0: 4.17,
+    orbit_radius: 1900, orbit_period: 6720, angle0: 4.17,
     color: '#c8b898',
     yield: { metal: 2, fuel: 0, gold: 4, science: 3 } },
   { id: 'eris', name: 'Eris', type: 'dwarf', parent: 'sol',
     radius: 1.5, soi: 9, mu: 1,
-    orbit_radius: 5992, orbit_period: 37636, angle0: 1.80,
+    orbit_radius: 2400, orbit_period: 9560, angle0: 1.80,
     color: '#e0e0e0',
     yield: { metal: 1, fuel: 0, gold: 5, science: 4 } },
 ];

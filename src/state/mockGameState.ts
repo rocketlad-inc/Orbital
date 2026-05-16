@@ -19,35 +19,39 @@ export const SHARED_BODIES: Body[] = [
     color: '#ffd180', orbitRadius: 0, orbitPeriod: 0, angle0: 0,
   },
   // Terrestrial planets
+  // Inner system scaled up ~1.4× on orbit radius and ~1.8× on SOI so
+  // ships orbiting at low altitude don't visually overlap with moons.
+  // Periods follow Kepler's 3rd law (T ∝ a^1.5).
   {
     id: 'mercury', name: 'Mercury', type: 'terrestrial', parent: 'sol',
-    radius: 2, soi: 12, mu: 50, color: '#8c8680',
-    orbitRadius: 51.3, orbitPeriod: 29.8, angle0: 4.40,
+    radius: 2, soi: 22, mu: 50, color: '#8c8680',
+    orbitRadius: 72, orbitPeriod: 49, angle0: 4.40,
     resources: { fuel: 0, gold: 2, metal: 5, science: 1 },
   },
   {
     id: 'venus', name: 'Venus', type: 'terrestrial', parent: 'sol',
-    radius: 3, soi: 24, mu: 150, color: '#e8cda0',
-    orbitRadius: 95.9, orbitPeriod: 76.2, angle0: 3.18,
+    radius: 3, soi: 43, mu: 150, color: '#e8cda0',
+    orbitRadius: 134, orbitPeriod: 126, angle0: 3.18,
     resources: { fuel: 1, gold: 1, metal: 3, science: 4 },
   },
   {
     id: 'earth', name: 'Earth', type: 'terrestrial', parent: 'sol',
-    radius: 3, soi: 30, mu: 100, color: '#4a90d9',
-    orbitRadius: 132.6, orbitPeriod: 123.8, angle0: 1.75,
+    radius: 3, soi: 54, mu: 100, color: '#4a90d9',
+    orbitRadius: 186, orbitPeriod: 205, angle0: 1.75,
     resources: { fuel: 3, gold: 2, metal: 3, science: 5 },
   },
   {
     id: 'mars', name: 'Mars', type: 'terrestrial', parent: 'sol',
-    radius: 2.5, soi: 24, mu: 80, color: '#c1440e',
-    orbitRadius: 202.1, orbitPeriod: 233.1, angle0: 6.20,
+    radius: 2.5, soi: 43, mu: 80, color: '#c1440e',
+    orbitRadius: 283, orbitPeriod: 386, angle0: 6.20,
     resources: { fuel: 1, gold: 1, metal: 6, science: 3 },
   },
-  // Earth's moon
+  // Earth's moon — orbit pushed out so Luna doesn't kiss the Earth's
+  // ship-orbit envelope at low altitude.
   {
     id: 'luna', name: 'Luna', type: 'moon', parent: 'earth',
-    radius: 1.5, soi: 4, mu: 5, color: '#c0c0c0',
-    orbitRadius: 12, orbitPeriod: TWO_PI * Math.sqrt(1728 / 100), angle0: 0,
+    radius: 1.5, soi: 8, mu: 5, color: '#c0c0c0',
+    orbitRadius: 20, orbitPeriod: TWO_PI * Math.sqrt(8000 / 100), angle0: 0,
     resources: { fuel: 0, gold: 0, metal: 2, science: 2 },
   },
   // Asteroid belt
@@ -114,17 +118,19 @@ export const SHARED_BODIES: Body[] = [
     orbitRadius: 65, orbitPeriod: TWO_PI * Math.sqrt(274625 / 600), angle0: 4.19,
     resources: { fuel: 5, gold: 1, metal: 2, science: 5 },
   },
-  // Ice giants
+  // Outer system compressed: Uranus/Neptune brought ~35-45% closer in
+  // so a 200-tick match can actually reach them. Periods recomputed
+  // per Kepler.
   {
     id: 'uranus', name: 'Uranus', type: 'ice_giant', parent: 'sol',
     radius: 5, soi: 110, mu: 200, color: '#73c2d6',
-    orbitRadius: 1697, orbitPeriod: 5665, angle0: 5.47,
+    orbitRadius: 1100, orbitPeriod: 2960, angle0: 5.47,
     resources: { fuel: 4, gold: 1, metal: 2, science: 4 },
   },
   {
     id: 'neptune', name: 'Neptune', type: 'ice_giant', parent: 'sol',
     radius: 5, soi: 120, mu: 250, color: '#3366cc',
-    orbitRadius: 2659, orbitPeriod: 11114, angle0: 5.32,
+    orbitRadius: 1500, orbitPeriod: 4710, angle0: 5.32,
     resources: { fuel: 4, gold: 2, metal: 1, science: 5 },
   },
   // Uranus moons
@@ -147,17 +153,18 @@ export const SHARED_BODIES: Body[] = [
     orbitRadius: 45, orbitPeriod: TWO_PI * Math.sqrt(91125 / 250), angle0: 0,
     resources: { fuel: 2, gold: 1, metal: 2, science: 5 },
   },
-  // Outer dwarf planets
+  // Outer dwarf planets — compressed proportionally with Uranus/Neptune
+  // so the trans-Neptunian neighborhood is still distinct but reachable.
   {
     id: 'pluto', name: 'Pluto', type: 'dwarf', parent: 'sol',
     radius: 1.5, soi: 12, mu: 2, color: '#c8b898',
-    orbitRadius: 3491, orbitPeriod: 16720, angle0: 4.17,
+    orbitRadius: 1900, orbitPeriod: 6720, angle0: 4.17,
     resources: { fuel: 0, gold: 4, metal: 2, science: 3 },
   },
   {
     id: 'eris', name: 'Eris', type: 'dwarf', parent: 'sol',
     radius: 1.5, soi: 9, mu: 1, color: '#e0e0e0',
-    orbitRadius: 5992, orbitPeriod: 37636, angle0: 1.80,
+    orbitRadius: 2400, orbitPeriod: 9560, angle0: 1.80,
     resources: { fuel: 0, gold: 5, metal: 1, science: 4 },
   },
 ];
