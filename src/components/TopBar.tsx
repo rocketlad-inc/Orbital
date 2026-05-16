@@ -350,18 +350,23 @@ const SideMenu: React.FC<SideMenuProps> = ({
       // Lazy-import apiFetch to avoid polluting TopBar's module graph
       // for single-player builds that don't need multiplayer code paths.
       const { apiFetch } = await import('../multiplayer/api');
-      const res = await apiFetch<{ current_tick?: number; advanced?: boolean }>(
+      const res = await apiFetch<{ current_tick?: number; advanced?: boolean; bodies_added?: number }>(
         `/api/lobby/rooms/${adminGameId}/force-tick`,
         { method: 'POST' },
       );
       if (!res.ok) {
         setForceTickStatus(res.error?.message ?? `Failed (${res.status})`);
-      } else if (res.data?.advanced === false) {
-        // Worker returned 200 but the tick didn't actually move — usually
-        // means the DO bailed (no game / status mismatch). Surface that.
-        setForceTickStatus('No change — check server logs');
       } else {
-        setForceTickStatus(`✓ Tick → T+${res.data?.current_tick ?? '?'}`);
+        const bodiesNote = res.data?.bodies_added && res.data.bodies_added > 0
+          ? ` +${res.data.bodies_added} bodies`
+          : '';
+        if (res.data?.advanced === false) {
+          // Worker returned 200 but the tick didn't actually move — usually
+          // means the DO bailed (no game / status mismatch). Surface that.
+          setForceTickStatus(`No change${bodiesNote}`);
+        } else {
+          setForceTickStatus(`✓ Tick → T+${res.data?.current_tick ?? '?'}${bodiesNote}`);
+        }
       }
     } catch (e) {
       setForceTickStatus(`Network error: ${(e as Error)?.message || 'unknown'}`);

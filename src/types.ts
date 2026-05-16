@@ -123,6 +123,24 @@ export interface Faction {
   name: string;
   color: string;                        // hex color for faction assets
   isPlayer: boolean;
+  /** When true, this faction's turn is driven by src/game/factionAI.ts
+   *  instead of waiting for player input. Single-player only for v1. */
+  isAI?: boolean;
+  /** Tick at which the AI last ran a decision cycle for this faction.
+   *  Used to throttle AI evaluations to AI_DECISION_INTERVAL. */
+  lastAIDecisionTick?: number;
+}
+
+/**
+ * A single AI decision entry — what the AI did, when, and a one-line
+ * human-readable description for the activity feed.
+ */
+export interface AIActivityEntry {
+  id: string;
+  tick: number;
+  factionId: string;
+  message: string;
+  kind: 'build' | 'deploy' | 'transfer' | 'research' | 'idle';
 }
 
 /**
@@ -203,6 +221,7 @@ export interface GameState {
   factionTech: Record<string, FactionTechStateBase>; // factionId → tech progress
   combatLog: string[];                 // recent combat events
   lastHarvestTick: number;             // tick when resources were last collected
+  aiActivityLog?: AIActivityEntry[];   // optional — rolling log of recent AI decisions
 }
 
 /**

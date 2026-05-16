@@ -455,6 +455,20 @@ async function handleForceTick(_req, env, ctx) {
     .bind(roomId).first();
   if (!game) return err(404, 'not_found', 'no game in this room yet');
   if (game.status !== 'active') return err(409, 'not_active', `game is ${game.status}`);
+
+  // Self-heal: if BODY_CATALOG has gained bodies since this game was
+  // seeded (asteroid belt, Kuiper objects, new moons), insert the
+  // missing rows now so the host doesn't have to start a fresh game
+  // just to see them. Idempotent — existing bodies are skipped.
+  let bodiesAdded = 0;
+  try {
+    if (typeof factions.backfillMissingBodies === 'function') {
+      bodiesAdded = await factions.backfillMissingBodies(env, roomId);
+    }
+  } catch (e) {
+    console.error('backfillMissingBodies failed', e);
+  }
+
   try {
     // Pass gameId in the body so the DO can self-heal its `gameStarted`
     // storage if it was recycled or never received /game-started.
@@ -479,6 +493,7 @@ async function handleForceTick(_req, env, ctx) {
     current_tick: after?.current_tick ?? game.current_tick,
     next_tick_at: after?.next_tick_at ?? game.next_tick_at,
     advanced: (after?.current_tick ?? 0) > (game.current_tick ?? 0),
+    bodies_added: bodiesAdded,
   });
 }
 

@@ -14,10 +14,10 @@
 // ============================================================
 
 import {
-  GameState, Ship, Body, Settlement, FactionResources,
+  GameState, Ship, Settlement, FactionResources,
 } from '../types';
 import { ShipClassName, SHIP_CLASSES, BUILDABLE_CLASSES } from './shipClasses';
-import { SETTLEMENT_DEFS, canHostCity, canHostStation, settlementYield } from './settlements';
+import { SETTLEMENT_DEFS, canHostCity, canHostStation } from './settlements';
 import { TechId, TECH_DEFS } from './techs';
 import { FUEL_ENABLED } from './featureFlags';
 
@@ -37,9 +37,8 @@ const SCORE_THRESHOLD = 0.5;
 /** Soft target for fleet size. Above this, building more is deprioritized. */
 const TARGET_FLEET_SIZE = 5;
 
-/** AI considers its own bodies "under threat" if at least this many hostile
- *  ships are within sensor range / orbiting. */
-const THREAT_SHIP_THRESHOLD = 1;
+// (THREAT_SHIP_THRESHOLD was reserved for a future threat-response heuristic;
+//  removed from v1 to keep the surface minimal.)
 
 // === Public API ==============================================
 

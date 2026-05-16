@@ -3,7 +3,8 @@
 // Ported from HTML prototype (trusting-mahavira branch)
 // ============================================================
 
-import { Body, Ship, Faction, GameState, OrbitElements, FactionResources } from '../types';
+import { Body, Ship, Faction, GameState, OrbitElements, FactionResources, Settlement } from '../types';
+import { createStation } from '../game/settlements';
 
 const TWO_PI = 2 * Math.PI;
 
@@ -259,7 +260,8 @@ export const SHARED_BODIES: Body[] = [
 // Shared factions
 export const SHARED_FACTIONS: Faction[] = [
   { id: 'player', name: 'Player', color: '#4ecdc4', isPlayer: true },
-  { id: 'enemy', name: 'Enemy', color: '#888888', isPlayer: false },
+  // Enemy is AI-driven in single-player scenarios. Run by src/game/factionAI.ts.
+  { id: 'enemy', name: 'Enemy', color: '#ff5e5e', isPlayer: false, isAI: true },
 ];
 
 // Helper to create a basic circular orbit at a given body
@@ -386,7 +388,7 @@ export function createScenario2(): GameState {
       orbit: { ...circularOrbitAround('earth', 18, 1), M0: Math.PI },
       orders: [],
     },
-    // Enemy fleet at Mars
+    // Enemy fleet at Mars — same shape as player so the AI has a real economy
     {
       id: 'ship-phantom', name: 'Phantom', class: 'corvette',
       ownedBy: 'enemy', fuel: 80,
@@ -394,25 +396,36 @@ export function createScenario2(): GameState {
       orders: [],
     },
     {
-      id: 'ship-wraith', name: 'Wraith', class: 'corvette',
-      ownedBy: 'enemy', fuel: 80,
-      orbit: { ...circularOrbitAround('mars', 12, -1), M0: Math.PI },
+      id: 'ship-wraith', name: 'Wraith', class: 'frigate',
+      ownedBy: 'enemy', fuel: 120,
+      orbit: { ...circularOrbitAround('mars', 14, -1), M0: Math.PI },
       orders: [],
     },
     {
-      id: 'ship-scirocco', name: 'Scirocco', class: 'frigate',
-      ownedBy: 'enemy', fuel: 120,
-      orbit: { ...circularOrbitAround('mars', 15, -1), M0: Math.PI * 0.5 },
+      id: 'ship-rove', name: 'Rove', class: 'freighter',
+      ownedBy: 'enemy', fuel: 100,
+      orbit: { ...circularOrbitAround('mars', 18, -1), M0: Math.PI * 0.5 },
       orders: [],
     },
   ];
 
+  // Pre-deploy a station at each faction's capital so both can build ships
+  // (the shipyard requires a station at the body) and the AI has an economic
+  // toehold to start from.
+  const earthBody = bodies.find(b => b.id === 'earth')!;
+  const marsBody = bodies.find(b => b.id === 'mars')!;
+  const settlements: Settlement[] = [
+    createStation(earthBody, 'player', 0, bodies, 'Tycho Station'),
+    createStation(marsBody, 'enemy', 0, bodies, 'Hellas Yards'),
+  ];
+
   return {
     currentTick: 0, bodies, ships, factions, orders: [],
-    fleets: [], buildOrders: [], settlements: [],
+    fleets: [], buildOrders: [], settlements,
     resources: freshResources(),
     combatLog: [], lastHarvestTick: 0,
     factionTech: freshFactionTech(),
+    aiActivityLog: [],
   };
 }
 

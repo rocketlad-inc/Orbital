@@ -689,6 +689,56 @@ export async function seedGameWorld(env, gameId) {
   };
 }
 
+// ---------- backfill helper ----------
+
+/**
+ * Insert any BODY_CATALOG entries that aren't yet in `game_bodies` for
+ * this game. Used when the catalog gains new bodies (asteroid belt,
+ * Kuiper objects, minor moons) after a game has already been seeded —
+ * `seedGameWorld` runs only once per game, so existing games stay
+ * frozen at whatever catalog version was current at start. This
+ * helper is idempotent: bodies that already exist are skipped, so
+ * it's safe to call repeatedly.
+ *
+ * Returns the number of inserted bodies.
+ */
+export async function backfillMissingBodies(env, gameId) {
+  const existing = await env.DB
+    .prepare('SELECT template_id FROM game_bodies WHERE game_id = ?')
+    .bind(gameId).all();
+  const have = new Set((existing.results ?? []).map(r => r.template_id));
+
+  const bodyRowIdFor = (tplId) => `${gameId}:${tplId}`;
+  const stmts = [];
+  let inserted = 0;
+  for (const b of BODY_CATALOG) {
+    if (have.has(b.id)) continue;
+    stmts.push(
+      env.DB.prepare(
+        `INSERT INTO game_bodies
+          (id, game_id, template_id, name, type, parent_body_id,
+           radius, soi, mu, orbit_radius, orbit_period, angle0, color,
+           yield_metal, yield_fuel, yield_gold, yield_science,
+           owner_faction_id, development_level, fortification_level, shipyard_level,
+           claimed_at_tick, developed_at_tick)
+         VALUES (?, ?, ?, ?, ?, ?,
+                 ?, ?, ?, ?, ?, ?, ?,
+                 ?, ?, ?, ?,
+                 NULL, 0, 0, 0,
+                 NULL, NULL)`,
+      ).bind(
+        bodyRowIdFor(b.id), gameId, b.id, b.name, b.type,
+        b.parent ? bodyRowIdFor(b.parent) : null,
+        b.radius, b.soi, b.mu, b.orbit_radius, b.orbit_period, b.angle0, b.color,
+        b.yield.metal, b.yield.fuel, b.yield.gold, b.yield.science,
+      ),
+    );
+    inserted += 1;
+  }
+  if (stmts.length > 0) await env.DB.batch(stmts);
+  return inserted;
+}
+
 // ---------- route handlers ----------
 
 async function handleListFactions(_req, env, ctx) {

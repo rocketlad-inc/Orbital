@@ -11,6 +11,123 @@ import {
 } from '../game/settlements';
 import { tickMaintenance } from '../game/maintenance';
 import { TechId, TECH_DEFS } from '../game/techs';
+import { runFactionAI, shouldRunAI } from '../game/factionAI';
+import { planBezierTransfer } from '../physics/bezierTransfer';
+import type { AIActivityEntry } from '../types';
+
+// === AI intent application helpers ===========================
+// These translate the AI brain's pure intents into concrete game-state
+// mutations during a tick. Lives at module scope so the per-tick reducer
+// stays focused on time advancement.
+
+type AIIntentResult = {
+  applied: boolean;
+  ships?: Ship[];
+  settlements?: import('../types').Settlement[];
+  buildOrders?: BuildOrder[];
+  factionPools?: Record<string, FactionResources>;
+};
+
+function applyAIIntent(
+  intent: import('../game/factionAI').AIActionIntent,
+  snapshot: GameState,
+  factionId: string,
+  tick: number,
+): AIIntentResult {
+  switch (intent.kind) {
+    case 'build_ship': {
+      const classDef = SHIP_CLASSES[intent.shipClass];
+      if (!classDef) return { applied: false };
+      const pool = snapshot.resources[factionId];
+      if (!pool || pool.ore < classDef.cost.ore || pool.credits < classDef.cost.credits) {
+        return { applied: false };
+      }
+      const newOrder: BuildOrder = {
+        id: `build-ai-${tick}-${Math.random().toString(36).slice(2, 6)}`,
+        bodyId: intent.bodyId,
+        shipClass: intent.shipClass,
+        ownedBy: factionId,
+        startTick: tick,
+        completeTick: tick + classDef.buildTime,
+        shipName: intent.name,
+      };
+      const newPools = { ...snapshot.resources };
+      newPools[factionId] = {
+        ...pool,
+        ore: pool.ore - classDef.cost.ore,
+        credits: pool.credits - classDef.cost.credits,
+      };
+      return {
+        applied: true,
+        buildOrders: [...snapshot.buildOrders, newOrder],
+        factionPools: newPools,
+      };
+    }
+
+    case 'deploy_settlement': {
+      const def = SETTLEMENT_DEFS[intent.settlementType];
+      const pool = snapshot.resources[factionId];
+      if (!pool || pool.ore < def.cost.ore || pool.credits < def.cost.credits) {
+        return { applied: false };
+      }
+      const body = snapshot.bodies.find(b => b.id === intent.bodyId);
+      if (!body) return { applied: false };
+      const settlement = intent.settlementType === 'city'
+        ? createCity(body, factionId, tick, intent.name)
+        : createStation(body, factionId, tick, snapshot.bodies, intent.name);
+      const newPools = { ...snapshot.resources };
+      newPools[factionId] = {
+        ...pool,
+        ore: pool.ore - def.cost.ore,
+        credits: pool.credits - def.cost.credits,
+      };
+      return {
+        applied: true,
+        settlements: [...snapshot.settlements, settlement],
+        factionPools: newPools,
+      };
+    }
+
+    case 'transfer': {
+      const ship = snapshot.ships.find(s => s.id === intent.shipId);
+      if (!ship || ship.transfer || ship.pendingTransfer) return { applied: false };
+      const arc = planBezierTransfer(ship.orbit, intent.targetBodyId, tick, snapshot.bodies);
+      if (!arc) return { applied: false };
+      // AI ships skip the player's pending/committed-node workflow — they go
+      // straight to transfer at planning time. This mirrors how the human
+      // would commit instantly via the COMMIT button.
+      const updatedShips = snapshot.ships.map(s =>
+        s.id === ship.id
+          ? { ...s, transfer: arc, pendingTransfer: undefined, lastBurnTick: tick }
+          : s
+      );
+      return { applied: true, ships: updatedShips };
+    }
+
+    case 'research': {
+      // Set researching field; the per-tick research drain (already in
+      // advanceToTick) will pour science into it on subsequent ticks.
+      // Mutating factionTech here would race with the drain — easier to
+      // skip the application step and have the AI re-evaluate next cycle
+      // once its science pool has built up. For now: no-op success.
+      // Future: extend the result type to include a factionTech patch.
+      return { applied: false };
+    }
+
+    default:
+      return { applied: false };
+  }
+}
+
+function classifyNote(intents: import('../game/factionAI').AIActionIntent[]): AIActivityEntry['kind'] {
+  if (intents.length === 0) return 'idle';
+  const first = intents[0];
+  if (first.kind === 'build_ship') return 'build';
+  if (first.kind === 'deploy_settlement') return 'deploy';
+  if (first.kind === 'transfer') return 'transfer';
+  if (first.kind === 'research') return 'research';
+  return 'idle';
+}
 
 export const TICKS_PER_GAME_DAY = 24;
 const REAL_SECONDS_PER_GAME_DAY = 3600;
@@ -338,6 +455,74 @@ export function GameContextProvider({
       ? [...prev.combatLog.slice(-20), ...combatNewLogs]
       : prev.combatLog;
 
+    // === Faction AI =========================================
+    // Run each AI faction's decision cycle if it's due, then apply the
+    // resulting intents to the in-flight tick state. Output is captured in
+    // an activity log for the corner feed.
+    let updatedFactions = prev.factions;
+    let aiActivityLog: AIActivityEntry[] = prev.aiActivityLog ?? [];
+    const aiFactions = prev.factions.filter(f => f.isAI && f.id !== 'player');
+    if (aiFactions.length > 0) {
+      // Snapshot reflecting all the per-tick mutations above. The AI
+      // makes decisions on the world the player would see this tick.
+      const aiSnapshot: GameState = {
+        ...prev,
+        ships: updatedShips,
+        settlements: updatedSettlements,
+        resources: factionPools,
+        factionTech: updatedTech,
+        buildOrders,
+        currentTick: newTime,
+      };
+
+      for (const aiFaction of aiFactions) {
+        if (!shouldRunAI(aiFaction.lastAIDecisionTick, newTime)) continue;
+        const decision = runFactionAI(aiSnapshot, aiFaction.id, newTime);
+
+        // Apply each intent. Each apply* returns whether the intent was
+        // executed (cost satisfied, no race with another intent).
+        for (const intent of decision.intents) {
+          const result = applyAIIntent(intent, aiSnapshot, aiFaction.id, newTime);
+          if (result.applied) {
+            // Commit mutations back to the working state
+            if (result.ships) updatedShips = result.ships;
+            if (result.settlements) updatedSettlements = result.settlements;
+            if (result.buildOrders) buildOrders = result.buildOrders;
+            if (result.factionPools) {
+              for (const [fid, fr] of Object.entries(result.factionPools)) {
+                factionPools[fid] = fr;
+              }
+            }
+            // Update the snapshot the next intent sees
+            aiSnapshot.ships = updatedShips;
+            aiSnapshot.settlements = updatedSettlements;
+            aiSnapshot.buildOrders = buildOrders;
+            aiSnapshot.resources = factionPools;
+          }
+        }
+
+        // Log even when no intents fired so the player can see the AI is alive
+        const notes = decision.notes.length > 0 ? decision.notes : [`${aiFaction.name}: standing by`];
+        for (const note of notes) {
+          aiActivityLog = [
+            ...aiActivityLog.slice(-49),
+            {
+              id: `ai-${newTime}-${Math.random().toString(36).slice(2, 6)}`,
+              tick: Math.floor(newTime),
+              factionId: aiFaction.id,
+              message: note,
+              kind: classifyNote(decision.intents),
+            },
+          ];
+        }
+
+        // Bump per-faction decision tick
+        updatedFactions = updatedFactions.map(f =>
+          f.id === aiFaction.id ? { ...f, lastAIDecisionTick: newTime } : f,
+        );
+      }
+    }
+
     const allOrders = updatedShips.flatMap(s => s.orders);
     return {
       ...prev,
@@ -349,7 +534,9 @@ export function GameContextProvider({
       factionTech: updatedTech,
       settlements: updatedSettlements,
       fleets: updatedFleets,
+      factions: updatedFactions,
       combatLog,
+      aiActivityLog,
     };
   }, [checkNodeExecution]);
 
