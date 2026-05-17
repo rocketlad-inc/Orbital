@@ -184,6 +184,62 @@ export class Room {
       }
       return new Response(null, { status: 204 });
     }
+    if (url.pathname === '/__internal/advance' && req.method === 'POST') {
+      // Turn-Based Mode batch-advance entry point. Called from
+      // worker/actions.js handleTurnCommit when every faction has
+      // submitted their COMMIT TURN for the current turn. Walks
+      // tick-by-tick so interval-gated logic (combat cadence, settlement
+      // growth) fires at the right cadence. After the batch, increments
+      // games.current_turn_number and clears the now-stale commit ledger
+      // so the next turn starts with a clean slate.
+      const gameIdParam = url.searchParams.get('gameId');
+      const ticksParam = Math.max(1, Math.min(500, Number(url.searchParams.get('ticks') ?? 20)));
+      if (!gameIdParam) {
+        return new Response(JSON.stringify({ error: 'missing gameId' }), {
+          status: 400, headers: { 'content-type': 'application/json' },
+        });
+      }
+      const g = await this.env.DB
+        .prepare('SELECT current_tick, current_turn_number, status FROM games WHERE id = ?')
+        .bind(gameIdParam).first();
+      if (!g) return new Response(JSON.stringify({ error: 'game_not_found' }), { status: 404 });
+      if (g.status !== 'active') {
+        return new Response(JSON.stringify({ error: 'not_active', status: g.status }), { status: 409 });
+      }
+      const startTick = Number(g.current_tick ?? 0);
+      const endTick = startTick + ticksParam;
+      const turnN = Number(g.current_turn_number ?? 0);
+      const now = Date.now();
+      for (let t = startTick + 1; t <= endTick; t++) {
+        try { await this.resolveTick(gameIdParam, t); }
+        catch (e) { console.error('resolveTick in batch failed', t, e); }
+      }
+      // Bookkeeping: bump current_tick + turn number, wipe stale commits,
+      // mark a single game_ticks row so /state shows the new tick.
+      await this.env.DB.batch([
+        this.env.DB
+          .prepare('UPDATE games SET current_tick = ?, current_turn_number = ? WHERE id = ?')
+          .bind(endTick, turnN + 1, gameIdParam),
+        this.env.DB
+          .prepare("INSERT OR REPLACE INTO game_ticks (game_id, tick_number, status, scheduled_at, started_at, completed_at) VALUES (?, ?, 'completed', ?, ?, ?)")
+          .bind(gameIdParam, endTick, now, now, now),
+        this.env.DB
+          .prepare('DELETE FROM game_turn_commits WHERE game_id = ? AND turn_number <= ?')
+          .bind(gameIdParam, turnN),
+      ]);
+      this.broadcast({
+        type: 'turn_advanced',
+        from_tick: startTick,
+        to_tick: endTick,
+        turn_number: turnN + 1,
+      });
+      return Response.json({
+        ok: true,
+        from_tick: startTick,
+        to_tick: endTick,
+        turn_number: turnN + 1,
+      });
+    }
     if (url.pathname === '/notify' && req.method === 'POST') {
       // Best-effort fan-out: feature modules (trades, messages, etc.)
       // post a JSON payload here and we broadcast it to every connected
@@ -387,11 +443,22 @@ export class Room {
     const gameId = started.gameId;
 
     const game = await this.env.DB
-      .prepare('SELECT status, current_tick, tick_interval_ms FROM games WHERE id = ?')
+      .prepare('SELECT status, current_tick, tick_interval_ms, turn_based_enabled FROM games WHERE id = ?')
       .bind(gameId)
       .first();
     if (!game) return;
     if (game.status === 'completed' || game.status === 'abandoned') return;
+
+    // Turn-Based Mode short-circuit: the alarm doesn't auto-advance time
+    // in TBM games. The tick batch is driven from POST /turn/commit
+    // (worker/actions.js handleTurnCommit) once every faction has clicked
+    // their COMMIT TURN button. Reschedule far in the future so the alarm
+    // doesn't repeatedly wake up and re-check; if the host disables TBM,
+    // the /turn/settings endpoint can force an alarm refresh.
+    if (game.turn_based_enabled === 1) {
+      try { await this.state.storage.setAlarm(Date.now() + 24 * 60 * 60 * 1000); } catch {}
+      return;
+    }
 
     const now = Date.now();
     const nextTick = (game.current_tick ?? 0) + 1;

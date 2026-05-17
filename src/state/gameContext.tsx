@@ -757,7 +757,26 @@ export function GameContextProvider({
     const ticks = Math.max(1, Math.floor(turnBased.ticksPerTurn));
     setGameStateInternal(prev => {
       logger.info('ACTION', `Turn committed: +${ticks} ticks (now T+${Math.round(prev.currentTick + ticks)})`);
-      return advanceToTick(prev, prev.currentTick + ticks);
+
+      // === Phase AI factions explicitly per turn =================
+      // In realtime, AI ticks every AI_DECISION_INTERVAL (=50) ticks.
+      // In TBM, the player might commit 20 ticks at a time, which means
+      // an AI could go several turns without acting. That feels wrong —
+      // a turn-based game should give every faction equal play.
+      //
+      // Fix: zero out lastAIDecisionTick for every AI faction so each
+      // one is eligible at the first tick of the jump. The existing
+      // AI loop inside advanceToTick will then run them once, and the
+      // resulting intents apply to the world the player just submitted
+      // (rather than to some intermediate state inside the jump).
+      const aiReadyFactions = prev.factions.map(f =>
+        f.isAI && f.id !== 'player'
+          ? { ...f, lastAIDecisionTick: undefined }
+          : f
+      );
+      const primed = { ...prev, factions: aiReadyFactions };
+
+      return advanceToTick(primed, prev.currentTick + ticks);
     });
   }, [advanceToTick, externallyControlled, turnBased.ticksPerTurn]);
 

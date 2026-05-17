@@ -35,6 +35,34 @@ export interface ResearchIntent {
   techId: string;
 }
 
+/** Result of a turn commit. Either the caller's vote was recorded
+ *  (advanced=false) or every faction had voted and the server advanced
+ *  the sim immediately (advanced=true). */
+export interface TurnCommitResult {
+  ok: boolean;
+  ready?: number;
+  needed?: number;
+  turn_number?: number;
+  advanced?: boolean;
+  advanced_ticks?: number;
+  new_tick?: number;
+  new_turn_number?: number;
+  error?: string;
+}
+
+/** Per-faction commit state for the current turn — used to render the
+ *  "waiting on Mars / Belt / etc." HUD. */
+export interface TurnStatus {
+  turn_based_enabled: boolean;
+  ticks_per_turn: number;
+  current_tick: number;
+  turn_number: number;
+  me_committed: boolean;
+  ready: number;
+  needed: number;
+  factions: Array<{ id: string; name: string; committed: boolean }>;
+}
+
 export interface MultiplayerActions {
   gameId: string;
   /** Post a committed maneuver node to the server. Resolves true on success. */
@@ -45,6 +73,16 @@ export interface MultiplayerActions {
   deploySettlement: (intent: SettlementIntent) => Promise<boolean>;
   /** Spend science to advance a tech level. Server is authoritative on cost. */
   research: (intent: ResearchIntent) => Promise<boolean>;
+
+  // --- Turn-Based Mode (MP) ---
+  /** Host-only: enable/disable TBM and set ticks_per_turn for this game. */
+  setTurnSettings: (enabled: boolean, ticksPerTurn: number) => Promise<boolean>;
+  /** Submit caller's faction as ready for the current turn. If this commit
+   *  fills the last slot, the server advances the sim by ticks_per_turn
+   *  ticks before responding. */
+  commitTurn: () => Promise<TurnCommitResult>;
+  /** Poll the per-faction readiness for the current turn. */
+  getTurnStatus: () => Promise<TurnStatus | null>;
 }
 
 const MultiplayerActionsContext = createContext<MultiplayerActions | null>(null);
@@ -113,6 +151,33 @@ export function MultiplayerActionsProvider({
         console.warn('research failed', res.error);
       }
       return res.ok;
+    },
+    async setTurnSettings(enabled, ticksPerTurn) {
+      const res = await apiFetch(`/api/games/${gameId}/turn/settings`, {
+        method: 'POST',
+        body: JSON.stringify({ enabled, ticks_per_turn: ticksPerTurn }),
+      });
+      if (!res.ok) console.warn('setTurnSettings failed', res.error);
+      return res.ok;
+    },
+    async commitTurn() {
+      const res = await apiFetch<TurnCommitResult>(`/api/games/${gameId}/turn/commit`, {
+        method: 'POST',
+      });
+      if (!res.ok) {
+        console.warn('commitTurn failed', res.error);
+        return { ok: false, error: res.error?.message ?? 'unknown' };
+      }
+      // The server already populates `ok: true` in its 200 payload, so
+      // spreading res.data after `ok: true` would re-set the same key.
+      // Take res.data wholesale (which has ok=true) and force `ok` true
+      // defensively, in case the server somehow returns ok=false on a 200.
+      return { ...res.data, ok: true };
+    },
+    async getTurnStatus() {
+      const res = await apiFetch<TurnStatus>(`/api/games/${gameId}/turn/status`);
+      if (!res.ok) return null;
+      return res.data;
     },
     });
   }, [gameId]);

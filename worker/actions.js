@@ -352,6 +352,201 @@ async function handleResearch(req, env, ctx) {
   }, { status: 201 });
 }
 
+// ============================================================
+// Turn-Based Mode endpoints (MP)
+//
+// /turn/settings  — host enables/disables TBM, sets ticks_per_turn
+// /turn/commit    — caller's faction declares ready for current turn.
+//                   When the last faction commits, the worker advances
+//                   the sim by ticks_per_turn ticks in one batch.
+// /turn/status    — read current readiness for HUD display.
+//
+// Implementation notes:
+//  * `games.turn_based_enabled` gates the Room DO alarm (see worker/room.js
+//    alarm() — short-circuits when the flag is on, so wall-clock time
+//    stops driving ticks).
+//  * `games.current_turn_number` increments after each successful batch,
+//    invalidating any stale rows in `game_turn_commits` from prior turns.
+//  * Batch advance is a tick-by-tick loop calling resolveTick(gameId, t)
+//    so interval-based logic (combat cadence, settlement growth) fires at
+//    the right moments. Yes, that's N round-trips per turn; acceptable
+//    for a prototype with N=20 default. Future: vectorize into one pass.
+// ============================================================
+
+async function handleTurnSettings(req, env, ctx) {
+  const { gameId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  // Host-only. We piggyback on the existing room.host_id (rooms own their
+  // game's host identity for the lifetime of the lobby + match).
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+  const room = await env.DB
+    .prepare(`SELECT r.host_id FROM rooms r
+                JOIN room_settings rs ON rs.room_id = r.id
+               WHERE rs.game_id = ? LIMIT 1`)
+    .bind(gameId)
+    .first();
+  if (!room || room.host_id !== ctx.session.user_id) {
+    return err(403, 'not_host', 'only the host can change turn settings');
+  }
+
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+  const enabled = body.enabled ? 1 : 0;
+  const ticks = Math.max(1, Math.min(500, Math.floor(Number(body.ticks_per_turn ?? 20))));
+
+  await env.DB
+    .prepare('UPDATE games SET turn_based_enabled = ?, ticks_per_turn = ? WHERE id = ?')
+    .bind(enabled, ticks, gameId)
+    .run();
+
+  return json({ ok: true, turn_based_enabled: enabled === 1, ticks_per_turn: ticks });
+}
+
+async function handleTurnCommit(req, env, ctx) {
+  const { gameId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const game = await env.DB
+    .prepare('SELECT current_tick, current_turn_number, turn_based_enabled, ticks_per_turn FROM games WHERE id = ?')
+    .bind(gameId)
+    .first();
+  if (!game) return err(404, 'not_found', 'game not found');
+  if (game.turn_based_enabled !== 1) {
+    return err(409, 'tbm_disabled', 'turn-based mode is not enabled on this game');
+  }
+
+  const turnN = game.current_turn_number ?? 0;
+  const now = Date.now();
+
+  // Record commit. PK conflict = idempotent re-commit; treat as success.
+  try {
+    await env.DB
+      .prepare(
+        `INSERT INTO game_turn_commits (game_id, faction_id, turn_number, committed_at_ms)
+           VALUES (?, ?, ?, ?)`,
+      )
+      .bind(gameId, me.id, turnN, now)
+      .run();
+  } catch (_e) { /* PK conflict — already committed, treat as ok */ }
+
+  // Count human factions in this game vs how many have committed for this turn.
+  // AI factions don't need to commit (they have no UI), so they're excluded
+  // from the "all ready" check. Until AI players exist (slot.is_ai), every
+  // faction with a non-null user_id counts as needing a commit.
+  const total = await env.DB
+    .prepare(`SELECT COUNT(*) AS n FROM game_factions
+               WHERE game_id = ? AND user_id IS NOT NULL`)
+    .bind(gameId)
+    .first();
+  const ready = await env.DB
+    .prepare(`SELECT COUNT(*) AS n FROM game_turn_commits
+               WHERE game_id = ? AND turn_number = ?`)
+    .bind(gameId, turnN)
+    .first();
+
+  const needed = Number(total?.n ?? 0);
+  const haveN = Number(ready?.n ?? 0);
+
+  // Not everyone in yet — just acknowledge and let the next /state poll
+  // surface the new ready count.
+  if (haveN < needed) {
+    return json({
+      ok: true,
+      ready: haveN,
+      needed,
+      turn_number: turnN,
+      advanced: false,
+    });
+  }
+
+  // All in. Run the batch: advance by ticks_per_turn ticks, calling
+  // resolveTick per intermediate tick so interval-based logic fires at
+  // the right moments. We grab the Room DO stub via env.ROOM and call
+  // through to its resolveTick — that keeps the per-tick logic in one
+  // place rather than duplicating the alarm body here.
+  const ticksPerTurn = Math.max(1, Number(game.ticks_per_turn ?? 20));
+  const startTick = Number(game.current_tick ?? 0);
+
+  try {
+    const stub = env.ROOM.get(env.ROOM.idFromName(gameId));
+    // Cross-DO call via fetch with a synthetic URL the room knows about.
+    // The room exposes /__internal/advance for this purpose (added below
+    // in room.js handle() routing).
+    const res = await stub.fetch(`https://room/__internal/advance?gameId=${encodeURIComponent(gameId)}&ticks=${ticksPerTurn}`, {
+      method: 'POST',
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      console.error('advance call failed', res.status, text);
+      return err(500, 'advance_failed', 'tick batch failed; see server logs');
+    }
+  } catch (e) {
+    console.error('advance dispatch failed', e);
+    return err(500, 'advance_failed', String(e?.message || e));
+  }
+
+  return json({
+    ok: true,
+    ready: haveN,
+    needed,
+    turn_number: turnN,
+    advanced: true,
+    advanced_ticks: ticksPerTurn,
+    new_tick: startTick + ticksPerTurn,
+    new_turn_number: turnN + 1,
+  });
+}
+
+async function handleTurnStatus(req, env, ctx) {
+  const { gameId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const game = await env.DB
+    .prepare('SELECT current_tick, current_turn_number, turn_based_enabled, ticks_per_turn FROM games WHERE id = ?')
+    .bind(gameId)
+    .first();
+  if (!game) return err(404, 'not_found', 'game not found');
+
+  const turnN = game.current_turn_number ?? 0;
+
+  const factions = await env.DB
+    .prepare(`SELECT id, name FROM game_factions
+               WHERE game_id = ? AND user_id IS NOT NULL`)
+    .bind(gameId)
+    .all();
+  const commits = await env.DB
+    .prepare(`SELECT faction_id, committed_at_ms FROM game_turn_commits
+               WHERE game_id = ? AND turn_number = ?`)
+    .bind(gameId, turnN)
+    .all();
+
+  const committedSet = new Set((commits.results ?? []).map(r => r.faction_id));
+  const factionStates = (factions.results ?? []).map(f => ({
+    id: f.id,
+    name: f.name,
+    committed: committedSet.has(f.id),
+  }));
+
+  return json({
+    turn_based_enabled: game.turn_based_enabled === 1,
+    ticks_per_turn: game.ticks_per_turn ?? 20,
+    current_tick: game.current_tick ?? 0,
+    turn_number: turnN,
+    me_committed: committedSet.has(me.id),
+    factions: factionStates,
+    ready: factionStates.filter(f => f.committed).length,
+    needed: factionStates.length,
+  });
+}
+
 export const routes = [
   {
     method: 'POST',
@@ -376,5 +571,23 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/research$/,
     auth: 'required',
     handle: handleResearch,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/turn\/settings$/,
+    auth: 'required',
+    handle: handleTurnSettings,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/turn\/commit$/,
+    auth: 'required',
+    handle: handleTurnCommit,
+  },
+  {
+    method: 'GET',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/turn\/status$/,
+    auth: 'required',
+    handle: handleTurnStatus,
   },
 ];

@@ -7,7 +7,10 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useGameContext } from '../state/gameContext';
 import { useTurnBasedSettings } from '../state/turnBasedSettings';
+import { computeTurnBudget } from '../game/turnBudget';
 import { useAuth } from '../multiplayer/AuthContext';
+import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { useMpTurnStatus } from '../multiplayer/useMpTurnStatus';
 import { logger } from '../game/logger';
 import './TopBar.css';
 
@@ -44,6 +47,13 @@ export const TopBar: React.FC<TopBarProps> = ({
     gameState, simSpeed, setSimSpeed, updateTick, selectShip,
     turnBasedActive, commitTurn,
   } = useGameContext();
+  // MP turn status: only present when wrapped in MultiplayerActionsProvider.
+  // Drives the MP-flavored COMMIT TURN UI (waiting-on banner, server commit
+  // call, ready/needed badge). In SP this returns null and we fall through
+  // to the local TBM path below.
+  const mpActions = useMultiplayerActions();
+  const { status: mpTurnStatus, refresh: refreshTurnStatus } = useMpTurnStatus();
+  const mpTbmActive = !!mpTurnStatus?.turn_based_enabled;
   const { user, signOut } = useAuth();
   const [dismissedAlertIds, setDismissedAlertIds] = useState<Set<string>>(new Set());
   const [menuOpen, setMenuOpen] = useState(false);
@@ -221,10 +231,10 @@ export const TopBar: React.FC<TopBarProps> = ({
           <div className="time-display__label">TICK</div>
           <div className="time-display__value">{tickStr}</div>
         </div>
-        {!hideSimControls && !turnBasedActive && (
+        {!hideSimControls && !turnBasedActive && !mpTbmActive && (
           // Realtime sim controls. Hidden in Turn-Based Mode (replaced
           // below by the single COMMIT TURN button) and in multiplayer
-          // (server is authoritative).
+          // when the server says TBM is on.
           <div className="sim-controls">
             <button
               className={`sim-btn ${simSpeed === 0 ? 'active' : ''}`}
@@ -244,28 +254,30 @@ export const TopBar: React.FC<TopBarProps> = ({
             <button className="sim-btn" onClick={() => handleSkip(1000)} title="Skip +1000 ticks">+1K</button>
           </div>
         )}
-        {!hideSimControls && turnBasedActive && (
-          // Turn-Based Mode: realtime sim is suppressed. The only time
-          // advance is COMMIT TURN, which jumps the sim forward by the
-          // user-configured ticksPerTurn (see Tunables → Turn-Based Mode).
-          <button
-            className="sim-btn sim-btn--commit-turn"
-            onClick={commitTurn}
-            title="Advance the simulation by one turn"
-            style={{
-              background: '#ffb84d',
-              color: '#0a1018',
-              fontWeight: 700,
-              letterSpacing: '0.12em',
-              padding: '6px 16px',
-              border: 'none',
-              borderRadius: 4,
-              cursor: 'pointer',
-              marginLeft: 8,
+        {!hideSimControls && turnBasedActive && !mpTbmActive && (
+          // SP Turn-Based Mode: realtime sim is suppressed. COMMIT TURN
+          // jumps the sim by ticksPerTurn. The button carries an inline
+          // budget summary (planned transfer fuel + items count) so the
+          // player knows roughly what's about to fire.
+          <CommitTurnButton onCommit={commitTurn} />
+        )}
+        {mpTbmActive && (
+          // MP Turn-Based Mode. Source of truth is the server's
+          // /turn/status poll. COMMIT TURN posts our vote; the sim
+          // doesn't advance until every faction has voted.
+          <MpCommitTurnButton
+            status={mpTurnStatus!}
+            onCommit={async () => {
+              if (!mpActions) return;
+              const res = await mpActions.commitTurn();
+              await refreshTurnStatus();
+              if (res.advanced) {
+                // Server already advanced — the next /state poll picks
+                // up the new tick. Could also force a /state refresh
+                // here, but the existing 1.5s poll cadence is enough.
+              }
             }}
-          >
-            ▶ COMMIT TURN
-          </button>
+          />
         )}
       </div>
 
@@ -346,6 +358,310 @@ const EventLogPanel: React.FC<{
     document.body,
   );
 };
+
+// ----------------------------------------------------------------
+// Turn-Based Mode COMMIT TURN button + budget popover.
+//
+// The bare button shows the planned-spend headline (e.g. "3 orders,
+// -36 fuel"). Hover/tap opens a popover with the full breakdown:
+// every planned transfer, build-in-flight, and research progress.
+// Visual is amber by default, red when planned fuel exceeds the pool
+// (still allowed — the per-tick economy might catch up before each
+// burn fires).
+// ----------------------------------------------------------------
+
+const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
+  const { gameState } = useGameContext();
+  const { ticksPerTurn } = useTurnBasedSettings();
+  const [popoverOpen, setPopoverOpen] = useState(false);
+
+  const budget = useMemo(
+    () => computeTurnBudget(gameState, 'player', ticksPerTurn),
+    [gameState, ticksPerTurn],
+  );
+
+  const headline = (() => {
+    const parts: string[] = [];
+    const ordersN = budget.plannedItems.length;
+    if (ordersN > 0) parts.push(`${ordersN} order${ordersN === 1 ? '' : 's'}`);
+    if (budget.plannedSpend.fuel > 0) parts.push(`-${budget.plannedSpend.fuel} fuel`);
+    const buildsLanding = budget.buildItems.filter(b => b.detail === 'LANDS THIS TURN').length;
+    if (buildsLanding > 0) parts.push(`+${buildsLanding} ship${buildsLanding === 1 ? '' : 's'}`);
+    return parts.length > 0 ? parts.join(' · ') : 'no orders queued';
+  })();
+
+  const overspending = budget.overspend.fuel;
+  const color = overspending ? '#ff5e5e' : '#ffb84d';
+
+  return (
+    <div
+      style={{ position: 'relative', marginLeft: 8, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+      onMouseEnter={() => setPopoverOpen(true)}
+      onMouseLeave={() => setPopoverOpen(false)}
+    >
+      <button
+        className="sim-btn sim-btn--commit-turn"
+        onClick={onCommit}
+        title="Advance the simulation by one turn"
+        style={{
+          background: color,
+          color: '#0a1018',
+          fontWeight: 700,
+          letterSpacing: '0.12em',
+          padding: '6px 14px',
+          border: 'none',
+          borderRadius: 4,
+          cursor: 'pointer',
+          display: 'inline-flex',
+          flexDirection: 'column',
+          alignItems: 'flex-start',
+          lineHeight: 1.15,
+        }}
+      >
+        <span style={{ fontSize: 11 }}>▶ COMMIT TURN</span>
+        <span style={{ fontSize: 9, opacity: 0.75, letterSpacing: '0.04em' }}>{headline}</span>
+      </button>
+      <button
+        onClick={(e) => { e.stopPropagation(); setPopoverOpen(p => !p); }}
+        title="Show turn budget"
+        aria-label="Show turn budget"
+        style={{
+          width: 22, height: 22, borderRadius: 3,
+          border: `1px solid ${color}`, background: 'transparent', color,
+          fontSize: 11, cursor: 'pointer', padding: 0,
+        }}
+      >ⓘ</button>
+
+      {popoverOpen && (
+        <div
+          role="dialog"
+          aria-label="Turn budget"
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 6px)',
+            right: 0,
+            minWidth: 280,
+            maxWidth: 360,
+            zIndex: 1120,
+            background: 'linear-gradient(180deg, #131c27 0%, #070b13 100%)',
+            border: `1px solid ${color}`,
+            borderRadius: 6,
+            padding: '10px 12px',
+            fontFamily: "'JetBrains Mono', monospace",
+            color: '#d8e4ee',
+            boxShadow: '0 10px 28px rgba(0, 0, 0, 0.6)',
+          }}
+        >
+          <div style={{ fontSize: 10, color, letterSpacing: '0.12em', marginBottom: 6 }}>
+            NEXT TURN · +{ticksPerTurn} ticks
+          </div>
+
+          <BudgetRow label="Planned transfers" count={budget.plannedItems.length} delta={`-${budget.plannedSpend.fuel} fuel`} warn={overspending} />
+          {budget.plannedItems.slice(0, 4).map((it, i) => (
+            <div key={i} style={{ fontSize: 10, color: '#8a9fb3', paddingLeft: 8 }}>
+              · {it.label}{it.detail ? ` — ${it.detail}` : ''}
+            </div>
+          ))}
+          {budget.plannedItems.length > 4 && (
+            <div style={{ fontSize: 10, color: '#8a9fb3', paddingLeft: 8 }}>
+              · +{budget.plannedItems.length - 4} more
+            </div>
+          )}
+
+          <div style={{ height: 1, background: '#2a3d50', margin: '8px 0' }} />
+
+          <BudgetRow
+            label="Builds in flight"
+            count={budget.buildItems.length}
+            delta={
+              budget.buildItems.filter(b => b.detail === 'LANDS THIS TURN').length > 0
+                ? `${budget.buildItems.filter(b => b.detail === 'LANDS THIS TURN').length} land this turn`
+                : ''
+            }
+          />
+          {budget.buildItems.slice(0, 3).map((it, i) => (
+            <div
+              key={i}
+              style={{
+                fontSize: 10,
+                color: it.detail === 'LANDS THIS TURN' ? '#7fffa1' : '#8a9fb3',
+                paddingLeft: 8,
+              }}
+            >
+              · {it.label} — {it.detail}
+            </div>
+          ))}
+
+          {budget.research && budget.research.techId && (
+            <>
+              <div style={{ height: 1, background: '#2a3d50', margin: '8px 0' }} />
+              <BudgetRow
+                label="Research"
+                count={1}
+                delta={`${budget.research.progressPct.toFixed(0)}% · ${budget.research.techId}`}
+              />
+            </>
+          )}
+
+          <div style={{ height: 1, background: '#2a3d50', margin: '8px 0' }} />
+
+          <div style={{ fontSize: 10, color: '#8a9fb3' }}>
+            POOL: {Math.round(budget.pool.fuel)} fuel · {Math.round(budget.pool.ore)} ore · {Math.round(budget.pool.credits)} cr
+          </div>
+          {overspending && (
+            <div style={{ fontSize: 10, color: '#ff5e5e', marginTop: 4 }}>
+              ⚠ Planned fuel ({budget.plannedSpend.fuel}) exceeds pool ({Math.round(budget.pool.fuel)}).
+              Some burns may abort mid-turn.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ----------------------------------------------------------------
+// MP COMMIT TURN button — variant for server-driven turn batches.
+//
+// Differences from the SP button:
+//  * Reads readiness from the /turn/status poll (mpTurnStatus prop)
+//    rather than from a local TBM context.
+//  * Once the caller has voted (me_committed=true), the button locks
+//    and shows "WAITING ON N FACTION(S)". When the server advances,
+//    the next poll resets me_committed and the button re-enables.
+//  * No SP budget popover — MP budget would need cross-faction data
+//    we don't have. Future: surface own-faction budget here too.
+// ----------------------------------------------------------------
+
+const MpCommitTurnButton: React.FC<{
+  status: import('../multiplayer/MultiplayerActionsContext').TurnStatus;
+  onCommit: () => Promise<void>;
+}> = ({ status, onCommit }) => {
+  const [busy, setBusy] = useState(false);
+  const locked = status.me_committed || busy;
+  const waitingOn = status.needed - status.ready;
+
+  const handleClick = async () => {
+    if (locked) return;
+    setBusy(true);
+    try { await onCommit(); } finally { setBusy(false); }
+  };
+
+  const label = locked
+    ? (waitingOn > 0 ? `⏳ WAITING ON ${waitingOn}` : '⏳ ADVANCING…')
+    : '▶ COMMIT TURN';
+  const color = locked ? '#5a7080' : '#ffb84d';
+
+  return (
+    <div style={{ marginLeft: 8, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <button
+        onClick={handleClick}
+        disabled={locked}
+        title={`Turn ${status.turn_number} · ${status.ready}/${status.needed} ready · +${status.ticks_per_turn} ticks on commit`}
+        style={{
+          background: color, color: '#0a1018',
+          fontWeight: 700, letterSpacing: '0.12em',
+          padding: '6px 14px', border: 'none', borderRadius: 4,
+          cursor: locked ? 'default' : 'pointer',
+          display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-start',
+          lineHeight: 1.15, opacity: locked ? 0.7 : 1,
+        }}
+      >
+        <span style={{ fontSize: 11 }}>{label}</span>
+        <span style={{ fontSize: 9, opacity: 0.75, letterSpacing: '0.04em' }}>
+          turn {status.turn_number} · {status.ready}/{status.needed}
+        </span>
+      </button>
+    </div>
+  );
+};
+
+// MP-only host control for enabling Turn-Based Mode on the active
+// game. Lives in the SideMenu HOST ADMIN section so non-hosts can't
+// see or change it. Reads current state from /turn/status and writes
+// via POST /turn/settings. Editing ticks_per_turn uses the same
+// pill-stepper pattern as the existing tick-interval admin.
+const MpTbmHostToggle: React.FC = () => {
+  const mp = useMultiplayerActions();
+  const { status, refresh } = useMpTurnStatus();
+  const [busy, setBusy] = useState(false);
+
+  if (!mp || !status) return null;
+
+  const setTBM = async (enabled: boolean, ticks: number) => {
+    setBusy(true);
+    try {
+      await mp.setTurnSettings(enabled, ticks);
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const ticksOptions = [10, 20, 50, 100];
+
+  return (
+    <div className="side-menu__item side-menu__item--block">
+      <span className="side-menu__item-icon">⏯</span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
+        <span className="side-menu__item-label" style={{ marginBottom: 2 }}>
+          Turn-Based Mode {status.turn_based_enabled ? 'ON' : 'OFF'}
+        </span>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button
+            className="side-menu__pill"
+            onClick={() => setTBM(!status.turn_based_enabled, status.ticks_per_turn)}
+            disabled={busy}
+          >
+            {status.turn_based_enabled ? 'Disable' : 'Enable'}
+          </button>
+        </div>
+        {status.turn_based_enabled && (
+          <>
+            <span className="side-menu__item-hint">Ticks per turn</span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {ticksOptions.map(t => (
+                <button
+                  key={t}
+                  className="side-menu__pill"
+                  onClick={() => setTBM(true, t)}
+                  disabled={busy}
+                  style={t === status.ticks_per_turn ? { borderColor: '#ffb84d', color: '#ffb84d' } : undefined}
+                >
+                  +{t}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        <span className="side-menu__item-hint" style={{ marginTop: 2 }}>
+          {status.turn_based_enabled
+            ? `Wall-clock paused. ${status.ready}/${status.needed} committed for turn ${status.turn_number}.`
+            : 'Server alarm advances ticks on schedule.'}
+        </span>
+      </div>
+    </div>
+  );
+};
+
+const BudgetRow: React.FC<{ label: string; count: number; delta?: string; warn?: boolean }> = ({
+  label, count, delta, warn,
+}) => (
+  <div
+    style={{
+      display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+      fontSize: 11, padding: '2px 0',
+    }}
+  >
+    <span>
+      <span style={{ color: '#d8e4ee' }}>{label}</span>
+      <span style={{ color: '#8a9fb3', marginLeft: 6 }}>×{count}</span>
+    </span>
+    {delta && (
+      <span style={{ color: warn ? '#ff5e5e' : '#ffb84d', fontWeight: 600 }}>{delta}</span>
+    )}
+  </div>
+);
 
 // ----------------------------------------------------------------
 // Side drawer: slides in from the left when the logo is clicked.
@@ -527,9 +843,10 @@ const SideMenu: React.FC<SideMenuProps> = ({
           )}
 
           {tbmAvailable && (
-            // Turn-Based Mode toggle. Persisted across sessions. Hidden in
-            // MP (server-driven tick) since TBM would need server-side
-            // turn collection to be meaningful.
+            // SP Turn-Based Mode toggle. Persisted across sessions in
+            // localStorage. Hidden in MP — the MP variant lives in HOST
+            // ADMIN below (host-only since it changes the whole table's
+            // tick rhythm).
             <button
               className="side-menu__item"
               onClick={() => tbm.setEnabled(!tbm.enabled)}
@@ -548,6 +865,13 @@ const SideMenu: React.FC<SideMenuProps> = ({
                 {tbm.enabled ? `+${tbm.ticksPerTurn} ticks/turn` : 'realtime'}
               </span>
             </button>
+          )}
+
+          {!tbmAvailable && isHost && adminGameId && (
+            // MP Turn-Based Mode (host-only). Posts /turn/settings, which
+            // also short-circuits the Room DO alarm so wall-clock time
+            // stops ticking and players have to opt in via COMMIT TURN.
+            <MpTbmHostToggle />
           )}
 
           {isHost && adminGameId && (
