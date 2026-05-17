@@ -18,6 +18,7 @@ import type { GameState, SinglePlayerConfig } from './types';
 import { prewarmShipIcons } from './render/shipIconCache';
 import { COLORS } from './render/colors';
 import { AuthProvider, useAuth } from './multiplayer/AuthContext';
+import { TurnBasedSettingsProvider } from './state/turnBasedSettings';
 import { AuthOverlay } from './multiplayer/AuthOverlay';
 import { Landing } from './components/Landing';
 import { TunablesPage } from './components/TunablesPage';
@@ -459,7 +460,9 @@ export function App() {
   return (
     <ErrorBoundary scope="App">
       <AuthProvider>
-        <AppShell />
+        <TurnBasedSettingsProvider>
+          <AppShell />
+        </TurnBasedSettingsProvider>
       </AuthProvider>
     </ErrorBoundary>
   );

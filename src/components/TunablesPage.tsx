@@ -8,6 +8,7 @@
 // ============================================================
 
 import React, { useEffect, useRef, useState } from 'react';
+import { useTurnBasedSettings } from '../state/turnBasedSettings';
 import './TunablesPage.css';
 
 interface TunablesPageProps {
@@ -276,6 +277,9 @@ export const TunablesPage: React.FC<TunablesPageProps> = ({ onBack }) => {
           <code>DESIGN.md §6</code>.
         </p>
       </div>
+
+      {/* ===== LIVE SETTINGS — these write to context, not just the JSON ===== */}
+      <TurnBasedModeLiveSettings />
 
       {/* ===== Economy & Flow — primer diagrams ===== */}
       <Section
@@ -1627,6 +1631,111 @@ const FlowArrow: React.FC<FlowArrowProps> = ({ x1, y1, x2, y2, label, vertical, 
         </text>
       )}
     </g>
+  );
+};
+
+// ============================================================
+// Turn-Based Mode — LIVE settings (unlike the rest of the page,
+// these write to a React context that the in-game sim loop reads).
+// Persisted to localStorage so a refresh keeps the player in TBM.
+//
+// SP-only for now. MP needs server-side turn collection (see
+// worker/room.js alarm), which is out of scope for this prototype —
+// hence the note + the disabled toggle path in TopBar.
+// ============================================================
+const TurnBasedModeLiveSettings: React.FC = () => {
+  const { enabled, ticksPerTurn, setEnabled, setTicksPerTurn } = useTurnBasedSettings();
+
+  return (
+    <Section
+      eyebrow="LIVE · EXPERIMENTAL"
+      title="Turn-Based Mode"
+      description="Suspend the realtime sim loop and only advance time when you click COMMIT TURN. Each commit jumps the sim forward by the number of ticks below — long enough for transfers to start firing, short enough that you still get a per-turn pulse. Single-player only; multiplayer would need server-side turn collection."
+    >
+      <div className="section-grid">
+        <div className="section-controls">
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              padding: '10px 0',
+              fontSize: 12,
+              cursor: 'pointer',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(e) => setEnabled(e.target.checked)}
+              style={{ width: 18, height: 18, cursor: 'pointer' }}
+            />
+            <span>
+              <strong style={{ color: enabled ? '#ffb84d' : '#d8e4ee' }}>
+                {enabled ? 'TURN-BASED MODE: ON' : 'TURN-BASED MODE: OFF'}
+              </strong>
+              <div style={{ color: '#8a9fb3', fontSize: 10, marginTop: 2 }}>
+                {enabled
+                  ? 'Realtime is suppressed. Use COMMIT TURN in the top bar.'
+                  : 'Game runs in realtime. Toggle on to switch flows.'}
+              </div>
+            </span>
+          </label>
+
+          <Slider
+            label="Ticks per turn"
+            value={ticksPerTurn}
+            min={1}
+            max={200}
+            step={1}
+            onChange={setTicksPerTurn}
+            displayValue={`${ticksPerTurn} ticks`}
+          />
+          <p style={{ color: '#8a9fb3', fontSize: 10, marginTop: 6 }}>
+            One tick ≈ a few minutes of in-game time on the default schedule.
+            20 ticks ≈ ~2.5 game-hours, enough for short transfers to begin
+            and for AI factions to make a couple of decisions.
+          </p>
+        </div>
+        <div
+          className="section-visual"
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 12,
+          }}
+        >
+          <div
+            style={{
+              padding: '24px 28px',
+              border: `2px solid ${enabled ? '#ffb84d' : '#2a3d50'}`,
+              borderRadius: 6,
+              background: enabled ? 'rgba(255, 184, 77, 0.08)' : 'transparent',
+              textAlign: 'center',
+            }}
+          >
+            <div style={{ fontSize: 11, letterSpacing: '0.12em', color: '#8a9fb3' }}>EACH TURN</div>
+            <div
+              style={{
+                fontSize: 32,
+                fontWeight: 700,
+                color: enabled ? '#ffb84d' : '#4a6275',
+                margin: '6px 0',
+              }}
+            >
+              +{ticksPerTurn}
+            </div>
+            <div style={{ fontSize: 10, color: '#8a9fb3' }}>ticks per commit</div>
+          </div>
+          <div style={{ fontSize: 10, color: '#8a9fb3', textAlign: 'center', maxWidth: 220 }}>
+            Plan all your orders, then click <strong>▶ COMMIT TURN</strong> in
+            the top bar to resolve them.
+          </div>
+        </div>
+      </div>
+    </Section>
   );
 };
 

@@ -6,6 +6,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useGameContext } from '../state/gameContext';
+import { useTurnBasedSettings } from '../state/turnBasedSettings';
 import { useAuth } from '../multiplayer/AuthContext';
 import { logger } from '../game/logger';
 import './TopBar.css';
@@ -39,7 +40,10 @@ export const TopBar: React.FC<TopBarProps> = ({
   activePanel, onTogglePanel, onExitMode, hideSimControls = false,
   adminGameId = null, isHost = false,
 }) => {
-  const { gameState, simSpeed, setSimSpeed, updateTick, selectShip } = useGameContext();
+  const {
+    gameState, simSpeed, setSimSpeed, updateTick, selectShip,
+    turnBasedActive, commitTurn,
+  } = useGameContext();
   const { user, signOut } = useAuth();
   const [dismissedAlertIds, setDismissedAlertIds] = useState<Set<string>>(new Set());
   const [menuOpen, setMenuOpen] = useState(false);
@@ -217,7 +221,10 @@ export const TopBar: React.FC<TopBarProps> = ({
           <div className="time-display__label">TICK</div>
           <div className="time-display__value">{tickStr}</div>
         </div>
-        {!hideSimControls && (
+        {!hideSimControls && !turnBasedActive && (
+          // Realtime sim controls. Hidden in Turn-Based Mode (replaced
+          // below by the single COMMIT TURN button) and in multiplayer
+          // (server is authoritative).
           <div className="sim-controls">
             <button
               className={`sim-btn ${simSpeed === 0 ? 'active' : ''}`}
@@ -236,6 +243,29 @@ export const TopBar: React.FC<TopBarProps> = ({
             <button className="sim-btn" onClick={() => handleSkip(100)} title="Skip +100 ticks">+100</button>
             <button className="sim-btn" onClick={() => handleSkip(1000)} title="Skip +1000 ticks">+1K</button>
           </div>
+        )}
+        {!hideSimControls && turnBasedActive && (
+          // Turn-Based Mode: realtime sim is suppressed. The only time
+          // advance is COMMIT TURN, which jumps the sim forward by the
+          // user-configured ticksPerTurn (see Tunables → Turn-Based Mode).
+          <button
+            className="sim-btn sim-btn--commit-turn"
+            onClick={commitTurn}
+            title="Advance the simulation by one turn"
+            style={{
+              background: '#ffb84d',
+              color: '#0a1018',
+              fontWeight: 700,
+              letterSpacing: '0.12em',
+              padding: '6px 16px',
+              border: 'none',
+              borderRadius: 4,
+              cursor: 'pointer',
+              marginLeft: 8,
+            }}
+          >
+            ▶ COMMIT TURN
+          </button>
         )}
       </div>
 
@@ -349,6 +379,11 @@ const SideMenu: React.FC<SideMenuProps> = ({
   const [forceTickStatus, setForceTickStatus] = useState<string | null>(null);
   const [intervalBusy, setIntervalBusy] = useState(false);
   const [intervalStatus, setIntervalStatus] = useState<string | null>(null);
+  // Turn-Based Mode toggle (live setting, persisted to localStorage).
+  // Hidden in multiplayer — the server is authoritative there and TBM
+  // would need server-side turn collection to work, which isn't built.
+  const tbm = useTurnBasedSettings();
+  const tbmAvailable = !adminGameId; // adminGameId is MP-only; SP leaves it null
 
   // Host can change the tick cadence on an in-flight game. Mirrors
   // worker/lobby.js ALLOWED_TICK_INTERVALS — any value not in this set is
@@ -488,6 +523,30 @@ const SideMenu: React.FC<SideMenuProps> = ({
               <span className="side-menu__item-icon">←</span>
               <span className="side-menu__item-label">Back to Menu</span>
               <span className="side-menu__item-hint">Exit this session</span>
+            </button>
+          )}
+
+          {tbmAvailable && (
+            // Turn-Based Mode toggle. Persisted across sessions. Hidden in
+            // MP (server-driven tick) since TBM would need server-side
+            // turn collection to be meaningful.
+            <button
+              className="side-menu__item"
+              onClick={() => tbm.setEnabled(!tbm.enabled)}
+              title={tbm.enabled
+                ? `On — realtime suppressed. Click COMMIT TURN to advance ${tbm.ticksPerTurn} ticks.`
+                : 'Off — game runs in realtime. Click to switch flows.'}
+            >
+              <span className="side-menu__item-icon">{tbm.enabled ? '⏯' : '▶'}</span>
+              <span className="side-menu__item-label">
+                Turn-Based Mode {tbm.enabled ? 'ON' : 'OFF'}
+              </span>
+              <span
+                className="side-menu__item-hint"
+                style={{ color: tbm.enabled ? '#ffb84d' : undefined }}
+              >
+                {tbm.enabled ? `+${tbm.ticksPerTurn} ticks/turn` : 'realtime'}
+              </span>
             </button>
           )}
 

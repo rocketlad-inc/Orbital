@@ -19,6 +19,7 @@ import { TechId, TECH_DEFS } from '../game/techs';
 import { runFactionAI, shouldRunAI } from '../game/factionAI';
 import { planBezierTransfer } from '../physics/bezierTransfer';
 import type { AIActivityEntry } from '../types';
+import { useTurnBasedSettings } from './turnBasedSettings';
 
 // === AI intent application helpers ===========================
 // These translate the AI brain's pure intents into concrete game-state
@@ -197,6 +198,14 @@ interface GameContextType {
   // Research / tech tree
   startResearch: (techId: TechId) => void;
   cancelResearch: () => void;
+
+  // Turn-Based Mode (experimental). `turnBasedActive` is true only when
+  // the player has opted into TBM AND the game isn't externally controlled
+  // (multiplayer is server-driven, so the toggle is a no-op there for now).
+  // `commitTurn` jumps the sim forward by the configured ticksPerTurn and
+  // is the only way time advances while TBM is active.
+  turnBasedActive: boolean;
+  commitTurn: () => void;
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
@@ -704,11 +713,22 @@ export function GameContextProvider({
   // Tick-based game loop
   const lastTimeRef = useRef<number>(0);
 
+  // Turn-Based Mode opt-in. When enabled (and not externally controlled
+  // by an MP server), the realtime sim loop below is suppressed and time
+  // only advances when the player clicks COMMIT TURN. See turnBasedSettings.tsx.
+  const turnBased = useTurnBasedSettings();
+  const turnBasedActive = turnBased.enabled && !externallyControlled;
+
   useEffect(() => {
     // In multiplayer the server's Room-DO alarm advances time. The local
     // sim loop is suppressed so the canvas can't drift away from the
     // server's authoritative tick.
     if (externallyControlled) return;
+    // Turn-based mode: realtime advancement is gated behind COMMIT TURN.
+    // The loop below stays silent until the player exits TBM. simSpeed
+    // and the +10 button still work for muscle-memory but the more
+    // common path is the new commitTurn action.
+    if (turnBasedActive) return;
     if (simSpeed === 0) return;
     lastTimeRef.current = performance.now();
 
@@ -724,7 +744,22 @@ export function GameContextProvider({
     }, 50);
 
     return () => clearInterval(interval);
-  }, [simSpeed, advanceToTick, externallyControlled]);
+  }, [simSpeed, advanceToTick, externallyControlled, turnBasedActive]);
+
+  // Advance the sim by exactly `ticksPerTurn` ticks in one shot. Routes
+  // through the same advanceToTick reducer the realtime loop uses, so
+  // build orders, combat, settlement yields, AI decisions, etc. all
+  // resolve as if a long fast-forward had finished. No-op if TBM is off
+  // (callers still get a sensible function — easier than null-guarding
+  // every UI binding).
+  const commitTurn = useCallback(() => {
+    if (externallyControlled) return; // Server is authoritative in MP
+    const ticks = Math.max(1, Math.floor(turnBased.ticksPerTurn));
+    setGameStateInternal(prev => {
+      logger.info('ACTION', `Turn committed: +${ticks} ticks (now T+${Math.round(prev.currentTick + ticks)})`);
+      return advanceToTick(prev, prev.currentTick + ticks);
+    });
+  }, [advanceToTick, externallyControlled, turnBased.ticksPerTurn]);
 
   const setGameState = useCallback((state: GameState) => {
     setGameStateInternal(state);
@@ -1200,6 +1235,7 @@ export function GameContextProvider({
     deploySettlement, damageSettlement,
     selectedSettlementId, selectSettlement,
     startResearch, cancelResearch,
+    turnBasedActive, commitTurn,
   };
 
   return (
