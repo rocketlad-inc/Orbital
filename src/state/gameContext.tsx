@@ -262,8 +262,58 @@ export function GameContextProvider({
   );
 
   // Replace gameState whenever the external snapshot changes reference.
+  //
+  // Important: in multiplayer the /state poll arrives every ~1.5s. A naive
+  // wholesale replacement (`setGameStateInternal(externalState)`) clobbered
+  // any locally-planned transfers + pendingTransfer that the player had
+  // drawn but not yet COMMITted — so the COMMIT button vanished mid-plan
+  // every time the next poll landed. We post to the server only on commit
+  // (see ShipPanel + commitTransferLocal), so the server legitimately
+  // doesn't know about the local plan yet.
+  //
+  // Fix: merge the local plan back onto the server snapshot. For each ship
+  // in externalState, preserve:
+  //   - any local order with status === 'planned' that isn't already on
+  //     the server (matched by id)
+  //   - the local pendingTransfer if the server hasn't already started a
+  //     transfer for that ship (which would mean the player already
+  //     committed and the server is executing it)
   useEffect(() => {
-    if (externalState) setGameStateInternal(externalState);
+    if (!externalState) return;
+    setGameStateInternal(prev => {
+      const mergedShips = externalState.ships.map(serverShip => {
+        const localShip = prev.ships.find(s => s.id === serverShip.id);
+        if (!localShip) return serverShip;
+
+        // Local planned orders the server doesn't have yet
+        const serverOrderIds = new Set(serverShip.orders.map(o => o.id));
+        const localPlanned = localShip.orders.filter(
+          o => o.status === 'planned' && !serverOrderIds.has(o.id),
+        );
+
+        // pendingTransfer: only keep local if the server isn't already
+        // executing a transfer (which would imply the player has committed)
+        const pendingTransfer = serverShip.transfer
+          ? undefined
+          : (localShip.pendingTransfer ?? serverShip.pendingTransfer);
+
+        if (localPlanned.length === 0 && pendingTransfer === serverShip.pendingTransfer) {
+          return serverShip;
+        }
+        return {
+          ...serverShip,
+          orders: localPlanned.length > 0
+            ? [...serverShip.orders, ...localPlanned]
+            : serverShip.orders,
+          pendingTransfer,
+        };
+      });
+
+      // Re-derive top-level orders list from the merged per-ship orders so
+      // the global GameState.orders stays in sync.
+      const allOrders = mergedShips.flatMap(s => s.orders);
+      return { ...externalState, ships: mergedShips, orders: allOrders };
+    });
   }, [externalState]);
 
   // One-shot: focus the camera on the requested body the first time
