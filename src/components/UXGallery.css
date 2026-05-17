@@ -3,7 +3,14 @@
    ============================================================ */
 
 .ux-gallery {
-  min-height: 100vh;
+  /* Own the viewport height and provide our own scroll context. Global
+     `html, body { overflow: hidden }` in App.css blocks page scrolling
+     (needed for the in-game canvas), so any full-page screen taller
+     than the viewport must scroll internally. Mirrors Landing.css. */
+  position: relative;
+  height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
   background: radial-gradient(ellipse at top, #0e1622 0%, #07090f 70%);
   color: #d8e4ee;
   font-family: 'JetBrains Mono', monospace;
