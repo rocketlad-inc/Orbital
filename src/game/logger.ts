@@ -220,6 +220,13 @@ function formatValue(v: unknown): string {
 // Singleton — there's only ever one logger per session.
 export const logger = new GameLogger();
 
+// Dev-time global handle so playtest tooling / DevTools snippets can poke
+// the logger without going through React. Harmless in prod (just exposes
+// the same singleton everyone else imports).
+if (typeof window !== 'undefined') {
+  (window as unknown as { orbitalLogger: GameLogger }).orbitalLogger = logger;
+}
+
 // Install global error handlers (only in browser).
 if (typeof window !== 'undefined') {
   const prevOnError = window.onerror;

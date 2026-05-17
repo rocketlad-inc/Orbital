@@ -1,0 +1,967 @@
+/* ============================================================
+   UX Gallery — 4 direction explorations
+   ============================================================ */
+
+.ux-gallery {
+  min-height: 100vh;
+  background: radial-gradient(ellipse at top, #0e1622 0%, #07090f 70%);
+  color: #d8e4ee;
+  font-family: 'JetBrains Mono', monospace;
+  padding-bottom: 80px;
+}
+
+/* ----- nav strip ----- */
+.ux-gallery__nav {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 14px 32px;
+  border-bottom: 1px solid #1a2230;
+  background: rgba(10, 14, 20, 0.85);
+  backdrop-filter: blur(8px);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.ux-gallery__back {
+  background: transparent;
+  border: 1px solid #2a3d50;
+  color: #d8e4ee;
+  padding: 6px 14px;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 0.15em;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.ux-gallery__back:hover { border-color: #4ecdc4; color: #4ecdc4; }
+.ux-gallery__brand {
+  font-family: 'Orbitron', 'JetBrains Mono', monospace;
+  font-size: 12px;
+  letter-spacing: 0.22em;
+  color: #ffb84d;
+}
+
+/* ----- intro ----- */
+.ux-gallery__intro {
+  max-width: 1080px;
+  margin: 48px auto 36px;
+  padding: 0 32px;
+}
+.ux-gallery__eyebrow {
+  font-size: 11px;
+  color: #4ecdc4;
+  letter-spacing: 0.3em;
+  margin-bottom: 14px;
+}
+.ux-gallery__title {
+  font-family: 'Orbitron', 'JetBrains Mono', monospace;
+  font-size: 32px;
+  font-weight: 600;
+  margin: 0 0 16px;
+  color: #fff;
+  line-height: 1.18;
+}
+.ux-gallery__lede {
+  font-size: 14px;
+  line-height: 1.7;
+  color: #a8b8c8;
+  max-width: 760px;
+  margin: 0 0 24px;
+}
+.ux-gallery__lede em { color: #4ecdc4; font-style: italic; }
+.ux-gallery__lede strong { color: #ffb84d; font-weight: 600; }
+
+.ux-gallery__legend {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+.ux-gallery__legend-item {
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  color: #6b8195;
+  padding: 4px 10px;
+  border: 1px solid #1f2a37;
+  border-radius: 2px;
+}
+
+/* ----- grid ----- */
+.ux-gallery__grid {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 0 32px;
+  display: grid;
+  gap: 36px;
+  grid-template-columns: 1fr;
+}
+@media (min-width: 1280px) {
+  .ux-gallery__grid { grid-template-columns: 1fr 1fr; }
+}
+
+/* ----- card ----- */
+.ux-card {
+  background: rgba(15, 22, 32, 0.7);
+  border: 1px solid #1f2a37;
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.ux-card__head {
+  padding: 18px 22px;
+  border-bottom: 1px solid #1a2230;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.ux-card__title-block { display: flex; gap: 14px; align-items: center; }
+.ux-card__num {
+  font-family: 'Orbitron', monospace;
+  font-size: 28px;
+  font-weight: 700;
+  color: #2a3d50;
+  letter-spacing: 0.04em;
+}
+.ux-card__name {
+  font-family: 'Orbitron', monospace;
+  font-size: 18px;
+  letter-spacing: 0.16em;
+  margin: 0 0 2px;
+  color: #ffb84d;
+}
+.ux-card__tag {
+  font-size: 10px;
+  color: #6b8195;
+  letter-spacing: 0.1em;
+}
+.ux-card__pitch {
+  padding: 16px 22px 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #b8c8d8;
+  margin: 0;
+}
+
+/* ----- view toggle ----- */
+.ux-view-toggle { display: flex; gap: 0; border: 1px solid #2a3d50; border-radius: 3px; overflow: hidden; }
+.ux-view-toggle__btn {
+  background: transparent;
+  border: none;
+  color: #6b8195;
+  padding: 6px 10px;
+  font-family: inherit;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+  border-right: 1px solid #2a3d50;
+  transition: color 0.12s, background 0.12s;
+}
+.ux-view-toggle__btn:last-child { border-right: none; }
+.ux-view-toggle__btn:hover { color: #d8e4ee; }
+.ux-view-toggle__btn.is-on {
+  background: rgba(78, 205, 196, 0.16);
+  color: #4ecdc4;
+}
+
+/* ----- stage + device frame ----- */
+.ux-card__stage {
+  padding: 24px;
+  background: radial-gradient(ellipse at center, #0a1018 0%, #050709 100%);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 460px;
+}
+.ux-device-frame {
+  border: 1px solid #2a3d50;
+  border-radius: 8px;
+  background: #0a0e14;
+  overflow: hidden;
+  position: relative;
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.6);
+}
+.ux-device-frame--desktop { width: 100%; max-width: 640px; aspect-ratio: 16 / 10; }
+.ux-device-frame--mobile { width: 240px; aspect-ratio: 9 / 19; border-radius: 22px; border-color: #1a2230; }
+.ux-device-frame--spreadsheet { width: 100%; max-width: 640px; min-height: 380px; }
+
+/* ----- card footer (pros/cons) ----- */
+.ux-card__foot {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  padding: 18px 22px 22px;
+  border-top: 1px solid #1a2230;
+}
+.ux-card__col-head {
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  margin-bottom: 8px;
+}
+.ux-card__col-head--pro { color: #6ee7b7; }
+.ux-card__col-head--con { color: #ff9180; }
+.ux-card__col ul {
+  margin: 0;
+  padding-left: 16px;
+  list-style: '·  ';
+}
+.ux-card__col li {
+  font-size: 11px;
+  line-height: 1.6;
+  color: #a8b8c8;
+  margin-bottom: 4px;
+}
+
+/* ----- outro ----- */
+.ux-gallery__outro {
+  max-width: 1080px;
+  margin: 60px auto 0;
+  padding: 28px 32px;
+  border-top: 1px solid #1a2230;
+}
+.ux-gallery__outro-title {
+  font-family: 'Orbitron', monospace;
+  font-size: 14px;
+  letter-spacing: 0.16em;
+  color: #4ecdc4;
+  margin-bottom: 8px;
+}
+.ux-gallery__outro p {
+  font-size: 12px;
+  line-height: 1.7;
+  color: #8a9fb3;
+  margin: 0;
+}
+
+/* ============================================================
+   Shared mockup primitives
+   ============================================================ */
+
+.mock-mini-map { width: 100%; height: 100%; display: block; }
+
+.mock-stat-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid #2a3d50;
+  border-radius: 2px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  background: rgba(0,0,0,0.4);
+}
+.mock-stat-chip__label { color: #6b8195; font-size: 9px; }
+.mock-stat-chip__value { color: #d8e4ee; font-weight: 600; }
+.mock-stat-chip--good { border-color: #2a5547; }
+.mock-stat-chip--good .mock-stat-chip__value { color: #6ee7b7; }
+.mock-stat-chip--warn { border-color: #55492a; }
+.mock-stat-chip--warn .mock-stat-chip__value { color: #ffb84d; }
+.mock-stat-chip--bad { border-color: #552a2a; }
+.mock-stat-chip--bad .mock-stat-chip__value { color: #ff9180; }
+
+.mock-pill {
+  display: inline-block;
+  padding: 2px 7px;
+  border: 1px solid #2a3d50;
+  border-radius: 12px;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: #8a9fb3;
+}
+.mock-pill--on { background: rgba(78, 205, 196, 0.16); border-color: #4ecdc4; color: #4ecdc4; }
+.mock-pill--mini { font-size: 8px; padding: 1px 5px; }
+
+.mock-cycle {
+  font-size: 9px;
+  color: #ffb84d;
+  letter-spacing: 0.1em;
+  margin-left: 8px;
+}
+
+.mock-section-head {
+  font-size: 9px;
+  color: #4ecdc4;
+  letter-spacing: 0.2em;
+  padding: 8px 10px 4px;
+  border-bottom: 1px solid #1a2230;
+  margin-top: 4px;
+}
+
+.mock-nav-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  font-size: 10px;
+  color: #b8c8d8;
+  border-left: 2px solid transparent;
+  cursor: pointer;
+}
+.mock-nav-row span { color: #6b8195; font-size: 9px; }
+.mock-nav-row--on { background: rgba(78, 205, 196, 0.1); border-left-color: #4ecdc4; color: #4ecdc4; }
+.mock-nav-row--warn { color: #ff9180; }
+.mock-nav-row--warn span { color: #ff9180; }
+
+.mock-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 9px;
+  color: #8a9fb3;
+}
+.mock-bar > span:first-child { width: 30px; }
+.mock-bar > span:last-child { margin-left: auto; }
+.mock-bar__fill {
+  flex: 1;
+  height: 4px;
+  background: linear-gradient(90deg, #4ecdc4, #6ee7b7);
+  border-radius: 2px;
+  position: relative;
+}
+.mock-bar > .mock-bar__fill { flex: none; height: 4px; }
+.mock-bar:has(span:nth-child(3)) .mock-bar__fill { flex: 1; }
+.mock-bar--mini { padding: 2px 0; }
+.mock-bar--mini .mock-bar__fill { height: 3px; background: #ffb84d; }
+
+.mock-kv { font-size: 9px; color: #6b8195; padding: 2px 10px 4px; }
+
+.mock-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(60px, 1fr));
+  gap: 4px;
+  padding: 5px 10px;
+  font-size: 10px;
+  color: #b8c8d8;
+  border-bottom: 1px solid #131b25;
+}
+.mock-row__cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mock-row--head { color: #6b8195; font-size: 9px; letter-spacing: 0.1em; background: rgba(10, 18, 28, 0.7); }
+.mock-row--alt { background: rgba(20, 28, 38, 0.4); }
+.mock-row--bad { color: #ff9180; }
+
+.mock-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+  border: 1px solid #2a3d50;
+  border-radius: 3px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: #d8e4ee;
+  cursor: pointer;
+  margin: 4px 6px 4px 0;
+}
+.mock-btn--primary {
+  background: rgba(255, 184, 77, 0.16);
+  border-color: #ffb84d;
+  color: #ffb84d;
+}
+.mock-btn--mini { padding: 3px 7px; font-size: 9px; }
+.mock-btn--big { padding: 10px 16px; font-size: 11px; flex: 1; }
+.mock-btn--ghost { background: transparent; opacity: 0.7; }
+
+.mock-alert {
+  display: inline-block;
+  padding: 4px 10px;
+  background: rgba(255, 94, 94, 0.16);
+  border: 1px solid #ff5e5e;
+  border-radius: 2px;
+  color: #ff9180;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+.mock-alert--mini { font-size: 9px; padding: 3px 8px; }
+
+.mock-tab {
+  flex: 1;
+  text-align: center;
+  padding: 8px 4px;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: #6b8195;
+  border-top: 2px solid transparent;
+  border-bottom: 1px solid #1a2230;
+}
+.mock-tab--on { color: #4ecdc4; border-top-color: #4ecdc4; background: rgba(78, 205, 196, 0.06); }
+.mock-tab--warn { color: #ff9180; }
+
+.mock-tick { color: #6b8195; font-size: 9px; letter-spacing: 0.08em; margin-right: 8px; }
+
+/* ============================================================
+   1. Command Bridge — Desktop
+   ============================================================ */
+
+.ux-cb-desk {
+  height: 100%;
+  display: grid;
+  grid-template-rows: 32px 1fr 28px;
+  font-size: 10px;
+  background: #0a0e14;
+}
+.ux-cb-desk__top {
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 14px;
+  border-bottom: 1px solid #1a2230;
+  background: rgba(15, 22, 32, 0.8);
+}
+.ux-cb-desk__brand { font-size: 9px; color: #ffb84d; letter-spacing: 0.18em; }
+.ux-cb-desk__res { display: flex; gap: 6px; margin-left: auto; }
+.ux-cb-desk__time { display: flex; align-items: center; gap: 4px; }
+.ux-cb-desk__body { display: grid; grid-template-columns: 110px 1fr 130px; overflow: hidden; }
+.ux-cb-desk__rail { border-right: 1px solid #1a2230; padding-bottom: 8px; }
+.ux-cb-desk__map { position: relative; background: #050709; }
+.ux-cb-desk__map-overlay { position: absolute; top: 8px; left: 8px; }
+.ux-cb-desk__panel { border-left: 1px solid #1a2230; padding-bottom: 6px; overflow: hidden; }
+.ux-cb-desk__bottom {
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border-top: 1px solid #1a2230;
+  background: rgba(8, 12, 18, 0.9);
+  font-size: 9px;
+  color: #8a9fb3;
+  gap: 4px;
+  overflow: hidden;
+}
+
+/* ============================================================
+   1. Command Bridge — Mobile
+   ============================================================ */
+
+.ux-cb-mob {
+  height: 100%;
+  display: grid;
+  grid-template-rows: 28px 30px 1fr 30px 36px;
+  font-size: 10px;
+  background: #0a0e14;
+}
+.ux-cb-mob__top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 12px;
+  font-size: 9px;
+  color: #ffb84d;
+  letter-spacing: 0.18em;
+  border-bottom: 1px solid #1a2230;
+}
+.ux-cb-mob__res {
+  display: flex;
+  gap: 4px;
+  padding: 0 8px;
+  align-items: center;
+  border-bottom: 1px solid #1a2230;
+}
+.ux-cb-mob__map { background: #050709; }
+.ux-cb-mob__sit { padding: 6px 8px; border-top: 1px solid #1a2230; }
+.ux-cb-mob__tabs { display: flex; border-top: 1px solid #1a2230; background: rgba(15, 22, 32, 0.9); }
+
+/* ============================================================
+   1. Command Bridge — Spreadsheet
+   ============================================================ */
+
+.ux-cb-sheet {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #0a0e14;
+  font-size: 10px;
+}
+.ux-cb-sheet__tabs { display: flex; border-bottom: 1px solid #1a2230; }
+.ux-cb-sheet__head { background: rgba(10, 18, 28, 0.6); }
+.ux-cb-sheet__rows { flex: 1; overflow: auto; }
+
+/* ============================================================
+   2. Mission Control — Desktop
+   ============================================================ */
+
+.ux-mc-desk {
+  height: 100%;
+  position: relative;
+  background: radial-gradient(ellipse at center, #07111c 0%, #02050a 100%);
+  overflow: hidden;
+}
+.ux-mc-desk__map { position: absolute; inset: 0; opacity: 0.65; }
+.ux-mc-desk__corner { position: absolute; padding: 14px; }
+.ux-mc-desk__corner--tl { top: 0; left: 0; }
+.ux-mc-desk__corner--tr { top: 0; right: 0; text-align: right; }
+.ux-mc-desk__corner--bl { bottom: 80px; left: 0; }
+.ux-mc-desk__bottom {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  background: rgba(10, 14, 20, 0.85);
+  border: 1px solid #2a3d50;
+  border-radius: 3px;
+  padding: 8px 12px;
+}
+
+.mock-readout {
+  font-family: 'JetBrains Mono', monospace;
+  background: rgba(10, 14, 20, 0.85);
+  border: 1px solid #2a3d50;
+  border-radius: 3px;
+  padding: 8px 12px;
+  min-width: 140px;
+  display: inline-block;
+}
+.mock-readout__label { font-size: 9px; color: #6b8195; letter-spacing: 0.18em; margin-bottom: 4px; }
+.mock-readout__value { font-size: 22px; color: #4ecdc4; font-weight: 600; }
+.mock-readout__value span { font-size: 11px; color: #6b8195; }
+.mock-readout__value--amber { color: #ffb84d; }
+.mock-readout__sub { font-size: 9px; color: #8a9fb3; margin-top: 2px; }
+.mock-readout--mini { padding: 6px 10px; }
+.mock-readout--mini .mock-readout__label { margin-bottom: 4px; color: #4ecdc4; }
+
+.mock-mini-grid {
+  display: grid;
+  grid-template-columns: auto auto;
+  column-gap: 14px;
+  row-gap: 2px;
+  font-size: 10px;
+}
+.mock-mini-grid span:nth-child(odd) { color: #6b8195; }
+.mock-mini-grid span:nth-child(even) { color: #d8e4ee; text-align: right; }
+
+.mock-timeline { margin-bottom: 6px; }
+.mock-timeline__head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 8px;
+  color: #6b8195;
+  letter-spacing: 0.12em;
+  margin-bottom: 4px;
+}
+.mock-timeline__track {
+  position: relative;
+  height: 18px;
+  background: linear-gradient(90deg, rgba(78,205,196,0.06), rgba(78,205,196,0.02));
+  border-radius: 2px;
+}
+.mock-timeline__node {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 9px;
+  color: #4ecdc4;
+  background: rgba(10, 14, 20, 0.9);
+  border: 1px solid #4ecdc4;
+  padding: 1px 5px;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+.mock-timeline__node--amber { color: #ffb84d; border-color: #ffb84d; }
+
+.mock-mc-controls { display: flex; gap: 6px; align-items: center; }
+
+/* ============================================================
+   2. Mission Control — Mobile
+   ============================================================ */
+
+.ux-mc-mob { height: 100%; position: relative; background: radial-gradient(ellipse at top, #07111c 0%, #02050a 100%); }
+.ux-mc-mob__map { position: absolute; inset: 0; opacity: 0.7; }
+.ux-mc-mob__badge {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: rgba(255, 184, 77, 0.12);
+  border: 1px solid #ffb84d;
+  border-radius: 3px;
+  padding: 6px 10px;
+  text-align: right;
+}
+.ux-mc-mob__badge .mock-readout__label { color: #ffb84d; font-size: 14px; letter-spacing: 0.06em; }
+.ux-mc-mob__sheet {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  background: rgba(10, 14, 20, 0.96);
+  border: 1px solid #2a3d50;
+  border-radius: 8px;
+  padding: 8px 10px 10px;
+}
+.mock-grab {
+  width: 32px;
+  height: 3px;
+  background: #2a3d50;
+  border-radius: 2px;
+  margin: 0 auto 8px;
+}
+.ux-mc-mob__actions { display: flex; gap: 6px; margin-top: 8px; }
+
+/* ============================================================
+   2. Mission Control — Spreadsheet
+   ============================================================ */
+
+.ux-mc-sheet {
+  height: 100%;
+  background: #0a0e14;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ux-mc-sheet__title {
+  font-size: 10px;
+  color: #4ecdc4;
+  letter-spacing: 0.18em;
+}
+.ux-mc-sheet__gantt {
+  background: rgba(8, 14, 22, 0.7);
+  border: 1px solid #1a2230;
+  border-radius: 3px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mock-gantt-row {
+  position: relative;
+  height: 22px;
+  display: flex;
+  align-items: center;
+}
+.mock-gantt-row__label {
+  width: 70px;
+  font-size: 10px;
+  color: #8a9fb3;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.mock-gantt-bar {
+  position: absolute;
+  left: 70px;
+  height: 16px;
+  background: rgba(78, 205, 196, 0.32);
+  border: 1px solid #4ecdc4;
+  border-radius: 2px;
+  font-size: 9px;
+  color: #d8e4ee;
+  padding: 0 6px;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.mock-gantt-bar--queued { background: rgba(107, 129, 149, 0.18); border-color: #6b8195; color: #8a9fb3; }
+.mock-gantt-bar--amber { background: rgba(255, 184, 77, 0.24); border-color: #ffb84d; color: #ffd180; }
+.mock-gantt-bar--red { background: rgba(255, 94, 94, 0.2); border-color: #ff5e5e; color: #ff9180; }
+.ux-mc-sheet__telem { flex: 1; background: rgba(8, 14, 22, 0.7); border: 1px solid #1a2230; border-radius: 3px; overflow: hidden; }
+
+/* ============================================================
+   3. Tactical HUD — Desktop
+   ============================================================ */
+
+.ux-th-desk {
+  height: 100%;
+  position: relative;
+  background: radial-gradient(ellipse at center, #0c0a18 0%, #02020a 100%);
+  overflow: hidden;
+}
+.ux-th-desk__map { position: absolute; inset: 0; opacity: 0.55; }
+.ux-th-desk__top {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.ux-th-desk__minimap {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 90px;
+  height: 90px;
+  border: 1px solid #ffb84d;
+  border-radius: 3px;
+  background: rgba(0,0,0,0.6);
+  overflow: hidden;
+}
+.ux-th-desk__alerts {
+  position: absolute;
+  right: 12px;
+  top: 112px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 180px;
+}
+.mock-toast {
+  background: rgba(10, 14, 20, 0.9);
+  border-left: 3px solid #4ecdc4;
+  padding: 6px 10px;
+  font-size: 10px;
+  color: #d8e4ee;
+}
+.mock-toast--red { border-left-color: #ff5e5e; color: #ff9180; }
+.mock-toast--amber { border-left-color: #ffb84d; color: #ffb84d; }
+
+.ux-th-desk__wheel {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+.mock-wheel {
+  width: 130px;
+  height: 130px;
+  border-radius: 50%;
+  border: 2px solid #ffb84d;
+  background: radial-gradient(circle, rgba(255, 184, 77, 0.18) 0%, rgba(0, 0, 0, 0.6) 70%);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mock-wheel--mob { width: 100px; height: 100px; }
+.mock-wheel__slice {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  margin-left: -16px;
+  margin-top: -16px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(10, 14, 20, 0.92);
+  border: 1px solid #ffb84d;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: #ffb84d;
+}
+.mock-wheel__center {
+  font-size: 9px;
+  color: #ffb84d;
+  letter-spacing: 0.14em;
+  background: rgba(10, 14, 20, 0.9);
+  padding: 4px 8px;
+  border-radius: 2px;
+  border: 1px solid #ffb84d;
+}
+
+.ux-th-desk__bar {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  background: rgba(8, 12, 18, 0.95);
+  border: 1px solid #2a3d50;
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+.mock-action {
+  min-width: 56px;
+  text-align: center;
+  font-size: 11px;
+  color: #d8e4ee;
+  padding: 6px 8px;
+  border: 1px solid #2a3d50;
+  border-radius: 3px;
+  background: rgba(15, 22, 32, 0.6);
+  line-height: 1.3;
+}
+.mock-action span {
+  display: inline-block;
+  font-size: 8px;
+  background: #ffb84d;
+  color: #0a0e14;
+  border-radius: 2px;
+  padding: 1px 4px;
+  margin: 0 2px;
+  letter-spacing: 0.04em;
+}
+.mock-action--cd { opacity: 0.5; }
+.mock-action--thumb { font-size: 11px; padding: 12px 12px; min-width: auto; flex: 1; }
+
+/* ============================================================
+   3. Tactical HUD — Mobile
+   ============================================================ */
+
+.ux-th-mob { height: 100%; position: relative; background: radial-gradient(ellipse at center, #0c0a18 0%, #02020a 100%); }
+.ux-th-mob__map { position: absolute; inset: 0; opacity: 0.55; }
+.ux-th-mob__toast {
+  position: absolute;
+  top: 10px;
+  left: 8px;
+  right: 8px;
+  text-align: center;
+  background: rgba(255, 94, 94, 0.16);
+  border: 1px solid #ff5e5e;
+  border-radius: 3px;
+  padding: 6px;
+  font-size: 10px;
+  color: #ff9180;
+  letter-spacing: 0.08em;
+}
+.ux-th-mob__wheel {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  transform: translate(-50%, -50%);
+}
+.ux-th-mob__thumb {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 10px;
+  display: flex;
+  gap: 4px;
+}
+
+/* ============================================================
+   3. Tactical HUD — Spreadsheet
+   ============================================================ */
+
+.ux-th-sheet {
+  height: 100%;
+  background: #0a0e14;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ux-th-sheet__title { font-size: 10px; color: #ffb84d; letter-spacing: 0.18em; margin-bottom: 4px; }
+.mock-order-row {
+  display: grid;
+  grid-template-columns: 24px 1fr 1.2fr 1.4fr 60px 80px;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  font-size: 10px;
+  color: #d8e4ee;
+  border: 1px solid #1a2230;
+  border-radius: 3px;
+  background: rgba(15, 22, 32, 0.5);
+  margin-bottom: 4px;
+  cursor: grab;
+}
+.mock-order-row--active { border-color: #ffb84d; background: rgba(255, 184, 77, 0.08); }
+.mock-order-row--paused { opacity: 0.5; }
+.ux-th-sheet__foot { margin-top: auto; display: flex; gap: 4px; }
+
+/* ============================================================
+   4. Empire Manager — Desktop
+   ============================================================ */
+
+.ux-em-desk {
+  height: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1.3fr 1fr;
+  gap: 0;
+  background: #0a0e14;
+}
+.ux-em-desk__left,
+.ux-em-desk__right {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: hidden;
+  background: rgba(10, 14, 20, 0.6);
+}
+.ux-em-desk__left { border-right: 1px solid #1a2230; }
+.ux-em-desk__right { border-left: 1px solid #1a2230; }
+.ux-em-desk__center { position: relative; display: flex; flex-direction: column; }
+.ux-em-desk__center > svg { flex: 1; }
+.mock-em-stat-strip {
+  display: flex;
+  gap: 4px;
+  padding: 8px;
+  background: rgba(10, 14, 20, 0.9);
+  border-top: 1px solid #1a2230;
+  justify-content: center;
+}
+
+.mock-card {
+  background: rgba(20, 28, 38, 0.7);
+  border: 1px solid #2a3d50;
+  border-radius: 6px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mock-card--warn { border-color: #ff5e5e; background: rgba(40, 18, 18, 0.5); }
+.mock-card__title { font-family: 'Orbitron', monospace; font-size: 12px; letter-spacing: 0.12em; color: #ffb84d; }
+.mock-card__sub { font-size: 9px; color: #8a9fb3; }
+.mock-card__cta { font-size: 10px; color: #4ecdc4; letter-spacing: 0.12em; align-self: flex-end; }
+
+.mock-job {
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  background: rgba(20, 28, 38, 0.5);
+  border-radius: 4px;
+  align-items: center;
+}
+.mock-job > div { flex: 1; }
+.mock-job__icon { font-size: 14px; color: #ffb84d; }
+.mock-job__title { font-size: 10px; color: #d8e4ee; }
+.mock-job__time { font-size: 9px; color: #6b8195; margin-top: 2px; text-align: right; }
+
+/* ============================================================
+   4. Empire Manager — Mobile
+   ============================================================ */
+
+.ux-em-mob {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #0a0e14;
+}
+.ux-em-mob__top {
+  display: flex;
+  gap: 4px;
+  padding: 8px;
+  border-bottom: 1px solid #1a2230;
+  justify-content: center;
+}
+.ux-em-mob__cards { flex: 1; padding: 10px; display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
+.ux-em-mob__nav { display: flex; border-top: 1px solid #1a2230; }
+
+/* ============================================================
+   4. Empire Manager — Spreadsheet
+   ============================================================ */
+
+.ux-em-sheet {
+  height: 100%;
+  background: #0a0e14;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ux-em-sheet__title { font-size: 10px; color: #4ecdc4; letter-spacing: 0.18em; margin-bottom: 4px; }
+.ux-em-sheet__filters { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 4px; }
+
+/* ============================================================
+   Responsive — narrow viewport
+   ============================================================ */
+
+@media (max-width: 720px) {
+  .ux-gallery__nav { padding: 12px 16px; }
+  .ux-gallery__intro { padding: 0 16px; margin: 32px auto 24px; }
+  .ux-gallery__title { font-size: 24px; }
+  .ux-gallery__grid { padding: 0 16px; gap: 24px; }
+  .ux-card__head { padding: 14px; }
+  .ux-card__pitch { padding: 12px 14px 0; }
+  .ux-card__stage { padding: 14px; min-height: 380px; }
+  .ux-card__foot { padding: 14px; grid-template-columns: 1fr; gap: 14px; }
+  .ux-device-frame--desktop { max-width: 100%; }
+  .ux-device-frame--mobile { width: 200px; }
+  .ux-gallery__outro { padding: 24px 16px; }
+}

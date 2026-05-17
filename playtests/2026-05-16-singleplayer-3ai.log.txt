@@ -1,0 +1,121 @@
+=== ORBITAL SP PLAYTEST LOG (curated) ===
+Session start:  2026-05-16T15:34:53Z
+Last tick:      7311 (game effectively stalled after tick ~795)
+Faction setup:  Player(Earth) vs ai-1 Outer Alliance(Mars), ai-2 Solar Directorate(Mercury), ai-3 Mars Combine(Venus)
+
+NOTE: Source log had 1594 entries, exactly 50% were duplicates — every event is logged twice
+(LOG-BUG-A, see report). This file is the deduped + filtered version showing only the
+meaningful events (drops per-volley combat noise, keeps destruction + planning + arrivals).
+Full deduped log is still in browser memory at `window.orbitalLogger` and can be re-exported.
+
+==================================================================
+                  KEY EVENT TIMELINE
+==================================================================
+
+[   -] [INFO ] [SESSION ] Logger initialized  href=http://localhost:3000/ vp=374x826
+[   -] [WARN ] [API     ] GET /api/auth/me — non-JSON response  status=504 ms=8
+[   -] [WARN ] [SYSTEM  ] PLAYTEST BUG-1: Faction name pool decoupled from capital — ai-3 named "Mars Combine" but capital is Venus, producing Vanguard-MAR labels at Venus.
+[T+    2] [INFO ] [ACTION  ] Built Scirocco (frigate) at Earth  cost={fuel:-20,ore:-30,credits:-25} buildTime=60
+[T+    3] [WARN ] [SYSTEM  ] PLAYTEST BUG-2: Build buttons (Corvette/Frigate/Destroyer/Freighter) do not display fuel cost. Actual frigate cost is {fuel:20, ore:30, credits:25} but UI shows only "30O 25C".
+[T+   11] [INFO ] [ACTION  ] Planned transfer: Vanguard (Earth → Mercury)  burnTime=17 deltav=1.44
+[T+   15] [INFO ] [ACTION  ] Committed transfer: Vanguard  burnTime=17
+[T+   16] [INFO ] [SIM     ] Transfer departed: Vanguard → mercury  arrival=76
+[T+   25] [INFO ] [TICK    ] snapshot  ships=3 settlements=2 fuel=193 ore=82 cr=33 sci=22 builds=4
+[T+   42] [INFO ] [ACTION  ] Planned transfer: Sentinel (Earth → Venus)  burnTime=47 deltav=0.48
+[T+   44] [INFO ] [ACTION  ] Committed transfer: Sentinel  burnTime=47
+[T+   45] [WARN ] [SYSTEM  ] PLAYTEST UX-1: TRANSFER button switches the map to "click target" mode (no on-screen hint). Only SHOW LIST opens the picker.
+[T+   47] [INFO ] [SIM     ] Transfer departed: Sentinel → venus  arrival=129
+[T+   50] [INFO ] [TICK    ] snapshot  ships=3 settlements=2 fuel=205 ore=94 cr=41 sci=44 builds=4
+[T+   60] [INFO ] [SIM     ] Build complete: Hammer (frigate) at mars  ownedBy=ai-1
+[T+   60] [INFO ] [SIM     ] Build complete: Defiant (frigate) at mercury  ownedBy=ai-2
+[T+   60] [INFO ] [SIM     ] Build complete: Hammer (frigate) at venus  ownedBy=ai-3
+[T+   63] [INFO ] [SIM     ] Build complete: Scirocco (frigate) at earth  ownedBy=player
+[T+   65] [INFO ] [SIM     ] Transfer arrived: Hauler-SOL → earth   ← ai-2 freighter to player's capital
+[T+   76] [INFO ] [SIM     ] Transfer arrived: Vanguard → mercury   ← player attacker arrives
+[T+   87] [INFO ] [SIM     ] Transfer arrived: Hauler-MAR → earth   ← ai-3 freighter to player's capital
+[T+  101] [INFO ] [TICK    ] snapshot  ships=4 settlements=2 fuel=237 ore=124 cr=61 sci=0 builds=2
+[T+  106] [ERROR] [COMBAT  ] Hauler-SOL destroyed!
+[T+  129] [INFO ] [SIM     ] Transfer arrived: Sentinel → venus     ← player attacker arrives
+[T+  146] [INFO ] [SIM     ] Build complete: Voyager (freighter) at mars  ownedBy=ai-1
+[T+  146] [INFO ] [SIM     ] Build complete: Caravan (freighter) at venus  ownedBy=ai-3
+[T+  151] [INFO ] [SIM     ] Transfer arrived: Hauler-OUT → earth   ← ai-1 freighter — 3rd hostile freighter at earth simultaneously
+[T+  166] [INFO ] [SIM     ] Transfer arrived: Vanguard-SOL → earth ← ai-2 escort frigate
+[T+  166] [INFO ] [SIM     ] Transfer arrived: Sentinel-SOL → earth ← ai-2 escort frigate
+[T+  199] [INFO ] [SIM     ] Transfer arrived: Defiant → venus
+[T+  200] [ERROR] [COMBAT  ] Vanguard destroyed!                    ← player's Mercury attacker lost
+[T+  211] [INFO ] [SIM     ] Build complete: Aegis (frigate) at mars  ownedBy=ai-1
+[T+  211] [INFO ] [SIM     ] Build complete: Resolute (frigate) at mercury  ownedBy=ai-2
+[T+  219] [ERROR] [COMBAT  ] Sentinel destroyed!                    ← player's Venus attacker lost
+[T+  225] [INFO ] [TICK    ] snapshot  ships=2 settlements=2 fuel=321 ore=204 cr=115 sci=0 builds=1
+[T+  262] [INFO ] [SIM     ] Build complete: Bulwark (frigate) at venus  ownedBy=ai-3
+[T+  277] [ERROR] [COMBAT  ] Vanguard-SOL destroyed!                ← ai-2 escorts killed at Earth
+[T+  277] [ERROR] [COMBAT  ] Sentinel-SOL destroyed!
+[T+  279] [INFO ] [SIM     ] Transfer arrived: Vanguard-MAR → mars  ← AI-vs-AI: ai-3 attacks ai-1 capital
+[T+  279] [INFO ] [SIM     ] Transfer arrived: Sentinel-MAR → mars
+[T+  289] [INFO ] [SIM     ] Transfer arrived: Hammer → earth       ← ai-3 frigate attacks earth
+[T+  353] [INFO ] [SIM     ] Transfer arrived: Voyager → earth      ← ai-1 freighter
+[T+  359] [ERROR] [COMBAT  ] Defiant destroyed!
+[T+  442] [INFO ] [SIM     ] Transfer arrived: Bulwark → earth      ← ai-3 frigate
+[T+  454] [INFO ] [SIM     ] Transfer arrived: Vanguard-OUT → earth ← 4-ship simultaneous arrival
+[T+  454] [INFO ] [SIM     ] Transfer arrived: Sentinel-OUT → earth
+[T+  454] [INFO ] [SIM     ] Transfer arrived: Vanguard-MAR → earth
+[T+  454] [INFO ] [SIM     ] Transfer arrived: Sentinel-MAR → earth
+[T+  454] [ERROR] [COMBAT  ] Earth Yards destroyed!                 ← player station LOST
+[T+  475] [ERROR] [COMBAT  ] Vanguard-MAR destroyed!
+[T+  475] [ERROR] [COMBAT  ] Sentinel-MAR destroyed!
+[T+  475] [INFO ] [TICK    ] snapshot  ships=2 settlements=1 fuel=508 ore=385 cr=234 sci=0 builds=0
+[T+  492] [INFO ] [SIM     ] Transfer arrived: Caravan → earth
+[T+  496] [ERROR] [COMBAT  ] Earth City destroyed!                  ← player city LOST — now 0 settlements
+[T+  500] [INFO ] [TICK    ] snapshot  ships=2 settlements=0 fuel=517 ore=395 cr=239 sci=0 builds=0
+[T+  505] [INFO ] [SIM     ] Transfer arrived: Hammer → mars
+[T+  544] [ERROR] [COMBAT  ] Bulwark destroyed!
+[T+  544] [ERROR] [COMBAT  ] Hauler destroyed!                      ← player freighter destroyed
+[T+  545] [ERROR] [COMBAT  ] Hammer destroyed!
+[T+  551] [INFO ] [TICK    ] snapshot  ships=1 settlements=0 fuel=517 ore=395 cr=239 sci=0 builds=0
+[T+  571] [INFO ] [SIM     ] Transfer arrived: Vanguard-OUT → mercury ← ai-1 starts counter-attacking ai-2
+[T+  571] [INFO ] [SIM     ] Transfer arrived: Sentinel-OUT → mercury
+[T+  579] [INFO ] [SIM     ] Transfer arrived: Hauler-MAR → titan    ← ai-3 colonising a moon
+[T+  591] [ERROR] [COMBAT  ] Vanguard-OUT destroyed!
+[T+  591] [ERROR] [COMBAT  ] Sentinel-OUT destroyed!
+[T+  617] [INFO ] [SIM     ] Build complete: Bulwark (frigate) at venus  ownedBy=ai-3
+[T+  630] [INFO ] [SIM     ] Transfer arrived: Hauler-OUT → titan
+[T+  667] [INFO ] [SIM     ] Build complete: Sentinel (frigate) at mars  ownedBy=ai-1
+[T+  746] [INFO ] [SIM     ] Transfer arrived: Bulwark → earth        ← ai-3 frigate hits player's last ship
+[T+  795] [ERROR] [COMBAT  ] Scirocco destroyed!                     ← PLAYER ELIMINATED (last ship lost)
+[T+  800] [INFO ] [TICK    ] snapshot  ships=0 settlements=0 fuel=517 ore=395 cr=239 sci=0 builds=0
+[T+  833] [INFO ] [SIM     ] Transfer arrived: Voyager → titan
+[T+  985] [INFO ] [SIM     ] Transfer arrived: Caravan → titan
+[T+ 1137] [INFO ] [SIM     ] Transfer arrived: Hauler-OUT → earth
+[T+ 1329] [WARN ] [SYSTEM  ] PLAYTEST OBSERVATION: AI rush successful — ai-3 (Mars Combine, capital Venus) sent freighter to Earth and deployed a city there on tick<562. Player city/station destroyed by enemy ship volleys before player could react.
+[T+ 1329] [WARN ] [SYSTEM  ] PLAYTEST BUG-3: Body ownership decoupled from settlements. Earth shows ownedBy="player" but player has 0 settlements there and an enemy has a city.
+[T+ 1329] [WARN ] [SYSTEM  ] PLAYTEST UX-2: Combat log shows "Hammer hits Hammer for 6" because two factions both built ships named "Hammer" — names need faction/id qualification.
+[T+ 1341] [INFO ] [SIM     ] Transfer arrived: Voyager → earth
+[T+ 1646] [INFO ] [SIM     ] Transfer arrived: Hauler-OUT → titan
+[T+ 1847] [INFO ] [SIM     ] Transfer arrived: Voyager → titan
+[T+ 2152] [INFO ] [SIM     ] Transfer arrived: Hauler-OUT → earth
+[T+ 2152] [ERROR] [COMBAT  ] Hauler-OUT destroyed!
+[T+ 2355] [INFO ] [SIM     ] Transfer arrived: Voyager → earth
+[T+ 2364] [WARN ] [SYSTEM  ] PLAYTEST BUG-4: No defeat/elimination detection. Player reduced to 0 ships and 0 settlements but status remains "active"; no game-over overlay or victory condition fires.
+[T+ 2364] [WARN ] [SYSTEM  ] PLAYTEST OBSERVATION: ai-2 (Solar Directorate) reduced to "standing by" idle state with only 1 ship, 2 settlements, 0 credits — appears stuck/AFK rather than rebuilding.
+[T+ 3555] [INFO ] [SIM     ] Transfer arrived: Voyager → titan
+[T+ 4034] [INFO ] [SIM     ] Transfer arrived: Voyager → earth
+[T+ 4034] [ERROR] [COMBAT  ] Voyager destroyed!
+[T+ 4035–7311]  >> Game continues indefinitely with player at 0/0, AIs idling. No victory condition fires. <<
+[T+ 7311] [INFO ] [SYSTEM  ] Tab hidden (test session ends here)
+
+==================================================================
+                  FINAL STANDINGS (T+7311)
+==================================================================
+
+Player (Commander):        0 ships,  0 settlements   <-- eliminated at T+795
+ai-1 (Outer Alliance):     3 ships,  2 settlements   (Mars)
+ai-2 (Solar Directorate):  1 ship,   2 settlements   (Mercury — AFK since ~T+600)
+ai-3 (Mars Combine):       3 ships,  3 settlements   (Venus + Earth Outpost)
+
+Body ownership table (per gameState.bodies — stale, see BUG-3):
+  Mercury → ai-2
+  Venus   → ai-3
+  Earth   → player        <-- WRONG: player has no settlements, ai-3 has Earth Outpost
+  Mars    → ai-1
+
+==================================================================

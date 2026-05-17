@@ -4,6 +4,7 @@
 // ============================================================
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useGameContext } from '../state/gameContext';
 import { useAuth } from '../multiplayer/AuthContext';
 import { logger } from '../game/logger';
@@ -287,7 +288,10 @@ const EventLogPanel: React.FC<{
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  return (
+  // Portal to <body> so this overlay isn't trapped by .top-bar's
+  // backdrop-filter (which promotes the top-bar to a containing block
+  // for position:fixed descendants and breaks the right-edge anchor).
+  return createPortal(
     <>
       <div className="event-log__backdrop" onClick={onClose} />
       <aside className="event-log">
@@ -308,7 +312,8 @@ const EventLogPanel: React.FC<{
           {entries.length} entries · Press <kbd>Esc</kbd> to close
         </footer>
       </aside>
-    </>
+    </>,
+    document.body,
   );
 };
 
@@ -421,7 +426,9 @@ const SideMenu: React.FC<SideMenuProps> = ({
     }
   }
 
-  return (
+  // Portal to <body> for the same reason as EventLogPanel: .top-bar's
+  // backdrop-filter would otherwise trap our fixed-positioned drawer.
+  return createPortal(
     <>
       <div className="side-menu__backdrop" onClick={onClose} />
       <aside className="side-menu" role="dialog" aria-label="Menu">
@@ -559,6 +566,7 @@ const SideMenu: React.FC<SideMenuProps> = ({
           <span>Press <kbd>Esc</kbd> to close</span>
         </footer>
       </aside>
-    </>
+    </>,
+    document.body,
   );
 };

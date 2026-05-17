@@ -7,6 +7,7 @@ import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { maintenanceRatesForShip } from '../game/maintenance';
 import { travelTimeModifier, FactionTechState } from '../game/techs';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { ShipIcon } from './ShipIcons';
 import { BottomSheet } from './BottomSheet';
 import './ShipPanel.css';
@@ -23,6 +24,7 @@ export const ShipPanel: React.FC = () => {
   // addition to mutating local state (so the UI feels responsive while
   // waiting for the next /state poll to reconcile).
   const mpActions = useMultiplayerActions();
+  const isMobile = useIsMobile();
 
   const [transferModalOpen, setTransferModalOpen] = useState(false);
   const [fleetModalOpen, setFleetModalOpen] = useState(false);
@@ -258,9 +260,64 @@ export const ShipPanel: React.FC = () => {
       )
     : [];
 
+  // Mobile target-selection mode: hide the ship panel BottomSheet so the
+  // canvas underneath is fully tappable for target picking. The panel
+  // re-mounts automatically when the player picks a target (which clears
+  // targetSelectionMode in the transfer handler) or cancels.
+  // Desktop is unaffected — the panel docks to the side and doesn't cover
+  // the canvas.
+  const hideForTargeting = isMobile && uiState.targetSelectionMode;
+
   return (
     <>
-      <BottomSheet open={true} onClose={deselectShip} title={`Ship: ${ship.name}`}>
+      {/* Floating cancel banner during mobile target selection. The map
+          HUD already prints "SELECT TARGET BODY", but mobile has no ESC
+          key — so we surface a tappable Cancel here. */}
+      {hideForTargeting && (
+        <div
+          className="ship-target-banner"
+          style={{
+            position: 'fixed',
+            left: 12,
+            right: 12,
+            bottom: 'calc(env(safe-area-inset-bottom, 0) + 12px)',
+            zIndex: 1090,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            padding: '10px 14px',
+            background: 'linear-gradient(180deg, #1a2433 0%, #0a1018 100%)',
+            border: '1px solid #ffb84d',
+            borderRadius: 8,
+            boxShadow: '0 6px 18px rgba(0, 0, 0, 0.55)',
+            fontFamily: "'JetBrains Mono', monospace",
+            color: '#ffb84d',
+            fontSize: 11,
+            letterSpacing: '0.08em',
+          }}
+        >
+          <span>TAP A BODY → {ship.name.toUpperCase()}</span>
+          <button
+            onClick={() => setTargetSelectionMode(false)}
+            style={{
+              border: '1px solid #ff5e5e',
+              background: 'transparent',
+              color: '#ff5e5e',
+              fontFamily: 'inherit',
+              fontSize: 11,
+              padding: '6px 12px',
+              borderRadius: 4,
+              cursor: 'pointer',
+              letterSpacing: '0.08em',
+            }}
+          >
+            CANCEL
+          </button>
+        </div>
+      )}
+
+      <BottomSheet open={!hideForTargeting} onClose={deselectShip} title={`Ship: ${ship.name}`}>
       <div className="ship-panel">
         <div className="panel-header">
           <span>SHIP: {ship.name}</span>
