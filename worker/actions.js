@@ -396,10 +396,42 @@ async function handleTurnSettings(req, env, ctx) {
   const enabled = body.enabled ? 1 : 0;
   const ticks = Math.max(1, Math.min(500, Math.floor(Number(body.ticks_per_turn ?? 20))));
 
+  // Read current state so we can re-arm the alarm if TBM is being toggled
+  // off. When TBM is enabled, the DO's alarm() sets storage.setAlarm to
+  // 24h ahead and never updates next_tick_at, so toggling TBM back off
+  // would leave the game frozen until that 24h timer pops (or the cron
+  // happens to ping at the right moment). Force a fresh next_tick_at
+  // here so the next cron tick or DO alarm wakes the game promptly.
+  const prev = await env.DB
+    .prepare('SELECT turn_based_enabled, tick_interval_ms FROM games WHERE id = ?')
+    .bind(gameId)
+    .first();
+
   await env.DB
     .prepare('UPDATE games SET turn_based_enabled = ?, ticks_per_turn = ? WHERE id = ?')
     .bind(enabled, ticks, gameId)
     .run();
+
+  // Toggling TBM OFF: rewrite next_tick_at to "now + tick_interval_ms"
+  // and ask the Room DO to re-arm its alarm to match. Idempotent for
+  // the cron path; necessary for the natural DO-alarm path.
+  if (prev && prev.turn_based_enabled === 1 && enabled === 0) {
+    const interval = prev.tick_interval_ms ?? 60_000;
+    const nextAt = Date.now() + interval;
+    await env.DB
+      .prepare('UPDATE games SET next_tick_at = ? WHERE id = ?')
+      .bind(nextAt, gameId)
+      .run();
+    try {
+      await env.ROOM.get(env.ROOM.idFromName(gameId)).fetch('https://room/tick-now', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ force: false, gameId }),
+      });
+    } catch {
+      // Cron will pick it up within ~60s if the direct poke fails.
+    }
+  }
 
   return json({ ok: true, turn_based_enabled: enabled === 1, ticks_per_turn: ticks });
 }

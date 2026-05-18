@@ -146,7 +146,7 @@ export class Room {
       }
 
       const game = await this.env.DB
-        .prepare('SELECT next_tick_at, status, tick_interval_ms FROM games WHERE id = ?')
+        .prepare('SELECT next_tick_at, status, tick_interval_ms, turn_based_enabled FROM games WHERE id = ?')
         .bind(started.gameId).first();
       if (!game) return new Response(null, { status: 204 });
       if (game.status === 'completed' || game.status === 'abandoned') {
@@ -154,6 +154,19 @@ export class Room {
       }
 
       const now = Date.now();
+      // Orphan recovery: active wall-clock game with NULL next_tick_at
+      // (TBM was on at some point, or the column got cleared). Set it
+      // to "now" so the tick can fire immediately rather than waiting
+      // indefinitely. Skip for TBM games — those are intentionally paused.
+      if (game.next_tick_at == null && game.turn_based_enabled !== 1) {
+        const interval = game.tick_interval_ms ?? 60_000;
+        const nextAt = Date.now() + interval;
+        await this.env.DB
+          .prepare('UPDATE games SET next_tick_at = ? WHERE id = ?')
+          .bind(nextAt, started.gameId).run();
+        try { await this.state.storage.setAlarm(nextAt); } catch {}
+        return new Response(null, { status: 204 });
+      }
       const due = game.next_tick_at != null && game.next_tick_at <= now;
       if (!force && !due) {
         // Nothing to do — and if the alarm got lost since the last call

@@ -9,6 +9,7 @@ import {
   clearedCookie,
   readSessionCookie,
 } from './auth.js';
+import { verifyGoogleIdToken } from './google.js';
 import { MIGRATIONS } from './_migrations_bundle.js';
 import { GIT_SHA, BUILT_AT } from './_version.js';
 
@@ -177,6 +178,111 @@ async function handleLogin(req, env) {
   const { token, expiresAt } = await createSession(env.DB, row.id, req.headers.get('user-agent'));
   return json(
     { user: { id: row.id, email: row.email, display_name: row.display_name } },
+    { headers: { 'set-cookie': sessionCookie(token, expiresAt) } },
+  );
+}
+
+async function handleGoogleAuth(req, env) {
+  const body = await readJson(req);
+  if (!body || typeof body.id_token !== 'string') {
+    return err(400, 'bad_request', 'id_token required');
+  }
+
+  let payload;
+  try {
+    payload = await verifyGoogleIdToken(body.id_token, env.GOOGLE_CLIENT_ID);
+  } catch (e) {
+    const code = e?.code ?? 'verify_failed';
+    if (code === 'server_misconfigured') {
+      return err(500, code, 'server is missing GOOGLE_CLIENT_ID');
+    }
+    return err(401, code, 'google id token rejected');
+  }
+
+  const googleSub = String(payload.sub);
+  const email = String(payload.email).trim().toLowerCase();
+  // Prefer the user-supplied display name (signup-style "call sign"),
+  // fall back to Google's name, then to the email local-part.
+  const displayName = (
+    (typeof body.display_name === 'string' && body.display_name.trim()) ||
+    (typeof payload.name === 'string' && payload.name.trim()) ||
+    email.split('@')[0]
+  ).slice(0, 40);
+
+  const now = Date.now();
+
+  // Three cases, in order:
+  //   1. We already know this google_sub → log them in.
+  //   2. We know this email (from password signup) → attach google_sub.
+  //   3. New user → create row with google_sub, no password.
+  let userId, userEmail, userDisplayName;
+
+  const bySub = await env.DB
+    .prepare('SELECT id, email, display_name FROM users WHERE google_sub = ?')
+    .bind(googleSub)
+    .first();
+
+  if (bySub) {
+    userId = bySub.id;
+    userEmail = bySub.email;
+    userDisplayName = bySub.display_name;
+    await env.DB
+      .prepare('UPDATE users SET last_login_at = ? WHERE id = ?')
+      .bind(now, userId)
+      .run();
+  } else {
+    const byEmail = await env.DB
+      .prepare('SELECT id, email, display_name FROM users WHERE email = ?')
+      .bind(email)
+      .first();
+    if (byEmail) {
+      // Link this Google account to the existing email-based user.
+      userId = byEmail.id;
+      userEmail = byEmail.email;
+      userDisplayName = byEmail.display_name;
+      await env.DB
+        .prepare('UPDATE users SET google_sub = ?, last_login_at = ? WHERE id = ?')
+        .bind(googleSub, now, userId)
+        .run();
+    } else {
+      // Brand-new user — provision row, no password_hash.
+      userId = newUserId();
+      userEmail = email;
+      userDisplayName = displayName;
+      try {
+        await env.DB
+          .prepare(
+            'INSERT INTO users (id, email, display_name, password_hash, google_sub, created_at, last_login_at) ' +
+            'VALUES (?, ?, ?, NULL, ?, ?, ?)',
+          )
+          .bind(userId, userEmail, userDisplayName, googleSub, now, now)
+          .run();
+      } catch (e) {
+        // Race: another request created the same email between the lookup
+        // and the insert. Re-fetch and attach.
+        if (String(e?.message || e).includes('UNIQUE')) {
+          const reFetch = await env.DB
+            .prepare('SELECT id, email, display_name FROM users WHERE email = ?')
+            .bind(email)
+            .first();
+          if (!reFetch) throw e;
+          userId = reFetch.id;
+          userEmail = reFetch.email;
+          userDisplayName = reFetch.display_name;
+          await env.DB
+            .prepare('UPDATE users SET google_sub = ?, last_login_at = ? WHERE id = ?')
+            .bind(googleSub, now, userId)
+            .run();
+        } else {
+          throw e;
+        }
+      }
+    }
+  }
+
+  const { token, expiresAt } = await createSession(env.DB, userId, req.headers.get('user-agent'));
+  return json(
+    { user: { id: userId, email: userEmail, display_name: userDisplayName } },
     { headers: { 'set-cookie': sessionCookie(token, expiresAt) } },
   );
 }
@@ -453,11 +559,42 @@ async function dispatchFeatureRoute(req, env, url, session) {
   return null;
 }
 
+// Auto-migration: each fresh Worker isolate runs handleInit() once on its
+// first /api/* request and caches the resulting Promise. Solves the trap
+// where the deploy pipeline ships new worker code (including new migration
+// SQL bundled into _migrations_bundle.js) but D1's schema stays at the
+// previous version until someone manually curls /api/__init. Without this,
+// every endpoint that touches a freshly-added column 500s until init runs.
+//
+// handleInit is idempotent (only runs migrations not already in _migrations)
+// so calling it eagerly costs ~1 query against _migrations per isolate.
+let _initPromise = null;
+function ensureMigrated(env) {
+  if (_initPromise) return _initPromise;
+  _initPromise = (async () => {
+    try {
+      await handleInit(null, env);
+    } catch (e) {
+      // Don't permanently latch failure — clear the cached promise so a
+      // future request retries. The endpoint that triggered this will
+      // still fail this time, but at least it'll self-heal.
+      _initPromise = null;
+      console.error('ensureMigrated failed', e);
+    }
+  })();
+  return _initPromise;
+}
+
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
 
     if (url.pathname.startsWith('/api/')) {
+      // Skip the auto-init for /api/__init itself (avoid a recursive call)
+      // and /api/_version (unauthenticated probe that shouldn't depend on D1).
+      if (url.pathname !== '/api/__init' && url.pathname !== '/api/_version') {
+        await ensureMigrated(env);
+      }
       try {
         return await this._dispatch(req, env, url);
       } catch (e) {
@@ -485,13 +622,19 @@ export default {
   async scheduled(_event, env, ctx) {
     ctx.waitUntil((async () => {
       try {
+        // Cron handler hits D1 directly, so it suffers the same
+        // stale-schema risk as the request path. Apply migrations first.
+        await ensureMigrated(env);
         const now = Date.now();
+        // Active games that are due OR orphaned (NULL next_tick_at but
+        // not turn-based — the latter happens when a game's tick state
+        // got dropped, e.g. an old game that predates migration 0013).
         const due = await env.DB
           .prepare(
             `SELECT id FROM games
               WHERE status = 'active'
-                AND next_tick_at IS NOT NULL
-                AND next_tick_at <= ?`,
+                AND (turn_based_enabled IS NULL OR turn_based_enabled = 0)
+                AND (next_tick_at IS NULL OR next_tick_at <= ?)`,
           )
           .bind(now)
           .all();
@@ -530,6 +673,7 @@ export default {
       // unauthenticated routes
       if (req.method === 'POST' && url.pathname === '/api/auth/signup') return handleSignup(req, env);
       if (req.method === 'POST' && url.pathname === '/api/auth/login') return handleLogin(req, env);
+      if (req.method === 'POST' && url.pathname === '/api/auth/google') return handleGoogleAuth(req, env);
       if (req.method === 'POST' && url.pathname === '/api/auth/logout') return handleLogout(req, env);
       if (req.method === 'GET'  && url.pathname === '/api/auth/me') return handleMe(req, env);
 
