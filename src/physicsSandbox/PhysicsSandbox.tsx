@@ -95,34 +95,48 @@ export function PhysicsSandbox({ onExit }: { onExit?: () => void }) {
   const [, setFrame] = useState(0);      // bumped by RAF for HUD updates
 
   // ---------- resize ----------
+  // We initialize size from window.innerWidth/innerHeight, but in some
+  // hosting contexts (preview iframes, slow page loads) those return 0
+  // on first read with no follow-up resize event. Re-measure once on
+  // mount to be safe.
   useEffect(() => {
-    const onResize = () => setSize({ w: window.innerWidth, h: window.innerHeight });
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    const measure = () => setSize({ w: window.innerWidth, h: window.innerHeight });
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
   }, []);
 
   // ---------- initial camera focus on Earth ----------
+  // Gate on size being measured — focusBody's scale calc needs a real
+  // viewport, and the resize effect above might run a tick later in
+  // some hosting contexts (preview iframes especially).
+  const didInitialFocusRef = useRef(false);
   useEffect(() => {
+    if (didInitialFocusRef.current) return;
+    if (size.w === 0 || size.h === 0) return;
+    didInitialFocusRef.current = true;
     focusBody('earth');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [size]);
 
   // ---------- RAF loop ----------
+  // The render loop has to read the LATEST draw closure each frame —
+  // draw() is recomputed by useCallback whenever size, trajectory,
+  // nodeChain, or selection changes, and capturing it once at mount
+  // would leave the canvas painting with stale (zero-sized) state.
+  const drawRef = useRef<() => void>(() => {});
   useEffect(() => {
     let raf = 0;
     let last = performance.now();
     const loop = (now: number) => {
       const dtMs = now - last;
       last = now;
-      // simSpeed ticks per *real* second
       const ticksPerSec = simSpeedRef.current;
       if (ticksPerSec > 0) {
         const before = tickRef.current;
         tickRef.current += (ticksPerSec * dtMs) / 1000;
-        // Fire any committed nodes that elapsed during this dt
         executeNodes(before, tickRef.current);
       }
-      // Camera auto-follow
       if (!manualCameraRef.current && viewTargetRef.current && viewTargetRef.current !== 'system') {
         const body = BY_ID[viewTargetRef.current];
         if (body) {
@@ -131,7 +145,7 @@ export function PhysicsSandbox({ onExit }: { onExit?: () => void }) {
           cameraRef.current.y = p.y;
         }
       }
-      draw();
+      drawRef.current();
       setFrame(f => (f + 1) & 0xffff);
       raf = requestAnimationFrame(loop);
     };
@@ -200,7 +214,8 @@ export function PhysicsSandbox({ onExit }: { onExit?: () => void }) {
     if (body.id === 'sol') viewRadius = 3000;
     else if (body.soi && body.soi !== Infinity) viewRadius = body.soi * 1.4;
     else viewRadius = 100;
-    cameraRef.current.scale = Math.min(size.w, size.h) / (viewRadius * 2);
+    const viewDim = Math.max(1, Math.min(size.w, size.h));  // never 0
+    cameraRef.current.scale = viewDim / (viewRadius * 2);
   }, [size]);
 
   const focusSystem = useCallback(() => {
@@ -329,6 +344,9 @@ export function PhysicsSandbox({ onExit }: { onExit?: () => void }) {
     ctx.textAlign = 'left';
     ctx.fillText(s.name.split(' ')[0], ss.x + 8, ss.y - 6);
   }, [size, trajectory, nodeChain, selectedBodyId, selectedNodeId, worldToScreen]);
+
+  // Refresh the RAF loop's draw reference whenever draw's identity changes.
+  drawRef.current = draw;
 
   // ---------- mouse handling ----------
   const draggingRef = useRef<
