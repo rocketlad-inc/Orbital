@@ -676,13 +676,6 @@ export default {
       if (req.method === 'POST' && url.pathname === '/api/auth/google') return handleGoogleAuth(req, env);
       if (req.method === 'POST' && url.pathname === '/api/auth/logout') return handleLogout(req, env);
       if (req.method === 'GET'  && url.pathname === '/api/auth/me') return handleMe(req, env);
-      // Public client config: the frontend pulls this at startup to decide
-      // whether to render the "Sign in with Google" button. Returns the
-      // public Google client_id (safe to expose — it's already in the JWT
-      // audience) or null if the server isn't configured for OAuth yet.
-      if (req.method === 'GET' && url.pathname === '/api/auth/config') {
-        return json({ google_client_id: env.GOOGLE_CLIENT_ID ?? null });
-      }
 
       // everything below requires a session
       const session = await currentSession(req, env);
