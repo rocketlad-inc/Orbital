@@ -14,6 +14,7 @@
 // ============================================================
 
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   listSaves, writeSave, readSave, deleteSave, exportSave, importSave,
   formatBytes, formatSavedAt, SaveMeta, AUTOSAVE_ID,
@@ -114,7 +115,13 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
 
   const title = mode === 'save' ? 'Save Game' : 'Load Game';
 
-  return (
+  // Portal to document.body — the modal is rendered from inside TopBar,
+  // and .top-bar carries a backdrop-filter, which promotes it to a
+  // containing block for any `position: fixed` descendant. Without the
+  // portal the overlay was sized to the top bar's box and clicks fell
+  // through to the canvas underneath. Same trick the SideMenu and
+  // EventLogPanel use (see TopBar.tsx).
+  return createPortal(
     <div
       role="dialog"
       aria-label={title}
@@ -330,6 +337,7 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
           Saves are stored in your browser ({saves.length} / ~10 fit). Export to JSON for backup.
         </footer>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
