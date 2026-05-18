@@ -327,16 +327,29 @@ export function GameContextProvider({
 
   // One-shot: focus the camera on the requested body the first time
   // that body shows up in gameState. Used by MultiplayerGameProvider
-  // to land the player at their capital instead of at Sol.
+  // to land the player at their capital instead of staring at Sol,
+  // and by SinglePlayerView for the same reason.
+  //
+  // Scale picked so the body itself shows as ~80px on a typical
+  // viewport, regardless of body radius — Pluto (r=1.5) zooms way
+  // more than Jupiter (r=8). This is the "drop me at home" view,
+  // not the "see the whole system" view.
   const initialFocusAppliedRef = useRef(false);
   useEffect(() => {
     if (initialFocusAppliedRef.current) return;
     if (!initialFocusBodyId) return;
-    const exists = gameState.bodies.some(b => b.id === initialFocusBodyId);
-    if (!exists) return;
+    const body = gameState.bodies.find(b => b.id === initialFocusBodyId);
+    if (!body) return;
     initialFocusAppliedRef.current = true;
+    const targetPx = 80;
+    const radius = Math.max(0.5, body.radius ?? 3);
+    const scale = Math.max(2, Math.min(60, targetPx / (2 * radius)));
+    // zoomLevel is a 1|2|3 UI mode (discrete), not the actual render
+    // scale — bucket the computed scale into the nearest slot.
+    const zoomLevel: CameraState['zoomLevel'] =
+      scale >= 10 ? 3 : scale >= 4 ? 2 : 1;
     setCameraInternal(prev => ({
-      ...prev, focusedBodyId: initialFocusBodyId, x: 0, y: 0, scale: 2, zoomLevel: 2,
+      ...prev, focusedBodyId: initialFocusBodyId, x: 0, y: 0, scale, zoomLevel,
     }));
   }, [initialFocusBodyId, gameState.bodies]);
   const [camera, setCameraInternal] = useState<CameraState>({

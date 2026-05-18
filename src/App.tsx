@@ -187,8 +187,19 @@ function SinglePlayerView({ onExit }: { onExit: () => void }) {
     );
   }
 
+  // Derive the player's capital from the seeded state so the camera
+  // lands focused on it instead of staring at Sol. The body where
+  // ownedBy === 'player' is the player's capital (singlePlayerSetup
+  // flips ownership for exactly one body per faction).
+  const initialFocusBodyId =
+    seededState.bodies.find(b => b.ownedBy === 'player')?.id ?? null;
+
   return (
-    <GameContextProvider key={providerKey} initialState={seededState}>
+    <GameContextProvider
+      key={providerKey}
+      initialState={seededState}
+      initialFocusBodyId={initialFocusBodyId}
+    >
       <GameUI onExit={onExit} onLoadSave={handleLoadSave} />
       <VictoryOverlay onNewGame={handleNewGame} />
     </GameContextProvider>
