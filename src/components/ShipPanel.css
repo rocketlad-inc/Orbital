@@ -426,6 +426,18 @@
   color: #6ee7b7;
 }
 
+/* Compact variant used by the grouped grid in TransferTargetPicker.
+   The grid renders ~2 columns on a 375px viewport, ~3 columns on tablet,
+   and 4+ on desktop. Override the base button's text-transform so body
+   names stay readable in mixed case. */
+.target-button--compact {
+  text-transform: none !important;
+  letter-spacing: 0.02em !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .input-group {
   margin-bottom: 12px;
   display: flex;

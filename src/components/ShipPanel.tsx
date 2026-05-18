@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { ManeuverNode } from '../types';
 import { planBezierTransfer } from '../physics/bezierTransfer';
@@ -526,42 +526,13 @@ export const ShipPanel: React.FC = () => {
       </BottomSheet>
 
       {transferModalOpen && (
-        <div className="modal-overlay" onClick={() => setTransferModalOpen(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>{hasExistingTransfer ? 'Chain Transfer To' : 'Select Transfer Target'}</h3>
-              <button className="modal-close" onClick={() => setTransferModalOpen(false)}>✕</button>
-            </div>
-            <div className="modal-body">
-              <div className="target-list">
-                {gameState.bodies
-                  .filter((b) => b.id !== 'sol' && b.id !== ship.orbit.parentBodyId)
-                  .map((body) => {
-                    // Show "Ganymede (Jupiter)" — i.e. the parent body's
-                    // display name, not its raw id. The previous code just
-                    // dropped body.parent in, which read fine in single-player
-                    // (where ids are slugs) but produced "(Reemucleoytj:jupiter)"
-                    // in multiplayer where ids carry the gameId namespace.
-                    const parentBody = body.parent
-                      ? gameState.bodies.find(b => b.id === body.parent)
-                      : null;
-                    const parentLabel = parentBody && parentBody.id !== 'sol'
-                      ? ` (${parentBody.name})`
-                      : '';
-                    return (
-                      <button
-                        key={body.id}
-                        className="target-button"
-                        onClick={() => handleTransferManeuver(body.id)}
-                      >
-                        {body.name}{parentLabel}
-                      </button>
-                    );
-                  })}
-              </div>
-            </div>
-          </div>
-        </div>
+        <TransferTargetPicker
+          bodies={gameState.bodies}
+          excludeBodyId={ship.orbit.parentBodyId}
+          title={hasExistingTransfer ? 'Chain Transfer To' : 'Select Transfer Target'}
+          onPick={(id) => handleTransferManeuver(id)}
+          onClose={() => setTransferModalOpen(false)}
+        />
       )}
 
       {fleetModalOpen && (
@@ -584,6 +555,151 @@ interface FleetFormationModalProps {
   onCancel: () => void;
   onConfirm: (ids: string[]) => void;
 }
+
+// ============================================================
+// TransferTargetPicker — grouped, searchable destination picker.
+//
+// Previously rendered ALL ~25 bodies as a single tall column of
+// full-width buttons; on mobile (and even desktop) that meant
+// a wall of scrolling to reach Pluto's moon. Now:
+//
+//   - a search box at the top filters by body name (live)
+//   - bodies are grouped by parent ("Inner system", "Asteroid belt",
+//     "Outer system", "Jupiter system", "Saturn system", etc.)
+//     and rendered in a 2-column responsive grid
+//   - each cell is compact enough that most groups fit in one viewport
+//     screenful without scrolling
+// ============================================================
+interface TransferTargetPickerProps {
+  bodies: import('../types').Body[];
+  /** Id of the body to exclude (the ship's current parent). */
+  excludeBodyId: string;
+  title: string;
+  onPick: (bodyId: string) => void;
+  onClose: () => void;
+}
+
+/** Group label + ordering for the picker. */
+function groupOf(body: import('../types').Body, bodies: import('../types').Body[]): { key: string; label: string; order: number } {
+  if (!body.parent || body.parent === 'sol') {
+    // Categorize sun-orbiters by type for legibility.
+    if (body.type === 'terrestrial') return { key: 'inner', label: 'Inner system', order: 1 };
+    if (body.type === 'dwarf' && body.orbitRadius < 500) return { key: 'belt', label: 'Asteroid belt', order: 2 };
+    if (body.type === 'gas_giant') return { key: 'gas', label: 'Gas giants', order: 3 };
+    if (body.type === 'ice_giant') return { key: 'ice', label: 'Ice giants', order: 4 };
+    if (body.type === 'dwarf') return { key: 'kuiper', label: 'Kuiper belt', order: 5 };
+    return { key: 'other', label: 'Other', order: 99 };
+  }
+  // Moons: group by parent body's name.
+  const parent = bodies.find(b => b.id === body.parent);
+  const pName = parent?.name ?? body.parent;
+  return { key: `moons-${body.parent}`, label: `${pName} system`, order: 10 };
+}
+
+const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
+  bodies, excludeBodyId, title, onPick, onClose,
+}) => {
+  const [query, setQuery] = useState('');
+
+  // Esc closes
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return bodies.filter(b => {
+      if (b.id === 'sol' || b.id === excludeBodyId) return false;
+      if (!q) return true;
+      const parentName = b.parent ? bodies.find(x => x.id === b.parent)?.name.toLowerCase() ?? '' : '';
+      return b.name.toLowerCase().includes(q) || parentName.includes(q);
+    });
+  }, [bodies, excludeBodyId, query]);
+
+  const groups = useMemo(() => {
+    const map = new Map<string, { label: string; order: number; bodies: import('../types').Body[] }>();
+    for (const b of visible) {
+      const g = groupOf(b, bodies);
+      if (!map.has(g.key)) map.set(g.key, { label: g.label, order: g.order, bodies: [] });
+      map.get(g.key)!.bodies.push(b);
+    }
+    // Sort body lists by name; groups by .order then label.
+    for (const v of map.values()) v.bodies.sort((a, b) => a.name.localeCompare(b.name));
+    return Array.from(map.values()).sort((a, b) => a.order - b.order || a.label.localeCompare(b.label));
+  }, [visible, bodies]);
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div
+        className="modal-content target-picker"
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: 480, width: '95vw', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}
+      >
+        <div className="modal-header">
+          <h3>{title}</h3>
+          <button className="modal-close" onClick={onClose} aria-label="Close">✕</button>
+        </div>
+        <div className="modal-body" style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 10, flex: 1, minHeight: 0 }}>
+          <input
+            type="text"
+            placeholder="Search bodies…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            autoFocus
+            style={{
+              width: '100%',
+              padding: '8px 10px',
+              background: 'rgba(255,255,255,0.04)',
+              border: '1px solid #2a3d50',
+              borderRadius: 3,
+              color: '#d8e4ee',
+              fontFamily: 'inherit',
+              fontSize: 12,
+              outline: 'none',
+            }}
+          />
+          <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {groups.length === 0 && (
+              <div style={{ color: '#8a9fb3', fontSize: 11, textAlign: 'center', padding: '24px 0' }}>
+                No bodies match "{query}".
+              </div>
+            )}
+            {groups.map(g => (
+              <div key={g.label}>
+                <div style={{
+                  fontSize: 9, letterSpacing: '0.14em', color: '#8a9fb3',
+                  textTransform: 'uppercase', marginBottom: 6,
+                }}>
+                  {g.label} · {g.bodies.length}
+                </div>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))',
+                    gap: 4,
+                  }}
+                >
+                  {g.bodies.map(body => (
+                    <button
+                      key={body.id}
+                      className="target-button target-button--compact"
+                      onClick={() => onPick(body.id)}
+                      style={{ padding: '7px 8px', fontSize: 10, textAlign: 'center' }}
+                    >
+                      {body.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const FleetFormationModal: React.FC<FleetFormationModalProps> = ({ mode, fleetName, peers, onCancel, onConfirm }) => {
   const [selected, setSelected] = useState<Set<string>>(new Set());
