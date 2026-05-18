@@ -24,6 +24,7 @@ import { AuthOverlay } from './multiplayer/AuthOverlay';
 import { Landing } from './components/Landing';
 import { TunablesPage } from './components/TunablesPage';
 import { UXGallery } from './components/UXGallery';
+import { PhysicsSandbox } from './physicsSandbox/PhysicsSandbox';
 import { ModePicker, GameMode } from './ModePicker';
 import { MultiplayerShell } from './multiplayer/MultiplayerShell';
 import { MultiplayerLobby } from './multiplayer/MultiplayerLobby';
@@ -504,14 +505,42 @@ function AppShell() {
   );
 }
 
+/**
+ * Top-level router gate. The physics sandbox lives on `feat/real-physics`
+ * and is reachable at `?physics`. It's deliberately stood up OUTSIDE the
+ * AppShell tree so it doesn't carry auth / providers / multiplayer wiring
+ * along with it — it's a pure KSP-style maneuver playground.
+ */
+function AppRouter() {
+  const [physicsMode, setPhysicsMode] = useState(() =>
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).has('physics'),
+  );
+  if (physicsMode) {
+    return (
+      <PhysicsSandbox
+        onExit={() => {
+          const url = new URL(window.location.href);
+          url.searchParams.delete('physics');
+          window.history.replaceState({}, '', url.toString());
+          setPhysicsMode(false);
+        }}
+      />
+    );
+  }
+  return (
+    <AuthProvider>
+      <TurnBasedSettingsProvider>
+        <AppShell />
+      </TurnBasedSettingsProvider>
+    </AuthProvider>
+  );
+}
+
 export function App() {
   return (
     <ErrorBoundary scope="App">
-      <AuthProvider>
-        <TurnBasedSettingsProvider>
-          <AppShell />
-        </TurnBasedSettingsProvider>
-      </AuthProvider>
+      <AppRouter />
     </ErrorBoundary>
   );
 }
