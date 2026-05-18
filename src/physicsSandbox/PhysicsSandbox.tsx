@@ -154,43 +154,70 @@ export function PhysicsSandbox({ onExit }: { onExit?: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ---------- node execution ----------
-  // Fire committed nodes whose t falls within the dt we just advanced.
-  // Uses computeNodeChain so each fired node burns on its CORRECTLY-
-  // FRAMED pre-burn orbit (e.g. an encounter node burns in the captured
-  // body's frame after the SOI re-anchor, not in the heliocentric one).
-  // Stale nodes (target encounter not found) are skipped silently.
+  // ---------- node execution + SOI transitions ----------
+  // Advances ship.orbit through every event that occurred during the
+  // (tBefore, tAfter] window — both committed node burns AND patched-
+  // conics SOI transitions (escapes from the current parent, entries
+  // into a sibling body). Without this, the projection and the actual
+  // ship state can diverge: the projection knows the ship will exit
+  // Earth's SOI mid-coast and continue heliocentric, but if the
+  // executor only fires nodes, ship.orbit stays anchored to Earth and
+  // the marker drifts off into nonsense.
+  //
+  // Implementation uses computeTrajectory itself as the source of
+  // truth — it already walks both kinds of events in order. We just
+  // pick the orbit whose arc covers tAfter, sum the fuel for any
+  // committed nodes that fired along the way, and recompute remaining
+  // node times against the new base orbit.
   const executeNodes = useCallback((tBefore: number, tAfter: number) => {
     const s = shipRef.current;
-    const chain = computeNodeChain(s.orbit, s.nodes, tBefore);
-    const fireable = chain.filter(
-      l => l.node.committed && !l.node.stale &&
-           l.node.t > tBefore && l.node.t <= tAfter,
-    ).sort((a, b) => a.node.t - b.node.t);
-    if (fireable.length === 0) return;
+    const liveNodes = s.nodes.filter(n => n.committed && !n.stale);
+    const arcs = computeTrajectory(s.orbit, liveNodes, tBefore);
+    if (arcs.length === 0) return;
 
-    // The post-burn orbit of the LAST node fired in this tick becomes
-    // the ship's new base orbit. (Earlier links' postBurnOrbits get
-    // superseded by later ones — the chain already threads them.)
-    const lastLink = fireable[fireable.length - 1];
-    const newOrbit = lastLink.postBurnOrbit;
-
-    let newFuel = s.fuel;
-    const firedIds = new Set<number>();
-    for (const link of fireable) {
-      firedIds.add(link.node.id);
-      const dvMag = Math.sqrt(link.node.dv.prograde ** 2 + link.node.dv.radial ** 2);
-      newFuel = Math.max(0, newFuel - Math.round(dvMag * 10));
+    // The orbit active at tAfter is the LATEST arc whose tStart <= tAfter.
+    // (Trajectory budget may end before tAfter; in that case we stick
+    // with the last arc's orbit — equivalent to "no event happened in
+    // the unprojected tail.")
+    let activeOrbit = s.orbit;
+    let crossedAnEvent = false;
+    for (const arc of arcs) {
+      if (arc.tStart <= tAfter + 1e-9) {
+        if (arc.orbit !== s.orbit && arc.tStart > tBefore + 1e-9) {
+          crossedAnEvent = true;
+        }
+        activeOrbit = arc.orbit;
+      } else {
+        break;
+      }
     }
-    const newNodes = s.nodes.filter(n => !firedIds.has(n.id));
 
-    // Remaining nodes' anchors may depend on the new base orbit — rerun
-    // recomputeNodeTimes so any pending encounter/periapsis nodes
-    // re-derive their `t` against what the ship is actually flying now.
+    // Fired nodes are committed ones whose t lies in the advanced window.
+    const firedIds = new Set<number>();
+    let fuelSpent = 0;
+    for (const n of liveNodes) {
+      if (n.t > tBefore && n.t <= tAfter) {
+        firedIds.add(n.id);
+        const dvMag = Math.sqrt(n.dv.prograde ** 2 + n.dv.radial ** 2);
+        fuelSpent += Math.round(dvMag * 10);
+      }
+    }
+
+    // Nothing happened — no SOI transitions, no node fires.
+    if (!crossedAnEvent && firedIds.size === 0) return;
+
+    const newOrbit = activeOrbit;
+    const newNodes = s.nodes.filter(n => !firedIds.has(n.id));
+    // Pending nodes (capture/circularization waiting on the new orbit)
+    // need their anchor times re-derived.
     recomputeNodeTimes(newOrbit, newNodes, tAfter);
 
     const updated: SandboxShip = {
-      ...s, orbit: newOrbit, nodes: newNodes, fuel: newFuel, _traj: null,
+      ...s,
+      orbit: newOrbit,
+      nodes: newNodes,
+      fuel: Math.max(0, s.fuel - fuelSpent),
+      _traj: null,
     };
     shipRef.current = updated;
     setShip(updated);
