@@ -24,6 +24,11 @@ export const TRAJ_STEP = 0.5;
 export const TRAJ_MAX_TICKS = 1500;
 export const TRAJ_MAX_ARCS = 6;
 export const TRAJ_ORBITS_AHEAD = 1.5;
+/** Ticks of SOI-exit suppression after a fresh re-anchor. Prevents the
+ *  ship from instantly bouncing back out of an SOI because the new
+ *  orbit's reconstructed radius lies microscopically outside its parent
+ *  due to floating-point noise in orbitFromWorldState. */
+export const SOI_ENTRY_GRACE = 3.0;
 
 /**
  * Anchor kinds drive how `node.t` is recomputed when the trajectory or
@@ -157,6 +162,9 @@ export function computeTrajectory(
   const sortedNodes = [...nodes].filter(n => n.t >= tStart).sort((a, b) => a.t - b.t);
   let nodeIdx = 0;
 
+  // Grace window after a fresh SOI entry — see SOI_ENTRY_GRACE doc.
+  let exitGraceUntil = -Infinity;
+
   for (let arcCount = 0; arcCount < TRAJ_MAX_ARCS && tCursor < tEnd; arcCount++) {
     let t = tCursor;
     let event: {
@@ -196,8 +204,9 @@ export function computeTrajectory(
       const nextT = Math.min(t + TRAJ_STEP, arcBudget, nodeT);
       const pos = orbitWorldPos(currentOrbit, nextT);
 
-      // Exit current parent's SOI?
-      if (currentParent.id !== 'sol') {
+      // Exit current parent's SOI? Suppressed inside the grace window
+      // that follows a fresh SOI re-anchor — see SOI_ENTRY_GRACE.
+      if (currentParent.id !== 'sol' && nextT >= exitGraceUntil) {
         const pp = bodyPosition(currentParent, nextT);
         const dx = pos.x - pp.x, dy = pos.y - pp.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
@@ -251,6 +260,10 @@ export function computeTrajectory(
       if (!newOrbit) break;
       currentOrbit = newOrbit;
       tCursor = event.t;
+      // Fresh re-anchor: silence the SOI-exit check briefly so floating-
+      // point noise at the boundary doesn't immediately bounce us back
+      // out of the new parent.
+      if (event.type === 'enter') exitGraceUntil = event.t + SOI_ENTRY_GRACE;
     } else if (nextNode && t >= nodeT) {
       arcs.push({
         orbit: currentOrbit,
@@ -366,10 +379,14 @@ export function findNextSOIEvent(
 
   const stepSize = 0.5;
   const limit = Math.min(maxLookahead, orbit.period * 2);
+  // If this orbit was just re-anchored (epoch is recent), skip exit
+  // checks until the grace window elapses — same numerical-noise guard
+  // computeTrajectory uses.
+  const exitGraceUntil = orbit.epoch + SOI_ENTRY_GRACE;
   for (let dt = stepSize; dt <= limit; dt += stepSize) {
     const t = fromTick + dt;
     const pos = orbitWorldPos(orbit, t);
-    if (parent.id !== 'sol') {
+    if (parent.id !== 'sol' && t >= exitGraceUntil) {
       const pp = bodyPosition(parent, t);
       const dx = pos.x - pp.x, dy = pos.y - pp.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
