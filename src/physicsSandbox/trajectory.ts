@@ -137,6 +137,19 @@ export function nextApsisTime(
   const thetaNow = trueAnomalyAt(orbit, fromTick);
   const thetaTarget = which === 'apoapsis' ? Math.PI : 0;
 
+  // If we're already AT the target apsis (e.g. a freshly-spawned ship at
+  // periapsis when the user clicks +STEP @ PERIAPSIS), the NEXT apsis is
+  // one full period away. Without this short-circuit, the sign-change
+  // scan below trips on the very first sample past `fromTick` and the
+  // bisection returns ≈ fromTick — i.e. "right now", which then fires
+  // immediately on commit and leaves the player wondering why their
+  // planned future burn never happened.
+  let deltaTheta = thetaTarget - thetaNow;
+  while (deltaTheta < 0) deltaTheta += TWO_PI;
+  if (deltaTheta < 1e-3 || Math.abs(deltaTheta - TWO_PI) < 1e-3) {
+    return fromTick + orbit.period;
+  }
+
   let tLow = fromTick;
   let tHigh = fromTick + orbit.period * 1.01;
   const samples = 60;
