@@ -312,11 +312,22 @@ export function maneuverMagnitude(dv: ManeuverDv): number {
 
 /**
  * Apply a Δv at time `t` on `orbit`, producing the new orbit immediately
- * after the burn. Uses vis-viva to derive pre-burn speed; adds the Δv in
- * the prograde / radial-out basis; converts the new state vector back to
- * orbital elements via orbitFromLocalState.
+ * after the burn. Two code paths:
+ *
+ * - For BOUND orbits, vis-viva on the stored elements gives the exact
+ *   speed and `prograde` is the velocity direction — clean math.
+ *
+ * - For ESCAPE orbits, the stored elements are the "fake 50·SOI ellipse"
+ *   sentinel; their vis-viva and prograde-from-Kepler are both wrong.
+ *   We Verlet-integrate the stored `escapeState` forward to `t` to
+ *   recover the true state vector, then apply Δv to that. This keeps
+ *   burns at SOI entry sized against the real hyperbolic excess
+ *   velocity rather than the fictional fake-ellipse one.
  */
 export function applyNodeToOrbit(orbit: Orbit, t: number, dv: ManeuverDv): Orbit {
+  if (orbit.escapeState) {
+    return applyNodeToEscapeOrbit(orbit, t, dv);
+  }
   const { prograde, radialOut } = velocityVectorsAt(orbit, t);
   const local = localPositionAt(orbit, t);
   const a = semiMajor(orbit);
@@ -331,6 +342,48 @@ export function applyNodeToOrbit(orbit: Orbit, t: number, dv: ManeuverDv): Orbit
   const newVx = oldVx + dvx;
   const newVy = oldVy + dvy;
   const next = orbitFromLocalState(local.x, local.y, newVx, newVy, orbit.parentBodyId, t);
+  return next ?? orbit;
+}
+
+/**
+ * State-vector-based burn application for escape orbits. Verlet-integrates
+ * `escapeState` to burn time, applies Δv along the actual prograde and
+ * radial-out directions in the parent-local frame, then reconstructs
+ * orbital elements via orbitFromLocalState.
+ */
+function applyNodeToEscapeOrbit(orbit: Orbit, t: number, dv: ManeuverDv): Orbit {
+  const es = orbit.escapeState!;
+  const mu = muOf(orbit.parentBodyId);
+  // Integrate forward from escapeState.t to t. Uses a small fixed step
+  // for accuracy over the typical 0.1-tick burn-after-entry window.
+  let rx = es.rx, ry = es.ry, vx = es.vx, vy = es.vy;
+  let curT = es.t;
+  const h = 0.05;
+  let safety = 0;
+  while (curT < t - 1e-9 && safety++ < 5000) {
+    const dt = Math.min(h, t - curT);
+    const r = Math.sqrt(rx * rx + ry * ry);
+    if (r < 0.1) break;
+    const acc = -mu / (r * r * r);
+    const ax = acc * rx, ay = acc * ry;
+    rx += vx * dt + 0.5 * ax * dt * dt;
+    ry += vy * dt + 0.5 * ay * dt * dt;
+    const r2 = Math.sqrt(rx * rx + ry * ry);
+    const acc2 = -mu / (r2 * r2 * r2);
+    vx += 0.5 * (ax + acc2 * rx) * dt;
+    vy += 0.5 * (ay + acc2 * ry) * dt;
+    curT += dt;
+  }
+  // Build prograde / radial-out from the actual state vector at burn time.
+  const r = Math.sqrt(rx * rx + ry * ry) || 1;
+  const speed = Math.sqrt(vx * vx + vy * vy) || 1;
+  const progradeX = vx / speed;
+  const progradeY = vy / speed;
+  const radialOutX = rx / r;
+  const radialOutY = ry / r;
+  const newVx = vx + progradeX * dv.prograde + radialOutX * dv.radial;
+  const newVy = vy + progradeY * dv.prograde + radialOutY * dv.radial;
+  const next = orbitFromLocalState(rx, ry, newVx, newVy, orbit.parentBodyId, t);
   return next ?? orbit;
 }
 
