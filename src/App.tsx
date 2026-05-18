@@ -243,10 +243,31 @@ function AppShell() {
       if (cancelled) return;
       if (res.ok) {
         setActiveRooms(res.data.rooms);
+
+        // Sanity-check the localStorage room id against actual membership.
+        // If selectedRoomId points at a room that's no longer in /me/rooms
+        // (kicked, deleted by host, account swapped), clear it before any
+        // mode-restore logic kicks in. Otherwise we drop the user into a
+        // room they can't access and the poll loop hammers 403s.
+        const remembered = localStorage.getItem(ROOM_STORAGE_KEY);
+        if (remembered) {
+          const stillMember = res.data.rooms.some(r => r.id === remembered);
+          if (!stillMember) {
+            logger.warn('SYSTEM', 'Stale room id in localStorage — clearing', { roomId: remembered });
+            localStorage.removeItem(ROOM_STORAGE_KEY);
+            setSelectedRoomId(null);
+          }
+        }
+
         // If the user has a single active game already underway, jump them
         // straight back in — this is the "default to active game" behavior.
         const inProgress = res.data.rooms.filter(r => r.game_status === 'active');
         if (inProgress.length === 1 && mode === null) {
+          // Lock selectedRoomId to that game so we don't accidentally land
+          // on whatever stale room was in localStorage from another session.
+          const liveId = inProgress[0].id;
+          setSelectedRoomId(liveId);
+          localStorage.setItem(ROOM_STORAGE_KEY, liveId);
           setMode('multiplayer');
           return;
         }
@@ -359,6 +380,7 @@ function AppShell() {
   useEffect(() => {
     if (!selectedRoomId || !user) return;
     let cancelled = false;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
     const poll = async () => {
       const res = await apiFetch<{
         game_id?: string | null;
@@ -369,13 +391,28 @@ function AppShell() {
         const gid = (res.data.settings?.game_id ?? res.data.game_id) || null;
         setRoomGameId(gid);
         setRoomHostId(res.data.settings?.host_id ?? null);
-      } else if (res.status === 404) {
+        return;
+      }
+      // 404 = room is gone. 403 = we're not a member anymore (kicked, or
+      // a stale localStorage room id from a previous account). Either
+      // way: bail back to the lobby, clear the stored id, and stop the
+      // poll loop so we don't hammer the endpoint with hundreds of 403s
+      // until the user reloads the tab.
+      if (res.status === 404 || res.status === 403) {
+        if (intervalId) clearInterval(intervalId);
+        intervalId = null;
+        logger.warn('SYSTEM', `Room poll bailed (${res.status}) — exiting room`, {
+          roomId: selectedRoomId, code: res.error?.code,
+        });
         setRoomGameId('missing');
       }
     };
     poll();
-    const t = setInterval(poll, 3000);
-    return () => { cancelled = true; clearInterval(t); };
+    intervalId = setInterval(poll, 3000);
+    return () => {
+      cancelled = true;
+      if (intervalId) clearInterval(intervalId);
+    };
   }, [selectedRoomId, user]);
 
   // If the room itself is gone, clear it and route back to the lobby.
