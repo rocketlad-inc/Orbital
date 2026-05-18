@@ -29,6 +29,13 @@ export const TRAJ_ORBITS_AHEAD = 1.5;
  *  orbit's reconstructed radius lies microscopically outside its parent
  *  due to floating-point noise in orbitFromWorldState. */
 export const SOI_ENTRY_GRACE = 3.0;
+/** Ticks of suppression on re-detecting an enter event into the body we
+ *  just exited. After a clean exit, the re-anchored heliocentric orbit
+ *  can land microscopically back inside the exited body's SOI due to
+ *  reconstruction noise — without this cooldown, the propagator picks
+ *  up an immediate "re-encounter" and you get a string of duplicate
+ *  ENC/EXIT pairs on the same body. */
+export const SOI_EXIT_COOLDOWN = 3.0;
 /** Multiplicative margin on SOI-exit detection. A capture burn sized
  *  "just enough" to bound the orbit will land apoapsis right at SOI;
  *  tiny floating-point excursions of `r` above SOI shouldn't trigger
@@ -36,6 +43,11 @@ export const SOI_ENTRY_GRACE = 3.0;
  *  Bisection then finds the true (soi-radius) crossing for the arc
  *  endpoint, so observable exits stay exact. */
 export const SOI_EXIT_HYSTERESIS = 1.03;
+/** Multiplicative margin on SOI-enter detection. Same idea as the exit
+ *  hysteresis but in reverse: don't declare an "enter" event unless the
+ *  ship is meaningfully inside the body's SOI. Prevents false re-entries
+ *  triggered by reconstruction noise at the boundary. */
+export const SOI_ENTER_HYSTERESIS = 0.97;
 
 /**
  * Anchor kinds drive how `node.t` is recomputed when the trajectory or
@@ -171,6 +183,9 @@ export function computeTrajectory(
 
   // Grace window after a fresh SOI entry — see SOI_ENTRY_GRACE doc.
   let exitGraceUntil = -Infinity;
+  // Cooldown on re-entering the body we just exited — see SOI_EXIT_COOLDOWN.
+  let enterCooldownBody: string | null = null;
+  let enterCooldownUntil = -Infinity;
 
   for (let arcCount = 0; arcCount < TRAJ_MAX_ARCS && tCursor < tEnd; arcCount++) {
     let t = tCursor;
@@ -228,16 +243,19 @@ export function computeTrajectory(
         }
       }
 
-      // Enter a sibling body's SOI?
+      // Enter a sibling body's SOI? Two guards:
+      //  - hysteresis margin (require dist meaningfully inside SOI)
+      //  - cooldown on re-entering the SAME body we just exited
       let entered: { type: 'enter'; t: number; intoBodyId: string } | null = null;
       for (const body of BODIES) {
         if (body.id === 'sol') continue;
         if (body.id === currentOrbit.parentBodyId) continue;
         if (body.parent !== currentOrbit.parentBodyId) continue;
+        if (body.id === enterCooldownBody && nextT < enterCooldownUntil) continue;
         const bp = bodyPosition(body, nextT);
         const dx = pos.x - bp.x, dy = pos.y - bp.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < body.soi) {
+        if (dist < body.soi * SOI_ENTER_HYSTERESIS) {
           const tEnter = bisectSOIEnter(currentOrbit, body.id, t, nextT);
           if (!entered || tEnter < entered.t) {
             entered = { type: 'enter', t: tEnter, intoBodyId: body.id };
@@ -274,7 +292,15 @@ export function computeTrajectory(
       // Fresh re-anchor: silence the SOI-exit check briefly so floating-
       // point noise at the boundary doesn't immediately bounce us back
       // out of the new parent.
-      if (event.type === 'enter') exitGraceUntil = event.t + SOI_ENTRY_GRACE;
+      if (event.type === 'enter') {
+        exitGraceUntil = event.t + SOI_ENTRY_GRACE;
+      } else if (event.type === 'exit') {
+        // After an exit, suppress an immediate re-entry into the same
+        // body — the new heliocentric orbit can land microscopically
+        // back inside its SOI from reconstruction noise.
+        enterCooldownBody = event.fromBodyId ?? null;
+        enterCooldownUntil = event.t + SOI_EXIT_COOLDOWN;
+      }
     } else if (nextNode && t >= nodeT) {
       arcs.push({
         orbit: currentOrbit,
@@ -418,7 +444,7 @@ export function findNextSOIEvent(
       const bp = bodyPosition(body, t);
       const dx = pos.x - bp.x, dy = pos.y - bp.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < body.soi) {
+      if (dist < body.soi * SOI_ENTER_HYSTERESIS) {
         const tEnter = bisectSOIEnter(orbit, body.id, t - stepSize, t);
         const enterPos = orbitWorldPos(orbit, tEnter);
         const enterVel = orbitWorldVelocity(orbit, tEnter);
