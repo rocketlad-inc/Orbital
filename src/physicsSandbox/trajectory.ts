@@ -25,7 +25,23 @@ export const TRAJ_MAX_TICKS = 1500;
 export const TRAJ_MAX_ARCS = 6;
 export const TRAJ_ORBITS_AHEAD = 1.5;
 
-export type AnchorKind = 'absolute' | 'periapsis' | 'apoapsis';
+/**
+ * Anchor kinds drive how `node.t` is recomputed when the trajectory or
+ * prior burns change:
+ *   - 'absolute'    user-picked time; never moves
+ *   - 'periapsis'   next periapsis of the orbit the node fires on
+ *   - 'apoapsis'    next apoapsis
+ *   - 'encounter'   the instant the ship crosses into targetBodyId's
+ *                   SOI. The pre-burn orbit is already re-parameterized
+ *                   in the captured body's frame — burning retrograde
+ *                   here lowers apoapsis (braking).
+ *   - 'capture'     periapsis of the captured orbit around
+ *                   targetBodyId. Use this for circularization burns
+ *                   after a capture has been planned.
+ */
+export type AnchorKind =
+  | 'absolute' | 'periapsis' | 'apoapsis'
+  | 'encounter' | 'capture';
 
 export interface ManeuverNode {
   id: number;
@@ -33,6 +49,14 @@ export interface ManeuverNode {
   anchor: AnchorKind;
   dv: ManeuverDv;
   committed: boolean;
+  /** Required for 'encounter' and 'capture' — the body whose SOI we're
+   *  capturing into. Ignored for other anchors. */
+  targetBodyId?: string;
+  /** True when an anchor's target event can't be found within the
+   *  projection budget (e.g. the trajectory no longer encounters the
+   *  body the node was planned around). The node won't fire while
+   *  stale. */
+  stale?: boolean;
 }
 
 export interface TrajectoryArc {
@@ -274,17 +298,34 @@ export function computeNodeChain(
   let cursorTick = Math.max(fromTick, baseOrbit.epoch);
 
   for (const node of sortedNodes) {
-    // Walk through intermediate SOI transitions before the node fires
+    // For encounter / capture nodes, we walk SOI events and CONSUME the
+    // matching one. For encounter, the burn fires AT the SOI entry — so
+    // the post-SOI orbit (in target body's frame) is the pre-burn orbit.
+    // For capture, we additionally fast-forward through the SOI entry
+    // so the pre-burn orbit is already inside the captured body's frame
+    // at periapsis.
+    const targetType: 'enter' | 'exit' | null =
+      node.anchor === 'encounter' || node.anchor === 'capture' ? 'enter'
+      : null;
+
     let walkOrbit = cursorOrbit;
     let walkTick = cursorTick;
+
     for (let i = 0; i < 6 && walkTick < node.t - 1e-6; i++) {
       const remaining = node.t - walkTick;
       const ev = findNextSOIEvent(walkOrbit, walkTick, Math.min(remaining + 5, TRAJ_MAX_TICKS));
-      if (!ev || ev.t >= node.t) break;
-      if (!ev.newOrbit) break;
+      if (!ev || !ev.newOrbit) break;
+      const isAnchorMatch =
+        !!targetType && ev.type === targetType &&
+        ev.bodyId === node.targetBodyId &&
+        Math.abs(ev.t - node.t) < 5.0;
+      const isIntermediate = ev.t < node.t - 1e-6;
+      if (!isAnchorMatch && !isIntermediate) break;
       walkOrbit = ev.newOrbit;
       walkTick = ev.t;
+      if (isAnchorMatch && node.anchor === 'encounter') break;
     }
+
     const preBurnOrbit = walkOrbit;
     const dvMag = Math.sqrt(node.dv.prograde * node.dv.prograde + node.dv.radial * node.dv.radial);
     const postBurnOrbit = dvMag > 0
@@ -365,8 +406,18 @@ export function findNextSOIEvent(
 }
 
 /**
- * Recompute periapsis/apoapsis anchor node times based on the orbit each
- * one will be fired on. Mutates nodes in place so the caller can re-render.
+ * Recompute every node's `t` based on the trajectory built from prior
+ * nodes. Anchor semantics:
+ *   - periapsis / apoapsis  → nextApsisTime on the cursor orbit
+ *   - absolute              → leave t alone, but still walk SOI events
+ *                             so the cursor stays in sync for later nodes
+ *   - encounter             → next SOI 'enter' event whose body matches
+ *                             targetBodyId; node fires AT the SOI boundary
+ *   - capture               → consume the SOI 'enter' event, then take
+ *                             the next periapsis of the captured orbit
+ * For encounter/capture we mark the node `stale: true` if we can't find
+ * the matching event within the projection budget — the executor skips
+ * stale nodes so a half-broken plan doesn't fire random burns.
  */
 export function recomputeNodeTimes(
   baseOrbit: Orbit,
@@ -378,15 +429,49 @@ export function recomputeNodeTimes(
   let cursorTick = Math.max(fromTick, baseOrbit.epoch);
 
   for (const node of sortedNodes) {
+    node.stale = false;
+
     if (node.anchor === 'periapsis' || node.anchor === 'apoapsis') {
-      // Walk through any SOI events before scanning for the next apsis
-      let walkOrbit = cursorOrbit;
-      let walkTick = cursorTick;
-      // Then update node.t
-      node.t = nextApsisTime(walkOrbit, walkTick, node.anchor);
+      node.t = nextApsisTime(cursorOrbit, cursorTick, node.anchor);
+    } else if (node.anchor === 'encounter' || node.anchor === 'capture') {
+      const targetId = node.targetBodyId;
+      if (!targetId) {
+        node.stale = true;
+      } else {
+        // Step through SOI events from cursorOrbit forward; the FIRST
+        // 'enter' into targetBodyId is the anchor instant.
+        let walkOrbit: Orbit | null = cursorOrbit;
+        let walkTick = cursorTick;
+        let found: { t: number; orbit: Orbit } | null = null;
+        for (let i = 0; i < 6; i++) {
+          if (!walkOrbit) break;
+          const ev = findNextSOIEvent(walkOrbit, walkTick, TRAJ_MAX_TICKS);
+          if (!ev || !ev.newOrbit) break;
+          walkOrbit = ev.newOrbit;
+          walkTick = ev.t;
+          if (ev.type === 'enter' && ev.bodyId === targetId) {
+            found = { t: ev.t, orbit: ev.newOrbit };
+            break;
+          }
+        }
+        if (!found) {
+          node.stale = true;
+        } else if (node.anchor === 'encounter') {
+          // Bump slightly past the SOI boundary so `computeTrajectory`
+          // processes the SOI re-anchor first and fires this node in
+          // the captured body's frame on the next iteration.
+          node.t = found.t + 0.1;
+          cursorOrbit = found.orbit;
+          cursorTick = found.t;
+        } else {
+          // capture: node fires at periapsis of the captured orbit
+          node.t = nextApsisTime(found.orbit, found.t, 'periapsis');
+          cursorOrbit = found.orbit;
+          cursorTick = found.t;
+        }
+      }
     } else {
-      // 'absolute' — leave node.t alone, but still walk SOI events to
-      // keep cursorOrbit consistent for subsequent nodes
+      // 'absolute' — walk SOI events so the cursor stays accurate
       let walkOrbit = cursorOrbit;
       let walkTick = cursorTick;
       for (let i = 0; i < 5 && walkTick < node.t - 1e-6; i++) {
@@ -398,6 +483,9 @@ export function recomputeNodeTimes(
       }
       cursorOrbit = walkOrbit;
     }
+
+    if (node.stale) continue;
+
     const dvMag = Math.sqrt(node.dv.prograde * node.dv.prograde + node.dv.radial * node.dv.radial);
     cursorOrbit = dvMag > 0
       ? applyNodeToOrbit(cursorOrbit, node.t, node.dv)

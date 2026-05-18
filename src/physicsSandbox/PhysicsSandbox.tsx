@@ -156,28 +156,44 @@ export function PhysicsSandbox({ onExit }: { onExit?: () => void }) {
 
   // ---------- node execution ----------
   // Fire committed nodes whose t falls within the dt we just advanced.
+  // Uses computeNodeChain so each fired node burns on its CORRECTLY-
+  // FRAMED pre-burn orbit (e.g. an encounter node burns in the captured
+  // body's frame after the SOI re-anchor, not in the heliocentric one).
+  // Stale nodes (target encounter not found) are skipped silently.
   const executeNodes = useCallback((tBefore: number, tAfter: number) => {
     const s = shipRef.current;
-    let mutated = false;
-    let orbit = s.orbit;
-    let nodes = s.nodes;
-    let fuel = s.fuel;
-    const toFire = nodes
-      .filter(n => n.committed && n.t > tBefore && n.t <= tAfter)
-      .sort((a, b) => a.t - b.t);
-    if (toFire.length === 0) return;
-    for (const n of toFire) {
-      orbit = applyNodeToOrbit(orbit, n.t, n.dv);
-      const dvMag = Math.sqrt(n.dv.prograde ** 2 + n.dv.radial ** 2);
-      fuel = Math.max(0, fuel - Math.round(dvMag * 10));
+    const chain = computeNodeChain(s.orbit, s.nodes, tBefore);
+    const fireable = chain.filter(
+      l => l.node.committed && !l.node.stale &&
+           l.node.t > tBefore && l.node.t <= tAfter,
+    ).sort((a, b) => a.node.t - b.node.t);
+    if (fireable.length === 0) return;
+
+    // The post-burn orbit of the LAST node fired in this tick becomes
+    // the ship's new base orbit. (Earlier links' postBurnOrbits get
+    // superseded by later ones — the chain already threads them.)
+    const lastLink = fireable[fireable.length - 1];
+    const newOrbit = lastLink.postBurnOrbit;
+
+    let newFuel = s.fuel;
+    const firedIds = new Set<number>();
+    for (const link of fireable) {
+      firedIds.add(link.node.id);
+      const dvMag = Math.sqrt(link.node.dv.prograde ** 2 + link.node.dv.radial ** 2);
+      newFuel = Math.max(0, newFuel - Math.round(dvMag * 10));
     }
-    nodes = nodes.filter(n => !toFire.includes(n));
-    mutated = true;
-    if (mutated) {
-      const updated: SandboxShip = { ...s, orbit, nodes, fuel, _traj: null };
-      shipRef.current = updated;
-      setShip(updated);
-    }
+    const newNodes = s.nodes.filter(n => !firedIds.has(n.id));
+
+    // Remaining nodes' anchors may depend on the new base orbit — rerun
+    // recomputeNodeTimes so any pending encounter/periapsis nodes
+    // re-derive their `t` against what the ship is actually flying now.
+    recomputeNodeTimes(newOrbit, newNodes, tAfter);
+
+    const updated: SandboxShip = {
+      ...s, orbit: newOrbit, nodes: newNodes, fuel: newFuel, _traj: null,
+    };
+    shipRef.current = updated;
+    setShip(updated);
   }, []);
 
   // ---------- trajectory + chain (memoized via shipRef) ----------
@@ -191,6 +207,43 @@ export function PhysicsSandbox({ onExit }: { onExit?: () => void }) {
     return computeNodeChain(ship.orbit, ship.nodes, tickRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ship.orbit, ship.nodes, simSpeed]);
+
+  // Scan the projected trajectory for the next SOI 'enter' event into a
+  // body that doesn't already have an encounter node planned. Drives the
+  // "+ BRAKING BURN @ X" button in the ship panel.
+  const upcomingEncounter = useMemo(() => {
+    const plannedTargets = new Set(
+      ship.nodes
+        .filter(n => n.anchor === 'encounter' && n.targetBodyId)
+        .map(n => n.targetBodyId!),
+    );
+    for (const arc of trajectory) {
+      if (arc.endReason === 'enter' && arc.enteredBodyId &&
+          !plannedTargets.has(arc.enteredBodyId)) {
+        return { bodyId: arc.enteredBodyId, t: arc.tEnd };
+      }
+    }
+    return null;
+  }, [trajectory, ship.nodes]);
+
+  // If the last planned encounter node has a captured orbit available,
+  // expose a "+ CIRCULARIZE @ X Pe" button. Skipped once a capture node
+  // for that body already exists.
+  const pendingCircularization = useMemo(() => {
+    const captureTargets = new Set(
+      ship.nodes
+        .filter(n => n.anchor === 'capture' && n.targetBodyId)
+        .map(n => n.targetBodyId!),
+    );
+    // Walk encounter nodes in node order; offer circularization for the
+    // first one that doesn't already have a paired capture.
+    for (const n of ship.nodes) {
+      if (n.anchor !== 'encounter' || !n.targetBodyId) continue;
+      if (captureTargets.has(n.targetBodyId)) continue;
+      return { bodyId: n.targetBodyId };
+    }
+    return null;
+  }, [ship.nodes]);
 
   // ---------- coordinate transforms ----------
   const worldToScreen = useCallback((x: number, y: number): { x: number; y: number } => {
@@ -511,28 +564,37 @@ export function PhysicsSandbox({ onExit }: { onExit?: () => void }) {
   }, [focusBody, focusSystem]);
 
   // ---------- node operations ----------
-  let nodeIdCounter = useRef(1);
-  const addNode = (anchor: AnchorKind) => {
+  const nodeIdCounter = useRef(1);
+  const addNode = (anchor: AnchorKind, targetBodyId?: string) => {
     setShip(prev => {
-      const t = tickRef.current;
-      // Determine t for the new node
+      // For apsis-anchored nodes we need a sensible default t before
+      // recomputeNodeTimes runs. Walk through prior burns to find the
+      // orbit the new node will fire on.
       const sortedExisting = [...prev.nodes].sort((a, b) => a.t - b.t);
       let cursorOrbit = prev.orbit;
-      let cursorTick = Math.max(t, prev.orbit.epoch);
+      let cursorTick = Math.max(tickRef.current, prev.orbit.epoch);
       for (const n of sortedExisting) {
-        cursorOrbit = applyNodeToOrbit(cursorOrbit, n.t, n.dv);
+        const dvMag = Math.sqrt(n.dv.prograde ** 2 + n.dv.radial ** 2);
+        if (dvMag > 0 && !n.stale) {
+          cursorOrbit = applyNodeToOrbit(cursorOrbit, n.t, n.dv);
+        }
         cursorTick = n.t;
       }
       let newT: number;
       if (anchor === 'periapsis' || anchor === 'apoapsis') {
         newT = nextApsisTime(cursorOrbit, cursorTick, anchor);
+      } else if (anchor === 'absolute') {
+        newT = cursorTick + 30;
       } else {
+        // encounter / capture — recomputeNodeTimes will fix t from the
+        // trajectory; placeholder is just to satisfy the type.
         newT = cursorTick + 30;
       }
       const newNode: ManeuverNode = {
         id: nodeIdCounter.current++,
         t: newT,
         anchor,
+        targetBodyId,
         dv: { prograde: 0, radial: 0 },
         committed: false,
       };
@@ -699,6 +761,22 @@ export function PhysicsSandbox({ onExit }: { onExit?: () => void }) {
           <button style={btnPrimary} onClick={() => addNode('periapsis')}>+ STEP @ PERIAPSIS</button>
           <button style={btnPrimary} onClick={() => addNode('apoapsis')}>+ STEP @ APOAPSIS</button>
           <button style={btnPrimary} onClick={() => addNode('absolute')}>+ STEP @ T+30</button>
+          {upcomingEncounter && (
+            <button
+              style={{ ...btnPrimary, background: 'rgba(255, 184, 77, 0.08)', borderColor: '#ffb84d', color: '#ffb84d' }}
+              onClick={() => addNode('encounter', upcomingEncounter.bodyId)}
+            >
+              + BRAKING BURN @ {BY_ID[upcomingEncounter.bodyId].name.toUpperCase()} SOI
+            </button>
+          )}
+          {pendingCircularization && (
+            <button
+              style={{ ...btnPrimary, background: 'rgba(255, 184, 77, 0.08)', borderColor: '#ffb84d', color: '#ffb84d' }}
+              onClick={() => addNode('capture', pendingCircularization.bodyId)}
+            >
+              + CIRCULARIZE @ {BY_ID[pendingCircularization.bodyId].name.toUpperCase()} Pe
+            </button>
+          )}
 
           {ship.nodes.length > 0 && (
             <>
@@ -709,23 +787,34 @@ export function PhysicsSandbox({ onExit }: { onExit?: () => void }) {
                 .map(n => {
                   const isSel = n.id === selectedNodeId;
                   const dv = Math.sqrt(n.dv.prograde ** 2 + n.dv.radial ** 2);
+                  const targetSuffix = n.targetBodyId
+                    ? ` @ ${BY_ID[n.targetBodyId]?.name.toUpperCase() ?? '?'}`
+                    : '';
+                  const borderColor = n.stale ? '#ff5e5e'
+                    : isSel ? '#ffb84d'
+                    : 'rgba(255, 184, 77, 0.35)';
                   return (
                     <div
                       key={n.id}
                       onClick={() => setSelectedNodeId(n.id)}
                       style={{
-                        background: n.committed
-                          ? 'rgba(255, 184, 77, 0.10)'
+                        background: n.stale ? 'rgba(255, 94, 94, 0.05)'
+                          : n.committed ? 'rgba(255, 184, 77, 0.10)'
                           : 'rgba(255, 184, 77, 0.04)',
-                        border: `1px ${n.committed ? 'solid' : 'dashed'} ${isSel ? '#ffb84d' : 'rgba(255, 184, 77, 0.35)'}`,
+                        border: `1px ${n.committed ? 'solid' : 'dashed'} ${borderColor}`,
                         padding: '8px 10px', marginBottom: 6, fontSize: 10, cursor: 'pointer',
+                        opacity: n.stale ? 0.7 : 1,
                       }}
                     >
                       <div style={{
                         display: 'flex', justifyContent: 'space-between',
-                        color: '#ffb84d', letterSpacing: '0.1em',
+                        color: n.stale ? '#ff5e5e' : '#ffb84d', letterSpacing: '0.1em',
                       }}>
-                        <span>{n.committed ? '● ' : '◇ '}{anchorLabel(n.anchor)} T+{(n.t - tickRef.current).toFixed(1)}</span>
+                        <span>
+                          {n.committed ? '● ' : '◇ '}
+                          {anchorLabel(n.anchor)}{targetSuffix}
+                          {n.stale ? ' (STALE)' : ` T+${(n.t - tickRef.current).toFixed(1)}`}
+                        </span>
                         <span>Δv {dv.toFixed(2)}</span>
                       </div>
                       <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
@@ -1026,6 +1115,8 @@ function hitHandle(
 function anchorLabel(a: AnchorKind): string {
   if (a === 'periapsis') return 'Pe';
   if (a === 'apoapsis') return 'Ap';
+  if (a === 'encounter') return 'ENC';
+  if (a === 'capture') return 'CAP';
   return 'TX';
 }
 
