@@ -932,19 +932,35 @@ const SideMenu: React.FC<SideMenuProps> = ({
             <MpTbmHostToggle />
           )}
 
-          {isHost && adminGameId && (
+          {adminGameId && (
+            // TIME section — visible to every MP player, not just the host.
+            // The previous `isHost && adminGameId` gate hid this entirely
+            // whenever the client couldn't confirm host identity (e.g.
+            // /api/lobby/rooms/:id host_id field wasn't surfaced, or the
+            // user joined someone else's room). Anyone can press these
+            // now; the server enforces host-only on /force-tick and
+            // /tick-interval, so non-hosts get a 403 surfaced inline via
+            // forceTickStatus / intervalStatus rather than a silent fail.
+            // The header label flips to "HOST ADMIN" only when we're sure
+            // the client is the host, so the visual still tells the
+            // truth about who has authority.
             <>
-              <div className="side-menu__group-label">HOST ADMIN</div>
+              <div className="side-menu__group-label">
+                {isHost ? 'HOST ADMIN' : 'TIME'}
+              </div>
               <button
                 className="side-menu__item"
                 onClick={forceTick}
                 disabled={forceTickBusy}
+                title={isHost ? 'Advance one tick now' : 'Host-only — non-hosts will see a 403'}
               >
                 <span className="side-menu__item-icon">⏭</span>
                 <span className="side-menu__item-label">
                   {forceTickStatus ?? (forceTickBusy ? 'Ticking…' : 'Force Tick')}
                 </span>
-                <span className="side-menu__item-hint">Advance one tick now</span>
+                <span className="side-menu__item-hint">
+                  {isHost ? 'Advance one tick now' : 'host-only'}
+                </span>
               </button>
               <div className="side-menu__item side-menu__item--block">
                 <span className="side-menu__item-icon">⏱</span>
@@ -959,14 +975,14 @@ const SideMenu: React.FC<SideMenuProps> = ({
                         className="side-menu__pill"
                         onClick={() => setTickInterval(opt.value, opt.label)}
                         disabled={intervalBusy}
-                        title={`${opt.label} per tick`}
+                        title={`${opt.label} per tick${isHost ? '' : ' (host-only — non-hosts get 403)'}`}
                       >
                         {opt.label}
                       </button>
                     ))}
                   </div>
                   <span className="side-menu__item-hint" style={{ marginTop: 2 }}>
-                    Cadence applies on next tick
+                    {isHost ? 'Cadence applies on next tick' : 'host-only — read-only for you'}
                   </span>
                 </div>
               </div>
