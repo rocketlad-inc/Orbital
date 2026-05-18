@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { GameContextProvider } from './state/gameContext';
+import { GameContextProvider, useGameContext } from './state/gameContext';
+import { useAutosave } from './state/useAutosave';
 import { MapCanvas } from './components/MapCanvas';
 import { ShipPanel } from './components/ShipPanel';
 import { BodyInspector } from './components/BodyInspector';
@@ -57,17 +58,30 @@ function GameUI({
   isMultiplayer = false,
   adminGameId,
   isHost,
+  onLoadSave,
 }: {
   onExit: () => void;
   isMultiplayer?: boolean;
   adminGameId?: string | null;
   isHost?: boolean;
+  /** Hand off a deserialized save back to the parent SinglePlayerView
+   *  so it can remount the GameContextProvider with the loaded state.
+   *  Only wired in SP; in MP the server is authoritative and Load is
+   *  hidden from the menu. */
+  onLoadSave?: (state: GameState) => void;
 }) {
   const [windowSize, setWindowSize] = useState({
     width: typeof window !== 'undefined' ? window.innerWidth : 1280,
     height: typeof window !== 'undefined' ? window.innerHeight : 800,
   });
   const [activePanel, setActivePanel] = useState<PanelId>(null);
+
+  // SP autosave loop. Reads from the GameContext that wraps this GameUI
+  // and writes to the rolling AUTOSAVE slot every 100 game-ticks. No-op
+  // in MP (server is authoritative). Defined here rather than in
+  // GameContextProvider so it can be cleanly disabled per-mode.
+  const { gameState } = useGameContext();
+  useAutosave(gameState, !isMultiplayer);
 
   useEffect(() => {
     const handleResize = () => {
@@ -102,6 +116,8 @@ function GameUI({
         hideSimControls={isMultiplayer}
         adminGameId={adminGameId ?? null}
         isHost={!!isHost}
+        canSaveLoad={!isMultiplayer}
+        onLoadSave={onLoadSave}
       />
       <Outliner />
 
@@ -135,9 +151,15 @@ function GameUI({
 function SinglePlayerView({ onExit }: { onExit: () => void }) {
   const [phase, setPhase] = useState<'setup' | 'playing'>('setup');
   const [seededState, setSeededState] = useState<GameState | null>(null);
+  // Bumped whenever we want to remount GameContextProvider with a fresh
+  // initialState. The provider only reads `initialState` on first mount,
+  // so loading a save mid-game requires us to throw the existing provider
+  // away and stand up a new one. Keying on this counter does exactly that.
+  const [providerKey, setProviderKey] = useState(0);
 
   const handleBegin = (config: SinglePlayerConfig) => {
     setSeededState(setupSinglePlayer(config));
+    setProviderKey(k => k + 1);
     setPhase('playing');
   };
 
@@ -146,13 +168,28 @@ function SinglePlayerView({ onExit }: { onExit: () => void }) {
     setPhase('setup');
   };
 
+  // Used by SinglePlayerSetup ("Load Save" button) AND by the in-game
+  // SaveLoadModal ("LOAD" row). Both paths land us in 'playing' phase
+  // with a fresh GameContextProvider seeded from the save.
+  const handleLoadSave = (state: GameState) => {
+    setSeededState(state);
+    setProviderKey(k => k + 1);
+    setPhase('playing');
+  };
+
   if (phase === 'setup' || !seededState) {
-    return <SinglePlayerSetup onBegin={handleBegin} onCancel={onExit} />;
+    return (
+      <SinglePlayerSetup
+        onBegin={handleBegin}
+        onCancel={onExit}
+        onLoadSave={handleLoadSave}
+      />
+    );
   }
 
   return (
-    <GameContextProvider initialState={seededState}>
-      <GameUI onExit={onExit} />
+    <GameContextProvider key={providerKey} initialState={seededState}>
+      <GameUI onExit={onExit} onLoadSave={handleLoadSave} />
       <VictoryOverlay onNewGame={handleNewGame} />
     </GameContextProvider>
   );

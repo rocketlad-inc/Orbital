@@ -14,11 +14,16 @@ import {
   SP_FACTION_COLORS,
   SP_MAX_AI_OPPONENTS,
 } from '../state/singlePlayerSetup';
+import { SaveLoadModal } from './SaveLoadModal';
+import { listSaves } from '../state/saveGame';
 import './SinglePlayerSetup.css';
 
 interface Props {
   onBegin: (config: SinglePlayerConfig) => void;
   onCancel: () => void;
+  /** Optional: surface a Load Save picker on this screen so the player
+   *  can resume an existing campaign instead of configuring a new one. */
+  onLoadSave?: (state: import('../types').GameState) => void;
 }
 
 interface FactionDraft {
@@ -27,8 +32,12 @@ interface FactionDraft {
   startingBodyId: string;
 }
 
-export const SinglePlayerSetup: React.FC<Props> = ({ onBegin, onCancel }) => {
+export const SinglePlayerSetup: React.FC<Props> = ({ onBegin, onCancel, onLoadSave }) => {
   const options = useMemo(() => getStartingBodyOptions(), []);
+  // Read the save index once on mount so the "Load Save" button can
+  // surface the count and stay hidden when there's nothing to load.
+  const savedCount = useMemo(() => listSaves().length, []);
+  const [loadModalOpen, setLoadModalOpen] = useState(false);
 
   // Default the player to Earth, AI #1 to Mars, AI #2 to Luna.
   const earthDefault = options.find(b => b.id === 'earth')?.id ?? options[0]?.id ?? '';
@@ -134,8 +143,41 @@ export const SinglePlayerSetup: React.FC<Props> = ({ onBegin, onCancel }) => {
           <span className="brand-glyph">◉</span>
           <span className="brand-text">ORBITAL · NEW CAMPAIGN</span>
         </div>
-        <div style={{ width: 90 }} />
+        {onLoadSave && savedCount > 0 ? (
+          <button
+            onClick={() => setLoadModalOpen(true)}
+            title="Resume a saved campaign"
+            style={{
+              minWidth: 90,
+              padding: '6px 14px',
+              background: 'transparent',
+              border: '1px solid #4ecdc4',
+              color: '#4ecdc4',
+              borderRadius: 4,
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 11,
+              fontWeight: 600,
+              letterSpacing: '0.08em',
+              cursor: 'pointer',
+            }}
+          >
+            ⤒ LOAD SAVE ({savedCount})
+          </button>
+        ) : (
+          <div style={{ width: 90 }} />
+        )}
       </header>
+
+      {loadModalOpen && onLoadSave && (
+        <SaveLoadModal
+          mode="load"
+          onClose={() => setLoadModalOpen(false)}
+          onLoad={(state) => {
+            setLoadModalOpen(false);
+            onLoadSave(state);
+          }}
+        />
+      )}
 
       <div className="sp-setup-intro">
         <h1>New Single-Player Campaign</h1>

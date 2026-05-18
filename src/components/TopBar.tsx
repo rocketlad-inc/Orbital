@@ -12,6 +12,8 @@ import { useAuth } from '../multiplayer/AuthContext';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { useMpTurnStatus } from '../multiplayer/useMpTurnStatus';
 import { logger } from '../game/logger';
+import { SaveLoadModal } from './SaveLoadModal';
+import type { GameState } from '../types';
 import './TopBar.css';
 
 export type PanelId = 'settlements' | 'fleet' | 'research' | null;
@@ -28,6 +30,12 @@ interface TopBarProps {
    *  and isHost is true, the menu shows Force-Tick controls. */
   adminGameId?: string | null;
   isHost?: boolean;
+  /** True when the SideMenu should offer Save/Load entries. Single-player
+   *  only — MP saves are server-side and out of scope. */
+  canSaveLoad?: boolean;
+  /** Threaded down from SinglePlayerView so the Load picker can hand the
+   *  deserialized state back to the parent, which remounts GameContextProvider. */
+  onLoadSave?: (state: GameState) => void;
 }
 
 interface Alert {
@@ -42,6 +50,7 @@ const SIM_SPEEDS = [1, 10, 100, 1000, 10000, 100000];
 export const TopBar: React.FC<TopBarProps> = ({
   activePanel, onTogglePanel, onExitMode, hideSimControls = false,
   adminGameId = null, isHost = false,
+  canSaveLoad = false, onLoadSave,
 }) => {
   const {
     gameState, simSpeed, setSimSpeed, updateTick, selectShip,
@@ -58,6 +67,10 @@ export const TopBar: React.FC<TopBarProps> = ({
   const [dismissedAlertIds, setDismissedAlertIds] = useState<Set<string>>(new Set());
   const [menuOpen, setMenuOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
+  // Save / Load modal state. Lifted into TopBar (rather than SideMenu)
+  // because closing the menu shouldn't kill the modal — players want to
+  // see the picker without the menu also occupying the screen.
+  const [saveLoadMode, setSaveLoadMode] = useState<null | 'save' | 'load'>(null);
 
   // Esc closes the drawer
   useEffect(() => {
@@ -161,6 +174,24 @@ export const TopBar: React.FC<TopBarProps> = ({
             const lvls = gameState.factionTech?.player?.levels || {};
             return Object.values(lvls).reduce((s, n) => s + (n ?? 0), 0);
           })()}
+          canSaveLoad={canSaveLoad}
+          onOpenSave={() => { setSaveLoadMode('save'); setMenuOpen(false); }}
+          onOpenLoad={() => { setSaveLoadMode('load'); setMenuOpen(false); }}
+        />
+      )}
+
+      {saveLoadMode && (
+        <SaveLoadModal
+          mode={saveLoadMode}
+          onClose={() => setSaveLoadMode(null)}
+          currentState={saveLoadMode === 'save' ? gameState : undefined}
+          onLoad={(state) => {
+            // Close before handing the state back — onLoadSave triggers
+            // a full GameContextProvider remount and we don't want a
+            // dangling modal on the freshly-loaded session.
+            setSaveLoadMode(null);
+            onLoadSave?.(state);
+          }}
         />
       )}
 
@@ -683,6 +714,10 @@ interface SideMenuProps {
   playerShipCount?: number;
   settlementCount?: number;
   researchTotal?: number;
+  /** SP-only: show Save / Load entries in the GAME section. */
+  canSaveLoad?: boolean;
+  onOpenSave?: () => void;
+  onOpenLoad?: () => void;
 }
 
 const SideMenu: React.FC<SideMenuProps> = ({
@@ -690,6 +725,7 @@ const SideMenu: React.FC<SideMenuProps> = ({
   adminGameId = null, isHost = false,
   activePanel, onTogglePanel,
   playerShipCount = 0, settlementCount = 0, researchTotal = 0,
+  canSaveLoad = false, onOpenSave, onOpenLoad,
 }) => {
   const [forceTickBusy, setForceTickBusy] = useState(false);
   const [forceTickStatus, setForceTickStatus] = useState<string | null>(null);
@@ -831,6 +867,28 @@ const SideMenu: React.FC<SideMenuProps> = ({
           )}
 
           <div className="side-menu__group-label">GAME</div>
+          {canSaveLoad && onOpenSave && (
+            <button
+              className="side-menu__item"
+              onClick={onOpenSave}
+              title="Save the current campaign to your browser"
+            >
+              <span className="side-menu__item-icon">⤓</span>
+              <span className="side-menu__item-label">Save Game</span>
+              <span className="side-menu__item-hint">localStorage</span>
+            </button>
+          )}
+          {canSaveLoad && onOpenLoad && (
+            <button
+              className="side-menu__item"
+              onClick={onOpenLoad}
+              title="Load a previously saved campaign (replaces this one)"
+            >
+              <span className="side-menu__item-icon">⤒</span>
+              <span className="side-menu__item-label">Load Game</span>
+              <span className="side-menu__item-hint">replaces current</span>
+            </button>
+          )}
           {onExitMode && (
             <button
               className="side-menu__item"
