@@ -29,6 +29,13 @@ export const TRAJ_ORBITS_AHEAD = 1.5;
  *  orbit's reconstructed radius lies microscopically outside its parent
  *  due to floating-point noise in orbitFromWorldState. */
 export const SOI_ENTRY_GRACE = 3.0;
+/** Multiplicative margin on SOI-exit detection. A capture burn sized
+ *  "just enough" to bound the orbit will land apoapsis right at SOI;
+ *  tiny floating-point excursions of `r` above SOI shouldn't trigger
+ *  an exit. We require dist > soi · this factor before declaring exit.
+ *  Bisection then finds the true (soi-radius) crossing for the arc
+ *  endpoint, so observable exits stay exact. */
+export const SOI_EXIT_HYSTERESIS = 1.03;
 
 /**
  * Anchor kinds drive how `node.t` is recomputed when the trajectory or
@@ -205,12 +212,16 @@ export function computeTrajectory(
       const pos = orbitWorldPos(currentOrbit, nextT);
 
       // Exit current parent's SOI? Suppressed inside the grace window
-      // that follows a fresh SOI re-anchor — see SOI_ENTRY_GRACE.
+      // that follows a fresh SOI re-anchor — see SOI_ENTRY_GRACE. The
+      // hysteresis margin (SOI_EXIT_HYSTERESIS) handles the common case
+      // where a capture burn sized just-enough places apoapsis right
+      // at the SOI radius: tiny radial noise at apsis shouldn't trip
+      // exit. Bisection finds the true SOI crossing for the arc end.
       if (currentParent.id !== 'sol' && nextT >= exitGraceUntil) {
         const pp = bodyPosition(currentParent, nextT);
         const dx = pos.x - pp.x, dy = pos.y - pp.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist > currentParent.soi) {
+        if (dist > currentParent.soi * SOI_EXIT_HYSTERESIS) {
           const tCross = bisectSOIExit(currentOrbit, currentParent.id, t, nextT);
           event = { type: 'exit', t: tCross, fromBodyId: currentParent.id };
           break;
@@ -390,7 +401,7 @@ export function findNextSOIEvent(
       const pp = bodyPosition(parent, t);
       const dx = pos.x - pp.x, dy = pos.y - pp.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist > parent.soi && parent.parent) {
+      if (dist > parent.soi * SOI_EXIT_HYSTERESIS && parent.parent) {
         const tExit = bisectSOIExit(orbit, parent.id, t - stepSize, t);
         const exitPos = orbitWorldPos(orbit, tExit);
         const exitVel = orbitWorldVelocity(orbit, tExit);
