@@ -125,10 +125,26 @@
 }
 .mp-user-pill button:hover { color: var(--mp-accent); border-color: var(--mp-accent); }
 
-/* ---- Right-side multiplayer dock ---- */
+/* ---- Right-side multiplayer dock ----
+ *
+ * Position is now anchored LEFT of the Outliner instead of competing
+ * for the same right strip. Previously both were pinned to right: 8/12px
+ * with mp-dock z-index 3000 stomping the Outliner's z-index 80 when
+ * expanded, and the 44px collapsed stub was tucked behind the Outliner
+ * with just a thin sliver visible — the "two menus on top of each other"
+ * the playtester called out.
+ *
+ * Outliner is `right: 8px; width: 240px;` → its left edge sits at
+ * right: 248px. We pin the dock to right: 264px so there's a clean
+ * 16px gutter between the two panels.
+ *
+ * When collapsed, the dock shrinks to a small top-anchored button
+ * (height: auto, no bottom anchor) so the right edge of the canvas
+ * isn't haunted by a full-height stub the player can't act on.
+ */
 .mp-dock {
   position: fixed;
-  top: 60px; right: 12px; bottom: 12px;
+  top: 60px; right: 264px; bottom: 12px;
   width: 360px;
   z-index: 3000;
   background: var(--mp-bg-panel);
@@ -137,7 +153,12 @@
   color: var(--mp-fg);
   display: flex; flex-direction: column;
 }
-.mp-dock.collapsed { width: 44px; }
+.mp-dock.collapsed {
+  width: 44px;
+  /* Collapse to a small top button — release the bottom anchor so the
+     stub doesn't stretch the full screen height. */
+  bottom: auto;
+}
 .mp-dock.collapsed .mp-dock-body, .mp-dock.collapsed .mp-tablist { display: none; }
 
 .mp-dock-head {

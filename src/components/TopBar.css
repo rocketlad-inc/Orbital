@@ -225,6 +225,22 @@
   white-space: nowrap;
   animation: alert-slide-in 0.3s ease-out;
   cursor: pointer;
+  /* Cap each chip's width so a long combat-log line can't push the X
+     dismiss button off the right edge of the top bar (or off-screen).
+     The inner text span ellipsizes; the dismiss stays anchored on the
+     right at its natural size. */
+  max-width: 280px;
+  min-width: 0;
+}
+
+/* Text inner span — flexes to fill, ellipsizes when it overruns the
+   chip's max-width. Without this the entire chip overflowed and the
+   close button became unreachable on smaller screens. */
+.alert-chip > span:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .alert-chip:hover {

@@ -25,8 +25,18 @@ interface MultiplayerShellProps {
   initialRoomId?: string | null;
 }
 
-export function MultiplayerShell({ children, onExit, initialRoomId }: MultiplayerShellProps) {
-  const { user, signOut } = useAuth();
+// `onExit` stays on the props interface for caller compatibility, but is
+// no longer rendered here — the TopBar title-button drawer's GAME →
+// "Back to Menu" entry is the single source of truth for exiting the
+// match (see App.tsx handleExitMode). Don't destructure it to keep
+// the lint clean.
+export function MultiplayerShell({ children, initialRoomId }: MultiplayerShellProps) {
+  // `signOut` used to live behind the mp-user-pill (top-right pill with
+  // "← Menu", display name, and Sign out). That pill duplicated the
+  // TopBar title-button drawer's GAME section ("Back to Menu") and
+  // ACCOUNT section ("Sign Out"), and visually competed with the
+  // Outliner + Comms toasts. Removed; signOut import goes with it.
+  const { user } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
   const [tab, setTab] = useState<Tab>('lobby');
   const [gameId, setGameId] = useState<string | null>(null);
@@ -172,13 +182,6 @@ export function MultiplayerShell({ children, onExit, initialRoomId }: Multiplaye
           ))}
         </div>
       )}
-      <div className="mp-user-pill">
-        {onExit && (
-          <button onClick={onExit} title="Back to mode picker">← Menu</button>
-        )}
-        <span className="who">{user.display_name || user.email}</span>
-        <button onClick={signOut}>Sign out</button>
-      </div>
       <div className={`mp-dock ${collapsed ? 'collapsed' : ''}`}>
         <div className="mp-dock-head">
           <span>{collapsed ? '▸' : 'MULTIPLAYER'}</span>
