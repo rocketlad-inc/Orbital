@@ -348,6 +348,29 @@ async function handleJoinRoom(req, env, session, roomId) {
       .bind(roomId, session.user_id, Date.now())
       .run();
     await env.DB.prepare('UPDATE rooms SET updated_at = ? WHERE id = ?').bind(Date.now(), roomId).run();
+
+    // Tell the Room DO about the new member immediately so its `members`
+    // map matches D1. Without this the DO only learns about a member when
+    // they open a WebSocket via /connect — and a joiner who closes the
+    // tab before connecting drifts forever (D1 count > DO count).
+    // Best-effort: a failure here doesn't roll back the D1 insert because
+    // the lobby snapshot path now reads members from D1 directly, so the
+    // user still appears in the lobby UI even if this call dropped.
+    try {
+      const userRow = await env.DB
+        .prepare('SELECT display_name FROM users WHERE id = ?')
+        .bind(session.user_id)
+        .first();
+      await roomStub(env, roomId).fetch('https://room/member-add', {
+        method: 'POST',
+        body: JSON.stringify({
+          userId: session.user_id,
+          displayName: userRow?.display_name ?? 'player',
+        }),
+      });
+    } catch (e) {
+      console.warn('handleJoinRoom: DO member-add dispatch failed', e);
+    }
   }
 
   return json({ ok: true, room_id: roomId });

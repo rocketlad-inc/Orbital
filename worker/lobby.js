@@ -346,23 +346,36 @@ async function handleLobbySnapshot(_req, env, ctx) {
   const snapRes = await roomStub(env, roomId).fetch('https://room/snapshot');
   const snap = snapRes.ok ? await snapRes.json() : { members: [], connected: [], ready: {} };
 
-  // Enrich the DO member list with the empire identity recorded in D1.
-  const idRows = await env.DB
-    .prepare('SELECT user_id, empire_name, bio, chosen_starting_body FROM room_members WHERE room_id = ?')
+  // === Membership: D1 is the source of truth ===========================
+  // The DO's `members` map is updated lazily — only when a user opens a
+  // WebSocket via /connect. A user who joined via POST /api/rooms/:id/join
+  // and then closed the tab before connecting was in D1's room_members but
+  // not in the DO. That made the lobby UI show 1/2 while the "My Games"
+  // card (which counts D1) showed 2/2 — same room, two answers, host
+  // confused about why the room reads as full. Build the member list from
+  // D1 directly and treat the DO's snap.members as a display-name cache.
+  const memberRows = await env.DB
+    .prepare(
+      `SELECT rm.user_id, rm.empire_name, rm.bio, rm.chosen_starting_body,
+              u.display_name
+         FROM room_members rm
+         JOIN users u ON u.id = rm.user_id
+        WHERE rm.room_id = ?`,
+    )
     .bind(roomId)
     .all();
-  const identityByUser = new Map(
-    (idRows.results ?? []).map(r => [r.user_id, {
-      empire_name: r.empire_name,
-      bio: r.bio,
-      chosen_starting_body: r.chosen_starting_body,
-    }]),
+  // The DO snapshot may carry a more recent displayName (e.g. user
+  // renamed mid-session before D1's users row updates). Prefer it when
+  // present; fall back to users.display_name from D1.
+  const doNameByUser = new Map(
+    (snap.members ?? []).map(m => [m.userId, m.displayName]),
   );
-  const enrichedMembers = (snap.members ?? []).map(m => ({
-    ...m,
-    empire_name: identityByUser.get(m.userId)?.empire_name ?? null,
-    bio: identityByUser.get(m.userId)?.bio ?? null,
-    chosen_starting_body: identityByUser.get(m.userId)?.chosen_starting_body ?? null,
+  const enrichedMembers = (memberRows.results ?? []).map(r => ({
+    userId: r.user_id,
+    displayName: doNameByUser.get(r.user_id) ?? r.display_name ?? 'player',
+    empire_name: r.empire_name ?? null,
+    bio: r.bio ?? null,
+    chosen_starting_body: r.chosen_starting_body ?? null,
   }));
 
   return json({

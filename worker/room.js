@@ -67,6 +67,34 @@ export class Room {
       this.broadcast({ type: 'settings', meta, settings });
       return Response.json(settings);
     }
+    if (url.pathname === '/member-add' && req.method === 'POST') {
+      // Server-driven member upsert. Called from worker/index.js
+      // handleJoinRoom right after the D1 room_members insert, so the
+      // DO's `members` map stays in sync with the D1 source of truth
+      // without waiting for the joiner to open a WebSocket. Without
+      // this, a join + tab-close before /connect left D1 at +1 member
+      // and the DO at +0, drifting forever (see lobby.js for details).
+      const body = await req.json().catch(() => ({}));
+      const userId = body?.userId;
+      const displayName = body?.displayName ?? 'player';
+      if (!userId) return new Response('missing userId', { status: 400 });
+      const members = (await this.state.storage.get('members')) ?? {};
+      if (!members[userId]) {
+        members[userId] = { userId, displayName };
+      } else {
+        // Refresh the displayName in case the user renamed since the
+        // last DO write.
+        members[userId].displayName = displayName;
+      }
+      await this.state.storage.put('members', members);
+      this.broadcast({
+        type: 'presence',
+        members: Object.values(members),
+        connected: this.connectedUserIds(),
+        ready: this.readyMap(),
+      });
+      return new Response(null, { status: 204 });
+    }
     if (url.pathname === '/kick' && req.method === 'POST') {
       const body = await req.json().catch(() => ({}));
       const targetId = body?.userId;
