@@ -21,14 +21,18 @@ interface TechPanelProps {
 }
 
 export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
-  const { gameState, startResearch, cancelResearch } = useGameContext();
+  const {
+    gameState, startResearch, cancelResearch,
+    enqueueResearch, dequeueResearch, moveResearchUp,
+  } = useGameContext();
   const mpActions = useMultiplayerActions();
   // Set of tech ids currently in flight (POSTed but /state hasn't yet
   // reconciled). Prevents the double-click race that fired multiple
   // research requests and made the second one bounce with a stale
   // 409 'insufficient_resources' even though the user saw enough science.
   const [inFlight, setInFlight] = React.useState<Set<TechId>>(new Set());
-  const tech = gameState.factionTech.player ?? { levels: {}, researching: null, progress: 0 };
+  const tech = gameState.factionTech.player ?? { levels: {}, researching: null, progress: 0, queue: [] };
+  const queue = tech.queue ?? [];
   const playerScience = gameState.resources.player?.science ?? 0;
 
   // Total level count across all techs (a vanity stat shown in subtitle).
@@ -84,6 +88,66 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
         </div>
       )}
 
+      {/* SP queue strip — MP keeps the single-shot research model and
+          hides this block. Shows queued techs as chips with up-arrow
+          and × controls so the player can re-order or remove. */}
+      {!mpActions && queue.length > 0 && (
+        <div
+          style={{
+            display: 'flex', flexWrap: 'wrap', gap: 6,
+            padding: '8px 12px',
+            background: 'rgba(78, 205, 196, 0.05)',
+            borderBottom: '1px solid #2a3d50',
+            alignItems: 'center',
+          }}
+        >
+          <span style={{ fontSize: 10, color: '#8a9fb3', letterSpacing: '0.1em', marginRight: 4 }}>
+            QUEUE
+          </span>
+          {(queue as TechId[]).map((qid, qi) => {
+            const qdef = TECH_DEFS[qid];
+            const qlvl = tech.levels[qid] ?? 0;
+            return (
+              <span
+                key={qid}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  padding: '3px 6px 3px 8px',
+                  border: '1px solid #4ecdc4', borderRadius: 4,
+                  fontSize: 11, color: '#d8e4ee',
+                }}
+                title={`${qdef.name} → level ${qlvl + 1}`}
+              >
+                <span style={{ color: '#8a9fb3', fontSize: 9 }}>{qi + 1}.</span>
+                <span>{qdef.icon} {qdef.name}</span>
+                {qi > 0 && (
+                  <button
+                    onClick={() => moveResearchUp(qid)}
+                    title="Move up"
+                    aria-label="Move up"
+                    style={{
+                      width: 16, height: 16, padding: 0,
+                      background: 'transparent', border: 'none',
+                      color: '#4ecdc4', cursor: 'pointer', fontSize: 11,
+                    }}
+                  >↑</button>
+                )}
+                <button
+                  onClick={() => dequeueResearch(qid)}
+                  title="Remove from queue"
+                  aria-label="Remove"
+                  style={{
+                    width: 16, height: 16, padding: 0,
+                    background: 'transparent', border: 'none',
+                    color: '#ff5e5e', cursor: 'pointer', fontSize: 11,
+                  }}
+                >×</button>
+              </span>
+            );
+          })}
+        </div>
+      )}
+
       <div className="overview-panel__body">
         <div className="tech-grid">
           {ALL_TECH_IDS.map((id) => {
@@ -91,7 +155,8 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
             const lvl = tech.levels[id] ?? 0;
             const cost = nextLevelCost(lvl, def);
             const isActive = tech.researching === id;
-            const isQueued = !!tech.researching && !isActive;
+            const queueIndex = queue.indexOf(id);
+            const isQueued = queueIndex >= 0;
             return (
               <div
                 key={id}
@@ -129,29 +194,20 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                   </span>
                 </div>
 
-                <button
-                  className={`tech-card__action ${isActive ? 'active' : ''}`}
-                  onClick={async () => {
-                    if (mpActions) {
-                      // Multiplayer: instant repeatables. Server is the
-                      // authority on cost and current level.
-                      //
-                      // Guard against double-click: track in-flight techIds
-                      // in a Set, refuse to fire a second request for the
-                      // same tech until /state has reconciled (the await
-                      // returns then the polling interval kicks in).
+                {/* SP card actions: Research / Cancel / Queue / Remove
+                    based on the tech's relationship to the player's
+                    current research + queue. MP keeps the single-button
+                    instant-research flow. */}
+                {mpActions ? (
+                  <button
+                    className={`tech-card__action ${isActive ? 'active' : ''}`}
+                    onClick={async () => {
                       if (inFlight.has(id)) return;
-                      // Belt-and-suspenders science check using whatever
-                      // /state most recently delivered. Avoids the round
-                      // trip when we already know it'll 409.
                       if (cost > playerScience) return;
                       setInFlight(prev => new Set(prev).add(id));
                       try {
                         await mpActions.research({ techId: id });
                       } finally {
-                        // Brief delay so the next /state poll (1.5s) lands
-                        // before we let another click through — otherwise a
-                        // fast clicker would burn through stale science.
                         setTimeout(() => {
                           setInFlight(prev => {
                             const next = new Set(prev);
@@ -160,29 +216,48 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                           });
                         }, 1800);
                       }
-                      return;
-                    }
-                    if (isActive) cancelResearch();
-                    else startResearch(id);
-                  }}
-                  disabled={
-                    (!mpActions && isQueued && !isActive)
-                    || (!!mpActions && (inFlight.has(id) || cost > playerScience))
-                  }
-                  title={
-                    mpActions
-                      ? (cost > playerScience
-                        ? `Not enough science (need ${cost})`
-                        : inFlight.has(id)
-                          ? 'Researching…'
-                          : `Spend ${cost} science to advance ${TECH_DEFS[id].name}`)
-                      : isQueued ? 'Cancel current research first' : (isActive ? 'Cancel research' : 'Research this tech next')
-                  }
-                >
-                  {mpActions
-                    ? (inFlight.has(id) ? '…' : `Research (${cost} sci)`)
-                    : isActive ? 'Researching…' : isQueued ? 'Queue full' : 'Research'}
-                </button>
+                    }}
+                    disabled={inFlight.has(id) || cost > playerScience}
+                    title={cost > playerScience
+                      ? `Not enough science (need ${cost})`
+                      : inFlight.has(id)
+                        ? 'Researching…'
+                        : `Spend ${cost} science to advance ${def.name}`}
+                  >
+                    {inFlight.has(id) ? '…' : `Research (${cost} sci)`}
+                  </button>
+                ) : isActive ? (
+                  <button
+                    className="tech-card__action active"
+                    onClick={cancelResearch}
+                    title="Cancel current research (loses progress)"
+                  >Cancel</button>
+                ) : isQueued ? (
+                  <button
+                    className="tech-card__action"
+                    onClick={() => dequeueResearch(id)}
+                    title={`Remove from queue (position ${queueIndex + 1})`}
+                    style={{ borderColor: '#ff5e5e', color: '#ff5e5e' }}
+                  >Remove (#{queueIndex + 1})</button>
+                ) : (
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <button
+                      className="tech-card__action"
+                      onClick={() => startResearch(id)}
+                      title={tech.researching
+                        ? `Switch focus to ${def.name} (abandons current progress)`
+                        : `Start researching ${def.name}`}
+                    >Research</button>
+                    {tech.researching && (
+                      <button
+                        className="tech-card__action"
+                        onClick={() => enqueueResearch(id)}
+                        title={`Queue ${def.name} after current research`}
+                        style={{ borderColor: '#4ecdc4', color: '#4ecdc4' }}
+                      >+ Queue</button>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}

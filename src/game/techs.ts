@@ -113,16 +113,32 @@ export const ALL_TECH_IDS: TechId[] = [
 ];
 
 /**
- * Per-faction tech progress: completed levels and the currently-researching tech.
+ * Per-faction tech progress: completed levels, the currently-researching
+ * tech, and a queue of techs to research next.
+ *
+ * `researching` becomes null when a level completes and the queue is empty.
+ * When the queue has entries, the next one auto-promotes to `researching`
+ * and progress resets — handled in the per-tick reducer in gameContext.
  */
 export interface FactionTechState {
   levels: Partial<Record<TechId, number>>;  // missing key = 0
   researching: TechId | null;
   progress: number;                          // science accumulated toward next level
+  queue?: TechId[];                          // upcoming research, FIFO
 }
 
+/**
+ * Maximum science a faction can spend per tick toward its current research.
+ * Caps the per-tick drain so a player who's been stockpiling can't insta-
+ * complete a tech the moment they pick it. Combined with baseCost (30–50
+ * for L1) this means a fresh tech takes ~10 ticks at base rate even with
+ * an enormous stockpile, which feels like "build over time" rather than
+ * "spend lump sum." Future-tunable; exposed here so tunables/AI can read it.
+ */
+export const MAX_SCIENCE_PER_TICK = 3;
+
 export function emptyFactionTechState(): FactionTechState {
-  return { levels: {}, researching: null, progress: 0 };
+  return { levels: {}, researching: null, progress: 0, queue: [] };
 }
 
 /** Current level (0 if never researched). */

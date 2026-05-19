@@ -15,7 +15,7 @@ import {
   canHostCity, canHostStation, SETTLEMENT_DEFS,
 } from '../game/settlements';
 import { tickMaintenance } from '../game/maintenance';
-import { TechId, TECH_DEFS } from '../game/techs';
+import { TechId, TECH_DEFS, MAX_SCIENCE_PER_TICK } from '../game/techs';
 import { runFactionAI, shouldRunAI } from '../game/factionAI';
 import { planBezierTransfer } from '../physics/bezierTransfer';
 import type { AIActivityEntry } from '../types';
@@ -198,6 +198,9 @@ interface GameContextType {
   // Research / tech tree
   startResearch: (techId: TechId) => void;
   cancelResearch: () => void;
+  enqueueResearch: (techId: TechId) => void;     // add to end of queue
+  dequeueResearch: (techId: TechId) => void;     // remove from queue
+  moveResearchUp: (techId: TechId) => void;      // shift toward front of queue
 
   // Debug / admin: bump a faction's pools by `delta` (positive grants,
   // negative drains). Pass factionId='all' to apply the same delta to
@@ -573,38 +576,59 @@ export function GameContextProvider({
     updatedShips = tickMaintenance(updatedShips, updatedSettlements, prev.bodies, tickDelta);
 
     // Research drain — for each faction with a queued tech, pour available
-    // science into the research bar; level up when full. Excess rolls into the
-    // next level so a stockpile can finish multiple cheap levels in one tick.
+    // science into the research bar; level up when full. The drain is
+    // capped at MAX_SCIENCE_PER_TICK so a player with a fat science
+    // stockpile can't insta-complete the moment they pick a tech —
+    // research now visibly accrues across many ticks. When a level
+    // finishes and the faction has a queued tech, the next one
+    // auto-promotes to `researching` and progress resets.
     const updatedTech: typeof prev.factionTech = {};
+    const tickDeltaScale = Math.max(0.01, tickDelta); // sub-tick advances get a fractional drain too
     for (const [fid, ts0] of Object.entries(prev.factionTech)) {
       let ts = ts0;
       if (!ts.researching) { updatedTech[fid] = ts; continue; }
-      const techId = ts.researching as TechId;
-      const def = TECH_DEFS[techId];
-      if (!def) { updatedTech[fid] = ts; continue; }
       const pool = factionPools[fid];
-      let available = pool ? pool.science : 0;
-      if (available <= 0) { updatedTech[fid] = ts; continue; }
+      const haveScience = pool ? pool.science : 0;
+      if (haveScience <= 0) { updatedTech[fid] = ts; continue; }
 
+      let researching: TechId | null = ts.researching as TechId;
       let progress = ts.progress;
       let levels = { ...ts.levels };
+      let queue = ts.queue ? [...ts.queue] : [];
+
+      // Per-tick spend budget: cap × tickDelta. Sub-tick advances still
+      // bleed a proportional amount so the loop's behavior is the same
+      // whether the realtime loop calls advanceToTick 20× at 0.1 each
+      // or once at 2.0.
+      const spendBudget = Math.min(haveScience, MAX_SCIENCE_PER_TICK * tickDeltaScale);
+      let available = spendBudget;
+      let science = haveScience;
       let iters = 0;
-      while (available > 0 && iters++ < 100) {
-        const curLevel = levels[techId] ?? 0;
+
+      while (available > 0 && researching && iters++ < 16) {
+        const def = TECH_DEFS[researching];
+        if (!def) break;
+        const curLevel = levels[researching] ?? 0;
         const cost = Math.ceil(def.baseCost * Math.pow(curLevel + 1, def.costScaling));
         const need = cost - progress;
         const spend = Math.min(available, need);
         progress += spend;
         available -= spend;
+        science -= spend;
         if (progress >= cost) {
-          levels[techId] = curLevel + 1;
+          levels[researching] = curLevel + 1;
           progress = 0;
+          // Auto-advance: pull the next tech off the queue. If empty,
+          // researching becomes null and the player gets a free tick
+          // until they queue something new.
+          researching = queue.length > 0 ? (queue.shift() as TechId) : null;
         } else {
+          // Hit the per-tick budget cap, but tech isn't done yet.
           break;
         }
       }
-      if (pool) pool.science = available;
-      updatedTech[fid] = { ...ts, levels, progress, researching: ts.researching };
+      if (pool) pool.science = Math.max(0, science);
+      updatedTech[fid] = { ...ts, levels, progress, researching, queue };
     }
 
     const combatLog = combatNewLogs.length > 0
@@ -1240,12 +1264,19 @@ export function GameContextProvider({
 
   const startResearch = useCallback((techId: TechId) => {
     setGameStateInternal(prev => {
-      const cur = prev.factionTech.player ?? { levels: {}, researching: null, progress: 0 };
+      const cur = prev.factionTech.player ?? { levels: {}, researching: null, progress: 0, queue: [] };
+      // Starting a tech that's already queued should promote it out of
+      // the queue rather than appearing in both "researching" and "next
+      // up" at once.
+      const queue = (cur.queue ?? []).filter(t => t !== techId);
+      // Switching away from a current research abandons its progress —
+      // matches the prior behavior. Players who want to preserve it
+      // should use the queue instead of switching directly.
       return {
         ...prev,
         factionTech: {
           ...prev.factionTech,
-          player: { ...cur, researching: techId, progress: 0 },
+          player: { ...cur, researching: techId, progress: 0, queue },
         },
       };
     });
@@ -1253,12 +1284,80 @@ export function GameContextProvider({
 
   const cancelResearch = useCallback(() => {
     setGameStateInternal(prev => {
-      const cur = prev.factionTech.player ?? { levels: {}, researching: null, progress: 0 };
+      const cur = prev.factionTech.player ?? { levels: {}, researching: null, progress: 0, queue: [] };
+      // Cancel just nukes the current research; the queue survives. If
+      // the queue has anything, the next tick's reducer will pull the
+      // head off and start it. Players who want to wipe everything can
+      // dequeue each entry separately.
       return {
         ...prev,
         factionTech: {
           ...prev.factionTech,
           player: { ...cur, researching: null, progress: 0 },
+        },
+      };
+    });
+  }, []);
+
+  const enqueueResearch = useCallback((techId: TechId) => {
+    setGameStateInternal(prev => {
+      const cur = prev.factionTech.player ?? { levels: {}, researching: null, progress: 0, queue: [] };
+      const queue = cur.queue ?? [];
+      // De-dupe: if it's already queued or actively researching, no-op.
+      // Players who want to research the same line repeatedly should
+      // wait for the level to finish before re-queueing.
+      if (cur.researching === techId) return prev;
+      if (queue.includes(techId)) return prev;
+      // If there's no current research, start it directly instead of
+      // queueing — saves the player from having to click Start after
+      // adding the first item.
+      if (!cur.researching) {
+        return {
+          ...prev,
+          factionTech: {
+            ...prev.factionTech,
+            player: { ...cur, researching: techId, progress: 0, queue },
+          },
+        };
+      }
+      return {
+        ...prev,
+        factionTech: {
+          ...prev.factionTech,
+          player: { ...cur, queue: [...queue, techId] },
+        },
+      };
+    });
+  }, []);
+
+  const dequeueResearch = useCallback((techId: TechId) => {
+    setGameStateInternal(prev => {
+      const cur = prev.factionTech.player ?? { levels: {}, researching: null, progress: 0, queue: [] };
+      const queue = (cur.queue ?? []).filter(t => t !== techId);
+      return {
+        ...prev,
+        factionTech: {
+          ...prev.factionTech,
+          player: { ...cur, queue },
+        },
+      };
+    });
+  }, []);
+
+  const moveResearchUp = useCallback((techId: TechId) => {
+    setGameStateInternal(prev => {
+      const cur = prev.factionTech.player ?? { levels: {}, researching: null, progress: 0, queue: [] };
+      const queue = [...(cur.queue ?? [])];
+      const idx = queue.indexOf(techId);
+      if (idx <= 0) return prev; // not in queue, or already at front
+      // Swap with the previous entry. At idx=0 the next swap would
+      // promote it to `researching` — handled separately via Start.
+      [queue[idx - 1], queue[idx]] = [queue[idx], queue[idx - 1]];
+      return {
+        ...prev,
+        factionTech: {
+          ...prev.factionTech,
+          player: { ...cur, queue },
         },
       };
     });
@@ -1305,6 +1404,7 @@ export function GameContextProvider({
     deploySettlement, damageSettlement,
     selectedSettlementId, selectSettlement,
     startResearch, cancelResearch,
+    enqueueResearch, dequeueResearch, moveResearchUp,
     turnBasedActive, commitTurn,
     adjustResources,
   };

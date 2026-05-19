@@ -201,12 +201,14 @@ export interface Settlement {
 
 /**
  * Per-faction tech progress (forward-declared; the canonical shape lives
- * in src/game/techs.ts).
+ * in src/game/techs.ts). `queue` is optional so callers that haven't been
+ * updated to the queue model keep type-checking.
  */
 export interface FactionTechStateBase {
   levels: Record<string, number>;
   researching: string | null;
   progress: number;
+  queue?: string[];
 }
 
 /**
