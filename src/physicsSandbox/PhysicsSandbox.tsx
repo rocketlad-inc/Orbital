@@ -24,7 +24,7 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { BODIES, BY_ID, muOf } from './bodies';
 import {
   Orbit, applyNodeToOrbit, bodyPosition, eccentricity,
-  orbitWorldPos, velocityVectorsAt,
+  orbitWorldPos, velocityVectorsAt, localPositionAt,
 } from './orbitalMath';
 import {
   ManeuverNode, AnchorKind, NodeLink, computeTrajectory, computeNodeChain,
@@ -403,7 +403,7 @@ export function PhysicsSandbox({ onExit }: { onExit?: () => void }) {
     drawTrajectory(ctx, trajectory, t, worldToScreen, cam);
 
     // Node diamonds + handles (for the selected node)
-    drawNodes(ctx, nodeChain, t, worldToScreen, selectedNodeId);
+    drawNodes(ctx, nodeChain, trajectory, t, worldToScreen, selectedNodeId);
 
     // Ship marker
     const shipPos = orbitWorldPos(s.orbit, t);
@@ -458,7 +458,8 @@ export function PhysicsSandbox({ onExit }: { onExit?: () => void }) {
     if (selectedNodeId !== null) {
       const link = nodeChain.find(l => l.node.id === selectedNodeId);
       if (link) {
-        const handle = hitHandle(sx, sy, link, worldToScreen);
+        const centerWs = nodeDisplayWorldPos(link, trajectory, tickRef.current);
+        const handle = hitHandle(sx, sy, link, centerWs, worldToScreen);
         if (handle) {
           draggingRef.current = { kind: 'handle', handle, nodeId: selectedNodeId };
           return;
@@ -466,12 +467,12 @@ export function PhysicsSandbox({ onExit }: { onExit?: () => void }) {
       }
     }
 
-    // 2) Node hit
+    // 2) Node hit — coordinate has to match the diamond's draw position
     for (const link of nodeChain) {
-      const ws = orbitWorldPos(link.preBurnOrbit, link.node.t);
+      const ws = nodeDisplayWorldPos(link, trajectory, tickRef.current);
       const sp = worldToScreen(ws.x, ws.y);
       const dx = sx - sp.x, dy = sy - sp.y;
-      if (dx * dx + dy * dy < 100) {
+      if (dx * dx + dy * dy < 196) {  // slightly larger hit radius to match 14px diamond
         setSelectedNodeId(link.node.id);
         return;
       }
@@ -516,7 +517,7 @@ export function PhysicsSandbox({ onExit }: { onExit?: () => void }) {
     if (drag.kind === 'handle') {
       const link = nodeChain.find(l => l.node.id === drag.nodeId);
       if (!link) return;
-      const ws = orbitWorldPos(link.preBurnOrbit, link.node.t);
+      const ws = nodeDisplayWorldPos(link, trajectory, tickRef.current);
       const center = worldToScreen(ws.x, ws.y);
       const { prograde, radialOut } = velocityVectorsAt(link.preBurnOrbit, link.node.t);
       let dir = { x: 0, y: 0 };
@@ -933,6 +934,34 @@ export function PhysicsSandbox({ onExit }: { onExit?: () => void }) {
 
 type ScreenTransform = (x: number, y: number) => { x: number; y: number };
 
+/**
+ * Where a node diamond should be drawn in WORLD coordinates. The orbit
+ * ellipse for an arc is anchored to its parent body's position at a
+ * specific time — `currentTick` for the arc the ship is currently on,
+ * `arc.tStart` for projected future arcs. Diamonds must use that same
+ * reference time so they sit on the visible ellipse instead of where
+ * the parent body will be at the node's burn time (which can be wildly
+ * off-screen if the parent moves significantly between now and then).
+ */
+function nodeDisplayWorldPos(
+  link: NodeLink,
+  arcs: ReturnType<typeof computeTrajectory>,
+  currentTick: number,
+): { x: number; y: number } {
+  const parent = BY_ID[link.preBurnOrbit.parentBodyId];
+  const owningArc = arcs.find(
+    a => a.orbit.parentBodyId === link.preBurnOrbit.parentBodyId &&
+         link.node.t >= a.tStart - 1e-3 && link.node.t <= a.tEnd + 1e-3,
+  );
+  const isCurrentArc = owningArc
+    ? currentTick >= owningArc.tStart && currentTick <= owningArc.tEnd
+    : true;
+  const parentTime = isCurrentArc ? currentTick : (owningArc?.tStart ?? currentTick);
+  const parentPos = bodyPosition(parent, parentTime);
+  const localPos = localPositionAt(link.preBurnOrbit, link.node.t);
+  return { x: parentPos.x + localPos.x, y: parentPos.y + localPos.y };
+}
+
 function drawTrajectory(
   ctx: CanvasRenderingContext2D,
   arcs: ReturnType<typeof computeTrajectory>,
@@ -963,8 +992,16 @@ function drawTrajectory(
     const isClosedFullOrbit =
       isBound && (arc.endReason === 'budget' || arc.endReason === 'node');
 
+    // The "reference time" for placing the parent body. For the arc
+    // the ship is currently on we use the live tick so the orbit
+    // visually follows its moving parent. For future arcs we freeze
+    // the parent at the arc's start (typically the burn or SOI
+    // transition that begins the arc) so the ellipse depicts the
+    // projected state of that arc.
+    const parentTime = isCurrent ? currentTick : arc.tStart;
+
     if (isClosedFullOrbit) {
-      drawClosedEllipse(ctx, arc.orbit, currentTick, worldToScreen, cam, color, dashed);
+      drawClosedEllipse(ctx, arc.orbit, parentTime, worldToScreen, cam, color, dashed);
     } else {
       drawArc(ctx, arc, worldToScreen, color, dashed);
     }
@@ -1044,14 +1081,14 @@ function drawArc(
 function drawClosedEllipse(
   ctx: CanvasRenderingContext2D,
   orbit: ReturnType<typeof computeTrajectory>[number]['orbit'],
-  currentTick: number,
+  parentTime: number,
   worldToScreen: ScreenTransform,
   cam: { x: number; y: number; scale: number },
   color: string,
   dashed: boolean,
 ) {
   const parent = BY_ID[orbit.parentBodyId];
-  const pPos = bodyPosition(parent, currentTick);
+  const pPos = bodyPosition(parent, parentTime);
   const ps = worldToScreen(pPos.x, pPos.y);
   const a = (orbit.rp + orbit.ra) / 2;          // semi-major
   const e = (orbit.ra - orbit.rp) / (orbit.ra + orbit.rp);
@@ -1076,13 +1113,16 @@ function drawClosedEllipse(
 function drawNodes(
   ctx: CanvasRenderingContext2D,
   chain: NodeLink[],
+  arcs: ReturnType<typeof computeTrajectory>,
   currentTick: number,
   worldToScreen: ScreenTransform,
   selectedNodeId: number | null,
 ) {
   for (const link of chain) {
-    const { node, preBurnOrbit } = link;
-    const wp = orbitWorldPos(preBurnOrbit, node.t);
+    const { node } = link;
+    // Place the diamond on the same orbit-ellipse the renderer draws —
+    // see nodeDisplayWorldPos for the parent-time selection rules.
+    const wp = nodeDisplayWorldPos(link, arcs, currentTick);
     const sp = worldToScreen(wp.x, wp.y);
     const isSel = node.id === selectedNodeId;
 
@@ -1170,10 +1210,10 @@ function hitHandle(
   sx: number,
   sy: number,
   link: NodeLink,
+  centerWorldPos: { x: number; y: number },
   worldToScreen: ScreenTransform,
 ): 'prograde' | 'retrograde' | 'radial-out' | 'radial-in' | null {
-  const wp = orbitWorldPos(link.preBurnOrbit, link.node.t);
-  const center = worldToScreen(wp.x, wp.y);
+  const center = worldToScreen(centerWorldPos.x, centerWorldPos.y);
   const { prograde, radialOut } = velocityVectorsAt(link.preBurnOrbit, link.node.t);
   const HANDLE_LEN = 50;
   const SCALE = 0.01;
