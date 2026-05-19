@@ -35,6 +35,19 @@ export const Outliner: React.FC = () => {
     return () => window.removeEventListener('keydown', onKey);
   }, [isMobile, collapsed]);
 
+  // Mirror collapse state onto a body class so sibling fixed-position
+  // panels (mp-dock in particular) can slide in/out alongside us. The
+  // mp-dock anchors to right: 264px when we're open (clear of our 240px
+  // width + 16px gutter) and right: 56px when we're collapsed (clear of
+  // our 32px stub + same gutter). multiplayer.css owns the actual
+  // declarations — this effect just publishes the signal.
+  useEffect(() => {
+    const cls = 'outliner-collapsed';
+    if (collapsed) document.body.classList.add(cls);
+    else document.body.classList.remove(cls);
+    return () => document.body.classList.remove(cls);
+  }, [collapsed]);
+
   const playerShips = useMemo(
     () => gameState.ships.filter(s => s.ownedBy === 'player'),
     [gameState.ships]

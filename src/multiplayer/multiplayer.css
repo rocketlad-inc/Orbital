@@ -127,20 +127,22 @@
 
 /* ---- Right-side multiplayer dock ----
  *
- * Position is now anchored LEFT of the Outliner instead of competing
- * for the same right strip. Previously both were pinned to right: 8/12px
- * with mp-dock z-index 3000 stomping the Outliner's z-index 80 when
- * expanded, and the 44px collapsed stub was tucked behind the Outliner
- * with just a thin sliver visible — the "two menus on top of each other"
- * the playtester called out.
+ * Anchored LEFT of the Outliner, with `right` tracking the Outliner's
+ * current width so the two panels slide together when the player
+ * collapses or expands the holdings drawer. body.outliner-collapsed is
+ * toggled by the Outliner component (see src/components/Outliner.tsx).
  *
- * Outliner is `right: 8px; width: 240px;` → its left edge sits at
- * right: 248px. We pin the dock to right: 264px so there's a clean
- * 16px gutter between the two panels.
+ *   Outliner open  (240px + 8px gutter) → mp-dock at right: 264px
+ *   Outliner shut  (32px + 8px gutter)  → mp-dock at right: 56px
  *
- * When collapsed, the dock shrinks to a small top-anchored button
- * (height: auto, no bottom anchor) so the right edge of the canvas
- * isn't haunted by a full-height stub the player can't act on.
+ * Previous version pinned the dock to a fixed right: 264px regardless
+ * of Outliner state, which left a ~232px dead zone of empty canvas when
+ * the player collapsed their Outliner. Transition on `right` mirrors
+ * the Outliner's own 0.2s width animation so they move in lockstep.
+ *
+ * When the dock itself is collapsed, it shrinks to a small top-anchored
+ * button (height: auto, no bottom anchor) so the right edge of the
+ * canvas isn't haunted by a full-height stub the player can't act on.
  */
 .mp-dock {
   position: fixed;
@@ -152,7 +154,9 @@
   font-family: var(--mp-mono);
   color: var(--mp-fg);
   display: flex; flex-direction: column;
+  transition: right 0.2s ease, width 0.2s ease;
 }
+body.outliner-collapsed .mp-dock { right: 56px; }
 .mp-dock.collapsed {
   width: 44px;
   /* Collapse to a small top button — release the bottom anchor so the
