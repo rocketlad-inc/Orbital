@@ -940,13 +940,34 @@ function drawTrajectory(
   worldToScreen: ScreenTransform,
   cam: { x: number; y: number; scale: number },
 ) {
-  // Current arc(s): solid line. Future arcs (committed): dashed amber.
+  // KSP-style: bound orbits that don't escape during the projection
+  // budget render as clean closed ellipses around their parent body.
+  // Only escape/transfer arcs (and the segment leading up to a planned
+  // burn) sample as partial paths. Without this, a stable circular
+  // orbit would render as 1.5 stacked sampled loops which looks like
+  // a noisy mess.
   for (let i = 0; i < arcs.length; i++) {
     const arc = arcs[i];
     const isCurrent = currentTick >= arc.tStart && currentTick <= arc.tEnd;
     const color = isCurrent ? '#4a7090' : 'rgba(255, 184, 77, 0.6)';
     const dashed = !isCurrent;
-    drawArc(ctx, arc, worldToScreen, color, dashed);
+
+    // Closed-ellipse condition: orbit is bound AND the only thing that
+    // ends the arc is "budget" (we ran out of forward window) or a node
+    // burn (a maneuver that doesn't itself involve an SOI transition).
+    // Both of those mean the orbit is a stable closed loop around its
+    // current parent — render it as a clean ellipse, KSP-style. SOI-
+    // exit/enter arcs render as partial sampled paths so the player
+    // can see the curve leading into the transition.
+    const isBound = arc.orbit.escapeEnergy === undefined;
+    const isClosedFullOrbit =
+      isBound && (arc.endReason === 'budget' || arc.endReason === 'node');
+
+    if (isClosedFullOrbit) {
+      drawClosedEllipse(ctx, arc.orbit, currentTick, worldToScreen, cam, color, dashed);
+    } else {
+      drawArc(ctx, arc, worldToScreen, color, dashed);
+    }
 
     // Encounter ghost
     if (arc.endReason === 'enter' && arc.enteredBodyId) {
@@ -1008,6 +1029,45 @@ function drawArc(
     if (i === 0) ctx.moveTo(sp.x, sp.y);
     else ctx.lineTo(sp.x, sp.y);
   }
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+/**
+ * Draws an orbit as a clean closed ellipse around its parent body.
+ * The geometry is taken directly from the Keplerian elements (a, e,
+ * omega), so it's both faster and visually crisper than sampling the
+ * orbit through time. The parent body's position is taken at the current
+ * tick — for moons of a moving body the ellipse follows the parent.
+ */
+function drawClosedEllipse(
+  ctx: CanvasRenderingContext2D,
+  orbit: ReturnType<typeof computeTrajectory>[number]['orbit'],
+  currentTick: number,
+  worldToScreen: ScreenTransform,
+  cam: { x: number; y: number; scale: number },
+  color: string,
+  dashed: boolean,
+) {
+  const parent = BY_ID[orbit.parentBodyId];
+  const pPos = bodyPosition(parent, currentTick);
+  const ps = worldToScreen(pPos.x, pPos.y);
+  const a = (orbit.rp + orbit.ra) / 2;          // semi-major
+  const e = (orbit.ra - orbit.rp) / (orbit.ra + orbit.rp);
+  const b = a * Math.sqrt(1 - e * e);          // semi-minor
+  const c = a * e;                              // focus-to-center
+  // Ellipse center is offset from the focus (parent body) by -c in the
+  // direction of periapsis (omega). At omega=0 the periapsis is on the
+  // +x axis, so center is at -c on x.
+  const cx = ps.x - Math.cos(orbit.omega) * c * cam.scale;
+  const cy = ps.y - Math.sin(orbit.omega) * c * cam.scale;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.3;
+  if (dashed) ctx.setLineDash([5, 5]);
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, a * cam.scale, b * cam.scale, orbit.omega, 0, TWO_PI);
   ctx.stroke();
   ctx.setLineDash([]);
   ctx.restore();
