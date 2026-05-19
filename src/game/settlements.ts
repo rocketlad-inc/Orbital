@@ -237,40 +237,26 @@ export function tickSettlements(
       }
     }
 
-    // Freighter offload: any of owner's freighters in orbit at this body
-    // siphons stockpile into the global faction pool (per-tick, fast).
-    const ownerFreighters = ships.filter(sh =>
-      sh.ownedBy === s.ownedBy &&
-      sh.class === 'freighter' &&
-      !sh.transfer &&
-      sh.orbit.parentBodyId === s.bodyId
-    );
-
-    if (ownerFreighters.length > 0 && (stockpile.fuel > 0 || stockpile.ore > 0 || stockpile.credits > 0 || stockpile.science > 0)) {
+    // Direct offload: each tick, any stockpile a settlement is holding
+    // gets swept straight into the owner's faction pool. The freighter-
+    // required ferry mechanic confused players ("I have cities but my
+    // CR isn't going up") so we cut it. Settlements just generate
+    // resources now; the stockpile field is kept (still written by the
+    // harvest cycle above) so save/load schemas don't change, but the
+    // value drains to ~0 within a tick of being written.
+    const hasStock = stockpile.fuel > 0 || stockpile.ore > 0 || stockpile.credits > 0 || stockpile.science > 0;
+    if (hasStock) {
       // Lazily create a pool for owners we haven't seen yet (e.g. captured
       // settlements whose new owner has no entry in gameState.resources).
       if (!factionPools[s.ownedBy]) {
         factionPools[s.ownedBy] = { fuel: 0, ore: 0, credits: 0, science: 0 };
       }
       const pool = factionPools[s.ownedBy];
-      // Each freighter carries up to 5 of each per tick
-      const capacity = ownerFreighters.length * 5;
-      const moveFuel = Math.min(stockpile.fuel, capacity);
-      const moveOre = Math.min(stockpile.ore, capacity);
-      const moveCredits = Math.min(stockpile.credits, capacity);
-      const moveScience = Math.min(stockpile.science, capacity);
-
-      pool.fuel += moveFuel;
-      pool.ore += moveOre;
-      pool.credits += moveCredits;
-      pool.science += moveScience;
-
-      stockpile = {
-        fuel: stockpile.fuel - moveFuel,
-        ore: stockpile.ore - moveOre,
-        credits: stockpile.credits - moveCredits,
-        science: stockpile.science - moveScience,
-      };
+      pool.fuel    += stockpile.fuel;
+      pool.ore     += stockpile.ore;
+      pool.credits += stockpile.credits;
+      pool.science += stockpile.science;
+      stockpile = { fuel: 0, ore: 0, credits: 0, science: 0 };
       dirty = true;
     }
 
@@ -302,29 +288,17 @@ export function damageSettlement(s: Settlement, dmg: number): Settlement | null 
 // === Income summary (HUD) ===
 
 /**
- * Per-tick income summary for a faction. Splits production into:
- *   - delivered: actual gain per tick that reaches the faction pool
- *     (only settlements that have an owner-freighter parked at the body
- *      ferry their stockpile back to the global pool)
- *   - stranded:  per-tick yield that accumulates in stockpiles but
- *     never reaches the pool until a freighter arrives. Surfaced as
- *     a warning callout so players notice when they need to dispatch
- *     a hauler.
- *   - waiting:   total currently sitting in stockpiles right now
- *     (snapshot, not a rate).
+ * Per-tick income summary for a faction.
  *
- * Per-tick numbers are continuous floats — settlementYield returns the
- * full-cycle output and the harvest cadence is one batch per
+ * Every settlement's yield lands directly in the faction pool now —
+ * the freighter-ferry step was scrapped — so the summary is just a
+ * single rate, no delivered/stranded split. settlementYield returns
+ * the full-cycle output and harvest fires once per
  * SETTLEMENT_HARVEST_INTERVAL ticks, so we divide by that to get a
- * useful "per-tick" display.
+ * smooth per-tick number for the HUD.
  */
 export interface IncomePerTick {
-  delivered: { fuel: number; ore: number; credits: number; science: number };
-  stranded:  { fuel: number; ore: number; credits: number; science: number };
-  waiting:   { fuel: number; ore: number; credits: number; science: number };
-  /** Count of settlements with no freighter on-body (stranded yield > 0). */
-  strandedCount: number;
-  /** Total settlements counted (informational). */
+  perTick: { fuel: number; ore: number; credits: number; science: number };
   settlementCount: number;
 }
 
@@ -332,44 +306,23 @@ export function computeIncomePerTick(
   factionId: string,
   settlements: Settlement[],
   bodies: Body[],
-  ships: Ship[],
+  // ships parameter retained for signature stability (older callers and
+  // future use cases like ship-maintenance drain). Currently unused.
+  _ships: Ship[],
   yieldMul: number = 1,
 ): IncomePerTick {
-  const zero = () => ({ fuel: 0, ore: 0, credits: 0, science: 0 });
-  const out: IncomePerTick = {
-    delivered: zero(), stranded: zero(), waiting: zero(),
-    strandedCount: 0, settlementCount: 0,
-  };
-  const mine = settlements.filter(s => s.ownedBy === factionId);
-  for (const s of mine) {
-    out.settlementCount += 1;
+  const perTick = { fuel: 0, ore: 0, credits: 0, science: 0 };
+  let settlementCount = 0;
+  for (const s of settlements) {
+    if (s.ownedBy !== factionId) continue;
+    settlementCount += 1;
     const body = bodies.find(b => b.id === s.bodyId);
     if (!body) continue;
     const y = settlementYield(s, body);
-    // The yield runs once per HARVEST_INTERVAL ticks. Normalize to
-    // per-tick so the HUD reads as a smooth rate.
-    const perTick = {
-      fuel:    y.fuel    * yieldMul / SETTLEMENT_HARVEST_INTERVAL,
-      ore:     y.ore     * yieldMul / SETTLEMENT_HARVEST_INTERVAL,
-      credits: y.credits * yieldMul / SETTLEMENT_HARVEST_INTERVAL,
-      science: y.science * yieldMul / SETTLEMENT_HARVEST_INTERVAL,
-    };
-    const hasFreighter = ships.some(sh =>
-      sh.ownedBy === factionId &&
-      sh.class === 'freighter' &&
-      !sh.transfer &&
-      sh.orbit.parentBodyId === s.bodyId
-    );
-    const bucket = hasFreighter ? out.delivered : out.stranded;
-    bucket.fuel    += perTick.fuel;
-    bucket.ore     += perTick.ore;
-    bucket.credits += perTick.credits;
-    bucket.science += perTick.science;
-    if (!hasFreighter) out.strandedCount += 1;
-    out.waiting.fuel    += s.stockpile.fuel;
-    out.waiting.ore     += s.stockpile.ore;
-    out.waiting.credits += s.stockpile.credits;
-    out.waiting.science += s.stockpile.science;
+    perTick.fuel    += (y.fuel    * yieldMul) / SETTLEMENT_HARVEST_INTERVAL;
+    perTick.ore     += (y.ore     * yieldMul) / SETTLEMENT_HARVEST_INTERVAL;
+    perTick.credits += (y.credits * yieldMul) / SETTLEMENT_HARVEST_INTERVAL;
+    perTick.science += (y.science * yieldMul) / SETTLEMENT_HARVEST_INTERVAL;
   }
-  return out;
+  return { perTick, settlementCount };
 }

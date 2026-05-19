@@ -958,19 +958,19 @@ export class Room {
         .run();
     }
 
-    // 3.6 Stockpile offload. If a player's freighter is in orbit at a
-    //     body where they own a settlement, sweep the settlement's stockpile
-    //     into the owning faction's resources. Mirrors the client behavior.
+    // 3.6 Stockpile offload. Settlements deposit directly into the
+    //     owner's faction pool every tick — the freighter-ferry mechanic
+    //     was scrapped because players had cities producing but no idea
+    //     why their CR wasn't moving (gold piled up on the city forever
+    //     waiting for a freighter that never came). Now every non-empty
+    //     stockpile sweeps to its faction's pool unconditionally. Mirrors
+    //     the client SP behavior in src/game/settlements.ts.
     const offloads = (await this.env.DB
       .prepare(
-        `SELECT DISTINCT s.id AS sid, s.owner_faction_id AS fid,
+        `SELECT s.id AS sid, s.owner_faction_id AS fid,
                 s.stockpile_metal AS m, s.stockpile_fuel AS f,
                 s.stockpile_gold AS g, s.stockpile_science AS sci
            FROM game_settlements s
-           JOIN game_ships sh ON sh.parent_body_id = s.body_id
-                              AND sh.owner_faction_id = s.owner_faction_id
-                              AND sh.ship_class = 'freighter'
-                              AND sh.status = 'active'
           WHERE s.game_id = ?
             AND s.destroyed_at_tick IS NULL
             AND (s.stockpile_metal + s.stockpile_fuel + s.stockpile_gold + s.stockpile_science) > 0`,
