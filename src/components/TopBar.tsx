@@ -13,6 +13,7 @@ import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext'
 import { useMpTurnStatus } from '../multiplayer/useMpTurnStatus';
 import { logger } from '../game/logger';
 import { SaveLoadModal } from './SaveLoadModal';
+import { AdminGrantModal } from './AdminGrantModal';
 import type { GameState } from '../types';
 import './TopBar.css';
 
@@ -71,6 +72,9 @@ export const TopBar: React.FC<TopBarProps> = ({
   // because closing the menu shouldn't kill the modal — players want to
   // see the picker without the menu also occupying the screen.
   const [saveLoadMode, setSaveLoadMode] = useState<null | 'save' | 'load'>(null);
+  // Admin resource-grant modal — opened from the DEBUG section of the
+  // SideMenu. SP-always-visible; MP-host-only on the server side.
+  const [adminGrantOpen, setAdminGrantOpen] = useState(false);
 
   // Esc closes the drawer
   useEffect(() => {
@@ -177,6 +181,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           canSaveLoad={canSaveLoad}
           onOpenSave={() => { setSaveLoadMode('save'); setMenuOpen(false); }}
           onOpenLoad={() => { setSaveLoadMode('load'); setMenuOpen(false); }}
+          onOpenAdminGrant={() => { setAdminGrantOpen(true); setMenuOpen(false); }}
         />
       )}
 
@@ -192,6 +197,13 @@ export const TopBar: React.FC<TopBarProps> = ({
             setSaveLoadMode(null);
             onLoadSave?.(state);
           }}
+        />
+      )}
+
+      {adminGrantOpen && (
+        <AdminGrantModal
+          onClose={() => setAdminGrantOpen(false)}
+          mpGameId={adminGameId}
         />
       )}
 
@@ -718,6 +730,9 @@ interface SideMenuProps {
   canSaveLoad?: boolean;
   onOpenSave?: () => void;
   onOpenLoad?: () => void;
+  /** Open the admin resource-grant modal. SP-always; MP-host-only
+   *  (server enforces). Wired from TopBar. */
+  onOpenAdminGrant?: () => void;
 }
 
 const SideMenu: React.FC<SideMenuProps> = ({
@@ -725,7 +740,7 @@ const SideMenu: React.FC<SideMenuProps> = ({
   adminGameId = null, isHost = false,
   activePanel, onTogglePanel,
   playerShipCount = 0, settlementCount = 0, researchTotal = 0,
-  canSaveLoad = false, onOpenSave, onOpenLoad,
+  canSaveLoad = false, onOpenSave, onOpenLoad, onOpenAdminGrant,
 }) => {
   const [forceTickBusy, setForceTickBusy] = useState(false);
   const [forceTickStatus, setForceTickStatus] = useState<string | null>(null);
@@ -970,6 +985,29 @@ const SideMenu: React.FC<SideMenuProps> = ({
                   </span>
                 </div>
               </div>
+              <button
+                className="side-menu__item"
+                onClick={() => { onClose(); onOpenAdminGrant?.(); }}
+              >
+                <span className="side-menu__item-icon">$</span>
+                <span className="side-menu__item-label">Grant Resources</span>
+                <span className="side-menu__item-hint">Bump any faction's pools</span>
+              </button>
+            </>
+          )}
+
+          {/* SP: surface the same admin tools under DEBUG (no MP host gate). */}
+          {!adminGameId && onOpenAdminGrant && (
+            <>
+              <div className="side-menu__group-label">DEBUG</div>
+              <button
+                className="side-menu__item"
+                onClick={() => { onClose(); onOpenAdminGrant?.(); }}
+              >
+                <span className="side-menu__item-icon">$</span>
+                <span className="side-menu__item-label">Grant Resources</span>
+                <span className="side-menu__item-hint">Bump any faction's pools</span>
+              </button>
             </>
           )}
 

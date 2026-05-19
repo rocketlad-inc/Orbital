@@ -83,6 +83,15 @@ export interface MultiplayerActions {
   commitTurn: () => Promise<TurnCommitResult>;
   /** Poll the per-faction readiness for the current turn. */
   getTurnStatus: () => Promise<TurnStatus | null>;
+
+  // --- Admin (host-only) ---
+  /** Bump a faction's resource pools (or every faction when target='all').
+   *  Server clamps each pool to >= 0. Returns ok+message — client surfaces
+   *  the message in the AdminGrantModal when not ok. */
+  adminGrant: (
+    target: string | 'all',
+    delta: { fuel?: number; ore?: number; credits?: number; science?: number },
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 const MultiplayerActionsContext = createContext<MultiplayerActions | null>(null);
@@ -178,6 +187,21 @@ export function MultiplayerActionsProvider({
       const res = await apiFetch<TurnStatus>(`/api/games/${gameId}/turn/status`);
       if (!res.ok) return null;
       return res.data;
+    },
+    async adminGrant(target, delta) {
+      const res = await apiFetch<{ ok: boolean }>(`/api/games/${gameId}/admin/grant`, {
+        method: 'POST',
+        body: JSON.stringify({
+          faction_id: target,
+          fuel: delta.fuel ?? 0,
+          ore: delta.ore ?? 0,
+          credits: delta.credits ?? 0,
+          science: delta.science ?? 0,
+        }),
+      });
+      if (res.ok) return { ok: true };
+      console.warn('adminGrant failed', res.error);
+      return { ok: false, error: res.error?.message ?? 'Server rejected the grant.' };
     },
     });
   }, [gameId]);

@@ -579,6 +579,82 @@ async function handleTurnStatus(req, env, ctx) {
   });
 }
 
+// ============================================================
+// Admin: grant resources (host-only).
+//
+// POST /api/games/:gameId/admin/grant
+//   body: { faction_id: string | 'all', fuel?, ore?, credits?, science? }
+// Bumps the chosen faction's pool by the supplied delta. Used when the
+// client AdminGrantModal repairs a busted state (e.g. the MP build-queue
+// bug that ate resources without surfacing the queue) or when a host
+// wants to rebalance mid-playtest. Rejects 403 if the caller isn't the
+// room host. Clamps each pool floor to 0 — drains never go negative.
+// ============================================================
+
+async function handleAdminGrant(req, env, ctx) {
+  const { gameId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  // Host-only. Mirrors handleTurnSettings: room.host_id is canonical.
+  const room = await env.DB
+    .prepare(`SELECT r.host_id FROM rooms r
+                JOIN room_settings rs ON rs.room_id = r.id
+               WHERE rs.game_id = ? LIMIT 1`)
+    .bind(gameId)
+    .first();
+  if (!room || room.host_id !== ctx.session.user_id) {
+    return err(403, 'not_host', 'only the host can grant resources');
+  }
+
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+  const targetRaw = String(body.faction_id ?? '');
+  if (!targetRaw) return err(400, 'bad_request', 'missing faction_id');
+
+  // Clamp deltas to a sane range so a hostile or fat-fingered request
+  // can't blow up the economy. ±1,000,000 covers any legit recovery.
+  const clamp = (n) => {
+    const x = Number(n);
+    if (!Number.isFinite(x)) return 0;
+    return Math.max(-1_000_000, Math.min(1_000_000, Math.round(x)));
+  };
+  const dFuel = clamp(body.fuel ?? 0);
+  const dOre = clamp(body.ore ?? 0);
+  const dCredits = clamp(body.credits ?? 0);
+  const dScience = clamp(body.science ?? 0);
+
+  if (!dFuel && !dOre && !dCredits && !dScience) {
+    return err(400, 'bad_request', 'all deltas were zero');
+  }
+
+  // Client uses ore/credits naming; server columns are metal/gold. Map here.
+  // Pools floor at 0 (use MAX so subtractions can't dive negative).
+  const sql = `UPDATE game_factions
+                  SET fuel    = MAX(0, fuel    + ?),
+                      metal   = MAX(0, metal   + ?),
+                      gold    = MAX(0, gold    + ?),
+                      science = MAX(0, science + ?)
+                WHERE game_id = ?`;
+
+  if (targetRaw === 'all') {
+    await env.DB.prepare(sql + '').bind(dFuel, dOre, dCredits, dScience, gameId).run();
+  } else {
+    await env.DB
+      .prepare(sql + ' AND id = ?')
+      .bind(dFuel, dOre, dCredits, dScience, gameId, targetRaw)
+      .run();
+  }
+
+  return json({
+    ok: true,
+    applied_to: targetRaw,
+    delta: { fuel: dFuel, ore: dOre, credits: dCredits, science: dScience },
+  });
+}
+
 export const routes = [
   {
     method: 'POST',
@@ -621,5 +697,11 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/turn\/status$/,
     auth: 'required',
     handle: handleTurnStatus,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/admin\/grant$/,
+    auth: 'required',
+    handle: handleAdminGrant,
   },
 ];

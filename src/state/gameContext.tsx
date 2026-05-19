@@ -199,6 +199,15 @@ interface GameContextType {
   startResearch: (techId: TechId) => void;
   cancelResearch: () => void;
 
+  // Debug / admin: bump a faction's pools by `delta` (positive grants,
+  // negative drains). Pass factionId='all' to apply the same delta to
+  // every faction. Mutates local state immediately; in MP the caller is
+  // responsible for also posting to the server-side grant endpoint.
+  adjustResources: (
+    factionId: string | 'all',
+    delta: Partial<{ fuel: number; ore: number; credits: number; science: number }>,
+  ) => void;
+
   // Turn-Based Mode (experimental). `turnBasedActive` is true only when
   // the player has opted into TBM AND the game isn't externally controlled
   // (multiplayer is server-driven, so the toggle is a no-op there for now).
@@ -1255,6 +1264,35 @@ export function GameContextProvider({
     });
   }, []);
 
+  // Debug/admin grant. Bumps one faction's pools (or every faction when
+  // factionId='all') by the supplied delta. Used by the AdminGrantModal
+  // when a player needs to recover from a busted MP build that ate
+  // resources without producing a ship, or when a host is tweaking the
+  // economy mid-playtest. In MP the caller must also post to the server
+  // endpoint — this only mutates client state.
+  const adjustResources = useCallback((
+    factionId: string | 'all',
+    delta: Partial<{ fuel: number; ore: number; credits: number; science: number }>,
+  ) => {
+    setGameStateInternal(prev => {
+      const targets = factionId === 'all'
+        ? Object.keys(prev.resources)
+        : [factionId];
+      const nextResources = { ...prev.resources };
+      for (const fid of targets) {
+        const cur = nextResources[fid] ?? { fuel: 0, ore: 0, credits: 0, science: 0 };
+        nextResources[fid] = {
+          fuel: Math.max(0, cur.fuel + (delta.fuel ?? 0)),
+          ore: Math.max(0, cur.ore + (delta.ore ?? 0)),
+          credits: Math.max(0, cur.credits + (delta.credits ?? 0)),
+          science: Math.max(0, cur.science + (delta.science ?? 0)),
+        };
+      }
+      logger.warn('RESOURCE', `Admin grant applied to ${factionId}`, delta);
+      return { ...prev, resources: nextResources };
+    });
+  }, []);
+
   const value: GameContextType = {
     gameState, camera, uiState, simSpeed,
     setGameState, updateGameState, updateTick, setSimSpeed,
@@ -1268,6 +1306,7 @@ export function GameContextProvider({
     selectedSettlementId, selectSettlement,
     startResearch, cancelResearch,
     turnBasedActive, commitTurn,
+    adjustResources,
   };
 
   return (
