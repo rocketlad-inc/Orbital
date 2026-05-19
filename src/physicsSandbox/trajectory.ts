@@ -315,28 +315,26 @@ export function computeTrajectory(
         enterCooldownUntil = event.t + SOI_EXIT_COOLDOWN;
       }
     } else if (nextNode && t >= nodeT) {
+      // Always push the arc up to the node — even if the node has
+      // dv=0. Skipping was too aggressive: it left the trajectory
+      // with NO arc containing the current tick, which broke the
+      // KSP-style ellipse rendering (the renderer drew the orbit at
+      // arc.tStart's parent position instead of the live parent
+      // position). Drawing-side dedup handles the overlap visually.
+      arcs.push({
+        orbit: currentOrbit,
+        tStart: tCursor,
+        tEnd: nextNode.t,
+        endReason: 'node',
+      });
       const nodeDvMag = Math.sqrt(
         nextNode.dv.prograde * nextNode.dv.prograde +
         nextNode.dv.radial * nextNode.dv.radial,
       );
       if (nodeDvMag > 1e-6) {
-        // Real burn — close the current arc, apply the burn, continue.
-        arcs.push({
-          orbit: currentOrbit,
-          tStart: tCursor,
-          tEnd: nextNode.t,
-          endReason: 'node',
-        });
         currentOrbit = applyNodeToOrbit(currentOrbit, nextNode.t, nextNode.dv);
-        tCursor = nextNode.t;
-      } else {
-        // No-op node (player added it but hasn't dragged a handle yet).
-        // Don't fork into a phantom arc with an identical orbit — that
-        // would draw a duplicate ellipse on top of the current one. The
-        // node still gets its diamond drawn by drawNodes(); we just
-        // don't need a trajectory arc transition for it.
-        tCursor = nextNode.t;
       }
+      tCursor = nextNode.t;
       nodeIdx++;
     } else {
       arcs.push({

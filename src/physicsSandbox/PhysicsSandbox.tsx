@@ -935,28 +935,49 @@ export function PhysicsSandbox({ onExit }: { onExit?: () => void }) {
 type ScreenTransform = (x: number, y: number) => { x: number; y: number };
 
 /**
- * Where a node diamond should be drawn in WORLD coordinates. The orbit
- * ellipse for an arc is anchored to its parent body's position at a
- * specific time — `currentTick` for the arc the ship is currently on,
- * `arc.tStart` for projected future arcs. Diamonds must use that same
- * reference time so they sit on the visible ellipse instead of where
- * the parent body will be at the node's burn time (which can be wildly
- * off-screen if the parent moves significantly between now and then).
+ * Where a node diamond should be drawn in WORLD coordinates.
+ *
+ * The diamond has to land on the SAME visible ellipse the trajectory
+ * renderer just drew. That means using the SAME parent-body reference
+ * time, with one wrinkle: when consecutive arcs share an identical
+ * orbit (the common dv=0 plan-node case), the renderer dedups to draw
+ * a single ellipse — anchored to the FIRST such arc's parentTime,
+ * which is the live tick. So for any node whose preBurnOrbit matches
+ * the currently-visible arc's orbit, we use `currentTick` regardless
+ * of which arc the node nominally "belongs to."
  */
+function sameOrbitElements(a: NodeLink['preBurnOrbit'], b: NodeLink['preBurnOrbit']): boolean {
+  return a.parentBodyId === b.parentBodyId &&
+    Math.abs(a.rp - b.rp) < 1e-4 &&
+    Math.abs(a.ra - b.ra) < 1e-4 &&
+    Math.abs(a.omega - b.omega) < 1e-4;
+}
+
 function nodeDisplayWorldPos(
   link: NodeLink,
   arcs: ReturnType<typeof computeTrajectory>,
   currentTick: number,
 ): { x: number; y: number } {
   const parent = BY_ID[link.preBurnOrbit.parentBodyId];
-  const owningArc = arcs.find(
-    a => a.orbit.parentBodyId === link.preBurnOrbit.parentBodyId &&
-         link.node.t >= a.tStart - 1e-3 && link.node.t <= a.tEnd + 1e-3,
+  // First preference: if the current arc has the SAME orbit elements
+  // as the node's preBurnOrbit, the ellipse the player can see is
+  // drawn around parent_at_currentTick — match that.
+  const currentArc = arcs.find(
+    a => currentTick >= a.tStart && currentTick <= a.tEnd &&
+         sameOrbitElements(a.orbit, link.preBurnOrbit),
   );
-  const isCurrentArc = owningArc
-    ? currentTick >= owningArc.tStart && currentTick <= owningArc.tEnd
-    : true;
-  const parentTime = isCurrentArc ? currentTick : (owningArc?.tStart ?? currentTick);
+  let parentTime: number;
+  if (currentArc) {
+    parentTime = currentTick;
+  } else {
+    // Otherwise: this node sits on a future arc that's drawn at its
+    // own tStart (e.g. the post-burn orbit after a real Δv).
+    const owningArc = arcs.find(
+      a => a.orbit.parentBodyId === link.preBurnOrbit.parentBodyId &&
+           link.node.t >= a.tStart - 1e-3 && link.node.t <= a.tEnd + 1e-3,
+    );
+    parentTime = owningArc?.tStart ?? currentTick;
+  }
   const parentPos = bodyPosition(parent, parentTime);
   const localPos = localPositionAt(link.preBurnOrbit, link.node.t);
   return { x: parentPos.x + localPos.x, y: parentPos.y + localPos.y };
@@ -975,6 +996,14 @@ function drawTrajectory(
   // burn) sample as partial paths. Without this, a stable circular
   // orbit would render as 1.5 stacked sampled loops which looks like
   // a noisy mess.
+  //
+  // Multiple consecutive arcs can share an identical orbit when a node
+  // hasn't been dragged yet (dv=0) — the trajectory keeps the arc
+  // boundary so the renderer knows where the current/future split is,
+  // but the closed-ellipse for each subsequent arc would just stack
+  // on top of the first one and over-draw. We skip the closed-ellipse
+  // call when the previous arc already drew the same ellipse.
+  let lastClosedEllipseKey: string | null = null;
   for (let i = 0; i < arcs.length; i++) {
     const arc = arcs[i];
     const isCurrent = currentTick >= arc.tStart && currentTick <= arc.tEnd;
@@ -1001,9 +1030,19 @@ function drawTrajectory(
     const parentTime = isCurrent ? currentTick : arc.tStart;
 
     if (isClosedFullOrbit) {
-      drawClosedEllipse(ctx, arc.orbit, parentTime, worldToScreen, cam, color, dashed);
+      // Dedup on orbit ELEMENTS only (parent, rp, ra, omega). Two arcs
+      // with identical elements but different parentTime (the un-touched
+      // dv=0 plan-node case) are still the same physical orbit — drawing
+      // them at different parent positions would just show the player
+      // ghost copies of their actual orbit at future times.
+      const key = `${arc.orbit.parentBodyId}|${arc.orbit.rp.toFixed(4)}|${arc.orbit.ra.toFixed(4)}|${arc.orbit.omega.toFixed(4)}`;
+      if (key !== lastClosedEllipseKey) {
+        drawClosedEllipse(ctx, arc.orbit, parentTime, worldToScreen, cam, color, dashed);
+        lastClosedEllipseKey = key;
+      }
     } else {
       drawArc(ctx, arc, worldToScreen, color, dashed);
+      lastClosedEllipseKey = null;
     }
 
     // Encounter ghost
