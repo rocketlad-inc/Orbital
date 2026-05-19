@@ -459,6 +459,47 @@ async function handlePatchMe(req, env, ctx) {
     .bind(...args)
     .run();
 
+  // Mid-game rename sync: if a game already exists for this room, push
+  // the same empire_name / bio update into the matching game_factions
+  // row so the in-game UI reflects the change instead of staying frozen
+  // at whatever was snapshot at seedGameWorld time. (chosen_starting_body
+  // is lobby-only — capitals are assigned at start and don't move.)
+  const gameExists = await env.DB
+    .prepare('SELECT 1 AS x FROM games WHERE id = ?')
+    .bind(roomId)
+    .first();
+  if (gameExists) {
+    const factionSets = [];
+    const factionArgs = [];
+    if (body.empire_name !== undefined) {
+      if (body.empire_name === null || body.empire_name === '') {
+        // Empty empire_name → fall back to the originally-rotated default.
+        // We don't store that default here, so the simplest revert is to
+        // leave the existing game_factions.name in place. Skipping rather
+        // than nulling avoids a NOT NULL constraint violation.
+      } else if (typeof body.empire_name === 'string') {
+        factionSets.push('name = ?');
+        factionArgs.push(body.empire_name.trim());
+      }
+    }
+    if (body.bio !== undefined) {
+      if (body.bio === null || body.bio === '') {
+        factionSets.push('bio = NULL');
+      } else if (typeof body.bio === 'string') {
+        factionSets.push('bio = ?');
+        factionArgs.push(body.bio.trim());
+      }
+    }
+    if (factionSets.length > 0) {
+      factionArgs.push(roomId, ctx.session.user_id);
+      await env.DB
+        .prepare(`UPDATE game_factions SET ${factionSets.join(', ')}
+                   WHERE game_id = ? AND user_id = ?`)
+        .bind(...factionArgs)
+        .run();
+    }
+  }
+
   const row = await env.DB
     .prepare('SELECT empire_name, bio, chosen_starting_body FROM room_members WHERE room_id = ? AND user_id = ?')
     .bind(roomId, ctx.session.user_id)
