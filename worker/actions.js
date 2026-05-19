@@ -108,7 +108,9 @@ async function handleCommitTransfer(req, env, ctx) {
 
 // POST /api/games/:gameId/bodies/:bodyId/build
 // body: { ship_class, ship_name? }
-// Validates: caller owns body, body has shipyard_level >= 1, faction can pay.
+// Validates: caller owns body, faction can pay. (shipyard_level gate was
+// dropped — the column was declared with DEFAULT 0 in 0003_game_state.sql
+// and nothing ever incremented it, so every MP build 409'd.)
 async function handleQueueBuild(req, env, ctx) {
   const { gameId, bodyId } = ctx.params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -126,14 +128,16 @@ async function handleQueueBuild(req, env, ctx) {
   const cost = SHIP_BUILD_COST[shipClass];
 
   const bodyRow = await env.DB
-    .prepare('SELECT id, owner_faction_id, shipyard_level FROM game_bodies WHERE id = ? AND game_id = ?')
+    .prepare('SELECT id, owner_faction_id FROM game_bodies WHERE id = ? AND game_id = ?')
     .bind(bodyId, gameId)
     .first();
   if (!bodyRow) return err(404, 'not_found', 'body not found');
   if (bodyRow.owner_faction_id !== me.id) return err(403, 'not_owner', 'you do not own this body');
-  if ((bodyRow.shipyard_level ?? 0) < 1) {
-    return err(409, 'no_shipyard', 'body has no shipyard (need shipyard_level >= 1)');
-  }
+  // shipyard_level gate removed: schema declared the column with
+  // DEFAULT 0 (migrations/0003_game_state.sql) and nothing ever wrote
+  // to it, so every MP build 409'd as no_shipyard. Body ownership
+  // (recomputeBodyOwnership requires the most settlements at the body)
+  // is the real gate.
 
   // Fuel was removed from the economy; only metal + gold are spent on builds.
   if (me.metal < cost.metal || me.gold < cost.gold) {
