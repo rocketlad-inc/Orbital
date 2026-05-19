@@ -377,14 +377,12 @@ async function handleTurnSettings(req, env, ctx) {
   const { gameId } = ctx.params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
 
-  // Host-only. We piggyback on the existing room.host_id (rooms own their
-  // game's host identity for the lifetime of the lobby + match).
+  // Host-only. games.id === rooms.id (handleStart writes both with the
+  // same id), so a direct lookup on rooms.host_id is the canonical check.
   const me = await requireMyFaction(env, gameId, ctx.session.user_id);
   if (!me) return err(403, 'not_member', 'not in this game');
   const room = await env.DB
-    .prepare(`SELECT r.host_id FROM rooms r
-                JOIN room_settings rs ON rs.room_id = r.id
-               WHERE rs.game_id = ? LIMIT 1`)
+    .prepare('SELECT host_id FROM rooms WHERE id = ?')
     .bind(gameId)
     .first();
   if (!room || room.host_id !== ctx.session.user_id) {
@@ -598,11 +596,11 @@ async function handleAdminGrant(req, env, ctx) {
   const me = await requireMyFaction(env, gameId, ctx.session.user_id);
   if (!me) return err(403, 'not_member', 'not in this game');
 
-  // Host-only. Mirrors handleTurnSettings: room.host_id is canonical.
+  // Host-only. games.id === rooms.id (same string is used for both —
+  // see worker/lobby.js handleStart which does INSERT INTO games(id, ...)
+  // using the roomId). No room_settings join needed.
   const room = await env.DB
-    .prepare(`SELECT r.host_id FROM rooms r
-                JOIN room_settings rs ON rs.room_id = r.id
-               WHERE rs.game_id = ? LIMIT 1`)
+    .prepare('SELECT host_id FROM rooms WHERE id = ?')
     .bind(gameId)
     .first();
   if (!room || room.host_id !== ctx.session.user_id) {
