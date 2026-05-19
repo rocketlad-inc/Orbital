@@ -336,6 +336,44 @@ export const ShipPanel: React.FC = () => {
               </span>
             </div>
             <div className="stat-row">
+              <span className="label">OWNER</span>
+              {(() => {
+                // Faction lookup: in MP the caller's faction id is
+                // rewritten to 'player' (see MultiplayerGameProvider
+                // PLAYER_TOKEN) so a single find on ownedBy works for
+                // both SP + MP. Render a colored chip so a glance tells
+                // you "mine / theirs / whose theirs" at the same colors
+                // ships now render in on the map.
+                const owner = gameState.factions.find(f => f.id === ship.ownedBy);
+                const ownerColor = owner?.color || '#8a9fb3';
+                const ownerName = owner?.name || ship.ownedBy.toUpperCase();
+                const isMine = ship.ownedBy === 'player';
+                return (
+                  <span
+                    className="value"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                  >
+                    <span
+                      aria-hidden
+                      style={{
+                        width: 10, height: 10, borderRadius: '50%',
+                        background: ownerColor, flexShrink: 0,
+                        boxShadow: `0 0 4px ${ownerColor}`,
+                      }}
+                    />
+                    <span style={{ color: ownerColor, fontWeight: 700 }}>
+                      {ownerName}
+                    </span>
+                    {isMine && (
+                      <span style={{ color: '#8a9fb3', fontSize: '9px', marginLeft: 2 }}>
+                        (you)
+                      </span>
+                    )}
+                  </span>
+                );
+              })()}
+            </div>
+            <div className="stat-row">
               <span className="label">HP</span>
               <span className="value" style={{ color: currentHp < maxHp * 0.3 ? '#ff5e5e' : undefined }}>
                 {currentHp.toFixed(0)}/{maxHp}
