@@ -239,12 +239,19 @@ const BODY_CATALOG = [
 // 2 worlds/player × 8 players = 16. Caps at 8 players × 2 worlds for v1.
 
 // Body ownership tracks settlements: the faction with the most active
-// settlements at a body owns it. Ties (or zero settlements) leave the
-// current owner unchanged — your claim isn't abandoned just because
-// you're temporarily undefended. Call this after any settlement
-// deploy/destroy that touches `bodyId`.
+// settlements at a body owns it.
+//   - Ties between two living factions → leave the current owner alone
+//     (your claim isn't surrendered just because someone matched your
+//     numbers; you have to be outnumbered to lose it).
+//   - Zero settlements remain (all destroyed) → reset to NULL. The body
+//     becomes unclaimed again. Previously this case also "left things
+//     alone," which left phantom ownership attached to bodies the
+//     player had been pushed out of. The body card kept showing the
+//     old owner with no presence on the body to back it up.
+// Call this after any settlement deploy/destroy that touches `bodyId`.
 //
-// Returns the new owner_faction_id (or null if no change was applied).
+// Returns the new owner_faction_id (or null if no change was applied
+// OR if ownership was cleared to neutral).
 export async function recomputeBodyOwnership(db, gameId, bodyId) {
   const rows = await db
     .prepare(
@@ -257,7 +264,16 @@ export async function recomputeBodyOwnership(db, gameId, bodyId) {
     .bind(gameId, bodyId)
     .all();
   const tally = rows.results ?? [];
-  if (tally.length === 0) return null;                        // no settlements → no change
+  if (tally.length === 0) {
+    // No active settlements anywhere on the body. Clear ownership so
+    // the body shows as unclaimed in the inspector and unlocks
+    // settlement re-deployment by anyone who lands a freighter.
+    await db
+      .prepare('UPDATE game_bodies SET owner_faction_id = NULL WHERE id = ? AND game_id = ? AND owner_faction_id IS NOT NULL')
+      .bind(bodyId, gameId)
+      .run();
+    return null;
+  }
   if (tally.length >= 2 && tally[0].n === tally[1].n) return null; // contested tie → no change
   const newOwner = tally[0].fid;
   await db

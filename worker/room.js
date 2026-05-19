@@ -536,6 +536,33 @@ export class Room {
   }
 
   async resolveTick(gameId, tick) {
+    // 0. Phantom-ownership sweep. Bodies whose last surviving settlement
+    //    was destroyed used to keep their old owner attached (the
+    //    recomputeBodyOwnership helper short-circuited on "zero
+    //    settlements" instead of clearing). The helper is fixed now, but
+    //    a single SQL pass per tick scrubs any rows already stuck in
+    //    that state from prior ticks — idempotent and cheap.
+    try {
+      await this.env.DB
+        .prepare(
+          `UPDATE game_bodies
+              SET owner_faction_id = NULL
+            WHERE game_id = ?
+              AND owner_faction_id IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM game_settlements s
+                 WHERE s.game_id = game_bodies.game_id
+                   AND s.body_id = game_bodies.id
+                   AND s.destroyed_at_tick IS NULL
+              )`,
+        )
+        .bind(gameId)
+        .run();
+    } catch (e) {
+      // Best-effort: never let the sweep block the rest of the tick.
+      console.error('phantom-ownership sweep failed', e);
+    }
+
     // 1. Build completions. Each row spawns one ship in a small circular
     //    orbit around the building body.
     const builds = (await this.env.DB
