@@ -494,7 +494,7 @@ export function PhysicsSandbox({ onExit }: { onExit?: () => void }) {
     // 4) Empty: deselect
     setSelectedNodeId(null);
     setSelectedBodyId(null);
-  }, [nodeChain, selectedNodeId, worldToScreen]);
+  }, [nodeChain, selectedNodeId, trajectory, worldToScreen]);
 
   const onMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const drag = draggingRef.current;
@@ -550,7 +550,7 @@ export function PhysicsSandbox({ onExit }: { onExit?: () => void }) {
         return { ...prev, nodes };
       });
     }
-  }, [nodeChain, worldToScreen]);
+  }, [nodeChain, trajectory, worldToScreen]);
 
   const onMouseUp = useCallback(() => {
     draggingRef.current = null;
