@@ -15,6 +15,11 @@ export interface RenderContext {
   camera: { x: number; y: number; scale: number; focusedBodyId?: string };
   t: number;
   bodies: Body[];
+  /** Factions in this game, used by per-asset color lookups (drawShip,
+   *  drawTransitShip, drawCity/Station). Optional — older render paths
+   *  pass factions in explicitly; new code falls back to neutral when
+   *  this isn't provided. */
+  factions?: Faction[];
   simSpeed?: number;
   /** Wall-clock ms (performance.now()) captured at the moment the
    *  renderer first observed each entity's current lastDamagedTick.
@@ -552,6 +557,23 @@ export function drawBody(
 }
 
 /**
+ * Resolve the per-ship draw color. Mirrors settlementColor so a ship
+ * and a settlement owned by the same faction render the same hue.
+ * Falls back to cyan / red when factions aren't on the context (old
+ * render paths or unit tests that build a bare RenderContext).
+ */
+function shipColor(ship: Ship, factions: Faction[] | undefined): string {
+  if (factions && factions.length > 0) {
+    const faction = factions.find(f => f.id === ship.ownedBy);
+    if (faction?.color) return faction.color;
+  }
+  // Fallback: player is cyan, anything else is red. Previously this was
+  // the only logic — kept as a safety net so a missing factions array
+  // doesn't leave ships colorless.
+  return ship.ownedBy === 'player' ? COLORS.neutral : COLORS.danger;
+}
+
+/**
  * Draw a ship on its orbit
  */
 export function drawShip(
@@ -570,7 +592,7 @@ export function drawShip(
   let canvasPos = worldToCanvas(worldX, worldY, ctx);
 
   // Faction-colored: cyan for player, red for enemy.
-  const shipColor = ship.ownedBy === 'enemy' ? COLORS.danger : COLORS.neutral;
+  const shipColorValue = shipColor(ship, ctx.factions);
 
   // Velocity vector — used both to rotate the icon and as a fallback tick.
   const vel = velocityVectorsAt(ship.orbit, ctx.t);
@@ -597,7 +619,7 @@ export function drawShip(
   const flashStart = ctx.damageFlashStart?.get(ship.id);
   drawDamageFlash(canvasPos, iconSize / 2, flashStart, ctx.nowMs ?? 0, ctx);
 
-  const icon = getShipIconImage(ship.class as ShipIconClass, shipColor);
+  const icon = getShipIconImage(ship.class as ShipIconClass, shipColorValue);
   if (icon) {
     // Draw the icon rotated to face the velocity direction.
     ctx.ctx.save();
@@ -609,11 +631,11 @@ export function drawShip(
     // Icon still rasterizing — fall back to the original dot + tick so the
     // map never appears empty.
     const shipSize = isSelected ? 5 : 4;
-    ctx.ctx.fillStyle = shipColor;
+    ctx.ctx.fillStyle = shipColorValue;
     ctx.ctx.beginPath();
     ctx.ctx.arc(canvasPos.x, canvasPos.y, shipSize, 0, Math.PI * 2);
     ctx.ctx.fill();
-    ctx.ctx.strokeStyle = shipColor;
+    ctx.ctx.strokeStyle = shipColorValue;
     ctx.ctx.lineWidth = 1.5;
     ctx.ctx.beginPath();
     ctx.ctx.moveTo(canvasPos.x, canvasPos.y);
@@ -631,7 +653,7 @@ export function drawShip(
   }
 
   // Draw ship name label
-  ctx.ctx.fillStyle = isSelected ? '#ffb84d' : shipColor;
+  ctx.ctx.fillStyle = isSelected ? '#ffb84d' : shipColorValue;
   ctx.ctx.font = '9px monospace';
   ctx.ctx.textAlign = 'left';
   ctx.ctx.textBaseline = 'middle';
@@ -978,7 +1000,7 @@ export function drawTransitShip(
 
   const worldPos = bezierPositionAt(ship.transfer, ctx.t);
   const canvasPos = worldToCanvas(worldPos.x, worldPos.y, ctx);
-  const shipColor = ship.ownedBy === 'enemy' ? COLORS.danger : COLORS.neutral;
+  const shipColorValue = shipColor(ship, ctx.factions);
 
   // Bezier tangent gives the heading. Note: bezierTangentAt uses screen-y
   // convention (positive y = up), so flip the y component for canvas angle.
@@ -992,7 +1014,7 @@ export function drawTransitShip(
   const flashStartT = ctx.damageFlashStart?.get(ship.id);
   drawDamageFlash(canvasPos, iconSize / 2, flashStartT, ctx.nowMs ?? 0, ctx);
 
-  const icon = getShipIconImage(ship.class as ShipIconClass, shipColor);
+  const icon = getShipIconImage(ship.class as ShipIconClass, shipColorValue);
   if (icon) {
     ctx.ctx.save();
     ctx.ctx.translate(canvasPos.x, canvasPos.y);
@@ -1001,11 +1023,11 @@ export function drawTransitShip(
     ctx.ctx.restore();
   } else {
     const shipSize = isSelected ? 5 : 4;
-    ctx.ctx.fillStyle = shipColor;
+    ctx.ctx.fillStyle = shipColorValue;
     ctx.ctx.beginPath();
     ctx.ctx.arc(canvasPos.x, canvasPos.y, shipSize, 0, Math.PI * 2);
     ctx.ctx.fill();
-    ctx.ctx.strokeStyle = shipColor;
+    ctx.ctx.strokeStyle = shipColorValue;
     ctx.ctx.lineWidth = 1.5;
     ctx.ctx.beginPath();
     ctx.ctx.moveTo(canvasPos.x, canvasPos.y);
@@ -1022,7 +1044,7 @@ export function drawTransitShip(
   }
 
   // Ship name
-  ctx.ctx.fillStyle = isSelected ? '#ffb84d' : shipColor;
+  ctx.ctx.fillStyle = isSelected ? '#ffb84d' : shipColorValue;
   ctx.ctx.font = '9px monospace';
   ctx.ctx.textAlign = 'left';
   ctx.ctx.textBaseline = 'middle';

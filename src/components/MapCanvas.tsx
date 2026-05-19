@@ -152,6 +152,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       camera: { x: camX, y: camY, scale: camera.scale, focusedBodyId: camera.focusedBodyId },
       t: gameState.currentTick,
       bodies: gameState.bodies,
+      // Factions enable per-faction ship coloring (matches settlements).
+      // Without this, drawShip falls back to cyan-for-player / red-otherwise,
+      // which collapsed every AI rival into the same hue.
+      factions: gameState.factions,
       simSpeed,
       damageFlashStart: damageFlashStartRef.current,
       nowMs,
