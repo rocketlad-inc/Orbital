@@ -14,6 +14,8 @@ import { useMpTurnStatus } from '../multiplayer/useMpTurnStatus';
 import { logger } from '../game/logger';
 import { SaveLoadModal } from './SaveLoadModal';
 import { AdminGrantModal } from './AdminGrantModal';
+import { computeIncomePerTick } from '../game/settlements';
+import { TECH_DEFS } from '../game/techs';
 import type { GameState } from '../types';
 import './TopBar.css';
 
@@ -89,6 +91,23 @@ export const TopBar: React.FC<TopBarProps> = ({
     () => gameState.ships.filter(s => s.ownedBy === 'player'),
     [gameState.ships]
   );
+
+  // Per-tick income for the resource pill subtext. Splits "delivered"
+  // (settlements with a freighter parked = actually reaches the pool)
+  // from "stranded" (no freighter = stockpiling at the settlement, not
+  // landing in CR). The stranded count is surfaced as a hover hint so
+  // the player knows *why* their gold pile isn't moving.
+  const income = useMemo(() => {
+    const lvl = gameState.factionTech?.player?.levels?.industry ?? 0;
+    const yieldMul = 1 + TECH_DEFS.industry.perLevel * lvl;
+    return computeIncomePerTick(
+      'player',
+      gameState.settlements,
+      gameState.bodies,
+      gameState.ships,
+      yieldMul,
+    );
+  }, [gameState.settlements, gameState.bodies, gameState.ships, gameState.factionTech]);
 
   // Derive alerts from game state
   const alerts = useMemo<Alert[]>(() => {
@@ -209,22 +228,38 @@ export const TopBar: React.FC<TopBarProps> = ({
 
       {playerResources && (
         <div className="top-bar__resources">
-          <div className="resource-pill resource-pill--fuel">
-            <div className="resource-pill__label">FUEL</div>
-            <div className="resource-pill__value">{Math.round(playerResources.fuel)}</div>
-          </div>
-          <div className="resource-pill resource-pill--ore">
-            <div className="resource-pill__label">ORE</div>
-            <div className="resource-pill__value">{Math.round(playerResources.ore)}</div>
-          </div>
-          <div className="resource-pill resource-pill--credits">
-            <div className="resource-pill__label">CR</div>
-            <div className="resource-pill__value">{Math.round(playerResources.credits)}</div>
-          </div>
-          <div className="resource-pill resource-pill--science">
-            <div className="resource-pill__label">SCI</div>
-            <div className="resource-pill__value">{Math.round(playerResources.science)}</div>
-          </div>
+          <ResourcePill
+            label="FUEL" modifier="fuel"
+            value={playerResources.fuel}
+            delivered={income.delivered.fuel}
+            stranded={income.stranded.fuel}
+            waiting={income.waiting.fuel}
+            strandedCount={income.strandedCount}
+          />
+          <ResourcePill
+            label="ORE" modifier="ore"
+            value={playerResources.ore}
+            delivered={income.delivered.ore}
+            stranded={income.stranded.ore}
+            waiting={income.waiting.ore}
+            strandedCount={income.strandedCount}
+          />
+          <ResourcePill
+            label="CR" modifier="credits"
+            value={playerResources.credits}
+            delivered={income.delivered.credits}
+            stranded={income.stranded.credits}
+            waiting={income.waiting.credits}
+            strandedCount={income.strandedCount}
+          />
+          <ResourcePill
+            label="SCI" modifier="science"
+            value={playerResources.science}
+            delivered={income.delivered.science}
+            stranded={income.stranded.science}
+            waiting={income.waiting.science}
+            strandedCount={income.strandedCount}
+          />
           <div className="resource-pill resource-pill--ships">
             <div className="resource-pill__label">SHIPS</div>
             <div className="resource-pill__value">{playerShips.length}</div>
@@ -399,6 +434,73 @@ const EventLogPanel: React.FC<{
       </aside>
     </>,
     document.body,
+  );
+};
+
+// ----------------------------------------------------------------
+// Resource pill with per-tick income subtext.
+//
+// `delivered` = actually reaches the faction pool (settlements that
+//               have an owner-freighter parked at their body).
+// `stranded`  = generated each tick but stockpiling at the settlement
+//               because no freighter is there to ferry it back. Shows
+//               in amber with an "X needs hauler" tooltip so the player
+//               notices and dispatches.
+// `waiting`   = total currently sitting in stockpiles (snapshot).
+// ----------------------------------------------------------------
+
+const fmtRate = (n: number) => {
+  if (n === 0) return '0';
+  if (n < 0.1) return n.toFixed(2);
+  if (n < 10)  return n.toFixed(1);
+  return Math.round(n).toString();
+};
+
+const ResourcePill: React.FC<{
+  label: string;
+  modifier: string;          // → css className suffix (fuel/ore/credits/science)
+  value: number;             // current pool
+  delivered: number;         // per-tick income that reaches the pool
+  stranded: number;          // per-tick yield still stockpiling at unhauled settlements
+  waiting: number;           // snapshot of total currently in stockpiles
+  strandedCount: number;     // how many settlements are missing a freighter
+}> = ({ label, modifier, value, delivered, stranded, waiting, strandedCount }) => {
+  const hasDelivered = delivered > 0.01;
+  const hasStranded  = stranded > 0.01;
+  const tooltip = (() => {
+    const lines: string[] = [];
+    lines.push(`${label}: ${Math.round(value)} (pool)`);
+    if (hasDelivered) lines.push(`+${fmtRate(delivered)} per tick from active settlements`);
+    if (hasStranded) {
+      lines.push(`+${fmtRate(stranded)} per tick stranded at ${strandedCount} settlement${strandedCount === 1 ? '' : 's'} — needs a freighter to ferry it`);
+    }
+    if (waiting > 0.5) lines.push(`${Math.round(waiting)} currently waiting in stockpiles`);
+    return lines.join('\n');
+  })();
+  return (
+    <div className={`resource-pill resource-pill--${modifier}`} title={tooltip}>
+      <div className="resource-pill__label">{label}</div>
+      <div className="resource-pill__value">{Math.round(value)}</div>
+      {(hasDelivered || hasStranded) && (
+        <div
+          className="resource-pill__rate"
+          style={{
+            fontSize: 9,
+            letterSpacing: '0.04em',
+            marginTop: 1,
+            color: hasDelivered ? '#7fffa1' : '#ffb84d',
+          }}
+        >
+          {hasDelivered && `+${fmtRate(delivered)}/t`}
+          {hasDelivered && hasStranded && ' '}
+          {hasStranded && (
+            <span style={{ color: '#ffb84d' }} title="No freighter at the producing body">
+              (+{fmtRate(stranded)} idle)
+            </span>
+          )}
+        </div>
+      )}
+    </div>
   );
 };
 

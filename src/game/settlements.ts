@@ -298,3 +298,78 @@ export function damageSettlement(s: Settlement, dmg: number): Settlement | null 
   if (newHp <= 0) return null;
   return { ...s, hp: newHp };
 }
+
+// === Income summary (HUD) ===
+
+/**
+ * Per-tick income summary for a faction. Splits production into:
+ *   - delivered: actual gain per tick that reaches the faction pool
+ *     (only settlements that have an owner-freighter parked at the body
+ *      ferry their stockpile back to the global pool)
+ *   - stranded:  per-tick yield that accumulates in stockpiles but
+ *     never reaches the pool until a freighter arrives. Surfaced as
+ *     a warning callout so players notice when they need to dispatch
+ *     a hauler.
+ *   - waiting:   total currently sitting in stockpiles right now
+ *     (snapshot, not a rate).
+ *
+ * Per-tick numbers are continuous floats — settlementYield returns the
+ * full-cycle output and the harvest cadence is one batch per
+ * SETTLEMENT_HARVEST_INTERVAL ticks, so we divide by that to get a
+ * useful "per-tick" display.
+ */
+export interface IncomePerTick {
+  delivered: { fuel: number; ore: number; credits: number; science: number };
+  stranded:  { fuel: number; ore: number; credits: number; science: number };
+  waiting:   { fuel: number; ore: number; credits: number; science: number };
+  /** Count of settlements with no freighter on-body (stranded yield > 0). */
+  strandedCount: number;
+  /** Total settlements counted (informational). */
+  settlementCount: number;
+}
+
+export function computeIncomePerTick(
+  factionId: string,
+  settlements: Settlement[],
+  bodies: Body[],
+  ships: Ship[],
+  yieldMul: number = 1,
+): IncomePerTick {
+  const zero = () => ({ fuel: 0, ore: 0, credits: 0, science: 0 });
+  const out: IncomePerTick = {
+    delivered: zero(), stranded: zero(), waiting: zero(),
+    strandedCount: 0, settlementCount: 0,
+  };
+  const mine = settlements.filter(s => s.ownedBy === factionId);
+  for (const s of mine) {
+    out.settlementCount += 1;
+    const body = bodies.find(b => b.id === s.bodyId);
+    if (!body) continue;
+    const y = settlementYield(s, body);
+    // The yield runs once per HARVEST_INTERVAL ticks. Normalize to
+    // per-tick so the HUD reads as a smooth rate.
+    const perTick = {
+      fuel:    y.fuel    * yieldMul / SETTLEMENT_HARVEST_INTERVAL,
+      ore:     y.ore     * yieldMul / SETTLEMENT_HARVEST_INTERVAL,
+      credits: y.credits * yieldMul / SETTLEMENT_HARVEST_INTERVAL,
+      science: y.science * yieldMul / SETTLEMENT_HARVEST_INTERVAL,
+    };
+    const hasFreighter = ships.some(sh =>
+      sh.ownedBy === factionId &&
+      sh.class === 'freighter' &&
+      !sh.transfer &&
+      sh.orbit.parentBodyId === s.bodyId
+    );
+    const bucket = hasFreighter ? out.delivered : out.stranded;
+    bucket.fuel    += perTick.fuel;
+    bucket.ore     += perTick.ore;
+    bucket.credits += perTick.credits;
+    bucket.science += perTick.science;
+    if (!hasFreighter) out.strandedCount += 1;
+    out.waiting.fuel    += s.stockpile.fuel;
+    out.waiting.ore     += s.stockpile.ore;
+    out.waiting.credits += s.stockpile.credits;
+    out.waiting.science += s.stockpile.science;
+  }
+  return out;
+}
