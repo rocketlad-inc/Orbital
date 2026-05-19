@@ -273,6 +273,23 @@ async function handleGetState(req, env, ctx) {
     .bind(gameId, me.id)
     .all()).results ?? [];
 
+  // In-flight ship builds for the caller's faction. The tick alarm
+  // processes these via game_body_build_queue → spawning the ship into
+  // game_ships when completes_at_tick is reached. Without surfacing
+  // them in /state, the client BuildPanel had no way to render the
+  // "BUILDING" progress strip — local optimistic state survived ~1.5s
+  // until the next poll wiped MultiplayerGameProvider's buildOrders,
+  // so players saw their money vanish with nothing in queue.
+  const buildQueue = (await env.DB
+    .prepare(
+      `SELECT id, body_id, ship_class, queued_at_tick, completes_at_tick
+         FROM game_body_build_queue
+        WHERE game_id = ? AND faction_id = ?
+          AND cancelled_at_tick IS NULL`,
+    )
+    .bind(gameId, me.id)
+    .all()).results ?? [];
+
   return json({
     game: {
       id: game.id,
@@ -313,6 +330,7 @@ async function handleGetState(req, env, ctx) {
     settlements,
     nodes,
     events,
+    build_queue: buildQueue,
   });
 }
 

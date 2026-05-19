@@ -133,6 +133,16 @@ interface ServerState {
     payload: string;
     created_at_ms: number;
   }>;
+  /** In-flight ship builds for the caller's faction. The tick alarm
+   *  spawns the ship into `ships` when completes_at_tick is reached;
+   *  this list shows the BuildPanel's "BUILDING" strip in the meantime. */
+  build_queue?: Array<{
+    id: string;
+    body_id: string;
+    ship_class: string;
+    queued_at_tick: number;
+    completes_at_tick: number;
+  }>;
 }
 
 // Map server body.type strings to client Body.type union.
@@ -428,6 +438,23 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       return `${t}  ${ev.kind}`;
     });
 
+  // Server-side build queue → client BuildOrder[]. Drives the BuildPanel
+  // "BUILDING" strip while the alarm grinds toward completes_at_tick.
+  // Without this, optimistic local state survived ~1.5s until the next
+  // /state poll wiped it, leaving players staring at deducted resources
+  // and nothing in the queue.
+  const buildOrders = (srv.build_queue ?? []).map(b => ({
+    id: b.id,
+    bodyId: stripGameId(b.body_id) ?? b.body_id,
+    shipClass: b.ship_class as 'corvette' | 'frigate' | 'destroyer' | 'freighter',
+    ownedBy: PLAYER_TOKEN,
+    startTick: b.queued_at_tick,
+    completeTick: b.completes_at_tick,
+    // The server doesn't currently track per-order names — fall back to
+    // a ship-class display label so the UI has something to render.
+    shipName: b.ship_class.charAt(0).toUpperCase() + b.ship_class.slice(1),
+  }));
+
   return {
     currentTick: srv.game.current_tick,
     bodies,
@@ -436,7 +463,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     factions,
     settlements,
     orders,
-    buildOrders: [],
+    buildOrders,
     resources: { [PLAYER_TOKEN]: playerRes },
     factionTech: { [PLAYER_TOKEN]: playerTech },
     combatLog,
