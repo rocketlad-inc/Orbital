@@ -106,6 +106,107 @@ async function handleCommitTransfer(req, env, ctx) {
   return json({ node: { id: nodeId, ship_id: shipId, sequence: seq, status: 'committed', scheduled_t: scheduledT } }, { status: 201 });
 }
 
+// ============================================================
+// Cancel endpoints
+//
+// Players need to be able to back out of a queued build or a
+// planned/committed transfer if they made a mistake or changed plans.
+// Without these, optimistic local removal was clobbered by the next
+// /state poll because the server row never went away — the user
+// reported "I can't cancel ship-building or transfers like 90% of
+// the time."
+//
+// Build cancel marks cancelled_at_tick on game_body_build_queue and
+// refunds the metal/gold spent at queue time. The alarm already
+// skips cancelled rows in resolveTick's completion sweep.
+//
+// Node cancel flips status='cancelled' on game_ship_nodes. The alarm
+// already skips non-committed nodes; cancelling a node that's already
+// 'in_transit' is allowed but doesn't refund fuel or stop the ship
+// from arriving (the burn has fired) — surfacing as a soft warning
+// would be a future polish; for now it just becomes a no-op refund.
+// ============================================================
+
+// Per-class refund table. Mirrors SHIP_BUILD_COST at the top of this
+// file. Kept inline so the constant doesn't drift; if the build cost
+// changes, this needs to update too.
+async function handleCancelBuild(req, env, ctx) {
+  const { gameId, orderId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const order = await env.DB
+    .prepare(
+      `SELECT id, faction_id, ship_class, completes_at_tick, cancelled_at_tick
+         FROM game_body_build_queue
+        WHERE id = ? AND game_id = ?`,
+    )
+    .bind(orderId, gameId)
+    .first();
+  if (!order) return err(404, 'not_found', 'build order not found');
+  if (order.faction_id !== me.id) return err(403, 'not_owner', 'not your build order');
+  if (order.cancelled_at_tick != null) {
+    return err(409, 'already_cancelled', 'this build was already cancelled');
+  }
+
+  // Refund the build cost. (fuel was removed from server-side build
+  // cost gating, but we keep the column rounding-trip-safe.)
+  const cost = SHIP_BUILD_COST[order.ship_class];
+  const game = await env.DB
+    .prepare('SELECT current_tick FROM games WHERE id = ?')
+    .bind(gameId)
+    .first();
+  const tick = game?.current_tick ?? 0;
+
+  await env.DB.batch([
+    env.DB
+      .prepare('UPDATE game_body_build_queue SET cancelled_at_tick = ? WHERE id = ?')
+      .bind(tick, orderId),
+    env.DB
+      .prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?')
+      .bind(cost?.metal ?? 0, cost?.gold ?? 0, me.id),
+  ]);
+
+  return json({
+    ok: true,
+    order_id: orderId,
+    refund: { metal: cost?.metal ?? 0, gold: cost?.gold ?? 0 },
+  });
+}
+
+async function handleCancelNode(req, env, ctx) {
+  const { gameId, nodeId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  // Ownership: a node belongs to a ship belongs to a faction.
+  const row = await env.DB
+    .prepare(
+      `SELECT n.id, n.status, n.ship_id, s.owner_faction_id AS fid
+         FROM game_ship_nodes n
+         JOIN game_ships s ON s.id = n.ship_id
+        WHERE n.id = ? AND n.game_id = ?`,
+    )
+    .bind(nodeId, gameId)
+    .first();
+  if (!row) return err(404, 'not_found', 'node not found');
+  if (row.fid !== me.id) return err(403, 'not_owner', 'not your ship');
+  if (row.status === 'executed' || row.status === 'cancelled') {
+    return err(409, 'already_resolved', `node is already ${row.status}`);
+  }
+
+  await env.DB
+    .prepare("UPDATE game_ship_nodes SET status = 'cancelled' WHERE id = ?")
+    .bind(nodeId)
+    .run();
+
+  return json({ ok: true, node_id: nodeId, was: row.status });
+}
+
 // POST /api/games/:gameId/bodies/:bodyId/build
 // body: { ship_class, ship_name? }
 // Validates: caller owns body, faction can pay. (shipyard_level gate was
@@ -705,5 +806,17 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/admin\/grant$/,
     auth: 'required',
     handle: handleAdminGrant,
+  },
+  {
+    method: 'DELETE',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/builds\/(?<orderId>[^/]+)$/,
+    auth: 'required',
+    handle: handleCancelBuild,
+  },
+  {
+    method: 'DELETE',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/nodes\/(?<nodeId>[^/]+)$/,
+    auth: 'required',
+    handle: handleCancelNode,
   },
 ];

@@ -92,6 +92,16 @@ export interface MultiplayerActions {
     target: string | 'all',
     delta: { fuel?: number; ore?: number; credits?: number; science?: number },
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
+
+  // --- Cancel actions ---
+  /** Cancel a queued ship build server-side (marks cancelled_at_tick,
+   *  refunds metal+gold). Without this, optimistic local removal was
+   *  clobbered by the next /state poll and the build re-appeared. */
+  cancelBuild: (orderId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  /** Cancel a planned or committed maneuver node server-side (flips
+   *  status='cancelled'). Same problem as build cancel: local-only
+   *  removal got rewound by the next /state. */
+  cancelNode: (nodeId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 const MultiplayerActionsContext = createContext<MultiplayerActions | null>(null);
@@ -187,6 +197,24 @@ export function MultiplayerActionsProvider({
       const res = await apiFetch<TurnStatus>(`/api/games/${gameId}/turn/status`);
       if (!res.ok) return null;
       return res.data;
+    },
+    async cancelBuild(orderId) {
+      const res = await apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/builds/${encodeURIComponent(orderId)}`,
+        { method: 'DELETE' },
+      );
+      if (res.ok) return { ok: true };
+      console.warn('cancelBuild failed', res.error);
+      return { ok: false, error: res.error?.message ?? 'Server rejected cancel.' };
+    },
+    async cancelNode(nodeId) {
+      const res = await apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/nodes/${encodeURIComponent(nodeId)}`,
+        { method: 'DELETE' },
+      );
+      if (res.ok) return { ok: true };
+      console.warn('cancelNode failed', res.error);
+      return { ok: false, error: res.error?.message ?? 'Server rejected cancel.' };
     },
     async adminGrant(target, delta) {
       const res = await apiFetch<{ ok: boolean }>(`/api/games/${gameId}/admin/grant`, {

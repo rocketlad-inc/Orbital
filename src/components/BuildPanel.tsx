@@ -95,7 +95,27 @@ export const BuildPanel: React.FC = () => {
                   <div className="build-progress-fill" style={{ width: `${Math.min(100, progress * 100)}%` }} />
                 </div>
                 <div className="build-eta">T-{remaining.toFixed(0)}</div>
-                <button className="build-cancel" onClick={() => cancelBuild(bo.id)}>✕</button>
+                <button
+                  className="build-cancel"
+                  onClick={() => {
+                    // Optimistic local remove + refund. In MP the server
+                    // is authoritative — without the DELETE the next
+                    // /state poll would resurrect this build queue row
+                    // and re-deduct the refund. Server failures are
+                    // logged; the next /state poll will reconcile (the
+                    // queued row reappearing is itself the error signal).
+                    cancelBuild(bo.id);
+                    if (mpActions) {
+                      mpActions.cancelBuild(bo.id).then(res => {
+                        if (!res.ok) {
+                          // eslint-disable-next-line no-console
+                          console.warn('cancelBuild rejected by server:', res.error);
+                        }
+                      });
+                    }
+                  }}
+                  title="Cancel this build (refunds the cost)"
+                >✕</button>
               </div>
             );
           })}

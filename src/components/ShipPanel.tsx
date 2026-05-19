@@ -439,7 +439,26 @@ export const ShipPanel: React.FC = () => {
                         </div>
                       </div>
                       <div className="order-actions">
-                        <button className="delete-btn" onClick={() => deleteManeuverNode(order.id)}>✕</button>
+                        <button
+                          className="delete-btn"
+                          onClick={() => {
+                            // Optimistic local remove + MP server-side
+                            // status='cancelled' POST. Without the DELETE
+                            // the next /state poll re-derived this node
+                            // from the server-side game_ship_nodes row,
+                            // so the X button looked broken to the user.
+                            deleteManeuverNode(order.id);
+                            if (mpActions) {
+                              mpActions.cancelNode(order.id).then(res => {
+                                if (!res.ok) {
+                                  // eslint-disable-next-line no-console
+                                  console.warn('cancelNode rejected by server:', res.error);
+                                }
+                              });
+                            }
+                          }}
+                          title="Cancel this maneuver"
+                        >✕</button>
                       </div>
                     </div>
                   ))}
