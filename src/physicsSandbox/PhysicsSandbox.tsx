@@ -1086,23 +1086,25 @@ function drawNodes(
     const sp = worldToScreen(wp.x, wp.y);
     const isSel = node.id === selectedNodeId;
 
-    // Diamond
+    // Diamond — larger and more opaque than before so it doesn't get
+    // lost behind overlapping orbit ellipses or planet labels.
+    const HALF = 7;
     ctx.save();
     ctx.translate(sp.x, sp.y);
     ctx.rotate(Math.PI / 4);
     if (node.committed) {
-      ctx.fillStyle = isSel ? '#ffb84d' : 'rgba(255, 184, 77, 0.85)';
-      ctx.fillRect(-5, -5, 10, 10);
+      ctx.fillStyle = isSel ? '#ffb84d' : 'rgba(255, 184, 77, 0.95)';
+      ctx.fillRect(-HALF, -HALF, HALF * 2, HALF * 2);
       ctx.strokeStyle = '#ffb84d';
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(-5, -5, 10, 10);
+      ctx.lineWidth = 2;
+      ctx.strokeRect(-HALF, -HALF, HALF * 2, HALF * 2);
     } else {
-      ctx.fillStyle = isSel ? 'rgba(255, 184, 77, 0.25)' : 'rgba(255, 184, 77, 0.08)';
-      ctx.fillRect(-5, -5, 10, 10);
-      ctx.strokeStyle = isSel ? '#ffb84d' : 'rgba(255, 184, 77, 0.55)';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([2, 2]);
-      ctx.strokeRect(-5, -5, 10, 10);
+      ctx.fillStyle = isSel ? 'rgba(255, 184, 77, 0.45)' : 'rgba(255, 184, 77, 0.25)';
+      ctx.fillRect(-HALF, -HALF, HALF * 2, HALF * 2);
+      ctx.strokeStyle = isSel ? '#ffb84d' : 'rgba(255, 184, 77, 0.85)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([3, 2]);
+      ctx.strokeRect(-HALF, -HALF, HALF * 2, HALF * 2);
       ctx.setLineDash([]);
     }
     ctx.restore();
