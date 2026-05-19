@@ -418,7 +418,17 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   }
 
   // Server-side chronicle entries -> human-readable combat log.
+  //
+  // Payloads now carry pre-resolved faction names (owner_faction_name,
+  // killer_faction_name) so we don't need to join against the factions
+  // map for every render. The factionNameById fallback covers older
+  // chronicle rows written before the server-side enrichment landed.
   const factionNameById = new Map(srv.factions.map(f => [f.id, f.name]));
+  const nameOfFaction = (id: string | null | undefined, fallback?: string): string => {
+    if (fallback) return fallback;
+    if (!id) return 'Unknown';
+    return factionNameById.get(id) ?? 'Unknown';
+  };
   const combatLog: string[] = (srv.events ?? [])
     .slice()
     .reverse()  // server returns newest first; we want chronological
@@ -426,15 +436,31 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       let parsed: Record<string, unknown> = {};
       try { parsed = JSON.parse(ev.payload || '{}'); } catch { /* ignore */ }
       const t = `T+${ev.tick_number}`;
+
       if (ev.kind === 'ship_destroyed') {
         const name = (parsed.ship_name as string) ?? 'Unknown';
         const cls = (parsed.ship_class as string) ?? 'ship';
         const where = (parsed.body_name as string) ?? 'space';
-        const owner = ev.actor_faction_id
-          ? factionNameById.get(ev.actor_faction_id) ?? 'Unknown'
-          : 'Unknown';
-        return `${t}  ${owner}'s ${cls} ${name} destroyed at ${where}`;
+        const owner = nameOfFaction(ev.actor_faction_id, parsed.owner_faction_name as string | undefined);
+        const killer = nameOfFaction(parsed.killer_faction_id as string | null, parsed.killer_faction_name as string | undefined);
+        // "destroyed by Unknown" is uninformative — only attribute when
+        // we actually have a killer id (the chronicle stored null for
+        // pre-attribution rows).
+        const tail = parsed.killer_faction_id ? ` by ${killer}` : '';
+        return `${t}  ${owner}'s ${cls} ${name} destroyed at ${where}${tail}`;
       }
+
+      if (ev.kind === 'settlement_destroyed') {
+        const sName = (parsed.settlement_name as string) ?? null;
+        const sType = (parsed.settlement_type as string) ?? 'settlement';
+        const where = (parsed.body_name as string) ?? 'unknown body';
+        const owner = nameOfFaction(ev.actor_faction_id, parsed.owner_faction_name as string | undefined);
+        const killer = nameOfFaction(parsed.killer_faction_id as string | null, parsed.killer_faction_name as string | undefined);
+        const tail = parsed.killer_faction_id ? ` by ${killer}` : '';
+        const label = sName ? `${sType} ${sName}` : sType;
+        return `${t}  ${owner}'s ${label} on ${where} destroyed${tail}`;
+      }
+
       return `${t}  ${ev.kind}`;
     });
 

@@ -731,7 +731,19 @@ export class Room {
       byBody.get(s.parent_body_id).push(s);
     }
 
-    const hpDeltas = new Map(); // shipId -> total damage taken this tick
+    // hpDeltas: shipId -> { total: number, byFaction: Map<factionId, number> }
+    // Per-faction split is needed so chronicle entries can credit the kill
+    // ("destroyed BY <faction>") — previously we only knew the victim.
+    const hpDeltas = new Map();
+    const addDamage = (targetId, attackerFid, amount) => {
+      let entry = hpDeltas.get(targetId);
+      if (!entry) {
+        entry = { total: 0, byFaction: new Map() };
+        hpDeltas.set(targetId, entry);
+      }
+      entry.total += amount;
+      entry.byFaction.set(attackerFid, (entry.byFaction.get(attackerFid) || 0) + amount);
+    };
     for (const [, ships] of byBody) {
       const factions = new Set(ships.map(s => s.owner_faction_id));
       if (factions.size < 2) continue;
@@ -745,9 +757,22 @@ export class Room {
         if (targets.length === 0) continue;
         const split = attacker.damage_per_tick / targets.length;
         for (const t of targets) {
-          hpDeltas.set(t.id, (hpDeltas.get(t.id) || 0) + split);
+          addDamage(t.id, attacker.owner_faction_id, split);
         }
       }
+    }
+
+    // Helper: return the faction id that dealt the most damage to `targetId`
+    // this tick, breaking ties by insertion order. Used to credit kills.
+    function topAttacker(targetId) {
+      const entry = hpDeltas.get(targetId);
+      if (!entry || entry.byFaction.size === 0) return null;
+      let best = null;
+      let bestDmg = -1;
+      for (const [fid, dmg] of entry.byFaction) {
+        if (dmg > bestDmg) { best = fid; bestDmg = dmg; }
+      }
+      return best;
     }
 
     // 3.4 Settlement combat. Hostile ships orbiting the same body as a
@@ -755,9 +780,12 @@ export class Room {
     //     suppress (same `peace` set as ship combat). Cities and stations
     //     can't fight back yet — that's a follow-up.
     const SETTLEMENT_INCOMING_DAMAGE_PER_HOSTILE_SHIP = 4;
+    // Pull settlement name too so chronicle entries can say "Triton City"
+    // instead of the un-formatted "settlement_destroyed" the log was
+    // showing previously.
     const livingSettlements = (await this.env.DB
       .prepare(
-        `SELECT id, body_id, owner_faction_id, type, hp, hp_max
+        `SELECT id, name, body_id, owner_faction_id, type, hp, hp_max
            FROM game_settlements
           WHERE game_id = ? AND destroyed_at_tick IS NULL`,
       )
@@ -765,6 +793,10 @@ export class Room {
       .all()).results ?? [];
 
     const destroyedSettlements = [];
+    // settlementId -> faction id that landed the killing volley, by largest
+    // ship-count contribution (proxy for damage since per-hostile damage
+    // is flat). Used downstream for the chronicle payload's killer field.
+    const settlementKillers = new Map();
     for (const s of livingSettlements) {
       const shipsHere = byBody.get(s.body_id) ?? [];
       const hostiles = shipsHere.filter(sh =>
@@ -781,6 +813,17 @@ export class Room {
           .bind(tick, tick, s.id)
           .run();
         destroyedSettlements.push(s);
+        // Largest hostile-faction presence gets the kill credit. Tie:
+        // first encountered wins (Map iteration order = insertion order).
+        const byFaction = new Map();
+        for (const h of hostiles) {
+          byFaction.set(h.owner_faction_id, (byFaction.get(h.owner_faction_id) || 0) + 1);
+        }
+        let topFid = null, topN = -1;
+        for (const [fid, n] of byFaction) {
+          if (n > topN) { topFid = fid; topN = n; }
+        }
+        if (topFid) settlementKillers.set(s.id, topFid);
       } else {
         await this.env.DB
           .prepare('UPDATE game_settlements SET hp = ?, last_combat_tick = ? WHERE id = ?')
@@ -793,15 +836,43 @@ export class Room {
     if (destroyedSettlements.length) {
       const now = Date.now();
       const touchedBodies = new Set();
+      // Pre-fetch all the faction names we'll cite (owners + killers) in
+      // one query — chronicling N settlements should be 1 round-trip for
+      // names, not 2N.
+      const factionIds = new Set();
+      for (const s of destroyedSettlements) {
+        if (s.owner_faction_id) factionIds.add(s.owner_faction_id);
+        const k = settlementKillers.get(s.id);
+        if (k) factionIds.add(k);
+      }
+      const factionNameById = new Map();
+      if (factionIds.size > 0) {
+        const ids = [...factionIds];
+        const placeholders = ids.map(() => '?').join(',');
+        const rows = (await this.env.DB
+          .prepare(`SELECT id, name FROM game_factions WHERE id IN (${placeholders})`)
+          .bind(...ids)
+          .all()).results ?? [];
+        for (const r of rows) factionNameById.set(r.id, r.name);
+      }
       for (const s of destroyedSettlements) {
         touchedBodies.add(s.body_id);
         const body = await this.env.DB
           .prepare('SELECT name FROM game_bodies WHERE id = ?')
           .bind(s.body_id).first();
+        const killerFid = settlementKillers.get(s.id) ?? null;
         const id = `c${tick}_setl_${s.id.slice(-6)}_${Math.random().toString(36).slice(2, 6)}`;
         const payload = JSON.stringify({
-          settlement_id: s.id, settlement_type: s.type,
-          body_id: s.body_id, body_name: body?.name ?? '?',
+          settlement_id: s.id,
+          // settlement_name was missing — without it the client log just
+          // said "settlement_destroyed" with no way to identify which.
+          settlement_name: s.name ?? null,
+          settlement_type: s.type,
+          body_id: s.body_id,
+          body_name: body?.name ?? '?',
+          owner_faction_name: factionNameById.get(s.owner_faction_id) ?? null,
+          killer_faction_id: killerFid,
+          killer_faction_name: killerFid ? (factionNameById.get(killerFid) ?? null) : null,
         });
         try {
           await this.env.DB
@@ -930,10 +1001,11 @@ export class Room {
     if (hpDeltas.size > 0) {
       const losses = [];
       const lostShipRows = [];  // for chronicle entries
-      for (const [shipId, dmg] of hpDeltas) {
+      const killerByShip = new Map(); // shipId -> faction id that landed the killing volley
+      for (const [shipId, entry] of hpDeltas) {
         const cur = allShips.find(s => s.id === shipId);
         if (!cur) continue;
-        const newHp = Math.max(0, cur.hp - dmg);
+        const newHp = Math.max(0, cur.hp - entry.total);
         if (newHp <= 0) {
           await this.env.DB
             .prepare("UPDATE game_ships SET hp = 0, status = 'destroyed', destroyed_at_tick = ? WHERE id = ?")
@@ -941,6 +1013,8 @@ export class Room {
             .run();
           losses.push(shipId);
           lostShipRows.push(cur);
+          const kf = topAttacker(shipId);
+          if (kf) killerByShip.set(shipId, kf);
         } else {
           await this.env.DB
             .prepare('UPDATE game_ships SET hp = ? WHERE id = ?')
@@ -953,6 +1027,30 @@ export class Room {
       // show a combat log without relying on the transient WS broadcast.
       if (lostShipRows.length) {
         const now = Date.now();
+        // Pre-fetch faction names for any killer ids we'll cite. One query
+        // for the lot is cheaper than per-ship round-trips in the loop.
+        const killerIds = [...new Set([...killerByShip.values()].filter(Boolean))];
+        const factionNameById = new Map();
+        if (killerIds.length > 0) {
+          const placeholders = killerIds.map(() => '?').join(',');
+          const rows = (await this.env.DB
+            .prepare(`SELECT id, name FROM game_factions WHERE id IN (${placeholders})`)
+            .bind(...killerIds)
+            .all()).results ?? [];
+          for (const r of rows) factionNameById.set(r.id, r.name);
+        }
+        // Also fetch the victim's faction name so the formatter can render
+        // "<owner>'s <class> <name> destroyed by <killer>" without needing
+        // a client-side join. actor_faction_id stays the owner (victim).
+        const victimFactionIds = [...new Set(lostShipRows.map(s => s.owner_faction_id).filter(Boolean))];
+        if (victimFactionIds.length > 0) {
+          const placeholders = victimFactionIds.map(() => '?').join(',');
+          const rows = (await this.env.DB
+            .prepare(`SELECT id, name FROM game_factions WHERE id IN (${placeholders})`)
+            .bind(...victimFactionIds)
+            .all()).results ?? [];
+          for (const r of rows) factionNameById.set(r.id, r.name);
+        }
         for (const lost of lostShipRows) {
           const ship = await this.env.DB
             .prepare('SELECT name, ship_class, parent_body_id FROM game_ships WHERE id = ?')
@@ -960,6 +1058,7 @@ export class Room {
           const body = ship?.parent_body_id
             ? await this.env.DB.prepare('SELECT name FROM game_bodies WHERE id = ?').bind(ship.parent_body_id).first()
             : null;
+          const killerFid = killerByShip.get(lost.id) ?? null;
           const entryId = `c${tick}_${lost.id.slice(-8)}_${Math.random().toString(36).slice(2, 6)}`;
           const payload = JSON.stringify({
             ship_id: lost.id,
@@ -967,6 +1066,13 @@ export class Room {
             ship_class: ship?.ship_class ?? 'unknown',
             body_id: ship?.parent_body_id ?? null,
             body_name: body?.name ?? 'unknown space',
+            // Killer attribution: top per-faction damage dealer. Null when
+            // no combat-capable ship was at the body (e.g. a kill from a
+            // future settlement attacker — currently impossible but
+            // forward-compatible).
+            killer_faction_id: killerFid,
+            killer_faction_name: killerFid ? (factionNameById.get(killerFid) ?? null) : null,
+            owner_faction_name: factionNameById.get(lost.owner_faction_id) ?? null,
           });
           try {
             await this.env.DB
