@@ -105,7 +105,18 @@ export const BuildPanel: React.FC = () => {
       <div className="build-classes">
         {BUILDABLE_CLASSES.map(cls => {
           const def = SHIP_CLASSES[cls];
-          const canAfford = playerRes.fuel >= def.cost.fuel && playerRes.ore >= def.cost.ore && playerRes.credits >= def.cost.credits;
+          // Per-resource shortages so the UI can colour each cost
+          // individually + surface the deficit explicitly. Previously the
+          // BUILD button just greyed out with no indication of why.
+          const shortFuel    = Math.max(0, def.cost.fuel    - playerRes.fuel);
+          const shortOre     = Math.max(0, def.cost.ore     - playerRes.ore);
+          const shortCredits = Math.max(0, def.cost.credits - playerRes.credits);
+          const canAfford = shortFuel === 0 && shortOre === 0 && shortCredits === 0;
+          const shortBits: string[] = [];
+          if (shortFuel    > 0) shortBits.push(`+${shortFuel} fuel`);
+          if (shortOre     > 0) shortBits.push(`+${shortOre} ore`);
+          if (shortCredits > 0) shortBits.push(`+${shortCredits} cr`);
+          const shortLabel = shortBits.length > 0 ? `Need ${shortBits.join(', ')}` : '';
           return (
             <div key={cls} className={`build-class-row ${!canAfford ? 'disabled' : ''}`}>
               <div className="class-info">
@@ -117,17 +128,47 @@ export const BuildPanel: React.FC = () => {
                 <span className="stat">HP:{def.hp}</span>
                 {def.cargoCapacity > 0 && <span className="stat">CG:{def.cargoCapacity}</span>}
               </div>
-              <div className="class-cost">
-                <span className="cost-metal">{def.cost.ore}O</span>
-                <span className="cost-money">{def.cost.credits}C</span>
+              <div className="class-cost" title={shortLabel || undefined}>
+                {def.cost.fuel > 0 && (
+                  <span
+                    className="cost-fuel"
+                    style={shortFuel > 0 ? { color: '#ff5e5e', fontWeight: 700 } : undefined}
+                  >{def.cost.fuel}F</span>
+                )}
+                <span
+                  className="cost-metal"
+                  style={shortOre > 0 ? { color: '#ff5e5e', fontWeight: 700 } : undefined}
+                >{def.cost.ore}O</span>
+                <span
+                  className="cost-money"
+                  style={shortCredits > 0 ? { color: '#ff5e5e', fontWeight: 700 } : undefined}
+                >{def.cost.credits}C</span>
               </div>
               <button
                 className="build-btn"
                 disabled={!canAfford}
                 onClick={() => handleBuild(cls)}
+                title={canAfford
+                  ? `Build a ${def.displayName} (${def.cost.fuel}F ${def.cost.ore}O ${def.cost.credits}C, ${def.buildTime} ticks)`
+                  : shortLabel}
               >
                 BUILD
               </button>
+              {!canAfford && shortLabel && (
+                // Inline shortage callout. Hugs the row so the player
+                // doesn't have to hover to learn what's missing.
+                <div
+                  className="build-shortage"
+                  role="status"
+                  style={{
+                    flexBasis: '100%',
+                    margin: '2px 0 0',
+                    fontSize: 10,
+                    color: '#ff5e5e',
+                    letterSpacing: '0.04em',
+                  }}
+                >⚠ {shortLabel}</div>
+              )}
             </div>
           );
         })}
