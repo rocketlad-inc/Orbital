@@ -8,8 +8,11 @@ import { useGameContext } from '../state/gameContext';
 import { computeIncomingThreats, IncomingThreat } from '../game/threats';
 import { ShipIcon, ShipIconClass } from './ShipIcons';
 
-/** Urgency by ticks-until-arrival → label + color */
-function urgency(ticks: number): { label: string; color: string; bg: string } {
+/** Urgency by ticks-until-arrival → label + color. A freshly-started
+ *  burn always reads as "BURN INBOUND" regardless of distance, so the
+ *  player notices the moment an enemy commits even on a long transit. */
+function urgency(ticks: number, isFreshBurn: boolean): { label: string; color: string; bg: string } {
+  if (isFreshBurn) return { label: 'BURN INBOUND', color: '#ff3030', bg: 'rgba(255, 48, 48, 0.18)' };
   if (ticks <= 10) return { label: 'IMMINENT', color: '#ff3030', bg: 'rgba(255, 48, 48, 0.15)' };
   if (ticks <= 30) return { label: 'INCOMING', color: '#ff8a4d', bg: 'rgba(255, 138, 77, 0.12)' };
   return { label: 'DETECTED', color: '#ffb84d', bg: 'rgba(255, 184, 77, 0.08)' };
@@ -155,7 +158,7 @@ interface ThreatRowProps {
 }
 
 const ThreatRow: React.FC<ThreatRowProps> = ({ threat, faction, isNew, onClick, onDismiss }) => {
-  const u = urgency(threat.ticksUntilArrival);
+  const u = urgency(threat.ticksUntilArrival, threat.isFreshBurn);
   const factionColor = faction?.color ?? '#ff5e5e';
   const factionName = faction?.name ?? threat.attackerFaction;
   return (
@@ -229,9 +232,17 @@ const ThreatRow: React.FC<ThreatRowProps> = ({ threat, faction, isNew, onClick, 
         </span>
       </div>
       <div style={{ fontSize: 9, color: '#8aa0b4', marginTop: 2, paddingLeft: 22 }}>
-        Defending: {threat.threatenedShipCount > 0 && `${threat.threatenedShipCount} ship${threat.threatenedShipCount === 1 ? '' : 's'}`}
-        {threat.threatenedShipCount > 0 && threat.threatenedSettlementCount > 0 && ' · '}
-        {threat.threatenedSettlementCount > 0 && `${threat.threatenedSettlementCount} settlement${threat.threatenedSettlementCount === 1 ? '' : 's'}`}
+        {threat.threatenedShipCount === 0 && threat.threatenedSettlementCount === 0 ? (
+          // Body owned but empty — incoming ship is a claim-jumper. No
+          // ships or settlements to defend it; the body itself is at risk.
+          <span style={{ color: '#ffb84d' }}>Claim unguarded — no ships or settlements here</span>
+        ) : (
+          <>
+            Defending: {threat.threatenedShipCount > 0 && `${threat.threatenedShipCount} ship${threat.threatenedShipCount === 1 ? '' : 's'}`}
+            {threat.threatenedShipCount > 0 && threat.threatenedSettlementCount > 0 && ' · '}
+            {threat.threatenedSettlementCount > 0 && `${threat.threatenedSettlementCount} settlement${threat.threatenedSettlementCount === 1 ? '' : 's'}`}
+          </>
+        )}
       </div>
     </div>
   );
