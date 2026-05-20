@@ -16,6 +16,7 @@ import {
 } from '../types';
 import { SHARED_BODIES } from './mockGameState';
 import { createCity, createStation } from '../game/settlements';
+import { seedBodySecrets } from '../game/secrets';
 
 // === Constants (mirror of worker/factions.js) =================
 
@@ -245,9 +246,15 @@ export function setupSinglePlayer(config: SinglePlayerConfig): GameState {
     });
   }
 
+  // Seed exploration secrets onto non-capital bodies. The seeder picks
+  // by body category (inner / belt / outer / moon) so e.g. the stargate
+  // never lands on Mercury. Map-seed-derived PRNG keeps placements
+  // reproducible per game.
+  const bodiesWithSecrets = seedBodySecrets(bodies, claimedBodies, rand);
+
   return {
     currentTick: 0,
-    bodies,
+    bodies: bodiesWithSecrets,
     ships,
     fleets: [],
     factions,

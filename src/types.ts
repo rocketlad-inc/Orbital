@@ -73,6 +73,39 @@ export interface Body {
 
   // Ownership
   ownedBy?: string;                     // faction id
+
+  /** Hidden surprise — set at game start by the secrets seeder for a
+   *  handful of non-capital bodies. Revealed when a player ship first
+   *  reaches the body; the effect fires and `revealed` flips true.
+   *  Persistent secrets (portal_to_sun, slingshot_anomaly) keep
+   *  applying after reveal; one-shot secrets are inert after firing. */
+  secret?: BodySecret;
+}
+
+/**
+ * Kinds of exploration surprises seeded onto non-capital bodies.
+ *
+ *   portal_to_sun     — every arriving ship is warped to a low Sol orbit
+ *                       (persistent shortcut once discovered)
+ *   ancient_city      — discoverer gets a free city (pop 3, free Lab L2)
+ *   free_collector    — discoverer gets a free city with hasCollector
+ *   derelict_warship  — discoverer claims a free Destroyer-class ship
+ *   resource_cache    — discoverer's pool gets +500 ore + 500 credits
+ *   ancient_databank  — discoverer gets +1 level in a random tech
+ */
+export type BodySecretKind =
+  | 'portal_to_sun'
+  | 'ancient_city'
+  | 'free_collector'
+  | 'derelict_warship'
+  | 'resource_cache'
+  | 'ancient_databank';
+
+export interface BodySecret {
+  kind: BodySecretKind;
+  revealed?: boolean;                   // set when the effect first fires
+  discoveredByFactionId?: string;
+  discoveredAtTick?: number;
 }
 
 /**

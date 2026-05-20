@@ -17,6 +17,7 @@ import {
   BUILDING_DEFS, buildingCostForNextLevel, buildingTimeForNextLevel,
   buildingLevel, shipyardSlotsAtBody,
 } from '../game/settlements';
+import { computeSecretReveal } from '../game/secrets';
 import { tickMaintenance } from '../game/maintenance';
 import { TechId, TECH_DEFS, MAX_SCIENCE_PER_TICK } from '../game/techs';
 import { runFactionAI, shouldRunAI } from '../game/factionAI';
@@ -669,8 +670,125 @@ export function GameContextProvider({
       updatedTech[fid] = { ...ts, levels, progress, researching, queue };
     }
 
-    const combatLog = combatNewLogs.length > 0
-      ? [...prev.combatLog.slice(-20), ...combatNewLogs]
+    // === Exploration secrets ================================
+    // For each non-revealed body secret, check whether any non-transit
+    // ship is in orbit and trigger the reveal. Persistent secrets
+    // (portal_to_sun) also re-apply their effect every tick to any
+    // ship at the body, not just the first to arrive.
+    const secretLogs: string[] = [];
+    let updatedBodies = prev.bodies;
+    {
+      const settlementSpawns: typeof updatedSettlements = [];
+      const shipSpawns: typeof updatedShips = [];
+
+      // Pre-compute ships-by-body so we can do a single scan.
+      const shipsByBody = new Map<string, typeof updatedShips>();
+      for (const sh of updatedShips) {
+        if (sh.transfer) continue;
+        const bid = sh.orbit.parentBodyId;
+        let arr = shipsByBody.get(bid);
+        if (!arr) { arr = []; shipsByBody.set(bid, arr); }
+        arr.push(sh);
+      }
+
+      const newBodies = updatedBodies.map(body => {
+        const s = body.secret;
+        if (!s) return body;
+        const localShips = shipsByBody.get(body.id) ?? [];
+
+        // Portal: persistent effect — every ship here gets warped to Sol.
+        // First arrival also flips revealed and emits the discovery log.
+        if (s.kind === 'portal_to_sun' && localShips.length > 0) {
+          let revealedNow: typeof s = s;
+          if (!s.revealed) {
+            const discoverer = localShips[0].ownedBy;
+            revealedNow = { ...s, revealed: true, discoveredByFactionId: discoverer, discoveredAtTick: newTime };
+            secretLogs.push(`${body.name}: DISCOVERY — an ancient stargate. Every ship arriving here will now be warped to Sol.`);
+            logger.info('SIM', `Stargate at ${body.name}`, { discoverer });
+          }
+          // Warp every ship at the body to a low Sol orbit.
+          const warpedIds = new Set(localShips.map(ls => ls.id));
+          updatedShips = updatedShips.map(sh => {
+            if (!warpedIds.has(sh.id)) return sh;
+            return {
+              ...sh,
+              orbit: createCircularOrbit('sol', 18, newTime, prev.bodies),
+              pendingTransfer: undefined,
+              queuedTransfers: undefined,
+            };
+          });
+          return { ...body, secret: revealedNow };
+        }
+
+        // One-shot reveals — fire once, then leave the secret as
+        // revealed (so the UI knows there's something here) but
+        // inert.
+        if (!s.revealed && localShips.length > 0) {
+          const discoverer = localShips[0].ownedBy;
+          const patch = computeSecretReveal(body, discoverer, newTime);
+          if (!patch) return body;
+          secretLogs.push(patch.message);
+          logger.info('SIM', `${s.kind} at ${body.name}`, { discoverer });
+
+          // Apply the patch's side effects.
+          if (patch.spawnSettlement) settlementSpawns.push(patch.spawnSettlement);
+
+          if (patch.spawnShipClass) {
+            const cls = getShipClass(patch.spawnShipClass as ShipClassName);
+            shipSpawns.push({
+              id: `ship-derelict-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              name: `${body.name} Salvage`,
+              class: patch.spawnShipClass,
+              ownedBy: discoverer,
+              fuel: cls.fuelCapacity,
+              hp: cls.hp,
+              orbit: createCircularOrbit(body.id, body.radius + 6, newTime, prev.bodies),
+              orders: [],
+            });
+          }
+
+          if (patch.resourceGain) {
+            const pool = factionPools[discoverer];
+            if (pool) {
+              pool.fuel    += patch.resourceGain.fuel;
+              pool.ore     += patch.resourceGain.ore;
+              pool.credits += patch.resourceGain.credits;
+              pool.science += patch.resourceGain.science;
+            }
+          }
+
+          if (patch.techBump) {
+            const ts = updatedTech[discoverer] ?? { levels: {}, researching: null, progress: 0, queue: [] };
+            // Pick a random tech track. Use prev.currentTick + body.id
+            // as deterministic-ish seed so the same game state doesn't
+            // produce different outcomes if this runs twice.
+            const tracks: TechId[] = ['weapons', 'armor', 'propulsion', 'construction', 'industry', 'sensors'];
+            const pick = tracks[Math.floor(Math.random() * tracks.length)];
+            const cur = ts.levels[pick] ?? 0;
+            updatedTech[discoverer] = {
+              ...ts,
+              levels: { ...ts.levels, [pick]: cur + patch.techBump.count },
+            };
+            secretLogs.push(`${body.name}: tech databank advanced ${pick} to L${cur + patch.techBump.count}.`);
+          }
+
+          return { ...body, secret: patch.secret };
+        }
+
+        return body;
+      });
+
+      if (settlementSpawns.length > 0) {
+        updatedSettlements = [...updatedSettlements, ...settlementSpawns];
+      }
+      if (shipSpawns.length > 0) {
+        updatedShips = [...updatedShips, ...shipSpawns];
+      }
+      updatedBodies = newBodies;
+    }
+
+    const combatLog = (combatNewLogs.length > 0 || secretLogs.length > 0)
+      ? [...prev.combatLog.slice(-20), ...combatNewLogs, ...secretLogs]
       : prev.combatLog;
 
     // === Faction AI =========================================
@@ -777,6 +895,7 @@ export function GameContextProvider({
 
     return {
       ...prev,
+      bodies: updatedBodies,
       ships: updatedShips,
       orders: allOrders,
       currentTick: newTime,
