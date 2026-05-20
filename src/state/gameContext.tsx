@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
-import { GameState, ManeuverNode, CameraState, MapUIState, Ship, Body, TransferArc, BuildOrder, SettlementType, FactionResources, BuildingKind, SettlementBuildOrder, TradeRoute } from '../types';
+import { GameState, ManeuverNode, CameraState, MapUIState, Ship, Body, BuildOrder, SettlementType, FactionResources, BuildingKind, SettlementBuildOrder, TradeRoute } from '../types';
 // Scenarios were removed when single-player switched to SinglePlayerSetup.
 // GameContextProvider now requires either an initialState (single-player,
 // seeded by setupSinglePlayer) or an externalState (multiplayer, server-
@@ -24,10 +24,13 @@ import {
 } from '../game/settlements';
 import { computeSecretReveal } from '../game/secrets';
 import { checkVictory } from '../game/victory';
+import {
+  createDysonSphere, tickDysonDelivery, damageDysonSphere,
+  isEligibleDysonFoundation, SOL_BODY_ID,
+} from '../game/dysonSphere';
 import { tickMaintenance } from '../game/maintenance';
 import { TechId, TECH_DEFS, TECH_MAX_LEVEL, MAX_SCIENCE_PER_TICK, engineGModifier } from '../game/techs';
 import { runFactionAI, shouldRunAI } from '../game/factionAI';
-import { planBezierTransfer } from '../physics/bezierTransfer';
 import type { AIActivityEntry } from '../types';
 import { useTurnBasedSettings } from './turnBasedSettings';
 
@@ -107,9 +110,9 @@ function applyAIIntent(
     case 'transfer': {
       const ship = snapshot.ships.find(s => s.id === intent.shipId);
       if (!ship) return { applied: false };
-      // No double-launching: a ship already in transit (torch OR legacy
-      // bezier) refuses a new transfer intent until it arrives.
-      if (ship.transit || ship.transfer || ship.pendingTransfer) return { applied: false };
+      // No double-launching: a ship already in transit (or with a
+      // staged preview) refuses a new transfer intent until it arrives.
+      if (ship.transit || ship.plannedTransit) return { applied: false };
 
       const faction = snapshot.factions.find(f => f.id === ship.ownedBy);
       // Engine acceleration = faction's stored engineG (if any) scaled by
@@ -146,10 +149,6 @@ function applyAIIntent(
                 vel: { x: launchVel.x, y: launchVel.y },
                 currentTransfer: plan,
               },
-              // Clear any legacy bezier state — torch takes over.
-              transfer: undefined,
-              pendingTransfer: undefined,
-              queuedTransfers: undefined,
             }
           : s
       );
@@ -222,8 +221,6 @@ interface GameContextType {
   addManeuverNode: (node: ManeuverNode) => void;
   commitManeuverNode: (nodeId: string) => void;
   deleteManeuverNode: (nodeId: string) => void;
-  setPendingTransfer: (shipId: string, arc: TransferArc | undefined) => void;
-  addQueuedTransfer: (shipId: string, arc: TransferArc) => void;
 
   /** Launch a torch transfer for the named ship. Used by player UI and
    *  the AI's 'transfer' intent. Returns the launched plan on success
@@ -242,7 +239,7 @@ interface GameContextType {
   /** Stage a torch transfer as a PREVIEW (ship.plannedTransit) without
    *  firing the burn. The map renderer shows it as a dashed amber arc;
    *  ShipPanel's COMMIT button promotes it via launchTorchTransfer.
-   *  Replaces the legacy setPendingTransfer flow. */
+   *  Stages a preview without firing the burn. */
   planTorchPreview: (shipId: string, targetBodyId: string) => import('../physics/torchTransfer').TorchTransfer | null;
 
   /** Clear a ship's plannedTransit preview without launching. */
@@ -277,6 +274,13 @@ interface GameContextType {
   cancelBuilding: (settlementId: string) => boolean;
   selectedSettlementId?: string;
   selectSettlement: (id: string | undefined) => void;
+
+  /** Lay the Dyson Sphere foundation at a Sol-orbit station. The
+   *  station must be player-owned, must already exist (no auto-deploy),
+   *  and no other Dyson Sphere may exist this game (one-shot per match).
+   *  After foundation, parked freighters at Sol drain the player's pool
+   *  each tick to build the sphere — see src/game/dysonSphere.ts. */
+  initiateDysonSphere: (foundationStationId: string) => boolean;
 
   // Trade routes (SP). Assign a freighter to ferry cargo between an
   // origin settlement and a destination collector. The freighter
@@ -381,19 +385,19 @@ export function GameContextProvider({
   //
   // Important: in multiplayer the /state poll arrives every ~1.5s. A naive
   // wholesale replacement (`setGameStateInternal(externalState)`) clobbered
-  // any locally-planned transfers + pendingTransfer that the player had
-  // drawn but not yet COMMITted — so the COMMIT button vanished mid-plan
-  // every time the next poll landed. We post to the server only on commit
-  // (see ShipPanel + commitTransferLocal), so the server legitimately
-  // doesn't know about the local plan yet.
+  // any locally-planned transfers + plannedTransit previews that the
+  // player had drawn but not yet COMMITted — so the COMMIT button
+  // vanished mid-plan every time the next poll landed. We post to the
+  // server only on commit (see ShipPanel + commitTransferLocal), so the
+  // server legitimately doesn't know about the local plan yet.
   //
   // Fix: merge the local plan back onto the server snapshot. For each ship
   // in externalState, preserve:
   //   - any local order with status === 'planned' that isn't already on
   //     the server (matched by id)
-  //   - the local pendingTransfer if the server hasn't already started a
-  //     transfer for that ship (which would mean the player already
-  //     committed and the server is executing it)
+  //   - the local plannedTransit preview if the server isn't already
+  //     executing a transit for that ship (which would mean the player
+  //     already committed and the server is executing it)
   useEffect(() => {
     if (!externalState) return;
     setGameStateInternal(prev => {
@@ -407,13 +411,14 @@ export function GameContextProvider({
           o => o.status === 'planned' && !serverOrderIds.has(o.id),
         );
 
-        // pendingTransfer: only keep local if the server isn't already
-        // executing a transfer (which would imply the player has committed)
-        const pendingTransfer = serverShip.transfer
+        // plannedTransit preview: only keep local if the server isn't
+        // already executing a transit (which would imply the player has
+        // committed).
+        const plannedTransit = serverShip.transit
           ? undefined
-          : (localShip.pendingTransfer ?? serverShip.pendingTransfer);
+          : (localShip.plannedTransit ?? serverShip.plannedTransit);
 
-        if (localPlanned.length === 0 && pendingTransfer === serverShip.pendingTransfer) {
+        if (localPlanned.length === 0 && plannedTransit === serverShip.plannedTransit) {
           return serverShip;
         }
         return {
@@ -421,7 +426,7 @@ export function GameContextProvider({
           orders: localPlanned.length > 0
             ? [...serverShip.orders, ...localPlanned]
             : serverShip.orders,
-          pendingTransfer,
+          plannedTransit,
         };
       });
 
@@ -470,35 +475,23 @@ export function GameContextProvider({
   const [simSpeed, setSimSpeedInternal] = useState<number>(0);
   const [selectedSettlementId, setSelectedSettlementId] = useState<string | undefined>(undefined);
 
-  // Ship state machine — handles both the new torch model and the
-  // legacy Bezier model during the migration. Per tick:
+  // Ship state machine — torch transit model. Per tick:
   //
-  //   • If ship.transit is set: TORCH — integrate (pos, vel) for the
-  //     elapsed dt via stepTorchShip. On arrival, snap the ship into
-  //     a circular parking orbit around the target body and clear
-  //     transit. Drain fuel proportional to the Δv expended this tick.
+  //   • If ship.transit is set: integrate (pos, vel) for the elapsed
+  //     dt via stepTorchShip. On arrival, snap the ship into a
+  //     circular parking orbit around the target body (or chain into
+  //     the next queued leg) and clear transit. Drain fuel
+  //     proportional to the Δv expended this tick.
   //
-  //   • Else if ship.transfer is set: LEGACY BEZIER — original flow.
-  //     Kept until Phase 6 cleanup so in-flight Bezier transfers in
-  //     old saves can complete cleanly.
-  //
-  //   • Else: parked — check committed maneuver nodes (legacy path).
-  //
-  // The tick delta we step is (tick - prevTick) where prevTick is the
-  // last tick we observed. We don't have prevTick directly, so derive
-  // it: ship.transit.currentTransfer.startTick is the launch instant;
-  // we integrate from that into the future. To handle multi-tick
-  // advances cleanly we always integrate from "now" relative to the
-  // ship's stored state — the stepTorchShip integrator is dt-based.
+  //   • Else: parked — committed transfer maneuver nodes are unused
+  //     under the torch model; transfers fire immediately via
+  //     launchTorchTransfer. Non-transfer planned/committed nodes
+  //     remain as informational placeholders.
   const checkNodeExecution = useCallback((ships: Ship[], bodies: Body[], tick: number, prevTick?: number): Ship[] => {
     let mutated = false;
     const updatedShips = ships.map(ship => {
       let orbit = ship.orbit;
       let fuel = ship.fuel;
-      let orders = ship.orders;
-      let transfer = ship.transfer;
-      let pendingTransfer = ship.pendingTransfer;
-      let queuedTransfers = ship.queuedTransfers ? [...ship.queuedTransfers] : [];
       let transit = ship.transit;
       let queuedTransits = ship.queuedTransits ? [...ship.queuedTransits] : undefined;
       let changed = false;
@@ -516,9 +509,7 @@ export function GameContextProvider({
           stepTorchShip(stepped, plan, fromTick, dt, bodies);
           transit = { ...transit, pos: stepped.pos, vel: stepped.vel };
           // Fuel drain: Δv expended this tick = a · dt during the burn
-          // (zero outside [startTick, arriveTick]). Phase 1 uses a
-          // simple "10× Δv" cost matching the legacy bezier fuel
-          // formula so building/economy balance carries over.
+          // (zero outside [startTick, arriveTick]).
           const burnStart = Math.max(plan.startTick, fromTick);
           const burnEnd   = Math.min(plan.arriveTick, tick);
           if (burnEnd > burnStart) {
@@ -551,68 +542,11 @@ export function GameContextProvider({
             }
           }
         }
-      } else if (transfer) {
-        // Loop arrival processing so a single large tickDelta can chain
-        // through multiple queued legs (e.g. fast-forward through a patrol).
-        while (transfer && tick >= transfer.arrivalTime) {
-          const cost = Math.round(Math.abs(transfer.arrivalDv) * 10);
-          fuel = Math.max(0, fuel - cost);
-
-          if (queuedTransfers.length > 0) {
-            const nextArc = queuedTransfers.shift()!;
-            const depCost = Math.round(Math.abs(nextArc.departureDv) * 10);
-            fuel = Math.max(0, fuel - depCost);
-            transfer = nextArc;
-            const chainBody = bodies.find(b => b.id === nextArc.departureBodyId);
-            const chainRadius = chainBody ? chainBody.radius + 4 : 10;
-            orbit = createCircularOrbit(nextArc.departureBodyId, chainRadius, tick, bodies);
-          } else {
-            const arrBodyId = transfer.arrivalBodyId;
-            const arrBody = bodies.find(b => b.id === arrBodyId);
-            const arrRadius = arrBody ? arrBody.radius + 4 : 10;
-            orbit = createCircularOrbit(arrBodyId, arrRadius, tick, bodies);
-            transfer = undefined;
-          }
-          changed = true;
-        }
-      } else {
-        // Ship is orbiting — check for departure burns
-        const sortedOrders = [...orders].sort((a, b) => a.burnTime - b.burnTime);
-        const executedIds: string[] = [];
-        for (const node of sortedOrders) {
-          if (node.status === 'committed' && node.burnTime <= tick) {
-            if (pendingTransfer && node.type === 'transfer') {
-              // Departure: switch to transit
-              const cost = Math.round(Math.abs(node.deltav) * 10);
-              fuel = Math.max(0, fuel - cost);
-              transfer = pendingTransfer;
-              pendingTransfer = undefined;
-            }
-            executedIds.push(node.id);
-            changed = true;
-          }
-          // NOTE: previously we also auto-expired planned nodes whose burn
-          // window had passed. That made the COMMIT button disappear at
-          // higher sim speeds — the 5-tick launch buffer flies by in
-          // seconds at 10×+ and the player loses the ability to commit
-          // the plan they just drew. Planned nodes now persist until the
-          // player explicitly commits or deletes them. If a planned
-          // transfer is committed after its original departure window,
-          // commitManeuverNode refreshes the arc to depart at currentTick+5
-          // before flipping status. See the "stale arc refresh" block in
-          // commitManeuverNode.
-        }
-        if (executedIds.length > 0) {
-          orders = orders.filter(o => !executedIds.includes(o.id));
-        }
       }
 
       if (changed) {
         mutated = true;
-        // Don't store an empty queuedTransfers array — keep undefined so
-        // ships without any queued legs stay clean.
-        const nextQueued = queuedTransfers.length > 0 ? queuedTransfers : undefined;
-        return { ...ship, orbit, fuel, orders, transfer, pendingTransfer, queuedTransfers: nextQueued, transit, queuedTransits };
+        return { ...ship, orbit, fuel, transit, queuedTransits };
       }
       return ship;
     });
@@ -631,23 +565,16 @@ export function GameContextProvider({
     // Keep logger's tick context fresh so every entry below has the right T+
     logger.setCurrentTick(newTime);
 
-    // Detect transfer arrivals (ships that had a transfer last frame but
-    // not this frame) BEFORE checkNodeExecution mutates them, so we can
-    // log meaningful arrival events.
+    // Detect torch arrivals (ships that had a transit last frame but
+    // not this frame) so we can log meaningful arrival events.
     const updatedShips0 = checkNodeExecution(prev.ships, prev.bodies, newTime, prev.currentTick);
     if (updatedShips0 !== prev.ships) {
       const prevById = new Map(prev.ships.map(s => [s.id, s]));
       for (const s of updatedShips0) {
         const before = prevById.get(s.id);
         if (!before) continue;
-        if (before.transfer && !s.transfer) {
-          // Just arrived (or chained to next leg). transfer was cleared.
+        if (before.transit && !s.transit) {
           logger.info('SIM', `Transfer arrived: ${s.name} → ${s.orbit.parentBodyId}`);
-        } else if (before.pendingTransfer && !s.pendingTransfer && s.transfer) {
-          // Departure burn fired
-          logger.info('SIM', `Transfer departed: ${s.name} → ${s.transfer.arrivalBodyId}`, {
-            arrival: Math.round(s.transfer.arrivalTime),
-          });
         }
       }
     }
@@ -732,14 +659,38 @@ export function GameContextProvider({
       r => updatedShips.some(s => s.id === r.shipId),
     );
     if (updatedRoutes.length > 0) {
-      // Per-faction flight-speed multiplier (Flight Dynamics tech).
-      // Larger multiplier = faster transit; we feed this into the
-      // existing planBezierTransfer travelTimeMul argument.
-      const flightMul: Record<string, number> = {};
-      for (const [fid, ts] of Object.entries(prev.factionTech)) {
-        const lvl = ts.levels['flight'] ?? 0;
-        flightMul[fid] = Math.max(0.2, 1 - TECH_DEFS.flight.perLevel * lvl);
+      // Per-faction engine acceleration. Reuses the same flight-tech
+      // multiplier the player-controlled ships get through engineGModifier.
+      const engineAccelFor: Record<string, number> = {};
+      for (const fid of Object.keys(prev.factionTech)) {
+        const faction = prev.factions.find(f => f.id === fid);
+        const baseAccel = faction?.engineG ?? DEFAULT_ENGINE_ACCEL;
+        const mul = engineGModifier(prev.factionTech[fid]);
+        engineAccelFor[fid] = baseAccel * mul;
       }
+
+      // Helper: launch a torch transfer for a freighter on a trade route.
+      // Returns the updated Ship (with .transit set) or null on failure.
+      const launchFreighterTorch = (ship: Ship, targetBodyId: string): Ship | null => {
+        const accel = engineAccelFor[ship.ownedBy] ?? DEFAULT_ENGINE_ACCEL;
+        const launchPos = orbitWorldPos(ship.orbit, newTime, prev.bodies);
+        const parent = prev.bodies.find(b => b.id === ship.orbit.parentBodyId);
+        const launchVel = parent ? bodyWorldVelocity(parent, newTime, prev.bodies) : { x: 0, y: 0 };
+        const plan = planTorchTransfer(
+          { pos: launchPos, vel: launchVel },
+          targetBodyId, accel, accel, newTime, prev.bodies,
+        );
+        if (!plan) return null;
+        return {
+          ...ship,
+          transit: {
+            pos: { x: launchPos.x, y: launchPos.y },
+            vel: { x: launchVel.x, y: launchVel.y },
+            currentTransfer: plan,
+          },
+        };
+      };
+
       const CARGO_CAP = 50;
       const nextShips = [...updatedShips];
       const nextSettlements = [...updatedSettlements];
@@ -747,7 +698,7 @@ export function GameContextProvider({
         const shipIdx = nextShips.findIndex(s => s.id === route.shipId);
         if (shipIdx < 0) return route;
         const ship = nextShips[shipIdx];
-        if (ship.transfer) return route;            // mid-transit
+        if (ship.transit) return route;             // mid-transit
         if (route.status === 'paused') return route;
 
         const here = ship.orbit.parentBodyId;
@@ -789,11 +740,9 @@ export function GameContextProvider({
           // origin gets the freighter cycling, so the next tick
           // it can try again. Without this an empty stockpile
           // would strand the freighter forever.
-          const arc = planBezierTransfer(
-            ship.orbit, route.destBodyId, newTime, prev.bodies, flightMul[ship.ownedBy] ?? 1,
-          );
-          if (arc) {
-            nextShips[shipIdx] = { ...ship, transfer: arc };
+          const next = launchFreighterTorch(ship, route.destBodyId);
+          if (next) {
+            nextShips[shipIdx] = next;
             if (pickedUp) {
               logger.info('SIM', `Trade route: ${ship.name} loaded ${Math.round(cargo.fuel + cargo.ore + cargo.credits + cargo.science)}u, → ${route.destBodyId}`);
             }
@@ -814,11 +763,9 @@ export function GameContextProvider({
           pool.credits += cargo.credits;
           pool.science += cargo.science;
           logger.info('SIM', `Trade route: ${ship.name} delivered ${Math.round(cargoTotal)}u to ${route.destBodyId}`);
-          const arc = planBezierTransfer(
-            ship.orbit, route.originBodyId, newTime, prev.bodies, flightMul[ship.ownedBy] ?? 1,
-          );
-          if (arc) {
-            nextShips[shipIdx] = { ...ship, transfer: arc };
+          const next = launchFreighterTorch(ship, route.originBodyId);
+          if (next) {
+            nextShips[shipIdx] = next;
             return { ...route, cargo: { fuel: 0, ore: 0, credits: 0, science: 0 }, status: 'returning' as const };
           }
           return { ...route, cargo: { fuel: 0, ore: 0, credits: 0, science: 0 } };
@@ -830,11 +777,9 @@ export function GameContextProvider({
         // current status so the route resumes.
         const target = route.status === 'outbound' ? route.destBodyId : route.originBodyId;
         if (here !== target) {
-          const arc = planBezierTransfer(
-            ship.orbit, target, newTime, prev.bodies, flightMul[ship.ownedBy] ?? 1,
-          );
-          if (arc) {
-            nextShips[shipIdx] = { ...ship, transfer: arc };
+          const next = launchFreighterTorch(ship, target);
+          if (next) {
+            nextShips[shipIdx] = next;
           }
         }
         return route;
@@ -861,6 +806,49 @@ export function GameContextProvider({
       const isKill = /destroyed!/.test(line);
       if (isKill) logger.error('COMBAT', line);
       else logger.info('COMBAT', line);
+    }
+
+    // === Dyson Sphere — damage routing + delivery ===========
+    // Damage applied to the foundation station this tick also hits
+    // the sphere; HP at zero or station destroyed → sphere collapses
+    // and accumulated resources are lost. Then run delivery: parked
+    // freighters at Sol drain the controller's pool into the sphere.
+    let updatedDyson = prev.dysonSphere ? { ...prev.dysonSphere } : undefined;
+    const dysonLogs: string[] = [];
+    if (updatedDyson) {
+      const beforeStation = prev.settlements.find(s => s.id === updatedDyson!.foundationSettlementId);
+      const afterStation = updatedSettlements.find(s => s.id === updatedDyson!.foundationSettlementId);
+      if (!afterStation && beforeStation) {
+        // Foundation destroyed — sphere collapses, all progress lost.
+        dysonLogs.push(`The Dyson Sphere at ${beforeStation.name} has been destroyed — all progress lost.`);
+        logger.error('COMBAT', `Dyson Sphere destroyed (foundation ${beforeStation.name} lost)`);
+        updatedDyson = undefined;
+      } else if (afterStation && beforeStation && afterStation.hp < beforeStation.hp) {
+        // Station took damage — pass it to the sphere.
+        const dmg = beforeStation.hp - afterStation.hp;
+        const damaged = damageDysonSphere(updatedDyson, dmg);
+        if (damaged == null) {
+          dysonLogs.push(`The Dyson Sphere collapsed under sustained attack!`);
+          logger.error('COMBAT', 'Dyson Sphere collapsed');
+          updatedDyson = undefined;
+        } else {
+          updatedDyson = damaged;
+        }
+      }
+    }
+    // Per-tick freighter delivery. Run even if HP just dropped — a
+    // surviving sphere keeps building. Uses the post-combat ship +
+    // pool snapshot so destroyed freighters don't contribute.
+    if (updatedDyson) {
+      const pool = factionPools[updatedDyson.controllerFactionId];
+      const result = tickDysonDelivery(updatedDyson, updatedShips, pool);
+      if (result.contributionThisTick > 0 && pool) {
+        pool.fuel    = Math.max(0, pool.fuel    - result.poolDebit.fuel);
+        pool.ore     = Math.max(0, pool.ore     - result.poolDebit.ore);
+        pool.credits = Math.max(0, pool.credits - result.poolDebit.credits);
+        pool.science = Math.max(0, pool.science - result.poolDebit.science);
+        updatedDyson = result.next;
+      }
     }
 
     // === Piracy ============================================
@@ -1029,8 +1017,9 @@ export function GameContextProvider({
             return {
               ...sh,
               orbit: createCircularOrbit('sol', 18, newTime, prev.bodies),
-              pendingTransfer: undefined,
-              queuedTransfers: undefined,
+              transit: undefined,
+              plannedTransit: undefined,
+              queuedTransits: undefined,
             };
           });
           return { ...body, secret: revealedNow };
@@ -1103,8 +1092,8 @@ export function GameContextProvider({
       updatedBodies = newBodies;
     }
 
-    const combatLog = (combatNewLogs.length > 0 || secretLogs.length > 0)
-      ? [...prev.combatLog.slice(-20), ...combatNewLogs, ...secretLogs]
+    const combatLog = (combatNewLogs.length > 0 || secretLogs.length > 0 || dysonLogs.length > 0)
+      ? [...prev.combatLog.slice(-20), ...combatNewLogs, ...secretLogs, ...dysonLogs]
       : prev.combatLog;
 
     // === Faction AI =========================================
@@ -1194,6 +1183,7 @@ export function GameContextProvider({
       factionTech: updatedTech,
       buildOrders,
       currentTick: newTime,
+      dysonSphere: updatedDyson,
     };
     const winCheck = checkVictory(postTickSnapshot);
     if (winCheck) {
@@ -1240,6 +1230,7 @@ export function GameContextProvider({
       status: nextStatus,
       winnerFactionId,
       victoryType,
+      dysonSphere: updatedDyson,
       tradeRoutes: updatedRoutes,
     };
   }, [checkNodeExecution]);
@@ -1396,56 +1387,23 @@ export function GameContextProvider({
         burnTime: Math.round(order.burnTime),
       });
 
-      // Stale-arc refresh: a planned transfer that's been sitting around
-      // can have a burn time in the past (the player drew the arc, then
-      // ran the sim forward at 100× before clicking COMMIT). In that
-      // case, recompute the bezier arc from the ship's current orbit so
-      // the transfer launches in the near future instead of being
-      // "already supposed to have happened". Without this refresh the
-      // commit path triggers an immediate departure with a stale arc
-      // pointing at where the target body USED to be.
-      const tick = prev.currentTick;
-      let refreshedArc: TransferArc | undefined;
-      let refreshedNode = { ...order, status: 'committed' as const };
-      if (
-        order.type === 'transfer' &&
-        order.burnTime < tick + 1 &&
-        ship?.pendingTransfer
-      ) {
-        const playerTech = prev.factionTech?.[ship.ownedBy];
-        const mul = playerTech ? Math.max(0.2, 1 - (TECH_DEFS.propulsion.perLevel * (playerTech.levels.propulsion ?? 0))) : 1;
-        const fresh = planBezierTransfer(
-          ship.orbit,
-          ship.pendingTransfer.arrivalBodyId,
-          tick,
-          prev.bodies,
-          mul,
-        );
-        if (fresh) {
-          refreshedArc = fresh;
-          refreshedNode = {
-            ...refreshedNode,
-            burnTime: fresh.departureTime,
-            deltav: fresh.departureDv,
-            prograde: fresh.departureDv,
-            label: fresh.label,
-          };
-        }
-      }
-
+      // Torch model: committing a node just flips its status. Transfer
+      // burns no longer fire through committed nodes — they fire via
+      // launchTorchTransfer when the player clicks COMMIT on the
+      // ship.plannedTransit preview (see ShipPanel.commitTransferLocal).
+      const committedNode = { ...order, status: 'committed' as const };
       return {
         ...prev,
         orders: prev.orders.map(o =>
-          o.id === nodeId ? refreshedNode : o
+          o.id === nodeId ? committedNode : o
         ),
         ships: prev.ships.map(s => {
           if (s.id !== order.shipId) return s;
           return {
             ...s,
             orders: s.orders.map(o =>
-              o.id === nodeId ? refreshedNode : o
+              o.id === nodeId ? committedNode : o
             ),
-            pendingTransfer: refreshedArc ?? s.pendingTransfer,
           };
         }),
       };
@@ -1457,19 +1415,8 @@ export function GameContextProvider({
       ...prev,
       orders: prev.orders.filter(order => order.id !== nodeId),
       ships: prev.ships.map(ship => {
-        const deletedOrder = ship.orders.find(o => o.id === nodeId);
         const newOrders = ship.orders.filter(order => order.id !== nodeId);
-        const hasTransferOrders = newOrders.some(o => o.type === 'transfer');
-        return {
-          ...ship,
-          orders: newOrders,
-          pendingTransfer: (deletedOrder?.type === 'transfer' && !hasTransferOrders)
-            ? undefined
-            : ship.pendingTransfer,
-          queuedTransfers: (deletedOrder?.type === 'transfer' && !hasTransferOrders)
-            ? undefined
-            : ship.queuedTransfers,
-        };
+        return { ...ship, orders: newOrders };
       }),
     }));
   }, []);
@@ -1527,7 +1474,7 @@ export function GameContextProvider({
       const fleet = prev.fleets.find(f => f.id === fleetId);
       if (!fleet) return prev;
       const ship = prev.ships.find(s => s.id === shipId);
-      if (!ship || ship.transfer || ship.ownedBy !== fleet.ownedBy) return prev;
+      if (!ship || ship.transit || ship.ownedBy !== fleet.ownedBy) return prev;
       const leadShip = prev.ships.find(s => s.id === fleet.leadShipId);
       if (!leadShip || ship.orbit.parentBodyId !== leadShip.orbit.parentBodyId) return prev;
       return {
@@ -1542,26 +1489,6 @@ export function GameContextProvider({
     });
   }, []);
 
-  const setPendingTransfer = useCallback((shipId: string, arc: TransferArc | undefined) => {
-    setGameStateInternal(prev => ({
-      ...prev,
-      ships: prev.ships.map(ship =>
-        ship.id === shipId ? { ...ship, pendingTransfer: arc } : ship
-      ),
-    }));
-  }, []);
-
-  const addQueuedTransfer = useCallback((shipId: string, arc: TransferArc) => {
-    setGameStateInternal(prev => ({
-      ...prev,
-      ships: prev.ships.map(ship => {
-        if (ship.id !== shipId) return ship;
-        const queue = ship.queuedTransfers ? [...ship.queuedTransfers, arc] : [arc];
-        return { ...ship, queuedTransfers: queue };
-      }),
-    }));
-  }, []);
-
   /** Launch a torch transfer for the named ship. Mirrors the AI's
    *  'transfer' intent path in applyIntent but invoked directly by
    *  the player UI. Returns the launched plan on success so the caller
@@ -1571,7 +1498,7 @@ export function GameContextProvider({
     setGameStateInternal(prev => {
       const ship = prev.ships.find(s => s.id === shipId);
       if (!ship) return prev;
-      if (ship.transit || ship.transfer || ship.pendingTransfer) return prev;
+      if (ship.transit) return prev;
 
       const faction = prev.factions.find(f => f.id === ship.ownedBy);
       const tech = prev.factionTech?.[ship.ownedBy];
@@ -1607,11 +1534,6 @@ export function GameContextProvider({
                 },
                 // Promoting a preview to a live burn clears it.
                 plannedTransit: undefined,
-                // Any legacy bezier or planned-but-not-launched state
-                // is superseded by the torch burn.
-                transfer: undefined,
-                pendingTransfer: undefined,
-                queuedTransfers: undefined,
                 // Strip any committed/planned 'transfer' maneuver nodes
                 // so they don't try to fire after the torch has launched.
                 orders: s.orders.filter(o => o.type !== 'transfer'),
@@ -1852,7 +1774,7 @@ export function GameContextProvider({
     // can deploy settlements (combat ships carry no construction materials).
     const playerFreighterHere = gameState.ships.find(s =>
       s.ownedBy === 'player' &&
-      !s.transfer &&
+      !s.transit &&
       s.orbit.parentBodyId === bodyId &&
       s.class === 'freighter'
     );
@@ -2149,6 +2071,35 @@ export function GameContextProvider({
     return ok;
   }, []);
 
+  const initiateDysonSphere = useCallback((foundationStationId: string): boolean => {
+    let ok = false;
+    setGameStateInternal(prev => {
+      if (prev.dysonSphere) {
+        logger.warn('ACTION', 'initiateDysonSphere: a sphere already exists this match');
+        return prev;
+      }
+      const station = prev.settlements.find(s => s.id === foundationStationId);
+      if (!station) {
+        logger.warn('ACTION', 'initiateDysonSphere: station not found', { foundationStationId });
+        return prev;
+      }
+      if (!isEligibleDysonFoundation(station, 'player')) {
+        logger.warn('ACTION', 'initiateDysonSphere: not an eligible foundation', {
+          foundationStationId, type: station.type, body: station.bodyId, owner: station.ownedBy,
+        });
+        return prev;
+      }
+      const sphere = createDysonSphere('player', foundationStationId, prev.currentTick);
+      logger.info('ACTION', `Dyson Sphere foundation laid at ${station.name}`, {
+        target: sphere.target,
+        maxHp: sphere.maxHp,
+      });
+      ok = true;
+      return { ...prev, dysonSphere: sphere };
+    });
+    return ok;
+  }, []);
+
   const cancelBuilding = useCallback((settlementId: string): boolean => {
     let ok = false;
     setGameStateInternal(prev => {
@@ -2323,12 +2274,13 @@ export function GameContextProvider({
     updateCamera, focusBody,
     selectShip, deselectShip, selectBody, deselectBody, hoverBody,
     setTargetSelectionMode,
-    addManeuverNode, commitManeuverNode, deleteManeuverNode, setPendingTransfer, addQueuedTransfer,
+    addManeuverNode, commitManeuverNode, deleteManeuverNode,
     launchTorchTransfer, enqueueTorchTransfer, planTorchPreview, cancelTorchPreview,
     buildShip, cancelBuild,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
     deploySettlement, damageSettlement, buildCollector,
     queueBuilding, cancelBuilding,
+    initiateDysonSphere,
     createTradeRoute, cancelTradeRoute,
     selectedSettlementId, selectSettlement,
     startResearch, cancelResearch,

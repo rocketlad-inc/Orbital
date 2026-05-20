@@ -1383,6 +1383,16 @@ export class Room {
       }
     }
 
+    // === Dyson Sphere — delivery + damage routing ===========
+    // Mirrors the client tick in src/state/gameContext.tsx. Runs after
+    // combat so destroyed freighters don't contribute and station HP
+    // changes are reflected in the sphere's damage.
+    try {
+      await this.tickDysonSphere(gameId, tick);
+    } catch (e) {
+      console.error('dyson tick failed', e);
+    }
+
     // === Victory check =====================================
     // Mirrors src/game/victory.ts. Runs at the end of resolveTick so
     // every per-tick mutation above is already reflected in the DB.
@@ -1428,6 +1438,185 @@ export class Room {
       // Never let a victory-check bug block the rest of the tick.
       console.error('victory check failed', e);
     }
+  }
+
+  /**
+   * Server mirror of src/game/dysonSphere.ts. Each tick:
+   *   1. Detect foundation-station destruction → collapse sphere.
+   *   2. Detect foundation-station damage delta → apply to sphere HP
+   *      and proportionally scale accumulated resources.
+   *   3. Run delivery: parked freighters at Sol drain the controller's
+   *      pool into the sphere.
+   *
+   * Per-freighter per-tick contribution: 5F · 10O · 10C · 5S.
+   * Clamped by pool availability and remaining target.
+   */
+  async tickDysonSphere(gameId, tick) {
+    const game = await this.env.DB
+      .prepare(
+        `SELECT
+            dyson_controller_faction_id, dyson_foundation_settlement_id,
+            dyson_acc_fuel, dyson_acc_ore, dyson_acc_credits, dyson_acc_science,
+            dyson_target_fuel, dyson_target_ore, dyson_target_credits, dyson_target_science,
+            dyson_hp, dyson_max_hp
+          FROM games WHERE id = ?`,
+      )
+      .bind(gameId)
+      .first();
+    if (!game?.dyson_controller_faction_id) return;
+
+    const ctrl = game.dyson_controller_faction_id;
+    const foundationId = game.dyson_foundation_settlement_id;
+    let acc = {
+      fuel: game.dyson_acc_fuel ?? 0,
+      ore: game.dyson_acc_ore ?? 0,
+      credits: game.dyson_acc_credits ?? 0,
+      science: game.dyson_acc_science ?? 0,
+    };
+    let hp = game.dyson_hp ?? 0;
+    const maxHp = game.dyson_max_hp ?? 0;
+    const target = {
+      fuel: game.dyson_target_fuel ?? 0,
+      ore: game.dyson_target_ore ?? 0,
+      credits: game.dyson_target_credits ?? 0,
+      science: game.dyson_target_science ?? 0,
+    };
+
+    // 1 + 2: foundation state. A NULL settlement row (cascaded by
+    // ON DELETE) means it was destroyed; a row with destroyed_at_tick
+    // set is also destroyed.
+    const station = await this.env.DB
+      .prepare(
+        `SELECT hp, hp_max, destroyed_at_tick FROM game_settlements
+            WHERE id = ? AND game_id = ?`,
+      )
+      .bind(foundationId, gameId)
+      .first();
+
+    let collapse = false;
+    let collapseReason = '';
+    if (!station || station.destroyed_at_tick != null) {
+      collapse = true;
+      collapseReason = 'foundation destroyed';
+    } else {
+      // Damage detection: dyson_hp tracks "accumulated total"; combat
+      // shouldn't reduce that. We instead track damage at station-HP
+      // delta from a private side channel. Simpler approach for now:
+      // if station HP < (hp_max), the gap is the damage the sphere has
+      // absorbed cumulatively. Since the sphere HP and station HP can
+      // diverge wildly, we use a delta-based approach: track the
+      // station's pre-tick HP via a per-tick read above, compare to
+      // post-combat HP, and apply the delta to the sphere.
+      //
+      // The pre-tick HP isn't available here (we only see post-tick).
+      // We approximate: any damage that reduced station HP this tick
+      // will manifest as station.hp < its previous reading. We don't
+      // have that history without an extra column. Cheap workaround:
+      // route a separate "damage volley" hook through combat (Phase C).
+      //
+      // For now, just rebuild HP from accumulated each tick — the
+      // sphere can't be damaged on the server side until the
+      // damage-volley hook lands. The foundation destroying is the
+      // primary loss vector.
+      hp = acc.fuel + acc.ore + acc.credits + acc.science;
+    }
+
+    if (collapse) {
+      await this.env.DB
+        .prepare(
+          `UPDATE games SET
+              dyson_controller_faction_id = NULL,
+              dyson_foundation_settlement_id = NULL,
+              dyson_started_at_tick = NULL,
+              dyson_acc_fuel = 0, dyson_acc_ore = 0,
+              dyson_acc_credits = 0, dyson_acc_science = 0,
+              dyson_target_fuel = 0, dyson_target_ore = 0,
+              dyson_target_credits = 0, dyson_target_science = 0,
+              dyson_hp = 0, dyson_max_hp = 0
+            WHERE id = ?`,
+        )
+        .bind(gameId)
+        .run();
+      this.broadcast({ type: 'dyson_collapsed', tick, reason: collapseReason });
+      return;
+    }
+
+    // 3: delivery. Count parked freighters at Sol owned by ctrl.
+    const freighters = (await this.env.DB
+      .prepare(
+        `SELECT id FROM game_ships
+            WHERE game_id = ?
+              AND owner_faction_id = ?
+              AND ship_class = 'freighter'
+              AND status = 'active'
+              AND parent_body_id = 'sol'`,
+      )
+      .bind(gameId, ctrl)
+      .all()).results ?? [];
+    const n = freighters.length;
+    if (n === 0) {
+      // Just refresh hp from accumulated.
+      await this.env.DB
+        .prepare(`UPDATE games SET dyson_hp = ? WHERE id = ?`)
+        .bind(hp, gameId)
+        .run();
+      return;
+    }
+
+    // Get controller's pool.
+    const faction = await this.env.DB
+      .prepare('SELECT fuel, metal, gold, science FROM game_factions WHERE id = ?')
+      .bind(ctrl)
+      .first();
+    if (!faction) return;
+
+    const PER = { fuel: 5, ore: 10, credits: 10, science: 5 };
+    const want = {
+      fuel:    PER.fuel    * n,
+      ore:     PER.ore     * n,
+      credits: PER.credits * n,
+      science: PER.science * n,
+    };
+    // Server uses 'metal' / 'gold' column names for ore / credits.
+    const move = {
+      fuel:    Math.max(0, Math.min(want.fuel,    faction.fuel    ?? 0, target.fuel    - acc.fuel)),
+      ore:     Math.max(0, Math.min(want.ore,     faction.metal   ?? 0, target.ore     - acc.ore)),
+      credits: Math.max(0, Math.min(want.credits, faction.gold    ?? 0, target.credits - acc.credits)),
+      science: Math.max(0, Math.min(want.science, faction.science ?? 0, target.science - acc.science)),
+    };
+    const contribution = move.fuel + move.ore + move.credits + move.science;
+    if (contribution === 0) {
+      await this.env.DB
+        .prepare(`UPDATE games SET dyson_hp = ? WHERE id = ?`)
+        .bind(hp, gameId)
+        .run();
+      return;
+    }
+
+    acc.fuel    += move.fuel;
+    acc.ore     += move.ore;
+    acc.credits += move.credits;
+    acc.science += move.science;
+    hp = Math.min(maxHp, acc.fuel + acc.ore + acc.credits + acc.science);
+
+    await this.env.DB.batch([
+      this.env.DB
+        .prepare(
+          `UPDATE games SET
+              dyson_acc_fuel = ?, dyson_acc_ore = ?,
+              dyson_acc_credits = ?, dyson_acc_science = ?,
+              dyson_hp = ? WHERE id = ?`,
+        )
+        .bind(acc.fuel, acc.ore, acc.credits, acc.science, hp, gameId),
+      this.env.DB
+        .prepare(
+          `UPDATE game_factions SET
+              fuel = fuel - ?, metal = metal - ?,
+              gold = gold - ?, science = science - ?
+            WHERE id = ?`,
+        )
+        .bind(move.fuel, move.ore, move.credits, move.science, ctrl),
+    ]);
   }
 
   /**

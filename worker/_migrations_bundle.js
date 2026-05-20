@@ -864,4 +864,128 @@ CREATE INDEX idx_trade_routes_game ON game_trade_routes(game_id, cancelled_at_ti
 CREATE UNIQUE INDEX idx_trade_routes_ship_active
   ON game_trade_routes(ship_id) WHERE cancelled_at_tick IS NULL;
 ` },
+  { name: "0017_force_finish_bezier_transfers.sql", sql: `-- Force-finish all in-flight legacy Bezier transfers.
+--
+-- Phase 6 of the Bezier→Torch migration. The game's transfer model
+-- changed from precomputed Hohmann-Bezier curves to a constant-thrust
+-- (torch) brachistochrone integrated tick-by-tick. The new client
+-- ignores legacy ship.transfer / ship.pendingTransfer fields and
+-- drives ships via ship.transit instead.
+--
+-- Per the deploy plan (Q3 option B from the original migration spec):
+-- any maneuver node that's currently committed-but-not-fired OR
+-- in_transit at the moment this migration runs gets force-finished.
+-- The ship is teleported into a parking orbit around the target body,
+-- the node is marked 'cancelled', and any subsequent post-Bezier code
+-- path that touched ship.transfer becomes a no-op.
+--
+-- Without this migration, active multiplayer games at deploy time
+-- would silently lose their in-flight transfers (the new client
+-- doesn't read those rows anymore) and players would see ships
+-- frozen at their departure body forever.
+
+-- Step 1: park ships sitting on an in-flight transfer at their
+-- destination body. The ship's parent_body_id swaps to the target,
+-- orbit elements reset to a clean low-altitude circular orbit, and
+-- epoch is bumped to current_tick so the new orbit is "fresh."
+--
+-- D1 (SQLite) supports correlated subqueries in UPDATE — we use one
+-- per column rather than a JOIN-update (which it doesn't support).
+-- The CASE on b.radius pulls a sensible parking altitude (1.5×
+-- body radius) when the body row exists; falls back to 6 game units.
+UPDATE game_ships
+SET
+  parent_body_id = (
+    SELECT n.target_body_id
+    FROM game_ship_nodes n
+    WHERE n.ship_id = game_ships.id
+      AND n.status IN ('committed', 'in_transit')
+      AND n.target_body_id IS NOT NULL
+    LIMIT 1
+  ),
+  orbit_rp = (
+    SELECT COALESCE(b.radius, 4) * 1.5
+    FROM game_ship_nodes n
+    LEFT JOIN game_bodies b ON b.id = n.target_body_id AND b.game_id = n.game_id
+    WHERE n.ship_id = game_ships.id
+      AND n.status IN ('committed', 'in_transit')
+      AND n.target_body_id IS NOT NULL
+    LIMIT 1
+  ),
+  orbit_ra = (
+    SELECT COALESCE(b.radius, 4) * 1.5
+    FROM game_ship_nodes n
+    LEFT JOIN game_bodies b ON b.id = n.target_body_id AND b.game_id = n.game_id
+    WHERE n.ship_id = game_ships.id
+      AND n.status IN ('committed', 'in_transit')
+      AND n.target_body_id IS NOT NULL
+    LIMIT 1
+  ),
+  orbit_omega = 0,
+  orbit_m0 = 0,
+  orbit_direction = 1,
+  orbit_epoch = (
+    SELECT g.current_tick
+    FROM games g
+    WHERE g.id = game_ships.game_id
+  )
+WHERE id IN (
+  SELECT DISTINCT n.ship_id
+  FROM game_ship_nodes n
+  WHERE n.status IN ('committed', 'in_transit')
+    AND n.target_body_id IS NOT NULL
+);
+
+-- Step 2: cancel every committed/in_transit transfer node so the
+-- alarm doesn't try to re-fire or arrive-process them. We deliberately
+-- DON'T delete the rows so the chronicle/history still has a record;
+-- the alarm code already skips status='cancelled'.
+UPDATE game_ship_nodes
+SET status = 'cancelled'
+WHERE status IN ('committed', 'in_transit');
+
+-- Add a faction-level engineG column so the torch executor (both
+-- client and any future server-side torch integration) can scale
+-- trip times by engine research. Default matches DEFAULT_ENGINE_G
+-- in src/physics/torchTransfer.ts (0.05g — research-level-0 baseline).
+ALTER TABLE game_factions ADD COLUMN engine_g REAL DEFAULT 0.05;
+` },
+  { name: "0018_dyson_sphere.sql", sql: `-- ============================================================================
+-- Orbital — Dyson Sphere megaproject (Engineering Victory)
+-- ============================================================================
+--
+-- One sphere per match. The faction that lays the foundation at a Sol-orbit
+-- station becomes the controller. Per tick, every parked freighter the
+-- controller owns at Sol drains a fixed quota from their empire pool and
+-- contributes it to the sphere. Completing the sphere (hp >= max_hp)
+-- triggers Engineering Victory.
+--
+-- Damage: the sphere absorbs damage routed through its foundation station
+-- (see worker/room.js Dyson damage block in resolveTick). Damage reduces
+-- hp and proportionally scales the accumulated resources so the progress
+-- bar stays coherent. hp=0 collapses the sphere; the foundation slot
+-- reopens for the next builder.
+--
+-- The state lives as nullable columns on the games row so we don't need a
+-- separate table for a single megaproject per match. Worker code reads:
+--   dyson_controller_faction_id IS NULL  → no sphere yet, slot open
+--   ELSE                                  → sphere active, columns populated
+-- ============================================================================
+
+ALTER TABLE games ADD COLUMN dyson_controller_faction_id TEXT REFERENCES game_factions(id) ON DELETE SET NULL;
+ALTER TABLE games ADD COLUMN dyson_foundation_settlement_id TEXT REFERENCES game_settlements(id) ON DELETE SET NULL;
+ALTER TABLE games ADD COLUMN dyson_started_at_tick INTEGER;
+ALTER TABLE games ADD COLUMN dyson_acc_fuel    INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE games ADD COLUMN dyson_acc_ore     INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE games ADD COLUMN dyson_acc_credits INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE games ADD COLUMN dyson_acc_science INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE games ADD COLUMN dyson_target_fuel    INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE games ADD COLUMN dyson_target_ore     INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE games ADD COLUMN dyson_target_credits INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE games ADD COLUMN dyson_target_science INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE games ADD COLUMN dyson_hp     INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE games ADD COLUMN dyson_max_hp INTEGER NOT NULL DEFAULT 0;
+
+CREATE INDEX idx_games_dyson_controller ON games(dyson_controller_faction_id);
+` },
 ];

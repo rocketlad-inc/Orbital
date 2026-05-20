@@ -226,9 +226,12 @@ export function canHostCity(body: Body): boolean {
   return body.type === 'terrestrial' || body.type === 'moon' || body.type === 'dwarf';
 }
 
-/** Stations can orbit anything that isn't a star */
-export function canHostStation(body: Body): boolean {
-  return body.type !== 'star';
+/** Stations can orbit anything — including Sol, which is the
+ *  foundation requirement for the Dyson Sphere megaproject (see
+ *  src/game/dysonSphere.ts). Stations at Sol get a higher orbit
+ *  altitude clearance to clear the star's radius. */
+export function canHostStation(_body: Body): boolean {
+  return true;
 }
 
 // === Factory functions ===

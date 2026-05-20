@@ -1100,6 +1100,99 @@ async function handleCancelTradeRoute(req, env, ctx) {
   return json({ ok: true, refund: { fuel, metal, gold, science } });
 }
 
+// === Dyson Sphere — Engineering Victory ====================
+//
+// Foundation = a player-owned station orbiting Sol. First initiate
+// claims the per-game slot. The per-tick delivery + damage logic
+// runs server-side in worker/room.js resolveTick.
+
+const DYSON_TARGET = {
+  fuel: 10_000,
+  ore: 15_000,
+  credits: 15_000,
+  science: 10_000,
+};
+const DYSON_MAX_HP =
+  DYSON_TARGET.fuel + DYSON_TARGET.ore + DYSON_TARGET.credits + DYSON_TARGET.science;
+
+// POST /api/games/:gameId/dyson/initiate
+// body: { foundation_settlement_id }
+// Caller must own a station at Sol matching foundation_settlement_id.
+// No resource cost — the cost is in the per-tick freighter drain.
+async function handleInitiateDyson(req, env, ctx) {
+  const { gameId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+  const stationId = body.foundation_settlement_id;
+  if (typeof stationId !== 'string') {
+    return err(400, 'bad_request', 'foundation_settlement_id required');
+  }
+
+  // Slot check — only one sphere per match.
+  const game = await env.DB
+    .prepare('SELECT dyson_controller_faction_id FROM games WHERE id = ?')
+    .bind(gameId)
+    .first();
+  if (game?.dyson_controller_faction_id) {
+    return err(409, 'slot_taken', 'a Dyson Sphere is already under construction this match');
+  }
+
+  // Settlement validity.
+  const station = await env.DB
+    .prepare(
+      `SELECT id, faction_id, body_id, type, destroyed_at_tick
+         FROM game_settlements WHERE id = ? AND game_id = ?`,
+    )
+    .bind(stationId, gameId)
+    .first();
+  if (!station) return err(404, 'not_found', 'station not found');
+  if (station.destroyed_at_tick != null) return err(409, 'destroyed', 'station is destroyed');
+  if (station.faction_id !== me.id) return err(403, 'not_owner', 'not your station');
+  if (station.type !== 'station') return err(409, 'not_a_station', 'foundation must be a station');
+  if (station.body_id !== 'sol') return err(409, 'not_at_sol', 'foundation must orbit Sol');
+
+  const gameRow = await env.DB
+    .prepare('SELECT current_tick FROM games WHERE id = ?')
+    .bind(gameId)
+    .first();
+  const tick = gameRow?.current_tick ?? 0;
+
+  await env.DB
+    .prepare(
+      `UPDATE games SET
+         dyson_controller_faction_id = ?,
+         dyson_foundation_settlement_id = ?,
+         dyson_started_at_tick = ?,
+         dyson_acc_fuel = 0, dyson_acc_ore = 0, dyson_acc_credits = 0, dyson_acc_science = 0,
+         dyson_target_fuel = ?, dyson_target_ore = ?, dyson_target_credits = ?, dyson_target_science = ?,
+         dyson_hp = 0, dyson_max_hp = ?
+       WHERE id = ?`,
+    )
+    .bind(
+      me.id, stationId, tick,
+      DYSON_TARGET.fuel, DYSON_TARGET.ore, DYSON_TARGET.credits, DYSON_TARGET.science,
+      DYSON_MAX_HP,
+      gameId,
+    )
+    .run();
+
+  return json({
+    ok: true,
+    dyson: {
+      controllerFactionId: me.id,
+      foundationSettlementId: stationId,
+      startedAtTick: tick,
+      maxHp: DYSON_MAX_HP,
+      target: DYSON_TARGET,
+    },
+  }, { status: 201 });
+}
+
 export const routes = [
   {
     method: 'POST',
@@ -1190,5 +1283,11 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/nodes\/(?<nodeId>[^/]+)$/,
     auth: 'required',
     handle: handleCancelNode,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/dyson\/initiate$/,
+    auth: 'required',
+    handle: handleInitiateDyson,
   },
 ];

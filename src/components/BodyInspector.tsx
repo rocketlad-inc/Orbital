@@ -148,6 +148,8 @@ export const BodyInspector: React.FC = () => {
 
         <SettlementsSection bodyId={body.id} />
 
+        {body.id === 'sol' && <DysonSpherePanel />}
+
         <BuildPanel />
       </div>
     </div>
@@ -586,6 +588,155 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
           </div>
         );
       })}
+    </div>
+  );
+};
+
+// ============================================================
+// DysonSpherePanel — Sol-only megaproject UI.
+//
+// State machine:
+//   no sphere yet                  → "Foundation slot open" + initiate button
+//   sphere exists, you control it  → progress bar + per-resource breakdown
+//   sphere exists, rival controls  → enemy progress display (intel value)
+// ============================================================
+const DysonSpherePanel: React.FC = () => {
+  const { gameState, initiateDysonSphere } = useGameContext();
+  const dyson = gameState.dysonSphere;
+
+  if (dyson) {
+    return <DysonSphereProgress />;
+  }
+
+  // No sphere yet — show eligible player Sol stations + initiate button.
+  const playerStations = gameState.settlements.filter(s =>
+    s.ownedBy === 'player' && s.type === 'station' && s.bodyId === 'sol'
+  );
+
+  return (
+    <div className="settlements-section" style={{ marginTop: 12 }}>
+      <div className="section-title" style={{ color: '#ffb84d' }}>
+        DYSON SPHERE
+      </div>
+      <div style={{
+        fontSize: 10, color: '#a8b8c8', marginBottom: 8, lineHeight: 1.5,
+      }}>
+        The Sol megaproject. Lay the foundation at a Sol-orbit station,
+        then park freighters here to deliver resources every tick.
+        Target: 10K fuel · 15K ore · 15K credits · 10K science.
+        Completing it wins the match by Engineering Victory.
+      </div>
+
+      {playerStations.length === 0 ? (
+        <div style={{
+          fontSize: 10, color: '#ffb84d', fontStyle: 'italic',
+          padding: '6px 8px', border: '1px dashed #ffb84d', borderRadius: 3,
+        }}>
+          Deploy a station in Sol orbit first to host the foundation.
+        </div>
+      ) : (
+        playerStations.map(s => (
+          <button
+            key={s.id}
+            onClick={() => initiateDysonSphere(s.id)}
+            style={{
+              display: 'block', width: '100%',
+              marginBottom: 4, padding: '8px 10px',
+              background: 'rgba(255, 184, 77, 0.08)',
+              color: '#ffb84d', border: '1px solid #ffb84d',
+              borderRadius: 3,
+              fontFamily: 'inherit', fontSize: 10, fontWeight: 700,
+              letterSpacing: '0.1em', cursor: 'pointer',
+            }}
+            title={`Lay the Dyson Sphere foundation on ${s.name}. One-shot per game — destroying the station collapses the entire project.`}
+          >
+            ◆ INITIATE AT {s.name.toUpperCase()}
+          </button>
+        ))
+      )}
+    </div>
+  );
+};
+
+const DysonSphereProgress: React.FC = () => {
+  const { gameState } = useGameContext();
+  const dyson = gameState.dysonSphere;
+  if (!dyson) return null;
+
+  const station = gameState.settlements.find(s => s.id === dyson.foundationSettlementId);
+  const controller = gameState.factions.find(f => f.id === dyson.controllerFactionId);
+  const isMine = dyson.controllerFactionId === 'player';
+  const pct = dyson.maxHp > 0 ? (dyson.hp / dyson.maxHp) * 100 : 0;
+
+  const rows: Array<{ label: string; acc: number; tgt: number; color: string }> = [
+    { label: 'Fuel',    acc: dyson.accumulated.fuel,    tgt: dyson.target.fuel,    color: '#ffb84d' },
+    { label: 'Ore',     acc: dyson.accumulated.ore,     tgt: dyson.target.ore,     color: '#a0a0a0' },
+    { label: 'Credits', acc: dyson.accumulated.credits, tgt: dyson.target.credits, color: '#ffd700' },
+    { label: 'Science', acc: dyson.accumulated.science, tgt: dyson.target.science, color: '#6ee7b7' },
+  ];
+
+  return (
+    <div className="settlements-section" style={{ marginTop: 12 }}>
+      <div className="section-title" style={{ color: '#ffb84d' }}>
+        DYSON SPHERE
+      </div>
+      <div style={{
+        fontSize: 10, marginBottom: 6,
+        color: isMine ? '#6ee7b7' : '#ff8a4d',
+      }}>
+        {isMine ? '★ YOUR PROJECT' : `RIVAL: ${controller?.name ?? '?'}`}
+        {station && <span style={{ color: '#a8b8c8' }}> · foundation: {station.name}</span>}
+      </div>
+
+      {/* Overall HP / progress bar */}
+      <div style={{
+        height: 10, background: 'rgba(42, 61, 80, 0.6)',
+        borderRadius: 4, overflow: 'hidden', marginBottom: 4,
+      }}>
+        <div style={{
+          height: '100%',
+          width: `${Math.min(100, pct)}%`,
+          background: 'linear-gradient(90deg, #ffb84d, #ffd180)',
+          transition: 'width 0.3s ease',
+        }} />
+      </div>
+      <div style={{ fontSize: 10, color: '#a8b8c8', marginBottom: 8, letterSpacing: '0.05em' }}>
+        {Math.round(dyson.hp)} / {dyson.maxHp} HP · {pct.toFixed(1)}%
+      </div>
+
+      {/* Per-resource breakdown */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {rows.map(r => {
+          const rowPct = r.tgt > 0 ? (r.acc / r.tgt) * 100 : 0;
+          return (
+            <div key={r.label} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9 }}>
+              <span style={{ minWidth: 50, color: r.color }}>{r.label}</span>
+              <div style={{
+                flex: 1, height: 5, background: 'rgba(42, 61, 80, 0.6)',
+                borderRadius: 2, overflow: 'hidden',
+              }}>
+                <div style={{
+                  height: '100%', width: `${Math.min(100, rowPct)}%`,
+                  background: r.color, opacity: 0.85,
+                }} />
+              </div>
+              <span style={{ minWidth: 96, textAlign: 'right', color: '#a8b8c8', letterSpacing: '0.04em' }}>
+                {Math.round(r.acc).toLocaleString()} / {r.tgt.toLocaleString()}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {isMine && (
+        <div style={{
+          marginTop: 8, fontSize: 9, color: '#a8b8c8', fontStyle: 'italic', lineHeight: 1.4,
+        }}>
+          Park more freighters at Sol to speed delivery. Each one drains
+          your pool by 5F · 10O · 10C · 5S per tick. Foundation
+          destruction wipes everything — defend it.
+        </div>
+      )}
     </div>
   );
 };
