@@ -70,37 +70,82 @@ export function clearCanvas(ctx: RenderContext) {
 // ============================================================
 
 /** Real-world milliseconds the red damage halo remains visible after a
- *  hit. Tied to wall clock, not game ticks — at default sim speed one
- *  tick is ~150 real seconds, so tick-based timing would leave glows
- *  on the map for minutes. 500ms is a satisfying blip. */
-export const DAMAGE_FLASH_DURATION_MS = 500;
+ *  hit. Tied to game ticks so the duration is "10 ticks" regardless
+ *  of sim speed — at fast-forward you still see a flash, just faster.
+ *  Per-frame interpolation comes from `t` (current tick, fractional). */
+export const DAMAGE_FLASH_DURATION_TICKS = 10;
+export const DESTRUCTION_FLASH_DURATION_TICKS = 10;
+
+/** Where in its lifecycle the flash is. Damage = small red ring,
+ *  Destruction = bigger orange-white explosion ring. Both share the
+ *  same fade curve. */
+export type FlashKind = 'damage' | 'destruction';
 
 /**
- * Render a brief red glow around a damaged ship/settlement marker.
+ * Render a brief glow around a damaged or destroyed ship/settlement
+ * marker. Two visual variants:
+ *   damage      → small red ring, modest expansion as it fades
+ *   destruction → larger orange/white explosion ring, bigger expansion
  *
- * `damageStartMs` is a wall-clock `performance.now()` stamp from the
- * frame the renderer first noticed a new `lastDamagedTick` value on
- * this entity (tracked outside the renderer; see MapCanvas's
- * damageFlashStart ref). Wall-clock keeps the visual duration
- * consistent across every sim speed.
+ * `startTick` is the game tick when the event happened (tracked
+ * outside the renderer in MapCanvas's flash refs). `nowTick` is the
+ * current fractional tick from gameState.currentTick. Tick-based so
+ * the flash duration is consistent across sim speeds (and a single
+ * +10-tick skip resolves a flash that started mid-skip).
  *
  * Call BEFORE drawing the entity's icon so the icon sits on top.
  */
 export function drawDamageFlash(
   canvasPos: { x: number; y: number },
   baseRadius: number,
-  damageStartMs: number | undefined,
-  nowMs: number,
+  startTick: number | undefined,
+  nowTick: number,
   ctx: RenderContext,
+  kind: FlashKind = 'damage',
+  durationTicks?: number,
 ) {
-  if (damageStartMs === undefined) return;
-  const age = nowMs - damageStartMs;
-  if (age < 0 || age >= DAMAGE_FLASH_DURATION_MS) return;
+  if (startTick === undefined) return;
+  const dur = durationTicks ?? (kind === 'destruction'
+    ? DESTRUCTION_FLASH_DURATION_TICKS
+    : DAMAGE_FLASH_DURATION_TICKS);
+  const age = nowTick - startTick;
+  if (age < 0 || age >= dur) return;
 
-  const freshness = 1 - age / DAMAGE_FLASH_DURATION_MS;
-  // Halo expands slightly as it fades — subtle "shockwave" feel
-  const haloR = baseRadius * (2.5 + (1 - freshness) * 1.5);
+  // freshness: 1.0 at impact, 0.0 at end of fade. Curved so the
+  // first half is bright and the second half lingers as a soft halo.
+  const linear = 1 - age / dur;
+  const freshness = Math.pow(linear, 0.6);
 
+  if (kind === 'destruction') {
+    // Bigger expanding shockwave + bright white-orange core. Reads
+    // as "something exploded here" even at the dim out-of-coverage
+    // wash applied later by the fog-of-war overlay.
+    const haloR = baseRadius * (4.0 + (1 - linear) * 4.0);
+    const grad = ctx.ctx.createRadialGradient(
+      canvasPos.x, canvasPos.y, baseRadius * 0.3,
+      canvasPos.x, canvasPos.y, haloR,
+    );
+    grad.addColorStop(0,    `rgba(255, 240, 200, ${0.85 * freshness})`);
+    grad.addColorStop(0.25, `rgba(255, 165, 60,  ${0.65 * freshness})`);
+    grad.addColorStop(0.6,  `rgba(255, 80, 40,   ${0.30 * freshness})`);
+    grad.addColorStop(1,     'rgba(120, 30, 10, 0)');
+    ctx.ctx.fillStyle = grad;
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(canvasPos.x, canvasPos.y, haloR, 0, Math.PI * 2);
+    ctx.ctx.fill();
+    // Outer ring shockwave — the silhouette of the explosion as it
+    // expands past the core glow. Thin, no fill, just an outline.
+    ctx.ctx.strokeStyle = `rgba(255, 200, 120, ${0.6 * freshness})`;
+    ctx.ctx.lineWidth = 1.5;
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(canvasPos.x, canvasPos.y, haloR * 0.9, 0, Math.PI * 2);
+    ctx.ctx.stroke();
+    return;
+  }
+
+  // Damage: small red halo with subtle expansion. Punchy at impact,
+  // lingers softly so a sequence of hits reads as continuous fire.
+  const haloR = baseRadius * (2.5 + (1 - linear) * 1.5);
   const grad = ctx.ctx.createRadialGradient(
     canvasPos.x, canvasPos.y, baseRadius * 0.6,
     canvasPos.x, canvasPos.y, haloR,
@@ -113,6 +158,11 @@ export function drawDamageFlash(
   ctx.ctx.arc(canvasPos.x, canvasPos.y, haloR, 0, Math.PI * 2);
   ctx.ctx.fill();
 }
+
+/** Back-compat alias for callers that still pass wall-clock ms. The
+ *  realtime damage flash was wall-clock; the tick-based one is the
+ *  new shape. Kept exported so future refactors can find it. */
+export const DAMAGE_FLASH_DURATION_MS = 500;
 
 // ============================================================
 // Starfield — procedural backdrop, cached to offscreen canvas
@@ -617,7 +667,7 @@ export function drawShip(
 
   // Damage flash sits beneath the icon so the icon stays at full opacity.
   const flashStart = ctx.damageFlashStart?.get(ship.id);
-  drawDamageFlash(canvasPos, iconSize / 2, flashStart, ctx.nowMs ?? 0, ctx);
+  drawDamageFlash(canvasPos, iconSize / 2, flashStart, ctx.t, ctx, 'damage');
 
   const icon = getShipIconImage(ship.class as ShipIconClass, shipColorValue);
   if (icon) {
@@ -1012,7 +1062,7 @@ export function drawTransitShip(
   // Damage flash beneath the icon — works the same way for transit ships
   // since combat can hit a ship on its arrival tick.
   const flashStartT = ctx.damageFlashStart?.get(ship.id);
-  drawDamageFlash(canvasPos, iconSize / 2, flashStartT, ctx.nowMs ?? 0, ctx);
+  drawDamageFlash(canvasPos, iconSize / 2, flashStartT, ctx.t, ctx, 'damage');
 
   const icon = getShipIconImage(ship.class as ShipIconClass, shipColorValue);
   if (icon) {
@@ -1196,7 +1246,7 @@ export function drawCity(
 
   // Damage flash underneath the marker
   const flashStartC = ctx.damageFlashStart?.get(settlement.id);
-  drawDamageFlash({ x: tipX, y: tipY }, size, flashStartC, ctx.nowMs ?? 0, ctx);
+  drawDamageFlash({ x: tipX, y: tipY }, size, flashStartC, ctx.t, ctx, 'damage');
 
   ctx.ctx.fillStyle = color;
   ctx.ctx.strokeStyle = '#0a0e14';
@@ -1287,7 +1337,7 @@ export function drawStation(
 
   // Damage flash underneath the diamond
   const flashStartS = ctx.damageFlashStart?.get(settlement.id);
-  drawDamageFlash(canvasPos, size, flashStartS, ctx.nowMs ?? 0, ctx);
+  drawDamageFlash(canvasPos, size, flashStartS, ctx.t, ctx, 'damage');
 
   // Diamond
   ctx.ctx.fillStyle = color;
@@ -1511,6 +1561,79 @@ export function drawEnemyTrajectoriesLayer(
     drawBezierTrajectory(ship.transfer, ctx, color, !targetOwned);
     ctx.ctx.restore();
   }
+}
+
+/**
+ * Render explosion flashes for entities that were destroyed recently.
+ * MapCanvas tracks ship/settlement disappearances and accumulates
+ * { worldPos, startTick } pairs; this pass walks them and draws the
+ * big destruction variant of the flash at each remembered location.
+ * Stale entries (older than DESTRUCTION_FLASH_DURATION_TICKS) are
+ * filtered out client-side before we get here.
+ */
+export interface DestructionFlash {
+  pos: { x: number; y: number };  // world coords
+  startTick: number;
+  baseRadius?: number;            // visual size; defaults to 10
+}
+
+export function drawDestructionFlashes(
+  flashes: DestructionFlash[],
+  ctx: RenderContext,
+  durationTicks?: number,
+) {
+  for (const f of flashes) {
+    const cp = worldToCanvas(f.pos.x, f.pos.y, ctx);
+    drawDamageFlash(
+      cp,
+      f.baseRadius ?? 10,
+      f.startTick,
+      ctx.t,
+      ctx,
+      'destruction',
+      durationTicks,
+    );
+  }
+}
+
+/**
+ * Fog-of-war dimming overlay. Always-on (no toggle). Paints a dark
+ * semi-transparent layer over the entire canvas, then uses the
+ * even-odd fill rule to "cut out" the union of sensor coverage
+ * circles — so in-range areas render normally and everything else
+ * fades to a grey wash that still lets planet motion through.
+ *
+ * Drawn LAST in the render order so it dims absolutely everything
+ * (bodies, ships, orbits, other layer overlays). The single
+ * even-odd fill is one path → one stroke regardless of how many
+ * ship/settlement sensors you have. Much cheaper than per-source
+ * compositing.
+ */
+export function drawFogOfWarOverlay(
+  rings: Array<{ pos: { x: number; y: number }; range: number }>,
+  ctx: RenderContext,
+) {
+  const c = ctx.ctx;
+  c.save();
+  c.beginPath();
+  // Outer rectangle covers the whole canvas.
+  c.rect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  // Inner subpaths are the sensor circles, traced in the opposite
+  // winding direction so the even-odd rule treats them as holes.
+  for (const r of rings) {
+    const cp = worldToCanvas(r.pos.x, r.pos.y, ctx);
+    const radius = r.range * ctx.camera.scale;
+    if (radius < 0.5) continue; // too small to matter at this zoom
+    c.moveTo(cp.x + radius, cp.y);
+    c.arc(cp.x, cp.y, radius, 0, Math.PI * 2);
+  }
+  // Dark warm-grey wash — keeps the canvas readable but obviously
+  // out-of-coverage. Opacity is tuned so planet motion + orbits stay
+  // visible (the player needs to track the inner-system bodies even
+  // when they're not in sensor range, otherwise the map feels broken).
+  c.fillStyle = 'rgba(8, 12, 18, 0.62)';
+  c.fill('evenodd');
+  c.restore();
 }
 
 /**

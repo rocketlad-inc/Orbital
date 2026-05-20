@@ -21,8 +21,11 @@ const STORAGE_KEY = 'orbital.mapLayers.v1';
 export type LayerId =
   | 'transfers'        // all in-flight ship transfer arcs (player + visible enemy)
   | 'enemyTrajectories' // highlight known incoming hostile ships
-  | 'sensors'          // your fleet/settlement sensor coverage rings
   | 'ownership';       // faction-colored ring around each owned body
+  // NOTE: 'sensors' was removed when sensor coverage became an
+  // always-on fog-of-war dimming overlay (drawn unconditionally by
+  // MapCanvas). The explicit ring overlay was redundant once the
+  // boundary between dimmed and bright became visible everywhere.
 
 /** Display-time metadata for the LayersPanel UI. Keeps the toggle
  *  labels + descriptions next to the IDs so adding a new layer is
@@ -46,11 +49,6 @@ export const LAYER_META: readonly LayerMeta[] = [
     label: 'Incoming threats',
     description: 'Highlight visible enemy ships whose transfer ends at one of your bodies.',
     defaultOn: true,
-  },
-  {
-    id: 'sensors',
-    label: 'Sensor coverage',
-    description: 'Translucent rings showing how far your fleet and settlements can see.',
   },
   {
     id: 'ownership',

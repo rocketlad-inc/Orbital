@@ -16,10 +16,11 @@ import {
   drawTargetHighlight,
   drawSettlement,
   drawShipGhost,
-  drawSensorRing,
   drawAllTransfersLayer,
   drawEnemyTrajectoriesLayer,
   drawOwnershipLayer,
+  drawFogOfWarOverlay,
+  drawDestructionFlashes,
   generateStarfield,
   drawStarfield,
   StarfieldCache,
@@ -74,31 +75,34 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // Fog of war: keep a rolling lastSeen map for the viewing faction
   const lastSeenRef = useRef<Map<string, GhostIntel>>(new Map());
 
-  // Damage flash bookkeeping. Two refs:
-  //   prevDamageTick   — last lastDamagedTick value we saw per entity
-  //   damageFlashStart — performance.now() when we first observed that tick
-  // Each frame we walk ships + settlements; when lastDamagedTick changes
-  // for an id, we stamp a fresh wall-clock time. The renderer reads the
-  // stamp via RenderContext.damageFlashStart and fades the halo over
-  // DAMAGE_FLASH_DURATION_MS regardless of sim speed.
+  // Flash bookkeeping. Tick-based (not wall-clock) so the fade
+  // duration is consistent across sim speeds — at 100× a flash that
+  // started "now" still gets DAMAGE_FLASH_DURATION_TICKS to play out,
+  // it just feels faster. A single +10-tick skip naturally resolves
+  // any flash that started inside it.
+  //
+  //   prevDamageTick     — last lastDamagedTick value seen per entity
+  //   damageFlashStart   — tick value when we first noticed the hit
+  //                        (passed to renderer, fades over ~10 ticks)
+  //   prevShipIds        — snapshot of last frame's ship ids; entries
+  //                        that disappear become destruction flashes
+  //   destructionFlashes — { id → { pos, startTick } } for entities
+  //                        that have died recently. Renderer draws a
+  //                        bigger orange "explosion" variant at each
+  //                        position, then we prune entries older than
+  //                        DESTRUCTION_FLASH_DURATION_TICKS.
   const prevDamageTickRef = useRef<Map<string, number>>(new Map());
   const damageFlashStartRef = useRef<Map<string, number>>(new Map());
+  const prevShipIdsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const prevSettlementIdsRef = useRef<Map<string, { x: number; y: number; bodyId: string }>>(new Map());
+  const destructionFlashesRef = useRef<Map<string, { pos: { x: number; y: number }; startTick: number; baseRadius?: number }>>(new Map());
 
   // Map layers: source of truth lives in MapLayersProvider (state +
-  // localStorage). The old V-key sensor toggle is kept as a keyboard
-  // shortcut for the 'sensors' layer so muscle memory still works.
-  // We surface the Set as a render dep so toggling any layer triggers
-  // a redraw (isOn would otherwise be stable across toggles).
-  const { enabled: enabledLayers, isOn: layerOn, toggle: toggleLayer } = useMapLayers();
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
-      if (e.key === 'v' || e.key === 'V') toggleLayer('sensors');
-    };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
-  }, [toggleLayer]);
+  // localStorage). The Set is surfaced as a render dep so toggling
+  // any layer triggers a redraw (isOn would otherwise be stable
+  // across toggles). The old V-key sensor toggle was removed when
+  // sensor coverage became an always-on fog overlay.
+  const { enabled: enabledLayers, isOn: layerOn } = useMapLayers();
 
 
   // Escape key cancels target selection
@@ -130,27 +134,86 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
     }
 
-    // === Damage flash bookkeeping ===
-    // Walk every ship + settlement; whenever an entity's lastDamagedTick
-    // differs from what we remembered last frame, stamp a fresh
-    // wall-clock time. The renderer fades the halo from there.
+    // === Flash bookkeeping (damage + destruction) ===
+    // Tick-based so the visual duration is consistent across sim
+    // speeds. Damage = entity present with a new lastDamagedTick;
+    // destruction = entity present last frame but missing this frame.
     const nowMs = performance.now();
+    const nowTick = gameState.currentTick;
+
+    // Build the current frame's ship-pos snapshot so we can both
+    // (a) record damage flashes on hit and (b) remember positions
+    // for any disappearing entries so destruction has a place to draw.
+    const curShipIds = new Map<string, { x: number; y: number }>();
     for (const ship of gameState.ships) {
+      // Position now; ships in transit use the Bezier path so they
+      // explode at the spot they were on the arc when killed.
+      // shipWorldPosition returns null for ships whose parent body
+      // has gone missing — skip those rather than crash.
+      const pos: { x: number; y: number } | null = ship.transfer
+        ? bezierPositionAt(ship.transfer, nowTick)
+        : shipWorldPosition(ship, nowTick, gameState.bodies);
+      if (pos) curShipIds.set(ship.id, pos);
+
       const cur = ship.lastDamagedTick;
       if (cur === undefined) continue;
       const prev = prevDamageTickRef.current.get(ship.id);
       if (prev !== cur) {
         prevDamageTickRef.current.set(ship.id, cur);
-        damageFlashStartRef.current.set(ship.id, nowMs);
+        damageFlashStartRef.current.set(ship.id, nowTick);
       }
     }
+    // Detect ship disappearance → destruction flash at last known pos.
+    // Skip the very first frame (prevShipIds empty = initial mount,
+    // not a die-off). The class-based base radius scales the boom
+    // with ship size so a destroyer pops bigger than a corvette.
+    if (prevShipIdsRef.current.size > 0) {
+      for (const [id, pos] of prevShipIdsRef.current) {
+        if (!curShipIds.has(id) && !destructionFlashesRef.current.has(id)) {
+          destructionFlashesRef.current.set(id, { pos, startTick: nowTick, baseRadius: 12 });
+        }
+      }
+    }
+    prevShipIdsRef.current = curShipIds;
+
+    // Settlements get the same treatment but their position is the
+    // body world-position (cities + stations both render adjacent to
+    // their body). Reusing bodyPosition keeps the math tight.
+    const curSettlementIds = new Map<string, { x: number; y: number; bodyId: string }>();
     for (const settlement of gameState.settlements) {
+      const body = gameState.bodies.find(b => b.id === settlement.bodyId);
+      if (body) {
+        const bp = bodyPosition(body, nowTick, gameState.bodies);
+        curSettlementIds.set(settlement.id, { x: bp.x, y: bp.y, bodyId: settlement.bodyId });
+      }
+
       const cur = settlement.lastDamagedTick;
       if (cur === undefined) continue;
       const prev = prevDamageTickRef.current.get(settlement.id);
       if (prev !== cur) {
         prevDamageTickRef.current.set(settlement.id, cur);
-        damageFlashStartRef.current.set(settlement.id, nowMs);
+        damageFlashStartRef.current.set(settlement.id, nowTick);
+      }
+    }
+    if (prevSettlementIdsRef.current.size > 0) {
+      for (const [id, snap] of prevSettlementIdsRef.current) {
+        if (!curSettlementIds.has(id) && !destructionFlashesRef.current.has(id)) {
+          destructionFlashesRef.current.set(id, {
+            pos: { x: snap.x, y: snap.y },
+            startTick: nowTick,
+            baseRadius: 14,
+          });
+        }
+      }
+    }
+    prevSettlementIdsRef.current = curSettlementIds;
+
+    // Prune flashes that have fully faded — keeps the map clean and
+    // bounds memory in a long campaign with lots of casualties.
+    const DESTRUCTION_FADE_TICKS = 10;
+    for (const [id, f] of destructionFlashesRef.current) {
+      if (nowTick - f.startTick >= DESTRUCTION_FADE_TICKS) {
+        destructionFlashesRef.current.delete(id);
       }
     }
 
@@ -256,21 +319,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     const threatBodies = threatenedBodyIds(threats);
 
     // === Map layer overlays (toggled via LayersPanel) ===
-    // Sensor coverage rings — drawn beneath everything else so the
-    // bodies and ships are still legible on top.
-    if (layerOn('sensors')) {
-      const rings = factionSensorRings(
-        'player',
-        gameState.ships,
-        gameState.settlements,
-        gameState.bodies,
-        gameState.currentTick,
-      );
-      for (const r of rings) {
-        drawSensorRing(r.pos, r.range, r.sourceType, renderContext);
-      }
-    }
-    // All ship transfer arcs — faint, beneath bodies but above sensors.
+    // Sensor coverage is now an always-on fog-of-war overlay drawn
+    // LAST (below) — out-of-range areas dim, in-range areas read
+    // normally, the boundary itself is the sensor edge. The old
+    // explicit sensor-rings toggle was redundant once the fog made
+    // the boundary visible everywhere; it's been removed.
+    // All ship transfer arcs — faint, beneath bodies.
     if (layerOn('transfers')) {
       drawAllTransfersLayer(gameState.ships, renderContext);
     }
@@ -468,6 +522,33 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         renderContext,
         selectedSettlementId === settlement.id,
       );
+    }
+
+    // Destruction flashes — for ships/settlements that disappeared
+    // recently. Drawn after the live entities so the explosion sits
+    // on top of nothing (the entity is gone) and beneath the fog
+    // overlay so a kill outside your sensor range still reads as
+    // dimmed (you saw it die through your scopes, but the lights
+    // are out now).
+    if (destructionFlashesRef.current.size > 0) {
+      const arr = Array.from(destructionFlashesRef.current.values());
+      drawDestructionFlashes(arr, renderContext);
+    }
+
+    // Fog-of-war: always-on dimming overlay on areas outside any of
+    // the player's sensor circles. Painted LAST so it sits on top of
+    // every game element — bodies, ships, orbits, layer overlays.
+    // Even-odd fill rule cuts holes where your sensors cover, so the
+    // boundary IS the sensor edge (no separate ring needed).
+    {
+      const rings = factionSensorRings(
+        'player',
+        gameState.ships,
+        gameState.settlements,
+        gameState.bodies,
+        gameState.currentTick,
+      );
+      drawFogOfWarOverlay(rings, renderContext);
     }
 
     drawHUD(renderContext, uiState.targetSelectionMode);
