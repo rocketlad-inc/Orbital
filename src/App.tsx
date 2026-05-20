@@ -22,6 +22,10 @@ import { COLORS } from './render/colors';
 import { AuthProvider, useAuth } from './multiplayer/AuthContext';
 import { TurnBasedSettingsProvider } from './state/turnBasedSettings';
 import { MapLayersProvider } from './state/mapLayers';
+import { TutorialProvider } from './state/tutorial';
+import { TUTORIAL_STEP_COUNT } from './game/tutorialSteps';
+import { TutorialOverlay } from './components/TutorialOverlay';
+import { TutorialPromptModal } from './components/TutorialPromptModal';
 import { AuthOverlay } from './multiplayer/AuthOverlay';
 import { Landing } from './components/Landing';
 import { TunablesPage } from './components/TunablesPage';
@@ -141,6 +145,14 @@ function GameUI({
       <LayersPanel />
       {!isMultiplayer && <AIActivityFeed />}
       <MobileSimControls hideSimControls={isMultiplayer} />
+
+      {/* Tutorial: first-game-only prompt + the coachmark overlay
+          shown while a tour is active. Both portal to document.body
+          so backdrop-filter on .top-bar doesn't trap them. The prompt
+          self-suppresses once the player has completed/skipped (state
+          persists across sessions via localStorage). */}
+      <TutorialPromptModal />
+      <TutorialOverlay />
     </div>
   );
 }
@@ -589,7 +601,9 @@ function AppRouter() {
     <AuthProvider>
       <TurnBasedSettingsProvider>
         <MapLayersProvider>
-          <AppShell />
+          <TutorialProvider stepCount={TUTORIAL_STEP_COUNT}>
+            <AppShell />
+          </TutorialProvider>
         </MapLayersProvider>
       </TurnBasedSettingsProvider>
     </AuthProvider>

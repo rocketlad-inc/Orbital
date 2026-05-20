@@ -16,8 +16,14 @@ import { SaveLoadModal } from './SaveLoadModal';
 import { AdminGrantModal } from './AdminGrantModal';
 import { computeIncomePerTick } from '../game/settlements';
 import { TECH_DEFS } from '../game/techs';
+import { useTutorial } from '../state/tutorial';
+import { TUTORIAL_STEP_COUNT } from '../game/tutorialSteps';
 import type { GameState } from '../types';
 import './TopBar.css';
+
+// Hint text under the Restart Tutorial menu item. Pulled out to a
+// constant so it doesn't allocate a new string every render.
+const TUTORIAL_STEP_COUNT_HINT = `${TUTORIAL_STEP_COUNT} steps · ~1 min`;
 
 export type PanelId = 'settlements' | 'fleet' | 'research' | null;
 
@@ -125,18 +131,13 @@ export const TopBar: React.FC<TopBarProps> = ({
       });
     }
 
-    // Ships arriving soon (within 5 ticks). Reads torch transit
-    // first, then legacy bezier — either path triggers the same
-    // arrival nudge.
+    // Ships arriving soon (within 5 ticks).
     for (const ship of playerShips) {
       let targetBodyId: string | undefined;
       let arrivalTick: number | undefined;
       if (ship.transit) {
         targetBodyId = ship.transit.currentTransfer.targetBodyId;
         arrivalTick = ship.transit.currentTransfer.arriveTick;
-      } else if (ship.transfer) {
-        targetBodyId = ship.transfer.arrivalBodyId;
-        arrivalTick = ship.transfer.arrivalTime;
       }
       if (targetBodyId && arrivalTick !== undefined) {
         const eta = arrivalTick - gameState.currentTick;
@@ -187,6 +188,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         onClick={() => setMenuOpen(true)}
         title="Open menu"
         aria-label="Open menu"
+        data-tutorial-id="menu-button"
       >
         <div className="top-bar__title-main">ORBITAL</div>
         <div className="top-bar__title-sub">v0.3 · menu</div>
@@ -238,7 +240,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       )}
 
       {playerResources && (
-        <div className="top-bar__resources">
+        <div className="top-bar__resources" data-tutorial-id="topbar-resources">
           <ResourcePill
             label="FUEL" modifier="fuel"
             value={playerResources.fuel}
@@ -280,6 +282,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           onClick={() => onTogglePanel(activePanel === 'settlements' ? null : 'settlements')}
           title="Settlements"
           aria-label="Settlements"
+          data-tutorial-id="nav-settlements"
         >
           <span className="nav-button__icon" aria-hidden>⌂</span>
           <span className="nav-button__label">Settlements</span>
@@ -290,6 +293,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           onClick={() => onTogglePanel(activePanel === 'fleet' ? null : 'fleet')}
           title="Fleet"
           aria-label="Fleet"
+          data-tutorial-id="nav-fleet"
         >
           <span className="nav-button__icon" aria-hidden>◈</span>
           <span className="nav-button__label">Fleet</span>
@@ -300,6 +304,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           onClick={() => onTogglePanel(activePanel === 'research' ? null : 'research')}
           title="Research tech tree"
           aria-label="Research"
+          data-tutorial-id="nav-research"
         >
           <span className="nav-button__icon" aria-hidden>⚛</span>
           <span className="nav-button__label">Research</span>
@@ -857,6 +862,9 @@ const SideMenu: React.FC<SideMenuProps> = ({
   // would need server-side turn collection to work, which isn't built.
   const tbm = useTurnBasedSettings();
   const tbmAvailable = !adminGameId; // adminGameId is MP-only; SP leaves it null
+  // Tutorial — replay entry under GAME. The first-game prompt has its
+  // own modal; this menu item is the "I want to see it again" path.
+  const tutorial = useTutorial();
 
   // Host can change the tick cadence on an in-flight game. Mirrors
   // worker/lobby.js ALLOWED_TICK_INTERVALS — any value not in this set is
@@ -1020,6 +1028,25 @@ const SideMenu: React.FC<SideMenuProps> = ({
               <span className="side-menu__item-hint">Exit this session</span>
             </button>
           )}
+          <button
+            className="side-menu__item"
+            onClick={() => {
+              // reset() clears the completed flag so the next time a
+              // player enters a game the prompt fires again. Calling
+              // start() directly also relaunches the tour now without
+              // requiring a reload.
+              tutorial.reset();
+              tutorial.start();
+              onClose();
+            }}
+            title="Replay the guided walkthrough"
+          >
+            <span className="side-menu__item-icon">?</span>
+            <span className="side-menu__item-label">
+              {tutorial.completed ? 'Replay Tutorial' : 'Start Tutorial'}
+            </span>
+            <span className="side-menu__item-hint">{TUTORIAL_STEP_COUNT_HINT}</span>
+          </button>
 
           {tbmAvailable && (
             // SP Turn-Based Mode toggle. Persisted across sessions in

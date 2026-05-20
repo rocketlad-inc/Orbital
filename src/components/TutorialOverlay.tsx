@@ -1,0 +1,295 @@
+// ============================================================
+// TutorialOverlay — the coachmark renderer.
+//
+// Reads the current tutorial step from context. For each step:
+//   - Finds the target element via data-tutorial-id (or centers
+//     the card when target=null).
+//   - Paints a dark backdrop over the whole viewport, cutting a
+//     hole around the target rect so it stays visible at full
+//     brightness (even-odd fill rule, same trick as the sensor
+//     fog overlay).
+//   - Renders a coachmark card with title + body + Back/Next/Skip,
+//     positioned next to the target on the placement side.
+//   - Re-measures on resize + every animation frame while active,
+//     so the cutout tracks the target if layout shifts.
+//
+// Portaled to document.body so .top-bar's backdrop-filter doesn't
+// confine the overlay to the top bar's box.
+// ============================================================
+
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { useTutorial } from '../state/tutorial';
+import { TUTORIAL_STEPS, TutorialStep } from '../game/tutorialSteps';
+
+interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Walk the DOM for the element matching `data-tutorial-id`. Returns
+ *  null if missing (the corresponding component may not be mounted
+ *  yet — overlay falls back to a centered card). */
+function findTarget(targetId: string | null): Element | null {
+  if (!targetId) return null;
+  return document.querySelector(`[data-tutorial-id="${targetId}"]`);
+}
+
+/** Pad the target rect by a few pixels so the cutout doesn't crowd
+ *  the element itself. Keeps a visible "halo" of unscored space. */
+function padRect(r: Rect, pad = 6): Rect {
+  return { x: r.x - pad, y: r.y - pad, width: r.width + pad * 2, height: r.height + pad * 2 };
+}
+
+/** Compute where to place the coachmark card relative to the target.
+ *  Falls back to centered when target is null or off-screen. */
+function placeCard(
+  targetRect: Rect | null,
+  placement: TutorialStep['placement'],
+  viewport: { width: number; height: number },
+  cardSize: { width: number; height: number },
+): { x: number; y: number } {
+  const GAP = 14;
+  if (!targetRect || placement === 'center') {
+    return {
+      x: Math.max(0, (viewport.width - cardSize.width) / 2),
+      y: Math.max(0, (viewport.height - cardSize.height) / 2),
+    };
+  }
+  let x = targetRect.x + targetRect.width / 2 - cardSize.width / 2;
+  let y = targetRect.y + targetRect.height / 2 - cardSize.height / 2;
+  if (placement === 'above')  y = targetRect.y - cardSize.height - GAP;
+  if (placement === 'below')  y = targetRect.y + targetRect.height + GAP;
+  if (placement === 'left')   x = targetRect.x - cardSize.width - GAP;
+  if (placement === 'right')  x = targetRect.x + targetRect.width + GAP;
+  // Clamp to viewport with a small margin so the card never goes off-screen.
+  const MARGIN = 8;
+  x = Math.max(MARGIN, Math.min(x, viewport.width - cardSize.width - MARGIN));
+  y = Math.max(MARGIN, Math.min(y, viewport.height - cardSize.height - MARGIN));
+  return { x, y };
+}
+
+export const TutorialOverlay: React.FC = () => {
+  const { active, index, advance, back, skip, finish } = useTutorial();
+  const [targetRect, setTargetRect] = useState<Rect | null>(null);
+  const [viewport, setViewport] = useState({
+    width: typeof window !== 'undefined' ? window.innerWidth : 1280,
+    height: typeof window !== 'undefined' ? window.innerHeight : 800,
+  });
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [cardSize, setCardSize] = useState({ width: 360, height: 180 });
+
+  const step = active && index >= 0 ? TUTORIAL_STEPS[index] : null;
+
+  // Re-measure target on every animation frame while active. Cheap —
+  // getBoundingClientRect is fast and the overlay is short-lived. Avoids
+  // a tower of ResizeObservers / MutationObservers to catch layout
+  // shifts (panels opening, drawers sliding, etc).
+  useEffect(() => {
+    if (!step) {
+      setTargetRect(null);
+      return;
+    }
+    let raf = 0;
+    const tick = () => {
+      const el = findTarget(step.target);
+      if (el) {
+        const r = el.getBoundingClientRect();
+        setTargetRect({ x: r.left, y: r.top, width: r.width, height: r.height });
+      } else {
+        setTargetRect(null);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [step]);
+
+  useEffect(() => {
+    const onResize = () => setViewport({ width: window.innerWidth, height: window.innerHeight });
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  // Measure the actual card so placement math accounts for the real
+  // height (varies by body length). Layout effect ensures we have
+  // measurements before paint to avoid a flash.
+  useLayoutEffect(() => {
+    if (!cardRef.current) return;
+    const r = cardRef.current.getBoundingClientRect();
+    if (Math.abs(r.width - cardSize.width) > 1 || Math.abs(r.height - cardSize.height) > 1) {
+      setCardSize({ width: r.width, height: r.height });
+    }
+  }, [step, cardSize.width, cardSize.height]);
+
+  // Keyboard: Esc skips, Enter / Right advances, Left goes back.
+  useEffect(() => {
+    if (!active) return;
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      if (e.key === 'Escape') skip();
+      else if (e.key === 'ArrowRight' || e.key === 'Enter') {
+        if (index === TUTORIAL_STEPS.length - 1) finish();
+        else advance();
+      }
+      else if (e.key === 'ArrowLeft') back();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [active, index, advance, back, skip, finish]);
+
+  if (!step) return null;
+
+  const isLast = index === TUTORIAL_STEPS.length - 1;
+  const isFirst = index === 0;
+  const cardPos = placeCard(targetRect, step.placement, viewport, cardSize);
+
+  return createPortal(
+    <div
+      role="dialog"
+      aria-label="Tutorial"
+      aria-live="polite"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 3000,
+        pointerEvents: 'none', // backdrop is purely visual; controls handle clicks themselves
+        fontFamily: "'JetBrains Mono', monospace",
+      }}
+    >
+      {/* Dim backdrop with the target rect cut out via even-odd fill.
+          Click intercepts skip — but only if there's no target (centered
+          steps), so target-aware steps don't accidentally dismiss the
+          tour when the player tries to click the highlighted element. */}
+      <svg
+        width={viewport.width}
+        height={viewport.height}
+        style={{
+          position: 'absolute', inset: 0,
+          pointerEvents: targetRect ? 'none' : 'auto',
+        }}
+        onClick={targetRect ? undefined : skip}
+      >
+        <defs>
+          <mask id="tutorial-cutout">
+            <rect x={0} y={0} width={viewport.width} height={viewport.height} fill="white" />
+            {targetRect && (() => {
+              const p = padRect(targetRect);
+              return <rect x={p.x} y={p.y} width={p.width} height={p.height} rx={6} fill="black" />;
+            })()}
+          </mask>
+        </defs>
+        <rect
+          x={0} y={0}
+          width={viewport.width} height={viewport.height}
+          fill="rgba(5, 8, 14, 0.66)"
+          mask="url(#tutorial-cutout)"
+        />
+        {targetRect && (() => {
+          const p = padRect(targetRect);
+          return (
+            <rect
+              x={p.x} y={p.y} width={p.width} height={p.height}
+              rx={6}
+              fill="none"
+              stroke="#ffb84d"
+              strokeWidth={2}
+              style={{ filter: 'drop-shadow(0 0 8px rgba(255, 184, 77, 0.6))' }}
+            />
+          );
+        })()}
+      </svg>
+
+      {/* Coachmark card — re-enables pointer events for its own area
+          so the player can click Back / Next / Skip. */}
+      <div
+        ref={cardRef}
+        style={{
+          position: 'absolute',
+          left: cardPos.x, top: cardPos.y,
+          width: 360, maxWidth: 'calc(100vw - 16px)',
+          background: 'linear-gradient(180deg, #131c27 0%, #070b13 100%)',
+          border: '1px solid #ffb84d',
+          borderRadius: 8,
+          padding: '14px 16px',
+          color: '#d8e4ee',
+          boxShadow: '0 12px 32px rgba(0, 0, 0, 0.6)',
+          pointerEvents: 'auto',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+            marginBottom: 6,
+          }}
+        >
+          <div style={{ fontSize: 10, color: '#8a9fb3', letterSpacing: '0.14em' }}>
+            TUTORIAL · {index + 1} / {TUTORIAL_STEPS.length}
+          </div>
+          <button
+            onClick={skip}
+            title="Skip tour (Esc)"
+            style={{
+              background: 'transparent', color: '#8a9fb3',
+              border: 'none', fontSize: 10, cursor: 'pointer',
+              letterSpacing: '0.08em',
+            }}
+          >SKIP</button>
+        </div>
+        <div style={{ fontSize: 15, fontWeight: 700, color: '#ffb84d', marginBottom: 6 }}>
+          {step.title}
+        </div>
+        <div style={{ fontSize: 12, lineHeight: 1.45, color: '#d8e4ee' }}>
+          {step.body}
+        </div>
+        <div
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            marginTop: 12, gap: 8,
+          }}
+        >
+          <button
+            onClick={back}
+            disabled={isFirst}
+            style={{
+              padding: '5px 12px',
+              background: 'transparent', color: isFirst ? '#4a5564' : '#d8e4ee',
+              border: `1px solid ${isFirst ? '#2a3d50' : '#4a6275'}`,
+              borderRadius: 4, cursor: isFirst ? 'default' : 'pointer',
+              fontFamily: 'inherit', fontSize: 11, letterSpacing: '0.08em',
+            }}
+          >‹ BACK</button>
+
+          {/* Progress dots — also clickable for jumping (handy for
+              players who want to re-read an earlier step). */}
+          <div style={{ display: 'flex', gap: 4 }}>
+            {TUTORIAL_STEPS.map((_, i) => (
+              <span
+                key={i}
+                style={{
+                  width: 5, height: 5, borderRadius: '50%',
+                  background: i === index ? '#ffb84d' : '#2a3d50',
+                  transition: 'background 0.18s',
+                }}
+              />
+            ))}
+          </div>
+
+          <button
+            onClick={() => isLast ? finish() : advance()}
+            style={{
+              padding: '5px 14px',
+              background: '#ffb84d', color: '#0a1018',
+              border: 'none', borderRadius: 4, cursor: 'pointer',
+              fontFamily: 'inherit', fontSize: 11, fontWeight: 700, letterSpacing: '0.08em',
+            }}
+          >{isLast ? 'DONE ▸' : 'NEXT ›'}</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+};

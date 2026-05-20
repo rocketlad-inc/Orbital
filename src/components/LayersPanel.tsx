@@ -51,6 +51,7 @@ export const LayersPanel: React.FC = () => {
         onClick={() => setOpen(v => !v)}
         title={`Map layers (${onCount} on)`}
         aria-label="Toggle map layers"
+        data-tutorial-id="layers-button"
         style={{
           display: 'inline-flex', alignItems: 'center', gap: 6,
           padding: '6px 10px',

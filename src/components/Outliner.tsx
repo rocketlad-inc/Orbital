@@ -65,10 +65,9 @@ export const Outliner: React.FC = () => {
       if (b.ownedBy === 'player') bodyIds.add(b.id);
     }
     for (const s of playerShips) {
-      // Parked ships contribute their body to the outliner; ships in
-      // transit (torch OR legacy bezier) appear in the dedicated
-      // In Transit section below.
-      if (!s.transfer && !s.transit) bodyIds.add(s.orbit.parentBodyId);
+      // Parked ships contribute their body to the outliner; ships
+      // in transit appear in the dedicated In Transit section below.
+      if (!s.transit) bodyIds.add(s.orbit.parentBodyId);
     }
     for (const s of playerSettlements) {
       bodyIds.add(s.bodyId);
@@ -82,10 +81,10 @@ export const Outliner: React.FC = () => {
       });
   }, [gameState.bodies, playerShips, playerSettlements]);
 
-  const inTransit = useMemo(() => playerShips.filter(s => s.transfer || s.transit), [playerShips]);
+  const inTransit = useMemo(() => playerShips.filter(s => s.transit), [playerShips]);
 
   const shipsAt = (bodyId: string) =>
-    playerShips.filter(s => !s.transfer && s.orbit.parentBodyId === bodyId);
+    playerShips.filter(s => !s.transit && s.orbit.parentBodyId === bodyId);
 
   const settlementsAt = (bodyId: string) =>
     playerSettlements.filter(s => s.bodyId === bodyId);
@@ -145,7 +144,10 @@ export const Outliner: React.FC = () => {
           aria-hidden
         />
       )}
-      <div className={`outliner${isMobile ? ' outliner--mobile' : ''}`}>
+      <div
+        className={`outliner${isMobile ? ' outliner--mobile' : ''}`}
+        data-tutorial-id="outliner"
+      >
       <div className="outliner__header">
         <span className="outliner__title">Outliner</span>
         <button
@@ -225,14 +227,9 @@ export const Outliner: React.FC = () => {
             <div className="outliner__section-title">In Transit</div>
             {inTransit.map(ship => {
               const def = getShipClass(ship.class as ShipClassName);
-              // Pull target + ETA from torch transit if present, else
-              // legacy bezier. inTransit guarantees at least one is set.
-              const targetBodyId = ship.transit
-                ? ship.transit.currentTransfer.targetBodyId
-                : ship.transfer!.arrivalBodyId;
-              const arrivalTick = ship.transit
-                ? ship.transit.currentTransfer.arriveTick
-                : ship.transfer!.arrivalTime;
+              // Pull target + ETA from the ship's torch transit state.
+              const targetBodyId = ship.transit!.currentTransfer.targetBodyId;
+              const arrivalTick = ship.transit!.currentTransfer.arriveTick;
               const target = gameState.bodies.find(b => b.id === targetBodyId);
               const eta = arrivalTick - gameState.currentTick;
               const r = hpRatio(ship);
