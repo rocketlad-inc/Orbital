@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
-import { GameState, ManeuverNode, CameraState, MapUIState, Ship, Body, TransferArc, BuildOrder, SettlementType, FactionResources } from '../types';
+import { GameState, ManeuverNode, CameraState, MapUIState, Ship, Body, TransferArc, BuildOrder, SettlementType, FactionResources, BuildingKind, SettlementBuildOrder } from '../types';
 // Scenarios were removed when single-player switched to SinglePlayerSetup.
 // GameContextProvider now requires either an initialState (single-player,
 // seeded by setupSinglePlayer) or an externalState (multiplayer, server-
@@ -14,6 +14,8 @@ import {
   createCity, createStation, tickSettlements,
   canHostCity, canHostStation, SETTLEMENT_DEFS,
   COLLECTOR_COST,
+  BUILDING_DEFS, buildingCostForNextLevel, buildingTimeForNextLevel,
+  buildingLevel, shipyardSlotsAtBody,
 } from '../game/settlements';
 import { tickMaintenance } from '../game/maintenance';
 import { TechId, TECH_DEFS, MAX_SCIENCE_PER_TICK } from '../game/techs';
@@ -198,6 +200,15 @@ interface GameContextType {
    *  false if the settlement isn't owned by the player, already has a
    *  collector, or the player can't afford it. */
   buildCollector: (settlementId: string) => boolean;
+  /** Queue a building upgrade at a settlement (forge / mint / lab on
+   *  cities; weapons / shipyard on stations). Debits the cost
+   *  immediately, schedules completion at `completeTick`. Returns
+   *  false if the settlement isn't player-owned, the building doesn't
+   *  match the host type, another upgrade is already in flight, or
+   *  resources are short. */
+  queueBuilding: (settlementId: string, kind: BuildingKind) => boolean;
+  /** Cancel an in-flight building upgrade. Refunds 50% of the spend. */
+  cancelBuilding: (settlementId: string) => boolean;
   selectedSettlementId?: string;
   selectSettlement: (id: string | undefined) => void;
 
@@ -521,6 +532,26 @@ export function GameContextProvider({
       buildOrders = buildOrders.filter(bo => newTime < bo.completeTick);
     }
 
+    // Settlement building completions — when a settlement's
+    // buildingQueue.completeTick is reached, bump the level and clear
+    // the queue so a new upgrade can be started. Cost was debited at
+    // queue time so this loop is pure level-flipping.
+    let settlementBuildingsDirty = false;
+    const preSettlements = prev.settlements.map(s => {
+      const q = s.buildingQueue;
+      if (!q || newTime < q.completeTick) return s;
+      settlementBuildingsDirty = true;
+      const cur = s.buildings ?? {};
+      logger.info('SIM', `Building complete: ${BUILDING_DEFS[q.kind].displayName} L${q.targetLevel} at ${s.name}`, {
+        settlementId: s.id, kind: q.kind, level: q.targetLevel,
+      });
+      return {
+        ...s,
+        buildings: { ...cur, [q.kind]: q.targetLevel },
+        buildingQueue: undefined,
+      };
+    });
+
     // Settlement extraction + freighter offload
     const factionPools: Record<string, FactionResources> = {};
     for (const [fid, fr] of Object.entries(prev.resources)) {
@@ -533,8 +564,9 @@ export function GameContextProvider({
       yieldMul[fid] = 1 + TECH_DEFS.industry.perLevel * lvl;
     }
     const settlementsResult = tickSettlements(
-      prev.settlements, prev.bodies, updatedShips, newTime, factionPools, yieldMul,
+      preSettlements, prev.bodies, updatedShips, newTime, factionPools, yieldMul,
     );
+    if (settlementBuildingsDirty) settlementsResult.changed = true;
     let updatedSettlements = settlementsResult.settlements;
 
     // Auto-combat: every ship and combat-capable settlement fires once every
@@ -1095,6 +1127,20 @@ export function GameContextProvider({
       return false;
     }
 
+    // Shipyard slot gate — every body has 1 base slot; station Shipyard
+    // building levels add more. In-flight ship builds at this body count
+    // toward the cap.
+    const slots = shipyardSlotsAtBody(bodyId, 'player', gameState.settlements);
+    const inFlightAtBody = gameState.buildOrders.filter(
+      bo => bo.bodyId === bodyId && bo.ownedBy === 'player'
+    ).length;
+    if (inFlightAtBody >= slots) {
+      logger.warn('ACTION', `buildShip: shipyard capacity reached`, {
+        bodyId, slots, inFlightAtBody,
+      });
+      return false;
+    }
+
     // Apply Construction-tech cost discount (capped at 75% off).
     const constructionLvl = gameState.factionTech.player?.levels['construction'] ?? 0;
     const costMul = Math.max(0.25, 1 - TECH_DEFS.construction.perLevel * constructionLvl);
@@ -1320,6 +1366,117 @@ export function GameContextProvider({
     return ok;
   }, []);
 
+  const queueBuilding = useCallback((settlementId: string, kind: BuildingKind): boolean => {
+    let ok = false;
+    setGameStateInternal(prev => {
+      const target = prev.settlements.find(s => s.id === settlementId);
+      if (!target) {
+        logger.warn('ACTION', 'queueBuilding: settlement not found', { settlementId, kind });
+        return prev;
+      }
+      if (target.ownedBy !== 'player') {
+        logger.warn('ACTION', 'queueBuilding: not your settlement', { settlementId, kind });
+        return prev;
+      }
+      const def = BUILDING_DEFS[kind];
+      if (!def) {
+        logger.warn('ACTION', 'queueBuilding: unknown kind', { kind });
+        return prev;
+      }
+      if (def.hostType !== target.type) {
+        logger.warn('ACTION', 'queueBuilding: host type mismatch', {
+          kind, requires: def.hostType, settlementType: target.type,
+        });
+        return prev;
+      }
+      if (target.buildingQueue) {
+        logger.warn('ACTION', 'queueBuilding: another upgrade already in flight', {
+          settlementId, kind, inFlight: target.buildingQueue.kind,
+        });
+        return prev;
+      }
+
+      const currentLevel = buildingLevel(target, kind);
+      const cost = buildingCostForNextLevel(kind, currentLevel);
+      const pool = prev.resources['player'];
+      if (!pool || pool.fuel < cost.fuel || pool.ore < cost.ore || pool.credits < cost.credits) {
+        logger.warn('ACTION', 'queueBuilding: insufficient resources', {
+          settlementId, kind, currentLevel, need: cost,
+          have: pool ? { fuel: pool.fuel, ore: pool.ore, credits: pool.credits } : null,
+        });
+        return prev;
+      }
+
+      const ticks = buildingTimeForNextLevel(kind, currentLevel);
+      const order: SettlementBuildOrder = {
+        id: `bldorder-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        settlementId,
+        kind,
+        targetLevel: currentLevel + 1,
+        startTick: prev.currentTick,
+        completeTick: prev.currentTick + ticks,
+      };
+      logger.info('ACTION', `Queued ${def.displayName} L${currentLevel + 1} at ${target.name}`, {
+        cost, ticks,
+      });
+      ok = true;
+      return {
+        ...prev,
+        settlements: prev.settlements.map(s =>
+          s.id === settlementId ? { ...s, buildingQueue: order } : s,
+        ),
+        resources: {
+          ...prev.resources,
+          player: {
+            ...pool,
+            fuel:    pool.fuel    - cost.fuel,
+            ore:     pool.ore     - cost.ore,
+            credits: pool.credits - cost.credits,
+          },
+        },
+      };
+    });
+    return ok;
+  }, []);
+
+  const cancelBuilding = useCallback((settlementId: string): boolean => {
+    let ok = false;
+    setGameStateInternal(prev => {
+      const target = prev.settlements.find(s => s.id === settlementId);
+      if (!target || target.ownedBy !== 'player' || !target.buildingQueue) return prev;
+      const q = target.buildingQueue;
+      const cost = buildingCostForNextLevel(q.kind, q.targetLevel - 1);
+      // 50% refund — losing the other half encourages players to think
+      // before queueing rather than treating queue as free.
+      const refund = {
+        fuel:    Math.floor(cost.fuel    / 2),
+        ore:     Math.floor(cost.ore     / 2),
+        credits: Math.floor(cost.credits / 2),
+      };
+      const pool = prev.resources['player'];
+      logger.info('ACTION', `Cancelled ${BUILDING_DEFS[q.kind].displayName} L${q.targetLevel} at ${target.name}`, {
+        refund,
+      });
+      ok = true;
+      return {
+        ...prev,
+        settlements: prev.settlements.map(s =>
+          s.id === settlementId ? { ...s, buildingQueue: undefined } : s,
+        ),
+        resources: pool ? {
+          ...prev.resources,
+          player: {
+            ...pool,
+            fuel:    pool.fuel    + refund.fuel,
+            ore:     pool.ore     + refund.ore,
+            credits: pool.credits + refund.credits,
+          },
+        } : prev.resources,
+      };
+    });
+    return ok;
+  }, []);
+
   const startResearch = useCallback((techId: TechId) => {
     setGameStateInternal(prev => {
       const cur = prev.factionTech.player ?? { levels: {}, researching: null, progress: 0, queue: [] };
@@ -1460,6 +1617,7 @@ export function GameContextProvider({
     buildShip, cancelBuild,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
     deploySettlement, damageSettlement, buildCollector,
+    queueBuilding, cancelBuilding,
     selectedSettlementId, selectSettlement,
     startResearch, cancelResearch,
     enqueueResearch, dequeueResearch, moveResearchUp,

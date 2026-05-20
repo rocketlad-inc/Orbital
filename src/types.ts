@@ -207,6 +207,36 @@ export interface Settlement {
   /** Tick this collector was constructed at, surfaced in the UI as a
    *  build date. undefined for the capital's free starting collector. */
   collectorBuiltTick?: number;
+
+  /** Per-building level counters. Missing key = level 0.
+   *  Cities can host forge / mint / lab; stations can host weapons /
+   *  shipyard. Effects compound additively per level via the helpers
+   *  in src/game/settlements.ts — see BUILDING_DEFS for the catalog. */
+  buildings?: Partial<Record<BuildingKind, number>>;
+  /** Single in-flight building upgrade for this settlement. Only one
+   *  at a time per settlement — finish or cancel before queueing
+   *  another. Cleared by the per-tick completion loop in
+   *  advanceToTick once completeTick is reached. */
+  buildingQueue?: SettlementBuildOrder;
+}
+
+/**
+ * Kinds of upgrade buildings that can be queued at a settlement.
+ * City-only: forge / mint / lab.  Station-only: weapons / shipyard.
+ */
+export type BuildingKind = 'forge' | 'mint' | 'lab' | 'weapons' | 'shipyard';
+
+/**
+ * One in-flight upgrade at a settlement. The "ship build queue"
+ * pattern (see BuildOrder above) for the settlement-buildings system.
+ */
+export interface SettlementBuildOrder {
+  id: string;
+  settlementId: string;
+  kind: BuildingKind;
+  targetLevel: number;   // level the settlement will be at on completion
+  startTick: number;
+  completeTick: number;
 }
 
 /**

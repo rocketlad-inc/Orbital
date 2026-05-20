@@ -9,8 +9,9 @@ import { bodyProductionRates } from '../game/economy';
 import {
   canHostCity, canHostStation, SETTLEMENT_DEFS, settlementYield, suggestSettlementName,
   COLLECTOR_COST,
+  BUILDING_DEFS, buildingLevel, buildingCostForNextLevel, buildingTimeForNextLevel,
 } from '../game/settlements';
-import { SettlementType } from '../types';
+import { SettlementType, BuildingKind, Settlement } from '../types';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { BottomSheet } from './BottomSheet';
 import './BodyInspector.css';
@@ -161,7 +162,7 @@ interface SettlementsSectionProps {
 const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
   const {
     gameState, deploySettlement, selectSettlement, selectedSettlementId,
-    buildCollector,
+    buildCollector, queueBuilding, cancelBuilding,
   } = useGameContext();
   // Non-null only in multiplayer: mirror the local deploy to the server.
   const mpActions = useMultiplayerActions();
@@ -321,6 +322,15 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
                   }}
                 >+ COLLECTOR ({COLLECTOR_COST.ore}O / {COLLECTOR_COST.credits}C)</button>
               )}
+              {isMine && (
+                <BuildingsStrip
+                  settlement={s}
+                  playerRes={playerRes}
+                  currentTick={gameState.currentTick}
+                  queueBuilding={queueBuilding}
+                  cancelBuilding={cancelBuilding}
+                />
+              )}
             </div>
           </div>
         );
@@ -386,6 +396,175 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
           )}
         </>
       )}
+    </div>
+  );
+};
+
+// ============================================================
+// Per-settlement Buildings strip — Forge / Mint / Lab on cities,
+// Weapons / Shipyard on stations. Each row shows current level,
+// next-level cost, and either a "+ Upgrade" button or an in-flight
+// progress bar with cancel.
+// ============================================================
+
+const CITY_BUILDINGS: BuildingKind[] = ['forge', 'mint', 'lab'];
+const STATION_BUILDINGS: BuildingKind[] = ['weapons', 'shipyard'];
+
+interface BuildingsStripProps {
+  settlement: Settlement;
+  playerRes: { fuel: number; ore: number; credits: number } | undefined;
+  currentTick: number;
+  queueBuilding: (settlementId: string, kind: BuildingKind) => boolean;
+  cancelBuilding: (settlementId: string) => boolean;
+}
+
+const BuildingsStrip: React.FC<BuildingsStripProps> = ({
+  settlement, playerRes, currentTick, queueBuilding, cancelBuilding,
+}) => {
+  const kinds = settlement.type === 'city' ? CITY_BUILDINGS : STATION_BUILDINGS;
+  const q = settlement.buildingQueue;
+
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        paddingTop: 6,
+        borderTop: '1px dashed rgba(78, 205, 196, 0.18)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+      }}
+    >
+      <div
+        style={{
+          fontSize: 8, letterSpacing: '0.14em',
+          color: '#6b8195', textTransform: 'uppercase',
+        }}
+      >Buildings</div>
+
+      {kinds.map(kind => {
+        const def = BUILDING_DEFS[kind];
+        const level = buildingLevel(settlement, kind);
+        const cost = buildingCostForNextLevel(kind, level);
+        const ticks = buildingTimeForNextLevel(kind, level);
+        const inFlight = q?.kind === kind;
+        const queueBusy = !!q && !inFlight;
+        const canAfford = !!playerRes
+          && playerRes.fuel    >= cost.fuel
+          && playerRes.ore     >= cost.ore
+          && playerRes.credits >= cost.credits;
+        const canQueue = !queueBusy && !inFlight && canAfford;
+
+        const costParts: string[] = [];
+        if (cost.fuel    > 0) costParts.push(`${cost.fuel}F`);
+        if (cost.ore     > 0) costParts.push(`${cost.ore}O`);
+        if (cost.credits > 0) costParts.push(`${cost.credits}C`);
+        const costStr = costParts.join(' ');
+
+        // Effect descriptor for next level
+        let effectStr: string;
+        if (def.yieldBoost) {
+          const pct = Math.round(def.yieldBoost.perLevel * 100);
+          effectStr = `+${pct}% ${def.yieldBoost.resource}`;
+        } else if (def.combatBoost) {
+          effectStr = `+${def.combatBoost.damagePerLevel} dmg/tick`;
+        } else if (def.shipyardBoost) {
+          effectStr = `+${def.shipyardBoost.slotsPerLevel} build slot`;
+        } else {
+          effectStr = '';
+        }
+
+        return (
+          <div
+            key={kind}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '3px 0',
+              fontSize: 9,
+            }}
+          >
+            <span
+              style={{
+                minWidth: 64,
+                fontWeight: 600,
+                color: level > 0 ? '#d8e4ee' : '#a8b8c8',
+                letterSpacing: '0.05em',
+              }}
+            >
+              {def.displayName} <span style={{ color: '#4ecdc4' }}>L{level}</span>
+            </span>
+
+            {inFlight && q ? (
+              <>
+                <div
+                  style={{
+                    flex: 1,
+                    height: 6,
+                    background: 'rgba(42, 61, 80, 0.6)',
+                    borderRadius: 3,
+                    overflow: 'hidden',
+                    position: 'relative',
+                  }}
+                  title={`Building ${def.displayName} L${q.targetLevel} — ETA T+${q.completeTick - currentTick} ticks`}
+                >
+                  <div
+                    style={{
+                      height: '100%',
+                      width: `${Math.min(100, ((currentTick - q.startTick) / (q.completeTick - q.startTick)) * 100)}%`,
+                      background: 'linear-gradient(90deg, #4ecdc4, #6ee7b7)',
+                    }}
+                  />
+                </div>
+                <span style={{ color: '#6b8195', minWidth: 50, textAlign: 'right' }}>
+                  T+{Math.max(0, q.completeTick - currentTick)}
+                </span>
+                <button
+                  onClick={(e) => { e.stopPropagation(); cancelBuilding(settlement.id); }}
+                  title="Cancel — refunds 50% of cost."
+                  style={{
+                    background: 'transparent',
+                    color: '#ff8888',
+                    border: '1px solid #5a2a30',
+                    borderRadius: 3,
+                    padding: '2px 6px',
+                    fontFamily: 'inherit', fontSize: 9, fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >✕</button>
+              </>
+            ) : (
+              <>
+                <span
+                  style={{ flex: 1, color: '#6b8195', fontStyle: 'italic' }}
+                  title={def.description}
+                >
+                  {effectStr} · {ticks}t · {costStr}
+                </span>
+                <button
+                  onClick={(e) => { e.stopPropagation(); queueBuilding(settlement.id, kind); }}
+                  disabled={!canQueue}
+                  title={
+                    queueBusy ? `Another upgrade is in flight (${BUILDING_DEFS[q!.kind].displayName})`
+                    : !canAfford ? `Need ${costStr}`
+                    : `Upgrade ${def.displayName} → L${level + 1} (${ticks} ticks)`
+                  }
+                  style={{
+                    padding: '2px 8px',
+                    background: 'transparent',
+                    color: canQueue ? '#4ecdc4' : '#5a7080',
+                    border: `1px solid ${canQueue ? '#4ecdc4' : '#2a3d50'}`,
+                    borderRadius: 3,
+                    fontFamily: 'inherit', fontSize: 9, fontWeight: 600,
+                    cursor: canQueue ? 'pointer' : 'default',
+                  }}
+                >+ L{level + 1}</button>
+              </>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 };

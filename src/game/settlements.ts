@@ -3,7 +3,7 @@
 // Extract body resources to a local stockpile that freighters carry away.
 // ============================================================
 
-import { Body, Settlement, SettlementType, Ship } from '../types';
+import { Body, Settlement, SettlementType, Ship, BuildingKind, SettlementBuildOrder } from '../types';
 import { createCircularOrbit, bodyPosition, localPositionAt } from '../physics/orbitalMechanics';
 import { bodyProductionRates } from './economy';
 
@@ -64,6 +64,132 @@ export const COLLECTOR_BASE_DRAIN_FRACTION = 0.5;
  *  high — the strategic depth is "where do I plant my next collector
  *  to widen my income funnel?" */
 export const COLLECTOR_COST = { fuel: 0, ore: 150, credits: 100 };
+
+// === Settlement upgrade buildings ============================
+//
+// Each settlement can host buildings that compound its native output.
+// Levels stack additively (`yield × (1 + level × perLevel)`), costs
+// compound multiplicatively (`baseCost × scaling^level`), build times
+// compound mildly. Soft-cap is natural — by L8 a Forge costs ~671c
+// per level and takes ~9 real hours at the default 7.5-min cadence.
+//
+// City-only: forge / mint / lab (surface industry)
+// Station-only: weapons / shipyard (orbital platforms)
+//
+// One in-flight upgrade per settlement. Forces the player to spread
+// or specialize — pick a focus per colony rather than parallel-
+// stacking the entire empire at once.
+
+export interface BuildingDef {
+  displayName: string;
+  hostType: SettlementType;
+  baseCost: { fuel: number; ore: number; credits: number };
+  costScaling: number;     // cost = baseCost × costScaling^currentLevel
+  baseBuildTicks: number;
+  buildTimeScaling: number; // ticks = baseBuildTicks × buildTimeScaling^currentLevel
+  description: string;
+  // Effect descriptors — consumed by yield / combat / shipyard hooks.
+  yieldBoost?: { resource: 'ore' | 'credits' | 'science'; perLevel: number };
+  combatBoost?: { damagePerLevel: number };
+  shipyardBoost?: { slotsPerLevel: number };
+}
+
+export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
+  forge: {
+    displayName: 'Forge',
+    hostType: 'city',
+    baseCost: { fuel: 0, ore: 0, credits: 40 },
+    costScaling: 1.6,
+    baseBuildTicks: 20,
+    buildTimeScaling: 1.3,
+    description: '+25% ore output per level. Spends credits to compound this city\'s metal yield.',
+    yieldBoost: { resource: 'ore', perLevel: 0.25 },
+  },
+  mint: {
+    displayName: 'Mint',
+    hostType: 'city',
+    baseCost: { fuel: 0, ore: 40, credits: 0 },
+    costScaling: 1.6,
+    baseBuildTicks: 20,
+    buildTimeScaling: 1.3,
+    description: '+25% credits output per level. Spends ore to compound this city\'s coinage yield.',
+    yieldBoost: { resource: 'credits', perLevel: 0.25 },
+  },
+  lab: {
+    displayName: 'Lab',
+    hostType: 'city',
+    baseCost: { fuel: 0, ore: 30, credits: 30 },
+    costScaling: 1.6,
+    baseBuildTicks: 25,
+    buildTimeScaling: 1.3,
+    description: '+20% science output per level. Costs both raw stock and capital.',
+    yieldBoost: { resource: 'science', perLevel: 0.20 },
+  },
+  weapons: {
+    displayName: 'Weapons',
+    hostType: 'station',
+    baseCost: { fuel: 0, ore: 30, credits: 20 },
+    costScaling: 1.6,
+    baseBuildTicks: 30,
+    buildTimeScaling: 1.3,
+    description: '+4 damage/tick to hostile ships in range, per level.',
+    combatBoost: { damagePerLevel: 4 },
+  },
+  shipyard: {
+    displayName: 'Shipyard',
+    hostType: 'station',
+    baseCost: { fuel: 0, ore: 50, credits: 30 },
+    costScaling: 1.7,
+    baseBuildTicks: 40,
+    buildTimeScaling: 1.3,
+    description: '+1 simultaneous ship-build slot at this body, per level.',
+    shipyardBoost: { slotsPerLevel: 1 },
+  },
+};
+
+/** Returns the current level (or 0) of a building at this settlement. */
+export function buildingLevel(s: Settlement, kind: BuildingKind): number {
+  return s.buildings?.[kind] ?? 0;
+}
+
+/** Resource cost to advance a building from its current level to level+1. */
+export function buildingCostForNextLevel(
+  kind: BuildingKind, currentLevel: number,
+): { fuel: number; ore: number; credits: number } {
+  const def = BUILDING_DEFS[kind];
+  const k = Math.pow(def.costScaling, currentLevel);
+  return {
+    fuel:    Math.ceil(def.baseCost.fuel    * k),
+    ore:     Math.ceil(def.baseCost.ore     * k),
+    credits: Math.ceil(def.baseCost.credits * k),
+  };
+}
+
+/** Ticks required to construct the next level. */
+export function buildingTimeForNextLevel(
+  kind: BuildingKind, currentLevel: number,
+): number {
+  const def = BUILDING_DEFS[kind];
+  return Math.ceil(def.baseBuildTicks * Math.pow(def.buildTimeScaling, currentLevel));
+}
+
+/** Aggregate shipyard slot count at a body from all owner stations. */
+export function shipyardSlotsAtBody(
+  bodyId: string,
+  ownerId: string,
+  settlements: Settlement[],
+): number {
+  let bonus = 0;
+  for (const s of settlements) {
+    if (s.bodyId !== bodyId) continue;
+    if (s.ownedBy !== ownerId) continue;
+    if (s.type !== 'station') continue;
+    bonus += buildingLevel(s, 'shipyard');
+  }
+  // Base 1 slot — every body can build at least 1 ship at a time
+  // even without a shipyard. Stations add `slotsPerLevel`/level.
+  return 1 + bonus * (BUILDING_DEFS.shipyard.shipyardBoost?.slotsPerLevel ?? 1);
+}
 
 /** Per-settlement-type defaults */
 export const SETTLEMENT_DEFS: Record<SettlementType, {
@@ -193,11 +319,18 @@ export function settlementYield(
   const typeMult = settlement.type === 'city'
     ? { fuel: 1.0, ore: 1.2, credits: 1.0, science: 0.8 }
     : { fuel: 1.1, ore: 0.8, credits: 1.0, science: 1.4 };
+
+  // Building multipliers — city Forge/Mint/Lab compound the matching
+  // resource. Stations don't host yield buildings, so these are 0 there.
+  const forgeMul   = 1 + buildingLevel(settlement, 'forge') * (BUILDING_DEFS.forge.yieldBoost?.perLevel ?? 0);
+  const mintMul    = 1 + buildingLevel(settlement, 'mint')  * (BUILDING_DEFS.mint.yieldBoost?.perLevel  ?? 0);
+  const labMul     = 1 + buildingLevel(settlement, 'lab')   * (BUILDING_DEFS.lab.yieldBoost?.perLevel   ?? 0);
+
   return {
-    fuel: base.fuel * mult * typeMult.fuel,
-    ore: base.ore * mult * typeMult.ore,
-    credits: base.credits * mult * typeMult.credits,
-    science: base.science * mult * typeMult.science,
+    fuel:    base.fuel    * mult * typeMult.fuel,
+    ore:     base.ore     * mult * typeMult.ore     * forgeMul,
+    credits: base.credits * mult * typeMult.credits * mintMul,
+    science: base.science * mult * typeMult.science * labMul,
   };
 }
 

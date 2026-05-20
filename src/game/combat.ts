@@ -6,7 +6,7 @@ import { Ship, Body, Settlement } from '../types';
 import { getShipClass, ShipClassName } from './shipClasses';
 import { bodyPosition, localPositionAt } from '../physics/orbitalMechanics';
 import { bezierPositionAt } from '../physics/bezierTransfer';
-import { SETTLEMENT_DEFS } from './settlements';
+import { SETTLEMENT_DEFS, BUILDING_DEFS, buildingLevel } from './settlements';
 
 /** Ticks between auto-fire volleys. Each combatant fires every N ticks. */
 export const AUTO_COMBAT_INTERVAL = 20;
@@ -117,10 +117,15 @@ export function autoCombatAtBodies(
       if (fired) shipLastCombat.set(attacker.id, tick);
     }
 
-    // Settlements fire on every hostile ship at the same body
+    // Settlements fire on every hostile ship at the same body.
+    // Weapons-building levels (station-only) add flat damage on top
+    // of the base SETTLEMENT_DEFS damagePerTick — see BUILDING_DEFS.
+    const weaponsPerLevel = BUILDING_DEFS.weapons.combatBoost?.damagePerLevel ?? 0;
     for (const attacker of localSettlements) {
       const def = SETTLEMENT_DEFS[attacker.type];
-      if (def.damagePerTick <= 0) continue;
+      const weaponsBonus = weaponsPerLevel * buildingLevel(attacker, 'weapons');
+      const baseDmg = def.damagePerTick + weaponsBonus;
+      if (baseDmg <= 0) continue;
       const lastFired = attacker.lastCombatTick ?? -Infinity;
       if (tick - lastFired < AUTO_COMBAT_INTERVAL) continue;
 
@@ -128,7 +133,7 @@ export function autoCombatAtBodies(
       for (const target of localShips) {
         if (target.ownedBy === attacker.ownedBy) continue;
         const targetClass = getShipClass(target.class as ShipClassName);
-        const dmg = def.damagePerTick * damageMulOf(attacker.ownedBy) * (1 - targetClass.pdcRating);
+        const dmg = baseDmg * damageMulOf(attacker.ownedBy) * (1 - targetClass.pdcRating);
         damageMap.set(target.id, (damageMap.get(target.id) || 0) + dmg);
         log.push(`${attacker.name} hits ${target.name} for ${dmg.toFixed(0)}`);
         fired = true;
