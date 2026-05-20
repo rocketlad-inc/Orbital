@@ -1732,42 +1732,63 @@ export function drawDestructionFlashes(
 
 /**
  * Fog-of-war dimming overlay. Always-on (no toggle). Paints a dark
- * semi-transparent layer over the entire canvas, then uses the
- * even-odd fill rule to "cut out" the union of sensor coverage
- * circles — so in-range areas render normally and everything else
- * fades to a grey wash that still lets planet motion through.
+ * semi-transparent layer over the entire canvas, then punches out
+ * the union of sensor coverage circles — so in-range areas render
+ * normally and everything else fades to a grey wash that still lets
+ * planet motion through.
  *
  * Drawn LAST in the render order so it dims absolutely everything
- * (bodies, ships, orbits, other layer overlays). The single
- * even-odd fill is one path → one stroke regardless of how many
- * ship/settlement sensors you have. Much cheaper than per-source
- * compositing.
+ * (bodies, ships, orbits, other layer overlays).
+ *
+ * The OLD approach used a single rect + circles path with even-odd
+ * fill. That's broken when two sensor circles overlap: a point
+ * covered by two circles has subpath count 3 (rect + circle + circle)
+ * which is odd, so even-odd considers it INSIDE the fill region —
+ * the dim wash gets re-applied right where the player has the most
+ * coverage. Visible as a "dark blob" centered on busy bodies.
+ *
+ * New approach (offscreen canvas):
+ *   1. Fill the whole offscreen with the dim wash.
+ *   2. destination-out the union of sensor circles with opaque ink,
+ *      which fully erases the wash inside the union regardless of
+ *      how many circles stack.
+ *   3. drawImage onto the main canvas.
  */
 export function drawFogOfWarOverlay(
   rings: Array<{ pos: { x: number; y: number }; range: number }>,
   ctx: RenderContext,
 ) {
-  const c = ctx.ctx;
-  c.save();
-  c.beginPath();
-  // Outer rectangle covers the whole canvas.
-  c.rect(0, 0, ctx.canvas.width, ctx.canvas.height);
-  // Inner subpaths are the sensor circles, traced in the opposite
-  // winding direction so the even-odd rule treats them as holes.
+  const w = ctx.canvas.width;
+  const h = ctx.canvas.height;
+  const off = document.createElement('canvas');
+  off.width = w;
+  off.height = h;
+  const oc = off.getContext('2d');
+  if (!oc) return;
+
+  // Pass 1: wash the whole offscreen with the dim color. Opacity is
+  // tuned so planet motion + orbits stay visible through the fog (the
+  // player needs to track the inner-system bodies even when they're
+  // not in sensor range, otherwise the map feels broken).
+  oc.fillStyle = 'rgba(8, 12, 18, 0.62)';
+  oc.fillRect(0, 0, w, h);
+
+  // Pass 2: punch out every sensor circle. Opaque source so the wash
+  // is fully erased — overlapping circles can't un-erase each other.
+  oc.globalCompositeOperation = 'destination-out';
+  oc.fillStyle = '#ffffff';
   for (const r of rings) {
     const cp = worldToCanvas(r.pos.x, r.pos.y, ctx);
     const radius = r.range * ctx.camera.scale;
     if (radius < 0.5) continue; // too small to matter at this zoom
-    c.moveTo(cp.x + radius, cp.y);
-    c.arc(cp.x, cp.y, radius, 0, Math.PI * 2);
+    oc.beginPath();
+    oc.arc(cp.x, cp.y, radius, 0, Math.PI * 2);
+    oc.fill();
   }
-  // Dark warm-grey wash — keeps the canvas readable but obviously
-  // out-of-coverage. Opacity is tuned so planet motion + orbits stay
-  // visible (the player needs to track the inner-system bodies even
-  // when they're not in sensor range, otherwise the map feels broken).
-  c.fillStyle = 'rgba(8, 12, 18, 0.62)';
-  c.fill('evenodd');
-  c.restore();
+
+  ctx.ctx.save();
+  ctx.ctx.drawImage(off, 0, 0);
+  ctx.ctx.restore();
 }
 
 /**
