@@ -1545,20 +1545,69 @@ export function drawSensorRing(
 }
 
 /**
- * Draw a clean outline for every sensor source. Called immediately
- * after drawFogOfWarOverlay so the rings sit on top of the fog wash —
- * the player sees crisp circles around each ship/city/station instead
- * of having to infer the boundary from the dimming alone.
+ * Draw a SINGLE faint outline at the outer boundary of the union of
+ * all sensor circles. Concentric per-source rings turn into spaghetti
+ * the moment you have more than one ship at a body — the player only
+ * cares about the outer edge of "what can I see," not which ship or
+ * station is providing each slice of that coverage.
  *
- * Mirrors what factionSensorRings returns; no extra computation.
+ * Technique: render to an offscreen canvas. Fill every circle solid,
+ * then `destination-out`-fill each with a slightly smaller radius. The
+ * overlapping interiors get erased completely; only the union boundary
+ * survives as a 1-px stroke-thick ring. Single composite onto the
+ * main canvas.
  */
-export function drawSensorEdges(
-  rings: Array<{ pos: { x: number; y: number }; range: number; sourceType: 'ship' | 'city' | 'station' }>,
+export function drawSensorUnionOutline(
+  rings: Array<{ pos: { x: number; y: number }; range: number }>,
   ctx: RenderContext,
 ) {
+  if (rings.length === 0) return;
+
+  const w = ctx.canvas.width;
+  const h = ctx.canvas.height;
+  const off = document.createElement('canvas');
+  off.width = w;
+  off.height = h;
+  const oc = off.getContext('2d');
+  if (!oc) return;
+
+  const color = withOpacity(COLORS.success, 0.45);
+  const lineWidth = 1;
+
+  // Pre-compute canvas-space circles. Skip any whose visible radius is
+  // smaller than the line width — they wouldn't contribute a visible
+  // ring anyway.
+  type CS = { x: number; y: number; r: number };
+  const circles: CS[] = [];
   for (const r of rings) {
-    drawSensorRing(r.pos, r.range, r.sourceType, ctx);
+    const cp = worldToCanvas(r.pos.x, r.pos.y, ctx);
+    const radius = r.range * ctx.camera.scale;
+    if (radius <= lineWidth) continue;
+    circles.push({ x: cp.x, y: cp.y, r: radius });
   }
+  if (circles.length === 0) return;
+
+  // Pass 1: solid-fill every circle in the outline color.
+  oc.fillStyle = color;
+  oc.globalCompositeOperation = 'source-over';
+  for (const c of circles) {
+    oc.beginPath();
+    oc.arc(c.x, c.y, c.r, 0, Math.PI * 2);
+    oc.fill();
+  }
+  // Pass 2: erase the inside of every circle, shrunk by lineWidth.
+  // Boundaries between two overlapping circles cancel out — only the
+  // outermost edge of the union survives as a thin ring.
+  oc.globalCompositeOperation = 'destination-out';
+  for (const c of circles) {
+    oc.beginPath();
+    oc.arc(c.x, c.y, c.r - lineWidth, 0, Math.PI * 2);
+    oc.fill();
+  }
+
+  ctx.ctx.save();
+  ctx.ctx.drawImage(off, 0, 0);
+  ctx.ctx.restore();
 }
 
 // ============================================================
