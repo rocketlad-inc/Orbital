@@ -202,8 +202,18 @@ export function setupSinglePlayer(config: SinglePlayerConfig): GameState {
     // a single city + city HP. Worker uses one auto-deployed city; we
     // give the player both because SP lacks the "deploy freighter" UX
     // step that MP has via the lobby starter freighter.
+    //
+    // The capital city ALSO starts with a free collector — this is the
+    // empire's first logistics endpoint. Every other planet has to
+    // build one (very expensive, see COLLECTOR_COST). Without at least
+    // one collector somewhere, settlement stockpiles can't drain to
+    // the empire pool — they just sit there.
     if (capital.type === 'terrestrial' || capital.type === 'moon' || capital.type === 'dwarf') {
-      settlements.push(createCity(capital, f.id, 0, `${capital.name} City`));
+      const capitalCity = createCity(capital, f.id, 0, `${capital.name} City`);
+      capitalCity.hasCollector = true;
+      // Leave collectorBuiltTick undefined to mark this as the free
+      // starting collector (vs one the player built later).
+      settlements.push(capitalCity);
     }
     settlements.push(createStation(capital, f.id, 0, bodies, `${capital.name} Yards`));
 

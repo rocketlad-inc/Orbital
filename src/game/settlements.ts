@@ -47,6 +47,24 @@ export const SETTLEMENT_HARVEST_INTERVAL = 10;
 /** Default station orbit altitude (above body surface) */
 export const STATION_ALTITUDE = 6;
 
+/** Ticks between automatic collector drains. Every interval, each
+ *  settlement bleeds a portion of its stockpile into the empire pool
+ *  — IF the empire owns at least one collector somewhere. Without a
+ *  collector the stockpile just keeps growing locally with nowhere to
+ *  go. Default 25 ticks ≈ 3 game-hours at the standard 7.5-min cadence. */
+export const COLLECTOR_AUTO_INTERVAL = 25;
+
+/** Fraction of each settlement's stockpile that the collector network
+ *  pulls into the empire pool every COLLECTOR_AUTO_INTERVAL. 0.5 = half
+ *  the stockpile flows per cycle; freighter trade routes (future
+ *  feature) layer a multiplier on top. */
+export const COLLECTOR_BASE_DRAIN_FRACTION = 0.5;
+
+/** Cost to build a collector at an existing settlement. Intentionally
+ *  high — the strategic depth is "where do I plant my next collector
+ *  to widen my income funnel?" */
+export const COLLECTOR_COST = { fuel: 0, ore: 150, credits: 100 };
+
 /** Per-settlement-type defaults */
 export const SETTLEMENT_DEFS: Record<SettlementType, {
   maxHp: number;
@@ -206,6 +224,15 @@ export function tickSettlements(
   let changed = false;
   const yieldMulOf = (fid: string) => yieldMul[fid] ?? 1;
 
+  // Pre-compute "does this faction have any active collector?" so we
+  // don't re-scan the settlements list inside the per-settlement loop
+  // below. Capitals start with a free collector (see singlePlayerSetup);
+  // every other one has to be built explicitly via buildCollector.
+  const hasCollectorByFaction: Record<string, boolean> = {};
+  for (const s of settlements) {
+    if (s.hasCollector) hasCollectorByFaction[s.ownedBy] = true;
+  }
+
   const updated = settlements.map(s => {
     let pop = s.population;
     let lastGrowth = s.lastGrowthTick;
@@ -237,26 +264,50 @@ export function tickSettlements(
       }
     }
 
-    // Direct offload: each tick, any stockpile a settlement is holding
-    // gets swept straight into the owner's faction pool. The freighter-
-    // required ferry mechanic confused players ("I have cities but my
-    // CR isn't going up") so we cut it. Settlements just generate
-    // resources now; the stockpile field is kept (still written by the
-    // harvest cycle above) so save/load schemas don't change, but the
-    // value drains to ~0 within a tick of being written.
+    // Collector-network drain. Stockpile flows to the empire pool only
+    // if the owning faction has at least one collector somewhere — the
+    // capital starts with one, every other has to be built. Without a
+    // collector, the stockpile keeps building locally with nowhere to
+    // go. This is the strategic depth lever: each new collector
+    // widens your logistics funnel.
+    //
+    // Drain cadence is COLLECTOR_AUTO_INTERVAL ticks; per cycle we
+    // pull COLLECTOR_BASE_DRAIN_FRACTION of whatever's sitting in
+    // stockpile. The remaining fraction stays put — so a stockpile
+    // smoothly bleeds toward the pool over multiple cycles, which
+    // reads as "trickle in" on the HUD's per-tick income meter rather
+    // than "everything teleports the moment you build the collector."
+    //
+    // Future hook (next turn): a freighter on an active TradeRoute from
+    // this settlement → a collector multiplies the drain fraction by
+    // (1 + flight_tech_bonus). For now the rate is uniform.
     const hasStock = stockpile.fuel > 0 || stockpile.ore > 0 || stockpile.credits > 0 || stockpile.science > 0;
-    if (hasStock) {
-      // Lazily create a pool for owners we haven't seen yet (e.g. captured
-      // settlements whose new owner has no entry in gameState.resources).
+    if (hasStock && hasCollectorByFaction[s.ownedBy]) {
+      // Per-tick drain step = base fraction / interval. Over the full
+      // interval this delivers ~50% of the current stockpile to the
+      // pool; spread across every tick instead of bursting once per
+      // cycle so the income meter feels live.
+      const perTickFraction = COLLECTOR_BASE_DRAIN_FRACTION / COLLECTOR_AUTO_INTERVAL;
+      const move = {
+        fuel:    stockpile.fuel    * perTickFraction,
+        ore:     stockpile.ore     * perTickFraction,
+        credits: stockpile.credits * perTickFraction,
+        science: stockpile.science * perTickFraction,
+      };
       if (!factionPools[s.ownedBy]) {
         factionPools[s.ownedBy] = { fuel: 0, ore: 0, credits: 0, science: 0 };
       }
       const pool = factionPools[s.ownedBy];
-      pool.fuel    += stockpile.fuel;
-      pool.ore     += stockpile.ore;
-      pool.credits += stockpile.credits;
-      pool.science += stockpile.science;
-      stockpile = { fuel: 0, ore: 0, credits: 0, science: 0 };
+      pool.fuel    += move.fuel;
+      pool.ore     += move.ore;
+      pool.credits += move.credits;
+      pool.science += move.science;
+      stockpile = {
+        fuel:    stockpile.fuel    - move.fuel,
+        ore:     stockpile.ore     - move.ore,
+        credits: stockpile.credits - move.credits,
+        science: stockpile.science - move.science,
+      };
       dirty = true;
     }
 
@@ -290,16 +341,30 @@ export function damageSettlement(s: Settlement, dmg: number): Settlement | null 
 /**
  * Per-tick income summary for a faction.
  *
- * Every settlement's yield lands directly in the faction pool now —
- * the freighter-ferry step was scrapped — so the summary is just a
- * single rate, no delivered/stranded split. settlementYield returns
- * the full-cycle output and harvest fires once per
- * SETTLEMENT_HARVEST_INTERVAL ticks, so we divide by that to get a
+ * Yield falls into one of two buckets:
+ *   - delivered: settlements whose stockpile drains to the pool (the
+ *     faction owns at least one collector somewhere)
+ *   - stranded:  yield that's piling up at settlements with no
+ *     collector network to receive it. Surfaces as a warning so
+ *     players know they need to build a collector — high-cost, but
+ *     they're losing all this throughput until they do.
+ *
+ * settlementYield returns the full-cycle output and harvest fires once
+ * per SETTLEMENT_HARVEST_INTERVAL ticks, so we divide by that to get a
  * smooth per-tick number for the HUD.
  */
 export interface IncomePerTick {
-  perTick: { fuel: number; ore: number; credits: number; science: number };
+  delivered: { fuel: number; ore: number; credits: number; science: number };
+  stranded:  { fuel: number; ore: number; credits: number; science: number };
+  /** Aggregate of stockpile sitting at the player's settlements right
+   *  now — surfaced when stranded > 0 so the HUD can hint "you have
+   *  X credits waiting; build a collector to claim them." */
+  waiting:   { fuel: number; ore: number; credits: number; science: number };
   settlementCount: number;
+  collectorCount: number;
+  /** True if the faction has at least one collector. When false the
+   *  HUD switches into "build a collector" warning mode. */
+  hasCollector: boolean;
 }
 
 export function computeIncomePerTick(
@@ -311,18 +376,34 @@ export function computeIncomePerTick(
   _ships: Ship[],
   yieldMul: number = 1,
 ): IncomePerTick {
-  const perTick = { fuel: 0, ore: 0, credits: 0, science: 0 };
-  let settlementCount = 0;
-  for (const s of settlements) {
-    if (s.ownedBy !== factionId) continue;
-    settlementCount += 1;
+  const zero = () => ({ fuel: 0, ore: 0, credits: 0, science: 0 });
+  const out: IncomePerTick = {
+    delivered: zero(), stranded: zero(), waiting: zero(),
+    settlementCount: 0, collectorCount: 0, hasCollector: false,
+  };
+  const mine = settlements.filter(s => s.ownedBy === factionId);
+  out.hasCollector = mine.some(s => s.hasCollector);
+  for (const s of mine) {
+    out.settlementCount += 1;
+    if (s.hasCollector) out.collectorCount += 1;
     const body = bodies.find(b => b.id === s.bodyId);
     if (!body) continue;
     const y = settlementYield(s, body);
-    perTick.fuel    += (y.fuel    * yieldMul) / SETTLEMENT_HARVEST_INTERVAL;
-    perTick.ore     += (y.ore     * yieldMul) / SETTLEMENT_HARVEST_INTERVAL;
-    perTick.credits += (y.credits * yieldMul) / SETTLEMENT_HARVEST_INTERVAL;
-    perTick.science += (y.science * yieldMul) / SETTLEMENT_HARVEST_INTERVAL;
+    const perTick = {
+      fuel:    (y.fuel    * yieldMul) / SETTLEMENT_HARVEST_INTERVAL,
+      ore:     (y.ore     * yieldMul) / SETTLEMENT_HARVEST_INTERVAL,
+      credits: (y.credits * yieldMul) / SETTLEMENT_HARVEST_INTERVAL,
+      science: (y.science * yieldMul) / SETTLEMENT_HARVEST_INTERVAL,
+    };
+    const bucket = out.hasCollector ? out.delivered : out.stranded;
+    bucket.fuel    += perTick.fuel;
+    bucket.ore     += perTick.ore;
+    bucket.credits += perTick.credits;
+    bucket.science += perTick.science;
+    out.waiting.fuel    += s.stockpile.fuel;
+    out.waiting.ore     += s.stockpile.ore;
+    out.waiting.credits += s.stockpile.credits;
+    out.waiting.science += s.stockpile.science;
   }
-  return { perTick, settlementCount };
+  return out;
 }

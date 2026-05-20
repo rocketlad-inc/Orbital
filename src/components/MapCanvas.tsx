@@ -552,6 +552,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     }
 
     drawHUD(renderContext, uiState.targetSelectionMode);
+    // enabledLayers (Set) is the actual signal for "redraw when a layer
+    // toggles" — listing layerOn is redundant (it closes over the same
+    // set). The lint rule can't see through that closure.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameState, camera, uiState, simSpeed, selectedSettlementId, enabledLayers]);
 
   const handleMouseMove = useCallback(

@@ -8,6 +8,7 @@ import { BuildPanel } from './BuildPanel';
 import { bodyProductionRates } from '../game/economy';
 import {
   canHostCity, canHostStation, SETTLEMENT_DEFS, settlementYield, suggestSettlementName,
+  COLLECTOR_COST,
 } from '../game/settlements';
 import { SettlementType } from '../types';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
@@ -160,6 +161,7 @@ interface SettlementsSectionProps {
 const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
   const {
     gameState, deploySettlement, selectSettlement, selectedSettlementId,
+    buildCollector,
   } = useGameContext();
   // Non-null only in multiplayer: mirror the local deploy to the server.
   const mpActions = useMultiplayerActions();
@@ -253,6 +255,11 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
           yieldRate.ore > 0.05 ? `+${yieldRate.ore.toFixed(1)}O` : null,
           yieldRate.credits > 0.05 ? `+${yieldRate.credits.toFixed(1)}C` : null,
         ].filter(Boolean).join(' ');
+        const isMine = s.ownedBy === 'player';
+        const playerRes = gameState.resources['player'];
+        const canAffordCollector = !!playerRes
+          && playerRes.ore >= COLLECTOR_COST.ore
+          && playerRes.credits >= COLLECTOR_COST.credits;
 
         return (
           <div
@@ -261,8 +268,26 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
             onClick={() => selectSettlement(isSelected ? undefined : s.id)}
           >
             <div className="settlement-info">
-              <div className="settlement-name" style={{ color: owner?.color }}>
-                {s.type === 'city' ? '■' : '◆'} {s.name}
+              <div
+                className="settlement-name"
+                style={{ color: owner?.color, display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                <span>{s.type === 'city' ? '■' : '◆'} {s.name}</span>
+                {s.hasCollector && (
+                  // Collector chip: small badge that mirrors the body
+                  // inspector's "this is a logistics endpoint" status.
+                  // Without one of these anywhere in the empire, every
+                  // settlement stockpile is stranded.
+                  <span
+                    title="Collector — receives stockpile drains from this empire's settlements"
+                    style={{
+                      fontSize: 8, letterSpacing: '0.12em',
+                      padding: '1px 5px', borderRadius: 3,
+                      border: '1px solid #4ecdc4', color: '#4ecdc4',
+                      background: 'rgba(78, 205, 196, 0.08)',
+                    }}
+                  >◆ COLLECTOR</span>
+                )}
               </div>
               <div className="settlement-stats">
                 <span>HP {Math.round(s.hp)}/{s.maxHp}</span>
@@ -273,6 +298,28 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
                 <div className="settlement-stockpile">
                   STOCK: {Math.round(s.stockpile.fuel)}F {Math.round(s.stockpile.ore)}O {Math.round(s.stockpile.credits)}C
                 </div>
+              )}
+              {isMine && !s.hasCollector && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    buildCollector(s.id);
+                  }}
+                  disabled={!canAffordCollector}
+                  title={canAffordCollector
+                    ? `Build a collector here. Drains ${COLLECTOR_COST.ore}O / ${COLLECTOR_COST.credits}C from your pool.`
+                    : `Need ${COLLECTOR_COST.ore} ore + ${COLLECTOR_COST.credits} credits.`}
+                  style={{
+                    marginTop: 6,
+                    padding: '4px 10px',
+                    background: canAffordCollector ? 'transparent' : 'transparent',
+                    color: canAffordCollector ? '#4ecdc4' : '#5a7080',
+                    border: `1px solid ${canAffordCollector ? '#4ecdc4' : '#2a3d50'}`,
+                    borderRadius: 3,
+                    fontFamily: 'inherit', fontSize: 10, fontWeight: 600, letterSpacing: '0.08em',
+                    cursor: canAffordCollector ? 'pointer' : 'default',
+                  }}
+                >+ COLLECTOR ({COLLECTOR_COST.ore}O / {COLLECTOR_COST.credits}C)</button>
               )}
             </div>
           </div>

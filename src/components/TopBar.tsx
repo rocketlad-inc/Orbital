@@ -231,22 +231,30 @@ export const TopBar: React.FC<TopBarProps> = ({
           <ResourcePill
             label="FUEL" modifier="fuel"
             value={playerResources.fuel}
-            rate={income.perTick.fuel}
+            rate={income.delivered.fuel}
+            stranded={income.stranded.fuel}
+            hasCollector={income.hasCollector}
           />
           <ResourcePill
             label="ORE" modifier="ore"
             value={playerResources.ore}
-            rate={income.perTick.ore}
+            rate={income.delivered.ore}
+            stranded={income.stranded.ore}
+            hasCollector={income.hasCollector}
           />
           <ResourcePill
             label="CR" modifier="credits"
             value={playerResources.credits}
-            rate={income.perTick.credits}
+            rate={income.delivered.credits}
+            stranded={income.stranded.credits}
+            hasCollector={income.hasCollector}
           />
           <ResourcePill
             label="SCI" modifier="science"
             value={playerResources.science}
-            rate={income.perTick.science}
+            rate={income.delivered.science}
+            stranded={income.stranded.science}
+            hasCollector={income.hasCollector}
           />
           <div className="resource-pill resource-pill--ships">
             <div className="resource-pill__label">SHIPS</div>
@@ -428,8 +436,12 @@ const EventLogPanel: React.FC<{
 // ----------------------------------------------------------------
 // Resource pill with per-tick income subtext.
 //
-// Cities/stations deposit directly into the faction pool now — no
-// freighter-ferry step — so the rate display is a single +X/t value.
+// Two rate states:
+//   - delivered (green +X/t): settlement yield that's actually reaching
+//     the pool via your collector network
+//   - stranded (red ~X/t):    yield piling up at settlements because
+//     the empire has no collector to receive it. The capital starts
+//     with one; lose it and the trickle goes red until you rebuild.
 // ----------------------------------------------------------------
 
 const fmtRate = (n: number) => {
@@ -443,12 +455,20 @@ const ResourcePill: React.FC<{
   label: string;
   modifier: string;          // → css className suffix (fuel/ore/credits/science)
   value: number;             // current pool
-  rate: number;              // per-tick income arriving in the pool
-}> = ({ label, modifier, value, rate }) => {
+  rate: number;              // per-tick income arriving in the pool (delivered)
+  stranded: number;          // per-tick income stuck in stockpiles (no collector)
+  hasCollector: boolean;     // does the empire have any collector at all
+}> = ({ label, modifier, value, rate, stranded, hasCollector }) => {
   const hasRate = rate > 0.01;
-  const tooltip = hasRate
-    ? `${label}: ${Math.round(value)} (pool) — gaining +${fmtRate(rate)} per tick from your settlements`
-    : `${label}: ${Math.round(value)} (pool)`;
+  const isStranded = stranded > 0.01 && !hasCollector;
+  let tooltip: string;
+  if (isStranded) {
+    tooltip = `${label}: ${Math.round(value)} (pool). ${fmtRate(stranded)}/t piling up at settlements — build a collector to receive it.`;
+  } else if (hasRate) {
+    tooltip = `${label}: ${Math.round(value)} (pool) — gaining +${fmtRate(rate)} per tick via your collector network.`;
+  } else {
+    tooltip = `${label}: ${Math.round(value)} (pool)`;
+  }
   return (
     <div className={`resource-pill resource-pill--${modifier}`} title={tooltip}>
       <div className="resource-pill__label">{label}</div>
@@ -457,14 +477,21 @@ const ResourcePill: React.FC<{
         <div
           className="resource-pill__rate"
           style={{
-            fontSize: 9,
-            letterSpacing: '0.04em',
-            marginTop: 1,
-            color: '#7fffa1',
+            fontSize: 9, letterSpacing: '0.04em', marginTop: 1, color: '#7fffa1',
           }}
-        >
-          +{fmtRate(rate)}/t
-        </div>
+        >+{fmtRate(rate)}/t</div>
+      )}
+      {isStranded && (
+        // Red trickle indicator: yield is being produced but has
+        // nowhere to land. ~X/t (with tilde) reads differently from
+        // +X/t so the player can clock the difference at a glance.
+        <div
+          className="resource-pill__rate"
+          style={{
+            fontSize: 9, letterSpacing: '0.04em', marginTop: 1, color: '#ff5e5e',
+          }}
+          aria-label="stranded — build a collector"
+        >~{fmtRate(stranded)}/t</div>
       )}
     </div>
   );

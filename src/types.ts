@@ -197,6 +197,41 @@ export interface Settlement {
   stockpile: { fuel: number; ore: number; credits: number; science: number };
 
   lastHarvestTick: number;            // tick when stockpile last grew
+
+  /** Collector network endpoint. When true, this settlement can receive
+   *  freighter trade-route dropoffs AND it counts toward the empire's
+   *  "has at least one collector" gate for the background stockpile
+   *  auto-drain. Capitals start with this; everything else has to build
+   *  one (high cost, see COLLECTOR_COST in src/game/settlements.ts). */
+  hasCollector?: boolean;
+  /** Tick this collector was constructed at, surfaced in the UI as a
+   *  build date. undefined for the capital's free starting collector. */
+  collectorBuiltTick?: number;
+}
+
+/**
+ * Trade route assigned to a freighter. The freighter runs origin → dest
+ * (a settlement with a stockpile, e.g. a city) → (a collector) and back
+ * indefinitely until the player cancels it. Auto-drain still flows in
+ * the background; an active route layers a multiplier on top of that
+ * base rate scaled by Flight Dynamics tech.
+ *
+ * NOTE: data shape only this turn. The execution loop, on-map
+ * rendering, and piracy-on-death cargo drop land in the next pass —
+ * the field exists now so the rest of the code can compile against it
+ * and the lobby/load-save flows persist routes across reloads.
+ */
+export interface TradeRoute {
+  id: string;
+  ownedBy: string;          // faction running the route
+  shipId: string;           // the freighter assigned (must be ownedBy)
+  originBodyId: string;     // settlement we pick up from
+  destBodyId: string;       // collector we drop off at
+  status: 'outbound' | 'returning' | 'paused';
+  /** Cargo currently sitting in the freighter's hold. Captured by the
+   *  killer's pool if the freighter dies en route. */
+  cargo: { fuel: number; ore: number; credits: number; science: number };
+  createdAtTick: number;
 }
 
 /**
@@ -227,6 +262,10 @@ export interface GameState {
   factionTech: Record<string, FactionTechStateBase>; // factionId → tech progress
   combatLog: string[];                 // recent combat events
   lastHarvestTick: number;             // tick when resources were last collected
+  /** Active trade routes (freighter ↔ collector). Empty when no
+   *  freighter has been assigned. Persisted with the save. Currently
+   *  data-only — the execution loop lands next turn. */
+  tradeRoutes?: TradeRoute[];
   aiActivityLog?: AIActivityEntry[];   // optional — rolling log of recent AI decisions
 
   // Match shape — populated in single-player by setup, in multiplayer by

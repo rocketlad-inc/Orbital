@@ -13,6 +13,7 @@ import { logger } from '../game/logger';
 import {
   createCity, createStation, tickSettlements,
   canHostCity, canHostStation, SETTLEMENT_DEFS,
+  COLLECTOR_COST,
 } from '../game/settlements';
 import { tickMaintenance } from '../game/maintenance';
 import { TechId, TECH_DEFS, MAX_SCIENCE_PER_TICK } from '../game/techs';
@@ -192,6 +193,11 @@ interface GameContextType {
   // Settlements
   deploySettlement: (bodyId: string, type: SettlementType, name?: string) => boolean;
   damageSettlement: (settlementId: string, dmg: number) => void;
+  /** Upgrade an existing settlement with a collector. Drains the
+   *  player's ore/credits (COLLECTOR_COST). Returns true on success,
+   *  false if the settlement isn't owned by the player, already has a
+   *  collector, or the player can't afford it. */
+  buildCollector: (settlementId: string) => boolean;
   selectedSettlementId?: string;
   selectSettlement: (id: string | undefined) => void;
 
@@ -1262,6 +1268,58 @@ export function GameContextProvider({
     });
   }, []);
 
+  const buildCollector = useCallback((settlementId: string): boolean => {
+    let ok = false;
+    setGameStateInternal(prev => {
+      const target = prev.settlements.find(s => s.id === settlementId);
+      if (!target) {
+        logger.warn('ACTION', 'buildCollector: settlement not found', { settlementId });
+        return prev;
+      }
+      if (target.ownedBy !== 'player') {
+        logger.warn('ACTION', 'buildCollector: not your settlement', {
+          settlementId, owner: target.ownedBy,
+        });
+        return prev;
+      }
+      if (target.hasCollector) {
+        logger.warn('ACTION', 'buildCollector: already has a collector', { settlementId });
+        return prev;
+      }
+      const pool = prev.resources['player'];
+      if (!pool || pool.ore < COLLECTOR_COST.ore || pool.credits < COLLECTOR_COST.credits) {
+        logger.warn('ACTION', 'buildCollector: insufficient resources', {
+          settlementId,
+          need: COLLECTOR_COST,
+          have: pool ? { ore: pool.ore, credits: pool.credits } : null,
+        });
+        return prev;
+      }
+      logger.info('ACTION', `Built collector at ${target.name}`, {
+        cost: { ore: -COLLECTOR_COST.ore, credits: -COLLECTOR_COST.credits },
+      });
+      ok = true;
+      return {
+        ...prev,
+        settlements: prev.settlements.map(s =>
+          s.id === settlementId
+            ? { ...s, hasCollector: true, collectorBuiltTick: prev.currentTick }
+            : s,
+        ),
+        resources: {
+          ...prev.resources,
+          player: {
+            ...pool,
+            fuel: pool.fuel - COLLECTOR_COST.fuel,
+            ore: pool.ore - COLLECTOR_COST.ore,
+            credits: pool.credits - COLLECTOR_COST.credits,
+          },
+        },
+      };
+    });
+    return ok;
+  }, []);
+
   const startResearch = useCallback((techId: TechId) => {
     setGameStateInternal(prev => {
       const cur = prev.factionTech.player ?? { levels: {}, researching: null, progress: 0, queue: [] };
@@ -1401,7 +1459,7 @@ export function GameContextProvider({
     addManeuverNode, commitManeuverNode, deleteManeuverNode, setPendingTransfer, addQueuedTransfer,
     buildShip, cancelBuild,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
-    deploySettlement, damageSettlement,
+    deploySettlement, damageSettlement, buildCollector,
     selectedSettlementId, selectSettlement,
     startResearch, cancelResearch,
     enqueueResearch, dequeueResearch, moveResearchUp,
