@@ -19,14 +19,22 @@
 // ============================================================
 
 import { GameState } from '../types';
+import { createCircularOrbit } from '../physics/orbitalMechanics';
 
 const STORAGE_PREFIX = 'orbital.save.v1';
 const INDEX_KEY = `${STORAGE_PREFIX}.index`;
 const BLOB_KEY = (saveId: string) => `${STORAGE_PREFIX}.blob.${saveId}`;
 
 /** Bumped when the GameState shape changes incompatibly. Loaders use
- *  this to refuse blobs they can't safely deserialize. */
-export const SAVE_SCHEMA_VERSION = 1;
+ *  this to refuse blobs they can't safely deserialize.
+ *
+ *  History:
+ *    v1 — original schema with Bezier ship.transfer / pendingTransfer
+ *    v2 — Bezier→Torch migration. Ships gain optional ship.transit;
+ *         load-time migrator force-finishes any v1 in-flight Bezier
+ *         transfers (parks ship at destination body, clears the
+ *         transfer fields). See migrateV1ToV2 below. */
+export const SAVE_SCHEMA_VERSION = 2;
 
 /** Maximum size (bytes) of a single save blob. ~2MB leaves headroom
  *  for several saves on the 5MB localStorage budget. */
@@ -161,13 +169,56 @@ export function writeSave(
 }
 
 /**
+ * v1 → v2 in-place migration: force-finish any Bezier transfers.
+ *
+ * v1 saves stored in-flight transfers as ship.transfer / pendingTransfer
+ * / queuedTransfers (cubic Bezier control points + Hohmann arrival
+ * tick). The v2 engine ignores those fields and drives ships via
+ * ship.transit (torch state vector) instead.
+ *
+ * Rather than try to "re-fly" old transfers under the torch model
+ * (the math + timing don't translate cleanly), we apply the Q3 deploy
+ * decision: TELEPORT each in-flight ship into a circular parking
+ * orbit around its intended destination. Player loses a few ticks of
+ * in-flight time in exchange for a clean state-vector world.
+ *
+ * Mutates the state in place. Safe to call on any version of the
+ * GameState — ships without legacy transfer fields are untouched.
+ */
+function migrateV1ToV2(state: GameState): void {
+  for (const ship of state.ships) {
+    // Force-finish committed-in-transit (.transfer) — park at arrival.
+    if (ship.transfer) {
+      const dest = state.bodies.find(b => b.id === ship.transfer!.arrivalBodyId);
+      if (dest) {
+        const parkRadius = Math.max(dest.radius * 1.5, 6);
+        ship.orbit = createCircularOrbit(dest.id, parkRadius, state.currentTick, state.bodies);
+      }
+      ship.transfer = undefined;
+    }
+    // Drop the planned/queued bezier intents — the player will replan
+    // under the new model from the parked orbit.
+    ship.pendingTransfer = undefined;
+    ship.queuedTransfers = undefined;
+    // Strip any 'transfer' maneuver orders since they reference
+    // bezier-shaped arcs in their preOrbit/postOrbit predictions.
+    ship.orders = ship.orders.filter(o => o.type !== 'transfer');
+  }
+}
+
+/**
  * Load a save by id. Returns the deserialized GameState or null if
  * the blob is missing, corrupt, or written against an incompatible
- * schema version.
+ * schema version. Old-but-migratable schemas are auto-upgraded.
  */
 export function readSave(id: string): { state: GameState; meta: SaveMeta } | null {
   const blob = readJson<SaveBlob>(BLOB_KEY(id));
   if (!blob || !blob.state || !blob.meta) return null;
+  // v1 → v2: force-finish Bezier transfers, then proceed normally.
+  if (blob.meta.schemaVersion === 1 && SAVE_SCHEMA_VERSION >= 2) {
+    migrateV1ToV2(blob.state);
+    blob.meta.schemaVersion = 2;
+  }
   if (blob.meta.schemaVersion !== SAVE_SCHEMA_VERSION) {
     // eslint-disable-next-line no-console
     console.warn(
@@ -222,6 +273,13 @@ export async function importSave(file: File): Promise<SaveMeta> {
   catch { throw new Error('Not valid JSON.'); }
 
   if (!parsed?.meta || !parsed?.state) throw new Error('File is not an Orbital save.');
+  // Same v1 → v2 migration as readSave — exported saves can be
+  // brought forward across the Bezier→Torch boundary without losing
+  // them; in-flight transfers get force-finished.
+  if (parsed.meta.schemaVersion === 1 && SAVE_SCHEMA_VERSION >= 2) {
+    migrateV1ToV2(parsed.state);
+    parsed.meta.schemaVersion = 2;
+  }
   if (parsed.meta.schemaVersion !== SAVE_SCHEMA_VERSION) {
     throw new Error(
       `Save was written against schema v${parsed.meta.schemaVersion}, this build expects v${SAVE_SCHEMA_VERSION}.`,
