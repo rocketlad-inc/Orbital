@@ -121,6 +121,34 @@ export interface Fleet {
 
 /**
  * A starship under player or enemy control
+ *
+ * A ship is in exactly ONE of two STATES at any time, discriminated by
+ * the presence of `transit`:
+ *
+ *  • PARKED (transit == undefined): Ship is in a closed orbit around
+ *    some body. `orbit` describes that orbit; rendering and game logic
+ *    use it directly.
+ *
+ *  • IN TRANSIT (transit != undefined): Ship is on a torch trajectory
+ *    in heliocentric coordinates. `transit.pos` and `transit.vel` are
+ *    integrated each tick by the game loop. `orbit` still exists (it's
+ *    the ship's last parked orbit, kept for type-compat) but rendering
+ *    and game logic must check `transit` first via the helpers in
+ *    src/render/visibility.ts.
+ *
+ * Transitions:
+ *  - Launch (parked → transit): `transit` populated from parent body's
+ *    instantaneous (pos, vel) at the launch tick; `orbit` is left alone
+ *    as a stale snapshot.
+ *  - Arrival (transit → parked): `transit` cleared, `orbit` overwritten
+ *    with a circular parking orbit around the new parent body (default
+ *    Pe ≈ 1.5·body.radius, prograde).
+ *
+ * The legacy Bezier fields (pendingTransfer, transfer, queuedTransfers,
+ * TransferArc itself) are scheduled for removal in Phase 6 of the
+ * Bezier→Torch migration. During Phases 0–5 they coexist with `transit`
+ * so old saves and active multiplayer games can be force-finished
+ * cleanly at deploy time.
  */
 export interface Ship {
   id: string;
@@ -133,22 +161,67 @@ export interface Ship {
   hp?: number;                          // current HP (undefined = full from class def)
   fleetId?: string;                     // fleet this ship belongs to (if any)
 
-  // Orbital position
-  orbit: OrbitElements;                 // current orbit around parent body
+  // Orbital position. Always set. During transit it's a stale snapshot
+  // of the last parked orbit; rendering and game logic must check
+  // `transit` first via the visibility helpers.
+  orbit: OrbitElements;
+
+  // Torch transit state — present when the ship is mid-burn between
+  // bodies. `transit.pos` and `transit.vel` are integrated each tick by
+  // the game loop.
+  transit?: ShipTransitState;
 
   // Maneuvers
   orders: ManeuverNode[];               // planned/committed burns for this ship
 
-  // Bezier transfer state
-  pendingTransfer?: TransferArc;        // planned but not yet departed
-  transfer?: TransferArc;               // currently in transit
-  queuedTransfers?: TransferArc[];      // chained transfers waiting after current
+  // Legacy Bezier transfer state — removed in Phase 6 cleanup. Kept
+  // during migration so old saves and in-flight MP transfers can be
+  // detected and force-finished on load.
+  pendingTransfer?: TransferArc;
+  transfer?: TransferArc;
+  queuedTransfers?: TransferArc[];
 
   // Combat — tick when this ship last fired in auto-combat at its body
   lastCombatTick?: number;
   // Combat — tick when this ship last TOOK damage. Used by the renderer
   // to flash the ship marker briefly so the player sees hits land.
   lastDamagedTick?: number;
+}
+
+/**
+ * State-vector data carried by a ship during a torch transit. (pos, vel)
+ * are heliocentric world coordinates in game units; the integrator in
+ * src/physics/torchTransfer.ts advances them every game tick.
+ *
+ * `currentTransfer` is the active plan — target body, accelerations,
+ * timing. `plannedTransfer` is a not-yet-launched proposal the player
+ * is configuring (it lives here briefly during planning, then gets
+ * promoted to currentTransfer when the player clicks LAUNCH).
+ */
+export interface ShipTransitState {
+  pos: { x: number; y: number };
+  vel: { x: number; y: number };
+  currentTransfer: TorchTransferPlan;
+}
+
+/**
+ * A torch transfer plan. Mirrors the runtime `TorchTransfer` type in
+ * src/physics/torchTransfer.ts; redeclared here so types.ts doesn't
+ * depend on the physics module.
+ */
+export interface TorchTransferPlan {
+  targetBodyId: string;
+  acceleration: number;          // boost-phase g (game units / tick²)
+  brakeAcceleration: number;     // brake-phase g — equal to acceleration for v1
+  startTick: number;
+  flipTick: number;
+  arriveTick: number;
+  thrustDir: { x: number; y: number };
+  interceptPos: { x: number; y: number };
+  startPos: { x: number; y: number };
+  startVel: { x: number; y: number };
+  totalDv: number;
+  peakVelocity: number;
 }
 
 /**
@@ -165,6 +238,14 @@ export interface Faction {
   /** Tick at which the AI last ran a decision cycle for this faction.
    *  Used to throttle AI evaluations to AI_DECISION_INTERVAL. */
   lastAIDecisionTick?: number;
+
+  /** Engine acceleration in game-units / tick², used by every ship this
+   *  faction owns for torch transfers. Higher = faster trips between
+   *  bodies AND lower trip-time Δv (peak velocity scales as √(a·d)).
+   *  Defaults to DEFAULT_ENGINE_ACCEL (≈ 0.05g); intended to grow with
+   *  engine research over the game's lifespan. Stored per-faction so
+   *  research advances independently. */
+  engineG?: number;
 }
 
 /**
