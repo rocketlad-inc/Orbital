@@ -9,6 +9,7 @@ import { createCircularOrbit, bodyWorldVelocity, orbitWorldPos } from '../physic
 import {
   planTorchTransfer, stepTorchShip,
   DEFAULT_ENGINE_ACCEL,
+  TorchTransfer,
 } from '../physics/torchTransfer';
 import { getShipClass, ShipClassName, SHIP_CLASSES } from '../game/shipClasses';
 import { formFleet, splitFromFleet } from '../game/fleet';
@@ -224,10 +225,18 @@ interface GameContextType {
   addQueuedTransfer: (shipId: string, arc: TransferArc) => void;
 
   /** Launch a torch transfer for the named ship. Used by player UI and
-   *  the AI's 'transfer' intent. Returns true if the burn was created,
-   *  false if the ship is already in transit, target is invalid, or
-   *  the ship's faction's engine is broken (engineG <= 0). */
-  launchTorchTransfer: (shipId: string, targetBodyId: string) => boolean;
+   *  the AI's 'transfer' intent. Returns the launched plan on success
+   *  (so the caller can read arrival/Δv to post to the multiplayer
+   *  server) or null on failure (ship already in transit, target
+   *  invalid, engine broken). */
+  launchTorchTransfer: (shipId: string, targetBodyId: string) => import('../physics/torchTransfer').TorchTransfer | null;
+
+  /** Append a chained torch leg to the named ship. The leg is planned
+   *  from wherever the ship is predicted to be after its current
+   *  transit (and any already-queued legs) lands. Ships not currently
+   *  in transit can't enqueue chained legs — use launchTorchTransfer
+   *  to start the first one. Returns the planned leg or null. */
+  enqueueTorchTransfer: (shipId: string, targetBodyId: string) => import('../physics/torchTransfer').TorchTransfer | null;
 
   // Ship building
   buildShip: (bodyId: string, shipClass: ShipClassName, name: string) => boolean;
@@ -481,6 +490,7 @@ export function GameContextProvider({
       let pendingTransfer = ship.pendingTransfer;
       let queuedTransfers = ship.queuedTransfers ? [...ship.queuedTransfers] : [];
       let transit = ship.transit;
+      let queuedTransits = ship.queuedTransits ? [...ship.queuedTransits] : undefined;
       let changed = false;
 
       if (transit) {
@@ -509,14 +519,26 @@ export function GameContextProvider({
           }
           changed = true;
 
-          // Arrival: snap into a circular parking orbit around the
-          // target body. The orbit's parent becomes the target; Pe is
-          // set to body.radius * 1.5 for a comfortable safe altitude.
+          // Arrival: either chain into the next queued leg or park.
           if (tick >= plan.arriveTick - 1e-9) {
-            const target = bodies.find(b => b.id === plan.targetBodyId);
-            const parkRadius = target ? Math.max(target.radius * 1.5, 6) : 10;
-            orbit = createCircularOrbit(plan.targetBodyId, parkRadius, tick, bodies);
-            transit = undefined;
+            if (queuedTransits && queuedTransits.length > 0) {
+              // Chain: pop the head and continue straight into the
+              // next burn without parking. The queued plan's
+              // startPos / startVel were predicted at queue-time to
+              // match this arrival point.
+              const nextPlan = queuedTransits[0];
+              transit = {
+                pos: { x: nextPlan.startPos.x, y: nextPlan.startPos.y },
+                vel: { x: nextPlan.startVel.x, y: nextPlan.startVel.y },
+                currentTransfer: nextPlan,
+              };
+              queuedTransits = queuedTransits.length > 1 ? queuedTransits.slice(1) : undefined;
+            } else {
+              const target = bodies.find(b => b.id === plan.targetBodyId);
+              const parkRadius = target ? Math.max(target.radius * 1.5, 6) : 10;
+              orbit = createCircularOrbit(plan.targetBodyId, parkRadius, tick, bodies);
+              transit = undefined;
+            }
           }
         }
       } else if (transfer) {
@@ -580,7 +602,7 @@ export function GameContextProvider({
         // Don't store an empty queuedTransfers array — keep undefined so
         // ships without any queued legs stay clean.
         const nextQueued = queuedTransfers.length > 0 ? queuedTransfers : undefined;
-        return { ...ship, orbit, fuel, orders, transfer, pendingTransfer, queuedTransfers: nextQueued, transit };
+        return { ...ship, orbit, fuel, orders, transfer, pendingTransfer, queuedTransfers: nextQueued, transit, queuedTransits };
       }
       return ship;
     });
@@ -1508,9 +1530,10 @@ export function GameContextProvider({
 
   /** Launch a torch transfer for the named ship. Mirrors the AI's
    *  'transfer' intent path in applyIntent but invoked directly by
-   *  the player UI. Returns true on success. */
-  const launchTorchTransfer = useCallback((shipId: string, targetBodyId: string): boolean => {
-    let success = false;
+   *  the player UI. Returns the launched plan on success so the caller
+   *  can post the matching arrival tick to the MP server. */
+  const launchTorchTransfer = useCallback((shipId: string, targetBodyId: string): TorchTransfer | null => {
+    let launchedPlan: TorchTransfer | null = null;
     setGameStateInternal(prev => {
       const ship = prev.ships.find(s => s.id === shipId);
       if (!ship) return prev;
@@ -1536,7 +1559,7 @@ export function GameContextProvider({
       );
       if (!plan) return prev;
 
-      success = true;
+      launchedPlan = plan;
       return {
         ...prev,
         ships: prev.ships.map(s =>
@@ -1561,7 +1584,53 @@ export function GameContextProvider({
         ),
       };
     });
-    return success;
+    return launchedPlan;
+  }, []);
+
+  /** Append a chained torch leg. The new leg is planned starting from
+   *  the predicted arrival state of the most recent leg (current
+   *  transit's arriveTick + interceptPos + target.vel, or the last
+   *  queued leg's). Mutates ship.queuedTransits. Caller can read the
+   *  returned plan to drive an MP post. */
+  const enqueueTorchTransfer = useCallback((shipId: string, targetBodyId: string): TorchTransfer | null => {
+    let appendedPlan: TorchTransfer | null = null;
+    setGameStateInternal(prev => {
+      const ship = prev.ships.find(s => s.id === shipId);
+      if (!ship || !ship.transit) return prev;
+
+      const faction = prev.factions.find(f => f.id === ship.ownedBy);
+      const tech = prev.factionTech?.[ship.ownedBy];
+      const baseAccel = faction?.engineG ?? DEFAULT_ENGINE_ACCEL;
+      const engineAccel = baseAccel * engineGModifier(tech);
+
+      // Find the prior leg's predicted arrival state — last queued
+      // plan if any, otherwise the active transit.
+      const queue = ship.queuedTransits ?? [];
+      const priorPlan = queue.length > 0 ? queue[queue.length - 1] : ship.transit.currentTransfer;
+      const arrivalTick = priorPlan.arriveTick;
+      const priorTargetBody = prev.bodies.find(b => b.id === priorPlan.targetBodyId);
+      const arrivalVel = priorTargetBody
+        ? bodyWorldVelocity(priorTargetBody, arrivalTick, prev.bodies)
+        : { x: 0, y: 0 };
+
+      const plan = planTorchTransfer(
+        { pos: { x: priorPlan.interceptPos.x, y: priorPlan.interceptPos.y }, vel: arrivalVel },
+        targetBodyId,
+        engineAccel, engineAccel,
+        arrivalTick, prev.bodies,
+      );
+      if (!plan) return prev;
+
+      appendedPlan = plan;
+      const newQueue = [...queue, plan];
+      return {
+        ...prev,
+        ships: prev.ships.map(s =>
+          s.id === shipId ? { ...s, queuedTransits: newQueue } : s,
+        ),
+      };
+    });
+    return appendedPlan;
   }, []);
 
   // ---- Ship Building ----
@@ -2168,7 +2237,7 @@ export function GameContextProvider({
     selectShip, deselectShip, selectBody, deselectBody, hoverBody,
     setTargetSelectionMode,
     addManeuverNode, commitManeuverNode, deleteManeuverNode, setPendingTransfer, addQueuedTransfer,
-    launchTorchTransfer,
+    launchTorchTransfer, enqueueTorchTransfer,
     buildShip, cancelBuild,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
     deploySettlement, damageSettlement, buildCollector,

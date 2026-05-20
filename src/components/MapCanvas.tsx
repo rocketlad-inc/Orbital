@@ -429,9 +429,18 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         if (arrivalBody) {
           drawGhostPlanet(arrivalBody, plan.arriveTick, gameState.currentTick, renderContext);
         }
-        // Queued multi-leg transfers don't yet have a torch equivalent
-        // — they're a UI feature from the Bezier era. Phase 3 decides
-        // whether to bring chained legs back as torch plans.
+
+        // Queued chained legs — draw each as a faint dashed amber
+        // preview so the player can see the full multi-leg plan at a
+        // glance. The first queued leg starts at the current transit's
+        // arrival; second leg starts at first's arrival; etc.
+        if (ship.queuedTransits) {
+          for (const queuedPlan of ship.queuedTransits) {
+            drawTorchTrajectory(queuedPlan, gameState.bodies, renderContext, COLORS.fgDim, true);
+            const qBody = gameState.bodies.find(b => b.id === queuedPlan.targetBodyId);
+            if (qBody) drawGhostPlanet(qBody, queuedPlan.arriveTick, gameState.currentTick, renderContext);
+          }
+        }
       } else if (ship.transfer) {
         drawBezierTrajectory(ship.transfer, renderContext, COLORS.arcTransfer, false);
         drawTransitShip(ship, renderContext, isSelected);

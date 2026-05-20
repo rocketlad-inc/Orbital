@@ -17,7 +17,7 @@ export const ShipPanel: React.FC = () => {
     gameState, uiState, deselectShip, setGameState,
     commitManeuverNode, deleteManeuverNode, addManeuverNode,
     setPendingTransfer, addQueuedTransfer, setTargetSelectionMode,
-    launchTorchTransfer,
+    launchTorchTransfer, enqueueTorchTransfer,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
     createTradeRoute, cancelTradeRoute,
   } = useGameContext();
@@ -42,7 +42,31 @@ export const ShipPanel: React.FC = () => {
     if (!ship) return;
 
     transferHandlerRef.current = (targetBodyId: string) => {
-      // Apply player's Flight Dynamics tech to shrink Hohmann transit time.
+      // If the ship is ALREADY in torch transit (or has queued torch
+      // legs), this is a chain-extension — enqueue a new leg planned
+      // from the prior leg's predicted arrival. Skip the bezier
+      // planning entirely. The enqueue path also posts to MP.
+      if (ship.transit || (ship.queuedTransits && ship.queuedTransits.length > 0)) {
+        const queuedPlan = enqueueTorchTransfer(ship.id, targetBodyId);
+        if (queuedPlan && mpActions) {
+          mpActions.transfer({
+            shipId: ship.id,
+            targetBodyId,
+            scheduledT: queuedPlan.startTick,
+            arrivalT: queuedPlan.arriveTick,
+            dvPrograde: queuedPlan.totalDv / 2,  // shim: server expects scalar dv
+            fuelCost: Math.round(queuedPlan.totalDv * 10),
+          });
+        }
+        setTransferModalOpen(false);
+        setTargetSelectionMode(false);
+        return;
+      }
+
+      // Otherwise: regular Bezier-style planning (pendingTransfer +
+      // maneuver node + COMMIT button). The bezier preview survives
+      // until the FU2 cleanup commit deletes it; planning here is
+      // purely visual since commit fires the torch immediately.
       const playerTech = gameState.factionTech?.[ship.ownedBy] as FactionTechState | undefined;
       const travelTimeMul = travelTimeModifier(playerTech);
 
@@ -171,44 +195,37 @@ export const ShipPanel: React.FC = () => {
    * the server's 'committed' record.
    */
   const commitTransferLocal = (node: ManeuverNode, owningShip: typeof ship) => {
-    // Phase 3 of the Bezier→Torch migration: COMMIT now LAUNCHES the
-    // torch burn immediately rather than handing off to the legacy
-    // executor's burnTime check. The previously-planned Bezier preview
-    // (pendingTransfer) gets cleared in launchTorchTransfer.
-    //
-    // The target body is recovered from the planned bezier arc that
-    // produced this node — that arc is still around for visual preview
-    // purposes during Phase 3, but the actual flight is torch.
+    // COMMIT now LAUNCHES the torch burn immediately. The target body
+    // is recovered from the planned bezier preview arc (still rendered
+    // for visual continuity during Phase 6 cleanup); the actual MP
+    // post uses the torch-derived arrival tick from the returned plan,
+    // so client and server agree on the canonical landing time.
     const arc = owningShip.pendingTransfer;
     if (!arc) {
       // No pending arc — fall back to the legacy node-commit path so
-      // anything else (non-transfer maneuvers, queue chain heads) still
-      // works. Will be revisited in Phase 6.
+      // non-transfer maneuvers still work.
       commitManeuverNode(node.id);
       return;
     }
-    // Also drop the planning node so its 'committed' status doesn't
-    // confuse downstream code that scans orders.
     deleteManeuverNode(node.id);
-    const launched = launchTorchTransfer(owningShip.id, arc.arrivalBodyId);
-    if (!launched) {
-      // Should be rare — the UI shouldn't offer COMMIT for ships in
-      // an unlaunchable state. Surface gently.
+    const plan = launchTorchTransfer(owningShip.id, arc.arrivalBodyId);
+    if (!plan) {
       console.warn('[transfer] launchTorchTransfer rejected', { shipId: owningShip.id, target: arc.arrivalBodyId });
       return;
     }
     if (!mpActions) return;
-    // Multiplayer: post the new-style action so the server records the
-    // torch burn. The MP TransferIntent shape gets simplified in
-    // Phase 5; for now we shim by re-using the existing fields with
-    // torch-derived values.
+    // Post the torch-derived arrival to the server so its DB row, the
+    // alarm's in_transit→arrive transition, and the other clients' MP
+    // reconstruction all agree exactly. arc.departureDv stays the
+    // posted Δv so existing fuel-cost columns line up; the canonical
+    // total Δv is plan.totalDv but the MP schema doesn't expose it yet.
     mpActions.transfer({
       shipId: owningShip.id,
       targetBodyId: arc.arrivalBodyId,
-      scheduledT: gameState.currentTick,
-      arrivalT: arc.arrivalTime,
+      scheduledT: plan.startTick,
+      arrivalT: plan.arriveTick,
       dvPrograde: arc.departureDv,
-      fuelCost: Math.round(Math.abs(arc.departureDv) * 10),
+      fuelCost: Math.round(plan.totalDv * 10),
     });
   };
 

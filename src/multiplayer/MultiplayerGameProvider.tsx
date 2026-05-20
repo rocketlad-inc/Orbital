@@ -502,8 +502,12 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       plan.flipTick = (plan.startTick + plan.arriveTick) / 2;
     }
 
-    if (srvNode.status === 'in_transit') {
-      // Integrate (pos, vel) forward from launch to currentTick.
+    // Both in_transit and committed (post-Phase-3, committed always
+    // means "burn has started — alarm just hasn't ticked yet") write
+    // ship.transit. The integrated (pos, vel) is computed from launch
+    // to currentTick; for a 0-tick-elapsed committed-this-poll case
+    // the state stays at launchPos which is the right answer.
+    if (srvNode.status === 'in_transit' || srvNode.status === 'committed') {
       const state = {
         pos: { x: launchPos.x, y: launchPos.y },
         vel: { x: launchVel.x, y: launchVel.y },
@@ -511,16 +515,6 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       const dt = Math.max(0, currentTick - srvNode.scheduled_t);
       if (dt > 0) stepTorchShip(state, plan, srvNode.scheduled_t, dt, bodies);
       ship.transit = { pos: state.pos, vel: state.vel, currentTransfer: plan };
-    } else {
-      // Committed but not yet fired — keep a bezier preview around
-      // until Phase 6 swaps the planning UI to torch fully.
-      const previewArc: TransferArc | null = planBezierTransfer(
-        ship.orbit, targetLocalId, srvNode.scheduled_t - 5, bodies, 1.0,
-      );
-      if (previewArc) {
-        if (srvNode.arrival_at_tick != null) previewArc.arrivalTime = srvNode.arrival_at_tick;
-        ship.pendingTransfer = previewArc;
-      }
     }
   }
 

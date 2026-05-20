@@ -171,6 +171,14 @@ export interface Ship {
   // the game loop.
   transit?: ShipTransitState;
 
+  // Chained transfer queue. When the current transit arrives, the
+  // executor pops the head of this list and starts it. Each entry is
+  // pre-planned (its startPos / startVel match the prior leg's arrival
+  // pos/vel) so the player can see realistic ETAs and trajectories
+  // for the full chain. Empty / undefined means the ship parks at the
+  // current transit's destination.
+  queuedTransits?: TorchTransferPlan[];
+
   // Maneuvers
   orders: ManeuverNode[];               // planned/committed burns for this ship
 
