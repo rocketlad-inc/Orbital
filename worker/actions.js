@@ -75,6 +75,17 @@ async function handleCommitTransfer(req, env, ctx) {
   if (!Number.isFinite(scheduledT) || scheduledT < 0) {
     return err(400, 'bad_request', 'invalid scheduled_t');
   }
+  // Client now computes travel time as plain distance/SHIP_SPEED and
+  // sends arrival_t in the intent. Server used to re-derive this in
+  // the alarm via a Hohmann formula that gave 400+ ticks for moon
+  // transfers (μ_sun applied to moon-around-planet orbit radii) —
+  // see src/physics/bezierTransfer.ts for the new formula. Validate
+  // it's strictly after departure; fall back to a small default if
+  // the client omits it for backward compat with an older bundle.
+  const arrivalT = body.arrival_t != null ? Number(body.arrival_t) : null;
+  if (arrivalT != null && (!Number.isFinite(arrivalT) || arrivalT <= scheduledT)) {
+    return err(400, 'bad_request', 'invalid arrival_t');
+  }
   const dvP = Number(body.dv_prograde ?? 0);
   const dvN = Number(body.dv_normal ?? 0);
   const dvR = Number(body.dv_radial ?? 0);
@@ -95,12 +106,12 @@ async function handleCommitTransfer(req, env, ctx) {
     .prepare(
       `INSERT INTO game_ship_nodes
         (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
-         scheduled_t, dv_prograde, dv_normal, dv_radial, fuel_cost,
+         scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
          status, committed_at_tick)
-       VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, ?, ?, ?, 'committed',
+       VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, ?, ?, ?, ?, 'committed',
                (SELECT current_tick FROM games WHERE id = ?))`,
     )
-    .bind(nodeId, gameId, shipId, seq, targetBodyId, scheduledT, dvP, dvN, dvR, fuelCost, gameId)
+    .bind(nodeId, gameId, shipId, seq, targetBodyId, scheduledT, arrivalT, dvP, dvN, dvR, fuelCost, gameId)
     .run();
 
   return json({ node: { id: nodeId, ship_id: shipId, sequence: seq, status: 'committed', scheduled_t: scheduledT } }, { status: 201 });

@@ -620,17 +620,18 @@ export class Room {
     //     AT THE DEPARTURE BODY until 2b fires — that keeps the canvas
     //     animating the in-flight ship along its bezier arc instead of
     //     teleporting on burn.
-    const SOL_MU = 6003; // matches client GRAVITATIONAL_PARAMS.SOL
+    // arrival_at_tick is now populated at intent-recording time by
+    // handleCommitTransfer (client supplies it). The join against
+    // game_bodies orbit_radius columns is kept around in case some
+    // legacy row needs the fallback derive, but the alarm doesn't
+    // use those values anymore.
     const departures = (await this.env.DB
       .prepare(
         `SELECT n.id, n.ship_id, n.target_body_id, n.scheduled_t,
-                s.parent_body_id AS dep_body_id,
-                dep.orbit_radius AS dep_r,
-                arr.orbit_radius AS arr_r
+                n.arrival_at_tick,
+                s.parent_body_id AS dep_body_id
            FROM game_ship_nodes n
            JOIN game_ships s ON s.id = n.ship_id
-           JOIN game_bodies dep ON dep.id = s.parent_body_id
-           JOIN game_bodies arr ON arr.id = n.target_body_id
           WHERE n.game_id = ?
             AND n.status = 'committed'
             AND n.scheduled_t <= ?
@@ -641,14 +642,23 @@ export class Room {
       .all()).results ?? [];
 
     for (const d of departures) {
-      // Hohmann travel time t = π√(a³/μ), a = (r1+r2)/2.
-      const r1 = d.dep_r || 0;
-      const r2 = d.arr_r || 0;
-      const a = (r1 + r2) / 2;
-      const travelTime = a > 0 && SOL_MU > 0
-        ? Math.PI * Math.sqrt((a * a * a) / SOL_MU)
-        : 5;
-      const arrivalAtTick = Math.max(tick + 1, Math.ceil(d.scheduled_t + travelTime));
+      // arrival_at_tick is set at intent-recording time by
+      // handleCommitTransfer (the client posts a precomputed value
+      // derived from plain distance/SHIP_SPEED). Trust it. We used
+      // to derive it here via Hohmann t = π√(a³/μ), but that gave
+      // 400+ ticks for moon transfers because the formula scales
+      // with parent μ — a 5-unit hop between two Jovian moons used
+      // μ_sun and inflated the time wildly. Distance/speed is now
+      // the single source of truth.
+      //
+      // The Math.ceil + max guard ensures we never write a value
+      // that's already passed (would leave the ship stuck in_transit
+      // with no arrival).
+      const fallback = Math.ceil(d.scheduled_t + 30); // legacy: old clients without arrival_t
+      const arrivalAtTick = Math.max(
+        tick + 1,
+        Math.ceil(d.arrival_at_tick != null ? d.arrival_at_tick : fallback),
+      );
       await this.env.DB
         .prepare(
           `UPDATE game_ship_nodes

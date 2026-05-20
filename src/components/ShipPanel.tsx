@@ -182,6 +182,10 @@ export const ShipPanel: React.FC = () => {
       shipId: owningShip.id,
       targetBodyId: arc.arrivalBodyId,
       scheduledT: arc.departureTime,
+      // Pass the precomputed arrival tick so the server doesn't re-
+      // derive it via Hohmann (which was giving 400+ ticks for moon
+      // transfers because of mismatched μ vs. orbit-radius units).
+      arrivalT: arc.arrivalTime,
       dvPrograde: arc.departureDv,
       fuelCost: Math.round(Math.abs(arc.departureDv) * 10),
     });

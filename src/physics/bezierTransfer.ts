@@ -98,12 +98,46 @@ export function planBezierTransfer(
     return null;
   }
 
-  // Hohmann transfer math
-  const a_transfer = (r1 + r2) / 2;
-  const baseTravelTime = Math.PI * Math.sqrt(a_transfer * a_transfer * a_transfer / mu);
-  const travelTime = baseTravelTime * Math.max(0.25, travelTimeMultiplier);
+  // === Transit time: distance / speed, not Hohmann ===
+  //
+  // The old code used the real-world Hohmann transfer formula
+  // t = π·√(a³/μ). That works fine for planet→planet around the Sun
+  // (big μ_sun) but moon→moon transfers use the parent planet's
+  // tiny μ, so √(a³/μ) explodes — a 5-unit hop between two Jovian
+  // moons took 400+ ticks even though the ship barely travels any
+  // distance. The simulation isn't trying to be physically accurate
+  // beyond "draw a curve, follow it" — so we use plain distance/speed
+  // and the curve is whatever the Bezier control-point code draws.
+  //
+  // SHIP_SPEED was tuned against the existing design table in the
+  // header comment: Earth ↔ Jupiter at the design-target ~290 ticks
+  // implies ~700 distance units / 290 ticks ≈ 2.4 units/tick. With
+  // SHIP_SPEED=2.5, Earth↔Luna comes out to ~4 ticks, Earth↔Saturn
+  // ~520, Europa↔Ganymede ~2-5 — all consistent with player expect-
+  // ations and the broken moon case is fixed.
+  const departureTime = currentTick + 5;
+  // Position estimate at departureTime (close enough for a first
+  // pass; arrivalTime gets pinned below).
+  const p0 = bodyPosition(departureBody, departureTime, bodies);
+  const p3Estimate = bodyPosition(arrivalBody, departureTime, bodies);
+  const dx0 = p3Estimate.x - p0.x;
+  const dy0 = p3Estimate.y - p0.y;
+  const distance = Math.sqrt(dx0 * dx0 + dy0 * dy0);
 
-  // Vis-viva dv
+  const SHIP_SPEED = 2.5; // game units per tick — see comment above
+  const MIN_TRAVEL_TIME = 3; // never let a transfer resolve in <3 ticks
+  const baseTravelTime = Math.max(MIN_TRAVEL_TIME, distance / SHIP_SPEED);
+  const travelTime = baseTravelTime * Math.max(0.25, travelTimeMultiplier);
+  const arrivalTime = departureTime + travelTime;
+
+  // Fuel cost: Hohmann Δv math is retained as a *cost* proxy only
+  // (energy required to make this trip in real physics is still a
+  // sensible signal for "how expensive should fuel be?"). The
+  // computed Δv is decoupled from travel time now, which is the
+  // whole point — long transfers no longer dictate slow ships, and
+  // short transfers don't dictate cheap ships. If/when fuel becomes
+  // a tighter mechanic this should be revisited.
+  const a_transfer = (r1 + r2) / 2;
   const v1_circ = Math.sqrt(mu / r1);
   const v1_trans = Math.sqrt(mu * (2 / r1 - 1 / a_transfer));
   const departureDv = Math.abs(v1_trans - v1_circ);
@@ -111,10 +145,6 @@ export function planBezierTransfer(
   const v2_circ = Math.sqrt(mu / r2);
   const v2_trans = Math.sqrt(mu * (2 / r2 - 1 / a_transfer));
   const arrivalDv = Math.abs(v2_circ - v2_trans);
-
-  const departureTime = currentTick + 5;
-
-  const arrivalTime = departureTime + travelTime;
 
   const isLocalTransfer = departureBody.id === arrParent || arrivalBody.id === depParent;
   const isSameParentMoons = depParent === arrParent && depParent !== 'sol';

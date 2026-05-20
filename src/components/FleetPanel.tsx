@@ -130,6 +130,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           shipId: ship.id,
           targetBodyId: arc.arrivalBodyId,
           scheduledT: arc.departureTime,
+          arrivalT: arc.arrivalTime,
           dvPrograde: arc.departureDv,
           fuelCost: Math.round(Math.abs(arc.departureDv) * 10),
         });

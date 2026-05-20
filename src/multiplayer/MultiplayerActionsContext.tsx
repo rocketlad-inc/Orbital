@@ -13,6 +13,13 @@ export interface TransferIntent {
   shipId: string;
   targetBodyId: string;
   scheduledT: number;        // server tick when burn fires (== arc.departureTime)
+  /** Precomputed arrival tick (== arc.arrivalTime). Sent so the server
+   *  doesn't have to re-derive it from a Hohmann formula that was
+   *  giving bad results for moon-to-moon transfers (tiny parent μ
+   *  inflated travel time, or wrong μ inflated it to 400+ ticks).
+   *  Client travel time is now plain distance/SHIP_SPEED — see
+   *  src/physics/bezierTransfer.ts. */
+  arrivalT: number;
   dvPrograde: number;
   dvNormal?: number;
   dvRadial?: number;
@@ -126,6 +133,7 @@ export function MultiplayerActionsProvider({
         body: JSON.stringify({
           target_body_id: qualify(intent.targetBodyId),
           scheduled_t: intent.scheduledT,
+          arrival_t: intent.arrivalT,
           dv_prograde: intent.dvPrograde,
           dv_normal: intent.dvNormal ?? 0,
           dv_radial: intent.dvRadial ?? 0,
