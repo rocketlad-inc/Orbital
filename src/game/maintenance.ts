@@ -4,9 +4,18 @@
 
 import { Ship, Body, Settlement } from '../types';
 import { getShipClass, ShipClassName } from './shipClasses';
+import { rankHpMul } from './techs';
 
-/** HP restored per tick when orbiting an owned body with a city */
+/** HP restored per tick when orbiting an owned body with a city.
+ *  Cities have the heavier industrial repair docks. */
 export const REPAIR_PER_TICK_CITY = 2;
+
+/** HP restored per tick when orbiting an owned body with a station.
+ *  Stations are orbital — a docked ship sharing the same body gets
+ *  patched up by station crews/auto-fabbers. Half of city repair
+ *  because the orbital footprint is smaller, but stacks with city
+ *  repair when both are present at the same body. */
+export const REPAIR_PER_TICK_STATION = 1;
 
 /** Base fuel restored per tick when orbiting an owned body (no settlement) */
 export const REFUEL_PER_TICK_BASE = 1;
@@ -51,6 +60,9 @@ export function maintenanceRatesForShip(
     } else if (st.type === 'station') {
       hasStation = true;
       refuelRate += REFUEL_PER_TICK_STATION;
+      // Stations also patch hulls — half the rate of a city's dockyards
+      // but stacks with city repair when both share the body.
+      repairRate += REPAIR_PER_TICK_STATION;
     }
   }
   return { repairRate, refuelRate, hasCity, hasStation };
@@ -76,7 +88,10 @@ export function tickMaintenance(
     if (rates.repairRate <= 0 && rates.refuelRate <= 0) return ship;
 
     const classDef = getShipClass(ship.class as ShipClassName);
-    const maxHp = classDef.hp;
+    // Rank-boosted HP cap (combat.ts applies the same multiplier on
+    // the destruction check). A veteran cruiser at rank 25 can heal
+    // up to 1.25× its base hp here.
+    const maxHp = classDef.hp * rankHpMul(ship.rank);
     const maxFuel = classDef.fuelCapacity;
 
     const currentHp = ship.hp ?? maxHp;

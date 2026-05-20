@@ -299,7 +299,28 @@ export const ShipPanel: React.FC = () => {
       <BottomSheet open={!hideForTargeting} onClose={deselectShip} title={`Ship: ${ship.name}`}>
       <div className="ship-panel">
         <div className="panel-header">
-          <span>SHIP: {ship.name}</span>
+          <span>
+            SHIP: {ship.name}
+            {(ship.rank ?? 0) > 0 && (
+              // Veterancy chip — every kill +1 rank, +1% damage/HP.
+              // The number is what other systems also surface (combat
+              // log, threat panel) so players learn what RANK means.
+              <span
+                style={{
+                  marginLeft: 6,
+                  padding: '1px 6px',
+                  fontSize: 9,
+                  letterSpacing: '0.1em',
+                  background: 'rgba(255, 184, 77, 0.18)',
+                  border: '1px solid #ffb84d',
+                  color: '#ffb84d',
+                  borderRadius: 3,
+                  verticalAlign: 'middle',
+                }}
+                title={`Rank ${ship.rank}: +${ship.rank ?? 0}% damage, +${ship.rank ?? 0}% max HP`}
+              >RANK {ship.rank}</span>
+            )}
+          </span>
           <button className="panel-close" onClick={deselectShip}>✕</button>
         </div>
 
@@ -391,6 +412,12 @@ export const ShipPanel: React.FC = () => {
               </div>
             )}
           </div>
+
+          <ShipCombatRecord
+            rank={ship.rank ?? 0}
+            history={ship.combatHistory ?? []}
+            bodies={gameState.bodies}
+          />
 
           {ship.class === 'freighter' && ship.ownedBy === 'player' && (
             <TradeRouteSection
@@ -869,6 +896,88 @@ const FleetFormationModal: React.FC<FleetFormationModalProps> = ({ mode, fleetNa
 // freighter: fill at origin → transfer → dump at dest → return →
 // repeat until cancelled.
 // ----------------------------------------------------------------
+
+// ----------------------------------------------------------------
+// ShipCombatRecord — per-ship rank + kill log, collapsible.
+//
+// Rank summary is always visible (shows the +%/+% bonuses). The
+// kill list collapses by default and expands on click — the ledger
+// can run up to KILL_HISTORY_CAP=20 entries and we don't want to
+// dominate the panel for veteran ships. Targets are rendered with
+// their class + which body they died at, plus the tick stamp so
+// the player can correlate with their event log.
+// ----------------------------------------------------------------
+const ShipCombatRecord: React.FC<{
+  rank: number;
+  history: import('../types').ShipKillRecord[];
+  bodies: Body[];
+}> = ({ rank, history, bodies }) => {
+  const [expanded, setExpanded] = useState(false);
+  const kills = history.length;
+  const dmgBonus = rank;     // each rank = +1%
+  const hpBonus  = rank;     // each rank = +1%
+  return (
+    <div className="combat-record-section" style={{ marginTop: 10 }}>
+      <div
+        className="section-title"
+        style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+          cursor: kills > 0 ? 'pointer' : 'default',
+        }}
+        onClick={() => kills > 0 && setExpanded(v => !v)}
+        title={kills > 0 ? 'Toggle combat record' : undefined}
+      >
+        <span>COMBAT RECORD</span>
+        <span style={{ fontSize: 10, color: '#8a9fb3', letterSpacing: '0.06em' }}>
+          {kills > 0 ? `${kills} kill${kills === 1 ? '' : 's'} · ${expanded ? '▲' : '▼'}` : 'No confirmed kills.'}
+        </span>
+      </div>
+      {rank > 0 && (
+        <div className="stat-row" style={{ marginTop: 4 }}>
+          <span className="label">VETERANCY</span>
+          <span className="value" style={{ color: '#ffb84d' }}>
+            +{dmgBonus}% DMG · +{hpBonus}% HP
+          </span>
+        </div>
+      )}
+      {expanded && kills > 0 && (
+        <ul
+          style={{
+            listStyle: 'none', padding: 0, margin: '6px 0 0',
+            display: 'flex', flexDirection: 'column', gap: 4,
+          }}
+        >
+          {history.slice().reverse().map((k, i) => {
+            const body = bodies.find(b => b.id === k.atBodyId);
+            return (
+              <li
+                key={`${k.tick}-${i}`}
+                style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+                  padding: '3px 6px',
+                  background: 'rgba(255, 184, 77, 0.04)',
+                  border: '1px solid #2a3d50',
+                  borderRadius: 3,
+                  fontSize: 10,
+                }}
+              >
+                <span style={{ color: '#ff5e5e' }}>
+                  ✕ {k.targetName}
+                  <span style={{ color: '#8a9fb3', marginLeft: 4 }}>
+                    ({k.targetClass})
+                  </span>
+                </span>
+                <span style={{ color: '#8a9fb3', fontSize: 9 }}>
+                  T+{k.tick} · {body?.name ?? k.atBodyId}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+};
 
 const TradeRouteSection: React.FC<{
   ship: Ship;

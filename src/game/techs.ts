@@ -201,6 +201,21 @@ export function hpModifier(state: FactionTechState | undefined): number {
   return 1 + effectAtLevel(TECH_DEFS.armor, techLevel(state, 'armor'));
 }
 
+/** Per-rank multiplier applied to a ship's BOTH damage and max HP.
+ *  Each confirmed kill grants +1 rank → +1% damage and +1% HP. Stacks
+ *  multiplicatively with the faction-level weapons/armor tech modifiers.
+ *  A rank-25 destroyer with weapons-3 (+30%) hits for 1.25 × 1.30 = 1.625×
+ *  base — meaningful veteran reward without runaway stacking. */
+export const RANK_PER_KILL_MUL = 0.01;
+
+export function rankDamageMul(rank: number | undefined): number {
+  return 1 + RANK_PER_KILL_MUL * Math.max(0, rank ?? 0);
+}
+
+export function rankHpMul(rank: number | undefined): number {
+  return 1 + RANK_PER_KILL_MUL * Math.max(0, rank ?? 0);
+}
+
 /** Transfer fuel-cost multiplier (lower = cheaper). Clamped at 0.2 of base. */
 export function fuelCostModifier(state: FactionTechState | undefined): number {
   const reduction = effectAtLevel(TECH_DEFS.propulsion, techLevel(state, 'propulsion'));

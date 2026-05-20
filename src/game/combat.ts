@@ -2,10 +2,15 @@
 // Combat System — Auto-fire at every hostile in orbit, every N ticks
 // ============================================================
 
-import { Ship, Body, Settlement } from '../types';
+import { Ship, Body, Settlement, ShipKillRecord } from '../types';
 import { getShipClass, ShipClassName } from './shipClasses';
 import { bodyPosition, localPositionAt } from '../physics/orbitalMechanics';
 import { SETTLEMENT_DEFS, BUILDING_DEFS, buildingLevel } from './settlements';
+import { rankDamageMul, rankHpMul } from './techs';
+
+/** Maximum entries to keep on a ship's combatHistory — LRU. Older
+ *  kills age out so a long campaign doesn't bloat save blobs. */
+const KILL_HISTORY_CAP = 20;
 
 /** Ticks between auto-fire volleys. Each combatant fires every N ticks. */
 export const AUTO_COMBAT_INTERVAL = 20;
@@ -76,11 +81,22 @@ export function autoCombatAtBodies(
   // Used downstream to credit the kill to the top-damage faction so
   // piracy (cargo capture from dead freighters) goes to the right pool.
   const damageByAttacker = new Map<string, Map<string, number>>();
-  const accrueDamage = (targetId: string, attackerFid: string, dmg: number) => {
+  // Per-ship damage attribution: targetId → Map<attackerShipId, dmg>.
+  // Used to identify the single hull that lands the killing blow for
+  // rank-up + combat-history recording. Settlements that fire on ships
+  // contribute to damageByAttacker (faction-level) but NOT here —
+  // stationary defenders don't accrue veterancy.
+  const damageByAttackerShip = new Map<string, Map<string, number>>();
+  const accrueDamage = (targetId: string, attackerFid: string, dmg: number, attackerShipId?: string) => {
     damageMap.set(targetId, (damageMap.get(targetId) || 0) + dmg);
     let m = damageByAttacker.get(targetId);
     if (!m) { m = new Map(); damageByAttacker.set(targetId, m); }
     m.set(attackerFid, (m.get(attackerFid) || 0) + dmg);
+    if (attackerShipId) {
+      let sm = damageByAttackerShip.get(targetId);
+      if (!sm) { sm = new Map(); damageByAttackerShip.set(targetId, sm); }
+      sm.set(attackerShipId, (sm.get(attackerShipId) || 0) + dmg);
+    }
   };
   const shipLastCombat = new Map<string, number>();
   const settlementLastCombat = new Map<string, number>();
@@ -118,19 +134,22 @@ export function autoCombatAtBodies(
       const lastFired = attacker.lastCombatTick ?? -Infinity;
       if (tick - lastFired < AUTO_COMBAT_INTERVAL) continue;
 
+      // Veterancy bonus: each rank on the attacker ship = +1% damage.
+      // Stacks multiplicatively with the faction Weapons tech modifier.
+      const attackerRankMul = rankDamageMul(attacker.rank);
       let fired = false;
       for (const target of localShips) {
         if (target.ownedBy === attacker.ownedBy) continue;
         const targetClass = getShipClass(target.class as ShipClassName);
-        const dmg = attackerClass.damagePerTick * damageMulOf(attacker.ownedBy) * (1 - targetClass.pdcRating);
-        accrueDamage(target.id, attacker.ownedBy, dmg);
+        const dmg = attackerClass.damagePerTick * damageMulOf(attacker.ownedBy) * attackerRankMul * (1 - targetClass.pdcRating);
+        accrueDamage(target.id, attacker.ownedBy, dmg, attacker.id);
         log.push(`${attacker.name} hits ${target.name} for ${dmg.toFixed(0)}`);
         fired = true;
       }
       for (const target of localSettlements) {
         if (target.ownedBy === attacker.ownedBy) continue;
-        const dmg = attackerClass.damagePerTick * damageMulOf(attacker.ownedBy) * (1 - SETTLEMENT_DEFS[target.type].pdcRating);
-        accrueDamage(target.id, attacker.ownedBy, dmg);
+        const dmg = attackerClass.damagePerTick * damageMulOf(attacker.ownedBy) * attackerRankMul * (1 - SETTLEMENT_DEFS[target.type].pdcRating);
+        accrueDamage(target.id, attacker.ownedBy, dmg, attacker.id);
         log.push(`${attacker.name} hits ${target.name} for ${dmg.toFixed(0)}`);
         fired = true;
       }
@@ -162,13 +181,17 @@ export function autoCombatAtBodies(
     }
   }
 
-  // Determine destruction
+  // Determine destruction. Target's effective HP cap factors in their
+  // own rank (each rank +1% max HP). The persisted `ship.hp` already
+  // reflects rank growth from prior maintenance ticks, so we compare
+  // against the rank-boosted maxHp consistently.
   const destroyedShips = new Set<string>();
   const destroyedSettlements = new Set<string>();
   for (const [id, dmg] of damageMap) {
     const ship = ships.find(s => s.id === id);
     if (ship) {
-      const maxHp = getShipClass(ship.class as ShipClassName).hp;
+      const baseMaxHp = getShipClass(ship.class as ShipClassName).hp;
+      const maxHp = baseMaxHp * rankHpMul(ship.rank);
       const currentHp = ship.hp ?? maxHp;
       if (dmg >= currentHp) {
         destroyedShips.add(id);
@@ -191,7 +214,8 @@ export function autoCombatAtBodies(
       let next = s;
       const dmg = damageMap.get(s.id);
       if (dmg !== undefined) {
-        const maxHp = getShipClass(s.class as ShipClassName).hp;
+        const baseMaxHp = getShipClass(s.class as ShipClassName).hp;
+        const maxHp = baseMaxHp * rankHpMul(s.rank);
         const currentHp = s.hp ?? maxHp;
         next = { ...next, hp: Math.max(0, currentHp - dmg), lastDamagedTick: tick };
       }
@@ -216,6 +240,10 @@ export function autoCombatAtBodies(
   // Kill attribution — top-damage faction wins the credit. Ties go to
   // first-encountered (Map iteration = insertion order in JS).
   const killedShips: Array<{ shipId: string; killerFactionId: string | null }> = [];
+  // Per-ship veterancy awards: targetShipId → top-damage attacker shipId.
+  // Stationary settlements can damage ships but don't accrue veterancy;
+  // damageByAttackerShip only carries ship-vs-ship attribution.
+  const killerByVictim = new Map<string, string>();
   for (const shipId of destroyedShips) {
     const m = damageByAttacker.get(shipId);
     let killer: string | null = null;
@@ -226,7 +254,51 @@ export function autoCombatAtBodies(
       }
     }
     killedShips.push({ shipId, killerFactionId: killer });
+
+    // Find the single attacker SHIP with the highest damage on this
+    // target. Awards the rank-up + history entry to that hull.
+    const sm = damageByAttackerShip.get(shipId);
+    if (sm) {
+      let bestShip: string | null = null;
+      let bestShipDmg = -1;
+      for (const [sid, dmg] of sm) {
+        if (dmg > bestShipDmg) { bestShipDmg = dmg; bestShip = sid; }
+      }
+      if (bestShip) killerByVictim.set(shipId, bestShip);
+    }
   }
 
-  return { ships: updatedShips, settlements: updatedSettlements, log, killedShips };
+  // Apply rank-up + push combat history record to each kill-credited ship.
+  // We mutate the already-mapped updatedShips array in a second pass so
+  // the killer's rank/history changes don't fight the lastCombatTick/HP
+  // writes above. A single ship can score multiple kills on the same
+  // tick (rare but possible — destroyer in a target-rich environment).
+  const survivors = updatedShips.map(s => {
+    let mut = s;
+    for (const [victimId, killerShipId] of killerByVictim) {
+      if (killerShipId !== s.id) continue;
+      const victim = ships.find(v => v.id === victimId);
+      if (!victim) continue;
+      const victimBody = victim.transit ? null : victim.orbit.parentBodyId;
+      const newRecord: ShipKillRecord = {
+        tick,
+        targetName: victim.name,
+        targetClass: victim.class,
+        atBodyId: victimBody ?? s.orbit.parentBodyId,
+      };
+      const history = mut.combatHistory ?? [];
+      // LRU: drop oldest when at cap.
+      const nextHistory = history.length >= KILL_HISTORY_CAP
+        ? [...history.slice(history.length - KILL_HISTORY_CAP + 1), newRecord]
+        : [...history, newRecord];
+      mut = {
+        ...mut,
+        rank: (mut.rank ?? 0) + 1,
+        combatHistory: nextHistory,
+      };
+    }
+    return mut;
+  });
+
+  return { ships: survivors, settlements: updatedSettlements, log, killedShips };
 }

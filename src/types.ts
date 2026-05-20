@@ -188,6 +188,30 @@ export interface Ship {
   // Combat — tick when this ship last TOOK damage. Used by the renderer
   // to flash the ship marker briefly so the player sees hits land.
   lastDamagedTick?: number;
+
+  // Veterancy: every confirmed kill +1 rank. Each rank grants +1% damage
+  // and +1% max HP, applied via rankDamageMul/rankHpMul in src/game/techs.ts
+  // (alongside the weapons/armor tech modifiers). Defaults to 0 for fresh
+  // hulls; undefined treated as 0 for back-compat with older save blobs.
+  rank?: number;
+  // Last 20 confirmed kills (LRU — oldest dropped when full) so the
+  // ShipPanel can surface a per-ship combat record without bloating
+  // saves. Older saves migrate to an empty array on load.
+  combatHistory?: ShipKillRecord[];
+}
+
+/** One confirmed kill credited to a ship. Stored on Ship.combatHistory.
+ *  Recorded by combat.ts when a destroyed ship's top-damaging attacker
+ *  is the owning ship — see autoCombatAtBodies. */
+export interface ShipKillRecord {
+  /** Game tick when the kill resolved. */
+  tick: number;
+  /** Display name of the destroyed ship at the moment it died. */
+  targetName: string;
+  /** Class of the destroyed ship — useful for "killed 3 corvettes" stats. */
+  targetClass: 'corvette' | 'frigate' | 'destroyer' | 'freighter';
+  /** Body id where the engagement took place. */
+  atBodyId: string;
 }
 
 /**
