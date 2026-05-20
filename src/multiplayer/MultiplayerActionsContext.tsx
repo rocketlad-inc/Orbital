@@ -117,6 +117,16 @@ export interface MultiplayerActions {
    *  would survive ~1.5s before the next /state poll restored
    *  has_collector=0 and refunded the resources. */
   buildCollector: (settlementId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+
+  // --- Settlement upgrade buildings (forge/mint/lab/weapons/shipyard) ---
+  /** Queue an upgrade. Server charges the current-level cost and writes
+   *  building_order_json. Cancelled or completed orders clear that slot. */
+  queueBuilding: (settlementId: string, kind: string) =>
+    Promise<{ ok: true } | { ok: false; error: string }>;
+  /** Cancel the in-flight upgrade at a settlement; server refunds the
+   *  cost-at-queue-time and clears building_order_json. */
+  cancelBuilding: (settlementId: string) =>
+    Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 const MultiplayerActionsContext = createContext<MultiplayerActions | null>(null);
@@ -255,6 +265,24 @@ export function MultiplayerActionsProvider({
       if (res.ok) return { ok: true };
       console.warn('buildCollector failed', res.error);
       return { ok: false, error: res.error?.message ?? 'Server rejected the collector build.' };
+    },
+    async queueBuilding(settlementId, kind) {
+      const res = await apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/settlements/${encodeURIComponent(settlementId)}/buildings`,
+        { method: 'POST', body: JSON.stringify({ kind }) },
+      );
+      if (res.ok) return { ok: true };
+      console.warn('queueBuilding failed', res.error);
+      return { ok: false, error: res.error?.message ?? 'Server rejected the building queue.' };
+    },
+    async cancelBuilding(settlementId) {
+      const res = await apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/settlements/${encodeURIComponent(settlementId)}/buildings`,
+        { method: 'DELETE' },
+      );
+      if (res.ok) return { ok: true };
+      console.warn('cancelBuilding failed', res.error);
+      return { ok: false, error: res.error?.message ?? 'Server rejected the cancel.' };
     },
     });
   }, [gameId]);

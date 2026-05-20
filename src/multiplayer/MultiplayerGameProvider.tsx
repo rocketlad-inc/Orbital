@@ -108,6 +108,12 @@ interface ServerState {
      *  endpoint and the empire's stockpile drain network can use it. */
     has_collector?: number;
     collector_built_tick?: number | null;
+    /** JSON blob — per-kind building level counter,
+     *  e.g. '{"forge":2,"mint":1}'. NULL/undefined means no buildings. */
+    buildings_json?: string | null;
+    /** JSON blob — single in-flight upgrade order or NULL.
+     *  Shape: { id, settlement_id, kind, target_level, start_tick, complete_tick } */
+    building_order_json?: string | null;
   }>;
   nodes?: Array<{
     id: string;
@@ -298,6 +304,30 @@ function settlementToClient(
     // hasCollector and refund the resources the player just spent.
     hasCollector: s.has_collector === 1,
     collectorBuiltTick: s.collector_built_tick ?? undefined,
+    // Settlement upgrade buildings + the single in-flight upgrade.
+    // Both arrive as JSON blobs on the server side; defensive parse
+    // so a malformed/legacy row degrades to "no buildings" instead of
+    // tanking the deserialization for the whole settlement list.
+    buildings: (() => {
+      if (!s.buildings_json) return undefined;
+      try { return JSON.parse(s.buildings_json) ?? {}; }
+      catch { return {}; }
+    })(),
+    buildingQueue: (() => {
+      if (!s.building_order_json) return undefined;
+      try {
+        const o = JSON.parse(s.building_order_json);
+        if (!o || !o.kind) return undefined;
+        return {
+          id: o.id,
+          settlementId: o.settlement_id,
+          kind: o.kind,
+          targetLevel: o.target_level ?? 1,
+          startTick: o.start_tick ?? 0,
+          completeTick: o.complete_tick ?? 0,
+        };
+      } catch { return undefined; }
+    })(),
   };
 }
 

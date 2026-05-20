@@ -781,6 +781,151 @@ async function handleAdminGrant(req, env, ctx) {
 // Capitals already have has_collector = 1 from seedGameWorld so the
 // "already_collector" guard catches the no-op double-build attempt.
 const COLLECTOR_COST = { metal: 150, gold: 100 };
+
+// Settlement upgrade buildings — server mirror of BUILDING_DEFS in
+// src/game/settlements.ts. KEEP IN SYNC. Cost compounds geometrically
+// per current level; build time compounds mildly.
+//
+//   cost   = floor(baseCost * costScaling^currentLevel)
+//   ticks  = ceil(baseBuildTicks * buildTimeScaling^currentLevel)
+//
+// (server columns are metal/gold; client uses ore/credits — same thing,
+// different name.)
+const BUILDING_DEFS = {
+  forge:    { hostType: 'city',    base: { fuel: 0, metal: 0,  gold: 40 }, costScaling: 1.6, baseTicks: 20, timeScaling: 1.3 },
+  mint:     { hostType: 'city',    base: { fuel: 0, metal: 40, gold: 0  }, costScaling: 1.6, baseTicks: 20, timeScaling: 1.3 },
+  lab:      { hostType: 'city',    base: { fuel: 0, metal: 30, gold: 30 }, costScaling: 1.6, baseTicks: 25, timeScaling: 1.3 },
+  weapons:  { hostType: 'station', base: { fuel: 0, metal: 30, gold: 20 }, costScaling: 1.6, baseTicks: 30, timeScaling: 1.3 },
+  shipyard: { hostType: 'station', base: { fuel: 0, metal: 50, gold: 30 }, costScaling: 1.7, baseTicks: 40, timeScaling: 1.3 },
+};
+
+function buildingCostAt(kind, level) {
+  const def = BUILDING_DEFS[kind];
+  if (!def) return null;
+  const k = Math.pow(def.costScaling, level);
+  return {
+    metal: Math.ceil(def.base.metal * k),
+    gold:  Math.ceil(def.base.gold  * k),
+  };
+}
+function buildingTicksAt(kind, level) {
+  const def = BUILDING_DEFS[kind];
+  if (!def) return 0;
+  return Math.ceil(def.baseTicks * Math.pow(def.timeScaling, level));
+}
+
+async function handleQueueBuilding(req, env, ctx) {
+  const { gameId, settlementId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+  const kind = body.kind;
+  if (!BUILDING_DEFS[kind]) return err(400, 'bad_request', `invalid kind: ${kind}`);
+
+  const settlement = await env.DB
+    .prepare(
+      `SELECT id, owner_faction_id, type, buildings_json, building_order_json
+         FROM game_settlements
+        WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL`,
+    )
+    .bind(settlementId, gameId)
+    .first();
+  if (!settlement) return err(404, 'not_found', 'settlement not found');
+  if (settlement.owner_faction_id !== me.id) {
+    return err(403, 'not_owner', 'you do not own this settlement');
+  }
+  if (settlement.type !== BUILDING_DEFS[kind].hostType) {
+    return err(409, 'wrong_host', `${kind} requires a ${BUILDING_DEFS[kind].hostType}`);
+  }
+  if (settlement.building_order_json) {
+    return err(409, 'busy', 'this settlement already has an upgrade in progress');
+  }
+
+  // Current level for this kind (default 0)
+  let buildings = {};
+  if (settlement.buildings_json) {
+    try { buildings = JSON.parse(settlement.buildings_json) ?? {}; } catch { buildings = {}; }
+  }
+  const currentLevel = Number(buildings[kind] ?? 0);
+  const cost = buildingCostAt(kind, currentLevel);
+  const ticks = buildingTicksAt(kind, currentLevel);
+
+  if (me.metal < cost.metal || me.gold < cost.gold) {
+    return err(409, 'insufficient_resources',
+      `need ${cost.metal} ore + ${cost.gold} credits for ${kind} L${currentLevel + 1}`);
+  }
+
+  const game = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
+  const startTick = game?.current_tick ?? 0;
+  const completeTick = startTick + ticks;
+
+  const order = {
+    id: `${settlementId}:b${Date.now().toString(36)}`,
+    settlement_id: settlementId,
+    kind,
+    target_level: currentLevel + 1,
+    start_tick: startTick,
+    complete_tick: completeTick,
+  };
+
+  await env.DB.batch([
+    env.DB
+      .prepare('UPDATE game_settlements SET building_order_json = ? WHERE id = ?')
+      .bind(JSON.stringify(order), settlementId),
+    env.DB
+      .prepare('UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ?')
+      .bind(cost.metal, cost.gold, me.id),
+  ]);
+
+  return json({ ok: true, order, cost });
+}
+
+async function handleCancelBuilding(req, env, ctx) {
+  const { gameId, settlementId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const settlement = await env.DB
+    .prepare(
+      `SELECT id, owner_faction_id, building_order_json, buildings_json
+         FROM game_settlements
+        WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL`,
+    )
+    .bind(settlementId, gameId)
+    .first();
+  if (!settlement) return err(404, 'not_found', 'settlement not found');
+  if (settlement.owner_faction_id !== me.id) return err(403, 'not_owner', 'not your settlement');
+  if (!settlement.building_order_json) {
+    return err(409, 'no_order', 'nothing to cancel');
+  }
+
+  let order;
+  try { order = JSON.parse(settlement.building_order_json); } catch { order = null; }
+  if (!order) {
+    // Corrupt blob — just clear it without refunding.
+    await env.DB.prepare('UPDATE game_settlements SET building_order_json = NULL WHERE id = ?')
+      .bind(settlementId).run();
+    return json({ ok: true, refund: null });
+  }
+
+  // Refund cost-at-queue-time.
+  const refund = buildingCostAt(order.kind, Math.max(0, (order.target_level ?? 1) - 1));
+  await env.DB.batch([
+    env.DB
+      .prepare('UPDATE game_settlements SET building_order_json = NULL WHERE id = ?')
+      .bind(settlementId),
+    env.DB
+      .prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?')
+      .bind(refund?.metal ?? 0, refund?.gold ?? 0, me.id),
+  ]);
+  return json({ ok: true, refund });
+}
 async function handleBuildCollector(req, env, ctx) {
   const { gameId, settlementId } = ctx.params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -878,6 +1023,18 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/settlements\/(?<settlementId>[^/]+)\/collector$/,
     auth: 'required',
     handle: handleBuildCollector,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/settlements\/(?<settlementId>[^/]+)\/buildings$/,
+    auth: 'required',
+    handle: handleQueueBuilding,
+  },
+  {
+    method: 'DELETE',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/settlements\/(?<settlementId>[^/]+)\/buildings$/,
+    auth: 'required',
+    handle: handleCancelBuilding,
   },
   {
     method: 'DELETE',

@@ -335,8 +335,21 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
                   settlement={s}
                   playerRes={playerRes}
                   currentTick={gameState.currentTick}
-                  queueBuilding={queueBuilding}
-                  cancelBuilding={cancelBuilding}
+                  queueBuilding={(sid, kind) => {
+                    // Optimistic local mutation + MP server post.
+                    // Mirrors the buildCollector flow: instant UI feel
+                    // in SP; in MP the server reconciles within ~1.5s
+                    // and locks in the cost deduction so the next
+                    // /state poll doesn't refund.
+                    const ok = queueBuilding(sid, kind);
+                    if (ok && mpActions) mpActions.queueBuilding(sid, kind);
+                    return ok;
+                  }}
+                  cancelBuilding={(sid) => {
+                    const ok = cancelBuilding(sid);
+                    if (ok && mpActions) mpActions.cancelBuilding(sid);
+                    return ok;
+                  }}
                 />
               )}
             </div>

@@ -563,6 +563,37 @@ export class Room {
       console.error('phantom-ownership sweep failed', e);
     }
 
+    // 0.5. Settlement-building completions. building_order_json carries
+    //      a single in-flight upgrade per settlement; when complete_tick
+    //      hits, bump the kind in buildings_json and clear the order.
+    try {
+      const dueOrders = (await this.env.DB
+        .prepare(
+          `SELECT id, buildings_json, building_order_json
+             FROM game_settlements
+            WHERE game_id = ?
+              AND destroyed_at_tick IS NULL
+              AND building_order_json IS NOT NULL`,
+        )
+        .bind(gameId)
+        .all()).results ?? [];
+      for (const row of dueOrders) {
+        let order; try { order = JSON.parse(row.building_order_json); } catch { continue; }
+        if (!order || (order.complete_tick ?? 0) > tick) continue;
+        let buildings = {};
+        if (row.buildings_json) {
+          try { buildings = JSON.parse(row.buildings_json) ?? {}; } catch { buildings = {}; }
+        }
+        buildings[order.kind] = Math.max(buildings[order.kind] ?? 0, order.target_level ?? 1);
+        await this.env.DB
+          .prepare('UPDATE game_settlements SET buildings_json = ?, building_order_json = NULL WHERE id = ?')
+          .bind(JSON.stringify(buildings), row.id)
+          .run();
+      }
+    } catch (e) {
+      console.error('settlement-building completion pass failed', e);
+    }
+
     // 1. Build completions. Each row spawns one ship in a small circular
     //    orbit around the building body.
     const builds = (await this.env.DB
