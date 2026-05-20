@@ -10,6 +10,7 @@ import { SettlementsPanel } from './components/SettlementsPanel';
 import { FleetPanel } from './components/FleetPanel';
 import { TechPanel } from './components/TechPanel';
 import { ThreatsPanel } from './components/ThreatsPanel';
+import { LayersPanel } from './components/LayersPanel';
 import { AIActivityFeed } from './components/AIActivityFeed';
 import { MobileSimControls } from './components/MobileSimControls';
 import { SinglePlayerSetup } from './components/SinglePlayerSetup';
@@ -20,6 +21,7 @@ import { prewarmShipIcons } from './render/shipIconCache';
 import { COLORS } from './render/colors';
 import { AuthProvider, useAuth } from './multiplayer/AuthContext';
 import { TurnBasedSettingsProvider } from './state/turnBasedSettings';
+import { MapLayersProvider } from './state/mapLayers';
 import { AuthOverlay } from './multiplayer/AuthOverlay';
 import { Landing } from './components/Landing';
 import { TunablesPage } from './components/TunablesPage';
@@ -135,6 +137,7 @@ function GameUI({
       <ShipPanel />
       <BodyInspector />
       <ThreatsPanel />
+      <LayersPanel />
       {!isMultiplayer && <AIActivityFeed />}
       <MobileSimControls hideSimControls={isMultiplayer} />
     </div>
@@ -568,7 +571,9 @@ function AppRouter() {
   return (
     <AuthProvider>
       <TurnBasedSettingsProvider>
-        <AppShell />
+        <MapLayersProvider>
+          <AppShell />
+        </MapLayersProvider>
       </TurnBasedSettingsProvider>
     </AuthProvider>
   );

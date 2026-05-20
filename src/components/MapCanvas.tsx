@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
+import { useMapLayers } from '../state/mapLayers';
 import {
   clearCanvas,
   drawOrbit,
@@ -16,6 +17,9 @@ import {
   drawSettlement,
   drawShipGhost,
   drawSensorRing,
+  drawAllTransfersLayer,
+  drawEnemyTrajectoriesLayer,
+  drawOwnershipLayer,
   generateStarfield,
   drawStarfield,
   StarfieldCache,
@@ -80,17 +84,21 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   const prevDamageTickRef = useRef<Map<string, number>>(new Map());
   const damageFlashStartRef = useRef<Map<string, number>>(new Map());
 
-  // Sensor coverage ring overlay toggle (V key)
-  const [showSensorRings, setShowSensorRings] = useState(false);
+  // Map layers: source of truth lives in MapLayersProvider (state +
+  // localStorage). The old V-key sensor toggle is kept as a keyboard
+  // shortcut for the 'sensors' layer so muscle memory still works.
+  // We surface the Set as a render dep so toggling any layer triggers
+  // a redraw (isOn would otherwise be stable across toggles).
+  const { enabled: enabledLayers, isOn: layerOn, toggle: toggleLayer } = useMapLayers();
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
-      if (e.key === 'v' || e.key === 'V') setShowSensorRings(s => !s);
+      if (e.key === 'v' || e.key === 'V') toggleLayer('sensors');
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, []);
+  }, [toggleLayer]);
 
 
   // Escape key cancels target selection
@@ -247,8 +255,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     const threats = allThreats.filter(t => visibleShipIds.has(t.attackerShipId));
     const threatBodies = threatenedBodyIds(threats);
 
-    // Sensor coverage rings (V to toggle)
-    if (showSensorRings) {
+    // === Map layer overlays (toggled via LayersPanel) ===
+    // Sensor coverage rings — drawn beneath everything else so the
+    // bodies and ships are still legible on top.
+    if (layerOn('sensors')) {
       const rings = factionSensorRings(
         'player',
         gameState.ships,
@@ -259,6 +269,22 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       for (const r of rings) {
         drawSensorRing(r.pos, r.range, r.sourceType, renderContext);
       }
+    }
+    // All ship transfer arcs — faint, beneath bodies but above sensors.
+    if (layerOn('transfers')) {
+      drawAllTransfersLayer(gameState.ships, renderContext);
+    }
+    // Incoming enemy trajectories — bright red glow for arcs ending at
+    // a player body, dim warning hue for everything else. Honors fog
+    // of war via visibleShipIds (only ships your sensors actually see).
+    if (layerOn('enemyTrajectories')) {
+      drawEnemyTrajectoriesLayer(
+        gameState.ships,
+        gameState.bodies,
+        visibleShipIds,
+        'player',
+        renderContext,
+      );
     }
 
     // Draw bodies
@@ -317,6 +343,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           formationMap.set(sid, { index: i, total: list.length });
         });
       }
+    }
+
+    // Body ownership rings — drawn AFTER bodies so the halo sits around
+    // the planet circle, BEFORE ships so the ring doesn't obscure ship
+    // icons stacked at low altitude.
+    if (layerOn('ownership')) {
+      drawOwnershipLayer(gameState.bodies, renderContext);
     }
 
     // Draw ships
@@ -438,7 +471,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     }
 
     drawHUD(renderContext, uiState.targetSelectionMode);
-  }, [gameState, camera, uiState, simSpeed, selectedSettlementId, showSensorRings]);
+  }, [gameState, camera, uiState, simSpeed, selectedSettlementId, enabledLayers]);
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {

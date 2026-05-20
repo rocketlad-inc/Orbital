@@ -1452,3 +1452,93 @@ export function drawSensorRing(
   ctx.ctx.setLineDash([]);
 }
 
+// ============================================================
+// Toggleable map layers (see src/state/mapLayers.tsx)
+//
+// Each function draws one overlay across the whole map. They're
+// cheap on top of the existing per-frame draw so we can leave them
+// uncached. Players toggle layers via LayersPanel; MapCanvas calls
+// these conditionally on `useMapLayers().isOn(...)`.
+// ============================================================
+
+/**
+ * Faint Bezier arc for every ship currently in transit, colored by
+ * the owning faction. Already-selected ships keep their own (brighter)
+ * arc drawn elsewhere — this is the "at-a-glance everyone-is-going-
+ * somewhere" overview that lets players plan around traffic.
+ */
+export function drawAllTransfersLayer(
+  ships: Ship[],
+  ctx: RenderContext,
+) {
+  for (const ship of ships) {
+    if (!ship.transfer) continue;
+    const color = shipColor(ship, ctx.factions);
+    ctx.ctx.save();
+    ctx.ctx.globalAlpha = 0.45;
+    drawBezierTrajectory(ship.transfer, ctx, color, false);
+    ctx.ctx.restore();
+  }
+}
+
+/**
+ * Highlight enemy ships whose transfer ends at one of the player's
+ * bodies. The base arc gets a red glow + the arrival body gets a
+ * pulsing "INCOMING" ring. Filters by `visibleShipIds` so fog of
+ * war stays honored — you only see threats your sensors can see.
+ */
+export function drawEnemyTrajectoriesLayer(
+  ships: Ship[],
+  bodies: Body[],
+  visibleShipIds: Set<string>,
+  playerFactionId: string,
+  ctx: RenderContext,
+) {
+  for (const ship of ships) {
+    if (!ship.transfer) continue;
+    if (ship.ownedBy === playerFactionId) continue;
+    if (!visibleShipIds.has(ship.id)) continue;
+    const target = bodies.find(b => b.id === ship.transfer!.arrivalBodyId);
+    const targetOwned = target?.ownedBy === playerFactionId;
+    // Bright red + thick stroke for arcs targeting you; otherwise a
+    // dimmer warning hue so the player can still read enemy maneuvers
+    // even when they're not the target.
+    const color = targetOwned ? '#ff3030' : '#ff8a40';
+    ctx.ctx.save();
+    ctx.ctx.globalAlpha = targetOwned ? 0.85 : 0.5;
+    ctx.ctx.shadowColor = color;
+    ctx.ctx.shadowBlur = targetOwned ? 6 : 0;
+    drawBezierTrajectory(ship.transfer, ctx, color, !targetOwned);
+    ctx.ctx.restore();
+  }
+}
+
+/**
+ * Colored ring around each body indicating the owning faction.
+ * Unowned bodies get nothing. Sits just outside the body's render
+ * radius so it reads as a halo without obscuring the planet itself.
+ */
+export function drawOwnershipLayer(
+  bodies: Body[],
+  ctx: RenderContext,
+) {
+  if (!ctx.factions || ctx.factions.length === 0) return;
+  for (const body of bodies) {
+    if (!body.ownedBy) continue;
+    const faction = ctx.factions.find(f => f.id === body.ownedBy);
+    const color = faction?.color || COLORS.neutral;
+    const wp = bodyPosition(body, ctx.t, ctx.bodies);
+    const cp = worldToCanvas(wp.x, wp.y, ctx);
+    const r = Math.max(10, body.radius * ctx.camera.scale + 6);
+    ctx.ctx.save();
+    ctx.ctx.strokeStyle = withOpacity(color, 0.75);
+    ctx.ctx.lineWidth = 1.5;
+    ctx.ctx.setLineDash([4, 2]);
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(cp.x, cp.y, r, 0, Math.PI * 2);
+    ctx.ctx.stroke();
+    ctx.ctx.setLineDash([]);
+    ctx.ctx.restore();
+  }
+}
+
