@@ -31,11 +31,14 @@ export function TorchSandbox({ onExit }: { onExit?: () => void }) {
   const simSpeedRef = useRef(0);            // ticks per real second
   const cameraRef = useRef({ x: 0, y: 0, scale: 1 });
 
-  // Ship starts parked at Earth's heliocentric position (at rest in
-  // the heliocentric frame for cleaner brachistochrone math).
+  // Ship starts co-orbiting Earth — inherits Earth's orbital velocity.
+  // Without this, the brachistochrone would be a perfect straight line
+  // (no curve from sideways momentum); inheriting Earth's velocity is
+  // both realistic and produces the characteristic banana-shaped path
+  // an Expanse torchship traces between planets.
   const [ship, setShip] = useState<TorchShipState>(() => ({
     pos: { ...bodyPosition(BY_ID['earth'], 0) },
-    vel: { x: 0, y: 0 },
+    vel: { ...bodyVelocity(BY_ID['earth'], 0) },
   }));
   const shipRef = useRef(ship);
   shipRef.current = ship;
@@ -92,9 +95,12 @@ export function TorchSandbox({ onExit }: { onExit?: () => void }) {
   }, []);
 
   const resetShip = useCallback(() => {
-    setShip({ pos: { ...bodyPosition(BY_ID['earth'], 0) }, vel: { x: 0, y: 0 } });
-    setTransfer(null);
     tickRef.current = 0;
+    setShip({
+      pos: { ...bodyPosition(BY_ID['earth'], 0) },
+      vel: { ...bodyVelocity(BY_ID['earth'], 0) },
+    });
+    setTransfer(null);
     setFrameTick(t => t + 1);
   }, []);
 
@@ -201,9 +207,17 @@ export function TorchSandbox({ onExit }: { onExit?: () => void }) {
       }
     }
 
-    // Planned-but-not-launched trajectory: dashed amber
+    // Planned-but-not-launched trajectory: dashed amber. The planner
+    // stamped the ship's launch state into the plan, so sampleTrajectory
+    // can integrate forward from that — and we get a CURVED path (the
+    // ship inherits parent orbital velocity, thrust continuously re-
+    // aims) rather than a straight line.
     if (!xfer && plannedTransfer) {
-      const samples = sampleTrajectory(plannedTransfer, s, 80);
+      const startShip: TorchShipState = {
+        pos: { ...plannedTransfer.startPos },
+        vel: { ...plannedTransfer.startVel },
+      };
+      const samples = sampleTrajectory(plannedTransfer, startShip, 120);
       ctx.save();
       ctx.strokeStyle = 'rgba(255, 184, 77, 0.55)';
       ctx.lineWidth = 1.4;
@@ -238,18 +252,15 @@ export function TorchSandbox({ onExit }: { onExit?: () => void }) {
       ctx.fillText('INTERCEPT', ip.x, ip.y - targetR - 6);
     }
 
-    // Active transfer path: solid + flip marker
+    // Active transfer path: solid + flip marker. Use the launch state
+    // recorded in the plan so the integrated curve matches what the
+    // sim is actually flying.
     if (xfer) {
       const startShip: TorchShipState = {
-        pos: {
-          x: xfer.interceptPos.x - xfer.thrustDir.x *
-             (xfer.acceleration * Math.pow((xfer.arriveTick - xfer.startTick), 2) / 4),
-          y: xfer.interceptPos.y - xfer.thrustDir.y *
-             (xfer.acceleration * Math.pow((xfer.arriveTick - xfer.startTick), 2) / 4),
-        },
-        vel: { x: 0, y: 0 },
+        pos: { ...xfer.startPos },
+        vel: { ...xfer.startVel },
       };
-      const samples = sampleTrajectory(xfer, startShip, 80);
+      const samples = sampleTrajectory(xfer, startShip, 120);
       // Already-traveled portion: solid teal
       // Not-yet-traveled portion: solid amber
       const tNow = tickRef.current;
@@ -271,12 +282,14 @@ export function TorchSandbox({ onExit }: { onExit?: () => void }) {
       }
       ctx.stroke();
       // Flip marker
-      const flipPos = {
-        x: startShip.pos.x + xfer.thrustDir.x * 0.5 * xfer.acceleration *
-           Math.pow((xfer.flipTick - xfer.startTick), 2),
-        y: startShip.pos.y + xfer.thrustDir.y * 0.5 * xfer.acceleration *
-           Math.pow((xfer.flipTick - xfer.startTick), 2),
-      };
+      // Pull the flip position straight out of the integrated samples
+      // — the closed-form would assume zero initial velocity, which
+      // the inheritance from Earth's orbital motion no longer
+      // satisfies.
+      const flipFrac = (xfer.flipTick - xfer.startTick) /
+                       (xfer.arriveTick - xfer.startTick);
+      const flipIdx = Math.round(flipFrac * (samples.length - 1));
+      const flipPos = samples[flipIdx];
       const fp = worldToScreen(flipPos.x, flipPos.y);
       ctx.save();
       ctx.translate(fp.x, fp.y);

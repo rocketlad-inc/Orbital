@@ -51,6 +51,10 @@ export interface TorchTransfer {
   thrustDir: Vec2;
   /** Where in the world we are aiming (target body at arriveTick). */
   interceptPos: Vec2;
+  /** Ship state at launch — needed by the renderer to draw the
+   *  actual curved path (inheriting initial orbital velocity). */
+  startPos: Vec2;
+  startVel: Vec2;
   /** Total Δv expended over the whole burn (= a·T). */
   totalDv: number;
   /** Peak velocity (at the flip). */
@@ -109,6 +113,8 @@ export function planTorchTransfer(
     arriveTick: currentTick + T,
     thrustDir,
     interceptPos,
+    startPos: { x: ship.pos.x, y: ship.pos.y },
+    startVel: { x: ship.vel.x, y: ship.vel.y },
     totalDv: acceleration * T,
     peakVelocity: Math.sqrt(acceleration * d),
   };
@@ -116,9 +122,25 @@ export function planTorchTransfer(
 
 /**
  * Step a ship forward by `dt` ticks under the given transfer plan.
- * Mutates and returns the ship state. If `dt` would step past the
- * arrival tick, the ship's velocity is zeroed and position is snapped
- * to the intercept (Expanse-style arrival "at rest").
+ *
+ * The thrust direction is recomputed AT EACH STEP — this is what gives
+ * the trajectory its characteristic curve when the ship starts with
+ * inherited orbital velocity:
+ *
+ *  - During the acceleration phase, we aim at the (fixed-at-plan-time)
+ *    intercept point. As the ship's perpendicular drift pulls it off
+ *    the straight Earth-to-intercept line, the thrust vector pivots
+ *    to keep aimed at the destination — but the velocity built up so
+ *    far still has the sideways component, so the path bends.
+ *
+ *  - During the deceleration phase we burn TRUE RETROGRADE (opposite
+ *    the ship's actual velocity vector). This kills both the toward-
+ *    target and the residual sideways motion, so the ship arrives
+ *    at-rest in the target's frame.
+ *
+ * On arrival the ship snaps to the target's position AND velocity, so
+ * the player ends up co-orbiting the target rather than continuing on
+ * a heliocentric tangent.
  */
 export function stepTorchShip(
   ship: TorchShipState,
@@ -132,73 +154,84 @@ export function stepTorchShip(
     ship.pos.y += ship.vel.y * dt;
     return ship;
   }
-  // Step forward up to arriveTick. If we overshoot, clamp.
   const endTick = Math.min(currentTick + dt, transfer.arriveTick);
   const step = endTick - currentTick;
-  if (step <= 0) {
-    ship.pos.x = transfer.interceptPos.x;
-    ship.pos.y = transfer.interceptPos.y;
-    ship.vel.x = 0;
-    ship.vel.y = 0;
-    return ship;
-  }
-  // Phase: which side of the flip are we on at the MIDPOINT of this step?
+  if (step <= 0) return ship;
+
+  // Direction is decided at the MIDPOINT of this step so we don't lurch
+  // when the flip crosses the middle of a step.
   const midTick = currentTick + step / 2;
   const inAccelPhase = midTick < transfer.flipTick;
-  const sign = inAccelPhase ? 1 : -1;
-  const ax = sign * transfer.thrustDir.x * transfer.acceleration;
-  const ay = sign * transfer.thrustDir.y * transfer.acceleration;
-  // Velocity-Verlet
+
+  let thrustX: number, thrustY: number;
+  if (inAccelPhase) {
+    // Aim at the planned intercept. As the ship's transverse velocity
+    // pulls it sideways, this re-aim curls the trajectory back toward
+    // the target.
+    const dx = transfer.interceptPos.x - ship.pos.x;
+    const dy = transfer.interceptPos.y - ship.pos.y;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    if (d < 1e-9) { thrustX = 0; thrustY = 0; }
+    else { thrustX = dx / d; thrustY = dy / d; }
+  } else {
+    // Decel: kill the ship's velocity relative to the target.
+    const target = BY_ID[transfer.targetId];
+    const tv = bodyVelocity(target, midTick);
+    const rvx = ship.vel.x - tv.x;
+    const rvy = ship.vel.y - tv.y;
+    const rv = Math.sqrt(rvx * rvx + rvy * rvy);
+    if (rv < 1e-9) { thrustX = 0; thrustY = 0; }
+    else { thrustX = -rvx / rv; thrustY = -rvy / rv; }
+  }
+
+  const ax = thrustX * transfer.acceleration;
+  const ay = thrustY * transfer.acceleration;
   ship.pos.x += ship.vel.x * step + 0.5 * ax * step * step;
   ship.pos.y += ship.vel.y * step + 0.5 * ay * step * step;
   ship.vel.x += ax * step;
   ship.vel.y += ay * step;
-  // Did we land at arrival? Snap velocity to 0 (idealized arrival).
+
+  // Arrival: snap to the PLANNED intercept (which equals the target's
+  // position at arriveTick by construction of the planner) and match
+  // the target's velocity so we end up co-orbiting it.
   if (endTick >= transfer.arriveTick - 1e-9) {
+    const target = BY_ID[transfer.targetId];
+    const tv = bodyVelocity(target, endTick);
     ship.pos.x = transfer.interceptPos.x;
     ship.pos.y = transfer.interceptPos.y;
-    ship.vel.x = 0;
-    ship.vel.y = 0;
+    ship.vel.x = tv.x;
+    ship.vel.y = tv.y;
   }
   return ship;
 }
 
 /**
- * Sample the ship's planned trajectory at N points between startTick
- * and arriveTick. Used by the renderer to draw the path. Returns an
- * array of (tick, x, y) points along the brachistochrone.
+ * Sample the ship's planned trajectory by NUMERICALLY INTEGRATING the
+ * same step logic the simulator uses. This produces the actual curved
+ * path the ship will fly — accounting for the inherited initial
+ * velocity (e.g. Earth's orbital motion) and the continuous re-aim of
+ * the thrust vector at the intercept point. The renderer can draw this
+ * directly and it'll match the live burn.
  */
 export function sampleTrajectory(
   transfer: TorchTransfer,
   startShip: TorchShipState,
-  samples: number = 80,
+  samples: number = 120,
 ): Array<{ t: number; x: number; y: number }> {
   const out: Array<{ t: number; x: number; y: number }> = [];
   const T = transfer.arriveTick - transfer.startTick;
-  const a = transfer.acceleration;
-  const dirX = transfer.thrustDir.x;
-  const dirY = transfer.thrustDir.y;
-  const halfT = T / 2;
-  // Use the closed-form position vs. time (with the ship starting at
-  // rest in the brachistochrone frame). This dodges any drift that
-  // numerical integration might introduce in the rendered path.
-  for (let i = 0; i <= samples; i++) {
-    const tau = (i / samples) * T;
-    let dAccel: number;
-    if (tau <= halfT) {
-      dAccel = 0.5 * a * tau * tau;
-    } else {
-      // First-half displacement plus the second-half deceleration arc
-      const t2 = tau - halfT;
-      const v0 = a * halfT;            // velocity at flip
-      dAccel = 0.5 * a * halfT * halfT // distance covered in first half
-             + v0 * t2 - 0.5 * a * t2 * t2;
-    }
-    out.push({
-      t: transfer.startTick + tau,
-      x: startShip.pos.x + dirX * dAccel,
-      y: startShip.pos.y + dirY * dAccel,
-    });
+  if (T <= 0) return out;
+  const s: TorchShipState = {
+    pos: { x: startShip.pos.x, y: startShip.pos.y },
+    vel: { x: startShip.vel.x, y: startShip.vel.y },
+  };
+  out.push({ t: transfer.startTick, x: s.pos.x, y: s.pos.y });
+  let t = transfer.startTick;
+  const dt = T / samples;
+  for (let i = 0; i < samples; i++) {
+    stepTorchShip(s, transfer, t, dt);
+    t += dt;
+    out.push({ t, x: s.pos.x, y: s.pos.y });
   }
   return out;
 }

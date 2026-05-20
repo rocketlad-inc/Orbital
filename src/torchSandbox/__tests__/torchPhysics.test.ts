@@ -46,17 +46,11 @@ describe('Torch transfer planner', () => {
     expect(T).toBeCloseTo(2 * Math.sqrt(d / accel), 3);
   });
 
-  it('numerical integration arrives at the intercept point on schedule', () => {
-    const ship: TorchShipState = { pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 } };
-    const accel = 10;
-    const plan = planTorchTransfer(ship, 'sol', accel, 0);
-    // Hack: target is Sol at origin, so intercept = (0,0). Trip is
-    // d=0 → bail. Use a non-Sol target with a fake stationary position
-    // instead. Easier: just verify with sampleTrajectory below.
-    expect(plan).toBeNull();  // ship already AT the target
-
-    // Test with a 100-unit straight trip via a fake transfer.
-    const fakeStart: TorchShipState = { pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 } };
+  it('zero-velocity ship on a stationary target traces a straight line', () => {
+    // Construct a fake transfer aimed at Sol (which sits at origin and
+    // doesn't move), starting at (-125, 0) at rest, intercept at origin.
+    // This is the degenerate case where there's no transverse velocity
+    // and no target motion, so the integrated path is exactly straight.
     const fakeTransfer = {
       targetId: 'sol',
       acceleration: 5,
@@ -64,29 +58,28 @@ describe('Torch transfer planner', () => {
       flipTick: 5,
       arriveTick: 10,
       thrustDir: { x: 1, y: 0 },
-      interceptPos: { x: 125, y: 0 },  // 5 · 10²/4 = 125
+      interceptPos: { x: 0, y: 0 },
+      startPos: { x: -125, y: 0 },
+      startVel: { x: 0, y: 0 },
       totalDv: 50,
       peakVelocity: 25,
     };
-    // Step through with dt=0.1 and check arrival
-    let s: TorchShipState = { pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 } };
+    let s: TorchShipState = { pos: { x: -125, y: 0 }, vel: { x: 0, y: 0 } };
     let t = 0;
     while (t < 10) {
       const dt = Math.min(0.05, 10 - t);
       s = stepTorchShip(s, fakeTransfer, t, dt);
       t += dt;
     }
-    // Arrived close to intercept (within numerical-integration tolerance)
-    expect(s.pos.x).toBeCloseTo(125, 0);
-    expect(s.pos.y).toBeCloseTo(0, 4);
-    // Arrival velocity zeroed (snap-on-arrive)
-    expect(s.vel.x).toBeCloseTo(0, 6);
+    expect(s.pos.x).toBeCloseTo(0, 0);
+    expect(s.pos.y).toBeCloseTo(0, 4);  // never strays off the x-axis
+    expect(s.vel.x).toBeCloseTo(0, 6);  // arrived at-rest (Sol vel = 0)
     expect(s.vel.y).toBeCloseTo(0, 6);
-    void fakeStart;
   });
 
-  it('sampleTrajectory traces a monotonic path from start to intercept', () => {
-    const ship: TorchShipState = { pos: { x: 0, y: 0 }, vel: { x: 0, y: 0 } };
+  it('a ship with inherited transverse velocity traces a CURVED path', () => {
+    // Same fake transfer toward (0,0), but the ship starts with
+    // sideways velocity. The integrated path should bend.
     const fakeTransfer = {
       targetId: 'sol',
       acceleration: 5,
@@ -94,18 +87,28 @@ describe('Torch transfer planner', () => {
       flipTick: 5,
       arriveTick: 10,
       thrustDir: { x: 1, y: 0 },
-      interceptPos: { x: 125, y: 0 },
+      interceptPos: { x: 0, y: 0 },
+      startPos: { x: -125, y: 0 },
+      startVel: { x: 0, y: 4 },  // sideways
       totalDv: 50,
       peakVelocity: 25,
     };
-    const samples = sampleTrajectory(fakeTransfer, ship, 40);
-    expect(samples.length).toBe(41);
-    expect(samples[0].x).toBeCloseTo(0, 6);
-    expect(samples[samples.length - 1].x).toBeCloseTo(125, 4);
-    // Strictly increasing x (monotonic accel-then-decel cover)
-    for (let i = 1; i < samples.length; i++) {
-      expect(samples[i].x).toBeGreaterThan(samples[i - 1].x - 1e-9);
+    const samples = sampleTrajectory(
+      fakeTransfer,
+      { pos: { x: -125, y: 0 }, vel: { x: 0, y: 4 } },
+      120,
+    );
+    // Find the maximum y excursion along the path. With sideways
+    // velocity it must be > 0 — that's the curve.
+    let maxY = 0;
+    for (const p of samples) {
+      if (p.y > maxY) maxY = p.y;
     }
+    expect(maxY).toBeGreaterThan(0.5);  // visibly curved
+    // Final arrival snaps to the intercept (0, 0)
+    const last = samples[samples.length - 1];
+    expect(last.x).toBeCloseTo(0, 0);
+    expect(last.y).toBeCloseTo(0, 0);
   });
 
   it('asG / fromG are inverses', () => {
