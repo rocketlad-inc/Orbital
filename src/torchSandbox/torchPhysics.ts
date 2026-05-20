@@ -39,11 +39,19 @@ export interface Vec2 { x: number; y: number }
 export interface TorchTransfer {
   /** Target body. */
   targetId: string;
-  /** Magnitude of constant thrust acceleration (game-units / tick²). */
+  /** Boost acceleration during the first phase (game-units / tick²). */
   acceleration: number;
+  /** Brake acceleration during the deceleration phase. Can differ from
+   *  `acceleration` to model asymmetric profiles (e.g. hard kick →
+   *  gentle brake, or slow ramp → emergency brake). When equal to
+   *  `acceleration` this reduces to the symmetric brachistochrone. */
+  brakeAcceleration: number;
   /** Tick when the burn starts. */
   startTick: number;
-  /** Tick of the flip (half-way point). */
+  /** Tick of the flip — boost ends, brake begins. For symmetric burns
+   *  this is at the midpoint; for asymmetric burns the flip happens
+   *  whenever the boost phase ends, which may be NOT at the time
+   *  midpoint of the trip. */
   flipTick: number;
   /** Tick of arrival. */
   arriveTick: number;
@@ -55,9 +63,10 @@ export interface TorchTransfer {
    *  actual curved path (inheriting initial orbital velocity). */
   startPos: Vec2;
   startVel: Vec2;
-  /** Total Δv expended over the whole burn (= a·T). */
+  /** Total Δv expended over the whole burn. For an asymmetric profile
+   *  this is boost_g·t_boost + brake_g·t_brake = 2·peakVelocity. */
   totalDv: number;
-  /** Peak velocity (at the flip). */
+  /** Peak velocity at the flip. v_peak = boost_g · t_boost. */
   peakVelocity: number;
 }
 
@@ -67,36 +76,58 @@ export interface TorchShipState {
 }
 
 /**
- * Plan a brachistochrone transfer. The ship's STARTING velocity is
- * ignored for the trajectory shape (acceleration so dominates that
- * orbital velocities are noise — but we set the thrust direction once
- * the intercept converges so the trip is still computed correctly).
+ * Plan a brachistochrone transfer with independently chosen boost and
+ * brake accelerations.
  *
- * Returns null if the target is the same body as where we are (no-op)
- * or the acceleration is non-positive.
+ * Asymmetric math (in 1D, ignoring the inherited transverse velocity):
+ *   - Boost phase, duration t1 at boost_g, peak velocity v = boost_g·t1
+ *   - Brake phase, duration t2 = v / brake_g at brake_g
+ *   - Distance covered:
+ *       d = ½·boost_g·t1² + ½·brake_g·t2²
+ *         = ½·boost_g·t1²·(1 + boost_g/brake_g)
+ *   - Solving for t1: t1 = sqrt( 2·d·brake_g / (boost_g·(boost_g+brake_g)) )
+ *   - Total trip time T = t1 + t2 = t1·(1 + boost_g/brake_g)
+ *
+ * Symmetric (brake_g = boost_g) reduces to the original T = 2·sqrt(d/a).
+ *
+ * The transverse-velocity inheritance handled by the integrator still
+ * applies — this closed-form just gives the iterative intercept its
+ * trip-time estimate.
+ *
+ * Returns null if either acceleration is non-positive, the target is
+ * invalid, or the ship is already at the target.
  */
 export function planTorchTransfer(
   ship: TorchShipState,
   targetId: string,
-  acceleration: number,
+  boostAccel: number,
+  brakeAccel: number,
   currentTick: number,
   iterations: number = 20,
 ): TorchTransfer | null {
-  if (acceleration <= 0) return null;
+  if (boostAccel <= 0 || brakeAccel <= 0) return null;
   const target = BY_ID[targetId];
   if (!target) return null;
 
-  // Initial intercept guess: target position right now.
+  // Asymmetric brachistochrone trip-time given a straight-line distance.
+  const tripTime = (d: number) => {
+    const t1 = Math.sqrt(2 * d * brakeAccel / (boostAccel * (boostAccel + brakeAccel)));
+    const t2 = (boostAccel * t1) / brakeAccel;
+    return { T: t1 + t2, t1, t2 };
+  };
+
   let interceptPos = bodyPosition(target, currentTick);
   let T = 0;
+  let t1 = 0;
   for (let i = 0; i < iterations; i++) {
     const dx = interceptPos.x - ship.pos.x;
     const dy = interceptPos.y - ship.pos.y;
     const d = Math.sqrt(dx * dx + dy * dy);
     if (d < 1e-6) return null;
-    const Tnext = 2 * Math.sqrt(d / acceleration);
-    if (Math.abs(Tnext - T) < 1e-4) { T = Tnext; break; }
-    T = Tnext;
+    const tt = tripTime(d);
+    if (Math.abs(tt.T - T) < 1e-4) { T = tt.T; t1 = tt.t1; break; }
+    T = tt.T;
+    t1 = tt.t1;
     interceptPos = bodyPosition(target, currentTick + T);
   }
 
@@ -104,19 +135,21 @@ export function planTorchTransfer(
   const dy = interceptPos.y - ship.pos.y;
   const d = Math.sqrt(dx * dx + dy * dy);
   const thrustDir: Vec2 = { x: dx / d, y: dy / d };
+  const vPeak = boostAccel * t1;
 
   return {
     targetId,
-    acceleration,
+    acceleration: boostAccel,
+    brakeAcceleration: brakeAccel,
     startTick: currentTick,
-    flipTick: currentTick + T / 2,
+    flipTick: currentTick + t1,
     arriveTick: currentTick + T,
     thrustDir,
     interceptPos,
     startPos: { x: ship.pos.x, y: ship.pos.y },
     startVel: { x: ship.vel.x, y: ship.vel.y },
-    totalDv: acceleration * T,
-    peakVelocity: Math.sqrt(acceleration * d),
+    totalDv: boostAccel * t1 + brakeAccel * (T - t1),
+    peakVelocity: vPeak,
   };
 }
 
@@ -164,17 +197,18 @@ export function stepTorchShip(
   const inAccelPhase = midTick < transfer.flipTick;
 
   let thrustX: number, thrustY: number;
+  let thisAccel: number;
   if (inAccelPhase) {
-    // Aim at the planned intercept. As the ship's transverse velocity
-    // pulls it sideways, this re-aim curls the trajectory back toward
-    // the target.
+    // Boost: aim at intercept, magnitude = boost_g.
+    thisAccel = transfer.acceleration;
     const dx = transfer.interceptPos.x - ship.pos.x;
     const dy = transfer.interceptPos.y - ship.pos.y;
     const d = Math.sqrt(dx * dx + dy * dy);
     if (d < 1e-9) { thrustX = 0; thrustY = 0; }
     else { thrustX = dx / d; thrustY = dy / d; }
   } else {
-    // Decel: kill the ship's velocity relative to the target.
+    // Brake: kill velocity relative to target, magnitude = brake_g.
+    thisAccel = transfer.brakeAcceleration;
     const target = BY_ID[transfer.targetId];
     const tv = bodyVelocity(target, midTick);
     const rvx = ship.vel.x - tv.x;
@@ -184,8 +218,8 @@ export function stepTorchShip(
     else { thrustX = -rvx / rv; thrustY = -rvy / rv; }
   }
 
-  const ax = thrustX * transfer.acceleration;
-  const ay = thrustY * transfer.acceleration;
+  const ax = thrustX * thisAccel;
+  const ay = thrustY * thisAccel;
   ship.pos.x += ship.vel.x * step + 0.5 * ax * step * step;
   ship.pos.y += ship.vel.y * step + 0.5 * ay * step * step;
   ship.vel.x += ax * step;
