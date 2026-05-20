@@ -19,7 +19,6 @@ import {
   drawEnemyTrajectoriesLayer,
   drawOwnershipLayer,
   drawFogOfWarOverlay,
-  drawSensorUnionOutline,
   drawDestructionFlashes,
   generateStarfield,
   drawStarfield,
@@ -524,14 +523,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       drawDestructionFlashes(arr, renderContext);
     }
 
-    // Fog-of-war + sensor union outline. Two-step:
-    //   1. drawFogOfWarOverlay paints the dim wash with circle cutouts
-    //      where your sensors are.
-    //   2. drawSensorUnionOutline strokes a SINGLE faint line at the
-    //      outer edge of the union of all sensor circles. Per-source
-    //      concentric rings produce spaghetti the moment you have more
-    //      than one ship at a body — only the outer boundary matters.
-    // Both passes run last so they sit on top of every game element.
+    // Fog-of-war: paint the dim wash and punch holes where the
+    // player's sensors reach. The dim↔bright transition is its own
+    // boundary — no separate outline pass needed.
     {
       const rings = factionSensorRings(
         'player',
@@ -541,7 +535,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         gameState.currentTick,
       );
       drawFogOfWarOverlay(rings, renderContext);
-      drawSensorUnionOutline(rings, renderContext);
     }
 
     drawHUD(renderContext, uiState.targetSelectionMode);
