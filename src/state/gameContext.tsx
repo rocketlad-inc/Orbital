@@ -218,6 +218,12 @@ interface GameContextType {
   setPendingTransfer: (shipId: string, arc: TransferArc | undefined) => void;
   addQueuedTransfer: (shipId: string, arc: TransferArc) => void;
 
+  /** Launch a torch transfer for the named ship. Used by player UI and
+   *  the AI's 'transfer' intent. Returns true if the burn was created,
+   *  false if the ship is already in transit, target is invalid, or
+   *  the ship's faction's engine is broken (engineG <= 0). */
+  launchTorchTransfer: (shipId: string, targetBodyId: string) => boolean;
+
   // Ship building
   buildShip: (bodyId: string, shipClass: ShipClassName, name: string) => boolean;
   cancelBuild: (buildOrderId: string) => void;
@@ -1495,6 +1501,62 @@ export function GameContextProvider({
     }));
   }, []);
 
+  /** Launch a torch transfer for the named ship. Mirrors the AI's
+   *  'transfer' intent path in applyIntent but invoked directly by
+   *  the player UI. Returns true on success. */
+  const launchTorchTransfer = useCallback((shipId: string, targetBodyId: string): boolean => {
+    let success = false;
+    setGameStateInternal(prev => {
+      const ship = prev.ships.find(s => s.id === shipId);
+      if (!ship) return prev;
+      if (ship.transit || ship.transfer || ship.pendingTransfer) return prev;
+
+      const faction = prev.factions.find(f => f.id === ship.ownedBy);
+      const engineAccel = faction?.engineG ?? DEFAULT_ENGINE_ACCEL;
+      const tick = prev.currentTick;
+
+      const launchPos = orbitWorldPos(ship.orbit, tick, prev.bodies);
+      const parent = prev.bodies.find(b => b.id === ship.orbit.parentBodyId);
+      const launchVel = parent
+        ? bodyWorldVelocity(parent, tick, prev.bodies)
+        : { x: 0, y: 0 };
+
+      const plan = planTorchTransfer(
+        { pos: launchPos, vel: launchVel },
+        targetBodyId,
+        engineAccel, engineAccel,
+        tick, prev.bodies,
+      );
+      if (!plan) return prev;
+
+      success = true;
+      return {
+        ...prev,
+        ships: prev.ships.map(s =>
+          s.id === shipId
+            ? {
+                ...s,
+                transit: {
+                  pos: { x: launchPos.x, y: launchPos.y },
+                  vel: { x: launchVel.x, y: launchVel.y },
+                  currentTransfer: plan,
+                },
+                // Any legacy bezier or planned-but-not-launched state
+                // is superseded by the torch burn.
+                transfer: undefined,
+                pendingTransfer: undefined,
+                queuedTransfers: undefined,
+                // Strip any committed/planned 'transfer' maneuver nodes
+                // so they don't try to fire after the torch has launched.
+                orders: s.orders.filter(o => o.type !== 'transfer'),
+              }
+            : s,
+        ),
+      };
+    });
+    return success;
+  }, []);
+
   // ---- Ship Building ----
   const buildShip = useCallback((bodyId: string, shipClass: ShipClassName, name: string): boolean => {
     const classDef = SHIP_CLASSES[shipClass];
@@ -2099,6 +2161,7 @@ export function GameContextProvider({
     selectShip, deselectShip, selectBody, deselectBody, hoverBody,
     setTargetSelectionMode,
     addManeuverNode, commitManeuverNode, deleteManeuverNode, setPendingTransfer, addQueuedTransfer,
+    launchTorchTransfer,
     buildShip, cancelBuild,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
     deploySettlement, damageSettlement, buildCollector,

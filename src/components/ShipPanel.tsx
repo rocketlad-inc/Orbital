@@ -17,6 +17,7 @@ export const ShipPanel: React.FC = () => {
     gameState, uiState, deselectShip, setGameState,
     commitManeuverNode, deleteManeuverNode, addManeuverNode,
     setPendingTransfer, addQueuedTransfer, setTargetSelectionMode,
+    launchTorchTransfer,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
     createTradeRoute, cancelTradeRoute,
   } = useGameContext();
@@ -170,22 +171,41 @@ export const ShipPanel: React.FC = () => {
    * the server's 'committed' record.
    */
   const commitTransferLocal = (node: ManeuverNode, owningShip: typeof ship) => {
-    commitManeuverNode(node.id);
-    if (!mpActions) return;
-    // Recover the arc that produced this node from the ship's pending
-    // transfer state (set at plan time). For queued transfers the arc
-    // came from queuedTransfers — but for now we only post the head
-    // of the chain; the rest will be posted as each one becomes the
-    // committed pending transfer on subsequent arrivals.
+    // Phase 3 of the Bezier→Torch migration: COMMIT now LAUNCHES the
+    // torch burn immediately rather than handing off to the legacy
+    // executor's burnTime check. The previously-planned Bezier preview
+    // (pendingTransfer) gets cleared in launchTorchTransfer.
+    //
+    // The target body is recovered from the planned bezier arc that
+    // produced this node — that arc is still around for visual preview
+    // purposes during Phase 3, but the actual flight is torch.
     const arc = owningShip.pendingTransfer;
-    if (!arc) return;
+    if (!arc) {
+      // No pending arc — fall back to the legacy node-commit path so
+      // anything else (non-transfer maneuvers, queue chain heads) still
+      // works. Will be revisited in Phase 6.
+      commitManeuverNode(node.id);
+      return;
+    }
+    // Also drop the planning node so its 'committed' status doesn't
+    // confuse downstream code that scans orders.
+    deleteManeuverNode(node.id);
+    const launched = launchTorchTransfer(owningShip.id, arc.arrivalBodyId);
+    if (!launched) {
+      // Should be rare — the UI shouldn't offer COMMIT for ships in
+      // an unlaunchable state. Surface gently.
+      console.warn('[transfer] launchTorchTransfer rejected', { shipId: owningShip.id, target: arc.arrivalBodyId });
+      return;
+    }
+    if (!mpActions) return;
+    // Multiplayer: post the new-style action so the server records the
+    // torch burn. The MP TransferIntent shape gets simplified in
+    // Phase 5; for now we shim by re-using the existing fields with
+    // torch-derived values.
     mpActions.transfer({
       shipId: owningShip.id,
       targetBodyId: arc.arrivalBodyId,
-      scheduledT: arc.departureTime,
-      // Pass the precomputed arrival tick so the server doesn't re-
-      // derive it via Hohmann (which was giving 400+ ticks for moon
-      // transfers because of mismatched μ vs. orbit-radius units).
+      scheduledT: gameState.currentTick,
       arrivalT: arc.arrivalTime,
       dvPrograde: arc.departureDv,
       fuelCost: Math.round(Math.abs(arc.departureDv) * 10),
