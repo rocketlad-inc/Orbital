@@ -34,8 +34,12 @@ export type {
 } from './orbitalMechanics';
 
 export {
-  planBezierTransfer,
-  bezierPositionAt,
-  bezierTangentAt,
-  bezierPoints,
-} from './bezierTransfer';
+  planTorchTransfer,
+  stepTorchShip,
+  sampleTorchTrajectory,
+  DEFAULT_ENGINE_G,
+  DEFAULT_ENGINE_ACCEL,
+  asG,
+  fromG,
+} from './torchTransfer';
+export type { TorchTransfer } from './torchTransfer';

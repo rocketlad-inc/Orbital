@@ -7,10 +7,7 @@ import React, { useMemo, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { ShipIcon } from './ShipIcons';
-import { planBezierTransfer } from '../physics/bezierTransfer';
-import { travelTimeModifier, FactionTechState } from '../game/techs';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
-import { ManeuverNode } from '../types';
 import './OverviewPanel.css';
 
 interface FleetPanelProps {
@@ -22,7 +19,7 @@ type Filter = 'all' | 'player' | 'enemy';
 export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const {
     gameState, selectShip, focusBody, uiState,
-    addManeuverNode, setPendingTransfer,
+    launchTorchTransfer,
   } = useGameContext();
   const mpActions = useMultiplayerActions();
   const [filter, setFilter] = useState<Filter>('player');
@@ -40,11 +37,10 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     });
   }, [gameState.ships, filter]);
 
-  // "In transit" covers both legacy bezier (ship.transfer) and torch
-  // (ship.transit) — both render the same way in this list and the
-  // bulk-action eligibility excludes both.
-  const inTransit = useMemo(() => ships.filter(s => s.transfer || s.transit), [ships]);
-  const orbiting = useMemo(() => ships.filter(s => !s.transfer && !s.transit), [ships]);
+  // "In transit" = ships with an active torch burn. Bulk-action
+  // eligibility excludes them.
+  const inTransit = useMemo(() => ships.filter(s => s.transit), [ships]);
+  const orbiting = useMemo(() => ships.filter(s => !s.transit), [ships]);
 
   // Group orbiting ships by parent body id
   const orbitingByBody = useMemo(() => {
@@ -79,11 +75,11 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   };
 
   // Set of player ships currently eligible for a bulk transfer
-  // (orbiting, with no pending or in-flight transfer already attached).
+  // (orbiting, with no in-flight or planned transit already attached).
   const bulkEligibleIds = useMemo(() => {
     return new Set(
       gameState.ships
-        .filter(s => s.ownedBy === 'player' && !s.transfer && !s.transit && !s.pendingTransfer)
+        .filter(s => s.ownedBy === 'player' && !s.transit && !s.plannedTransit)
         .map(s => s.id)
     );
   }, [gameState.ships]);
@@ -106,36 +102,23 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     if (!target) { setBulkError('Unknown destination'); return; }
     if (visibleSelected.length === 0) { setBulkError('No eligible ships selected'); return; }
 
-    const playerTech = gameState.factionTech?.player as FactionTechState | undefined;
-    const travelMul = travelTimeModifier(playerTech);
     let issued = 0;
     for (const sid of visibleSelected) {
       const ship = gameState.ships.find(s => s.id === sid);
       if (!ship) continue;
-      const arc = planBezierTransfer(ship.orbit, bulkTarget, gameState.currentTick, gameState.bodies, travelMul);
-      if (!arc) continue;
-      const node: ManeuverNode = {
-        id: `node-${Date.now()}-${Math.random()}`,
-        shipId: ship.id,
-        type: 'transfer',
-        burnTime: arc.departureTime,
-        deltav: arc.departureDv,
-        prograde: arc.departureDv,
-        radial: 0,
-        normal: 0,
-        status: 'planned',
-        label: arc.label,
-      };
-      addManeuverNode(node);
-      setPendingTransfer(ship.id, arc);
+      // Torch model: bulk transfer fires the burn immediately — no
+      // separate plan/commit step for the fleet-level button. Players
+      // who want the preview path should use the per-ship Transfer.
+      const plan = launchTorchTransfer(ship.id, bulkTarget);
+      if (!plan) continue;
       if (mpActions) {
         mpActions.transfer({
           shipId: ship.id,
-          targetBodyId: arc.arrivalBodyId,
-          scheduledT: arc.departureTime,
-          arrivalT: arc.arrivalTime,
-          dvPrograde: arc.departureDv,
-          fuelCost: Math.round(Math.abs(arc.departureDv) * 10),
+          targetBodyId: plan.targetBodyId,
+          scheduledT: plan.startTick,
+          arrivalT: plan.arriveTick,
+          dvPrograde: plan.totalDv / 2,
+          fuelCost: Math.round(plan.totalDv * 10),
         });
       }
       issued += 1;
@@ -196,25 +179,21 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const renderShipRow = (ship: typeof ships[0]) => {
     const def = getShipClass(ship.class as ShipClassName);
     const isSelected = uiState.selectedShipId === ship.id;
-    // Pull transit metadata from torch first (post-migration), then
-    // legacy bezier. Either gives the player a target + arrival ETA.
+    // Pull transit metadata from the ship's torch transit state.
     let targetBodyId: string | undefined;
     let eta: number | null = null;
     if (ship.transit) {
       const plan = ship.transit.currentTransfer;
       targetBodyId = plan.targetBodyId;
       eta = Math.max(0, plan.arriveTick - gameState.currentTick);
-    } else if (ship.transfer) {
-      targetBodyId = ship.transfer.arrivalBodyId;
-      eta = Math.max(0, ship.transfer.arrivalTime - gameState.currentTick);
     }
     const target = targetBodyId ? gameState.bodies.find(b => b.id === targetBodyId) : null;
-    const transit = ship.transit || ship.transfer;
+    const transit = ship.transit;
 
     let statusBadge;
     if (transit) {
       statusBadge = <span className="status-badge status-badge--transit">In Transit</span>;
-    } else if (ship.pendingTransfer) {
+    } else if (ship.plannedTransit) {
       statusBadge = <span className="status-badge status-badge--planned">Planned</span>;
     } else {
       statusBadge = <span className="status-badge status-badge--orbiting">Orbiting</span>;

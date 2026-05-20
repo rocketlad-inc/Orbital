@@ -2,9 +2,8 @@
 // Map Canvas Rendering - Draw the orbital system
 // ============================================================
 
-import { Body, Ship, OrbitElements, TrajectoryArc, TransferArc, Settlement, Faction, TorchTransferPlan } from '../types';
+import { Body, Ship, OrbitElements, TrajectoryArc, Settlement, Faction, TorchTransferPlan } from '../types';
 import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt } from '../physics/orbitalMechanics';
-import { bezierPositionAt, bezierTangentAt, bezierPoints } from '../physics/bezierTransfer';
 import { sampleTorchTrajectory } from '../physics/torchTransfer';
 import { COLORS, withOpacity, lighten, darken } from './colors';
 import { getShipIconImage } from './shipIconCache';
@@ -1018,30 +1017,6 @@ export function drawSOIBoundary(
   ctx.ctx.setLineDash([]);
 }
 
-export function drawBezierTrajectory(
-  arc: TransferArc,
-  ctx: RenderContext,
-  color: string = COLORS.arcTransfer,
-  isDashed: boolean = false
-) {
-  const points = bezierPoints(arc, 80);
-  if (points.length < 2) return;
-
-  if (isDashed) ctx.ctx.setLineDash([5, 5]);
-  ctx.ctx.strokeStyle = color;
-  ctx.ctx.lineWidth = 1.5;
-  ctx.ctx.beginPath();
-
-  for (let i = 0; i < points.length; i++) {
-    const cp = worldToCanvas(points[i].x, points[i].y, ctx);
-    if (i === 0) ctx.ctx.moveTo(cp.x, cp.y);
-    else ctx.ctx.lineTo(cp.x, cp.y);
-  }
-
-  ctx.ctx.stroke();
-  ctx.ctx.setLineDash([]);
-}
-
 /**
  * Draw an integrated torch trajectory: samples the actual curved path
  * the ship will fly (including bend from inherited orbital velocity),
@@ -1113,76 +1088,9 @@ export function drawTransitShip(
   ctx: RenderContext,
   isSelected: boolean = false
 ) {
-  // Torch transit: prefer the state-vector path. Falls through to
-  // legacy Bezier rendering only if torch state isn't present (will be
-  // removed entirely in Phase 6).
+  // Torch transit: read state-vector path directly.
   if (ship.transit) {
     drawTorchTransitShip(ship, ctx, isSelected);
-    return;
-  }
-  if (!ship.transfer) return;
-
-  const worldPos = bezierPositionAt(ship.transfer, ctx.t);
-  const canvasPos = worldToCanvas(worldPos.x, worldPos.y, ctx);
-  const shipColorValue = shipColor(ship, ctx.factions);
-
-  // Bezier tangent gives the heading. Note: bezierTangentAt uses screen-y
-  // convention (positive y = up), so flip the y component for canvas angle.
-  const tangent = bezierTangentAt(ship.transfer, ctx.t);
-  const heading = Math.atan2(-tangent.y, tangent.x);
-
-  const iconSize = isSelected ? 22 : 18;
-
-  // Damage flash beneath the icon — works the same way for transit ships
-  // since combat can hit a ship on its arrival tick.
-  const flashStartT = ctx.damageFlashStart?.get(ship.id);
-  drawDamageFlash(canvasPos, iconSize / 2, flashStartT, ctx.t, ctx, 'damage');
-
-  const icon = getShipIconImage(ship.class as ShipIconClass, shipColorValue);
-  if (icon) {
-    ctx.ctx.save();
-    ctx.ctx.translate(canvasPos.x, canvasPos.y);
-    ctx.ctx.rotate(heading);
-    ctx.ctx.drawImage(icon, -iconSize / 2, -iconSize / 2, iconSize, iconSize);
-    ctx.ctx.restore();
-  } else {
-    const shipSize = isSelected ? 5 : 4;
-    ctx.ctx.fillStyle = shipColorValue;
-    ctx.ctx.beginPath();
-    ctx.ctx.arc(canvasPos.x, canvasPos.y, shipSize, 0, Math.PI * 2);
-    ctx.ctx.fill();
-    ctx.ctx.strokeStyle = shipColorValue;
-    ctx.ctx.lineWidth = 1.5;
-    ctx.ctx.beginPath();
-    ctx.ctx.moveTo(canvasPos.x, canvasPos.y);
-    ctx.ctx.lineTo(canvasPos.x + tangent.x * 10, canvasPos.y - tangent.y * 10);
-    ctx.ctx.stroke();
-  }
-
-  if (isSelected) {
-    ctx.ctx.strokeStyle = COLORS.info;
-    ctx.ctx.lineWidth = 2;
-    ctx.ctx.beginPath();
-    ctx.ctx.arc(canvasPos.x, canvasPos.y, iconSize / 2 + 4, 0, Math.PI * 2);
-    ctx.ctx.stroke();
-  }
-
-  // Ship name
-  ctx.ctx.fillStyle = isSelected ? '#ffb84d' : shipColorValue;
-  ctx.ctx.font = '9px monospace';
-  ctx.ctx.textAlign = 'left';
-  ctx.ctx.textBaseline = 'middle';
-  ctx.ctx.fillText(ship.name.split(' ')[0], canvasPos.x + iconSize / 2 + 4, canvasPos.y - 6);
-
-  // ETA label
-  if (isSelected) {
-    const eta = ship.transfer.arrivalTime - ctx.t;
-    if (eta > 0) {
-      ctx.ctx.fillStyle = COLORS.fgDim;
-      ctx.ctx.font = '8px monospace';
-      ctx.ctx.textAlign = 'left';
-      ctx.ctx.fillText(`ETA T-${eta.toFixed(0)}`, canvasPos.x + 8, canvasPos.y + 6);
-    }
   }
 }
 
@@ -1260,36 +1168,6 @@ function drawTorchTransitShip(
       ctx.ctx.fillText(`${phase} · ETA T-${eta.toFixed(0)}`, canvasPos.x + 8, canvasPos.y + 6);
     }
   }
-}
-
-export function drawDepartureMarker(
-  arc: TransferArc,
-  currentTick: number,
-  ctx: RenderContext,
-  color: string = COLORS.maneuverPlanned
-) {
-  const canvasPos = worldToCanvas(arc.p0.x, arc.p0.y, ctx);
-  const sz = 6;
-
-  ctx.ctx.save();
-  ctx.ctx.translate(canvasPos.x, canvasPos.y);
-  ctx.ctx.rotate(Math.PI / 4);
-  ctx.ctx.fillStyle = color;
-  ctx.ctx.fillRect(-sz / 2, -sz / 2, sz, sz);
-  ctx.ctx.strokeStyle = color;
-  ctx.ctx.lineWidth = 1.5;
-  ctx.ctx.strokeRect(-sz / 2, -sz / 2, sz, sz);
-  ctx.ctx.restore();
-
-  const ticksUntil = arc.departureTime - currentTick;
-  const countdown = ticksUntil > 0 ? `T-${ticksUntil.toFixed(0)}` : 'NOW';
-
-  ctx.ctx.fillStyle = color;
-  ctx.ctx.font = '10px monospace';
-  ctx.ctx.textAlign = 'left';
-  ctx.ctx.textBaseline = 'bottom';
-  ctx.ctx.fillText(`Δv ${arc.departureDv.toFixed(2)} km/s`, canvasPos.x + 10, canvasPos.y - 4);
-  ctx.ctx.fillText(countdown, canvasPos.x + 10, canvasPos.y + 10);
 }
 
 export function drawTargetHighlight(
@@ -1708,8 +1586,6 @@ export function drawAllTransfersLayer(
     ctx.ctx.globalAlpha = 0.45;
     if (ship.transit) {
       drawTorchTrajectory(ship.transit.currentTransfer, ctx.bodies, ctx, color, false);
-    } else if (ship.transfer) {
-      drawBezierTrajectory(ship.transfer, ctx, color, false);
     }
     ctx.ctx.restore();
   }
@@ -1732,11 +1608,10 @@ export function drawEnemyTrajectoriesLayer(
     if (ship.ownedBy === playerFactionId) continue;
     if (!visibleShipIds.has(ship.id)) continue;
 
-    // Find the target body — either from the torch plan or the legacy
-    // arc — to drive the "is this aimed at me?" intensity.
+    // Find the target body from the torch plan to drive the
+    // "is this aimed at me?" intensity.
     let targetBodyId: string | undefined;
     if (ship.transit) targetBodyId = ship.transit.currentTransfer.targetBodyId;
-    else if (ship.transfer) targetBodyId = ship.transfer.arrivalBodyId;
     else continue;
 
     const target = bodies.find(b => b.id === targetBodyId);
@@ -1748,8 +1623,6 @@ export function drawEnemyTrajectoriesLayer(
     ctx.ctx.shadowBlur = targetOwned ? 6 : 0;
     if (ship.transit) {
       drawTorchTrajectory(ship.transit.currentTransfer, bodies, ctx, color, !targetOwned);
-    } else if (ship.transfer) {
-      drawBezierTrajectory(ship.transfer, ctx, color, !targetOwned);
     }
     ctx.ctx.restore();
   }

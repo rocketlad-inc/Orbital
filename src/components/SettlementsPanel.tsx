@@ -27,7 +27,7 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
         const ownerFreighters = gameState.ships.filter(s =>
           s.ownedBy === settlement.ownedBy &&
           s.class === 'freighter' &&
-          !s.transfer &&
+          !s.transit &&
           s.orbit.parentBodyId === settlement.bodyId
         );
         const yields = body ? settlementYield(settlement, body) : { fuel: 0, ore: 0, credits: 0 };

@@ -145,14 +145,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // for any disappearing entries so destruction has a place to draw.
     const curShipIds = new Map<string, { x: number; y: number }>();
     for (const ship of gameState.ships) {
-      // Position now; ships in transit use the Bezier path so they
-      // explode at the spot they were on the arc when killed.
+      // Position now; ships in transit use the torch trajectory so they
+      // explode at the spot they were on the burn when killed.
       // shipWorldPosition returns null for ships whose parent body
       // has gone missing — skip those rather than crash.
-      // shipWorldPosition already handles torch (ship.transit) and
-      // legacy bezier (ship.transfer) — no need to branch here. Returns
-      // null for ships whose parent body has gone missing — skip those
-      // rather than crash.
       const pos: { x: number; y: number } | null =
         shipWorldPosition(ship, nowTick, gameState.bodies);
       if (pos) curShipIds.set(ship.id, pos);
@@ -277,9 +273,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const ship = gameState.ships.find(s => s.id === uiState.selectedShipId);
         const hovBody = gameState.bodies.find(b => b.id === uiState.hoveredBodyId);
         // Same priority chain shipWorldPosition uses: torch transit
-        // first, legacy bezier second, parked orbit last. Returns
-        // null only if parent body has gone missing — skip the
-        // hover line in that edge case.
+        // first, parked orbit second. Returns null only if parent
+        // body has gone missing — skip the hover line in that edge case.
         const shipWorldPos = ship ? shipWorldPosition(ship, gameState.currentTick, gameState.bodies) : null;
         if (ship && hovBody && shipWorldPos) {
           const bodyWorldPos = bodyPosition(hovBody, gameState.currentTick, gameState.bodies);
@@ -374,12 +369,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // and a similar orbital radius (bucketed) get fanned out perpendicular
     // to their velocity so the cluster reads as a formation instead of a
     // single overlapping dot. Only orbiting ships are bucketed — ships in
-    // transit follow their Bezier arc and don't stack.
+    // transit follow their torch trajectory and don't stack.
     const formationMap = new Map<string, { index: number; total: number }>();
     {
       const buckets = new Map<string, string[]>();
       for (const s of gameState.ships) {
-        if (s.transfer) continue;
+        if (s.transit) continue;
         if (s.ownedBy !== 'player' && !visibleShipIds.has(s.id)) continue;
         // Bucket by parent + coarse orbital radius so two ships intended to
         // share an orbit cluster together even if their semi-major axes
@@ -940,5 +935,5 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
   }
 
   ctx.ctx.textAlign = 'right';
-  ctx.ctx.fillText('v0.2.0-bezier', ctx.canvas.width - 16, ctx.canvas.height - 16);
+  ctx.ctx.fillText('v0.3.0-torch', ctx.canvas.width - 16, ctx.canvas.height - 16);
 }

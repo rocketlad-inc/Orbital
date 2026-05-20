@@ -12,7 +12,6 @@
 
 import { Body, Ship, Settlement } from '../types';
 import { bodyPosition, orbitWorldPos } from '../physics/orbitalMechanics';
-import { bezierPositionAt } from '../physics/bezierTransfer';
 import { settlementWorldPosition } from './settlements';
 
 // === Sensor ranges (world units) ============================
@@ -104,15 +103,11 @@ function isOccluded(
 /** Get the world position of a ship at the current tick.
  *
  *  Priority order matches the ship's possible states:
- *    1. Torch transit (post-migration) — read ship.transit.pos directly
- *    2. Legacy Bezier transit — interpolate the cubic curve
- *    3. Parked — evaluate ship.orbit around its parent body
- *
- *  Both transit paths coexist during the Bezier→Torch migration
- *  (Phases 0–5); legacy bezier code path is removed in Phase 6. */
+ *    1. Torch transit — read ship.transit.pos directly
+ *    2. Parked — evaluate ship.orbit around its parent body
+ */
 export function shipWorldPosition(ship: Ship, tick: number, bodies: Body[]): { x: number; y: number } {
   if (ship.transit) return { x: ship.transit.pos.x, y: ship.transit.pos.y };
-  if (ship.transfer) return bezierPositionAt(ship.transfer, tick);
   return orbitWorldPos(ship.orbit, tick, bodies);
 }
 

@@ -143,12 +143,6 @@ export interface Fleet {
  *  - Arrival (transit → parked): `transit` cleared, `orbit` overwritten
  *    with a circular parking orbit around the new parent body (default
  *    Pe ≈ 1.5·body.radius, prograde).
- *
- * The legacy Bezier fields (pendingTransfer, transfer, queuedTransfers,
- * TransferArc itself) are scheduled for removal in Phase 6 of the
- * Bezier→Torch migration. During Phases 0–5 they coexist with `transit`
- * so old saves and active multiplayer games can be force-finished
- * cleanly at deploy time.
  */
 export interface Ship {
   id: string;
@@ -188,13 +182,6 @@ export interface Ship {
 
   // Maneuvers
   orders: ManeuverNode[];               // planned/committed burns for this ship
-
-  // Legacy Bezier transfer state — removed in Phase 6 cleanup. Kept
-  // during migration so old saves and in-flight MP transfers can be
-  // detected and force-finished on load.
-  pendingTransfer?: TransferArc;
-  transfer?: TransferArc;
-  queuedTransfers?: TransferArc[];
 
   // Combat — tick when this ship last fired in auto-combat at its body
   lastCombatTick?: number;
@@ -505,25 +492,6 @@ export interface MapUIState {
   selectedBodyId?: string;
   hoveredBodyId?: string;
   targetSelectionMode?: boolean;        // true when picking a transfer target on the map
-}
-
-/**
- * Bezier transfer arc: a precomputed cubic Bezier curve between two bodies.
- * Hohmann math drives fuel cost and travel time; the curve is purely visual.
- */
-export interface TransferArc {
-  id: string;
-  departureBodyId: string;
-  arrivalBodyId: string;
-  departureTime: number;
-  arrivalTime: number;
-  departureDv: number;
-  arrivalDv: number;
-  label: string;
-  p0: { x: number; y: number };
-  p3: { x: number; y: number };
-  cp1: { x: number; y: number };
-  cp2: { x: number; y: number };
 }
 
 /**

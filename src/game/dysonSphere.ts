@@ -106,7 +106,6 @@ export function tickDysonDelivery(
     s.ownedBy === state.controllerFactionId &&
     s.class === 'freighter' &&
     !s.transit &&
-    !s.transfer &&
     s.orbit.parentBodyId === SOL_BODY_ID,
   );
   const n = freighters.length;

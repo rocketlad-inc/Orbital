@@ -229,12 +229,12 @@ export const ShipPanel: React.FC = () => {
     ? gameState.ships.filter(s => currentFleet.shipIds.includes(s.id))
     : [];
   // Eligible peers: same faction, same parent body, not in transit, not this ship, not already in *this* fleet
-  const eligiblePeers = !ship.transfer
+  const eligiblePeers = !ship.transit
     ? gameState.ships.filter(s =>
         s.id !== ship.id &&
         s.ownedBy === ship.ownedBy &&
         s.orbit.parentBodyId === ship.orbit.parentBodyId &&
-        !s.transfer &&
+        !s.transit &&
         s.fleetId !== ship.fleetId
       )
     : [];

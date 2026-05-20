@@ -26,7 +26,7 @@ import { computeSecretReveal } from '../game/secrets';
 import { checkVictory } from '../game/victory';
 import {
   createDysonSphere, tickDysonDelivery, damageDysonSphere,
-  isEligibleDysonFoundation, SOL_BODY_ID,
+  isEligibleDysonFoundation,
 } from '../game/dysonSphere';
 import { tickMaintenance } from '../game/maintenance';
 import { TechId, TECH_DEFS, TECH_MAX_LEVEL, MAX_SCIENCE_PER_TICK, engineGModifier } from '../game/techs';
@@ -988,7 +988,7 @@ export function GameContextProvider({
       // Pre-compute ships-by-body so we can do a single scan.
       const shipsByBody = new Map<string, typeof updatedShips>();
       for (const sh of updatedShips) {
-        if (sh.transfer) continue;
+        if (sh.transit) continue;
         const bid = sh.orbit.parentBodyId;
         let arr = shipsByBody.get(bid);
         if (!arr) { arr = []; shipsByBody.set(bid, arr); }

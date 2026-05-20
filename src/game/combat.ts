@@ -5,15 +5,14 @@
 import { Ship, Body, Settlement } from '../types';
 import { getShipClass, ShipClassName } from './shipClasses';
 import { bodyPosition, localPositionAt } from '../physics/orbitalMechanics';
-import { bezierPositionAt } from '../physics/bezierTransfer';
 import { SETTLEMENT_DEFS, BUILDING_DEFS, buildingLevel } from './settlements';
 
 /** Ticks between auto-fire volleys. Each combatant fires every N ticks. */
 export const AUTO_COMBAT_INTERVAL = 20;
 
 /**
- * World position of a ship at the given tick. Handles ships in transit
- * (Bezier) and ships orbiting (parent body + local orbit position).
+ * World position of a ship at the given tick. Handles ships in torch
+ * transit (state-vector) and ships orbiting (parent body + local orbit).
  */
 export function shipWorldPosition(
   ship: Ship,
@@ -22,13 +21,9 @@ export function shipWorldPosition(
 ): { x: number; y: number } | null {
   // Priority order matches the ship's possible states:
   //   1. Torch transit  → ship.transit.pos directly
-  //   2. Legacy Bezier  → cubic interpolation (removed in Phase 6)
-  //   3. Parked         → orbit element evaluation
+  //   2. Parked         → orbit element evaluation
   if (ship.transit) {
     return { x: ship.transit.pos.x, y: ship.transit.pos.y };
-  }
-  if (ship.transfer) {
-    return bezierPositionAt(ship.transfer, tick);
   }
   const parent = bodies.find(b => b.id === ship.orbit.parentBodyId);
   if (!parent) return null;
@@ -93,7 +88,7 @@ export function autoCombatAtBodies(
   // Group combatants by body
   const shipsByBody = new Map<string, Ship[]>();
   for (const s of ships) {
-    if (s.transfer) continue;
+    if (s.transit) continue;
     const key = s.orbit.parentBodyId;
     if (!shipsByBody.has(key)) shipsByBody.set(key, []);
     shipsByBody.get(key)!.push(s);

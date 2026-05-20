@@ -31,9 +31,9 @@ export function maintenanceRatesForShip(
   settlements: Settlement[],
 ): MaintenanceInfo {
   const zero = { repairRate: 0, refuelRate: 0, hasCity: false, hasStation: false };
-  // Ships in transit (legacy bezier or torch) get no repair/refuel —
-  // they're not at any body's infrastructure.
-  if (ship.transfer || ship.transit) return zero;
+  // Ships in transit get no repair/refuel — they're not at any
+  // body's infrastructure.
+  if (ship.transit) return zero;
   const body = bodies.find(b => b.id === ship.orbit.parentBodyId);
   if (!body) return zero;
   if (body.ownedBy !== ship.ownedBy) return zero;

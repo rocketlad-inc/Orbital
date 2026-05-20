@@ -4,8 +4,8 @@
 // Pure function: runFactionAI(state, factionId, tick) → AIDecision.
 // No side effects. The caller (gameContext tick loop) applies the
 // returned intents through the existing action handlers (buildShip,
-// deploySettlement, planBezierTransfer + addManeuverNode + setPendingTransfer,
-// startResearch). The AI never mutates state directly.
+// deploySettlement, launchTorchTransfer, startResearch).
+// The AI never mutates state directly.
 //
 // Architecture: utility AI. For every possible action this faction
 // could take this tick, score it; pick the top N within an action
@@ -217,9 +217,9 @@ function determinePhase(
   // ships parked at it. Once that floor is met everywhere, graduate.
   const combatShipsAtBody = new Map<string, number>();
   for (const ship of myShips) {
-    // Skip ships in transit (legacy Bezier OR torch) — they don't count
-    // as defenders at any body until they park.
-    if (ship.transfer || ship.transit || ship.class === 'freighter') continue;
+    // Skip ships in transit — they don't count as defenders at any
+    // body until they park.
+    if (ship.transit || ship.class === 'freighter') continue;
     const bodyId = ship.orbit.parentBodyId;
     combatShipsAtBody.set(bodyId, (combatShipsAtBody.get(bodyId) ?? 0) + 1);
   }
@@ -245,7 +245,7 @@ function buildContext(state: GameState, factionId: string, tick: number): AICont
   const techLevels: Record<string, number> = tech?.levels ?? {};
 
   const myShips = state.ships.filter(s => s.ownedBy === factionId);
-  const myShipsIdle = myShips.filter(s => !s.transfer && !s.pendingTransfer);
+  const myShipsIdle = myShips.filter(s => !s.transit && !s.plannedTransit);
   const myFreightersIdle = myShipsIdle.filter(s => s.class === 'freighter');
   const myCombatShipsIdle = myShipsIdle.filter(s => s.class !== 'freighter');
 
@@ -261,9 +261,8 @@ function buildContext(state: GameState, factionId: string, tick: number): AICont
   const hostileShips = state.ships.filter(s => s.ownedBy !== factionId);
   const bodyIdToHostileShips = new Map<string, Ship[]>();
   for (const ship of hostileShips) {
-    // Skip ships in transit (Bezier OR torch) — they don't threaten
-    // any body until they arrive.
-    if (ship.transfer || ship.transit) continue;
+    // Skip ships in transit — they don't threaten any body until they arrive.
+    if (ship.transit) continue;
     const bodyId = ship.orbit.parentBodyId;
     if (!bodyIdToHostileShips.has(bodyId)) bodyIdToHostileShips.set(bodyId, []);
     bodyIdToHostileShips.get(bodyId)!.push(ship);

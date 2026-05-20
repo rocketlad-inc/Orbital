@@ -53,9 +53,8 @@ export function computeIncomingThreats(
 ): IncomingThreat[] {
   const threats: IncomingThreat[] = [];
   for (const ship of gameState.ships) {
-    // Pull the in-flight metadata from whichever transit shape the
-    // ship carries — torch (post-migration) or legacy bezier. Skip
-    // ships that aren't moving toward anything.
+    // Pull the in-flight metadata from the ship's torch transit state.
+    // Skip ships that aren't moving toward anything.
     let targetBodyId: string | undefined;
     let arrivalTime: number;
     let departureTime: number;
@@ -64,10 +63,6 @@ export function computeIncomingThreats(
       targetBodyId = plan.targetBodyId;
       arrivalTime = plan.arriveTick;
       departureTime = plan.startTick;
-    } else if (ship.transfer) {
-      targetBodyId = ship.transfer.arrivalBodyId;
-      arrivalTime = ship.transfer.arrivalTime;
-      departureTime = ship.transfer.departureTime;
     } else {
       continue;
     }
@@ -79,7 +74,7 @@ export function computeIncomingThreats(
 
     // Three ways the target body matters to forFaction:
     const threatenedShips = gameState.ships.filter(
-      s => s.ownedBy === forFaction && !s.transfer && !s.transit && s.orbit.parentBodyId === targetBodyId,
+      s => s.ownedBy === forFaction && !s.transit && s.orbit.parentBodyId === targetBodyId,
     );
     const threatenedSettlements = gameState.settlements.filter(
       s => s.ownedBy === forFaction && s.bodyId === targetBodyId,

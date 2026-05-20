@@ -14,7 +14,7 @@ export function formFleet(name: string, shipIds: string[], allShips: Ship[]): Fl
 
   // All ships must be at the same parent body and not in transit
   const parentId = ships[0].orbit.parentBodyId;
-  if (ships.some(s => s.orbit.parentBodyId !== parentId || s.transfer)) return null;
+  if (ships.some(s => s.orbit.parentBodyId !== parentId || s.transit)) return null;
 
   // All ships must be same faction
   const faction = ships[0].ownedBy;
@@ -103,7 +103,7 @@ export function mergeFleets(a: Fleet, b: Fleet, allShips: Ship[]): Fleet | null 
   const shipB = allShips.find(s => s.id === b.shipIds[0]);
   if (!shipA || !shipB) return null;
   if (shipA.orbit.parentBodyId !== shipB.orbit.parentBodyId) return null;
-  if (shipA.transfer || shipB.transfer) return null;
+  if (shipA.transit || shipB.transit) return null;
 
   const merged = [...new Set([...a.shipIds, ...b.shipIds])];
   fleetCounter++;

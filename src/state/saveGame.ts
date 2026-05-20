@@ -186,23 +186,31 @@ export function writeSave(
  * GameState — ships without legacy transfer fields are untouched.
  */
 function migrateV1ToV2(state: GameState): void {
-  for (const ship of state.ships) {
-    // Force-finish committed-in-transit (.transfer) — park at arrival.
-    if (ship.transfer) {
-      const dest = state.bodies.find(b => b.id === ship.transfer!.arrivalBodyId);
+  for (const shipBase of state.ships) {
+    // The v1 Ship had pendingTransfer / transfer / queuedTransfers as
+    // its in-flight container shapes. Those fields are gone from the
+    // current Ship interface, so cast to a permissive shape to read
+    // them off the loaded blob before stripping.
+    const legacy = shipBase as unknown as {
+      transfer?: { arrivalBodyId: string };
+      pendingTransfer?: unknown;
+      queuedTransfers?: unknown;
+    };
+    if (legacy.transfer) {
+      const dest = state.bodies.find(b => b.id === legacy.transfer!.arrivalBodyId);
       if (dest) {
         const parkRadius = Math.max(dest.radius * 1.5, 6);
-        ship.orbit = createCircularOrbit(dest.id, parkRadius, state.currentTick, state.bodies);
+        shipBase.orbit = createCircularOrbit(dest.id, parkRadius, state.currentTick, state.bodies);
       }
-      ship.transfer = undefined;
+      delete legacy.transfer;
     }
     // Drop the planned/queued bezier intents — the player will replan
     // under the new model from the parked orbit.
-    ship.pendingTransfer = undefined;
-    ship.queuedTransfers = undefined;
-    // Strip any 'transfer' maneuver orders since they reference
-    // bezier-shaped arcs in their preOrbit/postOrbit predictions.
-    ship.orders = ship.orders.filter(o => o.type !== 'transfer');
+    delete legacy.pendingTransfer;
+    delete legacy.queuedTransfers;
+    // Strip any 'transfer' maneuver orders since they reference the
+    // legacy bezier control points.
+    shipBase.orders = shipBase.orders.filter(o => o.type !== 'transfer');
   }
 }
 
