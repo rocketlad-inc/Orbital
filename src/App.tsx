@@ -27,6 +27,7 @@ import { Landing } from './components/Landing';
 import { TunablesPage } from './components/TunablesPage';
 import { UXGallery } from './components/UXGallery';
 import { PhysicsSandbox } from './physicsSandbox/PhysicsSandbox';
+import { TorchSandbox } from './torchSandbox/TorchSandbox';
 import { ModePicker, GameMode } from './ModePicker';
 import { MultiplayerShell } from './multiplayer/MultiplayerShell';
 import { MultiplayerLobby } from './multiplayer/MultiplayerLobby';
@@ -556,6 +557,10 @@ function AppRouter() {
     typeof window !== 'undefined' &&
     new URLSearchParams(window.location.search).has('physics'),
   );
+  const [torchMode, setTorchMode] = useState(() =>
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).has('torch'),
+  );
   if (physicsMode) {
     return (
       <PhysicsSandbox
@@ -564,6 +569,18 @@ function AppRouter() {
           url.searchParams.delete('physics');
           window.history.replaceState({}, '', url.toString());
           setPhysicsMode(false);
+        }}
+      />
+    );
+  }
+  if (torchMode) {
+    return (
+      <TorchSandbox
+        onExit={() => {
+          const url = new URL(window.location.href);
+          url.searchParams.delete('torch');
+          window.history.replaceState({}, '', url.toString());
+          setTorchMode(false);
         }}
       />
     );
