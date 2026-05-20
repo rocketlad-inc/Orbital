@@ -3,7 +3,7 @@
 // Extract body resources to a local stockpile that freighters carry away.
 // ============================================================
 
-import { Body, Settlement, SettlementType, Ship, BuildingKind, SettlementBuildOrder } from '../types';
+import { Body, Settlement, SettlementType, Ship, BuildingKind } from '../types';
 import { createCircularOrbit, bodyPosition, localPositionAt } from '../physics/orbitalMechanics';
 import { bodyProductionRates } from './economy';
 

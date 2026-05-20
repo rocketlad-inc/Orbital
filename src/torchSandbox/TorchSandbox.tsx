@@ -10,7 +10,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import {
   BODIES, BY_ID, bodyPosition, bodyVelocity,
   planTorchTransfer, stepTorchShip, sampleTrajectory,
-  TorchTransfer, TorchShipState, asG, fromG, G_ANCHOR,
+  TorchTransfer, TorchShipState, asG, fromG,
 } from './torchPhysics';
 
 const TWO_PI = Math.PI * 2;
@@ -49,7 +49,9 @@ export function TorchSandbox({ onExit }: { onExit?: () => void }) {
 
   // Planning controls
   const [targetId, setTargetId] = useState('jupiter');
-  const [gMultiplier, setGMultiplier] = useState(0.1);  // gravities
+  const [boostG, setBoostG] = useState(0.1);  // boost-phase g
+  const [brakeG, setBrakeG] = useState(0.1);  // brake-phase g
+  const [linkG, setLinkG] = useState(true);   // when true, brake follows boost
   const [simSpeed, setSimSpeed] = useState(0);
   const [, setFrameTick] = useState(0);
 
@@ -73,10 +75,11 @@ export function TorchSandbox({ onExit }: { onExit?: () => void }) {
   // The CURRENT plan we'd execute if the user clicked GO right now.
   // Recomputed whenever target / acceleration / ship state / tick changes.
   const plannedTransfer = useMemo(() => {
-    const accel = fromG(gMultiplier);
-    return planTorchTransfer(ship, targetId, accel, tickRef.current);
+    const boostAccel = fromG(boostG);
+    const brakeAccel = fromG(linkG ? boostG : brakeG);
+    return planTorchTransfer(ship, targetId, boostAccel, brakeAccel, tickRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [targetId, gMultiplier, ship, simSpeed]);
+  }, [targetId, boostG, brakeG, linkG, ship, simSpeed]);
 
   // Max perpendicular deviation of the integrated curve from the
   // straight-line reference (Earth → intercept). At 1g it's ~1% of
@@ -494,22 +497,51 @@ export function TorchSandbox({ onExit }: { onExit?: () => void }) {
             ))}
           </select>
 
-          <SectionLabel>ACCELERATION</SectionLabel>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, marginBottom: 4 }}>
+            <span style={{ color: '#6b8195', fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.18em' }}>
+              THRUST PROFILE
+            </span>
+            <label style={{ color: '#6b8195', fontSize: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <input type="checkbox" checked={linkG} onChange={e => setLinkG(e.target.checked)} />
+              SYMMETRIC
+            </label>
+          </div>
+          <div style={{ fontSize: 10, marginBottom: 4, color: '#6ee7b7' }}>BOOST</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <input
               type="range" min={0.01} max={10} step={0.01}
-              value={gMultiplier}
-              onChange={e => setGMultiplier(Number(e.target.value))}
+              value={boostG}
+              onChange={e => {
+                const v = Number(e.target.value);
+                setBoostG(v);
+                if (linkG) setBrakeG(v);
+              }}
               style={{ flex: 1 }}
             />
-            <span style={{ minWidth: 50, textAlign: 'right', color: '#ffb84d' }}>
-              {gMultiplier < 0.1 ? gMultiplier.toFixed(2) : gMultiplier.toFixed(1)}g
+            <span style={{ minWidth: 50, textAlign: 'right', color: '#6ee7b7' }}>
+              {boostG < 0.1 ? boostG.toFixed(2) : boostG.toFixed(1)}g
             </span>
           </div>
-          <div style={{ fontSize: 9, color: '#6b8195', marginTop: 2 }}>
-            = {fromG(gMultiplier).toFixed(1)} game-units / tick²
-            <br />
-            (1g anchor = {G_ANCHOR.toFixed(0)} u/tick² = Sol → Earth in 1 tick)
+          <div style={{ fontSize: 10, marginBottom: 4, marginTop: 8, color: '#fda4af' }}>BRAKE</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, opacity: linkG ? 0.45 : 1 }}>
+            <input
+              type="range" min={0.01} max={10} step={0.01}
+              value={linkG ? boostG : brakeG}
+              disabled={linkG}
+              onChange={e => setBrakeG(Number(e.target.value))}
+              style={{ flex: 1 }}
+            />
+            <span style={{ minWidth: 50, textAlign: 'right', color: '#fda4af' }}>
+              {(() => {
+                const g = linkG ? boostG : brakeG;
+                return g < 0.1 ? g.toFixed(2) : g.toFixed(1);
+              })()}g
+            </span>
+          </div>
+          <div style={{ fontSize: 9, color: '#6b8195', marginTop: 6 }}>
+            Symmetric = classic brachistochrone. Asymmetric models
+            kick-coast-brake or slow-cruise-emergency-brake profiles.
+            Trip time grows with the gentler of the two phases.
           </div>
 
           {plannedTransfer && (
@@ -522,7 +554,8 @@ export function TorchSandbox({ onExit }: { onExit?: () => void }) {
               <Row k="TOTAL Δv" v={`${plannedTransfer.totalDv.toFixed(2)} u/tick`} />
               <Row k="FLIP @" v={`T+${(plannedTransfer.flipTick - tickRef.current).toFixed(2)}`} />
               <Row k="ARRIVE @" v={`T+${(plannedTransfer.arriveTick - tickRef.current).toFixed(2)}`} />
-              <Row k="@" v={`${asG(plannedTransfer.acceleration).toFixed(2)}g`} />
+              <Row k="BOOST" v={`${asG(plannedTransfer.acceleration).toFixed(2)}g · ${(plannedTransfer.flipTick - plannedTransfer.startTick).toFixed(2)} ticks`} />
+              <Row k="BRAKE" v={`${asG(plannedTransfer.brakeAcceleration).toFixed(2)}g · ${(plannedTransfer.arriveTick - plannedTransfer.flipTick).toFixed(2)} ticks`} />
               {curveStats && (
                 <Row
                   k="CURVE"
@@ -571,7 +604,11 @@ export function TorchSandbox({ onExit }: { onExit?: () => void }) {
           <div style={{ padding: '12px 14px' }}>
             <Row k="SPEED" v={`${shipSpeed.toFixed(2)} u/tick`} />
             <Row k="ETA" v={eta != null ? `T+${eta.toFixed(2)}` : '—'} />
-            <Row k="THRUST" v={asG(transfer.acceleration).toFixed(2) + 'g'} />
+            <Row k="THRUST" v={(() => {
+              const a = tickRef.current < transfer.flipTick
+                ? transfer.acceleration : transfer.brakeAcceleration;
+              return asG(a).toFixed(2) + 'g';
+            })()} />
             <Row k="DIRECTION" v={
               tickRef.current < transfer.flipTick ? 'prograde' : 'retrograde'
             } />

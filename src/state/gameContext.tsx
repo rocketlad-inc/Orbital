@@ -1192,7 +1192,7 @@ export function GameContextProvider({
       };
     });
     return true;
-  }, [gameState.bodies, gameState.resources, gameState.factionTech]);
+  }, [gameState.bodies, gameState.resources, gameState.factionTech, gameState.buildOrders, gameState.settlements]);
 
   const cancelBuild = useCallback((buildOrderId: string) => {
     setGameStateInternal(prev => {
