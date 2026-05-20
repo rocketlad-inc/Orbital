@@ -397,6 +397,10 @@ const TECH_DEFS = {
   sensors:      { baseCost: 30, costScaling: 1.5 },
 };
 
+/** Mirror of src/game/techs.ts TECH_MAX_LEVEL. Hard cap per track —
+ *  reaching this on every track is Science Victory. */
+const TECH_MAX_LEVEL = 10;
+
 function techCostForNext(level, def) {
   return Math.ceil(def.baseCost * Math.pow(level + 1, def.costScaling));
 }
@@ -424,6 +428,13 @@ async function handleResearch(req, env, ctx) {
     .bind(gameId, me.id, techId)
     .first();
   const curLevel = cur?.level ?? 0;
+
+  // Cap at TECH_MAX_LEVEL — required for the Science Victory condition
+  // to be reachable. Mirrors the client-side cap in techs.ts.
+  if (curLevel >= TECH_MAX_LEVEL) {
+    return err(409, 'tech_maxed', `${techId} is already at max level ${TECH_MAX_LEVEL}`);
+  }
+
   const cost = techCostForNext(curLevel, TECH_DEFS[techId]);
 
   if ((me.science ?? 0) < cost) {

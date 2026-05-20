@@ -11,6 +11,7 @@ import { useGameContext } from '../state/gameContext';
 import {
   ALL_TECH_IDS, TECH_DEFS, TechId,
   effectAtLevel, nextLevelCost,
+  TECH_MAX_LEVEL,
 } from '../game/techs';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import './OverviewPanel.css';
@@ -153,6 +154,7 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
           {ALL_TECH_IDS.map((id) => {
             const def = TECH_DEFS[id];
             const lvl = tech.levels[id] ?? 0;
+            const isMaxed = lvl >= TECH_MAX_LEVEL;
             const cost = nextLevelCost(lvl, def);
             const isActive = tech.researching === id;
             const queueIndex = queue.indexOf(id);
@@ -160,12 +162,14 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
             return (
               <div
                 key={id}
-                className={`tech-card ${isActive ? 'active' : ''}`}
+                className={`tech-card ${isActive ? 'active' : ''} ${isMaxed ? 'maxed' : ''}`}
               >
                 <div className="tech-card__head">
                   <div className="tech-card__icon">{def.icon}</div>
                   <div className="tech-card__name">{def.name}</div>
-                  <div className="tech-card__level">Lv {lvl}</div>
+                  <div className="tech-card__level">
+                    {isMaxed ? `MAX ${TECH_MAX_LEVEL}` : `Lv ${lvl}`}
+                  </div>
                 </div>
                 <div className="tech-card__desc">{def.description}</div>
 
@@ -188,17 +192,39 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                 </div>
 
                 <div className="tech-card__cost">
-                  <span style={{ color: '#8a9fb3' }}>Lv {lvl + 1} cost</span>
-                  <span style={{ color: cost <= playerScience ? '#6ee7b7' : '#ffb84d' }}>
-                    {cost} sci
-                  </span>
+                  {isMaxed ? (
+                    <>
+                      <span style={{ color: '#8a9fb3' }}>Max level reached</span>
+                      <span style={{ color: '#ffb84d' }}>—</span>
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ color: '#8a9fb3' }}>Lv {lvl + 1} cost</span>
+                      <span style={{ color: cost <= playerScience ? '#6ee7b7' : '#ffb84d' }}>
+                        {cost} sci
+                      </span>
+                    </>
+                  )}
                 </div>
 
                 {/* SP card actions: Research / Cancel / Queue / Remove
                     based on the tech's relationship to the player's
                     current research + queue. MP keeps the single-button
-                    instant-research flow. */}
-                {mpActions ? (
+                    instant-research flow. Maxed techs short-circuit to
+                    an inert "MAXED" pill — no further research possible. */}
+                {isMaxed ? (
+                  <div
+                    className="tech-card__action"
+                    style={{
+                      color: '#ffb84d',
+                      borderColor: '#ffb84d',
+                      background: 'rgba(255, 184, 77, 0.08)',
+                      textAlign: 'center',
+                      cursor: 'default',
+                    }}
+                    title="This tech has reached the global cap."
+                  >★ MAXED</div>
+                ) : mpActions ? (
                   <button
                     className={`tech-card__action ${isActive ? 'active' : ''}`}
                     onClick={async () => {

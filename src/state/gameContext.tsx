@@ -23,8 +23,9 @@ import {
   buildingLevel, shipyardSlotsAtBody,
 } from '../game/settlements';
 import { computeSecretReveal } from '../game/secrets';
+import { checkVictory } from '../game/victory';
 import { tickMaintenance } from '../game/maintenance';
-import { TechId, TECH_DEFS, MAX_SCIENCE_PER_TICK, engineGModifier } from '../game/techs';
+import { TechId, TECH_DEFS, TECH_MAX_LEVEL, MAX_SCIENCE_PER_TICK, engineGModifier } from '../game/techs';
 import { runFactionAI, shouldRunAI } from '../game/factionAI';
 import { planBezierTransfer } from '../physics/bezierTransfer';
 import type { AIActivityEntry } from '../types';
@@ -237,6 +238,15 @@ interface GameContextType {
    *  in transit can't enqueue chained legs — use launchTorchTransfer
    *  to start the first one. Returns the planned leg or null. */
   enqueueTorchTransfer: (shipId: string, targetBodyId: string) => import('../physics/torchTransfer').TorchTransfer | null;
+
+  /** Stage a torch transfer as a PREVIEW (ship.plannedTransit) without
+   *  firing the burn. The map renderer shows it as a dashed amber arc;
+   *  ShipPanel's COMMIT button promotes it via launchTorchTransfer.
+   *  Replaces the legacy setPendingTransfer flow. */
+  planTorchPreview: (shipId: string, targetBodyId: string) => import('../physics/torchTransfer').TorchTransfer | null;
+
+  /** Clear a ship's plannedTransit preview without launching. */
+  cancelTorchPreview: (shipId: string) => void;
 
   // Ship building
   buildShip: (bodyId: string, shipClass: ShipClassName, name: string) => boolean;
@@ -944,6 +954,16 @@ export function GameContextProvider({
         const def = TECH_DEFS[researching];
         if (!def) break;
         const curLevel = levels[researching] ?? 0;
+        // Hard cap at TECH_MAX_LEVEL — once a tech is maxed, the drain
+        // stops spending science on it and auto-promotes to the next
+        // queued track. Required for Science Victory to be reachable
+        // without runaway scaling: at L10 the cost would be ~290k
+        // science per next level under the current scaling.
+        if (curLevel >= TECH_MAX_LEVEL) {
+          progress = 0;
+          researching = queue.length > 0 ? (queue.shift() as TechId) : null;
+          continue;
+        }
         const cost = Math.ceil(def.baseCost * Math.pow(curLevel + 1, def.costScaling));
         const need = cost - progress;
         const spend = Math.min(available, need);
@@ -1158,18 +1178,32 @@ export function GameContextProvider({
     const allOrders = updatedShips.flatMap(s => s.orders);
 
     // === Victory check ===
-    // If a match-length goal is set and we've reached or passed it, compute
-    // the winner and flip status to 'completed'. The next render shows the
-    // VictoryOverlay; advanceToTick early-exits while completed so time
-    // stops advancing. (The 'completed' early-exit above guarantees prev.status
-    // is not yet 'completed' here, but we re-check to satisfy TS narrowing.)
-    // Tick-countdown victory was removed — games run indefinitely. Status
-    // only flips to 'completed' if some other path sets it (none today;
-    // host-abandon is the only out). Leaving the placeholders so the
-    // existing VictoryOverlay wiring keeps compiling.
-    const nextStatus: GameState['status'] = prev.status;
-    const winnerFactionId = prev.winnerFactionId;
-    const victoryType = prev.victoryType;
+    // Run the three-conditions checker against the post-tick snapshot.
+    // First match wins — order: engineering → military → science (see
+    // src/game/victory.ts for the ordering rationale). On a hit, flip
+    // status to 'completed' so the next render shows VictoryOverlay
+    // and the early-exit at the top of advanceToTick freezes time.
+    let nextStatus: GameState['status'] = prev.status;
+    let winnerFactionId = prev.winnerFactionId;
+    let victoryType = prev.victoryType;
+    const postTickSnapshot: GameState = {
+      ...prev,
+      ships: updatedShips,
+      settlements: updatedSettlements,
+      resources: factionPools,
+      factionTech: updatedTech,
+      buildOrders,
+      currentTick: newTime,
+    };
+    const winCheck = checkVictory(postTickSnapshot);
+    if (winCheck) {
+      nextStatus = 'completed';
+      winnerFactionId = winCheck.winnerFactionId;
+      victoryType = winCheck.victoryType;
+      logger.info('SIM', `Victory: ${winCheck.victoryType} — ${winCheck.winnerFactionId}`, {
+        detail: winCheck.detail,
+      });
+    }
 
     // Sample a tick snapshot every ~25 simulated ticks so the log has
     // periodic economy/fleet checkpoints to read between events.
@@ -1571,6 +1605,8 @@ export function GameContextProvider({
                   vel: { x: launchVel.x, y: launchVel.y },
                   currentTransfer: plan,
                 },
+                // Promoting a preview to a live burn clears it.
+                plannedTransit: undefined,
                 // Any legacy bezier or planned-but-not-launched state
                 // is superseded by the torch burn.
                 transfer: undefined,
@@ -1631,6 +1667,57 @@ export function GameContextProvider({
       };
     });
     return appendedPlan;
+  }, []);
+
+  /** Stage a torch transfer as a preview (ship.plannedTransit). The
+   *  ship stays parked — this is the "I've picked a destination, show
+   *  me the path" step before COMMIT. */
+  const planTorchPreview = useCallback((shipId: string, targetBodyId: string): TorchTransfer | null => {
+    let plannedPlan: TorchTransfer | null = null;
+    setGameStateInternal(prev => {
+      const ship = prev.ships.find(s => s.id === shipId);
+      if (!ship) return prev;
+      if (ship.transit) return prev;
+
+      const faction = prev.factions.find(f => f.id === ship.ownedBy);
+      const tech = prev.factionTech?.[ship.ownedBy];
+      const baseAccel = faction?.engineG ?? DEFAULT_ENGINE_ACCEL;
+      const engineAccel = baseAccel * engineGModifier(tech);
+      const tick = prev.currentTick;
+
+      const launchPos = orbitWorldPos(ship.orbit, tick, prev.bodies);
+      const parent = prev.bodies.find(b => b.id === ship.orbit.parentBodyId);
+      const launchVel = parent
+        ? bodyWorldVelocity(parent, tick, prev.bodies)
+        : { x: 0, y: 0 };
+
+      const plan = planTorchTransfer(
+        { pos: launchPos, vel: launchVel },
+        targetBodyId,
+        engineAccel, engineAccel,
+        tick, prev.bodies,
+      );
+      if (!plan) return prev;
+
+      plannedPlan = plan;
+      return {
+        ...prev,
+        ships: prev.ships.map(s =>
+          s.id === shipId ? { ...s, plannedTransit: plan } : s,
+        ),
+      };
+    });
+    return plannedPlan;
+  }, []);
+
+  /** Clear a ship's plannedTransit. */
+  const cancelTorchPreview = useCallback((shipId: string) => {
+    setGameStateInternal(prev => ({
+      ...prev,
+      ships: prev.ships.map(s =>
+        s.id === shipId ? { ...s, plannedTransit: undefined } : s,
+      ),
+    }));
   }, []);
 
   // ---- Ship Building ----
@@ -2237,7 +2324,7 @@ export function GameContextProvider({
     selectShip, deselectShip, selectBody, deselectBody, hoverBody,
     setTargetSelectionMode,
     addManeuverNode, commitManeuverNode, deleteManeuverNode, setPendingTransfer, addQueuedTransfer,
-    launchTorchTransfer, enqueueTorchTransfer,
+    launchTorchTransfer, enqueueTorchTransfer, planTorchPreview, cancelTorchPreview,
     buildShip, cancelBuild,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
     deploySettlement, damageSettlement, buildCollector,

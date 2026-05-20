@@ -120,6 +120,23 @@
   box-shadow: 0 0 12px rgba(110, 231, 183, 0.15);
 }
 
+/* Maxed tech track: amber accent so the player sees at a glance which
+   tracks are "done" and how close they are to the science-victory cap. */
+.tech-card.maxed {
+  border-color: #ffb84d;
+  background: rgba(255, 184, 77, 0.06);
+}
+.tech-card.maxed .tech-card__icon {
+  border-color: #ffb84d;
+  background: rgba(255, 184, 77, 0.12);
+}
+.tech-card.maxed .tech-card__level {
+  color: #0a0e14;
+  background: #ffb84d;
+  border-color: #ffb84d;
+  font-weight: 800;
+}
+
 .tech-card__head {
   display: flex;
   align-items: center;

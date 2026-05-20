@@ -17,7 +17,7 @@ export const ShipPanel: React.FC = () => {
     gameState, uiState, deselectShip, setGameState,
     commitManeuverNode, deleteManeuverNode, addManeuverNode,
     setPendingTransfer, addQueuedTransfer, setTargetSelectionMode,
-    launchTorchTransfer, enqueueTorchTransfer,
+    launchTorchTransfer, enqueueTorchTransfer, planTorchPreview, cancelTorchPreview,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
     createTradeRoute, cancelTradeRoute,
   } = useGameContext();
@@ -42,10 +42,18 @@ export const ShipPanel: React.FC = () => {
     if (!ship) return;
 
     transferHandlerRef.current = (targetBodyId: string) => {
-      // If the ship is ALREADY in torch transit (or has queued torch
-      // legs), this is a chain-extension — enqueue a new leg planned
-      // from the prior leg's predicted arrival. Skip the bezier
-      // planning entirely. The enqueue path also posts to MP.
+      // Two flows depending on the ship's state:
+      //
+      // 1. SHIP IN TRANSIT (or has queued legs): chain-extension.
+      //    enqueueTorchTransfer plans a new leg from the prior leg's
+      //    predicted arrival; visible immediately as a queued dashed
+      //    preview on the map. Auto-commits — there's no separate
+      //    confirm step for chained legs.
+      //
+      // 2. SHIP PARKED: stage a torch preview via planTorchPreview.
+      //    The ship's plannedTransit field holds the plan; the map
+      //    renderer shows the dashed amber arc. The COMMIT button
+      //    promotes it via launchTorchTransfer.
       if (ship.transit || (ship.queuedTransits && ship.queuedTransits.length > 0)) {
         const queuedPlan = enqueueTorchTransfer(ship.id, targetBodyId);
         if (queuedPlan && mpActions) {
@@ -54,7 +62,7 @@ export const ShipPanel: React.FC = () => {
             targetBodyId,
             scheduledT: queuedPlan.startTick,
             arrivalT: queuedPlan.arriveTick,
-            dvPrograde: queuedPlan.totalDv / 2,  // shim: server expects scalar dv
+            dvPrograde: queuedPlan.totalDv / 2,  // server-side scalar shim
             fuelCost: Math.round(queuedPlan.totalDv * 10),
           });
         }
@@ -63,109 +71,37 @@ export const ShipPanel: React.FC = () => {
         return;
       }
 
-      // Otherwise: regular Bezier-style planning (pendingTransfer +
-      // maneuver node + COMMIT button). The bezier preview survives
-      // until the FU2 cleanup commit deletes it; planning here is
-      // purely visual since commit fires the torch immediately.
-      const playerTech = gameState.factionTech?.[ship.ownedBy] as FactionTechState | undefined;
-      const travelTimeMul = travelTimeModifier(playerTech);
-
-      const queue = ship.queuedTransfers || [];
-      let chainTail: { bodyId: string; time: number } | null = null;
-      if (queue.length > 0) {
-        const last = queue[queue.length - 1];
-        chainTail = { bodyId: last.arrivalBodyId, time: last.arrivalTime };
-      } else if (ship.transfer) {
-        chainTail = { bodyId: ship.transfer.arrivalBodyId, time: ship.transfer.arrivalTime };
-      } else if (ship.pendingTransfer) {
-        chainTail = { bodyId: ship.pendingTransfer.arrivalBodyId, time: ship.pendingTransfer.arrivalTime };
+      // Parked ship: stage a torch preview (NOT committed). Player
+      // clicks COMMIT to promote it to a live burn (commitTransferLocal).
+      const plan = planTorchPreview(ship.id, targetBodyId);
+      if (!plan) {
+        console.warn('[transfer] planTorchPreview returned null', {
+          shipId: ship.id, target: targetBodyId,
+        });
+        return;
       }
 
-      if (chainTail) {
-        const tailBody = gameState.bodies.find(b => b.id === chainTail!.bodyId);
-        const arrRadius = tailBody ? tailBody.radius + 4 : 10;
-        const tempOrbit = createCircularOrbit(chainTail.bodyId, arrRadius, chainTail.time, gameState.bodies);
-        const arc = planBezierTransfer(tempOrbit, targetBodyId, chainTail.time, gameState.bodies, travelTimeMul);
-        if (!arc) {
-          console.warn('[transfer] planBezierTransfer returned null (chain)', {
-            from: chainTail.bodyId, to: targetBodyId,
-            knownBodies: gameState.bodies.map(b => b.id),
-          });
-          return;
-        }
-        addQueuedTransfer(ship.id, arc);
-      } else {
-        const arc = planBezierTransfer(ship.orbit, targetBodyId, gameState.currentTick, gameState.bodies, travelTimeMul);
-        if (!arc) {
-          console.warn('[transfer] planBezierTransfer returned null', {
-            shipId: ship.id,
-            from: ship.orbit.parentBodyId, to: targetBodyId,
-            knownBodies: gameState.bodies.map(b => ({ id: b.id, parent: b.parent })),
-          });
-          return;
-        }
-
-        const node: ManeuverNode = {
-          id: `node-${Date.now()}-${Math.random()}`,
-          shipId: ship.id,
-          type: 'transfer',
-          burnTime: arc.departureTime,
-          deltav: arc.departureDv,
-          prograde: arc.departureDv,
-          radial: 0,
-          normal: 0,
-          status: 'planned',
-          label: arc.label,
-        };
-
-        addManeuverNode(node);
-        setPendingTransfer(ship.id, arc);
-        // NOTE: do NOT post mpActions.transfer() here. The server records
-        // every transfer it sees as 'committed' (no 'planned' state on the
-        // server side), which made every plan auto-commit at the next
-        // /state poll (~1.5s) regardless of whether the user clicked
-        // Commit. The post now happens in commitTransferLocal() below,
-        // wired to the COMMIT button so plan/commit stays a deliberate
-        // two-step action — matching the single-player UX.
-
-        // Fleet propagation: if this ship is in a fleet and the player opted in,
-        // plan the same target transfer for every fleet member (each from its own orbit).
-        if (propagateTransferToFleet && ship.fleetId) {
-          const fleet = gameState.fleets.find(f => f.id === ship.fleetId);
-          if (fleet) {
-            for (const memberId of fleet.shipIds) {
-              if (memberId === ship.id) continue;
-              const member = gameState.ships.find(s => s.id === memberId);
-              if (!member || member.transfer || member.pendingTransfer) continue;
-              const memberArc = planBezierTransfer(member.orbit, targetBodyId, gameState.currentTick, gameState.bodies, travelTimeMul);
-              if (!memberArc) continue;
-              const memberNode: ManeuverNode = {
-                id: `node-${Date.now()}-${Math.random()}`,
-                shipId: member.id,
-                type: 'transfer',
-                burnTime: memberArc.departureTime,
-                deltav: memberArc.departureDv,
-                prograde: memberArc.departureDv,
-                radial: 0,
-                normal: 0,
-                status: 'planned',
-                label: memberArc.label,
-              };
-              addManeuverNode(memberNode);
-              setPendingTransfer(member.id, memberArc);
-              // mpActions.transfer() is deliberately omitted here too —
-              // fleet members get their own planned node and will be
-              // posted together when the leader hits Commit (each
-              // member's node carries enough state for commitTransferLocal
-              // to recover the arc).
-            }
+      // Fleet propagation: stage previews for every fleet member from
+      // their own orbits so the player can COMMIT ALL in one click.
+      if (propagateTransferToFleet && ship.fleetId) {
+        const fleet = gameState.fleets.find(f => f.id === ship.fleetId);
+        if (fleet) {
+          for (const memberId of fleet.shipIds) {
+            if (memberId === ship.id) continue;
+            const member = gameState.ships.find(s => s.id === memberId);
+            if (!member || member.transit) continue;
+            planTorchPreview(member.id, targetBodyId);
           }
         }
       }
+
       setTransferModalOpen(false);
       setTargetSelectionMode(false);
     };
-  }, [ship, gameState, addManeuverNode, setPendingTransfer, addQueuedTransfer, setTargetSelectionMode, propagateTransferToFleet, mpActions]);
+  }, [
+    ship, gameState, planTorchPreview, enqueueTorchTransfer,
+    setTargetSelectionMode, propagateTransferToFleet, mpActions,
+  ]);
 
   const handleTransferConfirmEvent = useCallback((e: Event) => {
     const detail = (e as CustomEvent).detail;
@@ -187,57 +123,50 @@ export const ShipPanel: React.FC = () => {
 
   /**
    * Commit a planned transfer locally + post the intent to the server
-   * (multiplayer only). This is the deliberate two-step action: planning
-   * a transfer creates a `planned` node with a dashed preview arc; the
-   * user has to explicitly commit before the burn schedules on the
-   * server. Previously the server post happened at plan time, which
-   * made every transfer auto-fire ~1.5s later when /state polled back
-   * the server's 'committed' record.
+   * (multiplayer only). Two-step action preserved: planning a transfer
+   * stages a torch preview (ship.plannedTransit, dashed preview arc),
+   * COMMIT promotes that preview to a live burn via launchTorchTransfer.
+   * Previously the server post happened at plan time, which made every
+   * transfer auto-fire ~1.5s later when /state polled back the server's
+   * 'committed' record.
    */
-  const commitTransferLocal = (node: ManeuverNode, owningShip: typeof ship) => {
-    // COMMIT now LAUNCHES the torch burn immediately. The target body
-    // is recovered from the planned bezier preview arc (still rendered
-    // for visual continuity during Phase 6 cleanup); the actual MP
-    // post uses the torch-derived arrival tick from the returned plan,
-    // so client and server agree on the canonical landing time.
-    const arc = owningShip.pendingTransfer;
-    if (!arc) {
-      // No pending arc — fall back to the legacy node-commit path so
-      // non-transfer maneuvers still work.
-      commitManeuverNode(node.id);
+  const commitTransferLocal = (_node: ManeuverNode, owningShip: typeof ship) => {
+    // The planned preview holds the target body. Promote via
+    // launchTorchTransfer (the context method clears plannedTransit
+    // and sets ship.transit atomically).
+    const preview = owningShip.plannedTransit;
+    if (!preview) {
+      console.warn('[transfer] commitTransferLocal: no plannedTransit on ship', owningShip.id);
       return;
     }
-    deleteManeuverNode(node.id);
-    const plan = launchTorchTransfer(owningShip.id, arc.arrivalBodyId);
+    const plan = launchTorchTransfer(owningShip.id, preview.targetBodyId);
     if (!plan) {
-      console.warn('[transfer] launchTorchTransfer rejected', { shipId: owningShip.id, target: arc.arrivalBodyId });
+      console.warn('[transfer] launchTorchTransfer rejected', { shipId: owningShip.id, target: preview.targetBodyId });
       return;
     }
     if (!mpActions) return;
     // Post the torch-derived arrival to the server so its DB row, the
     // alarm's in_transit→arrive transition, and the other clients' MP
-    // reconstruction all agree exactly. arc.departureDv stays the
-    // posted Δv so existing fuel-cost columns line up; the canonical
-    // total Δv is plan.totalDv but the MP schema doesn't expose it yet.
+    // reconstruction all agree exactly.
     mpActions.transfer({
       shipId: owningShip.id,
-      targetBodyId: arc.arrivalBodyId,
+      targetBodyId: preview.targetBodyId,
       scheduledT: plan.startTick,
       arrivalT: plan.arriveTick,
-      dvPrograde: arc.departureDv,
+      dvPrograde: plan.totalDv / 2,
       fuelCost: Math.round(plan.totalDv * 10),
     });
   };
 
   const handleRemoveQueuedTransfer = (index: number) => {
-    const queue = ship.queuedTransfers || [];
+    const queue = ship.queuedTransits || [];
     if (index >= queue.length) return;
     const newQueue = queue.slice(0, index);
     setGameState({
       ...gameState,
       ships: gameState.ships.map(s =>
         s.id === ship.id
-          ? { ...s, queuedTransfers: newQueue.length > 0 ? newQueue : undefined }
+          ? { ...s, queuedTransits: newQueue.length > 0 ? newQueue : undefined }
           : s
       ),
     });
@@ -259,19 +188,31 @@ export const ShipPanel: React.FC = () => {
     setFleetModalOpen(false);
   };
 
-  const hasExistingTransfer = !!(ship.transfer || ship.pendingTransfer);
+  // "Has existing transfer" gates the TRANSFER button — a ship already
+  // committed to a destination (live torch burn OR staged preview)
+  // can't accept a new plan. Chained legs come in through the
+  // ship.transit branch via enqueueTorchTransfer.
+  const hasExistingTransfer = !!(ship.transit || ship.plannedTransit);
 
-  const locationLabel = ship.transfer
-    ? `→ ${gameState.bodies.find(b => b.id === ship.transfer!.arrivalBodyId)?.name || '?'}`
+  // Location label: target name during transit OR preview, parent body
+  // name when parked.
+  const transitTarget = ship.transit?.currentTransfer.targetBodyId;
+  const previewTarget = ship.plannedTransit?.targetBodyId;
+  const targetForLabel = transitTarget ?? previewTarget;
+  const locationLabel = targetForLabel
+    ? `→ ${gameState.bodies.find(b => b.id === targetForLabel)?.name || '?'}`
     : ship.orbit.parentBodyId.toUpperCase();
 
-  const eta = ship.transfer
-    ? ship.transfer.arrivalTime - gameState.currentTick
-    : ship.pendingTransfer
-      ? ship.pendingTransfer.departureTime - gameState.currentTick
+  // ETA: ticks-until-arrival for live transits; ticks-until-burn-start
+  // for previews (which is just 0 since torch fires on commit).
+  const eta = ship.transit
+    ? ship.transit.currentTransfer.arriveTick - gameState.currentTick
+    : ship.plannedTransit
+      ? ship.plannedTransit.arriveTick - gameState.currentTick
       : null;
 
-  const queuedTransfers = ship.queuedTransfers || [];
+  // Queue (torch chained legs).
+  const queuedTransits = ship.queuedTransits || [];
 
   // Ship class stats
   const shipClass = getShipClass(ship.class as ShipClassName);
@@ -441,13 +382,13 @@ export const ShipPanel: React.FC = () => {
               <span className="label">LOCATION</span>
               <span className="value">{locationLabel}</span>
             </div>
-            {ship.transfer && eta != null && eta > 0 && (
+            {ship.transit && eta != null && eta > 0 && (
               <div className="stat-row">
                 <span className="label">ETA</span>
                 <span className="value">T-{eta.toFixed(0)} ticks</span>
               </div>
             )}
-            {ship.pendingTransfer && !ship.transfer && (
+            {ship.plannedTransit && !ship.transit && (
               <div className="stat-row">
                 <span className="label">STATUS</span>
                 <span className="value">TRANSFER PLANNED</span>
@@ -484,21 +425,53 @@ export const ShipPanel: React.FC = () => {
 
           <div className="maneuver-section">
             <div className="section-title">MANEUVER NODES</div>
-            {ship.orders.length === 0 && !ship.transfer && queuedTransfers.length === 0 ? (
+            {ship.orders.length === 0 && !ship.transit && !ship.plannedTransit && queuedTransits.length === 0 ? (
               <div className="no-orders">No planned maneuvers</div>
             ) : (
               <>
                 <div className="orders-list">
-                  {ship.transfer && (
-                    <div className="order-item status-committed">
-                      <div className="order-info">
-                        <div className="order-type">{ship.transfer.label}</div>
-                        <div className="order-details">
-                          IN TRANSIT | Arr. Δv: {ship.transfer.arrivalDv.toFixed(2)} km/s
+                  {ship.transit && (() => {
+                    const plan = ship.transit.currentTransfer;
+                    const targetBody = gameState.bodies.find(b => b.id === plan.targetBodyId);
+                    const phase = gameState.currentTick < plan.flipTick ? 'BOOST' : 'BRAKE';
+                    return (
+                      <div className="order-item status-committed">
+                        <div className="order-info">
+                          <div className="order-type">→ {targetBody?.name ?? plan.targetBodyId}</div>
+                          <div className="order-details">
+                            {phase} | Δv: {plan.totalDv.toFixed(2)} | ETA T-{Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0)}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  )}
+                    );
+                  })()}
+                  {ship.plannedTransit && !ship.transit && (() => {
+                    const plan = ship.plannedTransit;
+                    const targetBody = gameState.bodies.find(b => b.id === plan.targetBodyId);
+                    const tripTime = plan.arriveTick - plan.startTick;
+                    return (
+                      <div className="order-item status-planned">
+                        <div className="order-info">
+                          <div className="order-type">→ {targetBody?.name ?? plan.targetBodyId} (PLANNED)</div>
+                          <div className="order-details">
+                            Δv: {plan.totalDv.toFixed(2)} | Trip: {tripTime.toFixed(0)} ticks
+                          </div>
+                        </div>
+                        <div className="order-actions">
+                          <button
+                            className="commit-btn"
+                            onClick={() => commitTransferLocal({ id: 'torch-preview' } as ManeuverNode, ship)}
+                            title="Launch this transfer"
+                          >COMMIT</button>
+                          <button
+                            className="delete-btn"
+                            onClick={() => cancelTorchPreview(ship.id)}
+                            title="Cancel this transfer"
+                          >✕</button>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {ship.orders.map((order) => (
                     <div key={order.id} className={`order-item status-${order.status}`}>
                       <div className="order-info">
@@ -531,23 +504,27 @@ export const ShipPanel: React.FC = () => {
                       </div>
                     </div>
                   ))}
-                  {queuedTransfers.map((qt, i) => (
-                    <div key={qt.id} className="order-item status-queued">
-                      <div className="order-info">
-                        <div className="order-type">{qt.label}</div>
-                        <div className="order-details">
-                          QUEUED | Δv: {(qt.departureDv + qt.arrivalDv).toFixed(2)} km/s | T+{qt.departureTime.toFixed(0)}
+                  {queuedTransits.map((qt, i) => {
+                    const targetBody = gameState.bodies.find(b => b.id === qt.targetBodyId);
+                    return (
+                      <div key={`${qt.targetBodyId}-${qt.startTick}-${i}`} className="order-item status-queued">
+                        <div className="order-info">
+                          <div className="order-type">→ {targetBody?.name ?? qt.targetBodyId}</div>
+                          <div className="order-details">
+                            QUEUED | Δv: {qt.totalDv.toFixed(2)} | Arr. T+{qt.arriveTick.toFixed(0)}
+                          </div>
+                        </div>
+                        <div className="order-actions">
+                          <button className="delete-btn" onClick={() => handleRemoveQueuedTransfer(i)}>✕</button>
                         </div>
                       </div>
-                      <div className="order-actions">
-                        <button className="delete-btn" onClick={() => handleRemoveQueuedTransfer(i)}>✕</button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 {ship.orders.some(o => o.status === 'planned') && (
                   <button
                     className="commit-all-btn"
+                    data-tutorial-id="ship-commit-button"
                     onClick={() => {
                       // Commit each planned node. In MP commitTransferLocal
                       // also posts the intent to the server; in SP it's
@@ -640,7 +617,11 @@ export const ShipPanel: React.FC = () => {
           )}
 
           <div className="maneuver-buttons">
-            <button className="maneuver-btn" onClick={() => setTargetSelectionMode(true)}>
+            <button
+              className="maneuver-btn"
+              onClick={() => setTargetSelectionMode(true)}
+              data-tutorial-id="ship-transfer-button"
+            >
               {hasExistingTransfer ? '+ CHAIN' : 'TRANSFER'}
             </button>
             <button className="maneuver-btn" onClick={() => setTransferModalOpen(true)}>

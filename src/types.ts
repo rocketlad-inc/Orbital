@@ -179,6 +179,13 @@ export interface Ship {
   // current transit's destination.
   queuedTransits?: TorchTransferPlan[];
 
+  // Planned-but-not-launched torch transfer. The player picked a
+  // destination but hasn't clicked COMMIT yet. The renderer shows a
+  // dashed preview from the ship's current parked position; COMMIT
+  // promotes this into ship.transit. Mutually exclusive with
+  // ship.transit (a ship in transit can't also have a separate plan).
+  plannedTransit?: TorchTransferPlan;
+
   // Maneuvers
   orders: ManeuverNode[];               // planned/committed burns for this ship
 
@@ -421,12 +428,44 @@ export interface GameState {
   aiActivityLog?: AIActivityEntry[];   // optional — rolling log of recent AI decisions
 
   // Match shape — populated in single-player by setup, in multiplayer by
-  // the server. Games run indefinitely now; `status` only flips to
-  // 'completed' via host-initiated abandon. The tick-countdown win
-  // condition (`totalTickTarget`) was removed.
+  // the server. The match ends when status flips to 'completed', either
+  // via a host-initiated abandon or when one of the three victory
+  // conditions in src/game/victory.ts fires.
   status?: 'lobby' | 'active' | 'completed' | 'abandoned';
   winnerFactionId?: string;            // set when status flips to 'completed'
-  victoryType?: 'hegemony' | 'wealth' | 'tiebreak';
+  /** Legacy labels (hegemony/wealth/tiebreak) stay in the union for
+   *  back-compat with replays from before three-conditions landed. */
+  victoryType?: 'engineering' | 'military' | 'science' | 'hegemony' | 'wealth' | 'tiebreak';
+
+  /** Dyson-Sphere megaproject state. Present only after a faction has
+   *  begun construction at a Sol station; completing it triggers
+   *  Engineering Victory. See src/game/dysonSphere.ts. */
+  dysonSphere?: DysonSphereState;
+}
+
+/**
+ * Dyson Sphere progress tracker. Lives at game-level rather than on a
+ * specific settlement because the project is the match-defining
+ * megaproject — destruction nukes the entire object and frees the
+ * slot for the next builder.
+ */
+export interface DysonSphereState {
+  /** Faction id of the empire whose Sol station is hosting the build. */
+  controllerFactionId: string;
+  /** Settlement id of the Sol station serving as the foundation. */
+  foundationSettlementId: string;
+  /** Per-resource accumulated total. Sum across all four = HP. */
+  accumulated: { fuel: number; ore: number; credits: number; science: number };
+  /** Per-resource target. Sum across all four = maxHp. */
+  target: { fuel: number; ore: number; credits: number; science: number };
+  /** Current hit-points. Equal to sum(accumulated) — duplicated so combat
+   *  damage can be applied without re-reading the deposit map. */
+  hp: number;
+  /** Maximum hit-points. Equal to sum(target) — cached so we don't sum
+   *  every render. */
+  maxHp: number;
+  /** Tick the foundation was laid; surfaced in the UI / chronicle. */
+  startedAtTick: number;
 }
 
 /**

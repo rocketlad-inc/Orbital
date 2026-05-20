@@ -1,15 +1,24 @@
 // ============================================================
 // Tech Tree — Neptune's Pride / Stellaris-late-game style.
 //
-// Six tech tracks, each with infinite levels. Each level costs
-// progressively more science but yields a flat per-level modifier
-// (so absolute benefit scales linearly while cost scales
-// super-linearly — Stellaris repeatables pattern).
+// Seven tech tracks, capped at TECH_MAX_LEVEL (=10) per track.
+// Each level costs progressively more science but yields a flat
+// per-level modifier (so absolute benefit scales linearly while
+// cost scales super-linearly — Stellaris repeatables pattern).
+//
+// Hitting max level on every track is the Science Victory
+// condition (see src/game/victory.ts).
 //
 // Effects are applied via the helpers at the bottom of this file
 // (combatModifier, buildCostModifier, etc.) which game logic calls
 // to read the current modifier for a faction.
 // ============================================================
+
+/**
+ * Hard cap on per-track tech level. Reaching this for every track
+ * triggers Science Victory. Server mirror lives in worker/actions.js.
+ */
+export const TECH_MAX_LEVEL = 10;
 
 export type TechId =
   | 'weapons'        // ship firepower
@@ -145,6 +154,19 @@ export function emptyFactionTechState(): FactionTechState {
 export function techLevel(state: FactionTechState | undefined, id: TechId): number {
   if (!state) return 0;
   return state.levels[id] ?? 0;
+}
+
+/** True when this tech has hit the global TECH_MAX_LEVEL cap. */
+export function isTechMaxed(state: FactionTechState | undefined, id: TechId): boolean {
+  return techLevel(state, id) >= TECH_MAX_LEVEL;
+}
+
+/** True when every tech track is at TECH_MAX_LEVEL — Science Victory trigger. */
+export function allTechsMaxed(state: FactionTechState | undefined): boolean {
+  for (const id of ALL_TECH_IDS) {
+    if (techLevel(state, id) < TECH_MAX_LEVEL) return false;
+  }
+  return true;
 }
 
 /** Science cost to advance from current level (N) to N+1 of the given tech. */

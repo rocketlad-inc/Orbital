@@ -1382,5 +1382,157 @@ export class Room {
         this.broadcast({ type: 'ships_destroyed', tick, ship_ids: losses });
       }
     }
+
+    // === Victory check =====================================
+    // Mirrors src/game/victory.ts. Runs at the end of resolveTick so
+    // every per-tick mutation above is already reflected in the DB.
+    // First match wins; order is engineering → military → science.
+    try {
+      const resolution = await this.checkVictory(gameId);
+      if (resolution) {
+        const now = Date.now();
+        await this.env.DB
+          .prepare(
+            `UPDATE games
+                SET status = 'completed',
+                    winner_faction_id = ?,
+                    victory_type = ?,
+                    completed_at = ?
+              WHERE id = ? AND status != 'completed'`,
+          )
+          .bind(resolution.winnerFactionId, resolution.victoryType, now, gameId)
+          .run();
+        try {
+          const entryId = crypto.randomUUID();
+          await this.env.DB
+            .prepare(
+              `INSERT INTO chronicle_entries
+                (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
+               VALUES (?, ?, ?, 'victory', ?, ?, 'public', ?)`,
+            )
+            .bind(entryId, gameId, tick, resolution.winnerFactionId,
+                  JSON.stringify({ victoryType: resolution.victoryType, detail: resolution.detail }),
+                  now)
+            .run();
+        } catch (e) {
+          console.error('chronicle insert failed (victory)', e);
+        }
+        this.broadcast({
+          type: 'game_completed',
+          tick,
+          winner_faction_id: resolution.winnerFactionId,
+          victory_type: resolution.victoryType,
+        });
+      }
+    } catch (e) {
+      // Never let a victory-check bug block the rest of the tick.
+      console.error('victory check failed', e);
+    }
+  }
+
+  /**
+   * Server mirror of src/game/victory.ts checkVictory.
+   *
+   *   ENGINEERING  dyson_sphere row hp >= max_hp (Phase B)
+   *   MILITARY     every rival faction has zero non-destroyed
+   *                settlements (cities and stations both count)
+   *   SCIENCE      faction has every tech track at TECH_MAX_LEVEL
+   *
+   * Returns { winnerFactionId, victoryType, detail } or null.
+   */
+  async checkVictory(gameId) {
+    // Active factions only — observers / eliminated seats excluded.
+    const factions = (await this.env.DB
+      .prepare(`SELECT id, name FROM game_factions WHERE game_id = ? AND status = 'active'`)
+      .bind(gameId)
+      .all()).results ?? [];
+    if (factions.length === 0) return null;
+
+    // ----- ENGINEERING -----
+    // Dyson Sphere lives on the `games` row as nullable columns
+    // populated by Phase B. The hp/max_hp pair encodes both progress
+    // and combat damage; reaching parity means the sphere is built.
+    try {
+      const dyson = await this.env.DB
+        .prepare(
+          `SELECT dyson_controller_faction_id, dyson_hp, dyson_max_hp
+             FROM games WHERE id = ?`,
+        )
+        .bind(gameId)
+        .first();
+      if (
+        dyson &&
+        dyson.dyson_controller_faction_id &&
+        dyson.dyson_max_hp > 0 &&
+        dyson.dyson_hp >= dyson.dyson_max_hp
+      ) {
+        return {
+          winnerFactionId: dyson.dyson_controller_faction_id,
+          victoryType: 'engineering',
+          detail: 'Dyson Sphere complete',
+        };
+      }
+    } catch {
+      // Column may not exist yet (pre-Phase-B DBs). Fall through.
+    }
+
+    // ----- MILITARY -----
+    // For each candidate, count rival factions with at least one
+    // non-destroyed settlement (city OR station). If none, candidate
+    // wins. Single-faction games can't win by military.
+    if (factions.length >= 2) {
+      const settled = (await this.env.DB
+        .prepare(
+          `SELECT DISTINCT faction_id
+             FROM game_settlements
+            WHERE game_id = ? AND destroyed_at_tick IS NULL`,
+        )
+        .bind(gameId)
+        .all()).results ?? [];
+      const factionsWithSettlements = new Set(settled.map(r => r.faction_id));
+      for (const candidate of factions) {
+        let anyRivalAlive = false;
+        for (const f of factions) {
+          if (f.id === candidate.id) continue;
+          if (factionsWithSettlements.has(f.id)) { anyRivalAlive = true; break; }
+        }
+        if (!anyRivalAlive) {
+          return {
+            winnerFactionId: candidate.id,
+            victoryType: 'military',
+            detail: 'All rival settlements destroyed',
+          };
+        }
+      }
+    }
+
+    // ----- SCIENCE -----
+    // Every tech track at TECH_MAX_LEVEL. Pull all faction_techs
+    // rows in one query and bucket per faction.
+    const techRows = (await this.env.DB
+      .prepare(`SELECT faction_id, tech_id, level FROM faction_techs WHERE game_id = ?`)
+      .bind(gameId)
+      .all()).results ?? [];
+    const TECH_TRACKS = ['weapons', 'armor', 'propulsion', 'flight', 'construction', 'industry', 'sensors'];
+    const TECH_MAX_LEVEL = 10;
+    const byFaction = new Map();
+    for (const r of techRows) {
+      let m = byFaction.get(r.faction_id);
+      if (!m) { m = new Map(); byFaction.set(r.faction_id, m); }
+      m.set(r.tech_id, r.level);
+    }
+    for (const candidate of factions) {
+      const levels = byFaction.get(candidate.id) ?? new Map();
+      const maxedAll = TECH_TRACKS.every(t => (levels.get(t) ?? 0) >= TECH_MAX_LEVEL);
+      if (maxedAll) {
+        return {
+          winnerFactionId: candidate.id,
+          victoryType: 'science',
+          detail: 'All tech tracks mastered',
+        };
+      }
+    }
+
+    return null;
   }
 }
