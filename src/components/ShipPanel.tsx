@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useGameContext } from '../state/gameContext';
-import { ManeuverNode } from '../types';
+import { ManeuverNode, Ship, Body, Settlement, TradeRoute } from '../types';
 import { planBezierTransfer } from '../physics/bezierTransfer';
 import { createCircularOrbit } from '../physics/orbitalMechanics';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
@@ -18,6 +18,7 @@ export const ShipPanel: React.FC = () => {
     commitManeuverNode, deleteManeuverNode, addManeuverNode,
     setPendingTransfer, addQueuedTransfer, setTargetSelectionMode,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
+    createTradeRoute, cancelTradeRoute,
   } = useGameContext();
 
   // In multiplayer this is non-null and we post intent to the server in
@@ -417,6 +418,17 @@ export const ShipPanel: React.FC = () => {
             )}
           </div>
 
+          {ship.class === 'freighter' && ship.ownedBy === 'player' && (
+            <TradeRouteSection
+              ship={ship}
+              tradeRoutes={gameState.tradeRoutes ?? []}
+              bodies={gameState.bodies}
+              settlements={gameState.settlements}
+              onCreate={(originBodyId, destBodyId) => createTradeRoute(ship.id, originBodyId, destBodyId)}
+              onCancel={cancelTradeRoute}
+            />
+          )}
+
           <div className="maneuver-section">
             <div className="section-title">MANEUVER NODES</div>
             {ship.orders.length === 0 && !ship.transfer && queuedTransfers.length === 0 ? (
@@ -811,6 +823,171 @@ const FleetFormationModal: React.FC<FleetFormationModalProps> = ({ mode, fleetNa
           </div>
         </div>
       </div>
+    </div>
+  );
+};
+
+// ----------------------------------------------------------------
+// TradeRouteSection — freighter-only. Shows the active route (with
+// cargo + cancel) or a "+ TRADE ROUTE" button that opens a picker
+// for origin (any player settlement) + destination (any player
+// collector). Once created, the per-tick reducer auto-pilots the
+// freighter: fill at origin → transfer → dump at dest → return →
+// repeat until cancelled.
+// ----------------------------------------------------------------
+
+const TradeRouteSection: React.FC<{
+  ship: Ship;
+  tradeRoutes: TradeRoute[];
+  bodies: Body[];
+  settlements: Settlement[];
+  onCreate: (originBodyId: string, destBodyId: string) => boolean;
+  onCancel: (routeId: string) => void;
+}> = ({ ship, tradeRoutes, bodies, settlements, onCreate, onCancel }) => {
+  const route = tradeRoutes.find(r => r.shipId === ship.id);
+  const [picking, setPicking] = useState(false);
+  const [originId, setOriginId] = useState<string>('');
+  const [destId, setDestId] = useState<string>('');
+
+  // Eligible origins = any body where the player owns a settlement
+  // (collector not required — you can pick up from any settlement,
+  // it just needs to have stockpile).
+  const originBodies = useMemo(() => {
+    const ids = new Set(settlements.filter(s => s.ownedBy === 'player').map(s => s.bodyId));
+    return bodies.filter(b => ids.has(b.id));
+  }, [bodies, settlements]);
+
+  // Eligible destinations = any body where the player has a collector.
+  // Without one the route's deliveries would have nowhere to land.
+  const destBodies = useMemo(() => {
+    const ids = new Set(
+      settlements.filter(s => s.ownedBy === 'player' && s.hasCollector).map(s => s.bodyId),
+    );
+    return bodies.filter(b => ids.has(b.id));
+  }, [bodies, settlements]);
+
+  if (route) {
+    const origin = bodies.find(b => b.id === route.originBodyId);
+    const dest = bodies.find(b => b.id === route.destBodyId);
+    const cargoTotal =
+      route.cargo.fuel + route.cargo.ore + route.cargo.credits + route.cargo.science;
+    const cargoStr = [
+      route.cargo.fuel    > 0 ? `${Math.round(route.cargo.fuel)}F`    : null,
+      route.cargo.ore     > 0 ? `${Math.round(route.cargo.ore)}O`     : null,
+      route.cargo.credits > 0 ? `${Math.round(route.cargo.credits)}C` : null,
+      route.cargo.science > 0 ? `${Math.round(route.cargo.science)}S` : null,
+    ].filter(Boolean).join(' ');
+    return (
+      <div className="maneuver-section">
+        <div className="section-title">TRADE ROUTE</div>
+        <div className="order-item status-committed" style={{ flexDirection: 'column', gap: 4 }}>
+          <div className="order-info" style={{ width: '100%' }}>
+            <div className="order-type">{origin?.name ?? '?'} ↔ {dest?.name ?? '?'}</div>
+            <div className="order-details">
+              {route.status === 'outbound' ? '→ delivering' : route.status === 'returning' ? '← picking up' : 'paused'}
+              {cargoTotal > 0 ? ` · cargo ${cargoStr}` : ' · empty hold'}
+            </div>
+          </div>
+          <button
+            className="maneuver-btn"
+            style={{ borderColor: '#ff5e5e', color: '#ff5e5e', alignSelf: 'flex-start' }}
+            onClick={() => onCancel(route.id)}
+            title="Cancel the route. Any cargo in the hold is dumped to your pool."
+          >
+            ✕ CANCEL ROUTE
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (picking) {
+    const canCreate = !!originId && !!destId && originId !== destId;
+    return (
+      <div className="maneuver-section">
+        <div className="section-title">NEW TRADE ROUTE</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '6px 0' }}>
+          <label style={{ fontSize: 10, color: '#8a9fb3', letterSpacing: '0.08em' }}>
+            ORIGIN (settlement)
+          </label>
+          <select
+            value={originId}
+            onChange={(e) => setOriginId(e.target.value)}
+            style={{
+              padding: '4px 6px', background: '#0a1018', border: '1px solid #2a3d50',
+              color: '#d8e4ee', fontFamily: 'inherit', fontSize: 11, borderRadius: 3,
+            }}
+          >
+            <option value="">— pick origin —</option>
+            {originBodies.map(b => (
+              <option key={b.id} value={b.id}>{b.name}</option>
+            ))}
+          </select>
+          <label style={{ fontSize: 10, color: '#8a9fb3', letterSpacing: '0.08em' }}>
+            DEST (collector)
+          </label>
+          {destBodies.length === 0 ? (
+            <div style={{ fontSize: 10, color: '#ff5e5e' }}>
+              You have no collectors. Build one at a settlement first.
+            </div>
+          ) : (
+            <select
+              value={destId}
+              onChange={(e) => setDestId(e.target.value)}
+              style={{
+                padding: '4px 6px', background: '#0a1018', border: '1px solid #2a3d50',
+                color: '#d8e4ee', fontFamily: 'inherit', fontSize: 11, borderRadius: 3,
+              }}
+            >
+              <option value="">— pick collector —</option>
+              {destBodies.map(b => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
+            </select>
+          )}
+          <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+            <button
+              className="maneuver-btn"
+              onClick={() => {
+                if (!canCreate) return;
+                if (onCreate(originId, destId)) {
+                  setPicking(false); setOriginId(''); setDestId('');
+                }
+              }}
+              disabled={!canCreate}
+              style={!canCreate ? { opacity: 0.5, cursor: 'default' } : undefined}
+            >
+              ▶ OPEN ROUTE
+            </button>
+            <button
+              className="maneuver-btn"
+              onClick={() => { setPicking(false); setOriginId(''); setDestId(''); }}
+            >
+              CANCEL
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="maneuver-section">
+      <div className="section-title">TRADE ROUTE</div>
+      <button
+        className="maneuver-btn"
+        onClick={() => setPicking(true)}
+        style={{ marginTop: 4 }}
+        title="Open a recurring trade route — auto-pilots this freighter to ferry cargo from a settlement to a collector and loop."
+        disabled={destBodies.length === 0}
+      >
+        + TRADE ROUTE
+      </button>
+      {destBodies.length === 0 && (
+        <div style={{ fontSize: 9, color: '#8a9fb3', marginTop: 4 }}>
+          Build a collector first.
+        </div>
+      )}
     </div>
   );
 };

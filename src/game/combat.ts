@@ -58,10 +58,28 @@ export function autoCombatAtBodies(
   tick: number,
   /** Optional per-faction damage multiplier (Weapons tech). Default 1.0. */
   damageMul: Record<string, number> = {},
-): { ships: Ship[]; settlements: Settlement[]; log: string[] } {
+): {
+  ships: Ship[];
+  settlements: Settlement[];
+  log: string[];
+  /** Per-ship kill credits — used by the reducer to hand a destroyed
+   *  freighter's trade-route cargo to whoever landed the most damage
+   *  (piracy). Empty when no ships died this tick. */
+  killedShips: Array<{ shipId: string; killerFactionId: string | null }>;
+} {
   const damageMulOf = (factionId: string) => damageMul[factionId] ?? 1;
   const log: string[] = [];
   const damageMap = new Map<string, number>();
+  // Per-attacker damage attribution: targetId → Map<attackerFactionId, dmg>.
+  // Used downstream to credit the kill to the top-damage faction so
+  // piracy (cargo capture from dead freighters) goes to the right pool.
+  const damageByAttacker = new Map<string, Map<string, number>>();
+  const accrueDamage = (targetId: string, attackerFid: string, dmg: number) => {
+    damageMap.set(targetId, (damageMap.get(targetId) || 0) + dmg);
+    let m = damageByAttacker.get(targetId);
+    if (!m) { m = new Map(); damageByAttacker.set(targetId, m); }
+    m.set(attackerFid, (m.get(attackerFid) || 0) + dmg);
+  };
   const shipLastCombat = new Map<string, number>();
   const settlementLastCombat = new Map<string, number>();
 
@@ -103,14 +121,14 @@ export function autoCombatAtBodies(
         if (target.ownedBy === attacker.ownedBy) continue;
         const targetClass = getShipClass(target.class as ShipClassName);
         const dmg = attackerClass.damagePerTick * damageMulOf(attacker.ownedBy) * (1 - targetClass.pdcRating);
-        damageMap.set(target.id, (damageMap.get(target.id) || 0) + dmg);
+        accrueDamage(target.id, attacker.ownedBy, dmg);
         log.push(`${attacker.name} hits ${target.name} for ${dmg.toFixed(0)}`);
         fired = true;
       }
       for (const target of localSettlements) {
         if (target.ownedBy === attacker.ownedBy) continue;
         const dmg = attackerClass.damagePerTick * damageMulOf(attacker.ownedBy) * (1 - SETTLEMENT_DEFS[target.type].pdcRating);
-        damageMap.set(target.id, (damageMap.get(target.id) || 0) + dmg);
+        accrueDamage(target.id, attacker.ownedBy, dmg);
         log.push(`${attacker.name} hits ${target.name} for ${dmg.toFixed(0)}`);
         fired = true;
       }
@@ -134,7 +152,7 @@ export function autoCombatAtBodies(
         if (target.ownedBy === attacker.ownedBy) continue;
         const targetClass = getShipClass(target.class as ShipClassName);
         const dmg = baseDmg * damageMulOf(attacker.ownedBy) * (1 - targetClass.pdcRating);
-        damageMap.set(target.id, (damageMap.get(target.id) || 0) + dmg);
+        accrueDamage(target.id, attacker.ownedBy, dmg);
         log.push(`${attacker.name} hits ${target.name} for ${dmg.toFixed(0)}`);
         fired = true;
       }
@@ -193,5 +211,20 @@ export function autoCombatAtBodies(
       return next;
     });
 
-  return { ships: updatedShips, settlements: updatedSettlements, log };
+  // Kill attribution — top-damage faction wins the credit. Ties go to
+  // first-encountered (Map iteration = insertion order in JS).
+  const killedShips: Array<{ shipId: string; killerFactionId: string | null }> = [];
+  for (const shipId of destroyedShips) {
+    const m = damageByAttacker.get(shipId);
+    let killer: string | null = null;
+    let best = -1;
+    if (m) {
+      for (const [fid, dmg] of m) {
+        if (dmg > best) { best = dmg; killer = fid; }
+      }
+    }
+    killedShips.push({ shipId, killerFactionId: killer });
+  }
+
+  return { ships: updatedShips, settlements: updatedSettlements, log, killedShips };
 }

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
-import { GameState, ManeuverNode, CameraState, MapUIState, Ship, Body, TransferArc, BuildOrder, SettlementType, FactionResources, BuildingKind, SettlementBuildOrder } from '../types';
+import { GameState, ManeuverNode, CameraState, MapUIState, Ship, Body, TransferArc, BuildOrder, SettlementType, FactionResources, BuildingKind, SettlementBuildOrder, TradeRoute } from '../types';
 // Scenarios were removed when single-player switched to SinglePlayerSetup.
 // GameContextProvider now requires either an initialState (single-player,
 // seeded by setupSinglePlayer) or an externalState (multiplayer, server-
@@ -212,6 +212,18 @@ interface GameContextType {
   cancelBuilding: (settlementId: string) => boolean;
   selectedSettlementId?: string;
   selectSettlement: (id: string | undefined) => void;
+
+  // Trade routes (SP). Assign a freighter to ferry cargo between an
+  // origin settlement and a destination collector. The freighter
+  // auto-pilots in advanceToTick: fill at origin → transfer → dump at
+  // dest → transfer back → loop until cancelled. Cargo is captured by
+  // the killer's pool if the freighter dies en route.
+  createTradeRoute: (
+    shipId: string,
+    originBodyId: string,
+    destBodyId: string,
+  ) => boolean;
+  cancelTradeRoute: (routeId: string) => void;
 
   // Research / tech tree
   startResearch: (techId: TechId) => void;
@@ -570,6 +582,135 @@ export function GameContextProvider({
     if (settlementBuildingsDirty) settlementsResult.changed = true;
     let updatedSettlements = settlementsResult.settlements;
 
+    // === Trade routes ============================================
+    // For each active route, auto-pilot the freighter:
+    //   - mid-transit → skip (transfer is already in flight)
+    //   - at origin with empty cargo → fill from settlement stockpile,
+    //     plan transfer to dest
+    //   - at dest with non-empty cargo → dump cargo to faction pool,
+    //     plan transfer back to origin
+    //   - "off course" (in orbit somewhere else) → plan transfer to
+    //     whichever endpoint matches the current status
+    //
+    // Cargo capacity is fixed at 50 of each resource (matches the
+    // freighter shipClass cargoCapacity). Routes whose freighter is
+    // missing (dead) are dropped — piracy code in combat hands the
+    // cargo to the killer separately.
+    let updatedRoutes = (prev.tradeRoutes ?? []).filter(
+      r => updatedShips.some(s => s.id === r.shipId),
+    );
+    if (updatedRoutes.length > 0) {
+      // Per-faction flight-speed multiplier (Flight Dynamics tech).
+      // Larger multiplier = faster transit; we feed this into the
+      // existing planBezierTransfer travelTimeMul argument.
+      const flightMul: Record<string, number> = {};
+      for (const [fid, ts] of Object.entries(prev.factionTech)) {
+        const lvl = ts.levels['flight'] ?? 0;
+        flightMul[fid] = Math.max(0.2, 1 - TECH_DEFS.flight.perLevel * lvl);
+      }
+      const CARGO_CAP = 50;
+      const nextShips = [...updatedShips];
+      const nextSettlements = [...updatedSettlements];
+      updatedRoutes = updatedRoutes.map(route => {
+        const shipIdx = nextShips.findIndex(s => s.id === route.shipId);
+        if (shipIdx < 0) return route;
+        const ship = nextShips[shipIdx];
+        if (ship.transfer) return route;            // mid-transit
+        if (route.status === 'paused') return route;
+
+        const here = ship.orbit.parentBodyId;
+        const cargo = { ...route.cargo };
+        const cargoTotal = cargo.fuel + cargo.ore + cargo.credits + cargo.science;
+
+        // PICKUP — at origin body with empty hold. Vacuum up to
+        // CARGO_CAP of each resource from any of the player's
+        // settlements at the origin body, scaled by what's available.
+        if (here === route.originBodyId && cargoTotal < 1) {
+          let pickedUp = false;
+          for (let i = 0; i < nextSettlements.length; i++) {
+            const s = nextSettlements[i];
+            if (s.bodyId !== route.originBodyId) continue;
+            if (s.ownedBy !== route.ownedBy) continue;
+            const take = {
+              fuel:    Math.min(CARGO_CAP - cargo.fuel,    s.stockpile.fuel),
+              ore:     Math.min(CARGO_CAP - cargo.ore,     s.stockpile.ore),
+              credits: Math.min(CARGO_CAP - cargo.credits, s.stockpile.credits),
+              science: Math.min(CARGO_CAP - cargo.science, s.stockpile.science),
+            };
+            if (take.fuel + take.ore + take.credits + take.science <= 0) continue;
+            cargo.fuel    += take.fuel;
+            cargo.ore     += take.ore;
+            cargo.credits += take.credits;
+            cargo.science += take.science;
+            nextSettlements[i] = {
+              ...s,
+              stockpile: {
+                fuel:    s.stockpile.fuel    - take.fuel,
+                ore:     s.stockpile.ore     - take.ore,
+                credits: s.stockpile.credits - take.credits,
+                science: s.stockpile.science - take.science,
+              },
+            };
+            pickedUp = true;
+          }
+          // Plan the outbound leg regardless — even an empty
+          // origin gets the freighter cycling, so the next tick
+          // it can try again. Without this an empty stockpile
+          // would strand the freighter forever.
+          const arc = planBezierTransfer(
+            ship.orbit, route.destBodyId, newTime, prev.bodies, flightMul[ship.ownedBy] ?? 1,
+          );
+          if (arc) {
+            nextShips[shipIdx] = { ...ship, transfer: arc };
+            if (pickedUp) {
+              logger.info('SIM', `Trade route: ${ship.name} loaded ${Math.round(cargo.fuel + cargo.ore + cargo.credits + cargo.science)}u, → ${route.destBodyId}`);
+            }
+            return { ...route, cargo, status: 'outbound' as const };
+          }
+          return { ...route, cargo };
+        }
+
+        // DELIVERY — at dest body with cargo in the hold. Dump
+        // everything into the faction pool and head home.
+        if (here === route.destBodyId && cargoTotal > 0) {
+          if (!factionPools[ship.ownedBy]) {
+            factionPools[ship.ownedBy] = { fuel: 0, ore: 0, credits: 0, science: 0 };
+          }
+          const pool = factionPools[ship.ownedBy];
+          pool.fuel    += cargo.fuel;
+          pool.ore     += cargo.ore;
+          pool.credits += cargo.credits;
+          pool.science += cargo.science;
+          logger.info('SIM', `Trade route: ${ship.name} delivered ${Math.round(cargoTotal)}u to ${route.destBodyId}`);
+          const arc = planBezierTransfer(
+            ship.orbit, route.originBodyId, newTime, prev.bodies, flightMul[ship.ownedBy] ?? 1,
+          );
+          if (arc) {
+            nextShips[shipIdx] = { ...ship, transfer: arc };
+            return { ...route, cargo: { fuel: 0, ore: 0, credits: 0, science: 0 }, status: 'returning' as const };
+          }
+          return { ...route, cargo: { fuel: 0, ore: 0, credits: 0, science: 0 } };
+        }
+
+        // OFF-COURSE recovery — ship is in orbit somewhere other
+        // than origin or dest (e.g. player manually transferred
+        // it). Send it back to whichever endpoint matches the
+        // current status so the route resumes.
+        const target = route.status === 'outbound' ? route.destBodyId : route.originBodyId;
+        if (here !== target) {
+          const arc = planBezierTransfer(
+            ship.orbit, target, newTime, prev.bodies, flightMul[ship.ownedBy] ?? 1,
+          );
+          if (arc) {
+            nextShips[shipIdx] = { ...ship, transfer: arc };
+          }
+        }
+        return route;
+      });
+      updatedShips = nextShips;
+      updatedSettlements = nextSettlements;
+    }
+
     // Auto-combat: every ship and combat-capable settlement fires once every
     // AUTO_COMBAT_INTERVAL ticks at every hostile combatant at the same body.
     // Apply per-faction Weapons-tech damage multiplier.
@@ -588,6 +729,39 @@ export function GameContextProvider({
       const isKill = /destroyed!/.test(line);
       if (isKill) logger.error('COMBAT', line);
       else logger.info('COMBAT', line);
+    }
+
+    // === Piracy ============================================
+    // Any destroyed freighter with cargo loaded on a trade route
+    // hands the cargo to whoever landed the killing volley. The
+    // route itself is removed (the freighter no longer exists).
+    if (combatResult.killedShips.length > 0 && updatedRoutes.length > 0) {
+      const aliveRoutes: typeof updatedRoutes = [];
+      for (const r of updatedRoutes) {
+        const kill = combatResult.killedShips.find(k => k.shipId === r.shipId);
+        if (!kill) { aliveRoutes.push(r); continue; }
+        const cargo = r.cargo;
+        const cargoTotal = cargo.fuel + cargo.ore + cargo.credits + cargo.science;
+        const killer = kill.killerFactionId;
+        if (killer && cargoTotal > 0) {
+          if (!factionPools[killer]) {
+            factionPools[killer] = { fuel: 0, ore: 0, credits: 0, science: 0 };
+          }
+          const pool = factionPools[killer];
+          pool.fuel    += cargo.fuel;
+          pool.ore     += cargo.ore;
+          pool.credits += cargo.credits;
+          pool.science += cargo.science;
+          combatNewLogs.push(
+            `${killer} captured ${Math.round(cargoTotal)}u from a freighter's hold`,
+          );
+          logger.warn('COMBAT', `Piracy: ${killer} captured ${Math.round(cargoTotal)}u of cargo`, {
+            shipId: r.shipId, killer,
+          });
+        }
+        // Route ends regardless — the freighter is gone.
+      }
+      updatedRoutes = aliveRoutes;
     }
 
     // Prune destroyed ships from fleet membership. A fleet with <2 surviving
@@ -910,6 +1084,7 @@ export function GameContextProvider({
       status: nextStatus,
       winnerFactionId,
       victoryType,
+      tradeRoutes: updatedRoutes,
     };
   }, [checkNodeExecution]);
 
@@ -1433,6 +1608,108 @@ export function GameContextProvider({
     });
   }, []);
 
+  const createTradeRoute = useCallback((
+    shipId: string,
+    originBodyId: string,
+    destBodyId: string,
+  ): boolean => {
+    let ok = false;
+    setGameStateInternal(prev => {
+      const ship = prev.ships.find(s => s.id === shipId);
+      if (!ship) {
+        logger.warn('ACTION', 'createTradeRoute: ship not found', { shipId });
+        return prev;
+      }
+      if (ship.ownedBy !== 'player') {
+        logger.warn('ACTION', 'createTradeRoute: not your ship', { shipId, owner: ship.ownedBy });
+        return prev;
+      }
+      if (ship.class !== 'freighter') {
+        logger.warn('ACTION', 'createTradeRoute: not a freighter', { shipId, class: ship.class });
+        return prev;
+      }
+      const origin = prev.bodies.find(b => b.id === originBodyId);
+      const dest = prev.bodies.find(b => b.id === destBodyId);
+      if (!origin || !dest) {
+        logger.warn('ACTION', 'createTradeRoute: body lookup failed', { originBodyId, destBodyId });
+        return prev;
+      }
+      // Validate origin has at least one player settlement to harvest from,
+      // and dest has a player collector to deliver to. Without these
+      // guardrails the freighter would loop forever doing nothing.
+      const originSettlement = prev.settlements.find(
+        s => s.bodyId === originBodyId && s.ownedBy === 'player',
+      );
+      const destCollector = prev.settlements.find(
+        s => s.bodyId === destBodyId && s.ownedBy === 'player' && s.hasCollector,
+      );
+      if (!originSettlement) {
+        logger.warn('ACTION', 'createTradeRoute: origin has no player settlement', { originBodyId });
+        return prev;
+      }
+      if (!destCollector) {
+        logger.warn('ACTION', 'createTradeRoute: dest has no player collector', { destBodyId });
+        return prev;
+      }
+      // Replace any existing route on this freighter — a player who
+      // changes their mind shouldn't have to cancel-then-create.
+      const filtered = (prev.tradeRoutes ?? []).filter(r => r.shipId !== shipId);
+      const route: TradeRoute = {
+        id: `tr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        ownedBy: 'player',
+        shipId,
+        originBodyId,
+        destBodyId,
+        status: ship.orbit.parentBodyId === originBodyId ? 'returning' : 'outbound',
+        // Status semantics:
+        //   'outbound'  = heading toward dest (cargo full)
+        //   'returning' = heading toward origin (cargo empty)
+        //   'paused'    = player paused; execution loop skips
+        // Set the initial status so the execution loop's first pass
+        // picks the right phase: if we're already at origin, treat as
+        // "returning" (we'll fill + flip to outbound on the same tick).
+        cargo: { fuel: 0, ore: 0, credits: 0, science: 0 },
+        createdAtTick: prev.currentTick,
+      };
+      logger.info('ACTION', `Trade route opened: ${ship.name} ${origin.name} ↔ ${dest.name}`);
+      ok = true;
+      return {
+        ...prev,
+        tradeRoutes: [...filtered, route],
+      };
+    });
+    return ok;
+  }, []);
+
+  const cancelTradeRoute = useCallback((routeId: string) => {
+    setGameStateInternal(prev => {
+      const route = (prev.tradeRoutes ?? []).find(r => r.id === routeId);
+      if (!route) return prev;
+      const ship = prev.ships.find(s => s.id === route.shipId);
+      // If there's cargo in the hold and the freighter is still alive,
+      // dump it into the player's pool as a "you cancelled, here's
+      // what was already loaded." Otherwise it would just disappear.
+      const cargo = route.cargo;
+      const hasCargo = cargo.fuel > 0 || cargo.ore > 0 || cargo.credits > 0 || cargo.science > 0;
+      const nextResources = { ...prev.resources };
+      if (hasCargo && ship) {
+        const pool = nextResources[ship.ownedBy] ?? { fuel: 0, ore: 0, credits: 0, science: 0 };
+        nextResources[ship.ownedBy] = {
+          fuel: pool.fuel + cargo.fuel,
+          ore: pool.ore + cargo.ore,
+          credits: pool.credits + cargo.credits,
+          science: pool.science + cargo.science,
+        };
+      }
+      logger.info('ACTION', `Trade route cancelled: ${ship?.name ?? route.shipId}`);
+      return {
+        ...prev,
+        tradeRoutes: (prev.tradeRoutes ?? []).filter(r => r.id !== routeId),
+        resources: nextResources,
+      };
+    });
+  }, []);
+
   const buildCollector = useCallback((settlementId: string): boolean => {
     let ok = false;
     setGameStateInternal(prev => {
@@ -1737,6 +2014,7 @@ export function GameContextProvider({
     createFleet, disbandFleet, removeFromFleet, addToFleet,
     deploySettlement, damageSettlement, buildCollector,
     queueBuilding, cancelBuilding,
+    createTradeRoute, cancelTradeRoute,
     selectedSettlementId, selectSettlement,
     startResearch, cancelResearch,
     enqueueResearch, dequeueResearch, moveResearchUp,
