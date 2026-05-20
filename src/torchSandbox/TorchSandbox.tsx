@@ -48,8 +48,8 @@ export function TorchSandbox({ onExit }: { onExit?: () => void }) {
   transferRef.current = transfer;
 
   // Planning controls
-  const [targetId, setTargetId] = useState('mars');
-  const [gMultiplier, setGMultiplier] = useState(1);  // gravities
+  const [targetId, setTargetId] = useState('jupiter');
+  const [gMultiplier, setGMultiplier] = useState(0.1);  // gravities
   const [simSpeed, setSimSpeed] = useState(0);
   const [, setFrameTick] = useState(0);
 
@@ -77,6 +77,33 @@ export function TorchSandbox({ onExit }: { onExit?: () => void }) {
     return planTorchTransfer(ship, targetId, accel, tickRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetId, gMultiplier, ship, simSpeed]);
+
+  // Max perpendicular deviation of the integrated curve from the
+  // straight-line reference (Earth → intercept). At 1g it's ~1% of
+  // trip distance — visible but subtle. At 0.1g it's much more
+  // dramatic.
+  const curveStats = useMemo(() => {
+    if (!plannedTransfer) return null;
+    const startShip = {
+      pos: { ...plannedTransfer.startPos },
+      vel: { ...plannedTransfer.startVel },
+    };
+    const samples = sampleTrajectory(plannedTransfer, startShip, 200);
+    const dx = plannedTransfer.interceptPos.x - plannedTransfer.startPos.x;
+    const dy = plannedTransfer.interceptPos.y - plannedTransfer.startPos.y;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    if (d < 1e-6) return null;
+    // Perpendicular unit (normal to the straight-line direction)
+    const nx = -dy / d, ny = dx / d;
+    let maxDev = 0;
+    for (const s of samples) {
+      const rx = s.x - plannedTransfer.startPos.x;
+      const ry = s.y - plannedTransfer.startPos.y;
+      const dev = Math.abs(rx * nx + ry * ny);
+      if (dev > maxDev) maxDev = dev;
+    }
+    return { maxDev, fraction: maxDev / d, directDist: d };
+  }, [plannedTransfer]);
 
   const launchPlan = useCallback(() => {
     if (!plannedTransfer) return;
@@ -217,11 +244,28 @@ export function TorchSandbox({ onExit }: { onExit?: () => void }) {
         pos: { ...plannedTransfer.startPos },
         vel: { ...plannedTransfer.startVel },
       };
-      const samples = sampleTrajectory(plannedTransfer, startShip, 120);
+      const samples = sampleTrajectory(plannedTransfer, startShip, 240);
+      // Reference straight line from launch to intercept (zero-velocity
+      // ideal). The actual integrated path bends away from this by the
+      // inherited-orbital-velocity contribution — at 1g cruise the
+      // deviation is ~1% of trip distance and might not jump out
+      // visually, but the reference line makes it obvious.
       ctx.save();
-      ctx.strokeStyle = 'rgba(255, 184, 77, 0.55)';
-      ctx.lineWidth = 1.4;
-      ctx.setLineDash([5, 5]);
+      ctx.strokeStyle = 'rgba(106, 132, 154, 0.45)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 4]);
+      const startSp = worldToScreen(plannedTransfer.startPos.x, plannedTransfer.startPos.y);
+      const endSp = worldToScreen(plannedTransfer.interceptPos.x, plannedTransfer.interceptPos.y);
+      ctx.beginPath();
+      ctx.moveTo(startSp.x, startSp.y);
+      ctx.lineTo(endSp.x, endSp.y);
+      ctx.stroke();
+      ctx.restore();
+      // Actual integrated path: dashed amber
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255, 184, 77, 0.75)';
+      ctx.lineWidth = 1.6;
+      ctx.setLineDash([6, 4]);
       ctx.beginPath();
       for (let i = 0; i < samples.length; i++) {
         const sp = worldToScreen(samples[i].x, samples[i].y);
@@ -453,13 +497,13 @@ export function TorchSandbox({ onExit }: { onExit?: () => void }) {
           <SectionLabel>ACCELERATION</SectionLabel>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <input
-              type="range" min={0.1} max={10} step={0.1}
+              type="range" min={0.01} max={10} step={0.01}
               value={gMultiplier}
               onChange={e => setGMultiplier(Number(e.target.value))}
               style={{ flex: 1 }}
             />
             <span style={{ minWidth: 50, textAlign: 'right', color: '#ffb84d' }}>
-              {gMultiplier.toFixed(1)}g
+              {gMultiplier < 0.1 ? gMultiplier.toFixed(2) : gMultiplier.toFixed(1)}g
             </span>
           </div>
           <div style={{ fontSize: 9, color: '#6b8195', marginTop: 2 }}>
@@ -479,6 +523,12 @@ export function TorchSandbox({ onExit }: { onExit?: () => void }) {
               <Row k="FLIP @" v={`T+${(plannedTransfer.flipTick - tickRef.current).toFixed(2)}`} />
               <Row k="ARRIVE @" v={`T+${(plannedTransfer.arriveTick - tickRef.current).toFixed(2)}`} />
               <Row k="@" v={`${asG(plannedTransfer.acceleration).toFixed(2)}g`} />
+              {curveStats && (
+                <Row
+                  k="CURVE"
+                  v={`${curveStats.maxDev.toFixed(1)} u (${(curveStats.fraction * 100).toFixed(2)}%)`}
+                />
+              )}
             </>
           )}
 
@@ -536,11 +586,12 @@ export function TorchSandbox({ onExit }: { onExit?: () => void }) {
         </div>
         <Legend color="#4ecdc4" label="Traveled path" />
         <Legend color="#ffb84d" label="Planned / remaining" />
+        <Legend color="#6a849a" label="Straight reference" />
         <Legend color="#6ee7b7" label="Thrust prograde" />
         <Legend color="#fda4af" label="Thrust retrograde" />
         <div style={{ marginTop: 6, color: '#8aa0b4' }}>
-          Iterative intercept matches target's future position. Trip
-          time = 2√(d/a); peak v = √(a·d).
+          Path bends from straight by inherited orbital velocity. At
+          1g it's ~1% of trip; drop to 0.1g for a clear banana.
         </div>
       </div>
     </div>
