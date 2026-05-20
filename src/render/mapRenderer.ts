@@ -1549,13 +1549,28 @@ export function drawSensorRing(
  * all sensor circles. Concentric per-source rings turn into spaghetti
  * the moment you have more than one ship at a body — the player only
  * cares about the outer edge of "what can I see," not which ship or
- * station is providing each slice of that coverage.
+ * station is providing each slice of that coverage. The inside of the
+ * union stays clear/transparent.
  *
- * Technique: render to an offscreen canvas. Fill every circle solid,
- * then `destination-out`-fill each with a slightly smaller radius. The
- * overlapping interiors get erased completely; only the union boundary
- * survives as a 1-px stroke-thick ring. Single composite onto the
- * main canvas.
+ * Technique (offscreen canvas):
+ *   1. Fill every circle with OPAQUE white. Overlaps stay alpha=1.
+ *   2. destination-out each circle shrunk by lineWidth, OPAQUE. Where
+ *      two circles overlap, BOTH shrunk circles erase the overlap, so
+ *      no interior ring survives. Only the outer boundary of the union
+ *      remains — a 1-px-wide alpha=1 ring.
+ *   3. source-in fill the desired outline color across the whole
+ *      buffer. Only the surviving ring picks up color; the rest stays
+ *      transparent.
+ *   4. drawImage onto the main canvas.
+ *
+ * Two compounding-alpha bugs the first cut had:
+ *   - Pass 1 used the FINAL faint color directly; overlaps compounded
+ *     alpha, producing visibly darker inner zones.
+ *   - Pass 2 used the same translucent color; destination-out scales
+ *     by SOURCE alpha, so a 0.45-alpha eraser only removed 45% of the
+ *     destination. Result: the inside never fully cleared.
+ * Both fixed by doing the geometry work fully opaque and recoloring at
+ * the end via source-in.
  */
 export function drawSensorUnionOutline(
   rings: Array<{ pos: { x: number; y: number }; range: number }>,
@@ -1571,7 +1586,6 @@ export function drawSensorUnionOutline(
   const oc = off.getContext('2d');
   if (!oc) return;
 
-  const color = withOpacity(COLORS.success, 0.45);
   const lineWidth = 1;
 
   // Pre-compute canvas-space circles. Skip any whose visible radius is
@@ -1587,8 +1601,8 @@ export function drawSensorUnionOutline(
   }
   if (circles.length === 0) return;
 
-  // Pass 1: solid-fill every circle in the outline color.
-  oc.fillStyle = color;
+  // Pass 1: solid-fill every circle with OPAQUE white (scratch color).
+  oc.fillStyle = '#ffffff';
   oc.globalCompositeOperation = 'source-over';
   for (const c of circles) {
     oc.beginPath();
@@ -1596,14 +1610,20 @@ export function drawSensorUnionOutline(
     oc.fill();
   }
   // Pass 2: erase the inside of every circle, shrunk by lineWidth.
-  // Boundaries between two overlapping circles cancel out — only the
-  // outermost edge of the union survives as a thin ring.
+  // Source alpha = 1 so the erase is total — overlapping shrunk
+  // circles fully cancel out interior boundaries.
   oc.globalCompositeOperation = 'destination-out';
   for (const c of circles) {
     oc.beginPath();
     oc.arc(c.x, c.y, c.r - lineWidth, 0, Math.PI * 2);
     oc.fill();
   }
+  // Pass 3: recolor the surviving ring to the desired faint outline
+  // color. source-in keeps only pixels where the destination is
+  // already opaque, so we don't paint into the transparent interior.
+  oc.globalCompositeOperation = 'source-in';
+  oc.fillStyle = withOpacity(COLORS.success, 0.45);
+  oc.fillRect(0, 0, w, h);
 
   ctx.ctx.save();
   ctx.ctx.drawImage(off, 0, 0);
