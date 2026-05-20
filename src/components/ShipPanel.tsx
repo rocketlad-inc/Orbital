@@ -3,6 +3,7 @@ import { useGameContext } from '../state/gameContext';
 import { Ship, Body, Settlement, TradeRoute } from '../types';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { maintenanceRatesForShip } from '../game/maintenance';
+import { rankHpMul } from '../game/techs';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { ShipIcon } from './ShipIcons';
@@ -215,7 +216,10 @@ export const ShipPanel: React.FC = () => {
 
   // Maintenance — repair/refuel rates at current location
   const maintenance = maintenanceRatesForShip(ship, gameState.bodies, gameState.settlements);
-  const maxHp = shipClass.hp;
+  // maxHp factors in veterancy (+1% per rank). Combat.ts + maintenance.ts
+  // both apply the same multiplier, so the displayed cap matches the
+  // actual cap the heal loop fills to.
+  const maxHp = Math.round(shipClass.hp * rankHpMul(ship.rank));
   const maxFuel = shipClass.fuelCapacity;
   const currentHp = ship.hp ?? maxHp;
   const hpAtMax = currentHp >= maxHp;

@@ -32,7 +32,22 @@ export interface MaintenanceInfo {
 
 /**
  * Compute the maintenance rates available to a ship at its current location.
- * Returns zero rates if the ship is in transit or at a non-friendly body.
+ *
+ * Three independent rules, each contributing to the total:
+ *
+ *   (a) base refuel: requires the ship to be parked at an OWNED body
+ *       (faction-controlled surface — basic logistics presence)
+ *   (b) city repair / station refuel boost: any of YOUR settlements
+ *       at the body, regardless of which faction owns the body.
+ *       Lets a city you've planted on a moon someone else technically
+ *       controls (settlement count tie) still service your hulls.
+ *   (c) station repair: any of YOUR stations at the body, full stop.
+ *       Stations are orbital infrastructure — the wrench-monkeys
+ *       don't care whose flag is on the planet below.
+ *
+ * Previously the entire function returned zero when body.ownedBy !=
+ * ship.ownedBy, which defeated the new station-heal feature for any
+ * forward base on contested territory.
  */
 export function maintenanceRatesForShip(
   ship: Ship,
@@ -45,12 +60,15 @@ export function maintenanceRatesForShip(
   if (ship.transit) return zero;
   const body = bodies.find(b => b.id === ship.orbit.parentBodyId);
   if (!body) return zero;
-  if (body.ownedBy !== ship.ownedBy) return zero;
 
+  // Base refuel only if you actually own the body (rule a).
+  let refuelRate = body.ownedBy === ship.ownedBy ? REFUEL_PER_TICK_BASE : 0;
   let repairRate = 0;
-  let refuelRate = REFUEL_PER_TICK_BASE;
   let hasCity = false;
   let hasStation = false;
+  // Rules (b) and (c): walk all settlements at this body and credit
+  // each one you own. No body-ownership gate on this loop — your
+  // infrastructure is your infrastructure.
   for (const st of settlements) {
     if (st.bodyId !== body.id) continue;
     if (st.ownedBy !== ship.ownedBy) continue;
@@ -60,8 +78,6 @@ export function maintenanceRatesForShip(
     } else if (st.type === 'station') {
       hasStation = true;
       refuelRate += REFUEL_PER_TICK_STATION;
-      // Stations also patch hulls — half the rate of a city's dockyards
-      // but stacks with city repair when both share the body.
       repairRate += REPAIR_PER_TICK_STATION;
     }
   }
