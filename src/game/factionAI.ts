@@ -217,7 +217,9 @@ function determinePhase(
   // ships parked at it. Once that floor is met everywhere, graduate.
   const combatShipsAtBody = new Map<string, number>();
   for (const ship of myShips) {
-    if (ship.transfer || ship.class === 'freighter') continue;
+    // Skip ships in transit (legacy Bezier OR torch) — they don't count
+    // as defenders at any body until they park.
+    if (ship.transfer || ship.transit || ship.class === 'freighter') continue;
     const bodyId = ship.orbit.parentBodyId;
     combatShipsAtBody.set(bodyId, (combatShipsAtBody.get(bodyId) ?? 0) + 1);
   }
@@ -259,7 +261,9 @@ function buildContext(state: GameState, factionId: string, tick: number): AICont
   const hostileShips = state.ships.filter(s => s.ownedBy !== factionId);
   const bodyIdToHostileShips = new Map<string, Ship[]>();
   for (const ship of hostileShips) {
-    if (ship.transfer) continue;  // in transit — not threatening yet
+    // Skip ships in transit (Bezier OR torch) — they don't threaten
+    // any body until they arrive.
+    if (ship.transfer || ship.transit) continue;
     const bodyId = ship.orbit.parentBodyId;
     if (!bodyIdToHostileShips.has(bodyId)) bodyIdToHostileShips.set(bodyId, []);
     bodyIdToHostileShips.get(bodyId)!.push(ship);

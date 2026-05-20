@@ -125,12 +125,23 @@ export const TopBar: React.FC<TopBarProps> = ({
       });
     }
 
-    // Ships arriving soon (within 5 ticks)
+    // Ships arriving soon (within 5 ticks). Reads torch transit
+    // first, then legacy bezier — either path triggers the same
+    // arrival nudge.
     for (const ship of playerShips) {
-      if (ship.transfer) {
-        const eta = ship.transfer.arrivalTime - gameState.currentTick;
+      let targetBodyId: string | undefined;
+      let arrivalTick: number | undefined;
+      if (ship.transit) {
+        targetBodyId = ship.transit.currentTransfer.targetBodyId;
+        arrivalTick = ship.transit.currentTransfer.arriveTick;
+      } else if (ship.transfer) {
+        targetBodyId = ship.transfer.arrivalBodyId;
+        arrivalTick = ship.transfer.arrivalTime;
+      }
+      if (targetBodyId && arrivalTick !== undefined) {
+        const eta = arrivalTick - gameState.currentTick;
         if (eta <= 5 && eta > 0) {
-          const target = gameState.bodies.find(b => b.id === ship.transfer!.arrivalBodyId);
+          const target = gameState.bodies.find(b => b.id === targetBodyId);
           out.push({
             id: `arrive-${ship.id}`,
             level: 'info',

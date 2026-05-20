@@ -53,17 +53,33 @@ export function computeIncomingThreats(
 ): IncomingThreat[] {
   const threats: IncomingThreat[] = [];
   for (const ship of gameState.ships) {
-    if (!ship.transfer) continue;
+    // Pull the in-flight metadata from whichever transit shape the
+    // ship carries — torch (post-migration) or legacy bezier. Skip
+    // ships that aren't moving toward anything.
+    let targetBodyId: string | undefined;
+    let arrivalTime: number;
+    let departureTime: number;
+    if (ship.transit) {
+      const plan = ship.transit.currentTransfer;
+      targetBodyId = plan.targetBodyId;
+      arrivalTime = plan.arriveTick;
+      departureTime = plan.startTick;
+    } else if (ship.transfer) {
+      targetBodyId = ship.transfer.arrivalBodyId;
+      arrivalTime = ship.transfer.arrivalTime;
+      departureTime = ship.transfer.departureTime;
+    } else {
+      continue;
+    }
     // Self-filter — the original sensitivity bug was that own ships
     // were firing threats. Keep this guard tight.
     if (ship.ownedBy === forFaction) continue;
 
-    const targetBodyId = ship.transfer.arrivalBodyId;
     const body = gameState.bodies.find(b => b.id === targetBodyId);
 
     // Three ways the target body matters to forFaction:
     const threatenedShips = gameState.ships.filter(
-      s => s.ownedBy === forFaction && !s.transfer && s.orbit.parentBodyId === targetBodyId,
+      s => s.ownedBy === forFaction && !s.transfer && !s.transit && s.orbit.parentBodyId === targetBodyId,
     );
     const threatenedSettlements = gameState.settlements.filter(
       s => s.ownedBy === forFaction && s.bodyId === targetBodyId,
@@ -82,10 +98,10 @@ export function computeIncomingThreats(
       attackerFaction: ship.ownedBy,
       targetBodyId,
       targetBodyName: body?.name ?? targetBodyId,
-      arrivalTime: ship.transfer.arrivalTime,
-      departureTime: ship.transfer.departureTime,
-      ticksUntilArrival: Math.max(0, ship.transfer.arrivalTime - gameState.currentTick),
-      isFreshBurn: gameState.currentTick - ship.transfer.departureTime <= FRESH_BURN_WINDOW,
+      arrivalTime,
+      departureTime,
+      ticksUntilArrival: Math.max(0, arrivalTime - gameState.currentTick),
+      isFreshBurn: gameState.currentTick - departureTime <= FRESH_BURN_WINDOW,
       threatenedShipCount: threatenedShips.length,
       threatenedSettlementCount: threatenedSettlements.length,
       targetBodyOwned: bodyOwned,

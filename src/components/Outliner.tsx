@@ -65,7 +65,10 @@ export const Outliner: React.FC = () => {
       if (b.ownedBy === 'player') bodyIds.add(b.id);
     }
     for (const s of playerShips) {
-      if (!s.transfer) bodyIds.add(s.orbit.parentBodyId);
+      // Parked ships contribute their body to the outliner; ships in
+      // transit (torch OR legacy bezier) appear in the dedicated
+      // In Transit section below.
+      if (!s.transfer && !s.transit) bodyIds.add(s.orbit.parentBodyId);
     }
     for (const s of playerSettlements) {
       bodyIds.add(s.bodyId);
@@ -79,7 +82,7 @@ export const Outliner: React.FC = () => {
       });
   }, [gameState.bodies, playerShips, playerSettlements]);
 
-  const inTransit = useMemo(() => playerShips.filter(s => s.transfer), [playerShips]);
+  const inTransit = useMemo(() => playerShips.filter(s => s.transfer || s.transit), [playerShips]);
 
   const shipsAt = (bodyId: string) =>
     playerShips.filter(s => !s.transfer && s.orbit.parentBodyId === bodyId);
@@ -222,8 +225,16 @@ export const Outliner: React.FC = () => {
             <div className="outliner__section-title">In Transit</div>
             {inTransit.map(ship => {
               const def = getShipClass(ship.class as ShipClassName);
-              const target = gameState.bodies.find(b => b.id === ship.transfer!.arrivalBodyId);
-              const eta = ship.transfer!.arrivalTime - gameState.currentTick;
+              // Pull target + ETA from torch transit if present, else
+              // legacy bezier. inTransit guarantees at least one is set.
+              const targetBodyId = ship.transit
+                ? ship.transit.currentTransfer.targetBodyId
+                : ship.transfer!.arrivalBodyId;
+              const arrivalTick = ship.transit
+                ? ship.transit.currentTransfer.arriveTick
+                : ship.transfer!.arrivalTime;
+              const target = gameState.bodies.find(b => b.id === targetBodyId);
+              const eta = arrivalTick - gameState.currentTick;
               const r = hpRatio(ship);
               return (
                 <div

@@ -40,8 +40,11 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     });
   }, [gameState.ships, filter]);
 
-  const inTransit = useMemo(() => ships.filter(s => s.transfer), [ships]);
-  const orbiting = useMemo(() => ships.filter(s => !s.transfer), [ships]);
+  // "In transit" covers both legacy bezier (ship.transfer) and torch
+  // (ship.transit) — both render the same way in this list and the
+  // bulk-action eligibility excludes both.
+  const inTransit = useMemo(() => ships.filter(s => s.transfer || s.transit), [ships]);
+  const orbiting = useMemo(() => ships.filter(s => !s.transfer && !s.transit), [ships]);
 
   // Group orbiting ships by parent body id
   const orbitingByBody = useMemo(() => {
@@ -80,7 +83,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const bulkEligibleIds = useMemo(() => {
     return new Set(
       gameState.ships
-        .filter(s => s.ownedBy === 'player' && !s.transfer && !s.pendingTransfer)
+        .filter(s => s.ownedBy === 'player' && !s.transfer && !s.transit && !s.pendingTransfer)
         .map(s => s.id)
     );
   }, [gameState.ships]);
@@ -193,9 +196,20 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const renderShipRow = (ship: typeof ships[0]) => {
     const def = getShipClass(ship.class as ShipClassName);
     const isSelected = uiState.selectedShipId === ship.id;
-    const transit = ship.transfer;
-    const target = transit ? gameState.bodies.find(b => b.id === transit.arrivalBodyId) : null;
-    const eta = transit ? Math.max(0, transit.arrivalTime - gameState.currentTick) : null;
+    // Pull transit metadata from torch first (post-migration), then
+    // legacy bezier. Either gives the player a target + arrival ETA.
+    let targetBodyId: string | undefined;
+    let eta: number | null = null;
+    if (ship.transit) {
+      const plan = ship.transit.currentTransfer;
+      targetBodyId = plan.targetBodyId;
+      eta = Math.max(0, plan.arriveTick - gameState.currentTick);
+    } else if (ship.transfer) {
+      targetBodyId = ship.transfer.arrivalBodyId;
+      eta = Math.max(0, ship.transfer.arrivalTime - gameState.currentTick);
+    }
+    const target = targetBodyId ? gameState.bodies.find(b => b.id === targetBodyId) : null;
+    const transit = ship.transit || ship.transfer;
 
     let statusBadge;
     if (transit) {
