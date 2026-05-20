@@ -127,6 +127,18 @@ export interface MultiplayerActions {
    *  cost-at-queue-time and clears building_order_json. */
   cancelBuilding: (settlementId: string) =>
     Promise<{ ok: true } | { ok: false; error: string }>;
+
+  // --- Trade routes ---
+  /** Open a recurring freighter route between origin (any player
+   *  settlement) and dest (a player collector). Server validates and
+   *  inserts; the per-tick auto-pilot loop in worker/room.js drives
+   *  the freighter from there. */
+  createTradeRoute: (shipId: string, originBodyId: string, destBodyId: string) =>
+    Promise<{ ok: true } | { ok: false; error: string }>;
+  /** Cancel an active route. Server refunds any cargo in the hold to
+   *  the player's pool (no resource leak). */
+  cancelTradeRoute: (routeId: string) =>
+    Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 const MultiplayerActionsContext = createContext<MultiplayerActions | null>(null);
@@ -282,6 +294,34 @@ export function MultiplayerActionsProvider({
       );
       if (res.ok) return { ok: true };
       console.warn('cancelBuilding failed', res.error);
+      return { ok: false, error: res.error?.message ?? 'Server rejected the cancel.' };
+    },
+    async createTradeRoute(shipId, originBodyId, destBodyId) {
+      const res = await apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/trade-routes`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            ship_id: shipId,
+            // Re-attach the gameId namespace; client stores stripped ids
+            // but server endpoints expect the fully-qualified form
+            // (same convention as transfers/builds).
+            origin_body_id: qualify(originBodyId),
+            dest_body_id: qualify(destBodyId),
+          }),
+        },
+      );
+      if (res.ok) return { ok: true };
+      console.warn('createTradeRoute failed', res.error);
+      return { ok: false, error: res.error?.message ?? 'Server rejected the route.' };
+    },
+    async cancelTradeRoute(routeId) {
+      const res = await apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/trade-routes/${encodeURIComponent(routeId)}`,
+        { method: 'DELETE' },
+      );
+      if (res.ok) return { ok: true };
+      console.warn('cancelTradeRoute failed', res.error);
       return { ok: false, error: res.error?.message ?? 'Server rejected the cancel.' };
     },
     });

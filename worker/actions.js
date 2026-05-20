@@ -969,6 +969,126 @@ async function handleBuildCollector(req, env, ctx) {
   });
 }
 
+// ============================================================
+// Trade routes (MP)
+//
+// POST   /api/games/:gameId/trade-routes              create
+// DELETE /api/games/:gameId/trade-routes/:routeId     cancel + refund
+//
+// The actual freighter auto-pilot lives in worker/room.js resolveTick;
+// these endpoints just record/erase intent. Validation:
+//   - caller owns the ship
+//   - ship is a freighter
+//   - origin body has a player-owned settlement (something to pick up)
+//   - dest body has a player-owned settlement WITH has_collector = 1
+//   - no other active route for this ship (UNIQUE INDEX guards too)
+// ============================================================
+async function handleCreateTradeRoute(req, env, ctx) {
+  const { gameId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+  const shipId       = String(body.ship_id ?? '');
+  const originBodyId = String(body.origin_body_id ?? '');
+  const destBodyId   = String(body.dest_body_id ?? '');
+  if (!SHIP_ID_RE.test(shipId))       return err(400, 'bad_request', 'invalid ship_id');
+  if (!BODY_ID_RE.test(originBodyId)) return err(400, 'bad_request', 'invalid origin_body_id');
+  if (!BODY_ID_RE.test(destBodyId))   return err(400, 'bad_request', 'invalid dest_body_id');
+  if (originBodyId === destBodyId)    return err(400, 'bad_request', 'origin and dest must differ');
+
+  const ship = await env.DB
+    .prepare('SELECT id, owner_faction_id, ship_class FROM game_ships WHERE id = ? AND game_id = ? AND status = ?')
+    .bind(shipId, gameId, 'active')
+    .first();
+  if (!ship) return err(404, 'not_found', 'ship not found');
+  if (ship.owner_faction_id !== me.id) return err(403, 'not_owner', 'not your ship');
+  if (ship.ship_class !== 'freighter') {
+    return err(409, 'wrong_class', 'only freighters can run trade routes');
+  }
+
+  // Origin must have a player-owned settlement.
+  const origin = await env.DB
+    .prepare('SELECT 1 AS x FROM game_settlements WHERE game_id = ? AND body_id = ? AND owner_faction_id = ? AND destroyed_at_tick IS NULL')
+    .bind(gameId, originBodyId, me.id)
+    .first();
+  if (!origin) return err(409, 'no_origin_settlement', 'origin body has no player settlement to pick up from');
+
+  // Dest must have a player-owned settlement with has_collector = 1.
+  const destC = await env.DB
+    .prepare('SELECT 1 AS x FROM game_settlements WHERE game_id = ? AND body_id = ? AND owner_faction_id = ? AND has_collector = 1 AND destroyed_at_tick IS NULL')
+    .bind(gameId, destBodyId, me.id)
+    .first();
+  if (!destC) return err(409, 'no_dest_collector', 'destination body has no player collector to deliver to');
+
+  // Drop any prior active route for this ship (UI lets the player
+  // replace; the UNIQUE INDEX would 409 otherwise).
+  const game = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
+  const tick = game?.current_tick ?? 0;
+  await env.DB
+    .prepare('UPDATE game_trade_routes SET cancelled_at_tick = ? WHERE ship_id = ? AND cancelled_at_tick IS NULL')
+    .bind(tick, shipId)
+    .run();
+
+  const routeId = `tr:${shipId}:${tick}:${Math.random().toString(36).slice(2, 6)}`;
+  await env.DB
+    .prepare(
+      `INSERT INTO game_trade_routes
+         (id, game_id, owner_faction_id, ship_id,
+          origin_body_id, dest_body_id, status,
+          cargo_fuel, cargo_metal, cargo_gold, cargo_science,
+          created_at_tick)
+       VALUES (?, ?, ?, ?, ?, ?, 'returning', 0, 0, 0, 0, ?)`,
+    )
+    .bind(routeId, gameId, me.id, shipId, originBodyId, destBodyId, tick)
+    .run();
+
+  return json({ ok: true, route: { id: routeId, ship_id: shipId, origin_body_id: originBodyId, dest_body_id: destBodyId } });
+}
+
+async function handleCancelTradeRoute(req, env, ctx) {
+  const { gameId, routeId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const route = await env.DB
+    .prepare(
+      `SELECT id, owner_faction_id, cancelled_at_tick,
+              cargo_fuel, cargo_metal, cargo_gold, cargo_science
+         FROM game_trade_routes WHERE id = ? AND game_id = ?`,
+    )
+    .bind(routeId, gameId)
+    .first();
+  if (!route) return err(404, 'not_found', 'route not found');
+  if (route.owner_faction_id !== me.id) return err(403, 'not_owner', 'not your route');
+  if (route.cancelled_at_tick != null) return err(409, 'already_cancelled', 'already cancelled');
+
+  // Refund any cargo currently in the freighter's hold. Without this
+  // the resources just vanish on cancel, which would punish players
+  // for redirecting a freighter mid-haul.
+  const game = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
+  const tick = game?.current_tick ?? 0;
+  const fuel    = Number(route.cargo_fuel    ?? 0);
+  const metal   = Number(route.cargo_metal   ?? 0);
+  const gold    = Number(route.cargo_gold    ?? 0);
+  const science = Number(route.cargo_science ?? 0);
+  await env.DB.batch([
+    env.DB
+      .prepare('UPDATE game_trade_routes SET cancelled_at_tick = ?, cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0 WHERE id = ?')
+      .bind(tick, routeId),
+    env.DB
+      .prepare('UPDATE game_factions SET fuel = fuel + ?, metal = metal + ?, gold = gold + ?, science = science + ? WHERE id = ?')
+      .bind(fuel, metal, gold, science, me.id),
+  ]);
+
+  return json({ ok: true, refund: { fuel, metal, gold, science } });
+}
+
 export const routes = [
   {
     method: 'POST',
@@ -1035,6 +1155,18 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/settlements\/(?<settlementId>[^/]+)\/buildings$/,
     auth: 'required',
     handle: handleCancelBuilding,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/trade-routes$/,
+    auth: 'required',
+    handle: handleCreateTradeRoute,
+  },
+  {
+    method: 'DELETE',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/trade-routes\/(?<routeId>[^/]+)$/,
+    auth: 'required',
+    handle: handleCancelTradeRoute,
   },
   {
     method: 'DELETE',

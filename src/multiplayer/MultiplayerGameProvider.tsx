@@ -153,6 +153,21 @@ interface ServerState {
     queued_at_tick: number;
     completes_at_tick: number;
   }>;
+  /** Active trade routes for the caller's faction. Server names use
+   *  metal/gold; the deserializer below maps to ore/credits to match
+   *  the client TradeRoute shape. */
+  trade_routes?: Array<{
+    id: string;
+    ship_id: string;
+    origin_body_id: string;
+    dest_body_id: string;
+    status: 'outbound' | 'returning' | 'paused';
+    cargo_fuel: number;
+    cargo_metal: number;
+    cargo_gold: number;
+    cargo_science: number;
+    created_at_tick: number;
+  }>;
 }
 
 // Map server body.type strings to client Body.type union.
@@ -520,6 +535,25 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     shipName: b.ship_class.charAt(0).toUpperCase() + b.ship_class.slice(1),
   }));
 
+  // Trade routes — server cargo columns (metal/gold) → client
+  // ore/credits. Strips gameId namespace from body ids so they line up
+  // with bodies[] (handled the same way as everywhere else).
+  const tradeRoutes = (srv.trade_routes ?? []).map(r => ({
+    id: r.id,
+    ownedBy: PLAYER_TOKEN,
+    shipId: r.ship_id,
+    originBodyId: stripGameId(r.origin_body_id) ?? r.origin_body_id,
+    destBodyId: stripGameId(r.dest_body_id) ?? r.dest_body_id,
+    status: r.status,
+    cargo: {
+      fuel: r.cargo_fuel,
+      ore: r.cargo_metal,       // server metal → client ore
+      credits: r.cargo_gold,    // server gold  → client credits
+      science: r.cargo_science,
+    },
+    createdAtTick: r.created_at_tick,
+  }));
+
   return {
     currentTick: srv.game.current_tick,
     bodies,
@@ -533,6 +567,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     factionTech: { [PLAYER_TOKEN]: playerTech },
     combatLog,
     lastHarvestTick: srv.game.current_tick,
+    tradeRoutes,
   };
 }
 

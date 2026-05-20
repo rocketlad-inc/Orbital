@@ -292,6 +292,21 @@ async function handleGetState(req, env, ctx) {
     .bind(gameId, me.id)
     .all()).results ?? [];
 
+  // Active trade routes for the caller's faction. The auto-pilot loop
+  // in worker/room.js resolveTick mutates these; the client deserializer
+  // converts server's metal/gold column names back to client's ore/credits.
+  const tradeRoutes = (await env.DB
+    .prepare(
+      `SELECT id, ship_id, origin_body_id, dest_body_id, status,
+              cargo_fuel, cargo_metal, cargo_gold, cargo_science,
+              created_at_tick
+         FROM game_trade_routes
+        WHERE game_id = ? AND owner_faction_id = ?
+          AND cancelled_at_tick IS NULL`,
+    )
+    .bind(gameId, me.id)
+    .all()).results ?? [];
+
   return json({
     game: {
       id: game.id,
@@ -333,6 +348,7 @@ async function handleGetState(req, env, ctx) {
     nodes,
     events,
     build_queue: buildQueue,
+    trade_routes: tradeRoutes,
   });
 }
 

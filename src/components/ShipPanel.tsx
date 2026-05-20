@@ -424,8 +424,24 @@ export const ShipPanel: React.FC = () => {
               tradeRoutes={gameState.tradeRoutes ?? []}
               bodies={gameState.bodies}
               settlements={gameState.settlements}
-              onCreate={(originBodyId, destBodyId) => createTradeRoute(ship.id, originBodyId, destBodyId)}
-              onCancel={cancelTradeRoute}
+              onCreate={(originBodyId, destBodyId) => {
+                // Optimistic local create + MP server post. In SP the
+                // local mutation is the source of truth; in MP it
+                // gives the UI an immediate route to render until the
+                // next /state poll (~1.5s) reconciles with the
+                // server's authoritative row.
+                const ok = createTradeRoute(ship.id, originBodyId, destBodyId);
+                if (ok && mpActions) {
+                  mpActions.createTradeRoute(ship.id, originBodyId, destBodyId);
+                }
+                return ok;
+              }}
+              onCancel={(routeId) => {
+                cancelTradeRoute(routeId);
+                if (mpActions) {
+                  mpActions.cancelTradeRoute(routeId);
+                }
+              }}
             />
           )}
 

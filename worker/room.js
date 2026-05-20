@@ -740,6 +740,179 @@ export class Room {
       ]);
     }
 
+    // 2c. Trade route auto-pilot.
+    //
+    // For each active route, look at the freighter. Skip if it has any
+    // in_transit OR committed node currently — the alarm's depart/arrive
+    // passes (2a/2b) already drive that ship; don't double-schedule.
+    //
+    //   - At origin with empty hold  → pick up from origin settlement
+    //                                   stockpile (up to CARGO_CAP per
+    //                                   resource), insert committed
+    //                                   node toward dest. Status →
+    //                                   'outbound'.
+    //   - At dest with non-empty hold → dump cargo into faction pool,
+    //                                   clear cargo, insert committed
+    //                                   node back to origin. Status →
+    //                                   'returning'.
+    //   - Off-course / paused        → no-op (player can manually fly
+    //                                   back; route picks up next time
+    //                                   they land at an endpoint).
+    //
+    // arrival_at_tick uses a flat 60-tick placeholder per leg. The
+    // existing scheduled_t/arrival_at_tick path in 2a/2b is the single
+    // source of truth for "ship is in transit" so we don't need to
+    // re-implement the Bezier model.
+    try {
+      const CARGO_CAP = 50;
+      const LEG_TICKS = 60;
+      const routes = (await this.env.DB
+        .prepare(
+          `SELECT id, owner_faction_id, ship_id, origin_body_id, dest_body_id, status,
+                  cargo_fuel, cargo_metal, cargo_gold, cargo_science
+             FROM game_trade_routes
+            WHERE game_id = ? AND cancelled_at_tick IS NULL`,
+        )
+        .bind(gameId)
+        .all()).results ?? [];
+
+      for (const r of routes) {
+        if (r.status === 'paused') continue;
+        const ship = await this.env.DB
+          .prepare("SELECT id, owner_faction_id, parent_body_id, ship_class, status FROM game_ships WHERE id = ?")
+          .bind(r.ship_id).first();
+        // Dead or missing freighter → cancel the route so we don't keep
+        // scanning it. Piracy step (below) handles cargo capture if the
+        // freighter died this tick.
+        if (!ship || ship.status !== 'active') {
+          await this.env.DB
+            .prepare('UPDATE game_trade_routes SET cancelled_at_tick = ? WHERE id = ?')
+            .bind(tick, r.id).run();
+          continue;
+        }
+        if (ship.ship_class !== 'freighter') continue;
+
+        // Skip if already mid-transit (any committed or in_transit node).
+        const inFlight = await this.env.DB
+          .prepare("SELECT 1 AS x FROM game_ship_nodes WHERE ship_id = ? AND status IN ('committed','in_transit') LIMIT 1")
+          .bind(r.ship_id).first();
+        if (inFlight) continue;
+
+        const here = ship.parent_body_id;
+        const cargoFuel    = Number(r.cargo_fuel    ?? 0);
+        const cargoMetal   = Number(r.cargo_metal   ?? 0);
+        const cargoGold    = Number(r.cargo_gold    ?? 0);
+        const cargoScience = Number(r.cargo_science ?? 0);
+        const cargoTotal = cargoFuel + cargoMetal + cargoGold + cargoScience;
+
+        const planLeg = async (targetBodyId) => {
+          // Insert a committed node toward targetBodyId. 2a will flip it
+          // to in_transit next tick; 2b will arrive it LEG_TICKS later.
+          const seqRow = await this.env.DB
+            .prepare('SELECT MAX(sequence) AS m FROM game_ship_nodes WHERE ship_id = ?')
+            .bind(r.ship_id).first();
+          const seq = (seqRow?.m ?? -1) + 1;
+          const nodeId = `${r.ship_id}:tr${tick}:n${seq}`;
+          await this.env.DB
+            .prepare(
+              `INSERT INTO game_ship_nodes
+                 (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
+                  scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
+                  status, committed_at_tick)
+               VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, 0, 0, 0, 0, 'committed', ?)`,
+            )
+            .bind(nodeId, gameId, r.ship_id, seq, targetBodyId, tick, tick + LEG_TICKS, tick)
+            .run();
+        };
+
+        if (here === r.origin_body_id && cargoTotal < 1) {
+          // PICKUP: vacuum from settlement stockpiles at origin.
+          const stocks = (await this.env.DB
+            .prepare(
+              `SELECT id, stockpile_fuel, stockpile_metal, stockpile_gold, stockpile_science
+                 FROM game_settlements
+                WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+                  AND destroyed_at_tick IS NULL`,
+            )
+            .bind(gameId, r.origin_body_id, r.owner_faction_id)
+            .all()).results ?? [];
+          let cf = 0, cm = 0, cg = 0, csci = 0;
+          for (const s of stocks) {
+            const take = {
+              f:  Math.min(CARGO_CAP - cf,   Number(s.stockpile_fuel    ?? 0)),
+              m:  Math.min(CARGO_CAP - cm,   Number(s.stockpile_metal   ?? 0)),
+              g:  Math.min(CARGO_CAP - cg,   Number(s.stockpile_gold    ?? 0)),
+              sc: Math.min(CARGO_CAP - csci, Number(s.stockpile_science ?? 0)),
+            };
+            if (take.f + take.m + take.g + take.sc <= 0) continue;
+            cf += take.f; cm += take.m; cg += take.g; csci += take.sc;
+            await this.env.DB
+              .prepare(
+                `UPDATE game_settlements
+                    SET stockpile_fuel    = stockpile_fuel    - ?,
+                        stockpile_metal   = stockpile_metal   - ?,
+                        stockpile_gold    = stockpile_gold    - ?,
+                        stockpile_science = stockpile_science - ?
+                  WHERE id = ?`,
+              )
+              .bind(take.f, take.m, take.g, take.sc, s.id)
+              .run();
+            if (cf >= CARGO_CAP && cm >= CARGO_CAP && cg >= CARGO_CAP && csci >= CARGO_CAP) break;
+          }
+          // Always plan the outbound leg — even an empty stockpile
+          // sends the freighter cycling so it'll try again next loop.
+          await this.env.DB
+            .prepare(
+              `UPDATE game_trade_routes
+                  SET cargo_fuel = ?, cargo_metal = ?, cargo_gold = ?, cargo_science = ?,
+                      status = 'outbound'
+                WHERE id = ?`,
+            )
+            .bind(cf, cm, cg, csci, r.id)
+            .run();
+          await planLeg(r.dest_body_id);
+          continue;
+        }
+
+        if (here === r.dest_body_id && cargoTotal > 0) {
+          // DELIVERY: dump cargo to faction pool, head home.
+          await this.env.DB.batch([
+            this.env.DB
+              .prepare(
+                `UPDATE game_factions
+                    SET fuel    = fuel    + ?,
+                        metal   = metal   + ?,
+                        gold    = gold    + ?,
+                        science = science + ?
+                  WHERE id = ?`,
+              )
+              .bind(cargoFuel, cargoMetal, cargoGold, cargoScience, r.owner_faction_id),
+            this.env.DB
+              .prepare(
+                `UPDATE game_trade_routes
+                    SET cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0,
+                        status = 'returning'
+                  WHERE id = ?`,
+              )
+              .bind(r.id),
+          ]);
+          await planLeg(r.origin_body_id);
+          continue;
+        }
+
+        // Otherwise (off-course or at correct endpoint with wrong cargo
+        // phase), nudge the freighter toward whichever endpoint matches
+        // the current status. This recovers from a player manually
+        // flying the ship off-route.
+        const target = r.status === 'outbound' ? r.dest_body_id : r.origin_body_id;
+        if (here !== target) {
+          await planLeg(target);
+        }
+      }
+    } catch (e) {
+      console.error('trade-route auto-pilot failed', e);
+    }
+
     // 3. Combat. Find bodies where 2+ factions have ships. Each ship's
     //    damage_per_tick is split evenly across hostile ships at the same
     //    body. Ships at hp<=0 are marked destroyed.
@@ -1087,6 +1260,55 @@ export class Room {
           await this.env.DB
             .prepare('UPDATE game_ships SET hp = ? WHERE id = ?')
             .bind(newHp, shipId)
+            .run();
+        }
+      }
+
+      // Piracy: any destroyed freighter on an active trade route hands
+      // its cargo to the kill-credit faction. Mirrors the SP hook in
+      // src/state/gameContext.tsx. Routes are cancelled regardless —
+      // the ship is gone, the auto-pilot has nothing to drive.
+      if (losses.length > 0) {
+        const placeholders = losses.map(() => '?').join(',');
+        const looted = (await this.env.DB
+          .prepare(
+            `SELECT id, ship_id, owner_faction_id,
+                    cargo_fuel, cargo_metal, cargo_gold, cargo_science
+               FROM game_trade_routes
+              WHERE game_id = ?
+                AND cancelled_at_tick IS NULL
+                AND ship_id IN (${placeholders})`,
+          )
+          .bind(gameId, ...losses)
+          .all()).results ?? [];
+        for (const r of looted) {
+          const killer = killerByShip.get(r.ship_id);
+          const cargoFuel    = Number(r.cargo_fuel    ?? 0);
+          const cargoMetal   = Number(r.cargo_metal   ?? 0);
+          const cargoGold    = Number(r.cargo_gold    ?? 0);
+          const cargoScience = Number(r.cargo_science ?? 0);
+          const total = cargoFuel + cargoMetal + cargoGold + cargoScience;
+          if (killer && total > 0) {
+            await this.env.DB
+              .prepare(
+                `UPDATE game_factions
+                    SET fuel    = fuel    + ?,
+                        metal   = metal   + ?,
+                        gold    = gold    + ?,
+                        science = science + ?
+                  WHERE id = ?`,
+              )
+              .bind(cargoFuel, cargoMetal, cargoGold, cargoScience, killer)
+              .run();
+          }
+          await this.env.DB
+            .prepare(
+              `UPDATE game_trade_routes
+                  SET cancelled_at_tick = ?,
+                      cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0
+                WHERE id = ?`,
+            )
+            .bind(tick, r.id)
             .run();
         }
       }
