@@ -20,6 +20,13 @@ export function shipWorldPosition(
   tick: number,
   bodies: Body[],
 ): { x: number; y: number } | null {
+  // Priority order matches the ship's possible states:
+  //   1. Torch transit  → ship.transit.pos directly
+  //   2. Legacy Bezier  → cubic interpolation (removed in Phase 6)
+  //   3. Parked         → orbit element evaluation
+  if (ship.transit) {
+    return { x: ship.transit.pos.x, y: ship.transit.pos.y };
+  }
   if (ship.transfer) {
     return bezierPositionAt(ship.transfer, tick);
   }

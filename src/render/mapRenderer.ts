@@ -2,9 +2,10 @@
 // Map Canvas Rendering - Draw the orbital system
 // ============================================================
 
-import { Body, Ship, OrbitElements, TrajectoryArc, TransferArc, Settlement, Faction } from '../types';
+import { Body, Ship, OrbitElements, TrajectoryArc, TransferArc, Settlement, Faction, TorchTransferPlan } from '../types';
 import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt } from '../physics/orbitalMechanics';
 import { bezierPositionAt, bezierTangentAt, bezierPoints } from '../physics/bezierTransfer';
+import { sampleTorchTrajectory } from '../physics/torchTransfer';
 import { COLORS, withOpacity, lighten, darken } from './colors';
 import { getShipIconImage } from './shipIconCache';
 import { ShipIconClass } from '../components/ShipIcons';
@@ -1041,11 +1042,54 @@ export function drawBezierTrajectory(
   ctx.ctx.setLineDash([]);
 }
 
+/**
+ * Draw an integrated torch trajectory: samples the actual curved path
+ * the ship will fly (including bend from inherited orbital velocity),
+ * then connects the samples with a polyline. Mirror of the bezier
+ * version, but the curve emerges from physics rather than control
+ * points.
+ */
+export function drawTorchTrajectory(
+  plan: TorchTransferPlan,
+  bodies: Body[],
+  ctx: RenderContext,
+  color: string = COLORS.arcTransfer,
+  isDashed: boolean = false
+) {
+  const samples = sampleTorchTrajectory(
+    plan,
+    { pos: { x: plan.startPos.x, y: plan.startPos.y },
+      vel: { x: plan.startVel.x, y: plan.startVel.y } },
+    bodies,
+    80,
+  );
+  if (samples.length < 2) return;
+
+  if (isDashed) ctx.ctx.setLineDash([5, 5]);
+  ctx.ctx.strokeStyle = color;
+  ctx.ctx.lineWidth = 1.5;
+  ctx.ctx.beginPath();
+  for (let i = 0; i < samples.length; i++) {
+    const cp = worldToCanvas(samples[i].x, samples[i].y, ctx);
+    if (i === 0) ctx.ctx.moveTo(cp.x, cp.y);
+    else ctx.ctx.lineTo(cp.x, cp.y);
+  }
+  ctx.ctx.stroke();
+  ctx.ctx.setLineDash([]);
+}
+
 export function drawTransitShip(
   ship: Ship,
   ctx: RenderContext,
   isSelected: boolean = false
 ) {
+  // Torch transit: prefer the state-vector path. Falls through to
+  // legacy Bezier rendering only if torch state isn't present (will be
+  // removed entirely in Phase 6).
+  if (ship.transit) {
+    drawTorchTransitShip(ship, ctx, isSelected);
+    return;
+  }
   if (!ship.transfer) return;
 
   const worldPos = bezierPositionAt(ship.transfer, ctx.t);
@@ -1108,6 +1152,82 @@ export function drawTransitShip(
       ctx.ctx.font = '8px monospace';
       ctx.ctx.textAlign = 'left';
       ctx.ctx.fillText(`ETA T-${eta.toFixed(0)}`, canvasPos.x + 8, canvasPos.y + 6);
+    }
+  }
+}
+
+/**
+ * Torch-mode equivalent of drawTransitShip. Reads ship.transit.pos for
+ * the world position (no need to interpolate — the executor keeps it
+ * fresh each tick), ship.transit.vel for the heading. Falls back to a
+ * dot+tick line when no ship icon is available.
+ */
+function drawTorchTransitShip(
+  ship: Ship,
+  ctx: RenderContext,
+  isSelected: boolean,
+) {
+  if (!ship.transit) return;
+  const { pos, vel, currentTransfer } = ship.transit;
+  const canvasPos = worldToCanvas(pos.x, pos.y, ctx);
+  const shipColorValue = shipColor(ship, ctx.factions);
+
+  // Heading from velocity; canvas y inverts so we flip the y component.
+  const vMag = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
+  const dirX = vMag > 1e-9 ? vel.x / vMag : 1;
+  const dirY = vMag > 1e-9 ? vel.y / vMag : 0;
+  const heading = Math.atan2(-dirY, dirX);
+
+  const iconSize = isSelected ? 22 : 18;
+
+  const flashStartT = ctx.damageFlashStart?.get(ship.id);
+  drawDamageFlash(canvasPos, iconSize / 2, flashStartT, ctx.t, ctx, 'damage');
+
+  const icon = getShipIconImage(ship.class as ShipIconClass, shipColorValue);
+  if (icon) {
+    ctx.ctx.save();
+    ctx.ctx.translate(canvasPos.x, canvasPos.y);
+    ctx.ctx.rotate(heading);
+    ctx.ctx.drawImage(icon, -iconSize / 2, -iconSize / 2, iconSize, iconSize);
+    ctx.ctx.restore();
+  } else {
+    const shipSize = isSelected ? 5 : 4;
+    ctx.ctx.fillStyle = shipColorValue;
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(canvasPos.x, canvasPos.y, shipSize, 0, Math.PI * 2);
+    ctx.ctx.fill();
+    ctx.ctx.strokeStyle = shipColorValue;
+    ctx.ctx.lineWidth = 1.5;
+    ctx.ctx.beginPath();
+    ctx.ctx.moveTo(canvasPos.x, canvasPos.y);
+    ctx.ctx.lineTo(canvasPos.x + dirX * 10, canvasPos.y - dirY * 10);
+    ctx.ctx.stroke();
+  }
+
+  if (isSelected) {
+    ctx.ctx.strokeStyle = COLORS.info;
+    ctx.ctx.lineWidth = 2;
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(canvasPos.x, canvasPos.y, iconSize / 2 + 4, 0, Math.PI * 2);
+    ctx.ctx.stroke();
+  }
+
+  // Ship name
+  ctx.ctx.fillStyle = isSelected ? '#ffb84d' : shipColorValue;
+  ctx.ctx.font = '9px monospace';
+  ctx.ctx.textAlign = 'left';
+  ctx.ctx.textBaseline = 'middle';
+  ctx.ctx.fillText(ship.name.split(' ')[0], canvasPos.x + iconSize / 2 + 4, canvasPos.y - 6);
+
+  // ETA + phase label when selected
+  if (isSelected) {
+    const eta = currentTransfer.arriveTick - ctx.t;
+    const phase = ctx.t < currentTransfer.flipTick ? 'BOOST' : 'BRAKE';
+    if (eta > 0) {
+      ctx.ctx.fillStyle = COLORS.fgDim;
+      ctx.ctx.font = '8px monospace';
+      ctx.ctx.textAlign = 'left';
+      ctx.ctx.fillText(`${phase} · ETA T-${eta.toFixed(0)}`, canvasPos.x + 8, canvasPos.y + 6);
     }
   }
 }
@@ -1522,11 +1642,14 @@ export function drawAllTransfersLayer(
   ctx: RenderContext,
 ) {
   for (const ship of ships) {
-    if (!ship.transfer) continue;
     const color = shipColor(ship, ctx.factions);
     ctx.ctx.save();
     ctx.ctx.globalAlpha = 0.45;
-    drawBezierTrajectory(ship.transfer, ctx, color, false);
+    if (ship.transit) {
+      drawTorchTrajectory(ship.transit.currentTransfer, ctx.bodies, ctx, color, false);
+    } else if (ship.transfer) {
+      drawBezierTrajectory(ship.transfer, ctx, color, false);
+    }
     ctx.ctx.restore();
   }
 }
@@ -1545,20 +1668,28 @@ export function drawEnemyTrajectoriesLayer(
   ctx: RenderContext,
 ) {
   for (const ship of ships) {
-    if (!ship.transfer) continue;
     if (ship.ownedBy === playerFactionId) continue;
     if (!visibleShipIds.has(ship.id)) continue;
-    const target = bodies.find(b => b.id === ship.transfer!.arrivalBodyId);
+
+    // Find the target body — either from the torch plan or the legacy
+    // arc — to drive the "is this aimed at me?" intensity.
+    let targetBodyId: string | undefined;
+    if (ship.transit) targetBodyId = ship.transit.currentTransfer.targetBodyId;
+    else if (ship.transfer) targetBodyId = ship.transfer.arrivalBodyId;
+    else continue;
+
+    const target = bodies.find(b => b.id === targetBodyId);
     const targetOwned = target?.ownedBy === playerFactionId;
-    // Bright red + thick stroke for arcs targeting you; otherwise a
-    // dimmer warning hue so the player can still read enemy maneuvers
-    // even when they're not the target.
     const color = targetOwned ? '#ff3030' : '#ff8a40';
     ctx.ctx.save();
     ctx.ctx.globalAlpha = targetOwned ? 0.85 : 0.5;
     ctx.ctx.shadowColor = color;
     ctx.ctx.shadowBlur = targetOwned ? 6 : 0;
-    drawBezierTrajectory(ship.transfer, ctx, color, !targetOwned);
+    if (ship.transit) {
+      drawTorchTrajectory(ship.transit.currentTransfer, bodies, ctx, color, !targetOwned);
+    } else if (ship.transfer) {
+      drawBezierTrajectory(ship.transfer, ctx, color, !targetOwned);
+    }
     ctx.ctx.restore();
   }
 }

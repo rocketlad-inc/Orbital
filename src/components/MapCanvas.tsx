@@ -10,6 +10,7 @@ import {
   drawSOIBoundary,
   drawApsisMarkers,
   drawBezierTrajectory,
+  drawTorchTrajectory,
   drawTransitShip,
   drawDepartureMarker,
   drawGhostPlanet,
@@ -150,9 +151,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // explode at the spot they were on the arc when killed.
       // shipWorldPosition returns null for ships whose parent body
       // has gone missing — skip those rather than crash.
-      const pos: { x: number; y: number } | null = ship.transfer
-        ? bezierPositionAt(ship.transfer, nowTick)
-        : shipWorldPosition(ship, nowTick, gameState.bodies);
+      // shipWorldPosition already handles torch (ship.transit) and
+      // legacy bezier (ship.transfer) — no need to branch here. Returns
+      // null for ships whose parent body has gone missing — skip those
+      // rather than crash.
+      const pos: { x: number; y: number } | null =
+        shipWorldPosition(ship, nowTick, gameState.bodies);
       if (pos) curShipIds.set(ship.id, pos);
 
       const cur = ship.lastDamagedTick;
@@ -274,14 +278,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       if (uiState.hoveredBodyId && uiState.selectedShipId) {
         const ship = gameState.ships.find(s => s.id === uiState.selectedShipId);
         const hovBody = gameState.bodies.find(b => b.id === uiState.hoveredBodyId);
-        if (ship && hovBody) {
-          let shipWorldPos;
-          if (ship.transfer) {
-            shipWorldPos = bezierPositionAt(ship.transfer, gameState.currentTick);
-          } else {
-            const { orbitWorldPos } = require('../physics/orbitalMechanics');
-            shipWorldPos = orbitWorldPos(ship.orbit, gameState.currentTick, gameState.bodies);
-          }
+        // Same priority chain shipWorldPosition uses: torch transit
+        // first, legacy bezier second, parked orbit last. Returns
+        // null only if parent body has gone missing — skip the
+        // hover line in that edge case.
+        const shipWorldPos = ship ? shipWorldPosition(ship, gameState.currentTick, gameState.bodies) : null;
+        if (ship && hovBody && shipWorldPos) {
           const bodyWorldPos = bodyPosition(hovBody, gameState.currentTick, gameState.bodies);
           const shipCanvas = worldToCanvas(shipWorldPos.x, shipWorldPos.y, renderContext);
           const bodyCanvas = worldToCanvas(bodyWorldPos.x, bodyWorldPos.y, renderContext);
@@ -414,7 +416,20 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const isSelected = uiState.selectedShipId === ship.id;
       const formation = formationMap.get(ship.id);
 
-      if (ship.transfer) {
+      if (ship.transit) {
+        // Torch transit — preferred path post-migration.
+        const plan = ship.transit.currentTransfer;
+        drawTorchTrajectory(plan, gameState.bodies, renderContext, COLORS.arcTransfer, false);
+        drawTransitShip(ship, renderContext, isSelected);
+
+        const arrivalBody = gameState.bodies.find(b => b.id === plan.targetBodyId);
+        if (arrivalBody) {
+          drawGhostPlanet(arrivalBody, plan.arriveTick, gameState.currentTick, renderContext);
+        }
+        // Queued multi-leg transfers don't yet have a torch equivalent
+        // — they're a UI feature from the Bezier era. Phase 3 decides
+        // whether to bring chained legs back as torch plans.
+      } else if (ship.transfer) {
         drawBezierTrajectory(ship.transfer, renderContext, COLORS.arcTransfer, false);
         drawTransitShip(ship, renderContext, isSelected);
 
@@ -887,7 +902,9 @@ function getShipCanvasPos(
   ship: any, canvas: HTMLCanvasElement, bodies: any[], camera: any, t: number
 ): { x: number; y: number } {
   let pos;
-  if (ship.transfer) {
+  if (ship.transit) {
+    pos = { x: ship.transit.pos.x, y: ship.transit.pos.y };
+  } else if (ship.transfer) {
     pos = bezierPositionAt(ship.transfer, t);
   } else {
     const { orbitWorldPos } = require('../physics/orbitalMechanics');
