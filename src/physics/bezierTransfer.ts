@@ -14,9 +14,11 @@
 // change, recompute the transit table in DESIGN.md.
 
 import { OrbitElements, Body, TransferArc } from '../types';
-import { bodyPosition, muOf, GRAVITATIONAL_PARAMS } from './orbitalMechanics';
+import { bodyPosition, bodyAngleAt, muOf, GRAVITATIONAL_PARAMS } from './orbitalMechanics';
 
-const TWO_PI = Math.PI * 2;
+// TWO_PI used to multiply (t / orbitPeriod) at six sites here. All of
+// those collapsed into bodyAngleAt() once the global ORBITAL_SPEED_SCALE
+// landed in orbitalMechanics.ts, so the local constant became dead.
 const MU_SUN = GRAVITATIONAL_PARAMS.SOL;
 
 export function planBezierTransfer(
@@ -161,11 +163,11 @@ function computeBezierControlPoints(
   const p3 = bodyPosition(arrivalBody, arrivalTime, bodies);
 
   // Departure tangent: prograde direction (perpendicular to radial from Sol)
-  const depAngle = departureBody.angle0 + TWO_PI * departureTime / departureBody.orbitPeriod;
+  const depAngle = bodyAngleAt(departureBody, departureTime);
   const depTangent = { x: -Math.sin(depAngle), y: Math.cos(depAngle) };
 
   // Arrival tangent: prograde direction at arrival body's position
-  const arrAngle = arrivalBody.angle0 + TWO_PI * arrivalTime / arrivalBody.orbitPeriod;
+  const arrAngle = bodyAngleAt(arrivalBody, arrivalTime);
   const arrTangent = { x: -Math.sin(arrAngle), y: Math.cos(arrAngle) };
 
   const dx = p3.x - p0.x;
@@ -210,7 +212,7 @@ function computeBezierControlPointsLocal(
 
   let depTangent: { x: number; y: number };
   if (depIsMoon) {
-    const depAngle = departureBody.angle0 + TWO_PI * departureTime / departureBody.orbitPeriod;
+    const depAngle = bodyAngleAt(departureBody, departureTime);
     depTangent = { x: -Math.sin(depAngle), y: Math.cos(depAngle) };
   } else {
     const perp = { x: -dy / dist, y: dx / dist };
@@ -219,7 +221,7 @@ function computeBezierControlPointsLocal(
 
   let arrTangent: { x: number; y: number };
   if (arrIsMoon) {
-    const arrAngle = arrivalBody.angle0 + TWO_PI * arrivalTime / arrivalBody.orbitPeriod;
+    const arrAngle = bodyAngleAt(arrivalBody, arrivalTime);
     arrTangent = { x: -Math.sin(arrAngle), y: Math.cos(arrAngle) };
   } else {
     const perp = { x: dy / dist, y: -dx / dist };
@@ -253,10 +255,10 @@ function computeBezierControlPointsCrossSystem(
   const p3 = bodyPosition(arrivalBody, arrivalTime, bodies);
 
   // Use parent planet tangents for the heliocentric transfer shape
-  const depAngle = depPlanet.angle0 + TWO_PI * departureTime / depPlanet.orbitPeriod;
+  const depAngle = bodyAngleAt(depPlanet, departureTime);
   const depTangent = { x: -Math.sin(depAngle), y: Math.cos(depAngle) };
 
-  const arrAngle = arrPlanet.angle0 + TWO_PI * arrivalTime / arrPlanet.orbitPeriod;
+  const arrAngle = bodyAngleAt(arrPlanet, arrivalTime);
   const arrTangent = { x: -Math.sin(arrAngle), y: Math.cos(arrAngle) };
 
   const dx = p3.x - p0.x;

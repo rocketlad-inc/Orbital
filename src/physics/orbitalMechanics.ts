@@ -181,13 +181,39 @@ export interface WorldPosition {
   y: number;
 }
 
+/**
+ * Global planet-motion scaling. 1.0 = real Kepler periods; 0.5 = planets
+ * move at half-speed so transfers don't look like they're chasing a
+ * fast-moving target. Applies ONLY to celestial bodies (Body.orbitPeriod);
+ * ship orbits (OrbitElements.period) are untouched so combat windows and
+ * ship-on-ship engagement still feel responsive.
+ *
+ * Tuned at 0.5 per playtest feedback: "the planets move so much during
+ * a transfer it's confusing." Hohmann travel time is unaffected (it
+ * depends on the transfer-orbit semi-major axis + Sol's μ, not on how
+ * fast the destination planet rotates), but phase-angle windows for
+ * "soonest" transfers now come around half as often — which is the
+ * intended trade-off.
+ */
+export const ORBITAL_SPEED_SCALE = 0.5;
+
+/**
+ * Angle (radians) of a body around its parent at tick `t`. Applies the
+ * global ORBITAL_SPEED_SCALE so every planet-position computation stays
+ * in sync (renderer, transfer planner, ghost-planet preview, etc.).
+ * Centralised so a single constant flip changes the whole system.
+ */
+export function bodyAngleAt(body: Body, t: number): number {
+  return body.angle0! + (TWO_PI * t * ORBITAL_SPEED_SCALE / body.orbitPeriod);
+}
+
 export function bodyPosition(body: Body, t: number, bodies: Body[]): WorldPosition {
   if (!body.parent) return { x: 0, y: 0 };
   const parent = bodies.find(b => b.id === body.parent);
   if (!parent) return { x: 0, y: 0 };
 
   const parentPos = bodyPosition(parent, t, bodies);
-  const angle = body.angle0! + (TWO_PI * t / body.orbitPeriod);
+  const angle = bodyAngleAt(body, t);
   return {
     x: parentPos.x + Math.cos(angle) * body.orbitRadius,
     y: parentPos.y + Math.sin(angle) * body.orbitRadius,
