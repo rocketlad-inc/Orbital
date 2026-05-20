@@ -1624,8 +1624,13 @@ export function drawShipGhost(
 }
 
 /**
- * Draw a faint sensor-coverage circle around an asset. Used to hint the
- * player at where their visibility extends.
+ * Draw a clean sensor-coverage circle around an asset. One per ship /
+ * city / station — the boundary the fog-of-war overlay also cuts out.
+ *
+ * Color codes by sourceType so the player can read "this is a station's
+ * sensor reach (big cyan)" vs "this is a freighter's tiny green eye."
+ * Stroke is solid + moderate opacity so the edge is visible against
+ * both the dimmed fog AND the in-coverage bright canvas.
  */
 export function drawSensorRing(
   worldPos: { x: number; y: number },
@@ -1635,7 +1640,7 @@ export function drawSensorRing(
 ) {
   const canvasPos = worldToCanvas(worldPos.x, worldPos.y, ctx);
   const radius = range * ctx.camera.scale;
-  if (radius < 6) return; // too small to bother
+  if (radius < 6) return; // too small to bother — the asset's icon is its own marker
 
   const color = sourceType === 'station'
     ? COLORS.info
@@ -1643,13 +1648,39 @@ export function drawSensorRing(
       ? COLORS.warning
       : COLORS.success;
 
-  ctx.ctx.strokeStyle = withOpacity(color, 0.08);
-  ctx.ctx.lineWidth = 1;
-  ctx.ctx.setLineDash([2, 5]);
+  // Solid outline against the fog wash. A subtle filled wedge inside
+  // would dim what's already bright, so we only stroke. Two-pass:
+  // wider faded ring underneath for a "glow," sharp 1px on top.
+  ctx.ctx.save();
+  ctx.ctx.strokeStyle = withOpacity(color, 0.18);
+  ctx.ctx.lineWidth = 3;
   ctx.ctx.beginPath();
   ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
   ctx.ctx.stroke();
-  ctx.ctx.setLineDash([]);
+
+  ctx.ctx.strokeStyle = withOpacity(color, 0.55);
+  ctx.ctx.lineWidth = 1;
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
+  ctx.ctx.stroke();
+  ctx.ctx.restore();
+}
+
+/**
+ * Draw a clean outline for every sensor source. Called immediately
+ * after drawFogOfWarOverlay so the rings sit on top of the fog wash —
+ * the player sees crisp circles around each ship/city/station instead
+ * of having to infer the boundary from the dimming alone.
+ *
+ * Mirrors what factionSensorRings returns; no extra computation.
+ */
+export function drawSensorEdges(
+  rings: Array<{ pos: { x: number; y: number }; range: number; sourceType: 'ship' | 'city' | 'station' }>,
+  ctx: RenderContext,
+) {
+  for (const r of rings) {
+    drawSensorRing(r.pos, r.range, r.sourceType, ctx);
+  }
 }
 
 // ============================================================

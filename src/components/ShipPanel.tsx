@@ -1,11 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useGameContext } from '../state/gameContext';
-import { ManeuverNode, Ship, Body, Settlement, TradeRoute } from '../types';
-import { planBezierTransfer } from '../physics/bezierTransfer';
-import { createCircularOrbit } from '../physics/orbitalMechanics';
+import { Ship, Body, Settlement, TradeRoute } from '../types';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { maintenanceRatesForShip } from '../game/maintenance';
-import { travelTimeModifier, FactionTechState } from '../game/techs';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { ShipIcon } from './ShipIcons';
@@ -15,8 +12,7 @@ import './ShipPanel.css';
 export const ShipPanel: React.FC = () => {
   const {
     gameState, uiState, deselectShip, setGameState,
-    commitManeuverNode, deleteManeuverNode, addManeuverNode,
-    setPendingTransfer, addQueuedTransfer, setTargetSelectionMode,
+    deleteManeuverNode, setTargetSelectionMode,
     launchTorchTransfer, enqueueTorchTransfer, planTorchPreview, cancelTorchPreview,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
     createTradeRoute, cancelTradeRoute,
@@ -130,7 +126,7 @@ export const ShipPanel: React.FC = () => {
    * transfer auto-fire ~1.5s later when /state polled back the server's
    * 'committed' record.
    */
-  const commitTransferLocal = (_node: ManeuverNode, owningShip: typeof ship) => {
+  const commitTransferLocal = (owningShip: typeof ship) => {
     // The planned preview holds the target body. Promote via
     // launchTorchTransfer (the context method clears plannedTransit
     // and sets ship.transit atomically).
@@ -460,7 +456,7 @@ export const ShipPanel: React.FC = () => {
                         <div className="order-actions">
                           <button
                             className="commit-btn"
-                            onClick={() => commitTransferLocal({ id: 'torch-preview' } as ManeuverNode, ship)}
+                            onClick={() => commitTransferLocal(ship)}
                             title="Launch this transfer"
                           >COMMIT</button>
                           <button
@@ -531,9 +527,13 @@ export const ShipPanel: React.FC = () => {
                       // just a local status flip via commitManeuverNode.
                       // Walk a snapshot of orders so the loop is stable
                       // even if state mutates between iterations.
-                      const planned = ship.orders.filter(o => o.status === 'planned');
-                      for (const o of planned) {
-                        commitTransferLocal(o, ship);
+                      // Torch model: commit is now per-ship, not per-node.
+                      // The plannedTransit preview lives on the ship itself
+                      // (set by planTorchPreview); commitTransferLocal
+                      // promotes that single preview to a live burn. Skip
+                      // ships that have no preview to commit.
+                      if (ship.plannedTransit) {
+                        commitTransferLocal(ship);
                       }
                     }}
                   >

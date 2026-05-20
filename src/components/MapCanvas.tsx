@@ -9,10 +9,8 @@ import {
   drawOrbitEllipse,
   drawSOIBoundary,
   drawApsisMarkers,
-  drawBezierTrajectory,
   drawTorchTrajectory,
   drawTransitShip,
-  drawDepartureMarker,
   drawGhostPlanet,
   drawTargetHighlight,
   drawSettlement,
@@ -21,6 +19,7 @@ import {
   drawEnemyTrajectoriesLayer,
   drawOwnershipLayer,
   drawFogOfWarOverlay,
+  drawSensorEdges,
   drawDestructionFlashes,
   generateStarfield,
   drawStarfield,
@@ -29,7 +28,6 @@ import {
   worldToCanvas,
   RenderContext,
 } from '../render/mapRenderer';
-import { bezierPositionAt } from '../physics/bezierTransfer';
 import { bodyPosition } from '../physics/orbitalMechanics';
 import { COLORS, withOpacity } from '../render/colors';
 import { shipWorldPosition } from '../game/combat';
@@ -441,25 +439,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             if (qBody) drawGhostPlanet(qBody, queuedPlan.arriveTick, gameState.currentTick, renderContext);
           }
         }
-      } else if (ship.transfer) {
-        drawBezierTrajectory(ship.transfer, renderContext, COLORS.arcTransfer, false);
-        drawTransitShip(ship, renderContext, isSelected);
-
-        const arrivalBody = gameState.bodies.find(b => b.id === ship.transfer!.arrivalBodyId);
-        if (arrivalBody) {
-          drawGhostPlanet(arrivalBody, ship.transfer.arrivalTime, gameState.currentTick, renderContext);
-        }
-
-        if (ship.queuedTransfers) {
-          for (const qt of ship.queuedTransfers) {
-            drawBezierTrajectory(qt, renderContext, COLORS.fgDim, true);
-            const qtArrBody = gameState.bodies.find(b => b.id === qt.arrivalBodyId);
-            if (qtArrBody) {
-              drawGhostPlanet(qtArrBody, qt.arrivalTime, gameState.currentTick, renderContext);
-            }
-          }
-        }
-      } else if (ship.pendingTransfer) {
+      } else if (ship.plannedTransit) {
+        // Ship parked but has a torch preview staged. Draw the parked
+        // orbit + ship at its current location, plus a dashed amber
+        // torch arc to the picked destination.
         drawOrbitEllipse(
           ship.orbit, renderContext,
           isSelected ? COLORS.orbitCurrent : COLORS.orbitTrajectory,
@@ -468,28 +451,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         drawShip(ship, renderContext, isSelected, formation);
         if (isSelected) drawApsisMarkers(ship, renderContext);
 
-        const nodeColor = ship.orders.some(o => o.type === 'transfer' && o.status === 'committed')
-          ? COLORS.maneuverCommitted
-          : COLORS.maneuverPlanned;
-        drawBezierTrajectory(ship.pendingTransfer, renderContext, nodeColor, true);
+        const previewColor = COLORS.maneuverPlanned;
+        drawTorchTrajectory(ship.plannedTransit, gameState.bodies, renderContext, previewColor, true);
 
-        const arrivalBody = gameState.bodies.find(b => b.id === ship.pendingTransfer!.arrivalBodyId);
+        const arrivalBody = gameState.bodies.find(b => b.id === ship.plannedTransit!.targetBodyId);
         if (arrivalBody) {
-          drawGhostPlanet(arrivalBody, ship.pendingTransfer.arrivalTime, gameState.currentTick, renderContext);
-        }
-
-        if (isSelected) {
-          drawDepartureMarker(ship.pendingTransfer, gameState.currentTick, renderContext, nodeColor);
-        }
-
-        if (ship.queuedTransfers) {
-          for (const qt of ship.queuedTransfers) {
-            drawBezierTrajectory(qt, renderContext, COLORS.fgDim, true);
-            const qtArrBody = gameState.bodies.find(b => b.id === qt.arrivalBodyId);
-            if (qtArrBody) {
-              drawGhostPlanet(qtArrBody, qt.arrivalTime, gameState.currentTick, renderContext);
-            }
-          }
+          drawGhostPlanet(arrivalBody, ship.plannedTransit.arriveTick, gameState.currentTick, renderContext);
         }
       } else {
         drawOrbitEllipse(
@@ -562,11 +529,19 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       drawDestructionFlashes(arr, renderContext);
     }
 
-    // Fog-of-war: always-on dimming overlay on areas outside any of
-    // the player's sensor circles. Painted LAST so it sits on top of
-    // every game element — bodies, ships, orbits, layer overlays.
-    // Even-odd fill rule cuts holes where your sensors cover, so the
-    // boundary IS the sensor edge (no separate ring needed).
+    // Fog-of-war + sensor edges. Two-step:
+    //   1. drawFogOfWarOverlay paints the dim wash with circle cutouts
+    //      where your sensors are. That ALONE leaves the boundary as
+    //      "wherever the wash stops" — which is hard to read against
+    //      busy backgrounds and overlapping circles. Players reported
+    //      "weird fog of war."
+    //   2. drawSensorEdges then strokes a crisp colored outline on
+    //      each sensor source so every ship / city / station has a
+    //      clean visible circle. Color-coded by sourceType:
+    //        green = ship    (small reach)
+    //        amber = city    (mid-sized ground array)
+    //        cyan  = station (largest, orbital platform)
+    // Both passes run last so they sit on top of every game element.
     {
       const rings = factionSensorRings(
         'player',
@@ -576,6 +551,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         gameState.currentTick,
       );
       drawFogOfWarOverlay(rings, renderContext);
+      drawSensorEdges(rings, renderContext);
     }
 
     drawHUD(renderContext, uiState.targetSelectionMode);
@@ -916,8 +892,6 @@ function getShipCanvasPos(
   let pos;
   if (ship.transit) {
     pos = { x: ship.transit.pos.x, y: ship.transit.pos.y };
-  } else if (ship.transfer) {
-    pos = bezierPositionAt(ship.transfer, t);
   } else {
     const { orbitWorldPos } = require('../physics/orbitalMechanics');
     pos = orbitWorldPos(ship.orbit, t, bodies);
