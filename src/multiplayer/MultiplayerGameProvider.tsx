@@ -18,7 +18,7 @@ import {
 import {
   planTorchTransfer, stepTorchShip, DEFAULT_ENGINE_ACCEL,
 } from '../physics/torchTransfer';
-import { orbitWorldPos, bodyWorldVelocity } from '../physics/orbitalMechanics';
+import { orbitWorldPos, orbitWorldVelocity } from '../physics/orbitalMechanics';
 import { engineGModifier } from '../game/techs';
 
 // Shape of /api/games/:gid/state.
@@ -485,11 +485,11 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     const engineAccel = baseAccel * techScale;
 
     // Launch (pos, vel) for the torch — at scheduled_t, ship is in
-    // its parked orbit. orbitWorldPos handles propagation; parent's
-    // velocity is the dominant launch velocity term.
+    // its parked orbit. orbitWorldVelocity sums parent's velocity and
+    // the ship's local orbital motion, which matters for fast-orbiting
+    // moons; using parent velocity alone mis-aims the brachistochrone.
     const launchPos = orbitWorldPos(ship.orbit, srvNode.scheduled_t, bodies);
-    const parent = bodies.find(b => b.id === ship.orbit.parentBodyId);
-    const launchVel = parent ? bodyWorldVelocity(parent, srvNode.scheduled_t, bodies) : { x: 0, y: 0 };
+    const launchVel = orbitWorldVelocity(ship.orbit, srvNode.scheduled_t, bodies);
 
     const plan = planTorchTransfer(
       { pos: launchPos, vel: launchVel },

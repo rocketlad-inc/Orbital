@@ -5,7 +5,7 @@ import { GameState, ManeuverNode, CameraState, MapUIState, Ship, Body, BuildOrde
 // seeded by setupSinglePlayer) or an externalState (multiplayer, server-
 // driven). The fallback empty state below is only hit if neither prop is
 // passed, which would be a programming error rather than a play state.
-import { createCircularOrbit, bodyWorldVelocity, orbitWorldPos } from '../physics/orbitalMechanics';
+import { createCircularOrbit, bodyWorldVelocity, orbitWorldPos, orbitWorldVelocity } from '../physics/orbitalMechanics';
 import {
   planTorchTransfer, stepTorchShip,
   DEFAULT_ENGINE_ACCEL,
@@ -122,15 +122,13 @@ function applyAIIntent(
       const baseAccel = faction?.engineG ?? DEFAULT_ENGINE_ACCEL;
       const engineAccel = baseAccel * engineGModifier(tech);
 
-      // Ship's launch state: world position from its current orbit, world
-      // velocity from the parent body's motion. Phase 1 simplification —
-      // ignores the ship's orbital velocity around its parent (small
-      // compared to the torch burn). Phase 7 polish can add that back.
+      // Ship's launch state: world position + world velocity from the
+      // ship's current orbit. orbitWorldVelocity sums the parent body's
+      // velocity AND the ship's local orbital motion — important for
+      // ships parked around fast-moving moons, where ignoring the
+      // local component mis-aims the brachistochrone.
       const launchPos = orbitWorldPos(ship.orbit, tick, snapshot.bodies);
-      const parent = snapshot.bodies.find(b => b.id === ship.orbit.parentBodyId);
-      const launchVel = parent
-        ? bodyWorldVelocity(parent, tick, snapshot.bodies)
-        : { x: 0, y: 0 };
+      const launchVel = orbitWorldVelocity(ship.orbit, tick, snapshot.bodies);
 
       const plan = planTorchTransfer(
         { pos: launchPos, vel: launchVel },
@@ -398,6 +396,12 @@ export function GameContextProvider({
   //   - the local plannedTransit preview if the server isn't already
   //     executing a transit for that ship (which would mean the player
   //     already committed and the server is executing it)
+  //   - the local queuedTransits chain. The server protocol doesn't
+  //     model chained legs at all — only the active transfer node —
+  //     so without this merge any queued legs the player drew would
+  //     vanish on the next 1.5s poll. Kept on every ship regardless
+  //     of transit status (a ship currently on leg 1 still needs the
+  //     queue for leg 2+).
   useEffect(() => {
     if (!externalState) return;
     setGameStateInternal(prev => {
@@ -418,15 +422,21 @@ export function GameContextProvider({
           ? undefined
           : (localShip.plannedTransit ?? serverShip.plannedTransit);
 
-        if (localPlanned.length === 0 && plannedTransit === serverShip.plannedTransit) {
-          return serverShip;
-        }
+        // queuedTransits: client-only chained legs.
+        const queuedTransits = localShip.queuedTransits ?? serverShip.queuedTransits;
+
+        const noChange =
+          localPlanned.length === 0 &&
+          plannedTransit === serverShip.plannedTransit &&
+          queuedTransits === serverShip.queuedTransits;
+        if (noChange) return serverShip;
         return {
           ...serverShip,
           orders: localPlanned.length > 0
             ? [...serverShip.orders, ...localPlanned]
             : serverShip.orders,
           plannedTransit,
+          queuedTransits,
         };
       });
 
@@ -500,46 +510,49 @@ export function GameContextProvider({
         // Torch transit: integrate (pos, vel) forward to `tick`.
         const plan = transit.currentTransfer;
         const fromTick = prevTick ?? plan.startTick;
-        const dt = tick - fromTick;
-        if (dt > 0) {
-          const stepped = {
-            pos: { x: transit.pos.x, y: transit.pos.y },
-            vel: { x: transit.vel.x, y: transit.vel.y },
-          };
-          stepTorchShip(stepped, plan, fromTick, dt, bodies);
-          transit = { ...transit, pos: stepped.pos, vel: stepped.vel };
-          // Fuel drain: Δv expended this tick = a · dt during the burn
-          // (zero outside [startTick, arriveTick]).
-          const burnStart = Math.max(plan.startTick, fromTick);
-          const burnEnd   = Math.min(plan.arriveTick, tick);
-          if (burnEnd > burnStart) {
-            const accelPhase = Math.max(0, Math.min(plan.flipTick, burnEnd) - burnStart);
-            const brakePhase = Math.max(0, burnEnd - Math.max(plan.flipTick, burnStart));
-            const dvThisStep = plan.acceleration * accelPhase + plan.brakeAcceleration * brakePhase;
-            fuel = Math.max(0, fuel - Math.round(dvThisStep * 10));
-          }
-          changed = true;
+        const dt = Math.max(0, tick - fromTick);
+        const stepped = {
+          pos: { x: transit.pos.x, y: transit.pos.y },
+          vel: { x: transit.vel.x, y: transit.vel.y },
+        };
+        // Note: we no longer gate stepTorchShip on dt>0. A ship that
+        // launches on the same tick as advanceToTick is processing
+        // would otherwise pin at its launchPos for an extra frame
+        // (common in MP where committed→in_transit lands on the
+        // current tick). stepTorchShip is dt=0 safe.
+        if (dt > 0) stepTorchShip(stepped, plan, fromTick, dt, bodies);
+        transit = { ...transit, pos: stepped.pos, vel: stepped.vel };
+        // Fuel drain: Δv expended this tick = a · dt during the burn
+        // (zero outside [startTick, arriveTick]).
+        const burnStart = Math.max(plan.startTick, fromTick);
+        const burnEnd   = Math.min(plan.arriveTick, tick);
+        if (burnEnd > burnStart) {
+          const accelPhase = Math.max(0, Math.min(plan.flipTick, burnEnd) - burnStart);
+          const brakePhase = Math.max(0, burnEnd - Math.max(plan.flipTick, burnStart));
+          const dvThisStep = plan.acceleration * accelPhase + plan.brakeAcceleration * brakePhase;
+          fuel = Math.max(0, fuel - Math.round(dvThisStep * 10));
+        }
+        changed = true;
 
-          // Arrival: either chain into the next queued leg or park.
-          if (tick >= plan.arriveTick - 1e-9) {
-            if (queuedTransits && queuedTransits.length > 0) {
-              // Chain: pop the head and continue straight into the
-              // next burn without parking. The queued plan's
-              // startPos / startVel were predicted at queue-time to
-              // match this arrival point.
-              const nextPlan = queuedTransits[0];
-              transit = {
-                pos: { x: nextPlan.startPos.x, y: nextPlan.startPos.y },
-                vel: { x: nextPlan.startVel.x, y: nextPlan.startVel.y },
-                currentTransfer: nextPlan,
-              };
-              queuedTransits = queuedTransits.length > 1 ? queuedTransits.slice(1) : undefined;
-            } else {
-              const target = bodies.find(b => b.id === plan.targetBodyId);
-              const parkRadius = target ? Math.max(target.radius * 1.5, 6) : 10;
-              orbit = createCircularOrbit(plan.targetBodyId, parkRadius, tick, bodies);
-              transit = undefined;
-            }
+        // Arrival: either chain into the next queued leg or park.
+        if (tick >= plan.arriveTick - 1e-9) {
+          if (queuedTransits && queuedTransits.length > 0) {
+            // Chain: pop the head and continue straight into the
+            // next burn without parking. The queued plan's
+            // startPos / startVel were predicted at queue-time to
+            // match this arrival point.
+            const nextPlan = queuedTransits[0];
+            transit = {
+              pos: { x: nextPlan.startPos.x, y: nextPlan.startPos.y },
+              vel: { x: nextPlan.startVel.x, y: nextPlan.startVel.y },
+              currentTransfer: nextPlan,
+            };
+            queuedTransits = queuedTransits.length > 1 ? queuedTransits.slice(1) : undefined;
+          } else {
+            const target = bodies.find(b => b.id === plan.targetBodyId);
+            const parkRadius = target ? Math.max(target.radius * 1.5, 6) : 10;
+            orbit = createCircularOrbit(plan.targetBodyId, parkRadius, tick, bodies);
+            transit = undefined;
           }
         }
       }
@@ -674,8 +687,7 @@ export function GameContextProvider({
       const launchFreighterTorch = (ship: Ship, targetBodyId: string): Ship | null => {
         const accel = engineAccelFor[ship.ownedBy] ?? DEFAULT_ENGINE_ACCEL;
         const launchPos = orbitWorldPos(ship.orbit, newTime, prev.bodies);
-        const parent = prev.bodies.find(b => b.id === ship.orbit.parentBodyId);
-        const launchVel = parent ? bodyWorldVelocity(parent, newTime, prev.bodies) : { x: 0, y: 0 };
+        const launchVel = orbitWorldVelocity(ship.orbit, newTime, prev.bodies);
         const plan = planTorchTransfer(
           { pos: launchPos, vel: launchVel },
           targetBodyId, accel, accel, newTime, prev.bodies,
@@ -1507,10 +1519,7 @@ export function GameContextProvider({
       const tick = prev.currentTick;
 
       const launchPos = orbitWorldPos(ship.orbit, tick, prev.bodies);
-      const parent = prev.bodies.find(b => b.id === ship.orbit.parentBodyId);
-      const launchVel = parent
-        ? bodyWorldVelocity(parent, tick, prev.bodies)
-        : { x: 0, y: 0 };
+      const launchVel = orbitWorldVelocity(ship.orbit, tick, prev.bodies);
 
       const plan = planTorchTransfer(
         { pos: launchPos, vel: launchVel },
@@ -1608,10 +1617,7 @@ export function GameContextProvider({
       const tick = prev.currentTick;
 
       const launchPos = orbitWorldPos(ship.orbit, tick, prev.bodies);
-      const parent = prev.bodies.find(b => b.id === ship.orbit.parentBodyId);
-      const launchVel = parent
-        ? bodyWorldVelocity(parent, tick, prev.bodies)
-        : { x: 0, y: 0 };
+      const launchVel = orbitWorldVelocity(ship.orbit, tick, prev.bodies);
 
       const plan = planTorchTransfer(
         { pos: launchPos, vel: launchVel },

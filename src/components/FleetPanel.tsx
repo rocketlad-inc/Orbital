@@ -117,7 +117,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           targetBodyId: plan.targetBodyId,
           scheduledT: plan.startTick,
           arrivalT: plan.arriveTick,
-          dvPrograde: plan.totalDv / 2,
+          dvPrograde: plan.totalDv,
           fuelCost: Math.round(plan.totalDv * 10),
         });
       }

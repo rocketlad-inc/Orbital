@@ -59,7 +59,7 @@ export const ShipPanel: React.FC = () => {
             targetBodyId,
             scheduledT: queuedPlan.startTick,
             arrivalT: queuedPlan.arriveTick,
-            dvPrograde: queuedPlan.totalDv / 2,  // server-side scalar shim
+            dvPrograde: queuedPlan.totalDv,
             fuelCost: Math.round(queuedPlan.totalDv * 10),
           });
         }
@@ -150,7 +150,10 @@ export const ShipPanel: React.FC = () => {
       targetBodyId: preview.targetBodyId,
       scheduledT: plan.startTick,
       arrivalT: plan.arriveTick,
-      dvPrograde: plan.totalDv / 2,
+      // dvPrograde is a Δv magnitude on the server; the maneuver-node
+      // display reconstructs `deltav = sqrt(prograde²+normal²+radial²)`
+      // and we want it to read the full burn cost, not half of it.
+      dvPrograde: plan.totalDv,
       fuelCost: Math.round(plan.totalDv * 10),
     });
   };
@@ -548,29 +551,36 @@ export const ShipPanel: React.FC = () => {
                     );
                   })}
                 </div>
-                {ship.orders.some(o => o.status === 'planned') && (
-                  <button
-                    className="commit-all-btn"
-                    data-tutorial-id="ship-commit-button"
-                    onClick={() => {
-                      // Commit each planned node. In MP commitTransferLocal
-                      // also posts the intent to the server; in SP it's
-                      // just a local status flip via commitManeuverNode.
-                      // Walk a snapshot of orders so the loop is stable
-                      // even if state mutates between iterations.
-                      // Torch model: commit is now per-ship, not per-node.
-                      // The plannedTransit preview lives on the ship itself
-                      // (set by planTorchPreview); commitTransferLocal
-                      // promotes that single preview to a live burn. Skip
-                      // ships that have no preview to commit.
-                      if (ship.plannedTransit) {
-                        commitTransferLocal(ship);
-                      }
-                    }}
-                  >
-                    ▶ COMMIT ALL
-                  </button>
-                )}
+                {(() => {
+                  // Torch model: commit is per-ship, not per-node.
+                  // Each ship's plannedTransit preview is promoted to a
+                  // live burn via commitTransferLocal. The button label
+                  // honors fleet propagation — when the player staged
+                  // transfers for an entire fleet from this ship, we
+                  // commit ALL of them; otherwise it's just this ship.
+                  const fleetPreviewShips = ship.fleetId
+                    ? gameState.ships.filter(s =>
+                        s.fleetId === ship.fleetId && s.plannedTransit && !s.transit,
+                      )
+                    : (ship.plannedTransit ? [ship] : []);
+                  if (fleetPreviewShips.length === 0) return null;
+                  const label = fleetPreviewShips.length > 1
+                    ? `▶ COMMIT ALL (${fleetPreviewShips.length})`
+                    : '▶ COMMIT';
+                  return (
+                    <button
+                      className="commit-all-btn"
+                      data-tutorial-id="ship-commit-button"
+                      onClick={() => {
+                        for (const s of fleetPreviewShips) {
+                          commitTransferLocal(s);
+                        }
+                      }}
+                    >
+                      {label}
+                    </button>
+                  );
+                })()}
               </>
             )}
           </div>
