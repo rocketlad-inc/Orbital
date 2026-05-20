@@ -23,7 +23,7 @@ import {
 } from '../game/settlements';
 import { computeSecretReveal } from '../game/secrets';
 import { tickMaintenance } from '../game/maintenance';
-import { TechId, TECH_DEFS, MAX_SCIENCE_PER_TICK } from '../game/techs';
+import { TechId, TECH_DEFS, MAX_SCIENCE_PER_TICK, engineGModifier } from '../game/techs';
 import { runFactionAI, shouldRunAI } from '../game/factionAI';
 import { planBezierTransfer } from '../physics/bezierTransfer';
 import type { AIActivityEntry } from '../types';
@@ -110,7 +110,12 @@ function applyAIIntent(
       if (ship.transit || ship.transfer || ship.pendingTransfer) return { applied: false };
 
       const faction = snapshot.factions.find(f => f.id === ship.ownedBy);
-      const engineAccel = faction?.engineG ?? DEFAULT_ENGINE_ACCEL;
+      // Engine acceleration = faction's stored engineG (if any) scaled by
+      // their current flight-tech tier. Lets old saves without engineG
+      // still see research-driven speed-ups via the tech state.
+      const tech = snapshot.factionTech?.[ship.ownedBy];
+      const baseAccel = faction?.engineG ?? DEFAULT_ENGINE_ACCEL;
+      const engineAccel = baseAccel * engineGModifier(tech);
 
       // Ship's launch state: world position from its current orbit, world
       // velocity from the parent body's motion. Phase 1 simplification —
@@ -1512,7 +1517,9 @@ export function GameContextProvider({
       if (ship.transit || ship.transfer || ship.pendingTransfer) return prev;
 
       const faction = prev.factions.find(f => f.id === ship.ownedBy);
-      const engineAccel = faction?.engineG ?? DEFAULT_ENGINE_ACCEL;
+      const tech = prev.factionTech?.[ship.ownedBy];
+      const baseAccel = faction?.engineG ?? DEFAULT_ENGINE_ACCEL;
+      const engineAccel = baseAccel * engineGModifier(tech);
       const tick = prev.currentTick;
 
       const launchPos = orbitWorldPos(ship.orbit, tick, prev.bodies);

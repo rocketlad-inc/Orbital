@@ -1045,16 +1045,20 @@ export function drawBezierTrajectory(
 /**
  * Draw an integrated torch trajectory: samples the actual curved path
  * the ship will fly (including bend from inherited orbital velocity),
- * then connects the samples with a polyline. Mirror of the bezier
- * version, but the curve emerges from physics rather than control
- * points.
+ * then connects the samples with two polylines — one for the boost
+ * phase (prograde green) and one for the brake phase (retrograde
+ * pink), with the flip marker in between. Falls back to the single
+ * `color` argument for both phases if needed (used by the all-ships
+ * and enemy overlays where faction color matters more than thrust
+ * phase).
  */
 export function drawTorchTrajectory(
   plan: TorchTransferPlan,
   bodies: Body[],
   ctx: RenderContext,
   color: string = COLORS.arcTransfer,
-  isDashed: boolean = false
+  isDashed: boolean = false,
+  splitPhaseColors: boolean = false,
 ) {
   const samples = sampleTorchTrajectory(
     plan,
@@ -1066,15 +1070,41 @@ export function drawTorchTrajectory(
   if (samples.length < 2) return;
 
   if (isDashed) ctx.ctx.setLineDash([5, 5]);
-  ctx.ctx.strokeStyle = color;
   ctx.ctx.lineWidth = 1.5;
-  ctx.ctx.beginPath();
-  for (let i = 0; i < samples.length; i++) {
-    const cp = worldToCanvas(samples[i].x, samples[i].y, ctx);
-    if (i === 0) ctx.ctx.moveTo(cp.x, cp.y);
-    else ctx.ctx.lineTo(cp.x, cp.y);
+
+  if (splitPhaseColors) {
+    // Two passes: boost (samples.t < flipTick) in green, brake in pink.
+    // The flip sample stitches them so there's no gap. Adds visual
+    // weight to the maneuver — players can see at a glance which half
+    // of the trip the ship is currently in.
+    const flipIdx = samples.findIndex(s => s.t >= plan.flipTick);
+    const splitAt = flipIdx < 0 ? samples.length - 1 : flipIdx;
+    ctx.ctx.strokeStyle = '#6ee7b7';  // green = boost / prograde
+    ctx.ctx.beginPath();
+    for (let i = 0; i <= splitAt; i++) {
+      const cp = worldToCanvas(samples[i].x, samples[i].y, ctx);
+      if (i === 0) ctx.ctx.moveTo(cp.x, cp.y);
+      else ctx.ctx.lineTo(cp.x, cp.y);
+    }
+    ctx.ctx.stroke();
+    ctx.ctx.strokeStyle = '#fda4af';  // pink = brake / retrograde
+    ctx.ctx.beginPath();
+    for (let i = splitAt; i < samples.length; i++) {
+      const cp = worldToCanvas(samples[i].x, samples[i].y, ctx);
+      if (i === splitAt) ctx.ctx.moveTo(cp.x, cp.y);
+      else ctx.ctx.lineTo(cp.x, cp.y);
+    }
+    ctx.ctx.stroke();
+  } else {
+    ctx.ctx.strokeStyle = color;
+    ctx.ctx.beginPath();
+    for (let i = 0; i < samples.length; i++) {
+      const cp = worldToCanvas(samples[i].x, samples[i].y, ctx);
+      if (i === 0) ctx.ctx.moveTo(cp.x, cp.y);
+      else ctx.ctx.lineTo(cp.x, cp.y);
+    }
+    ctx.ctx.stroke();
   }
-  ctx.ctx.stroke();
   ctx.ctx.setLineDash([]);
 }
 

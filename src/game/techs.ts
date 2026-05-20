@@ -192,6 +192,32 @@ export function travelTimeModifier(state: FactionTechState | undefined): number 
   return Math.max(0.25, 1 - reduction);
 }
 
+/** Engine-G multiplier for the torch transfer model. Returns the
+ *  factor applied to DEFAULT_ENGINE_G (≈ 0.05g) to give this faction's
+ *  current per-ship acceleration. Higher tech = higher g = shorter
+ *  trip times AND lower total Δv (peak velocity scales with √(a·d),
+ *  total Δv = 2·peakV).
+ *
+ *  Tied to the `flight` tech so it's the same research line that
+ *  shrank Hohmann travel-time under the old model — players who
+ *  invested there don't lose progress to the Bezier→Torch migration.
+ *  Maxed-out flight tech is currently 4× base = 0.20g (Mars in ~3
+ *  days, Pluto in ~12). */
+export function engineGModifier(
+  state: FactionTechState | { levels: Record<string, number> } | undefined,
+): number {
+  // Re-uses the same effect curve as travelTimeModifier — at level 0
+  // the reduction is 0 (multiplier = 1), at maxed it's roughly 0.75
+  // (multiplier ≈ 4). Could split into a separate tech later.
+  //
+  // Accepts both FactionTechState (TechId-typed) and the looser
+  // FactionTechStateBase (string-typed) so MP-side callers don't have
+  // to widen-cast at the call site.
+  const lvl = state?.levels?.flight ?? 0;
+  const reduction = effectAtLevel(TECH_DEFS.flight, lvl);
+  return 1 / Math.max(0.25, 1 - reduction);
+}
+
 /** Build-cost multiplier (lower = cheaper). Clamped at 0.25 of base. */
 export function buildCostModifier(state: FactionTechState | undefined): number {
   const reduction = effectAtLevel(TECH_DEFS.construction, techLevel(state, 'construction'));

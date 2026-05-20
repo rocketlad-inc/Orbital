@@ -20,6 +20,7 @@ import {
   planTorchTransfer, stepTorchShip, DEFAULT_ENGINE_ACCEL,
 } from '../physics/torchTransfer';
 import { orbitWorldPos, bodyWorldVelocity } from '../physics/orbitalMechanics';
+import { engineGModifier } from '../game/techs';
 
 // Shape of /api/games/:gid/state.
 interface ServerState {
@@ -468,7 +469,13 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     if (!ship) continue;
     const targetLocalId = stripGameId(srvNode.target_body_id) ?? srvNode.target_body_id;
     const faction = factions.find(f => f.id === ship.ownedBy);
-    const engineAccel = faction?.engineG ?? DEFAULT_ENGINE_ACCEL;
+    // Same engine-g formula as single-player: stored faction baseline
+    // (if any) scaled by the player's flight-tech tier. Only the local
+    // player's tech is exchanged over the protocol (other factions'
+    // tech is opaque), so non-player ships get the unscaled baseline.
+    const baseAccel = faction?.engineG ?? DEFAULT_ENGINE_ACCEL;
+    const techScale = ship.ownedBy === srv.me.faction_id ? engineGModifier(playerTech) : 1;
+    const engineAccel = baseAccel * techScale;
 
     // Launch (pos, vel) for the torch — at scheduled_t, ship is in
     // its parked orbit. orbitWorldPos handles propagation; parent's

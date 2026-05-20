@@ -417,9 +417,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const formation = formationMap.get(ship.id);
 
       if (ship.transit) {
-        // Torch transit — preferred path post-migration.
+        // Torch transit — preferred path post-migration. Selected ship
+        // gets the split-phase coloring (green boost / pink brake) so
+        // the player can see at a glance which half of the burn they're
+        // in. Unselected uses the arcTransfer color for visual quiet.
         const plan = ship.transit.currentTransfer;
-        drawTorchTrajectory(plan, gameState.bodies, renderContext, COLORS.arcTransfer, false);
+        drawTorchTrajectory(plan, gameState.bodies, renderContext, COLORS.arcTransfer, false, isSelected);
         drawTransitShip(ship, renderContext, isSelected);
 
         const arrivalBody = gameState.bodies.find(b => b.id === plan.targetBodyId);
