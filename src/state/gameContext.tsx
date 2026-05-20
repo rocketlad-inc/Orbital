@@ -5,7 +5,11 @@ import { GameState, ManeuverNode, CameraState, MapUIState, Ship, Body, TransferA
 // seeded by setupSinglePlayer) or an externalState (multiplayer, server-
 // driven). The fallback empty state below is only hit if neither prop is
 // passed, which would be a programming error rather than a play state.
-import { createCircularOrbit } from '../physics/orbitalMechanics';
+import { createCircularOrbit, bodyWorldVelocity, orbitWorldPos } from '../physics/orbitalMechanics';
+import {
+  planTorchTransfer, stepTorchShip,
+  DEFAULT_ENGINE_ACCEL,
+} from '../physics/torchTransfer';
 import { getShipClass, ShipClassName, SHIP_CLASSES } from '../game/shipClasses';
 import { formFleet, splitFromFleet } from '../game/fleet';
 import { autoCombatAtBodies } from '../game/combat';
@@ -100,15 +104,46 @@ function applyAIIntent(
 
     case 'transfer': {
       const ship = snapshot.ships.find(s => s.id === intent.shipId);
-      if (!ship || ship.transfer || ship.pendingTransfer) return { applied: false };
-      const arc = planBezierTransfer(ship.orbit, intent.targetBodyId, tick, snapshot.bodies);
-      if (!arc) return { applied: false };
-      // AI ships skip the player's pending/committed-node workflow — they go
-      // straight to transfer at planning time. This mirrors how the human
-      // would commit instantly via the COMMIT button.
+      if (!ship) return { applied: false };
+      // No double-launching: a ship already in transit (torch OR legacy
+      // bezier) refuses a new transfer intent until it arrives.
+      if (ship.transit || ship.transfer || ship.pendingTransfer) return { applied: false };
+
+      const faction = snapshot.factions.find(f => f.id === ship.ownedBy);
+      const engineAccel = faction?.engineG ?? DEFAULT_ENGINE_ACCEL;
+
+      // Ship's launch state: world position from its current orbit, world
+      // velocity from the parent body's motion. Phase 1 simplification —
+      // ignores the ship's orbital velocity around its parent (small
+      // compared to the torch burn). Phase 7 polish can add that back.
+      const launchPos = orbitWorldPos(ship.orbit, tick, snapshot.bodies);
+      const parent = snapshot.bodies.find(b => b.id === ship.orbit.parentBodyId);
+      const launchVel = parent
+        ? bodyWorldVelocity(parent, tick, snapshot.bodies)
+        : { x: 0, y: 0 };
+
+      const plan = planTorchTransfer(
+        { pos: launchPos, vel: launchVel },
+        intent.targetBodyId,
+        engineAccel, engineAccel,         // symmetric for v1
+        tick, snapshot.bodies,
+      );
+      if (!plan) return { applied: false };
+
       const updatedShips = snapshot.ships.map(s =>
         s.id === ship.id
-          ? { ...s, transfer: arc, pendingTransfer: undefined, lastBurnTick: tick }
+          ? {
+              ...s,
+              transit: {
+                pos: { x: launchPos.x, y: launchPos.y },
+                vel: { x: launchVel.x, y: launchVel.y },
+                currentTransfer: plan,
+              },
+              // Clear any legacy bezier state — torch takes over.
+              transfer: undefined,
+              pendingTransfer: undefined,
+              queuedTransfers: undefined,
+            }
           : s
       );
       return { applied: true, ships: updatedShips };
@@ -405,10 +440,27 @@ export function GameContextProvider({
   const [simSpeed, setSimSpeedInternal] = useState<number>(0);
   const [selectedSettlementId, setSelectedSettlementId] = useState<string | undefined>(undefined);
 
-  // Ship state machine for Bezier transfers:
-  //   orbiting (no transfer) → committed node fires → in_transit (transfer set)
-  //   in_transit → arrivalTime reached → orbiting at destination
-  const checkNodeExecution = useCallback((ships: Ship[], bodies: Body[], tick: number): Ship[] => {
+  // Ship state machine — handles both the new torch model and the
+  // legacy Bezier model during the migration. Per tick:
+  //
+  //   • If ship.transit is set: TORCH — integrate (pos, vel) for the
+  //     elapsed dt via stepTorchShip. On arrival, snap the ship into
+  //     a circular parking orbit around the target body and clear
+  //     transit. Drain fuel proportional to the Δv expended this tick.
+  //
+  //   • Else if ship.transfer is set: LEGACY BEZIER — original flow.
+  //     Kept until Phase 6 cleanup so in-flight Bezier transfers in
+  //     old saves can complete cleanly.
+  //
+  //   • Else: parked — check committed maneuver nodes (legacy path).
+  //
+  // The tick delta we step is (tick - prevTick) where prevTick is the
+  // last tick we observed. We don't have prevTick directly, so derive
+  // it: ship.transit.currentTransfer.startTick is the launch instant;
+  // we integrate from that into the future. To handle multi-tick
+  // advances cleanly we always integrate from "now" relative to the
+  // ship's stored state — the stepTorchShip integrator is dt-based.
+  const checkNodeExecution = useCallback((ships: Ship[], bodies: Body[], tick: number, prevTick?: number): Ship[] => {
     let mutated = false;
     const updatedShips = ships.map(ship => {
       let orbit = ship.orbit;
@@ -417,9 +469,46 @@ export function GameContextProvider({
       let transfer = ship.transfer;
       let pendingTransfer = ship.pendingTransfer;
       let queuedTransfers = ship.queuedTransfers ? [...ship.queuedTransfers] : [];
+      let transit = ship.transit;
       let changed = false;
 
-      if (transfer) {
+      if (transit) {
+        // Torch transit: integrate (pos, vel) forward to `tick`.
+        const plan = transit.currentTransfer;
+        const fromTick = prevTick ?? plan.startTick;
+        const dt = tick - fromTick;
+        if (dt > 0) {
+          const stepped = {
+            pos: { x: transit.pos.x, y: transit.pos.y },
+            vel: { x: transit.vel.x, y: transit.vel.y },
+          };
+          stepTorchShip(stepped, plan, fromTick, dt, bodies);
+          transit = { ...transit, pos: stepped.pos, vel: stepped.vel };
+          // Fuel drain: Δv expended this tick = a · dt during the burn
+          // (zero outside [startTick, arriveTick]). Phase 1 uses a
+          // simple "10× Δv" cost matching the legacy bezier fuel
+          // formula so building/economy balance carries over.
+          const burnStart = Math.max(plan.startTick, fromTick);
+          const burnEnd   = Math.min(plan.arriveTick, tick);
+          if (burnEnd > burnStart) {
+            const accelPhase = Math.max(0, Math.min(plan.flipTick, burnEnd) - burnStart);
+            const brakePhase = Math.max(0, burnEnd - Math.max(plan.flipTick, burnStart));
+            const dvThisStep = plan.acceleration * accelPhase + plan.brakeAcceleration * brakePhase;
+            fuel = Math.max(0, fuel - Math.round(dvThisStep * 10));
+          }
+          changed = true;
+
+          // Arrival: snap into a circular parking orbit around the
+          // target body. The orbit's parent becomes the target; Pe is
+          // set to body.radius * 1.5 for a comfortable safe altitude.
+          if (tick >= plan.arriveTick - 1e-9) {
+            const target = bodies.find(b => b.id === plan.targetBodyId);
+            const parkRadius = target ? Math.max(target.radius * 1.5, 6) : 10;
+            orbit = createCircularOrbit(plan.targetBodyId, parkRadius, tick, bodies);
+            transit = undefined;
+          }
+        }
+      } else if (transfer) {
         // Loop arrival processing so a single large tickDelta can chain
         // through multiple queued legs (e.g. fast-forward through a patrol).
         while (transfer && tick >= transfer.arrivalTime) {
@@ -480,7 +569,7 @@ export function GameContextProvider({
         // Don't store an empty queuedTransfers array — keep undefined so
         // ships without any queued legs stay clean.
         const nextQueued = queuedTransfers.length > 0 ? queuedTransfers : undefined;
-        return { ...ship, orbit, fuel, orders, transfer, pendingTransfer, queuedTransfers: nextQueued };
+        return { ...ship, orbit, fuel, orders, transfer, pendingTransfer, queuedTransfers: nextQueued, transit };
       }
       return ship;
     });
@@ -502,7 +591,7 @@ export function GameContextProvider({
     // Detect transfer arrivals (ships that had a transfer last frame but
     // not this frame) BEFORE checkNodeExecution mutates them, so we can
     // log meaningful arrival events.
-    const updatedShips0 = checkNodeExecution(prev.ships, prev.bodies, newTime);
+    const updatedShips0 = checkNodeExecution(prev.ships, prev.bodies, newTime, prev.currentTick);
     if (updatedShips0 !== prev.ships) {
       const prevById = new Map(prev.ships.map(s => [s.id, s]));
       for (const s of updatedShips0) {

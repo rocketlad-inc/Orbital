@@ -28,7 +28,8 @@
 // Travel-time formula (symmetric):  T = 2·√(d / a)
 // (Asymmetric: t1 = √(2·d·brake / (boost·(boost+brake))), T = t1·(1+boost/brake))
 
-import { Body, bodyPosition, bodyWorldVelocity } from './orbitalMechanics';
+import { bodyPosition, bodyWorldVelocity } from './orbitalMechanics';
+import type { Body } from '../types';
 
 export interface Vec2 { x: number; y: number }
 
