@@ -1458,7 +1458,8 @@ export class Room {
             dyson_controller_faction_id, dyson_foundation_settlement_id,
             dyson_acc_fuel, dyson_acc_ore, dyson_acc_credits, dyson_acc_science,
             dyson_target_fuel, dyson_target_ore, dyson_target_credits, dyson_target_science,
-            dyson_hp, dyson_max_hp
+            dyson_hp, dyson_max_hp,
+            dyson_station_last_hp
           FROM games WHERE id = ?`,
       )
       .bind(gameId)
@@ -1495,29 +1496,36 @@ export class Room {
 
     let collapse = false;
     let collapseReason = '';
+    let stationHpForNextTick = null;
     if (!station || station.destroyed_at_tick != null) {
       collapse = true;
       collapseReason = 'foundation destroyed';
     } else {
-      // Damage detection: dyson_hp tracks "accumulated total"; combat
-      // shouldn't reduce that. We instead track damage at station-HP
-      // delta from a private side channel. Simpler approach for now:
-      // if station HP < (hp_max), the gap is the damage the sphere has
-      // absorbed cumulatively. Since the sphere HP and station HP can
-      // diverge wildly, we use a delta-based approach: track the
-      // station's pre-tick HP via a per-tick read above, compare to
-      // post-combat HP, and apply the delta to the sphere.
-      //
-      // The pre-tick HP isn't available here (we only see post-tick).
-      // We approximate: any damage that reduced station HP this tick
-      // will manifest as station.hp < its previous reading. We don't
-      // have that history without an extra column. Cheap workaround:
-      // route a separate "damage volley" hook through combat (Phase C).
-      //
-      // For now, just rebuild HP from accumulated each tick — the
-      // sphere can't be damaged on the server side until the
-      // damage-volley hook lands. The foundation destroying is the
-      // primary loss vector.
+      stationHpForNextTick = station.hp;
+      // Damage delta: compare current foundation HP to dyson_station_last_hp
+      // (snapshotted on the previous tickDysonSphere call). Any drop is
+      // damage the sphere absorbs. Migration 0019 added the column;
+      // NULL means "first read after foundation-laying" — we seed
+      // last_hp without applying damage.
+      const prevHp = game.dyson_station_last_hp;
+      if (prevHp != null && station.hp < prevHp) {
+        const dmg = prevHp - station.hp;
+        const oldHp = acc.fuel + acc.ore + acc.credits + acc.science;
+        const newHp = oldHp - dmg;
+        if (newHp <= 0) {
+          collapse = true;
+          collapseReason = 'damaged to collapse';
+        } else {
+          // Per the player's spec: scale accumulated resources by the
+          // damage ratio so the breakdown stays coherent. Then rebuild
+          // total HP from the scaled accumulator.
+          const ratio = newHp / oldHp;
+          acc.fuel    = Math.floor(acc.fuel    * ratio);
+          acc.ore     = Math.floor(acc.ore     * ratio);
+          acc.credits = Math.floor(acc.credits * ratio);
+          acc.science = Math.floor(acc.science * ratio);
+        }
+      }
       hp = acc.fuel + acc.ore + acc.credits + acc.science;
     }
 
@@ -1532,7 +1540,8 @@ export class Room {
               dyson_acc_credits = 0, dyson_acc_science = 0,
               dyson_target_fuel = 0, dyson_target_ore = 0,
               dyson_target_credits = 0, dyson_target_science = 0,
-              dyson_hp = 0, dyson_max_hp = 0
+              dyson_hp = 0, dyson_max_hp = 0,
+              dyson_station_last_hp = NULL
             WHERE id = ?`,
         )
         .bind(gameId)
@@ -1555,10 +1564,17 @@ export class Room {
       .all()).results ?? [];
     const n = freighters.length;
     if (n === 0) {
-      // Just refresh hp from accumulated.
+      // Just refresh hp from accumulated + persist station-HP snapshot
+      // for next tick's damage delta.
       await this.env.DB
-        .prepare(`UPDATE games SET dyson_hp = ? WHERE id = ?`)
-        .bind(hp, gameId)
+        .prepare(
+          `UPDATE games SET dyson_hp = ?,
+              dyson_acc_fuel = ?, dyson_acc_ore = ?,
+              dyson_acc_credits = ?, dyson_acc_science = ?,
+              dyson_station_last_hp = ?
+            WHERE id = ?`,
+        )
+        .bind(hp, acc.fuel, acc.ore, acc.credits, acc.science, stationHpForNextTick, gameId)
         .run();
       return;
     }
@@ -1586,9 +1602,17 @@ export class Room {
     };
     const contribution = move.fuel + move.ore + move.credits + move.science;
     if (contribution === 0) {
+      // No pool / no remaining target — still persist the accumulator
+      // (damage may have scaled it down) + station-HP snapshot.
       await this.env.DB
-        .prepare(`UPDATE games SET dyson_hp = ? WHERE id = ?`)
-        .bind(hp, gameId)
+        .prepare(
+          `UPDATE games SET dyson_hp = ?,
+              dyson_acc_fuel = ?, dyson_acc_ore = ?,
+              dyson_acc_credits = ?, dyson_acc_science = ?,
+              dyson_station_last_hp = ?
+            WHERE id = ?`,
+        )
+        .bind(hp, acc.fuel, acc.ore, acc.credits, acc.science, stationHpForNextTick, gameId)
         .run();
       return;
     }
@@ -1605,9 +1629,10 @@ export class Room {
           `UPDATE games SET
               dyson_acc_fuel = ?, dyson_acc_ore = ?,
               dyson_acc_credits = ?, dyson_acc_science = ?,
-              dyson_hp = ? WHERE id = ?`,
+              dyson_hp = ?,
+              dyson_station_last_hp = ? WHERE id = ?`,
         )
-        .bind(acc.fuel, acc.ore, acc.credits, acc.science, hp, gameId),
+        .bind(acc.fuel, acc.ore, acc.credits, acc.science, hp, stationHpForNextTick, gameId),
       this.env.DB
         .prepare(
           `UPDATE game_factions SET

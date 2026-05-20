@@ -13,9 +13,8 @@ import { GameContextProvider } from '../state/gameContext';
 import { MultiplayerActionsProvider } from './MultiplayerActionsContext';
 import {
   Body, Ship, Faction, GameState, OrbitElements, FactionResources, FactionTechStateBase,
-  Settlement, ManeuverNode, TransferArc,
+  Settlement, ManeuverNode,
 } from '../types';
-import { planBezierTransfer } from '../physics/bezierTransfer';
 import {
   planTorchTransfer, stepTorchShip, DEFAULT_ENGINE_ACCEL,
 } from '../physics/torchTransfer';
@@ -35,6 +34,17 @@ interface ServerState {
     map_seed: string;
     winner_faction_id?: string | null;
     victory_type?: string | null;
+    /** Dyson Sphere snapshot. Null until a foundation has been laid.
+     *  Server-side authoritative — populated/cleared in tickDysonSphere. */
+    dyson_sphere?: {
+      controllerFactionId: string;
+      foundationSettlementId: string;
+      startedAtTick: number;
+      accumulated: { fuel: number; ore: number; credits: number; science: number };
+      target:      { fuel: number; ore: number; credits: number; science: number };
+      hp: number;
+      maxHp: number;
+    } | null;
   };
   me: {
     faction_id: string;
@@ -186,11 +196,8 @@ function mapBodyType(t: string): Body['type'] {
  * Server-side body IDs are namespaced per game as "<gameId>:<localId>"
  * (e.g. "Reemucleoytj:sol", "Reemucleoytj:jupiter"). The rest of the
  * client codebase compares body IDs against the unprefixed literals
- * 'sol', 'jupiter', etc. — most notably in physics/bezierTransfer.ts
- * where the whole intra/inter-system planner branches on
- * depParent === 'sol'. When the gameId prefix is left intact every
- * branch falls through and planBezierTransfer returns null, which is
- * why destination clicks in multiplayer silently did nothing.
+ * 'sol', 'jupiter', etc. — most notably in physics/torchTransfer.ts
+ * where the planner reads body coordinates by local id.
  *
  * Strip the prefix once at the deserialization boundary so every
  * downstream consumer sees the same simple IDs as in single-player.
@@ -601,6 +608,25 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     createdAtTick: r.created_at_tick,
   }));
 
+  // Dyson Sphere remap. Server returns the controller's faction id +
+  // settlement id in namespaced form ("<gameId>:..."). The client
+  // GameState stores ownership against PLAYER_TOKEN for the caller and
+  // unprefixed body/settlement ids — match the rest of the remap.
+  const dysonSphere = srv.game.dyson_sphere ? (() => {
+    const d = srv.game.dyson_sphere!;
+    return {
+      controllerFactionId: d.controllerFactionId === callerFactionId
+        ? PLAYER_TOKEN
+        : d.controllerFactionId,
+      foundationSettlementId: stripGameId(d.foundationSettlementId) ?? d.foundationSettlementId,
+      accumulated: { ...d.accumulated },
+      target: { ...d.target },
+      hp: d.hp,
+      maxHp: d.maxHp,
+      startedAtTick: d.startedAtTick,
+    };
+  })() : undefined;
+
   return {
     currentTick: srv.game.current_tick,
     bodies,
@@ -615,6 +641,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     combatLog,
     lastHarvestTick: srv.game.current_tick,
     tradeRoutes,
+    dysonSphere,
   };
 }
 

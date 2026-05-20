@@ -34,7 +34,7 @@ export const BodyInspector: React.FC = () => {
 
   // Count ships at this body
   const shipsHere = gameState.ships.filter(
-    s => !s.transfer && s.orbit.parentBodyId === body.id
+    s => !s.transit && s.orbit.parentBodyId === body.id
   );
 
   const isFocused = camera.focusedBodyId === body.id;
@@ -66,7 +66,7 @@ export const BodyInspector: React.FC = () => {
           const settlementsHere = gameState.settlements.filter(s => s.bodyId === body.id);
           const playerSettlements = settlementsHere.filter(s => s.ownedBy === 'player');
           const freightersHere = gameState.ships.filter(
-            s => s.class === 'freighter' && !s.transfer && s.orbit.parentBodyId === body.id && s.ownedBy === 'player'
+            s => s.class === 'freighter' && !s.transit && s.orbit.parentBodyId === body.id && s.ownedBy === 'player'
           );
           return (
             <>
@@ -194,7 +194,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
 
   // Only freighters can deliver settlement materials — combat ships can't deploy.
   const playerFreighterHere = gameState.ships.find(s =>
-    s.ownedBy === 'player' && !s.transfer && s.orbit.parentBodyId === bodyId && s.class === 'freighter'
+    s.ownedBy === 'player' && !s.transit && s.orbit.parentBodyId === bodyId && s.class === 'freighter'
   );
   const canBuildHere = !!playerFreighterHere;
 
@@ -602,6 +602,12 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
 // ============================================================
 const DysonSpherePanel: React.FC = () => {
   const { gameState, initiateDysonSphere } = useGameContext();
+  // Non-null in MP — we mirror initiate to the server so the per-tick
+  // delivery loop runs against the server's authoritative dyson_*
+  // columns. Server response (success or error) round-trips via the
+  // next /state poll, which is when the local panel actually flips
+  // from "no sphere yet" to "in progress".
+  const mpActions = useMultiplayerActions();
   const dyson = gameState.dysonSphere;
 
   if (dyson) {
@@ -638,7 +644,22 @@ const DysonSpherePanel: React.FC = () => {
         playerStations.map(s => (
           <button
             key={s.id}
-            onClick={() => initiateDysonSphere(s.id)}
+            onClick={() => {
+              // SP: mutate local state directly so the panel updates
+              // immediately. MP: also POST to the server so the per-tick
+              // delivery loop fires; /state will reconcile within
+              // ~1.5s and the local state will pick up the server-side
+              // dyson_sphere snapshot.
+              initiateDysonSphere(s.id);
+              if (mpActions) {
+                mpActions.initiateDysonSphere(s.id).then(res => {
+                  if (!res.ok) {
+                    // eslint-disable-next-line no-console
+                    console.warn('initiateDysonSphere rejected by server:', res.error);
+                  }
+                });
+              }
+            }}
             style={{
               display: 'block', width: '100%',
               marginBottom: 4, padding: '8px 10px',

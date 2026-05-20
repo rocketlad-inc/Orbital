@@ -33,7 +33,12 @@ async function handleGetState(req, env, ctx) {
     .prepare(
       `SELECT id, status, current_tick, tick_interval_ms,
               next_tick_at, started_at, completed_at, map_seed,
-              winner_faction_id, victory_type
+              winner_faction_id, victory_type,
+              dyson_controller_faction_id, dyson_foundation_settlement_id,
+              dyson_started_at_tick,
+              dyson_acc_fuel, dyson_acc_ore, dyson_acc_credits, dyson_acc_science,
+              dyson_target_fuel, dyson_target_ore, dyson_target_credits, dyson_target_science,
+              dyson_hp, dyson_max_hp
          FROM games WHERE id = ?`,
     )
     .bind(gameId)
@@ -307,6 +312,30 @@ async function handleGetState(req, env, ctx) {
     .bind(gameId, me.id)
     .all()).results ?? [];
 
+  // Dyson Sphere megaproject — populated only when a foundation has
+  // been laid. Null until the first `initiate` POST per match. See
+  // migration 0018 + worker/room.js tickDysonSphere for the per-tick
+  // delivery + damage logic.
+  const dysonSphere = game.dyson_controller_faction_id ? {
+    controllerFactionId: game.dyson_controller_faction_id,
+    foundationSettlementId: game.dyson_foundation_settlement_id,
+    startedAtTick: game.dyson_started_at_tick,
+    accumulated: {
+      fuel:    game.dyson_acc_fuel    ?? 0,
+      ore:     game.dyson_acc_ore     ?? 0,
+      credits: game.dyson_acc_credits ?? 0,
+      science: game.dyson_acc_science ?? 0,
+    },
+    target: {
+      fuel:    game.dyson_target_fuel    ?? 0,
+      ore:     game.dyson_target_ore     ?? 0,
+      credits: game.dyson_target_credits ?? 0,
+      science: game.dyson_target_science ?? 0,
+    },
+    hp:    game.dyson_hp     ?? 0,
+    maxHp: game.dyson_max_hp ?? 0,
+  } : null;
+
   return json({
     game: {
       id: game.id,
@@ -319,6 +348,7 @@ async function handleGetState(req, env, ctx) {
       map_seed: game.map_seed,
       winner_faction_id: game.winner_faction_id,
       victory_type: game.victory_type,
+      dyson_sphere: dysonSphere,
     },
     me: {
       faction_id: me.id,

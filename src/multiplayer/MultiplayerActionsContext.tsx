@@ -12,13 +12,10 @@ import { apiFetch } from './api';
 export interface TransferIntent {
   shipId: string;
   targetBodyId: string;
-  scheduledT: number;        // server tick when burn fires (== arc.departureTime)
-  /** Precomputed arrival tick (== arc.arrivalTime). Sent so the server
-   *  doesn't have to re-derive it from a Hohmann formula that was
-   *  giving bad results for moon-to-moon transfers (tiny parent μ
-   *  inflated travel time, or wrong μ inflated it to 400+ ticks).
-   *  Client travel time is now plain distance/SHIP_SPEED — see
-   *  src/physics/bezierTransfer.ts. */
+  scheduledT: number;        // server tick when burn fires (== plan.startTick)
+  /** Precomputed arrival tick (== plan.arriveTick). Sent so the server
+   *  doesn't have to re-derive it — client-side torch math owns the
+   *  travel-time computation; see src/physics/torchTransfer.ts. */
   arrivalT: number;
   dvPrograde: number;
   dvNormal?: number;
@@ -126,6 +123,15 @@ export interface MultiplayerActions {
   /** Cancel the in-flight upgrade at a settlement; server refunds the
    *  cost-at-queue-time and clears building_order_json. */
   cancelBuilding: (settlementId: string) =>
+    Promise<{ ok: true } | { ok: false; error: string }>;
+
+  // --- Dyson Sphere (Engineering Victory) ---
+  /** Lay the Dyson Sphere foundation at one of the caller's Sol-orbit
+   *  stations. Server enforces the one-per-game slot, station ownership,
+   *  station type, and Sol-orbit checks. Per-tick delivery happens
+   *  server-side in tickDysonSphere; the client just mounts the panel
+   *  via the /state mirror. */
+  initiateDysonSphere: (foundationSettlementId: string) =>
     Promise<{ ok: true } | { ok: false; error: string }>;
 
   // --- Trade routes ---
@@ -295,6 +301,24 @@ export function MultiplayerActionsProvider({
       if (res.ok) return { ok: true };
       console.warn('cancelBuilding failed', res.error);
       return { ok: false, error: res.error?.message ?? 'Server rejected the cancel.' };
+    },
+    async initiateDysonSphere(foundationSettlementId) {
+      // Server expects the namespaced settlement id ("<gameId>:<localId>").
+      // Settlement ids in the client are unprefixed after the
+      // MultiplayerGameProvider deserialization strips the namespace,
+      // so qualify on the way out the same way every other action does.
+      const res = await apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/dyson/initiate`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            foundation_settlement_id: qualify(foundationSettlementId),
+          }),
+        },
+      );
+      if (res.ok) return { ok: true };
+      console.warn('initiateDysonSphere failed', res.error);
+      return { ok: false, error: res.error?.message ?? 'Server rejected the Dyson Sphere foundation.' };
     },
     async createTradeRoute(shipId, originBodyId, destBodyId) {
       const res = await apiFetch<{ ok: boolean }>(
