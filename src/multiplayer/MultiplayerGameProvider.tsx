@@ -16,6 +16,10 @@ import {
   Settlement, ManeuverNode, TransferArc,
 } from '../types';
 import { planBezierTransfer } from '../physics/bezierTransfer';
+import {
+  planTorchTransfer, stepTorchShip, DEFAULT_ENGINE_ACCEL,
+} from '../physics/torchTransfer';
+import { orbitWorldPos, bodyWorldVelocity } from '../physics/orbitalMechanics';
 
 // Shape of /api/games/:gid/state.
 interface ServerState {
@@ -439,35 +443,77 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     }
   }
 
-  // Reconstruct Bezier transfer arcs from in_transit / committed nodes so
-  // the canvas can animate ships along their curves between burn and
-  // arrival, and draw dashed preview arcs for committed-but-not-yet-fired
-  // departures. Without this, server-driven ships sit at the departure
-  // body for the whole Hohmann travel time and then teleport.
+  // Reconstruct ship transit state from committed/in_transit nodes.
+  //
+  // Phase 5 of the Bezier→Torch migration: the SERVER still records
+  // transfers as Bezier-shaped maneuver-node rows (target body +
+  // scheduled tick + arrival tick + fuel cost) but the CLIENT
+  // reconstructs them as torch trajectories for rendering and
+  // gameplay. We pivot here so the server protocol doesn't have to
+  // change yet — server validation, arrival authority, and tick
+  // advancement all stay as-is, but the visualization and per-ship
+  // (pos, vel) calc become torch.
+  //
+  // For each in_transit node we plan a torch trajectory from the
+  // ship's known orbit at scheduled_t, then integrate forward to
+  // currentTick to get the live (pos, vel). For committed-but-not-
+  // yet-fired nodes we leave a planned-transit pending so the canvas
+  // can draw a dashed preview.
   const shipById = new Map(ships.map(s => [s.id, s]));
+  const currentTick = srv.game.current_tick;
   for (const srvNode of (srv.nodes ?? [])) {
     if (!srvNode.target_body_id) continue;
     if (srvNode.status !== 'committed' && srvNode.status !== 'in_transit') continue;
     const ship = shipById.get(srvNode.ship_id);
     if (!ship) continue;
-    // planBezierTransfer adds a +5-tick launch buffer to currentTick;
-    // pass scheduled_t - 5 so the resulting arc.departureTime matches.
-    const pseudoNow = srvNode.scheduled_t - 5;
     const targetLocalId = stripGameId(srvNode.target_body_id) ?? srvNode.target_body_id;
-    const arc: TransferArc | null = planBezierTransfer(
-      ship.orbit, targetLocalId, pseudoNow, bodies, 1.0,
+    const faction = factions.find(f => f.id === ship.ownedBy);
+    const engineAccel = faction?.engineG ?? DEFAULT_ENGINE_ACCEL;
+
+    // Launch (pos, vel) for the torch — at scheduled_t, ship is in
+    // its parked orbit. orbitWorldPos handles propagation; parent's
+    // velocity is the dominant launch velocity term.
+    const launchPos = orbitWorldPos(ship.orbit, srvNode.scheduled_t, bodies);
+    const parent = bodies.find(b => b.id === ship.orbit.parentBodyId);
+    const launchVel = parent ? bodyWorldVelocity(parent, srvNode.scheduled_t, bodies) : { x: 0, y: 0 };
+
+    const plan = planTorchTransfer(
+      { pos: launchPos, vel: launchVel },
+      targetLocalId,
+      engineAccel, engineAccel,
+      srvNode.scheduled_t, bodies,
     );
-    if (!arc) continue;
-    // For an in_transit node, the server's authoritative arrival tick is
-    // arrival_at_tick — override the Hohmann-computed one so the canvas
-    // doesn't disagree with the server about when arrival fires.
-    if (srvNode.status === 'in_transit' && srvNode.arrival_at_tick != null) {
-      arc.arrivalTime = srvNode.arrival_at_tick;
+    if (!plan) continue;
+
+    // If the server gave us an authoritative arrival tick, snap the
+    // torch's arriveTick to it. The trip-time math may differ slightly
+    // between the legacy server formula and the new torch one; the
+    // server is canonical for "when does the ship park."
+    if (srvNode.arrival_at_tick != null && srvNode.arrival_at_tick > srvNode.scheduled_t) {
+      plan.arriveTick = srvNode.arrival_at_tick;
+      // Re-derive the flip so the boost/brake split stays symmetric.
+      plan.flipTick = (plan.startTick + plan.arriveTick) / 2;
     }
+
     if (srvNode.status === 'in_transit') {
-      ship.transfer = arc;
+      // Integrate (pos, vel) forward from launch to currentTick.
+      const state = {
+        pos: { x: launchPos.x, y: launchPos.y },
+        vel: { x: launchVel.x, y: launchVel.y },
+      };
+      const dt = Math.max(0, currentTick - srvNode.scheduled_t);
+      if (dt > 0) stepTorchShip(state, plan, srvNode.scheduled_t, dt, bodies);
+      ship.transit = { pos: state.pos, vel: state.vel, currentTransfer: plan };
     } else {
-      ship.pendingTransfer = arc;
+      // Committed but not yet fired — keep a bezier preview around
+      // until Phase 6 swaps the planning UI to torch fully.
+      const previewArc: TransferArc | null = planBezierTransfer(
+        ship.orbit, targetLocalId, srvNode.scheduled_t - 5, bodies, 1.0,
+      );
+      if (previewArc) {
+        if (srvNode.arrival_at_tick != null) previewArc.arrivalTime = srvNode.arrival_at_tick;
+        ship.pendingTransfer = previewArc;
+      }
     }
   }
 
