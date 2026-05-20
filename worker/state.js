@@ -228,7 +228,8 @@ async function handleGetState(req, env, ctx) {
               hp, hp_max, population,
               surface_angle, orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch,
               stockpile_metal, stockpile_fuel, stockpile_gold, stockpile_science,
-              created_at_tick, last_growth_tick, last_harvest_tick
+              created_at_tick, last_growth_tick, last_harvest_tick,
+              has_collector, collector_built_tick
          FROM game_settlements
         WHERE game_id = ?1
           AND destroyed_at_tick IS NULL

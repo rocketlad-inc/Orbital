@@ -648,11 +648,13 @@ export async function seedGameWorld(env, gameId) {
           (id, game_id, body_id, owner_faction_id, type, name,
            hp, hp_max, population,
            surface_angle, orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch,
-           created_at_tick, last_growth_tick, last_harvest_tick)
+           created_at_tick, last_growth_tick, last_harvest_tick,
+           has_collector, collector_built_tick)
          VALUES (?, ?, ?, ?, 'city', ?,
                  ?, ?, 1,
                  ?, NULL, NULL, NULL, NULL, NULL,
-                 0, 0, 0)`,
+                 0, 0, 0,
+                 1, NULL)`,
       ).bind(
         cityId, gameId, bodyRowIdFor(capTpl), f.id,
         `${f.name} Capital`,

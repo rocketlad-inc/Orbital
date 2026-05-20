@@ -304,7 +304,15 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    buildCollector(s.id);
+                    // Local optimistic flip first — UI feels instant.
+                    // In MP the server is authoritative for resources;
+                    // post the intent so the next /state poll doesn't
+                    // wipe the local change and refund the player's
+                    // money without delivering the collector.
+                    const localOk = buildCollector(s.id);
+                    if (localOk && mpActions) {
+                      mpActions.buildCollector(s.id);
+                    }
                   }}
                   disabled={!canAffordCollector}
                   title={canAffordCollector

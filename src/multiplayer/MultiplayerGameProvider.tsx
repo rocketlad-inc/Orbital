@@ -104,6 +104,10 @@ interface ServerState {
     created_at_tick: number;
     last_growth_tick: number | null;
     last_harvest_tick: number | null;
+    /** Collector flag (0/1) — when 1 this settlement is a logistics
+     *  endpoint and the empire's stockpile drain network can use it. */
+    has_collector?: number;
+    collector_built_tick?: number | null;
   }>;
   nodes?: Array<{
     id: string;
@@ -289,6 +293,11 @@ function settlementToClient(
       science: s.stockpile_science,
     },
     lastHarvestTick: s.last_harvest_tick ?? s.created_at_tick,
+    // Collector flag — server stores 0/1, client uses boolean. Without
+    // this the next /state poll would wipe any locally-flipped
+    // hasCollector and refund the resources the player just spent.
+    hasCollector: s.has_collector === 1,
+    collectorBuiltTick: s.collector_built_tick ?? undefined,
   };
 }
 

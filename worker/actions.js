@@ -769,6 +769,61 @@ async function handleAdminGrant(req, env, ctx) {
   });
 }
 
+// POST /api/games/:gameId/settlements/:settlementId/collector
+// Upgrades an existing player-owned settlement to a logistics endpoint.
+// Charges COLLECTOR_COST (150 ore, 100 credits) and flips
+// has_collector = 1 atomically. Failure modes:
+//   404 not_found          — settlement missing or different game
+//   403 not_owner          — settlement belongs to a different faction
+//   409 already_collector  — settlement already has one
+//   409 insufficient_resources — pool can't cover the cost
+//
+// Capitals already have has_collector = 1 from seedGameWorld so the
+// "already_collector" guard catches the no-op double-build attempt.
+const COLLECTOR_COST = { metal: 150, gold: 100 };
+async function handleBuildCollector(req, env, ctx) {
+  const { gameId, settlementId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const settlement = await env.DB
+    .prepare('SELECT id, owner_faction_id, has_collector FROM game_settlements WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL')
+    .bind(settlementId, gameId)
+    .first();
+  if (!settlement) return err(404, 'not_found', 'settlement not found');
+  if (settlement.owner_faction_id !== me.id) {
+    return err(403, 'not_owner', 'you do not own this settlement');
+  }
+  if (settlement.has_collector === 1) {
+    return err(409, 'already_collector', 'this settlement already has a collector');
+  }
+  if (me.metal < COLLECTOR_COST.metal || me.gold < COLLECTOR_COST.gold) {
+    return err(409, 'insufficient_resources',
+      `need ${COLLECTOR_COST.metal} ore + ${COLLECTOR_COST.gold} credits`);
+  }
+
+  const game = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
+  const tick = game?.current_tick ?? 0;
+
+  await env.DB.batch([
+    env.DB
+      .prepare('UPDATE game_settlements SET has_collector = 1, collector_built_tick = ? WHERE id = ?')
+      .bind(tick, settlementId),
+    env.DB
+      .prepare('UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ?')
+      .bind(COLLECTOR_COST.metal, COLLECTOR_COST.gold, me.id),
+  ]);
+
+  return json({
+    ok: true,
+    settlement_id: settlementId,
+    built_at_tick: tick,
+    cost: { metal: COLLECTOR_COST.metal, gold: COLLECTOR_COST.gold },
+  });
+}
+
 export const routes = [
   {
     method: 'POST',
@@ -817,6 +872,12 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/admin\/grant$/,
     auth: 'required',
     handle: handleAdminGrant,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/settlements\/(?<settlementId>[^/]+)\/collector$/,
+    auth: 'required',
+    handle: handleBuildCollector,
   },
   {
     method: 'DELETE',

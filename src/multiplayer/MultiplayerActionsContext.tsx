@@ -109,6 +109,14 @@ export interface MultiplayerActions {
    *  status='cancelled'). Same problem as build cancel: local-only
    *  removal got rewound by the next /state. */
   cancelNode: (nodeId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+
+  // --- Collector network ---
+  /** Upgrade a player-owned settlement to a logistics endpoint. Server
+   *  charges COLLECTOR_COST (150 ore + 100 credits) and flips
+   *  has_collector = 1. Without this server hop the local mutation
+   *  would survive ~1.5s before the next /state poll restored
+   *  has_collector=0 and refunded the resources. */
+  buildCollector: (settlementId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 const MultiplayerActionsContext = createContext<MultiplayerActions | null>(null);
@@ -238,6 +246,15 @@ export function MultiplayerActionsProvider({
       if (res.ok) return { ok: true };
       console.warn('adminGrant failed', res.error);
       return { ok: false, error: res.error?.message ?? 'Server rejected the grant.' };
+    },
+    async buildCollector(settlementId) {
+      const res = await apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/settlements/${encodeURIComponent(settlementId)}/collector`,
+        { method: 'POST' },
+      );
+      if (res.ok) return { ok: true };
+      console.warn('buildCollector failed', res.error);
+      return { ok: false, error: res.error?.message ?? 'Server rejected the collector build.' };
     },
     });
   }, [gameId]);
