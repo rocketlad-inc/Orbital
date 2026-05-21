@@ -346,7 +346,12 @@ interface GameContextType {
   cancelTorchPreview: (shipId: string) => void;
 
   // Ship building
-  buildShip: (bodyId: string, shipClass: ShipClassName, name: string) => boolean;
+  buildShip: (
+    bodyId: string,
+    shipClass: ShipClassName,
+    name: string,
+    iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F',
+  ) => boolean;
   cancelBuild: (buildOrderId: string) => void;
 
   // Fleet management
@@ -736,6 +741,10 @@ export function GameContextProvider({
           hp: classDef.hp,
           orbit: createCircularOrbit(bo.bodyId, 8, newTime, prev.bodies),
           orders: [],
+          // Player's icon pick rides through the queue and lands on the
+          // spawned ship. Undefined falls back to DEFAULT_SHIP_ICONS at
+          // render time.
+          iconVariant: bo.iconVariant,
         };
       });
       updatedShips = [...updatedShips, ...newShips];
@@ -1788,7 +1797,12 @@ export function GameContextProvider({
   }, []);
 
   // ---- Ship Building ----
-  const buildShip = useCallback((bodyId: string, shipClass: ShipClassName, name: string): boolean => {
+  const buildShip = useCallback((
+    bodyId: string,
+    shipClass: ShipClassName,
+    name: string,
+    iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F',
+  ): boolean => {
     const classDef = SHIP_CLASSES[shipClass];
     if (!classDef) {
       logger.warn('ACTION', `buildShip: unknown class`, { shipClass });
@@ -1850,6 +1864,7 @@ export function GameContextProvider({
         startTick: prev.currentTick,
         completeTick: prev.currentTick + classDef.buildTime,
         shipName: name,
+        iconVariant,
       };
 
       return {

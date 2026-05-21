@@ -27,6 +27,9 @@ export interface BuildIntent {
   bodyId: string;
   shipClass: 'corvette' | 'frigate' | 'destroyer' | 'freighter';
   shipName?: string;
+  /** Player's picked icon variant from the BuildPanel dropdown.
+   *  Server validates 'A'..'F'; undefined/null = class default. */
+  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
 }
 
 export interface SettlementIntent {
@@ -188,6 +191,7 @@ export function MultiplayerActionsProvider({
         body: JSON.stringify({
           ship_class: intent.shipClass,
           ship_name: intent.shipName,
+          icon_variant: intent.iconVariant ?? null,
         }),
       });
       if (!res.ok) {

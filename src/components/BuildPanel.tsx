@@ -6,7 +6,10 @@ import React, { useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { BUILDABLE_CLASSES, SHIP_CLASSES, ShipClassName } from '../game/shipClasses';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
-import { ShipIcon } from './ShipIcons';
+import {
+  ShipIcon, ShipIconVariant, ICON_VARIANT_NAMES,
+  ALL_VARIANTS, DEFAULT_SHIP_ICONS,
+} from './ShipIcons';
 import './BuildPanel.css';
 
 // Expanse-themed random ship names
@@ -31,6 +34,16 @@ export const BuildPanel: React.FC = () => {
   const mpActions = useMultiplayerActions();
   const [, setSelectedClass] = useState<ShipClassName | null>(null);
   const [customName, setCustomName] = useState<string>('');
+  // Per-class icon variant pick. Each row in the build list has its
+  // own selector defaulting to DEFAULT_SHIP_ICONS[class]. Map keyed by
+  // class because the player might want, e.g. Corvette Raptor and
+  // Frigate Carrier at the same time.
+  const [iconChoice, setIconChoice] = useState<Record<ShipClassName, ShipIconVariant>>({
+    corvette:  DEFAULT_SHIP_ICONS.corvette,
+    frigate:   DEFAULT_SHIP_ICONS.frigate,
+    destroyer: DEFAULT_SHIP_ICONS.destroyer,
+    freighter: DEFAULT_SHIP_ICONS.freighter,
+  });
 
   if (!uiState.selectedBodyId) return null;
 
@@ -52,16 +65,17 @@ export const BuildPanel: React.FC = () => {
     const name = trimmed.length > 0
       ? trimmed
       : getRandomName(shipClass, existingShipNames);
+    const variant = iconChoice[shipClass];
     if (mpActions) {
       // Multiplayer: server is canonical for resource deduction + queue
       // persistence. Skip the local buildShip() — calling it here used
       // to flash 2× deducted resources for ~1.5s until /state poll snap
       // back. Post intent only; UI updates when the poll lands.
-      mpActions.build({ bodyId: body.id, shipClass, shipName: name });
+      mpActions.build({ bodyId: body.id, shipClass, shipName: name, iconVariant: variant });
       setCustomName('');
     } else {
       // Single-player: local state is canonical.
-      const success = buildShip(body.id, shipClass, name);
+      const success = buildShip(body.id, shipClass, name, variant);
       if (success) setCustomName('');
     }
     setSelectedClass(null);
@@ -143,7 +157,34 @@ export const BuildPanel: React.FC = () => {
           return (
             <div key={cls} className={`build-class-row ${!canAfford ? 'disabled' : ''}`}>
               <div className="class-info">
-                <span className="class-icon"><ShipIcon shipClass={cls} size={16} /></span>
+                {/* Icon picker. Shows the currently-selected variant
+                    big, with a small dropdown to swap it. Each row's
+                    state is independent (the player can be eyeing a
+                    Raptor corvette and a Carrier frigate at once). */}
+                <span
+                  className="class-icon"
+                  title={`Icon: ${ICON_VARIANT_NAMES[cls][iconChoice[cls]]} (click selector to change)`}
+                >
+                  <ShipIcon shipClass={cls} variant={iconChoice[cls]} size={20} />
+                </span>
+                <select
+                  value={iconChoice[cls]}
+                  onChange={(e) => setIconChoice(prev => ({
+                    ...prev, [cls]: e.target.value as ShipIconVariant,
+                  }))}
+                  title="Pick an icon variant for this ship"
+                  style={{
+                    fontSize: 9, padding: '2px 4px',
+                    background: '#0a1018', color: '#4ecdc4',
+                    border: '1px solid #2a3d50', borderRadius: 3,
+                    fontFamily: 'inherit', cursor: 'pointer',
+                    marginRight: 4,
+                  }}
+                >
+                  {ALL_VARIANTS.map(v => (
+                    <option key={v} value={v}>{v} · {ICON_VARIANT_NAMES[cls][v]}</option>
+                  ))}
+                </select>
                 <span className="class-name">{def.displayName}</span>
               </div>
               <div className="class-stats">

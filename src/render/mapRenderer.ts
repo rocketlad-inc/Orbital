@@ -669,7 +669,7 @@ export function drawShip(
   const flashStart = ctx.damageFlashStart?.get(ship.id);
   drawDamageFlash(canvasPos, iconSize / 2, flashStart, ctx.t, ctx, 'damage');
 
-  const icon = getShipIconImage(ship.class as ShipIconClass, shipColorValue);
+  const icon = getShipIconImage(ship.class as ShipIconClass, shipColorValue, ship.iconVariant);
   if (icon) {
     // Draw the icon rotated to face the velocity direction.
     ctx.ctx.save();
@@ -1121,7 +1121,7 @@ function drawTorchTransitShip(
   const flashStartT = ctx.damageFlashStart?.get(ship.id);
   drawDamageFlash(canvasPos, iconSize / 2, flashStartT, ctx.t, ctx, 'damage');
 
-  const icon = getShipIconImage(ship.class as ShipIconClass, shipColorValue);
+  const icon = getShipIconImage(ship.class as ShipIconClass, shipColorValue, ship.iconVariant);
   if (icon) {
     ctx.ctx.save();
     ctx.ctx.translate(canvasPos.x, canvasPos.y);

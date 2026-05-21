@@ -598,7 +598,8 @@ export class Room {
     //    orbit around the building body.
     const builds = (await this.env.DB
       .prepare(
-        `SELECT id, body_id, faction_id, ship_class, completes_at_tick
+        `SELECT id, body_id, faction_id, ship_class, completes_at_tick,
+                icon_variant
            FROM game_body_build_queue
           WHERE game_id = ?
             AND cancelled_at_tick IS NULL
@@ -633,12 +634,12 @@ export class Room {
                parent_body_id, orbit_rp, orbit_ra, orbit_omega,
                orbit_m0, orbit_epoch, orbit_direction,
                fuel, fuel_max, status, built_at_tick,
-               hp, hp_max, damage_per_tick)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 1, ?, ?, 'active', ?, ?, ?, ?)`,
+               hp, hp_max, damage_per_tick, icon_variant)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 1, ?, ?, 'active', ?, ?, ?, ?, ?)`,
           )
           .bind(shipId, gameId, b.faction_id, shipName, b.ship_class,
                 b.body_id, rp, ra, tick, fuelMax, fuelMax, tick,
-                hp, hp, dmg),
+                hp, hp, dmg, b.icon_variant ?? null),
         this.env.DB
           .prepare('DELETE FROM game_body_build_queue WHERE id = ?')
           .bind(b.id),

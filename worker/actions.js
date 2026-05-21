@@ -237,6 +237,17 @@ async function handleQueueBuild(req, env, ctx) {
   if (typeof shipClass !== 'string' || !SHIP_CLASSES.has(shipClass)) {
     return err(400, 'bad_request', 'invalid ship_class');
   }
+  // Player-picked icon variant from the BuildPanel dropdown. Validated
+  // here so a malicious / outdated client can't write garbage to the
+  // column. NULL is allowed and means "use the class default" — older
+  // clients that don't post the field still work.
+  let iconVariant = null;
+  if (body.icon_variant !== undefined && body.icon_variant !== null) {
+    if (typeof body.icon_variant !== 'string' || !/^[A-F]$/.test(body.icon_variant)) {
+      return err(400, 'bad_request', 'invalid icon_variant');
+    }
+    iconVariant = body.icon_variant;
+  }
   const cost = SHIP_BUILD_COST[shipClass];
 
   const bodyRow = await env.DB
@@ -269,10 +280,10 @@ async function handleQueueBuild(req, env, ctx) {
     env.DB
       .prepare(
         `INSERT INTO game_body_build_queue
-          (id, game_id, body_id, faction_id, ship_class, queued_at_tick, completes_at_tick)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          (id, game_id, body_id, faction_id, ship_class, queued_at_tick, completes_at_tick, icon_variant)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .bind(orderId, gameId, bodyId, me.id, shipClass, startTick, completeTick),
+      .bind(orderId, gameId, bodyId, me.id, shipClass, startTick, completeTick, iconVariant),
     env.DB
       .prepare(
         `UPDATE game_factions SET metal = metal - ?, gold = gold - ?

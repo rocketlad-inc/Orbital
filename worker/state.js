@@ -227,7 +227,8 @@ async function handleGetState(req, env, ctx) {
               orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
               fuel, fuel_max, hp, hp_max, damage_per_tick,
               rank, combat_history,
-              status, built_at_tick
+              status, built_at_tick,
+              icon_variant
          FROM game_ships
         WHERE game_id = ?1
           AND status = 'active'
@@ -323,7 +324,8 @@ async function handleGetState(req, env, ctx) {
   // so players saw their money vanish with nothing in queue.
   const buildQueue = (await env.DB
     .prepare(
-      `SELECT id, body_id, ship_class, queued_at_tick, completes_at_tick
+      `SELECT id, body_id, ship_class, queued_at_tick, completes_at_tick,
+              icon_variant
          FROM game_body_build_queue
         WHERE game_id = ? AND faction_id = ?
           AND cancelled_at_tick IS NULL`,

@@ -106,6 +106,9 @@ interface ServerState {
     /** JSON blob — ShipKillRecord[] of recent kills (capped to 20). */
     combat_history?: string | null;
     status: string;
+    /** Player's icon-variant pick from the build queue ('A'..'F').
+     *  NULL means use the class default. Migration 0022. */
+    icon_variant?: string | null;
   }>;
   settlements?: Array<{
     id: string;
@@ -177,6 +180,8 @@ interface ServerState {
     ship_class: string;
     queued_at_tick: number;
     completes_at_tick: number;
+    /** Player's icon pick at queue time, or null for class default. */
+    icon_variant?: string | null;
   }>;
   /** Active trade routes for the caller's faction. Server names use
    *  metal/gold; the deserializer below maps to ore/credits to match
@@ -281,6 +286,13 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
       if (Array.isArray(parsed)) combatHistory = parsed;
     } catch { /* ignore malformed */ }
   }
+  // Icon variant: server stores 'A'..'F' or null. Defensive narrow so
+  // a malformed row (e.g. lowercase or garbage) falls back to undefined
+  // (= class default at render time) instead of poisoning the type.
+  let iconVariant: Ship['iconVariant'] = undefined;
+  if (s.icon_variant && /^[A-F]$/.test(s.icon_variant)) {
+    iconVariant = s.icon_variant as Ship['iconVariant'];
+  }
   return {
     id: s.id,
     name: s.name,
@@ -292,6 +304,7 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     orders: [],
     rank: s.rank ?? 0,
     combatHistory,
+    iconVariant,
   };
 }
 
@@ -612,17 +625,26 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   // Without this, optimistic local state survived ~1.5s until the next
   // /state poll wiped it, leaving players staring at deducted resources
   // and nothing in the queue.
-  const buildOrders = (srv.build_queue ?? []).map(b => ({
-    id: b.id,
-    bodyId: stripGameId(b.body_id) ?? b.body_id,
-    shipClass: b.ship_class as 'corvette' | 'frigate' | 'destroyer' | 'freighter',
-    ownedBy: PLAYER_TOKEN,
-    startTick: b.queued_at_tick,
-    completeTick: b.completes_at_tick,
-    // The server doesn't currently track per-order names — fall back to
-    // a ship-class display label so the UI has something to render.
-    shipName: b.ship_class.charAt(0).toUpperCase() + b.ship_class.slice(1),
-  }));
+  const buildOrders = (srv.build_queue ?? []).map(b => {
+    // Narrow the icon variant defensively so a malformed/legacy row
+    // becomes "use class default" instead of poisoning the type.
+    let iv: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | undefined;
+    if (b.icon_variant && /^[A-F]$/.test(b.icon_variant)) {
+      iv = b.icon_variant as 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
+    }
+    return {
+      id: b.id,
+      bodyId: stripGameId(b.body_id) ?? b.body_id,
+      shipClass: b.ship_class as 'corvette' | 'frigate' | 'destroyer' | 'freighter',
+      ownedBy: PLAYER_TOKEN,
+      startTick: b.queued_at_tick,
+      completeTick: b.completes_at_tick,
+      // The server doesn't currently track per-order names — fall back to
+      // a ship-class display label so the UI has something to render.
+      shipName: b.ship_class.charAt(0).toUpperCase() + b.ship_class.slice(1),
+      iconVariant: iv,
+    };
+  });
 
   // Trade routes — server cargo columns (metal/gold) → client
   // ore/credits. Strips gameId namespace from body ids so they line up

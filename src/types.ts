@@ -154,6 +154,10 @@ export interface Ship {
   fuel: number;                         // remaining fuel
   hp?: number;                          // current HP (undefined = full from class def)
   fleetId?: string;                     // fleet this ship belongs to (if any)
+  /** Per-ship icon variant override picked at construction. Falls back
+   *  to DEFAULT_SHIP_ICONS[class] when undefined. Values map 1:1 to
+   *  ShipIconVariant ('A'..'F') in src/components/ShipIcons.tsx. */
+  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
 
   // Orbital position. Always set. During transit it's a stale snapshot
   // of the last parked orbit; rendering and game logic must check
@@ -297,6 +301,9 @@ export interface BuildOrder {
   startTick: number;                    // tick when construction started
   completeTick: number;                 // tick when ship launches to orbit
   shipName: string;                     // name for the new ship
+  /** Icon variant picked at build time. Copied to Ship.iconVariant
+   *  when the build completes. Undefined falls back to the class default. */
+  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
 }
 
 /**
