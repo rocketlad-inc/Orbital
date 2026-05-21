@@ -304,7 +304,7 @@ export const ShipPanel: React.FC = () => {
       )}
 
       <BottomSheet open={!hideForTargeting} onClose={deselectShip} title={`Ship: ${ship.name}`}>
-      <div className="ship-panel">
+      <div className="ship-panel" data-tutorial-id="ship-panel">
         <div className="panel-header">
           <span>
             SHIP: {ship.name}

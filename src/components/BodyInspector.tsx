@@ -42,7 +42,7 @@ export const BodyInspector: React.FC = () => {
 
   return (
     <BottomSheet open={true} onClose={deselectBody} title={body.name.toUpperCase()}>
-    <div className="body-inspector">
+    <div className="body-inspector" data-tutorial-id="body-inspector">
       <div className="panel-header">
         <span>{body.name.toUpperCase()}</span>
         <div className="panel-header-actions">

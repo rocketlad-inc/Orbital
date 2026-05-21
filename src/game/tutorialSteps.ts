@@ -43,10 +43,18 @@ export interface TutorialStep {
   /** Body text — one to two sentences. Plain string, no markdown. */
   body: string;
   /** data-tutorial-id of the element to point at. null means
-   *  center-of-screen (used for intro / outro steps). */
+   *  center-of-screen (used for intro / outro steps). The card is
+   *  positioned relative to this primary target. */
   target: string | null;
-  /** Which side of the target to place the card. Ignored when
-   *  target is null. */
+  /** Additional elements to cut out of the backdrop. They get the
+   *  same un-dimmed treatment as `target` but don't influence the
+   *  card position. Useful when a step refers to two places at
+   *  once — e.g. the select-body step explains "click in the
+   *  Outliner" while also wanting the freshly-opened BodyInspector
+   *  to stay readable. Missing anchors are silently skipped. */
+  extraTargets?: string[];
+  /** Which side of the primary target to place the card. Ignored
+   *  when target is null. */
   placement: Placement;
 }
 
@@ -98,6 +106,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
     title: 'Inspect a body',
     body: 'Click any body — here in the Outliner or out on the map — to open its inspector. We’ve opened one of yours for you.',
     target: 'outliner',
+    extraTargets: ['body-inspector'],
     placement: 'left',
   },
   {
@@ -142,6 +151,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
     title: 'Inspect a ship',
     body: 'Click any of your ships — here in the Outliner or out on the map — to open its panel. We’ve opened one for you.',
     target: 'outliner',
+    extraTargets: ['ship-panel'],
     placement: 'left',
   },
   {

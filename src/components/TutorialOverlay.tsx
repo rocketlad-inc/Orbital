@@ -76,6 +76,11 @@ export const TutorialOverlay: React.FC = () => {
   const { active, index, advance, back, skip, finish, jumpTo } = useTutorial();
   const { gameState, selectBody, selectShip } = useGameContext();
   const [targetRect, setTargetRect] = useState<Rect | null>(null);
+  // Extra cutout rects for steps that highlight more than one element
+  // (e.g. select-body highlights the Outliner AND the freshly-opened
+  // BodyInspector so the inspector doesn't sit dimmed behind the
+  // backdrop while the card talks about it).
+  const [extraRects, setExtraRects] = useState<Rect[]>([]);
   const [viewport, setViewport] = useState({
     width: typeof window !== 'undefined' ? window.innerWidth : 1280,
     height: typeof window !== 'undefined' ? window.innerHeight : 800,
@@ -115,10 +120,12 @@ export const TutorialOverlay: React.FC = () => {
   useEffect(() => {
     if (!step) {
       setTargetRect(null);
+      setExtraRects([]);
       return;
     }
     let raf = 0;
     const tick = () => {
+      // Primary target — drives card placement + outline halo
       const el = findTarget(step.target);
       if (el) {
         const r = el.getBoundingClientRect();
@@ -126,6 +133,17 @@ export const TutorialOverlay: React.FC = () => {
       } else {
         setTargetRect(null);
       }
+      // Extra targets — additional cutouts; placement is not affected.
+      // Missing anchors are silently filtered (panel hasn't mounted
+      // yet, etc) so a typo or auto-open race doesn't break the step.
+      const extras: Rect[] = [];
+      for (const id of step.extraTargets ?? []) {
+        const ee = findTarget(id);
+        if (!ee) continue;
+        const r = ee.getBoundingClientRect();
+        extras.push({ x: r.left, y: r.top, width: r.width, height: r.height });
+      }
+      setExtraRects(extras);
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -201,10 +219,19 @@ export const TutorialOverlay: React.FC = () => {
         <defs>
           <mask id="tutorial-cutout">
             <rect x={0} y={0} width={viewport.width} height={viewport.height} fill="white" />
+            {/* Primary cutout — full halo around the step's main target. */}
             {targetRect && (() => {
               const p = padRect(targetRect);
               return <rect x={p.x} y={p.y} width={p.width} height={p.height} rx={6} fill="black" />;
             })()}
+            {/* Extra cutouts — each gets the same un-dimmed treatment so
+                a multi-anchor step (e.g. Outliner + freshly-opened
+                BodyInspector) doesn't leave half its anchors lurking in
+                the dark. */}
+            {extraRects.map((r, i) => {
+              const p = padRect(r);
+              return <rect key={i} x={p.x} y={p.y} width={p.width} height={p.height} rx={6} fill="black" />;
+            })}
           </mask>
         </defs>
         <rect
@@ -213,6 +240,8 @@ export const TutorialOverlay: React.FC = () => {
           fill="rgba(5, 8, 14, 0.66)"
           mask="url(#tutorial-cutout)"
         />
+        {/* Outline ring around the primary target — bright amber so it
+            reads as "look here." */}
         {targetRect && (() => {
           const p = padRect(targetRect);
           return (
@@ -226,6 +255,23 @@ export const TutorialOverlay: React.FC = () => {
             />
           );
         })()}
+        {/* Extra targets get a softer ring so the player's eye still
+            lands on the primary first, but they read as "this is also
+            relevant" rather than fading into the cutout. */}
+        {extraRects.map((r, i) => {
+          const p = padRect(r);
+          return (
+            <rect
+              key={`extra-${i}`}
+              x={p.x} y={p.y} width={p.width} height={p.height}
+              rx={6}
+              fill="none"
+              stroke="rgba(255, 184, 77, 0.45)"
+              strokeWidth={1.5}
+              strokeDasharray="4 3"
+            />
+          );
+        })}
       </svg>
 
       {/* Coachmark card — re-enables pointer events for its own area
