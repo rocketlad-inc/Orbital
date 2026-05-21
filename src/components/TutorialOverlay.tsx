@@ -20,6 +20,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTutorial } from '../state/tutorial';
+import { useGameContext } from '../state/gameContext';
 import { TUTORIAL_STEPS, TutorialStep } from '../game/tutorialSteps';
 
 interface Rect {
@@ -73,6 +74,7 @@ function placeCard(
 
 export const TutorialOverlay: React.FC = () => {
   const { active, index, advance, back, skip, finish, jumpTo } = useTutorial();
+  const { gameState, selectBody, selectShip } = useGameContext();
   const [targetRect, setTargetRect] = useState<Rect | null>(null);
   const [viewport, setViewport] = useState({
     width: typeof window !== 'undefined' ? window.innerWidth : 1280,
@@ -82,6 +84,29 @@ export const TutorialOverlay: React.FC = () => {
   const [cardSize, setCardSize] = useState({ width: 360, height: 180 });
 
   const step = active && index >= 0 ? TUTORIAL_STEPS[index] : null;
+
+  // Auto-select a body / ship when the tour reaches the
+  // 'select-body' / 'select-ship' steps so the BodyInspector and
+  // ShipPanel actually mount — otherwise the subsequent inspector /
+  // panel steps would point at elements that don't exist yet and the
+  // overlay would fall back to a centered card with no halo.
+  //
+  // Picks the first PLAYER-owned target. If the player has nothing
+  // (rare — they'd have already lost), we silently skip and the
+  // panel-deep-dive steps degrade to centered cards.
+  useEffect(() => {
+    if (!step) return;
+    if (step.id === 'select-body') {
+      const mine = gameState.settlements.find(s => s.ownedBy === 'player');
+      if (mine) selectBody(mine.bodyId);
+    } else if (step.id === 'select-ship') {
+      const mine = gameState.ships.find(s => s.ownedBy === 'player');
+      if (mine) selectShip(mine.id);
+    }
+    // gameState.settlements/ships intentionally NOT in deps — we only
+    // want this to fire on step change, not whenever the world ticks.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step?.id]);
 
   // Re-measure target on every animation frame while active. Cheap —
   // getBoundingClientRect is fast and the overlay is short-lived. Avoids

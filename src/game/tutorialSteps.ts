@@ -72,13 +72,6 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
     target: 'topbar-resources',
     placement: 'below',
   },
-  {
-    id: 'sim-controls',
-    title: 'Time controls',
-    body: 'Pause, run real-time, or fast-forward up to 100,000×. +10 / +100 / +1K skip ahead a fixed number of ticks. Long transits feel short on 100× — interceptions feel longer on 1×.',
-    target: 'sim-controls',
-    placement: 'below',
-  },
 
   // === Outliner =============================================
   {
@@ -88,21 +81,19 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
     target: 'outliner',
     placement: 'left',
   },
-  {
-    id: 'outliner-transit',
-    title: 'In transit',
-    body: 'Ships currently burning between bodies show here with their destination and T-minus ticks to arrival. Click one to jump to its panel and re-plan or cancel mid-burn.',
-    target: 'outliner-transit',
-    placement: 'left',
-  },
 
   // === Body inspector =======================================
+  //
+  // The 'select-body' step has a side-effect: when it becomes active,
+  // TutorialOverlay auto-selects the player's first owned settlement
+  // and calls selectBody(bodyId) so the BodyInspector mounts and the
+  // following steps can anchor to elements inside it.
   {
     id: 'select-body',
     title: 'Open a body',
-    body: 'Click any body on the map to open its inspector. The next few steps walk through what’s in that panel — open one now if you can.',
-    target: null,
-    placement: 'center',
+    body: 'Click any body in the Outliner (or on the map) to open its inspector. We’ll open one now so you can see the panels.',
+    target: 'outliner',
+    placement: 'left',
   },
   {
     id: 'body-production',
@@ -141,12 +132,16 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   },
 
   // === Ship panel ===========================================
+  //
+  // Like 'select-body' above, 'select-ship' has a side-effect: the
+  // overlay auto-selects the player's first owned ship when this step
+  // becomes active so ShipPanel mounts for the following steps.
   {
     id: 'select-ship',
     title: 'Open a ship',
-    body: 'Click a ship in the outliner or on the map to open its panel. The next steps walk through what’s in there.',
-    target: null,
-    placement: 'center',
+    body: 'Click a ship in the Outliner (or on the map) to open its panel. We’ll select one now so you can see what’s in it.',
+    target: 'outliner',
+    placement: 'left',
   },
   {
     id: 'ship-stats',
