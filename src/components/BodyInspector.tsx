@@ -92,14 +92,18 @@ export const BodyInspector: React.FC = () => {
                 <div className="production-summary">
                   <div className="production-title">POTENTIAL YIELD / HARVEST</div>
                   <div className="production-rates">
+                    {/* Math.round defensive — bodyProductionRates() multiplies
+                        by PRODUCTION_MULTIPLIER (=1 today), so values land on
+                        the integer body.resources today. If anyone tunes the
+                        multiplier we don't want "+3.5 FUEL" to suddenly leak. */}
                     {production.fuel > 0 && (
-                      <span className="production-rate">+{production.fuel} FUEL</span>
+                      <span className="production-rate">+{Math.round(production.fuel)} FUEL</span>
                     )}
                     {production.ore > 0 && (
-                      <span className="production-rate">+{production.ore} ORE</span>
+                      <span className="production-rate">+{Math.round(production.ore)} ORE</span>
                     )}
                     {production.credits > 0 && (
-                      <span className="production-rate">+{production.credits} CR</span>
+                      <span className="production-rate">+{Math.round(production.credits)} CR</span>
                     )}
                   </div>
                   <div className="production-note">
@@ -534,7 +538,7 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
                     overflow: 'hidden',
                     position: 'relative',
                   }}
-                  title={`Building ${def.displayName} L${q.targetLevel} — ETA T+${q.completeTick - currentTick} ticks`}
+                  title={`Building ${def.displayName} L${q.targetLevel} — ETA T+${Math.max(0, Math.round(q.completeTick - currentTick))} ticks`}
                 >
                   <div
                     style={{
@@ -545,7 +549,13 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
                   />
                 </div>
                 <span style={{ color: '#6b8195', minWidth: 50, textAlign: 'right' }}>
-                  T+{Math.max(0, q.completeTick - currentTick)}
+                  {/* Math.round before display — completeTick - currentTick
+                      can leak floats from upstream tick arithmetic (e.g.
+                      currentTick is incremented in fractional steps when
+                      time scale is non-1x), and a label like
+                      "T+26.91330444444418" reads as a UI bug, not as
+                      precision. */}
+                  T+{Math.max(0, Math.round(q.completeTick - currentTick))}
                 </span>
                 <button
                   onClick={(e) => { e.stopPropagation(); cancelBuilding(settlement.id); }}

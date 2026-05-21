@@ -235,7 +235,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
         <td>{statusBadge}</td>
         <td>
           {transit && target ? (
-            <span>→ <strong style={{ color: '#4ecdc4' }}>{target.name}</strong> · T-{eta}</span>
+            <span>→ <strong style={{ color: '#4ecdc4' }}>{target.name}</strong> · T-{Math.round(eta ?? 0)}</span>
           ) : (
             <span className="col-muted">{ship.orbit.parentBodyId.toUpperCase()}</span>
           )}

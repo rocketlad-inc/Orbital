@@ -159,7 +159,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         out.push({
           id: `lowfuel-${ship.id}`,
           level: 'warn',
-          text: `${ship.name} low fuel (${ship.fuel})`,
+          text: `${ship.name} low fuel (${Math.round(ship.fuel)})`,
           onClick: () => selectShip(ship.id),
         });
       }
