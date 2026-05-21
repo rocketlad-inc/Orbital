@@ -102,7 +102,7 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
             alignItems: 'center',
           }}
         >
-          <span style={{ fontSize: 10, color: '#8a9fb3', letterSpacing: '0.1em', marginRight: 4 }}>
+          <span style={{ fontSize: 10, color: '#b8c8d6', letterSpacing: '0.1em', marginRight: 4 }}>
             QUEUE
           </span>
           {(queue as TechId[]).map((qid, qi) => {
@@ -119,7 +119,7 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                 }}
                 title={`${qdef.name} → level ${qlvl + 1}`}
               >
-                <span style={{ color: '#8a9fb3', fontSize: 9 }}>{qi + 1}.</span>
+                <span style={{ color: '#b8c8d6', fontSize: 9 }}>{qi + 1}.</span>
                 <span>{qdef.icon} {qdef.name}</span>
                 {qi > 0 && (
                   <button
@@ -182,7 +182,7 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                   <div className="tech-card__effect-label">Current</div>
                   <div className="tech-card__effect-value">
                     {lvl === 0 ? (
-                      <span style={{ color: '#8a9fb3' }}>no bonus</span>
+                      <span style={{ color: '#b8c8d6' }}>no bonus</span>
                     ) : (
                       <span style={{ color: '#6ee7b7' }}>
                         +{(effectAtLevel(def, lvl) * 100).toFixed(0)}% effect
@@ -194,12 +194,12 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                 <div className="tech-card__cost">
                   {isMaxed ? (
                     <>
-                      <span style={{ color: '#8a9fb3' }}>Max level reached</span>
+                      <span style={{ color: '#b8c8d6' }}>Max level reached</span>
                       <span style={{ color: '#ffb84d' }}>—</span>
                     </>
                   ) : (
                     <>
-                      <span style={{ color: '#8a9fb3' }}>Lv {lvl + 1} cost</span>
+                      <span style={{ color: '#b8c8d6' }}>Lv {lvl + 1} cost</span>
                       <span style={{ color: cost <= playerScience ? '#6ee7b7' : '#ffb84d' }}>
                         {cost} sci
                       </span>

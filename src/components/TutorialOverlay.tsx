@@ -338,14 +338,14 @@ export const TutorialOverlay: React.FC = () => {
             marginBottom: 6,
           }}
         >
-          <div style={{ fontSize: 10, color: '#8a9fb3', letterSpacing: '0.14em' }}>
+          <div style={{ fontSize: 10, color: '#b8c8d6', letterSpacing: '0.14em' }}>
             TUTORIAL · {index + 1} / {TUTORIAL_STEPS.length}
           </div>
           <button
             onClick={skip}
             title="Skip tour (Esc)"
             style={{
-              background: 'transparent', color: '#8a9fb3',
+              background: 'transparent', color: '#b8c8d6',
               border: 'none', fontSize: 10, cursor: 'pointer',
               letterSpacing: '0.08em',
             }}
@@ -412,7 +412,7 @@ export const TutorialOverlay: React.FC = () => {
             <div
               style={{
                 flex: '1 1 auto', minWidth: 0, textAlign: 'center',
-                fontSize: 10, color: '#8a9fb3', letterSpacing: '0.1em',
+                fontSize: 10, color: '#b8c8d6', letterSpacing: '0.1em',
                 fontVariantNumeric: 'tabular-nums',
               }}
               title="Tutorial progress"

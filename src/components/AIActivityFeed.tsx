@@ -29,7 +29,7 @@ const KIND_COLOR: Record<string, string> = {
   collector: '#a3e635',
   upgrade: '#f59e0b',
   dyson: '#fbbf24',
-  idle: '#6b8195',
+  idle: '#9aaec0',
 };
 
 export const AIActivityFeed: React.FC = () => {
@@ -79,7 +79,7 @@ export const AIActivityFeed: React.FC = () => {
           {recent.map(entry => {
             const faction = factionLookup.get(entry.factionId);
             const glyph = KIND_GLYPH[entry.kind] ?? '·';
-            const color = KIND_COLOR[entry.kind] ?? '#6b8195';
+            const color = KIND_COLOR[entry.kind] ?? '#9aaec0';
             return (
               <li key={entry.id} className="ai-feed-entry">
                 <span className="ai-feed-tick">T+{entry.tick}</span>

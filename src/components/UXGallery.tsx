@@ -42,7 +42,7 @@ const MiniOrbitalMap: React.FC<{ scale?: number; highlight?: string }> = ({ scal
     {/* sun */}
     <circle cx="100" cy="100" r="6" fill="#ffd180" />
     {/* mercury */}
-    <circle cx="130" cy="100" r="1.6" fill="#8a9fb3" />
+    <circle cx="130" cy="100" r="1.6" fill="#b8c8d6" />
     {/* venus */}
     <circle cx="100" cy="155" r="2.3" fill="#e8c896" />
     {/* earth — pulse */}

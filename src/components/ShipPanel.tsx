@@ -352,7 +352,7 @@ export const ShipPanel: React.FC = () => {
                 // you "mine / theirs / whose theirs" at the same colors
                 // ships now render in on the map.
                 const owner = gameState.factions.find(f => f.id === ship.ownedBy);
-                const ownerColor = owner?.color || '#8a9fb3';
+                const ownerColor = owner?.color || '#b8c8d6';
                 const ownerName = owner?.name || ship.ownedBy.toUpperCase();
                 const isMine = ship.ownedBy === 'player';
                 return (
@@ -372,7 +372,7 @@ export const ShipPanel: React.FC = () => {
                       {ownerName}
                     </span>
                     {isMine && (
-                      <span style={{ color: '#8a9fb3', fontSize: '9px', marginLeft: 2 }}>
+                      <span style={{ color: '#b8c8d6', fontSize: '9px', marginLeft: 2 }}>
                         (you)
                       </span>
                     )}
@@ -651,7 +651,7 @@ export const ShipPanel: React.FC = () => {
                 <span className="label">CADENCE</span>
                 <span className="value">every 20 ticks</span>
               </div>
-              <div className="stat-row" style={{ fontSize: '9px', color: '#8a9fb3', fontStyle: 'italic' }}>
+              <div className="stat-row" style={{ fontSize: '9px', color: '#b8c8d6', fontStyle: 'italic' }}>
                 Auto-fires at any hostile sharing this body.
               </div>
             </div>
@@ -810,14 +810,14 @@ const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
           />
           <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
             {groups.length === 0 && (
-              <div style={{ color: '#8a9fb3', fontSize: 11, textAlign: 'center', padding: '24px 0' }}>
+              <div style={{ color: '#b8c8d6', fontSize: 11, textAlign: 'center', padding: '24px 0' }}>
                 No bodies match "{query}".
               </div>
             )}
             {groups.map(g => (
               <div key={g.label}>
                 <div style={{
-                  fontSize: 9, letterSpacing: '0.14em', color: '#8a9fb3',
+                  fontSize: 9, letterSpacing: '0.14em', color: '#b8c8d6',
                   textTransform: 'uppercase', marginBottom: 6,
                 }}>
                   {g.label} · {g.bodies.length}
@@ -878,7 +878,7 @@ const FleetFormationModal: React.FC<FleetFormationModalProps> = ({ mode, fleetNa
                     onChange={() => toggle(p.id)}
                   />
                   <span style={{ flex: 1 }}>{p.name}</span>
-                  <span style={{ color: '#8a9fb3', fontSize: 9 }}>{p.class.toUpperCase()}</span>
+                  <span style={{ color: '#b8c8d6', fontSize: 9 }}>{p.class.toUpperCase()}</span>
                 </label>
               ))}
             </div>
@@ -942,7 +942,7 @@ const ShipCombatRecord: React.FC<{
         title={kills > 0 ? 'Toggle combat record' : undefined}
       >
         <span>COMBAT RECORD</span>
-        <span style={{ fontSize: 10, color: '#8a9fb3', letterSpacing: '0.06em' }}>
+        <span style={{ fontSize: 10, color: '#b8c8d6', letterSpacing: '0.06em' }}>
           {kills > 0 ? `${kills} kill${kills === 1 ? '' : 's'} · ${expanded ? '▲' : '▼'}` : 'No confirmed kills.'}
         </span>
       </div>
@@ -977,11 +977,11 @@ const ShipCombatRecord: React.FC<{
               >
                 <span style={{ color: '#ff5e5e' }}>
                   ✕ {k.targetName}
-                  <span style={{ color: '#8a9fb3', marginLeft: 4 }}>
+                  <span style={{ color: '#b8c8d6', marginLeft: 4 }}>
                     ({k.targetClass})
                   </span>
                 </span>
-                <span style={{ color: '#8a9fb3', fontSize: 9 }}>
+                <span style={{ color: '#b8c8d6', fontSize: 9 }}>
                   T+{k.tick} · {body?.name ?? k.atBodyId}
                 </span>
               </li>
@@ -1047,7 +1047,17 @@ const TradeRouteSection: React.FC<{
           </div>
           <button
             className="maneuver-btn"
-            style={{ borderColor: '#ff5e5e', color: '#ff5e5e', alignSelf: 'flex-start' }}
+            // Brightened red + opaque tinted fill so the destructive button
+            // reads against the golden status-committed row background.
+            // Previous (#ff5e5e on amber tint) was ~3:1 contrast — below
+            // WCAG AA — and the red-on-amber created visual noise.
+            style={{
+              borderColor: '#ff7a7a',
+              color: '#ffb0b0',
+              background: 'rgba(255, 94, 94, 0.12)',
+              alignSelf: 'flex-start',
+              fontWeight: 600,
+            }}
             onClick={() => onCancel(route.id)}
             title="Cancel the route. Any cargo in the hold is dumped to your pool."
           >
@@ -1064,7 +1074,7 @@ const TradeRouteSection: React.FC<{
       <div className="maneuver-section">
         <div className="section-title">NEW TRADE ROUTE</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '6px 0' }}>
-          <label style={{ fontSize: 10, color: '#8a9fb3', letterSpacing: '0.08em' }}>
+          <label style={{ fontSize: 10, color: '#b8c8d6', letterSpacing: '0.08em' }}>
             ORIGIN (settlement)
           </label>
           <select
@@ -1080,7 +1090,7 @@ const TradeRouteSection: React.FC<{
               <option key={b.id} value={b.id}>{b.name}</option>
             ))}
           </select>
-          <label style={{ fontSize: 10, color: '#8a9fb3', letterSpacing: '0.08em' }}>
+          <label style={{ fontSize: 10, color: '#b8c8d6', letterSpacing: '0.08em' }}>
             DEST (collector)
           </label>
           {destBodies.length === 0 ? (
@@ -1141,7 +1151,7 @@ const TradeRouteSection: React.FC<{
         + TRADE ROUTE
       </button>
       {destBodies.length === 0 && (
-        <div style={{ fontSize: 9, color: '#8a9fb3', marginTop: 4 }}>
+        <div style={{ fontSize: 9, color: '#b8c8d6', marginTop: 4 }}>
           Build a collector first.
         </div>
       )}

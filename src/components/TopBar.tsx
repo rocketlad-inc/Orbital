@@ -612,12 +612,12 @@ const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
 
           <BudgetRow label="Planned transfers" count={budget.plannedItems.length} delta={`-${budget.plannedSpend.fuel} fuel`} warn={overspending} />
           {budget.plannedItems.slice(0, 4).map((it, i) => (
-            <div key={i} style={{ fontSize: 10, color: '#8a9fb3', paddingLeft: 8 }}>
+            <div key={i} style={{ fontSize: 10, color: '#b8c8d6', paddingLeft: 8 }}>
               · {it.label}{it.detail ? ` — ${it.detail}` : ''}
             </div>
           ))}
           {budget.plannedItems.length > 4 && (
-            <div style={{ fontSize: 10, color: '#8a9fb3', paddingLeft: 8 }}>
+            <div style={{ fontSize: 10, color: '#b8c8d6', paddingLeft: 8 }}>
               · +{budget.plannedItems.length - 4} more
             </div>
           )}
@@ -638,7 +638,7 @@ const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
               key={i}
               style={{
                 fontSize: 10,
-                color: it.detail === 'LANDS THIS TURN' ? '#7fffa1' : '#8a9fb3',
+                color: it.detail === 'LANDS THIS TURN' ? '#7fffa1' : '#b8c8d6',
                 paddingLeft: 8,
               }}
             >
@@ -659,7 +659,7 @@ const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
 
           <div style={{ height: 1, background: '#2a3d50', margin: '8px 0' }} />
 
-          <div style={{ fontSize: 10, color: '#8a9fb3' }}>
+          <div style={{ fontSize: 10, color: '#b8c8d6' }}>
             POOL: {Math.round(budget.pool.fuel)} fuel · {Math.round(budget.pool.ore)} ore · {Math.round(budget.pool.credits)} cr
           </div>
           {overspending && (
@@ -809,7 +809,7 @@ const BudgetRow: React.FC<{ label: string; count: number; delta?: string; warn?:
   >
     <span>
       <span style={{ color: '#d8e4ee' }}>{label}</span>
-      <span style={{ color: '#8a9fb3', marginLeft: 6 }}>×{count}</span>
+      <span style={{ color: '#b8c8d6', marginLeft: 6 }}>×{count}</span>
     </span>
     {delta && (
       <span style={{ color: warn ? '#ff5e5e' : '#ffb84d', fontWeight: 600 }}>{delta}</span>

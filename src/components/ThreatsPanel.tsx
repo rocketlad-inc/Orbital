@@ -118,7 +118,7 @@ export const ThreatsPanel: React.FC = () => {
               background: 'transparent',
               border: '1px solid #2a3d50',
               borderRadius: 3,
-              color: '#8a9fb3',
+              color: '#b8c8d6',
               fontFamily: 'inherit',
               fontSize: 9,
               letterSpacing: '0.08em',
@@ -191,7 +191,7 @@ const ThreatRow: React.FC<ThreatRowProps> = ({ threat, faction, isNew, onClick, 
           style={{
             background: 'transparent',
             border: 'none',
-            color: '#8a9fb3',
+            color: '#b8c8d6',
             cursor: 'pointer',
             padding: 0,
             marginLeft: 4,
@@ -227,7 +227,7 @@ const ThreatRow: React.FC<ThreatRowProps> = ({ threat, faction, isNew, onClick, 
         </span>
         <span style={{ flex: 1 }}>
           <span style={{ color: '#d8e4ee', fontWeight: 'bold' }}>{threat.attackerName}</span>
-          <span style={{ color: '#8a9fb3' }}> → </span>
+          <span style={{ color: '#b8c8d6' }}> → </span>
           <span style={{ color: '#ffb84d' }}>{threat.targetBodyName.toUpperCase()}</span>
         </span>
       </div>

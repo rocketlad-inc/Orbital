@@ -135,7 +135,7 @@ export const AdminGrantModal: React.FC<Props> = ({ onClose, mpGameId }) => {
 
         <div style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div>
-            <label style={{ fontSize: 10, color: '#8a9fb3', letterSpacing: '0.1em', display: 'block', marginBottom: 4 }}>
+            <label style={{ fontSize: 10, color: '#b8c8d6', letterSpacing: '0.1em', display: 'block', marginBottom: 4 }}>
               TARGET
             </label>
             <select
@@ -158,7 +158,7 @@ export const AdminGrantModal: React.FC<Props> = ({ onClose, mpGameId }) => {
           </div>
 
           <div>
-            <label style={{ fontSize: 10, color: '#8a9fb3', letterSpacing: '0.1em', display: 'block', marginBottom: 4 }}>
+            <label style={{ fontSize: 10, color: '#b8c8d6', letterSpacing: '0.1em', display: 'block', marginBottom: 4 }}>
               PRESETS (applies to all four fields)
             </label>
             <div style={{ display: 'flex', gap: 6 }}>
@@ -178,7 +178,7 @@ export const AdminGrantModal: React.FC<Props> = ({ onClose, mpGameId }) => {
                 onClick={() => applyPreset(0)}
                 style={{
                   flex: 0.6, padding: '6px 0',
-                  background: 'transparent', color: '#8a9fb3',
+                  background: 'transparent', color: '#b8c8d6',
                   border: '1px solid #2a3d50', borderRadius: 3,
                   fontFamily: 'inherit', fontSize: 11, cursor: 'pointer',
                 }}
@@ -233,7 +233,7 @@ export const AdminGrantModal: React.FC<Props> = ({ onClose, mpGameId }) => {
             >{status}</div>
           )}
 
-          <div style={{ fontSize: 10, color: '#8a9fb3', fontStyle: 'italic' }}>
+          <div style={{ fontSize: 10, color: '#b8c8d6', fontStyle: 'italic' }}>
             {mpGameId
               ? 'Host-only on the server. Local change applies immediately; server rejects with 403 if you are not the host.'
               : 'Single-player only — values mutate this campaign\'s state.'}
@@ -245,7 +245,7 @@ export const AdminGrantModal: React.FC<Props> = ({ onClose, mpGameId }) => {
               disabled={busy}
               style={{
                 padding: '6px 14px',
-                background: 'transparent', color: '#8a9fb3',
+                background: 'transparent', color: '#b8c8d6',
                 border: '1px solid #2a3d50', borderRadius: 4, cursor: 'pointer',
                 fontFamily: 'inherit', fontSize: 11, letterSpacing: '0.08em',
               }}

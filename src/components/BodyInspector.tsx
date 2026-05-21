@@ -471,8 +471,8 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
     >
       <div
         style={{
-          fontSize: 8, letterSpacing: '0.14em',
-          color: '#6b8195', textTransform: 'uppercase',
+          fontSize: 10, letterSpacing: '0.14em', fontWeight: 700,
+          color: '#b8c8d6', textTransform: 'uppercase',
         }}
       >Buildings</div>
 
@@ -516,7 +516,7 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
               alignItems: 'center',
               gap: 6,
               padding: '3px 0',
-              fontSize: 9,
+              fontSize: 10,
             }}
           >
             <span
@@ -551,7 +551,7 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
                     }}
                   />
                 </div>
-                <span style={{ color: '#6b8195', minWidth: 50, textAlign: 'right' }}>
+                <span style={{ color: '#b8c8d6', minWidth: 50, textAlign: 'right', fontWeight: 600 }}>
                   {/* Math.round before display — completeTick - currentTick
                       can leak floats from upstream tick arithmetic (e.g.
                       currentTick is incremented in fractional steps when
@@ -577,7 +577,7 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
             ) : (
               <>
                 <span
-                  style={{ flex: 1, color: '#6b8195', fontStyle: 'italic' }}
+                  style={{ flex: 1, color: '#b8c8d6', fontStyle: 'italic' }}
                   title={def.description}
                 >
                   {effectStr} · {ticks}t · {costStr}

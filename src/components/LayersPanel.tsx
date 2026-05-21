@@ -146,7 +146,7 @@ export const LayersPanel: React.FC = () => {
                   <span style={{
                     display: 'block',
                     fontSize: 9,
-                    color: '#8a9fb3',
+                    color: '#b8c8d6',
                     marginTop: 2,
                     lineHeight: 1.3,
                   }}>{m.description}</span>
@@ -158,7 +158,7 @@ export const LayersPanel: React.FC = () => {
           <div
             style={{
               fontSize: 9,
-              color: '#8a9fb3',
+              color: '#b8c8d6',
               fontStyle: 'italic',
               marginTop: 6,
               borderTop: '1px solid #2a3d50',

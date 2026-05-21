@@ -171,7 +171,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
             }}>
               {isCounter ? 'Counter Offer' : 'New Trade Offer'}
             </div>
-            <div style={{ fontSize: 10, color: '#8a9fb3', marginTop: 2 }}>
+            <div style={{ fontSize: 10, color: '#b8c8d6', marginTop: 2 }}>
               {isCounter ? 'Modify terms and send back' : 'Propose terms to another faction'}
             </div>
           </div>
@@ -179,7 +179,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
             onClick={onClose}
             style={{
               background: 'none', border: '1px solid #2a3d50',
-              color: '#8a9fb3', cursor: 'pointer', fontSize: 14,
+              color: '#b8c8d6', cursor: 'pointer', fontSize: 14,
               padding: 0, width: 24, height: 24, borderRadius: 3,
             }}
           >✕</button>
@@ -188,7 +188,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
         <form onSubmit={submit} style={{ padding: 16, color: '#d8e4ee', fontSize: 11 }}>
           {!isCounter && (
             <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 9, color: '#8a9fb3', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4 }}>
+              <div style={{ fontSize: 9, color: '#b8c8d6', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4 }}>
                 Negotiating with
               </div>
               <select
@@ -204,7 +204,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
             </div>
           )}
           {isCounter && (
-            <div style={{ marginBottom: 12, fontSize: 10, color: '#8a9fb3' }}>
+            <div style={{ marginBottom: 12, fontSize: 10, color: '#b8c8d6' }}>
               Replying to{' '}
               <span style={{ color: responderColor, fontWeight: 600 }}>{responderName}</span>
             </div>
@@ -232,7 +232,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
           </div>
 
           <div style={{ marginTop: 12 }}>
-            <div style={{ fontSize: 9, color: '#8a9fb3', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4 }}>
+            <div style={{ fontSize: 9, color: '#b8c8d6', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4 }}>
               Note (optional)
             </div>
             <textarea
@@ -334,7 +334,7 @@ function ColumnEditor({
       })}
 
       <div style={{
-        fontSize: 9, color: '#8a9fb3', letterSpacing: '0.1em',
+        fontSize: 9, color: '#b8c8d6', letterSpacing: '0.1em',
         textTransform: 'uppercase', marginTop: 8, marginBottom: 4,
       }}>
         Pacts
@@ -361,7 +361,7 @@ function ColumnEditor({
       })}
 
       {hint && (
-        <div style={{ fontSize: 8, color: '#8a9fb3', marginTop: 6, fontStyle: 'italic' }}>
+        <div style={{ fontSize: 8, color: '#b8c8d6', marginTop: 6, fontStyle: 'italic' }}>
           {hint}
         </div>
       )}

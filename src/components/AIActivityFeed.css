@@ -35,7 +35,7 @@
   align-items: center;
   gap: 8px;
   font-family: 'JetBrains Mono', monospace;
-  color: #8a9fb3;
+  color: #b8c8d6;
   font-size: 10px;
   letter-spacing: 0.2em;
   font-weight: 700;
@@ -80,7 +80,7 @@
 .ai-feed-collapse {
   background: transparent;
   border: 1px solid #2a3d50;
-  color: #6b8195;
+  color: #9aaec0;
   font-size: 13px;
   width: 22px;
   height: 22px;
@@ -124,8 +124,8 @@
 }
 
 .ai-feed-tick {
-  color: #6b8195;
-  font-size: 9px;
+  color: #9aaec0;
+  font-size: 10px;
   letter-spacing: 0.05em;
   font-weight: 600;
 }
@@ -146,16 +146,16 @@
 .ai-feed-empty {
   padding: 18px 12px;
   text-align: center;
-  color: #6b8195;
+  color: #9aaec0;
   font-style: italic;
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .ai-feed-foot {
   padding: 6px 12px;
   border-top: 1px solid #2a3d50;
-  font-size: 9px;
+  font-size: 10px;
   letter-spacing: 0.1em;
-  color: #6b8195;
+  color: #9aaec0;
   background: rgba(10, 14, 20, 0.6);
 }

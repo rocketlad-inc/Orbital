@@ -88,7 +88,7 @@
 .ux-gallery__legend-item {
   font-size: 10px;
   letter-spacing: 0.15em;
-  color: #6b8195;
+  color: #9aaec0;
   padding: 4px 10px;
   border: 1px solid #1f2a37;
   border-radius: 2px;
@@ -142,7 +142,7 @@
 }
 .ux-card__tag {
   font-size: 10px;
-  color: #6b8195;
+  color: #9aaec0;
   letter-spacing: 0.1em;
 }
 .ux-card__pitch {
@@ -158,7 +158,7 @@
 .ux-view-toggle__btn {
   background: transparent;
   border: none;
-  color: #6b8195;
+  color: #9aaec0;
   padding: 6px 10px;
   font-family: inherit;
   font-size: 10px;
@@ -239,7 +239,7 @@
 .ux-gallery__outro p {
   font-size: 12px;
   line-height: 1.7;
-  color: #8a9fb3;
+  color: #b8c8d6;
   margin: 0;
 }
 
@@ -260,7 +260,7 @@
   letter-spacing: 0.06em;
   background: rgba(0,0,0,0.4);
 }
-.mock-stat-chip__label { color: #6b8195; font-size: 9px; }
+.mock-stat-chip__label { color: #9aaec0; font-size: 9px; }
 .mock-stat-chip__value { color: #d8e4ee; font-weight: 600; }
 .mock-stat-chip--good { border-color: #2a5547; }
 .mock-stat-chip--good .mock-stat-chip__value { color: #6ee7b7; }
@@ -276,7 +276,7 @@
   border-radius: 12px;
   font-size: 9px;
   letter-spacing: 0.08em;
-  color: #8a9fb3;
+  color: #b8c8d6;
 }
 .mock-pill--on { background: rgba(78, 205, 196, 0.16); border-color: #4ecdc4; color: #4ecdc4; }
 .mock-pill--mini { font-size: 8px; padding: 1px 5px; }
@@ -307,7 +307,7 @@
   border-left: 2px solid transparent;
   cursor: pointer;
 }
-.mock-nav-row span { color: #6b8195; font-size: 9px; }
+.mock-nav-row span { color: #9aaec0; font-size: 9px; }
 .mock-nav-row--on { background: rgba(78, 205, 196, 0.1); border-left-color: #4ecdc4; color: #4ecdc4; }
 .mock-nav-row--warn { color: #ff9180; }
 .mock-nav-row--warn span { color: #ff9180; }
@@ -318,7 +318,7 @@
   gap: 8px;
   padding: 4px 0;
   font-size: 9px;
-  color: #8a9fb3;
+  color: #b8c8d6;
 }
 .mock-bar > span:first-child { width: 30px; }
 .mock-bar > span:last-child { margin-left: auto; }
@@ -334,7 +334,7 @@
 .mock-bar--mini { padding: 2px 0; }
 .mock-bar--mini .mock-bar__fill { height: 3px; background: #ffb84d; }
 
-.mock-kv { font-size: 9px; color: #6b8195; padding: 2px 10px 4px; }
+.mock-kv { font-size: 9px; color: #9aaec0; padding: 2px 10px 4px; }
 
 .mock-row {
   display: grid;
@@ -346,7 +346,7 @@
   border-bottom: 1px solid #131b25;
 }
 .mock-row__cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mock-row--head { color: #6b8195; font-size: 9px; letter-spacing: 0.1em; background: rgba(10, 18, 28, 0.7); }
+.mock-row--head { color: #9aaec0; font-size: 9px; letter-spacing: 0.1em; background: rgba(10, 18, 28, 0.7); }
 .mock-row--alt { background: rgba(20, 28, 38, 0.4); }
 .mock-row--bad { color: #ff9180; }
 
@@ -390,14 +390,14 @@
   padding: 8px 4px;
   font-size: 9px;
   letter-spacing: 0.1em;
-  color: #6b8195;
+  color: #9aaec0;
   border-top: 2px solid transparent;
   border-bottom: 1px solid #1a2230;
 }
 .mock-tab--on { color: #4ecdc4; border-top-color: #4ecdc4; background: rgba(78, 205, 196, 0.06); }
 .mock-tab--warn { color: #ff9180; }
 
-.mock-tick { color: #6b8195; font-size: 9px; letter-spacing: 0.08em; margin-right: 8px; }
+.mock-tick { color: #9aaec0; font-size: 9px; letter-spacing: 0.08em; margin-right: 8px; }
 
 /* ============================================================
    1. Command Bridge — Desktop
@@ -433,7 +433,7 @@
   border-top: 1px solid #1a2230;
   background: rgba(8, 12, 18, 0.9);
   font-size: 9px;
-  color: #8a9fb3;
+  color: #b8c8d6;
   gap: 4px;
   overflow: hidden;
 }
@@ -520,11 +520,11 @@
   min-width: 140px;
   display: inline-block;
 }
-.mock-readout__label { font-size: 9px; color: #6b8195; letter-spacing: 0.18em; margin-bottom: 4px; }
+.mock-readout__label { font-size: 9px; color: #9aaec0; letter-spacing: 0.18em; margin-bottom: 4px; }
 .mock-readout__value { font-size: 22px; color: #4ecdc4; font-weight: 600; }
-.mock-readout__value span { font-size: 11px; color: #6b8195; }
+.mock-readout__value span { font-size: 11px; color: #9aaec0; }
 .mock-readout__value--amber { color: #ffb84d; }
-.mock-readout__sub { font-size: 9px; color: #8a9fb3; margin-top: 2px; }
+.mock-readout__sub { font-size: 9px; color: #b8c8d6; margin-top: 2px; }
 .mock-readout--mini { padding: 6px 10px; }
 .mock-readout--mini .mock-readout__label { margin-bottom: 4px; color: #4ecdc4; }
 
@@ -535,7 +535,7 @@
   row-gap: 2px;
   font-size: 10px;
 }
-.mock-mini-grid span:nth-child(odd) { color: #6b8195; }
+.mock-mini-grid span:nth-child(odd) { color: #9aaec0; }
 .mock-mini-grid span:nth-child(even) { color: #d8e4ee; text-align: right; }
 
 .mock-timeline { margin-bottom: 6px; }
@@ -543,7 +543,7 @@
   display: flex;
   justify-content: space-between;
   font-size: 8px;
-  color: #6b8195;
+  color: #9aaec0;
   letter-spacing: 0.12em;
   margin-bottom: 4px;
 }
@@ -640,7 +640,7 @@
 .mock-gantt-row__label {
   width: 70px;
   font-size: 10px;
-  color: #8a9fb3;
+  color: #b8c8d6;
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
@@ -659,7 +659,7 @@
   white-space: nowrap;
   overflow: hidden;
 }
-.mock-gantt-bar--queued { background: rgba(107, 129, 149, 0.18); border-color: #6b8195; color: #8a9fb3; }
+.mock-gantt-bar--queued { background: rgba(107, 129, 149, 0.18); border-color: #9aaec0; color: #b8c8d6; }
 .mock-gantt-bar--amber { background: rgba(255, 184, 77, 0.24); border-color: #ffb84d; color: #ffd180; }
 .mock-gantt-bar--red { background: rgba(255, 94, 94, 0.2); border-color: #ff5e5e; color: #ff9180; }
 .ux-mc-sheet__telem { flex: 1; background: rgba(8, 14, 22, 0.7); border: 1px solid #1a2230; border-radius: 3px; overflow: hidden; }
@@ -904,7 +904,7 @@
 }
 .mock-card--warn { border-color: #ff5e5e; background: rgba(40, 18, 18, 0.5); }
 .mock-card__title { font-family: 'Orbitron', monospace; font-size: 12px; letter-spacing: 0.12em; color: #ffb84d; }
-.mock-card__sub { font-size: 9px; color: #8a9fb3; }
+.mock-card__sub { font-size: 9px; color: #b8c8d6; }
 .mock-card__cta { font-size: 10px; color: #4ecdc4; letter-spacing: 0.12em; align-self: flex-end; }
 
 .mock-job {
@@ -918,7 +918,7 @@
 .mock-job > div { flex: 1; }
 .mock-job__icon { font-size: 14px; color: #ffb84d; }
 .mock-job__title { font-size: 10px; color: #d8e4ee; }
-.mock-job__time { font-size: 9px; color: #6b8195; margin-top: 2px; text-align: right; }
+.mock-job__time { font-size: 9px; color: #9aaec0; margin-top: 2px; text-align: right; }
 
 /* ============================================================
    4. Empire Manager — Mobile

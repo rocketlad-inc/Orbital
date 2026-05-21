@@ -150,7 +150,7 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
           }}
         >
           <div>
-            <div style={{ fontSize: 10, letterSpacing: '0.16em', color: '#8a9fb3' }}>SINGLE-PLAYER</div>
+            <div style={{ fontSize: 10, letterSpacing: '0.16em', color: '#b8c8d6' }}>SINGLE-PLAYER</div>
             <div style={{ fontSize: 16, fontWeight: 700, color: '#ffb84d', letterSpacing: '0.08em' }}>{title.toUpperCase()}</div>
           </div>
           <button
@@ -233,7 +233,7 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
             <div
               style={{
                 padding: '32px 16px', textAlign: 'center',
-                color: '#8a9fb3', fontSize: 12, fontStyle: 'italic',
+                color: '#b8c8d6', fontSize: 12, fontStyle: 'italic',
               }}
             >
               No saves yet. {mode === 'save' && 'Use the field above to create one.'}
@@ -271,7 +271,7 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
                         >AUTO</span>
                       )}
                     </div>
-                    <div style={{ fontSize: 10, color: '#8a9fb3', marginTop: 2 }}>
+                    <div style={{ fontSize: 10, color: '#b8c8d6', marginTop: 2 }}>
                       T+{s.currentTick} · {s.playerShipCount} ships · {s.playerSettlementCount} settlements · {formatBytes(s.bytes)} · {formatSavedAt(s.savedAt)}
                     </div>
                   </div>
@@ -306,7 +306,7 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
                       aria-label="Export"
                       style={{
                         width: 28, height: 28,
-                        background: 'transparent', color: '#8a9fb3',
+                        background: 'transparent', color: '#b8c8d6',
                         border: '1px solid #2a3d50', borderRadius: 3, cursor: 'pointer',
                       }}
                     >⤓</button>
@@ -331,7 +331,7 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
           style={{
             padding: '10px 18px',
             borderTop: '1px solid #2a3d50',
-            fontSize: 10, color: '#8a9fb3',
+            fontSize: 10, color: '#b8c8d6',
           }}
         >
           Saves are stored in your browser ({saves.length} / ~10 fit). Export to JSON for backup.

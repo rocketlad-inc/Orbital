@@ -1624,7 +1624,7 @@ const FlowArrow: React.FC<FlowArrowProps> = ({ x1, y1, x2, y2, label, vertical, 
       {label && (
         <text
           x={labelX} y={labelY} textAnchor="middle"
-          fill="#8a9fb3" fontSize={7}
+          fill="#b8c8d6" fontSize={7}
           fontFamily="JetBrains Mono, monospace"
         >
           {label}
@@ -1674,7 +1674,7 @@ const TurnBasedModeLiveSettings: React.FC = () => {
               <strong style={{ color: enabled ? '#ffb84d' : '#d8e4ee' }}>
                 {enabled ? 'TURN-BASED MODE: ON' : 'TURN-BASED MODE: OFF'}
               </strong>
-              <div style={{ color: '#8a9fb3', fontSize: 10, marginTop: 2 }}>
+              <div style={{ color: '#b8c8d6', fontSize: 10, marginTop: 2 }}>
                 {enabled
                   ? 'Realtime is suppressed. Use COMMIT TURN in the top bar.'
                   : 'Game runs in realtime. Toggle on to switch flows.'}
@@ -1691,7 +1691,7 @@ const TurnBasedModeLiveSettings: React.FC = () => {
             onChange={setTicksPerTurn}
             displayValue={`${ticksPerTurn} ticks`}
           />
-          <p style={{ color: '#8a9fb3', fontSize: 10, marginTop: 6 }}>
+          <p style={{ color: '#b8c8d6', fontSize: 10, marginTop: 6 }}>
             One tick ≈ a few minutes of in-game time on the default schedule.
             20 ticks ≈ ~2.5 game-hours, enough for short transfers to begin
             and for AI factions to make a couple of decisions.
@@ -1716,7 +1716,7 @@ const TurnBasedModeLiveSettings: React.FC = () => {
               textAlign: 'center',
             }}
           >
-            <div style={{ fontSize: 11, letterSpacing: '0.12em', color: '#8a9fb3' }}>EACH TURN</div>
+            <div style={{ fontSize: 11, letterSpacing: '0.12em', color: '#b8c8d6' }}>EACH TURN</div>
             <div
               style={{
                 fontSize: 32,
@@ -1727,9 +1727,9 @@ const TurnBasedModeLiveSettings: React.FC = () => {
             >
               +{ticksPerTurn}
             </div>
-            <div style={{ fontSize: 10, color: '#8a9fb3' }}>ticks per commit</div>
+            <div style={{ fontSize: 10, color: '#b8c8d6' }}>ticks per commit</div>
           </div>
-          <div style={{ fontSize: 10, color: '#8a9fb3', textAlign: 'center', maxWidth: 220 }}>
+          <div style={{ fontSize: 10, color: '#b8c8d6', textAlign: 'center', maxWidth: 220 }}>
             Plan all your orders, then click <strong>▶ COMMIT TURN</strong> in
             the top bar to resolve them.
           </div>

@@ -45,7 +45,7 @@ export const TutorialPromptModal: React.FC = () => {
           boxShadow: '0 16px 40px rgba(0, 0, 0, 0.6)',
         }}
       >
-        <div style={{ fontSize: 10, letterSpacing: '0.16em', color: '#8a9fb3', marginBottom: 4 }}>
+        <div style={{ fontSize: 10, letterSpacing: '0.16em', color: '#b8c8d6', marginBottom: 4 }}>
           WELCOME, COMMANDER
         </div>
         <div style={{ fontSize: 20, fontWeight: 700, color: '#ffb84d', marginBottom: 12 }}>
@@ -61,7 +61,7 @@ export const TutorialPromptModal: React.FC = () => {
             onClick={skip}
             style={{
               padding: '8px 16px',
-              background: 'transparent', color: '#8a9fb3',
+              background: 'transparent', color: '#b8c8d6',
               border: '1px solid #2a3d50', borderRadius: 4, cursor: 'pointer',
               fontFamily: 'inherit', fontSize: 12, letterSpacing: '0.08em',
             }}

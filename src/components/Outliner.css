@@ -73,9 +73,9 @@
 }
 
 .outliner__section-title {
-  font-size: 8px;
+  font-size: 10px;
   font-weight: 700;
-  color: #8a9fb3;
+  color: #b8c8d6;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   padding: 4px 8px;
@@ -123,7 +123,7 @@
 
 .outliner__body-count {
   font-size: 9px;
-  color: #8a9fb3;
+  color: #b8c8d6;
   padding: 1px 6px;
   background: rgba(107, 129, 149, 0.15);
   border-radius: 8px;
@@ -153,8 +153,8 @@
 }
 
 .outliner__ship-class {
-  font-size: 8px;
-  color: #8a9fb3;
+  font-size: 9px;
+  color: #b8c8d6;
   text-transform: uppercase;
   margin-right: 4px;
   letter-spacing: 0.05em;
@@ -168,8 +168,9 @@
 }
 
 .outliner__ship-status {
-  font-size: 8px;
-  padding: 1px 4px;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 5px;
   border-radius: 2px;
 }
 
@@ -184,8 +185,8 @@
 }
 
 .outliner__empty {
-  font-size: 9px;
-  color: #8a9fb3;
+  font-size: 10px;
+  color: #b8c8d6;
   font-style: italic;
   padding: 4px 12px;
 }
