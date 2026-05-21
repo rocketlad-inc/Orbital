@@ -72,7 +72,7 @@ function placeCard(
 }
 
 export const TutorialOverlay: React.FC = () => {
-  const { active, index, advance, back, skip, finish } = useTutorial();
+  const { active, index, advance, back, skip, finish, jumpTo } = useTutorial();
   const [targetRect, setTargetRect] = useState<Rect | null>(null);
   const [viewport, setViewport] = useState({
     width: typeof window !== 'undefined' ? window.innerWidth : 1280,
@@ -248,7 +248,7 @@ export const TutorialOverlay: React.FC = () => {
         <div
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            marginTop: 12, gap: 8,
+            marginTop: 12, gap: 10,
           }}
         >
           <button
@@ -260,23 +260,54 @@ export const TutorialOverlay: React.FC = () => {
               border: `1px solid ${isFirst ? '#2a3d50' : '#4a6275'}`,
               borderRadius: 4, cursor: isFirst ? 'default' : 'pointer',
               fontFamily: 'inherit', fontSize: 11, letterSpacing: '0.08em',
+              // flexShrink:0 + whiteSpace:nowrap keep "‹ BACK" / "NEXT ›"
+              // on a single line — at 26 steps the dot strip below was
+              // eating enough width to wrap the labels onto two lines.
+              flexShrink: 0, whiteSpace: 'nowrap',
             }}
           >‹ BACK</button>
 
-          {/* Progress dots — also clickable for jumping (handy for
-              players who want to re-read an earlier step). */}
-          <div style={{ display: 'flex', gap: 4 }}>
-            {TUTORIAL_STEPS.map((_, i) => (
-              <span
-                key={i}
-                style={{
-                  width: 5, height: 5, borderRadius: '50%',
-                  background: i === index ? '#ffb84d' : '#2a3d50',
-                  transition: 'background 0.18s',
-                }}
-              />
-            ))}
-          </div>
+          {/* Progress dots — clickable for jumping (handy for players
+              who want to re-read an earlier step). minWidth:0 +
+              overflow:hidden lets the strip shrink before the side
+              buttons do, so the tour-step pills never push BACK/NEXT
+              into wrapping their labels.
+              At >18 steps the dot row gets dense — drop to a compact
+              "N / TOTAL" pill so the card stays readable instead. */}
+          {TUTORIAL_STEPS.length <= 18 ? (
+            <div
+              style={{
+                display: 'flex', gap: 4, flex: '1 1 auto',
+                minWidth: 0, justifyContent: 'center',
+                flexWrap: 'wrap',
+              }}
+            >
+              {TUTORIAL_STEPS.map((_, i) => (
+                <button
+                  key={i}
+                  onClick={() => jumpTo(i)}
+                  title={`Step ${i + 1} of ${TUTORIAL_STEPS.length}`}
+                  style={{
+                    width: 6, height: 6, borderRadius: '50%', padding: 0,
+                    background: i === index ? '#ffb84d' : '#2a3d50',
+                    border: 'none', cursor: 'pointer',
+                    transition: 'background 0.18s',
+                  }}
+                />
+              ))}
+            </div>
+          ) : (
+            <div
+              style={{
+                flex: '1 1 auto', minWidth: 0, textAlign: 'center',
+                fontSize: 10, color: '#8a9fb3', letterSpacing: '0.1em',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+              title="Tutorial progress"
+            >
+              {index + 1} / {TUTORIAL_STEPS.length}
+            </div>
+          )}
 
           <button
             onClick={() => isLast ? finish() : advance()}
@@ -285,6 +316,7 @@ export const TutorialOverlay: React.FC = () => {
               background: '#ffb84d', color: '#0a1018',
               border: 'none', borderRadius: 4, cursor: 'pointer',
               fontFamily: 'inherit', fontSize: 11, fontWeight: 700, letterSpacing: '0.08em',
+              flexShrink: 0, whiteSpace: 'nowrap',
             }}
           >{isLast ? 'DONE ▸' : 'NEXT ›'}</button>
         </div>
