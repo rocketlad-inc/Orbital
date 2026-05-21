@@ -13,15 +13,25 @@
 //      data-tutorial-id attribute somewhere in the component tree.
 //   3. Pick a placement so the card doesn't overlap the target.
 //
-// Keep bodies short — one or two sentences. The point is to
-// orient the player, not lecture them. Players who want details
-// can dig into menus on their own.
+// Voice notes (be ruthless when editing copy):
+//   - Each body is one or two sentences, max. The card is a
+//     glance, not a manual. Players who want depth will find it
+//     in the UI's hover tooltips.
+//   - Lead with the WHY (what the player gets out of this) before
+//     the HOW (which button does what). "Stockpile only reaches
+//     your pool through a collector" beats "click + COLLECTOR to
+//     build a logistics endpoint."
+//   - Avoid in-house jargon — "L3 diminishing returns" reads
+//     fine to us but lands as gibberish on a new player.
 //
-// Steps that target elements which only appear after a click
-// (ship panel, body inspector) use a `null` "click prompt" step
-// in front so the player knows to open the panel before the next
-// coachmark can find its anchor. Without that, the overlay falls
-// back to a centered card with no halo, which is confusing.
+// Auto-open behavior:
+//   The 'select-body' and 'select-ship' steps have a side effect —
+//   TutorialOverlay auto-selects the player's first owned body /
+//   ship when those steps become active, so the BodyInspector /
+//   ShipPanel are actually mounted by the time the following
+//   deep-dive steps need to anchor inside them. If a panel can't
+//   open (the player has none), the deep-dive steps degrade to
+//   centered fallback cards.
 // ============================================================
 
 export type Placement = 'above' | 'below' | 'left' | 'right' | 'center';
@@ -45,21 +55,21 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'welcome',
     title: 'Welcome to Orbital',
-    body: 'Quick tour of the major systems. Use Next / Back to step through, or hit Skip if you’d rather just play.',
+    body: 'Build an interplanetary empire across the Sol system. Sixty-second tour of the major systems — hit Skip if you’d rather just play.',
     target: null,
     placement: 'center',
   },
   {
     id: 'victory',
     title: 'Three ways to win',
-    body: 'SCIENCE — max every tech track. MILITARY — wipe every rival settlement off the map. ENGINEERING — complete the Dyson Sphere at Sol. Pick a path; everything else hangs off that choice.',
+    body: 'SCIENCE — research every tech track to the top. MILITARY — destroy every rival settlement. ENGINEERING — finish the Dyson Sphere around the sun. Pick a path; the rest of the game answers to that choice.',
     target: null,
     placement: 'center',
   },
   {
     id: 'map',
-    title: 'The map',
-    body: 'Drag to pan, scroll to zoom. Inside your sensor range renders bright; everything else dims to a grey wash. Double-click a body to follow it.',
+    title: 'Reading the map',
+    body: 'Drag to pan, scroll to zoom, double-click any body to follow it. What your sensors can see is in full colour; what they can’t is dimmed.',
     target: null,
     placement: 'center',
   },
@@ -67,8 +77,8 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   // === Top bar ==============================================
   {
     id: 'resources',
-    title: 'Resources',
-    body: 'Your faction’s pool — fuel, ore, credits, science. The +X/t under each value is what your settlements deposit each tick. No collector? Your settlements stockpile but never deliver.',
+    title: 'Your treasury',
+    body: 'Fuel, ore, credits, science — everything you spend comes from here. The +X/t line is what your settlements deposit per tick. Without a collector, those harvests pile up and never reach you.',
     target: 'topbar-resources',
     placement: 'below',
   },
@@ -77,111 +87,102 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'outliner',
     title: 'Your holdings',
-    body: 'Every body you control and every ship you own — grouped by location. Green/amber/red HP dots, ⛽ flag for low fuel, ★ for owned bodies. Click any row to focus the map.',
+    body: 'Every body and ship you own, grouped by location. HP dots show damage at a glance, ⛽ flags low fuel, ★ marks bodies you control. Click any row to focus the map.',
     target: 'outliner',
     placement: 'left',
   },
 
   // === Body inspector =======================================
-  //
-  // The 'select-body' step has a side-effect: when it becomes active,
-  // TutorialOverlay auto-selects the player's first owned settlement
-  // and calls selectBody(bodyId) so the BodyInspector mounts and the
-  // following steps can anchor to elements inside it.
   {
     id: 'select-body',
-    title: 'Open a body',
-    body: 'Click any body in the Outliner (or on the map) to open its inspector. We’ll open one now so you can see the panels.',
+    title: 'Inspect a body',
+    body: 'Click any body — here in the Outliner or out on the map — to open its inspector. We’ve opened one of yours for you.',
     target: 'outliner',
     placement: 'left',
   },
   {
     id: 'body-production',
-    title: 'Potential yield',
-    body: 'Every body lists what it produces per harvest. Higher-yield bodies are worth contesting; barren rocks aren’t. Yields flow into a city or station you deploy here.',
+    title: 'What this body yields',
+    body: 'Every body advertises what it can produce per harvest. Rich bodies are worth fighting for; barren rocks aren’t. Those yields only start flowing once you settle here.',
     target: 'body-production',
     placement: 'right',
   },
   {
     id: 'deploy-buttons',
-    title: 'Deploy a settlement',
-    body: 'Send a freighter to orbit a body, then DEPLOY CITY (extraction + science) or DEPLOY STATION (shipyard + weapons + Dyson foundation). Costs come from your pool.',
+    title: 'Found a city or station',
+    body: 'Send a freighter into orbit, then deploy. Cities harvest the body and host labs. Stations build ships, mount guns, and can host the Dyson foundation if they’re at Sol.',
     target: 'deploy-buttons',
     placement: 'above',
   },
   {
     id: 'collector-button',
-    title: 'Build a collector',
-    body: 'A settlement’s stockpile only reaches your pool through a collector link. Your first one is free; subsequent collectors cost ore + credits but unlock new income lines.',
+    title: 'Plug it into the network',
+    body: 'Income from a settlement only reaches your treasury through a collector. Your first one comes free with your starting city; every new settlement needs its own.',
     target: 'collector-button',
     placement: 'right',
   },
   {
     id: 'buildings-strip',
-    title: 'Settlement buildings',
-    body: 'Cities host FORGE (+ore), MINT (+credits), LAB (+science). Stations host WEAPONS (+station damage) and SHIPYARD (+build slots). Each level past L3 hits diminishing returns.',
+    title: 'Upgrade buildings',
+    body: 'Cities take FORGE (more ore), MINT (more credits), LAB (more science). Stations take WEAPONS (heavier guns) and SHIPYARD (more parallel builds). Costs ramp with every level.',
     target: 'buildings-strip',
     placement: 'right',
   },
   {
     id: 'dyson-sphere',
-    title: 'Dyson Sphere (Engineering Victory)',
-    body: 'At a Sol-orbit station you can lay the Dyson foundation. Park freighters at Sol to deliver fuel/ore/credits/science every tick. Fill the four targets and you win — but rivals can blow up your foundation.',
+    title: 'Dyson Sphere · Engineering Victory',
+    body: 'At a Sol-orbit station you can lay the megaproject foundation. Park freighters at Sol to pipe fuel, ore, credits, and science into it every tick. Fill all four targets and you win — but enemies who blow up the foundation collapse the whole project.',
     target: 'dyson-sphere-section',
     placement: 'above',
   },
 
   // === Ship panel ===========================================
-  //
-  // Like 'select-body' above, 'select-ship' has a side-effect: the
-  // overlay auto-selects the player's first owned ship when this step
-  // becomes active so ShipPanel mounts for the following steps.
   {
     id: 'select-ship',
-    title: 'Open a ship',
-    body: 'Click a ship in the Outliner (or on the map) to open its panel. We’ll select one now so you can see what’s in it.',
+    title: 'Inspect a ship',
+    body: 'Click any of your ships — here in the Outliner or out on the map — to open its panel. We’ve opened one for you.',
     target: 'outliner',
     placement: 'left',
   },
   {
     id: 'ship-stats',
-    title: 'Ship stats',
-    body: 'Class, HP, fuel, location. Parked at a friendly station? Passive +repair/t and +refuel/t kick in. Fuel runs out mid-transit and the ship drifts dead until rescued.',
+    title: 'Hull and tank',
+    body: 'Class, HP, fuel, and where the ship currently is. Parked at any of your settlements? It quietly repairs and refuels each tick. Run dry mid-burn and the ship drifts dead until someone tows it home.',
     target: 'ship-stats',
     placement: 'right',
   },
   {
     id: 'ship-combat-record',
     title: 'Veterancy',
-    body: 'Every kill bumps the ship’s rank — +1% damage and +1% HP cap per rank. The combat record lists every hull it’s killed, who owned it, and where. Veteran ships are worth retreating to heal.',
+    body: 'Every confirmed kill bumps this ship’s rank — +1% damage and +1% HP per rank, no cap. The combat record below lists who it’s killed and where. A veteran is worth pulling back to heal rather than losing.',
     target: 'ship-combat-record',
     placement: 'right',
   },
   {
     id: 'ship-fleet-section',
     title: 'Fleets',
-    body: 'Group ships into a fleet to move them as one — TRANSFER on any member can move the whole formation. FORM FLEET, ADD SHIPS, LEAVE, or DISBAND from this panel.',
+    body: 'Group several ships into a fleet to move them as one — a transfer ordered for any member sweeps the whole group along. Form, leave, or disband from this panel.',
     target: 'ship-fleet-section',
     placement: 'right',
   },
   {
     id: 'transfer',
     title: 'Plan a transfer',
-    body: 'TRANSFER drops you into target-pick mode. Click a destination body to draw a dashed preview arc. Nothing’s committed yet — you can re-pick or cancel.',
+    body: 'TRANSFER drops you into target-pick mode. Click a destination body to draw a dashed preview arc. Nothing’s spent yet — re-pick or cancel as much as you want.',
     target: 'ship-transfer-button',
     placement: 'above',
   },
   {
     id: 'commit',
     title: 'Lock it in',
-    body: 'COMMIT flips the planned burn into the schedule. The ship slides along the curve from departure to arrival. Cancel any time before it fires.',
+    body: 'COMMIT spends the fuel and schedules the burn. The ship slides along the curve from departure to arrival. You can still cancel any time before it fires.',
     target: 'ship-commit-button',
     placement: 'above',
   },
   {
     id: 'ship-maneuver',
     title: 'Orders queue',
-    body: 'Each committed burn shows here with Δv, ETA, and a cancel button. You can chain legs — queue Earth→Mars→Jupiter and the ship auto-launches each leg as the previous one lands.',
+    body: 'Every committed burn shows here with Δv, ETA, and a cancel button. Chain legs to set long routes — queue Earth→Mars→Jupiter and the ship auto-launches each leg as the previous one lands.',
     target: 'ship-maneuver-section',
     placement: 'right',
   },
@@ -189,22 +190,22 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   // === Big systems on the top bar ===========================
   {
     id: 'build',
-    title: 'Build ships (Military Victory)',
-    body: 'FLEET opens the shipyard manager — pick a class (corvette / frigate / destroyer / freighter), watch the cost, queue builds at stations. Combat fleets are how you take rival settlements.',
+    title: 'Fleet · Military Victory',
+    body: 'Open the shipyard manager here. Pick a class — corvette, frigate, destroyer, freighter — and queue it at one of your stations. Combat fleets are how you take rival settlements.',
     target: 'nav-fleet',
     placement: 'below',
   },
   {
     id: 'research',
-    title: 'Research (Science Victory)',
-    body: 'Seven tech tracks — weapons, armor, propulsion, etc. Each caps at L10. Filling every track to L10 wins by Science Victory. Earlier levels are cheap; the last few are punishing.',
+    title: 'Research · Science Victory',
+    body: 'Seven tech tracks, capped at level 10 each. Filling every track wins you the Science Victory. Early levels are cheap and you’ll fly through them; the last few are punishing.',
     target: 'nav-research',
     placement: 'below',
   },
   {
     id: 'settlements',
     title: 'Settlements panel',
-    body: 'Empire-wide view of every city and station — yields, stockpile, building queue. Useful for spotting under-collected stockpiles or empty shipyard slots.',
+    body: 'Empire-wide view of every city and station — yields, stockpiles, building queues. Quickest way to spot a settlement leaking income because you forgot to drop a collector.',
     target: 'nav-settlements',
     placement: 'below',
   },
@@ -213,21 +214,21 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'layers',
     title: 'Map layers',
-    body: 'Toggle overlays — transfer arcs from every faction, incoming hostile trajectories, body ownership rings. Default-on layers cover the basics.',
+    body: 'Toggle overlays — transfer arcs from every faction, incoming hostile trajectories, body ownership rings. Turn them on when the map gets busy.',
     target: 'layers-button',
     placement: 'left',
   },
   {
     id: 'menu',
     title: 'Save, load, settings',
-    body: 'The menu (top-left logo) opens save/load, the admin grant tool, and a Restart Tutorial entry if you want to see this again.',
+    body: 'The logo in the top-left opens save/load and game settings. Restart Tutorial lives in here too if you ever want to see this again.',
     target: 'menu-button',
     placement: 'below',
   },
   {
     id: 'done',
-    title: 'You’re set',
-    body: 'That’s the tour. Click around — everything has tooltips on hover. Have fun out there.',
+    title: 'Pick your path',
+    body: 'That’s the tour. Decide whether you’re going for Science, Military, or the Sphere — and start building. Tooltips on hover explain everything else.',
     target: null,
     placement: 'center',
   },
