@@ -44,6 +44,40 @@ function padRect(r: Rect, pad = 6): Rect {
   return { x: r.x - pad, y: r.y - pad, width: r.width + pad * 2, height: r.height + pad * 2 };
 }
 
+/** Snap a DOMRect to integer pixel bounds. getBoundingClientRect
+ *  returns subpixel floats that drift by fractions of a pixel
+ *  frame-to-frame even when the element is visually stationary
+ *  (font hinting, transform rounding, etc). Storing the raw values
+ *  caused a noticeable wiggle on the highlighted panel — every frame
+ *  the SVG outline redrew at a slightly different position. Rounding
+ *  collapses that drift so the outline only moves when the element
+ *  genuinely moves by a whole pixel or more. */
+function snapRect(r: { left: number; top: number; width: number; height: number }): Rect {
+  return {
+    x: Math.round(r.left),
+    y: Math.round(r.top),
+    width: Math.round(r.width),
+    height: Math.round(r.height),
+  };
+}
+
+/** True if two rects differ in any field. Used to bail out of state
+ *  updates when nothing meaningful changed — prevents the per-frame
+ *  re-render cascade. null on either side means "they differ." */
+function rectsDiffer(a: Rect | null, b: Rect | null): boolean {
+  if (a === null && b === null) return false;
+  if (a === null || b === null) return true;
+  return a.x !== b.x || a.y !== b.y || a.width !== b.width || a.height !== b.height;
+}
+
+function rectArraysDiffer(a: Rect[], b: Rect[]): boolean {
+  if (a.length !== b.length) return true;
+  for (let i = 0; i < a.length; i++) {
+    if (rectsDiffer(a[i], b[i])) return true;
+  }
+  return false;
+}
+
 /** Compute where to place the coachmark card relative to the target.
  *  Falls back to centered when target is null or off-screen. */
 function placeCard(
@@ -124,26 +158,33 @@ export const TutorialOverlay: React.FC = () => {
       return;
     }
     let raf = 0;
+    // Local "last known" rects — compared against the next measurement
+    // so we only fire setState when the snapped (integer) rects
+    // actually changed. State-by-reference would re-render every frame
+    // and was the cause of the highlighted-panel wiggle.
+    let lastPrimary: Rect | null = null;
+    let lastExtras: Rect[] = [];
     const tick = () => {
       // Primary target — drives card placement + outline halo
       const el = findTarget(step.target);
-      if (el) {
-        const r = el.getBoundingClientRect();
-        setTargetRect({ x: r.left, y: r.top, width: r.width, height: r.height });
-      } else {
-        setTargetRect(null);
+      const nextPrimary: Rect | null = el ? snapRect(el.getBoundingClientRect()) : null;
+      if (rectsDiffer(lastPrimary, nextPrimary)) {
+        lastPrimary = nextPrimary;
+        setTargetRect(nextPrimary);
       }
       // Extra targets — additional cutouts; placement is not affected.
       // Missing anchors are silently filtered (panel hasn't mounted
       // yet, etc) so a typo or auto-open race doesn't break the step.
-      const extras: Rect[] = [];
+      const nextExtras: Rect[] = [];
       for (const id of step.extraTargets ?? []) {
         const ee = findTarget(id);
         if (!ee) continue;
-        const r = ee.getBoundingClientRect();
-        extras.push({ x: r.left, y: r.top, width: r.width, height: r.height });
+        nextExtras.push(snapRect(ee.getBoundingClientRect()));
       }
-      setExtraRects(extras);
+      if (rectArraysDiffer(lastExtras, nextExtras)) {
+        lastExtras = nextExtras;
+        setExtraRects(nextExtras);
+      }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
