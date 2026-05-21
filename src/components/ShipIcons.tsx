@@ -6,7 +6,10 @@
 
 import React from 'react';
 
-export type ShipIconVariant = 'A' | 'B' | 'C';
+// A/B/C — the original three; D/E/F — new candidates added for player
+// selection (gallery at ?icons). The picker dropdown at ship construction
+// lets the player override the default per-build.
+export type ShipIconVariant = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
 export type ShipIconClass = 'corvette' | 'frigate' | 'destroyer' | 'freighter';
 
 interface IconProps {
@@ -215,15 +218,229 @@ export const FreighterC: React.FC<IconProps> = (p) => (
 );
 
 // ============================================================
+// CANDIDATE icons (D / E / F per class) — proposed additions for the
+// player-choosable picker. Reviewable in the gallery at ?icons; the
+// final set will be kept in the dropdown, the rest removed.
+// ============================================================
+
+// ===== CORVETTE candidates =====
+
+/** Corvette D — NEEDLE: razor-thin interceptor with stabilizers */
+export const CorvetteD: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    {/* Long needle nose */}
+    <path d="M2 16 L8 14 L24 15 L31 16 L24 17 L8 18 Z" />
+    {/* Vertical stabilizers (top + bottom) */}
+    <path d="M14 14 L13 9 L17 9 L17 14" />
+    <path d="M14 18 L13 23 L17 23 L17 18" />
+    {/* Cockpit */}
+    <circle cx="22" cy="16" r="1" fill="currentColor" stroke="none" />
+  </SVG>
+);
+
+/** Corvette E — DART-FIN: swept arrow with a single rear tail fin */
+export const CorvetteE: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    {/* Arrowhead */}
+    <path d="M4 16 L20 11 L30 16 L20 21 Z" />
+    {/* Big tail fin behind */}
+    <path d="M4 16 L1 9 L7 12" />
+    <path d="M4 16 L1 23 L7 20" />
+    {/* Forward laser barrel */}
+    <path d="M30 16 L32 16" />
+  </SVG>
+);
+
+/** Corvette F — RAPTOR: bird-like with forward beak + rear talons */
+export const CorvetteF: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    {/* Beak / nose */}
+    <path d="M16 16 L30 14 L30 18 Z" />
+    {/* Body */}
+    <path d="M6 12 L16 12 L18 16 L16 20 L6 20 Z" />
+    {/* Talons / engine claws */}
+    <path d="M6 12 L2 8 L4 14" />
+    <path d="M6 20 L2 24 L4 18" />
+    {/* Eye dot */}
+    <circle cx="24" cy="16" r="1" fill="currentColor" stroke="none" />
+  </SVG>
+);
+
+// ===== FRIGATE candidates =====
+
+/** Frigate D — STARSHIP: saucer + nacelles silhouette */
+export const FrigateD: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    {/* Saucer (forward) */}
+    <ellipse cx="22" cy="16" rx="8" ry="5" />
+    {/* Neck */}
+    <path d="M14 15 L18 15 M14 17 L18 17" />
+    {/* Twin nacelles (rear, top + bottom) */}
+    <path d="M4 10 L14 10 L14 14 L4 14 Z" />
+    <path d="M4 18 L14 18 L14 22 L4 22 Z" />
+    {/* Nacelle tips */}
+    <circle cx="14" cy="12" r="0.8" fill="currentColor" stroke="none" />
+    <circle cx="14" cy="20" r="0.8" fill="currentColor" stroke="none" />
+  </SVG>
+);
+
+/** Frigate E — HAWK: wing-prominent with an underslung weapons pod */
+export const FrigateE: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    {/* Central fuselage */}
+    <path d="M6 14 L24 14 L30 16 L24 18 L6 18 Z" />
+    {/* Big swept wings */}
+    <path d="M10 14 L4 8 L18 13" />
+    <path d="M10 18 L4 24 L18 19" />
+    {/* Underslung weapons pod */}
+    <rect x="14" y="20" width="6" height="2.5" />
+    {/* Cockpit */}
+    <circle cx="22" cy="16" r="1.2" fill="currentColor" stroke="none" />
+  </SVG>
+);
+
+/** Frigate F — CARRIER: hangar-bay maw with bridge tower above */
+export const FrigateF: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    {/* Boxy hull */}
+    <path d="M4 12 L24 12 L30 16 L24 20 L4 20 Z" />
+    {/* Forward hangar opening */}
+    <path d="M24 14 L30 16 L24 18 Z" />
+    {/* Bridge tower on top */}
+    <path d="M8 12 L10 7 L16 7 L18 12" />
+    {/* Aft engine block */}
+    <path d="M4 13 L1 14 L1 18 L4 19" />
+  </SVG>
+);
+
+// ===== DESTROYER candidates =====
+
+/** Destroyer D — DREADNOUGHT: armored brick with multiple turrets */
+export const DestroyerD: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    {/* Brick hull */}
+    <rect x="4" y="9" width="22" height="14" rx="1" />
+    {/* Forward ramming prow */}
+    <path d="M26 11 L31 16 L26 21" />
+    {/* Six turrets */}
+    <circle cx="10" cy="12" r="1.5" />
+    <circle cx="15" cy="12" r="1.5" />
+    <circle cx="20" cy="12" r="1.5" />
+    <circle cx="10" cy="20" r="1.5" />
+    <circle cx="15" cy="20" r="1.5" />
+    <circle cx="20" cy="20" r="1.5" />
+  </SVG>
+);
+
+/** Destroyer E — RAILGUN: long sniper spike dominating the silhouette */
+export const DestroyerE: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    {/* Long rail barrel */}
+    <path d="M14 15 L32 15 L32 17 L14 17 Z" />
+    {/* Compact aft hull */}
+    <path d="M2 11 L14 11 L14 21 L2 21 Z" />
+    {/* Rail support struts */}
+    <path d="M14 15 L18 12" />
+    <path d="M14 17 L18 20" />
+    {/* Hull blisters */}
+    <circle cx="6" cy="13" r="1" />
+    <circle cx="6" cy="19" r="1" />
+  </SVG>
+);
+
+/** Destroyer F — BROADSIDE: flat wide profile with side gun batteries */
+export const DestroyerF: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    {/* Wide flat hull */}
+    <path d="M4 13 L26 13 L30 16 L26 19 L4 19 Z" />
+    {/* Top gun batteries (three barrels each side) */}
+    <path d="M8 13 L8 9" />
+    <path d="M13 13 L13 9" />
+    <path d="M18 13 L18 9" />
+    {/* Bottom gun batteries */}
+    <path d="M8 19 L8 23" />
+    <path d="M13 19 L13 23" />
+    <path d="M18 19 L18 23" />
+    {/* Forward gun */}
+    <path d="M30 16 L32 16" />
+    {/* Aft engine block */}
+    <path d="M4 14 L1 15 L1 17 L4 18" />
+  </SVG>
+);
+
+// ===== FREIGHTER candidates =====
+
+/** Freighter D — TANKER: chained cylindrical fuel tanks behind a tug */
+export const FreighterD: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    {/* Aft tank */}
+    <ellipse cx="6" cy="16" rx="4" ry="3" />
+    {/* Mid tank */}
+    <ellipse cx="14" cy="16" rx="4" ry="3" />
+    {/* Connector struts */}
+    <path d="M10 15 L10 17 M18 15 L18 17" />
+    {/* Forward tug */}
+    <path d="M18 13 L26 13 L30 16 L26 19 L18 19 Z" />
+    {/* Tug cockpit */}
+    <circle cx="25" cy="16" r="1" fill="currentColor" stroke="none" />
+  </SVG>
+);
+
+/** Freighter E — RING: torus cargo ring around a central spine */
+export const FreighterE: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    {/* Central spine */}
+    <path d="M2 16 L30 16" strokeWidth={2.5} />
+    {/* Cargo ring (front) */}
+    <ellipse cx="18" cy="16" rx="3.5" ry="7" />
+    {/* Aft engine */}
+    <path d="M2 14 L4 12 L8 12 L8 20 L4 20 L2 18 Z" />
+    {/* Forward nose */}
+    <circle cx="30" cy="16" r="1" fill="currentColor" stroke="none" />
+  </SVG>
+);
+
+/** Freighter F — BARGE: flat slab with stacked container columns */
+export const FreighterF: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    {/* Flat slab hull */}
+    <rect x="3" y="13" width="22" height="6" />
+    {/* Container column 1 */}
+    <rect x="5" y="8" width="4" height="5" />
+    <rect x="5" y="19" width="4" height="5" />
+    {/* Container column 2 */}
+    <rect x="11" y="8" width="4" height="5" />
+    <rect x="11" y="19" width="4" height="5" />
+    {/* Container column 3 */}
+    <rect x="17" y="8" width="4" height="5" />
+    <rect x="17" y="19" width="4" height="5" />
+    {/* Forward bridge */}
+    <path d="M25 13 L29 13 L31 16 L29 19 L25 19" />
+  </SVG>
+);
+
+// ============================================================
 // Selector — render any (class, variant) combination
 // ============================================================
 
 const REGISTRY: Record<ShipIconClass, Record<ShipIconVariant, React.FC<IconProps>>> = {
-  corvette: { A: CorvetteA, B: CorvetteB, C: CorvetteC },
-  frigate: { A: FrigateA, B: FrigateB, C: FrigateC },
-  destroyer: { A: DestroyerA, B: DestroyerB, C: DestroyerC },
-  freighter: { A: FreighterA, B: FreighterB, C: FreighterC },
+  corvette:  { A: CorvetteA,  B: CorvetteB,  C: CorvetteC,  D: CorvetteD,  E: CorvetteE,  F: CorvetteF  },
+  frigate:   { A: FrigateA,   B: FrigateB,   C: FrigateC,   D: FrigateD,   E: FrigateE,   F: FrigateF   },
+  destroyer: { A: DestroyerA, B: DestroyerB, C: DestroyerC, D: DestroyerD, E: DestroyerE, F: DestroyerF },
+  freighter: { A: FreighterA, B: FreighterB, C: FreighterC, D: FreighterD, E: FreighterE, F: FreighterF },
 };
+
+/** Human-readable names for each variant, surfaced in the picker
+ *  dropdown and the ?icons gallery. */
+export const ICON_VARIANT_NAMES: Record<ShipIconClass, Record<ShipIconVariant, string>> = {
+  corvette:  { A: 'Dart',      B: 'Delta',     C: 'Gunship',     D: 'Needle',     E: 'Dart-Fin',   F: 'Raptor'   },
+  frigate:   { A: 'Cruciform', B: 'Diamond',   C: 'Triple-Turret', D: 'Starship', E: 'Hawk',       F: 'Carrier'  },
+  destroyer: { A: 'Hexagon',   B: 'Wedge',     C: 'Capital',     D: 'Dreadnought', E: 'Railgun',   F: 'Broadside' },
+  freighter: { A: 'Containers', B: 'Tug',      C: 'Bulk',        D: 'Tanker',     E: 'Ring',       F: 'Barge'    },
+};
+
+/** Every variant id, ordered for the gallery + picker. */
+export const ALL_VARIANTS: ShipIconVariant[] = ['A', 'B', 'C', 'D', 'E', 'F'];
 
 /** Player-chosen default icon variant per class. */
 export const DEFAULT_SHIP_ICONS: Record<ShipIconClass, ShipIconVariant> = {

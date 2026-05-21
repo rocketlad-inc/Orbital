@@ -30,6 +30,7 @@ import { AuthOverlay } from './multiplayer/AuthOverlay';
 import { Landing } from './components/Landing';
 import { TunablesPage } from './components/TunablesPage';
 import { UXGallery } from './components/UXGallery';
+import { ShipIconGalleryPage } from './components/ShipIconGalleryPage';
 import { PhysicsSandbox } from './physicsSandbox/PhysicsSandbox';
 import { TorchSandbox } from './torchSandbox/TorchSandbox';
 import { ModePicker, GameMode } from './ModePicker';
@@ -244,6 +245,12 @@ function AppShell() {
   const [showAuth, setShowAuth] = useState(false);
   const [showTunables, setShowTunables] = useState(false);
   const [showUX, setShowUX] = useState(false);
+  // Ship icon gallery — reachable at ?icons. Standalone preview page
+  // for picking which D/E/F candidates to keep before the dropdown
+  // wires up at ship construction.
+  const [showIcons, setShowIcons] = useState(() =>
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('icons'),
+  );
 
   // When the user authenticates, fetch any rooms they're already a member of
   // so the mode picker can offer a "resume" shortcut.
@@ -452,6 +459,19 @@ function AppShell() {
         <div className="mp-card">Loading…</div>
       </div>
     );
+  }
+
+  // Icon gallery — auth-bypass route so the player can preview ship
+  // icon candidates without signing in. Mirrors the Tunables/UX
+  // pattern; reached via ?icons.
+  if (showIcons) {
+    return <ShipIconGalleryPage onBack={() => {
+      setShowIcons(false);
+      // Strip ?icons from the URL so a refresh doesn't bounce back here.
+      const url = new URL(window.location.href);
+      url.searchParams.delete('icons');
+      window.history.replaceState({}, '', url.toString());
+    }} />;
   }
 
   // Unauthenticated, not yet in guest mode: show landing first, then auth overlay.
