@@ -283,7 +283,7 @@ export interface AIActivityEntry {
   tick: number;
   factionId: string;
   message: string;
-  kind: 'build' | 'deploy' | 'transfer' | 'research' | 'idle';
+  kind: 'build' | 'deploy' | 'transfer' | 'research' | 'collector' | 'upgrade' | 'dyson' | 'idle';
 }
 
 /**

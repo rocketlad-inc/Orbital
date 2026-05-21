@@ -84,13 +84,13 @@ const DEFENSE_SHIPS_PER_BODY = 1;
  *  ~50% of all available levels. */
 const SCIENCE_PHASE_LEVEL_FLOOR = 35;
 
-// NOTE: previously ENGINEERING_FREIGHTER_TARGET was defined here as a
-// soft target for the AI's freighter pre-staging at Sol during the
-// engineering phase. The reference site got refactored out; the
-// constant was kept behind an eslint-disable so the design intent
-// stayed visible. CI started failing on it anyway, so the constant
-// is gone — see git history if you need to re-introduce the AI's
-// "stage 5 freighters near Sol before Dyson" heuristic.
+/** Soft target for the AI's freighter pre-staging at Sol during the
+ *  ENGINEERING phase. Each parked freighter pumps
+ *  DYSON_PER_FREIGHTER_PER_TICK into the sphere every tick, so the
+ *  AI keeps ferrying idle freighters to Sol until this many are
+ *  parked. Past this floor, the dysonFreighter weight stops biasing
+ *  new transfers and the AI can return to other priorities. */
+const ENGINEERING_FREIGHTER_TARGET = 5;
 
 interface PhaseWeights {
   // Build category multipliers — applied to per-class build scores
@@ -621,6 +621,34 @@ function generateTransferCandidates(ctx: AIContext): AIActionIntent[] {
   const out: AIActionIntent[] = [];
   if (ctx.myCombatShipsIdle.length === 0 && ctx.myFreightersIdle.length === 0) return out;
 
+  // === 0. ENGINEERING: ferry freighters to Sol for sphere delivery ===
+  // When the AI is pushing the megaproject, idle freighters parked
+  // anywhere except Sol are dead weight. Each freighter at Sol drains
+  // DYSON_PER_FREIGHTER_PER_TICK from the empire pool into the sphere,
+  // so the bottleneck is "how many freighters can I park at Sol". This
+  // emits one transfer-to-Sol per idle freighter not already there,
+  // up to ENGINEERING_FREIGHTER_TARGET total parked.
+  if (ctx.phase === 'engineering' && ctx.myFreightersAtSol < ENGINEERING_FREIGHTER_TARGET) {
+    const freightersNotAtSol = ctx.myFreightersIdle.filter(
+      f => f.orbit.parentBodyId !== SOL_BODY_ID,
+    );
+    // Cap at 2 per cycle so the AI doesn't fire every freighter in one
+    // tick — staggered launches look more natural in the activity feed.
+    for (const freighter of freightersNotAtSol.slice(0, 2)) {
+      out.push({
+        kind: 'transfer',
+        shipId: freighter.id,
+        targetBodyId: SOL_BODY_ID,
+        // High base score — ENGINEERING weight (4.0) pushes this above
+        // almost everything else when phase is active. Each delivered
+        // freighter pumps DYSON_PER_FREIGHTER_PER_TICK = 30 into the
+        // sphere every tick, so the gain compounds.
+        score: 3.0 * ctx.weights.dysonFreighter,
+        reason: `[${ctx.phase}] freighter → Sol for Dyson delivery (+${DYSON_PER_FREIGHTER_PER_TICK}/tick)`,
+      });
+    }
+  }
+
   // === 1. Freighter colonization runs ===
   // Send freighters to high-yield bodies we don't already settle. Phase
   // weight here is the difference between aggressive colonization
@@ -981,7 +1009,7 @@ function describeIntent(intent: AIActionIntent, ctx: AIContext): string {
       const target = ctx.state.bodies.find(b => b.id === intent.targetBodyId);
       // Transfer reason already includes the phase tag (see generator);
       // strip the duplicate so the message doesn't double up.
-      const reason = intent.reason.replace(/^\[(EXP|DEF|AGR|expansion|defense|aggression)\]\s*/, '');
+      const reason = intent.reason.replace(/^\[(EXP|DEF|AGR|ENG|SCI|expansion|defense|aggression|engineering|science)\]\s*/, '');
       return `${tag} ${ctx.faction.name}: ${ship?.name ?? 'ship'} → ${target?.name ?? intent.targetBodyId} — ${reason}`;
     }
     case 'research': {

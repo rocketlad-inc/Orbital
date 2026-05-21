@@ -15,6 +15,9 @@ const KIND_GLYPH: Record<string, string> = {
   deploy: '◆',
   transfer: '→',
   research: '⚛',
+  collector: '⧉',
+  upgrade: '↑',
+  dyson: '☀',
   idle: '·',
 };
 
@@ -23,6 +26,9 @@ const KIND_COLOR: Record<string, string> = {
   deploy: '#6ee7b7',
   transfer: '#4ecdc4',
   research: '#67e8f9',
+  collector: '#a3e635',
+  upgrade: '#f59e0b',
+  dyson: '#fbbf24',
   idle: '#6b8195',
 };
 
