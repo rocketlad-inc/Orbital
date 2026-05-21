@@ -45,6 +45,14 @@ type AIIntentResult = {
   settlements?: import('../types').Settlement[];
   buildOrders?: BuildOrder[];
   factionPools?: Record<string, FactionResources>;
+  /** Replace the per-faction tech state. Used by the 'research' intent
+   *  to set its `researching` target — the per-tick research drain in
+   *  advanceToTick then fills progress incrementally. */
+  factionTech?: GameState['factionTech'];
+  /** Replace the Dyson Sphere state. Used by 'initiate_dyson' to lay
+   *  the foundation; per-tick freighter delivery + damage routing in
+   *  advanceToTick takes over from there. */
+  dysonSphere?: GameState['dysonSphere'];
 };
 
 function applyAIIntent(
@@ -154,13 +162,104 @@ function applyAIIntent(
     }
 
     case 'research': {
-      // Set researching field; the per-tick research drain (already in
-      // advanceToTick) will pour science into it on subsequent ticks.
-      // Mutating factionTech here would race with the drain — easier to
-      // skip the application step and have the AI re-evaluate next cycle
-      // once its science pool has built up. For now: no-op success.
-      // Future: extend the result type to include a factionTech patch.
-      return { applied: false };
+      // Set the faction's `researching` target. The per-tick drain in
+      // advanceToTick (lines ~953-1009) then pours science into it.
+      // We don't deduct cost here — the drain handles that incrementally
+      // and applies the level-up when progress fills.
+      const prevTech = snapshot.factionTech ?? {};
+      const cur = prevTech[factionId] ?? { levels: {}, researching: null, progress: 0, queue: [] };
+      // If something is already researching this faction (shouldn't be —
+      // the AI gates on alreadyResearching), bail rather than abandoning
+      // in-flight progress.
+      if (cur.researching) return { applied: false };
+      return {
+        applied: true,
+        factionTech: {
+          ...prevTech,
+          [factionId]: { ...cur, researching: intent.techId, progress: 0 },
+        },
+      };
+    }
+
+    case 'build_collector': {
+      const target = snapshot.settlements.find(s => s.id === intent.settlementId);
+      if (!target || target.ownedBy !== factionId) return { applied: false };
+      if (target.hasCollector) return { applied: false };
+      const pool = snapshot.resources[factionId];
+      if (
+        !pool ||
+        pool.fuel < COLLECTOR_COST.fuel ||
+        pool.ore < COLLECTOR_COST.ore ||
+        pool.credits < COLLECTOR_COST.credits
+      ) return { applied: false };
+      const newPools = { ...snapshot.resources };
+      newPools[factionId] = {
+        ...pool,
+        fuel: pool.fuel - COLLECTOR_COST.fuel,
+        ore: pool.ore - COLLECTOR_COST.ore,
+        credits: pool.credits - COLLECTOR_COST.credits,
+      };
+      return {
+        applied: true,
+        settlements: snapshot.settlements.map(s =>
+          s.id === intent.settlementId
+            ? { ...s, hasCollector: true, collectorBuiltTick: tick }
+            : s,
+        ),
+        factionPools: newPools,
+      };
+    }
+
+    case 'queue_building': {
+      const target = snapshot.settlements.find(s => s.id === intent.settlementId);
+      if (!target || target.ownedBy !== factionId) return { applied: false };
+      const def = BUILDING_DEFS[intent.buildingKind];
+      if (!def || def.hostType !== target.type) return { applied: false };
+      // One in-flight upgrade per settlement — matches the player rule.
+      if (target.buildingQueue) return { applied: false };
+      const currentLevel = buildingLevel(target, intent.buildingKind);
+      const cost = buildingCostForNextLevel(intent.buildingKind, currentLevel);
+      const pool = snapshot.resources[factionId];
+      if (
+        !pool ||
+        pool.fuel < cost.fuel ||
+        pool.ore < cost.ore ||
+        pool.credits < cost.credits
+      ) return { applied: false };
+      const ticks = buildingTimeForNextLevel(intent.buildingKind, currentLevel);
+      const order: SettlementBuildOrder = {
+        id: `bldorder-ai-${tick}-${Math.random().toString(36).slice(2, 6)}`,
+        settlementId: target.id,
+        kind: intent.buildingKind,
+        targetLevel: currentLevel + 1,
+        startTick: tick,
+        completeTick: tick + ticks,
+      };
+      const newPools = { ...snapshot.resources };
+      newPools[factionId] = {
+        ...pool,
+        fuel:    pool.fuel    - cost.fuel,
+        ore:     pool.ore     - cost.ore,
+        credits: pool.credits - cost.credits,
+      };
+      return {
+        applied: true,
+        settlements: snapshot.settlements.map(s =>
+          s.id === target.id ? { ...s, buildingQueue: order } : s,
+        ),
+        factionPools: newPools,
+      };
+    }
+
+    case 'initiate_dyson': {
+      // One sphere per match (server + client both enforce). Refuse if
+      // someone already laid the foundation.
+      if (snapshot.dysonSphere) return { applied: false };
+      const station = snapshot.settlements.find(s => s.id === intent.settlementId);
+      if (!station) return { applied: false };
+      if (!isEligibleDysonFoundation(station, factionId)) return { applied: false };
+      const sphere = createDysonSphere(factionId, intent.settlementId, tick);
+      return { applied: true, dysonSphere: sphere };
     }
 
     default:
@@ -175,6 +274,9 @@ function classifyNote(intents: import('../game/factionAI').AIActionIntent[]): AI
   if (first.kind === 'deploy_settlement') return 'deploy';
   if (first.kind === 'transfer') return 'transfer';
   if (first.kind === 'research') return 'research';
+  if (first.kind === 'build_collector') return 'collector';
+  if (first.kind === 'queue_building') return 'upgrade';
+  if (first.kind === 'initiate_dyson') return 'dyson';
   return 'idle';
 }
 
@@ -443,7 +545,30 @@ export function GameContextProvider({
       // Re-derive top-level orders list from the merged per-ship orders so
       // the global GameState.orders stays in sync.
       const allOrders = mergedShips.flatMap(s => s.orders);
-      return { ...externalState, ships: mergedShips, orders: allOrders };
+
+      // Fleets are client-only — there's no server table or /state field
+      // for them. Preserve the local list across the poll, but prune any
+      // fleet whose ships no longer exist (destroyed, deserted by ID
+      // change) so the panel doesn't accumulate ghost fleets.
+      const liveShipIds = new Set(mergedShips.map(s => s.id));
+      const prunedFleets = (prev.fleets ?? []).map(f => ({
+        ...f,
+        shipIds: f.shipIds.filter(id => liveShipIds.has(id)),
+      })).filter(f => f.shipIds.length >= 1);
+      // Re-apply each surviving fleet's id onto its members' Ship.fleetId
+      // since the server snapshot doesn't carry that field.
+      const fleetByMember = new Map<string, string>();
+      for (const f of prunedFleets) {
+        for (const id of f.shipIds) fleetByMember.set(id, f.id);
+      }
+      const finalShips = fleetByMember.size > 0
+        ? mergedShips.map(s => {
+            const fleetId = fleetByMember.get(s.id);
+            return fleetId === s.fleetId ? s : { ...s, fleetId };
+          })
+        : mergedShips;
+
+      return { ...externalState, ships: finalShips, orders: allOrders, fleets: prunedFleets };
     });
   }, [externalState]);
 
@@ -1146,11 +1271,25 @@ export function GameContextProvider({
                 factionPools[fid] = fr;
               }
             }
+            // 'research' intent — merge new factionTech into the in-flight
+            // accumulator so subsequent ticks see the AI's chosen tech
+            if (result.factionTech) {
+              for (const [fid, ts] of Object.entries(result.factionTech)) {
+                updatedTech[fid] = ts;
+              }
+            }
+            // 'initiate_dyson' intent — replace the sphere snapshot so
+            // tickDysonDelivery + damage routing pick it up next tick
+            if (result.dysonSphere !== undefined) {
+              updatedDyson = result.dysonSphere;
+            }
             // Update the snapshot the next intent sees
             aiSnapshot.ships = updatedShips;
             aiSnapshot.settlements = updatedSettlements;
             aiSnapshot.buildOrders = buildOrders;
             aiSnapshot.resources = factionPools;
+            aiSnapshot.factionTech = updatedTech;
+            aiSnapshot.dysonSphere = updatedDyson;
           }
         }
 

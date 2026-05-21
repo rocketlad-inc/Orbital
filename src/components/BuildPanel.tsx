@@ -52,14 +52,17 @@ export const BuildPanel: React.FC = () => {
     const name = trimmed.length > 0
       ? trimmed
       : getRandomName(shipClass, existingShipNames);
-    const success = buildShip(body.id, shipClass, name);
-    if (success) {
+    if (mpActions) {
+      // Multiplayer: server is canonical for resource deduction + queue
+      // persistence. Skip the local buildShip() — calling it here used
+      // to flash 2× deducted resources for ~1.5s until /state poll snap
+      // back. Post intent only; UI updates when the poll lands.
+      mpActions.build({ bodyId: body.id, shipClass, shipName: name });
       setCustomName('');
-      // Multiplayer: server is the authority for resource deduction +
-      // queue persistence. Post intent so it shows up next /state.
-      if (mpActions) {
-        mpActions.build({ bodyId: body.id, shipClass, shipName: name });
-      }
+    } else {
+      // Single-player: local state is canonical.
+      const success = buildShip(body.id, shipClass, name);
+      if (success) setCustomName('');
     }
     setSelectedClass(null);
   };

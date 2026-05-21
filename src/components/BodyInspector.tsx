@@ -218,9 +218,13 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
   const handleConfirm = () => {
     if (!namingType) return;
     const name = draftName.trim();
-    deploySettlement(bodyId, namingType, name || undefined);
     if (mpActions) {
+      // Multiplayer: server is canonical for resource deduction +
+      // settlement creation. Skip the local deploySettlement() which
+      // would flash 2× deducted resources for ~1.5s until /state poll.
       mpActions.deploySettlement({ bodyId, type: namingType, name: name || undefined });
+    } else {
+      deploySettlement(bodyId, namingType, name || undefined);
     }
     setNamingType(null);
     setDraftName('');

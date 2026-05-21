@@ -322,18 +322,23 @@ async function handleDeploySettlement(req, env, ctx) {
     return err(409, 'no_surface', 'cannot found a city on this body type');
   }
 
-  // Caller needs a ship orbiting here OR they already own the body.
+  // Caller needs a FREIGHTER orbiting here OR they already own the body.
+  // Combat ships don't carry construction materials, so requiring a
+  // freighter matches the client gate (BodyInspector.tsx) and the SP
+  // gameContext.deploySettlement gate. Without this filter a player can
+  // deploy by sending only a corvette/frigate/destroyer.
   const presence = await env.DB
     .prepare(
       `SELECT 1 AS x FROM game_ships
         WHERE game_id = ? AND owner_faction_id = ? AND parent_body_id = ?
+          AND ship_class = 'freighter'
           AND status = 'active'
         LIMIT 1`,
     )
     .bind(gameId, me.id, bodyId)
     .first();
   if (!presence && bodyRow.owner_faction_id !== me.id) {
-    return err(403, 'no_presence', 'need a ship at this body to deploy');
+    return err(403, 'no_presence', 'need a freighter at this body to deploy');
   }
 
   if (me.metal < SETTLEMENT_COST.metal || me.gold < SETTLEMENT_COST.gold) {

@@ -95,6 +95,10 @@ interface ServerState {
     hp?: number;
     hp_max?: number;
     damage_per_tick?: number;
+    /** Veterancy: confirmed kills earned by this hull. Migration 0020. */
+    rank?: number;
+    /** JSON blob — ShipKillRecord[] of recent kills (capped to 20). */
+    combat_history?: string | null;
     status: string;
   }>;
   settlements?: Array<{
@@ -248,6 +252,16 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     period,
     parentBodyId: stripGameId(s.parent_body_id) ?? s.parent_body_id,
   };
+  // Veterancy. combat_history is a JSON blob; defensive-parse so a
+  // malformed blob falls back to [] rather than tanking the whole
+  // /state deserialization for the rest of the ships.
+  let combatHistory: Ship['combatHistory'] = undefined;
+  if (s.combat_history) {
+    try {
+      const parsed = JSON.parse(s.combat_history);
+      if (Array.isArray(parsed)) combatHistory = parsed;
+    } catch { /* ignore malformed */ }
+  }
   return {
     id: s.id,
     name: s.name,
@@ -257,6 +271,8 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     hp: s.hp,
     orbit,
     orders: [],
+    rank: s.rank ?? 0,
+    combatHistory,
   };
 }
 

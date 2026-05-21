@@ -14,11 +14,20 @@
 // ============================================================
 
 import {
-  GameState, Ship, Settlement, FactionResources,
+  GameState, Ship, Settlement, FactionResources, BuildingKind,
 } from '../types';
 import { ShipClassName, SHIP_CLASSES, BUILDABLE_CLASSES } from './shipClasses';
-import { SETTLEMENT_DEFS, canHostCity, canHostStation } from './settlements';
-import { TechId, TECH_DEFS } from './techs';
+import {
+  SETTLEMENT_DEFS, canHostCity, canHostStation,
+  COLLECTOR_COST,
+  // BUILDING_DEFS pending settlement-upgrade AI candidate generator.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  BUILDING_DEFS, buildingLevel, buildingCostForNextLevel,
+} from './settlements';
+import { TechId, TECH_DEFS, TECH_MAX_LEVEL, ALL_TECH_IDS } from './techs';
+// DYSON_PER_FREIGHTER_PER_TICK pending engineering-phase scoring of Sol freighters.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { SOL_BODY_ID, DYSON_PER_FREIGHTER_PER_TICK } from './dysonSphere';
 import { FUEL_ENABLED } from './featureFlags';
 
 // === Constants ===============================================
@@ -39,21 +48,27 @@ const TARGET_FLEET_SIZE = 5;
 
 // === Strategic phase model ===================================
 //
-// The AI moves through three phases based on its current footprint
-// and threats. Each phase applies different weight multipliers to
-// the utility-scored candidate actions, so the same brain naturally
-// shifts focus:
+// The AI moves through phases based on its current footprint, threats,
+// and proximity to a victory condition. Each phase applies different
+// weight multipliers to the utility-scored candidate actions, so the
+// same brain naturally shifts focus:
 //
-//   EXPANSION → bias build/deploy/transfer-freighter, suppress combat
-//   DEFENSE   → bias combat-ship builds + transfers to own bodies,
-//               suppress expansion and offensive transfers
-//   AGGRESSION → bias destroyer builds + transfers to enemy bodies
+//   EXPANSION   → bias build/deploy/transfer-freighter, suppress combat
+//   DEFENSE     → bias combat-ship builds + transfers to own bodies,
+//                 suppress expansion and offensive transfers
+//   AGGRESSION  → bias destroyer builds + transfers to enemy bodies
+//   ENGINEERING → AI controls the Dyson Sphere foundation slot or
+//                 already started it. Crank freighter builds + Sol
+//                 transfers; keep combat alive to defend the foundation
+//   SCIENCE     → AI has researched > SCIENCE_PHASE_LEVEL_FLOOR total
+//                 tech levels (close to maxing all tracks). Lab spam,
+//                 science-yield buildings, no offensive expansion
 //
 // Phase is recomputed each cycle from raw state, so the AI can fall
 // back from AGGRESSION to DEFENSE if a colony comes under attack, or
 // back to EXPANSION if its colonies are wiped out.
 
-export type AIPhase = 'expansion' | 'defense' | 'aggression';
+export type AIPhase = 'expansion' | 'defense' | 'aggression' | 'engineering' | 'science';
 
 /** Minimum colonies (distinct settled bodies) before the AI even
  *  considers leaving expansion phase. First goal is more colonies. */
@@ -63,6 +78,20 @@ const EXPANSION_TARGET_COLONIES = 2;
  *  phase considers itself "complete" and graduates to aggression. */
 const DEFENSE_SHIPS_PER_BODY = 1;
 
+/** Total tech-level threshold (across all tracks) at which the AI
+ *  shifts into SCIENCE phase. 7 tracks × TECH_MAX_LEVEL=10 = 70
+ *  total possible, so this triggers when the AI has researched
+ *  ~50% of all available levels. */
+const SCIENCE_PHASE_LEVEL_FLOOR = 35;
+
+// NOTE: previously ENGINEERING_FREIGHTER_TARGET was defined here as a
+// soft target for the AI's freighter pre-staging at Sol during the
+// engineering phase. The reference site got refactored out; the
+// constant was kept behind an eslint-disable so the design intent
+// stayed visible. CI started failing on it anyway, so the constant
+// is gone — see git history if you need to re-introduce the AI's
+// "stage 5 freighters near Sol before Dyson" heuristic.
+
 interface PhaseWeights {
   // Build category multipliers — applied to per-class build scores
   freighterBuild: number;
@@ -71,9 +100,18 @@ interface PhaseWeights {
   // Deploy multiplier
   settlementDeploy: number;
   // Transfer multipliers
-  freighterTransfer: number; // sending a freighter to colonize
-  transferToOwn: number;     // sending a combat ship to defend my body
-  transferToEnemy: number;   // sending a combat ship to attack an enemy body
+  freighterTransfer: number;     // sending a freighter to colonize
+  transferToOwn: number;         // sending a combat ship to defend my body
+  transferToEnemy: number;       // sending a combat ship to attack an enemy body
+  // Logistics / upgrades / megaproject multipliers
+  collectorBuild: number;        // building a logistics endpoint
+  yieldBuilding: number;         // forge / mint
+  scienceBuilding: number;       // lab + 'science'-type research
+  weaponsBuilding: number;       // station combat upgrades
+  shipyardBuilding: number;      // parallel build slots
+  dysonInitiate: number;         // lay the foundation
+  dysonFreighter: number;        // send freighter to Sol
+  research: number;              // overall science-spend
 }
 
 const PHASE_WEIGHTS: Record<AIPhase, PhaseWeights> = {
@@ -88,6 +126,14 @@ const PHASE_WEIGHTS: Record<AIPhase, PhaseWeights> = {
     freighterTransfer: 2.5,
     transferToOwn: 0.3,
     transferToEnemy: 0.1,    // never attack while expanding
+    collectorBuild: 1.5,     // every new settlement needs collector links
+    yieldBuilding: 1.2,
+    scienceBuilding: 1.0,
+    weaponsBuilding: 0.3,
+    shipyardBuilding: 0.5,
+    dysonInitiate: 0.1,      // not a priority while still growing
+    dysonFreighter: 0.0,
+    research: 1.0,
   },
   // Phase 2: hold what we've got. Combat-ship pump on, sending them
   // out to defend colonies. Settlement deploys throttled — we're not
@@ -100,6 +146,14 @@ const PHASE_WEIGHTS: Record<AIPhase, PhaseWeights> = {
     freighterTransfer: 0.4,
     transferToOwn: 2.5,      // defending my bodies is the goal
     transferToEnemy: 0.3,    // not yet
+    collectorBuild: 1.0,
+    yieldBuilding: 0.7,
+    scienceBuilding: 0.5,
+    weaponsBuilding: 2.5,    // station guns are gold during defense
+    shipyardBuilding: 1.0,
+    dysonInitiate: 0.0,
+    dysonFreighter: 0.0,
+    research: 0.6,
   },
   // Phase 3: take the fight outward. Heavy hitters preferred, plus
   // a freighter chain for resupply. Offensive transfers dominate.
@@ -111,6 +165,54 @@ const PHASE_WEIGHTS: Record<AIPhase, PhaseWeights> = {
     freighterTransfer: 0.8,
     transferToOwn: 0.5,      // defenders stay put, the rest go forward
     transferToEnemy: 2.5,    // hunt
+    collectorBuild: 0.6,
+    yieldBuilding: 0.5,
+    scienceBuilding: 0.3,
+    weaponsBuilding: 1.0,
+    shipyardBuilding: 1.5,   // need throughput to keep cranking ships
+    dysonInitiate: 0.0,
+    dysonFreighter: 0.0,
+    research: 0.4,
+  },
+  // Phase 4: pursue Engineering Victory. AI has either laid the
+  // foundation or has the means to (Sol station + freighter chain).
+  // Everything bends toward keeping freighters parked at Sol AND
+  // defending the foundation station.
+  engineering: {
+    freighterBuild: 3.0,     // need a delivery fleet
+    combatShipBuild: 1.0,
+    destroyerBuild: 1.2,     // defend the foundation
+    settlementDeploy: 0.5,
+    freighterTransfer: 0.5,  // no time for colonization runs
+    transferToOwn: 1.5,      // hold Sol and supply lines
+    transferToEnemy: 0.4,
+    collectorBuild: 1.0,
+    yieldBuilding: 1.5,      // mints + forges fuel the drain
+    scienceBuilding: 0.5,
+    weaponsBuilding: 2.5,    // defend the Sol station
+    shipyardBuilding: 1.5,
+    dysonInitiate: 5.0,      // top priority if slot is open
+    dysonFreighter: 4.0,     // ferry every spare freighter to Sol
+    research: 0.4,
+  },
+  // Phase 5: pursue Science Victory. AI is well past halfway through
+  // the tech tree; pour science into the remaining levels.
+  science: {
+    freighterBuild: 1.0,
+    combatShipBuild: 0.5,
+    destroyerBuild: 0.3,
+    settlementDeploy: 0.8,   // more cities → more science
+    freighterTransfer: 0.8,
+    transferToOwn: 1.0,
+    transferToEnemy: 0.1,    // don't pick fights, just research
+    collectorBuild: 1.0,
+    yieldBuilding: 1.0,
+    scienceBuilding: 3.0,    // every spare credit into labs
+    weaponsBuilding: 1.0,    // defend what we have
+    shipyardBuilding: 0.5,
+    dysonInitiate: 0.0,
+    dysonFreighter: 0.0,
+    research: 3.0,           // everything we can afford
   },
 };
 
@@ -121,6 +223,9 @@ export type AIActionIntent =
   | { kind: 'deploy_settlement'; bodyId: string; settlementType: 'city' | 'station'; name: string; score: number; reason: string }
   | { kind: 'transfer'; shipId: string; targetBodyId: string; score: number; reason: string }
   | { kind: 'research'; techId: TechId; score: number; reason: string }
+  | { kind: 'build_collector'; settlementId: string; score: number; reason: string }
+  | { kind: 'queue_building'; settlementId: string; buildingKind: BuildingKind; score: number; reason: string }
+  | { kind: 'initiate_dyson'; settlementId: string; score: number; reason: string }
   | { kind: 'idle'; score: 0; reason: string };
 
 export interface AIDecision {
@@ -147,6 +252,9 @@ export function runFactionAI(
     ...generateDeployCandidates(ctx),
     ...generateTransferCandidates(ctx),
     ...generateResearchCandidates(ctx),
+    ...generateCollectorCandidates(ctx),
+    ...generateBuildingCandidates(ctx),
+    ...generateDysonCandidates(ctx),
   ];
 
   candidates.sort((a, b) => b.score - a.score);
@@ -171,6 +279,8 @@ interface AIContext {
   tick: number;
   resources: FactionResources;
   techLevels: Record<string, number>;
+  totalTechLevels: number;            // sum across all tracks — used by phase detection
+  alreadyResearching: boolean;        // skip queuing duplicate research
 
   // Faction's stuff
   myShips: Ship[];                    // all ships I own
@@ -179,12 +289,18 @@ interface AIContext {
   myCombatShipsIdle: Ship[];          // corvettes/frigates/destroyers not busy
   mySettlements: Settlement[];
   myStations: Settlement[];           // shipyards
+  myCities: Settlement[];             // forge/mint/lab hosts
+  mySolStations: Settlement[];        // Dyson-eligible foundations
+  myFreightersAtSol: number;          // counts for sphere delivery
   myActiveBuildBodyIds: Set<string>;  // bodies currently constructing a ship
+  hasAnyCollector: boolean;           // empire-wide collector gate
 
   // World
   ownedBodyIds: Set<string>;          // bodies I have a settlement on
   hostileShips: Ship[];               // any ship not owned by me
   bodyIdToHostileShips: Map<string, Ship[]>;  // for threat assessment
+  dyson: GameState['dysonSphere'];    // current sphere snapshot (or undefined)
+  iControlDyson: boolean;             // I'm the controller faction
 
   // Strategic phase + the weight table to apply this cycle
   phase: AIPhase;
@@ -200,6 +316,10 @@ function determinePhase(
   mySettlements: Settlement[],
   myShips: Ship[],
   bodyIdToHostileShips: Map<string, Ship[]>,
+  totalTechLevels: number,
+  iControlDyson: boolean,
+  mySolStationCount: number,
+  dysonExists: boolean,
 ): AIPhase {
   // EXPANSION → not enough colonies yet AND nothing's on fire.
   // If a colony is being attacked, jump straight to defense even if
@@ -211,6 +331,27 @@ function determinePhase(
   const distinctColonyBodies = new Set(mySettlements.map(s => s.bodyId)).size;
   if (distinctColonyBodies < EXPANSION_TARGET_COLONIES && !underAttack) {
     return 'expansion';
+  }
+
+  // ENGINEERING → I control the sphere OR I have the means to grab it
+  // (a Sol station, no rival sphere yet). This trumps everything else
+  // once the AI has positioned for the megaproject — it's the most
+  // committed strategic pivot. Falls back to defense the moment a
+  // colony's under attack so the AI doesn't fiddle while Rome burns.
+  if (iControlDyson) {
+    if (underAttack) return 'defense';
+    return 'engineering';
+  }
+  if (!dysonExists && mySolStationCount > 0) {
+    if (underAttack) return 'defense';
+    return 'engineering';
+  }
+
+  // SCIENCE → past the 50% tech-tree threshold. We're closer to the
+  // Science Victory than to anything else; lean into research. Still
+  // falls back to defense on attack — the AI isn't blind to the map.
+  if (totalTechLevels >= SCIENCE_PHASE_LEVEL_FLOOR && !underAttack) {
+    return 'science';
   }
 
   // DEFENSE → each colony body needs at least DEFENSE_SHIPS_PER_BODY combat
@@ -243,6 +384,8 @@ function buildContext(state: GameState, factionId: string, tick: number): AICont
 
   const tech = state.factionTech?.[factionId];
   const techLevels: Record<string, number> = tech?.levels ?? {};
+  const totalTechLevels = ALL_TECH_IDS.reduce((sum, id) => sum + (techLevels[id] ?? 0), 0);
+  const alreadyResearching = !!tech?.researching;
 
   const myShips = state.ships.filter(s => s.ownedBy === factionId);
   const myShipsIdle = myShips.filter(s => !s.transit && !s.plannedTransit);
@@ -251,6 +394,12 @@ function buildContext(state: GameState, factionId: string, tick: number): AICont
 
   const mySettlements = state.settlements.filter(s => s.ownedBy === factionId);
   const myStations = mySettlements.filter(s => s.type === 'station');
+  const myCities = mySettlements.filter(s => s.type === 'city');
+  const mySolStations = myStations.filter(s => s.bodyId === SOL_BODY_ID);
+  const myFreightersAtSol = myShips.filter(s =>
+    s.class === 'freighter' && !s.transit && s.orbit.parentBodyId === SOL_BODY_ID,
+  ).length;
+  const hasAnyCollector = mySettlements.some(s => s.hasCollector);
 
   const myActiveBuildBodyIds = new Set(
     state.buildOrders.filter(b => b.ownedBy === factionId).map(b => b.bodyId)
@@ -268,7 +417,14 @@ function buildContext(state: GameState, factionId: string, tick: number): AICont
     bodyIdToHostileShips.get(bodyId)!.push(ship);
   }
 
-  const phase = determinePhase(mySettlements, myShips, bodyIdToHostileShips);
+  const dyson = state.dysonSphere;
+  const iControlDyson = dyson?.controllerFactionId === factionId;
+  const dysonExists = !!dyson;
+
+  const phase = determinePhase(
+    mySettlements, myShips, bodyIdToHostileShips,
+    totalTechLevels, iControlDyson, mySolStations.length, dysonExists,
+  );
 
   return {
     factionId,
@@ -277,16 +433,24 @@ function buildContext(state: GameState, factionId: string, tick: number): AICont
     tick,
     resources,
     techLevels,
+    totalTechLevels,
+    alreadyResearching,
     myShips,
     myShipsIdle,
     myFreightersIdle,
     myCombatShipsIdle,
     mySettlements,
     myStations,
+    myCities,
+    mySolStations,
+    myFreightersAtSol,
     myActiveBuildBodyIds,
+    hasAnyCollector,
     ownedBodyIds,
     hostileShips,
     bodyIdToHostileShips,
+    dyson,
+    iControlDyson,
     phase,
     weights: PHASE_WEIGHTS[phase],
   };
@@ -545,12 +709,16 @@ function generateTransferCandidates(ctx: AIContext): AIActionIntent[] {
 function generateResearchCandidates(ctx: AIContext): AIActionIntent[] {
   const out: AIActionIntent[] = [];
 
-  // Don't research if we have nothing else going on — keep science for later.
-  if (ctx.resources.science < 30) return out;
+  // Already researching something? Skip — the per-tick drain in
+  // advanceToTick handles incremental progress. We only push a new
+  // 'research' intent when there's nothing in flight.
+  if (ctx.alreadyResearching) return out;
 
-  // Already researching something? Skip — single track at a time for v1.
-  const tech = ctx.state.factionTech?.[ctx.factionId];
-  if (tech?.researching) return out;
+  // Min science threshold. In SCIENCE phase we research the moment we
+  // can afford any level; in other phases we hold a small buffer so
+  // the early-game pool isn't drained by lab spam.
+  const minScience = ctx.phase === 'science' ? 0 : 30;
+  if (ctx.resources.science < minScience) return out;
 
   const priorities: Array<{ techId: TechId; baseScore: number }> = [
     { techId: 'weapons', baseScore: 2.0 },
@@ -563,13 +731,27 @@ function generateResearchCandidates(ctx: AIContext): AIActionIntent[] {
   ];
 
   for (const p of priorities) {
-    if (!canAffordTech(ctx, p.techId)) continue;
+    // Hard skip — cap reached. Wastes scoring effort and breaks the
+    // Science Victory path if we let the AI keep picking maxed tracks.
     const level = ctx.techLevels[p.techId] ?? 0;
-    // Diminishing returns: each level past 3 is half as valuable
-    const levelMod = level < 3 ? 1 : (0.5 / (level - 2));
+    if (level >= TECH_MAX_LEVEL) continue;
+    if (!canAffordTech(ctx, p.techId)) continue;
+    // Diminishing returns: each level past 3 is half as valuable.
+    // SCIENCE phase undoes the diminishing return because the goal IS
+    // to complete every track regardless of marginal effect.
+    const levelMod = ctx.phase === 'science'
+      ? 1
+      : (level < 3 ? 1 : (0.5 / (level - 2)));
     const cost = techCost(p.techId, level);
     const costShare = cost / Math.max(1, ctx.resources.science);
-    const score = p.baseScore * levelMod - costShare * 1.5;
+    let score = p.baseScore * levelMod - costShare * 1.5;
+    // SCIENCE phase: bias toward whichever track is FURTHEST from max,
+    // so the AI sweeps the whole tree instead of doubling down on one.
+    if (ctx.phase === 'science') {
+      const distanceFromMax = TECH_MAX_LEVEL - level;
+      score += distanceFromMax * 0.2;
+    }
+    score *= ctx.weights.research;
     if (score <= 0) continue;
     out.push({
       kind: 'research',
@@ -579,6 +761,170 @@ function generateResearchCandidates(ctx: AIContext): AIActionIntent[] {
     });
   }
   return out;
+}
+
+// === Collector network =======================================
+//
+// Without at least one collector, every settlement's stockpile is
+// stranded — the empire pool never grows from harvests. AI's first
+// settlement gets the free starting collector via singlePlayerSetup,
+// but every subsequent settlement is a new logistics gap. This
+// generator proposes collector builds at any owned settlement that
+// doesn't have one, prioritizing settlements with stockpile sitting
+// idle (high signal: we're losing income to lack of logistics).
+
+function generateCollectorCandidates(ctx: AIContext): AIActionIntent[] {
+  const out: AIActionIntent[] = [];
+  // Affordability gate — costs are global per-build, not per-settlement.
+  if (
+    ctx.resources.ore < COLLECTOR_COST.ore ||
+    ctx.resources.credits < COLLECTOR_COST.credits
+  ) {
+    return out;
+  }
+  for (const s of ctx.mySettlements) {
+    if (s.hasCollector) continue;
+    let score = 0;
+    let reason = '';
+    if (!ctx.hasAnyCollector) {
+      // EMERGENCY: empire-wide stockpile is going nowhere. Top priority.
+      score = 6;
+      reason = `first collector — empire has no logistics yet`;
+    } else {
+      // Stockpile-driven: every settlement that's accumulating but
+      // can't ship is a problem. Score scales with sitting stock.
+      const stock = s.stockpile.fuel + s.stockpile.ore + s.stockpile.credits + s.stockpile.science;
+      if (stock < 20) {
+        // Negligible stockpile, low priority — keep the action queue
+        // free for higher-value moves.
+        continue;
+      }
+      score = 1 + Math.min(stock / 80, 3);
+      reason = `unlock ${Math.round(stock)} stranded stock at ${s.name}`;
+    }
+    score *= ctx.weights.collectorBuild;
+    // Cost penalty — collectors are pricey (150O + 100C).
+    score -= (COLLECTOR_COST.ore / Math.max(1, ctx.resources.ore)) * 1.0;
+    score -= (COLLECTOR_COST.credits / Math.max(1, ctx.resources.credits)) * 1.0;
+    if (score <= SCORE_THRESHOLD) continue;
+    out.push({ kind: 'build_collector', settlementId: s.id, score, reason });
+  }
+  return out;
+}
+
+// === Settlement upgrade buildings ============================
+//
+// Forge / Mint / Lab on cities; Weapons / Shipyard on stations.
+// One in-flight upgrade per settlement (server + client both
+// enforce). AI picks the best candidate per settlement and
+// proposes upgrading to the next level, scored by:
+//   - phase weight for that building category
+//   - inverse cost share (cheaper upgrades preferred)
+//   - existing level (diminishing returns past L3)
+
+function generateBuildingCandidates(ctx: AIContext): AIActionIntent[] {
+  const out: AIActionIntent[] = [];
+
+  for (const s of ctx.mySettlements) {
+    // Slot busy — server only accepts one upgrade at a time per settlement.
+    if (s.buildingQueue) continue;
+
+    const allowed: BuildingKind[] = s.type === 'city'
+      ? ['forge', 'mint', 'lab']
+      : ['weapons', 'shipyard'];
+
+    for (const kind of allowed) {
+      const level = buildingLevel(s, kind);
+      const cost = buildingCostForNextLevel(kind, level);
+      // Affordability
+      if (
+        ctx.resources.ore < cost.ore ||
+        ctx.resources.credits < cost.credits
+      ) continue;
+
+      // Pick the phase weight that matches the building category.
+      let weight = 1;
+      let baseScore = 1;
+      let reason = '';
+      switch (kind) {
+        case 'forge':
+          weight = ctx.weights.yieldBuilding;
+          baseScore = 1.5;
+          reason = `forge L${level + 1} (+ore yield)`;
+          break;
+        case 'mint':
+          weight = ctx.weights.yieldBuilding;
+          baseScore = 1.5;
+          reason = `mint L${level + 1} (+credits yield)`;
+          break;
+        case 'lab':
+          weight = ctx.weights.scienceBuilding;
+          baseScore = 1.4;
+          reason = `lab L${level + 1} (+science yield)`;
+          break;
+        case 'weapons':
+          weight = ctx.weights.weaponsBuilding;
+          baseScore = 1.6;
+          reason = `weapons L${level + 1} (+station damage)`;
+          break;
+        case 'shipyard':
+          weight = ctx.weights.shipyardBuilding;
+          baseScore = 1.4;
+          reason = `shipyard L${level + 1} (+build slots)`;
+          break;
+      }
+
+      // Diminishing returns past L3 so the AI doesn't keep dumping
+      // ore into one forge forever.
+      const levelMod = level < 3 ? 1 : (0.6 / (level - 2));
+
+      // Cost share penalty
+      const orePool = Math.max(1, ctx.resources.ore);
+      const credPool = Math.max(1, ctx.resources.credits);
+      const costShare = (cost.ore / orePool) + (cost.credits / credPool);
+
+      let score = baseScore * levelMod * weight - costShare * 1.0;
+      if (score <= SCORE_THRESHOLD) continue;
+
+      out.push({
+        kind: 'queue_building',
+        settlementId: s.id,
+        buildingKind: kind,
+        score,
+        reason: `${s.name}: ${reason}`,
+      });
+    }
+  }
+  return out;
+}
+
+// === Dyson Sphere ============================================
+//
+// One-shot per game. AI initiates if (a) it has a Sol station, (b) no
+// sphere exists yet, and (c) the AI is in ENGINEERING phase (which
+// triggers when the above two are true and no attack is in progress).
+// The buildContext sets `mySolStations` and `dyson` for cheap lookups.
+
+function generateDysonCandidates(ctx: AIContext): AIActionIntent[] {
+  // Already controls the sphere — nothing to initiate.
+  if (ctx.iControlDyson) return [];
+  // A rival owns the slot — can't initiate.
+  if (ctx.dyson) return [];
+  // No Sol station — can't initiate either.
+  if (ctx.mySolStations.length === 0) return [];
+
+  // Pick the first eligible station as the foundation. Score reflects
+  // the sphere being a long-game commitment — only fires meaningfully
+  // in ENGINEERING phase where weights.dysonInitiate ≈ 5.
+  const station = ctx.mySolStations[0];
+  const score = 3.0 * ctx.weights.dysonInitiate;
+  if (score <= SCORE_THRESHOLD) return [];
+  return [{
+    kind: 'initiate_dyson',
+    settlementId: station.id,
+    score,
+    reason: `lay Dyson foundation at ${station.name}`,
+  }];
 }
 
 // === Naming helpers ==========================================
@@ -610,9 +956,11 @@ function generateSettlementName(type: 'city' | 'station', bodyName: string): str
 /** Compact 3-letter phase tag for the activity feed. */
 function phaseTag(phase: AIPhase): string {
   switch (phase) {
-    case 'expansion':  return 'EXP';
-    case 'defense':    return 'DEF';
-    case 'aggression': return 'AGR';
+    case 'expansion':   return 'EXP';
+    case 'defense':     return 'DEF';
+    case 'aggression':  return 'AGR';
+    case 'engineering': return 'ENG';
+    case 'science':     return 'SCI';
   }
 }
 
@@ -638,6 +986,18 @@ function describeIntent(intent: AIActionIntent, ctx: AIContext): string {
     }
     case 'research': {
       return `${tag} ${ctx.faction.name}: researching ${intent.reason}`;
+    }
+    case 'build_collector': {
+      const settlement = ctx.state.settlements.find(s => s.id === intent.settlementId);
+      return `${tag} ${ctx.faction.name}: building collector at ${settlement?.name ?? intent.settlementId} (${intent.reason})`;
+    }
+    case 'queue_building': {
+      const settlement = ctx.state.settlements.find(s => s.id === intent.settlementId);
+      return `${tag} ${ctx.faction.name}: upgrading ${intent.buildingKind} at ${settlement?.name ?? intent.settlementId} (${intent.reason})`;
+    }
+    case 'initiate_dyson': {
+      const settlement = ctx.state.settlements.find(s => s.id === intent.settlementId);
+      return `${tag} ${ctx.faction.name}: laying Dyson foundation at ${settlement?.name ?? intent.settlementId} (${intent.reason})`;
     }
     case 'idle':
       return `${tag} ${ctx.faction.name}: ${intent.reason}`;
