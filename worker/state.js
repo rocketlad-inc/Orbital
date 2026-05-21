@@ -136,6 +136,8 @@ async function handleGetState(req, env, ctx) {
               orbit_radius, orbit_period, angle0, color,
               yield_metal, yield_fuel, yield_gold, yield_science,
               owner_faction_id, development_level, fortification_level, shipyard_level,
+              secret_kind, secret_revealed,
+              secret_discovered_by_faction_id, secret_discovered_at_tick,
               (id IN (SELECT bid FROM visible_bodies)) AS visible_to_me
          FROM game_bodies
         WHERE game_id = ?1`,
@@ -147,18 +149,49 @@ async function handleGetState(req, env, ctx) {
   // world is intel — mask owner_faction_id (and the development levels
   // that follow from it) on bodies the caller hasn't actually scouted.
   // The caller's own worlds are always 'visible_to_me=1' via the CTE.
+  //
+  // Secrets are also intel: unrevealed secret_kind never leaks to the
+  // client. After reveal, the secret IS public (it's a chronicle event
+  // — every player sees the announcement) so we ship it to everyone.
   const bodies = bodiesRaw.map(b => {
+    const isRevealed = b.secret_revealed === 1;
+    // Strip unrevealed secret_kind so clients can't sniff what's buried
+    // on bodies they haven't visited. After reveal it's broadcast.
+    const secretFields = isRevealed
+      ? {
+          secret_kind: b.secret_kind,
+          secret_revealed: 1,
+          secret_discovered_by_faction_id: b.secret_discovered_by_faction_id,
+          secret_discovered_at_tick: b.secret_discovered_at_tick,
+        }
+      : {
+          secret_kind: null,
+          secret_revealed: 0,
+          secret_discovered_by_faction_id: null,
+          secret_discovered_at_tick: null,
+        };
     if (b.visible_to_me) {
-      const { visible_to_me, ...rest } = b;
-      return rest;
+      const {
+        visible_to_me,
+        secret_kind, secret_revealed,
+        secret_discovered_by_faction_id, secret_discovered_at_tick,
+        ...rest
+      } = b;
+      return { ...rest, ...secretFields };
     }
-    const { visible_to_me, owner_faction_id, development_level, fortification_level, shipyard_level, ...rest } = b;
+    const {
+      visible_to_me, owner_faction_id, development_level, fortification_level, shipyard_level,
+      secret_kind, secret_revealed,
+      secret_discovered_by_faction_id, secret_discovered_at_tick,
+      ...rest
+    } = b;
     return {
       ...rest,
       owner_faction_id: null,
       development_level: 0,
       fortification_level: 0,
       shipyard_level: 0,
+      ...secretFields,
     };
   });
 

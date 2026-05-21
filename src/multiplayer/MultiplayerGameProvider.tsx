@@ -77,6 +77,12 @@ interface ServerState {
     yield_gold: number;
     yield_science: number;
     owner_faction_id: string | null;
+    /** Body secret. Server only ships these fields after reveal —
+     *  unrevealed secrets always come back as null/0 here. Migration 0021. */
+    secret_kind?: string | null;
+    secret_revealed?: number;
+    secret_discovered_by_faction_id?: string | null;
+    secret_discovered_at_tick?: number | null;
   }>;
   ships: Array<{
     id: string;
@@ -214,6 +220,18 @@ function stripGameId(id: string | null | undefined): string | undefined {
 
 function bodyToClient(b: ServerState['bodies'][number]): Body {
   const localId = stripGameId(b.id) ?? b.id;
+  // Secret: only present if revealed. Server strips secret_kind from
+  // unrevealed bodies in state.js so we don't have to second-guess it.
+  // The client renderer keys off `secret.revealed` for the discovery
+  // toast / "stargate active" indicator.
+  const secret: Body['secret'] = (b.secret_kind && b.secret_revealed === 1)
+    ? {
+        kind: b.secret_kind as Body['secret'] extends infer T ? T extends { kind: infer K } ? K : never : never,
+        revealed: true,
+        discoveredByFactionId: b.secret_discovered_by_faction_id ?? undefined,
+        discoveredAtTick: b.secret_discovered_at_tick ?? undefined,
+      }
+    : undefined;
   return {
     id: localId,
     name: b.name,
@@ -233,6 +251,7 @@ function bodyToClient(b: ServerState['bodies'][number]): Body {
       science: b.yield_science,
     },
     ownedBy: b.owner_faction_id ?? undefined,
+    secret,
   };
 }
 

@@ -381,6 +381,65 @@ function shuffleInPlace(arr, rand) {
   }
 }
 
+// ---------- body secrets seeding ----------
+//
+// Mirror of src/game/secrets.ts SECRET_DEFS. Each secret kind only
+// attaches to bodies in compatible categories so the layout always
+// feels reasonable (no Mercury portals, no asteroid databanks).
+const SECRET_HOST_CATEGORIES = {
+  portal_to_sun:    ['outer', 'moon-outer'],
+  ancient_city:     ['belt'],
+  free_collector:   ['moon-outer', 'moon-inner'],
+  derelict_warship: ['belt', 'outer'],
+  resource_cache:   ['inner', 'belt'],
+  ancient_databank: ['moon-inner', 'moon-outer'],
+};
+
+const SECRET_KINDS = Object.keys(SECRET_HOST_CATEGORIES);
+
+/** Classify a BODY_CATALOG entry into the same category buckets the
+ *  client's secrets.ts uses, so the host filter agrees with SP. */
+function categorizeBodyForSecret(b) {
+  if (b.type === 'star') return null;
+  if (b.type === 'moon') {
+    const parent = BODY_CATALOG.find(x => x.id === b.parent);
+    if (parent && (parent.type === 'gas-giant' || parent.type === 'ice-giant')) return 'moon-outer';
+    return 'moon-inner';
+  }
+  if (b.type === 'asteroid' || b.type === 'dwarf') return 'belt';
+  // Terrestrial / gas / ice bucketed by orbital radius. Inner ≤ 250.
+  if (b.orbit_radius < 250) return 'inner';
+  return 'outer';
+}
+
+/** Deterministic secret placements keyed by body template id.
+ *  Skips bodies that are already claimed by a faction (capitals +
+ *  secondary worlds). Returns a Map<templateId, kind>. */
+function pickSecretPlacements(rand, ownership) {
+  const pool = { 'inner': [], 'belt': [], 'outer': [], 'moon-inner': [], 'moon-outer': [] };
+  for (const b of BODY_CATALOG) {
+    if (ownership.has(b.id)) continue;
+    const cat = categorizeBodyForSecret(b);
+    if (cat) pool[cat].push(b);
+  }
+  const claimed = new Set();
+  const placements = new Map();
+  for (const kind of SECRET_KINDS) {
+    const cats = SECRET_HOST_CATEGORIES[kind];
+    const candidates = [];
+    for (const cat of cats) {
+      for (const b of pool[cat]) {
+        if (!claimed.has(b.id)) candidates.push(b);
+      }
+    }
+    if (candidates.length === 0) continue;
+    const pick = candidates[Math.floor(rand() * candidates.length)];
+    claimed.add(pick.id);
+    placements.set(pick.id, kind);
+  }
+  return placements;
+}
+
 // ---------- helpers ----------
 
 function jsonResponse(data, init = {}) {
@@ -562,12 +621,18 @@ export async function seedGameWorld(env, gameId) {
     );
   }
 
+  // Pre-compute secret placements. Deterministic from rand (which is
+  // seeded from map_seed) so two players entering the same lobby see
+  // the same layout. Only un-owned bodies get secrets.
+  const secretPlacements = pickSecretPlacements(rand, ownership);
+
   // 2) game_bodies — catalog order preserved so parents land before children.
   for (const b of BODY_CATALOG) {
     const own = ownership.get(b.id);
     const isCapital = own ? own.isCapital : false;
     const devLevel = own ? (isCapital ? HOME_DEVELOPMENT_LEVEL : SECONDARY_DEVELOPMENT_LEVEL) : 0;
     const yard = isCapital ? 1 : 0;
+    const secretKind = secretPlacements.get(b.id) ?? null;
     stmts.push(
       env.DB.prepare(
         `INSERT INTO game_bodies
@@ -575,12 +640,14 @@ export async function seedGameWorld(env, gameId) {
            radius, soi, mu, orbit_radius, orbit_period, angle0, color,
            yield_metal, yield_fuel, yield_gold, yield_science,
            owner_faction_id, development_level, fortification_level, shipyard_level,
-           claimed_at_tick, developed_at_tick)
+           claimed_at_tick, developed_at_tick,
+           secret_kind, secret_revealed, secret_discovered_by_faction_id, secret_discovered_at_tick)
          VALUES (?, ?, ?, ?, ?, ?,
                  ?, ?, ?, ?, ?, ?, ?,
                  ?, ?, ?, ?,
                  ?, ?, ?, ?,
-                 ?, ?)`,
+                 ?, ?,
+                 ?, 0, NULL, NULL)`,
       ).bind(
         bodyRowIdFor(b.id), gameId, b.id, b.name, b.type,
         b.parent ? bodyRowIdFor(b.parent) : null,
@@ -591,6 +658,7 @@ export async function seedGameWorld(env, gameId) {
         0, yard,
         own ? 0 : null,
         own ? 0 : null,
+        secretKind,
       ),
     );
   }

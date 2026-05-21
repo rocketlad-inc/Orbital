@@ -740,6 +740,30 @@ export class Room {
       ]);
     }
 
+    // 2d. Body secret reveal + persistent portal warp.
+    //
+    // Mirrors src/game/secrets.ts + the client gameContext.tsx reveal
+    // loop. A body with secret_kind != null AND secret_revealed = 0
+    // fires its effect the first tick any active ship parks there.
+    // portal_to_sun additionally keeps warping every subsequent ship
+    // back to Sol forever (so the portal stays a strategic hazard,
+    // not just a one-time reveal).
+    //
+    // Effects:
+    //   portal_to_sun     warp all parked ships at this body to Sol
+    //                     (a +18 circular orbit around the star).
+    //   ancient_city      free city for the discoverer + Lab L2 baked
+    //                     in via has_collector NULL and population 3.
+    //   free_collector    free city with has_collector = 1.
+    //   derelict_warship  free destroyer spawned at the body.
+    //   resource_cache    +500 metal +500 gold to discoverer's pool.
+    //   ancient_databank  bump a random tech track by +1 for discoverer.
+    try {
+      await this.resolveSecretReveal(gameId, tick);
+    } catch (e) {
+      console.error('resolveSecretReveal failed', e);
+    }
+
     // 2c. Trade route auto-pilot.
     //
     // For each active route, look at the freighter. Skip if it has any
@@ -1318,13 +1342,22 @@ export class Room {
         .run();
     }
 
-    // 3.6 Stockpile offload. Settlements deposit directly into the
-    //     owner's faction pool every tick — the freighter-ferry mechanic
-    //     was scrapped because players had cities producing but no idea
-    //     why their CR wasn't moving (gold piled up on the city forever
-    //     waiting for a freighter that never came). Now every non-empty
-    //     stockpile sweeps to its faction's pool unconditionally. Mirrors
-    //     the client SP behavior in src/game/settlements.ts.
+    // 3.6 Stockpile offload — collector-network gated, fractional drain.
+    //
+    // Mirrors the SP rule in src/game/settlements.ts tickSettlements:
+    // a faction unlocks its logistics network the moment ANY of its
+    // settlements carries has_collector = 1. From then on, every one
+    // of that faction's settlements bleeds a fraction of its stockpile
+    // into the pool each tick — not 100%, so the income meter reads
+    // as a live trickle rather than burst dumps. Factions with zero
+    // collectors get nothing: stockpiles stay local until they pay
+    // COLLECTOR_COST on at least one settlement.
+    //
+    // Drain step = COLLECTOR_BASE_DRAIN_FRACTION (0.5) /
+    //              COLLECTOR_AUTO_INTERVAL (25) = 0.02 per tick.
+    // Over 25 ticks that's ~50% of the stockpile delivered, matching
+    // the SP tempo. Use Math.round to avoid sub-integer dust.
+    const DRAIN_PER_TICK = 0.5 / 25;
     const offloads = (await this.env.DB
       .prepare(
         `SELECT s.id AS sid, s.owner_faction_id AS fid,
@@ -1333,12 +1366,31 @@ export class Room {
            FROM game_settlements s
           WHERE s.game_id = ?
             AND s.destroyed_at_tick IS NULL
-            AND (s.stockpile_metal + s.stockpile_fuel + s.stockpile_gold + s.stockpile_science) > 0`,
+            AND (s.stockpile_metal + s.stockpile_fuel + s.stockpile_gold + s.stockpile_science) > 0
+            AND s.owner_faction_id IN (
+              SELECT DISTINCT owner_faction_id FROM game_settlements
+               WHERE game_id = ?
+                 AND destroyed_at_tick IS NULL
+                 AND has_collector = 1
+            )`,
       )
-      .bind(gameId)
+      .bind(gameId, gameId)
       .all()).results ?? [];
 
     for (const o of offloads) {
+      // Compute the per-tick slice. At least 1 of any resource that
+      // has any stockpile, so a tiny stockpile still trickles instead
+      // of stranding at 1-2 forever on the floor of the fractional math.
+      const slice = (v) => {
+        if (v <= 0) return 0;
+        const portion = Math.round(v * DRAIN_PER_TICK);
+        return Math.max(1, portion);
+      };
+      const dm = Math.min(o.m, slice(o.m));
+      const df = Math.min(o.f, slice(o.f));
+      const dg = Math.min(o.g, slice(o.g));
+      const dsci = Math.min(o.sci, slice(o.sci));
+      if (dm + df + dg + dsci <= 0) continue;
       await this.env.DB.batch([
         this.env.DB
           .prepare(
@@ -1346,15 +1398,17 @@ export class Room {
                 SET metal = metal + ?, fuel = fuel + ?, gold = gold + ?, science = science + ?
               WHERE id = ?`,
           )
-          .bind(o.m, o.f, o.g, o.sci, o.fid),
+          .bind(dm, df, dg, dsci, o.fid),
         this.env.DB
           .prepare(
             `UPDATE game_settlements
-                SET stockpile_metal = 0, stockpile_fuel = 0,
-                    stockpile_gold = 0, stockpile_science = 0
+                SET stockpile_metal = stockpile_metal - ?,
+                    stockpile_fuel  = stockpile_fuel  - ?,
+                    stockpile_gold  = stockpile_gold  - ?,
+                    stockpile_science = stockpile_science - ?
               WHERE id = ?`,
           )
-          .bind(o.sid),
+          .bind(dm, df, dg, dsci, o.sid),
       ]);
     }
 
@@ -1628,6 +1682,273 @@ export class Room {
    * Per-freighter per-tick contribution: 5F · 10O · 10C · 5S.
    * Clamped by pool availability and remaining target.
    */
+  /**
+   * Body-secret reveal pass + portal_to_sun persistent warp.
+   *
+   * Runs once per resolveTick. Finds every secret-bearing body that
+   * either (a) has an unrevealed secret AND a parked ship, or (b)
+   * has a revealed portal_to_sun AND any parked ships. Applies the
+   * appropriate effect (settlement/ship spawn, resource grant, tech
+   * bump, ship warp) and emits a `secret_discovered` chronicle entry
+   * on first reveal.
+   *
+   * Effect resolution mirrors src/game/secrets.ts computeSecretReveal.
+   * Kept server-authoritative: the discoverer is the OWNER of the first
+   * ship the SELECT returns for each body, ordered deterministically by
+   * arrival (built_at_tick fallback) so concurrent arrivals don't race.
+   */
+  async resolveSecretReveal(gameId, tick) {
+    const SOL_BODY_ID = `${gameId}:sol`;
+    const now = Date.now();
+
+    // Step 1: unrevealed-secret bodies that have at least one parked ship.
+    const unrevealed = (await this.env.DB
+      .prepare(
+        `SELECT b.id AS body_id, b.name AS body_name, b.radius AS body_radius,
+                b.secret_kind AS kind,
+                (SELECT s.owner_faction_id FROM game_ships s
+                  WHERE s.game_id = b.game_id
+                    AND s.parent_body_id = b.id
+                    AND s.status = 'active'
+                  ORDER BY s.built_at_tick ASC, s.id ASC
+                  LIMIT 1) AS discoverer
+           FROM game_bodies b
+          WHERE b.game_id = ?
+            AND b.secret_kind IS NOT NULL
+            AND b.secret_revealed = 0`,
+      )
+      .bind(gameId)
+      .all()).results ?? [];
+
+    for (const row of unrevealed) {
+      if (!row.discoverer) continue; // no ship parked here yet
+      const { body_id, body_name, body_radius, kind, discoverer } = row;
+      const stmts = [];
+      let chronicleMessage = `${body_name}: DISCOVERY — ${kind.replace(/_/g, ' ')}`;
+
+      // Mark the body revealed first; subsequent effects piggyback on
+      // the same batch when they're DB-only (no DO-state writes).
+      stmts.push(
+        this.env.DB
+          .prepare(
+            `UPDATE game_bodies
+                SET secret_revealed = 1,
+                    secret_discovered_by_faction_id = ?,
+                    secret_discovered_at_tick = ?
+              WHERE id = ?`,
+          )
+          .bind(discoverer, tick, body_id),
+      );
+
+      switch (kind) {
+        case 'portal_to_sun': {
+          // Persistent effect — the warp itself is applied below for
+          // any ship currently at the body. The reveal just flips the
+          // flag so the chronicle fires once.
+          chronicleMessage = `${body_name}: DISCOVERY — an ancient stargate. Every ship arriving here will now be warped to Sol.`;
+          break;
+        }
+        case 'ancient_city': {
+          const cityId = `${body_id}:cAC${Math.random().toString(36).slice(2, 8)}`;
+          const surfaceAngle = Math.random() * Math.PI * 2;
+          stmts.push(
+            this.env.DB
+              .prepare(
+                `INSERT INTO game_settlements
+                  (id, game_id, body_id, owner_faction_id, type, name,
+                   hp, hp_max, population,
+                   surface_angle, orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch,
+                   created_at_tick, last_growth_tick, last_harvest_tick,
+                   has_collector, collector_built_tick,
+                   buildings_json)
+                 VALUES (?, ?, ?, ?, 'city', ?,
+                         100, 100, 3,
+                         ?, NULL, NULL, NULL, NULL, NULL,
+                         ?, ?, ?,
+                         0, NULL,
+                         '{"lab":2}')`,
+              )
+              .bind(cityId, gameId, body_id, discoverer, `${body_name} Ruins`,
+                    surfaceAngle, tick, tick, tick),
+          );
+          stmts.push(
+            this.env.DB
+              .prepare('UPDATE game_bodies SET owner_faction_id = ? WHERE id = ?')
+              .bind(discoverer, body_id),
+          );
+          chronicleMessage = `${body_name}: DISCOVERY — a long-abandoned colony reactivates under your banner — a free city with a working Lab.`;
+          break;
+        }
+        case 'free_collector': {
+          const cityId = `${body_id}:cFC${Math.random().toString(36).slice(2, 8)}`;
+          const surfaceAngle = Math.random() * Math.PI * 2;
+          stmts.push(
+            this.env.DB
+              .prepare(
+                `INSERT INTO game_settlements
+                  (id, game_id, body_id, owner_faction_id, type, name,
+                   hp, hp_max, population,
+                   surface_angle, orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch,
+                   created_at_tick, last_growth_tick, last_harvest_tick,
+                   has_collector, collector_built_tick)
+                 VALUES (?, ?, ?, ?, 'city', ?,
+                         100, 100, 2,
+                         ?, NULL, NULL, NULL, NULL, NULL,
+                         ?, ?, ?,
+                         1, ?)`,
+              )
+              .bind(cityId, gameId, body_id, discoverer, `${body_name} Hub`,
+                    surfaceAngle, tick, tick, tick, tick),
+          );
+          stmts.push(
+            this.env.DB
+              .prepare('UPDATE game_bodies SET owner_faction_id = ? WHERE id = ?')
+              .bind(discoverer, body_id),
+          );
+          chronicleMessage = `${body_name}: DISCOVERY — a derelict freight hub still pings. Free city + collector — your logistics just widened.`;
+          break;
+        }
+        case 'derelict_warship': {
+          // Spawn a destroyer for the discoverer in a tight orbit
+          // around the body. Stats mirror the destroyer class definition.
+          const shipId = `${gameId}:wreck_${body_id.slice(-8)}_${Math.random().toString(36).slice(2, 6)}`;
+          const rp = (body_radius || 4) * 1.5;
+          const ra = (body_radius || 4) * 2.0;
+          stmts.push(
+            this.env.DB
+              .prepare(
+                `INSERT INTO game_ships
+                  (id, game_id, owner_faction_id, name, ship_class, parent_body_id,
+                   orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
+                   fuel, fuel_max, status, built_at_tick,
+                   hp, hp_max, damage_per_tick)
+                 VALUES (?, ?, ?, ?, 'destroyer', ?,
+                         ?, ?, 0, 0, ?, 1,
+                         200, 200, 'active', ?,
+                         180, 180, 10)`,
+              )
+              .bind(shipId, gameId, discoverer, `${body_name} Salvage`, body_id,
+                    rp, ra, tick, tick),
+          );
+          chronicleMessage = `${body_name}: DISCOVERY — a derelict destroyer is salvageable. Claimed.`;
+          break;
+        }
+        case 'resource_cache': {
+          stmts.push(
+            this.env.DB
+              .prepare('UPDATE game_factions SET metal = metal + 500, gold = gold + 500 WHERE id = ?')
+              .bind(discoverer),
+          );
+          chronicleMessage = `${body_name}: DISCOVERY — a buried cache — +500 metal + 500 gold to your pool.`;
+          break;
+        }
+        case 'ancient_databank': {
+          // Pick a random tech track. tech ids match the client's
+          // TechId union; we keep the list inline rather than import
+          // it cross-runtime to avoid bundling the whole tech catalog.
+          const TECH_TRACKS = ['weapons', 'armor', 'propulsion', 'construction', 'industry', 'sensors', 'flight'];
+          const pick = TECH_TRACKS[Math.floor(Math.random() * TECH_TRACKS.length)];
+          // Upsert: try update first, fall back to insert if missing.
+          const existing = await this.env.DB
+            .prepare('SELECT level FROM faction_techs WHERE game_id = ? AND faction_id = ? AND tech_id = ?')
+            .bind(gameId, discoverer, pick)
+            .first();
+          if (existing) {
+            stmts.push(
+              this.env.DB
+                .prepare(
+                  `UPDATE faction_techs
+                      SET level = level + 1,
+                          status = 'completed',
+                          completed_at_tick = ?
+                    WHERE game_id = ? AND faction_id = ? AND tech_id = ?`,
+                )
+                .bind(tick, gameId, discoverer, pick),
+            );
+          } else {
+            stmts.push(
+              this.env.DB
+                .prepare(
+                  `INSERT INTO faction_techs
+                    (game_id, faction_id, tech_id, status, level, started_at_tick, completed_at_tick)
+                   VALUES (?, ?, ?, 'completed', 1, ?, ?)`,
+                )
+                .bind(gameId, discoverer, pick, tick, tick),
+            );
+          }
+          chronicleMessage = `${body_name}: DISCOVERY — an intact databank teaches your engineers a new trick. ${pick} +1.`;
+          break;
+        }
+      }
+
+      // Chronicle the discovery. Best-effort; never block the reveal.
+      const chronicleId = `secret_${body_id.slice(-12)}_${Math.random().toString(36).slice(2, 8)}`;
+      stmts.push(
+        this.env.DB
+          .prepare(
+            `INSERT INTO chronicle_entries
+              (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+             VALUES (?, ?, ?, 'secret_discovered', ?, ?, ?, 'public', ?)`,
+          )
+          .bind(
+            chronicleId, gameId, tick, discoverer, body_id,
+            JSON.stringify({ kind, body_name, message: chronicleMessage }),
+            now,
+          ),
+      );
+
+      try {
+        await this.env.DB.batch(stmts);
+      } catch (e) {
+        console.error('secret reveal batch failed', { body_id, kind }, e);
+        // Don't propagate — keep ticking even if one body's reveal fails.
+      }
+    }
+
+    // Step 2: persistent portal_to_sun warp. Bodies with a revealed
+    // portal keep warping every ship that arrives, forever. Cheap to
+    // run unconditionally — most games have at most one portal.
+    const portalBodies = (await this.env.DB
+      .prepare(
+        `SELECT id FROM game_bodies
+          WHERE game_id = ?
+            AND secret_kind = 'portal_to_sun'
+            AND secret_revealed = 1`,
+      )
+      .bind(gameId)
+      .all()).results ?? [];
+
+    for (const p of portalBodies) {
+      const stuck = (await this.env.DB
+        .prepare(
+          `SELECT id FROM game_ships
+            WHERE game_id = ?
+              AND parent_body_id = ?
+              AND status = 'active'`,
+        )
+        .bind(gameId, p.id)
+        .all()).results ?? [];
+      if (stuck.length === 0) continue;
+      // Warp each to a low Sol orbit (rp=18, ra=20).
+      const warpStmts = stuck.map(sh =>
+        this.env.DB
+          .prepare(
+            `UPDATE game_ships
+                SET parent_body_id = ?,
+                    orbit_rp = 18, orbit_ra = 20, orbit_omega = 0,
+                    orbit_m0 = 0, orbit_epoch = ?, orbit_direction = 1
+              WHERE id = ?`,
+          )
+          .bind(SOL_BODY_ID, tick, sh.id),
+      );
+      try {
+        await this.env.DB.batch(warpStmts);
+      } catch (e) {
+        console.error('portal warp batch failed', { portal_body: p.id }, e);
+      }
+    }
+  }
+
   async tickDysonSphere(gameId, tick) {
     const game = await this.env.DB
       .prepare(
