@@ -13,6 +13,7 @@ import {
 } from '../game/settlements';
 import { SettlementType, BuildingKind, Settlement } from '../types';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { humanizeMpError } from '../multiplayer/errorMessages';
 import { BottomSheet } from './BottomSheet';
 import './BodyInspector.css';
 
@@ -179,7 +180,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
   const inputRef = useRef<HTMLInputElement>(null);
   // Server-side deploy rejection surfaced inline so the player isn't
   // left with a silent "button reset" UX. Cleared on the next attempt.
-  // (humanizeDeployError is defined at module scope below.)
+  // (Message mapping lives in multiplayer/errorMessages.ts.)
   const [deployError, setDeployError] = useState<string | null>(null);
 
   const body = gameState.bodies.find(b => b.id === bodyId);
@@ -248,7 +249,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
       mpActions.deploySettlement({ bodyId, type: typeAtClick, name: nameAtClick || undefined })
         .then(res => {
           if (!res.ok) {
-            setDeployError(humanizeDeployError(res.code, res.error, typeAtClick));
+            setDeployError(humanizeMpError(res.code, res.error, 'deploy'));
           }
         });
     } else {
@@ -346,7 +347,15 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
                     // money without delivering the collector.
                     const localOk = buildCollector(s.id);
                     if (localOk && mpActions) {
-                      mpActions.buildCollector(s.id);
+                      // Surface server rejections so the player learns why
+                      // the collector chip flickered ON then back OFF (e.g.
+                      // server said "insufficient_resources" because a
+                      // concurrent action drained the pool). Reuses
+                      // deployError because both errors live in the same
+                      // SettlementsSection — one chip is enough.
+                      mpActions.buildCollector(s.id).then(res => {
+                        if (!res.ok) setDeployError(humanizeMpError(res.code, res.error, 'deploy'));
+                      });
                     }
                   }}
                   disabled={!canAffordCollector}
@@ -378,12 +387,20 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
                     // and locks in the cost deduction so the next
                     // /state poll doesn't refund.
                     const ok = queueBuilding(sid, kind);
-                    if (ok && mpActions) mpActions.queueBuilding(sid, kind);
+                    if (ok && mpActions) {
+                      mpActions.queueBuilding(sid, kind).then(res => {
+                        if (!res.ok) setDeployError(humanizeMpError(res.code, res.error, 'build'));
+                      });
+                    }
                     return ok;
                   }}
                   cancelBuilding={(sid) => {
                     const ok = cancelBuilding(sid);
-                    if (ok && mpActions) mpActions.cancelBuilding(sid);
+                    if (ok && mpActions) {
+                      mpActions.cancelBuilding(sid).then(res => {
+                        if (!res.ok) setDeployError(humanizeMpError(res.code, res.error, 'build'));
+                      });
+                    }
                     return ok;
                   }}
                 />
@@ -476,37 +493,10 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
   );
 };
 
-/**
- * Server returns short codes like 'no_presence' / 'no_surface' /
- * 'insufficient_resources'. Map to actionable English so the BodyInspector
- * tells the player WHAT to do, not just "the server said no."
- */
-function humanizeDeployError(
-  code: string | undefined,
-  fallback: string,
-  type: SettlementType,
-): string {
-  switch (code) {
-    case 'no_presence':
-      // The server requires a freighter at the body OR ownership.
-      // The client should usually prevent this — but if the player's
-      // freighter departed between the button render and the click,
-      // they'd hit this server-side. Tell them what to fix.
-      return 'Server: a freighter must be in orbit at this body to deploy. Send one and try again.';
-    case 'no_surface':
-      return `Server: a ${type} can't be deployed on this body type (gas giants, stars, ice giants — no surface).`;
-    case 'insufficient_resources':
-      return 'Server: not enough ore + credits. Wait for income or grant resources via the admin panel.';
-    case 'not_member':
-      return 'Server: you are not in this game. Re-enter the room and try again.';
-    case 'not_found':
-      return 'Server: this body no longer exists in the game.';
-    default:
-      // Unmapped code (or no code) — fall back to whatever server said,
-      // plus the code itself so we can spot it during dev.
-      return code ? `Server (${code}): ${fallback}` : `Server: ${fallback}`;
-  }
-}
+// (Deploy error mapping moved to shared multiplayer/errorMessages.ts —
+// humanizeMpError(code, fallback, 'deploy'). The same helper now serves
+// build / transfer / research / TBM-toggle so we don't drift across
+// four near-identical switch statements.)
 
 // ============================================================
 // Per-settlement Buildings strip — Forge / Mint / Lab on cities,
@@ -699,6 +689,11 @@ const DysonSpherePanel: React.FC = () => {
   // next /state poll, which is when the local panel actually flips
   // from "no sphere yet" to "in progress".
   const mpActions = useMultiplayerActions();
+  // Megaproject stakes are high (one foundation per game). If the
+  // server rejects (someone else just laid it, station not on Sol,
+  // station not yours), the player needs to know — the chip
+  // disappearing isn't an obvious failure signal.
+  const [dysonError, setDysonError] = useState<string | null>(null);
   const dyson = gameState.dysonSphere;
 
   if (dyson) {
@@ -743,8 +738,10 @@ const DysonSpherePanel: React.FC = () => {
               // dyson_sphere snapshot.
               initiateDysonSphere(s.id);
               if (mpActions) {
+                setDysonError(null);
                 mpActions.initiateDysonSphere(s.id).then(res => {
                   if (!res.ok) {
+                    setDysonError(humanizeMpError(res.code, res.error, 'build'));
                     // eslint-disable-next-line no-console
                     console.warn('initiateDysonSphere rejected by server:', res.error);
                   }
@@ -765,6 +762,22 @@ const DysonSpherePanel: React.FC = () => {
             ◆ INITIATE AT {s.name.toUpperCase()}
           </button>
         ))
+      )}
+      {dysonError && (
+        // Megaproject rejection — clearly bad news. Show as a red chip
+        // below the initiate buttons.
+        <button
+          onClick={() => setDysonError(null)}
+          style={{
+            marginTop: 8, padding: '6px 10px',
+            background: 'rgba(255, 94, 94, 0.1)',
+            border: '1px solid #ff5e5e', borderRadius: 4,
+            color: '#ff5e5e', fontSize: 10, lineHeight: 1.4,
+            fontFamily: 'inherit', textAlign: 'left',
+            cursor: 'pointer', width: '100%',
+          }}
+          title="Click to dismiss"
+        >⚠ {dysonError}</button>
       )}
     </div>
   );

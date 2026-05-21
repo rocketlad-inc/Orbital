@@ -70,24 +70,38 @@ export interface TurnStatus {
   factions: Array<{ id: string; name: string; committed: boolean }>;
 }
 
+/** Common shape for any action that can be rejected by the server.
+ *  When ok=false the caller gets the short server-side code (used by
+ *  humanizeMpError to pick the right message) plus the freeform
+ *  payload message as a fallback. Every mutating action now returns
+ *  this rather than a bare boolean — without the code the UI is forced
+ *  to silently reset on rejection, which reads as "the button did
+ *  nothing." See src/multiplayer/errorMessages.ts. */
+export type MpActionResult = { ok: true } | { ok: false; code?: string; error: string };
+
 export interface MultiplayerActions {
   gameId: string;
-  /** Post a committed maneuver node to the server. Resolves true on success. */
-  transfer: (intent: TransferIntent) => Promise<boolean>;
-  /** Queue a ship build. Resolves true on success. */
-  build: (intent: BuildIntent) => Promise<boolean>;
-  /** Deploy a city or station at a body. */
-  /** Returns ok+error so the BodyInspector can surface the specific
-   *  server rejection (no_presence / insufficient_resources /
-   *  no_surface) inline instead of a silent reset. */
-  deploySettlement: (intent: SettlementIntent) =>
-    Promise<{ ok: true } | { ok: false; code?: string; error: string }>;
-  /** Spend science to advance a tech level. Server is authoritative on cost. */
-  research: (intent: ResearchIntent) => Promise<boolean>;
+  /** Post a committed maneuver node to the server. Errors carry a code
+   *  (not_owner / not_found / bad_request) so the ShipPanel can surface
+   *  the rejection instead of silently dropping the post. */
+  transfer: (intent: TransferIntent) => Promise<MpActionResult>;
+  /** Queue a ship build. Errors carry a code (not_owner /
+   *  insufficient_resources / not_found) so BuildPanel can show the
+   *  player why the queue didn't take. */
+  build: (intent: BuildIntent) => Promise<MpActionResult>;
+  /** Deploy a city or station at a body. Errors carry the server's
+   *  rejection code (no_presence / no_surface / insufficient_resources)
+   *  so the BodyInspector can surface it inline. */
+  deploySettlement: (intent: SettlementIntent) => Promise<MpActionResult>;
+  /** Spend science to advance a tech level. Server is authoritative on
+   *  cost — errors carry tech_maxed / insufficient_resources for the
+   *  TechPanel to surface. */
+  research: (intent: ResearchIntent) => Promise<MpActionResult>;
 
   // --- Turn-Based Mode (MP) ---
-  /** Host-only: enable/disable TBM and set ticks_per_turn for this game. */
-  setTurnSettings: (enabled: boolean, ticksPerTurn: number) => Promise<boolean>;
+  /** Host-only: enable/disable TBM and set ticks_per_turn for this game.
+   *  Errors carry not_host so non-hosts see why the toggle didn't take. */
+  setTurnSettings: (enabled: boolean, ticksPerTurn: number) => Promise<MpActionResult>;
   /** Submit caller's faction as ready for the current turn. If this commit
    *  fills the last slot, the server advances the sim by ticks_per_turn
    *  ticks before responding. */
@@ -102,17 +116,17 @@ export interface MultiplayerActions {
   adminGrant: (
     target: string | 'all',
     delta: { fuel?: number; ore?: number; credits?: number; science?: number },
-  ) => Promise<{ ok: true } | { ok: false; error: string }>;
+  ) => Promise<MpActionResult>;
 
   // --- Cancel actions ---
   /** Cancel a queued ship build server-side (marks cancelled_at_tick,
    *  refunds metal+gold). Without this, optimistic local removal was
    *  clobbered by the next /state poll and the build re-appeared. */
-  cancelBuild: (orderId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  cancelBuild: (orderId: string) => Promise<MpActionResult>;
   /** Cancel a planned or committed maneuver node server-side (flips
    *  status='cancelled'). Same problem as build cancel: local-only
    *  removal got rewound by the next /state. */
-  cancelNode: (nodeId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  cancelNode: (nodeId: string) => Promise<MpActionResult>;
 
   // --- Collector network ---
   /** Upgrade a player-owned settlement to a logistics endpoint. Server
@@ -120,17 +134,17 @@ export interface MultiplayerActions {
    *  has_collector = 1. Without this server hop the local mutation
    *  would survive ~1.5s before the next /state poll restored
    *  has_collector=0 and refunded the resources. */
-  buildCollector: (settlementId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  buildCollector: (settlementId: string) => Promise<MpActionResult>;
 
   // --- Settlement upgrade buildings (forge/mint/lab/weapons/shipyard) ---
   /** Queue an upgrade. Server charges the current-level cost and writes
    *  building_order_json. Cancelled or completed orders clear that slot. */
   queueBuilding: (settlementId: string, kind: string) =>
-    Promise<{ ok: true } | { ok: false; error: string }>;
+    Promise<MpActionResult>;
   /** Cancel the in-flight upgrade at a settlement; server refunds the
    *  cost-at-queue-time and clears building_order_json. */
   cancelBuilding: (settlementId: string) =>
-    Promise<{ ok: true } | { ok: false; error: string }>;
+    Promise<MpActionResult>;
 
   // --- Dyson Sphere (Engineering Victory) ---
   /** Lay the Dyson Sphere foundation at one of the caller's Sol-orbit
@@ -139,7 +153,7 @@ export interface MultiplayerActions {
    *  server-side in tickDysonSphere; the client just mounts the panel
    *  via the /state mirror. */
   initiateDysonSphere: (foundationSettlementId: string) =>
-    Promise<{ ok: true } | { ok: false; error: string }>;
+    Promise<MpActionResult>;
 
   // --- Trade routes ---
   /** Open a recurring freighter route between origin (any player
@@ -147,11 +161,11 @@ export interface MultiplayerActions {
    *  inserts; the per-tick auto-pilot loop in worker/room.js drives
    *  the freighter from there. */
   createTradeRoute: (shipId: string, originBodyId: string, destBodyId: string) =>
-    Promise<{ ok: true } | { ok: false; error: string }>;
+    Promise<MpActionResult>;
   /** Cancel an active route. Server refunds any cargo in the hold to
    *  the player's pool (no resource leak). */
   cancelTradeRoute: (routeId: string) =>
-    Promise<{ ok: true } | { ok: false; error: string }>;
+    Promise<MpActionResult>;
 }
 
 const MultiplayerActionsContext = createContext<MultiplayerActions | null>(null);
@@ -183,11 +197,13 @@ export function MultiplayerActionsProvider({
           fuel_cost: intent.fuelCost,
         }),
       });
-      if (!res.ok) {
-        // Surface to console for now; ShipPanel can show a toast later.
-        console.warn('transfer failed', res.error);
-      }
-      return res.ok;
+      if (res.ok) return { ok: true };
+      console.warn('transfer failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the transfer.',
+      };
     },
     async build(intent) {
       const res = await apiFetch(`/api/games/${gameId}/bodies/${encodeURIComponent(qualify(intent.bodyId))}/build`, {
@@ -198,10 +214,13 @@ export function MultiplayerActionsProvider({
           icon_variant: intent.iconVariant ?? null,
         }),
       });
-      if (!res.ok) {
-        console.warn('build failed', res.error);
-      }
-      return res.ok;
+      if (res.ok) return { ok: true };
+      console.warn('build failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the build.',
+      };
     },
     async deploySettlement(intent) {
       const res = await apiFetch(`/api/games/${gameId}/bodies/${encodeURIComponent(qualify(intent.bodyId))}/settlement`, {
@@ -221,18 +240,26 @@ export function MultiplayerActionsProvider({
         method: 'POST',
         body: JSON.stringify({ tech_id: intent.techId }),
       });
-      if (!res.ok) {
-        console.warn('research failed', res.error);
-      }
-      return res.ok;
+      if (res.ok) return { ok: true };
+      console.warn('research failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the research spend.',
+      };
     },
     async setTurnSettings(enabled, ticksPerTurn) {
       const res = await apiFetch(`/api/games/${gameId}/turn/settings`, {
         method: 'POST',
         body: JSON.stringify({ enabled, ticks_per_turn: ticksPerTurn }),
       });
-      if (!res.ok) console.warn('setTurnSettings failed', res.error);
-      return res.ok;
+      if (res.ok) return { ok: true };
+      console.warn('setTurnSettings failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the TBM setting change.',
+      };
     },
     async commitTurn() {
       const res = await apiFetch<TurnCommitResult>(`/api/games/${gameId}/turn/commit`, {
@@ -260,7 +287,11 @@ export function MultiplayerActionsProvider({
       );
       if (res.ok) return { ok: true };
       console.warn('cancelBuild failed', res.error);
-      return { ok: false, error: res.error?.message ?? 'Server rejected cancel.' };
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected cancel.',
+      };
     },
     async cancelNode(nodeId) {
       const res = await apiFetch<{ ok: boolean }>(
@@ -269,7 +300,11 @@ export function MultiplayerActionsProvider({
       );
       if (res.ok) return { ok: true };
       console.warn('cancelNode failed', res.error);
-      return { ok: false, error: res.error?.message ?? 'Server rejected cancel.' };
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected cancel.',
+      };
     },
     async adminGrant(target, delta) {
       const res = await apiFetch<{ ok: boolean }>(`/api/games/${gameId}/admin/grant`, {
@@ -284,7 +319,11 @@ export function MultiplayerActionsProvider({
       });
       if (res.ok) return { ok: true };
       console.warn('adminGrant failed', res.error);
-      return { ok: false, error: res.error?.message ?? 'Server rejected the grant.' };
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the grant.',
+      };
     },
     async buildCollector(settlementId) {
       const res = await apiFetch<{ ok: boolean }>(
@@ -293,7 +332,11 @@ export function MultiplayerActionsProvider({
       );
       if (res.ok) return { ok: true };
       console.warn('buildCollector failed', res.error);
-      return { ok: false, error: res.error?.message ?? 'Server rejected the collector build.' };
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the collector build.',
+      };
     },
     async queueBuilding(settlementId, kind) {
       const res = await apiFetch<{ ok: boolean }>(
@@ -302,7 +345,11 @@ export function MultiplayerActionsProvider({
       );
       if (res.ok) return { ok: true };
       console.warn('queueBuilding failed', res.error);
-      return { ok: false, error: res.error?.message ?? 'Server rejected the building queue.' };
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the building queue.',
+      };
     },
     async cancelBuilding(settlementId) {
       const res = await apiFetch<{ ok: boolean }>(
@@ -311,7 +358,11 @@ export function MultiplayerActionsProvider({
       );
       if (res.ok) return { ok: true };
       console.warn('cancelBuilding failed', res.error);
-      return { ok: false, error: res.error?.message ?? 'Server rejected the cancel.' };
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the cancel.',
+      };
     },
     async initiateDysonSphere(foundationSettlementId) {
       // Server expects the namespaced settlement id ("<gameId>:<localId>").
@@ -329,7 +380,11 @@ export function MultiplayerActionsProvider({
       );
       if (res.ok) return { ok: true };
       console.warn('initiateDysonSphere failed', res.error);
-      return { ok: false, error: res.error?.message ?? 'Server rejected the Dyson Sphere foundation.' };
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the Dyson Sphere foundation.',
+      };
     },
     async createTradeRoute(shipId, originBodyId, destBodyId) {
       const res = await apiFetch<{ ok: boolean }>(
@@ -348,7 +403,11 @@ export function MultiplayerActionsProvider({
       );
       if (res.ok) return { ok: true };
       console.warn('createTradeRoute failed', res.error);
-      return { ok: false, error: res.error?.message ?? 'Server rejected the route.' };
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the route.',
+      };
     },
     async cancelTradeRoute(routeId) {
       const res = await apiFetch<{ ok: boolean }>(
@@ -357,7 +416,11 @@ export function MultiplayerActionsProvider({
       );
       if (res.ok) return { ok: true };
       console.warn('cancelTradeRoute failed', res.error);
-      return { ok: false, error: res.error?.message ?? 'Server rejected the cancel.' };
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the cancel.',
+      };
     },
     });
   }, [gameId]);

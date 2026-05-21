@@ -10,6 +10,7 @@ import { useTurnBasedSettings } from '../state/turnBasedSettings';
 import { computeTurnBudget } from '../game/turnBudget';
 import { useAuth } from '../multiplayer/AuthContext';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { humanizeMpError } from '../multiplayer/errorMessages';
 import { useMpTurnStatus } from '../multiplayer/useMpTurnStatus';
 import { logger } from '../game/logger';
 import { SaveLoadModal } from './SaveLoadModal';
@@ -739,13 +740,21 @@ const MpTbmHostToggle: React.FC = () => {
   const mp = useMultiplayerActions();
   const { status, refresh } = useMpTurnStatus();
   const [busy, setBusy] = useState(false);
+  // Surface server-side rejections (not_host, bad_request) inline so
+  // a non-host clicking the toggle sees why nothing happened. Without
+  // this the pill just flickered busy → idle with status unchanged.
+  const [tbmError, setTbmError] = useState<string | null>(null);
 
   if (!mp || !status) return null;
 
   const setTBM = async (enabled: boolean, ticks: number) => {
     setBusy(true);
+    setTbmError(null);
     try {
-      await mp.setTurnSettings(enabled, ticks);
+      const res = await mp.setTurnSettings(enabled, ticks);
+      if (!res.ok) {
+        setTbmError(humanizeMpError(res.code, res.error, 'tbm'));
+      }
       await refresh();
     } finally {
       setBusy(false);
@@ -793,6 +802,22 @@ const MpTbmHostToggle: React.FC = () => {
             ? `Wall-clock paused. ${status.ready}/${status.needed} committed for turn ${status.turn_number}.`
             : 'Server alarm advances ticks on schedule.'}
         </span>
+        {tbmError && (
+          // Server rejected the toggle (almost always not_host on a
+          // joined-mid-game client). Click to dismiss.
+          <button
+            onClick={() => setTbmError(null)}
+            style={{
+              marginTop: 4, padding: '4px 8px',
+              background: 'rgba(255, 94, 94, 0.1)',
+              border: '1px solid #ff5e5e', borderRadius: 4,
+              color: '#ff5e5e', fontSize: 10, lineHeight: 1.3,
+              fontFamily: 'inherit', textAlign: 'left',
+              cursor: 'pointer', width: '100%',
+            }}
+            title="Click to dismiss"
+          >⚠ {tbmError}</button>
+        )}
       </div>
     </div>
   );

@@ -8,6 +8,7 @@ import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { ShipIcon } from './ShipIcons';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { humanizeMpError } from '../multiplayer/errorMessages';
 import './OverviewPanel.css';
 
 interface FleetPanelProps {
@@ -103,6 +104,11 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     if (visibleSelected.length === 0) { setBulkError('No eligible ships selected'); return; }
 
     let issued = 0;
+    // Collect server rejection codes so the UI can summarize what
+    // happened ("3 transfers rejected: not enough fuel / no longer
+    // own ship"). Without this, the bulk button looks like it
+    // worked but half the ships silently snap back to orbiting.
+    const serverRejections: string[] = [];
     for (const sid of visibleSelected) {
       const ship = gameState.ships.find(s => s.id === sid);
       if (!ship) continue;
@@ -119,6 +125,16 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           arrivalT: plan.arriveTick,
           dvPrograde: plan.totalDv,
           fuelCost: Math.round(plan.totalDv * 10),
+        }).then(res => {
+          if (!res.ok) {
+            serverRejections.push(humanizeMpError(res.code, res.error, 'transfer'));
+            // We collect from many ships' resolved promises (fire-and-forget
+            // loop), but they all share `serverRejections`. We re-render the
+            // bulkError each rejection so the player sees the count grow.
+            setBulkError(
+              `${serverRejections.length} of ${visibleSelected.length} rejected by server — ${serverRejections[0]}`,
+            );
+          }
         });
       }
       issued += 1;

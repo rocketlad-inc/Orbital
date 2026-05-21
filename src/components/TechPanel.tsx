@@ -14,6 +14,7 @@ import {
   TECH_MAX_LEVEL,
 } from '../game/techs';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { humanizeMpError } from '../multiplayer/errorMessages';
 import './OverviewPanel.css';
 import './TechPanel.css';
 
@@ -32,6 +33,11 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
   // research requests and made the second one bounce with a stale
   // 409 'insufficient_resources' even though the user saw enough science.
   const [inFlight, setInFlight] = React.useState<Set<TechId>>(new Set());
+  // Server-side research rejection shown as a banner at the top of
+  // the tech list. Without this the button just flickers from "…" to
+  // the un-clicked state when the server returns 409 tech_maxed or
+  // 409 insufficient_resources, with no explanation.
+  const [researchError, setResearchError] = React.useState<string | null>(null);
   const tech = gameState.factionTech.player ?? { levels: {}, researching: null, progress: 0, queue: [] };
   const queue = tech.queue ?? [];
   const playerScience = gameState.resources.player?.science ?? 0;
@@ -149,6 +155,27 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
         </div>
       )}
 
+      {researchError && (
+        // MP server rejected the research spend (tech_maxed or
+        // insufficient_resources, usually). Surface inline rather than
+        // letting the button silently flicker back to its idle state.
+        <button
+          onClick={() => setResearchError(null)}
+          style={{
+            margin: '8px 12px 0', padding: '6px 10px',
+            background: 'rgba(255, 94, 94, 0.1)',
+            border: '1px solid #ff5e5e', borderRadius: 4,
+            color: '#ff5e5e', fontSize: 10, lineHeight: 1.4,
+            fontFamily: 'inherit', textAlign: 'left',
+            cursor: 'pointer',
+            // The panel body uses width 100% so this banner needs the
+            // same accounting (margin already provides side padding).
+            width: 'calc(100% - 24px)',
+          }}
+          title="Click to dismiss"
+        >⚠ {researchError}</button>
+      )}
+
       <div className="overview-panel__body">
         <div className="tech-grid">
           {ALL_TECH_IDS.map((id) => {
@@ -231,8 +258,12 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                       if (inFlight.has(id)) return;
                       if (cost > playerScience) return;
                       setInFlight(prev => new Set(prev).add(id));
+                      setResearchError(null);
                       try {
-                        await mpActions.research({ techId: id });
+                        const res = await mpActions.research({ techId: id });
+                        if (!res.ok) {
+                          setResearchError(humanizeMpError(res.code, res.error, 'research'));
+                        }
                       } finally {
                         setTimeout(() => {
                           setInFlight(prev => {

@@ -6,6 +6,7 @@ import React, { useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { BUILDABLE_CLASSES, SHIP_CLASSES, ShipClassName } from '../game/shipClasses';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { humanizeMpError } from '../multiplayer/errorMessages';
 import {
   ShipIcon, ShipIconVariant, ICON_VARIANT_NAMES,
   ALL_VARIANTS, DEFAULT_SHIP_ICONS,
@@ -44,6 +45,10 @@ export const BuildPanel: React.FC = () => {
     destroyer: DEFAULT_SHIP_ICONS.destroyer,
     freighter: DEFAULT_SHIP_ICONS.freighter,
   });
+  // Server-side build rejection shown as a red chip below the rows so
+  // the BUILD button never silently resets in MP — mirrors the
+  // BodyInspector deploy-error pattern. Cleared on the next attempt.
+  const [buildError, setBuildError] = useState<string | null>(null);
 
   if (!uiState.selectedBodyId) return null;
 
@@ -71,7 +76,15 @@ export const BuildPanel: React.FC = () => {
       // persistence. Skip the local buildShip() — calling it here used
       // to flash 2× deducted resources for ~1.5s until /state poll snap
       // back. Post intent only; UI updates when the poll lands.
-      mpActions.build({ bodyId: body.id, shipClass, shipName: name, iconVariant: variant });
+      // Surface server rejections inline so the BUILD button doesn't
+      // appear to "do nothing" when the queue actually 4xx'd.
+      setBuildError(null);
+      mpActions.build({ bodyId: body.id, shipClass, shipName: name, iconVariant: variant })
+        .then(res => {
+          if (!res.ok) {
+            setBuildError(humanizeMpError(res.code, res.error, 'build'));
+          }
+        });
       setCustomName('');
     } else {
       // Single-player: local state is canonical.
@@ -237,6 +250,25 @@ export const BuildPanel: React.FC = () => {
           );
         })}
       </div>
+
+      {buildError && (
+        // Server rejected the queue. Without surfacing this the BUILD
+        // button would silently reset to the un-clicked state when the
+        // next /state poll arrived (because the server never actually
+        // wrote the row). Click to dismiss.
+        <button
+          onClick={() => setBuildError(null)}
+          style={{
+            marginTop: 8, padding: '6px 10px',
+            background: 'rgba(255, 94, 94, 0.1)',
+            border: '1px solid #ff5e5e', borderRadius: 4,
+            color: '#ff5e5e', fontSize: 10, lineHeight: 1.4,
+            fontFamily: 'inherit', textAlign: 'left',
+            cursor: 'pointer', width: '100%',
+          }}
+          title="Click to dismiss"
+        >⚠ {buildError}</button>
+      )}
 
       <div className="resources-bar">
         <span className="resource">FUEL: {Math.round(playerRes.fuel)}</span>

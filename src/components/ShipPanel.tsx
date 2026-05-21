@@ -5,6 +5,7 @@ import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { maintenanceRatesForShip } from '../game/maintenance';
 import { rankHpMul } from '../game/techs';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { humanizeMpError } from '../multiplayer/errorMessages';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { ShipIcon } from './ShipIcons';
 import { BottomSheet } from './BottomSheet';
@@ -28,6 +29,12 @@ export const ShipPanel: React.FC = () => {
   const [transferModalOpen, setTransferModalOpen] = useState(false);
   const [fleetModalOpen, setFleetModalOpen] = useState(false);
   const [propagateTransferToFleet, setPropagateTransferToFleet] = useState(true);
+  // Server-side transfer rejection — shown inline above the COMMIT
+  // button when MP rejects the burn (e.g. ship was captured between
+  // plan and commit). Without this the TRANSFER / COMMIT click looks
+  // like it worked but the next /state poll silently rewinds the
+  // optimistic local state.
+  const [transferError, setTransferError] = useState<string | null>(null);
 
   const ship = uiState.selectedShipId
     ? gameState.ships.find(s => s.id === uiState.selectedShipId) || null
@@ -54,6 +61,7 @@ export const ShipPanel: React.FC = () => {
       if (ship.transit || (ship.queuedTransits && ship.queuedTransits.length > 0)) {
         const queuedPlan = enqueueTorchTransfer(ship.id, targetBodyId);
         if (queuedPlan && mpActions) {
+          setTransferError(null);
           mpActions.transfer({
             shipId: ship.id,
             targetBodyId,
@@ -61,6 +69,10 @@ export const ShipPanel: React.FC = () => {
             arrivalT: queuedPlan.arriveTick,
             dvPrograde: queuedPlan.totalDv,
             fuelCost: Math.round(queuedPlan.totalDv * 10),
+          }).then(res => {
+            if (!res.ok) {
+              setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
+            }
           });
         }
         setTransferModalOpen(false);
@@ -145,6 +157,7 @@ export const ShipPanel: React.FC = () => {
     // Post the torch-derived arrival to the server so its DB row, the
     // alarm's in_transit→arrive transition, and the other clients' MP
     // reconstruction all agree exactly.
+    setTransferError(null);
     mpActions.transfer({
       shipId: owningShip.id,
       targetBodyId: preview.targetBodyId,
@@ -155,6 +168,10 @@ export const ShipPanel: React.FC = () => {
       // and we want it to read the full burn cost, not half of it.
       dvPrograde: plan.totalDv,
       fuelCost: Math.round(plan.totalDv * 10),
+    }).then(res => {
+      if (!res.ok) {
+        setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
+      }
     });
   };
 
@@ -440,14 +457,24 @@ export const ShipPanel: React.FC = () => {
                 // server's authoritative row.
                 const ok = createTradeRoute(ship.id, originBodyId, destBodyId);
                 if (ok && mpActions) {
-                  mpActions.createTradeRoute(ship.id, originBodyId, destBodyId);
+                  // Surface server rejections (route already exists,
+                  // origin not yours, dest not a collector) so the route
+                  // chip doesn't flicker on and silently disappear. The
+                  // 'transfer' domain message is close enough — both
+                  // talk about ship/body presence.
+                  setTransferError(null);
+                  mpActions.createTradeRoute(ship.id, originBodyId, destBodyId).then(res => {
+                    if (!res.ok) setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
+                  });
                 }
                 return ok;
               }}
               onCancel={(routeId) => {
                 cancelTradeRoute(routeId);
                 if (mpActions) {
-                  mpActions.cancelTradeRoute(routeId);
+                  mpActions.cancelTradeRoute(routeId).then(res => {
+                    if (!res.ok) setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
+                  });
                 }
               }}
             />
@@ -657,6 +684,23 @@ export const ShipPanel: React.FC = () => {
             </div>
           )}
 
+          {transferError && (
+            // Server rejected this transfer. Surface inline above the
+            // maneuver buttons so the next-action UI is right next to
+            // the explanation. Click to dismiss.
+            <button
+              onClick={() => setTransferError(null)}
+              style={{
+                margin: '0 0 6px', padding: '6px 10px',
+                background: 'rgba(255, 94, 94, 0.1)',
+                border: '1px solid #ff5e5e', borderRadius: 4,
+                color: '#ff5e5e', fontSize: 10, lineHeight: 1.4,
+                fontFamily: 'inherit', textAlign: 'left',
+                cursor: 'pointer', width: '100%',
+              }}
+              title="Click to dismiss"
+            >⚠ {transferError}</button>
+          )}
           <div className="maneuver-buttons">
             <button
               className="maneuver-btn"
