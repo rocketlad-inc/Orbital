@@ -124,9 +124,21 @@
   border: 1px solid #2a3d50;
   border-radius: 3px;
   font-size: 10px;
+  /* flex-wrap lets the shortage callout (flexBasis: 100%) drop to its
+     own line below the row. Without this the callout collides with
+     the BUILD button + cost on the same line and the disabled row
+     reads as a jumble. */
+  flex-wrap: wrap;
 }
 
-.build-class-row.disabled {
+/* Don't dim the entire row — that also dims the shortage warning,
+   making the "Need +10 cr" hint unreadable on the disabled state.
+   Dim just the *content* (stats, cost, build button) and keep the
+   shortage callout full opacity. */
+.build-class-row.disabled .class-info,
+.build-class-row.disabled .class-stats,
+.build-class-row.disabled .class-cost,
+.build-class-row.disabled .build-btn {
   opacity: 0.4;
 }
 
@@ -134,7 +146,10 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  min-width: 75px;
+  /* Bumped to fit the new icon-variant <select> dropdown. The original
+     75px was for a single icon + class name; we now also host a
+     ~70px dropdown showing "F · Raptor". */
+  min-width: 165px;
 }
 
 .class-icon {
