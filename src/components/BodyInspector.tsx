@@ -177,17 +177,29 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
   const [namingType, setNamingType] = useState<SettlementType | null>(null);
   const [draftName, setDraftName] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  // Server-side deploy rejection surfaced inline so the player isn't
+  // left with a silent "button reset" UX. Cleared on the next attempt.
+  // (humanizeDeployError is defined at module scope below.)
+  const [deployError, setDeployError] = useState<string | null>(null);
 
   const body = gameState.bodies.find(b => b.id === bodyId);
 
-  // Auto-focus and seed default name when prompt opens
+  // Auto-focus and seed default name when prompt opens. On mobile the
+  // BottomSheet caps at 55vh and the prompt can render below the fold
+  // if there's a long settlements list; scrollIntoView before focus
+  // keeps the input AND its FOUND CITY / CANCEL buttons visible above
+  // the iOS keyboard.
   useEffect(() => {
     if (namingType && body) {
       setDraftName(suggestSettlementName(body, namingType, gameState.settlements));
-      // Focus & select after a tick so the input is rendered
       setTimeout(() => {
-        inputRef.current?.focus();
-        inputRef.current?.select();
+        const el = inputRef.current;
+        if (!el) return;
+        try {
+          el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        } catch { /* older Safari lacks smooth */ }
+        el.focus();
+        el.select();
       }, 0);
     }
   }, [namingType, body, gameState.settlements]);
@@ -221,12 +233,24 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
 
   const handleConfirm = () => {
     if (!namingType) return;
+    setDeployError(null);
     const name = draftName.trim();
     if (mpActions) {
       // Multiplayer: server is canonical for resource deduction +
       // settlement creation. Skip the local deploySettlement() which
       // would flash 2× deducted resources for ~1.5s until /state poll.
-      mpActions.deploySettlement({ bodyId, type: namingType, name: name || undefined });
+      // Surface server rejections inline so the deploy button doesn't
+      // look like it "did nothing" — without this, a server-side gate
+      // (no_presence / no_surface / insufficient_resources) reset the
+      // UI to a fresh state with no explanation.
+      const typeAtClick = namingType;
+      const nameAtClick = name;
+      mpActions.deploySettlement({ bodyId, type: typeAtClick, name: nameAtClick || undefined })
+        .then(res => {
+          if (!res.ok) {
+            setDeployError(humanizeDeployError(res.code, res.error, typeAtClick));
+          }
+        });
     } else {
       deploySettlement(bodyId, namingType, name || undefined);
     }
@@ -428,11 +452,61 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
           {!canBuildHere && (cityAllowed || stationAllowed) && (
             <div className="deploy-hint">Send a freighter to orbit to deploy</div>
           )}
+
+          {deployError && (
+            // Server rejected the deploy. Show why so the player can
+            // act on it instead of clicking the button again with the
+            // same broken preconditions. Click the chip to dismiss.
+            <button
+              onClick={() => setDeployError(null)}
+              style={{
+                marginTop: 6, padding: '6px 10px',
+                background: 'rgba(255, 94, 94, 0.1)',
+                border: '1px solid #ff5e5e', borderRadius: 4,
+                color: '#ff5e5e', fontSize: 10, lineHeight: 1.4,
+                fontFamily: 'inherit', textAlign: 'left',
+                cursor: 'pointer', width: '100%',
+              }}
+              title="Click to dismiss"
+            >⚠ {deployError}</button>
+          )}
         </>
       )}
     </div>
   );
 };
+
+/**
+ * Server returns short codes like 'no_presence' / 'no_surface' /
+ * 'insufficient_resources'. Map to actionable English so the BodyInspector
+ * tells the player WHAT to do, not just "the server said no."
+ */
+function humanizeDeployError(
+  code: string | undefined,
+  fallback: string,
+  type: SettlementType,
+): string {
+  switch (code) {
+    case 'no_presence':
+      // The server requires a freighter at the body OR ownership.
+      // The client should usually prevent this — but if the player's
+      // freighter departed between the button render and the click,
+      // they'd hit this server-side. Tell them what to fix.
+      return 'Server: a freighter must be in orbit at this body to deploy. Send one and try again.';
+    case 'no_surface':
+      return `Server: a ${type} can't be deployed on this body type (gas giants, stars, ice giants — no surface).`;
+    case 'insufficient_resources':
+      return 'Server: not enough ore + credits. Wait for income or grant resources via the admin panel.';
+    case 'not_member':
+      return 'Server: you are not in this game. Re-enter the room and try again.';
+    case 'not_found':
+      return 'Server: this body no longer exists in the game.';
+    default:
+      // Unmapped code (or no code) — fall back to whatever server said,
+      // plus the code itself so we can spot it during dev.
+      return code ? `Server (${code}): ${fallback}` : `Server: ${fallback}`;
+  }
+}
 
 // ============================================================
 // Per-settlement Buildings strip — Forge / Mint / Lab on cities,

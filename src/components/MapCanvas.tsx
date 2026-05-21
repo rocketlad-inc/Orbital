@@ -897,7 +897,12 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
 
   ctx.ctx.fillStyle = COLORS.fgFaint;
   ctx.ctx.font = '10px monospace';
-  ctx.ctx.fillText('Right-drag: pan | Scroll: zoom | Click: select | Double-click: focus', 16, ctx.canvas.height - 32);
+  // Hint changes by input modality — desktop hotkeys are wrong on a
+  // touch device, so don't tell a phone player to "right-drag."
+  const hint = isCoarsePointer()
+    ? 'Drag: pan · Pinch: zoom · Tap: select · Double-tap: focus'
+    : 'Right-drag: pan | Scroll: zoom | Click: select | Double-click: focus';
+  ctx.ctx.fillText(hint, 16, ctx.canvas.height - 32);
 
   if (targetSelectionMode) {
     ctx.ctx.fillStyle = COLORS.warning;

@@ -1626,17 +1626,34 @@ export function drawDestructionFlashes(
  *      how many circles stack.
  *   3. drawImage onto the main canvas.
  */
+// Module-level cache for the fog offscreen canvas. Allocating a new
+// fullscreen canvas every frame burned ~24MB/s of memory churn on
+// mid-tier phones (430×932×4 bytes × 60fps), starving the GC and
+// stuttering the map. Cache it across frames; only re-allocate when
+// the viewport changes size.
+let fogOffscreen: HTMLCanvasElement | null = null;
+let fogOffscreenCtx: CanvasRenderingContext2D | null = null;
+
 export function drawFogOfWarOverlay(
   rings: Array<{ pos: { x: number; y: number }; range: number }>,
   ctx: RenderContext,
 ) {
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
-  const off = document.createElement('canvas');
-  off.width = w;
-  off.height = h;
-  const oc = off.getContext('2d');
+  if (!fogOffscreen || fogOffscreen.width !== w || fogOffscreen.height !== h) {
+    fogOffscreen = document.createElement('canvas');
+    fogOffscreen.width = w;
+    fogOffscreen.height = h;
+    fogOffscreenCtx = fogOffscreen.getContext('2d');
+  }
+  const oc = fogOffscreenCtx;
   if (!oc) return;
+
+  // Pass 0: reset to fully transparent so last frame's wash + holes
+  // don't bleed through. clearRect is the cheapest way to wipe an
+  // entire backing buffer.
+  oc.globalCompositeOperation = 'source-over';
+  oc.clearRect(0, 0, w, h);
 
   // Pass 1: wash the whole offscreen with the dim color. Opacity is
   // tuned so planet motion + orbits stay visible through the fog (the
@@ -1659,7 +1676,7 @@ export function drawFogOfWarOverlay(
   }
 
   ctx.ctx.save();
-  ctx.ctx.drawImage(off, 0, 0);
+  ctx.ctx.drawImage(fogOffscreen, 0, 0);
   ctx.ctx.restore();
 }
 

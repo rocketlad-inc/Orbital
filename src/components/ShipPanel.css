@@ -349,7 +349,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 200;
+  /* Must sit ABOVE BottomSheet (z:1080). The previous z:200 made the
+   * TransferTargetPicker invisible on mobile — the sheet covered it. */
+  z-index: 1200;
 }
 
 .modal-content {

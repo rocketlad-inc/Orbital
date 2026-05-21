@@ -22,6 +22,16 @@ interface BottomSheetProps {
 
 const DRAG_DISMISS_THRESHOLD = 80; // px downward swipe required to close
 
+// Module-level registry: only one BottomSheet may be open at a time on
+// mobile. ShipPanel and BodyInspector both render BottomSheet and used
+// to stack at the same z-index, hiding the lower sheet under the upper
+// one with no indicator. When a new sheet opens, kick the previous
+// sheet's onClose so the player sees a clean swap instead of a silent
+// cover-up. Desktop is a no-op pass-through; the registry only fires
+// on touch viewports.
+interface OpenEntry { close?: () => void; }
+const openSheets = new Set<OpenEntry>();
+
 export const BottomSheet: React.FC<BottomSheetProps> = ({
   open,
   onClose,
@@ -48,6 +58,21 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [isMobile, open, onClose]);
+
+  // Singleton-on-mobile: when this sheet opens, close any other open
+  // sheet. Without this, opening ShipPanel while BodyInspector is open
+  // silently paints over the body sheet — same chrome, same z-index,
+  // same coordinates, and the body sheet is effectively gone.
+  useEffect(() => {
+    if (!isMobile || !open) return;
+    for (const other of openSheets) {
+      if (other.close) other.close();
+    }
+    const entry: OpenEntry = { close: onClose };
+    openSheets.add(entry);
+    return () => { openSheets.delete(entry); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMobile, open]);
 
   // Desktop: pass-through. Children render where they always did.
   if (!isMobile) {

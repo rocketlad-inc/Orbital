@@ -199,6 +199,7 @@ export const AdminGrantModal: React.FC<Props> = ({ onClose, mpGameId }) => {
                 </label>
                 <input
                   type="number"
+                  inputMode="numeric"
                   value={val}
                   onChange={(e) => setVal(e.target.value)}
                   style={{

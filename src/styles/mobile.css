@@ -92,6 +92,34 @@
 
   /* Alerts row: hide on tight viewports — the ThreatsPanel/sheets handle this */
   .top-bar__alerts { display: none; }
+
+  /* AI activity feed: hide on mobile. At 380px wide and anchored to
+   * bottom-left, it covers the MobileSimControls dock (also bottom-
+   * left) — players couldn't reach pause/×100/×10K controls behind it.
+   * The chronicle/Daily/CommsPanel surface the same info on mobile. */
+  .ai-feed { display: none !important; }
+
+  /* Sub-44px touch targets that the per-component CSS still emits:
+   * commit/cancel buttons in queued transfer rows, filter chips. */
+  .delete-btn,
+  .commit-btn,
+  .filter-chip {
+    min-height: 40px;
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  /* Side-menu close button — desktop is 28×28, too small on touch. */
+  .side-menu__close {
+    width: 44px !important;
+    height: 44px !important;
+  }
+
+  /* Header ✕ inside ShipPanel/BodyInspector when wrapped in a
+   * BottomSheet: redundant with the sheet's own close button, and
+   * the inner one is only 20×20. Hide it to avoid a tiny duplicate
+   * target. */
+  .bottom-sheet__body .panel-close { display: none; }
 }
 
 /* ThreatsPanel: anchor to top-LEFT-edge below the TopBar on mobile, full

@@ -104,6 +104,7 @@ export function SenatePanel({ gameId }: { gameId: string }) {
             <input
               className="mp-input"
               type="number"
+              inputMode="decimal"
               step="any"
               min={selectedSlider.min}
               max={selectedSlider.max}

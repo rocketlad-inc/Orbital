@@ -316,6 +316,7 @@ function ColumnEditor({
             </span>
             <input
               type="number"
+              inputMode="numeric"
               min={0}
               value={bundle[k]}
               onChange={(e) => onResource(k, Number(e.target.value))}

@@ -385,6 +385,7 @@ function RoomDetail({
               <input
                 className="mp-input"
                 type="number"
+                inputMode="numeric"
                 min={2}
                 max={8}
                 value={hostMax}
