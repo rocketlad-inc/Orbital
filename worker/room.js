@@ -922,9 +922,15 @@ export class Room {
     //    them. An "active" treaty has status='active', broken_at_tick IS
     //    NULL, and (expires_at_tick IS NULL OR expires_at_tick > tick),
     //    with BOTH sides as signed signatories.
+    // Pull rank + combat_history alongside the live stats so we can
+    // (1) multiply each attacker's damage by 1 + 0.01*rank, and
+    // (2) append a kill record + bump rank when a hull lands the
+    // killing blow on another ship. Class + name are needed for the
+    // history record itself (target's class/name at moment of death).
     const allShips = (await this.env.DB
       .prepare(
-        `SELECT id, owner_faction_id, parent_body_id, hp, damage_per_tick
+        `SELECT id, owner_faction_id, parent_body_id, hp, damage_per_tick,
+                rank, combat_history, ship_class, name
            FROM game_ships
           WHERE game_id = ? AND status = 'active'`,
       )
@@ -972,18 +978,23 @@ export class Room {
       byBody.get(s.parent_body_id).push(s);
     }
 
-    // hpDeltas: shipId -> { total: number, byFaction: Map<factionId, number> }
-    // Per-faction split is needed so chronicle entries can credit the kill
-    // ("destroyed BY <faction>") — previously we only knew the victim.
+    // hpDeltas: shipId -> { total: number, byFaction: Map<factionId, number>,
+    //                       byShip: Map<attackerShipId, number> }
+    // Per-faction split credits the kill in chronicle entries; per-ship
+    // split credits the rank-up + history record to a specific hull
+    // (mirrors src/game/combat.ts damageByAttackerShip).
     const hpDeltas = new Map();
-    const addDamage = (targetId, attackerFid, amount) => {
+    const addDamage = (targetId, attackerFid, attackerShipId, amount) => {
       let entry = hpDeltas.get(targetId);
       if (!entry) {
-        entry = { total: 0, byFaction: new Map() };
+        entry = { total: 0, byFaction: new Map(), byShip: new Map() };
         hpDeltas.set(targetId, entry);
       }
       entry.total += amount;
       entry.byFaction.set(attackerFid, (entry.byFaction.get(attackerFid) || 0) + amount);
+      if (attackerShipId) {
+        entry.byShip.set(attackerShipId, (entry.byShip.get(attackerShipId) || 0) + amount);
+      }
     };
     for (const [, ships] of byBody) {
       const factions = new Set(ships.map(s => s.owner_faction_id));
@@ -996,9 +1007,15 @@ export class Room {
           && !peace.has(pairKey(attacker.owner_faction_id, t.owner_faction_id)),
         );
         if (targets.length === 0) continue;
-        const split = attacker.damage_per_tick / targets.length;
+        // Veterancy: each rank on the attacker = +1% damage (mirrors
+        // src/game/techs.ts RANK_PER_KILL_MUL). Stacks multiplicatively
+        // with the faction-level Weapons tech (which is applied via the
+        // hp_max / damage_per_tick already stamped on the ship row when
+        // they were last upgraded — see lobby/upgrade endpoints).
+        const rankMul = 1 + 0.01 * Math.max(0, attacker.rank ?? 0);
+        const split = (attacker.damage_per_tick * rankMul) / targets.length;
         for (const t of targets) {
-          addDamage(t.id, attacker.owner_faction_id, split);
+          addDamage(t.id, attacker.owner_faction_id, attacker.id, split);
         }
       }
     }
@@ -1012,6 +1029,21 @@ export class Room {
       let bestDmg = -1;
       for (const [fid, dmg] of entry.byFaction) {
         if (dmg > bestDmg) { best = fid; bestDmg = dmg; }
+      }
+      return best;
+    }
+
+    // Mirror of the above but per-ship — returns the single attacker
+    // ship id that landed the most damage on `targetId`. Used for
+    // rank-up + combat history awards. Stationary settlements don't
+    // populate `byShip` so they correctly never accrue veterancy.
+    function topAttackerShip(targetId) {
+      const entry = hpDeltas.get(targetId);
+      if (!entry || entry.byShip.size === 0) return null;
+      let best = null;
+      let bestDmg = -1;
+      for (const [sid, dmg] of entry.byShip) {
+        if (dmg > bestDmg) { best = sid; bestDmg = dmg; }
       }
       return best;
     }
@@ -1136,6 +1168,93 @@ export class Room {
       }
     }
 
+    // 3.45 Ship maintenance — heal + refuel at friendly infrastructure.
+    //      Mirrors src/game/maintenance.ts tickMaintenance. Three rules:
+    //        (a) base refuel +1: ship parked at a body YOU own (logistics
+    //            presence — flag-on-the-pole signal, not infrastructure).
+    //        (b) per city you own at the body: +2 HP, no fuel.
+    //        (c) per station you own at the body: +1 HP and +2 fuel.
+    //      Rules (b)+(c) don't gate on body ownership — your settlements
+    //      service your hulls even on contested moons. Heal cap is the
+    //      rank-boosted max (rank +1% each), so veteran ships fill in
+    //      their extra HP buffer over time. Refuel cap is the per-class
+    //      fuel_max stored at spawn.
+    //
+    //      Skipped for ships in transit (they're not orbiting any body's
+    //      infrastructure).
+    const REPAIR_CITY = 2;
+    const REPAIR_STATION = 1;
+    const REFUEL_BASE = 1;
+    const REFUEL_STATION = 2;
+    // One ship-row fetch with the joinable owner-status data. status='active'
+    // excludes ships destroyed earlier in this same tick; transit-state
+    // is encoded as parent_body_id pointing at the source body even
+    // while in flight, so we filter on the route-state column the
+    // alarm uses elsewhere. The schema doesn't have a single 'in_transit'
+    // bool — the existence of an in_transit ship_node is the signal —
+    // so we cheat and detect transit via `has_pending_arrival_at_tick`
+    // joined from game_ship_nodes (cheap, indexed). Ships in transit
+    // get zero maintenance.
+    const maintShips = (await this.env.DB
+      .prepare(
+        `SELECT s.id, s.owner_faction_id, s.parent_body_id, s.hp, s.hp_max,
+                s.fuel, s.fuel_max, s.rank,
+                b.owner_faction_id AS body_owner,
+                (SELECT 1 FROM game_ship_nodes n
+                  WHERE n.ship_id = s.id
+                    AND n.game_id = ?1
+                    AND n.status = 'in_transit'
+                  LIMIT 1) AS in_transit
+           FROM game_ships s
+           JOIN game_bodies b ON b.id = s.parent_body_id
+          WHERE s.game_id = ?1 AND s.status = 'active'`,
+      )
+      .bind(gameId)
+      .all()).results ?? [];
+    // Settlement-by-body lookup — we need every settlement at each body
+    // the player has a ship at, filtered to "owned by the same faction".
+    // Cheaper to fetch once and group than to subquery per-ship.
+    const settlementsByBody = new Map();
+    const allSettlements = (await this.env.DB
+      .prepare(
+        `SELECT id, body_id, owner_faction_id, type
+           FROM game_settlements
+          WHERE game_id = ? AND destroyed_at_tick IS NULL`,
+      )
+      .bind(gameId)
+      .all()).results ?? [];
+    for (const st of allSettlements) {
+      if (!settlementsByBody.has(st.body_id)) settlementsByBody.set(st.body_id, []);
+      settlementsByBody.get(st.body_id).push(st);
+    }
+    for (const ship of maintShips) {
+      if (ship.in_transit) continue;
+      const localStations = (settlementsByBody.get(ship.parent_body_id) ?? [])
+        .filter(st => st.owner_faction_id === ship.owner_faction_id);
+      let repairRate = 0;
+      let refuelRate = ship.body_owner === ship.owner_faction_id ? REFUEL_BASE : 0;
+      for (const st of localStations) {
+        if (st.type === 'city') {
+          repairRate += REPAIR_CITY;
+        } else if (st.type === 'station') {
+          repairRate += REPAIR_STATION;
+          refuelRate += REFUEL_STATION;
+        }
+      }
+      if (repairRate <= 0 && refuelRate <= 0) continue;
+      // Rank-boosted HP cap so veteran hulls can heal into their
+      // extra buffer. The +1% per rank matches client combat.ts +
+      // src/game/techs.ts rankHpMul.
+      const effectiveMaxHp = (ship.hp_max ?? 0) * (1 + 0.01 * Math.max(0, ship.rank ?? 0));
+      const newHp = Math.min(effectiveMaxHp, (ship.hp ?? effectiveMaxHp) + repairRate);
+      const newFuel = Math.min(ship.fuel_max ?? 0, (ship.fuel ?? 0) + refuelRate);
+      if (newHp === ship.hp && newFuel === ship.fuel) continue;
+      await this.env.DB
+        .prepare('UPDATE game_ships SET hp = ?, fuel = ? WHERE id = ?')
+        .bind(newHp, newFuel, ship.id)
+        .run();
+    }
+
     // 3.5 Yield harvest. Every SETTLEMENT_HARVEST_INTERVAL=10 ticks, each
     //     settlement converts its body's yield into stockpile, scaled by
     //     population and the settlement type's bias (cities -> metal,
@@ -1243,6 +1362,16 @@ export class Room {
       const losses = [];
       const lostShipRows = [];  // for chronicle entries
       const killerByShip = new Map(); // shipId -> faction id that landed the killing volley
+      // killerShipByVictim: victimShipId -> attacker SHIP id that landed
+      // the most damage. Used below to award rank + push a history row.
+      // Per-attacker-ship attribution, separate from the per-faction
+      // kill credit that drives chronicle entries + piracy loot.
+      const killerShipByVictim = new Map();
+      // Track each killer ship's pending rank/history mutation so we
+      // can collapse N kills on the same hull into one UPDATE at the
+      // end (a destroyer cleaning up a squad shouldn't take N round-
+      // trips). Map: killerShipId -> { addedRank, newHistoryRecords[] }
+      const veteranAwards = new Map();
       for (const [shipId, entry] of hpDeltas) {
         const cur = allShips.find(s => s.id === shipId);
         if (!cur) continue;
@@ -1256,12 +1385,60 @@ export class Room {
           lostShipRows.push(cur);
           const kf = topAttacker(shipId);
           if (kf) killerByShip.set(shipId, kf);
+
+          // Veterancy award. Find the single attacker ship with the
+          // highest damage; bump its rank +1 and append a kill record
+          // to its combat_history (LRU cap 20, applied in the flush
+          // below). Settlements firing on ships have no shipId in the
+          // byShip map so they correctly don't earn ranks.
+          const killerShipId = topAttackerShip(shipId);
+          if (killerShipId && killerShipId !== shipId) {
+            let award = veteranAwards.get(killerShipId);
+            if (!award) {
+              award = { addedRank: 0, newRecords: [] };
+              veteranAwards.set(killerShipId, award);
+            }
+            award.addedRank += 1;
+            award.newRecords.push({
+              tick,
+              targetName: cur.name ?? '?',
+              targetClass: cur.ship_class ?? 'frigate',
+              atBodyId: cur.parent_body_id,
+            });
+          }
         } else {
           await this.env.DB
             .prepare('UPDATE game_ships SET hp = ? WHERE id = ?')
             .bind(newHp, shipId)
             .run();
         }
+      }
+
+      // Flush veteran awards — one UPDATE per killer ship. Read the
+      // current rank + history from the live `allShips` snapshot we
+      // already queried at the top of combat (cheaper than a re-SELECT).
+      const KILL_HISTORY_CAP = 20;
+      for (const [killerShipId, award] of veteranAwards) {
+        const killer = allShips.find(s => s.id === killerShipId);
+        if (!killer) continue;
+        const newRank = (killer.rank ?? 0) + award.addedRank;
+        // Parse the existing JSON history (or empty) and apply the new
+        // records LRU-style. Malformed JSON resets the column rather
+        // than crashing the tick.
+        let history = [];
+        if (killer.combat_history) {
+          try {
+            const parsed = JSON.parse(killer.combat_history);
+            if (Array.isArray(parsed)) history = parsed;
+          } catch {
+            // Bad JSON — start fresh; logging would spam the console.
+          }
+        }
+        history = [...history, ...award.newRecords].slice(-KILL_HISTORY_CAP);
+        await this.env.DB
+          .prepare('UPDATE game_ships SET rank = ?, combat_history = ? WHERE id = ?')
+          .bind(newRank, JSON.stringify(history), killerShipId)
+          .run();
       }
 
       // Piracy: any destroyed freighter on an active trade route hands
