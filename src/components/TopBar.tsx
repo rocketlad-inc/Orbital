@@ -325,7 +325,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           // Realtime sim controls. Hidden in Turn-Based Mode (replaced
           // below by the single COMMIT TURN button) and in multiplayer
           // when the server says TBM is on.
-          <div className="sim-controls">
+          <div className="sim-controls" data-tutorial-id="sim-controls">
             <button
               className={`sim-btn ${simSpeed === 0 ? 'active' : ''}`}
               onClick={() => setSimSpeed(0)}

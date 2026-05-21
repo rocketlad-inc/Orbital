@@ -89,7 +89,7 @@ export const BodyInspector: React.FC = () => {
                 </div>
               </div>
               {hasProduction && (
-                <div className="production-summary">
+                <div className="production-summary" data-tutorial-id="body-production">
                   <div className="production-title">POTENTIAL YIELD / HARVEST</div>
                   <div className="production-rates">
                     {/* Math.round defensive — bodyProductionRates() multiplies
@@ -312,6 +312,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
               )}
               {isMine && !s.hasCollector && (
                 <button
+                  data-tutorial-id="collector-button"
                   onClick={(e) => {
                     e.stopPropagation();
                     // Local optimistic flip first — UI feels instant.
@@ -341,6 +342,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
                 >+ COLLECTOR ({COLLECTOR_COST.ore}O / {COLLECTOR_COST.credits}C)</button>
               )}
               {isMine && (
+                <div data-tutorial-id="buildings-strip">
                 <BuildingsStrip
                   settlement={s}
                   playerRes={playerRes}
@@ -361,6 +363,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
                     return ok;
                   }}
                 />
+                </div>
               )}
             </div>
           </div>
@@ -391,7 +394,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
         </div>
       ) : (
         <>
-          <div className="deploy-buttons">
+          <div className="deploy-buttons" data-tutorial-id="deploy-buttons">
             {cityAllowed && (
               <button
                 className="deploy-btn"
@@ -634,7 +637,7 @@ const DysonSpherePanel: React.FC = () => {
   );
 
   return (
-    <div className="settlements-section" style={{ marginTop: 12 }}>
+    <div className="settlements-section" data-tutorial-id="dyson-sphere-section" style={{ marginTop: 12 }}>
       <div className="section-title" style={{ color: '#ffb84d' }}>
         DYSON SPHERE
       </div>
@@ -711,7 +714,7 @@ const DysonSphereProgress: React.FC = () => {
   ];
 
   return (
-    <div className="settlements-section" style={{ marginTop: 12 }}>
+    <div className="settlements-section" data-tutorial-id="dyson-sphere-section" style={{ marginTop: 12 }}>
       <div className="section-title" style={{ color: '#ffb84d' }}>
         DYSON SPHERE
       </div>

@@ -223,7 +223,7 @@ export const Outliner: React.FC = () => {
         </div>
 
         {inTransit.length > 0 && (
-          <div className="outliner__section">
+          <div className="outliner__section" data-tutorial-id="outliner-transit">
             <div className="outliner__section-title">In Transit</div>
             {inTransit.map(ship => {
               const def = getShipClass(ship.class as ShipClassName);

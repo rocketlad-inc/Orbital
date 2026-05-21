@@ -332,7 +332,7 @@ export const ShipPanel: React.FC = () => {
         </div>
 
         <div className="panel-body">
-          <div className="ship-stats">
+          <div className="ship-stats" data-tutorial-id="ship-stats">
             <div className="stat-row">
               <span className="label">CLASS</span>
               <span className="value" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -453,7 +453,7 @@ export const ShipPanel: React.FC = () => {
             />
           )}
 
-          <div className="maneuver-section">
+          <div className="maneuver-section" data-tutorial-id="ship-maneuver-section">
             <div className="section-title">MANEUVER NODES</div>
             {ship.orders.length === 0 && !ship.transit && !ship.plannedTransit && queuedTransits.length === 0 ? (
               <div className="no-orders">No planned maneuvers</div>
@@ -586,7 +586,7 @@ export const ShipPanel: React.FC = () => {
           </div>
 
           {(currentFleet || eligiblePeers.length > 0) && (
-            <div className="fleet-section">
+            <div className="fleet-section" data-tutorial-id="ship-fleet-section">
               <div className="section-title">
                 FLEET{currentFleet ? `: ${currentFleet.name}` : ''}
               </div>
@@ -931,7 +931,7 @@ const ShipCombatRecord: React.FC<{
   const dmgBonus = rank;     // each rank = +1%
   const hpBonus  = rank;     // each rank = +1%
   return (
-    <div className="combat-record-section" style={{ marginTop: 10 }}>
+    <div className="combat-record-section" data-tutorial-id="ship-combat-record" style={{ marginTop: 10 }}>
       <div
         className="section-title"
         style={{
