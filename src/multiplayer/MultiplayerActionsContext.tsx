@@ -77,7 +77,11 @@ export interface MultiplayerActions {
   /** Queue a ship build. Resolves true on success. */
   build: (intent: BuildIntent) => Promise<boolean>;
   /** Deploy a city or station at a body. */
-  deploySettlement: (intent: SettlementIntent) => Promise<boolean>;
+  /** Returns ok+error so the BodyInspector can surface the specific
+   *  server rejection (no_presence / insufficient_resources /
+   *  no_surface) inline instead of a silent reset. */
+  deploySettlement: (intent: SettlementIntent) =>
+    Promise<{ ok: true } | { ok: false; code?: string; error: string }>;
   /** Spend science to advance a tech level. Server is authoritative on cost. */
   research: (intent: ResearchIntent) => Promise<boolean>;
 
@@ -204,10 +208,13 @@ export function MultiplayerActionsProvider({
         method: 'POST',
         body: JSON.stringify({ type: intent.type, name: intent.name }),
       });
-      if (!res.ok) {
-        console.warn('deploySettlement failed', res.error);
-      }
-      return res.ok;
+      if (res.ok) return { ok: true };
+      console.warn('deploySettlement failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the settlement deploy.',
+      };
     },
     async research(intent) {
       const res = await apiFetch(`/api/games/${gameId}/research`, {
