@@ -6,6 +6,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { BuildPanel } from './BuildPanel';
 import { bodyProductionRates } from '../game/economy';
+import { getBodyFlavor } from '../game/bodyFlavor';
 import {
   canHostCity, canHostStation, SETTLEMENT_DEFS, settlementYield, suggestSettlementName,
   COLLECTOR_COST,
@@ -61,6 +62,34 @@ export const BodyInspector: React.FC = () => {
       </div>
 
       <div className="panel-body">
+        {/* Flavor text — authored prose from src/game/bodyFlavor.ts.
+            Renders nothing when empty so unauthored bodies don't show
+            an awkward placeholder block. Sits BEFORE the resource grid
+            so the inspector reads as "what is this place" first, then
+            the numbers. */}
+        {(() => {
+          const flavor = getBodyFlavor(body.id);
+          if (!flavor) return null;
+          return (
+            <div
+              data-tutorial-id="body-flavor"
+              style={{
+                fontSize: 11,
+                lineHeight: 1.55,
+                color: '#a8b8c8',
+                fontStyle: 'italic',
+                padding: '8px 10px',
+                marginBottom: 10,
+                borderLeft: '2px solid #4a6275',
+                background: 'rgba(74, 98, 117, 0.08)',
+                borderRadius: '0 3px 3px 0',
+              }}
+            >
+              {flavor}
+            </div>
+          );
+        })()}
+
         {body.resources && (() => {
           const production = bodyProductionRates(body);
           const hasProduction = production.fuel > 0 || production.ore > 0 || production.credits > 0;
