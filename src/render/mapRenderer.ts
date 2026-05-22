@@ -1225,19 +1225,43 @@ function drawTorchTransitShip(
   const canvasPos = worldToCanvas(lerpedPos.x, lerpedPos.y, ctx);
   const shipColorValue = shipColor(ship, ctx.factions);
 
-  // Heading from velocity; canvas y inverts so we flip the y component.
-  const vMag = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
-  const dirX = vMag > 1e-9 ? vel.x / vMag : 1;
-  const dirY = vMag > 1e-9 ? vel.y / vMag : 0;
-  const proHeading = Math.atan2(-dirY, dirX);
-  // Phase: <flipTick = BOOST (engine behind), >=flipTick = BRAKE (engine
-  // ahead, ship flipped 180°). Outside [startTick, arriveTick] the
-  // ship isn't actively thrusting — coast with prograde nose (boost
-  // attitude) and no exhaust.
-  const isBoost = ctx.t < currentTransfer.flipTick;
+  // Phase detection: BOOST (engine fires prograde toward intercept) vs
+  // BRAKE (engine fires retrograde to kill velocity relative to target).
+  // Outside [startTick, arriveTick] the ship is coasting.
+  const isBoost = ctx.t >= currentTransfer.startTick && ctx.t < currentTransfer.flipTick;
   const isBrake = ctx.t >= currentTransfer.flipTick && ctx.t < currentTransfer.arriveTick;
   const thrusting = isBoost || isBrake;
-  const heading = isBrake ? proHeading + Math.PI : proHeading;
+
+  // Ship's nose ALWAYS points in the thrust direction — that's where
+  // the engine is firing. NOT velocity direction. Big difference early
+  // in boost when the ship still has substantial inherited orbital
+  // velocity perpendicular to the thrust axis: the rocket points where
+  // it's pushing, not where it's currently drifting.
+  //
+  //   BOOST  → thrust toward intercept point (the moving-target aim)
+  //   BRAKE  → thrust opposite the ship's velocity (so the engine
+  //            naturally ends up pointed "ahead" of motion — the
+  //            classic flip-and-burn silhouette)
+  //   COAST  → no thrust; fall back to velocity direction so the icon
+  //            isn't lurching to face an arbitrary reference
+  let thrustX: number, thrustY: number;
+  if (isBoost) {
+    const dx = currentTransfer.interceptPos.x - lerpedPos.x;
+    const dy = currentTransfer.interceptPos.y - lerpedPos.y;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    thrustX = d > 1e-9 ? dx / d : 1;
+    thrustY = d > 1e-9 ? dy / d : 0;
+  } else if (isBrake) {
+    const vMag = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
+    thrustX = vMag > 1e-9 ? -vel.x / vMag : 1;
+    thrustY = vMag > 1e-9 ? -vel.y / vMag : 0;
+  } else {
+    const vMag = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
+    thrustX = vMag > 1e-9 ? vel.x / vMag : 1;
+    thrustY = vMag > 1e-9 ? vel.y / vMag : 0;
+  }
+  // Canvas y axis inverts.
+  const heading = Math.atan2(-thrustY, thrustX);
 
   const iconSize = isSelected ? 22 : 18;
 

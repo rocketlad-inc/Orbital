@@ -8,7 +8,7 @@ import { GameState, ManeuverNode, CameraState, MapUIState, Ship, Body, BuildOrde
 import { createCircularOrbit, bodyWorldVelocity, orbitWorldPos, orbitWorldVelocity } from '../physics/orbitalMechanics';
 import {
   planTorchTransfer, stepTorchShip,
-  DEFAULT_ENGINE_ACCEL,
+  DEFAULT_ENGINE_G, fromG,
   TorchTransfer,
 } from '../physics/torchTransfer';
 import { getShipClass, ShipClassName, SHIP_CLASSES } from '../game/shipClasses';
@@ -127,7 +127,11 @@ function applyAIIntent(
       // their current flight-tech tier. Lets old saves without engineG
       // still see research-driven speed-ups via the tech state.
       const tech = snapshot.factionTech?.[ship.ownedBy];
-      const baseAccel = faction?.engineG ?? DEFAULT_ENGINE_ACCEL;
+      // UNIT FIX: faction.engineG is stored in G (e.g. 0.05) per migration 0017's
+      // default; G_ANCHOR is the in-game accel that equals 1g. Without the
+      // conversion the torch acceleration is 530× too weak and ships coast off
+      // in roughly their inherited orbital direction instead of arriving.
+      const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
       const engineAccel = baseAccel * engineGModifier(tech);
 
       // Ship's launch state: world position + world velocity from the
@@ -811,7 +815,12 @@ export function GameContextProvider({
       const engineAccelFor: Record<string, number> = {};
       for (const fid of Object.keys(prev.factionTech)) {
         const faction = prev.factions.find(f => f.id === fid);
-        const baseAccel = faction?.engineG ?? DEFAULT_ENGINE_ACCEL;
+        // UNIT FIX: faction.engineG is stored in G (e.g. 0.05) per
+        // migration 0017's default; G_ANCHOR is the in-game accel that
+        // equals 1g. Without the conversion the torch acceleration is
+        // 530× too weak and ships coast off in roughly their inherited
+        // orbital direction instead of arriving.
+        const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
         const mul = engineGModifier(prev.factionTech[fid]);
         engineAccelFor[fid] = baseAccel * mul;
       }
@@ -819,7 +828,7 @@ export function GameContextProvider({
       // Helper: launch a torch transfer for a freighter on a trade route.
       // Returns the updated Ship (with .transit set) or null on failure.
       const launchFreighterTorch = (ship: Ship, targetBodyId: string): Ship | null => {
-        const accel = engineAccelFor[ship.ownedBy] ?? DEFAULT_ENGINE_ACCEL;
+        const accel = engineAccelFor[ship.ownedBy] ?? fromG(DEFAULT_ENGINE_G);
         const launchPos = orbitWorldPos(ship.orbit, newTime, prev.bodies);
         const launchVel = orbitWorldVelocity(ship.orbit, newTime, prev.bodies);
         const plan = planTorchTransfer(
@@ -1696,7 +1705,11 @@ export function GameContextProvider({
 
       const faction = prev.factions.find(f => f.id === ship.ownedBy);
       const tech = prev.factionTech?.[ship.ownedBy];
-      const baseAccel = faction?.engineG ?? DEFAULT_ENGINE_ACCEL;
+      // UNIT FIX: faction.engineG is stored in G (e.g. 0.05) per migration 0017's
+      // default; G_ANCHOR is the in-game accel that equals 1g. Without the
+      // conversion the torch acceleration is 530× too weak and ships coast off
+      // in roughly their inherited orbital direction instead of arriving.
+      const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
       const engineAccel = baseAccel * engineGModifier(tech);
       const tick = prev.currentTick;
 
@@ -1749,7 +1762,11 @@ export function GameContextProvider({
 
       const faction = prev.factions.find(f => f.id === ship.ownedBy);
       const tech = prev.factionTech?.[ship.ownedBy];
-      const baseAccel = faction?.engineG ?? DEFAULT_ENGINE_ACCEL;
+      // UNIT FIX: faction.engineG is stored in G (e.g. 0.05) per migration 0017's
+      // default; G_ANCHOR is the in-game accel that equals 1g. Without the
+      // conversion the torch acceleration is 530× too weak and ships coast off
+      // in roughly their inherited orbital direction instead of arriving.
+      const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
       const engineAccel = baseAccel * engineGModifier(tech);
 
       // Find the prior leg's predicted arrival state — last queued
@@ -1794,7 +1811,11 @@ export function GameContextProvider({
 
       const faction = prev.factions.find(f => f.id === ship.ownedBy);
       const tech = prev.factionTech?.[ship.ownedBy];
-      const baseAccel = faction?.engineG ?? DEFAULT_ENGINE_ACCEL;
+      // UNIT FIX: faction.engineG is stored in G (e.g. 0.05) per migration 0017's
+      // default; G_ANCHOR is the in-game accel that equals 1g. Without the
+      // conversion the torch acceleration is 530× too weak and ships coast off
+      // in roughly their inherited orbital direction instead of arriving.
+      const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
       const engineAccel = baseAccel * engineGModifier(tech);
       const tick = prev.currentTick;
 

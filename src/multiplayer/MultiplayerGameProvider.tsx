@@ -16,7 +16,7 @@ import {
   Settlement, ManeuverNode,
 } from '../types';
 import {
-  planTorchTransfer, stepTorchShip, DEFAULT_ENGINE_ACCEL,
+  planTorchTransfer, stepTorchShip, DEFAULT_ENGINE_G, fromG,
 } from '../physics/torchTransfer';
 import { orbitWorldPos, orbitWorldVelocity } from '../physics/orbitalMechanics';
 import { engineGModifier } from '../game/techs';
@@ -539,7 +539,12 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     // (if any) scaled by the player's flight-tech tier. Only the local
     // player's tech is exchanged over the protocol (other factions'
     // tech is opaque), so non-player ships get the unscaled baseline.
-    const baseAccel = faction?.engineG ?? DEFAULT_ENGINE_ACCEL;
+    // UNIT FIX: faction.engineG comes back from the server in units of
+    // 1g (e.g. 0.05). Multiply by G_ANCHOR via fromG so torch accel
+    // has the right magnitude — see SP gameContext.tsx for the
+    // matching fix. Without this, reconstructed transits ran 530× too
+    // weak and ships visibly drifted off the rendered curve.
+    const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
     const techScale = ship.ownedBy === srv.me.faction_id ? engineGModifier(playerTech) : 1;
     const engineAccel = baseAccel * techScale;
 
