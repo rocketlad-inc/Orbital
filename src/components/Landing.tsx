@@ -117,8 +117,7 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
           ORBITAL
         </h1>
         <div className="hero-tagline">
-          Burn between worlds. Build an empire across the Sol system — and the
-          stars beyond.
+          Burn between worlds. Build an empire across the Sol system.
           <br />
           Win by science, by conquest, or by building a sphere around the sun.
         </div>
@@ -162,10 +161,6 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
             destroyers can shatter a city, but only if they survive the trip home
             to refuel.
           </p>
-          <p>
-            And somewhere past Sedna, an unremarkable Kuiper-belt rock is hiding
-            a door to another star.
-          </p>
         </div>
       </section>
 
@@ -191,8 +186,8 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
           />
           <FeatureCard
             icon="✦"
-            title="Tech, secrets & black holes"
-            body="Seven research tracks, exploration secrets buried on random moons, and two far systems reached through warp gates — a binary-star colony world and an X-ray binary built around a black hole."
+            title="Research & exploration"
+            body="Seven tech tracks scale weapons, armor, propulsion, sensors, and yields. Hidden caches, derelict warships, and ancient databanks wait on random moons — every match seeds them differently. Send ships out to find them."
           />
         </div>
       </section>
@@ -225,7 +220,7 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
         <div className="section-eyebrow">— FROM THE BRIDGE</div>
         <h2 className="section-title">What you&rsquo;ll see</h2>
         <div className="screenshots-grid">
-          <ScreenshotCard caption="The Sol system at start — bodies, orbits, faction colors. Two more systems wait at the edge of the map.">
+          <ScreenshotCard caption="The Sol system at start — bodies, orbits, faction colors.">
             <ScreenshotSolarSystem />
           </ScreenshotCard>
           <ScreenshotCard caption="Plan a transfer. Pick a target, the torch curve appears with Δv and arrival ETA.">
