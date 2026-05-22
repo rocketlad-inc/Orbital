@@ -8,6 +8,10 @@ import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext'
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { ShipIcon } from './ShipIcons';
+import {
+  BINARY_SYSTEM_BODY_IDS,
+  BLACK_HOLE_SYSTEM_BODY_IDS,
+} from '../state/mockGameState';
 import { BottomSheet } from './BottomSheet';
 import './ShipPanel.css';
 
@@ -771,8 +775,24 @@ interface TransferTargetPickerProps {
   onClose: () => void;
 }
 
-/** Group label + ordering for the picker. */
-function groupOf(body: import('../types').Body, bodies: import('../types').Body[]): { key: string; label: string; order: number } {
+/** Group label + ordering for the picker. `farSystem: true` flags the
+ *  group as collapsible in the UI — Centauri and Cygnus X live behind
+ *  a "show" toggle by default so the Sol-system picker isn't dominated
+ *  by 15+ exotic destinations the player won't pick most matches. */
+function groupOf(
+  body: import('../types').Body,
+  bodies: import('../types').Body[],
+): { key: string; label: string; order: number; farSystem?: boolean } {
+  // Far systems get folded into one group each regardless of their
+  // own internal parent-child structure (Prismara orbits Crimson but
+  // belongs in the Centauri bucket, not its own "Crimson system"
+  // sub-group). High order so they sort to the bottom of the list.
+  if (BINARY_SYSTEM_BODY_IDS.has(body.id)) {
+    return { key: 'centauri', label: 'Centauri system', order: 20, farSystem: true };
+  }
+  if (BLACK_HOLE_SYSTEM_BODY_IDS.has(body.id)) {
+    return { key: 'cygnus', label: 'Cygnus X system', order: 21, farSystem: true };
+  }
   if (!body.parent || body.parent === 'sol') {
     // Categorize sun-orbiters by type for legibility.
     if (body.type === 'terrestrial') return { key: 'inner', label: 'Inner system', order: 1 };
@@ -792,6 +812,13 @@ const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
   bodies, excludeBodyId, title, onPick, onClose,
 }) => {
   const [query, setQuery] = useState('');
+  // Per-group expansion state. Far-system groups (Centauri / Cygnus X)
+  // are collapsed by default; the player toggles them open. Sol-system
+  // groups have no toggle and are always shown. An active search
+  // query auto-expands any far group that has matches inside it (see
+  // the render logic below), without persisting that expansion — clear
+  // the query and the group collapses again.
+  const [manualExpanded, setManualExpanded] = useState<Set<string>>(new Set());
 
   // Esc closes
   useEffect(() => {
@@ -808,6 +835,10 @@ const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
       // ship in close-solar orbit. Only the origin body is excluded
       // from the picker (can't transfer to where you already are).
       if (b.id === excludeBodyId) return false;
+      // Lagrange-type markers (the Centauri + Cygnus barycenters) are
+      // invisible centre-of-mass points with no SOI or mu — there's
+      // nothing to park around. Hide them so the player can't try.
+      if (b.type === 'lagrange') return false;
       if (!q) return true;
       const parentName = b.parent ? bodies.find(x => x.id === b.parent)?.name.toLowerCase() ?? '' : '';
       return b.name.toLowerCase().includes(q) || parentName.includes(q);
@@ -815,16 +846,32 @@ const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
   }, [bodies, excludeBodyId, query]);
 
   const groups = useMemo(() => {
-    const map = new Map<string, { label: string; order: number; bodies: import('../types').Body[] }>();
+    const map = new Map<string, { label: string; order: number; farSystem?: boolean; bodies: import('../types').Body[] }>();
     for (const b of visible) {
       const g = groupOf(b, bodies);
-      if (!map.has(g.key)) map.set(g.key, { label: g.label, order: g.order, bodies: [] });
+      if (!map.has(g.key)) map.set(g.key, { label: g.label, order: g.order, farSystem: g.farSystem, bodies: [] });
       map.get(g.key)!.bodies.push(b);
     }
     // Sort body lists by name; groups by .order then label.
     for (const v of map.values()) v.bodies.sort((a, b) => a.name.localeCompare(b.name));
-    return Array.from(map.values()).sort((a, b) => a.order - b.order || a.label.localeCompare(b.label));
+    return Array.from(map.entries())
+      .map(([key, v]) => ({ key, ...v }))
+      .sort((a, b) => a.order - b.order || a.label.localeCompare(b.label));
   }, [visible, bodies]);
+
+  // Active-query auto-expand: when the player is searching, any
+  // far-system group that has matches gets opened so the matches are
+  // actually visible. Without this, the matches would just be hidden
+  // behind a still-collapsed toggle and the search would silently
+  // appear to find nothing.
+  const hasActiveQuery = query.trim().length > 0;
+  const toggleGroup = (key: string) => {
+    setManualExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -862,34 +909,72 @@ const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
                 No bodies match "{query}".
               </div>
             )}
-            {groups.map(g => (
-              <div key={g.label}>
-                <div style={{
-                  fontSize: 9, letterSpacing: '0.14em', color: '#b8c8d6',
-                  textTransform: 'uppercase', marginBottom: 6,
-                }}>
-                  {g.label} · {g.bodies.length}
-                </div>
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))',
-                    gap: 4,
-                  }}
-                >
-                  {g.bodies.map(body => (
+            {groups.map(g => {
+              // Far-system groups (Centauri / Cygnus) collapse by
+              // default. Open when the player clicks the toggle OR
+              // when an active search query has matches inside
+              // (otherwise the search appears to find nothing).
+              const isCollapsible = g.farSystem;
+              const isOpen = !isCollapsible || hasActiveQuery || manualExpanded.has(g.key);
+              const headerColor = g.farSystem ? '#ffb84d' : '#b8c8d6';
+              return (
+                <div key={g.key}>
+                  {isCollapsible ? (
+                    // Clickable header for the collapsible far groups.
+                    // Caret rotates open/closed so the affordance reads
+                    // even without hover state.
                     <button
-                      key={body.id}
-                      className="target-button target-button--compact"
-                      onClick={() => onPick(body.id)}
-                      style={{ padding: '7px 8px', fontSize: 10, textAlign: 'center' }}
+                      onClick={() => toggleGroup(g.key)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        width: '100%', padding: '4px 0',
+                        background: 'transparent', border: 'none',
+                        cursor: 'pointer',
+                        fontSize: 9, letterSpacing: '0.14em', color: headerColor,
+                        textTransform: 'uppercase',
+                        fontFamily: 'inherit', textAlign: 'left',
+                        marginBottom: isOpen ? 6 : 0,
+                      }}
+                      title={isOpen ? 'Hide far-system bodies' : 'Show far-system bodies'}
                     >
-                      {body.name}
+                      <span style={{
+                        display: 'inline-block',
+                        transition: 'transform 0.15s',
+                        transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)',
+                      }}>▶</span>
+                      {g.label} · {g.bodies.length}
                     </button>
-                  ))}
+                  ) : (
+                    <div style={{
+                      fontSize: 9, letterSpacing: '0.14em', color: headerColor,
+                      textTransform: 'uppercase', marginBottom: 6,
+                    }}>
+                      {g.label} · {g.bodies.length}
+                    </div>
+                  )}
+                  {isOpen && (
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))',
+                        gap: 4,
+                      }}
+                    >
+                      {g.bodies.map(body => (
+                        <button
+                          key={body.id}
+                          className="target-button target-button--compact"
+                          onClick={() => onPick(body.id)}
+                          style={{ padding: '7px 8px', fontSize: 10, textAlign: 'center' }}
+                        >
+                          {body.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>
