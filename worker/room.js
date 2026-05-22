@@ -484,7 +484,7 @@ export class Room {
     const gameId = started.gameId;
 
     const game = await this.env.DB
-      .prepare('SELECT status, current_tick, tick_interval_ms, turn_based_enabled FROM games WHERE id = ?')
+      .prepare('SELECT status, current_tick, tick_interval_ms, turn_based_enabled, next_tick_at FROM games WHERE id = ?')
       .bind(gameId)
       .first();
     if (!game) return;
@@ -502,37 +502,64 @@ export class Room {
     }
 
     const now = Date.now();
-    const nextTick = (game.current_tick ?? 0) + 1;
+    const interval = game.tick_interval_ms ?? 86_400_000;
+    const startTick = game.current_tick ?? 0;
+    const scheduled = game.next_tick_at ?? now;
+
+    // Catch-up loop. CF DO alarms are best-effort and the cron fall-back
+    // only fires once per minute, so a hibernating DO + sporadic cron can
+    // accumulate hours of missed ticks (4h wall-clock vs. 38 actual ticks
+    // on a 60s cadence — what playtesters were hitting). When alarm DOES
+    // fire we walk every tick that should have fired since `next_tick_at`
+    // so the simulation stays on the cadence the host configured.
+    //
+    // The cap keeps a single alarm invocation from blowing the DO CPU
+    // budget on a game that's been orphaned for days; remaining ticks
+    // are picked up by the next cron poke. 50 × ~10ms/tick ≈ 500ms,
+    // well under the per-invocation budget.
+    const overdueMs = Math.max(0, now - scheduled);
+    const catchUp = Math.min(1 + Math.floor(overdueMs / Math.max(interval, 1)), 50);
+    const endTick = startTick + catchUp;
 
     // Games run indefinitely. Tick-countdown victory was removed; the
     // games table still carries a total_tick_target column for schema
     // compatibility (NOT NULL DEFAULT 42) but the alarm no longer reads
     // it, no endpoint serves it, and no client surface displays it.
 
-    // ----- resolve scheduled events for [prev+1 .. nextTick] -----
-    try {
-      await this.resolveTick(gameId, nextTick);
-    } catch (e) {
-      console.error('resolveTick failed', e);
+    // ----- resolve scheduled events for [startTick+1 .. endTick] -----
+    // Note: resolveTick reads the per-tick parameter, not games.current_tick,
+    // so it's safe to loop here before the bulk UPDATE below. This mirrors
+    // the /__internal/advance batch path used by Turn-Based Mode.
+    for (let t = startTick + 1; t <= endTick; t++) {
+      try {
+        await this.resolveTick(gameId, t);
+      } catch (e) {
+        console.error('resolveTick failed', e, { gameId, t });
+      }
     }
 
-    const interval = game.tick_interval_ms ?? 86_400_000;
-    const nextAt = now + interval;
+    // Schedule the next tick by stepping forward from the original
+    // schedule, not "now" — this prevents drift accumulating when each
+    // alarm fires slightly late. If we're so far behind that the next
+    // theoretical tick is still in the past, push out one interval from
+    // `now` so the alarm doesn't immediately re-fire in a hot loop.
+    let nextAt = scheduled + catchUp * interval;
+    if (nextAt <= now) nextAt = now + interval;
 
     await this.env.DB.batch([
       this.env.DB
         .prepare('UPDATE games SET current_tick = ?, next_tick_at = ? WHERE id = ?')
-        .bind(nextTick, nextAt, gameId),
+        .bind(endTick, nextAt, gameId),
       this.env.DB
         .prepare("INSERT OR REPLACE INTO game_ticks (game_id, tick_number, status, scheduled_at, started_at, completed_at) VALUES (?, ?, 'completed', ?, ?, ?)")
-        .bind(gameId, nextTick, now, now, now),
+        .bind(gameId, endTick, now, now, now),
     ]);
 
     try { await this.state.storage.setAlarm(nextAt); } catch (e) {
       console.error('setAlarm (reschedule) failed', e);
     }
 
-    this.broadcast({ type: 'tick', tick: nextTick, next_tick_at: nextAt });
+    this.broadcast({ type: 'tick', tick: endTick, next_tick_at: nextAt });
   }
 
   async resolveTick(gameId, tick) {
@@ -1055,12 +1082,19 @@ export class Room {
     const allShips = (await this.env.DB
       .prepare(
         `SELECT id, owner_faction_id, parent_body_id, hp, damage_per_tick,
-                rank, combat_history, ship_class, name
+                rank, combat_history, ship_class, name, last_combat_tick
            FROM game_ships
           WHERE game_id = ? AND status = 'active'`,
       )
       .bind(gameId)
       .all()).results ?? [];
+
+    // Combat cadence — every N ticks per ship, matching the SP
+    // constant AUTO_COMBAT_INTERVAL in src/game/combat.ts. Pulled into
+    // a server constant rather than imported because the worker is a
+    // separate Cloudflare bundle that doesn't share the React build
+    // tree. Keep in sync if SP's interval changes.
+    const AUTO_COMBAT_INTERVAL = 3;
 
     // Build a fast at-peace lookup: pacts.has(fA + '|' + fB) === true iff
     // they have an active NAP/defense pact (unordered key).
@@ -1121,11 +1155,22 @@ export class Room {
         entry.byShip.set(attackerShipId, (entry.byShip.get(attackerShipId) || 0) + amount);
       }
     };
+    // Ships that fired this tick — their last_combat_tick gets bumped
+    // to `tick` in a post-loop UPDATE so the next-N-ticks cooldown
+    // applies. Tracked here instead of inline so we can batch the writes.
+    const firedShipIds = new Set();
     for (const [, ships] of byBody) {
       const factions = new Set(ships.map(s => s.owner_faction_id));
       if (factions.size < 2) continue;
       for (const attacker of ships) {
         if (!attacker.damage_per_tick || attacker.damage_per_tick <= 0) continue;
+        // Cadence gate — only fire if AUTO_COMBAT_INTERVAL ticks have
+        // passed since this ship's last volley. NULL last_combat_tick
+        // (never fired) reads as -Infinity, so a fresh ship can fire
+        // immediately. Matches the SP loop's lastCombatTick check in
+        // src/game/combat.ts:134.
+        const lastFired = attacker.last_combat_tick ?? -Infinity;
+        if (tick - lastFired < AUTO_COMBAT_INTERVAL) continue;
         // Only target ships from factions we're at war with (no peace pact).
         const targets = ships.filter(t =>
           t.owner_faction_id !== attacker.owner_faction_id
@@ -1142,6 +1187,7 @@ export class Room {
         for (const t of targets) {
           addDamage(t.id, attacker.owner_faction_id, attacker.id, split);
         }
+        firedShipIds.add(attacker.id);
       }
     }
 
@@ -1511,6 +1557,21 @@ export class Room {
           )
           .bind(dm, df, dg, dsci, o.sid),
       ]);
+    }
+
+    // Stamp last_combat_tick on every ship that fired this tick. Done
+    // before the damage-application block so even ships that fired and
+    // missed (all targets had peace pacts, etc — defensively, can't
+    // happen given the loop structure but cheap insurance) get gated
+    // correctly on subsequent ticks. Batched via D1.batch() so a body
+    // with a dozen ships firing doesn't burn a dozen round-trips.
+    if (firedShipIds.size > 0) {
+      const stmt = this.env.DB.prepare(
+        'UPDATE game_ships SET last_combat_tick = ? WHERE id = ?',
+      );
+      await this.env.DB.batch(
+        Array.from(firedShipIds).map(id => stmt.bind(tick, id)),
+      );
     }
 
     if (hpDeltas.size > 0) {

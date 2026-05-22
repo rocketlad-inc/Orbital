@@ -685,20 +685,13 @@ export const ShipPanel: React.FC = () => {
               <div className="section-title">COMBAT</div>
               <div className="stat-row">
                 <span className="label">DAMAGE</span>
-                {/* SP fires "{damagePerTick}/volley" every AUTO_COMBAT_INTERVAL
-                    ticks (20). MP server fires {damagePerTick}/tick with no
-                    cadence gate, so the unit label has to change to match
-                    what the player actually sees. Default to MP behavior
-                    when mpActions is wired (we're talking to the server). */}
-                <span className="value">
-                  {shipClass.damagePerTick}/{mpActions ? 'tick' : 'volley'}
-                </span>
+                <span className="value">{shipClass.damagePerTick}/volley</span>
               </div>
               <div className="stat-row">
                 <span className="label">CADENCE</span>
-                <span className="value">
-                  {mpActions ? 'every server tick' : 'every 20 ticks'}
-                </span>
+                {/* SP + MP now both gate combat at AUTO_COMBAT_INTERVAL=3
+                    ticks per ship. Single label; no MP branch needed. */}
+                <span className="value">every 3 ticks</span>
               </div>
               <div className="stat-row" style={{ fontSize: '9px', color: '#b8c8d6', fontStyle: 'italic' }}>
                 Auto-fires at any hostile sharing this body.

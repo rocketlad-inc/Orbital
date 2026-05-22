@@ -12,8 +12,13 @@ import { rankDamageMul, rankHpMul } from './techs';
  *  kills age out so a long campaign doesn't bloat save blobs. */
 const KILL_HISTORY_CAP = 20;
 
-/** Ticks between auto-fire volleys. Each combatant fires every N ticks. */
-export const AUTO_COMBAT_INTERVAL = 20;
+/** Ticks between auto-fire volleys. Each combatant fires every N ticks.
+ *  Was 20 originally — far too slow once playtesting confirmed engagements
+ *  at the same body should feel punchy. 3 ticks lets a frigate trade
+ *  volleys quickly without making corvettes vaporize on the first turn.
+ *  The MP server reads the same constant (mirrored in worker/room.js so
+ *  the combat cadence matches between SP and MP). */
+export const AUTO_COMBAT_INTERVAL = 3;
 
 /**
  * World position of a ship at the given tick. Handles ships in torch
