@@ -8,6 +8,14 @@
   border-radius: 4px;
   backdrop-filter: blur(8px);
   min-width: 280px;
+  /* Was unbounded. With only `right:` set under position:fixed the
+     box uses shrink-to-fit, and a single-line body-flavor paragraph
+     (added recently to the panel header) has a max-content width
+     equal to that whole sentence — so the inspector stretched edge-
+     to-edge. Pin a sensible cap and let the flavor paragraph wrap
+     inside, which is what the existing `overflow-y: auto` + max-height
+     were designed for. */
+  max-width: 360px;
   max-height: calc(100vh - 80px);
   overflow-y: auto;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
