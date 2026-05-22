@@ -4,7 +4,7 @@
 
 import { Body, Ship, OrbitElements, TrajectoryArc, Settlement, Faction, TorchTransferPlan } from '../types';
 import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt } from '../physics/orbitalMechanics';
-import { sampleTorchTrajectory } from '../physics/torchTransfer';
+import { sampleTorchTrajectory, torchPositionFromSamples } from '../physics/torchTransfer';
 import { COLORS, withOpacity, lighten, darken } from './colors';
 import { getShipIconImage } from './shipIconCache';
 import { ShipIconClass } from '../components/ShipIcons';
@@ -1027,6 +1027,9 @@ export function drawSOIBoundary(
  * and enemy overlays where faction color matters more than thrust
  * phase).
  */
+/** Returns the sample array so callers (drawTransitShip) can position the
+ *  ship via lerp on the exact same polyline — guarantees ship sits ON the
+ *  line, not next to it. */
 export function drawTorchTrajectory(
   plan: TorchTransferPlan,
   bodies: Body[],
@@ -1034,7 +1037,7 @@ export function drawTorchTrajectory(
   color: string = COLORS.arcTransfer,
   isDashed: boolean = false,
   splitPhaseColors: boolean = false,
-) {
+): Array<{ t: number; x: number; y: number }> {
   const samples = sampleTorchTrajectory(
     plan,
     { pos: { x: plan.startPos.x, y: plan.startPos.y },
@@ -1042,7 +1045,7 @@ export function drawTorchTrajectory(
     bodies,
     80,
   );
-  if (samples.length < 2) return;
+  if (samples.length < 2) return samples;
 
   if (isDashed) ctx.ctx.setLineDash([5, 5]);
   ctx.ctx.lineWidth = 1.5;
@@ -1081,16 +1084,22 @@ export function drawTorchTrajectory(
     ctx.ctx.stroke();
   }
   ctx.ctx.setLineDash([]);
+  return samples;
 }
 
 export function drawTransitShip(
   ship: Ship,
   ctx: RenderContext,
-  isSelected: boolean = false
+  isSelected: boolean = false,
+  // Samples from drawTorchTrajectory. When provided, the ship is
+  // positioned via lerp on the same polyline so it sits exactly ON the
+  // line at every t — not on the underlying analytic curve, which
+  // diverges from the visible chord between sample points.
+  trajectorySamples?: Array<{ t: number; x: number; y: number }>,
 ) {
   // Torch transit: read state-vector path directly.
   if (ship.transit) {
-    drawTorchTransitShip(ship, ctx, isSelected);
+    drawTorchTransitShip(ship, ctx, isSelected, trajectorySamples);
   }
 }
 
@@ -1200,10 +1209,20 @@ function drawTorchTransitShip(
   ship: Ship,
   ctx: RenderContext,
   isSelected: boolean,
+  trajectorySamples?: Array<{ t: number; x: number; y: number }>,
 ) {
   if (!ship.transit) return;
-  const { pos, vel, currentTransfer } = ship.transit;
-  const canvasPos = worldToCanvas(pos.x, pos.y, ctx);
+  const { vel, currentTransfer } = ship.transit;
+  // Position the ship by lerping into the same sample array the line is
+  // drawn from. Without this the ship reads ship.transit.pos — an
+  // independent fresh integration that agrees with the line only at
+  // sample times, leaving the ship visibly off the polyline mid-segment.
+  // Falls back to the stored pos when no samples were provided (e.g. an
+  // old caller hasn't been threaded yet).
+  const lerpedPos = trajectorySamples && trajectorySamples.length > 0
+    ? torchPositionFromSamples(trajectorySamples, ctx.t)
+    : { x: ship.transit.pos.x, y: ship.transit.pos.y };
+  const canvasPos = worldToCanvas(lerpedPos.x, lerpedPos.y, ctx);
   const shipColorValue = shipColor(ship, ctx.factions);
 
   // Heading from velocity; canvas y inverts so we flip the y component.

@@ -286,6 +286,51 @@ export function sampleTorchTrajectory(
 }
 
 /**
+ * Linearly interpolate a position on a previously-sampled torch trajectory
+ * for time `t`. Same array the renderer connects with lineTo, so a ship
+ * drawn at this position lands ON the visible polyline — not next to it.
+ *
+ * Why the helper exists: the renderer used to draw the ship at
+ * `ship.transit.pos` (a fresh integration from launch state) while the
+ * trajectory line was sampled at 80 fixed points and connected with
+ * straight segments. Even when both integrations were numerically
+ * identical at the sample times, the ship between samples followed the
+ * true curve while the line followed a chord — so the ship visibly
+ * floated off the polyline mid-segment. By driving the ship from the
+ * same samples + lerp, ship and line coincide exactly at every t.
+ *
+ * Falls back to the curve endpoints when `t` is outside the sampled
+ * range (callers can still draw a ship that's pre-launch or already
+ * arrived without bounds-checking themselves).
+ */
+export function torchPositionFromSamples(
+  samples: Array<{ t: number; x: number; y: number }>,
+  t: number,
+): { x: number; y: number } {
+  if (samples.length === 0) return { x: 0, y: 0 };
+  if (t <= samples[0].t) return { x: samples[0].x, y: samples[0].y };
+  const last = samples[samples.length - 1];
+  if (t >= last.t) return { x: last.x, y: last.y };
+  // Linear scan is fine — samples is ~80 entries and called per ship per frame.
+  // If this ever becomes hot, swap for a binary search keyed on sample t.
+  for (let i = 1; i < samples.length; i++) {
+    if (samples[i].t >= t) {
+      const a = samples[i - 1];
+      const b = samples[i];
+      const span = b.t - a.t;
+      // Guard against duplicate-t samples (shouldn't happen but be defensive).
+      if (span <= 0) return { x: a.x, y: a.y };
+      const u = (t - a.t) / span;
+      return {
+        x: a.x + (b.x - a.x) * u,
+        y: a.y + (b.y - a.y) * u,
+      };
+    }
+  }
+  return { x: last.x, y: last.y };
+}
+
+/**
  * 1g anchor: the acceleration that would carry a ship from Sol to
  * Earth (orbitRadius ≈ 132.6 game-units) in exactly 1 tick under a
  * symmetric brachistochrone. Picked so the slider readout matches

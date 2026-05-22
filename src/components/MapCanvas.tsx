@@ -413,9 +413,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // gets the split-phase coloring (green boost / pink brake) so
         // the player can see at a glance which half of the burn they're
         // in. Unselected uses the arcTransfer color for visual quiet.
+        //
+        // The samples returned from drawTorchTrajectory drive the ship's
+        // drawn position via lerp — same polyline both the line and the
+        // ship sit on, so the icon never floats off the visible curve.
         const plan = ship.transit.currentTransfer;
-        drawTorchTrajectory(plan, gameState.bodies, renderContext, COLORS.arcTransfer, false, isSelected);
-        drawTransitShip(ship, renderContext, isSelected);
+        const samples = drawTorchTrajectory(plan, gameState.bodies, renderContext, COLORS.arcTransfer, false, isSelected);
+        drawTransitShip(ship, renderContext, isSelected, samples);
 
         const arrivalBody = gameState.bodies.find(b => b.id === plan.targetBodyId);
         if (arrivalBody) {
