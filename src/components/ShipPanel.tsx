@@ -685,11 +685,20 @@ export const ShipPanel: React.FC = () => {
               <div className="section-title">COMBAT</div>
               <div className="stat-row">
                 <span className="label">DAMAGE</span>
-                <span className="value">{shipClass.damagePerTick}/volley</span>
+                {/* SP fires "{damagePerTick}/volley" every AUTO_COMBAT_INTERVAL
+                    ticks (20). MP server fires {damagePerTick}/tick with no
+                    cadence gate, so the unit label has to change to match
+                    what the player actually sees. Default to MP behavior
+                    when mpActions is wired (we're talking to the server). */}
+                <span className="value">
+                  {shipClass.damagePerTick}/{mpActions ? 'tick' : 'volley'}
+                </span>
               </div>
               <div className="stat-row">
                 <span className="label">CADENCE</span>
-                <span className="value">every 20 ticks</span>
+                <span className="value">
+                  {mpActions ? 'every server tick' : 'every 20 ticks'}
+                </span>
               </div>
               <div className="stat-row" style={{ fontSize: '9px', color: '#b8c8d6', fontStyle: 'italic' }}>
                 Auto-fires at any hostile sharing this body.
