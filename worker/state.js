@@ -118,6 +118,24 @@ async function handleGetState(req, env, ctx) {
           WHERE game_id = ?1 AND owner_faction_id = ?2
             AND destroyed_at_tick IS NULL
        ),
+       -- Parents of presence bodies, only if those parents are
+       -- themselves non-stars (their parent_body_id IS NOT NULL).
+       -- Extracted into its own CTE so visible_bodies can reuse it
+       -- for both the "parent" rule and the "sibling moons" rule
+       -- without re-running the same subquery twice.
+       my_parents_visible AS (
+         SELECT p.id FROM game_bodies p
+          WHERE p.game_id = ?1
+            AND p.destroyed_at_tick IS NULL
+            AND p.parent_body_id IS NOT NULL
+            AND p.id IN (
+              SELECT parent_body_id FROM game_bodies
+               WHERE game_id = ?1
+                 AND destroyed_at_tick IS NULL
+                 AND id IN (SELECT bid FROM my_presence)
+                 AND parent_body_id IS NOT NULL
+            )
+       ),
        visible_bodies AS (
          -- (1) presence
          SELECT bid FROM my_presence
@@ -130,17 +148,20 @@ async function handleGetState(req, env, ctx) {
          UNION
          -- (3) parent of presence body, only if that parent is itself
          --     a non-star (parent_body_id IS NOT NULL on the parent)
-         SELECT p.id FROM game_bodies p
-          WHERE p.game_id = ?1
-            AND p.destroyed_at_tick IS NULL
-            AND p.parent_body_id IS NOT NULL
-            AND p.id IN (
-              SELECT parent_body_id FROM game_bodies
-               WHERE game_id = ?1
-                 AND destroyed_at_tick IS NULL
-                 AND id IN (SELECT bid FROM my_presence)
-                 AND parent_body_id IS NOT NULL
-            )
+         SELECT id FROM my_parents_visible
+         UNION
+         -- (4) sibling moons — other children of my_parents_visible.
+         --     This is the rule that lets a ship at Enceladus see
+         --     Titan and Rhea (all sibling moons of Saturn), not just
+         --     Saturn itself. Without this, parking at any moon hid
+         --     the rest of the system from the player. Restricted to
+         --     my_parents_visible (non-star parents only), so a ship
+         --     at Saturn does NOT pull in every other planet as a
+         --     "sibling of Sol" — that'd reveal the whole map.
+         SELECT id FROM game_bodies
+          WHERE game_id = ?1
+            AND destroyed_at_tick IS NULL
+            AND parent_body_id IN (SELECT id FROM my_parents_visible)
        )
        SELECT id, template_id, name, type, parent_body_id, radius, soi, mu,
               orbit_radius, orbit_period, angle0, color,
@@ -226,13 +247,9 @@ async function handleGetState(req, env, ctx) {
           WHERE game_id = ?1 AND owner_faction_id = ?2
             AND destroyed_at_tick IS NULL
        ),
-       visible_bodies AS (
-         SELECT bid FROM my_presence
-         UNION
-         SELECT id FROM game_bodies
-          WHERE game_id = ?1 AND destroyed_at_tick IS NULL
-            AND parent_body_id IN (SELECT bid FROM my_presence)
-         UNION
+       -- Non-star parents of presence bodies. See the long-form CTE
+       -- in the bodies query above for the why.
+       my_parents_visible AS (
          SELECT p.id FROM game_bodies p
           WHERE p.game_id = ?1 AND p.destroyed_at_tick IS NULL
             AND p.parent_body_id IS NOT NULL
@@ -242,6 +259,20 @@ async function handleGetState(req, env, ctx) {
                  AND id IN (SELECT bid FROM my_presence)
                  AND parent_body_id IS NOT NULL
             )
+       ),
+       visible_bodies AS (
+         SELECT bid FROM my_presence
+         UNION
+         SELECT id FROM game_bodies
+          WHERE game_id = ?1 AND destroyed_at_tick IS NULL
+            AND parent_body_id IN (SELECT bid FROM my_presence)
+         UNION
+         SELECT id FROM my_parents_visible
+         UNION
+         -- Sibling moons — see the bodies-query comment for the why.
+         SELECT id FROM game_bodies
+          WHERE game_id = ?1 AND destroyed_at_tick IS NULL
+            AND parent_body_id IN (SELECT id FROM my_parents_visible)
        )
        SELECT id, name, ship_class, owner_faction_id, parent_body_id,
               orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
@@ -270,13 +301,9 @@ async function handleGetState(req, env, ctx) {
           WHERE game_id = ?1 AND owner_faction_id = ?2
             AND destroyed_at_tick IS NULL
        ),
-       visible_bodies AS (
-         SELECT bid FROM my_presence
-         UNION
-         SELECT id FROM game_bodies
-          WHERE game_id = ?1 AND destroyed_at_tick IS NULL
-            AND parent_body_id IN (SELECT bid FROM my_presence)
-         UNION
+       -- Non-star parents of presence bodies. See the long-form CTE
+       -- in the bodies query above for the why.
+       my_parents_visible AS (
          SELECT p.id FROM game_bodies p
           WHERE p.game_id = ?1 AND p.destroyed_at_tick IS NULL
             AND p.parent_body_id IS NOT NULL
@@ -286,6 +313,20 @@ async function handleGetState(req, env, ctx) {
                  AND id IN (SELECT bid FROM my_presence)
                  AND parent_body_id IS NOT NULL
             )
+       ),
+       visible_bodies AS (
+         SELECT bid FROM my_presence
+         UNION
+         SELECT id FROM game_bodies
+          WHERE game_id = ?1 AND destroyed_at_tick IS NULL
+            AND parent_body_id IN (SELECT bid FROM my_presence)
+         UNION
+         SELECT id FROM my_parents_visible
+         UNION
+         -- Sibling moons — see the bodies-query comment for the why.
+         SELECT id FROM game_bodies
+          WHERE game_id = ?1 AND destroyed_at_tick IS NULL
+            AND parent_body_id IN (SELECT id FROM my_parents_visible)
        )
        SELECT id, body_id, owner_faction_id, type, name,
               hp, hp_max, population,
