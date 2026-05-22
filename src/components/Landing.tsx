@@ -117,9 +117,10 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
           ORBITAL
         </h1>
         <div className="hero-tagline">
-          Plot transfers across the solar system. Build cities and stations.
+          Burn between worlds. Build an empire across the Sol system — and the
+          stars beyond.
           <br />
-          Command fleets that fight for every body that matters.
+          Win by science, by conquest, or by building a sphere around the sun.
         </div>
         <div className="hero-cta">
           <button className="cta-primary" onClick={onSignIn}>
@@ -142,22 +143,28 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
         <h2 className="section-title">A Solar System on Rails</h2>
         <div className="section-body">
           <p>
-            Orbital is a real-time strategy game played across the inner and outer
-            planets. Every ship follows a Hohmann transfer between bodies — when you
-            launch from Earth toward Mars, you commit to a curve and a travel time
-            you can&rsquo;t take back.
+            Orbital is a real-time strategy game played across the inner planets,
+            the asteroid belt, and the gas giants. Ships move under continuous
+            torch acceleration — burn out, flip, burn back — so every transfer
+            commits you to a flight path and a travel time you can&rsquo;t take
+            back.
           </p>
           <p>
             Stake a claim by deploying <strong>cities on planets</strong> and{' '}
             <strong>stations in orbit</strong>. Both extract the body&rsquo;s
-            resources into a local stockpile that your freighters can lift to the
-            fleet pool. Settlements grow over time — every 100 ticks a city&rsquo;s
-            population ticks up and its yield multiplier with it.
+            yields, then ship them home through your collector network. Upgrade
+            with forges, mints, labs, weapon platforms, and shipyards. Drop a
+            collector or watch your income pile up unused.
           </p>
           <p>
-            When two players want the same moon, ships engage at range and
-            settlements return fire. Combat is decided by firepower, point-defense,
-            and whether you can resupply before your destroyer runs out of HP.
+            When two factions want the same moon, ships engage at range and
+            settlements return fire. Veteran hulls grow deadlier with every kill;
+            destroyers can shatter a city, but only if they survive the trip home
+            to refuel.
+          </p>
+          <p>
+            And somewhere past Sedna, an unremarkable Kuiper-belt rock is hiding
+            a door to another star.
           </p>
         </div>
       </section>
@@ -169,23 +176,46 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
         <div className="features-grid">
           <FeatureCard
             icon="↗"
-            title="Bezier transfers"
-            body="Plan and chain transfers between any two bodies. Hohmann math computes the Δv cost and travel time; the arc visualizes the route. Patrol routes auto-chain across moons."
+            title="Torch trajectories"
+            body="Plan transfers between any two bodies. The brachistochrone solver computes the burn schedule and fuel cost; chain legs together to patrol multiple moons. Faster engines come from the tech tree."
           />
           <FeatureCard
             icon="■"
-            title="Cities & stations"
-            body="Drop cities on terrestrial bodies, station weapons platforms in orbit. Both extract resources and grow population over time. Multiple factions can colonize the same body."
+            title="Cities, stations & upgrades"
+            body="Drop cities for ore, mints, and labs. Station shipyards in orbit for fleet production and weapon platforms. Every settlement levels up — forges deepen, weapons heavier, science compounds."
           />
           <FeatureCard
             icon="◈"
-            title="Fleets & combat"
-            body="Build corvettes, frigates, destroyers, and freighters. Engage hostile ships and enemy settlements at range. PDC ratings reduce incoming fire."
+            title="Fleets, combat & veterans"
+            body="Build corvettes, frigates, destroyers, and freighters. Group them into fleets that transfer as one. Every kill bumps a hull&rsquo;s rank with permanent damage and HP bonuses — a senior destroyer is worth retreating."
           />
           <FeatureCard
             icon="✦"
-            title="Multiplayer"
-            body="Sign in, claim a faction, and play asynchronously against other commanders. Senate channels and faction messaging keep you in the diplomatic loop."
+            title="Tech, secrets & black holes"
+            body="Seven research tracks, exploration secrets buried on random moons, and two far systems reached through warp gates — a binary-star colony world and an X-ray binary built around a black hole."
+          />
+        </div>
+      </section>
+
+      {/* Three Paths to Victory */}
+      <section className="landing-section">
+        <div className="section-eyebrow">— THREE PATHS TO VICTORY</div>
+        <h2 className="section-title">Decide how you win.</h2>
+        <div className="features-grid">
+          <FeatureCard
+            icon="⚛"
+            title="Science"
+            body="Research every track to the top. Seven disciplines, ten levels each — the early levels are cheap but the last few are punishing. Found by the player whose labs run hottest."
+          />
+          <FeatureCard
+            icon="✕"
+            title="Military"
+            body="Eliminate every rival settlement off the map. Pick your moment, build your destroyers, and start with the ones that can&rsquo;t fight back. Permanent. Loud."
+          />
+          <FeatureCard
+            icon="☀"
+            title="Engineering"
+            body="Build the Dyson Sphere around the sun. Lay the foundation at a Sol-orbit station, then run freighters in to deliver every resource it asks for. Rivals can blow up the foundation."
           />
         </div>
       </section>
@@ -195,13 +225,13 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
         <div className="section-eyebrow">— FROM THE BRIDGE</div>
         <h2 className="section-title">What you&rsquo;ll see</h2>
         <div className="screenshots-grid">
-          <ScreenshotCard caption="The solar system at scenario start — bodies, orbits, faction colors.">
+          <ScreenshotCard caption="The Sol system at start — bodies, orbits, faction colors. Two more systems wait at the edge of the map.">
             <ScreenshotSolarSystem />
           </ScreenshotCard>
-          <ScreenshotCard caption="Plan a transfer. Pick a target, the Bezier arc appears with Δv and ETA.">
+          <ScreenshotCard caption="Plan a transfer. Pick a target, the torch curve appears with Δv and arrival ETA.">
             <ScreenshotTransfer />
           </ScreenshotCard>
-          <ScreenshotCard caption="Deploy a city, name it, watch population grow and stockpile fill.">
+          <ScreenshotCard caption="Deploy a city, name it, queue upgrades, watch population grow and stockpiles fill.">
             <ScreenshotSettlement />
           </ScreenshotCard>
         </div>
@@ -213,12 +243,12 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
         <button className="cta-primary cta-large" onClick={onSignIn}>
           CREATE ACCOUNT
         </button>
-        <div className="cta-sub">Free. No download. Runs in your browser.</div>
+        <div className="cta-sub">Free. No download. Runs in your browser. Solo or multiplayer.</div>
       </section>
 
       <footer className="landing-footer">
         <div className="footer-line">
-          ORBITAL · v0.1.0 prototype · built with TypeScript, React, and a lot of vis-viva
+          ORBITAL · v0.2 prototype · built with TypeScript, React, and a lot of brachistochrone
         </div>
       </footer>
     </div>
