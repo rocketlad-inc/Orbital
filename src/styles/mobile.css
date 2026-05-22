@@ -22,9 +22,12 @@
 
   /* Generic button bump — applies to buttons that don't already have
      mobile-aware sizing. Specific components (TopBar nav, BuildPanel
-     build button) override below. */
+     build button) override below. Apple HIG = 44pt; we hit that on
+     primary actions via the pointer-coarse block below and use 40px
+     as the floor for secondary actions. */
   button {
-    min-height: 36px;
+    min-height: 40px;
+    font-size: 12px;
   }
 
   /* The desktop floating panels are heavy when forced onto a small
@@ -100,13 +103,38 @@
   .ai-feed { display: none !important; }
 
   /* Sub-44px touch targets that the per-component CSS still emits:
-   * commit/cancel buttons in queued transfer rows, filter chips. */
+   * commit/cancel buttons in queued transfer rows, filter chips,
+   * tab pills, and various row actions. Sweep them all together so
+   * the player doesn't squint at a 24px target. */
   .delete-btn,
   .commit-btn,
-  .filter-chip {
-    min-height: 40px;
+  .filter-chip,
+  .commit-all-btn,
+  .transfer-btn,
+  .fleet-btn,
+  .collector-btn,
+  .deploy-btn,
+  .tab-btn,
+  .focus-btn,
+  .panel-focus {
+    min-height: 44px;
     padding-left: 12px;
     padding-right: 12px;
+    font-size: 12px;
+  }
+
+  /* Order row text is too small on a phone. */
+  .order-item, .order-type, .order-details,
+  .body-info, .info-row, .label, .value,
+  .section-title {
+    font-size: 12px;
+  }
+
+  /* Buildings strip rows — the action ✓/▲ buttons need to be tappable
+   * without picking up the row's onClick by accident. */
+  .building-row button {
+    min-height: 44px;
+    min-width: 44px;
   }
 
   /* Side-menu close button — desktop is 28×28, too small on touch. */
@@ -146,15 +174,35 @@
 /* === Coarse-pointer specific (touch input regardless of viewport) === */
 
 @media (pointer: coarse) {
-  /* Bigger build buttons */
+  /* Primary action buttons hit the 44pt Apple HIG / 48dp Material
+     target on touch viewports. Generic buttons get 40 (already set
+     above in the viewport-based block); these get 44–48. */
   .build-btn,
   .nav-button,
   .sim-btn,
   .maneuver-btn,
-  .deploy-btn {
-    min-height: 40px;
-    padding-left: 14px;
-    padding-right: 14px;
+  .deploy-btn,
+  .commit-btn,
+  .commit-all-btn,
+  .transfer-btn,
+  .fleet-btn {
+    min-height: 44px;
+    padding-left: 16px;
+    padding-right: 16px;
+    font-size: 13px;
+  }
+
+  /* Square icon buttons (close, focus, etc.) need both dimensions
+     at the target — height alone isn't enough if width is 20px. */
+  .panel-close,
+  .panel-focus,
+  .focus-btn,
+  .side-menu__close,
+  .bottom-sheet__close,
+  .delete-btn,
+  .modal-close {
+    min-width: 44px;
+    min-height: 44px;
   }
 
   /* Form inputs (custom name, etc.) get touch-friendly height */

@@ -166,11 +166,21 @@ export function useCanvasTouchInput({
         }
       } else if (pointers.size === 1) {
         // One-finger drag = pan. Translate the camera in world units.
-        const cam = cameraRef.current;
-        updateCameraRef.current({
+        //
+        // CRITICAL: if a focused body is sticky (initial-focus puts the
+        // camera on the player's capital on first load), the renderer's
+        // effectiveCamera() overrides cam.x/y with the body's position
+        // every frame — so panning silently does nothing until we drop
+        // the focus. The desktop handler does this same release in
+        // MapCanvas's mousedown; the touch handler was missing it,
+        // which is why the player could pinch-zoom but couldn't pan.
+        const cam = cameraRef.current as CameraLike & { focusedBodyId?: string };
+        const updates: Partial<CameraLike> & { focusedBodyId?: string | undefined } = {
           x: cam.x - dx / cam.scale,
           y: cam.y - dy / cam.scale,
-        });
+        };
+        if (cam.focusedBodyId) updates.focusedBodyId = undefined;
+        updateCameraRef.current(updates);
       }
     };
 
