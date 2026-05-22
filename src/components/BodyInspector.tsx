@@ -12,11 +12,27 @@ import {
   COLLECTOR_COST,
   BUILDING_DEFS, buildingLevel, buildingCostForNextLevel, buildingTimeForNextLevel,
 } from '../game/settlements';
-import { SettlementType, BuildingKind, Settlement } from '../types';
+import { SettlementType, BuildingKind, Settlement, Body } from '../types';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import { BottomSheet } from './BottomSheet';
+import {
+  planTorchTransfer, fromG,
+} from '../physics/torchTransfer';
+import { bodyPosition, bodyWorldVelocity } from '../physics/orbitalMechanics';
 import './BodyInspector.css';
+
+/** Per-Δv fuel cost when an asteroid is rammed via Trajectory Control
+ *  Thrusters. Charged once at commit time to the faction pool. Tuned
+ *  so an inner-system ram costs a meaningful chunk of an early-game
+ *  fuel stockpile but doesn't bankrupt a mid-game empire. */
+const RAM_FUEL_PER_DV = 50;
+
+/** Asteroid trajectory thrusters are makeshift — they're industrial
+ *  hardware bolted to a rock, not a torch drive plant. Effective
+ *  acceleration is ~10× weaker than a torch ship's so the doom clock
+ *  ticks slowly enough to give defenders real warning. */
+const RAM_ASTEROID_G = 0.005;
 
 export const BodyInspector: React.FC = () => {
   const { gameState, camera, uiState, deselectBody, focusBody } = useGameContext();
@@ -181,6 +197,8 @@ export const BodyInspector: React.FC = () => {
         </div>
 
         <SettlementsSection bodyId={body.id} />
+
+        {body.type === 'asteroid' && <RamControlsSection body={body} />}
 
         {body.id === 'sol' && <DysonSpherePanel />}
 
@@ -470,6 +488,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
                 <div data-tutorial-id="buildings-strip">
                 <BuildingsStrip
                   settlement={s}
+                  body={body}
                   playerRes={playerRes}
                   currentTick={gameState.currentTick}
                   queueBuilding={(sid, kind) => {
@@ -599,9 +618,15 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
 
 const CITY_BUILDINGS: BuildingKind[] = ['forge', 'mint', 'lab'];
 const STATION_BUILDINGS: BuildingKind[] = ['weapons', 'shipyard'];
+// Asteroid-only city extension: when the parent body's type is
+// 'asteroid', append trajectory_thrusters to the available city
+// buildings. Kept separate from CITY_BUILDINGS so non-asteroid cities
+// don't see the option.
+const ASTEROID_CITY_EXTRA: BuildingKind[] = ['trajectory_thrusters'];
 
 interface BuildingsStripProps {
   settlement: Settlement;
+  body: Body;
   playerRes: { fuel: number; ore: number; credits: number } | undefined;
   currentTick: number;
   queueBuilding: (settlementId: string, kind: BuildingKind) => boolean;
@@ -609,9 +634,12 @@ interface BuildingsStripProps {
 }
 
 const BuildingsStrip: React.FC<BuildingsStripProps> = ({
-  settlement, playerRes, currentTick, queueBuilding, cancelBuilding,
+  settlement, body, playerRes, currentTick, queueBuilding, cancelBuilding,
 }) => {
-  const kinds = settlement.type === 'city' ? CITY_BUILDINGS : STATION_BUILDINGS;
+  const baseKinds = settlement.type === 'city' ? CITY_BUILDINGS : STATION_BUILDINGS;
+  const kinds: BuildingKind[] = (settlement.type === 'city' && body.type === 'asteroid')
+    ? [...baseKinds, ...ASTEROID_CITY_EXTRA]
+    : baseKinds;
   const q = settlement.buildingQueue;
 
   return (
@@ -761,6 +789,262 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
           </div>
         );
       })}
+    </div>
+  );
+};
+
+// ============================================================
+// RamControlsSection — asteroid-only doomsday-weapon UI.
+//
+// Visible only on bodies where type === 'asteroid'. Three states:
+//
+//   1. Asteroid already in flight (body.ramPlan set) — show ETA +
+//      target name, no actions.
+//   2. Caller owns a settlement here with trajectory_thrusters built
+//      — show "RAM TARGET" button. Clicking opens a target picker
+//      modal: select any non-self body, see preview (ETA / Δv /
+//      fuel cost), confirm to commit.
+//   3. Otherwise — hidden or shown as "build Trajectory Control
+//      Thrusters to enable" prompt.
+//
+// Math: brachistochrone toward the predicted future position of the
+// target body. Same iterative solve as ship transfers; the asteroid
+// supplies its current pos/vel (from natural orbit) instead of a
+// ship's launch state. Plan is computed client-side and posted to
+// the server via mpActions.ram in MP.
+// ============================================================
+const RamControlsSection: React.FC<{ body: Body }> = ({ body }) => {
+  const { gameState, setGameState } = useGameContext();
+  const mpActions = useMultiplayerActions();
+  const [targetPickerOpen, setTargetPickerOpen] = useState(false);
+  const [pickedTargetId, setPickedTargetId] = useState<string | null>(null);
+  const [ramError, setRamError] = useState<string | null>(null);
+
+  // STATE 1 — already in flight.
+  if (body.ramPlan) {
+    const target = gameState.bodies.find(b => b.id === body.ramPlan!.targetBodyId);
+    const eta = Math.max(0, body.ramPlan.arriveTick - gameState.currentTick);
+    const launcher = gameState.factions.find(f => f.id === body.ramPlan!.ownedBy);
+    return (
+      <div style={{
+        marginTop: 8, padding: 8,
+        border: '1px solid #ff4444', borderRadius: 4,
+        background: 'rgba(80, 20, 20, 0.4)',
+      }}>
+        <div style={{ color: '#ff8888', fontSize: 11, fontWeight: 700, letterSpacing: '0.1em' }}>
+          ⚠ ASTEROID WEAPON IN FLIGHT
+        </div>
+        <div style={{ color: '#e8c8b8', fontSize: 10, marginTop: 4 }}>
+          {body.name} → {target?.name ?? '?'}<br />
+          Impact in T-{eta.toFixed(0)} ticks<br />
+          Launched by {launcher?.name ?? body.ramPlan.ownedBy}
+        </div>
+      </div>
+    );
+  }
+
+  // STATE 2 — show RAM only if caller has TT built here.
+  const mySettlements = gameState.settlements.filter(
+    s => s.bodyId === body.id && s.ownedBy === 'player',
+  );
+  const hasThrusters = mySettlements.some(
+    s => (s.buildings?.trajectory_thrusters ?? 0) >= 1,
+  );
+
+  if (!hasThrusters) {
+    // STATE 3 — show a hint.
+    return (
+      <div style={{
+        marginTop: 8, padding: 6,
+        fontSize: 10, color: '#7a8a96', fontStyle: 'italic',
+      }}>
+        Build Trajectory Control Thrusters at a settlement here to weaponize this asteroid.
+      </div>
+    );
+  }
+
+  // STATE 2 — show RAM button + (when picked) preview.
+  const playerFaction = gameState.factions.find(f => f.id === 'player');
+  const baseAccel = fromG(playerFaction?.engineG ?? RAM_ASTEROID_G);
+  // Plan from current asteroid state.
+  const launchPos = bodyPosition(body, gameState.currentTick, gameState.bodies);
+  // Asteroid's world velocity. Approximate with finite difference;
+  // bodyWorldVelocity in the codebase handles standard parent orbits
+  // and is cheap enough to call here. Eccentric Kepler bodies use
+  // the same orbit elements.
+  const launchVel = body.parent
+    ? bodyWorldVelocity(gameState.bodies.find(b => b.id === body.parent!)!, gameState.currentTick, gameState.bodies)
+    : { x: 0, y: 0 };
+  // For eccentric asteroids, also add the body's own orbital motion.
+  // Cheap finite difference on bodyPosition.
+  const dh = 0.01;
+  const p1 = bodyPosition(body, gameState.currentTick - dh, gameState.bodies);
+  const p2 = bodyPosition(body, gameState.currentTick + dh, gameState.bodies);
+  const fullVel = {
+    x: (p2.x - p1.x) / (2 * dh),
+    y: (p2.y - p1.y) / (2 * dh),
+  };
+  void launchVel; // parent vel folded into fullVel via the finite diff above
+
+  // Bodies the player can target. Skip self + Sol-warning aside; the
+  // server allows Sol but the asteroid evaporates harmlessly there.
+  const targets = gameState.bodies.filter(b =>
+    b.id !== body.id && !b.destroyedAtTick,
+  );
+
+  const pickedTarget = pickedTargetId
+    ? targets.find(b => b.id === pickedTargetId) ?? null
+    : null;
+
+  let plan: ReturnType<typeof planTorchTransfer> = null;
+  let fuelCost = 0;
+  if (pickedTarget) {
+    plan = planTorchTransfer(
+      { pos: launchPos, vel: fullVel },
+      pickedTarget.id,
+      baseAccel,
+      baseAccel,
+      gameState.currentTick,
+      gameState.bodies,
+    );
+    if (plan) fuelCost = Math.ceil(plan.totalDv * RAM_FUEL_PER_DV);
+  }
+
+  const playerRes = gameState.resources['player'];
+  const canAfford = !!plan && !!playerRes && playerRes.fuel >= fuelCost;
+
+  const handleConfirm = () => {
+    if (!plan || !pickedTarget) return;
+    setRamError(null);
+    // Local optimistic apply: set body.ramPlan + deduct fuel from
+    // player pool. The server will reconcile via /state.
+    const newRamPlan = {
+      targetBodyId: plan.targetBodyId,
+      startTick: plan.startTick,
+      flipTick: plan.flipTick,
+      arriveTick: plan.arriveTick,
+      acceleration: plan.acceleration,
+      startPos: { x: plan.startPos.x, y: plan.startPos.y },
+      startVel: { x: plan.startVel.x, y: plan.startVel.y },
+      interceptPos: { x: plan.interceptPos.x, y: plan.interceptPos.y },
+      totalDv: plan.totalDv,
+      ownedBy: 'player',
+    };
+    setGameState({
+      ...gameState,
+      bodies: gameState.bodies.map(b =>
+        b.id === body.id ? { ...b, ramPlan: newRamPlan } : b,
+      ),
+      resources: {
+        ...gameState.resources,
+        player: playerRes
+          ? { ...playerRes, fuel: Math.max(0, playerRes.fuel - fuelCost) }
+          : playerRes,
+      },
+    });
+    if (mpActions) {
+      mpActions.ram({
+        bodyId: body.id,
+        targetBodyId: plan.targetBodyId,
+        startTick: plan.startTick,
+        flipTick: plan.flipTick,
+        arriveTick: plan.arriveTick,
+        acceleration: plan.acceleration,
+        startPos: plan.startPos,
+        startVel: plan.startVel,
+        interceptPos: plan.interceptPos,
+        totalDv: plan.totalDv,
+        fuelCost,
+      }).then(res => {
+        if (!res.ok) {
+          setRamError(humanizeMpError(res.code, res.error, 'ram'));
+        }
+      });
+    }
+    setTargetPickerOpen(false);
+    setPickedTargetId(null);
+  };
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      {!targetPickerOpen ? (
+        <button
+          onClick={() => setTargetPickerOpen(true)}
+          style={{
+            background: 'rgba(180, 40, 40, 0.2)',
+            color: '#ff9090',
+            border: '1px solid #b04040',
+            borderRadius: 3,
+            padding: '6px 10px',
+            fontSize: 11, fontWeight: 700, letterSpacing: '0.1em',
+            cursor: 'pointer', width: '100%',
+          }}
+        >▶ RAM TARGET</button>
+      ) : (
+        <div style={{
+          border: '1px solid #b04040', borderRadius: 4, padding: 8,
+          background: 'rgba(40, 20, 20, 0.6)',
+        }}>
+          <div style={{ fontSize: 10, color: '#ff9090', fontWeight: 700, letterSpacing: '0.1em', marginBottom: 6 }}>
+            PICK TARGET BODY
+          </div>
+          <select
+            value={pickedTargetId ?? ''}
+            onChange={(e) => setPickedTargetId(e.target.value || null)}
+            style={{
+              width: '100%', padding: '4px 6px', marginBottom: 6,
+              background: '#0a1018', color: '#c8d4e0',
+              border: '1px solid #2a3d50', fontSize: 11,
+            }}
+          >
+            <option value="">— select —</option>
+            {targets.map(b => (
+              <option key={b.id} value={b.id}>{b.name}</option>
+            ))}
+          </select>
+          {plan && pickedTarget && (
+            <div style={{ fontSize: 10, color: '#e0d0c0', marginBottom: 6, lineHeight: 1.4 }}>
+              Crash {body.name} into {pickedTarget.name}<br />
+              ETA: T+{(plan.arriveTick - gameState.currentTick).toFixed(0)} ticks<br />
+              Δv: {plan.totalDv.toFixed(1)} · Fuel cost: {fuelCost}<br />
+              {pickedTarget.id === 'sol'
+                ? <span style={{ color: '#ffcc66' }}>Sol target — asteroid will evaporate (no effect)</span>
+                : <span style={{ color: '#ff8888' }}>On impact: settlements destroyed, yields halved</span>}
+            </div>
+          )}
+          {plan && pickedTarget && !canAfford && (
+            <div style={{ fontSize: 10, color: '#ff8080', marginBottom: 6 }}>
+              Not enough fuel ({playerRes?.fuel ?? 0} / {fuelCost})
+            </div>
+          )}
+          {ramError && (
+            <div style={{ fontSize: 10, color: '#ff8080', marginBottom: 6 }}>{ramError}</div>
+          )}
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button
+              onClick={handleConfirm}
+              disabled={!plan || !canAfford}
+              style={{
+                flex: 1, padding: '6px 10px',
+                background: canAfford ? 'rgba(180, 40, 40, 0.4)' : 'rgba(40, 40, 40, 0.4)',
+                color: canAfford ? '#ff9090' : '#666',
+                border: `1px solid ${canAfford ? '#b04040' : '#333'}`,
+                borderRadius: 3, fontSize: 11, fontWeight: 700, letterSpacing: '0.08em',
+                cursor: canAfford ? 'pointer' : 'default',
+              }}
+            >▶ CONFIRM IMPACT</button>
+            <button
+              onClick={() => { setTargetPickerOpen(false); setPickedTargetId(null); setRamError(null); }}
+              style={{
+                padding: '6px 10px',
+                background: 'transparent', color: '#8898a4',
+                border: '1px solid #3a4a58', borderRadius: 3,
+                fontSize: 10, cursor: 'pointer',
+              }}
+            >CANCEL</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -90,9 +90,11 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     [selectedIds, bulkEligibleIds]
   );
 
-  // Bodies the player can route to (everything except Sol).
+  // Bodies the player can route to. Sol is included — the Dyson
+  // sphere ferry mechanic already routes freighters there, and the
+  // fleet picker previously excluded it for no good reason.
   const transferTargets = useMemo(
-    () => gameState.bodies.filter(b => b.id !== 'sol').sort((a, b) => a.name.localeCompare(b.name)),
+    () => [...gameState.bodies].sort((a, b) => a.name.localeCompare(b.name)),
     [gameState.bodies]
   );
 

@@ -803,7 +803,11 @@ const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return bodies.filter(b => {
-      if (b.id === 'sol' || b.id === excludeBodyId) return false;
+      // Sol is a legal target — Dyson sphere ferry already routes
+      // freighters there, and players occasionally want to park a
+      // ship in close-solar orbit. Only the origin body is excluded
+      // from the picker (can't transfer to where you already are).
+      if (b.id === excludeBodyId) return false;
       if (!q) return true;
       const parentName = b.parent ? bodies.find(x => x.id === b.parent)?.name.toLowerCase() ?? '' : '';
       return b.name.toLowerCase().includes(q) || parentName.includes(q);

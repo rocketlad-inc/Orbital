@@ -265,7 +265,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // Draw target selection highlights
     if (uiState.targetSelectionMode) {
       for (const body of gameState.bodies) {
-        if (body.id === 'sol') continue;
+        // Sol is a valid target — the Dyson sphere ferry mechanic
+        // already routes freighters there, and there's no reason a
+        // player can't park a survey ship in close-solar orbit. The
+        // earlier exclusion predated the engineering/Dyson flow.
         const isHovered = uiState.hoveredBodyId === body.id;
         drawTargetHighlight(body, renderContext, isHovered);
       }
@@ -718,7 +721,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
       if (uiState.targetSelectionMode) {
         for (const body of gameState.bodies) {
-          if (body.id === 'sol') continue;
+          // Sol is a valid target — see the matching note in the
+          // target-highlight render loop above. Removing both gates
+          // unblocks pick-via-map for Sol (the panel-driven Dyson
+          // transfer already worked via a different code path).
           const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
           const clickRadius = Math.max(12, body.radius! * camera.scale + 8) + TOUCH_HIT_PADDING;
           if (Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < clickRadius) {
