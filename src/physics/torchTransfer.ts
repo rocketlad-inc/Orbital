@@ -159,7 +159,21 @@ export function planTorchTransfer(
  * Arrival snap is intentional. The game-loop caller then performs the
  * parking-orbit insertion (Phase 1).
  */
-export function stepTorchShip(
+/** Maximum integrator step in ticks.
+ *
+ *  The thrust direction re-aims at the start of each step (boost: vector to
+ *  intercept; brake: opposite of velocity relative to target). The renderer's
+ *  sampleTorchTrajectory takes many tiny steps and gets a smoothly-curving
+ *  arc. If the simulator is called with a huge dt in one go — which happens
+ *  in MP whenever /state polls back ("integrate from launch to currentTick"
+ *  in one step ≈ 50 ticks for a Mars transfer) — the thrust direction stays
+ *  frozen at the midpoint of that giant chunk and the ship goes nearly
+ *  straight. Result: ship icon visibly drifts off the rendered trajectory
+ *  line. By clamping the per-iteration step to MAX_SUBSTEP and looping, the
+ *  simulator and the renderer agree to within roundoff. */
+const MAX_SUBSTEP = 1;
+
+function singleStepTorch(
   ship: TorchShipState,
   transfer: TorchTransfer | undefined,
   currentTick: number,
@@ -214,6 +228,30 @@ export function stepTorchShip(
     ship.pos.y = transfer.interceptPos.y;
     ship.vel.x = tv.x;
     ship.vel.y = tv.y;
+  }
+  return ship;
+}
+
+export function stepTorchShip(
+  ship: TorchShipState,
+  transfer: TorchTransfer | undefined,
+  currentTick: number,
+  dt: number,
+  bodies: Body[],
+): TorchShipState {
+  if (dt <= 0) return ship;
+  // Subdivide the requested dt into ≤MAX_SUBSTEP chunks so the thrust
+  // direction re-aims at the same cadence the renderer's sampler uses.
+  // Without this, a single large step ends up frozen at one midpoint
+  // direction and the ship visibly drifts off the rendered arc.
+  let elapsed = 0;
+  while (elapsed < dt) {
+    const step = Math.min(MAX_SUBSTEP, dt - elapsed);
+    singleStepTorch(ship, transfer, currentTick + elapsed, step, bodies);
+    elapsed += step;
+    // Arrival snap inside singleStepTorch already pinned the state to
+    // interceptPos + target velocity. No more meaningful integration to do.
+    if (transfer && currentTick + elapsed >= transfer.arriveTick - 1e-9) break;
   }
   return ship;
 }
