@@ -611,14 +611,19 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const worldBeforeX = camera.x + (mouseX - canvas.width / 2) / camera.scale;
       const worldBeforeY = camera.y + (mouseY - canvas.height / 2) / camera.scale;
       const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-      // MIN_SCALE was 0.005 before the Centauri binary system landed;
-      // at that floor the binary at world x≈60,000 only fits on wide
-      // monitors. Dropped to 0.002 so the player can pull all the way
-      // out and frame Sol + Centauri together on a typical 1000–1200px
-      // canvas. Sol system renders as a small cluster at that zoom
-      // (~14px wide) but stays legible thanks to the renderer's 3px
-      // min-draw floor on bodies.
-      const newScale = Math.max(0.002, Math.min(50, camera.scale * factor));
+      // MIN_SCALE evolution:
+      //   0.005  — original; Sol-system-only era
+      //   0.002  — Centauri at 60K landed
+      //   0.0012 — Centauri pushed to 265K AND Cygnus X added at 340K
+      //            on the opposite side of Sol. Both need to be
+      //            reachable at full zoom-out. On a 1000px canvas
+      //            centered at Sol, scale=0.0012 gives ±417K visible
+      //            range — Centauri at +265 and Cygnus at -340 both
+      //            sit comfortably inside, with Cygnus juuust off the
+      //            visible band at the default zoom (good — players
+      //            should discover it by pulling out).
+      // Touch hook (useCanvasTouchInput) needs to match this clamp.
+      const newScale = Math.max(0.0012, Math.min(50, camera.scale * factor));
       const newCamX = worldBeforeX - (mouseX - canvas.width / 2) / newScale;
       const newCamY = worldBeforeY - (mouseY - canvas.height / 2) / newScale;
       updateCamera({ x: newCamX, y: newCamY, scale: newScale });

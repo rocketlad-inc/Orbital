@@ -452,6 +452,68 @@ function drawStarBody(
   ctx.ctx.fill();
 }
 
+/** Black hole: dark event horizon + bright orange/red accretion disk.
+ *
+ *  Layered from outside in:
+ *    - faint blue-violet halo (gravitational lensing suggestion)
+ *    - hot accretion disk ring (orange→red→dark falloff)
+ *    - black event horizon (filled disk, no gradient — true black)
+ *
+ *  No "core glow" like a star — the entire point is the central disk
+ *  is invisible. Light comes from the swirling accretion disk, not
+ *  the singularity itself. We don't bother drawing a Doppler-tilted
+ *  disk (one half brighter than the other from rotation) — clean
+ *  symmetry reads better at small sizes. */
+function drawBlackHoleBody(
+  body: Body,
+  canvasPos: { x: number; y: number },
+  radius: number,
+  ctx: RenderContext,
+) {
+  // Faint outer halo — visual hint at the gravitational lensing
+  // signature without actually doing the optics.
+  const haloR = radius * 7;
+  const halo = ctx.ctx.createRadialGradient(
+    canvasPos.x, canvasPos.y, radius * 2.5,
+    canvasPos.x, canvasPos.y, haloR,
+  );
+  halo.addColorStop(0, 'rgba(180, 120, 220, 0.18)');
+  halo.addColorStop(0.5, 'rgba(120, 80, 180, 0.06)');
+  halo.addColorStop(1, 'rgba(120, 80, 180, 0)');
+  ctx.ctx.fillStyle = halo;
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, haloR, 0, Math.PI * 2);
+  ctx.ctx.fill();
+
+  // Accretion disk — bright ring around the horizon. Bright hot
+  // orange near the event horizon, falling off to deep red and then
+  // black at the outer edge. radius * 3 gives a chunky ring that
+  // reads as the dominant feature.
+  const diskR = radius * 3;
+  const disk = ctx.ctx.createRadialGradient(
+    canvasPos.x, canvasPos.y, radius * 1.05,
+    canvasPos.x, canvasPos.y, diskR,
+  );
+  disk.addColorStop(0,    '#fff0c0');   // innermost: white-hot inner edge
+  disk.addColorStop(0.18, '#ffb050');   // hot orange
+  disk.addColorStop(0.5,  '#d04020');   // red shade
+  disk.addColorStop(0.85, '#401015');   // deep red, almost gone
+  disk.addColorStop(1,    'rgba(40, 8, 12, 0)');
+  ctx.ctx.fillStyle = disk;
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, diskR, 0, Math.PI * 2);
+  ctx.ctx.fill();
+
+  // Event horizon — solid black. Drawn LAST so it sits on top of the
+  // disk, cleanly blacking out the central region. No gradient — the
+  // whole point is that no light escapes. Slightly larger than the
+  // body's nominal radius so the disk's inner edge tucks under it.
+  ctx.ctx.fillStyle = '#000000';
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, radius * 1.05, 0, Math.PI * 2);
+  ctx.ctx.fill();
+}
+
 /** Terrestrial / moon / dwarf / asteroid: atmosphere glow + sphere shading. */
 function drawPlanetBody(
   body: Body,
@@ -572,6 +634,8 @@ export function drawBody(
 
   if (body.type === 'star') {
     drawStarBody(body, canvasPos, radius, ctx);
+  } else if (body.type === 'black_hole') {
+    drawBlackHoleBody(body, canvasPos, radius, ctx);
   } else if (body.type === 'gas_giant') {
     drawGasGiantBody(body, canvasPos, radius, ctx);
   } else {
@@ -595,8 +659,11 @@ export function drawBody(
     ctx.ctx.stroke();
   }
 
-  // Draw label: always for Sol and direct children of Sol, otherwise at scale > 0.4
-  const alwaysShowLabel = body.type === 'star' || body.parent === 'sol';
+  // Draw label: always for stars, black holes, and direct children of
+  // Sol; otherwise only at zoomed-in scales. Black holes ride the same
+  // always-on rule as stars so "CYGNUS X" stays readable when the
+  // player is pulled all the way out hunting for the far systems.
+  const alwaysShowLabel = body.type === 'star' || body.type === 'black_hole' || body.parent === 'sol';
   if (alwaysShowLabel || ctx.camera.scale > 0.4) {
     ctx.ctx.fillStyle = isSelected ? '#ffb84d' : '#8aa0b4';
     ctx.ctx.font = '10px monospace';

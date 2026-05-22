@@ -299,18 +299,18 @@ export const SHARED_BODIES: Body[] = [
   // (renderer min-draws at 3px so it's a tiny gray dot at the
   // barycenter, which actually reads as "centre of mass" nicely).
   //
-  // DISTANCE TUNING: 60,000 world units puts the binary visible at
-  // the current MIN_SCALE (0.002) on viewports as small as 600px wide
-  // centered roughly on Sol. Earlier 150,000 was past the right edge
-  // on any window narrower than ~1500px, which made players think the
-  // system wasn't there. Direct brachistochrone travel at default
-  // engine accel is ~95 ticks — still significant enough that the
-  // gate is a meaningful shortcut.
+  // DISTANCE TUNING: 265,000 world units gives a brachistochrone
+  // direct-travel time of exactly 200 ticks at DEFAULT_ENGINE_ACCEL
+  // (formula t = 2·√(d/a), a=26.52, so 265,200 → 200 ticks). The
+  // intent is "you can SEE Centauri at max zoom-out but it's juuust
+  // off-frame at default zoom" — the gate is the practical way in.
+  // MIN_SCALE was lowered to 0.0012 so the system fits on a typical
+  // 1000-1200px canvas at full zoom-out.
   // ============================================================
   {
     id: 'binary_barycenter', name: 'Centauri Barycenter', type: 'lagrange', parent: 'sol',
     radius: 0.5, soi: 0, mu: 0, color: '#3a3a44',
-    orbitRadius: 60000, orbitPeriod: 1e12, angle0: 0,
+    orbitRadius: 265000, orbitPeriod: 1e12, angle0: 0,  // east of Sol
   },
   {
     id: 'centauri_a', name: 'Centauri A', type: 'star', parent: 'binary_barycenter',
@@ -328,46 +328,141 @@ export const SHARED_BODIES: Body[] = [
   // Circumbinary worlds. Periods follow a rough √r scaling so the
   // outer worlds visibly lag behind the inner one, same as Kepler's
   // 3rd law in Sol — keeps the visual recognisably "planetary."
+  // Science-rich worlds — discovering this system is meant to be
+  // genuinely transformative for the player's research economy.
+  // Verdant alone produces more science/harvest than any Sol body.
   {
     id: 'verdant', name: 'Verdant', type: 'terrestrial', parent: 'binary_barycenter',
     radius: 4, soi: 60, mu: 150, color: '#3aaf6e',
     orbitRadius: 400, orbitPeriod: 700, angle0: 0.3,
-    resources: { fuel: 6, gold: 4, metal: 6, science: 9 },
+    resources: { fuel: 6, gold: 4, metal: 6, science: 18 },
   },
   {
     id: 'crimson', name: 'Crimson', type: 'gas_giant', parent: 'binary_barycenter',
     radius: 9, soi: 110, mu: 350, color: '#d35454',
     orbitRadius: 850, orbitPeriod: 2100, angle0: 2.1,
-    resources: { fuel: 10, gold: 0, metal: 0, science: 4 },
+    resources: { fuel: 12, gold: 0, metal: 0, science: 14 },
   },
   {
     id: 'prismara', name: 'Prismara', type: 'moon', parent: 'crimson',
     radius: 1.8, soi: 9, mu: 6, color: '#c0a8ff',
     orbitRadius: 26, orbitPeriod: 90, angle0: 0,
-    resources: { fuel: 0, gold: 6, metal: 4, science: 4 },
+    resources: { fuel: 0, gold: 6, metal: 4, science: 12 },
   },
   {
     id: 'cinder', name: 'Cinder', type: 'terrestrial', parent: 'binary_barycenter',
     radius: 3, soi: 40, mu: 90, color: '#a8553a',
     orbitRadius: 1400, orbitPeriod: 4400, angle0: 4.7,
-    resources: { fuel: 0, gold: 8, metal: 5, science: 3 },
+    resources: { fuel: 0, gold: 8, metal: 5, science: 15 },
   },
   // Outer dwarf — the return-gate body. The warp_gate secret on this
   // is hardcoded by singlePlayerSetup (it always exists, always points
-  // back to Sol's randomized gate body). Resources are middling — the
-  // appeal of this place is the shortcut, not the dirt.
+  // back to Sol's randomized Centauri-side gate).
   {
     id: 'farspire', name: 'Farspire', type: 'dwarf', parent: 'binary_barycenter',
     radius: 1.5, soi: 9, mu: 1, color: '#9088b0',
     orbitRadius: 2400, orbitPeriod: 10000, angle0: 1.5,
-    resources: { fuel: 0, gold: 3, metal: 4, science: 6 },
+    resources: { fuel: 0, gold: 3, metal: 4, science: 10 },
+  },
+
+  // ============================================================
+  // CYGNUS X-1 ANALOGUE — stellar-mass black hole + companion star
+  // X-ray binary, ~225 ticks direct from Sol on the opposite side
+  // (orbitRadius 340,000, angle0=π → west of Sol). Reachable via a
+  // second warp gate randomized onto a different Kuiper body each
+  // match (see seedWarpGates in singlePlayerSetup).
+  //
+  // PHYSICS: black holes don't usually live alone. Real-world
+  // stellar-mass BHs (5-30 M☉) typically formed from a supernova
+  // and were gravitationally bound to a companion that survived
+  // the blast. The companion sheds gas onto the BH via stellar
+  // wind or Roche-lobe overflow, forming an accretion disk that
+  // glows in X-ray (this is how we detect most stellar BHs — pure
+  // BHs alone are invisible). Cygnus X-1 is the textbook example:
+  // a ~21 M☉ BH paired with a ~40 M☉ blue supergiant (HDE 226868)
+  // at ~0.2 AU separation, orbital period ~5.6 days.
+  //
+  // We model: a central black_hole body at the system's barycenter
+  // with a hot blue-white companion star orbiting tightly (matches
+  // the X-ray-binary observation). Around them, a few wandering
+  // worlds — stripped, irradiated, metal-rich from supernova ejecta,
+  // and unusually high in science yield because every probe sent
+  // there is rewriting astrophysics textbooks. Outer dwarf hosts
+  // the return gate.
+  //
+  // Stable planets around X-ray binaries are rare but theoretically
+  // possible if they orbit FAR from the binary (beyond the disk
+  // truncation radius — we put the inner world at r=500, ~10× the
+  // BH-companion separation). Their existence here is implicitly
+  // "they survived because they were already far out when the
+  // primary went supernova."
+  // ============================================================
+  {
+    id: 'bh_barycenter', name: 'Cygnus Barycenter', type: 'lagrange', parent: 'sol',
+    radius: 0.5, soi: 0, mu: 0, color: '#3a3a44',
+    orbitRadius: 340000, orbitPeriod: 1e12, angle0: Math.PI,  // west of Sol
+  },
+  {
+    id: 'cygnus_x', name: 'Cygnus X', type: 'black_hole', parent: 'bh_barycenter',
+    // Small visible radius — the event horizon is tiny compared to
+    // a star. The custom renderer draws the accretion disk much
+    // bigger (3× the body radius) so it reads as a glowing eye.
+    radius: 4, soi: 50, mu: 600, color: '#000000',
+    // Same period as the companion, phased π apart so they stay
+    // opposite each other across the barycenter (matches binary-
+    // star bookkeeping). Mass ratio ~1:2 (BH heavier than companion
+    // — real Cygnus X-1 is the reverse, but flipping it here keeps
+    // the BH closer to the barycenter for visual cleanliness).
+    orbitRadius: 12, orbitPeriod: 180, angle0: 0,
+  },
+  {
+    id: 'hde_226868', name: 'HDE 226868', type: 'star', parent: 'bh_barycenter',
+    // Blue-white supergiant donor star. Color picked to read as
+    // "hot massive star" against the dark BH.
+    radius: 7, soi: 30, mu: 300, color: '#a8d0ff',
+    orbitRadius: 24, orbitPeriod: 180, angle0: Math.PI,
+  },
+  // Surviving worlds — irradiated by the X-ray emission, enriched
+  // by supernova ejecta. Science yields are exceptional because
+  // every measurement out here is a new physics result.
+  {
+    id: 'requiem', name: 'Requiem', type: 'terrestrial', parent: 'bh_barycenter',
+    radius: 3, soi: 40, mu: 80, color: '#5a3a4a',  // dark irradiated rock
+    orbitRadius: 500, orbitPeriod: 900, angle0: 1.2,
+    resources: { fuel: 0, gold: 6, metal: 10, science: 20 },
+  },
+  {
+    id: 'vellichor', name: 'Vellichor', type: 'gas_giant', parent: 'bh_barycenter',
+    // X-ray-bleached gas giant — methane stripped, hydrogen ionized,
+    // visual hue tends toward pale blue-violet.
+    radius: 8, soi: 95, mu: 320, color: '#8870b0',
+    orbitRadius: 1000, orbitPeriod: 2600, angle0: 3.4,
+    resources: { fuel: 14, gold: 0, metal: 0, science: 16 },
+  },
+  {
+    id: 'echelon', name: 'Echelon', type: 'terrestrial', parent: 'bh_barycenter',
+    // Heavy-element world — supernova ejecta seeded it with gold,
+    // uranium, exotic isotopes.
+    radius: 3.5, soi: 45, mu: 110, color: '#b89060',
+    orbitRadius: 1700, orbitPeriod: 5800, angle0: 5.3,
+    resources: { fuel: 0, gold: 14, metal: 8, science: 18 },
+  },
+  // Outer dwarf — the return-gate body for this system. The warp_gate
+  // secret here points back to whichever Sol KBO got picked as the
+  // Cygnus-side gate. Like Farspire, resources are middling — the
+  // payoff is the shortcut.
+  {
+    id: 'reliquary', name: 'Reliquary', type: 'dwarf', parent: 'bh_barycenter',
+    radius: 1.5, soi: 9, mu: 1, color: '#706878',
+    orbitRadius: 2800, orbitPeriod: 12000, angle0: 0.8,
+    resources: { fuel: 0, gold: 4, metal: 5, science: 12 },
   },
 ];
 
-/** Body ids in the binary system. Exported so the secret seeder can
- *  exclude them from Sol-side warp-gate randomization (we don't want
- *  the Sol-side gate accidentally landing on a binary body, even
- *  though category filtering already prevents it). */
+/** Body ids in the Centauri binary system. Exported so the regular
+ *  secret seeder can exclude them — we don't want a portal_to_sun
+ *  landing on Verdant and quietly warping returning explorers back
+ *  to Sol. The dedicated warp gates handle all inter-system travel. */
 export const BINARY_SYSTEM_BODY_IDS: ReadonlySet<string> = new Set([
   'binary_barycenter',
   'centauri_a', 'centauri_b',
@@ -375,17 +470,30 @@ export const BINARY_SYSTEM_BODY_IDS: ReadonlySet<string> = new Set([
   'farspire',
 ]);
 
-/** Sol-side Kuiper-belt bodies that are eligible to host the random
- *  warp gate. Pluto is excluded by player request (charming little
- *  binary planet, leave it alone). Picked at seed time by
- *  src/state/singlePlayerSetup.ts. */
+/** Body ids in the Cygnus X-1 analogue system. Same exclusion logic
+ *  as the Centauri set. */
+export const BLACK_HOLE_SYSTEM_BODY_IDS: ReadonlySet<string> = new Set([
+  'bh_barycenter',
+  'cygnus_x', 'hde_226868',
+  'requiem', 'vellichor', 'echelon',
+  'reliquary',
+]);
+
+/** Sol-side Kuiper-belt bodies eligible to host a random warp gate.
+ *  Pluto is excluded by player request (charming little binary planet,
+ *  leave it alone). Two of these are picked at seed time without
+ *  replacement — one for the Centauri gate, one for the Cygnus gate. */
 export const SOL_GATE_CANDIDATES: readonly string[] = [
   'haumea', 'makemake', 'quaoar', 'eris', 'sedna',
 ];
 
-/** The binary system's return gate is fixed — Farspire, the outermost
- *  dwarf in the system. Same outer-system silhouette as Sol's KBOs. */
+/** The binary system's return gate — Farspire, the outermost dwarf
+ *  in Centauri. Hardcoded; same outer-system silhouette as Sol's KBOs. */
 export const BINARY_RETURN_GATE_ID = 'farspire';
+
+/** The black-hole system's return gate — Reliquary, the outermost
+ *  dwarf in Cygnus. Hardcoded mirror of Farspire. */
+export const BLACK_HOLE_RETURN_GATE_ID = 'reliquary';
 
 // (Everything below — SHARED_FACTIONS, getScenario, createScenario1-4,
 // freshResources/Tech, withOwnership, ScenarioType, SCENARIO_DESCRIPTIONS —

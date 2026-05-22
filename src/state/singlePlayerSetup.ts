@@ -16,7 +16,9 @@ import {
 } from '../types';
 import {
   SHARED_BODIES,
-  SOL_GATE_CANDIDATES, BINARY_RETURN_GATE_ID, BINARY_SYSTEM_BODY_IDS,
+  SOL_GATE_CANDIDATES,
+  BINARY_RETURN_GATE_ID, BINARY_SYSTEM_BODY_IDS,
+  BLACK_HOLE_RETURN_GATE_ID, BLACK_HOLE_SYSTEM_BODY_IDS,
 } from './mockGameState';
 import { createCity, createStation } from '../game/settlements';
 import { seedBodySecrets } from '../game/secrets';
@@ -254,20 +256,24 @@ export function setupSinglePlayer(config: SinglePlayerConfig): GameState {
   // never lands on Mercury. Map-seed-derived PRNG keeps placements
   // reproducible per game.
   //
-  // Binary-system bodies are added to the exclusion set so the regular
-  // seeder doesn't drop e.g. a portal_to_sun on Verdant (which would
-  // warp returning explorers straight back to Sol — funny but confusing).
-  // The dedicated warp_gate pair below handles all inter-system travel.
-  const secretExclusions = new Set([...claimedBodies, ...BINARY_SYSTEM_BODY_IDS]);
+  // Far-system bodies (Centauri + Cygnus X) are added to the exclusion
+  // set so the regular seeder doesn't drop e.g. a portal_to_sun on
+  // Verdant (which would warp returning explorers straight back to
+  // Sol — funny but confusing). The dedicated warp_gate seeder below
+  // handles all inter-system travel.
+  const secretExclusions = new Set([
+    ...claimedBodies,
+    ...BINARY_SYSTEM_BODY_IDS,
+    ...BLACK_HOLE_SYSTEM_BODY_IDS,
+  ]);
   let bodiesWithSecrets = seedBodySecrets(bodies, secretExclusions, rand);
 
-  // Warp gate to the binary system. Pick one Sol-side Kuiper-belt
-  // candidate (Pluto excluded by design) and link it bidirectionally
-  // to Farspire in the Centauri system. If the secret seeder already
-  // dropped something on the chosen body, we OVERWRITE it — the gate
-  // is the more dramatic story, and the player only loses a one-shot
-  // freebie like a resource cache. Also overwrites Farspire's secret
-  // (if any) so the return trip always works.
+  // Two warp gates: one to Centauri (binary stars, science-rich
+  // worlds), one to Cygnus X (black hole + companion, exotic worlds).
+  // Picks two different Sol-side Kuiper bodies as the entry points;
+  // Pluto is excluded by design. Overwrites whatever the regular
+  // seeder may have dropped on the chosen bodies — gates are the more
+  // dramatic story than a one-shot resource cache.
   bodiesWithSecrets = seedWarpGates(bodiesWithSecrets, rand);
 
   return {
@@ -295,36 +301,41 @@ export function setupSinglePlayer(config: SinglePlayerConfig): GameState {
 // status enum, but for now there's no natural end to compute against.
 
 /**
- * Drop bidirectional warp gates on (1) a randomly chosen Sol-side
- * Kuiper-belt body and (2) Farspire in the binary system. Sol-side
- * pick is reproducible from the map-seed PRNG; binary side is fixed.
+ * Drop bidirectional warp gates linking Sol to BOTH far systems.
+ * Picks two distinct Sol-side Kuiper bodies (without replacement) via
+ * the map-seed PRNG; one becomes the Centauri gate, one becomes the
+ * Cygnus X gate. Return gates on Farspire and Reliquary are fixed.
  *
  * Per-tick teleport behavior is wired in gameContext.tsx advanceToTick
  * — this only seeds the metadata.
  */
 function seedWarpGates(bodies: Body[], rand: () => number): Body[] {
-  const solGateId = SOL_GATE_CANDIDATES[
-    Math.floor(rand() * SOL_GATE_CANDIDATES.length)
-  ];
+  // Shuffle the candidate list and take the first two — guarantees
+  // distinct picks without the "did I pick the same one twice?" loop.
+  const shuffled = [...SOL_GATE_CANDIDATES];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  const centauriGateId = shuffled[0];
+  const cygnusGateId = shuffled[1];
+
+  const gatePairs: Record<string, string> = {
+    [centauriGateId]: BINARY_RETURN_GATE_ID,
+    [BINARY_RETURN_GATE_ID]: centauriGateId,
+    [cygnusGateId]: BLACK_HOLE_RETURN_GATE_ID,
+    [BLACK_HOLE_RETURN_GATE_ID]: cygnusGateId,
+  };
+
   return bodies.map(b => {
-    if (b.id === solGateId) {
-      return {
-        ...b,
-        secret: {
-          kind: 'warp_gate' as const,
-          destinationBodyId: BINARY_RETURN_GATE_ID,
-        },
-      };
-    }
-    if (b.id === BINARY_RETURN_GATE_ID) {
-      return {
-        ...b,
-        secret: {
-          kind: 'warp_gate' as const,
-          destinationBodyId: solGateId,
-        },
-      };
-    }
-    return b;
+    const dest = gatePairs[b.id];
+    if (!dest) return b;
+    return {
+      ...b,
+      secret: {
+        kind: 'warp_gate' as const,
+        destinationBodyId: dest,
+      },
+    };
   });
 }
