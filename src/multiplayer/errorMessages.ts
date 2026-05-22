@@ -81,7 +81,19 @@ export function humanizeMpError(
       return 'Server: this tech is already at the global cap.';
 
     case 'no_presence':
-      return 'Server: a freighter must be in orbit at this body to deploy. Send one and try again.';
+      // Three things produce this on the deploy path:
+      //   1. The visible freighter is an enemy's — only YOUR OWN
+      //      freighter counts.
+      //   2. You sent a combat ship instead — corvettes/frigates/
+      //      destroyers can't deliver settlement materials.
+      //   3. Sync window: your freighter just arrived locally but the
+      //      server hasn't yet processed the arrival tick. The client
+      //      shows it parked; the server still has it in flight.
+      // We name all three so the player can pick the right next step
+      // without guessing.
+      return 'Server: you need YOUR OWN freighter parked at this body to deploy. '
+        + 'If you just arrived, wait a tick for the server to confirm — '
+        + 'otherwise check that the freighter at this body is yours and not an enemy\'s.';
 
     case 'no_surface':
       return 'Server: a city cannot be deployed on this body type (stars / gas giants / ice giants have no surface).';

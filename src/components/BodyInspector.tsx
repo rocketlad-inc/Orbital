@@ -210,10 +210,61 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
   const settlements = gameState.settlements.filter(s => s.bodyId === bodyId);
 
   // Only freighters can deliver settlement materials — combat ships can't deploy.
-  const playerFreighterHere = gameState.ships.find(s =>
-    s.ownedBy === 'player' && !s.transit && s.orbit.parentBodyId === bodyId && s.class === 'freighter'
-  );
+  //
+  // Extra gate (MP): also reject ships that still carry a committed
+  // transfer order. Background: gameContext.advanceToTick runs locally
+  // every tick in MP too, so a torch arrival fires on the client a
+  // tick or two before the server's alarm processes it. Without this
+  // check, the deploy button is enabled in that desync window, the
+  // player clicks, and the server returns no_presence because its
+  // ships.parent_body_id still says 'earth' (or wherever). The
+  // committed-order check is the proxy for "server has confirmed
+  // arrival" — committed orders only clear once /state polls back the
+  // server's executed/cleared row.
+  const playerFreighterHere = gameState.ships.find(s => {
+    if (s.ownedBy !== 'player') return false;
+    if (s.transit) return false;
+    if (s.orbit.parentBodyId !== bodyId) return false;
+    if (s.class !== 'freighter') return false;
+    // In MP, if the server still has an unfinished transfer node on
+    // this ship, the client has locally arrived but the server hasn't —
+    // hold off until /state confirms.
+    if (mpActions && s.orders.some(o =>
+      o.type === 'transfer' && (o.status === 'committed' || o.status === 'planned')
+    )) {
+      return false;
+    }
+    return true;
+  });
   const canBuildHere = !!playerFreighterHere;
+
+  // Diagnostic: is there a NON-player freighter at this body? Used to
+  // refine the hint copy — the player might be looking at the enemy's
+  // ship and wondering why their button is disabled.
+  const enemyFreighterHere = !playerFreighterHere && gameState.ships.some(s =>
+    s.ownedBy !== 'player' && !s.transit && s.orbit.parentBodyId === bodyId && s.class === 'freighter'
+  );
+  // Diagnostic: is the player's freighter mid-flight to here? Differentiates
+  // "send one" from "wait, yours is on its way."
+  const playerFreighterEnRoute = !playerFreighterHere && gameState.ships.some(s =>
+    s.ownedBy === 'player' && s.class === 'freighter' && (
+      // Active torch burn pointed here
+      s.transit?.currentTransfer.targetBodyId === bodyId
+      // Or a committed/planned transfer order pointed here (MP server still has it)
+      || s.orders.some(o =>
+        o.type === 'transfer'
+        && (o.status === 'committed' || o.status === 'planned')
+        && o.capturedAtBody === bodyId
+      )
+    )
+  );
+  // Single source of truth for the disabled-button hint text. Used by
+  // both the button title attribute and the visible hint below.
+  const noFreighterHint = playerFreighterEnRoute
+    ? 'Your freighter is en route — wait for it to arrive'
+    : enemyFreighterHere
+      ? 'That freighter belongs to an enemy. Send YOUR own to deploy.'
+      : 'Send a freighter to orbit to deploy';
 
   const cityAllowed = canHostCity(body);
   const stationAllowed = canHostStation(body);
@@ -442,7 +493,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
                 disabled={!canBuildHere || !canAffordCity}
                 onClick={() => handleStartDeploy('city')}
                 title={
-                  !canBuildHere ? 'Need a freighter in orbit'
+                  !canBuildHere ? noFreighterHint
                   : !canAffordCity ? `Need ${SETTLEMENT_DEFS.city.cost.fuel}F/${SETTLEMENT_DEFS.city.cost.ore}O/${SETTLEMENT_DEFS.city.cost.credits}C`
                   : `Deploy a city (${SETTLEMENT_DEFS.city.cost.fuel}F/${SETTLEMENT_DEFS.city.cost.ore}O/${SETTLEMENT_DEFS.city.cost.credits}C)`
                 }
@@ -456,7 +507,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
                 disabled={!canBuildHere || !canAffordStation}
                 onClick={() => handleStartDeploy('station')}
                 title={
-                  !canBuildHere ? 'Need a freighter in orbit'
+                  !canBuildHere ? noFreighterHint
                   : !canAffordStation ? `Need ${SETTLEMENT_DEFS.station.cost.fuel}F/${SETTLEMENT_DEFS.station.cost.ore}O/${SETTLEMENT_DEFS.station.cost.credits}C`
                   : `Deploy a station (${SETTLEMENT_DEFS.station.cost.fuel}F/${SETTLEMENT_DEFS.station.cost.ore}O/${SETTLEMENT_DEFS.station.cost.credits}C)`
                 }
@@ -467,7 +518,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
           </div>
 
           {!canBuildHere && (cityAllowed || stationAllowed) && (
-            <div className="deploy-hint">Send a freighter to orbit to deploy</div>
+            <div className="deploy-hint">{noFreighterHint}</div>
           )}
 
           {deployError && (

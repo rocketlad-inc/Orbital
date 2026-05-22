@@ -420,6 +420,13 @@ function nodeToClient(
   // 'committed' so the existing UI continues to render it.
   const clientStatus: ManeuverNode['status'] =
     n.status === 'in_transit' ? 'committed' : n.status;
+  // Strip the gameId namespace from the target body id so the client's
+  // capturedAtBody matches the client-side body ids ('luna', 'mars').
+  // Without this, deploy-button gates that compare against bodyId would
+  // never match because the server sends '<gameId>:luna'.
+  const targetLocal = n.target_body_id
+    ? (stripGameId(n.target_body_id) ?? n.target_body_id)
+    : undefined;
   return {
     id: n.id,
     shipId: n.ship_id,
@@ -430,7 +437,11 @@ function nodeToClient(
     radial: n.dv_radial,
     normal: n.dv_normal,
     status: clientStatus,
-    label: n.target_body_id ? `→ ${n.target_body_id}` : undefined,
+    label: targetLocal ? `→ ${targetLocal}` : undefined,
+    // Expose target body as a structured field so UI gates ("freighter
+    // en route to here?", trade route filters) don't have to parse the
+    // label string.
+    capturedAtBody: targetLocal,
   };
 }
 
