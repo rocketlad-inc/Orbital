@@ -291,18 +291,26 @@ export const SHARED_BODIES: Body[] = [
   // "two suns going around each other" rather than "two stars
   // that look static for the whole match."
   //
-  // Barycenter is anchored at +150,000 from Sol via a parent-of-
+  // Barycenter is anchored at a distance from Sol via a parent-of-
   // sol orbit with effectively-infinite period — the body system
   // requires every non-root to orbit something, so we use Sol as a
   // pretend parent and crank the period so it doesn't drift on
   // gameplay timescales. radius=0.5 keeps it nearly invisible
   // (renderer min-draws at 3px so it's a tiny gray dot at the
   // barycenter, which actually reads as "centre of mass" nicely).
+  //
+  // DISTANCE TUNING: 60,000 world units puts the binary visible at
+  // the current MIN_SCALE (0.002) on viewports as small as 600px wide
+  // centered roughly on Sol. Earlier 150,000 was past the right edge
+  // on any window narrower than ~1500px, which made players think the
+  // system wasn't there. Direct brachistochrone travel at default
+  // engine accel is ~95 ticks — still significant enough that the
+  // gate is a meaningful shortcut.
   // ============================================================
   {
     id: 'binary_barycenter', name: 'Centauri Barycenter', type: 'lagrange', parent: 'sol',
     radius: 0.5, soi: 0, mu: 0, color: '#3a3a44',
-    orbitRadius: 150000, orbitPeriod: 1e12, angle0: 0,
+    orbitRadius: 60000, orbitPeriod: 1e12, angle0: 0,
   },
   {
     id: 'centauri_a', name: 'Centauri A', type: 'star', parent: 'binary_barycenter',

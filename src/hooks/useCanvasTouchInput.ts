@@ -145,7 +145,10 @@ export function useCanvasTouchInput({
         const [a, b] = Array.from(pointers.values());
         const dist = Math.hypot(a.x - b.x, a.y - b.y);
         if (pinchStartDist > 0) {
-          const targetScale = Math.max(0.005, Math.min(50, pinchStartScale * (dist / pinchStartDist)));
+          // MIN_SCALE 0.002 (was 0.005) so touch users can also pull
+          // out far enough to frame the Centauri binary system. Stay
+          // in sync with MapCanvas.tsx wheel-zoom clamp.
+          const targetScale = Math.max(0.002, Math.min(50, pinchStartScale * (dist / pinchStartDist)));
           // Zoom around the midpoint so the part of the world under the
           // gesture stays under the gesture.
           const midClientX = (a.x + b.x) / 2;

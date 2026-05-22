@@ -611,7 +611,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const worldBeforeX = camera.x + (mouseX - canvas.width / 2) / camera.scale;
       const worldBeforeY = camera.y + (mouseY - canvas.height / 2) / camera.scale;
       const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-      const newScale = Math.max(0.005, Math.min(50, camera.scale * factor));
+      // MIN_SCALE was 0.005 before the Centauri binary system landed;
+      // at that floor the binary at world x≈60,000 only fits on wide
+      // monitors. Dropped to 0.002 so the player can pull all the way
+      // out and frame Sol + Centauri together on a typical 1000–1200px
+      // canvas. Sol system renders as a small cluster at that zoom
+      // (~14px wide) but stays legible thanks to the renderer's 3px
+      // min-draw floor on bodies.
+      const newScale = Math.max(0.002, Math.min(50, camera.scale * factor));
       const newCamX = worldBeforeX - (mouseX - canvas.width / 2) / newScale;
       const newCamY = worldBeforeY - (mouseY - canvas.height / 2) / newScale;
       updateCamera({ x: newCamX, y: newCamY, scale: newScale });
