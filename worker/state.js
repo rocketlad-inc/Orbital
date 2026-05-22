@@ -138,9 +138,16 @@ async function handleGetState(req, env, ctx) {
               owner_faction_id, development_level, fortification_level, shipyard_level,
               secret_kind, secret_revealed,
               secret_discovered_by_faction_id, secret_discovered_at_tick,
+              orbit_rp, orbit_ra, orbit_omega, orbit_m0,
+              ram_target_body_id, ram_start_tick, ram_flip_tick, ram_arrive_tick,
+              ram_acceleration, ram_start_pos_x, ram_start_pos_y,
+              ram_start_vel_x, ram_start_vel_y,
+              ram_intercept_pos_x, ram_intercept_pos_y,
+              ram_total_dv, ram_owned_by_faction_id,
               (id IN (SELECT bid FROM visible_bodies)) AS visible_to_me
          FROM game_bodies
-        WHERE game_id = ?1`,
+        WHERE game_id = ?1
+          AND destroyed_at_tick IS NULL`,
     )
     .bind(gameId, me.id)
     .all()).results ?? [];

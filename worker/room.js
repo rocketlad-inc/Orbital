@@ -765,6 +765,17 @@ export class Room {
       console.error('resolveSecretReveal failed', e);
     }
 
+    // 2c-pre. Asteroid-weapon impacts.
+    //
+    // Bodies with ram_target_body_id != NULL and ram_arrive_tick <= tick
+    // are arriving this step. Apply the impact effects (settlements
+    // wiped, yields halved, asteroid destroyed) atomically per body.
+    try {
+      await this.resolveAsteroidImpacts(gameId, tick);
+    } catch (e) {
+      console.error('resolveAsteroidImpacts failed', e);
+    }
+
     // 2c. Trade route auto-pilot.
     //
     // For each active route, look at the freighter. Skip if it has any
@@ -1683,6 +1694,153 @@ export class Room {
    * Per-freighter per-tick contribution: 5F · 10O · 10C · 5S.
    * Clamped by pool availability and remaining target.
    */
+  /**
+   * Asteroid-weapon impact resolver.
+   *
+   * For each body whose ram_arrive_tick has come up, apply the impact:
+   *   - All non-destroyed settlements at target_body_id get marked
+   *     destroyed_at_tick.
+   *   - Target body's yield_metal / yield_fuel / yield_gold /
+   *     yield_science halved (floor) — pollution + crater + lost
+   *     surface infrastructure.
+   *   - Ownership of the target body is recomputed (likely flips to
+   *     NULL if every settlement is gone).
+   *   - The asteroid itself is marked destroyed_at_tick — it's
+   *     consumed in the strike.
+   *   - Chronicle entry: 'asteroid_impact'. Lights up the Daily.
+   *
+   * Sol is a special case: the asteroid evaporates on approach and
+   * nothing else happens. Lets a player who built TT but doesn't want
+   * to use it as a weapon dispose of the rock pacifically.
+   */
+  async resolveAsteroidImpacts(gameId, tick) {
+    const now = Date.now();
+    const arrivals = (await this.env.DB
+      .prepare(
+        `SELECT id, name, ram_target_body_id, ram_owned_by_faction_id, ram_arrive_tick
+           FROM game_bodies
+          WHERE game_id = ?
+            AND ram_target_body_id IS NOT NULL
+            AND ram_arrive_tick IS NOT NULL
+            AND ram_arrive_tick <= ?
+            AND destroyed_at_tick IS NULL`,
+      )
+      .bind(gameId, tick)
+      .all()).results ?? [];
+
+    for (const a of arrivals) {
+      const targetId = a.ram_target_body_id;
+      const targetIsSol = targetId === `${gameId}:sol` || targetId === 'sol';
+
+      // Always: consume the asteroid.
+      const stmts = [];
+      stmts.push(
+        this.env.DB
+          .prepare(
+            `UPDATE game_bodies
+                SET destroyed_at_tick = ?,
+                    ram_target_body_id = NULL,
+                    ram_arrive_tick = NULL
+              WHERE id = ?`,
+          )
+          .bind(tick, a.id),
+      );
+
+      let targetName = 'Sol';
+      let destroyedCount = 0;
+      if (!targetIsSol) {
+        // Look up target name + current yields.
+        const target = await this.env.DB
+          .prepare(
+            `SELECT name, yield_metal, yield_fuel, yield_gold, yield_science
+               FROM game_bodies
+              WHERE id = ? AND game_id = ?`,
+          )
+          .bind(targetId, gameId)
+          .first();
+        targetName = target?.name ?? '?';
+
+        // Settlements wiped.
+        const victimSettlements = (await this.env.DB
+          .prepare(
+            `SELECT id FROM game_settlements
+              WHERE game_id = ? AND body_id = ? AND destroyed_at_tick IS NULL`,
+          )
+          .bind(gameId, targetId)
+          .all()).results ?? [];
+        destroyedCount = victimSettlements.length;
+        for (const s of victimSettlements) {
+          stmts.push(
+            this.env.DB
+              .prepare('UPDATE game_settlements SET destroyed_at_tick = ? WHERE id = ?')
+              .bind(tick, s.id),
+          );
+        }
+
+        // Yields halved (floor). Target body endures, but the surface
+        // is now a crater field that produces half what it did.
+        if (target) {
+          stmts.push(
+            this.env.DB
+              .prepare(
+                `UPDATE game_bodies
+                    SET yield_metal = ?, yield_fuel = ?, yield_gold = ?, yield_science = ?
+                  WHERE id = ?`,
+              )
+              .bind(
+                Math.floor((target.yield_metal ?? 0) / 2),
+                Math.floor((target.yield_fuel ?? 0) / 2),
+                Math.floor((target.yield_gold ?? 0) / 2),
+                Math.floor((target.yield_science ?? 0) / 2),
+                targetId,
+              ),
+          );
+        }
+      }
+
+      // Chronicle entry.
+      const chronicleId = `impact_${a.id.slice(-10)}_${Math.random().toString(36).slice(2, 8)}`;
+      stmts.push(
+        this.env.DB
+          .prepare(
+            `INSERT INTO chronicle_entries
+              (id, game_id, tick_number, kind, actor_faction_id, body_id, target_faction_id, payload, visibility, created_at_ms)
+             VALUES (?, ?, ?, 'asteroid_impact', ?, ?, NULL, ?, 'public', ?)`,
+          )
+          .bind(
+            chronicleId, gameId, tick,
+            a.ram_owned_by_faction_id,
+            targetId,
+            JSON.stringify({
+              asteroid_name: a.name,
+              target_name: targetName,
+              target_body_id: targetId,
+              settlements_destroyed: destroyedCount,
+              sol_special: targetIsSol,
+            }),
+            now,
+          ),
+      );
+
+      try {
+        await this.env.DB.batch(stmts);
+      } catch (e) {
+        console.error('asteroid impact batch failed', { asteroid: a.id, target: targetId }, e);
+        continue;
+      }
+
+      // Body ownership may need to flip to NULL if every settlement
+      // was destroyed. Reuse the existing helper.
+      if (!targetIsSol) {
+        try {
+          await recomputeBodyOwnership(this.env.DB, gameId, targetId);
+        } catch (e) {
+          console.error('recomputeBodyOwnership after impact failed', e);
+        }
+      }
+    }
+  }
+
   /**
    * Body-secret reveal pass + portal_to_sun persistent warp.
    *

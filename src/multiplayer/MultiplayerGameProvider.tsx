@@ -83,6 +83,30 @@ interface ServerState {
     secret_revealed?: number;
     secret_discovered_by_faction_id?: string | null;
     secret_discovered_at_tick?: number | null;
+    /** Eccentric Kepler elements for Kuiper-class rogue asteroids.
+     *  Migration 0024. All four nullable; when present the client
+     *  bodyPosition uses Kepler propagation instead of the circular
+     *  shortcut. */
+    orbit_rp?: number | null;
+    orbit_ra?: number | null;
+    orbit_omega?: number | null;
+    orbit_m0?: number | null;
+    /** Active asteroid-weapon trajectory. Set when a faction has
+     *  triggered RAM on this body via its Trajectory Control Thrusters.
+     *  Migration 0024. */
+    ram_target_body_id?: string | null;
+    ram_start_tick?: number | null;
+    ram_flip_tick?: number | null;
+    ram_arrive_tick?: number | null;
+    ram_acceleration?: number | null;
+    ram_start_pos_x?: number | null;
+    ram_start_pos_y?: number | null;
+    ram_start_vel_x?: number | null;
+    ram_start_vel_y?: number | null;
+    ram_intercept_pos_x?: number | null;
+    ram_intercept_pos_y?: number | null;
+    ram_total_dv?: number | null;
+    ram_owned_by_faction_id?: string | null;
   }>;
   ships: Array<{
     id: string;
@@ -237,6 +261,30 @@ function bodyToClient(b: ServerState['bodies'][number]): Body {
         discoveredAtTick: b.secret_discovered_at_tick ?? undefined,
       }
     : undefined;
+  // Active ram plan — present when this body has been diverted as an
+  // asteroid weapon. Server only ships these fields when a plan is set.
+  const ramPlan: Body['ramPlan'] = (
+    b.ram_target_body_id != null
+    && b.ram_start_tick != null
+    && b.ram_arrive_tick != null
+    && b.ram_acceleration != null
+    && b.ram_start_pos_x != null && b.ram_start_pos_y != null
+    && b.ram_start_vel_x != null && b.ram_start_vel_y != null
+    && b.ram_intercept_pos_x != null && b.ram_intercept_pos_y != null
+    && b.ram_total_dv != null
+    && b.ram_owned_by_faction_id != null
+  ) ? {
+    targetBodyId: stripGameId(b.ram_target_body_id) ?? b.ram_target_body_id,
+    startTick: b.ram_start_tick,
+    flipTick: b.ram_flip_tick ?? (b.ram_start_tick + b.ram_arrive_tick) / 2,
+    arriveTick: b.ram_arrive_tick,
+    acceleration: b.ram_acceleration,
+    startPos: { x: b.ram_start_pos_x, y: b.ram_start_pos_y },
+    startVel: { x: b.ram_start_vel_x, y: b.ram_start_vel_y },
+    interceptPos: { x: b.ram_intercept_pos_x, y: b.ram_intercept_pos_y },
+    totalDv: b.ram_total_dv,
+    ownedBy: b.ram_owned_by_faction_id,
+  } : undefined;
   return {
     id: localId,
     name: b.name,
@@ -257,6 +305,14 @@ function bodyToClient(b: ServerState['bodies'][number]): Body {
     },
     ownedBy: b.owner_faction_id ?? undefined,
     secret,
+    // Eccentric Kepler fields. Pass through nullable — bodyPosition
+    // checks "all four present" before switching from the circular
+    // shortcut to Kepler propagation.
+    orbit_rp: b.orbit_rp ?? undefined,
+    orbit_ra: b.orbit_ra ?? undefined,
+    orbit_omega: b.orbit_omega ?? undefined,
+    orbit_m0: b.orbit_m0 ?? undefined,
+    ramPlan,
   };
 }
 
@@ -631,6 +687,24 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         const tail = parsed.killer_faction_id ? ` by ${killer}` : '';
         const label = sName ? `${sType} ${sName}` : sType;
         return `${t}  ${owner}'s ${label} on ${where} destroyed${tail}`;
+      }
+
+      if (ev.kind === 'asteroid_launched') {
+        const asteroid = (parsed.asteroid_name as string) ?? 'an asteroid';
+        const target = (parsed.target_name as string) ?? 'a planet';
+        const eta = (parsed.ticks_to_impact as number) ?? 0;
+        const launcher = nameOfFaction(ev.actor_faction_id);
+        return `${t}  ⚠ ${launcher} diverts ${asteroid} toward ${target} — impact in T-${eta} ticks`;
+      }
+
+      if (ev.kind === 'asteroid_impact') {
+        const asteroid = (parsed.asteroid_name as string) ?? 'asteroid';
+        const target = (parsed.target_name as string) ?? 'a body';
+        const count = (parsed.settlements_destroyed as number) ?? 0;
+        const sol = parsed.sol_special === true;
+        const aggressor = nameOfFaction(ev.actor_faction_id);
+        if (sol) return `${t}  ${asteroid} evaporated into Sol (no effect) — launched by ${aggressor}`;
+        return `${t}  💥 IMPACT — ${asteroid} struck ${target}, ${count} settlement${count !== 1 ? 's' : ''} destroyed${ev.actor_faction_id ? ` (${aggressor})` : ''}`;
       }
 
       return `${t}  ${ev.kind}`;

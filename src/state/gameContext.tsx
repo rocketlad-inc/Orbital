@@ -727,6 +727,64 @@ export function GameContextProvider({
     }
     let updatedShips = updatedShips0;
 
+    // Asteroid-weapon impact resolution. Any body with a ramPlan whose
+    // arriveTick has come up applies the impact this tick: settlements
+    // at the target wiped, yields halved, asteroid destroyed. Mirrors
+    // the worker's resolveAsteroidImpacts pass. Mutates updatedBodies /
+    // updatedSettlements arrays we'll thread through the rest of this
+    // tick step.
+    let bodiesAfterRam: Body[] = prev.bodies;
+    let settlementsAfterRam = prev.settlements;
+    {
+      const arrivingRams = prev.bodies.filter(
+        b => b.ramPlan && newTime >= b.ramPlan.arriveTick && !b.destroyedAtTick,
+      );
+      if (arrivingRams.length > 0) {
+        const wipedBodyIds = new Set<string>();
+        for (const a of arrivingRams) {
+          const plan = a.ramPlan!;
+          const targetIsSol = plan.targetBodyId === 'sol';
+          if (targetIsSol) {
+            logger.info('SIM', `Asteroid ${a.name} evaporated into Sol`);
+          } else {
+            const target = prev.bodies.find(b => b.id === plan.targetBodyId);
+            const targetName = target?.name ?? plan.targetBodyId;
+            const settlementCount = settlementsAfterRam.filter(
+              s => s.bodyId === plan.targetBodyId,
+            ).length;
+            logger.error('COMBAT', `ASTEROID IMPACT: ${a.name} struck ${targetName} — ${settlementCount} settlements destroyed`);
+            wipedBodyIds.add(plan.targetBodyId);
+          }
+        }
+        // Apply: destroy victim settlements, halve victim yields,
+        // mark asteroids destroyed.
+        const arrivingIds = new Set(arrivingRams.map(a => a.id));
+        bodiesAfterRam = prev.bodies.map(b => {
+          if (arrivingIds.has(b.id)) {
+            return { ...b, ramPlan: undefined, destroyedAtTick: newTime };
+          }
+          if (wipedBodyIds.has(b.id) && b.resources) {
+            return {
+              ...b,
+              resources: {
+                metal:   Math.floor(b.resources.metal   / 2),
+                fuel:    Math.floor(b.resources.fuel    / 2),
+                gold:    Math.floor(b.resources.gold    / 2),
+                science: Math.floor(b.resources.science / 2),
+              },
+              ownedBy: undefined,
+            };
+          }
+          return b;
+        });
+        if (wipedBodyIds.size > 0) {
+          settlementsAfterRam = settlementsAfterRam.filter(
+            s => !wipedBodyIds.has(s.bodyId),
+          );
+        }
+      }
+    }
+
     // Process build orders
     let buildOrders = prev.buildOrders;
     const completedBuilds = buildOrders.filter(bo => newTime >= bo.completeTick);
@@ -760,7 +818,7 @@ export function GameContextProvider({
     // the queue so a new upgrade can be started. Cost was debited at
     // queue time so this loop is pure level-flipping.
     let settlementBuildingsDirty = false;
-    const preSettlements = prev.settlements.map(s => {
+    const preSettlements = settlementsAfterRam.map(s => {
       const q = s.buildingQueue;
       if (!q || newTime < q.completeTick) return s;
       settlementBuildingsDirty = true;
@@ -1134,8 +1192,11 @@ export function GameContextProvider({
     // ship is in orbit and trigger the reveal. Persistent secrets
     // (portal_to_sun) also re-apply their effect every tick to any
     // ship at the body, not just the first to arrive.
+    //
+    // Start from the post-ram-impact body list so any halved yields /
+    // destroyed asteroids are visible to the secret pass.
     const secretLogs: string[] = [];
-    let updatedBodies = prev.bodies;
+    let updatedBodies: Body[] = bodiesAfterRam;
     {
       const settlementSpawns: typeof updatedSettlements = [];
       const shipSpawns: typeof updatedShips = [];

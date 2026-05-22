@@ -145,7 +145,40 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
     description: '+1 simultaneous ship-build slot at this body, per level.',
     shipyardBoost: { slotsPerLevel: 1 },
   },
+  // Trajectory Control Thrusters — asteroid-only doomsday weapon.
+  // Single-level (level >= 1 means "built"). Once present, the body's
+  // owning faction can target another body via the RAM action, paying
+  // a faction-fuel cost proportional to the brachistochrone Δv. Impact
+  // wipes settlements + halves yields. The asteroid itself is consumed.
+  //
+  // Gating happens at the UI + server endpoints by host body type
+  // (only body.type === 'asteroid' is allowed) rather than in
+  // BUILDING_DEFS, since BUILDING_DEFS already keys on settlement
+  // host type. The hostType field stays 'city' because that's where
+  // the building socket lives — but the canConstruct check filters
+  // on the parent body's type.
+  trajectory_thrusters: {
+    displayName: 'Trajectory Control Thrusters',
+    hostType: 'city',
+    baseCost: { fuel: 0, ore: 800, credits: 1200 },
+    costScaling: 99,            // exorbitant — players should never see L2 even theoretically
+    baseBuildTicks: 40,
+    buildTimeScaling: 1,
+    description: 'Anchor industrial-scale thrust packages to this rock. Unlocks the RAM action — target another body and crash this asteroid into it.',
+  },
 };
+
+/** Whether a given building can be built at the given body. Most
+ *  buildings can host anywhere a settlement can; trajectory_thrusters
+ *  is gated to rogue asteroid bodies only. Used by both the client UI
+ *  to show/hide the building option and the server to validate the
+ *  queueBuilding request. */
+export function buildingAllowedAt(kind: BuildingKind, body: Body): boolean {
+  if (kind === 'trajectory_thrusters') {
+    return body.type === 'asteroid';
+  }
+  return true;
+}
 
 /** Returns the current level (or 0) of a building at this settlement. */
 export function buildingLevel(s: Settlement, kind: BuildingKind): number {

@@ -42,6 +42,25 @@ export interface ResearchIntent {
   techId: string;
 }
 
+/** RAM intent — commits an asteroid (with built Trajectory Control
+ *  Thrusters) to a torch transit toward `targetBodyId`. The client
+ *  computes the entire plan via planTorchTransfer and posts every
+ *  field; the server only validates + persists. Mirrors the same
+ *  trust model the ship-transfer intent uses. */
+export interface RamIntent {
+  bodyId: string;                  // the asteroid being launched
+  targetBodyId: string;
+  startTick: number;
+  flipTick: number;
+  arriveTick: number;
+  acceleration: number;
+  startPos: { x: number; y: number };
+  startVel: { x: number; y: number };
+  interceptPos: { x: number; y: number };
+  totalDv: number;
+  fuelCost: number;
+}
+
 /** Result of a turn commit. Either the caller's vote was recorded
  *  (advanced=false) or every faction had voted and the server advanced
  *  the sim immediately (advanced=true). */
@@ -97,6 +116,12 @@ export interface MultiplayerActions {
    *  cost — errors carry tech_maxed / insufficient_resources for the
    *  TechPanel to surface. */
   research: (intent: ResearchIntent) => Promise<MpActionResult>;
+
+  /** Trigger the RAM action on a rogue asteroid. Server validates
+   *  ownership, TT presence, fuel; on success the body's natural
+   *  orbit is replaced by the supplied torch plan. Doomsday clock
+   *  starts here — there is no abort endpoint. */
+  ram: (intent: RamIntent) => Promise<MpActionResult>;
 
   // --- Turn-Based Mode (MP) ---
   /** Host-only: enable/disable TBM and set ticks_per_turn for this game.
@@ -246,6 +271,36 @@ export function MultiplayerActionsProvider({
         ok: false,
         code: res.error?.code,
         error: res.error?.message ?? 'Server rejected the research spend.',
+      };
+    },
+    async ram(intent) {
+      const res = await apiFetch(
+        `/api/games/${gameId}/bodies/${encodeURIComponent(qualify(intent.bodyId))}/ram`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            target_body_id: qualify(intent.targetBodyId),
+            start_tick: intent.startTick,
+            flip_tick: intent.flipTick,
+            arrive_tick: intent.arriveTick,
+            acceleration: intent.acceleration,
+            start_pos_x: intent.startPos.x,
+            start_pos_y: intent.startPos.y,
+            start_vel_x: intent.startVel.x,
+            start_vel_y: intent.startVel.y,
+            intercept_pos_x: intent.interceptPos.x,
+            intercept_pos_y: intent.interceptPos.y,
+            total_dv: intent.totalDv,
+            fuel_cost: intent.fuelCost,
+          }),
+        },
+      );
+      if (res.ok) return { ok: true };
+      console.warn('ram failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the asteroid ram.',
       };
     },
     async setTurnSettings(enabled, ticksPerTurn) {

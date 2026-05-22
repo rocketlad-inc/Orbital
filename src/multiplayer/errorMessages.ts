@@ -19,7 +19,8 @@ export type MpErrorDomain =
   | 'deploy'
   | 'transfer'
   | 'research'
-  | 'tbm';
+  | 'tbm'
+  | 'ram';
 
 /**
  * Map a server error code to a user-facing string.
@@ -90,6 +91,20 @@ export function humanizeMpError(
 
     case 'no_surface':
       return 'Server: a city cannot be deployed on this body type (stars / gas giants / ice giants have no surface).';
+
+    // RAM-specific codes
+    case 'wrong_type':
+      return 'Server: only rogue asteroid bodies can be rammed.';
+    case 'already_ramming':
+      return 'Server: this asteroid already has a ram in flight.';
+    case 'no_settlement':
+      return 'Server: you need a settlement on this asteroid to ram.';
+    case 'no_thrusters':
+      return 'Server: build Trajectory Control Thrusters first.';
+    case 'insufficient_fuel':
+      return 'Server: not enough fuel to launch this ram.';
+    case 'destroyed':
+      return 'Server: this body has been destroyed.';
 
     case 'bad_request':
       // bad_request typically indicates a client-server schema drift

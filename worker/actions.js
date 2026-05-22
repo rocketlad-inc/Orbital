@@ -1209,6 +1209,209 @@ async function handleInitiateDyson(req, env, ctx) {
   }, { status: 201 });
 }
 
+// ============================================================
+// POST /api/games/:gameId/bodies/:bodyId/ram
+// body: { target_body_id, start_pos:{x,y}, start_vel:{x,y},
+//         intercept_pos:{x,y}, flip_tick, arrive_tick, acceleration,
+//         total_dv, fuel_cost }
+//
+// Trigger the asteroid-weapon RAM action. The asteroid `bodyId` has
+// already had a Trajectory Control Thrusters building constructed at
+// it (validated below); the caller's faction is the building's owner.
+// On commit the asteroid leaves its natural orbit and begins a torch
+// transit toward `target_body_id`. The on-tick resolver detects
+// arrival and applies the impact effects (settlements destroyed,
+// yields halved, asteroid removed).
+//
+// The plan is computed client-side (same shape as ship transfers —
+// avoids duplicating the torch math on the server). The server
+// validates the inputs are sane, the body is a settable asteroid
+// owned by the caller's faction, the TT building is present, and
+// the caller has enough fuel.
+//
+// Once written, the doom clock is on. There is no abort endpoint.
+// ============================================================
+async function handleRamAsteroid(req, env, ctx) {
+  const { gameId, bodyId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  if (!BODY_ID_RE.test(bodyId)) return err(400, 'bad_request', 'invalid body id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const body = await env.DB
+    .prepare(
+      `SELECT id, type, owner_faction_id, ram_target_body_id, destroyed_at_tick
+         FROM game_bodies
+        WHERE id = ? AND game_id = ?`,
+    )
+    .bind(bodyId, gameId)
+    .first();
+  if (!body) return err(404, 'not_found', 'asteroid not found');
+  if (body.destroyed_at_tick != null) return err(409, 'destroyed', 'asteroid already destroyed');
+  if (body.type !== 'asteroid') {
+    return err(409, 'wrong_type', 'only rogue asteroid bodies can be rammed');
+  }
+  if (body.ram_target_body_id) {
+    return err(409, 'already_ramming', 'this asteroid already has a ram in flight');
+  }
+
+  // Caller must own a settlement here AND that settlement must carry
+  // the trajectory_thrusters building at level >= 1.
+  const settlements = (await env.DB
+    .prepare(
+      `SELECT id, owner_faction_id, buildings_json
+         FROM game_settlements
+        WHERE game_id = ? AND body_id = ? AND destroyed_at_tick IS NULL`,
+    )
+    .bind(gameId, bodyId)
+    .all()).results ?? [];
+  const mySettlements = settlements.filter(s => s.owner_faction_id === me.id);
+  if (mySettlements.length === 0) {
+    return err(403, 'no_settlement', 'you need a settlement on this asteroid to ram');
+  }
+  const hasThrusters = mySettlements.some(s => {
+    if (!s.buildings_json) return false;
+    try {
+      const bs = JSON.parse(s.buildings_json);
+      return (bs?.trajectory_thrusters ?? 0) >= 1;
+    } catch { return false; }
+  });
+  if (!hasThrusters) {
+    return err(409, 'no_thrusters', 'Trajectory Control Thrusters must be built first');
+  }
+
+  const payload = await readJson(req);
+  if (!payload || typeof payload !== 'object') return err(400, 'bad_request', 'invalid body');
+
+  const targetBodyId = payload.target_body_id;
+  if (typeof targetBodyId !== 'string' || !BODY_ID_RE.test(targetBodyId)) {
+    return err(400, 'bad_request', 'invalid target_body_id');
+  }
+  if (targetBodyId === bodyId) return err(400, 'bad_request', 'cannot target self');
+  const target = await env.DB
+    .prepare('SELECT 1 AS x FROM game_bodies WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL')
+    .bind(targetBodyId, gameId)
+    .first();
+  if (!target) return err(404, 'not_found', 'target body not found');
+
+  // Validate the plan envelope. Reject NaN, infinity, and obviously
+  // out-of-range values. The client is trusted on the math (planTorch
+  // already runs there) but the server is the source of truth for
+  // fuel debit and tick timing.
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v)) ? v : null;
+  const startTick = num(payload.start_tick);
+  const flipTick = num(payload.flip_tick);
+  const arriveTick = num(payload.arrive_tick);
+  const acceleration = num(payload.acceleration);
+  const startPosX = num(payload.start_pos_x);
+  const startPosY = num(payload.start_pos_y);
+  const startVelX = num(payload.start_vel_x);
+  const startVelY = num(payload.start_vel_y);
+  const interceptPosX = num(payload.intercept_pos_x);
+  const interceptPosY = num(payload.intercept_pos_y);
+  const totalDv = num(payload.total_dv);
+  const fuelCost = num(payload.fuel_cost);
+  if ([startTick, flipTick, arriveTick, acceleration, startPosX, startPosY,
+       startVelX, startVelY, interceptPosX, interceptPosY, totalDv, fuelCost]
+      .some(v => v == null)) {
+    return err(400, 'bad_request', 'plan fields missing or invalid');
+  }
+  if (arriveTick <= startTick) return err(400, 'bad_request', 'arrive_tick must follow start_tick');
+  if (flipTick <= startTick || flipTick >= arriveTick) {
+    return err(400, 'bad_request', 'flip_tick must lie between start and arrive');
+  }
+  if (acceleration <= 0) return err(400, 'bad_request', 'acceleration must be positive');
+  if (fuelCost < 0) return err(400, 'bad_request', 'fuel_cost must be non-negative');
+
+  // Fuel debit. Atomic with the plan write below — if either fails,
+  // the player keeps their fuel.
+  if ((me.fuel ?? 0) < fuelCost) {
+    return err(409, 'insufficient_fuel', `need ${fuelCost} fuel to ram, have ${me.fuel ?? 0}`);
+  }
+
+  const game = await env.DB
+    .prepare('SELECT current_tick FROM games WHERE id = ?')
+    .bind(gameId)
+    .first();
+  const nowTick = game?.current_tick ?? 0;
+  if (startTick < nowTick - 1) {
+    return err(400, 'bad_request', 'start_tick is in the past');
+  }
+
+  await env.DB.batch([
+    env.DB
+      .prepare(
+        `UPDATE game_bodies
+            SET ram_target_body_id = ?,
+                ram_start_tick = ?,
+                ram_flip_tick = ?,
+                ram_arrive_tick = ?,
+                ram_acceleration = ?,
+                ram_start_pos_x = ?, ram_start_pos_y = ?,
+                ram_start_vel_x = ?, ram_start_vel_y = ?,
+                ram_intercept_pos_x = ?, ram_intercept_pos_y = ?,
+                ram_total_dv = ?,
+                ram_owned_by_faction_id = ?
+          WHERE id = ? AND game_id = ?`,
+      )
+      .bind(
+        targetBodyId, startTick, flipTick, arriveTick, acceleration,
+        startPosX, startPosY, startVelX, startVelY,
+        interceptPosX, interceptPosY, totalDv, me.id,
+        bodyId, gameId,
+      ),
+    env.DB
+      .prepare('UPDATE game_factions SET fuel = fuel - ? WHERE id = ?')
+      .bind(fuelCost, me.id),
+  ]);
+
+  // Chronicle the launch — broadcasts to everyone, gives them ~arrive
+  // ticks of warning. Atrocity-flavored entry; the Daily picks this
+  // up automatically.
+  try {
+    const targetName = (await env.DB
+      .prepare('SELECT name FROM game_bodies WHERE id = ? AND game_id = ?')
+      .bind(targetBodyId, gameId)
+      .first())?.name ?? '?';
+    const ownName = (await env.DB
+      .prepare('SELECT name FROM game_bodies WHERE id = ? AND game_id = ?')
+      .bind(bodyId, gameId)
+      .first())?.name ?? '?';
+    const ticksToImpact = Math.ceil(arriveTick - nowTick);
+    const id = `ram_${bodyId.slice(-8)}_${Math.random().toString(36).slice(2, 8)}`;
+    await env.DB
+      .prepare(
+        `INSERT INTO chronicle_entries
+          (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+         VALUES (?, ?, ?, 'asteroid_launched', ?, ?, ?, 'public', ?)`,
+      )
+      .bind(
+        id, gameId, nowTick, me.id, bodyId,
+        JSON.stringify({
+          asteroid_name: ownName,
+          target_body_id: targetBodyId,
+          target_name: targetName,
+          ticks_to_impact: ticksToImpact,
+          owner_faction_id: me.id,
+        }),
+        Date.now(),
+      )
+      .run();
+  } catch (e) {
+    // Chronicle is best-effort; don't fail the launch over it.
+    console.error('ram chronicle failed', e);
+  }
+
+  return json({
+    ok: true,
+    body_id: bodyId,
+    target_body_id: targetBodyId,
+    arrive_at_tick: arriveTick,
+    fuel_cost: fuelCost,
+  }, { status: 201 });
+}
+
 export const routes = [
   {
     method: 'POST',
@@ -1305,5 +1508,11 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/dyson\/initiate$/,
     auth: 'required',
     handle: handleInitiateDyson,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/bodies\/(?<bodyId>[^/]+)\/ram$/,
+    auth: 'required',
+    handle: handleRamAsteroid,
   },
 ];

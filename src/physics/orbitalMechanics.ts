@@ -212,11 +212,143 @@ export function bodyPosition(body: Body, t: number, bodies: Body[]): WorldPositi
   const parent = bodies.find(b => b.id === body.parent);
   if (!parent) return { x: 0, y: 0 };
 
+  // Ram trajectory overrides everything — body has been diverted from
+  // its natural orbit by Trajectory Control Thrusters and is on a
+  // torch transit toward its target. Integrate the torch state directly.
+  if (body.ramPlan) {
+    return ramBodyPosition(body.ramPlan, t, bodies);
+  }
+
+  // Eccentric Kepler orbit (Kuiper-class rogue asteroids). Standard
+  // bodies skip this and use the cheap circular shortcut below.
+  if (
+    body.orbit_rp != null && body.orbit_ra != null
+    && body.orbit_rp > 0 && body.orbit_ra > body.orbit_rp
+  ) {
+    const parentPos = bodyPosition(parent, t, bodies);
+    const localPos = bodyEccentricLocalPosition(body, t);
+    return {
+      x: parentPos.x + localPos.x,
+      y: parentPos.y + localPos.y,
+    };
+  }
+
+  // Legacy circular shortcut. Untouched for every existing body.
   const parentPos = bodyPosition(parent, t, bodies);
   const angle = bodyAngleAt(body, t);
   return {
     x: parentPos.x + Math.cos(angle) * body.orbitRadius,
     y: parentPos.y + Math.sin(angle) * body.orbitRadius,
+  };
+}
+
+/**
+ * Local position on an eccentric Kepler orbit. Mirrors
+ * localPositionAt(orbit) but operates on a Body's optional Kepler
+ * fields. Body.orbit_m0 is the MEAN anomaly at epoch, not the true
+ * anomaly — distinguishes from OrbitElements which stores theta in
+ * that slot.
+ */
+function bodyEccentricLocalPosition(
+  body: Body, t: number,
+): { x: number; y: number } {
+  const rp = body.orbit_rp!;
+  const ra = body.orbit_ra!;
+  const omega = body.orbit_omega ?? 0;
+  const m0 = body.orbit_m0 ?? 0;
+  const a = (rp + ra) / 2;
+  const e = (ra - rp) / (ra + rp);
+  const period = body.orbitPeriod;
+  // Mean anomaly drift. Scaled by ORBITAL_SPEED_SCALE so the eccentric
+  // bodies stay in sync with the circular ones if the game ever fiddles
+  // the time scale.
+  let M = m0 + TWO_PI * t * ORBITAL_SPEED_SCALE / period;
+  M = ((M % TWO_PI) + TWO_PI) % TWO_PI;
+  const theta = solveKepler(M, e);
+  const r = a * (1 - e * e) / (1 + e * Math.cos(theta));
+  const phi = omega + theta;
+  return { x: r * Math.cos(phi), y: r * Math.sin(phi) };
+}
+
+/**
+ * World position of a body that's actively on a ram trajectory.
+ * Integrates the same torch math ships use. Cheap iterative step
+ * from startTick → currentTick; called once per render frame per
+ * ramming body, so worst case ~6 calls/frame.
+ */
+function ramBodyPosition(
+  plan: import('../types').RamPlan,
+  t: number,
+  bodies: Body[],
+): WorldPosition {
+  // Pre-ram coast: should not happen (plan is set at launch tick) but
+  // guard so a stale plan can't return NaN.
+  if (t <= plan.startTick) return { x: plan.startPos.x, y: plan.startPos.y };
+  // Post-arrival: pinned at intercept point until destruction passes.
+  if (t >= plan.arriveTick) return { x: plan.interceptPos.x, y: plan.interceptPos.y };
+
+  // Integrate. Small fixed substep for stability with re-aim each step.
+  let px = plan.startPos.x, py = plan.startPos.y;
+  let vx = plan.startVel.x, vy = plan.startVel.y;
+  const SUB = 1;
+  let cur = plan.startTick;
+  const target = bodies.find(b => b.id === plan.targetBodyId);
+  while (cur < t) {
+    const dt = Math.min(SUB, t - cur);
+    const mid = cur + dt / 2;
+    let ax: number, ay: number;
+    if (mid < plan.flipTick) {
+      // Boost: aim at intercept
+      const dx = plan.interceptPos.x - px;
+      const dy = plan.interceptPos.y - py;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (d < 1e-9) { ax = 0; ay = 0; }
+      else { ax = plan.acceleration * dx / d; ay = plan.acceleration * dy / d; }
+    } else {
+      // Brake: kill velocity relative to target body
+      let tvx = 0, tvy = 0;
+      if (target) {
+        const tv = bodyWorldVelocityRaw(target, mid, bodies);
+        tvx = tv.x; tvy = tv.y;
+      }
+      const rvx = vx - tvx;
+      const rvy = vy - tvy;
+      const rv = Math.sqrt(rvx * rvx + rvy * rvy);
+      if (rv < 1e-9) { ax = 0; ay = 0; }
+      else { ax = -plan.acceleration * rvx / rv; ay = -plan.acceleration * rvy / rv; }
+    }
+    px += vx * dt + 0.5 * ax * dt * dt;
+    py += vy * dt + 0.5 * ay * dt * dt;
+    vx += ax * dt;
+    vy += ay * dt;
+    cur += dt;
+  }
+  return { x: px, y: py };
+}
+
+/** Internal: a stripped-down bodyWorldVelocity that avoids the
+ *  importing-itself circle of doom by reading body fields directly. */
+function bodyWorldVelocityRaw(body: Body, t: number, bodies: Body[]): WorldPosition {
+  if (!body.parent) return { x: 0, y: 0 };
+  const parent = bodies.find(b => b.id === body.parent);
+  if (!parent) return { x: 0, y: 0 };
+  const parentVel = bodyWorldVelocityRaw(parent, t, bodies);
+  // For circular orbits, tangential velocity = 2π·r / period, perp to position.
+  // Eccentric Kepler bodies use a finite-difference sample for simplicity.
+  if (body.orbit_rp != null && body.orbit_ra != null && body.orbit_ra > body.orbit_rp) {
+    const h = 0.01;
+    const p1 = bodyEccentricLocalPosition(body, t - h);
+    const p2 = bodyEccentricLocalPosition(body, t + h);
+    return {
+      x: parentVel.x + (p2.x - p1.x) / (2 * h),
+      y: parentVel.y + (p2.y - p1.y) / (2 * h),
+    };
+  }
+  const angle = bodyAngleAt(body, t);
+  const omega = TWO_PI * ORBITAL_SPEED_SCALE / body.orbitPeriod;
+  return {
+    x: parentVel.x - Math.sin(angle) * body.orbitRadius * omega,
+    y: parentVel.y + Math.cos(angle) * body.orbitRadius * omega,
   };
 }
 

@@ -19,7 +19,7 @@ import { BottomSheet } from './BottomSheet';
 import {
   planTorchTransfer, fromG,
 } from '../physics/torchTransfer';
-import { bodyPosition, bodyWorldVelocity } from '../physics/orbitalMechanics';
+import { bodyPosition } from '../physics/orbitalMechanics';
 import './BodyInspector.css';
 
 /** Per-Δv fuel cost when an asteroid is rammed via Trajectory Control
@@ -866,17 +866,11 @@ const RamControlsSection: React.FC<{ body: Body }> = ({ body }) => {
   // STATE 2 — show RAM button + (when picked) preview.
   const playerFaction = gameState.factions.find(f => f.id === 'player');
   const baseAccel = fromG(playerFaction?.engineG ?? RAM_ASTEROID_G);
-  // Plan from current asteroid state.
+  // Plan from current asteroid state. Position from bodyPosition;
+  // velocity via finite difference (works for circular AND eccentric
+  // Kepler orbits — and we don't need closed-form derivative since
+  // this is called once per render, not per integration step).
   const launchPos = bodyPosition(body, gameState.currentTick, gameState.bodies);
-  // Asteroid's world velocity. Approximate with finite difference;
-  // bodyWorldVelocity in the codebase handles standard parent orbits
-  // and is cheap enough to call here. Eccentric Kepler bodies use
-  // the same orbit elements.
-  const launchVel = body.parent
-    ? bodyWorldVelocity(gameState.bodies.find(b => b.id === body.parent!)!, gameState.currentTick, gameState.bodies)
-    : { x: 0, y: 0 };
-  // For eccentric asteroids, also add the body's own orbital motion.
-  // Cheap finite difference on bodyPosition.
   const dh = 0.01;
   const p1 = bodyPosition(body, gameState.currentTick - dh, gameState.bodies);
   const p2 = bodyPosition(body, gameState.currentTick + dh, gameState.bodies);
@@ -884,7 +878,6 @@ const RamControlsSection: React.FC<{ body: Body }> = ({ body }) => {
     x: (p2.x - p1.x) / (2 * dh),
     y: (p2.y - p1.y) / (2 * dh),
   };
-  void launchVel; // parent vel folded into fullVel via the finite diff above
 
   // Bodies the player can target. Skip self + Sol-warning aside; the
   // server allows Sol but the asteroid evaporates harmlessly there.

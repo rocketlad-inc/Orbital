@@ -97,6 +97,72 @@ export const SHARED_BODIES: Body[] = [
     orbitRadius: 310, orbitPeriod: 443, angle0: 6.23,
     resources: { fuel: 0, gold: 3, metal: 4, science: 1 },
   },
+
+  // ============================================================
+  // ROGUE ASTEROIDS — small settable bodies that can host
+  // Trajectory Control Thrusters. Rich in metal + credits to
+  // make the early-game rush worthwhile; sparse on fuel + science
+  // so they're not strictly better than planets/moons. Once a
+  // faction builds the TT building, they unlock the RAM action
+  // and can crash this rock into another body.
+  //
+  // Three belt-class entries (circular, intermingled with the
+  // existing dwarfs) + three Kuiper-class entries with long
+  // eccentric paths swinging between the mid-inner system and
+  // far outside Pluto. Names are evocative-but-fictional so they
+  // don't collide with any real-world body.
+  // ============================================================
+  {
+    id: 'midas', name: 'Midas', type: 'asteroid', parent: 'sol',
+    radius: 0.6, soi: 2, mu: 0.04, color: '#c8a872',
+    orbitRadius: 295, orbitPeriod: 415, angle0: 0.4,
+    resources: { fuel: 0, gold: 6, metal: 8, science: 0 },
+  },
+  {
+    id: 'styx_rock', name: 'Styx', type: 'asteroid', parent: 'sol',
+    radius: 0.6, soi: 2, mu: 0.04, color: '#7a6858',
+    orbitRadius: 320, orbitPeriod: 470, angle0: 3.0,
+    resources: { fuel: 0, gold: 5, metal: 9, science: 0 },
+  },
+  {
+    id: 'iron_anna', name: 'Iron Anna', type: 'asteroid', parent: 'sol',
+    radius: 0.7, soi: 2, mu: 0.05, color: '#9a7a5a',
+    orbitRadius: 340, orbitPeriod: 515, angle0: 5.1,
+    resources: { fuel: 0, gold: 4, metal: 10, science: 1 },
+  },
+  // Kuiper-class — long elliptical paths. orbit_rp brings them
+  // through the inner system on perihelion (~200 units, between
+  // Mars and the belt); orbit_ra puts apohelion way out past
+  // Pluto (~2000-3500 units). orbitRadius = (rp+ra)/2 = semi-
+  // major axis. orbitPeriod from Kepler's third around Sol.
+  {
+    id: 'black_sky', name: 'Black Sky', type: 'asteroid', parent: 'sol',
+    radius: 0.5, soi: 2, mu: 0.03, color: '#3a3030',
+    orbitRadius: 1100,                          // a = (rp+ra)/2
+    orbitPeriod: 2960, angle0: 0,
+    orbit_rp: 200, orbit_ra: 2000,
+    orbit_omega: 0.4, orbit_m0: 1.2,
+    resources: { fuel: 0, gold: 7, metal: 9, science: 0 },
+  },
+  {
+    id: 'vagrant', name: 'Vagrant', type: 'asteroid', parent: 'sol',
+    radius: 0.5, soi: 2, mu: 0.03, color: '#5a4838',
+    orbitRadius: 1450,
+    orbitPeriod: 4470, angle0: 0,
+    orbit_rp: 250, orbit_ra: 2650,
+    orbit_omega: 2.1, orbit_m0: 4.7,
+    resources: { fuel: 0, gold: 8, metal: 8, science: 1 },
+  },
+  {
+    id: 'augustin', name: 'Augustín', type: 'asteroid', parent: 'sol',
+    radius: 0.5, soi: 2, mu: 0.03, color: '#6a5040',
+    orbitRadius: 1900,
+    orbitPeriod: 6660, angle0: 0,
+    orbit_rp: 300, orbit_ra: 3500,
+    orbit_omega: 4.6, orbit_m0: 3.1,
+    resources: { fuel: 0, gold: 9, metal: 7, science: 1 },
+  },
+
   // Gas giants
   {
     id: 'jupiter', name: 'Jupiter', type: 'gas_giant', parent: 'sol',

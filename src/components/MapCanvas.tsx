@@ -5,6 +5,7 @@ import {
   clearCanvas,
   drawOrbit,
   drawBody,
+  drawRammingBody,
   drawShip,
   drawOrbitEllipse,
   drawSOIBoundary,
@@ -346,6 +347,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const isSelected = uiState.selectedBodyId === body.id;
       const isHovered = uiState.hoveredBodyId === body.id;
       drawBody(body, renderContext, isSelected, isHovered);
+      // Asteroid-weapon overlay: flame trail + projected impact path
+      // + pulsing crosshair on the target. drawBody already places
+      // the body's icon at its ram-mode position via bodyPosition.
+      if (body.ramPlan) {
+        drawRammingBody(body, renderContext);
+      }
 
       // Pulsing red threat ring around threatened bodies.
       if (threatBodies.has(body.id)) {

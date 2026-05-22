@@ -1171,6 +1171,126 @@ export function drawTransitShip(
 }
 
 /**
+ * Render the special overlay for a body that's on an active ram
+ * trajectory: a flame trail trailing the rock, the projected impact
+ * path, and a pulsing red ring at the predicted impact location.
+ *
+ * Called per-frame for any body whose ramPlan is set. The body's
+ * normal icon is still drawn by drawBody (bodyPosition honors the
+ * torch plan), so this overlay just layers the threat indicators
+ * on top.
+ */
+export function drawRammingBody(
+  body: Body,
+  ctx: RenderContext,
+) {
+  if (!body.ramPlan) return;
+  const plan = body.ramPlan;
+  const t = ctx.t;
+  if (t < plan.startTick || t >= plan.arriveTick) return;
+
+  // Sample positions along the ram trajectory for the rendered line.
+  const samples = 40;
+  const dt = (plan.arriveTick - plan.startTick) / samples;
+  const points: Array<{ x: number; y: number }> = [];
+  for (let i = 0; i <= samples; i++) {
+    const sampleTick = plan.startTick + i * dt;
+    const sb: Body = { ...body, ramPlan: { ...plan, arriveTick: plan.arriveTick + 1 } };
+    // Tiny hack: bodyPosition checks `t >= arriveTick` and returns
+    // interceptPos. We want the integration value at sampleTick, so
+    // bump arriveTick out of the way for the sample.
+    points.push(bodyPosition(sb, sampleTick, ctx.bodies));
+  }
+
+  // Trajectory line — dashed orange-red, pulsing alpha by closeness
+  // to arrival to convey urgency.
+  const eta = plan.arriveTick - t;
+  const urgency = Math.max(0, Math.min(1, 1 - eta / 200));
+  const alpha = 0.35 + 0.45 * urgency;
+  ctx.ctx.save();
+  ctx.ctx.strokeStyle = `rgba(255, 90, 60, ${alpha})`;
+  ctx.ctx.lineWidth = 1.5;
+  ctx.ctx.setLineDash([4, 3]);
+  ctx.ctx.beginPath();
+  for (let i = 0; i < points.length; i++) {
+    const cp = worldToCanvas(points[i].x, points[i].y, ctx);
+    if (i === 0) ctx.ctx.moveTo(cp.x, cp.y);
+    else ctx.ctx.lineTo(cp.x, cp.y);
+  }
+  ctx.ctx.stroke();
+  ctx.ctx.setLineDash([]);
+  ctx.ctx.restore();
+
+  // Engine flame at the asteroid's current position, pointing along
+  // its current motion direction. Body has been moving along the
+  // trajectory; tangent at current tick = derivative via finite diff.
+  const here = bodyPosition(body, t, ctx.bodies);
+  const ahead = bodyPosition(body, t + 0.05, ctx.bodies);
+  const dx = ahead.x - here.x;
+  const dy = ahead.y - here.y;
+  const d = Math.hypot(dx, dy);
+  if (d > 1e-6) {
+    const dirX = dx / d;
+    const dirY = dy / d;
+    const canvasHere = worldToCanvas(here.x, here.y, ctx);
+    // Engine is on the "back" of the rock — opposite the direction
+    // of motion (during boost; ram thrust during boost = toward
+    // intercept, which is where the rock is heading).
+    const enginePos = {
+      x: canvasHere.x - dirX * body.radius * ctx.camera.scale,
+      y: canvasHere.y + dirY * body.radius * ctx.camera.scale * (-1),
+      // (canvas y inverts; flame canvas dir = (dirX, -dirY))
+    };
+    void enginePos; // kept for symmetry with the ship exhaust; use canvasHere directly
+    drawThrustExhaust(
+      ctx.ctx,
+      { x: canvasHere.x - dirX * body.radius * ctx.camera.scale,
+        y: canvasHere.y - (-dirY) * body.radius * ctx.camera.scale },
+      { x: dirX, y: -dirY },
+      Math.max(10, body.radius * ctx.camera.scale * 1.5),
+      1,
+    );
+  }
+
+  // Impact ghost-marker at the predicted target body position at
+  // arriveTick. Pulsing red ring + crosshair so the player can see
+  // exactly where + when the strike lands.
+  const targetBody = ctx.bodies.find(b => b.id === plan.targetBodyId);
+  if (targetBody) {
+    const impactPos = bodyPosition(targetBody, plan.arriveTick, ctx.bodies);
+    const impactCanvas = worldToCanvas(impactPos.x, impactPos.y, ctx);
+    const pulse = 0.6 + 0.4 * Math.sin(performance.now() / 240);
+    const r = Math.max(10, targetBody.radius * ctx.camera.scale + 6);
+    ctx.ctx.save();
+    ctx.ctx.strokeStyle = `rgba(255, 60, 60, ${0.5 + 0.4 * pulse})`;
+    ctx.ctx.lineWidth = 1.5;
+    ctx.ctx.setLineDash([3, 3]);
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(impactCanvas.x, impactCanvas.y, r, 0, Math.PI * 2);
+    ctx.ctx.stroke();
+    ctx.ctx.setLineDash([]);
+    // Crosshair
+    ctx.ctx.beginPath();
+    ctx.ctx.moveTo(impactCanvas.x - r - 4, impactCanvas.y);
+    ctx.ctx.lineTo(impactCanvas.x - r + 2, impactCanvas.y);
+    ctx.ctx.moveTo(impactCanvas.x + r - 2, impactCanvas.y);
+    ctx.ctx.lineTo(impactCanvas.x + r + 4, impactCanvas.y);
+    ctx.ctx.moveTo(impactCanvas.x, impactCanvas.y - r - 4);
+    ctx.ctx.lineTo(impactCanvas.x, impactCanvas.y - r + 2);
+    ctx.ctx.moveTo(impactCanvas.x, impactCanvas.y + r - 2);
+    ctx.ctx.lineTo(impactCanvas.x, impactCanvas.y + r + 4);
+    ctx.ctx.stroke();
+    // Countdown label
+    ctx.ctx.fillStyle = `rgba(255, 100, 80, ${0.7 + 0.3 * pulse})`;
+    ctx.ctx.font = 'bold 10px monospace';
+    ctx.ctx.textAlign = 'center';
+    ctx.ctx.textBaseline = 'bottom';
+    ctx.ctx.fillText(`⚠ IMPACT T-${eta.toFixed(0)}`, impactCanvas.x, impactCanvas.y - r - 6);
+    ctx.ctx.restore();
+  }
+}
+
+/**
  * Tapered cone of exhaust trailing from a thrusting ship's engine.
  *
  * `enginePos` is the canvas-space point where the engine bell sits

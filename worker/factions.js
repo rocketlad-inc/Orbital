@@ -89,6 +89,48 @@ const BODY_CATALOG = [
     color: '#aa9070',
     yield: { metal: 4, fuel: 0, gold: 3, science: 1 } },
 
+  // ---- rogue asteroids (settable; can host Trajectory Control Thrusters) ----
+  // Three belt-class entries interspersed with the existing dwarfs, plus
+  // three Kuiper-class with long elliptical paths. Rich in metal + credits
+  // to reward the early grab; sparse on fuel/science so they don't strictly
+  // dominate planet/moon real estate.
+  { id: 'midas', name: 'Midas', type: 'asteroid', parent: 'sol',
+    radius: 0.6, soi: 2, mu: 0.04,
+    orbit_radius: 295, orbit_period: 415, angle0: 0.4,
+    color: '#c8a872',
+    yield: { metal: 8, fuel: 0, gold: 6, science: 0 } },
+  { id: 'styx_rock', name: 'Styx', type: 'asteroid', parent: 'sol',
+    radius: 0.6, soi: 2, mu: 0.04,
+    orbit_radius: 320, orbit_period: 470, angle0: 3.0,
+    color: '#7a6858',
+    yield: { metal: 9, fuel: 0, gold: 5, science: 0 } },
+  { id: 'iron_anna', name: 'Iron Anna', type: 'asteroid', parent: 'sol',
+    radius: 0.7, soi: 2, mu: 0.05,
+    orbit_radius: 340, orbit_period: 515, angle0: 5.1,
+    color: '#9a7a5a',
+    yield: { metal: 10, fuel: 0, gold: 4, science: 1 } },
+  // Kuiper-class — eccentric. rp brings them through inner system on
+  // perihelion; ra puts them way past Pluto. Inserter must populate
+  // game_bodies.orbit_rp/ra/omega/m0 so bodyPosition uses Kepler.
+  { id: 'black_sky', name: 'Black Sky', type: 'asteroid', parent: 'sol',
+    radius: 0.5, soi: 2, mu: 0.03,
+    orbit_radius: 1100, orbit_period: 2960, angle0: 0,
+    orbit_rp: 200, orbit_ra: 2000, orbit_omega: 0.4, orbit_m0: 1.2,
+    color: '#3a3030',
+    yield: { metal: 9, fuel: 0, gold: 7, science: 0 } },
+  { id: 'vagrant', name: 'Vagrant', type: 'asteroid', parent: 'sol',
+    radius: 0.5, soi: 2, mu: 0.03,
+    orbit_radius: 1450, orbit_period: 4470, angle0: 0,
+    orbit_rp: 250, orbit_ra: 2650, orbit_omega: 2.1, orbit_m0: 4.7,
+    color: '#5a4838',
+    yield: { metal: 8, fuel: 0, gold: 8, science: 1 } },
+  { id: 'augustin', name: 'Augustin', type: 'asteroid', parent: 'sol',
+    radius: 0.5, soi: 2, mu: 0.03,
+    orbit_radius: 1900, orbit_period: 6660, angle0: 0,
+    orbit_rp: 300, orbit_ra: 3500, orbit_omega: 4.6, orbit_m0: 3.1,
+    color: '#6a5040',
+    yield: { metal: 7, fuel: 0, gold: 9, science: 1 } },
+
   // ---- gas giants ----
   { id: 'jupiter', name: 'Jupiter', type: 'gas-giant', parent: 'sol',
     radius: 8, soi: 160, mu: 1000,
@@ -639,6 +681,13 @@ export async function seedGameWorld(env, gameId) {
     const devLevel = own ? (isCapital ? HOME_DEVELOPMENT_LEVEL : SECONDARY_DEVELOPMENT_LEVEL) : 0;
     const yard = isCapital ? 1 : 0;
     const secretKind = secretPlacements.get(b.id) ?? null;
+    // Eccentric Kepler elements — present only on Kuiper-class rogue
+    // asteroids. Null elsewhere so bodyPosition uses the legacy
+    // circular shortcut.
+    const orbitRp    = b.orbit_rp    ?? null;
+    const orbitRa    = b.orbit_ra    ?? null;
+    const orbitOmega = b.orbit_omega ?? null;
+    const orbitM0    = b.orbit_m0    ?? null;
     stmts.push(
       env.DB.prepare(
         `INSERT INTO game_bodies
@@ -647,13 +696,15 @@ export async function seedGameWorld(env, gameId) {
            yield_metal, yield_fuel, yield_gold, yield_science,
            owner_faction_id, development_level, fortification_level, shipyard_level,
            claimed_at_tick, developed_at_tick,
-           secret_kind, secret_revealed, secret_discovered_by_faction_id, secret_discovered_at_tick)
+           secret_kind, secret_revealed, secret_discovered_by_faction_id, secret_discovered_at_tick,
+           orbit_rp, orbit_ra, orbit_omega, orbit_m0)
          VALUES (?, ?, ?, ?, ?, ?,
                  ?, ?, ?, ?, ?, ?, ?,
                  ?, ?, ?, ?,
                  ?, ?, ?, ?,
                  ?, ?,
-                 ?, 0, NULL, NULL)`,
+                 ?, 0, NULL, NULL,
+                 ?, ?, ?, ?)`,
       ).bind(
         bodyRowIdFor(b.id), gameId, b.id, b.name, b.type,
         b.parent ? bodyRowIdFor(b.parent) : null,
@@ -665,6 +716,7 @@ export async function seedGameWorld(env, gameId) {
         own ? 0 : null,
         own ? 0 : null,
         secretKind,
+        orbitRp, orbitRa, orbitOmega, orbitM0,
       ),
     );
   }

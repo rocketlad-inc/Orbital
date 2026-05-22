@@ -80,6 +80,65 @@ export interface Body {
    *  Persistent secrets (portal_to_sun, slingshot_anomaly) keep
    *  applying after reveal; one-shot secrets are inert after firing. */
   secret?: BodySecret;
+
+  /** Eccentric Kepler elements (rogue asteroids only).
+   *
+   *  Standard bodies use the legacy circular shortcut: position is
+   *  (cos(angle), sin(angle)) * orbitRadius, with angle linear in t.
+   *  Rogue asteroids spawned on long Kuiper-belt-class trajectories
+   *  need eccentric orbits, so when these four fields are present
+   *  bodyPosition switches to full Kepler propagation around the
+   *  parent — same math the ship orbits use. orbitRadius is kept in
+   *  sync with the semi-major axis for any non-asteroid code that
+   *  still reads it (period derivation, sensor checks, etc.).
+   *
+   *  rp/ra in game units, omega in radians, m0 = mean anomaly at
+   *  epoch (NOT true anomaly — distinguishes from OrbitElements.M0,
+   *  which historically stored true anomaly for ship orbits).
+   */
+  orbit_rp?: number;
+  orbit_ra?: number;
+  orbit_omega?: number;
+  orbit_m0?: number;
+
+  /** Active asteroid-weapon trajectory. When set, the body has been
+   *  diverted from its natural orbit and is on a torch transit toward
+   *  `targetBodyId`. Renderer + bodyPosition override the Kepler/
+   *  circular path and integrate this plan instead. Cleared (with
+   *  the body itself destroyed) at arriveTick. */
+  ramPlan?: RamPlan;
+
+  /** Set when the body has been destroyed — either smashed into a
+   *  target via its own ram plan, or wiped by an incoming impact
+   *  (planets don't get destroyed, but asteroids can collide
+   *  asteroid-on-asteroid in pathological cases). Filtered out of
+   *  /state. */
+  destroyedAtTick?: number;
+}
+
+/**
+ * Asteroid-weapon trajectory. Created when a player triggers the RAM
+ * action on a rogue asteroid that hosts a built `trajectory_thrusters`
+ * building. The asteroid is then on a torch transit toward
+ * `targetBodyId`; on arrival the target's settlements are destroyed,
+ * its yields are halved, and the asteroid itself is removed.
+ *
+ * Once committed, the plan cannot be aborted or re-targeted — the
+ * doomsday clock is the entire mechanic.
+ */
+export interface RamPlan {
+  targetBodyId: string;
+  startTick: number;
+  flipTick: number;
+  arriveTick: number;
+  acceleration: number;          // game-units / tick² (boost = brake, symmetric)
+  startPos: { x: number; y: number };
+  startVel: { x: number; y: number };
+  interceptPos: { x: number; y: number };
+  totalDv: number;
+  /** Faction that committed the impact — for chronicle attribution,
+   *  honor decrement (-100 max penalty), and post-impact propaganda. */
+  ownedBy: string;
 }
 
 /**
@@ -381,7 +440,13 @@ export interface Settlement {
  * Kinds of upgrade buildings that can be queued at a settlement.
  * City-only: forge / mint / lab.  Station-only: weapons / shipyard.
  */
-export type BuildingKind = 'forge' | 'mint' | 'lab' | 'weapons' | 'shipyard';
+export type BuildingKind =
+  | 'forge' | 'mint' | 'lab' | 'weapons' | 'shipyard'
+  // Trajectory Control Thrusters — only buildable on rogue asteroid
+  // bodies (type='asteroid'). When present, the asteroid's owning
+  // faction can target another body and crash this one into it via
+  // the RAM action. Single-level, present/absent.
+  | 'trajectory_thrusters';
 
 /**
  * One in-flight upgrade at a settlement. The "ship build queue"
