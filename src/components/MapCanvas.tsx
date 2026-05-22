@@ -342,8 +342,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       );
     }
 
-    // Draw bodies
+    // Draw bodies. Destroyed asteroids (post-RAM impact) keep their
+    // row in gameState.bodies for one tick to give consumers a chance
+    // to observe destroyedAtTick, but they must not render — without
+    // this filter the SP MapCanvas would snap them back to their
+    // natural orbit and they'd visibly orbit forever even though
+    // their impact already fired. (MP /state strips them at the
+    // SQL layer so this only bit single-player.)
     for (const body of gameState.bodies) {
+      if (body.destroyedAtTick != null) continue;
       const isSelected = uiState.selectedBodyId === body.id;
       const isHovered = uiState.hoveredBodyId === body.id;
       drawBody(body, renderContext, isSelected, isHovered);

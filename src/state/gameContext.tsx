@@ -577,7 +577,33 @@ export function GameContextProvider({
           })
         : mergedShips;
 
-      return { ...externalState, ships: finalShips, orders: allOrders, fleets: prunedFleets };
+      // Body ramPlan preservation. Same pattern as plannedTransit
+      // for ships: when the player commits a RAM (CONFIRM IMPACT),
+      // we set body.ramPlan locally and post the intent. The next
+      // /state poll arrives ~1.5s later with the server's row; if
+      // the server hasn't flushed yet (clock skew, slow write),
+      // we'd flicker "ramming → not ramming → ramming" without
+      // this merge. Keep the local plan when externalState has
+      // no plan for the same body AND the body isn't destroyed.
+      const mergedBodies = externalState.bodies.map(serverBody => {
+        const localBody = prev.bodies.find(b => b.id === serverBody.id);
+        if (!localBody) return serverBody;
+        // Server says destroyed → trust server.
+        if (serverBody.destroyedAtTick != null) return serverBody;
+        // Server already has a ramPlan → trust server (it's authoritative).
+        if (serverBody.ramPlan) return serverBody;
+        // Local has a ramPlan, server doesn't yet → preserve local.
+        if (localBody.ramPlan) return { ...serverBody, ramPlan: localBody.ramPlan };
+        return serverBody;
+      });
+
+      return {
+        ...externalState,
+        bodies: mergedBodies,
+        ships: finalShips,
+        orders: allOrders,
+        fleets: prunedFleets,
+      };
     });
   }, [externalState]);
 

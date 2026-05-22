@@ -66,7 +66,7 @@ async function handleCommitTransfer(req, env, ctx) {
     return err(400, 'bad_request', 'invalid target_body_id');
   }
   const target = await env.DB
-    .prepare('SELECT 1 AS x FROM game_bodies WHERE id = ? AND game_id = ?')
+    .prepare('SELECT 1 AS x FROM game_bodies WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL')
     .bind(targetBodyId, gameId)
     .first();
   if (!target) return err(404, 'not_found', 'target body not found');
@@ -251,7 +251,7 @@ async function handleQueueBuild(req, env, ctx) {
   const cost = SHIP_BUILD_COST[shipClass];
 
   const bodyRow = await env.DB
-    .prepare('SELECT id, owner_faction_id FROM game_bodies WHERE id = ? AND game_id = ?')
+    .prepare('SELECT id, owner_faction_id FROM game_bodies WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL')
     .bind(bodyId, gameId)
     .first();
   if (!bodyRow) return err(404, 'not_found', 'body not found');
@@ -323,7 +323,7 @@ async function handleDeploySettlement(req, env, ctx) {
   if (type !== 'city' && type !== 'station') return err(400, 'bad_request', "type must be 'city' or 'station'");
 
   const bodyRow = await env.DB
-    .prepare('SELECT id, type, radius, owner_faction_id FROM game_bodies WHERE id = ? AND game_id = ?')
+    .prepare('SELECT id, type, radius, owner_faction_id FROM game_bodies WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL')
     .bind(bodyId, gameId)
     .first();
   if (!bodyRow) return err(404, 'not_found', 'body not found');
@@ -921,6 +921,11 @@ async function handleQueueBuilding(req, env, ctx) {
     target_level: currentLevel + 1,
     start_tick: startTick,
     complete_tick: completeTick,
+    // Persist cost so resolveAsteroidImpacts (and any future
+    // settlement-destruction path) can refund the in-flight upgrade.
+    // Without this the refund block reads order?.cost as undefined and
+    // silently keeps the materials.
+    cost: { ore: cost.metal, credits: cost.gold },
   };
 
   await env.DB.batch([
@@ -1388,6 +1393,15 @@ async function handleRamAsteroid(req, env, ctx) {
     env.DB
       .prepare('UPDATE game_factions SET fuel = fuel - ? WHERE id = ?')
       .bind(fuelCost, me.id),
+    // Reputation hit. Asteroid weapons are atrocities — bypass
+    // every diplomatic norm, broadcast their threat to everyone in
+    // the system, and the launching faction takes the maximum
+    // reputation penalty regardless of who the target is. -100
+    // floored at -100 so a single attacker can keep ramming
+    // without sinking to -1000.
+    env.DB
+      .prepare(`UPDATE game_factions SET reputation = MAX(reputation - 100, -100) WHERE id = ?`)
+      .bind(me.id),
   ]);
 
   // Chronicle the launch — broadcasts to everyone, gives them ~arrive

@@ -110,6 +110,7 @@ async function handleGetState(req, env, ctx) {
          UNION
          SELECT id AS bid FROM game_bodies
           WHERE game_id = ?1 AND owner_faction_id = ?2
+            AND destroyed_at_tick IS NULL
        ),
        visible_bodies AS (
          -- (1) presence
@@ -118,16 +119,19 @@ async function handleGetState(req, env, ctx) {
          -- (2) moons of presence bodies
          SELECT id FROM game_bodies
           WHERE game_id = ?1
+            AND destroyed_at_tick IS NULL
             AND parent_body_id IN (SELECT bid FROM my_presence)
          UNION
          -- (3) parent of presence body, only if that parent is itself
          --     a non-star (parent_body_id IS NOT NULL on the parent)
          SELECT p.id FROM game_bodies p
           WHERE p.game_id = ?1
+            AND p.destroyed_at_tick IS NULL
             AND p.parent_body_id IS NOT NULL
             AND p.id IN (
               SELECT parent_body_id FROM game_bodies
                WHERE game_id = ?1
+                 AND destroyed_at_tick IS NULL
                  AND id IN (SELECT bid FROM my_presence)
                  AND parent_body_id IS NOT NULL
             )
@@ -214,18 +218,21 @@ async function handleGetState(req, env, ctx) {
          UNION
          SELECT id AS bid FROM game_bodies
           WHERE game_id = ?1 AND owner_faction_id = ?2
+            AND destroyed_at_tick IS NULL
        ),
        visible_bodies AS (
          SELECT bid FROM my_presence
          UNION
          SELECT id FROM game_bodies
-          WHERE game_id = ?1 AND parent_body_id IN (SELECT bid FROM my_presence)
+          WHERE game_id = ?1 AND destroyed_at_tick IS NULL
+            AND parent_body_id IN (SELECT bid FROM my_presence)
          UNION
          SELECT p.id FROM game_bodies p
-          WHERE p.game_id = ?1 AND p.parent_body_id IS NOT NULL
+          WHERE p.game_id = ?1 AND p.destroyed_at_tick IS NULL
+            AND p.parent_body_id IS NOT NULL
             AND p.id IN (
               SELECT parent_body_id FROM game_bodies
-               WHERE game_id = ?1
+               WHERE game_id = ?1 AND destroyed_at_tick IS NULL
                  AND id IN (SELECT bid FROM my_presence)
                  AND parent_body_id IS NOT NULL
             )
@@ -255,18 +262,21 @@ async function handleGetState(req, env, ctx) {
          UNION
          SELECT id AS bid FROM game_bodies
           WHERE game_id = ?1 AND owner_faction_id = ?2
+            AND destroyed_at_tick IS NULL
        ),
        visible_bodies AS (
          SELECT bid FROM my_presence
          UNION
          SELECT id FROM game_bodies
-          WHERE game_id = ?1 AND parent_body_id IN (SELECT bid FROM my_presence)
+          WHERE game_id = ?1 AND destroyed_at_tick IS NULL
+            AND parent_body_id IN (SELECT bid FROM my_presence)
          UNION
          SELECT p.id FROM game_bodies p
-          WHERE p.game_id = ?1 AND p.parent_body_id IS NOT NULL
+          WHERE p.game_id = ?1 AND p.destroyed_at_tick IS NULL
+            AND p.parent_body_id IS NOT NULL
             AND p.id IN (
               SELECT parent_body_id FROM game_bodies
-               WHERE game_id = ?1
+               WHERE game_id = ?1 AND destroyed_at_tick IS NULL
                  AND id IN (SELECT bid FROM my_presence)
                  AND parent_body_id IS NOT NULL
             )

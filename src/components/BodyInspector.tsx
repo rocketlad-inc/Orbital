@@ -852,13 +852,23 @@ const RamControlsSection: React.FC<{ body: Body }> = ({ body }) => {
   );
 
   if (!hasThrusters) {
-    // STATE 3 — show a hint.
+    // STATE 3 — show a hint. Reword by what the player still needs:
+    // if there's no settlement yet, the first hurdle is parking a
+    // freighter and founding a city. If a settlement exists but
+    // Thrusters aren't queued, point straight at the building.
+    const hintCopy = mySettlements.length === 0
+      ? 'Park a freighter here, found a city, then queue Trajectory Control Thrusters to weaponize this rock.'
+      : 'Queue Trajectory Control Thrusters at your settlement here to weaponize this rock. (Buildings panel below.)';
     return (
       <div style={{
-        marginTop: 8, padding: 6,
-        fontSize: 10, color: '#7a8a96', fontStyle: 'italic',
+        marginTop: 8, padding: '8px 10px',
+        fontSize: 10, color: '#a0b0c0', fontStyle: 'italic',
+        background: 'rgba(74, 98, 117, 0.10)',
+        borderLeft: '2px solid #4a6275', borderRadius: '0 3px 3px 0',
       }}>
-        Build Trajectory Control Thrusters at a settlement here to weaponize this asteroid.
+        ☄ This is a rogue asteroid — small, mineable, and weaponizable.
+        <br /><br />
+        {hintCopy}
       </div>
     );
   }
@@ -923,12 +933,19 @@ const RamControlsSection: React.FC<{ body: Body }> = ({ body }) => {
       totalDv: plan.totalDv,
       ownedBy: 'player',
     };
+    // Local optimistic update: set the ramPlan so the renderer + map
+    // panel reflect the launch immediately. In MP, skip the local
+    // fuel deduction — the server is canonical and the next /state
+    // poll will reconcile within ~1.5s. Without that guard the
+    // player saw a brief "fuel down" → "fuel back" flash if the
+    // server's row landed after the poll. SP still needs the local
+    // deduction since there's no server reconciling.
     setGameState({
       ...gameState,
       bodies: gameState.bodies.map(b =>
         b.id === body.id ? { ...b, ramPlan: newRamPlan } : b,
       ),
-      resources: {
+      resources: mpActions ? gameState.resources : {
         ...gameState.resources,
         player: playerRes
           ? { ...playerRes, fuel: Math.max(0, playerRes.fuel - fuelCost) }
