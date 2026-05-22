@@ -33,6 +33,28 @@ export const SECRET_DEFS: Record<BodySecretKind, SecretDef> = {
     discoveryMessage: 'DISCOVERY: an ancient stargate. Every ship arriving here will now be warped to Sol.',
     hostCategories: ['outer', 'moon-outer'],
   },
+  // Warp gate is seeded outside the normal seedBodySecrets flow (see
+  // src/state/singlePlayerSetup.ts seedWarpGates) — listed here so the
+  // exhaustive Record<BodySecretKind, …> type is satisfied and any
+  // inspector/log code that wants a display name has one. hostCategories
+  // is intentionally empty so the regular seeder never picks it.
+  warp_gate: {
+    kind: 'warp_gate',
+    displayName: 'Warp Gate',
+    discoveryMessage: 'DISCOVERY: a warp gate. Arriving ships are transported across the void.',
+    hostCategories: [],
+  },
+  // Stub entry — the warp_gate kind was added to BodySecretKind for the
+  // upcoming binary-system feature but the SECRET_DEFS record is exhaustive
+  // via Record<BodySecretKind, ...>, so this slot has to exist. Treat
+  // warp_gate as an outer-system rarity until the seeder/effect logic
+  // around `destinationBodyId` lands.
+  warp_gate: {
+    kind: 'warp_gate',
+    displayName: 'Warp Gate',
+    discoveryMessage: 'DISCOVERY: a warp gate. Every ship arriving here is hurled to a distant orbit.',
+    hostCategories: ['outer', 'moon-outer'],
+  },
   ancient_city: {
     kind: 'ancient_city',
     displayName: 'Ancient City Ruins',
@@ -191,6 +213,14 @@ export function computeSecretReveal(
     case 'portal_to_sun':
       // Persistent effect — the warp-on-arrival handler keys off the
       // body's revealed secret. No extra patch payload needed.
+      break;
+
+    case 'warp_gate':
+      // Same story as portal_to_sun — the warp-on-arrival handler in
+      // gameContext.tsx does the teleport AND its own reveal log
+      // (because it knows the destination body name). This branch
+      // normally never runs; it exists for type exhaustiveness in
+      // case the secret is somehow inspected outside the warp loop.
       break;
 
     case 'ancient_city': {

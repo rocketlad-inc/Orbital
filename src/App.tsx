@@ -10,7 +10,6 @@ import { SettlementsPanel } from './components/SettlementsPanel';
 import { FleetPanel } from './components/FleetPanel';
 import { TechPanel } from './components/TechPanel';
 import { ThreatsPanel } from './components/ThreatsPanel';
-import { LayersPanel } from './components/LayersPanel';
 import { AIActivityFeed } from './components/AIActivityFeed';
 import { MobileSimControls } from './components/MobileSimControls';
 import { SinglePlayerSetup } from './components/SinglePlayerSetup';
@@ -143,7 +142,6 @@ function GameUI({
       <ShipPanel />
       <BodyInspector />
       <ThreatsPanel />
-      <LayersPanel />
       {!isMultiplayer && <AIActivityFeed />}
       <MobileSimControls hideSimControls={isMultiplayer} />
 

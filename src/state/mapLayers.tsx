@@ -16,7 +16,10 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 
-const STORAGE_KEY = 'orbital.mapLayers.v1';
+// v2: bumped when the LayersPanel button was removed and all overlays
+// default to ON. Old v1 entries (where players had turned layers off)
+// would otherwise persist forever with no UI to flip them back on.
+const STORAGE_KEY = 'orbital.mapLayers.v2';
 
 export type LayerId =
   | 'transfers'        // all in-flight ship transfer arcs (player + visible enemy)
@@ -42,7 +45,8 @@ export const LAYER_META: readonly LayerMeta[] = [
   {
     id: 'transfers',
     label: 'Ship transfers',
-    description: 'Show the Bezier arc of every ship currently in transit.',
+    description: 'Show the torch trajectory of every ship currently in transit.',
+    defaultOn: true,
   },
   {
     id: 'enemyTrajectories',
@@ -57,6 +61,12 @@ export const LAYER_META: readonly LayerMeta[] = [
     defaultOn: true,
   },
 ];
+
+// The LayersPanel button was removed in favor of "everything on by default."
+// The toggle context still exists so the renderer keeps its conditional draw
+// gates intact AND old localStorage entries (where players turned a layer off
+// before the panel was removed) continue to be honored. If you want to bring
+// the UI back later, restore App.tsx's <LayersPanel /> mount.
 
 interface LayersContextValue {
   enabled: Set<LayerId>;
