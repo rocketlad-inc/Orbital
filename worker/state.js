@@ -240,7 +240,7 @@ async function handleGetState(req, env, ctx) {
        SELECT id, name, ship_class, owner_faction_id, parent_body_id,
               orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
               fuel, fuel_max, hp, hp_max, damage_per_tick,
-              rank, combat_history,
+              rank, combat_history, trades_completed,
               status, built_at_tick,
               icon_variant
          FROM game_ships

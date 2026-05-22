@@ -129,6 +129,10 @@ interface ServerState {
     rank?: number;
     /** JSON blob — ShipKillRecord[] of recent kills (capped to 20). */
     combat_history?: string | null;
+    /** Freighter-only: cumulative deliveries on active trade routes.
+     *  Replaces the combat-record display on the ShipPanel for
+     *  freighters. Migration 0025. */
+    trades_completed?: number;
     status: string;
     /** Player's icon-variant pick from the build queue ('A'..'F').
      *  NULL means use the class default. Migration 0022. */
@@ -360,6 +364,7 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     orders: [],
     rank: s.rank ?? 0,
     combatHistory,
+    tradesCompleted: s.trades_completed ?? 0,
     iconVariant,
   };
 }

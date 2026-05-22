@@ -911,7 +911,9 @@ export class Room {
         }
 
         if (here === r.dest_body_id && cargoTotal > 0) {
-          // DELIVERY: dump cargo to faction pool, head home.
+          // DELIVERY: dump cargo to faction pool, head home. Also
+          // bump the freighter's trades_completed counter so the
+          // ShipPanel's TRADE LOG section reflects the delivery.
           await this.env.DB.batch([
             this.env.DB
               .prepare(
@@ -931,6 +933,9 @@ export class Room {
                   WHERE id = ?`,
               )
               .bind(r.id),
+            this.env.DB
+              .prepare('UPDATE game_ships SET trades_completed = trades_completed + 1 WHERE id = ?')
+              .bind(r.ship_id),
           ]);
           await planLeg(r.origin_body_id);
           continue;

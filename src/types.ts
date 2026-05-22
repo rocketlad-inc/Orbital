@@ -271,6 +271,12 @@ export interface Ship {
   // ShipPanel can surface a per-ship combat record without bloating
   // saves. Older saves migrate to an empty array on load.
   combatHistory?: ShipKillRecord[];
+  // Freighter-only: cumulative trade-route deliveries. Increments by 1
+  // each time the ship lands at a route's dest body with cargo and
+  // dumps it into the faction pool. Replaces the COMBAT RECORD panel
+  // on the ShipPanel for freighters with a TRADE LOG view, since
+  // freighters can't actually kill. Migration 0025.
+  tradesCompleted?: number;
 }
 
 /** One confirmed kill credited to a ship. Stored on Ship.combatHistory.

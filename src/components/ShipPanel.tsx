@@ -441,11 +441,20 @@ export const ShipPanel: React.FC = () => {
             )}
           </div>
 
-          <ShipCombatRecord
-            rank={ship.rank ?? 0}
-            history={ship.combatHistory ?? []}
-            bodies={gameState.bodies}
-          />
+          {/* Freighters show TRADE LOG (delivery count) instead of
+              COMBAT RECORD (confirmed kills) — they're cargo haulers,
+              not warships, and "0 confirmed kills" was a category
+              error that read as "underperforming" instead of "this
+              ship can't kill." */}
+          {ship.class === 'freighter' ? (
+            <ShipTradeLog tradesCompleted={ship.tradesCompleted ?? 0} />
+          ) : (
+            <ShipCombatRecord
+              rank={ship.rank ?? 0}
+              history={ship.combatHistory ?? []}
+              bodies={gameState.bodies}
+            />
+          )}
 
           {ship.class === 'freighter' && ship.ownedBy === 'player' && (
             <TradeRouteSection
@@ -1043,6 +1052,34 @@ const FleetFormationModal: React.FC<FleetFormationModalProps> = ({ mode, fleetNa
 // freighter: fill at origin → transfer → dump at dest → return →
 // repeat until cancelled.
 // ----------------------------------------------------------------
+
+// ----------------------------------------------------------------
+// ShipTradeLog — freighter-only delivery counter.
+//
+// Replaces ShipCombatRecord on freighters since they can't actually
+// kill anything (damagePerTick === 0 in the class def). Shows a
+// running count of completed deliveries on active trade routes —
+// incremented server-side in worker/room.js when a freighter dumps
+// cargo at a dest body, and SP-side in gameContext.tsx's matching
+// DELIVERY branch.
+// ----------------------------------------------------------------
+const ShipTradeLog: React.FC<{ tradesCompleted: number }> = ({ tradesCompleted }) => {
+  return (
+    <div className="combat-record-section" style={{ marginTop: 10 }}>
+      <div
+        className="section-title"
+        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}
+      >
+        <span>TRADE LOG</span>
+        <span style={{ fontSize: 10, color: '#b8c8d6', letterSpacing: '0.06em' }}>
+          {tradesCompleted > 0
+            ? `${tradesCompleted} route${tradesCompleted === 1 ? '' : 's'} completed`
+            : 'No deliveries yet.'}
+        </span>
+      </div>
+    </div>
+  );
+};
 
 // ----------------------------------------------------------------
 // ShipCombatRecord — per-ship rank + kill log, collapsible.

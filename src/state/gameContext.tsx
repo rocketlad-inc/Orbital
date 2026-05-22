@@ -998,7 +998,9 @@ export function GameContextProvider({
         }
 
         // DELIVERY — at dest body with cargo in the hold. Dump
-        // everything into the faction pool and head home.
+        // everything into the faction pool and head home. Bump the
+        // freighter's tradesCompleted counter for the ShipPanel
+        // trade log.
         if (here === route.destBodyId && cargoTotal > 0) {
           if (!factionPools[ship.ownedBy]) {
             factionPools[ship.ownedBy] = { fuel: 0, ore: 0, credits: 0, science: 0 };
@@ -1009,11 +1011,15 @@ export function GameContextProvider({
           pool.credits += cargo.credits;
           pool.science += cargo.science;
           logger.info('SIM', `Trade route: ${ship.name} delivered ${Math.round(cargoTotal)}u to ${route.destBodyId}`);
+          const completed = (ship.tradesCompleted ?? 0) + 1;
           const next = launchFreighterTorch(ship, route.originBodyId);
           if (next) {
-            nextShips[shipIdx] = next;
+            nextShips[shipIdx] = { ...next, tradesCompleted: completed };
             return { ...route, cargo: { fuel: 0, ore: 0, credits: 0, science: 0 }, status: 'returning' as const };
           }
+          // Even if launch failed (no fuel etc.) still credit the
+          // delivery — the cargo did land.
+          nextShips[shipIdx] = { ...ship, tradesCompleted: completed };
           return { ...route, cargo: { fuel: 0, ore: 0, credits: 0, science: 0 } };
         }
 
