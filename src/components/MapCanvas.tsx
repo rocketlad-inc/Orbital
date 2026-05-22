@@ -246,9 +246,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     }
     drawStarfield(starfieldRef.current, renderContext);
 
-    // Draw orbits for all bodies
+    // Draw orbits for all bodies. Lagrange-point markers (e.g. the
+    // Centauri-system barycenter) are skipped — they live way outside
+    // the normal scale band and their orbit ring would just be a giant
+    // distracting circle through the Kuiper belt at max zoom-out.
     for (const body of gameState.bodies) {
-      if (body.parent) {
+      if (body.parent && body.type !== 'lagrange') {
         drawOrbit(body, renderContext, withOpacity(body.color, 0.35));
       }
     }

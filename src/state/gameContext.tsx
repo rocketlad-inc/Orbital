@@ -1171,6 +1171,40 @@ export function GameContextProvider({
           return { ...body, secret: revealedNow };
         }
 
+        // Warp gate: persistent effect — every arriving ship is
+        // teleported into a low orbit around s.destinationBodyId.
+        // Used to link Sol's randomized Kuiper gate to Farspire in
+        // the binary system (and vice versa). Mirrors portal_to_sun
+        // except the destination is data-driven rather than
+        // hardcoded to Sol.
+        if (s.kind === 'warp_gate' && localShips.length > 0 && s.destinationBodyId) {
+          const destBody = prev.bodies.find(b => b.id === s.destinationBodyId);
+          if (!destBody) return body;  // gate broken; bail rather than crash
+          let revealedNow: typeof s = s;
+          if (!s.revealed) {
+            const discoverer = localShips[0].ownedBy;
+            revealedNow = { ...s, revealed: true, discoveredByFactionId: discoverer, discoveredAtTick: newTime };
+            secretLogs.push(`${body.name}: DISCOVERY — a warp gate to ${destBody.name}. Every ship arriving here will be transported across the void.`);
+            logger.info('SIM', `Warp gate at ${body.name}`, { discoverer, destination: destBody.id });
+          }
+          // Drop arrivals into a low parking orbit on the far side.
+          // Altitude scaled off the destination's radius so the ship
+          // doesn't spawn inside the body or kiss its SOI edge.
+          const warpedIds = new Set(localShips.map(ls => ls.id));
+          const parkAltitude = Math.max(8, destBody.radius * 3);
+          updatedShips = updatedShips.map(sh => {
+            if (!warpedIds.has(sh.id)) return sh;
+            return {
+              ...sh,
+              orbit: createCircularOrbit(destBody.id, parkAltitude, newTime, prev.bodies),
+              transit: undefined,
+              plannedTransit: undefined,
+              queuedTransits: undefined,
+            };
+          });
+          return { ...body, secret: revealedNow };
+        }
+
         // One-shot reveals — fire once, then leave the secret as
         // revealed (so the UI knows there's something here) but
         // inert.

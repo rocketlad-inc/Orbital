@@ -44,17 +44,6 @@ export const SECRET_DEFS: Record<BodySecretKind, SecretDef> = {
     discoveryMessage: 'DISCOVERY: a warp gate. Arriving ships are transported across the void.',
     hostCategories: [],
   },
-  // Stub entry — the warp_gate kind was added to BodySecretKind for the
-  // upcoming binary-system feature but the SECRET_DEFS record is exhaustive
-  // via Record<BodySecretKind, ...>, so this slot has to exist. Treat
-  // warp_gate as an outer-system rarity until the seeder/effect logic
-  // around `destinationBodyId` lands.
-  warp_gate: {
-    kind: 'warp_gate',
-    displayName: 'Warp Gate',
-    discoveryMessage: 'DISCOVERY: a warp gate. Every ship arriving here is hurled to a distant orbit.',
-    hostCategories: ['outer', 'moon-outer'],
-  },
   ancient_city: {
     kind: 'ancient_city',
     displayName: 'Ancient City Ruins',

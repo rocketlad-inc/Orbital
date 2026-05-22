@@ -14,7 +14,10 @@ import {
   GameState, Ship, Faction, Body, Settlement, SinglePlayerConfig,
   FactionResources, FactionTechStateBase, OrbitElements,
 } from '../types';
-import { SHARED_BODIES } from './mockGameState';
+import {
+  SHARED_BODIES,
+  SOL_GATE_CANDIDATES, BINARY_RETURN_GATE_ID, BINARY_SYSTEM_BODY_IDS,
+} from './mockGameState';
 import { createCity, createStation } from '../game/settlements';
 import { seedBodySecrets } from '../game/secrets';
 
@@ -250,7 +253,22 @@ export function setupSinglePlayer(config: SinglePlayerConfig): GameState {
   // by body category (inner / belt / outer / moon) so e.g. the stargate
   // never lands on Mercury. Map-seed-derived PRNG keeps placements
   // reproducible per game.
-  const bodiesWithSecrets = seedBodySecrets(bodies, claimedBodies, rand);
+  //
+  // Binary-system bodies are added to the exclusion set so the regular
+  // seeder doesn't drop e.g. a portal_to_sun on Verdant (which would
+  // warp returning explorers straight back to Sol — funny but confusing).
+  // The dedicated warp_gate pair below handles all inter-system travel.
+  const secretExclusions = new Set([...claimedBodies, ...BINARY_SYSTEM_BODY_IDS]);
+  let bodiesWithSecrets = seedBodySecrets(bodies, secretExclusions, rand);
+
+  // Warp gate to the binary system. Pick one Sol-side Kuiper-belt
+  // candidate (Pluto excluded by design) and link it bidirectionally
+  // to Farspire in the Centauri system. If the secret seeder already
+  // dropped something on the chosen body, we OVERWRITE it — the gate
+  // is the more dramatic story, and the player only loses a one-shot
+  // freebie like a resource cache. Also overwrites Farspire's secret
+  // (if any) so the return trip always works.
+  bodiesWithSecrets = seedWarpGates(bodiesWithSecrets, rand);
 
   return {
     currentTick: 0,
@@ -275,3 +293,38 @@ export function setupSinglePlayer(config: SinglePlayerConfig): GameState {
 // Tick-countdown victory was removed — games run indefinitely. If a
 // win-condition heuristic ever returns it'll live here next to the
 // status enum, but for now there's no natural end to compute against.
+
+/**
+ * Drop bidirectional warp gates on (1) a randomly chosen Sol-side
+ * Kuiper-belt body and (2) Farspire in the binary system. Sol-side
+ * pick is reproducible from the map-seed PRNG; binary side is fixed.
+ *
+ * Per-tick teleport behavior is wired in gameContext.tsx advanceToTick
+ * — this only seeds the metadata.
+ */
+function seedWarpGates(bodies: Body[], rand: () => number): Body[] {
+  const solGateId = SOL_GATE_CANDIDATES[
+    Math.floor(rand() * SOL_GATE_CANDIDATES.length)
+  ];
+  return bodies.map(b => {
+    if (b.id === solGateId) {
+      return {
+        ...b,
+        secret: {
+          kind: 'warp_gate' as const,
+          destinationBodyId: BINARY_RETURN_GATE_ID,
+        },
+      };
+    }
+    if (b.id === BINARY_RETURN_GATE_ID) {
+      return {
+        ...b,
+        secret: {
+          kind: 'warp_gate' as const,
+          destinationBodyId: solGateId,
+        },
+      };
+    }
+    return b;
+  });
+}

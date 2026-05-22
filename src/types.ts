@@ -87,6 +87,11 @@ export interface Body {
  *
  *   portal_to_sun     — every arriving ship is warped to a low Sol orbit
  *                       (persistent shortcut once discovered)
+ *   warp_gate         — every arriving ship is warped to a low orbit
+ *                       around `destinationBodyId`. Used to link Sol to
+ *                       the far binary system (and back). One gate body
+ *                       in each system, randomized per map seed on the
+ *                       Sol side, fixed on the binary side. Persistent.
  *   ancient_city      — discoverer gets a free city (pop 3, free Lab L2)
  *   free_collector    — discoverer gets a free city with hasCollector
  *   derelict_warship  — discoverer claims a free Destroyer-class ship
@@ -95,6 +100,7 @@ export interface Body {
  */
 export type BodySecretKind =
   | 'portal_to_sun'
+  | 'warp_gate'
   | 'ancient_city'
   | 'free_collector'
   | 'derelict_warship'
@@ -106,6 +112,10 @@ export interface BodySecret {
   revealed?: boolean;                   // set when the effect first fires
   discoveredByFactionId?: string;
   discoveredAtTick?: number;
+  /** Destination body id for `warp_gate` secrets. Ships arriving at the
+   *  host body get teleported into a low orbit around the destination.
+   *  Unused for other secret kinds. */
+  destinationBodyId?: string;
 }
 
 /**

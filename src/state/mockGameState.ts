@@ -264,7 +264,120 @@ export const SHARED_BODIES: Body[] = [
     orbitRadius: 3500, orbitPeriod: 16800, angle0: 2.55,
     resources: { fuel: 0, gold: 3, metal: 7, science: 3 },
   },
+
+  // ============================================================
+  // ALPHA CENTAURI ANALOGUE — far binary system, reachable via the
+  // warp gate seeded onto a random Sol-side Kuiper body each match
+  // (see seedWarpGates in src/state/singlePlayerSetup.ts). Direct
+  // travel is also possible if you've got the fuel and patience —
+  // brachistochrone time at default engine accel is ~150 ticks.
+  //
+  // The system is laid out as P-type (circumbinary): two stars
+  // orbit a common barycenter very tightly relative to the
+  // surrounding planets. For a circumbinary planet to be stable,
+  // its orbit radius needs to be roughly ≥ 3-5× the stellar
+  // separation — otherwise the time-varying gravitational tug of
+  // the two stars destabilizes it (real-world examples like
+  // Kepler-16b sit at this threshold). With our stars at ±18 / ±28
+  // from the barycenter (max separation ~46), the inner planet at
+  // r=400 sits comfortably outside the chaos zone.
+  //
+  // Both stars share orbitPeriod so they stay diametrically
+  // opposite — our simplified Kepler model doesn't enforce
+  // barycentric coupling on its own, so we lock it via period +
+  // phase. Real Alpha Cen A/B orbit their barycenter on an
+  // 80-year eccentric path (11-36 AU range); we collapse that
+  // to a fast circular orbit so the visual is recognisably
+  // "two suns going around each other" rather than "two stars
+  // that look static for the whole match."
+  //
+  // Barycenter is anchored at +150,000 from Sol via a parent-of-
+  // sol orbit with effectively-infinite period — the body system
+  // requires every non-root to orbit something, so we use Sol as a
+  // pretend parent and crank the period so it doesn't drift on
+  // gameplay timescales. radius=0.5 keeps it nearly invisible
+  // (renderer min-draws at 3px so it's a tiny gray dot at the
+  // barycenter, which actually reads as "centre of mass" nicely).
+  // ============================================================
+  {
+    id: 'binary_barycenter', name: 'Centauri Barycenter', type: 'lagrange', parent: 'sol',
+    radius: 0.5, soi: 0, mu: 0, color: '#3a3a44',
+    orbitRadius: 150000, orbitPeriod: 1e12, angle0: 0,
+  },
+  {
+    id: 'centauri_a', name: 'Centauri A', type: 'star', parent: 'binary_barycenter',
+    radius: 8, soi: 35, mu: 200, color: '#ffe082',
+    // angle0=0 → starts at +X relative to barycenter
+    orbitRadius: 18, orbitPeriod: 240, angle0: 0,
+  },
+  {
+    id: 'centauri_b', name: 'Centauri B', type: 'star', parent: 'binary_barycenter',
+    radius: 6, soi: 28, mu: 150, color: '#ff8a5e',
+    // angle0=π → starts at -X, opposite Centauri A. Same period keeps
+    // them locked opposite each other for the entire match.
+    orbitRadius: 28, orbitPeriod: 240, angle0: Math.PI,
+  },
+  // Circumbinary worlds. Periods follow a rough √r scaling so the
+  // outer worlds visibly lag behind the inner one, same as Kepler's
+  // 3rd law in Sol — keeps the visual recognisably "planetary."
+  {
+    id: 'verdant', name: 'Verdant', type: 'terrestrial', parent: 'binary_barycenter',
+    radius: 4, soi: 60, mu: 150, color: '#3aaf6e',
+    orbitRadius: 400, orbitPeriod: 700, angle0: 0.3,
+    resources: { fuel: 6, gold: 4, metal: 6, science: 9 },
+  },
+  {
+    id: 'crimson', name: 'Crimson', type: 'gas_giant', parent: 'binary_barycenter',
+    radius: 9, soi: 110, mu: 350, color: '#d35454',
+    orbitRadius: 850, orbitPeriod: 2100, angle0: 2.1,
+    resources: { fuel: 10, gold: 0, metal: 0, science: 4 },
+  },
+  {
+    id: 'prismara', name: 'Prismara', type: 'moon', parent: 'crimson',
+    radius: 1.8, soi: 9, mu: 6, color: '#c0a8ff',
+    orbitRadius: 26, orbitPeriod: 90, angle0: 0,
+    resources: { fuel: 0, gold: 6, metal: 4, science: 4 },
+  },
+  {
+    id: 'cinder', name: 'Cinder', type: 'terrestrial', parent: 'binary_barycenter',
+    radius: 3, soi: 40, mu: 90, color: '#a8553a',
+    orbitRadius: 1400, orbitPeriod: 4400, angle0: 4.7,
+    resources: { fuel: 0, gold: 8, metal: 5, science: 3 },
+  },
+  // Outer dwarf — the return-gate body. The warp_gate secret on this
+  // is hardcoded by singlePlayerSetup (it always exists, always points
+  // back to Sol's randomized gate body). Resources are middling — the
+  // appeal of this place is the shortcut, not the dirt.
+  {
+    id: 'farspire', name: 'Farspire', type: 'dwarf', parent: 'binary_barycenter',
+    radius: 1.5, soi: 9, mu: 1, color: '#9088b0',
+    orbitRadius: 2400, orbitPeriod: 10000, angle0: 1.5,
+    resources: { fuel: 0, gold: 3, metal: 4, science: 6 },
+  },
 ];
+
+/** Body ids in the binary system. Exported so the secret seeder can
+ *  exclude them from Sol-side warp-gate randomization (we don't want
+ *  the Sol-side gate accidentally landing on a binary body, even
+ *  though category filtering already prevents it). */
+export const BINARY_SYSTEM_BODY_IDS: ReadonlySet<string> = new Set([
+  'binary_barycenter',
+  'centauri_a', 'centauri_b',
+  'verdant', 'crimson', 'prismara', 'cinder',
+  'farspire',
+]);
+
+/** Sol-side Kuiper-belt bodies that are eligible to host the random
+ *  warp gate. Pluto is excluded by player request (charming little
+ *  binary planet, leave it alone). Picked at seed time by
+ *  src/state/singlePlayerSetup.ts. */
+export const SOL_GATE_CANDIDATES: readonly string[] = [
+  'haumea', 'makemake', 'quaoar', 'eris', 'sedna',
+];
+
+/** The binary system's return gate is fixed — Farspire, the outermost
+ *  dwarf in the system. Same outer-system silhouette as Sol's KBOs. */
+export const BINARY_RETURN_GATE_ID = 'farspire';
 
 // (Everything below — SHARED_FACTIONS, getScenario, createScenario1-4,
 // freshResources/Tech, withOwnership, ScenarioType, SCENARIO_DESCRIPTIONS —
