@@ -1095,10 +1095,106 @@ export function drawTransitShip(
 }
 
 /**
+ * Tapered cone of exhaust trailing from a thrusting ship's engine.
+ *
+ * `enginePos` is the canvas-space point where the engine bell sits
+ * (the back edge of the ship icon). `thrustDir` is a UNIT vector in
+ * canvas space pointing in the direction the engine is firing — i.e.
+ * the direction the ship is *trying to go*. The flame extends in the
+ * OPPOSITE direction (exhaust comes out the back of the engine).
+ *
+ * Cheap visuals: a single filled triangle with a linear gradient from
+ * bright yellow-white at the nozzle to transparent at the tail, plus
+ * a small per-frame jitter on the tail point so the flame looks
+ * alive. Total cost: one beginPath + one fill per thrusting ship.
+ */
+function drawThrustExhaust(
+  ctx2d: CanvasRenderingContext2D,
+  enginePos: { x: number; y: number },
+  thrustDir: { x: number; y: number },
+  shipSize: number,
+  intensity: number = 1,
+) {
+  // Flame length scales with ship icon size. Trail length stays
+  // recognizable even when zoomed out.
+  const flameLen = shipSize * 2.4;
+  const flameWidth = shipSize * 0.42;
+  // Exhaust extends OPPOSITE to thrust.
+  const tailX = enginePos.x - thrustDir.x * flameLen;
+  const tailY = enginePos.y - thrustDir.y * flameLen;
+  // Perpendicular for the flame's flared base near the engine bell.
+  const perpX = -thrustDir.y;
+  const perpY = thrustDir.x;
+  // Per-frame jitter for a "live" flicker. Random is fine — the
+  // unpredictability is the point. Cheap enough to do every frame.
+  const jitterMag = shipSize * 0.18;
+  const jitterT = (Math.random() - 0.5) * 2 * jitterMag;       // tail wag
+  const jitterP = (Math.random() - 0.5) * jitterMag * 0.3;     // base wiggle
+  const lenJitter = (Math.random() - 0.5) * shipSize * 0.4;    // length pulse
+
+  // Gradient: hot core at the engine bell, cooling out to the tail.
+  const grad = ctx2d.createLinearGradient(
+    enginePos.x, enginePos.y,
+    tailX, tailY,
+  );
+  grad.addColorStop(0,    `rgba(255, 245, 200, ${0.95 * intensity})`);
+  grad.addColorStop(0.25, `rgba(255, 180, 90,  ${0.70 * intensity})`);
+  grad.addColorStop(0.7,  `rgba(255, 90, 50,   ${0.25 * intensity})`);
+  grad.addColorStop(1,     'rgba(255, 60, 30, 0)');
+
+  ctx2d.save();
+  ctx2d.fillStyle = grad;
+  ctx2d.beginPath();
+  // Flared base near the engine nozzle.
+  ctx2d.moveTo(
+    enginePos.x + perpX * (flameWidth + jitterP),
+    enginePos.y + perpY * (flameWidth + jitterP),
+  );
+  ctx2d.lineTo(
+    enginePos.x - perpX * (flameWidth - jitterP),
+    enginePos.y - perpY * (flameWidth - jitterP),
+  );
+  // Tapered tail with side-to-side wag.
+  ctx2d.lineTo(
+    tailX - thrustDir.x * lenJitter + perpX * jitterT,
+    tailY - thrustDir.y * lenJitter + perpY * jitterT,
+  );
+  ctx2d.closePath();
+  ctx2d.fill();
+
+  // Hot inner core — a smaller, brighter triangle layered over the
+  // outer flame so the engine bell reads as the brightest point.
+  const coreLen = flameLen * 0.45;
+  const coreW = flameWidth * 0.55;
+  const coreTailX = enginePos.x - thrustDir.x * coreLen;
+  const coreTailY = enginePos.y - thrustDir.y * coreLen;
+  const coreGrad = ctx2d.createLinearGradient(
+    enginePos.x, enginePos.y,
+    coreTailX, coreTailY,
+  );
+  coreGrad.addColorStop(0, `rgba(255, 255, 235, ${0.95 * intensity})`);
+  coreGrad.addColorStop(1, `rgba(255, 200, 100, 0)`);
+  ctx2d.fillStyle = coreGrad;
+  ctx2d.beginPath();
+  ctx2d.moveTo(enginePos.x + perpX * coreW, enginePos.y + perpY * coreW);
+  ctx2d.lineTo(enginePos.x - perpX * coreW, enginePos.y - perpY * coreW);
+  ctx2d.lineTo(coreTailX, coreTailY);
+  ctx2d.closePath();
+  ctx2d.fill();
+  ctx2d.restore();
+}
+
+/**
  * Torch-mode equivalent of drawTransitShip. Reads ship.transit.pos for
  * the world position (no need to interpolate — the executor keeps it
  * fresh each tick), ship.transit.vel for the heading. Falls back to a
  * dot+tick line when no ship icon is available.
+ *
+ * Flip-and-burn orientation: during BOOST the ship points along its
+ * velocity vector (engine at the trailing edge, exhaust streams behind).
+ * At flipTick the ship rotates 180° to BRAKE — engine now points along
+ * the velocity vector, exhaust streams AHEAD of motion as the ship
+ * decelerates. That's the moment everyone in space-sim land waits for.
  */
 function drawTorchTransitShip(
   ship: Ship,
@@ -1114,12 +1210,41 @@ function drawTorchTransitShip(
   const vMag = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
   const dirX = vMag > 1e-9 ? vel.x / vMag : 1;
   const dirY = vMag > 1e-9 ? vel.y / vMag : 0;
-  const heading = Math.atan2(-dirY, dirX);
+  const proHeading = Math.atan2(-dirY, dirX);
+  // Phase: <flipTick = BOOST (engine behind), >=flipTick = BRAKE (engine
+  // ahead, ship flipped 180°). Outside [startTick, arriveTick] the
+  // ship isn't actively thrusting — coast with prograde nose (boost
+  // attitude) and no exhaust.
+  const isBoost = ctx.t < currentTransfer.flipTick;
+  const isBrake = ctx.t >= currentTransfer.flipTick && ctx.t < currentTransfer.arriveTick;
+  const thrusting = isBoost || isBrake;
+  const heading = isBrake ? proHeading + Math.PI : proHeading;
 
   const iconSize = isSelected ? 22 : 18;
 
   const flashStartT = ctx.damageFlashStart?.get(ship.id);
   drawDamageFlash(canvasPos, iconSize / 2, flashStartT, ctx.t, ctx, 'damage');
+
+  // Thrust exhaust — drawn BEFORE the ship icon so the icon sits on top
+  // of the engine. Engine is at the "back" of the local ship icon
+  // (negative x in local space, since icons face +x at heading=0).
+  // After rotating by `heading`, the engine in canvas coords is:
+  //   enginePos = canvasPos - heading_unit * iconSize/2
+  // The exhaust then extends further in -heading_unit (further behind
+  // the engine). This is correct in BOTH phases: in BRAKE the ship has
+  // flipped, so "behind the engine" in world space is now AHEAD of
+  // motion — exactly what you'd see when the torch decelerates.
+  if (thrusting) {
+    const cosH = Math.cos(heading);
+    const sinH = Math.sin(heading);
+    drawThrustExhaust(
+      ctx.ctx,
+      { x: canvasPos.x - cosH * iconSize / 2, y: canvasPos.y - sinH * iconSize / 2 },
+      { x: cosH, y: sinH },
+      iconSize,
+      isSelected ? 1.0 : 0.85,
+    );
+  }
 
   const icon = getShipIconImage(ship.class as ShipIconClass, shipColorValue, ship.iconVariant);
   if (icon) {
@@ -1134,11 +1259,15 @@ function drawTorchTransitShip(
     ctx.ctx.beginPath();
     ctx.ctx.arc(canvasPos.x, canvasPos.y, shipSize, 0, Math.PI * 2);
     ctx.ctx.fill();
+    // Nose tick — points the way the ship is FACING (engine at the
+    // other end), so during BRAKE this tick visibly flips around.
+    const noseX = Math.cos(heading);
+    const noseY = Math.sin(heading);
     ctx.ctx.strokeStyle = shipColorValue;
     ctx.ctx.lineWidth = 1.5;
     ctx.ctx.beginPath();
     ctx.ctx.moveTo(canvasPos.x, canvasPos.y);
-    ctx.ctx.lineTo(canvasPos.x + dirX * 10, canvasPos.y - dirY * 10);
+    ctx.ctx.lineTo(canvasPos.x + noseX * 10, canvasPos.y + noseY * 10);
     ctx.ctx.stroke();
   }
 
