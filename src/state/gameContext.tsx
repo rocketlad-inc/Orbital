@@ -777,9 +777,16 @@ export function GameContextProvider({
           }
           return b;
         });
-        if (wipedBodyIds.size > 0) {
+        // Wipe BOTH target settlements AND settlements on the
+        // destroyed asteroid itself. The rock is being driven into a
+        // planet; anyone who built a city on the thruster platform
+        // goes with it. Without this, the on-asteroid city becomes
+        // an orphan whose body has destroyed_at_tick set — a leak
+        // the audit caught.
+        const destroyedSettlementBodies = new Set([...wipedBodyIds, ...arrivingIds]);
+        if (destroyedSettlementBodies.size > 0) {
           settlementsAfterRam = settlementsAfterRam.filter(
-            s => !wipedBodyIds.has(s.bodyId),
+            s => !destroyedSettlementBodies.has(s.bodyId),
           );
         }
       }

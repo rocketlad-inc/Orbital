@@ -1732,7 +1732,11 @@ export class Room {
       const targetId = a.ram_target_body_id;
       const targetIsSol = targetId === `${gameId}:sol` || targetId === 'sol';
 
-      // Always: consume the asteroid.
+      // Always: consume the asteroid AND any settlements on it (the
+      // rock is being driven into a planet — anyone who built a city
+      // on the thruster platform goes with it). Refund pending
+      // building queues on those settlements so the launching faction
+      // isn't double-charged: they already paid the ram fuel.
       const stmts = [];
       stmts.push(
         this.env.DB
@@ -1745,6 +1749,41 @@ export class Room {
           )
           .bind(tick, a.id),
       );
+      // Wipe own settlements + refund any in-flight building queue.
+      const ownSettlements = (await this.env.DB
+        .prepare(
+          `SELECT id, owner_faction_id, building_order_json
+             FROM game_settlements
+            WHERE game_id = ? AND body_id = ? AND destroyed_at_tick IS NULL`,
+        )
+        .bind(gameId, a.id)
+        .all()).results ?? [];
+      for (const s of ownSettlements) {
+        stmts.push(
+          this.env.DB
+            .prepare('UPDATE game_settlements SET destroyed_at_tick = ? WHERE id = ?')
+            .bind(tick, s.id),
+        );
+        if (s.building_order_json && s.owner_faction_id) {
+          try {
+            const order = JSON.parse(s.building_order_json);
+            const cost = order?.cost;
+            if (cost && typeof cost === 'object') {
+              const oreRefund = Math.max(0, Math.floor(cost.ore ?? 0));
+              const credRefund = Math.max(0, Math.floor(cost.credits ?? 0));
+              if (oreRefund + credRefund > 0) {
+                stmts.push(
+                  this.env.DB
+                    .prepare(
+                      `UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?`,
+                    )
+                    .bind(oreRefund, credRefund, s.owner_faction_id),
+                );
+              }
+            }
+          } catch { /* malformed order json — skip refund */ }
+        }
+      }
 
       let targetName = 'Sol';
       let destroyedCount = 0;
@@ -1760,10 +1799,13 @@ export class Room {
           .first();
         targetName = target?.name ?? '?';
 
-        // Settlements wiped.
+        // Settlements wiped. Same build-queue refund logic as the
+        // asteroid's own settlements — anyone with an upgrade in
+        // flight on a destroyed city gets their ore + credits back.
         const victimSettlements = (await this.env.DB
           .prepare(
-            `SELECT id FROM game_settlements
+            `SELECT id, owner_faction_id, building_order_json
+               FROM game_settlements
               WHERE game_id = ? AND body_id = ? AND destroyed_at_tick IS NULL`,
           )
           .bind(gameId, targetId)
@@ -1775,6 +1817,25 @@ export class Room {
               .prepare('UPDATE game_settlements SET destroyed_at_tick = ? WHERE id = ?')
               .bind(tick, s.id),
           );
+          if (s.building_order_json && s.owner_faction_id) {
+            try {
+              const order = JSON.parse(s.building_order_json);
+              const cost = order?.cost;
+              if (cost && typeof cost === 'object') {
+                const oreRefund = Math.max(0, Math.floor(cost.ore ?? 0));
+                const credRefund = Math.max(0, Math.floor(cost.credits ?? 0));
+                if (oreRefund + credRefund > 0) {
+                  stmts.push(
+                    this.env.DB
+                      .prepare(
+                        `UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?`,
+                      )
+                      .bind(oreRefund, credRefund, s.owner_faction_id),
+                  );
+                }
+              }
+            } catch { /* malformed order json — skip refund */ }
+          }
         }
 
         // Yields halved (floor). Target body endures, but the surface

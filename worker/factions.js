@@ -124,7 +124,7 @@ const BODY_CATALOG = [
     orbit_rp: 250, orbit_ra: 2650, orbit_omega: 2.1, orbit_m0: 4.7,
     color: '#5a4838',
     yield: { metal: 8, fuel: 0, gold: 8, science: 1 } },
-  { id: 'augustin', name: 'Augustin', type: 'asteroid', parent: 'sol',
+  { id: 'augustin', name: 'Augustín', type: 'asteroid', parent: 'sol',
     radius: 0.5, soi: 2, mu: 0.03,
     orbit_radius: 1900, orbit_period: 6660, angle0: 0,
     orbit_rp: 300, orbit_ra: 3500, orbit_omega: 4.6, orbit_m0: 3.1,
@@ -857,6 +857,15 @@ export async function backfillMissingBodies(env, gameId) {
   let inserted = 0;
   for (const b of BODY_CATALOG) {
     if (have.has(b.id)) continue;
+    // Eccentric Kepler elements for Kuiper-class rogue asteroids
+    // (migration 0024). Plain circular bodies have all four NULL and
+    // fall through to the legacy `bodyPosition` shortcut. Without
+    // these here, a pre-0024 game backfilled later would have its
+    // Kuiper asteroids stuck on a wrong-orbit-radius circle.
+    const orbitRp    = b.orbit_rp    ?? null;
+    const orbitRa    = b.orbit_ra    ?? null;
+    const orbitOmega = b.orbit_omega ?? null;
+    const orbitM0    = b.orbit_m0    ?? null;
     stmts.push(
       env.DB.prepare(
         `INSERT INTO game_bodies
@@ -864,17 +873,20 @@ export async function backfillMissingBodies(env, gameId) {
            radius, soi, mu, orbit_radius, orbit_period, angle0, color,
            yield_metal, yield_fuel, yield_gold, yield_science,
            owner_faction_id, development_level, fortification_level, shipyard_level,
-           claimed_at_tick, developed_at_tick)
+           claimed_at_tick, developed_at_tick,
+           orbit_rp, orbit_ra, orbit_omega, orbit_m0)
          VALUES (?, ?, ?, ?, ?, ?,
                  ?, ?, ?, ?, ?, ?, ?,
                  ?, ?, ?, ?,
                  NULL, 0, 0, 0,
-                 NULL, NULL)`,
+                 NULL, NULL,
+                 ?, ?, ?, ?)`,
       ).bind(
         bodyRowIdFor(b.id), gameId, b.id, b.name, b.type,
         b.parent ? bodyRowIdFor(b.parent) : null,
         b.radius, b.soi, b.mu, b.orbit_radius, b.orbit_period, b.angle0, b.color,
         b.yield.metal, b.yield.fuel, b.yield.gold, b.yield.science,
+        orbitRp, orbitRa, orbitOmega, orbitM0,
       ),
     );
     inserted += 1;

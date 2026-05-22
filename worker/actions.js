@@ -824,6 +824,18 @@ const BUILDING_DEFS = {
   lab:      { hostType: 'city',    base: { fuel: 0, metal: 30, gold: 30 }, costScaling: 1.6, baseTicks: 25, timeScaling: 1.3 },
   weapons:  { hostType: 'station', base: { fuel: 0, metal: 30, gold: 20 }, costScaling: 1.6, baseTicks: 30, timeScaling: 1.3 },
   shipyard: { hostType: 'station', base: { fuel: 0, metal: 50, gold: 30 }, costScaling: 1.7, baseTicks: 40, timeScaling: 1.3 },
+  // Trajectory Control Thrusters — asteroid-weapon enabler. Mirrors
+  // src/game/settlements.ts BUILDING_DEFS. hostBodyType restricts the
+  // queueBuilding endpoint to rogue-asteroid bodies; without this an
+  // unsanctioned POST could light Earth/Mars up with thrusters.
+  trajectory_thrusters: {
+    hostType: 'city',
+    hostBodyType: 'asteroid',
+    base: { fuel: 0, metal: 800, gold: 1200 },
+    costScaling: 99,   // single-level — impossibly expensive at L2
+    baseTicks: 40,
+    timeScaling: 1,
+  },
 };
 
 function buildingCostAt(kind, level) {
@@ -867,6 +879,18 @@ async function handleQueueBuilding(req, env, ctx) {
   }
   if (settlement.type !== BUILDING_DEFS[kind].hostType) {
     return err(409, 'wrong_host', `${kind} requires a ${BUILDING_DEFS[kind].hostType}`);
+  }
+  // Body-type gate (e.g. trajectory_thrusters → asteroid only). Without
+  // this a hand-crafted POST could queue an asteroid-only building on
+  // a normal planet city.
+  if (BUILDING_DEFS[kind].hostBodyType) {
+    const host = await env.DB
+      .prepare('SELECT type FROM game_bodies WHERE id = (SELECT body_id FROM game_settlements WHERE id = ?)')
+      .bind(settlementId)
+      .first();
+    if (!host || host.type !== BUILDING_DEFS[kind].hostBodyType) {
+      return err(409, 'wrong_body_type', `${kind} requires a ${BUILDING_DEFS[kind].hostBodyType} body`);
+    }
   }
   if (settlement.building_order_json) {
     return err(409, 'busy', 'this settlement already has an upgrade in progress');

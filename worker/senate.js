@@ -105,8 +105,15 @@ async function loadGameAndFaction(env, gameId, session) {
 }
 
 async function planetCount(env, gameId, factionId) {
+  // Filter destroyed_at_tick so an asteroid wiped by a ram impact
+  // (migration 0024) no longer counts toward its former owner's
+  // vote weight.
   const row = await env.DB
-    .prepare('SELECT COUNT(*) AS c FROM game_bodies WHERE game_id = ? AND owner_faction_id = ?')
+    .prepare(
+      `SELECT COUNT(*) AS c FROM game_bodies
+        WHERE game_id = ? AND owner_faction_id = ?
+          AND destroyed_at_tick IS NULL`,
+    )
     .bind(gameId, factionId)
     .first();
   return row?.c ?? 0;
