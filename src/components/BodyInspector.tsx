@@ -258,13 +258,25 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
       )
     )
   );
+  // Diagnostic: does the player have a NON-freighter ship parked here?
+  // The most common confusion — player sees their frigate/corvette at the
+  // body, assumes any of their ships counts, clicks deploy, server says
+  // no_presence. Name the offending ship so the hint is concrete.
+  const playerNonFreighterHere = !playerFreighterHere && gameState.ships.find(s =>
+    s.ownedBy === 'player'
+    && !s.transit
+    && s.orbit.parentBodyId === bodyId
+    && s.class !== 'freighter'
+  );
   // Single source of truth for the disabled-button hint text. Used by
   // both the button title attribute and the visible hint below.
   const noFreighterHint = playerFreighterEnRoute
     ? 'Your freighter is en route — wait for it to arrive'
-    : enemyFreighterHere
-      ? 'That freighter belongs to an enemy. Send YOUR own to deploy.'
-      : 'Send a freighter to orbit to deploy';
+    : playerNonFreighterHere
+      ? `Your ${playerNonFreighterHere.class} here can't deploy — only freighters can.`
+      : enemyFreighterHere
+        ? 'That freighter belongs to an enemy. Send YOUR own to deploy.'
+        : 'Send a freighter to orbit to deploy';
 
   const cityAllowed = canHostCity(body);
   const stationAllowed = canHostStation(body);

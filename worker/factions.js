@@ -337,8 +337,11 @@ const CARGO_SHIPS_PER_WORLD = 1;
 const STARTER_CITY_HP = 100;
 
 // Starter fleet template. ship_class is a free-form TEXT column in the
-// schema; 'frigate' = combat, 'cargo' = freight. Names are templates;
-// suffixed per body so each ship gets a unique label.
+// schema; the canonical class names are corvette/frigate/destroyer/
+// freighter — same set used by every server-side gate (no_presence
+// deploy check, trade-route auto-pilot, harvest loop). Names are
+// templates; suffixed per body so each ship gets a unique label.
+//
 // Combat stats by ship class. Mirrors src/game/shipClasses.ts on the
 // client side. Used both by seedGameWorld (starter fleet) and by the
 // Room DO tick resolver (build completions + combat resolution).
@@ -347,14 +350,17 @@ export const SHIP_COMBAT_STATS = {
   frigate:   { hp: 80,  damage_per_tick: 10 },
   destroyer: { hp: 200, damage_per_tick: 18 },
   freighter: { hp: 30,  damage_per_tick: 0 },
-  // Legacy alias used by the starter fleet.
-  cargo:     { hp: 30,  damage_per_tick: 0 },
 };
 
 const STARTER_FLEET = [
-  { class: 'frigate', baseName: 'Vanguard', fuelMax: 800 },
-  { class: 'frigate', baseName: 'Sentinel', fuelMax: 800 },
-  { class: 'cargo',   baseName: 'Hauler',   fuelMax: 1500 },
+  { class: 'frigate',   baseName: 'Vanguard', fuelMax: 800 },
+  { class: 'frigate',   baseName: 'Sentinel', fuelMax: 800 },
+  // Hauler used to be inserted as ship_class='cargo' but every server
+  // gate checks for 'freighter' literally — meaning starter Haulers
+  // could never deploy cities, never pick up trade-route cargo, and
+  // never appear in harvest yields. Now stored consistently as
+  // 'freighter'. Migration 0023 backfills existing rows.
+  { class: 'freighter', baseName: 'Hauler',   fuelMax: 1500 },
 ];
 
 // Deterministic PRNG so map_seed actually produces a reproducible world.
