@@ -58,6 +58,13 @@ async function handleInit(req, env) {
   const done = new Set((applied.results ?? []).map(r => r.name));
 
   const newlyApplied = [];
+  // Some errors are recoverable — D1 throws "duplicate column name"
+  // when an ADD COLUMN already ran on a prior partial application,
+  // "already exists" for CREATE TABLE IF NOT EXISTS edge cases, etc.
+  // Treating these as success lets a re-run finish the migration
+  // instead of permanently bricking the loop. NOT_FATAL_RE matches
+  // those + similar repeatable-statement failures.
+  const NOT_FATAL_RE = /duplicate column|already exists|no such column.*to drop/i;
   for (const m of MIGRATIONS) {
     if (done.has(m.name)) continue;
     const stmts = m.sql
@@ -68,11 +75,19 @@ async function handleInit(req, env) {
       try {
         await env.DB.prepare(stmt).run();
       } catch (e) {
+        const msg = String(e?.message || e);
+        if (NOT_FATAL_RE.test(msg)) {
+          // Already-applied artifact — log and continue. The whole
+          // migration still gets stamped as applied below so we don't
+          // retry it next isolate.
+          console.warn(`migration ${m.name} stmt skipped (already applied):`, msg);
+          continue;
+        }
         return json({
           ok: false,
           migration: m.name,
           statement: stmt.slice(0, 200),
-          error: String(e?.message || e),
+          error: msg,
           newlyApplied,
         }, { status: 500 });
       }
@@ -490,11 +505,28 @@ function ensureMigrated(env) {
   if (_initPromise) return _initPromise;
   _initPromise = (async () => {
     try {
-      await handleInit(null, env);
+      // handleInit returns a 500 RESPONSE (not a throw) when a
+      // migration statement fails — e.g. "duplicate column name"
+      // from a partial prior application. The previous wrapper
+      // didn't check the response shape, so a failed migration
+      // silently latched as "init done" and every subsequent
+      // request hit unmigrated columns and 500'd. Now we inspect
+      // the response body; if ok=false, treat as failure, clear
+      // the latch so the next request retries.
+      const res = await handleInit(null, env);
+      if (res && typeof res.json === 'function') {
+        try {
+          // Clone before reading so we don't drain the body on the
+          // caller (handleInit isn't called for its return value
+          // anywhere else, but defensive).
+          const body = await res.clone().json();
+          if (body && body.ok === false) {
+            _initPromise = null;
+            console.error('ensureMigrated: handleInit returned ok=false', body);
+          }
+        } catch { /* not JSON, treat as success */ }
+      }
     } catch (e) {
-      // Don't permanently latch failure — clear the cached promise so a
-      // future request retries. The endpoint that triggered this will
-      // still fail this time, but at least it'll self-heal.
       _initPromise = null;
       console.error('ensureMigrated failed', e);
     }

@@ -47,20 +47,26 @@ async function handleGetState(req, env, ctx) {
 
   // Self-heal: Cloudflare DO alarms have been observed to occasionally
   // not fire on time (game frozen for 2h with no ticks during testing).
-  // When /state notices the wall clock has passed next_tick_at by a
-  // healthy margin, nudge the Room DO via /tick-now (no-op if not
-  // actually due). Fire-and-forget — we don't await it so /state stays
-  // snappy. The nudge re-arms setAlarm so future ticks fire on schedule.
-  if (
-    game.status === 'active'
-    && game.next_tick_at != null
-    && Date.now() > game.next_tick_at + 1000  // 1s grace
-  ) {
+  // Two cases we nudge for:
+  //   (a) next_tick_at is in the past — the DO never woke. Fire
+  //       /tick-now so the alarm runs catch-up.
+  //   (b) next_tick_at is NULL on an active non-TBM game — DO storage
+  //       drifted (recycled before /game-started landed, host edited
+  //       interval before alarm armed, etc.). /tick-now's orphan
+  //       branch will set next_tick_at = now + interval and arm the
+  //       alarm. Without (b) an orphaned game stalls forever — the
+  //       state.js self-heal was bypassing this since the previous
+  //       guard required next_tick_at != null.
+  // Fire-and-forget — we don't await it so /state stays snappy.
+  const isActive = game.status === 'active';
+  const isOverdue = game.next_tick_at != null && Date.now() > game.next_tick_at + 1000;
+  const isOrphaned = game.next_tick_at == null;
+  if (isActive && (isOverdue || isOrphaned)) {
     const stub = env.ROOM.get(env.ROOM.idFromName(game.id));
     stub.fetch('https://room/tick-now', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ force: false }),
+      body: JSON.stringify({ force: false, gameId: game.id }),
     }).catch(() => { /* swallow — best-effort */ });
   }
 
