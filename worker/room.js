@@ -801,7 +801,6 @@ export class Room {
     // re-implement the Bezier model.
     try {
       const CARGO_CAP = 50;
-      const LEG_TICKS = 60;
       const routes = (await this.env.DB
         .prepare(
           `SELECT id, owner_faction_id, ship_id, origin_body_id, dest_body_id, status,
@@ -811,6 +810,83 @@ export class Room {
         )
         .bind(gameId)
         .all()).results ?? [];
+
+      // Helper: recursive heliocentric body position. Mirrors the
+      // client's bodyPosition in src/physics/orbitalMechanics.ts —
+      // the legacy circular-orbit shortcut. Rogue Kuiper asteroids
+      // with eccentric Kepler elements (orbit_rp/ra/omega/m0) aren't
+      // valid trade-route endpoints in v1, so we don't need the
+      // Kepler propagator here. Cached per-call to avoid re-querying
+      // the same parent body multiple times in one leg lookup.
+      const TWO_PI = 2 * Math.PI;
+      const bodyCache = new Map();
+      const fetchBody = async (id) => {
+        if (bodyCache.has(id)) return bodyCache.get(id);
+        const row = await this.env.DB
+          .prepare(
+            `SELECT id, parent_body_id, orbit_radius, orbit_period, angle0
+               FROM game_bodies WHERE id = ? AND game_id = ?`,
+          )
+          .bind(id, gameId)
+          .first();
+        bodyCache.set(id, row);
+        return row;
+      };
+      const bodyPosAt = async (id, t) => {
+        const b = await fetchBody(id);
+        if (!b || b.parent_body_id == null) return { x: 0, y: 0 };
+        const parent = await bodyPosAt(b.parent_body_id, t);
+        const angle = (b.angle0 ?? 0) + TWO_PI * t / (b.orbit_period || 1);
+        return {
+          x: parent.x + Math.cos(angle) * (b.orbit_radius ?? 0),
+          y: parent.y + Math.sin(angle) * (b.orbit_radius ?? 0),
+        };
+      };
+
+      // Torch trip-time. Mirrors planTorchTransfer in
+      // src/physics/torchTransfer.ts — closed-form brachistochrone
+      // T = 2·√(d/a) for symmetric accel, with a 5-iteration
+      // intercept refinement so target-body motion during the trip
+      // is accounted for. Returns an integer tick count >= 1.
+      //
+      // Previously this used a hard-coded LEG_TICKS = 60. For a short
+      // Jupiter-system moon-hop (Europa↔Ganymede ≈ 30 units, T ≈ 2)
+      // that gave the client a 60-tick window to run the torch
+      // integrator at full thrust both directions — producing the
+      // 23,000-unit overshoot zigzags the player reported.
+      const G_ANCHOR = 4 * 132.6;            // mirror physics/torchTransfer.ts
+      const DEFAULT_ENGINE_G = 0.05;
+      const fromG = (g) => g * G_ANCHOR;
+      const factionAccelCache = new Map();
+      const getFactionAccel = async (factionId) => {
+        if (factionAccelCache.has(factionId)) return factionAccelCache.get(factionId);
+        const f = await this.env.DB
+          .prepare('SELECT engine_g FROM game_factions WHERE id = ?')
+          .bind(factionId)
+          .first();
+        const g = f?.engine_g ?? DEFAULT_ENGINE_G;
+        const accel = fromG(g);
+        factionAccelCache.set(factionId, accel);
+        return accel;
+      };
+      const computeLegTicks = async (factionId, originId, destId, refTick) => {
+        const accel = await getFactionAccel(factionId);
+        const startPos = await bodyPosAt(originId, refTick);
+        let T = 1;
+        for (let i = 0; i < 5; i++) {
+          const destPos = await bodyPosAt(destId, refTick + T);
+          const dx = destPos.x - startPos.x;
+          const dy = destPos.y - startPos.y;
+          const d = Math.sqrt(dx * dx + dy * dy);
+          const Tnew = 2 * Math.sqrt(Math.max(d, 0.01) / accel);
+          if (Math.abs(Tnew - T) < 0.05) { T = Tnew; break; }
+          T = Tnew;
+        }
+        // Clamp to integer ticks >= 1. Aggressively short trips (T<1)
+        // still need at least one tick so the depart→arrive state
+        // machine has room to fire 2a then 2b.
+        return Math.max(1, Math.ceil(T));
+      };
 
       for (const r of routes) {
         if (r.status === 'paused') continue;
@@ -842,8 +918,16 @@ export class Room {
         const cargoTotal = cargoFuel + cargoMetal + cargoGold + cargoScience;
 
         const planLeg = async (targetBodyId) => {
-          // Insert a committed node toward targetBodyId. 2a will flip it
-          // to in_transit next tick; 2b will arrive it LEG_TICKS later.
+          // Insert a committed node toward targetBodyId. 2a will flip
+          // it to in_transit next tick; 2b will arrive it at the
+          // computed arrival tick. Trip time uses real torch math
+          // (computeLegTicks above) so the client's reconstructed
+          // plan agrees on the timing — without that the client's
+          // integrator runs full thrust over an inflated arrival
+          // window and produces zigzag overshoot trajectories.
+          const legTicks = await computeLegTicks(
+            r.owner_faction_id, here, targetBodyId, tick,
+          );
           const seqRow = await this.env.DB
             .prepare('SELECT MAX(sequence) AS m FROM game_ship_nodes WHERE ship_id = ?')
             .bind(r.ship_id).first();
@@ -857,7 +941,7 @@ export class Room {
                   status, committed_at_tick)
                VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, 0, 0, 0, 0, 'committed', ?)`,
             )
-            .bind(nodeId, gameId, r.ship_id, seq, targetBodyId, tick, tick + LEG_TICKS, tick)
+            .bind(nodeId, gameId, r.ship_id, seq, targetBodyId, tick, tick + legTicks, tick)
             .run();
         };
 
