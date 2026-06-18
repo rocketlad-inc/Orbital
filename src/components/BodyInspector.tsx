@@ -250,124 +250,70 @@ export const BodyInspector: React.FC = () => {
           </div>
         </div>
 
-        <div className="panel-body">
+        <div className="panel-body body-focus__top-body">
+        {/* Compact body-info chip row — TYPE / OWNER / SHIPS as inline
+            pills instead of a full info table. PARENT + SOI dropped;
+            the player already knows the body's parent from clicking
+            it, and SOI is a tooltip-on-hover value, not a glance one. */}
+        <div className="body-focus__chips">
+          <span className="body-focus__chip">{body.type.toUpperCase()}</span>
+          {ownerFaction && (
+            <span
+              className="body-focus__chip"
+              style={{ color: ownerFaction.color, borderColor: ownerFaction.color }}
+            >
+              {ownerFaction.name.toUpperCase()}
+            </span>
+          )}
+          {shipsHere.length > 0 && (
+            <span className="body-focus__chip">{shipsHere.length} SHIP{shipsHere.length === 1 ? '' : 'S'}</span>
+          )}
+        </div>
+
         {/* Flavor text — authored prose from src/game/bodyFlavor.ts.
-            Renders nothing when empty so unauthored bodies don't show
-            an awkward placeholder block. */}
+            Compact styling so it doesn't dominate the card. */}
         {(() => {
           const flavor = getBodyFlavor(body.id);
           if (!flavor) return null;
           return (
-            <div
-              data-tutorial-id="body-flavor"
-              style={{
-                fontSize: 11,
-                lineHeight: 1.55,
-                color: '#a8b8c8',
-                fontStyle: 'italic',
-                padding: '8px 10px',
-                marginBottom: 10,
-                borderLeft: '2px solid #4a6275',
-                background: 'rgba(74, 98, 117, 0.08)',
-                borderRadius: '0 3px 3px 0',
-              }}
-            >
+            <div data-tutorial-id="body-flavor" className="body-focus__flavor">
               {flavor}
             </div>
           );
         })()}
 
+        {/* Yields — single-row of small chips instead of a 2×2 grid.
+            The "POTENTIAL YIELD / HARVEST" title is dropped; the row
+            speaks for itself with the +N units. */}
         {body.resources && (() => {
           const production = bodyProductionRates(body);
           const hasProduction = production.fuel > 0 || production.ore > 0 || production.credits > 0;
+          if (!hasProduction) return null;
           const settlementsHere = gameState.settlements.filter(s => s.bodyId === body.id);
           const playerSettlements = settlementsHere.filter(s => s.ownedBy === 'player');
           const freightersHere = gameState.ships.filter(
             s => s.class === 'freighter' && !s.transit && s.orbit.parentBodyId === body.id && s.ownedBy === 'player'
           );
           return (
-            <>
-              <div className="resources-grid">
-                <div className="resource-item">
-                  <div className="resource-label">FUEL</div>
-                  <div className="resource-value">{body.resources.fuel}</div>
-                </div>
-                <div className="resource-item">
-                  <div className="resource-label">CREDITS</div>
-                  <div className="resource-value">{body.resources.gold}</div>
-                </div>
-                <div className="resource-item">
-                  <div className="resource-label">METAL</div>
-                  <div className="resource-value">{body.resources.metal}</div>
-                </div>
-                <div className="resource-item">
-                  <div className="resource-label">SCI</div>
-                  <div className="resource-value">{body.resources.science}</div>
-                </div>
+            <div className="body-focus__yields" data-tutorial-id="body-production">
+              <div className="body-focus__yield-row">
+                {production.fuel > 0 && <span>+{Math.round(production.fuel)}F</span>}
+                {production.ore > 0 && <span>+{Math.round(production.ore)}O</span>}
+                {production.credits > 0 && <span>+{Math.round(production.credits)}C</span>}
+                <span style={{ color: '#7a8a9a' }}>/ harvest</span>
               </div>
-              {hasProduction && (
-                <div className="production-summary" data-tutorial-id="body-production">
-                  <div className="production-title">POTENTIAL YIELD / HARVEST</div>
-                  <div className="production-rates">
-                    {/* Math.round defensive — bodyProductionRates() multiplies
-                        by PRODUCTION_MULTIPLIER (=1 today), so values land on
-                        the integer body.resources today. If anyone tunes the
-                        multiplier we don't want "+3.5 FUEL" to suddenly leak. */}
-                    {production.fuel > 0 && (
-                      <span className="production-rate">+{Math.round(production.fuel)} FUEL</span>
-                    )}
-                    {production.ore > 0 && (
-                      <span className="production-rate">+{Math.round(production.ore)} ORE</span>
-                    )}
-                    {production.credits > 0 && (
-                      <span className="production-rate">+{Math.round(production.credits)} CR</span>
-                    )}
-                  </div>
-                  <div className="production-note">
-                    {playerSettlements.length === 0
-                      ? freightersHere.length === 0
-                        ? 'Park a freighter here, then deploy a city or station below to start production'
-                        : 'Deploy a city or station below to start production'
-                      : freightersHere.length === 0
-                        ? `${playerSettlements.length} settlement${playerSettlements.length > 1 ? 's' : ''} extracting — send a freighter here to ferry the stockpile to your resources (top-right)`
-                        : `${playerSettlements.length} settlement${playerSettlements.length > 1 ? 's' : ''} extracting · ${freightersHere.length} freighter${freightersHere.length > 1 ? 's' : ''} ferrying to your resources`}
-                  </div>
-                </div>
-              )}
-            </>
+              <div className="body-focus__yield-note">
+                {playerSettlements.length === 0
+                  ? freightersHere.length === 0
+                    ? 'No settlement yet — park a freighter, then deploy.'
+                    : 'Freighter in orbit; deploy below to start harvesting.'
+                  : freightersHere.length === 0
+                    ? `${playerSettlements.length} settlement${playerSettlements.length > 1 ? 's' : ''} stockpiling — send a freighter.`
+                    : `${playerSettlements.length} extracting · ${freightersHere.length} ferrying.`}
+              </div>
+            </div>
           );
         })()}
-
-        <div className="body-info">
-          <div className="info-row">
-            <span className="label">TYPE</span>
-            <span className="value">{body.type.toUpperCase()}</span>
-          </div>
-          {ownerFaction && (
-            <div className="info-row">
-              <span className="label">OWNER</span>
-              <span className="value" style={{ color: ownerFaction.color }}>
-                {ownerFaction.name.toUpperCase()}
-              </span>
-            </div>
-          )}
-          {body.parent && (
-            <div className="info-row">
-              <span className="label">PARENT</span>
-              <span className="value">{body.parent.toUpperCase()}</span>
-            </div>
-          )}
-          <div className="info-row">
-            <span className="label">SOI</span>
-            <span className="value">{body.soi === Infinity ? '∞' : body.soi.toFixed(0)}</span>
-          </div>
-          {shipsHere.length > 0 && (
-            <div className="info-row">
-              <span className="label">SHIPS</span>
-              <span className="value">{shipsHere.length}</span>
-            </div>
-          )}
-        </div>
 
         {/* Asteroid-only ram controls stay in the top card alongside
             the body info — they're contextual, not part of the
@@ -395,8 +341,133 @@ export const BodyInspector: React.FC = () => {
         <BuildPanel />
       </div>
 
+      {/* === Connector lines === SVG overlay that draws a curve from
+          each settlement row in the LEFT/RIGHT cards out to that
+          settlement's actual position on the map (surface for cities,
+          orbit for stations). Implementation: see ConnectorLines
+          below — DOM-driven (rows tagged with data-settlement-id) +
+          per-frame world→screen math mirroring the renderer's
+          worldToCanvas. Player-owned only — enemy settlements don't
+          get lines (they're intel hidden in the fog wash anyway). */}
+      <ConnectorLines bodyId={body.id} />
+
     </div>
     </BottomSheet>
+  );
+};
+
+// ============================================================
+// ConnectorLines — SVG overlay drawing a curve from each settlement
+// row in the LEFT/RIGHT cards to its on-map marker.
+// Updates on every frame (the body and stations move). Settlements
+// without a matching DOM row are silently skipped — e.g. enemy
+// settlements that don't render in the player's panel.
+// ============================================================
+const ConnectorLines: React.FC<{ bodyId: string }> = ({ bodyId }) => {
+  const { gameState, camera } = useGameContext();
+  const svgRef = useRef<SVGSVGElement>(null);
+
+  // Animation-frame loop while mounted. Per-frame: compute each
+  // player-owned settlement's world position, convert to screen
+  // coords, look up its DOM row by data-settlement-id, and emit a
+  // cubic-bezier path from the row's inward edge to the marker.
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const svg = svgRef.current;
+      if (!svg) {
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+      const body = gameState.bodies.find(b => b.id === bodyId);
+      if (!body) {
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+      const bodyWorldPos = bodyPosition(body, gameState.currentTick, gameState.bodies);
+      const viewportW = window.innerWidth;
+      const viewportH = window.innerHeight;
+
+      // worldToCanvas mirror — same math the renderer uses. Camera
+      // tracks the focused body so screen-center is body-center.
+      const camX = camera.focusedBodyId === bodyId ? bodyWorldPos.x : camera.x;
+      const camY = camera.focusedBodyId === bodyId ? bodyWorldPos.y : camera.y;
+      const worldToScreen = (wx: number, wy: number) => ({
+        x: viewportW / 2 + (wx - camX) * camera.scale,
+        y: viewportH / 2 + (wy - camY) * camera.scale,
+      });
+
+      const settlements = gameState.settlements.filter(
+        s => s.bodyId === bodyId && s.ownedBy === 'player',
+      );
+
+      const paths: string[] = [];
+      for (const s of settlements) {
+        const row = svg.parentElement?.querySelector(
+          `[data-settlement-id="${s.id}"]`,
+        ) as HTMLElement | null;
+        if (!row) continue;
+        const rect = row.getBoundingClientRect();
+
+        // Settlement world position: cities sit on the surface at
+        // surfaceAngle, stations sit in orbit at the current orbital
+        // angle. Same math as drawCity / drawStation in mapRenderer.
+        let sx: number, sy: number;
+        if (s.type === 'city') {
+          const angle = s.surfaceAngle ?? 0;
+          sx = bodyWorldPos.x + body.radius * Math.cos(angle);
+          sy = bodyWorldPos.y + body.radius * Math.sin(angle);
+        } else if (s.orbit) {
+          const orbit = s.orbit;
+          const radius = (orbit.rp + orbit.ra) / 2;
+          const M = orbit.M0 + (2 * Math.PI * (gameState.currentTick - orbit.epoch) / orbit.period) * orbit.direction;
+          const theta = M;
+          sx = bodyWorldPos.x + radius * Math.cos(theta);
+          sy = bodyWorldPos.y + radius * Math.sin(theta);
+        } else {
+          continue;
+        }
+        const target = worldToScreen(sx, sy);
+
+        // Source = the row's inward-facing edge midpoint. Cities live
+        // in the left card → source is the row's right edge. Stations
+        // live in the right card → source is the row's left edge.
+        const sourceX = s.type === 'city' ? rect.right : rect.left;
+        const sourceY = rect.top + rect.height / 2;
+
+        // Cubic bezier — pull both control points horizontally toward
+        // the target so the line sweeps cleanly across the gap instead
+        // of looping. Magnitude proportional to horizontal distance so
+        // small distances don't get exaggerated curves.
+        const dx = target.x - sourceX;
+        const cp1x = sourceX + dx * 0.45;
+        const cp2x = target.x - dx * 0.45;
+        paths.push(
+          `M ${sourceX} ${sourceY} C ${cp1x} ${sourceY}, ${cp2x} ${target.y}, ${target.x} ${target.y}`,
+        );
+      }
+
+      // Replace innerHTML once per frame rather than React-rendering
+      // each path — keeps the connector animation off React's reconciler.
+      svg.innerHTML = paths
+        .map(d => `<path d="${d}" stroke="rgba(78,205,196,0.5)" stroke-width="1" fill="none" stroke-dasharray="3 3"/>`)
+        .join('');
+
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [bodyId, gameState, camera]);
+
+  return (
+    <svg
+      ref={svgRef}
+      style={{
+        position: 'fixed', inset: 0,
+        pointerEvents: 'none',
+        zIndex: 90,  // below cards (91), above canvas
+      }}
+    />
   );
 };
 
@@ -613,6 +684,10 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
         return (
           <div
             key={s.id}
+            // data-settlement-id is read by BodyInspector's connector-line
+            // SVG overlay so each row can sprout a curve pointing at its
+            // settlement on the map. No effect on the row's other behavior.
+            data-settlement-id={s.id}
             className={`settlement-row ${isSelected ? 'selected' : ''}`}
             onClick={() => selectSettlement(isSelected ? undefined : s.id)}
           >

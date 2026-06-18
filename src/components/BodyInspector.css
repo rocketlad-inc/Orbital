@@ -35,40 +35,51 @@
   overflow-y: auto;
 }
 
+/* Cards anchor TIGHT to the viewport edges so the central area
+   stays free for the planet and its orbiting ships.
+   - Top + Bottom: horizontally centered, narrow (340 / 440).
+   - Left + Right: aligned with the left rail / MP dock (8px from
+     edge, same 280px width). They cover those rails during body
+     view — we don't need the Outliner while inspecting a single
+     body, and the MP dock can wait until the player zooms back out.
+     z-index: 91 so we sit one layer above the rail's z:80.
+   All four cards size to their content (height: max-content) up
+   to a max-height cap that forces internal scroll only when truly
+   overflowing. No more "always-scrollbar" feel. */
 .body-focus__top {
-  top: 60px;
+  top: 12px;
   left: 50%;
   transform: translateX(-50%);
-  width: 380px;
-  max-width: calc(100vw - 320px);
-  max-height: 30vh;
+  width: 340px;
+  max-width: calc(100vw - 600px);
+  max-height: 26vh;
+  z-index: 91;
 }
 
 .body-focus__left {
-  top: 50%;
-  left: 312px;  /* left-rail (8 + 280) + 24px gutter */
-  transform: translateY(-50%);
+  top: 80px;
+  left: 8px;
   width: 280px;
-  max-width: 28vw;
-  max-height: 60vh;
+  max-height: calc(100vh - 220px);
+  z-index: 91;
 }
 
 .body-focus__right {
-  top: 50%;
-  right: 392px;  /* mp-dock (8 + 360) + 24px gutter */
-  transform: translateY(-50%);
+  top: 80px;
+  right: 8px;
   width: 280px;
-  max-width: 28vw;
-  max-height: 60vh;
+  max-height: calc(100vh - 220px);
+  z-index: 91;
 }
 
 .body-focus__bottom {
-  bottom: 20px;
+  bottom: 12px;
   left: 50%;
   transform: translateX(-50%);
-  width: 560px;
-  max-width: calc(100vw - 320px);
-  max-height: 32vh;
+  width: 440px;
+  max-width: calc(100vw - 600px);
+  max-height: 30vh;
+  z-index: 91;
 }
 
 /* Mobile: collapse the cardinal split. BottomSheet on mobile already
@@ -175,6 +186,64 @@
   font-size: 10px;
   color: #d8e4ee;
   font-family: 'JetBrains Mono', monospace;
+}
+
+/* Top card compact mode. The body header (TOP card) was the worst
+   offender for content overflow — five sections stacked plus the
+   header. These rules trim the rendered density without dropping
+   information. */
+.body-focus__top-body {
+  padding: 8px 10px !important;  /* tighter than the default .panel-body */
+}
+.body-focus__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.body-focus__chip {
+  display: inline-block;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  padding: 2px 6px;
+  border: 1px solid #2a3d50;
+  border-radius: 2px;
+  color: #b8c8d6;
+  white-space: nowrap;
+}
+.body-focus__flavor {
+  font-size: 10px;
+  line-height: 1.45;
+  color: #a8b8c8;
+  font-style: italic;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  border-left: 2px solid #4a6275;
+  background: rgba(74, 98, 117, 0.06);
+  border-radius: 0 2px 2px 0;
+  /* The flavor text is the variable-length piece. Cap it and let it
+     scroll inside the card so a 4-sentence Centauri body doesn't
+     blow out the top card's max-height. */
+  max-height: 11vh;
+  overflow-y: auto;
+}
+.body-focus__yields {
+  margin-top: 4px;
+}
+.body-focus__yield-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 10px;
+  color: #ffb84d;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+.body-focus__yield-note {
+  font-size: 9px;
+  color: #7a8a9a;
+  font-style: italic;
+  line-height: 1.4;
 }
 
 .resources-grid {
