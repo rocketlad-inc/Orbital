@@ -1,32 +1,99 @@
-.body-inspector {
+/* === Cardinal body view ===
+   When a body is selected, the inspector breaks into 4 panels anchored
+   around the center of the canvas, leaving the body (which is rendered
+   by the map canvas behind) visible in the middle.
+   Layout uses fixed positioning per card so each card can size itself
+   without competing for grid space.
+   Layout zones (LEFT rail at left:8-296px, MP dock at right:8-376px):
+     TOP    — centered above the body, name/flavor/yields
+     LEFT   — center-left, just right of the left rail
+     RIGHT  — center-right, just left of the MP dock
+     BOTTOM — centered below the body, shipyard
+   Each card is independently scrollable so a heavily-built body
+   doesn't blow out the layout. */
+.body-focus {
   position: fixed;
-  /* Outliner moved to the LEFT rail; old `right: 264px` was reserved
-     for it. Now sits center-right with a comfortable gutter from the
-     MP dock (which lives at right: 8px after the layout overhaul).
-     Phase 3 of the UI overhaul replaces this entirely with the
-     cardinal four-panel layout around a zoomed-in planet. */
-  bottom: 16px;
-  right: 380px;
+  inset: 0;
   z-index: 90;
+  pointer-events: none;  /* canvas behind stays clickable in the gaps */
+}
+.body-focus > * { pointer-events: auto; }
+
+/* Shared card styling — all 4 cards share the dark backdrop and
+   border so they read as one inspector broken into pieces, not as
+   four unrelated panels. */
+.body-focus__top,
+.body-focus__left,
+.body-focus__right,
+.body-focus__bottom {
+  position: absolute;
   background: rgba(10, 14, 20, 0.96);
   border: 1px solid #2a3d50;
   border-radius: 4px;
   backdrop-filter: blur(8px);
-  min-width: 280px;
-  /* Was unbounded. With only `right:` set under position:fixed the
-     box uses shrink-to-fit, and a single-line body-flavor paragraph
-     (added recently to the panel header) has a max-content width
-     equal to that whole sentence — so the inspector stretched edge-
-     to-edge. Pin a sensible cap and let the flavor paragraph wrap
-     inside, which is what the existing `overflow-y: auto` + max-height
-     were designed for. */
-  max-width: 360px;
-  max-height: calc(100vh - 80px);
-  overflow-y: auto;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  overflow-y: auto;
 }
 
-.body-inspector .panel-header {
+.body-focus__top {
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 380px;
+  max-width: calc(100vw - 320px);
+  max-height: 30vh;
+}
+
+.body-focus__left {
+  top: 50%;
+  left: 312px;  /* left-rail (8 + 280) + 24px gutter */
+  transform: translateY(-50%);
+  width: 280px;
+  max-width: 28vw;
+  max-height: 60vh;
+}
+
+.body-focus__right {
+  top: 50%;
+  right: 392px;  /* mp-dock (8 + 360) + 24px gutter */
+  transform: translateY(-50%);
+  width: 280px;
+  max-width: 28vw;
+  max-height: 60vh;
+}
+
+.body-focus__bottom {
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 560px;
+  max-width: calc(100vw - 320px);
+  max-height: 32vh;
+}
+
+/* Mobile: collapse the cardinal split. BottomSheet on mobile already
+   wraps the whole .body-focus tree and renders it as a vertical-scroll
+   sheet, so we just need to undo the absolute positioning and let the
+   cards stack one above the next. */
+@media (max-width: 768px) {
+  .body-focus {
+    position: static;
+    inset: auto;
+  }
+  .body-focus__top,
+  .body-focus__left,
+  .body-focus__right,
+  .body-focus__bottom {
+    position: static;
+    transform: none;
+    width: auto;
+    max-width: none;
+    max-height: none;
+    margin-bottom: 10px;
+  }
+}
+
+.body-focus .panel-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -40,7 +107,7 @@
   font-weight: 600;
 }
 
-.body-inspector .panel-close {
+.body-focus .panel-close {
   background: none;
   border: none;
   color: #4ecdc4;
@@ -56,17 +123,17 @@
   transition: all 0.2s ease;
 }
 
-.body-inspector .panel-close:hover {
+.body-focus .panel-close:hover {
   background: rgba(78, 205, 196, 0.2);
 }
 
-.body-inspector .panel-header-actions {
+.body-focus .panel-header-actions {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-.body-inspector .panel-focus {
+.body-focus .panel-focus {
   background: transparent;
   border: 1px solid #2a3d50;
   color: #b8c8d6;
@@ -79,18 +146,18 @@
   transition: all 0.15s ease;
 }
 
-.body-inspector .panel-focus:hover {
+.body-focus .panel-focus:hover {
   border-color: #4ecdc4;
   color: #4ecdc4;
 }
 
-.body-inspector .panel-focus.active {
+.body-focus .panel-focus.active {
   border-color: #ffb84d;
   color: #ffb84d;
   background: rgba(255, 184, 77, 0.08);
 }
 
-.body-inspector .panel-body {
+.body-focus .panel-body {
   padding: 12px;
   font-size: 10px;
   color: #d8e4ee;

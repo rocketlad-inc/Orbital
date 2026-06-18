@@ -58,31 +58,50 @@ export const BodyInspector: React.FC = () => {
   const isFocused = camera.focusedBodyId === body.id;
   const toggleFocus = () => focusBody(isFocused ? undefined : body.id);
 
+  // === Cardinal panel layout ===
+  // After the UI overhaul, BodyInspector renders 4 cards around the
+  // (zoomed-in) body instead of one stacked side panel:
+  //   TOP    — name + flavor + yields + production note + body info
+  //   LEFT   — cities at this body (or DysonSphere at Sol, where no
+  //            city is possible)
+  //   RIGHT  — stations at this body
+  //   BOTTOM — Shipyard (BuildPanel) — ship class tiles
+  //
+  // SettlementsSection takes a typeFilter prop so the same component
+  // mounts twice, once filtered to 'city' on the left, once filtered
+  // to 'station' on the right. Each instance only shows the deploy
+  // button for its own type.
+  //
+  // The planet-zoom-on-open behavior and the dismiss-on-pan-or-Esc
+  // exit are deliberately NOT here yet — first iteration just lays
+  // out the cardinal panels around whatever the camera is already
+  // showing. Those behaviors land in a follow-up.
   return (
     <BottomSheet open={true} onClose={deselectBody} title={body.name.toUpperCase()}>
-    <div className="body-inspector" data-tutorial-id="body-inspector">
-      <div className="panel-header">
-        <span>{body.name.toUpperCase()}</span>
-        <div className="panel-header-actions">
-          <button
-            className={`panel-focus ${isFocused ? 'active' : ''}`}
-            onClick={toggleFocus}
-            title={isFocused ? 'Stop following' : 'Camera follows this body'}
-          >
-            {isFocused ? '◉ FOLLOWING' : '○ FOLLOW'}
-          </button>
-          <button className="panel-close" onClick={deselectBody}>
-            ✕
-          </button>
-        </div>
-      </div>
+    <div className="body-focus" data-tutorial-id="body-inspector">
 
-      <div className="panel-body">
+      {/* === TOP CARD === */}
+      <div className="body-focus__top">
+        <div className="panel-header">
+          <span>{body.name.toUpperCase()}</span>
+          <div className="panel-header-actions">
+            <button
+              className={`panel-focus ${isFocused ? 'active' : ''}`}
+              onClick={toggleFocus}
+              title={isFocused ? 'Stop following' : 'Camera follows this body'}
+            >
+              {isFocused ? '◉ FOLLOWING' : '○ FOLLOW'}
+            </button>
+            <button className="panel-close" onClick={deselectBody}>
+              ✕
+            </button>
+          </div>
+        </div>
+
+        <div className="panel-body">
         {/* Flavor text — authored prose from src/game/bodyFlavor.ts.
             Renders nothing when empty so unauthored bodies don't show
-            an awkward placeholder block. Sits BEFORE the resource grid
-            so the inspector reads as "what is this place" first, then
-            the numbers. */}
+            an awkward placeholder block. */}
         {(() => {
           const flavor = getBodyFlavor(body.id);
           if (!flavor) return null;
@@ -196,14 +215,32 @@ export const BodyInspector: React.FC = () => {
           )}
         </div>
 
-        <SettlementsSection bodyId={body.id} />
-
+        {/* Asteroid-only ram controls stay in the top card alongside
+            the body info — they're contextual, not part of the
+            city/station/shipyard split. */}
         {body.type === 'asteroid' && <RamControlsSection body={body} />}
+        </div>
+      </div>
 
-        {body.id === 'sol' && <DysonSpherePanel />}
+      {/* === LEFT CARD === Cities (or Dyson Sphere at Sol) */}
+      <div className="body-focus__left">
+        {body.id === 'sol' ? (
+          <DysonSpherePanel />
+        ) : (
+          <SettlementsSection bodyId={body.id} typeFilter="city" />
+        )}
+      </div>
 
+      {/* === RIGHT CARD === Stations */}
+      <div className="body-focus__right">
+        <SettlementsSection bodyId={body.id} typeFilter="station" />
+      </div>
+
+      {/* === BOTTOM CARD === Shipyard */}
+      <div className="body-focus__bottom">
         <BuildPanel />
       </div>
+
     </div>
     </BottomSheet>
   );
@@ -211,9 +248,15 @@ export const BodyInspector: React.FC = () => {
 
 interface SettlementsSectionProps {
   bodyId: string;
+  /** Restrict the section to one settlement type. Used by the cardinal
+   *  body view to split the section into city-only (left card) and
+   *  station-only (right card). When undefined, both kinds render and
+   *  both deploy buttons show — same shape the section had before the
+   *  split. */
+  typeFilter?: 'city' | 'station';
 }
 
-const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
+const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFilter }) => {
   const {
     gameState, deploySettlement, selectSettlement, selectedSettlementId,
     buildCollector, queueBuilding, cancelBuilding,
@@ -254,7 +297,9 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
 
   if (!body) return null;
 
-  const settlements = gameState.settlements.filter(s => s.bodyId === bodyId);
+  const settlements = gameState.settlements
+    .filter(s => s.bodyId === bodyId)
+    .filter(s => !typeFilter || s.type === typeFilter);
 
   // Only freighters can deliver settlement materials — combat ships can't deploy.
   //
@@ -547,7 +592,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
       ) : (
         <>
           <div className="deploy-buttons" data-tutorial-id="deploy-buttons">
-            {cityAllowed && (
+            {cityAllowed && (!typeFilter || typeFilter === 'city') && (
               <button
                 className="deploy-btn"
                 disabled={!canBuildHere || !canAffordCity}
@@ -561,7 +606,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
                 ■ DEPLOY CITY
               </button>
             )}
-            {stationAllowed && (
+            {stationAllowed && (!typeFilter || typeFilter === 'station') && (
               <button
                 className="deploy-btn"
                 disabled={!canBuildHere || !canAffordStation}
