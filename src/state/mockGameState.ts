@@ -70,31 +70,31 @@ export const SHARED_BODIES: Body[] = [
   {
     id: 'ceres', name: 'Ceres', type: 'dwarf', parent: 'sol',
     radius: 1.5, soi: 9, mu: 0.5, color: '#6b6b6b',
-    orbitRadius: 310, orbitPeriod: 443, angle0: 1.20,
+    orbitRadius: 360, orbitPeriod: 555, angle0: 1.20,
     resources: { fuel: 1, gold: 3, metal: 5, science: 1 },
   },
   {
     id: 'vesta', name: 'Vesta', type: 'dwarf', parent: 'sol',
     radius: 1, soi: 6, mu: 0.3, color: '#a89888',
-    orbitRadius: 310, orbitPeriod: 443, angle0: 2.46,
+    orbitRadius: 360, orbitPeriod: 555, angle0: 2.46,
     resources: { fuel: 0, gold: 2, metal: 6, science: 1 },
   },
   {
     id: 'pallas', name: 'Pallas', type: 'dwarf', parent: 'sol',
     radius: 1, soi: 5, mu: 0.25, color: '#80706a',
-    orbitRadius: 310, orbitPeriod: 443, angle0: 3.71,
+    orbitRadius: 360, orbitPeriod: 555, angle0: 3.71,
     resources: { fuel: 0, gold: 1, metal: 5, science: 2 },
   },
   {
     id: 'hygiea', name: 'Hygiea', type: 'dwarf', parent: 'sol',
     radius: 1, soi: 5, mu: 0.2, color: '#75655a',
-    orbitRadius: 310, orbitPeriod: 443, angle0: 4.97,
+    orbitRadius: 360, orbitPeriod: 555, angle0: 4.97,
     resources: { fuel: 1, gold: 1, metal: 5, science: 1 },
   },
   {
     id: 'juno', name: 'Juno', type: 'dwarf', parent: 'sol',
     radius: 1, soi: 5, mu: 0.2, color: '#aa9070',
-    orbitRadius: 310, orbitPeriod: 443, angle0: 6.23,
+    orbitRadius: 360, orbitPeriod: 555, angle0: 6.23,
     resources: { fuel: 0, gold: 3, metal: 4, science: 1 },
   },
 
@@ -115,19 +115,19 @@ export const SHARED_BODIES: Body[] = [
   {
     id: 'midas', name: 'Midas', type: 'asteroid', parent: 'sol',
     radius: 0.6, soi: 2, mu: 0.04, color: '#c8a872',
-    orbitRadius: 295, orbitPeriod: 415, angle0: 0.4,
+    orbitRadius: 345, orbitPeriod: 525, angle0: 0.4,
     resources: { fuel: 0, gold: 6, metal: 8, science: 0 },
   },
   {
     id: 'styx_rock', name: 'Styx', type: 'asteroid', parent: 'sol',
     radius: 0.6, soi: 2, mu: 0.04, color: '#7a6858',
-    orbitRadius: 320, orbitPeriod: 470, angle0: 3.0,
+    orbitRadius: 370, orbitPeriod: 584, angle0: 3.0,
     resources: { fuel: 0, gold: 5, metal: 9, science: 0 },
   },
   {
     id: 'iron_anna', name: 'Iron Anna', type: 'asteroid', parent: 'sol',
     radius: 0.7, soi: 2, mu: 0.05, color: '#9a7a5a',
-    orbitRadius: 340, orbitPeriod: 515, angle0: 5.1,
+    orbitRadius: 390, orbitPeriod: 632, angle0: 5.1,
     resources: { fuel: 0, gold: 4, metal: 10, science: 1 },
   },
   // Kuiper-class — long elliptical paths. orbit_rp brings them

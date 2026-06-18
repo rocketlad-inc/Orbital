@@ -9,7 +9,6 @@ import {
   drawRammingBody,
   drawShip,
   drawOrbitEllipse,
-  drawSOIBoundary,
   drawApsisMarkers,
   drawTorchTrajectory,
   drawTransitShip,
@@ -265,7 +264,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // Draw SOI boundaries
     for (const body of gameState.bodies) {
       if (body.type === 'star') continue;
-      drawSOIBoundary(body, renderContext);
+      // SOI boundary ring removed — player feedback: too many dashed
+      // rings around every planet read as visual noise. Sensor fog
+      // already implies the gravitational neighborhood.
+      // drawSOIBoundary(body, renderContext);
     }
 
     // Draw target selection highlights
