@@ -2,7 +2,7 @@
 // BodyInspector - Resource readout + build UI for selected body
 // ============================================================
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { BuildPanel } from './BuildPanel';
 import { bodyProductionRates } from '../game/economy';
@@ -35,13 +35,165 @@ const RAM_FUEL_PER_DV = 50;
 const RAM_ASTEROID_G = 0.005;
 
 export const BodyInspector: React.FC = () => {
-  const { gameState, camera, uiState, deselectBody, focusBody } = useGameContext();
+  const { gameState, camera, uiState, deselectBody, focusBody, updateCamera } = useGameContext();
+  const selectedBodyId = uiState.selectedBodyId;
 
-  if (!uiState.selectedBodyId) {
+  // === Body-focus camera state ===
+  // When a body is selected, we save the camera snapshot from BEFORE
+  // the zoom-in so Escape can restore it cleanly. Stored as a ref so
+  // updating it doesn't re-render the whole inspector.
+  //
+  // Lifecycle:
+  //   - body selected (selectedBodyId becomes non-null)
+  //       → snapshot current camera, focusBody(id), bump scale.
+  //   - user pans or wheel-zooms
+  //       → MapCanvas already clears camera.focusedBodyId on drag/zoom.
+  //         The watcher effect below sees focusedBodyId !== selectedBodyId
+  //         and calls deselectBody (snapshot NOT restored — the user
+  //         was the one driving the camera change, so honor it).
+  //   - Escape / X button (deselectBody)
+  //       → restore snapshot, then the selectedBodyId reset clears state.
+  const cameraSnapshotRef = useRef<{ x: number; y: number; scale: number; focusedBodyId?: string } | null>(null);
+  const lastSelectedRef = useRef<string | null>(null);
+  // True once camera.focusedBodyId has actually become the selected
+  // body (i.e. Effect 1's focusBody call has propagated through a
+  // render). Effect 2 (dismiss-on-pan) refuses to fire until this is
+  // true so the inspector isn't immediately closed by its own zoom
+  // call — focusBody's state update is async, so on the FIRST render
+  // after a body becomes selected, camera.focusedBodyId still holds
+  // the old value. Without this gate, Effect 2 would see
+  // focusedBodyId !== selectedBodyId on that first render and call
+  // deselectBody before the player saw anything.
+  const focusEstablishedRef = useRef(false);
+
+  // ZOOM ON OPEN: snapshot, focus, scale up. Only fires on the
+  // selection EDGE (no body → body, or body A → body B) so a re-render
+  // of an already-open inspector doesn't keep re-snapshotting.
+  useEffect(() => {
+    if (!selectedBodyId) {
+      focusEstablishedRef.current = false;
+      return;
+    }
+    if (lastSelectedRef.current === selectedBodyId) return;
+    // New selection edge — reset the "established" gate so Effect 2
+    // waits for our focusBody call to land before considering dismiss.
+    focusEstablishedRef.current = false;
+    // Edge: a new body became selected. Snapshot the camera from
+    // BEFORE we started zooming — that's the state we'll restore on
+    // Escape. Use the live camera (not the focus-overridden one); the
+    // ref captures the raw {x, y, scale} the player would have come
+    // back to if we hadn't taken over.
+    if (lastSelectedRef.current === null) {
+      cameraSnapshotRef.current = {
+        x: camera.x,
+        y: camera.y,
+        scale: camera.scale,
+        focusedBodyId: camera.focusedBodyId,
+      };
+    }
+    lastSelectedRef.current = selectedBodyId;
+    // Compute a zoom that makes the body visually prominent. Target
+    // is ~60px screen radius — clamps the body between "barely
+    // distinguishable rock" (low) and "fills the whole inspector
+    // gap" (high). Sol-system stars have radius 10, gas giants 5-9,
+    // moons 1-2 → scales between 6 and 40, all comfortably inside
+    // the [0.0012, 50] MIN/MAX_SCALE clamp.
+    const body = gameState.bodies.find(b => b.id === selectedBodyId);
+    if (!body) return;
+    const targetScale = 60 / Math.max(body.radius, 1.5);
+    focusBody(selectedBodyId);
+    updateCamera({ scale: Math.min(50, Math.max(0.0012, targetScale)) });
+    // gameState.bodies / camera intentionally NOT deps — fires only on
+    // selection change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedBodyId]);
+
+  // DISMISS ON PAN OR ZOOM: MapCanvas's mousedown / wheel handlers
+  // clear camera.focusedBodyId the moment the user grabs the map. If
+  // we had a body selected and that link breaks, treat it as the
+  // player escaping the inspector and close it. The snapshot is
+  // INTENTIONALLY NOT restored here — the user was driving the camera
+  // when they pan/zoom, so leave them where they ended up.
+  //
+  // GATING via focusEstablishedRef: focusBody's state update from
+  // Effect 1 lands in a SUBSEQUENT render. On the first render after
+  // a new selection, camera.focusedBodyId still holds whatever it was
+  // before — almost certainly not selectedBodyId — and this effect
+  // would dismiss instantly. We only treat the focus link as "broken"
+  // AFTER we've observed it actually established once.
+  useEffect(() => {
+    if (!selectedBodyId) return;
+    if (camera.focusedBodyId === selectedBodyId) {
+      focusEstablishedRef.current = true;
+      return;
+    }
+    if (!focusEstablishedRef.current) return;
+    // The focus link broke after being established. Drop the selection.
+    cameraSnapshotRef.current = null;  // don't restore on the upcoming deselect
+    lastSelectedRef.current = null;
+    deselectBody();
+  }, [camera.focusedBodyId, selectedBodyId, deselectBody]);
+
+  // RESET STATE ON UNMOUNT / DESELECT: clear the lastSelected ref so
+  // the NEXT body select re-snapshots. Restoring the snapshot is
+  // handled by the deselectBody-wrapped close button (see useCallback
+  // below) so that pan-dismiss and Esc-dismiss have different
+  // semantics: pan keeps the player where they panned to; Esc bounces
+  // them back to where they started.
+  useEffect(() => {
+    if (!selectedBodyId) lastSelectedRef.current = null;
+  }, [selectedBodyId]);
+
+  // HIDE OTHER UI ON MOBILE BODY VIEW: set a body class while the
+  // inspector is open. CSS in BodyInspector.css hides .top-bar and
+  // .mp-dock at the mobile breakpoint when this class is present.
+  useEffect(() => {
+    if (!selectedBodyId) return;
+    document.body.classList.add('body-focus-active');
+    return () => document.body.classList.remove('body-focus-active');
+  }, [selectedBodyId]);
+
+  // Snapshot-aware close. Restores the saved camera so the player
+  // returns to the framing they were in before clicking the body. If
+  // the snapshot was cleared (pan-dismiss path), just deselect.
+  // Declared BEFORE the Esc handler effect that depends on it.
+  const closeAndRestore = useCallback(() => {
+    const snap = cameraSnapshotRef.current;
+    cameraSnapshotRef.current = null;
+    if (snap) {
+      updateCamera({
+        x: snap.x,
+        y: snap.y,
+        scale: snap.scale,
+        focusedBodyId: snap.focusedBodyId,
+      });
+    }
+    deselectBody();
+  }, [deselectBody, updateCamera]);
+
+  // ESCAPE → close with snapshot restore. BottomSheet only handles Esc
+  // on mobile; on desktop the inspector floats with no modal scrim, so
+  // we register the listener ourselves. Same closeAndRestore as the X
+  // button — the player bounces back to where they were before
+  // clicking the body. Guarded against input/textarea focus so typing
+  // a settlement name doesn't accidentally close the inspector.
+  useEffect(() => {
+    if (!selectedBodyId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const t = e.target as HTMLElement;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      closeAndRestore();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectedBodyId, closeAndRestore]);
+
+  if (!selectedBodyId) {
     return null;
   }
 
-  const body = gameState.bodies.find(b => b.id === uiState.selectedBodyId);
+  const body = gameState.bodies.find(b => b.id === selectedBodyId);
   if (!body) {
     return null;
   }
@@ -58,164 +210,278 @@ export const BodyInspector: React.FC = () => {
   const isFocused = camera.focusedBodyId === body.id;
   const toggleFocus = () => focusBody(isFocused ? undefined : body.id);
 
+  // === Cardinal panel layout ===
+  // After the UI overhaul, BodyInspector renders 4 cards around the
+  // (zoomed-in) body instead of one stacked side panel:
+  //   TOP    — name + flavor + yields + production note + body info
+  //   LEFT   — cities at this body (or DysonSphere at Sol, where no
+  //            city is possible)
+  //   RIGHT  — stations at this body
+  //   BOTTOM — Shipyard (BuildPanel) — ship class tiles
+  //
+  // SettlementsSection takes a typeFilter prop so the same component
+  // mounts twice, once filtered to 'city' on the left, once filtered
+  // to 'station' on the right. Each instance only shows the deploy
+  // button for its own type.
+  //
+  // The planet-zoom-on-open behavior and the dismiss-on-pan-or-Esc
+  // exit are deliberately NOT here yet — first iteration just lays
+  // out the cardinal panels around whatever the camera is already
+  // showing. Those behaviors land in a follow-up.
   return (
-    <BottomSheet open={true} onClose={deselectBody} title={body.name.toUpperCase()}>
-    <div className="body-inspector" data-tutorial-id="body-inspector">
-      <div className="panel-header">
-        <span>{body.name.toUpperCase()}</span>
-        <div className="panel-header-actions">
-          <button
-            className={`panel-focus ${isFocused ? 'active' : ''}`}
-            onClick={toggleFocus}
-            title={isFocused ? 'Stop following' : 'Camera follows this body'}
-          >
-            {isFocused ? '◉ FOLLOWING' : '○ FOLLOW'}
-          </button>
-          <button className="panel-close" onClick={deselectBody}>
-            ✕
-          </button>
-        </div>
-      </div>
+    <BottomSheet open={true} onClose={closeAndRestore} title={body.name.toUpperCase()}>
+    <div className="body-focus" data-tutorial-id="body-inspector">
 
-      <div className="panel-body">
+      {/* === TOP CARD === */}
+      <div className="body-focus__top">
+        <div className="panel-header">
+          <span>{body.name.toUpperCase()}</span>
+          <div className="panel-header-actions">
+            <button
+              className={`panel-focus ${isFocused ? 'active' : ''}`}
+              onClick={toggleFocus}
+              title={isFocused ? 'Stop following' : 'Camera follows this body'}
+            >
+              {isFocused ? '◉ FOLLOWING' : '○ FOLLOW'}
+            </button>
+            <button className="panel-close" onClick={closeAndRestore}>
+              ✕
+            </button>
+          </div>
+        </div>
+
+        <div className="panel-body body-focus__top-body">
+        {/* Compact body-info chip row — TYPE / OWNER / SHIPS as inline
+            pills instead of a full info table. PARENT + SOI dropped;
+            the player already knows the body's parent from clicking
+            it, and SOI is a tooltip-on-hover value, not a glance one. */}
+        <div className="body-focus__chips">
+          <span className="body-focus__chip">{body.type.toUpperCase()}</span>
+          {ownerFaction && (
+            <span
+              className="body-focus__chip"
+              style={{ color: ownerFaction.color, borderColor: ownerFaction.color }}
+            >
+              {ownerFaction.name.toUpperCase()}
+            </span>
+          )}
+          {shipsHere.length > 0 && (
+            <span className="body-focus__chip">{shipsHere.length} SHIP{shipsHere.length === 1 ? '' : 'S'}</span>
+          )}
+        </div>
+
         {/* Flavor text — authored prose from src/game/bodyFlavor.ts.
-            Renders nothing when empty so unauthored bodies don't show
-            an awkward placeholder block. Sits BEFORE the resource grid
-            so the inspector reads as "what is this place" first, then
-            the numbers. */}
+            Compact styling so it doesn't dominate the card. */}
         {(() => {
           const flavor = getBodyFlavor(body.id);
           if (!flavor) return null;
           return (
-            <div
-              data-tutorial-id="body-flavor"
-              style={{
-                fontSize: 11,
-                lineHeight: 1.55,
-                color: '#a8b8c8',
-                fontStyle: 'italic',
-                padding: '8px 10px',
-                marginBottom: 10,
-                borderLeft: '2px solid #4a6275',
-                background: 'rgba(74, 98, 117, 0.08)',
-                borderRadius: '0 3px 3px 0',
-              }}
-            >
+            <div data-tutorial-id="body-flavor" className="body-focus__flavor">
               {flavor}
             </div>
           );
         })()}
 
+        {/* Yields — single-row of small chips instead of a 2×2 grid.
+            The "POTENTIAL YIELD / HARVEST" title is dropped; the row
+            speaks for itself with the +N units. */}
         {body.resources && (() => {
           const production = bodyProductionRates(body);
           const hasProduction = production.fuel > 0 || production.ore > 0 || production.credits > 0;
+          if (!hasProduction) return null;
           const settlementsHere = gameState.settlements.filter(s => s.bodyId === body.id);
           const playerSettlements = settlementsHere.filter(s => s.ownedBy === 'player');
           const freightersHere = gameState.ships.filter(
             s => s.class === 'freighter' && !s.transit && s.orbit.parentBodyId === body.id && s.ownedBy === 'player'
           );
           return (
-            <>
-              <div className="resources-grid">
-                <div className="resource-item">
-                  <div className="resource-label">FUEL</div>
-                  <div className="resource-value">{body.resources.fuel}</div>
-                </div>
-                <div className="resource-item">
-                  <div className="resource-label">CREDITS</div>
-                  <div className="resource-value">{body.resources.gold}</div>
-                </div>
-                <div className="resource-item">
-                  <div className="resource-label">METAL</div>
-                  <div className="resource-value">{body.resources.metal}</div>
-                </div>
-                <div className="resource-item">
-                  <div className="resource-label">SCI</div>
-                  <div className="resource-value">{body.resources.science}</div>
-                </div>
+            <div className="body-focus__yields" data-tutorial-id="body-production">
+              <div className="body-focus__yield-row">
+                {production.fuel > 0 && <span>+{Math.round(production.fuel)}F</span>}
+                {production.ore > 0 && <span>+{Math.round(production.ore)}O</span>}
+                {production.credits > 0 && <span>+{Math.round(production.credits)}C</span>}
+                <span style={{ color: '#7a8a9a' }}>/ harvest</span>
               </div>
-              {hasProduction && (
-                <div className="production-summary" data-tutorial-id="body-production">
-                  <div className="production-title">POTENTIAL YIELD / HARVEST</div>
-                  <div className="production-rates">
-                    {/* Math.round defensive — bodyProductionRates() multiplies
-                        by PRODUCTION_MULTIPLIER (=1 today), so values land on
-                        the integer body.resources today. If anyone tunes the
-                        multiplier we don't want "+3.5 FUEL" to suddenly leak. */}
-                    {production.fuel > 0 && (
-                      <span className="production-rate">+{Math.round(production.fuel)} FUEL</span>
-                    )}
-                    {production.ore > 0 && (
-                      <span className="production-rate">+{Math.round(production.ore)} ORE</span>
-                    )}
-                    {production.credits > 0 && (
-                      <span className="production-rate">+{Math.round(production.credits)} CR</span>
-                    )}
-                  </div>
-                  <div className="production-note">
-                    {playerSettlements.length === 0
-                      ? freightersHere.length === 0
-                        ? 'Park a freighter here, then deploy a city or station below to start production'
-                        : 'Deploy a city or station below to start production'
-                      : freightersHere.length === 0
-                        ? `${playerSettlements.length} settlement${playerSettlements.length > 1 ? 's' : ''} extracting — send a freighter here to ferry the stockpile to your resources (top-right)`
-                        : `${playerSettlements.length} settlement${playerSettlements.length > 1 ? 's' : ''} extracting · ${freightersHere.length} freighter${freightersHere.length > 1 ? 's' : ''} ferrying to your resources`}
-                  </div>
-                </div>
-              )}
-            </>
+              <div className="body-focus__yield-note">
+                {playerSettlements.length === 0
+                  ? freightersHere.length === 0
+                    ? 'No settlement yet — park a freighter, then deploy.'
+                    : 'Freighter in orbit; deploy below to start harvesting.'
+                  : freightersHere.length === 0
+                    ? `${playerSettlements.length} settlement${playerSettlements.length > 1 ? 's' : ''} stockpiling — send a freighter.`
+                    : `${playerSettlements.length} extracting · ${freightersHere.length} ferrying.`}
+              </div>
+            </div>
           );
         })()}
 
-        <div className="body-info">
-          <div className="info-row">
-            <span className="label">TYPE</span>
-            <span className="value">{body.type.toUpperCase()}</span>
-          </div>
-          {ownerFaction && (
-            <div className="info-row">
-              <span className="label">OWNER</span>
-              <span className="value" style={{ color: ownerFaction.color }}>
-                {ownerFaction.name.toUpperCase()}
-              </span>
-            </div>
-          )}
-          {body.parent && (
-            <div className="info-row">
-              <span className="label">PARENT</span>
-              <span className="value">{body.parent.toUpperCase()}</span>
-            </div>
-          )}
-          <div className="info-row">
-            <span className="label">SOI</span>
-            <span className="value">{body.soi === Infinity ? '∞' : body.soi.toFixed(0)}</span>
-          </div>
-          {shipsHere.length > 0 && (
-            <div className="info-row">
-              <span className="label">SHIPS</span>
-              <span className="value">{shipsHere.length}</span>
-            </div>
-          )}
-        </div>
-
-        <SettlementsSection bodyId={body.id} />
-
+        {/* Asteroid-only ram controls stay in the top card alongside
+            the body info — they're contextual, not part of the
+            city/station/shipyard split. */}
         {body.type === 'asteroid' && <RamControlsSection body={body} />}
+        </div>
+      </div>
 
-        {body.id === 'sol' && <DysonSpherePanel />}
+      {/* === LEFT CARD === Cities (or Dyson Sphere at Sol) */}
+      <div className="body-focus__left">
+        {body.id === 'sol' ? (
+          <DysonSpherePanel />
+        ) : (
+          <SettlementsSection bodyId={body.id} typeFilter="city" />
+        )}
+      </div>
 
+      {/* === RIGHT CARD === Stations */}
+      <div className="body-focus__right">
+        <SettlementsSection bodyId={body.id} typeFilter="station" />
+      </div>
+
+      {/* === BOTTOM CARD === Shipyard */}
+      <div className="body-focus__bottom">
         <BuildPanel />
       </div>
+
+      {/* === Connector lines === SVG overlay that draws a curve from
+          each settlement row in the LEFT/RIGHT cards out to that
+          settlement's actual position on the map (surface for cities,
+          orbit for stations). Implementation: see ConnectorLines
+          below — DOM-driven (rows tagged with data-settlement-id) +
+          per-frame world→screen math mirroring the renderer's
+          worldToCanvas. Player-owned only — enemy settlements don't
+          get lines (they're intel hidden in the fog wash anyway). */}
+      <ConnectorLines bodyId={body.id} />
+
     </div>
     </BottomSheet>
   );
 };
 
+// ============================================================
+// ConnectorLines — SVG overlay drawing a curve from each settlement
+// row in the LEFT/RIGHT cards to its on-map marker.
+// Updates on every frame (the body and stations move). Settlements
+// without a matching DOM row are silently skipped — e.g. enemy
+// settlements that don't render in the player's panel.
+// ============================================================
+const ConnectorLines: React.FC<{ bodyId: string }> = ({ bodyId }) => {
+  const { gameState, camera } = useGameContext();
+  const svgRef = useRef<SVGSVGElement>(null);
+
+  // Animation-frame loop while mounted. Per-frame: compute each
+  // player-owned settlement's world position, convert to screen
+  // coords, look up its DOM row by data-settlement-id, and emit a
+  // cubic-bezier path from the row's inward edge to the marker.
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const svg = svgRef.current;
+      if (!svg) {
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+      const body = gameState.bodies.find(b => b.id === bodyId);
+      if (!body) {
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+      const bodyWorldPos = bodyPosition(body, gameState.currentTick, gameState.bodies);
+      const viewportW = window.innerWidth;
+      const viewportH = window.innerHeight;
+
+      // worldToCanvas mirror — same math the renderer uses. Camera
+      // tracks the focused body so screen-center is body-center.
+      const camX = camera.focusedBodyId === bodyId ? bodyWorldPos.x : camera.x;
+      const camY = camera.focusedBodyId === bodyId ? bodyWorldPos.y : camera.y;
+      const worldToScreen = (wx: number, wy: number) => ({
+        x: viewportW / 2 + (wx - camX) * camera.scale,
+        y: viewportH / 2 + (wy - camY) * camera.scale,
+      });
+
+      const settlements = gameState.settlements.filter(
+        s => s.bodyId === bodyId && s.ownedBy === 'player',
+      );
+
+      const paths: string[] = [];
+      for (const s of settlements) {
+        const row = svg.parentElement?.querySelector(
+          `[data-settlement-id="${s.id}"]`,
+        ) as HTMLElement | null;
+        if (!row) continue;
+        const rect = row.getBoundingClientRect();
+
+        // Settlement world position: cities sit on the surface at
+        // surfaceAngle, stations sit in orbit at the current orbital
+        // angle. Same math as drawCity / drawStation in mapRenderer.
+        let sx: number, sy: number;
+        if (s.type === 'city') {
+          const angle = s.surfaceAngle ?? 0;
+          sx = bodyWorldPos.x + body.radius * Math.cos(angle);
+          sy = bodyWorldPos.y + body.radius * Math.sin(angle);
+        } else if (s.orbit) {
+          const orbit = s.orbit;
+          const radius = (orbit.rp + orbit.ra) / 2;
+          const M = orbit.M0 + (2 * Math.PI * (gameState.currentTick - orbit.epoch) / orbit.period) * orbit.direction;
+          const theta = M;
+          sx = bodyWorldPos.x + radius * Math.cos(theta);
+          sy = bodyWorldPos.y + radius * Math.sin(theta);
+        } else {
+          continue;
+        }
+        const target = worldToScreen(sx, sy);
+
+        // Source = the row's inward-facing edge midpoint. Cities live
+        // in the left card → source is the row's right edge. Stations
+        // live in the right card → source is the row's left edge.
+        const sourceX = s.type === 'city' ? rect.right : rect.left;
+        const sourceY = rect.top + rect.height / 2;
+
+        // Cubic bezier — pull both control points horizontally toward
+        // the target so the line sweeps cleanly across the gap instead
+        // of looping. Magnitude proportional to horizontal distance so
+        // small distances don't get exaggerated curves.
+        const dx = target.x - sourceX;
+        const cp1x = sourceX + dx * 0.45;
+        const cp2x = target.x - dx * 0.45;
+        paths.push(
+          `M ${sourceX} ${sourceY} C ${cp1x} ${sourceY}, ${cp2x} ${target.y}, ${target.x} ${target.y}`,
+        );
+      }
+
+      // Replace innerHTML once per frame rather than React-rendering
+      // each path — keeps the connector animation off React's reconciler.
+      svg.innerHTML = paths
+        .map(d => `<path d="${d}" stroke="rgba(78,205,196,0.5)" stroke-width="1" fill="none" stroke-dasharray="3 3"/>`)
+        .join('');
+
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [bodyId, gameState, camera]);
+
+  return (
+    <svg
+      ref={svgRef}
+      style={{
+        position: 'fixed', inset: 0,
+        pointerEvents: 'none',
+        zIndex: 90,  // below cards (91), above canvas
+      }}
+    />
+  );
+};
+
 interface SettlementsSectionProps {
   bodyId: string;
+  /** Restrict the section to one settlement type. Used by the cardinal
+   *  body view to split the section into city-only (left card) and
+   *  station-only (right card). When undefined, both kinds render and
+   *  both deploy buttons show — same shape the section had before the
+   *  split. */
+  typeFilter?: 'city' | 'station';
 }
 
-const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
+const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFilter }) => {
   const {
     gameState, deploySettlement, selectSettlement, selectedSettlementId,
     buildCollector, queueBuilding, cancelBuilding,
@@ -260,7 +526,9 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
 
   if (!body) return null;
 
-  const settlements = gameState.settlements.filter(s => s.bodyId === bodyId);
+  const settlements = gameState.settlements
+    .filter(s => s.bodyId === bodyId)
+    .filter(s => !typeFilter || s.type === typeFilter);
 
   // Only freighters can deliver settlement materials — combat ships can't deploy.
   //
@@ -416,6 +684,10 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
         return (
           <div
             key={s.id}
+            // data-settlement-id is read by BodyInspector's connector-line
+            // SVG overlay so each row can sprout a curve pointing at its
+            // settlement on the map. No effect on the row's other behavior.
+            data-settlement-id={s.id}
             className={`settlement-row ${isSelected ? 'selected' : ''}`}
             onClick={() => selectSettlement(isSelected ? undefined : s.id)}
           >
@@ -553,7 +825,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
       ) : (
         <>
           <div className="deploy-buttons" data-tutorial-id="deploy-buttons">
-            {cityAllowed && (
+            {cityAllowed && (!typeFilter || typeFilter === 'city') && (
               <button
                 className="deploy-btn"
                 disabled={!canBuildHere || !canAffordCity}
@@ -567,7 +839,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId }) => {
                 ■ DEPLOY CITY
               </button>
             )}
-            {stationAllowed && (
+            {stationAllowed && (!typeFilter || typeFilter === 'station') && (
               <button
                 className="deploy-btn"
                 disabled={!canBuildHere || !canAffordStation}

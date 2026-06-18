@@ -127,18 +127,10 @@
 
 /* ---- Right-side multiplayer dock ----
  *
- * Anchored LEFT of the Outliner, with `right` tracking the Outliner's
- * current width so the two panels slide together when the player
- * collapses or expands the holdings drawer. body.outliner-collapsed is
- * toggled by the Outliner component (see src/components/Outliner.tsx).
- *
- *   Outliner open  (240px + 8px gutter) → mp-dock at right: 264px
- *   Outliner shut  (32px + 8px gutter)  → mp-dock at right: 56px
- *
- * Previous version pinned the dock to a fixed right: 264px regardless
- * of Outliner state, which left a ~232px dead zone of empty canvas when
- * the player collapsed their Outliner. Transition on `right` mirrors
- * the Outliner's own 0.2s width animation so they move in lockstep.
+ * Anchored at the RIGHT edge of the viewport. Used to track the
+ * Outliner's width and slide together with it; the layout overhaul
+ * moved the Outliner to the LEFT side, so the dock now has the right
+ * edge to itself and just pins at right: 8px.
  *
  * When the dock itself is collapsed, it shrinks to a small top-anchored
  * button (height: auto, no bottom anchor) so the right edge of the
@@ -154,9 +146,8 @@
   font-family: var(--mp-mono);
   color: var(--mp-fg);
   display: flex; flex-direction: column;
-  transition: right 0.2s ease, width 0.2s ease;
+  transition: width 0.2s ease;
 }
-body.outliner-collapsed .mp-dock { right: 8px; /* outliner on left now */ }
 .mp-dock.collapsed {
   width: 44px;
   /* Collapse to a small top button — release the bottom anchor so the

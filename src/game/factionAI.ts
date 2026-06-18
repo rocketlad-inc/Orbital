@@ -29,6 +29,18 @@ import { TechId, TECH_DEFS, TECH_MAX_LEVEL, ALL_TECH_IDS } from './techs';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { SOL_BODY_ID, DYSON_PER_FREIGHTER_PER_TICK } from './dysonSphere';
 import { FUEL_ENABLED } from './featureFlags';
+import {
+  BINARY_SYSTEM_BODY_IDS,
+  BLACK_HOLE_SYSTEM_BODY_IDS,
+} from '../state/mockGameState';
+
+// Bodies that require inter-system warp travel. The AI has no concept of
+// warp gates so it must never attempt to colonize, deploy, or attack bodies
+// in remote star systems — ships sent there simply disappear.
+const REMOTE_SYSTEM_BODY_IDS: ReadonlySet<string> = new Set([
+  ...BINARY_SYSTEM_BODY_IDS,
+  ...BLACK_HOLE_SYSTEM_BODY_IDS,
+]);
 
 // === Constants ===============================================
 
@@ -558,6 +570,9 @@ function generateDeployCandidates(ctx: AIContext): AIActionIntent[] {
     if (!body) continue;
     if (body.type === 'star') continue;
 
+    // Remote star-system bodies require warp gates — the AI can't reach them.
+    if (REMOTE_SYSTEM_BODY_IDS.has(bodyId)) continue;
+
     // Already have a settlement here? Skip — one is enough for v1.
     if (ctx.mySettlements.some(s => s.bodyId === bodyId)) continue;
 
@@ -658,6 +673,8 @@ function generateTransferCandidates(ctx: AIContext): AIActionIntent[] {
       if (b.type === 'star') return false;
       if (b.id === freighter.orbit.parentBodyId) return false;
       if (ctx.ownedBodyIds.has(b.id)) return false;
+      // Remote systems require warp gates — unreachable for the AI.
+      if (REMOTE_SYSTEM_BODY_IDS.has(b.id)) return false;
       return canHostCity(b) || canHostStation(b);
     });
 
@@ -693,6 +710,8 @@ function generateTransferCandidates(ctx: AIContext): AIActionIntent[] {
 
     for (const [bodyId, hostiles] of ctx.bodyIdToHostileShips) {
       if (bodyId === ship.orbit.parentBodyId) continue;
+      // Remote systems are unreachable — ignore threats there.
+      if (REMOTE_SYSTEM_BODY_IDS.has(bodyId)) continue;
       const body = ctx.state.bodies.find(b => b.id === bodyId);
       if (!body) continue;
       const threat = hostiles.length;

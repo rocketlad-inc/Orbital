@@ -1,27 +1,123 @@
-.body-inspector {
+/* === Cardinal body view ===
+   When a body is selected, the inspector breaks into 4 panels anchored
+   around the center of the canvas, leaving the body (which is rendered
+   by the map canvas behind) visible in the middle.
+   Layout uses fixed positioning per card so each card can size itself
+   without competing for grid space.
+   Layout zones (LEFT rail at left:8-296px, MP dock at right:8-376px):
+     TOP    — centered above the body, name/flavor/yields
+     LEFT   — center-left, just right of the left rail
+     RIGHT  — center-right, just left of the MP dock
+     BOTTOM — centered below the body, shipyard
+   Each card is independently scrollable so a heavily-built body
+   doesn't blow out the layout. */
+.body-focus {
   position: fixed;
-  bottom: 16px;
-  right: 8px;  /* outliner moved to left edge — was 264px */
+  inset: 0;
   z-index: 90;
+  pointer-events: none;  /* canvas behind stays clickable in the gaps */
+}
+.body-focus > * { pointer-events: auto; }
+
+/* Shared card styling — all 4 cards share the dark backdrop and
+   border so they read as one inspector broken into pieces, not as
+   four unrelated panels. */
+.body-focus__top,
+.body-focus__left,
+.body-focus__right,
+.body-focus__bottom {
+  position: absolute;
   background: rgba(10, 14, 20, 0.96);
   border: 1px solid #2a3d50;
   border-radius: 4px;
   backdrop-filter: blur(8px);
-  min-width: 280px;
-  /* Was unbounded. With only `right:` set under position:fixed the
-     box uses shrink-to-fit, and a single-line body-flavor paragraph
-     (added recently to the panel header) has a max-content width
-     equal to that whole sentence — so the inspector stretched edge-
-     to-edge. Pin a sensible cap and let the flavor paragraph wrap
-     inside, which is what the existing `overflow-y: auto` + max-height
-     were designed for. */
-  max-width: 360px;
-  max-height: calc(100vh - 80px);
-  overflow-y: auto;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  overflow-y: auto;
 }
 
-.body-inspector .panel-header {
+/* Cards anchor TIGHT to the viewport edges so the central area
+   stays free for the planet and its orbiting ships.
+   - Top + Bottom: horizontally centered, narrow (340 / 440).
+   - Left + Right: aligned with the left rail / MP dock (8px from
+     edge, same 280px width). They cover those rails during body
+     view — we don't need the Outliner while inspecting a single
+     body, and the MP dock can wait until the player zooms back out.
+     z-index: 91 so we sit one layer above the rail's z:80.
+   All four cards size to their content (height: max-content) up
+   to a max-height cap that forces internal scroll only when truly
+   overflowing. No more "always-scrollbar" feel. */
+.body-focus__top {
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 340px;
+  max-width: calc(100vw - 600px);
+  max-height: 26vh;
+  z-index: 91;
+}
+
+.body-focus__left {
+  top: 80px;
+  left: 8px;
+  width: 280px;
+  max-height: calc(100vh - 220px);
+  z-index: 91;
+}
+
+.body-focus__right {
+  top: 80px;
+  right: 8px;
+  width: 280px;
+  max-height: calc(100vh - 220px);
+  z-index: 91;
+}
+
+.body-focus__bottom {
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 440px;
+  max-width: calc(100vw - 600px);
+  max-height: 30vh;
+  z-index: 91;
+}
+
+/* Mobile: collapse the cardinal split. BottomSheet on mobile already
+   wraps the whole .body-focus tree and renders it as a vertical-scroll
+   sheet, so we just need to undo the absolute positioning and let the
+   cards stack one above the next. */
+@media (max-width: 768px) {
+  .body-focus {
+    position: static;
+    inset: auto;
+  }
+  .body-focus__top,
+  .body-focus__left,
+  .body-focus__right,
+  .body-focus__bottom {
+    position: static;
+    transform: none;
+    width: auto;
+    max-width: none;
+    max-height: none;
+    margin-bottom: 10px;
+  }
+
+  /* HIDE OTHER UI ON MOBILE BODY VIEW.
+     body.body-focus-active is added/removed by BodyInspector while a
+     body is selected. On mobile the cardinal cards become a vertical
+     stack inside the BottomSheet — the TopBar + MP dock would just
+     compete for screen and overlap the cards. Hide them entirely.
+     The Outliner is in the left rail and BottomSheet already covers
+     it on mobile via its scrim, so it doesn't need its own rule.
+     Desktop ignores this rule (lives inside the 768px media query). */
+  body.body-focus-active .top-bar,
+  body.body-focus-active .mp-dock {
+    display: none;
+  }
+}
+
+.body-focus .panel-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -35,7 +131,7 @@
   font-weight: 600;
 }
 
-.body-inspector .panel-close {
+.body-focus .panel-close {
   background: none;
   border: none;
   color: #4ecdc4;
@@ -51,17 +147,17 @@
   transition: all 0.2s ease;
 }
 
-.body-inspector .panel-close:hover {
+.body-focus .panel-close:hover {
   background: rgba(78, 205, 196, 0.2);
 }
 
-.body-inspector .panel-header-actions {
+.body-focus .panel-header-actions {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-.body-inspector .panel-focus {
+.body-focus .panel-focus {
   background: transparent;
   border: 1px solid #2a3d50;
   color: #b8c8d6;
@@ -74,22 +170,80 @@
   transition: all 0.15s ease;
 }
 
-.body-inspector .panel-focus:hover {
+.body-focus .panel-focus:hover {
   border-color: #4ecdc4;
   color: #4ecdc4;
 }
 
-.body-inspector .panel-focus.active {
+.body-focus .panel-focus.active {
   border-color: #ffb84d;
   color: #ffb84d;
   background: rgba(255, 184, 77, 0.08);
 }
 
-.body-inspector .panel-body {
+.body-focus .panel-body {
   padding: 12px;
   font-size: 10px;
   color: #d8e4ee;
   font-family: 'JetBrains Mono', monospace;
+}
+
+/* Top card compact mode. The body header (TOP card) was the worst
+   offender for content overflow — five sections stacked plus the
+   header. These rules trim the rendered density without dropping
+   information. */
+.body-focus__top-body {
+  padding: 8px 10px !important;  /* tighter than the default .panel-body */
+}
+.body-focus__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.body-focus__chip {
+  display: inline-block;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  padding: 2px 6px;
+  border: 1px solid #2a3d50;
+  border-radius: 2px;
+  color: #b8c8d6;
+  white-space: nowrap;
+}
+.body-focus__flavor {
+  font-size: 10px;
+  line-height: 1.45;
+  color: #a8b8c8;
+  font-style: italic;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  border-left: 2px solid #4a6275;
+  background: rgba(74, 98, 117, 0.06);
+  border-radius: 0 2px 2px 0;
+  /* The flavor text is the variable-length piece. Cap it and let it
+     scroll inside the card so a 4-sentence Centauri body doesn't
+     blow out the top card's max-height. */
+  max-height: 11vh;
+  overflow-y: auto;
+}
+.body-focus__yields {
+  margin-top: 4px;
+}
+.body-focus__yield-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 10px;
+  color: #ffb84d;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+.body-focus__yield-note {
+  font-size: 9px;
+  color: #7a8a9a;
+  font-style: italic;
+  line-height: 1.4;
 }
 
 .resources-grid {
