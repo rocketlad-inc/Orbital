@@ -8,6 +8,7 @@ import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext'
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { ShipIcon } from './ShipIcons';
+import { DEFAULT_ENGINE_G } from '../physics/torchTransfer';
 import {
   BINARY_SYSTEM_BODY_IDS,
   BLACK_HOLE_SYSTEM_BODY_IDS,
@@ -426,6 +427,19 @@ export const ShipPanel: React.FC = () => {
             <div className="stat-row">
               <span className="label">LOCATION</span>
               <span className="value">{locationLabel}</span>
+            </div>
+            <div
+              className="stat-row"
+              title="Max sustained acceleration. All ships in your faction share the same engine output — bigger ships aren't slower (or faster). Boost it by researching the flight tech."
+            >
+              <span className="label">MAX ACCEL</span>
+              <span className="value">
+                {(() => {
+                  const owner = gameState.factions.find(f => f.id === ship.ownedBy);
+                  const g = owner?.engineG ?? DEFAULT_ENGINE_G;
+                  return `${g.toFixed(2)}g`;
+                })()}
+              </span>
             </div>
             {ship.transit && eta != null && eta > 0 && (
               <div className="stat-row">

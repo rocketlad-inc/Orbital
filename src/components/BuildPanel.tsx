@@ -96,7 +96,7 @@ export const BuildPanel: React.FC = () => {
 
   return (
     <div className="build-panel">
-      <div className="section-title">SHIPYARD</div>
+      <div className="section-title">BUILD</div>
 
       <div className="build-name-row">
         <input
@@ -229,7 +229,7 @@ export const BuildPanel: React.FC = () => {
                   ? `Build a ${def.displayName} (${def.cost.fuel}F ${def.cost.ore}O ${def.cost.credits}C, ${def.buildTime} ticks)`
                   : shortLabel}
               >
-                BUILD
+                BUILD · {def.buildTime}t
               </button>
               {!canAfford && shortLabel && (
                 // Inline shortage callout. Hugs the row so the player

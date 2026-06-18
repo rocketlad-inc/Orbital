@@ -961,7 +961,7 @@ const SHIP_NAME_POOLS: Record<ShipClassName, string[]> = {
   corvette: ['Lance', 'Sting', 'Razor', 'Falcon', 'Spear', 'Knife', 'Hawk', 'Dart', 'Talon'],
   frigate: ['Resolute', 'Vanguard', 'Hammer', 'Stalwart', 'Sentinel', 'Bulwark', 'Aegis', 'Defiant'],
   destroyer: ['Tyrant', 'Ironclad', 'Vengeance', 'Wrath', 'Citadel', 'Behemoth', 'Conqueror', 'Dreadnought'],
-  freighter: ['Carryall', 'Hauler', 'Caravan', 'Pioneer', 'Voyager', 'Drifter', 'Trader', 'Ferry'],
+  freighter: ['Carryall', 'Caravan', 'Pioneer', 'Voyager', 'Drifter', 'Trader', 'Ferry', 'Skipper'],
 };
 
 function generateShipName(cls: ShipClassName, ctx: AIContext): string {

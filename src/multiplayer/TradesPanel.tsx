@@ -34,7 +34,7 @@ const RESOURCE_COLORS: Record<keyof ResourceBundle, string> = {
 const RESOURCE_LABELS: Record<keyof ResourceBundle, string> = {
   metal: 'Metal',
   fuel: 'Fuel',
-  gold: 'Gold',
+  gold: 'Credits',
   science: 'Science',
 };
 

@@ -32,7 +32,7 @@ export function FactionPanel({ gameId }: { gameId: string }) {
       <div className="mp-resource-grid">
         <div className="mp-resource-tile"><div className="label">Metal</div><div className="value">{me.metal}</div></div>
         <div className="mp-resource-tile"><div className="label">Fuel</div><div className="value">{me.fuel}</div></div>
-        <div className="mp-resource-tile"><div className="label">Gold</div><div className="value">{me.gold}</div></div>
+        <div className="mp-resource-tile"><div className="label">Credits</div><div className="value">{me.gold}</div></div>
         <div className="mp-resource-tile"><div className="label">Science</div><div className="value">{me.science}</div></div>
       </div>
 

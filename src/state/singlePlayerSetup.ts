@@ -77,7 +77,7 @@ interface StarterShipSpec {
 const STARTER_FLEET: StarterShipSpec[] = [
   { shipClass: 'frigate',   baseName: 'Vanguard' },
   { shipClass: 'frigate',   baseName: 'Sentinel' },
-  { shipClass: 'freighter', baseName: 'Hauler' },
+  { shipClass: 'freighter', baseName: 'Pioneer' },
 ];
 
 // === Helpers =================================================

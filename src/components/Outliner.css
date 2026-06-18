@@ -1,11 +1,11 @@
 /* ============================================================
-   Outliner — right-side persistent list of bodies & ships
+   Outliner — LEFT-side persistent list of bodies & ships
    ============================================================ */
 
 .outliner {
   position: fixed;
   top: 52px;
-  right: 8px;
+  left: 8px;
   bottom: 8px;
   width: 240px;
   z-index: 80;

@@ -394,7 +394,7 @@ export const TunablesPage: React.FC<TunablesPageProps> = ({ onBack }) => {
               file="worker/factions.js STARTING_RESOURCES.fuel"
             />
             <Slider
-              label="Starting gold"
+              label="Starting credits"
               value={v.startingGold} min={0} max={1000} step={5}
               onChange={x => set('startingGold', x)}
               file="worker/factions.js STARTING_RESOURCES.gold"
@@ -1327,13 +1327,13 @@ const ResourceFlowDiagram: React.FC = () => (
     <div className="vis-flow-title">RESOURCE FLOW</div>
     <svg viewBox="0 0 720 200" className="vis-flow-svg">
       {/* Boxes */}
-      <FlowNode x={20}  y={70} w={120} h={60} title="BODY" sub="metal · fuel · gold · science" color="#a89878" />
+      <FlowNode x={20}  y={70} w={120} h={60} title="BODY" sub="metal · fuel · credits · science" color="#a89878" />
       <FlowNode x={180} y={70} w={130} h={60} title="SETTLEMENT" sub="harvests every N ticks" color="#ff8c69" />
       <FlowNode x={350} y={70} w={120} h={60} title="FREIGHTER" sub="ferries to pool" color="#4ecdc4" />
-      <FlowNode x={510} y={70} w={130} h={60} title="FACTION POOL" sub="metal · fuel · gold · sci" color="#ffb84d" />
+      <FlowNode x={510} y={70} w={130} h={60} title="FACTION POOL" sub="metal · fuel · credits · sci" color="#ffb84d" />
       {/* Spend lanes */}
-      <FlowNode x={550} y={5}  w={130} h={36} title="→ SHIP BUILDS" sub="metal + gold"     color="#67e8f9" small />
-      <FlowNode x={550} y={160} w={130} h={36} title="→ SETTLEMENTS" sub="metal + gold"    color="#67e8f9" small />
+      <FlowNode x={550} y={5}  w={130} h={36} title="→ SHIP BUILDS" sub="metal + credits"  color="#67e8f9" small />
+      <FlowNode x={550} y={160} w={130} h={36} title="→ SETTLEMENTS" sub="metal + credits" color="#67e8f9" small />
       <FlowNode x={50}  y={155} w={180} h={36} title="→ TECH" sub="science (from yield)"  color="#67e8f9" small />
       {/* Arrows */}
       <FlowArrow x1={140} y1={100} x2={180} y2={100} label={`× pop mult`} />
@@ -1545,7 +1545,7 @@ const StarterLoadoutSummary: React.FC<{
       <span className="vis-caption-dim">
         {' · '}{combatShips} combat + {cargoShips} cargo
         {' · '}city HP {cityHp}
-        {' · '}pool M{metal} F{fuel} G{gold}
+        {' · '}pool M{metal} F{fuel} C{gold}
       </span>
     </div>
   </div>

@@ -11,3 +11,12 @@
  * and the maintenance loop all assume.
  */
 export const FUEL_ENABLED = true;
+
+
+/**
+ * When true, the renderer draws a single straight line from start
+ * to end for each transit instead of the integrated torch curve.
+ * Playtester feedback: the bendy curves were unreadable at zoom.
+ * Set to false to restore the physics-accurate curve.
+ */
+export const STRAIGHT_LINE_TRAJECTORIES = true;

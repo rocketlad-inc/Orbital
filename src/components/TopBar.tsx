@@ -494,7 +494,7 @@ const ResourcePill: React.FC<{
         <div
           className="resource-pill__rate"
           style={{
-            fontSize: 9, letterSpacing: '0.04em', marginTop: 1, color: '#7fffa1',
+            fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', marginTop: 2, color: '#7fffa1',
           }}
         >+{fmtRate(rate)}/t</div>
       )}
@@ -505,7 +505,7 @@ const ResourcePill: React.FC<{
         <div
           className="resource-pill__rate"
           style={{
-            fontSize: 9, letterSpacing: '0.04em', marginTop: 1, color: '#ff5e5e',
+            fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', marginTop: 2, color: '#ff5e5e',
           }}
           aria-label="stranded — build a collector"
         >~{fmtRate(stranded)}/t</div>

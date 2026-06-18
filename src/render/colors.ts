@@ -26,6 +26,7 @@ export const COLORS = {
 
   // Trajectory arc segments (KSP-style per-phase coloring)
   arcTransfer: '#ffb84d',           // amber for heliocentric transfer
+  arcTradeRoute: '#67e8f9',         // sky-cyan for repeating trade-route legs
   arcCapture: '#6ee7b7',            // green for entering target SOI
   arcEscape: '#ff5e5e',             // red for leaving SOI
   arcCoast: '#4ecdc4',              // cyan for coasting/captured orbit

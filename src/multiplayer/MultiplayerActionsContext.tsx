@@ -155,7 +155,7 @@ export interface MultiplayerActions {
 
   // --- Collector network ---
   /** Upgrade a player-owned settlement to a logistics endpoint. Server
-   *  charges COLLECTOR_COST (150 ore + 100 credits) and flips
+   *  charges COLLECTOR_COST (500 credits) and flips
    *  has_collector = 1. Without this server hop the local mutation
    *  would survive ~1.5s before the next /state poll restored
    *  has_collector=0 and refunded the resources. */

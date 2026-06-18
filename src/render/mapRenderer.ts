@@ -5,6 +5,8 @@
 import { Body, Ship, OrbitElements, TrajectoryArc, Settlement, Faction, TorchTransferPlan } from '../types';
 import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt } from '../physics/orbitalMechanics';
 import { sampleTorchTrajectory, torchPositionFromSamples } from '../physics/torchTransfer';
+import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
+import { canHostCity } from '../game/settlements';
 import { COLORS, withOpacity, lighten, darken } from './colors';
 import { getShipIconImage } from './shipIconCache';
 import { ShipIconClass } from '../components/ShipIcons';
@@ -284,17 +286,54 @@ export function drawOrbit(
   const parentPos = bodyPosition(parentBody, ctx.t, ctx.bodies);
   const canvasParentPos = worldToCanvas(parentPos.x, parentPos.y, ctx);
 
-  const radius = body.orbitRadius * ctx.camera.scale;
-
   ctx.ctx.strokeStyle = color;
   ctx.ctx.lineWidth = width;
+
+  // Eccentric orbit (rogue asteroids on Kuiper trajectories). When
+  // bodyPosition switches to Kepler propagation, drawOrbit must
+  // switch too — drawing a circle at orbitRadius leaves the sprite
+  // visibly off its own orbit ring near periapsis/apoapsis. The
+  // ellipse focus is at the parent; semi-major a = (rp+ra)/2,
+  // eccentricity e = (ra-rp)/(ra+rp), and the ellipse center sits
+  // c = a*e back along the omega axis from the focus.
+  if (
+    body.orbit_rp !== undefined &&
+    body.orbit_ra !== undefined &&
+    body.orbit_omega !== undefined
+  ) {
+    const rp = body.orbit_rp;
+    const ra = body.orbit_ra;
+    const a = (rp + ra) / 2;
+    const e = (ra - rp) / (ra + rp);
+    const b = a * Math.sqrt(Math.max(0, 1 - e * e));
+    const c = a * e;
+    const omega = body.orbit_omega;
+    // Ellipse center in world coords, offset from focus along -omega.
+    const cx = parentPos.x - Math.cos(omega) * c;
+    const cy = parentPos.y - Math.sin(omega) * c;
+    const cp = worldToCanvas(cx, cy, ctx);
+    ctx.ctx.beginPath();
+    ctx.ctx.ellipse(
+      cp.x, cp.y,
+      a * ctx.camera.scale,
+      b * ctx.camera.scale,
+      omega,
+      0,
+      Math.PI * 2,
+    );
+    ctx.ctx.stroke();
+    return;
+  }
+
+  // Circular shortcut for normal bodies.
+  const radius = body.orbitRadius * ctx.camera.scale;
   ctx.ctx.beginPath();
   ctx.ctx.arc(
     canvasParentPos.x,
     canvasParentPos.y,
     radius,
     0,
-    Math.PI * 2
+    Math.PI * 2,
   );
   ctx.ctx.stroke();
 }
@@ -642,6 +681,24 @@ export function drawBody(
     drawPlanetBody(body, canvasPos, radius, ctx);
   }
 
+  // City-eligibility hint ring. Subtle green band on unowned bodies
+  // where the player CAN drop a settlement, so the "where do I go
+  // next?" question reads at a glance. Owned bodies already get
+  // their owner ring; gas giants / stars / ice giants / black holes
+  // get nothing because cities don't fit on them anyway.
+  if (!body.ownedBy && canHostCity(body)) {
+    const ringR = radius + 4;
+    ctx.ctx.save();
+    ctx.ctx.strokeStyle = 'rgba(110, 231, 183, 0.45)';
+    ctx.ctx.lineWidth = 1;
+    ctx.ctx.setLineDash([2, 3]);
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(canvasPos.x, canvasPos.y, ringR, 0, Math.PI * 2);
+    ctx.ctx.stroke();
+    ctx.ctx.setLineDash([]);
+    ctx.ctx.restore();
+  }
+
   // Draw selection/hover ring
   if (isSelected) {
     ctx.ctx.strokeStyle = COLORS.warning;
@@ -808,7 +865,7 @@ export function drawResourcePanel(
   ctx.ctx.textAlign = 'left';
   ctx.ctx.textBaseline = 'top';
 
-  const labels = ['Fuel', 'Gold', 'Metal', 'Sci'];
+  const labels = ['Fuel', 'Credits', 'Metal', 'Sci'];
   const values = [
     body.resources.fuel,
     body.resources.gold,
@@ -1105,13 +1162,25 @@ export function drawTorchTrajectory(
   isDashed: boolean = false,
   splitPhaseColors: boolean = false,
 ): Array<{ t: number; x: number; y: number }> {
-  const samples = sampleTorchTrajectory(
-    plan,
-    { pos: { x: plan.startPos.x, y: plan.startPos.y },
-      vel: { x: plan.startVel.x, y: plan.startVel.y } },
-    bodies,
-    80,
-  );
+  // Playtester said the curved torch arcs were unreadable —
+  // straight-line mode draws a single segment from start to end.
+  // We still return a 2-sample polyline so drawTransitShip lerps
+  // the ship along the same line we drew.
+  let samples: Array<{ t: number; x: number; y: number }>;
+  if (STRAIGHT_LINE_TRAJECTORIES) {
+    samples = [
+      { t: plan.startTick,  x: plan.startPos.x,     y: plan.startPos.y },
+      { t: plan.arriveTick, x: plan.interceptPos.x, y: plan.interceptPos.y },
+    ];
+  } else {
+    samples = sampleTorchTrajectory(
+      plan,
+      { pos: { x: plan.startPos.x, y: plan.startPos.y },
+        vel: { x: plan.startVel.x, y: plan.startVel.y } },
+      bodies,
+      80,
+    );
+  }
   if (samples.length < 2) return samples;
 
   if (isDashed) ctx.ctx.setLineDash([5, 5]);
@@ -1269,16 +1338,21 @@ export function drawRammingBody(
     ctx.ctx.arc(impactCanvas.x, impactCanvas.y, r, 0, Math.PI * 2);
     ctx.ctx.stroke();
     ctx.ctx.setLineDash([]);
-    // Crosshair
+    // Crosshair — arm length proportional to the ring `r` so the tics
+    // scale with the impact ring at any zoom (instead of a fixed
+    // canvas-pixel offset that looks tiny on a large ring and bloated
+    // relative to a small one).
+    const armOuter = Math.max(3, r * 0.3);
+    const armInner = Math.max(1.5, r * 0.15);
     ctx.ctx.beginPath();
-    ctx.ctx.moveTo(impactCanvas.x - r - 4, impactCanvas.y);
-    ctx.ctx.lineTo(impactCanvas.x - r + 2, impactCanvas.y);
-    ctx.ctx.moveTo(impactCanvas.x + r - 2, impactCanvas.y);
-    ctx.ctx.lineTo(impactCanvas.x + r + 4, impactCanvas.y);
-    ctx.ctx.moveTo(impactCanvas.x, impactCanvas.y - r - 4);
-    ctx.ctx.lineTo(impactCanvas.x, impactCanvas.y - r + 2);
-    ctx.ctx.moveTo(impactCanvas.x, impactCanvas.y + r - 2);
-    ctx.ctx.lineTo(impactCanvas.x, impactCanvas.y + r + 4);
+    ctx.ctx.moveTo(impactCanvas.x - r - armOuter, impactCanvas.y);
+    ctx.ctx.lineTo(impactCanvas.x - r + armInner, impactCanvas.y);
+    ctx.ctx.moveTo(impactCanvas.x + r - armInner, impactCanvas.y);
+    ctx.ctx.lineTo(impactCanvas.x + r + armOuter, impactCanvas.y);
+    ctx.ctx.moveTo(impactCanvas.x, impactCanvas.y - r - armOuter);
+    ctx.ctx.lineTo(impactCanvas.x, impactCanvas.y - r + armInner);
+    ctx.ctx.moveTo(impactCanvas.x, impactCanvas.y + r - armInner);
+    ctx.ctx.lineTo(impactCanvas.x, impactCanvas.y + r + armOuter);
     ctx.ctx.stroke();
     // Countdown label
     ctx.ctx.fillStyle = `rgba(255, 100, 80, ${0.7 + 0.3 * pulse})`;
@@ -1833,7 +1907,10 @@ export function drawShipGhost(
   const color = faction?.color || COLORS.fgDim;
 
   const canvasPos = worldToCanvas(intel.x, intel.y, ctx);
-  const size = 4;
+  // Match drawShip's sqrt-mitigated scaling so the ghost reads as
+  // "ship-shaped" at any zoom — fixed 4px bloats relative to actual
+  // ships when the player pulls way out.
+  const size = Math.max(2.5, 4 * Math.min(1.5, Math.sqrt(ctx.camera.scale)));
 
   // Dashed outline circle
   ctx.ctx.strokeStyle = withOpacity(color, opacity);
@@ -1920,7 +1997,12 @@ export function drawEnemyTrajectoriesLayer(
     ctx.ctx.save();
     ctx.ctx.globalAlpha = targetOwned ? 0.85 : 0.5;
     ctx.ctx.shadowColor = color;
-    ctx.ctx.shadowBlur = targetOwned ? 6 : 0;
+    // shadowBlur is canvas-pixel based; a fixed 6 stays the same
+    // on screen at every zoom. At full zoom-out the trajectory line
+    // becomes a short stub and that 6px halo paints a red smear
+    // around it. Scale with the destruction flash treatment.
+    const blurFactor = Math.min(1.2, Math.max(0.3, Math.sqrt(ctx.camera.scale)));
+    ctx.ctx.shadowBlur = targetOwned ? 6 * blurFactor : 0;
     if (ship.transit) {
       drawTorchTrajectory(ship.transit.currentTransfer, bodies, ctx, color, !targetOwned);
     }
@@ -1947,11 +2029,18 @@ export function drawDestructionFlashes(
   ctx: RenderContext,
   durationTicks?: number,
 ) {
+  // baseRadius is authored as a canvas-pixel reference at "normal" zoom
+  // (~10-14 px), and drawDamageFlash blooms it 4-8x into the halo. Left
+  // unscaled, that halo stays the same screen size regardless of camera
+  // zoom — at full zoom-out, an 80-110 px explosion engulfs entire orbits
+  // and dominates the map. Scale by sqrt(scale) with clamps so the flash
+  // tracks how big the destroyed entity itself looks.
+  const sizeFactor = Math.min(1.2, Math.max(0.3, Math.sqrt(ctx.camera.scale)));
   for (const f of flashes) {
     const cp = worldToCanvas(f.pos.x, f.pos.y, ctx);
     drawDamageFlash(
       cp,
-      f.baseRadius ?? 10,
+      (f.baseRadius ?? 10) * sizeFactor,
       f.startTick,
       ctx.t,
       ctx,
@@ -2068,3 +2157,82 @@ export function drawOwnershipLayer(
   }
 }
 
+
+
+// ============================================================
+// Asteroid belt cosmetic dust — small grey specks scattered in
+// the belt annulus around the player's home star, generated once
+// at module load and rendered every frame as world-space points.
+// Pure visual flair, no gameplay impact. The angle distribution
+// is uniformly random; the radius is pulled toward 310 (the belt
+// canon radius) by a Gaussian-ish bias so the dust thickens at
+// the ring instead of forming a uniform donut.
+// ============================================================
+
+interface BeltDustParticle {
+  r: number;       // orbital radius from Sol
+  angle: number;   // radians at t=0
+  shade: number;   // 0-1 brightness modulation
+  size: number;    // canvas-px floor for the dust dot
+  driftMul: number; // angular drift speed multiplier
+}
+
+const BELT_DUST_COUNT = 220;
+const BELT_CENTER_R = 310;
+const BELT_HALF_WIDTH = 55;
+
+function generateBeltDust(): BeltDustParticle[] {
+  // Deterministic LCG so the belt pattern is consistent run-to-run.
+  let seed = 0x9e3779b1 >>> 0;
+  const rand = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 0xFFFFFFFF;
+  };
+  const out: BeltDustParticle[] = [];
+  for (let i = 0; i < BELT_DUST_COUNT; i++) {
+    // Sum of two uniforms approximates a triangular peak at 0,
+    // pulling radius toward BELT_CENTER_R.
+    const bias = (rand() + rand()) / 2 - 0.5;
+    out.push({
+      r: BELT_CENTER_R + bias * 2 * BELT_HALF_WIDTH,
+      angle: rand() * Math.PI * 2,
+      shade: 0.35 + rand() * 0.5,
+      size: 0.8 + rand() * 0.9,
+      driftMul: 0.85 + rand() * 0.3,
+    });
+  }
+  return out;
+}
+
+const BELT_DUST: BeltDustParticle[] = generateBeltDust();
+
+/**
+ * Render the belt-dust pass. Sun is assumed at the world origin
+ * (default for the Sol system); rendering the specks any further
+ * out than the belt would be wasted draw calls in the hot path.
+ *
+ * Each speck drifts slowly along its orbit. The drift uses the
+ * same period reference as the named belt dwarfs (443 ticks) so
+ * the dust appears to move with the rest of the belt instead of
+ * looking pinned to a backdrop.
+ */
+export function drawAsteroidBeltDust(ctx: RenderContext) {
+  // Skip when zoomed so far out the belt would be sub-pixel
+  // anyway — saves a few hundred draw calls per frame on the
+  // wide overview.
+  if (ctx.camera.scale < 0.0015) return;
+  const driftAngle = (ctx.t / 443) * Math.PI * 2;
+  for (const p of BELT_DUST) {
+    const a = p.angle + driftAngle * p.driftMul;
+    const wx = Math.cos(a) * p.r;
+    const wy = Math.sin(a) * p.r;
+    const cp = worldToCanvas(wx, wy, ctx);
+    // Clip cheaply: skip if off-canvas.
+    if (cp.x < -4 || cp.y < -4 || cp.x > ctx.canvas.width + 4 || cp.y > ctx.canvas.height + 4) continue;
+    const size = Math.max(0.6, p.size * Math.min(1.2, Math.sqrt(ctx.camera.scale) * 1.4));
+    ctx.ctx.fillStyle = `rgba(168, 152, 136, ${0.18 * p.shade})`;
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(cp.x, cp.y, size, 0, Math.PI * 2);
+    ctx.ctx.fill();
+  }
+}
