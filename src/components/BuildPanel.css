@@ -7,11 +7,12 @@
 }
 
 .build-panel .section-title {
-  font-size: 10px;
+  font-size: 16px;
   color: #ffb84d;
-  letter-spacing: 0.1em;
-  margin-bottom: 8px;
-  font-weight: bold;
+  letter-spacing: 0.15em;
+  margin-bottom: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 /* Custom-name input */
@@ -194,16 +195,17 @@
 }
 
 .build-btn {
-  padding: 2px 8px;
+  padding: 6px 12px;
   background: rgba(78, 205, 196, 0.15);
   color: #4ecdc4;
   border: 1px solid #4ecdc4;
   border-radius: 2px;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: bold;
   cursor: pointer;
   letter-spacing: 0.05em;
+  transition: background 80ms ease, transform 80ms ease, box-shadow 80ms ease;
 }
 
 .build-btn:disabled {
@@ -213,6 +215,22 @@
 
 .build-btn:hover:not(:disabled) {
   background: rgba(78, 205, 196, 0.3);
+  box-shadow: 0 0 6px rgba(78, 205, 196, 0.35);
+}
+
+.build-btn:active:not(:disabled) {
+  background: rgba(78, 205, 196, 0.55);
+  transform: scale(0.95);
+  box-shadow: 0 0 10px rgba(78, 205, 196, 0.6);
+}
+
+@keyframes build-btn-queued-flash {
+  0%   { background: rgba(110, 231, 183, 0.85); box-shadow: 0 0 14px rgba(110, 231, 183, 0.9); }
+  100% { background: rgba(78, 205, 196, 0.15); box-shadow: 0 0 0 transparent; }
+}
+
+.build-btn--just-queued {
+  animation: build-btn-queued-flash 600ms ease-out;
 }
 
 /* Resources Bar */

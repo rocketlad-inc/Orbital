@@ -1643,17 +1643,48 @@ export function GameContextProvider({
     }
   }, [gameState.bodies]);
 
-  const selectShip = useCallback((shipId: string) => {
-    setUIStateInternal(prev => ({ ...prev, selectedShipId: shipId, selectedBodyId: undefined }));
+  // Playtester feedback: uncommitted transfer previews persisted
+  // across context switches — players would plan a transfer, click
+  // elsewhere, and the dashed preview kept hanging on the map. Wipe
+  // ship.plannedTransit on the ship being unselected so the canvas
+  // matches the player's mental model: previews live until you
+  // commit them or stop paying attention.
+  const clearPlannedTransitOnLeave = useCallback((leavingShipId: string | undefined) => {
+    if (!leavingShipId) return;
+    setGameStateInternal(prev => {
+      const ship = prev.ships.find(s => s.id === leavingShipId);
+      if (!ship?.plannedTransit) return prev;
+      return {
+        ...prev,
+        ships: prev.ships.map(s =>
+          s.id === leavingShipId ? { ...s, plannedTransit: undefined } : s,
+        ),
+      };
+    });
   }, []);
+
+  const selectShip = useCallback((shipId: string) => {
+    setUIStateInternal(prev => {
+      if (prev.selectedShipId && prev.selectedShipId !== shipId) {
+        clearPlannedTransitOnLeave(prev.selectedShipId);
+      }
+      return { ...prev, selectedShipId: shipId, selectedBodyId: undefined };
+    });
+  }, [clearPlannedTransitOnLeave]);
 
   const deselectShip = useCallback(() => {
-    setUIStateInternal(prev => ({ ...prev, selectedShipId: undefined }));
-  }, []);
+    setUIStateInternal(prev => {
+      clearPlannedTransitOnLeave(prev.selectedShipId);
+      return { ...prev, selectedShipId: undefined };
+    });
+  }, [clearPlannedTransitOnLeave]);
 
   const selectBody = useCallback((bodyId: string) => {
-    setUIStateInternal(prev => ({ ...prev, selectedBodyId: bodyId, selectedShipId: undefined }));
-  }, []);
+    setUIStateInternal(prev => {
+      clearPlannedTransitOnLeave(prev.selectedShipId);
+      return { ...prev, selectedBodyId: bodyId, selectedShipId: undefined };
+    });
+  }, [clearPlannedTransitOnLeave]);
 
   const deselectBody = useCallback(() => {
     setUIStateInternal(prev => ({ ...prev, selectedBodyId: undefined }));

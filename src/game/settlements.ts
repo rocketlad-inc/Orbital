@@ -63,7 +63,7 @@ export const COLLECTOR_BASE_DRAIN_FRACTION = 0.5;
 /** Cost to build a collector at an existing settlement. Intentionally
  *  high — the strategic depth is "where do I plant my next collector
  *  to widen my income funnel?" */
-export const COLLECTOR_COST = { fuel: 0, ore: 150, credits: 100 };
+export const COLLECTOR_COST = { fuel: 0, ore: 0, credits: 500 };
 
 // === Settlement upgrade buildings ============================
 //

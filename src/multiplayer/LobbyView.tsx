@@ -131,6 +131,11 @@ function RoomDetail({
   const wsRef = useRef<WebSocket | null>(null);
   // Bumped to force-reconnect the room WS (e.g. after a stale-socket send).
   const [wsTick, setWsTick] = useState(0);
+  // Optimistic local ready flag — the WS roundtrip can take 100-300ms
+  // and the playtester read that delay as "Ready Up does nothing".
+  // We flip this immediately on click; useEffect below clears it once
+  // the snap's authoritative value catches up.
+  const [optimisticReady, setOptimisticReady] = useState<boolean | null>(null);
 
   // Empire identity form state (controlled; pre-fill from snap on first load).
   const [empireName, setEmpireName] = useState('');
@@ -191,6 +196,14 @@ function RoomDetail({
     if (snap?.game_id) onEnterGame(snap.game_id);
   }, [snap?.game_id, onEnterGame]);
 
+  // Clear the optimistic Ready flag once the server-authoritative
+  // snapshot agrees with what we showed locally.
+  useEffect(() => {
+    if (optimisticReady == null || !user || !snap) return;
+    const serverReady = !!snap.ready[user.id];
+    if (serverReady === optimisticReady) setOptimisticReady(null);
+  }, [snap, user, optimisticReady]);
+
   // First-load identity prefill from this user's row in members.
   useEffect(() => {
     if (!snap || identityInitedRef.current || !user) return;
@@ -215,7 +228,7 @@ function RoomDetail({
 
   const isHost = snap.settings.host_id === user?.id;
   const started = !!snap.game_id;
-  const myReady = !!(user && snap.ready[user.id]);
+  const myReady = optimisticReady ?? !!(user && snap.ready[user.id]);
 
   async function saveEmpire() {
     setError(null);
@@ -265,10 +278,13 @@ function RoomDetail({
     // so the useEffect below opens a fresh socket.
     if (ws && ws.readyState === WebSocket.OPEN) {
       try {
-        ws.send(JSON.stringify({ type: 'ready', ready: !myReady }));
+        const next = !myReady;
+        setOptimisticReady(next);
+        ws.send(JSON.stringify({ type: 'ready', ready: next }));
         return;
       } catch (e) {
         console.warn('ready send failed, will reconnect', e);
+        setOptimisticReady(null);
       }
     }
     // Dead socket. Bump the reconnect counter so the WS effect tears

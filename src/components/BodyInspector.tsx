@@ -293,7 +293,7 @@ export const BodyInspector: React.FC = () => {
                   <div className="resource-value">{body.resources.fuel}</div>
                 </div>
                 <div className="resource-item">
-                  <div className="resource-label">GOLD</div>
+                  <div className="resource-label">CREDITS</div>
                   <div className="resource-value">{body.resources.gold}</div>
                 </div>
                 <div className="resource-item">
@@ -325,7 +325,9 @@ export const BodyInspector: React.FC = () => {
                   </div>
                   <div className="production-note">
                     {playerSettlements.length === 0
-                      ? 'Deploy a city or station below to start production'
+                      ? freightersHere.length === 0
+                        ? 'Park a freighter here, then deploy a city or station below to start production'
+                        : 'Deploy a city or station below to start production'
                       : freightersHere.length === 0
                         ? `${playerSettlements.length} settlement${playerSettlements.length > 1 ? 's' : ''} extracting — send a freighter here to ferry the stockpile to your resources (top-right)`
                         : `${playerSettlements.length} settlement${playerSettlements.length > 1 ? 's' : ''} extracting · ${freightersHere.length} freighter${freightersHere.length > 1 ? 's' : ''} ferrying to your resources`}
@@ -445,7 +447,11 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
         el.select();
       }, 0);
     }
-  }, [namingType, body, gameState.settlements]);
+    // gameState.settlements deliberately NOT in deps — that array
+    // updates on every tick/poll, and re-running this effect would
+    // wipe whatever name the player has typed back to the suggestion.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [namingType, body]);
 
   if (!body) return null;
 

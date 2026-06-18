@@ -712,6 +712,42 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         return `${t}  💥 IMPACT — ${asteroid} struck ${target}, ${count} settlement${count !== 1 ? 's' : ''} destroyed${ev.actor_faction_id ? ` (${aggressor})` : ''}`;
       }
 
+      if (ev.kind === 'settlement_built') {
+        const sType = (parsed.settlement_type as string) ?? 'settlement';
+        const sName = (parsed.settlement_name as string) ?? null;
+        const where = (parsed.body_name as string) ?? 'a body';
+        const owner = nameOfFaction(ev.actor_faction_id, parsed.owner_faction_name as string | undefined);
+        const label = sName ? `${sType} ${sName}` : sType;
+        return `${t}  ${owner} founded ${label} on ${where}`;
+      }
+
+      if (ev.kind === 'ship_built') {
+        const cls = (parsed.ship_class as string) ?? 'ship';
+        const name = (parsed.ship_name as string) ?? null;
+        const where = (parsed.body_name as string) ?? 'orbit';
+        const owner = nameOfFaction(ev.actor_faction_id, parsed.owner_faction_name as string | undefined);
+        const label = name ? `${cls} ${name}` : cls;
+        return `${t}  ${owner}'s yard at ${where} launched a ${label}`;
+      }
+
+      if (ev.kind === 'building_completed') {
+        const kind = (parsed.building_kind as string) ?? 'building';
+        const lvl = (parsed.new_level as number) ?? 1;
+        const sName = (parsed.settlement_name as string) ?? 'settlement';
+        const where = (parsed.body_name as string) ?? 'a body';
+        const owner = nameOfFaction(ev.actor_faction_id, parsed.owner_faction_name as string | undefined);
+        return `${t}  ${owner}'s ${sName} on ${where} completed ${kind} L${lvl}`;
+      }
+
+      if (ev.kind === 'secret_discovered') {
+        // The server already wrote a human-readable message into the
+        // payload (e.g. "Ceres: DISCOVERY — a derelict destroyer is
+        // salvageable. Claimed."). Just surface it with the timestamp.
+        const owner = nameOfFaction(ev.actor_faction_id);
+        const msg = (parsed.message as string) ?? `${parsed.kind ?? 'something'} at ${parsed.body_name ?? 'a body'}`;
+        return `${t}  🔍 ${owner}: ${msg}`;
+      }
+
       return `${t}  ${ev.kind}`;
     });
 

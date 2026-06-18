@@ -616,6 +616,39 @@ export class Room {
           .prepare('UPDATE game_settlements SET buildings_json = ?, building_order_json = NULL WHERE id = ?')
           .bind(JSON.stringify(buildings), row.id)
           .run();
+        // Chronicle the completion so players can see a forge/lab/
+        // shipyard level finishing in the log.
+        try {
+          const meta = await this.env.DB
+            .prepare(`SELECT s.body_id, s.owner_faction_id, s.name AS settlement_name,
+                             b.name AS body_name, f.name AS owner_faction_name
+                        FROM game_settlements s
+                        JOIN game_bodies b   ON b.id = s.body_id
+                        LEFT JOIN game_factions f ON f.id = s.owner_faction_id
+                       WHERE s.id = ?`)
+            .bind(row.id).first();
+          if (meta) {
+            const payload = JSON.stringify({
+              building_kind: order.kind,
+              new_level: buildings[order.kind],
+              settlement_id: row.id,
+              settlement_name: meta.settlement_name,
+              body_name: meta.body_name,
+              owner_faction_name: meta.owner_faction_name,
+            });
+            await this.env.DB
+              .prepare(
+                `INSERT INTO chronicle_entries
+                  (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+                 VALUES (?, ?, ?, 'building_completed', ?, ?, ?, 'public', ?)`,
+              )
+              .bind(`c_b_${row.id}_${order.kind}_${tick}`, gameId, tick,
+                    meta.owner_faction_id, meta.body_id, payload, Date.now())
+              .run();
+          }
+        } catch (e) {
+          console.error('building_completed chronicle insert failed', e);
+        }
       }
     } catch (e) {
       console.error('settlement-building completion pass failed', e);
@@ -671,6 +704,35 @@ export class Room {
           .prepare('DELETE FROM game_body_build_queue WHERE id = ?')
           .bind(b.id),
       ]);
+
+      // Chronicle the completion. Playtester reported the log was
+      // mostly silent — they didn't know when a queued ship had
+      // actually rolled out of the yard.
+      try {
+        const body = await this.env.DB
+          .prepare('SELECT name FROM game_bodies WHERE id = ?')
+          .bind(b.body_id).first();
+        const fac = await this.env.DB
+          .prepare('SELECT name FROM game_factions WHERE id = ?')
+          .bind(b.faction_id).first();
+        const payload = JSON.stringify({
+          ship_id: shipId,
+          ship_name: shipName,
+          ship_class: b.ship_class,
+          body_name: body?.name ?? null,
+          owner_faction_name: fac?.name ?? null,
+        });
+        await this.env.DB
+          .prepare(
+            `INSERT INTO chronicle_entries
+              (id, game_id, tick_number, kind, actor_faction_id, body_id, ship_id, payload, visibility, created_at_ms)
+             VALUES (?, ?, ?, 'ship_built', ?, ?, ?, ?, 'public', ?)`,
+          )
+          .bind(`c_${shipId}`, gameId, tick, b.faction_id, b.body_id, shipId, payload, Date.now())
+          .run();
+      } catch (e) {
+        console.error('ship_built chronicle insert failed', e);
+      }
     }
 
     // 2a. Depart. A committed node whose scheduled_t has come up: stamp
@@ -1021,11 +1083,16 @@ export class Room {
           continue;
         }
 
-        if (here === r.dest_body_id && cargoTotal > 0) {
-          // DELIVERY: dump cargo to faction pool, head home. Also
-          // bump the freighter's trades_completed counter so the
-          // ShipPanel's TRADE LOG section reflects the delivery.
-          await this.env.DB.batch([
+        if (here === r.dest_body_id) {
+          // DELIVERY: dump whatever's in the hold and cycle back home.
+          // Previously this required cargoTotal > 0, but a freighter
+          // that picked up an empty stockpile arrives at dest with
+          // nothing in the hold and got STUCK (DELIVERY didn't fire
+          // and the nudge saw here === target). That's what the
+          // playtester saw as "trade routes aren't repeating".
+          // Only bump trades_completed for cargo-bearing deliveries
+          // so the counter still tracks real runs.
+          const batch = [
             this.env.DB
               .prepare(
                 `UPDATE game_factions
@@ -1044,10 +1111,15 @@ export class Room {
                   WHERE id = ?`,
               )
               .bind(r.id),
-            this.env.DB
-              .prepare('UPDATE game_ships SET trades_completed = trades_completed + 1 WHERE id = ?')
-              .bind(r.ship_id),
-          ]);
+          ];
+          if (cargoTotal > 0) {
+            batch.push(
+              this.env.DB
+                .prepare('UPDATE game_ships SET trades_completed = trades_completed + 1 WHERE id = ?')
+                .bind(r.ship_id),
+            );
+          }
+          await this.env.DB.batch(batch);
           await planLeg(r.origin_body_id);
           continue;
         }

@@ -16,10 +16,10 @@ const SHIP_CLASSES = new Set(['corvette', 'frigate', 'destroyer', 'freighter']);
 // columns (metal/fuel/gold). Note ore->metal and credits->gold renames
 // (server schema vs client naming).
 const SHIP_BUILD_COST = {
-  corvette:  { fuel: 10, metal: 15, gold: 10, build_ticks: 30 },
-  frigate:   { fuel: 20, metal: 30, gold: 25, build_ticks: 60 },
-  destroyer: { fuel: 40, metal: 60, gold: 50, build_ticks: 120 },
-  freighter: { fuel: 15, metal: 20, gold: 15, build_ticks: 45 },
+  corvette:  { fuel: 3,  metal: 5,  gold: 4,  build_ticks: 10 },
+  frigate:   { fuel: 7,  metal: 10, gold: 8,  build_ticks: 20 },
+  destroyer: { fuel: 14, metal: 20, gold: 17, build_ticks: 40 },
+  freighter: { fuel: 5,  metal: 7,  gold: 5,  build_ticks: 15 },
 };
 
 function json(data, init = {}) {
@@ -323,7 +323,7 @@ async function handleDeploySettlement(req, env, ctx) {
   if (type !== 'city' && type !== 'station') return err(400, 'bad_request', "type must be 'city' or 'station'");
 
   const bodyRow = await env.DB
-    .prepare('SELECT id, type, radius, owner_faction_id FROM game_bodies WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL')
+    .prepare('SELECT id, name, type, radius, owner_faction_id FROM game_bodies WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL')
     .bind(bodyId, gameId)
     .first();
   if (!bodyRow) return err(404, 'not_found', 'body not found');
@@ -397,6 +397,34 @@ async function handleDeploySettlement(req, env, ctx) {
   // Body ownership = "faction with the most settlements here". The brand
   // new settlement may have just tipped the balance — recompute.
   await recomputeBodyOwnership(env.DB, gameId, bodyId);
+
+  // Chronicle the founding so the log isn't dominated by destruction
+  // events. Playtester reported: "Log doesn't include any in-game logs
+  // such as settlements made."
+  try {
+    const bodyName = bodyRow?.name ?? 'unknown body';
+    const factionName = (await env.DB
+      .prepare('SELECT name FROM game_factions WHERE id = ?')
+      .bind(me.id).first())?.name ?? null;
+    const payload = JSON.stringify({
+      settlement_id: id,
+      settlement_type: type,
+      settlement_name: name,
+      body_name: bodyName,
+      owner_faction_name: factionName,
+    });
+    const entryId = `c_${id}`;
+    await env.DB
+      .prepare(
+        `INSERT INTO chronicle_entries
+          (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+         VALUES (?, ?, ?, 'settlement_built', ?, ?, ?, 'public', ?)`,
+      )
+      .bind(entryId, gameId, tick, me.id, bodyId, payload, Date.now())
+      .run();
+  } catch (e) {
+    console.error('settlement_built chronicle insert failed', e);
+  }
 
   return json({ settlement: { id, body_id: bodyId, type, name, hp, hp_max: hp } }, { status: 201 });
 }
@@ -807,7 +835,7 @@ async function handleAdminGrant(req, env, ctx) {
 //
 // Capitals already have has_collector = 1 from seedGameWorld so the
 // "already_collector" guard catches the no-op double-build attempt.
-const COLLECTOR_COST = { metal: 150, gold: 100 };
+const COLLECTOR_COST = { metal: 0, gold: 500 };
 
 // Settlement upgrade buildings — server mirror of BUILDING_DEFS in
 // src/game/settlements.ts. KEEP IN SYNC. Cost compounds geometrically

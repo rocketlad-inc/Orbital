@@ -5,6 +5,7 @@ import {
   clearCanvas,
   drawOrbit,
   drawBody,
+  drawAsteroidBeltDust,
   drawRammingBody,
   drawShip,
   drawOrbitEllipse,
@@ -247,6 +248,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     }
     drawStarfield(starfieldRef.current, renderContext);
 
+    // Belt dust — purely cosmetic specks between Mars and Jupiter so
+    // the belt doesn't read as five lonely rocks at the same radius.
+    drawAsteroidBeltDust(renderContext);
+
     // Draw orbits for all bodies. Lagrange-point markers (e.g. the
     // Centauri-system barycenter) are skipped — they live way outside
     // the normal scale band and their orbit ring would just be a giant
@@ -438,7 +443,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // drawn position via lerp — same polyline both the line and the
         // ship sit on, so the icon never floats off the visible curve.
         const plan = ship.transit.currentTransfer;
-        const samples = drawTorchTrajectory(plan, gameState.bodies, renderContext, COLORS.arcTransfer, false, isSelected);
+        // Trade-route legs render in cyan so the player can pick out
+        // "this freighter is on a recurring run" vs "this is a
+        // one-shot transfer I ordered" at a glance.
+        const tradeLeg = gameState.tradeRoutes?.find(r => r.shipId === ship.id);
+        const arcColor = tradeLeg ? COLORS.arcTradeRoute : COLORS.arcTransfer;
+        const samples = drawTorchTrajectory(plan, gameState.bodies, renderContext, arcColor, false, isSelected && !tradeLeg);
         drawTransitShip(ship, renderContext, isSelected, samples);
 
         const arrivalBody = gameState.bodies.find(b => b.id === plan.targetBodyId);
