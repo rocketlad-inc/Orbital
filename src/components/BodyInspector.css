@@ -52,7 +52,7 @@
   transform: translateX(-50%);
   width: 340px;
   max-width: calc(100vw - 600px);
-  max-height: 26vh;
+  max-height: 40vh;
   z-index: 91;
 }
 
@@ -78,8 +78,34 @@
   transform: translateX(-50%);
   width: 600px;
   max-width: calc(100vw - 600px);
-  max-height: 30vh;
+  max-height: 38vh;
   z-index: 91;
+}
+
+/* Desktop cardinal layout: force COMPACT control sizing, beating the
+   global `@media (pointer: coarse)` touch min-heights in mobile.css.
+   A desktop touchscreen (coarse pointer, width > 1024) gets the
+   cardinal layout but would otherwise inherit 44px touch buttons that
+   blow the cards out and force scrolling. Scoped to min-width:769 so
+   true mobile (the BottomSheet stack) keeps its touch targets. */
+@media (min-width: 769px) {
+  .body-focus .build-btn,
+  .body-focus .deploy-btn,
+  .body-focus .maneuver-btn {
+    min-height: 0;
+    padding: 4px 8px;
+    font-size: 10px;
+  }
+  .body-focus .build-name-input,
+  .body-focus input[type="text"],
+  .body-focus select {
+    min-height: 0;
+  }
+  .body-focus .panel-close,
+  .body-focus .panel-focus {
+    min-width: 0;
+    min-height: 0;
+  }
 }
 
 /* Mobile: collapse the cardinal split. BottomSheet on mobile already
@@ -213,7 +239,7 @@
 }
 .body-focus__flavor {
   font-size: 10px;
-  line-height: 1.45;
+  line-height: 1.4;
   color: #a8b8c8;
   font-style: italic;
   padding: 6px 8px;
@@ -221,11 +247,10 @@
   border-left: 2px solid #4a6275;
   background: rgba(74, 98, 117, 0.06);
   border-radius: 0 2px 2px 0;
-  /* The flavor text is the variable-length piece. Cap it and let it
-     scroll inside the card so a 4-sentence Centauri body doesn't
-     blow out the top card's max-height. */
-  max-height: 11vh;
-  overflow-y: auto;
+  /* No internal scroll — the top card grows to fit the flavor so
+     nothing scrolls. The longest body blurbs (Centauri / Cygnus,
+     ~4 sentences) are the sizing target; the top card's max-height
+     is set generously enough to contain them. */
 }
 .body-focus__yields {
   margin-top: 4px;

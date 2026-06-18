@@ -7,17 +7,17 @@
 }
 
 .build-panel .section-title {
-  font-size: 16px;
+  font-size: 12px;
   color: #ffb84d;
   letter-spacing: 0.15em;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
   font-weight: 700;
   text-transform: uppercase;
 }
 
 /* Custom-name input */
 .build-name-row {
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .build-name-input {
@@ -26,7 +26,7 @@
   border: 1px solid #2a3d50;
   border-radius: 3px;
   color: #d8e4ee;
-  padding: 5px 8px;
+  padding: 4px 8px;
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
   outline: none;
@@ -110,26 +110,24 @@
 }
 
 /* Ship Class List */
+/* Two-column grid of compact ship cards. Four buildable classes →
+   2×2, so the whole shipyard fits in the bottom card without
+   scrolling. Each cell is a self-contained vertical card. */
 .build-classes {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
 }
 
 .build-class-row {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 6px;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 8px;
   background: rgba(20, 32, 44, 0.6);
   border: 1px solid #2a3d50;
   border-radius: 3px;
   font-size: 10px;
-  /* flex-wrap lets the shortage callout (flexBasis: 100%) drop to its
-     own line below the row. Without this the callout collides with
-     the BUILD button + cost on the same line and the disabled row
-     reads as a jumble. */
-  flex-wrap: wrap;
 }
 
 /* Don't dim the entire row — that also dims the shortage warning,
@@ -143,14 +141,11 @@
   opacity: 0.4;
 }
 
+/* Row 1 of the card: icon + class name. */
 .class-info {
   display: flex;
   align-items: center;
   gap: 4px;
-  /* Bumped to fit the new icon-variant <select> dropdown. The original
-     75px was for a single icon + class name; we now also host a
-     ~70px dropdown showing "F · Raptor". */
-  min-width: 165px;
 }
 
 .class-icon {
@@ -166,12 +161,13 @@
 .class-name {
   color: #d8e4ee;
   font-weight: bold;
+  font-size: 11px;
 }
 
+/* Row 2: stats. */
 .class-stats {
   display: flex;
-  gap: 4px;
-  flex: 1;
+  gap: 6px;
 }
 
 .class-stats .stat {
@@ -179,9 +175,10 @@
   font-size: 9px;
 }
 
+/* Row 3: cost. */
 .class-cost {
   display: flex;
-  gap: 4px;
+  gap: 6px;
 }
 
 .cost-metal {
@@ -194,17 +191,20 @@
   font-size: 9px;
 }
 
+/* Row 4: full-width compact BUILD button. */
 .build-btn {
-  padding: 6px 12px;
+  margin-top: 2px;
+  padding: 4px 8px;
+  width: 100%;
   background: rgba(78, 205, 196, 0.15);
   color: #4ecdc4;
   border: 1px solid #4ecdc4;
   border-radius: 2px;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: bold;
   cursor: pointer;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.04em;
   transition: background 80ms ease, transform 80ms ease, box-shadow 80ms ease;
 }
 
