@@ -1,3 +1,4 @@
+import { canHostCity } from '../game/settlements';
 // ============================================================
 // Map Canvas Rendering - Draw the orbital system
 // ============================================================
@@ -678,6 +679,24 @@ export function drawBody(
     drawGasGiantBody(body, canvasPos, radius, ctx);
   } else {
     drawPlanetBody(body, canvasPos, radius, ctx);
+  }
+
+  // City-eligibility hint ring. Subtle green band on unowned bodies
+  // where the player CAN drop a settlement, so the "where do I go
+  // next?" question reads at a glance. Owned bodies already get
+  // their owner ring; gas giants / stars / ice giants / black holes
+  // get nothing because cities don't fit on them anyway.
+  if (!body.ownedBy && canHostCity(body)) {
+    const ringR = radius + 4;
+    ctx.ctx.save();
+    ctx.ctx.strokeStyle = 'rgba(110, 231, 183, 0.45)';
+    ctx.ctx.lineWidth = 1;
+    ctx.ctx.setLineDash([2, 3]);
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(canvasPos.x, canvasPos.y, ringR, 0, Math.PI * 2);
+    ctx.ctx.stroke();
+    ctx.ctx.setLineDash([]);
+    ctx.ctx.restore();
   }
 
   // Draw selection/hover ring
