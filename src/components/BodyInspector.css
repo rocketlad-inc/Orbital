@@ -76,7 +76,7 @@
   bottom: 12px;
   left: 50%;
   transform: translateX(-50%);
-  width: 440px;
+  width: 600px;
   max-width: calc(100vw - 600px);
   max-height: 30vh;
   z-index: 91;
