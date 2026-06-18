@@ -127,7 +127,18 @@ function GameUI({
         canSaveLoad={!isMultiplayer}
         onLoadSave={onLoadSave}
       />
-      <Outliner />
+      {/* Left rail — persistent column on the LEFT edge. Holds the
+          ShipPanel (slides down into view when a ship is selected) on
+          top and the Outliner below. Wrapping both in this flex
+          container is what lets the ShipPanel push the Outliner down
+          without needing absolute-position math, and what lets the MP
+          dock sit free on the right edge without tracking Outliner
+          width. ShipPanel is always mounted — its own internal logic
+          returns null when no ship is selected. */}
+      <div className="left-rail">
+        <ShipPanel />
+        <Outliner />
+      </div>
 
       {activePanel === 'settlements' && (
         <SettlementsPanel onClose={() => setActivePanel(null)} />
@@ -139,7 +150,6 @@ function GameUI({
         <TechPanel onClose={() => setActivePanel(null)} />
       )}
 
-      <ShipPanel />
       <BodyInspector />
       <ThreatsPanel />
       {!isMultiplayer && <AIActivityFeed />}

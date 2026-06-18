@@ -1,7 +1,12 @@
 .body-inspector {
   position: fixed;
+  /* Outliner moved to the LEFT rail; old `right: 264px` was reserved
+     for it. Now sits center-right with a comfortable gutter from the
+     MP dock (which lives at right: 8px after the layout overhaul).
+     Phase 3 of the UI overhaul replaces this entirely with the
+     cardinal four-panel layout around a zoomed-in planet. */
   bottom: 16px;
-  right: 264px;  /* leave room for outliner */
+  right: 380px;
   z-index: 90;
   background: rgba(10, 14, 20, 0.96);
   border: 1px solid #2a3d50;

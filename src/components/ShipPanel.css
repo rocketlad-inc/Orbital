@@ -1,17 +1,28 @@
 .ship-panel {
-  position: fixed;
-  bottom: 16px;
-  left: 16px;
-  z-index: 90;
+  /* Sits at the TOP of .left-rail. flex-shrink:0 so the panel keeps its
+     natural height and the Outliner below absorbs the remaining space.
+     max-height caps it at 55vh so a heavily-populated ship doesn't
+     squeeze the Outliner off-screen. The slide-down-from-above effect
+     comes from animating from translateY(-110%) on enter. */
+  flex: 0 0 auto;
+  max-height: 55vh;
   background: rgba(10, 14, 20, 0.96);
   border: 1px solid #2a3d50;
   border-radius: 4px;
   backdrop-filter: blur(8px);
-  min-width: 350px;
-  max-height: 500px;
   display: flex;
   flex-direction: column;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  /* Slide-in animation. The ShipPanel returns null when no ship is
+     selected, so it only renders during the visible window — the
+     keyframe runs once on mount. */
+  animation: ship-panel-slide-in 0.22s ease-out;
+  overflow: hidden;
+}
+
+@keyframes ship-panel-slide-in {
+  from { transform: translateY(-110%); opacity: 0; }
+  to   { transform: translateY(0);     opacity: 1; }
 }
 
 .panel-header {

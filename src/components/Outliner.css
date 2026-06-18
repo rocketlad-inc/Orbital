@@ -2,13 +2,32 @@
    Outliner — right-side persistent list of bodies & ships
    ============================================================ */
 
-.outliner {
+/* === Left rail — shared column for ShipPanel + Outliner ===
+   The post-overhaul layout puts both on the LEFT edge (was: Outliner
+   on the right). When a ship is selected, ShipPanel slides down into
+   view from the top of this column; Outliner takes the rest. The rail
+   is a thin flex container so the two children share the column
+   cleanly without absolute-position math. */
+.left-rail {
   position: fixed;
   top: 52px;
-  right: 8px;
+  left: 8px;
   bottom: 8px;
-  width: 240px;
+  width: 280px;
   z-index: 80;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;  /* let the canvas behind catch through the gap */
+}
+.left-rail > * { pointer-events: auto; }
+
+.outliner {
+  /* Sits inside .left-rail. No position:fixed — flex layout handles
+     it. flex:1 + min-height:0 so the section grows to fill remaining
+     column height and the inner body scrolls instead of overflowing. */
+  flex: 1;
+  min-height: 0;
   background: rgba(10, 14, 20, 0.94);
   border: 1px solid #2a3d50;
   border-radius: 4px;
@@ -24,6 +43,7 @@
 
 .outliner--collapsed {
   width: 32px;
+  flex: 0 0 auto;
 }
 
 .outliner__header {
