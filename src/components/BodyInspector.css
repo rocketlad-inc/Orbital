@@ -91,6 +91,19 @@
     max-height: none;
     margin-bottom: 10px;
   }
+
+  /* HIDE OTHER UI ON MOBILE BODY VIEW.
+     body.body-focus-active is added/removed by BodyInspector while a
+     body is selected. On mobile the cardinal cards become a vertical
+     stack inside the BottomSheet — the TopBar + MP dock would just
+     compete for screen and overlap the cards. Hide them entirely.
+     The Outliner is in the left rail and BottomSheet already covers
+     it on mobile via its scrim, so it doesn't need its own rule.
+     Desktop ignores this rule (lives inside the 768px media query). */
+  body.body-focus-active .top-bar,
+  body.body-focus-active .mp-dock {
+    display: none;
+  }
 }
 
 .body-focus .panel-header {

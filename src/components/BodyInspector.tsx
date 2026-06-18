@@ -2,7 +2,7 @@
 // BodyInspector - Resource readout + build UI for selected body
 // ============================================================
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { BuildPanel } from './BuildPanel';
 import { bodyProductionRates } from '../game/economy';
@@ -35,13 +35,165 @@ const RAM_FUEL_PER_DV = 50;
 const RAM_ASTEROID_G = 0.005;
 
 export const BodyInspector: React.FC = () => {
-  const { gameState, camera, uiState, deselectBody, focusBody } = useGameContext();
+  const { gameState, camera, uiState, deselectBody, focusBody, updateCamera } = useGameContext();
+  const selectedBodyId = uiState.selectedBodyId;
 
-  if (!uiState.selectedBodyId) {
+  // === Body-focus camera state ===
+  // When a body is selected, we save the camera snapshot from BEFORE
+  // the zoom-in so Escape can restore it cleanly. Stored as a ref so
+  // updating it doesn't re-render the whole inspector.
+  //
+  // Lifecycle:
+  //   - body selected (selectedBodyId becomes non-null)
+  //       → snapshot current camera, focusBody(id), bump scale.
+  //   - user pans or wheel-zooms
+  //       → MapCanvas already clears camera.focusedBodyId on drag/zoom.
+  //         The watcher effect below sees focusedBodyId !== selectedBodyId
+  //         and calls deselectBody (snapshot NOT restored — the user
+  //         was the one driving the camera change, so honor it).
+  //   - Escape / X button (deselectBody)
+  //       → restore snapshot, then the selectedBodyId reset clears state.
+  const cameraSnapshotRef = useRef<{ x: number; y: number; scale: number; focusedBodyId?: string } | null>(null);
+  const lastSelectedRef = useRef<string | null>(null);
+  // True once camera.focusedBodyId has actually become the selected
+  // body (i.e. Effect 1's focusBody call has propagated through a
+  // render). Effect 2 (dismiss-on-pan) refuses to fire until this is
+  // true so the inspector isn't immediately closed by its own zoom
+  // call — focusBody's state update is async, so on the FIRST render
+  // after a body becomes selected, camera.focusedBodyId still holds
+  // the old value. Without this gate, Effect 2 would see
+  // focusedBodyId !== selectedBodyId on that first render and call
+  // deselectBody before the player saw anything.
+  const focusEstablishedRef = useRef(false);
+
+  // ZOOM ON OPEN: snapshot, focus, scale up. Only fires on the
+  // selection EDGE (no body → body, or body A → body B) so a re-render
+  // of an already-open inspector doesn't keep re-snapshotting.
+  useEffect(() => {
+    if (!selectedBodyId) {
+      focusEstablishedRef.current = false;
+      return;
+    }
+    if (lastSelectedRef.current === selectedBodyId) return;
+    // New selection edge — reset the "established" gate so Effect 2
+    // waits for our focusBody call to land before considering dismiss.
+    focusEstablishedRef.current = false;
+    // Edge: a new body became selected. Snapshot the camera from
+    // BEFORE we started zooming — that's the state we'll restore on
+    // Escape. Use the live camera (not the focus-overridden one); the
+    // ref captures the raw {x, y, scale} the player would have come
+    // back to if we hadn't taken over.
+    if (lastSelectedRef.current === null) {
+      cameraSnapshotRef.current = {
+        x: camera.x,
+        y: camera.y,
+        scale: camera.scale,
+        focusedBodyId: camera.focusedBodyId,
+      };
+    }
+    lastSelectedRef.current = selectedBodyId;
+    // Compute a zoom that makes the body visually prominent. Target
+    // is ~60px screen radius — clamps the body between "barely
+    // distinguishable rock" (low) and "fills the whole inspector
+    // gap" (high). Sol-system stars have radius 10, gas giants 5-9,
+    // moons 1-2 → scales between 6 and 40, all comfortably inside
+    // the [0.0012, 50] MIN/MAX_SCALE clamp.
+    const body = gameState.bodies.find(b => b.id === selectedBodyId);
+    if (!body) return;
+    const targetScale = 60 / Math.max(body.radius, 1.5);
+    focusBody(selectedBodyId);
+    updateCamera({ scale: Math.min(50, Math.max(0.0012, targetScale)) });
+    // gameState.bodies / camera intentionally NOT deps — fires only on
+    // selection change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedBodyId]);
+
+  // DISMISS ON PAN OR ZOOM: MapCanvas's mousedown / wheel handlers
+  // clear camera.focusedBodyId the moment the user grabs the map. If
+  // we had a body selected and that link breaks, treat it as the
+  // player escaping the inspector and close it. The snapshot is
+  // INTENTIONALLY NOT restored here — the user was driving the camera
+  // when they pan/zoom, so leave them where they ended up.
+  //
+  // GATING via focusEstablishedRef: focusBody's state update from
+  // Effect 1 lands in a SUBSEQUENT render. On the first render after
+  // a new selection, camera.focusedBodyId still holds whatever it was
+  // before — almost certainly not selectedBodyId — and this effect
+  // would dismiss instantly. We only treat the focus link as "broken"
+  // AFTER we've observed it actually established once.
+  useEffect(() => {
+    if (!selectedBodyId) return;
+    if (camera.focusedBodyId === selectedBodyId) {
+      focusEstablishedRef.current = true;
+      return;
+    }
+    if (!focusEstablishedRef.current) return;
+    // The focus link broke after being established. Drop the selection.
+    cameraSnapshotRef.current = null;  // don't restore on the upcoming deselect
+    lastSelectedRef.current = null;
+    deselectBody();
+  }, [camera.focusedBodyId, selectedBodyId, deselectBody]);
+
+  // RESET STATE ON UNMOUNT / DESELECT: clear the lastSelected ref so
+  // the NEXT body select re-snapshots. Restoring the snapshot is
+  // handled by the deselectBody-wrapped close button (see useCallback
+  // below) so that pan-dismiss and Esc-dismiss have different
+  // semantics: pan keeps the player where they panned to; Esc bounces
+  // them back to where they started.
+  useEffect(() => {
+    if (!selectedBodyId) lastSelectedRef.current = null;
+  }, [selectedBodyId]);
+
+  // HIDE OTHER UI ON MOBILE BODY VIEW: set a body class while the
+  // inspector is open. CSS in BodyInspector.css hides .top-bar and
+  // .mp-dock at the mobile breakpoint when this class is present.
+  useEffect(() => {
+    if (!selectedBodyId) return;
+    document.body.classList.add('body-focus-active');
+    return () => document.body.classList.remove('body-focus-active');
+  }, [selectedBodyId]);
+
+  // Snapshot-aware close. Restores the saved camera so the player
+  // returns to the framing they were in before clicking the body. If
+  // the snapshot was cleared (pan-dismiss path), just deselect.
+  // Declared BEFORE the Esc handler effect that depends on it.
+  const closeAndRestore = useCallback(() => {
+    const snap = cameraSnapshotRef.current;
+    cameraSnapshotRef.current = null;
+    if (snap) {
+      updateCamera({
+        x: snap.x,
+        y: snap.y,
+        scale: snap.scale,
+        focusedBodyId: snap.focusedBodyId,
+      });
+    }
+    deselectBody();
+  }, [deselectBody, updateCamera]);
+
+  // ESCAPE → close with snapshot restore. BottomSheet only handles Esc
+  // on mobile; on desktop the inspector floats with no modal scrim, so
+  // we register the listener ourselves. Same closeAndRestore as the X
+  // button — the player bounces back to where they were before
+  // clicking the body. Guarded against input/textarea focus so typing
+  // a settlement name doesn't accidentally close the inspector.
+  useEffect(() => {
+    if (!selectedBodyId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const t = e.target as HTMLElement;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      closeAndRestore();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectedBodyId, closeAndRestore]);
+
+  if (!selectedBodyId) {
     return null;
   }
 
-  const body = gameState.bodies.find(b => b.id === uiState.selectedBodyId);
+  const body = gameState.bodies.find(b => b.id === selectedBodyId);
   if (!body) {
     return null;
   }
@@ -77,7 +229,7 @@ export const BodyInspector: React.FC = () => {
   // out the cardinal panels around whatever the camera is already
   // showing. Those behaviors land in a follow-up.
   return (
-    <BottomSheet open={true} onClose={deselectBody} title={body.name.toUpperCase()}>
+    <BottomSheet open={true} onClose={closeAndRestore} title={body.name.toUpperCase()}>
     <div className="body-focus" data-tutorial-id="body-inspector">
 
       {/* === TOP CARD === */}
@@ -92,7 +244,7 @@ export const BodyInspector: React.FC = () => {
             >
               {isFocused ? '◉ FOLLOWING' : '○ FOLLOW'}
             </button>
-            <button className="panel-close" onClick={deselectBody}>
+            <button className="panel-close" onClick={closeAndRestore}>
               ✕
             </button>
           </div>
