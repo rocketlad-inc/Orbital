@@ -58,21 +58,29 @@
    RIGHT  — station settlement(s). Left edge just right of orbit.
    BOTTOM — shipyard. Wide, 2-col build grid. */
 .body-focus__top {
-  top: 12px;
+  /* Clear the top bar (≈52px) so the card's header — body name +
+     FOLLOW + close button — isn't occluded. Fixed max-height (not
+     vh) so the side cards below it can start at a fixed offset that
+     holds across every screen height. */
+  top: 60px;
   left: 50%;
   transform: translateX(-50%);
   width: 520px;
   max-width: calc(100vw - 32px);
-  max-height: 30vh;
+  max-height: 240px;
   z-index: 91;
 }
 
-/* Side cards sit BELOW the top card (top: 232) and ABOVE the bottom
-   card (bottom: calc(34vh + 20px)) so they auto-size to the middle
-   band and never collide with either. Their inner edge is pinned
-   130px from centre — just outside the ~100px orbit ring. */
+/* Side cards sit BELOW the top card (top: 312 = top card's 60 +
+   240 max-height + 12 gap) and ABOVE the bottom card (bottom:
+   calc(37vh + 16px)) so they auto-size to the middle band and never
+   collide with either. The top card is wider (520) than the central
+   gap between the side cards (260), so the 312px offset — clearing
+   the top card's full height — is what prevents its lower corners
+   from overlapping the side cards. Inner edge pinned 130px from
+   centre, just outside the ~90px orbit ring. */
 .body-focus__left {
-  top: 232px;
+  top: 312px;
   right: calc(50% + 130px);
   left: auto;
   bottom: calc(37vh + 16px);
@@ -82,7 +90,7 @@
 }
 
 .body-focus__right {
-  top: 232px;
+  top: 312px;
   left: calc(50% + 130px);
   right: auto;
   bottom: calc(37vh + 16px);
