@@ -119,9 +119,10 @@ export const BodyInspector: React.FC = () => {
     if (body.soi !== Infinity) {
       envelopeR = Math.min(envelopeR, body.soi * 0.6);
     }
-    // Target the envelope to ~110px screen radius (220px diameter),
-    // fitting the central gap with a little breathing room.
-    const targetScale = 110 / Math.max(envelopeR, 1);
+    // Target the envelope to ~90px screen radius (180px diameter),
+    // fitting the central hole between the cards with breathing room
+    // above the bottom card and below the top card.
+    const targetScale = 90 / Math.max(envelopeR, 1);
     focusBody(selectedBodyId);
     updateCamera({ scale: Math.min(50, Math.max(0.0012, targetScale)) });
     // gameState.bodies / camera intentionally NOT deps — fires only on

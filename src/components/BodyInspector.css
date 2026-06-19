@@ -46,29 +46,48 @@
    All four cards size to their content (height: max-content) up
    to a max-height cap that forces internal scroll only when truly
    overflowing. No more "always-scrollbar" feel. */
+/* Plus-shaped ring of cards hugging the planet. All four anchor
+   relative to the viewport CENTRE (50%) so they stay close to the
+   focused body regardless of screen width, leaving a ~220px-radius
+   central hole for the planet + its orbiting ships. The body-view
+   zoom (BodyInspector.tsx) frames the ship-orbit envelope to ~100px
+   radius so the whole orbit sits inside that hole.
+
+   TOP    — details (name / flavor / yields). Wide + grows to fit.
+   LEFT   — city settlement(s). Right edge tucked just left of orbit.
+   RIGHT  — station settlement(s). Left edge just right of orbit.
+   BOTTOM — shipyard. Wide, 2-col build grid. */
 .body-focus__top {
   top: 12px;
   left: 50%;
   transform: translateX(-50%);
-  width: 340px;
-  max-width: calc(100vw - 600px);
-  max-height: 40vh;
+  width: 520px;
+  max-width: calc(100vw - 32px);
+  max-height: 30vh;
   z-index: 91;
 }
 
+/* Side cards sit BELOW the top card (top: 232) and ABOVE the bottom
+   card (bottom: calc(34vh + 20px)) so they auto-size to the middle
+   band and never collide with either. Their inner edge is pinned
+   130px from centre — just outside the ~100px orbit ring. */
 .body-focus__left {
-  top: 80px;
-  left: 8px;
-  width: 280px;
-  max-height: calc(100vh - 220px);
+  top: 232px;
+  right: calc(50% + 130px);
+  left: auto;
+  bottom: calc(37vh + 16px);
+  width: 300px;
+  overflow-y: auto;
   z-index: 91;
 }
 
 .body-focus__right {
-  top: 80px;
-  right: 8px;
-  width: 280px;
-  max-height: calc(100vh - 220px);
+  top: 232px;
+  left: calc(50% + 130px);
+  right: auto;
+  bottom: calc(37vh + 16px);
+  width: 300px;
+  overflow-y: auto;
   z-index: 91;
 }
 
@@ -76,9 +95,9 @@
   bottom: 12px;
   left: 50%;
   transform: translateX(-50%);
-  width: 600px;
-  max-width: calc(100vw - 600px);
-  max-height: 38vh;
+  width: 640px;
+  max-width: calc(100vw - 32px);
+  max-height: 37vh;
   z-index: 91;
 }
 
