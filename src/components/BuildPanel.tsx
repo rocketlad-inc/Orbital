@@ -170,34 +170,29 @@ export const BuildPanel: React.FC = () => {
           return (
             <div key={cls} className={`build-class-row ${!canAfford ? 'disabled' : ''}`}>
               <div className="class-info">
-                {/* Icon picker. Shows the currently-selected variant
-                    big, with a small dropdown to swap it. Each row's
-                    state is independent (the player can be eyeing a
-                    Raptor corvette and a Carrier frigate at once). */}
-                <span
+                {/* Icon-variant picker dropped from the inline row to
+                    keep the build row narrow enough to stay one-line
+                    inside the bottom card. The variant is still
+                    accessible via the ship's own panel after build —
+                    it's a power-user preference, not a build-time
+                    decision. Click the icon itself to cycle through
+                    variants in-place. */}
+                <button
                   className="class-icon"
-                  title={`Icon: ${ICON_VARIANT_NAMES[cls][iconChoice[cls]]} (click selector to change)`}
-                >
-                  <ShipIcon shipClass={cls} variant={iconChoice[cls]} size={20} />
-                </span>
-                <select
-                  value={iconChoice[cls]}
-                  onChange={(e) => setIconChoice(prev => ({
-                    ...prev, [cls]: e.target.value as ShipIconVariant,
-                  }))}
-                  title="Pick an icon variant for this ship"
+                  onClick={() => {
+                    const cur = ALL_VARIANTS.indexOf(iconChoice[cls]);
+                    const next = ALL_VARIANTS[(cur + 1) % ALL_VARIANTS.length];
+                    setIconChoice(prev => ({ ...prev, [cls]: next }));
+                  }}
+                  title={`Icon: ${ICON_VARIANT_NAMES[cls][iconChoice[cls]]} (click to cycle)`}
                   style={{
-                    fontSize: 9, padding: '2px 4px',
-                    background: '#0a1018', color: '#4ecdc4',
-                    border: '1px solid #2a3d50', borderRadius: 3,
-                    fontFamily: 'inherit', cursor: 'pointer',
-                    marginRight: 4,
+                    background: 'transparent', border: 'none',
+                    padding: 0, cursor: 'pointer',
+                    display: 'inline-flex', alignItems: 'center',
                   }}
                 >
-                  {ALL_VARIANTS.map(v => (
-                    <option key={v} value={v}>{v} · {ICON_VARIANT_NAMES[cls][v]}</option>
-                  ))}
-                </select>
+                  <ShipIcon shipClass={cls} variant={iconChoice[cls]} size={20} />
+                </button>
                 <span className="class-name">{def.displayName}</span>
               </div>
               <div className="class-stats">
