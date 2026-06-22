@@ -313,17 +313,26 @@ function RoomDetail({
     setTimeout(() => setSavedFlash(null), 1500);
   }
 
+  // The local player's claimed capital — drives the backdrop map's
+  // fly-in zoom so picking a world on the panel centres the map on it.
+  const myChoice = user?.id
+    ? snap.members.find(m => m.userId === user.id)?.chosen_starting_body ?? null
+    : null;
+
   return (
-    <div>
-      {/* Pre-game map preview — fills the blank central viewport behind
-          the dock so players can see where the starting worlds sit.
-          Only while the game hasn't started (a running game draws its
-          own map). Purely visual; the card picker below is the claim
-          control. */}
+    <div className="lobby-room">
+      {/* Pre-game map preview — fills the blank viewport BEHIND the panel
+          so players can see where the starting worlds sit. Only while
+          the game hasn't started (a running game draws its own map).
+          Purely visual; the card picker in the panel is the claim
+          control. Zooms to the local player's claimed world. */}
       {!started && (
-        <LobbyMapPreview snap={snap} myUserId={user?.id} />
+        <LobbyMapPreview snap={snap} myUserId={user?.id} focusBodyId={myChoice} />
       )}
 
+      {/* All lobby controls live in a readable panel floating over the
+          map backdrop. */}
+      <div className="lobby-panel">
       <div className="mp-row" style={{ justifyContent: 'space-between' }}>
         <div className="mp-section-title" style={{ margin: 0 }}>{snap.settings.name}</div>
         <button className="mp-kick" onClick={onLeave}>Back</button>
@@ -466,6 +475,7 @@ function RoomDetail({
       })}
 
       <div className="mp-error">{error || ''}</div>
+      </div>
     </div>
   );
 }

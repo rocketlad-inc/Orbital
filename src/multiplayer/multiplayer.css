@@ -471,6 +471,10 @@
   padding: 18px 32px;
   border-bottom: 1px solid var(--mp-border);
   background: rgba(10, 14, 20, 0.6);
+  /* Above the lobby map backdrop (z:0) so the brand/header stays
+     readable while the system renders behind the panel. */
+  position: relative;
+  z-index: 5;
 }
 .mp-lobby__brand {
   display: flex; align-items: baseline; gap: 14px;
@@ -1013,9 +1017,31 @@
 .lobby-map-preview {
   position: fixed;
   inset: 0;
-  z-index: 50;
+  /* z:0 so it sits BEHIND the lobby panel (z:2) and header (z:5) but
+     above the .mp-lobby element's own radial-gradient background. */
+  z-index: 0;
   pointer-events: none;
   background: #05080e;
+}
+
+/* Lobby room layout: the map is a fixed full-bleed backdrop; the panel
+   floats over it, centred. */
+.lobby-room {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+.lobby-panel {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  max-width: 460px;
+  background: rgba(8, 12, 18, 0.86);
+  backdrop-filter: blur(10px);
+  border: 1px solid #2a3d50;
+  border-radius: 10px;
+  padding: 18px 22px 20px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
 }
 .lobby-map-preview__canvas {
   width: 100%;
