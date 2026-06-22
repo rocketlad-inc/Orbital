@@ -187,7 +187,7 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
           <FeatureCard
             icon="✦"
             title="Research & exploration"
-            body="Seven tech tracks scale weapons, armor, propulsion, sensors, and yields. Hidden caches, derelict warships, and ancient databanks wait on random moons — every match seeds them differently. Send ships out to find them."
+            body="Seven tech tracks — weapons, armor, propulsion, flight dynamics, construction, industry, sensors — each capped at level 10. Hidden caches, derelict warships, and ancient databanks wait on random moons; every match seeds them differently. Send ships out to find them."
           />
         </div>
       </section>
@@ -314,35 +314,45 @@ const SolarSystemMock: React.FC = () => (
       </radialGradient>
     </defs>
 
-    {/* Orbits */}
-    <circle cx="300" cy="180" r="90" stroke="#2d4255" strokeWidth="1" fill="none" />
-    <circle cx="300" cy="180" r="150" stroke="#3d2820" strokeWidth="1" fill="none" />
+    {/* Orbits — Earth, Mars, gas giant beyond the belt */}
+    <circle cx="300" cy="180" r="90"  stroke="#2d4255" strokeWidth="1" fill="none" />
+    <circle cx="300" cy="180" r="135" stroke="#3d2820" strokeWidth="1" fill="none" />
+    <circle cx="300" cy="180" r="215" stroke="#3d2820" strokeWidth="0.8" fill="none" />
 
     {/* Sun glow + core */}
     <circle cx="300" cy="180" r="80" fill="url(#sunGlow)" />
     <circle cx="300" cy="180" r="14" fill="url(#sunCore)" />
 
+    {/* Asteroid belt — stippled annulus between Mars and the outer orbit */}
+    <g opacity="0.55">
+      {Array.from({ length: 70 }).map((_, i) => {
+        const a = (i / 70) * Math.PI * 2 + (i % 3) * 0.04;
+        const rJitter = 165 + ((i * 13) % 25);
+        const cx = 300 + Math.cos(a) * rJitter;
+        const cy = 180 + Math.sin(a) * rJitter;
+        return <circle key={i} cx={cx} cy={cy} r={0.9} fill="#a89878" />;
+      })}
+    </g>
+
     {/* Earth */}
     <circle cx="390" cy="180" r="9" fill="url(#earthGrad)" />
     <text x="390" y="208" textAnchor="middle" className="mock-label">EARTH</text>
 
-    {/* Mars */}
-    <circle cx="225" cy="245" r="7" fill="url(#marsGrad)" />
-    <text x="225" y="270" textAnchor="middle" className="mock-label">MARS</text>
+    {/* Mars — on its own orbit, clear of the belt */}
+    <circle cx="218" cy="252" r="7" fill="url(#marsGrad)" />
+    <text x="218" y="278" textAnchor="middle" className="mock-label">MARS</text>
 
-    {/* Bezier transfer arc */}
-    <path
-      d="M 390 180 C 410 100, 280 90, 225 245"
+    {/* Straight-line transfer (matches the in-game render) */}
+    <line
+      x1="390" y1="180" x2="218" y2="252"
       stroke="#ffb84d"
       strokeWidth="1.5"
-      fill="none"
-      strokeDasharray="0"
     />
 
-    {/* Ship */}
-    <g transform="translate(330 130)">
+    {/* Ship — ~40% of the way from Earth to Mars along the segment */}
+    <g transform="translate(321 209)">
       <circle r="4" fill="#4ecdc4" />
-      <line x1="0" y1="0" x2="6" y2="-3" stroke="#6ee7b7" strokeWidth="1.5" />
+      <line x1="0" y1="0" x2="-5" y2="2" stroke="#6ee7b7" strokeWidth="1.5" />
       <text x="0" y="-12" textAnchor="middle" className="mock-label-sm">ROCINANTE</text>
     </g>
   </svg>
@@ -368,9 +378,9 @@ const ScreenshotSolarSystem: React.FC = () => (
     </defs>
 
     {/* Orbits */}
-    <circle cx="200" cy="120" r="50" stroke="#2d4255" strokeWidth="0.7" fill="none" />
-    <circle cx="200" cy="120" r="85" stroke="#3d2820" strokeWidth="0.7" fill="none" />
-    <circle cx="200" cy="120" r="115" stroke="#5a3a1a" strokeWidth="0.7" fill="none" />
+    <circle cx="200" cy="120" r="50"  stroke="#2d4255" strokeWidth="0.7" fill="none" />
+    <circle cx="200" cy="120" r="80"  stroke="#3d2820" strokeWidth="0.7" fill="none" />
+    <circle cx="200" cy="120" r="115" stroke="#3d2820" strokeWidth="0.6" fill="none" />
 
     {/* Sun */}
     <circle cx="200" cy="120" r="40" fill="url(#ss1Sun)" />
@@ -381,14 +391,25 @@ const ScreenshotSolarSystem: React.FC = () => (
     <circle cx="250" cy="120" r="4" fill="#7fb3d5" />
     <text x="250" y="135" textAnchor="middle" className="ss-label">EARTH</text>
 
-    {/* Mid planet */}
-    <circle cx="200" cy="205" r="3.5" fill="#d8784a" />
-    <text x="200" y="220" textAnchor="middle" className="ss-label">MARS</text>
+    {/* Mars */}
+    <circle cx="200" cy="200" r="3.5" fill="#d8784a" />
+    <text x="200" y="216" textAnchor="middle" className="ss-label">MARS</text>
 
-    {/* Outer planet (gas giant w/ ring) */}
+    {/* Asteroid belt — stippled band between Mars and the gas giant */}
+    <g opacity="0.55">
+      {Array.from({ length: 55 }).map((_, i) => {
+        const a = (i / 55) * Math.PI * 2 + (i % 4) * 0.05;
+        const rJitter = 96 + ((i * 11) % 14);
+        const cx = 200 + Math.cos(a) * rJitter;
+        const cy = 120 + Math.sin(a) * rJitter;
+        return <circle key={`belt-${i}`} cx={cx} cy={cy} r={0.7} fill="#a89878" />;
+      })}
+    </g>
+
+    {/* Saturn — the ring graphic is unambiguously saturnine, label matches */}
     <ellipse cx="115" cy="120" rx="11" ry="2.5" stroke="#d4a574" strokeWidth="0.8" fill="none" />
     <circle cx="115" cy="120" r="6" fill="#d4a574" />
-    <text x="115" y="138" textAnchor="middle" className="ss-label">JUPITER</text>
+    <text x="115" y="138" textAnchor="middle" className="ss-label">SATURN</text>
 
     {/* Ship */}
     <circle cx="245" cy="115" r="2.5" fill="#4ecdc4" />
@@ -426,12 +447,11 @@ const ScreenshotTransfer: React.FC = () => (
     <circle cx="180" cy="210" r="4" stroke="#d8784a" strokeWidth="0.8" fill="none" strokeDasharray="2 2" />
     <text x="180" y="225" textAnchor="middle" className="ss-label" fill="rgba(216,120,74,0.7)">MARS T+45</text>
 
-    {/* Dashed Bezier arc — planned transfer */}
-    <path
-      d="M 255 120 C 320 70, 230 60, 180 210"
+    {/* Dashed straight-line transfer — matches the in-game render */}
+    <line
+      x1="255" y1="120" x2="180" y2="210"
       stroke="#ffb84d"
       strokeWidth="1.5"
-      fill="none"
       strokeDasharray="5 5"
     />
 
