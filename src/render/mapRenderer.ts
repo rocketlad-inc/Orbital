@@ -583,10 +583,80 @@ function drawPlanetBody(
   ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
   ctx.ctx.fill();
 
+  // Per-body surface features (continents, ice caps). Drawn before
+  // sphere shading so the shading's edge-darkening + highlight unify
+  // the features into the sphere instead of sitting flat on top.
+  // Only worth rendering when the disk is large enough to read.
+  if (radius > 5) {
+    drawSurfaceFeatures(body, canvasPos, radius, ctx);
+  }
+
   // Sphere shading (only when big enough to see)
   if (radius > 3.5) {
     drawSphereShading(canvasPos, radius, ctx);
   }
+}
+
+/**
+ * Decorative surface detail keyed by body id. Everything is clipped to
+ * the planet disk and uses fixed (deterministic) positions in units of
+ * `radius`, so the features stay put frame-to-frame instead of
+ * shimmering. Only a few hand-placed bodies have art; the rest fall
+ * through and render as a plain shaded disk.
+ */
+function drawSurfaceFeatures(
+  body: Body,
+  canvasPos: { x: number; y: number },
+  radius: number,
+  ctx: RenderContext,
+) {
+  const c = ctx.ctx;
+  const { x, y } = canvasPos;
+
+  // Clip everything to the planet disk so features never spill past
+  // the limb.
+  c.save();
+  c.beginPath();
+  c.arc(x, y, radius, 0, Math.PI * 2);
+  c.clip();
+
+  if (body.id === 'earth') {
+    // Continents — overlapping green blobs. Each entry is a cluster of
+    // circles (dx, dy, r in radius-units) filled as one landmass so the
+    // outline reads organic rather than a single perfect circle.
+    const land = '#3f8a4f';
+    const landDark = '#356b3f';
+    const continents: Array<Array<[number, number, number]>> = [
+      // Americas-ish vertical strip, left
+      [[-0.45, -0.35, 0.30], [-0.55, 0.05, 0.28], [-0.40, 0.40, 0.26], [-0.30, 0.10, 0.22]],
+      // Africa/Eurasia-ish mass, right of center
+      [[0.30, -0.25, 0.34], [0.50, 0.05, 0.26], [0.25, 0.20, 0.30], [0.55, -0.35, 0.20]],
+      // small southern landmass
+      [[0.05, 0.62, 0.20], [-0.12, 0.66, 0.16]],
+    ];
+    for (let ci = 0; ci < continents.length; ci++) {
+      c.fillStyle = ci % 2 === 0 ? land : landDark;
+      for (const [dx, dy, r] of continents[ci]) {
+        c.beginPath();
+        c.arc(x + dx * radius, y + dy * radius, r * radius, 0, Math.PI * 2);
+        c.fill();
+      }
+    }
+  } else if (body.id === 'mars') {
+    // North polar ice cap — a bright cap pinned to the top of the disk,
+    // wider than it is tall so it reads as a pole seen at an angle.
+    // A smaller south cap balances it at the bottom.
+    c.fillStyle = '#eaf2f7';
+    c.beginPath();
+    c.ellipse(x, y - radius * 0.78, radius * 0.62, radius * 0.34, 0, 0, Math.PI * 2);
+    c.fill();
+    c.fillStyle = 'rgba(234, 242, 247, 0.8)';
+    c.beginPath();
+    c.ellipse(x, y + radius * 0.86, radius * 0.40, radius * 0.22, 0, 0, Math.PI * 2);
+    c.fill();
+  }
+
+  c.restore();
 }
 
 /** Gas giant: outer haze, horizontal cloud bands, sphere shading, refined ring. */
