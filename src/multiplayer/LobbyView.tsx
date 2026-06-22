@@ -330,13 +330,16 @@ function RoomDetail({
         <LobbyMapPreview snap={snap} myUserId={user?.id} focusBodyId={myChoice} />
       )}
 
-      {/* All lobby controls live in a readable panel floating over the
-          map backdrop. */}
+      {/* All lobby controls live in a full-height panel over the map
+          backdrop: a fixed header (room name + Back) so the top never
+          scrolls out of view, and a scrollable body for everything
+          else. */}
       <div className="lobby-panel">
-      <div className="mp-row" style={{ justifyContent: 'space-between' }}>
-        <div className="mp-section-title" style={{ margin: 0 }}>{snap.settings.name}</div>
+      <div className="lobby-panel__header">
+        <span className="lobby-panel__title">{snap.settings.name}</span>
         <button className="mp-kick" onClick={onLeave}>Back</button>
       </div>
+      <div className="lobby-panel__body">
 
       {inviteCode && !started && (
         <div className="mp-invite-strip" onClick={copyInvite} title="Click to copy invite code">
@@ -475,7 +478,8 @@ function RoomDetail({
       })}
 
       <div className="mp-error">{error || ''}</div>
-      </div>
+      </div>{/* .lobby-panel__body */}
+      </div>{/* .lobby-panel */}
     </div>
   );
 }

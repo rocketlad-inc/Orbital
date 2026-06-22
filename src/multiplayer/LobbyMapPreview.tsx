@@ -88,30 +88,43 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
       const options = snap.starting_body_options ?? [];
 
       // Whole-system framing: fit every startable world + its parent.
+      // This is the most zoomed-OUT the camera is allowed to go.
       let fit = 200;
       for (const o of options) {
         fit = Math.max(fit, solDistance(o.id));
         if (o.parent) fit = Math.max(fit, solDistance(o.parent));
       }
       fit *= 1.25;
-      const z = userZoomRef.current;
       const fullScale = (Math.min(w, h) * 0.46) / fit;
 
       const focus = focusBodyId ? BY_ID.get(focusBodyId) : undefined;
-      if (!focus) {
-        return { x: 0, y: 0, scale: fullScale * z };
+
+      // Default framing scale + camera centre.
+      let center = { x: 0, y: 0 };
+      let frameScale = fullScale;
+      if (focus) {
+        const wp = bodyPosition(focus, 0, SOL_BODIES);
+        center = { x: wp.x, y: wp.y };
+        // Frame the body + its moons. Moon-less world uses its own
+        // radius; a planet with moons frames the widest moon orbit.
+        let moonSpan = focus.radius * 8;
+        for (const b of SOL_BODIES) {
+          if (b.parent === focus.id) moonSpan = Math.max(moonSpan, b.orbitRadius * 1.4);
+        }
+        frameScale = (Math.min(w, h) * 0.40) / Math.max(moonSpan, 1);
       }
 
-      // Focus framing: centre on the body, zoom so the body + its moons
-      // fill the view. A moon-less world uses its own radius; a planet
-      // with moons frames the widest moon orbit.
-      const wp = bodyPosition(focus, 0, SOL_BODIES);
-      let moonSpan = focus.radius * 8;
-      for (const b of SOL_BODIES) {
-        if (b.parent === focus.id) moonSpan = Math.max(moonSpan, b.orbitRadius * 1.4);
-      }
-      const focusScale = (Math.min(w, h) * 0.40) / Math.max(moonSpan, 1);
-      return { x: wp.x, y: wp.y, scale: focusScale * z };
+      // Clamp the manual zoom by EFFECTIVE scale, not a fixed multiplier:
+      //   - can't pull out past fullScale (the whole startable system)
+      //   - can push in to 6× the default frame
+      // Deriving the multiplier bounds from the scales means you can
+      // always scroll all the way out to the system even when the
+      // default frame is a tight moon close-up.
+      const minZoom = (fullScale * 0.92) / frameScale;  // ≤ 1 when focused
+      const maxZoom = 6;
+      userZoomRef.current = Math.max(minZoom, Math.min(maxZoom, userZoomRef.current));
+
+      return { x: center.x, y: center.y, scale: frameScale * userZoomRef.current };
     };
 
     const draw = (cam: Camera, w: number, h: number) => {
@@ -239,8 +252,11 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
     // whole system or push in close, but never invert or lose the map.
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-      userZoomRef.current = Math.max(0.15, Math.min(6, userZoomRef.current * factor));
+      const factor = e.deltaY < 0 ? 1.22 : 1 / 1.22;
+      // Loose safety bound only; computeTarget re-clamps by effective
+      // scale each frame (so you can zoom out to the whole system and
+      // in to 6× the frame regardless of how tight the focus is).
+      userZoomRef.current = Math.max(0.001, Math.min(50, userZoomRef.current * factor));
       kick();
     };
     canvas.addEventListener('wheel', onWheel, { passive: false });
