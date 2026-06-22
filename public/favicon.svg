@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <defs>
+    <radialGradient id="sphere" cx="0.36" cy="0.32" r="0.85">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.40"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.45"/>
+    </radialGradient>
+    <clipPath id="planet"><circle cx="16" cy="16" r="6"/></clipPath>
+  </defs>
+  <!-- dark tile so the mark reads on light or dark browser chrome -->
+  <rect width="32" height="32" rx="7" fill="#0a0e14"/>
+  <!-- tilted orbit ring (amber, the brand accent) -->
+  <g transform="rotate(-22 16 16)">
+    <ellipse cx="16" cy="16" rx="13" ry="5.4" fill="none" stroke="#ffb84d" stroke-width="1.5"/>
+  </g>
+  <!-- Earth: blue disk + green continent dabs + sphere shading -->
+  <circle cx="16" cy="16" r="6" fill="#3a78c2"/>
+  <g clip-path="url(#planet)">
+    <ellipse cx="14" cy="14.5" rx="2.4" ry="1.8" fill="#3f8a4f"/>
+    <ellipse cx="18.2" cy="18" rx="1.8" ry="1.5" fill="#3f8a4f"/>
+  </g>
+  <circle cx="16" cy="16" r="6" fill="url(#sphere)"/>
+  <!-- a ship/moon riding the orbit -->
+  <g transform="rotate(-22 16 16)"><circle cx="29" cy="16" r="2.1" fill="#ffd27f"/></g>
+</svg>
