@@ -1024,30 +1024,26 @@
   background: #05080e;
 }
 
-/* Lobby room layout: the map is a fixed full-bleed backdrop; the panel
-   is a full-height column pinned to the right. When a room is open the
-   surrounding .mp-lobby__main drops its padding/centering so the panel
-   reaches the top + right edges flush. */
-.mp-lobby__main:has(.lobby-room) {
-  padding: 0;
-  overflow: hidden;
-  justify-content: flex-end;
-}
+/* Lobby room layout: both the map backdrop AND the panel are
+   position:fixed, anchored to the viewport — so neither depends on
+   .mp-lobby__main's flex sizing, padding, or scroll. The panel pins
+   to the right edge top-to-bottom and reaches the very top (z:6, above
+   the lobby header z:5, so nothing offsets it down). .lobby-room is
+   just a passthrough — its two children are both fixed/out-of-flow. */
 .lobby-room {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  justify-content: flex-end;
+  display: contents;
 }
 .lobby-panel {
-  position: relative;
-  z-index: 2;
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
   width: 440px;
   max-width: 100%;
-  height: 100%;
+  z-index: 6;
   display: flex;
   flex-direction: column;
-  background: rgba(8, 12, 18, 0.9);
+  background: rgba(8, 12, 18, 0.92);
   backdrop-filter: blur(10px);
   border-left: 1px solid #2a3d50;
   box-shadow: -16px 0 48px rgba(0, 0, 0, 0.5);
