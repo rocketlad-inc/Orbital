@@ -143,10 +143,10 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
         <div className="section-body">
           <p>
             Orbital is a real-time strategy game played across the inner planets,
-            the asteroid belt, and the gas giants. Ships move under continuous
-            torch acceleration — burn out, flip, burn back — so every transfer
-            commits you to a flight path and a travel time you can&rsquo;t take
-            back.
+            the asteroid belt, and the gas giants. Ships ride a continuous-thrust
+            torch from origin to target &mdash; every transfer commits you to a
+            flight time and a fuel cost you can&rsquo;t take back, computed
+            from the ship&rsquo;s engine and the distance to the rendezvous.
           </p>
           <p>
             Stake a claim by deploying <strong>cities on planets</strong> and{' '}
