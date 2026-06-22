@@ -620,10 +620,24 @@
   background: rgba(255, 255, 255, 0.02);
   border-left: 2px solid #2a3d50;
   border-radius: 0 3px 3px 0;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
 }
 .event-log__row:hover {
   background: rgba(255, 184, 77, 0.04);
   border-left-color: #ffb84d;
+}
+.event-log__icon {
+  flex: 0 0 auto;
+  width: 12px;
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.event-log__text {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .event-log__empty {

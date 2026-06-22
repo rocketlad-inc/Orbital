@@ -92,15 +92,37 @@ export const BodyInspector: React.FC = () => {
       };
     }
     lastSelectedRef.current = selectedBodyId;
-    // Compute a zoom that makes the body visually prominent. Target
-    // is ~60px screen radius — clamps the body between "barely
-    // distinguishable rock" (low) and "fills the whole inspector
-    // gap" (high). Sol-system stars have radius 10, gas giants 5-9,
-    // moons 1-2 → scales between 6 and 40, all comfortably inside
-    // the [0.0012, 50] MIN/MAX_SCALE clamp.
+    // Frame the SHIP-ORBIT ENVELOPE, not the body itself. The body is
+    // tiny relative to the radius its ships and stations orbit at, so
+    // zooming to make the body ~60px left the orbit ring far larger
+    // than the central viewing gap — the cardinal cards clipped the
+    // top and bottom of the orbit. Instead we target the widest thing
+    // actually orbiting this body so the whole ring lands inside the
+    // ~220px-tall central window between the top and bottom cards.
     const body = gameState.bodies.find(b => b.id === selectedBodyId);
     if (!body) return;
-    const targetScale = 60 / Math.max(body.radius, 1.5);
+    // Widest orbit radius (world units) among ships + stations parked
+    // here. Cities sit on the surface (body.radius). Falls back to a
+    // fraction of the body's SOI when nothing is in orbit yet, so an
+    // empty body still frames a sensible "approach envelope".
+    let envelopeR = body.radius * 2.5;
+    for (const s of gameState.ships) {
+      if (s.transit || s.orbit?.parentBodyId !== selectedBodyId) continue;
+      const r = (s.orbit.rp + s.orbit.ra) / 2;
+      if (r > envelopeR) envelopeR = r;
+    }
+    for (const st of gameState.settlements) {
+      if (st.bodyId !== selectedBodyId || !st.orbit) continue;
+      const r = (st.orbit.rp + st.orbit.ra) / 2;
+      if (r > envelopeR) envelopeR = r;
+    }
+    if (body.soi !== Infinity) {
+      envelopeR = Math.min(envelopeR, body.soi * 0.6);
+    }
+    // Target the envelope to ~90px screen radius (180px diameter),
+    // fitting the central hole between the cards with breathing room
+    // above the bottom card and below the top card.
+    const targetScale = 90 / Math.max(envelopeR, 1);
     focusBody(selectedBodyId);
     updateCamera({ scale: Math.min(50, Math.max(0.0012, targetScale)) });
     // gameState.bodies / camera intentionally NOT deps — fires only on

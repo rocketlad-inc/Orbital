@@ -46,29 +46,56 @@
    All four cards size to their content (height: max-content) up
    to a max-height cap that forces internal scroll only when truly
    overflowing. No more "always-scrollbar" feel. */
+/* Plus-shaped ring of cards hugging the planet. All four anchor
+   relative to the viewport CENTRE (50%) so they stay close to the
+   focused body regardless of screen width, leaving a ~220px-radius
+   central hole for the planet + its orbiting ships. The body-view
+   zoom (BodyInspector.tsx) frames the ship-orbit envelope to ~100px
+   radius so the whole orbit sits inside that hole.
+
+   TOP    — details (name / flavor / yields). Wide + grows to fit.
+   LEFT   — city settlement(s). Right edge tucked just left of orbit.
+   RIGHT  — station settlement(s). Left edge just right of orbit.
+   BOTTOM — shipyard. Wide, 2-col build grid. */
 .body-focus__top {
-  top: 12px;
+  /* Clear the top bar (≈52px) so the card's header — body name +
+     FOLLOW + close button — isn't occluded. Fixed max-height (not
+     vh) so the side cards below it can start at a fixed offset that
+     holds across every screen height. */
+  top: 60px;
   left: 50%;
   transform: translateX(-50%);
-  width: 340px;
-  max-width: calc(100vw - 600px);
-  max-height: 26vh;
+  width: 520px;
+  max-width: calc(100vw - 32px);
+  max-height: 240px;
   z-index: 91;
 }
 
+/* Side cards sit BELOW the top card (top: 312 = top card's 60 +
+   240 max-height + 12 gap) and ABOVE the bottom card (bottom:
+   calc(37vh + 16px)) so they auto-size to the middle band and never
+   collide with either. The top card is wider (520) than the central
+   gap between the side cards (260), so the 312px offset — clearing
+   the top card's full height — is what prevents its lower corners
+   from overlapping the side cards. Inner edge pinned 130px from
+   centre, just outside the ~90px orbit ring. */
 .body-focus__left {
-  top: 80px;
-  left: 8px;
-  width: 280px;
-  max-height: calc(100vh - 220px);
+  top: 312px;
+  right: calc(50% + 130px);
+  left: auto;
+  bottom: calc(37vh + 16px);
+  width: 300px;
+  overflow-y: auto;
   z-index: 91;
 }
 
 .body-focus__right {
-  top: 80px;
-  right: 8px;
-  width: 280px;
-  max-height: calc(100vh - 220px);
+  top: 312px;
+  left: calc(50% + 130px);
+  right: auto;
+  bottom: calc(37vh + 16px);
+  width: 300px;
+  overflow-y: auto;
   z-index: 91;
 }
 
@@ -76,10 +103,36 @@
   bottom: 12px;
   left: 50%;
   transform: translateX(-50%);
-  width: 440px;
-  max-width: calc(100vw - 600px);
-  max-height: 30vh;
+  width: 640px;
+  max-width: calc(100vw - 32px);
+  max-height: 37vh;
   z-index: 91;
+}
+
+/* Desktop cardinal layout: force COMPACT control sizing, beating the
+   global `@media (pointer: coarse)` touch min-heights in mobile.css.
+   A desktop touchscreen (coarse pointer, width > 1024) gets the
+   cardinal layout but would otherwise inherit 44px touch buttons that
+   blow the cards out and force scrolling. Scoped to min-width:769 so
+   true mobile (the BottomSheet stack) keeps its touch targets. */
+@media (min-width: 769px) {
+  .body-focus .build-btn,
+  .body-focus .deploy-btn,
+  .body-focus .maneuver-btn {
+    min-height: 0;
+    padding: 4px 8px;
+    font-size: 10px;
+  }
+  .body-focus .build-name-input,
+  .body-focus input[type="text"],
+  .body-focus select {
+    min-height: 0;
+  }
+  .body-focus .panel-close,
+  .body-focus .panel-focus {
+    min-width: 0;
+    min-height: 0;
+  }
 }
 
 /* Mobile: collapse the cardinal split. BottomSheet on mobile already
@@ -213,7 +266,7 @@
 }
 .body-focus__flavor {
   font-size: 10px;
-  line-height: 1.45;
+  line-height: 1.4;
   color: #a8b8c8;
   font-style: italic;
   padding: 6px 8px;
@@ -221,11 +274,10 @@
   border-left: 2px solid #4a6275;
   background: rgba(74, 98, 117, 0.06);
   border-radius: 0 2px 2px 0;
-  /* The flavor text is the variable-length piece. Cap it and let it
-     scroll inside the card so a 4-sentence Centauri body doesn't
-     blow out the top card's max-height. */
-  max-height: 11vh;
-  overflow-y: auto;
+  /* No internal scroll — the top card grows to fit the flavor so
+     nothing scrolls. The longest body blurbs (Centauri / Cygnus,
+     ~4 sentences) are the sizing target; the top card's max-height
+     is set generously enough to contain them. */
 }
 .body-focus__yields {
   margin-top: 4px;
