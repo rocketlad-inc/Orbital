@@ -120,12 +120,30 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
         bodies: SOL_BODIES,
       };
 
+      // Visible set: only worlds you can actually START on, plus the
+      // parents that anchor a selectable moon (so e.g. Io's orbit has a
+      // Jupiter to circle), plus Sol as the centre. Everything else —
+      // belt dwarfs, KBOs, rogue asteroids — is hidden so the map shows
+      // only the capital options, not clutter.
+      const visible = new Set<string>(['sol']);
+      for (const o of (snap.starting_body_options ?? [])) {
+        visible.add(o.id);
+        let cur = BY_ID.get(o.id);
+        let guard = 0;
+        while (cur && cur.parent && cur.parent !== 'sol' && guard++ < 6) {
+          visible.add(cur.parent);
+          cur = BY_ID.get(cur.parent);
+        }
+      }
+
       clearCanvas(ctx);
       for (const b of SOL_BODIES) {
         if (b.type === 'star') continue;
+        if (!visible.has(b.id)) continue;
         drawOrbit(b, ctx, 'rgba(120, 150, 180, 0.18)', 1);
       }
       for (const b of SOL_BODIES) {
+        if (!visible.has(b.id)) continue;
         drawBody(b, ctx);
       }
 
