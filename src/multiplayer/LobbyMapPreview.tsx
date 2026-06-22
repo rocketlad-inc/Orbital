@@ -62,6 +62,15 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
   // Animated camera: `cam` is the current (lerps toward `target`).
   const camRef = useRef<Camera | null>(null);
   const rafRef = useRef<number>(0);
+  // Manual zoom multiplier on top of the auto-framing. Scroll the map
+  // to zoom out/in for context; the camera CENTRE stays on the focused
+  // planet (or system centre), so your world never leaves the middle.
+  const userZoomRef = useRef<number>(1);
+
+  // Re-frame (reset manual zoom) whenever the focused planet changes —
+  // picking a new capital snaps back to its default framed view, from
+  // which you can scroll out again.
+  useEffect(() => { userZoomRef.current = 1; }, [focusBodyId]);
 
   const claimsKey = snap.members
     .map(m => `${m.userId}:${m.chosen_starting_body ?? ''}`)
@@ -85,11 +94,12 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
         if (o.parent) fit = Math.max(fit, solDistance(o.parent));
       }
       fit *= 1.25;
+      const z = userZoomRef.current;
       const fullScale = (Math.min(w, h) * 0.46) / fit;
 
       const focus = focusBodyId ? BY_ID.get(focusBodyId) : undefined;
       if (!focus) {
-        return { x: 0, y: 0, scale: fullScale };
+        return { x: 0, y: 0, scale: fullScale * z };
       }
 
       // Focus framing: centre on the body, zoom so the body + its moons
@@ -101,7 +111,7 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
         if (b.parent === focus.id) moonSpan = Math.max(moonSpan, b.orbitRadius * 1.4);
       }
       const focusScale = (Math.min(w, h) * 0.40) / Math.max(moonSpan, 1);
-      return { x: wp.x, y: wp.y, scale: focusScale };
+      return { x: wp.x, y: wp.y, scale: focusScale * z };
     };
 
     const draw = (cam: Camera, w: number, h: number) => {
@@ -223,6 +233,18 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
       if (!rafRef.current) rafRef.current = requestAnimationFrame(tick);
     };
 
+    // Scroll-to-zoom. Adjusts the manual multiplier and re-kicks the
+    // animation, which eases to the new scale while keeping the camera
+    // centred on the focused planet. Clamped so you can pull out to the
+    // whole system or push in close, but never invert or lose the map.
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      userZoomRef.current = Math.max(0.15, Math.min(6, userZoomRef.current * factor));
+      kick();
+    };
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+
     kick();
     const ro = new ResizeObserver(kick);
     ro.observe(canvas);
@@ -231,6 +253,7 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       rafRef.current = 0;
       ro.disconnect();
+      canvas.removeEventListener('wheel', onWheel);
       window.removeEventListener('resize', kick);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -243,6 +266,7 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
         <span><i className="dot dot--claimable" /> claimable</span>
         <span><i className="dot dot--mine" /> your pick</span>
         <span><i className="dot dot--other" /> taken</span>
+        <span className="lobby-map-preview__hint">scroll to zoom</span>
       </div>
     </div>
   );
