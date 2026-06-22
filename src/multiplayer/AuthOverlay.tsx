@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { useAuth } from './AuthContext';
+import { GoogleSignInButton } from './GoogleSignInButton';
 import './multiplayer.css';
 
 export function AuthOverlay({ onGuest }: { onGuest?: () => void }) {
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp, signInWithGoogle, googleClientId } = useAuth();
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -21,6 +22,14 @@ export function AuthOverlay({ onGuest }: { onGuest?: () => void }) {
     setBusy(false);
     if (err) setError(err);
   }
+
+  const onGoogleCredential = useCallback(async (idToken: string) => {
+    setError(null);
+    setBusy(true);
+    const err = await signInWithGoogle(idToken);
+    setBusy(false);
+    if (err) setError(err);
+  }, [signInWithGoogle]);
 
   return (
     <div className="mp-overlay">
@@ -40,6 +49,20 @@ export function AuthOverlay({ onGuest }: { onGuest?: () => void }) {
             onClick={() => { setMode('signup'); setError(null); }}
           >Create account</button>
         </div>
+
+        {googleClientId && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 10, margin: '4px 0 14px' }}>
+            <GoogleSignInButton
+              clientId={googleClientId}
+              onCredential={onGoogleCredential}
+              onError={(msg) => setError(msg)}
+              disabled={busy}
+            />
+            <div style={{ textAlign: 'center', fontSize: 10, color: '#6b8195', letterSpacing: '0.12em' }}>
+              — OR USE EMAIL —
+            </div>
+          </div>
+        )}
 
         {mode === 'signup' && (
           <>
