@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, RoomSnapshot, RoomSummary } from './api';
 import { useAuth } from './AuthContext';
+import { LobbyMapPreview } from './LobbyMapPreview';
 
 // Real-world time between automatic ticks. Must match the worker's
 // ALLOWED_TICK_INTERVALS — keep these two lists in sync.
@@ -314,6 +315,15 @@ function RoomDetail({
 
   return (
     <div>
+      {/* Pre-game map preview — fills the blank central viewport behind
+          the dock so players can see where the starting worlds sit.
+          Only while the game hasn't started (a running game draws its
+          own map). Purely visual; the card picker below is the claim
+          control. */}
+      {!started && (
+        <LobbyMapPreview snap={snap} myUserId={user?.id} />
+      )}
+
       <div className="mp-row" style={{ justifyContent: 'space-between' }}>
         <div className="mp-section-title" style={{ margin: 0 }}>{snap.settings.name}</div>
         <button className="mp-kick" onClick={onLeave}>Back</button>
