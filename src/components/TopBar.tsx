@@ -411,6 +411,29 @@ export const TopBar: React.FC<TopBarProps> = ({
 // Full chronicle history. The top-bar ticker only shows the last 2-4
 // entries to stay compact; this drawer surfaces the full server-pushed
 // combatLog (gameState.combatLog) in chronological order.
+
+/**
+ * Classify a free-text event-log line into an icon + color by keyword.
+ * The log is just strings (combat.ts / secrets.ts / dysonSphere push
+ * pre-formatted messages), so we sniff the text rather than carry a
+ * structured kind. Order matters: more specific categories (Dyson,
+ * discovery) are checked before the generic "destroyed"/"hits" buckets
+ * so e.g. "The Dyson Sphere … destroyed" reads as a Dyson event, not a
+ * plain destruction. Glyphs stay in the unicode family the rest of the
+ * UI uses (◆ ■ ⚛ …) so they render without an icon font. */
+function logEntryIcon(entry: string): { icon: string; color: string } {
+  const s = entry.toLowerCase();
+  if (s.includes('dyson')) return { icon: '☀', color: '#fbbf24' };       // megaproject
+  if (s.includes('victory') || s.includes(' wins')) return { icon: '♛', color: '#6ee7b7' };
+  if (s.includes('discovery') || s.includes('databank') || s.includes('warp gate') || s.includes('stargate')) {
+    return { icon: '✦', color: '#67e8f9' };                              // exploration find
+  }
+  if (s.includes('captured')) return { icon: '⚑', color: '#ffd700' };    // piracy / cargo grab
+  if (s.includes('destroyed') || s.includes('collapsed')) return { icon: '✖', color: '#ff5e5e' };
+  if (s.includes(' hits ')) return { icon: '⚔', color: '#ffb84d' };      // weapons fire
+  return { icon: '›', color: '#8a9fb3' };                                // generic milestone
+}
+
 const EventLogPanel: React.FC<{
   entries: string[];
   onClose: () => void;
@@ -436,9 +459,19 @@ const EventLogPanel: React.FC<{
           {entries.length === 0 ? (
             <div className="event-log__empty">No events yet. Combat results and game milestones will appear here.</div>
           ) : (
-            entries.map((entry, i) => (
-              <div key={i} className="event-log__row">{entry}</div>
-            ))
+            entries.map((entry, i) => {
+              const { icon, color } = logEntryIcon(entry);
+              return (
+                <div key={i} className="event-log__row">
+                  <span
+                    className="event-log__icon"
+                    style={{ color }}
+                    aria-hidden="true"
+                  >{icon}</span>
+                  <span className="event-log__text">{entry}</span>
+                </div>
+              );
+            })
           )}
         </div>
         <footer className="event-log__foot">
