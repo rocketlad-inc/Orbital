@@ -526,6 +526,14 @@ export interface GameState {
   tradeRoutes?: TradeRoute[];
   aiActivityLog?: AIActivityEntry[];   // optional — rolling log of recent AI decisions
 
+  /** Faction ids the local player is allied with — active defense-pact
+   *  or intel-share treaties. Multiplayer only, populated from /state.
+   *  Allies share sensor coverage: their ships/settlements count as the
+   *  player's own for fog of war (computeVisibility / factionSensorRings
+   *  treat these ids as friendly). Empty/undefined in single-player,
+   *  which has no diplomacy. */
+  alliedFactionIds?: string[];
+
   // Match shape — populated in single-player by setup, in multiplayer by
   // the server. The match ends when status flips to 'completed', either
   // via a host-initiated abandon or when one of the three victory

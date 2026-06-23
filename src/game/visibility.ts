@@ -111,11 +111,24 @@ export function shipWorldPosition(ship: Ship, tick: number, bodies: Body[]): { x
   return orbitWorldPos(ship.orbit, tick, bodies);
 }
 
+// === Friendly-faction helper ================================
+//
+// Allies share sensors + vision: an allied faction's ships/settlements
+// act as the viewer's own for fog-of-war. `alliedFactionIds` is empty
+// in single-player (no alliances) and carries the active
+// defense-pact / intel-share partners in multiplayer.
+
+const NO_ALLIES: ReadonlySet<string> = new Set();
+
+function isFriendly(ownedBy: string, viewer: string, allies: ReadonlySet<string>): boolean {
+  return ownedBy === viewer || allies.has(ownedBy);
+}
+
 // === Sensor source enumeration ===============================
 
 /**
- * All sensor sources for a faction: ships + settlements. Returns
- * an array of {pos, range} pairs evaluated at the current tick.
+ * All sensor sources for a faction (and its allies): ships +
+ * settlements. Returns {pos, range} pairs evaluated at the current tick.
  */
 function factionSensors(
   factionId: string,
@@ -123,18 +136,19 @@ function factionSensors(
   settlements: Settlement[],
   bodies: Body[],
   tick: number,
+  allies: ReadonlySet<string> = NO_ALLIES,
 ): Array<{ pos: { x: number; y: number }; range: number }> {
   const sensors: Array<{ pos: { x: number; y: number }; range: number }> = [];
 
   for (const s of ships) {
-    if (s.ownedBy !== factionId) continue;
+    if (!isFriendly(s.ownedBy, factionId, allies)) continue;
     // Even ships in transit have working sensors.
     const range = SHIP_SENSOR_RANGE[s.class] ?? 25;
     sensors.push({ pos: shipWorldPosition(s, tick, bodies), range });
   }
 
   for (const st of settlements) {
-    if (st.ownedBy !== factionId) continue;
+    if (!isFriendly(st.ownedBy, factionId, allies)) continue;
     const range = SETTLEMENT_SENSOR_RANGE[st.type] ?? 40;
     const pos = settlementWorldPosition(st, tick, bodies);
     if (pos) sensors.push({ pos, range });
@@ -172,15 +186,16 @@ export function computeVisibility(
   bodies: Body[],
   tick: number,
   previousLastSeen: Map<string, { x: number; y: number; tick: number; shipClass: string; ownedBy: string }>,
+  alliedFactionIds: ReadonlySet<string> = NO_ALLIES,
 ): VisibilityResult {
   const visibleShipIds = new Set<string>();
   const lastSeen = new Map<string, { x: number; y: number; tick: number; shipClass: string; ownedBy: string }>();
 
-  const sensors = factionSensors(viewerFactionId, ships, settlements, bodies, tick);
+  const sensors = factionSensors(viewerFactionId, ships, settlements, bodies, tick, alliedFactionIds);
 
   for (const ship of ships) {
-    // Friendlies always visible
-    if (ship.ownedBy === viewerFactionId) {
+    // Friendlies (own + allied) always visible
+    if (isFriendly(ship.ownedBy, viewerFactionId, alliedFactionIds)) {
       visibleShipIds.add(ship.id);
       continue;
     }
@@ -231,17 +246,18 @@ export function factionSensorRings(
   settlements: Settlement[],
   bodies: Body[],
   tick: number,
+  allies: ReadonlySet<string> = NO_ALLIES,
 ): Array<{ pos: { x: number; y: number }; range: number; sourceType: 'ship' | 'city' | 'station' }> {
   const rings: Array<{ pos: { x: number; y: number }; range: number; sourceType: 'ship' | 'city' | 'station' }> = [];
 
   for (const s of ships) {
-    if (s.ownedBy !== factionId) continue;
+    if (!isFriendly(s.ownedBy, factionId, allies)) continue;
     const range = SHIP_SENSOR_RANGE[s.class] ?? 25;
     rings.push({ pos: shipWorldPosition(s, tick, bodies), range, sourceType: 'ship' });
   }
 
   for (const st of settlements) {
-    if (st.ownedBy !== factionId) continue;
+    if (!isFriendly(st.ownedBy, factionId, allies)) continue;
     const range = SETTLEMENT_SENSOR_RANGE[st.type] ?? 40;
     const pos = settlementWorldPosition(st, tick, bodies);
     if (pos) rings.push({ pos, range, sourceType: st.type });

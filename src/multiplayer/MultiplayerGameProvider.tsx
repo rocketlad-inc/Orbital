@@ -54,6 +54,9 @@ interface ServerState {
     capital_body_id: string | null;
     resources: { metal: number; fuel: number; gold: number; science: number };
     tech_levels?: Record<string, number>;
+    /** Faction ids the caller is allied with (active defense-pact /
+     *  intel-share). Drives shared sensor vision. */
+    ally_faction_ids?: string[];
   };
   factions: Array<{
     id: string; slot: number; name: string; color: string; status: string;
@@ -830,6 +833,10 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     lastHarvestTick: srv.game.current_tick,
     tradeRoutes,
     dysonSphere,
+    // Allies keep their own (server) faction ids on the client — only
+    // the caller is remapped to PLAYER_TOKEN — so ally-owned ships carry
+    // these ids and the fog-of-war friendly check matches directly.
+    alliedFactionIds: srv.me.ally_faction_ids ?? [],
   };
 }
 
