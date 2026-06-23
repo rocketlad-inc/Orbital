@@ -9,6 +9,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from './api';
+import { logger, LogCategory, LogLevel } from '../game/logger';
 import { GameContextProvider } from '../state/gameContext';
 import { MultiplayerActionsProvider } from './MultiplayerActionsContext';
 import {
@@ -509,7 +510,44 @@ function nodeToClient(
   };
 }
 
+// Audit-log mirroring of server chronicle events. The /state poll returns
+// a rolling window of recent events (newest-first); we log each one exactly
+// once, keyed by its stable id. The set is session-scoped — cleared if it
+// ever grows unreasonably so a marathon game can't leak memory (the only
+// cost is that a long-since-scrolled-out event could re-log, which never
+// happens in practice because the server window is small and recent).
+const loggedEventIds = new Set<string>();
+
+/** Map a chronicle event kind to a logger category + level so the exported
+ *  audit reads with the right severity. Unknown kinds fall back to SIM. */
+function classifyChronicleEvent(kind: string): { category: LogCategory; level: LogLevel } {
+  switch (kind) {
+    case 'ship_destroyed':
+    case 'settlement_destroyed':
+    case 'asteroid_impact':
+      return { category: 'COMBAT', level: 'INFO' };
+    case 'asteroid_launched':
+    case 'treaty_broken':
+      return { category: 'THREAT', level: 'WARN' };
+    case 'settlement_built':
+    case 'ship_built':
+    case 'building_completed':
+    case 'secret_discovered':
+      return { category: 'SIM', level: 'INFO' };
+    case 'trade_accepted':
+    case 'treaty_signed':
+      return { category: 'SYSTEM', level: 'INFO' };
+    default:
+      return { category: 'SIM', level: 'INFO' };
+  }
+}
+
 function serverToGameState(srv: ServerState, callerFactionId: string): GameState {
+  // Keep the audit log's tick column in sync with the server clock. Without
+  // this, every MP log entry stamps "T+ -" (the logger's tick is otherwise
+  // only set by the single-player engine, which never runs in MP).
+  logger.setCurrentTick(srv.game.current_tick);
+
   const bodies = srv.bodies.map(bodyToClient);
   // muById is keyed on the stripped local body id (matching what
   // bodyToClient produces). Strip server-side references before lookup
@@ -665,10 +703,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     if (!id) return 'Unknown';
     return factionNameById.get(id) ?? 'Unknown';
   };
-  const combatLog: string[] = (srv.events ?? [])
-    .slice()
-    .reverse()  // server returns newest first; we want chronological
-    .map(ev => {
+  const formatEvent = (ev: NonNullable<ServerState['events']>[number]): string => {
       let parsed: Record<string, unknown> = {};
       try { parsed = JSON.parse(ev.payload || '{}'); } catch { /* ignore */ }
       const t = `T+${ev.tick_number}`;
@@ -801,7 +836,31 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       }
 
       return `${t}  ${ev.kind}`;
-    });
+    };
+
+  // Server returns newest-first; we want chronological for both the UI log
+  // and the audit mirror.
+  const orderedEvents = (srv.events ?? []).slice().reverse();
+  if (loggedEventIds.size > 4000) loggedEventIds.clear();
+  const combatLog: string[] = orderedEvents.map(ev => {
+    const msg = formatEvent(ev);
+    // Mirror each chronicle event into the audit log exactly once. This is
+    // the only path battles / discoveries / builds / diplomacy reach the
+    // exported log in multiplayer — the sim runs server-side, so the
+    // single-player engine's logger hooks never fire here.
+    if (!loggedEventIds.has(ev.id)) {
+      loggedEventIds.add(ev.id);
+      const { category, level } = classifyChronicleEvent(ev.kind);
+      logger.log(level, category, msg, {
+        kind: ev.kind,
+        ...(ev.actor_faction_id ? { actor: ev.actor_faction_id } : {}),
+        ...(ev.target_faction_id ? { target: ev.target_faction_id } : {}),
+        ...(ev.body_id ? { body: ev.body_id } : {}),
+        ...(ev.ship_id ? { ship: ev.ship_id } : {}),
+      });
+    }
+    return msg;
+  });
 
   // Server-side build queue → client BuildOrder[]. Drives the BuildPanel
   // "BUILDING" strip while the alarm grinds toward completes_at_tick.
