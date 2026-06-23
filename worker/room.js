@@ -1578,7 +1578,8 @@ export class Room {
     // Sum per-faction across all collector settlements in a single
     // pass, then apply one batched UPDATE per faction (pool += integer
     // portion of (remainder + delivery), remainder = fractional part).
-    const HARVEST_INTERVAL = 10;
+    // HARVEST_INTERVAL = 10 is already declared at the top of the
+    // harvest section above; reuse it.
     const collectorRows = (await this.env.DB
       .prepare(
         `SELECT s.owner_faction_id AS fid,
