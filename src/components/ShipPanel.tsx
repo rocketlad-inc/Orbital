@@ -5,6 +5,7 @@ import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { maintenanceRatesForShip } from '../game/maintenance';
 import { rankHpMul } from '../game/techs';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { markNodeCancelPending, unmarkNodeCancelPending } from '../multiplayer/pendingNodeCancels';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { ShipIcon } from './ShipIcons';
@@ -63,9 +64,18 @@ export const ShipPanel: React.FC = () => {
       //    The ship's plannedTransit field holds the plan; the map
       //    renderer shows the dashed amber arc. The COMMIT button
       //    promotes it via launchTorchTransfer.
-      if (ship.transit || (ship.queuedTransits && ship.queuedTransits.length > 0)) {
+      if (ship.transit || ship.plannedTransit || (ship.queuedTransits && ship.queuedTransits.length > 0)) {
         const queuedPlan = enqueueTorchTransfer(ship.id, targetBodyId);
-        if (queuedPlan && mpActions) {
+        // Post immediately ONLY when chaining onto a live in-flight
+        // burn — the server already knows about ship.transit so the
+        // queued leg's scheduledT = arriveTick is a coherent future
+        // event for it. When chaining onto a still-uncommitted
+        // plannedTransit, the server has no idea the prior leg exists;
+        // posting now would make the server treat the chained leg as
+        // primary and the /state poll would wipe the local plannedTransit.
+        // commitTransferLocal posts the full chain when the player
+        // hits COMMIT.
+        if (queuedPlan && mpActions && ship.transit) {
           setTransferError(null);
           mpActions.transfer({
             shipId: ship.id,
@@ -159,6 +169,14 @@ export const ShipPanel: React.FC = () => {
       return;
     }
     if (!mpActions) return;
+    // Snapshot the queue BEFORE we post — launchTorchTransfer didn't
+    // touch queuedTransits, but each one needs to land on the server
+    // too so the alarm fires the chained burn at the right tick. Each
+    // q.startTick is already chained from the previous leg's arriveTick
+    // (set at enqueue time in gameContext), so we can post each leg
+    // verbatim and the server's alarm scheduler does the right thing.
+    const queuedAtCommit = owningShip.queuedTransits ?? [];
+
     // Post the torch-derived arrival to the server so its DB row, the
     // alarm's in_transit→arrive transition, and the other clients' MP
     // reconstruction all agree exactly.
@@ -178,12 +196,34 @@ export const ShipPanel: React.FC = () => {
         setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
       }
     });
+
+    // Post each queued leg. These were chained off plannedTransit's
+    // arriveTick at enqueue time, so their scheduledT lines up with
+    // when the previous leg parks the ship.
+    for (const q of queuedAtCommit) {
+      mpActions.transfer({
+        shipId: owningShip.id,
+        targetBodyId: q.targetBodyId,
+        scheduledT: q.startTick,
+        arrivalT: q.arriveTick,
+        dvPrograde: q.totalDv,
+        fuelCost: Math.round(q.totalDv * 10),
+      }).then(res => {
+        if (!res.ok) {
+          setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
+        }
+      });
+    }
   };
 
   const handleRemoveQueuedTransfer = (index: number) => {
     const queue = ship.queuedTransits || [];
     if (index >= queue.length) return;
+    // A queued leg launches from the previous leg's arrival point, so
+    // removing one orphans every leg chained after it — drop the tail too.
+    const removed = queue.slice(index);
     const newQueue = queue.slice(0, index);
+    // Optimistic local removal.
     setGameState({
       ...gameState,
       ships: gameState.ships.map(s =>
@@ -192,6 +232,26 @@ export const ShipPanel: React.FC = () => {
           : s
       ),
     });
+    // Multiplayer: the queued legs are 'committed' server rows. Without a
+    // server-side cancel the next /state poll reconstructs them and they
+    // "come back." Cancel each removed leg's node and mark it pending so
+    // reconstruction suppresses it until the cancel lands (no flicker).
+    if (mpActions) {
+      for (const leg of removed) {
+        if (!leg.nodeId) continue;  // local-only preview leg — nothing to cancel
+        const nodeId = leg.nodeId;
+        markNodeCancelPending(nodeId);
+        mpActions.cancelNode(nodeId).then(res => {
+          if (!res.ok) {
+            // Server kept the leg — stop suppressing it so it reappears
+            // instead of silently executing while hidden.
+            unmarkNodeCancelPending(nodeId);
+            // eslint-disable-next-line no-console
+            console.warn('cancelNode (queued leg) rejected by server:', res.error);
+          }
+        });
+      }
+    }
   };
 
   const handleFormFleet = (peerIds: string[]) => {
@@ -517,13 +577,12 @@ export const ShipPanel: React.FC = () => {
                   {ship.transit && (() => {
                     const plan = ship.transit.currentTransfer;
                     const targetBody = gameState.bodies.find(b => b.id === plan.targetBodyId);
-                    const phase = gameState.currentTick < plan.flipTick ? 'BOOST' : 'BRAKE';
                     return (
                       <div className="order-item status-committed">
                         <div className="order-info">
                           <div className="order-type">→ {targetBody?.name ?? plan.targetBodyId}</div>
                           <div className="order-details">
-                            {phase} | Δv: {plan.totalDv.toFixed(2)} | ETA T-{Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0)}
+                            ETA T-{Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0)} · Δv {plan.totalDv.toFixed(2)}
                           </div>
                         </div>
                       </div>
@@ -543,11 +602,6 @@ export const ShipPanel: React.FC = () => {
                         </div>
                         <div className="order-actions">
                           <button
-                            className="commit-btn"
-                            onClick={() => commitTransferLocal(ship)}
-                            title="Launch this transfer"
-                          >COMMIT</button>
-                          <button
                             className="delete-btn"
                             onClick={() => cancelTorchPreview(ship.id)}
                             title="Cancel this transfer"
@@ -556,7 +610,7 @@ export const ShipPanel: React.FC = () => {
                       </div>
                     );
                   })()}
-                  {ship.orders.map((order) => (
+                  {ship.orders.filter(o => o.type !== 'transfer').map((order) => (
                     <div key={order.id} className={`order-item status-${order.status}`}>
                       <div className="order-info">
                         <div className="order-type">{order.label || order.type.toUpperCase()}</div>

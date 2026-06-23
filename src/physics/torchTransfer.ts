@@ -69,6 +69,11 @@ export interface TorchTransfer {
   totalDv: number;
   /** Peak speed at the flip, used for diagnostics and UI readouts. */
   peakVelocity: number;
+  /** Multiplayer only: the id of the server `game_ship_nodes` row this
+   *  plan was reconstructed from. Lets the UI cancel a queued leg on the
+   *  server (not just locally). Undefined for single-player and for
+   *  not-yet-committed local preview legs. */
+  nodeId?: string;
 }
 
 /** State-vector ship state — what a ship carries during a transit. */

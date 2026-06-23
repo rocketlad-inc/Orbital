@@ -9,6 +9,8 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from './api';
+import { logger, LogCategory, LogLevel } from '../game/logger';
+import { isNodeCancelPending, reconcilePendingNodeCancels } from './pendingNodeCancels';
 import { GameContextProvider } from '../state/gameContext';
 import { MultiplayerActionsProvider } from './MultiplayerActionsContext';
 import {
@@ -17,8 +19,9 @@ import {
 } from '../types';
 import {
   planTorchTransfer, stepTorchShip, DEFAULT_ENGINE_G, fromG,
+  TorchTransfer,
 } from '../physics/torchTransfer';
-import { orbitWorldPos, orbitWorldVelocity } from '../physics/orbitalMechanics';
+import { orbitWorldPos, orbitWorldVelocity, bodyWorldVelocity } from '../physics/orbitalMechanics';
 import { engineGModifier } from '../game/techs';
 
 // Shape of /api/games/:gid/state.
@@ -509,7 +512,44 @@ function nodeToClient(
   };
 }
 
+// Audit-log mirroring of server chronicle events. The /state poll returns
+// a rolling window of recent events (newest-first); we log each one exactly
+// once, keyed by its stable id. The set is session-scoped — cleared if it
+// ever grows unreasonably so a marathon game can't leak memory (the only
+// cost is that a long-since-scrolled-out event could re-log, which never
+// happens in practice because the server window is small and recent).
+const loggedEventIds = new Set<string>();
+
+/** Map a chronicle event kind to a logger category + level so the exported
+ *  audit reads with the right severity. Unknown kinds fall back to SIM. */
+function classifyChronicleEvent(kind: string): { category: LogCategory; level: LogLevel } {
+  switch (kind) {
+    case 'ship_destroyed':
+    case 'settlement_destroyed':
+    case 'asteroid_impact':
+      return { category: 'COMBAT', level: 'INFO' };
+    case 'asteroid_launched':
+    case 'treaty_broken':
+      return { category: 'THREAT', level: 'WARN' };
+    case 'settlement_built':
+    case 'ship_built':
+    case 'building_completed':
+    case 'secret_discovered':
+      return { category: 'SIM', level: 'INFO' };
+    case 'trade_accepted':
+    case 'treaty_signed':
+      return { category: 'SYSTEM', level: 'INFO' };
+    default:
+      return { category: 'SIM', level: 'INFO' };
+  }
+}
+
 function serverToGameState(srv: ServerState, callerFactionId: string): GameState {
+  // Keep the audit log's tick column in sync with the server clock. Without
+  // this, every MP log entry stamps "T+ -" (the logger's tick is otherwise
+  // only set by the single-player engine, which never runs in MP).
+  logger.setCurrentTick(srv.game.current_tick);
+
   const bodies = srv.bodies.map(bodyToClient);
   // muById is keyed on the stripped local body id (matching what
   // bodyToClient produces). Strip server-side references before lookup
@@ -592,65 +632,115 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   // can draw a dashed preview.
   const shipById = new Map(ships.map(s => [s.id, s]));
   const currentTick = srv.game.current_tick;
-  for (const srvNode of (srv.nodes ?? [])) {
-    if (!srvNode.target_body_id) continue;
-    if (srvNode.status !== 'committed' && srvNode.status !== 'in_transit') continue;
-    const ship = shipById.get(srvNode.ship_id);
+
+  // A ship can have MULTIPLE live nodes when the player chains transfers:
+  // the leg in flight now plus one or more future legs (each a 'committed'
+  // row whose scheduled_t == the previous leg's arrival). Only the ACTIVE
+  // leg becomes ship.transit (solid line); future legs become
+  // ship.queuedTransits (dashed, chained from the prior leg's arrival).
+  //
+  // The old code set ship.transit for EVERY committed/in_transit node, so a
+  // freshly-queued second leg (committed, future scheduled_t) overwrote the
+  // active one and the ship appeared to teleport straight to the second
+  // target — that was the "chaining replaces the node" bug. The server was
+  // always right (it only fires a committed node once scheduled_t arrives);
+  // only this client-side reconstruction was collapsing the chain.
+  const liveNodesByShip = new Map<string, NonNullable<ServerState['nodes']>>();
+  const liveNodeIds = new Set<string>();
+  for (const n of (srv.nodes ?? [])) {
+    if (!n.target_body_id) continue;
+    if (n.status !== 'committed' && n.status !== 'in_transit') continue;
+    // Arrived but not yet swept to 'executed' — don't resurrect it.
+    if (n.arrival_at_tick != null && n.arrival_at_tick <= currentTick) continue;
+    liveNodeIds.add(n.id);
+    // The player just cancelled this leg; the server row is still
+    // 'committed' until the POST lands. Suppress it so the queued leg
+    // stays removed instead of flickering back on this poll.
+    if (isNodeCancelPending(n.id)) continue;
+    const arr = liveNodesByShip.get(n.ship_id);
+    if (arr) arr.push(n);
+    else liveNodesByShip.set(n.ship_id, [n]);
+  }
+  // Stop suppressing any pending cancel the server has now applied (the
+  // node is no longer in the live set).
+  reconcilePendingNodeCancels(liveNodeIds);
+
+  for (const [shipId, nodes] of liveNodesByShip) {
+    const ship = shipById.get(shipId);
     if (!ship) continue;
-    const targetLocalId = stripGameId(srvNode.target_body_id) ?? srvNode.target_body_id;
+    // Earliest first so the active leg is processed before the chain.
+    nodes.sort((a, b) => a.scheduled_t - b.scheduled_t);
+
     const faction = factions.find(f => f.id === ship.ownedBy);
     // Same engine-g formula as single-player: stored faction baseline
-    // (if any) scaled by the player's flight-tech tier. Only the local
-    // player's tech is exchanged over the protocol (other factions'
-    // tech is opaque), so non-player ships get the unscaled baseline.
-    // UNIT FIX: faction.engineG comes back from the server in units of
-    // 1g (e.g. 0.05). Multiply by G_ANCHOR via fromG so torch accel
-    // has the right magnitude — see SP gameContext.tsx for the
-    // matching fix. Without this, reconstructed transits ran 530× too
-    // weak and ships visibly drifted off the rendered curve.
+    // scaled by the local player's flight-tech tier (other factions' tech
+    // is opaque over the protocol, so their ships get the baseline).
+    // UNIT FIX: faction.engineG is in units of 1g (e.g. 0.05); fromG scales
+    // it to in-game accel — see SP gameContext.tsx for the matching fix.
     const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
     const techScale = ship.ownedBy === srv.me.faction_id ? engineGModifier(playerTech) : 1;
     const engineAccel = baseAccel * techScale;
 
-    // Launch (pos, vel) for the torch — at scheduled_t, ship is in
-    // its parked orbit. orbitWorldVelocity sums parent's velocity and
-    // the ship's local orbital motion, which matters for fast-orbiting
-    // moons; using parent velocity alone mis-aims the brachistochrone.
-    const launchPos = orbitWorldPos(ship.orbit, srvNode.scheduled_t, bodies);
-    const launchVel = orbitWorldVelocity(ship.orbit, srvNode.scheduled_t, bodies);
+    const queued: TorchTransfer[] = [];
+    let priorPlan: TorchTransfer | null = null;
+    for (const n of nodes) {
+      const targetLocalId = stripGameId(n.target_body_id!) ?? n.target_body_id!;
 
-    const plan = planTorchTransfer(
-      { pos: launchPos, vel: launchVel },
-      targetLocalId,
-      engineAccel, engineAccel,
-      srvNode.scheduled_t, bodies,
-    );
-    if (!plan) continue;
+      // Launch (pos, vel): the active leg launches from the ship's parked
+      // orbit at scheduled_t; a chained future leg launches from the prior
+      // leg's predicted arrival point + that body's velocity, mirroring the
+      // local enqueueTorchTransfer chain so the dashed arc lines up.
+      let launchPos: { x: number; y: number };
+      let launchVel: { x: number; y: number };
+      if (priorPlan) {
+        const pp = priorPlan;  // const capture — keeps the find() closure off the loop var
+        const priorBody = bodies.find(b => b.id === pp.targetBodyId);
+        launchPos = { x: pp.interceptPos.x, y: pp.interceptPos.y };
+        launchVel = priorBody
+          ? bodyWorldVelocity(priorBody, pp.arriveTick, bodies)
+          : { x: 0, y: 0 };
+      } else {
+        launchPos = orbitWorldPos(ship.orbit, n.scheduled_t, bodies);
+        launchVel = orbitWorldVelocity(ship.orbit, n.scheduled_t, bodies);
+      }
 
-    // If the server gave us an authoritative arrival tick, snap the
-    // torch's arriveTick to it. The trip-time math may differ slightly
-    // between the legacy server formula and the new torch one; the
-    // server is canonical for "when does the ship park."
-    if (srvNode.arrival_at_tick != null && srvNode.arrival_at_tick > srvNode.scheduled_t) {
-      plan.arriveTick = srvNode.arrival_at_tick;
-      // Re-derive the flip so the boost/brake split stays symmetric.
-      plan.flipTick = (plan.startTick + plan.arriveTick) / 2;
+      const plan = planTorchTransfer(
+        { pos: launchPos, vel: launchVel },
+        targetLocalId,
+        engineAccel, engineAccel,
+        n.scheduled_t, bodies,
+      );
+      if (!plan) continue;
+
+      // Server is canonical for "when does the ship park" — snap to its
+      // authoritative arrival tick and re-center the flip.
+      if (n.arrival_at_tick != null && n.arrival_at_tick > n.scheduled_t) {
+        plan.arriveTick = n.arrival_at_tick;
+        plan.flipTick = (plan.startTick + plan.arriveTick) / 2;
+      }
+
+      // Active = the burn has started (in_transit) or its scheduled_t has
+      // come up. There is at most one such leg; the rest are future.
+      const isActive = n.status === 'in_transit' || n.scheduled_t <= currentTick;
+      if (isActive && !ship.transit) {
+        const state = {
+          pos: { x: launchPos.x, y: launchPos.y },
+          vel: { x: launchVel.x, y: launchVel.y },
+        };
+        const dt = Math.max(0, currentTick - n.scheduled_t);
+        if (dt > 0) stepTorchShip(state, plan, n.scheduled_t, dt, bodies);
+        plan.nodeId = n.id;
+        ship.transit = { pos: state.pos, vel: state.vel, currentTransfer: plan };
+      } else {
+        // Carry the server node id so the UI can cancel this leg
+        // server-side, not just locally.
+        plan.nodeId = n.id;
+        queued.push(plan);
+      }
+      priorPlan = plan;
     }
 
-    // Both in_transit and committed (post-Phase-3, committed always
-    // means "burn has started — alarm just hasn't ticked yet") write
-    // ship.transit. The integrated (pos, vel) is computed from launch
-    // to currentTick; for a 0-tick-elapsed committed-this-poll case
-    // the state stays at launchPos which is the right answer.
-    if (srvNode.status === 'in_transit' || srvNode.status === 'committed') {
-      const state = {
-        pos: { x: launchPos.x, y: launchPos.y },
-        vel: { x: launchVel.x, y: launchVel.y },
-      };
-      const dt = Math.max(0, currentTick - srvNode.scheduled_t);
-      if (dt > 0) stepTorchShip(state, plan, srvNode.scheduled_t, dt, bodies);
-      ship.transit = { pos: state.pos, vel: state.vel, currentTransfer: plan };
-    }
+    if (queued.length > 0) ship.queuedTransits = queued;
   }
 
   // Server-side chronicle entries -> human-readable combat log.
@@ -665,10 +755,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     if (!id) return 'Unknown';
     return factionNameById.get(id) ?? 'Unknown';
   };
-  const combatLog: string[] = (srv.events ?? [])
-    .slice()
-    .reverse()  // server returns newest first; we want chronological
-    .map(ev => {
+  const formatEvent = (ev: NonNullable<ServerState['events']>[number]): string => {
       let parsed: Record<string, unknown> = {};
       try { parsed = JSON.parse(ev.payload || '{}'); } catch { /* ignore */ }
       const t = `T+${ev.tick_number}`;
@@ -751,8 +838,81 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         return `${t}  🔍 ${owner}: ${msg}`;
       }
 
+      // --------- Diplomacy events ---------
+      // Pact-kind labels — keep in sync with src/multiplayer/api.ts
+      // PACT_LABELS but expanded so the log copy reads grammatically.
+      const pactLabel = (k: string): string => {
+        if (k === 'nap') return 'Non-Aggression Pact';
+        if (k === 'defense_pact') return 'Defense Pact';
+        if (k === 'intel_share') return 'Intel-Share Pact';
+        return 'pact';
+      };
+
+      // Human-readable resource bundle. Drops zero entries so a
+      // pure-pact trade doesn't say "0M 0F 0C 0S".
+      const fmtBundle = (b: unknown): string => {
+        if (!b || typeof b !== 'object') return 'nothing';
+        const o = b as Record<string, number>;
+        const parts: string[] = [];
+        if ((o.metal ?? 0) > 0)   parts.push(`${o.metal} ore`);
+        if ((o.fuel ?? 0) > 0)    parts.push(`${o.fuel} fuel`);
+        if ((o.gold ?? 0) > 0)    parts.push(`${o.gold} credits`);
+        if ((o.science ?? 0) > 0) parts.push(`${o.science} science`);
+        return parts.length ? parts.join(', ') : 'nothing';
+      };
+
+      if (ev.kind === 'trade_accepted') {
+        const proposer = nameOfFaction(ev.actor_faction_id);
+        const responder = nameOfFaction(ev.target_faction_id);
+        const offer = fmtBundle(parsed.offer);
+        const request = fmtBundle(parsed.request);
+        const pacts = Array.isArray(parsed.pacts) ? (parsed.pacts as string[]) : [];
+        const pactTail = pacts.length
+          ? ` + ${pacts.map(pactLabel).join(', ')}`
+          : '';
+        return `${t}  ⚖ ${proposer} traded ${offer} → ${responder} for ${request}${pactTail}`;
+      }
+
+      if (ev.kind === 'treaty_signed') {
+        const a = nameOfFaction(ev.actor_faction_id);
+        const b = nameOfFaction(ev.target_faction_id);
+        const kind = pactLabel((parsed.kind as string) ?? 'pact');
+        return `${t}  🕊 ${a} & ${b} signed ${kind}`;
+      }
+
+      if (ev.kind === 'treaty_broken') {
+        const breaker = nameOfFaction(ev.actor_faction_id);
+        const other = nameOfFaction(ev.target_faction_id);
+        const kind = pactLabel((parsed.kind as string) ?? 'pact');
+        return `${t}  ⚔ ${breaker} broke the ${kind} with ${other} — war resumes`;
+      }
+
       return `${t}  ${ev.kind}`;
-    });
+    };
+
+  // Server returns newest-first; we want chronological for both the UI log
+  // and the audit mirror.
+  const orderedEvents = (srv.events ?? []).slice().reverse();
+  if (loggedEventIds.size > 4000) loggedEventIds.clear();
+  const combatLog: string[] = orderedEvents.map(ev => {
+    const msg = formatEvent(ev);
+    // Mirror each chronicle event into the audit log exactly once. This is
+    // the only path battles / discoveries / builds / diplomacy reach the
+    // exported log in multiplayer — the sim runs server-side, so the
+    // single-player engine's logger hooks never fire here.
+    if (!loggedEventIds.has(ev.id)) {
+      loggedEventIds.add(ev.id);
+      const { category, level } = classifyChronicleEvent(ev.kind);
+      logger.log(level, category, msg, {
+        kind: ev.kind,
+        ...(ev.actor_faction_id ? { actor: ev.actor_faction_id } : {}),
+        ...(ev.target_faction_id ? { target: ev.target_faction_id } : {}),
+        ...(ev.body_id ? { body: ev.body_id } : {}),
+        ...(ev.ship_id ? { ship: ev.ship_id } : {}),
+      });
+    }
+    return msg;
+  });
 
   // Server-side build queue → client BuildOrder[]. Drives the BuildPanel
   // "BUILDING" strip while the alarm grinds toward completes_at_tick.
@@ -872,6 +1032,13 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
   // Stable ref so the polling effect doesn't tear down each render.
   const onGameMissingRef = useRef(onGameMissing);
   useEffect(() => { onGameMissingRef.current = onGameMissing; }, [onGameMissing]);
+
+  // Tag the audit log with this game's id + mode. This also drives the
+  // logger's per-game reset: entering a new game id clears the previous
+  // game's persisted entries, while refreshing the same game keeps them.
+  useEffect(() => {
+    logger.setSession({ mode: 'multiplayer', gameId });
+  }, [gameId]);
 
   const fetchState = useCallback(async () => {
     if (inflightRef.current) return;

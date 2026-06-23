@@ -8,6 +8,7 @@
 
 import React, { createContext, useContext, useMemo } from 'react';
 import { apiFetch } from './api';
+import { logger } from '../game/logger';
 
 export interface TransferIntent {
   shipId: string;
@@ -222,7 +223,13 @@ export function MultiplayerActionsProvider({
           fuel_cost: intent.fuelCost,
         }),
       });
-      if (res.ok) return { ok: true };
+      if (res.ok) {
+        logger.info('ACTION', 'Transfer ordered', {
+          ship: intent.shipId, to: intent.targetBodyId,
+          arriveT: intent.arrivalT, fuel: intent.fuelCost,
+        });
+        return { ok: true };
+      }
       console.warn('transfer failed', res.error);
       return {
         ok: false,
@@ -239,7 +246,12 @@ export function MultiplayerActionsProvider({
           icon_variant: intent.iconVariant ?? null,
         }),
       });
-      if (res.ok) return { ok: true };
+      if (res.ok) {
+        logger.info('ACTION', 'Ship build queued', {
+          body: intent.bodyId, class: intent.shipClass, name: intent.shipName,
+        });
+        return { ok: true };
+      }
       console.warn('build failed', res.error);
       return {
         ok: false,
@@ -252,7 +264,12 @@ export function MultiplayerActionsProvider({
         method: 'POST',
         body: JSON.stringify({ type: intent.type, name: intent.name }),
       });
-      if (res.ok) return { ok: true };
+      if (res.ok) {
+        logger.info('ACTION', 'Settlement deployed', {
+          body: intent.bodyId, type: intent.type, name: intent.name,
+        });
+        return { ok: true };
+      }
       console.warn('deploySettlement failed', res.error);
       return {
         ok: false,
@@ -265,7 +282,10 @@ export function MultiplayerActionsProvider({
         method: 'POST',
         body: JSON.stringify({ tech_id: intent.techId }),
       });
-      if (res.ok) return { ok: true };
+      if (res.ok) {
+        logger.info('ACTION', 'Research spent', { tech: intent.techId });
+        return { ok: true };
+      }
       console.warn('research failed', res.error);
       return {
         ok: false,
@@ -295,7 +315,13 @@ export function MultiplayerActionsProvider({
           }),
         },
       );
-      if (res.ok) return { ok: true };
+      if (res.ok) {
+        logger.warn('ACTION', 'Asteroid ram launched', {
+          asteroid: intent.bodyId, target: intent.targetBodyId,
+          arriveTick: intent.arriveTick, fuel: intent.fuelCost,
+        });
+        return { ok: true };
+      }
       console.warn('ram failed', res.error);
       return {
         ok: false,
@@ -372,7 +398,13 @@ export function MultiplayerActionsProvider({
           science: delta.science ?? 0,
         }),
       });
-      if (res.ok) return { ok: true };
+      if (res.ok) {
+        logger.warn('ACTION', 'Admin grant', {
+          target, fuel: delta.fuel ?? 0, ore: delta.ore ?? 0,
+          credits: delta.credits ?? 0, science: delta.science ?? 0,
+        });
+        return { ok: true };
+      }
       console.warn('adminGrant failed', res.error);
       return {
         ok: false,
@@ -385,7 +417,10 @@ export function MultiplayerActionsProvider({
         `/api/games/${gameId}/settlements/${encodeURIComponent(settlementId)}/collector`,
         { method: 'POST' },
       );
-      if (res.ok) return { ok: true };
+      if (res.ok) {
+        logger.info('ACTION', 'Collector built', { settlement: settlementId });
+        return { ok: true };
+      }
       console.warn('buildCollector failed', res.error);
       return {
         ok: false,
@@ -398,7 +433,10 @@ export function MultiplayerActionsProvider({
         `/api/games/${gameId}/settlements/${encodeURIComponent(settlementId)}/buildings`,
         { method: 'POST', body: JSON.stringify({ kind }) },
       );
-      if (res.ok) return { ok: true };
+      if (res.ok) {
+        logger.info('ACTION', 'Building upgrade queued', { settlement: settlementId, kind });
+        return { ok: true };
+      }
       console.warn('queueBuilding failed', res.error);
       return {
         ok: false,
@@ -433,7 +471,10 @@ export function MultiplayerActionsProvider({
           }),
         },
       );
-      if (res.ok) return { ok: true };
+      if (res.ok) {
+        logger.info('ACTION', 'Dyson Sphere foundation laid', { settlement: foundationSettlementId });
+        return { ok: true };
+      }
       console.warn('initiateDysonSphere failed', res.error);
       return {
         ok: false,
@@ -456,7 +497,10 @@ export function MultiplayerActionsProvider({
           }),
         },
       );
-      if (res.ok) return { ok: true };
+      if (res.ok) {
+        logger.info('ACTION', 'Trade route opened', { ship: shipId, origin: originBodyId, dest: destBodyId });
+        return { ok: true };
+      }
       console.warn('createTradeRoute failed', res.error);
       return {
         ok: false,

@@ -327,6 +327,10 @@ export interface TorchTransferPlan {
   startVel: { x: number; y: number };
   totalDv: number;
   peakVelocity: number;
+  /** Multiplayer: id of the server `game_ship_nodes` row this leg was
+   *  reconstructed from, so the UI can cancel it server-side. Undefined
+   *  for single-player and not-yet-committed local preview legs. */
+  nodeId?: string;
 }
 
 /**

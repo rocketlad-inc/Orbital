@@ -15,6 +15,21 @@ const SILENT_GET_PREFIXES = [
   '/api/users/me/rooms', // my-rooms refresh
 ];
 
+/** Same idea for the in-game poll loop, but these carry a variable :gameId
+ *  segment so a literal prefix won't match. Silencing the successful 200s
+ *  keeps the exported log a readable audit of game events + player actions
+ *  instead of a wall of 1-per-second /state heartbeats (errors/non-200s on
+ *  these endpoints are still logged by the failure path below). */
+const SILENT_GET_PATTERNS: RegExp[] = [
+  /\/api\/games\/[^/]+\/state$/,
+  /\/api\/games\/[^/]+\/turn\/status$/,
+  /\/api\/games\/[^/]+\/me$/,
+  /\/api\/games\/[^/]+\/factions$/,
+  /\/api\/games\/[^/]+\/pacts$/,
+  /\/api\/games\/[^/]+\/trades(\?|$)/,
+  /\/api\/games\/[^/]+\/messages\/unread-count$/,
+];
+
 export async function apiFetch<T = unknown>(
   path: string,
   init: RequestInit = {},
@@ -49,7 +64,10 @@ export async function apiFetch<T = unknown>(
   const ms = Math.round(performance.now() - t0);
   if (res.ok) {
     // Silence chatty successful polls; log everything else.
-    const silent = method === 'GET' && SILENT_GET_PREFIXES.some(p => path.startsWith(p));
+    const silent = method === 'GET' && (
+      SILENT_GET_PREFIXES.some(p => path.startsWith(p))
+      || SILENT_GET_PATTERNS.some(re => re.test(path))
+    );
     if (!silent) logger.info('API', `${method} ${path} ${res.status}`, { ms });
     return { ok: true, status: res.status, data: data as T };
   }
