@@ -621,8 +621,18 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
         ? 'That freighter belongs to an enemy. Send YOUR own to deploy.'
         : 'Send a freighter to orbit to deploy';
 
-  const cityAllowed = canHostCity(body);
-  const stationAllowed = canHostStation(body);
+  // One settlement of each type per body. `settlements` is already
+  // filtered to this section's type (city panel vs station panel), so
+  // a non-empty list means a settlement of that type already sits here
+  // and the DEPLOY button should not show — you can't found a second.
+  const cityHere = gameState.settlements.some(s => s.bodyId === bodyId && s.type === 'city');
+  const stationHere = gameState.settlements.some(s => s.bodyId === bodyId && s.type === 'station');
+  const cityAllowed = canHostCity(body) && !cityHere;
+  const stationAllowed = canHostStation(body) && !stationHere;
+  // Per-panel deploy visibility: the cardinal layout renders a CITY
+  // section and a STATION section, so each only offers its own deploy.
+  const showCityDeploy = cityAllowed && (!typeFilter || typeFilter === 'city');
+  const showStationDeploy = stationAllowed && (!typeFilter || typeFilter === 'station');
 
   const playerRes = gameState.resources['player'];
   const canAffordCity = playerRes
@@ -853,7 +863,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
       ) : (
         <>
           <div className="deploy-buttons" data-tutorial-id="deploy-buttons">
-            {cityAllowed && (!typeFilter || typeFilter === 'city') && (
+            {showCityDeploy && (
               <button
                 className="deploy-btn"
                 disabled={!canBuildHere || !canAffordCity}
@@ -867,7 +877,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                 ■ DEPLOY CITY
               </button>
             )}
-            {stationAllowed && (!typeFilter || typeFilter === 'station') && (
+            {showStationDeploy && (
               <button
                 className="deploy-btn"
                 disabled={!canBuildHere || !canAffordStation}
@@ -883,7 +893,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
             )}
           </div>
 
-          {!canBuildHere && (cityAllowed || stationAllowed) && (
+          {!canBuildHere && (showCityDeploy || showStationDeploy) && (
             <div className="deploy-hint">{noFreighterHint}</div>
           )}
 
