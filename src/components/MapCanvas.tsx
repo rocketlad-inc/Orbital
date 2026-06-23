@@ -165,9 +165,32 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // Skip the very first frame (prevShipIds empty = initial mount,
     // not a die-off). The class-based base radius scales the boom
     // with ship size so a destroyer pops bigger than a corvette.
+    //
+    // CRITICAL fog-of-war check: an enemy ship can disappear from
+    // /state for TWO reasons — it was destroyed, or it drifted out of
+    // the player's sensor coverage. Only flash when the last known
+    // position was inside coverage at this moment, so fog-out doesn't
+    // paint fake combat blooms. Computed lazily and once per frame.
+    const sensorRingsThisFrame = factionSensorRings(
+      'player',
+      gameState.ships,
+      gameState.settlements,
+      gameState.bodies,
+      nowTick,
+    );
+    const wasInCoverage = (pos: { x: number; y: number }): boolean => {
+      for (const r of sensorRingsThisFrame) {
+        const dx = pos.x - r.pos.x;
+        const dy = pos.y - r.pos.y;
+        if (dx * dx + dy * dy <= r.range * r.range) return true;
+      }
+      return false;
+    };
+
     if (prevShipIdsRef.current.size > 0) {
       for (const [id, pos] of prevShipIdsRef.current) {
         if (!curShipIds.has(id) && !destructionFlashesRef.current.has(id)) {
+          if (!wasInCoverage(pos)) continue; // fog-out, not destruction
           destructionFlashesRef.current.set(id, { pos, startTick: nowTick, baseRadius: 12 });
         }
       }
@@ -196,6 +219,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     if (prevSettlementIdsRef.current.size > 0) {
       for (const [id, snap] of prevSettlementIdsRef.current) {
         if (!curSettlementIds.has(id) && !destructionFlashesRef.current.has(id)) {
+          // Same fog-of-war guard as ships: skip if the body that
+          // hosted this settlement is now outside the player's sensor
+          // coverage. Settlement loss without a kill chronicle event
+          // is far more likely a fog-out than a destruction.
+          if (!wasInCoverage({ x: snap.x, y: snap.y })) continue;
           destructionFlashesRef.current.set(id, {
             pos: { x: snap.x, y: snap.y },
             startTick: nowTick,
