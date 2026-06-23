@@ -171,12 +171,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // the player's sensor coverage. Only flash when the last known
     // position was inside coverage at this moment, so fog-out doesn't
     // paint fake combat blooms. Computed lazily and once per frame.
+    // Allies (MP defense-pact / intel-share) share sensor coverage —
+    // their sources count as the player's own for fog, flash-gating,
+    // and yield-readout reveal. Empty in single-player.
+    const alliedSet: ReadonlySet<string> = new Set(gameState.alliedFactionIds ?? []);
     const sensorRingsThisFrame = factionSensorRings(
       'player',
       gameState.ships,
       gameState.settlements,
       gameState.bodies,
       nowTick,
+      alliedSet,
     );
     const wasInCoverage = (pos: { x: number; y: number }): boolean => {
       for (const r of sensorRingsThisFrame) {
@@ -337,10 +342,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // === Fog of war ============================================
     // Recompute the player's visibility set each frame, carrying the
     // previous lastSeen map forward so ghosts age naturally.
-    // Allies (MP defense-pact / intel-share partners) share sensor
-    // coverage — their ships/settlements count as the player's own for
-    // fog of war. Empty in single-player.
-    const alliedSet: ReadonlySet<string> = new Set(gameState.alliedFactionIds ?? []);
+    // alliedSet computed once near the top of this frame (shared sensor
+    // coverage for fog, flash-gating, and yield reveal).
     const visibility = computeVisibility(
       'player',
       gameState.ships,
@@ -393,7 +396,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       if (body.destroyedAtTick != null) continue;
       const isSelected = uiState.selectedBodyId === body.id;
       const isHovered = uiState.hoveredBodyId === body.id;
-      drawBody(body, renderContext, isSelected, isHovered);
+      // A body's resource yields are intel — only reveal the readout
+      // when the body is inside the player's (or an ally's) live sensor
+      // coverage. Geometry/label still always render.
+      const bodyPos = bodyPosition(body, gameState.currentTick, gameState.bodies);
+      const yieldsVisible = wasInCoverage(bodyPos);
+      drawBody(body, renderContext, isSelected, isHovered, yieldsVisible);
       // Asteroid-weapon overlay: flame trail + projected impact path
       // + pulsing crosshair on the target. drawBody already places
       // the body's icon at its ram-mode position via bodyPosition.

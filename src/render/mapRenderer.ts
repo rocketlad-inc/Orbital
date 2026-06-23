@@ -735,7 +735,12 @@ export function drawBody(
   body: Body,
   ctx: RenderContext,
   isSelected: boolean = false,
-  isHovered: boolean = false
+  isHovered: boolean = false,
+  /** Show the yield readout under the label. Gated on sensor coverage
+   *  by the caller — a body's resources are intel, only revealed when
+   *  it's actually in range. Defaults true so non-fog callers (e.g. the
+   *  lobby preview) keep showing it. */
+  showYields: boolean = true,
 ) {
   const pos = bodyPosition(body, ctx.t, ctx.bodies);
   const canvasPos = worldToCanvas(pos.x, pos.y, ctx);
@@ -803,7 +808,7 @@ export function drawBody(
     // credits gold, science sky-cyan). Zero yields are skipped so
     // a barren rock doesn't pad three "0" tokens. Stars / black
     // holes / gas giants without body.resources fall through here.
-    if (body.resources) {
+    if (body.resources && showYields) {
       const tokens: Array<{ text: string; color: string }> = [];
       if (body.resources.fuel > 0)    tokens.push({ text: `${body.resources.fuel}F`,    color: '#ffb84d' });
       if (body.resources.metal > 0)   tokens.push({ text: `${body.resources.metal}O`,   color: '#a0a0a0' });
