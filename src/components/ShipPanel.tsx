@@ -517,13 +517,12 @@ export const ShipPanel: React.FC = () => {
                   {ship.transit && (() => {
                     const plan = ship.transit.currentTransfer;
                     const targetBody = gameState.bodies.find(b => b.id === plan.targetBodyId);
-                    const phase = gameState.currentTick < plan.flipTick ? 'BOOST' : 'BRAKE';
                     return (
                       <div className="order-item status-committed">
                         <div className="order-info">
                           <div className="order-type">→ {targetBody?.name ?? plan.targetBodyId}</div>
                           <div className="order-details">
-                            {phase} | Δv: {plan.totalDv.toFixed(2)} | ETA T-{Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0)}
+                            ETA T-{Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0)} · Δv {plan.totalDv.toFixed(2)}
                           </div>
                         </div>
                       </div>
@@ -556,7 +555,7 @@ export const ShipPanel: React.FC = () => {
                       </div>
                     );
                   })()}
-                  {ship.orders.map((order) => (
+                  {ship.orders.filter(o => o.type !== 'transfer').map((order) => (
                     <div key={order.id} className={`order-item status-${order.status}`}>
                       <div className="order-info">
                         <div className="order-type">{order.label || order.type.toUpperCase()}</div>
