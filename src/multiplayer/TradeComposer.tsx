@@ -262,7 +262,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
             </button>
             <button
               type="submit"
-              className="mp-btn-primary"
+              className="mp-btn mp-btn--primary"
               disabled={!canSubmit || hasOverspend}
             >
               {isCounter ? 'Send Counter' : 'Send Offer'}

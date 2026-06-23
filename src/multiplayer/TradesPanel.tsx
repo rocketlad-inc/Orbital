@@ -122,7 +122,7 @@ export function TradesPanel({ gameId }: { gameId: string }) {
       </div>
 
       <button
-        className="mp-btn-primary"
+        className="mp-btn mp-btn--primary"
         style={{ marginBottom: 8, width: '100%' }}
         onClick={() => setComposerMode({ kind: 'new' })}
         disabled={!me || factions.length < 2}
@@ -144,7 +144,7 @@ export function TradesPanel({ gameId }: { gameId: string }) {
             actions={(trade) => (
               <>
                 <button
-                  className="mp-btn-primary"
+                  className="mp-btn mp-btn--primary"
                   onClick={() =>
                     handleAction(() => api.accept(trade.id) as any)
                   }
