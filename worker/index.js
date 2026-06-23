@@ -9,6 +9,7 @@ import {
   clearedCookie,
   readSessionCookie,
 } from './auth.js';
+import { verifyGoogleIdToken } from './google.js';
 import { MIGRATIONS } from './_migrations_bundle.js';
 import { GIT_SHA, BUILT_AT } from './_version.js';
 
@@ -192,6 +193,116 @@ async function handleLogin(req, env) {
   const { token, expiresAt } = await createSession(env.DB, row.id, req.headers.get('user-agent'));
   return json(
     { user: { id: row.id, email: row.email, display_name: row.display_name } },
+    { headers: { 'set-cookie': sessionCookie(token, expiresAt) } },
+  );
+}
+
+async function handleGoogleAuth(req, env) {
+  const body = await readJson(req);
+  if (!body || typeof body.id_token !== 'string') {
+    return err(400, 'bad_request', 'id_token required');
+  }
+
+  let payload;
+  try {
+    payload = await verifyGoogleIdToken(body.id_token, env.GOOGLE_CLIENT_ID);
+  } catch (e) {
+    const code = e?.code ?? 'verify_failed';
+    if (code === 'server_misconfigured') {
+      return err(500, code, 'server is missing GOOGLE_CLIENT_ID');
+    }
+    return err(401, code, 'google id token rejected');
+  }
+
+  const googleSub = String(payload.sub);
+  const email = String(payload.email).trim().toLowerCase();
+  // Prefer the user-supplied display name (signup-style "call sign"),
+  // fall back to Google's name, then to the email local-part.
+  const displayName = (
+    (typeof body.display_name === 'string' && body.display_name.trim()) ||
+    (typeof payload.name === 'string' && payload.name.trim()) ||
+    email.split('@')[0]
+  ).slice(0, 40);
+
+  const now = Date.now();
+
+  // Three cases, in order:
+  //   1. We already know this google_sub → log them in.
+  //   2. We know this email (from password signup) → attach google_sub.
+  //   3. New user → create row with google_sub, no password.
+  let userId, userEmail, userDisplayName;
+
+  const bySub = await env.DB
+    .prepare('SELECT id, email, display_name FROM users WHERE google_sub = ?')
+    .bind(googleSub)
+    .first();
+
+  if (bySub) {
+    userId = bySub.id;
+    userEmail = bySub.email;
+    userDisplayName = bySub.display_name;
+    await env.DB
+      .prepare('UPDATE users SET last_login_at = ? WHERE id = ?')
+      .bind(now, userId)
+      .run();
+  } else {
+    const byEmail = await env.DB
+      .prepare('SELECT id, email, display_name FROM users WHERE email = ?')
+      .bind(email)
+      .first();
+    if (byEmail) {
+      // Link this Google account to the existing email-based user.
+      userId = byEmail.id;
+      userEmail = byEmail.email;
+      userDisplayName = byEmail.display_name;
+      await env.DB
+        .prepare('UPDATE users SET google_sub = ?, last_login_at = ? WHERE id = ?')
+        .bind(googleSub, now, userId)
+        .run();
+    } else {
+      // Brand-new user — provision row. password_hash is '' (empty)
+      // rather than NULL: the column stays NOT NULL (see migration
+      // 0027 for why we avoid relaxing it), and verifyPassword rejects
+      // '' so this account can never be logged into via the password
+      // form — Google is its only entry point unless it later sets a
+      // password.
+      userId = newUserId();
+      userEmail = email;
+      userDisplayName = displayName;
+      try {
+        await env.DB
+          .prepare(
+            'INSERT INTO users (id, email, display_name, password_hash, google_sub, created_at, last_login_at) ' +
+            "VALUES (?, ?, ?, '', ?, ?, ?)",
+          )
+          .bind(userId, userEmail, userDisplayName, googleSub, now, now)
+          .run();
+      } catch (e) {
+        // Race: another request created the same email between the lookup
+        // and the insert. Re-fetch and attach.
+        if (String(e?.message || e).includes('UNIQUE')) {
+          const reFetch = await env.DB
+            .prepare('SELECT id, email, display_name FROM users WHERE email = ?')
+            .bind(email)
+            .first();
+          if (!reFetch) throw e;
+          userId = reFetch.id;
+          userEmail = reFetch.email;
+          userDisplayName = reFetch.display_name;
+          await env.DB
+            .prepare('UPDATE users SET google_sub = ?, last_login_at = ? WHERE id = ?')
+            .bind(googleSub, now, userId)
+            .run();
+        } else {
+          throw e;
+        }
+      }
+    }
+  }
+
+  const { token, expiresAt } = await createSession(env.DB, userId, req.headers.get('user-agent'));
+  return json(
+    { user: { id: userId, email: userEmail, display_name: userDisplayName } },
     { headers: { 'set-cookie': sessionCookie(token, expiresAt) } },
   );
 }
@@ -622,8 +733,16 @@ export default {
       // unauthenticated routes
       if (req.method === 'POST' && url.pathname === '/api/auth/signup') return handleSignup(req, env);
       if (req.method === 'POST' && url.pathname === '/api/auth/login') return handleLogin(req, env);
+      if (req.method === 'POST' && url.pathname === '/api/auth/google') return handleGoogleAuth(req, env);
       if (req.method === 'POST' && url.pathname === '/api/auth/logout') return handleLogout(req, env);
       if (req.method === 'GET'  && url.pathname === '/api/auth/me') return handleMe(req, env);
+      // Public client config: the frontend pulls this at startup to decide
+      // whether to render the "Sign in with Google" button. Returns the
+      // public Google client_id (safe to expose — it's already in the JWT
+      // audience) or null if the server isn't configured for OAuth yet.
+      if (req.method === 'GET' && url.pathname === '/api/auth/config') {
+        return json({ google_client_id: env.GOOGLE_CLIENT_ID ?? null });
+      }
 
       // everything below requires a session
       const session = await currentSession(req, env);

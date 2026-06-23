@@ -471,6 +471,10 @@
   padding: 18px 32px;
   border-bottom: 1px solid var(--mp-border);
   background: rgba(10, 14, 20, 0.6);
+  /* Above the lobby map backdrop (z:0) so the brand/header stays
+     readable while the system renders behind the panel. */
+  position: relative;
+  z-index: 5;
 }
 .mp-lobby__brand {
   display: flex; align-items: baseline; gap: 14px;
@@ -1005,6 +1009,110 @@
   font-size: 13px;
   color: var(--mp-friendly);
 }
+
+/* ---- Lobby map preview ----
+   Fixed full-viewport canvas behind the dock during pre-game lobby.
+   z-index sits below .mp-dock (3000) but above the blank backdrop.
+   pointer-events:none — purely decorative, never traps clicks. */
+.lobby-map-preview {
+  position: fixed;
+  inset: 0;
+  /* z:0 so it sits BEHIND the lobby panel (z:2) and header (z:5) but
+     above the .mp-lobby element's own radial-gradient background. */
+  z-index: 0;
+  pointer-events: none;
+  background: #05080e;
+}
+
+/* Lobby room layout: both the map backdrop AND the panel are
+   position:fixed, anchored to the viewport — so neither depends on
+   .mp-lobby__main's flex sizing, padding, or scroll. The panel pins
+   to the right edge top-to-bottom and reaches the very top (z:6, above
+   the lobby header z:5, so nothing offsets it down). .lobby-room is
+   just a passthrough — its two children are both fixed/out-of-flow. */
+.lobby-room {
+  display: contents;
+}
+.lobby-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 440px;
+  max-width: 100%;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  background: rgba(8, 12, 18, 0.92);
+  backdrop-filter: blur(10px);
+  border-left: 1px solid #2a3d50;
+  box-shadow: -16px 0 48px rgba(0, 0, 0, 0.5);
+}
+/* Fixed panel header — room name + Back. Stays put while the body
+   scrolls, so the top of the lobby never disappears under a scroll. */
+.lobby-panel__header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid #2a3d50;
+  background: rgba(78, 205, 196, 0.06);
+}
+.lobby-panel__title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--mp-accent);
+}
+.lobby-panel__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px 28px;
+}
+.lobby-map-preview__canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  /* The container is pointer-events:none so it never blocks panel
+     clicks, but the canvas itself opts back in to catch scroll-zoom
+     in the exposed map area. The panel (z:2) still sits on top, so
+     clicks/scrolls over it go to the panel, not the map. */
+  pointer-events: auto;
+}
+.lobby-map-preview__legend {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  display: flex;
+  gap: 14px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: #b8c8d6;
+  background: rgba(10, 14, 20, 0.6);
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #2a3d50;
+}
+.lobby-map-preview__legend span { white-space: nowrap; }
+.lobby-map-preview__hint {
+  color: #6b8195;
+  font-style: italic;
+  border-left: 1px solid #2a3d50;
+  padding-left: 14px;
+}
+.lobby-map-preview__legend .dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+.lobby-map-preview__legend .dot--claimable { background: #4ecdc4; opacity: 0.55; }
+.lobby-map-preview__legend .dot--mine { background: #4ecdc4; }
+.lobby-map-preview__legend .dot--other { background: #ffb84d; }
 
 /* ---- Starting-body picker (in-room lobby) ---- */
 .lobby-body-grid {

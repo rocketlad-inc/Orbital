@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, RoomSnapshot, RoomSummary } from './api';
 import { useAuth } from './AuthContext';
+import { LobbyMapPreview } from './LobbyMapPreview';
 
 // Real-world time between automatic ticks. Must match the worker's
 // ALLOWED_TICK_INTERVALS — keep these two lists in sync.
@@ -26,15 +27,22 @@ const DEFAULT_TICK_INTERVAL_MS = 450_000;
 interface Props {
   onEnterGame: (roomId: string, gameId: string) => void;
   initialRoomId?: string | null;
+  /** Exit the room entirely (back to the multiplayer room browser).
+   *  Supplied by MultiplayerShell. When present, the room's Back button
+   *  uses it instead of the in-component RoomList fallback. */
+  onExitRoom?: () => void;
 }
 
-export function LobbyView({ onEnterGame, initialRoomId }: Props) {
+export function LobbyView({ onEnterGame, initialRoomId, onExitRoom }: Props) {
   const [activeRoomId, setActiveRoomId] = useState<string | null>(initialRoomId ?? null);
 
   return activeRoomId
     ? <RoomDetail
         roomId={activeRoomId}
-        onLeave={() => setActiveRoomId(null)}
+        // Prefer the real exit (→ room browser). The setActiveRoomId(null)
+        // fallback only matters in the standalone RoomList → RoomDetail
+        // flow, which the shell never uses (it always enters with a room).
+        onLeave={() => { if (onExitRoom) onExitRoom(); else setActiveRoomId(null); }}
         onEnterGame={(gid) => onEnterGame(activeRoomId, gid)}
       />
     : <RoomList onJoin={setActiveRoomId} />;
@@ -136,6 +144,13 @@ function RoomDetail({
   // We flip this immediately on click; useEffect below clears it once
   // the snap's authoritative value catches up.
   const [optimisticReady, setOptimisticReady] = useState<boolean | null>(null);
+  // Optimistic starting-capital pick. Same story as Ready: picking a
+  // body PATCHes then re-polls — two server round-trips before the card
+  // highlight + map zoom react, which read as ">1s lag" per click. We
+  // show the pick instantly and reconcile when the snapshot agrees.
+  //   undefined = follow the server; string = optimistic claim;
+  //   null = optimistic un-claim.
+  const [optimisticChoice, setOptimisticChoice] = useState<string | null | undefined>(undefined);
 
   // Empire identity form state (controlled; pre-fill from snap on first load).
   const [empireName, setEmpireName] = useState('');
@@ -203,6 +218,13 @@ function RoomDetail({
     const serverReady = !!snap.ready[user.id];
     if (serverReady === optimisticReady) setOptimisticReady(null);
   }, [snap, user, optimisticReady]);
+
+  // Drop the optimistic capital pick once the server snapshot agrees.
+  useEffect(() => {
+    if (optimisticChoice === undefined || !user || !snap) return;
+    const serverChoice = snap.members.find(m => m.userId === user.id)?.chosen_starting_body ?? null;
+    if (serverChoice === optimisticChoice) setOptimisticChoice(undefined);
+  }, [snap, user, optimisticChoice]);
 
   // First-load identity prefill from this user's row in members.
   useEffect(() => {
@@ -312,12 +334,53 @@ function RoomDetail({
     setTimeout(() => setSavedFlash(null), 1500);
   }
 
+  // The local player's claimed capital — drives the backdrop map's
+  // fly-in zoom AND the picker highlight. Prefers the optimistic value
+  // (set the instant you click) so both react without waiting on the
+  // server round-trip.
+  const serverChoice = user?.id
+    ? snap.members.find(m => m.userId === user.id)?.chosen_starting_body ?? null
+    : null;
+  const myChoice = optimisticChoice !== undefined ? optimisticChoice : serverChoice;
+
+  // Pick (or un-pick) a starting capital: reflect it locally NOW, then
+  // PATCH in the background. On failure, roll back to the server value.
+  const handlePick = async (bodyId: string | null) => {
+    setError(null);
+    setOptimisticChoice(bodyId);
+    const res = await apiFetch(`/api/lobby/rooms/${roomId}/me`, {
+      method: 'PATCH',
+      body: JSON.stringify({ chosen_starting_body: bodyId }),
+    });
+    if (!res.ok) {
+      setOptimisticChoice(undefined);  // revert to whatever the server says
+      setError(res.error?.message ?? 'Could not pick body');
+      return;
+    }
+    refresh();  // pull the authoritative snapshot; reconcile effect clears the override
+  };
+
   return (
-    <div>
-      <div className="mp-row" style={{ justifyContent: 'space-between' }}>
-        <div className="mp-section-title" style={{ margin: 0 }}>{snap.settings.name}</div>
+    <div className="lobby-room">
+      {/* Pre-game map preview — fills the blank viewport BEHIND the panel
+          so players can see where the starting worlds sit. Only while
+          the game hasn't started (a running game draws its own map).
+          Purely visual; the card picker in the panel is the claim
+          control. Zooms to the local player's claimed world. */}
+      {!started && (
+        <LobbyMapPreview snap={snap} myUserId={user?.id} focusBodyId={myChoice} />
+      )}
+
+      {/* All lobby controls live in a full-height panel over the map
+          backdrop: a fixed header (room name + Back) so the top never
+          scrolls out of view, and a scrollable body for everything
+          else. */}
+      <div className="lobby-panel">
+      <div className="lobby-panel__header">
+        <span className="lobby-panel__title">{snap.settings.name}</span>
         <button className="mp-kick" onClick={onLeave}>Back</button>
       </div>
+      <div className="lobby-panel__body">
 
       {inviteCode && !started && (
         <div className="mp-invite-strip" onClick={copyInvite} title="Click to copy invite code">
@@ -375,11 +438,10 @@ function RoomDetail({
           </div>
 
           <StartingBodyPicker
-            roomId={roomId}
             snap={snap}
             myUserId={user?.id}
-            onSaved={refresh}
-            onError={setError}
+            myChoice={myChoice}
+            onPick={handlePick}
           />
         </>
       )}
@@ -456,6 +518,8 @@ function RoomDetail({
       })}
 
       <div className="mp-error">{error || ''}</div>
+      </div>{/* .lobby-panel__body */}
+      </div>{/* .lobby-panel */}
     </div>
   );
 }
@@ -463,37 +527,34 @@ function RoomDetail({
 // ---------- Starting body picker ----------
 
 function StartingBodyPicker({
-  roomId, snap, myUserId, onSaved, onError,
+  snap, myUserId, myChoice, onPick,
 }: {
-  roomId: string;
   snap: RoomSnapshot;
   myUserId?: string;
-  onSaved: () => void;
-  onError: (msg: string | null) => void;
+  /** Effective choice (optimistic-aware) from the parent. */
+  myChoice: string | null;
+  /** Pick / un-pick handler (optimistic + PATCH) owned by the parent. */
+  onPick: (bodyId: string | null) => void;
 }) {
   const options = snap.starting_body_options ?? [];
   if (!options.length) return null;
 
-  const me = myUserId ? snap.members.find(m => m.userId === myUserId) : undefined;
-  const myChoice = me?.chosen_starting_body ?? null;
   // Map of body id -> userId who claimed it (so we can show "taken").
+  // Built from the server snapshot for OTHER players, then patched with
+  // the local player's optimistic choice so the highlight is instant and
+  // never shows a stale double-claim while the PATCH is in flight.
   const claimedBy = new Map<string, string>();
   for (const m of snap.members) {
     if (m.chosen_starting_body) claimedBy.set(m.chosen_starting_body, m.userId);
   }
-
-  async function pick(bodyId: string | null) {
-    onError(null);
-    const res = await apiFetch(`/api/lobby/rooms/${roomId}/me`, {
-      method: 'PATCH',
-      body: JSON.stringify({ chosen_starting_body: bodyId }),
-    });
-    if (!res.ok) {
-      onError(res.error?.message ?? 'Could not pick body');
-      return;
+  if (myUserId) {
+    for (const [bid, uid] of Array.from(claimedBy)) {
+      if (uid === myUserId) claimedBy.delete(bid);
     }
-    onSaved();
+    if (myChoice) claimedBy.set(myChoice, myUserId);
   }
+
+  const pick = onPick;
 
   return (
     <>
