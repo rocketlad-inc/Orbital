@@ -4,4 +4,12 @@
   left: 0;
   cursor: crosshair;
   display: block;
+  /* Defense in depth: the React inline style sets the same thing, but
+     having it in CSS catches initial-paint and any code path where the
+     inline style hasn't kicked in yet. Without this, iOS Safari can
+     interpret two-finger touches as a page-zoom gesture before our JS
+     handlers run. */
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
 }

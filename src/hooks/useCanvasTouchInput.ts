@@ -113,6 +113,15 @@ export function useCanvasTouchInput({
         const [a, b] = Array.from(pointers.values());
         pinchStartDist = Math.hypot(a.x - b.x, a.y - b.y);
         pinchStartScale = cameraRef.current.scale;
+        // Release any sticky body focus so the renderer's
+        // effectiveCamera() stops overriding cam.x/y. Without this, the
+        // pinch math happens correctly but the visual stays locked on
+        // the focused body and the player only sees zoom, never the
+        // pan-toward-midpoint that pinch is supposed to feel like.
+        const cam2 = cameraRef.current as CameraLike & { focusedBodyId?: string };
+        if (cam2.focusedBodyId) {
+          updateCameraRef.current({ focusedBodyId: undefined } as Partial<CameraLike> & { focusedBodyId?: string | undefined });
+        }
         clearLongPress();
       } else if (pointers.size === 1 && callbacksRef.current.onLongPress) {
         clearLongPress();
@@ -236,12 +245,21 @@ export function useCanvasTouchInput({
       if (e.cancelable) e.preventDefault();
     };
 
+    // iOS Safari sends non-standard `gesture*` events for multi-touch
+    // and will hijack a two-finger pinch into a native page zoom even
+    // when `touch-action: none` is set on the canvas. Block them so
+    // our PointerEvents own the pinch unchallenged.
+    const blockGesture = (e: Event) => { e.preventDefault(); };
+
     canvas.addEventListener('pointerdown', onPointerDown);
     canvas.addEventListener('pointermove', onPointerMove);
     canvas.addEventListener('pointerup', onPointerUp);
     canvas.addEventListener('pointercancel', onPointerCancel);
     canvas.addEventListener('touchstart', blockTouch, { passive: false });
     canvas.addEventListener('touchmove', blockTouch, { passive: false });
+    canvas.addEventListener('gesturestart', blockGesture as EventListener, { passive: false });
+    canvas.addEventListener('gesturechange', blockGesture as EventListener, { passive: false });
+    canvas.addEventListener('gestureend', blockGesture as EventListener, { passive: false });
 
     return () => {
       canvas.removeEventListener('pointerdown', onPointerDown);
@@ -250,6 +268,9 @@ export function useCanvasTouchInput({
       canvas.removeEventListener('pointercancel', onPointerCancel);
       canvas.removeEventListener('touchstart', blockTouch);
       canvas.removeEventListener('touchmove', blockTouch);
+      canvas.removeEventListener('gesturestart', blockGesture as EventListener);
+      canvas.removeEventListener('gesturechange', blockGesture as EventListener);
+      canvas.removeEventListener('gestureend', blockGesture as EventListener);
       clearLongPress();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
