@@ -682,10 +682,16 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
 
   return (
     <div className="settlements-section">
-      <div className="section-title">SETTLEMENTS</div>
+      <div className="section-title">
+        {typeFilter === 'city' ? 'CITY' : typeFilter === 'station' ? 'STATION' : 'SETTLEMENTS'}
+      </div>
 
       {settlements.length === 0 && !namingType && (
-        <div className="no-orders">No settlements at this body</div>
+        <div className="no-orders">
+          {typeFilter === 'city' ? 'No city at this body'
+            : typeFilter === 'station' ? 'No station at this body'
+            : 'No settlements at this body'}
+        </div>
       )}
 
       {settlements.map(s => {
