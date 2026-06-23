@@ -1889,7 +1889,19 @@ export function GameContextProvider({
     let appendedPlan: TorchTransfer | null = null;
     setGameStateInternal(prev => {
       const ship = prev.ships.find(s => s.id === shipId);
-      if (!ship || !ship.transit) return prev;
+      if (!ship) return prev;
+      // Chain from whatever 'prior leg' exists: the last queued plan
+      // > the in-flight transit > the still-uncommitted preview. The
+      // preview branch was missing before — picking a second target
+      // while plannedTransit was set fell through to planTorchPreview
+      // and silently OVERWROTE the first preview instead of appending.
+      const queue = ship.queuedTransits ?? [];
+      let priorPlan: TorchTransfer | null = null;
+      if (queue.length > 0) priorPlan = queue[queue.length - 1];
+      else if (ship.transit) priorPlan = ship.transit.currentTransfer;
+      else if (ship.plannedTransit) priorPlan = ship.plannedTransit;
+      if (!priorPlan) return prev;
+      const lastLeg = priorPlan;  // non-null past the early return
 
       const faction = prev.factions.find(f => f.id === ship.ownedBy);
       const tech = prev.factionTech?.[ship.ownedBy];
@@ -1900,18 +1912,14 @@ export function GameContextProvider({
       const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
       const engineAccel = baseAccel * engineGModifier(tech);
 
-      // Find the prior leg's predicted arrival state — last queued
-      // plan if any, otherwise the active transit.
-      const queue = ship.queuedTransits ?? [];
-      const priorPlan = queue.length > 0 ? queue[queue.length - 1] : ship.transit.currentTransfer;
-      const arrivalTick = priorPlan.arriveTick;
-      const priorTargetBody = prev.bodies.find(b => b.id === priorPlan.targetBodyId);
+      const arrivalTick = lastLeg.arriveTick;
+      const priorTargetBody = prev.bodies.find(b => b.id === lastLeg.targetBodyId);
       const arrivalVel = priorTargetBody
         ? bodyWorldVelocity(priorTargetBody, arrivalTick, prev.bodies)
         : { x: 0, y: 0 };
 
       const plan = planTorchTransfer(
-        { pos: { x: priorPlan.interceptPos.x, y: priorPlan.interceptPos.y }, vel: arrivalVel },
+        { pos: { x: lastLeg.interceptPos.x, y: lastLeg.interceptPos.y }, vel: arrivalVel },
         targetBodyId,
         engineAccel, engineAccel,
         arrivalTick, prev.bodies,

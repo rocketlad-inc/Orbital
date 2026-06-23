@@ -63,7 +63,7 @@ export const ShipPanel: React.FC = () => {
       //    The ship's plannedTransit field holds the plan; the map
       //    renderer shows the dashed amber arc. The COMMIT button
       //    promotes it via launchTorchTransfer.
-      if (ship.transit || (ship.queuedTransits && ship.queuedTransits.length > 0)) {
+      if (ship.transit || ship.plannedTransit || (ship.queuedTransits && ship.queuedTransits.length > 0)) {
         const queuedPlan = enqueueTorchTransfer(ship.id, targetBodyId);
         if (queuedPlan && mpActions) {
           setTransferError(null);
@@ -541,11 +541,6 @@ export const ShipPanel: React.FC = () => {
                           </div>
                         </div>
                         <div className="order-actions">
-                          <button
-                            className="commit-btn"
-                            onClick={() => commitTransferLocal(ship)}
-                            title="Launch this transfer"
-                          >COMMIT</button>
                           <button
                             className="delete-btn"
                             onClick={() => cancelTorchPreview(ship.id)}
