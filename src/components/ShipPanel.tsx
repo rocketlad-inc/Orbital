@@ -65,7 +65,16 @@ export const ShipPanel: React.FC = () => {
       //    promotes it via launchTorchTransfer.
       if (ship.transit || ship.plannedTransit || (ship.queuedTransits && ship.queuedTransits.length > 0)) {
         const queuedPlan = enqueueTorchTransfer(ship.id, targetBodyId);
-        if (queuedPlan && mpActions) {
+        // Post immediately ONLY when chaining onto a live in-flight
+        // burn — the server already knows about ship.transit so the
+        // queued leg's scheduledT = arriveTick is a coherent future
+        // event for it. When chaining onto a still-uncommitted
+        // plannedTransit, the server has no idea the prior leg exists;
+        // posting now would make the server treat the chained leg as
+        // primary and the /state poll would wipe the local plannedTransit.
+        // commitTransferLocal posts the full chain when the player
+        // hits COMMIT.
+        if (queuedPlan && mpActions && ship.transit) {
           setTransferError(null);
           mpActions.transfer({
             shipId: ship.id,
@@ -159,6 +168,14 @@ export const ShipPanel: React.FC = () => {
       return;
     }
     if (!mpActions) return;
+    // Snapshot the queue BEFORE we post — launchTorchTransfer didn't
+    // touch queuedTransits, but each one needs to land on the server
+    // too so the alarm fires the chained burn at the right tick. Each
+    // q.startTick is already chained from the previous leg's arriveTick
+    // (set at enqueue time in gameContext), so we can post each leg
+    // verbatim and the server's alarm scheduler does the right thing.
+    const queuedAtCommit = owningShip.queuedTransits ?? [];
+
     // Post the torch-derived arrival to the server so its DB row, the
     // alarm's in_transit→arrive transition, and the other clients' MP
     // reconstruction all agree exactly.
@@ -178,6 +195,24 @@ export const ShipPanel: React.FC = () => {
         setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
       }
     });
+
+    // Post each queued leg. These were chained off plannedTransit's
+    // arriveTick at enqueue time, so their scheduledT lines up with
+    // when the previous leg parks the ship.
+    for (const q of queuedAtCommit) {
+      mpActions.transfer({
+        shipId: owningShip.id,
+        targetBodyId: q.targetBodyId,
+        scheduledT: q.startTick,
+        arrivalT: q.arriveTick,
+        dvPrograde: q.totalDv,
+        fuelCost: Math.round(q.totalDv * 10),
+      }).then(res => {
+        if (!res.ok) {
+          setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
+        }
+      });
+    }
   };
 
   const handleRemoveQueuedTransfer = (index: number) => {
