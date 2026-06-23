@@ -1636,43 +1636,29 @@ export class Room {
     }
 
     if (perFaction.size > 0) {
-      // Read current remainders for the affected factions, then write
-      // back (pool += whole, remainder = fractional). Batched per
-      // faction; one SELECT + one UPDATE.
+      // Round per-tick delivery to integer and add to the pool. We
+      // dropped the fractional remainder accumulator (migration 0028's
+      // *_remainder columns) because a single SELECT failure against
+      // a not-yet-migrated D1 would silently kill resolveTick mid-tick.
+      // Math.round drift is ~0.5/tick worst-case per resource per
+      // collector -- below the noise floor of the harvest cadence and
+      // building boosts, so not worth the migration fragility.
       for (const [fid, delta] of perFaction) {
-        const row = await this.env.DB
-          .prepare(
-            `SELECT fuel_remainder, metal_remainder, gold_remainder, science_remainder
-               FROM game_factions WHERE id = ?`,
-          )
-          .bind(fid).first();
-        if (!row) continue;
-        const fuelT    = Number(row.fuel_remainder    ?? 0) + delta.fuel;
-        const metalT   = Number(row.metal_remainder   ?? 0) + delta.metal;
-        const goldT    = Number(row.gold_remainder    ?? 0) + delta.gold;
-        const scienceT = Number(row.science_remainder ?? 0) + delta.science;
-        const fuelInt    = Math.floor(fuelT);
-        const metalInt   = Math.floor(metalT);
-        const goldInt    = Math.floor(goldT);
-        const scienceInt = Math.floor(scienceT);
+        const fuelI    = Math.round(delta.fuel);
+        const metalI   = Math.round(delta.metal);
+        const goldI    = Math.round(delta.gold);
+        const scienceI = Math.round(delta.science);
+        if (fuelI + metalI + goldI + scienceI <= 0) continue;
         await this.env.DB
           .prepare(
             `UPDATE game_factions
                 SET fuel    = fuel    + ?,
                     metal   = metal   + ?,
                     gold    = gold    + ?,
-                    science = science + ?,
-                    fuel_remainder    = ?,
-                    metal_remainder   = ?,
-                    gold_remainder    = ?,
-                    science_remainder = ?
+                    science = science + ?
               WHERE id = ?`,
           )
-          .bind(
-            fuelInt, metalInt, goldInt, scienceInt,
-            fuelT - fuelInt, metalT - metalInt, goldT - goldInt, scienceT - scienceInt,
-            fid,
-          )
+          .bind(fuelI, metalI, goldI, scienceI, fid)
           .run();
       }
     }
