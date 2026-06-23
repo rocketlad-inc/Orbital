@@ -337,6 +337,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // === Fog of war ============================================
     // Recompute the player's visibility set each frame, carrying the
     // previous lastSeen map forward so ghosts age naturally.
+    // Allies (MP defense-pact / intel-share partners) share sensor
+    // coverage — their ships/settlements count as the player's own for
+    // fog of war. Empty in single-player.
+    const alliedSet: ReadonlySet<string> = new Set(gameState.alliedFactionIds ?? []);
     const visibility = computeVisibility(
       'player',
       gameState.ships,
@@ -344,6 +348,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       gameState.bodies,
       gameState.currentTick,
       lastSeenRef.current,
+      alliedSet,
     );
     lastSeenRef.current = visibility.lastSeen;
     const visibleShipIds = visibility.visibleShipIds;
@@ -597,6 +602,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         gameState.settlements,
         gameState.bodies,
         gameState.currentTick,
+        alliedSet,
       );
       drawFogOfWarOverlay(rings, renderContext);
     }

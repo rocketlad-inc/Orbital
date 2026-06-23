@@ -100,6 +100,36 @@ async function handleGetState(req, env, ctx) {
     .bind(gameId)
     .all()).results ?? [];
 
+  // Allies — factions the caller co-signs an ACTIVE defense-pact or
+  // intel-share treaty with. They share sensor vision: the fog CTEs
+  // below expand "my presence" to include allied presence, so anything
+  // an ally can see, the caller sees too. (NAP is peace-only, not an
+  // alliance, so it's deliberately excluded.) Both signatories must
+  // have signed and the treaty must be live (not broken / expired).
+  const allyRows = (await env.DB
+    .prepare(
+      `SELECT DISTINCT ts2.faction_id AS ally_id
+         FROM treaties t
+         JOIN treaty_signatories ts1
+           ON ts1.treaty_id = t.id AND ts1.faction_id = ?2 AND ts1.signed_at_tick IS NOT NULL
+         JOIN treaty_signatories ts2
+           ON ts2.treaty_id = t.id AND ts2.faction_id != ?2 AND ts2.signed_at_tick IS NOT NULL
+        WHERE t.game_id = ?1
+          AND t.status = 'active'
+          AND t.broken_at_tick IS NULL
+          AND t.kind IN ('defense_pact', 'intel_share')
+          AND (t.expires_at_tick IS NULL OR t.expires_at_tick > ?3)`,
+    )
+    .bind(gameId, me.id, game.current_tick)
+    .all()).results ?? [];
+  const allyIds = allyRows.map(r => r.ally_id);
+
+  // Faction ids whose presence illuminates the map for the caller:
+  // the caller plus every ally. Passed to the fog CTEs as a JSON array
+  // (json_each) so the IN-list works for any number of allies without
+  // a variable placeholder count.
+  const presenceFactionIds = JSON.stringify([me.id, ...allyIds]);
+
   // Sensor-radius fog. The caller "sees" a body if any of the following:
   //   (1) presence — they own it OR a ship of theirs is orbiting it
   //   (2) sibling-by-parent — it's a moon of a body in (1), so a ship at
@@ -112,10 +142,10 @@ async function handleGetState(req, env, ctx) {
       `WITH my_presence AS (
          SELECT DISTINCT parent_body_id AS bid
            FROM game_ships
-          WHERE game_id = ?1 AND owner_faction_id = ?2 AND status = 'active'
+          WHERE game_id = ?1 AND owner_faction_id IN (SELECT value FROM json_each(?2)) AND status = 'active'
          UNION
          SELECT id AS bid FROM game_bodies
-          WHERE game_id = ?1 AND owner_faction_id = ?2
+          WHERE game_id = ?1 AND owner_faction_id IN (SELECT value FROM json_each(?2))
             AND destroyed_at_tick IS NULL
        ),
        -- Parents of presence bodies, only if those parents are
@@ -180,7 +210,7 @@ async function handleGetState(req, env, ctx) {
         WHERE game_id = ?1
           AND destroyed_at_tick IS NULL`,
     )
-    .bind(gameId, me.id)
+    .bind(gameId, presenceFactionIds)
     .all()).results ?? [];
 
   // Body geometry is physical reality, always visible. But who owns a
@@ -241,10 +271,10 @@ async function handleGetState(req, env, ctx) {
       `WITH my_presence AS (
          SELECT DISTINCT parent_body_id AS bid
            FROM game_ships
-          WHERE game_id = ?1 AND owner_faction_id = ?2 AND status = 'active'
+          WHERE game_id = ?1 AND owner_faction_id IN (SELECT value FROM json_each(?2)) AND status = 'active'
          UNION
          SELECT id AS bid FROM game_bodies
-          WHERE game_id = ?1 AND owner_faction_id = ?2
+          WHERE game_id = ?1 AND owner_faction_id IN (SELECT value FROM json_each(?2))
             AND destroyed_at_tick IS NULL
        ),
        -- Non-star parents of presence bodies. See the long-form CTE
@@ -283,10 +313,10 @@ async function handleGetState(req, env, ctx) {
          FROM game_ships
         WHERE game_id = ?1
           AND status = 'active'
-          AND (owner_faction_id = ?2
+          AND (owner_faction_id IN (SELECT value FROM json_each(?2))
                OR parent_body_id IN (SELECT bid FROM visible_bodies))`,
     )
-    .bind(gameId, me.id)
+    .bind(gameId, presenceFactionIds)
     .all()).results ?? [];
 
   // Settlements: same visibility set as ships/bodies above.
@@ -295,10 +325,10 @@ async function handleGetState(req, env, ctx) {
       `WITH my_presence AS (
          SELECT DISTINCT parent_body_id AS bid
            FROM game_ships
-          WHERE game_id = ?1 AND owner_faction_id = ?2 AND status = 'active'
+          WHERE game_id = ?1 AND owner_faction_id IN (SELECT value FROM json_each(?2)) AND status = 'active'
          UNION
          SELECT id AS bid FROM game_bodies
-          WHERE game_id = ?1 AND owner_faction_id = ?2
+          WHERE game_id = ?1 AND owner_faction_id IN (SELECT value FROM json_each(?2))
             AND destroyed_at_tick IS NULL
        ),
        -- Non-star parents of presence bodies. See the long-form CTE
@@ -338,10 +368,10 @@ async function handleGetState(req, env, ctx) {
          FROM game_settlements
         WHERE game_id = ?1
           AND destroyed_at_tick IS NULL
-          AND (owner_faction_id = ?2
+          AND (owner_faction_id IN (SELECT value FROM json_each(?2))
                OR body_id IN (SELECT bid FROM visible_bodies))`,
     )
-    .bind(gameId, me.id)
+    .bind(gameId, presenceFactionIds)
     .all()).results ?? [];
 
   // Recent public chronicle entries — combat results, key events. Surfaced
@@ -470,6 +500,9 @@ async function handleGetState(req, env, ctx) {
       tech_levels,
       reputation: me.reputation,
       senate_weight: me.senate_weight,
+      // Allies (active defense-pact / intel-share). The client treats
+      // these faction ids as friendly for fog of war — shared vision.
+      ally_faction_ids: allyIds,
     },
     factions,
     bodies,
