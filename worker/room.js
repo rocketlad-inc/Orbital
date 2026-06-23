@@ -1561,74 +1561,112 @@ export class Room {
         .run();
     }
 
-    // 3.6 Stockpile offload — collector-network gated, fractional drain.
+    // 3.6 Direct yield delivery — per-collector, every tick, fractional.
     //
-    // Mirrors the SP rule in src/game/settlements.ts tickSettlements:
-    // a faction unlocks its logistics network the moment ANY of its
-    // settlements carries has_collector = 1. From then on, every one
-    // of that faction's settlements bleeds a fraction of its stockpile
-    // into the pool each tick — not 100%, so the income meter reads
-    // as a live trickle rather than burst dumps. Factions with zero
-    // collectors get nothing: stockpiles stay local until they pay
-    // COLLECTOR_COST on at least one settlement.
+    // Settlements with has_collector = 1 are plumbed straight into the
+    // faction pool: every tick they deliver (yield / HARVEST_INTERVAL)
+    // per resource directly to the pool. No stockpile involvement on
+    // collector settlements. The fractional residual lives in the
+    // *_remainder columns (migration 0027) so the per-tick delivery
+    // matches what the income pill on the HUD promises.
     //
-    // Drain step = COLLECTOR_BASE_DRAIN_FRACTION (0.5) /
-    //              COLLECTOR_AUTO_INTERVAL (25) = 0.02 per tick.
-    // Over 25 ticks that's ~50% of the stockpile delivered, matching
-    // the SP tempo. Use Math.round to avoid sub-integer dust.
-    const DRAIN_PER_TICK = 0.5 / 25;
-    const offloads = (await this.env.DB
+    // Non-collector settlements continue to accumulate stockpile via
+    // the harvest cycle (every HARVEST_INTERVAL=10 ticks); that
+    // stockpile no longer auto-drains. Only trade-route freighters or
+    // a freshly-built collector on that settlement extract it.
+    //
+    // Sum per-faction across all collector settlements in a single
+    // pass, then apply one batched UPDATE per faction (pool += integer
+    // portion of (remainder + delivery), remainder = fractional part).
+    const HARVEST_INTERVAL = 10;
+    const collectorRows = (await this.env.DB
       .prepare(
-        `SELECT s.id AS sid, s.owner_faction_id AS fid,
-                s.stockpile_metal AS m, s.stockpile_fuel AS f,
-                s.stockpile_gold AS g, s.stockpile_science AS sci
+        `SELECT s.owner_faction_id AS fid,
+                s.id AS sid, s.population AS pop, s.type AS stype,
+                s.forge_level AS forge_l, s.mint_level AS mint_l, s.lab_level AS lab_l,
+                b.yield_metal   AS y_metal,
+                b.yield_fuel    AS y_fuel,
+                b.yield_gold    AS y_gold,
+                b.yield_science AS y_science
            FROM game_settlements s
+           JOIN game_bodies b ON b.id = s.body_id
           WHERE s.game_id = ?
             AND s.destroyed_at_tick IS NULL
-            AND (s.stockpile_metal + s.stockpile_fuel + s.stockpile_gold + s.stockpile_science) > 0
-            AND s.owner_faction_id IN (
-              SELECT DISTINCT owner_faction_id FROM game_settlements
-               WHERE game_id = ?
-                 AND destroyed_at_tick IS NULL
-                 AND has_collector = 1
-            )`,
+            AND s.has_collector = 1`,
       )
-      .bind(gameId, gameId)
+      .bind(gameId)
       .all()).results ?? [];
 
-    for (const o of offloads) {
-      // Compute the per-tick slice. At least 1 of any resource that
-      // has any stockpile, so a tiny stockpile still trickles instead
-      // of stranding at 1-2 forever on the floor of the fractional math.
-      const slice = (v) => {
-        if (v <= 0) return 0;
-        const portion = Math.round(v * DRAIN_PER_TICK);
-        return Math.max(1, portion);
+    // Building yield multipliers — mirror src/game/settlements.ts
+    // settlementYield() so server and SP agree on per-tick deliveries.
+    const YIELD_MULT_PER_POP = 0.20;
+    const FORGE_PER_LEVEL = 0.25;
+    const MINT_PER_LEVEL  = 0.25;
+    const LAB_PER_LEVEL   = 0.20;
+    const TYPE_MUL_CITY    = { fuel: 1.0, metal: 1.2, gold: 1.0, science: 0.8 };
+    const TYPE_MUL_STATION = { fuel: 1.1, metal: 0.8, gold: 1.0, science: 1.4 };
+
+    const perFaction = new Map();
+    for (const r of collectorRows) {
+      const tm = r.stype === 'city' ? TYPE_MUL_CITY : TYPE_MUL_STATION;
+      const popMul = 1 + YIELD_MULT_PER_POP * (Number(r.pop ?? 1) - 1);
+      const forgeMul = 1 + Number(r.forge_l ?? 0) * FORGE_PER_LEVEL;
+      const mintMul  = 1 + Number(r.mint_l  ?? 0) * MINT_PER_LEVEL;
+      const labMul   = 1 + Number(r.lab_l   ?? 0) * LAB_PER_LEVEL;
+      const delivery = {
+        fuel:    Number(r.y_fuel    ?? 0) * popMul * tm.fuel    / HARVEST_INTERVAL,
+        metal:   Number(r.y_metal   ?? 0) * popMul * tm.metal   * forgeMul / HARVEST_INTERVAL,
+        gold:    Number(r.y_gold    ?? 0) * popMul * tm.gold    * mintMul  / HARVEST_INTERVAL,
+        science: Number(r.y_science ?? 0) * popMul * tm.science * labMul   / HARVEST_INTERVAL,
       };
-      const dm = Math.min(o.m, slice(o.m));
-      const df = Math.min(o.f, slice(o.f));
-      const dg = Math.min(o.g, slice(o.g));
-      const dsci = Math.min(o.sci, slice(o.sci));
-      if (dm + df + dg + dsci <= 0) continue;
-      await this.env.DB.batch([
-        this.env.DB
+      const agg = perFaction.get(r.fid) ?? { fuel: 0, metal: 0, gold: 0, science: 0 };
+      agg.fuel    += delivery.fuel;
+      agg.metal   += delivery.metal;
+      agg.gold    += delivery.gold;
+      agg.science += delivery.science;
+      perFaction.set(r.fid, agg);
+    }
+
+    if (perFaction.size > 0) {
+      // Read current remainders for the affected factions, then write
+      // back (pool += whole, remainder = fractional). Batched per
+      // faction; one SELECT + one UPDATE.
+      for (const [fid, delta] of perFaction) {
+        const row = await this.env.DB
+          .prepare(
+            `SELECT fuel_remainder, metal_remainder, gold_remainder, science_remainder
+               FROM game_factions WHERE id = ?`,
+          )
+          .bind(fid).first();
+        if (!row) continue;
+        const fuelT    = Number(row.fuel_remainder    ?? 0) + delta.fuel;
+        const metalT   = Number(row.metal_remainder   ?? 0) + delta.metal;
+        const goldT    = Number(row.gold_remainder    ?? 0) + delta.gold;
+        const scienceT = Number(row.science_remainder ?? 0) + delta.science;
+        const fuelInt    = Math.floor(fuelT);
+        const metalInt   = Math.floor(metalT);
+        const goldInt    = Math.floor(goldT);
+        const scienceInt = Math.floor(scienceT);
+        await this.env.DB
           .prepare(
             `UPDATE game_factions
-                SET metal = metal + ?, fuel = fuel + ?, gold = gold + ?, science = science + ?
+                SET fuel    = fuel    + ?,
+                    metal   = metal   + ?,
+                    gold    = gold    + ?,
+                    science = science + ?,
+                    fuel_remainder    = ?,
+                    metal_remainder   = ?,
+                    gold_remainder    = ?,
+                    science_remainder = ?
               WHERE id = ?`,
           )
-          .bind(dm, df, dg, dsci, o.fid),
-        this.env.DB
-          .prepare(
-            `UPDATE game_settlements
-                SET stockpile_metal = stockpile_metal - ?,
-                    stockpile_fuel  = stockpile_fuel  - ?,
-                    stockpile_gold  = stockpile_gold  - ?,
-                    stockpile_science = stockpile_science - ?
-              WHERE id = ?`,
+          .bind(
+            fuelInt, metalInt, goldInt, scienceInt,
+            fuelT - fuelInt, metalT - metalInt, goldT - goldInt, scienceT - scienceInt,
+            fid,
           )
-          .bind(dm, df, dg, dsci, o.sid),
-      ]);
+          .run();
+      }
     }
 
     // Stamp last_combat_tick on every ship that fired this tick. Done
