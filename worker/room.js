@@ -1580,11 +1580,24 @@ export class Room {
     // portion of (remainder + delivery), remainder = fractional part).
     // HARVEST_INTERVAL = 10 is already declared at the top of the
     // harvest section above; reuse it.
+    //
+    // NOTE: building levels live in the buildings_json TEXT column
+    // ({"forge":2,"mint":0,"lab":1}), NOT in forge_level/mint_level/
+    // lab_level columns (those don't exist). Referencing the phantom
+    // columns made this SELECT throw 'no such column: s.forge_level'
+    // every tick, which killed resolveTick right here -- pool never
+    // updated and everything after this block (combat, dyson, victory)
+    // silently stopped too. Pull buildings_json and parse per row.
+    // Wrapped: a SQL/parse error in collector delivery must NOT
+    // kill the rest of resolveTick (combat, dyson, victory). This
+    // block silently killed the whole tick when it referenced
+    // phantom forge_level columns — never again.
+    try {
     const collectorRows = (await this.env.DB
       .prepare(
         `SELECT s.owner_faction_id AS fid,
                 s.id AS sid, s.population AS pop, s.type AS stype,
-                s.forge_level AS forge_l, s.mint_level AS mint_l, s.lab_level AS lab_l,
+                s.buildings_json AS buildings,
                 b.yield_metal   AS y_metal,
                 b.yield_fuel    AS y_fuel,
                 b.yield_gold    AS y_gold,
@@ -1598,9 +1611,10 @@ export class Room {
       .bind(gameId)
       .all()).results ?? [];
 
-    // Building yield multipliers — mirror src/game/settlements.ts
-    // settlementYield() so server and SP agree on per-tick deliveries.
-    const YIELD_MULT_PER_POP = 0.20;
+    // Yield multipliers — mirror src/game/settlements.ts settlementYield()
+    // AND the harvest block above (which uses 0.1 per pop) so server,
+    // SP, and the client income pill all agree.
+    const YIELD_MULT_PER_POP = 0.1;
     const FORGE_PER_LEVEL = 0.25;
     const MINT_PER_LEVEL  = 0.25;
     const LAB_PER_LEVEL   = 0.20;
@@ -1610,17 +1624,16 @@ export class Room {
     const perFaction = new Map();
     for (const r of collectorRows) {
       const tm = r.stype === 'city' ? TYPE_MUL_CITY : TYPE_MUL_STATION;
-      const popMul = 1 + YIELD_MULT_PER_POP * (Number(r.pop ?? 1) - 1);
-      const forgeMul = 1 + Number(r.forge_l ?? 0) * FORGE_PER_LEVEL;
-      const mintMul  = 1 + Number(r.mint_l  ?? 0) * MINT_PER_LEVEL;
-      const labMul   = 1 + Number(r.lab_l   ?? 0) * LAB_PER_LEVEL;
-      // Full harvest yield delivered every tick (no /HARVEST_INTERVAL
-      // divide). That's the point of building a collector — it speeds
-      // up extraction 10× vs the stockpile cycle non-collector
-      // settlements run on. Yield * popMul * typeMul can still be
-      // fractional (e.g. 3 ore × 1.1 pop × 1.2 city = 3.96), so the
-      // fractional residual accumulates in *_remainder until it crosses
-      // 1 and the integer portion transfers to the pool.
+      const popMul = 1 + YIELD_MULT_PER_POP * Math.max(0, Number(r.pop ?? 1) - 1);
+      let bld = {};
+      if (r.buildings) { try { bld = JSON.parse(r.buildings) ?? {}; } catch { bld = {}; } }
+      const forgeMul = 1 + Number(bld.forge ?? 0) * FORGE_PER_LEVEL;
+      const mintMul  = 1 + Number(bld.mint  ?? 0) * MINT_PER_LEVEL;
+      const labMul   = 1 + Number(bld.lab   ?? 0) * LAB_PER_LEVEL;
+      // Full harvest yield delivered to the pool every tick (no
+      // /HARVEST_INTERVAL divide) — that's the point of a collector:
+      // 10x faster extraction than the stockpile cycle non-collector
+      // settlements run on.
       const delivery = {
         fuel:    Number(r.y_fuel    ?? 0) * popMul * tm.fuel,
         metal:   Number(r.y_metal   ?? 0) * popMul * tm.metal   * forgeMul,
@@ -1661,6 +1674,9 @@ export class Room {
           .bind(fuelI, metalI, goldI, scienceI, fid)
           .run();
       }
+    }
+    } catch (e) {
+      console.error('collector delivery failed (non-fatal)', e);
     }
 
     // Stamp last_combat_tick on every ship that fired this tick. Done
