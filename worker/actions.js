@@ -826,7 +826,7 @@ async function handleAdminGrant(req, env, ctx) {
 
 // POST /api/games/:gameId/settlements/:settlementId/collector
 // Upgrades an existing player-owned settlement to a logistics endpoint.
-// Charges COLLECTOR_COST (150 ore, 100 credits) and flips
+// Charges COLLECTOR_COST (500 credits) and flips
 // has_collector = 1 atomically. Failure modes:
 //   404 not_found          — settlement missing or different game
 //   403 not_owner          — settlement belongs to a different faction

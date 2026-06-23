@@ -75,7 +75,7 @@ export const ShipIconGalleryPage: React.FC<Props> = ({ onBack }) => {
         minHeight: '100vh',
         background: 'linear-gradient(180deg, #050810 0%, #0c1218 100%)',
         color: '#d8e4ee',
-        fontFamily: "'JetBrains Mono', monospace",
+        fontFamily: 'var(--font-body)',
         padding: '20px 28px 60px',
       }}
     >
@@ -219,7 +219,7 @@ export const ShipIconGalleryPage: React.FC<Props> = ({ onBack }) => {
             background: '#0a1018', border: '1px solid #2a3d50',
             borderRadius: 4, padding: '12px 14px',
             fontSize: 11, color: '#d8e4ee', whiteSpace: 'pre-wrap',
-            fontFamily: "'JetBrains Mono', monospace",
+            fontFamily: 'var(--font-body)',
             margin: 0,
           }}
         >{summary}</pre>

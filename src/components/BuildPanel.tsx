@@ -2,7 +2,7 @@
 // BuildPanel — Ship construction UI for owned bodies
 // ============================================================
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { BUILDABLE_CLASSES, SHIP_CLASSES, ShipClassName } from '../game/shipClasses';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
@@ -49,6 +49,16 @@ export const BuildPanel: React.FC = () => {
   // the BUILD button never silently resets in MP — mirrors the
   // BodyInspector deploy-error pattern. Cleared on the next attempt.
   const [buildError, setBuildError] = useState<string | null>(null);
+  // CSS-side feedback for click confirmation: the build-btn--just-queued
+  // class fires the queued-flash keyframes for 600ms. Tracked per
+  // class so the player can spam BUILD on Corvette without losing the
+  // animation on Frigate.
+  const [recentlyQueued, setRecentlyQueued] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (recentlyQueued.size === 0) return;
+    const t = setTimeout(() => setRecentlyQueued(new Set()), 600);
+    return () => clearTimeout(t);
+  }, [recentlyQueued]);
 
   if (!uiState.selectedBodyId) return null;
 
@@ -217,9 +227,9 @@ export const BuildPanel: React.FC = () => {
                 >{def.cost.credits}C</span>
               </div>
               <button
-                className="build-btn"
+                className={`build-btn${recentlyQueued.has(cls) ? ' build-btn--just-queued' : ''}`}
                 disabled={!canAfford}
-                onClick={() => handleBuild(cls)}
+                onClick={() => { setRecentlyQueued(s => new Set(s).add(cls)); handleBuild(cls); }}
                 title={canAfford
                   ? `Build a ${def.displayName} (${def.cost.fuel}F ${def.cost.ore}O ${def.cost.credits}C, ${def.buildTime} ticks)`
                   : shortLabel}

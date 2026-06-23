@@ -67,9 +67,8 @@
 .brand-text {
   font-family: var(--display);
   font-size: 18px;
-  letter-spacing: 0.3em;
+  letter-spacing: 0.08em;
   color: var(--accent);
-  font-weight: 700;
 }
 
 .landing-nav-actions {
@@ -249,11 +248,10 @@
 
 .landing .section-title {
   font-family: var(--display);
-  font-size: clamp(28px, 4vw, 44px);
-  letter-spacing: 0.05em;
+  font-size: clamp(26px, 4vw, 40px);
+  letter-spacing: 0.03em;
   color: var(--fg);
   margin: 0 0 32px;
-  font-weight: 700;
 }
 
 .landing .section-body {

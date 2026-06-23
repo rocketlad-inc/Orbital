@@ -98,7 +98,7 @@ export const ThreatsPanel: React.FC = () => {
         border: '1px solid #ff5e5e',
         borderRadius: 4,
         padding: '8px 10px',
-        fontFamily: "'JetBrains Mono', monospace",
+        fontFamily: 'var(--font-body)',
         color: '#d8e4ee',
         boxShadow: '0 0 12px rgba(255, 94, 94, 0.25)',
       }}

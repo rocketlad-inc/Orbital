@@ -241,7 +241,7 @@ export const TutorialOverlay: React.FC = () => {
         inset: 0,
         zIndex: 3000,
         pointerEvents: 'none', // backdrop is purely visual; controls handle clicks themselves
-        fontFamily: "'JetBrains Mono', monospace",
+        fontFamily: 'var(--font-body)',
       }}
     >
       {/* Dim backdrop with the target rect cut out via even-odd fill.

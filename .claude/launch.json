@@ -3,9 +3,10 @@
   "configurations": [
     {
       "name": "orbital-frontend",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["start"],
-      "port": 3000
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "-s", "C:/Users/lcfee/OneDrive/Documents/Claude/Projects/Orbital/build", "-l", "5050"],
+      "port": 5050,
+      "autoPort": true
     }
   ]
 }

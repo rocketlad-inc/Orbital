@@ -129,7 +129,7 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
         position: 'fixed', inset: 0, zIndex: 2000,
         background: 'rgba(5, 8, 14, 0.78)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontFamily: "'JetBrains Mono', monospace", color: '#d8e4ee',
+        fontFamily: 'var(--font-body)', color: '#d8e4ee',
       }}
       onClick={onClose}
     >

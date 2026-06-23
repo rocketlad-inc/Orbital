@@ -105,7 +105,7 @@ function GameUI({
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
 
       if (e.key === 'Escape') setActivePanel(null);
-      if (e.key === 's' || e.key === 'S') setActivePanel(p => (p === 'settlements' ? null : 'settlements'));
+      if (e.key === 'c' || e.key === 'C') setActivePanel(p => (p === 'settlements' ? null : 'settlements'));
       if (e.key === 'f' || e.key === 'F') setActivePanel(p => (p === 'fleet' ? null : 'fleet'));
       if (e.key === 'r' || e.key === 'R') setActivePanel(p => (p === 'research' ? null : 'research'));
     };

@@ -1582,7 +1582,7 @@ const FlowNode: React.FC<FlowNodeProps> = ({ x, y, w, h, title, sub, color, smal
       <text
         x={x + w / 2} y={titleY} textAnchor="middle"
         fill={color} fontSize={titleSize} fontWeight={600}
-        fontFamily="JetBrains Mono, monospace"
+        fontFamily="var(--font-body)"
       >
         {title}
       </text>
@@ -1590,7 +1590,7 @@ const FlowNode: React.FC<FlowNodeProps> = ({ x, y, w, h, title, sub, color, smal
         <text
           x={x + w / 2} y={y + h / 2 + subSize + 2} textAnchor="middle"
           fill="#a5b7ca" fontSize={subSize}
-          fontFamily="JetBrains Mono, monospace"
+          fontFamily="var(--font-body)"
         >
           {sub}
         </text>
@@ -1625,7 +1625,7 @@ const FlowArrow: React.FC<FlowArrowProps> = ({ x1, y1, x2, y2, label, vertical, 
         <text
           x={labelX} y={labelY} textAnchor="middle"
           fill="#b8c8d6" fontSize={7}
-          fontFamily="JetBrains Mono, monospace"
+          fontFamily="var(--font-body)"
         >
           {label}
         </text>

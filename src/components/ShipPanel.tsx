@@ -299,7 +299,7 @@ export const ShipPanel: React.FC = () => {
             border: '1px solid #ffb84d',
             borderRadius: 8,
             boxShadow: '0 6px 18px rgba(0, 0, 0, 0.55)',
-            fontFamily: "'JetBrains Mono', monospace",
+            fontFamily: 'var(--font-body)',
             color: '#ffb84d',
             fontSize: 11,
             letterSpacing: '0.08em',

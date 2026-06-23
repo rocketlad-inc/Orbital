@@ -154,7 +154,7 @@ export const SinglePlayerSetup: React.FC<Props> = ({ onBegin, onCancel, onLoadSa
               border: '1px solid #4ecdc4',
               color: '#4ecdc4',
               borderRadius: 4,
-              fontFamily: "'JetBrains Mono', monospace",
+              fontFamily: 'var(--font-body)',
               fontSize: 11,
               fontWeight: 600,
               letterSpacing: '0.08em',

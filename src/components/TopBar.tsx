@@ -635,7 +635,7 @@ const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
             border: `1px solid ${color}`,
             borderRadius: 6,
             padding: '10px 12px',
-            fontFamily: "'JetBrains Mono', monospace",
+            fontFamily: 'var(--font-body)',
             color: '#d8e4ee',
             boxShadow: '0 10px 28px rgba(0, 0, 0, 0.6)',
           }}

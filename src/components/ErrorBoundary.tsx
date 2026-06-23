@@ -52,7 +52,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
         zIndex: 9999,
         background: 'rgba(5, 8, 12, 0.96)',
         color: '#d8e4ee',
-        fontFamily: "'JetBrains Mono', monospace",
+        fontFamily: 'var(--font-body)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -72,7 +72,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
             color: '#ff5e5e',
             letterSpacing: '0.12em',
             marginBottom: 12,
-            fontFamily: "'Orbitron', 'JetBrains Mono', monospace",
+            fontFamily: 'var(--font-display)',
           }}>
             ⚠ SOMETHING BROKE
           </div>

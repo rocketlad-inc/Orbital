@@ -144,7 +144,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
         position: 'fixed', inset: 0, zIndex: 200,
         background: 'rgba(0, 0, 0, 0.55)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontFamily: "'JetBrains Mono', monospace",
+        fontFamily: 'var(--font-body)',
       }}
       onClick={onClose}
     >

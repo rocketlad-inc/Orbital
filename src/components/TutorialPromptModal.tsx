@@ -31,7 +31,7 @@ export const TutorialPromptModal: React.FC = () => {
         position: 'fixed', inset: 0, zIndex: 2900,
         background: 'rgba(5, 8, 14, 0.78)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontFamily: "'JetBrains Mono', monospace",
+        fontFamily: 'var(--font-body)',
       }}
     >
       <div
