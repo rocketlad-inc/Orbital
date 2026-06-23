@@ -10,8 +10,8 @@
   --border: #2a3d50;
   --accent: #ffb84d;
   --friendly: #4ecdc4;
-  --mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
-  --display: 'Orbitron', system-ui, sans-serif;
+  --mono: var(--font-body);
+  --display: var(--font-display);
 
   /* Own the viewport height and provide our own scroll context. Global
      `html, body { overflow: hidden }` in App.css blocks page scrolling

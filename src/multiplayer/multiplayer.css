@@ -11,7 +11,7 @@
   --mp-accent: #ffb84d;
   --mp-friendly: #4ecdc4;
   --mp-hostile: #ff5e5e;
-  --mp-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  --mp-mono: var(--font-body);
 }
 
 /* ---- Full-screen auth overlay ---- */
@@ -31,9 +31,9 @@
   color: var(--mp-fg);
 }
 .mp-title {
-  font-family: 'Orbitron', system-ui, sans-serif;
+  font-family: var(--font-display);
   font-size: 18px;
-  letter-spacing: 0.25em;
+  letter-spacing: 0.08em;
   color: var(--mp-accent);
   margin: 0;
 }
@@ -50,18 +50,19 @@
   border: 1px solid var(--mp-border);
   color: var(--mp-fg-dim);
   padding: 8px;
-  font: inherit;
+  font-family: var(--font-display);
   font-size: 13px;
-  letter-spacing: 0.15em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   cursor: pointer;
 }
 .mp-tab.active { color: var(--mp-accent); border-color: var(--mp-accent); }
 .mp-label {
   display: block;
+  font-family: var(--font-display);
   font-size: 12px;
   color: var(--mp-fg-dim);
-  letter-spacing: 0.15em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   margin: 12px 0 4px;
 }
@@ -81,8 +82,8 @@
   width: 100%; margin-top: 16px;
   background: var(--mp-accent); color: var(--mp-bg);
   border: none; padding: 10px;
-  font: inherit; font-weight: 600;
-  font-size: 13px; letter-spacing: 0.2em; text-transform: uppercase;
+  font-family: var(--font-display);
+  font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase;
   cursor: pointer;
 }
 .mp-submit:disabled { opacity: 0.5; cursor: wait; }
@@ -160,8 +161,9 @@
   padding: 8px 10px;
   border-bottom: 1px solid var(--mp-border);
   display: flex; align-items: center; justify-content: space-between;
+  font-family: var(--font-display);
   font-size: 13px;
-  letter-spacing: 0.2em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--mp-accent);
 }
@@ -186,9 +188,9 @@
   border-bottom: 2px solid transparent;
   color: var(--mp-fg-dim);
   padding: 8px 4px;
-  font: inherit;
+  font-family: var(--font-display);
   font-size: 13px;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   cursor: pointer;
 }
@@ -199,9 +201,10 @@
 
 .mp-dock-body { flex: 1; overflow-y: auto; padding: 10px 12px; }
 .mp-section-title {
+  font-family: var(--font-display);
   font-size: 12px;
   color: var(--mp-fg-dim);
-  letter-spacing: 0.2em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   margin: 8px 0 6px;
 }
@@ -1149,10 +1152,10 @@
   cursor: not-allowed;
 }
 .lobby-body-card__name {
+  font-family: var(--font-display);
   font-size: 13px;
-  font-weight: 700;
   color: var(--mp-accent);
-  letter-spacing: 0.03em;
+  letter-spacing: 0.02em;
 }
 /* "Your pick" cards: name flips from amber accent to friendly cyan so
    the card visibly belongs to you, matching the map legend. */
@@ -1171,11 +1174,11 @@
   margin-top: 1px;
 }
 .lobby-body-card__tag {
+  font-family: var(--font-display);
   font-size: 13px;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--mp-accent);
-  font-weight: 600;
   margin-top: 2px;
 }
 .lobby-body-card.is-mine .lobby-body-card__tag { color: var(--mp-friendly); }

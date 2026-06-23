@@ -14,7 +14,7 @@
   border-radius: 22px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(6px);
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-body);
   /* Honor iOS safe area at the bottom */
   margin-bottom: env(safe-area-inset-bottom, 0);
 }

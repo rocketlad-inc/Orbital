@@ -215,7 +215,7 @@
   border: 1px solid #2a3d50;
   color: #b8c8d6;
   cursor: pointer;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-body);
   font-size: 9px;
   letter-spacing: 0.1em;
   padding: 3px 8px;
@@ -238,7 +238,7 @@
   padding: 12px;
   font-size: 10px;
   color: #d8e4ee;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-body);
 }
 
 /* Top card compact mode. The body header (TOP card) was the worst
@@ -485,7 +485,7 @@
   cursor: pointer;
   font-size: 9px;
   font-weight: 600;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-body);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   transition: all 0.15s ease;
@@ -544,7 +544,7 @@
   color: #d8e4ee;
   padding: 6px 8px;
   font-size: 10px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-body);
   letter-spacing: 0.03em;
   outline: none;
   transition: border-color 0.15s ease;
@@ -574,7 +574,7 @@
   cursor: pointer;
   font-size: 9px;
   font-weight: 700;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-body);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   transition: all 0.15s ease;
@@ -593,7 +593,7 @@
   cursor: pointer;
   font-size: 9px;
   font-weight: 600;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-body);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   transition: all 0.15s ease;

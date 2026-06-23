@@ -1,3 +1,10 @@
+:root {
+  /* Display = Audiowide (no bold weights, runs wide — see typography
+     guidance in CSS rules below). Body = Chakra Petch (400/600/700). */
+  --font-display: 'Audiowide', 'Orbitron', 'Eurostile', system-ui, sans-serif;
+  --font-body: 'Chakra Petch', 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -15,7 +22,7 @@ body {
   height: 100%;
   background: #0a0e14;
   color: #d8e4ee;
-  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  font-family: var(--font-body);
   overflow: hidden;
   user-select: none;
 }
@@ -40,11 +47,14 @@ body {
 }
 
 .title {
-  font-family: 'Orbitron', 'Eurostile', system-ui, sans-serif;
-  font-size: 15px;
-  letter-spacing: 0.25em;
+  /* Audiowide: no bold weights, already-wide letterforms. Skip
+     font-weight and trim letter-spacing so it doesn't blow out
+     on mobile. Size bumped down a notch — Audiowide renders
+     larger than Orbitron at the same px. */
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 0.08em;
   color: #ffb84d;
-  font-weight: 600;
 }
 
 .subtitle {
@@ -75,7 +85,7 @@ body {
   border: none;
   color: #8a9fb3;
   padding: 6px 12px;
-  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  font-family: var(--font-body);
   font-size: 11px;
   letter-spacing: 0.1em;
   cursor: pointer;
@@ -92,7 +102,7 @@ body {
 
 .time-tick {
   color: #8a9fb3;
-  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  font-family: var(--font-body);
   font-size: 11px;
   letter-spacing: 0.1em;
   padding: 6px 12px;

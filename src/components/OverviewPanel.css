@@ -13,7 +13,7 @@
   background: rgba(10, 14, 20, 0.97);
   border: 1px solid #2a3d50;
   border-radius: 4px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-body);
   color: #d8e4ee;
   display: flex;
   flex-direction: column;
@@ -56,7 +56,7 @@
 }
 
 .overview-panel__title-main {
-  font-family: 'Orbitron', 'JetBrains Mono', monospace;
+  font-family: var(--font-display);
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.18em;

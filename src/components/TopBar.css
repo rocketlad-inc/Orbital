@@ -16,7 +16,7 @@
   padding: 0 16px;
   background: linear-gradient(180deg, rgba(10, 14, 20, 0.98), rgba(10, 14, 20, 0.92));
   border-bottom: 1px solid #2a3d50;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-body);
   font-size: 11px;
   color: #d8e4ee;
   user-select: none;
@@ -47,7 +47,7 @@
 }
 
 .top-bar__title-main {
-  font-family: 'Orbitron', 'JetBrains Mono', monospace;
+  font-family: var(--font-display);
   font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.15em;
@@ -318,7 +318,7 @@
   display: flex;
   flex-direction: column;
   color: #d8e4ee;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-body);
   box-shadow: 8px 0 24px rgba(0, 0, 0, 0.5);
   animation: side-menu-slide 0.22s cubic-bezier(0.2, 0.7, 0.2, 1);
   overflow: hidden;       /* nav handles its own scroll below */
@@ -335,7 +335,7 @@
   flex-shrink: 0;
 }
 .side-menu__brand {
-  font-family: 'Orbitron', 'JetBrains Mono', monospace;
+  font-family: var(--font-display);
   font-size: 18px;
   letter-spacing: 0.28em;
   font-weight: 700;
@@ -555,7 +555,7 @@
   box-shadow: -8px 0 24px rgba(0, 0, 0, 0.5);
   display: flex;
   flex-direction: column;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-body);
   color: #d8e4ee;
   animation: event-log-slide 0.22s ease both;
 }
@@ -578,7 +578,7 @@
   flex-shrink: 0;
 }
 .event-log__title {
-  font-family: 'Orbitron', 'JetBrains Mono', monospace;
+  font-family: var(--font-display);
   font-size: 13px;
   letter-spacing: 0.18em;
   color: #ffb84d;

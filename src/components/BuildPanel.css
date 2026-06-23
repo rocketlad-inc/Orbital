@@ -27,7 +27,7 @@
   border-radius: 3px;
   color: #d8e4ee;
   padding: 4px 8px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-body);
   font-size: 10px;
   outline: none;
   box-sizing: border-box;
@@ -200,7 +200,7 @@
   color: #4ecdc4;
   border: 1px solid #4ecdc4;
   border-radius: 2px;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-body);
   font-size: 10px;
   font-weight: bold;
   cursor: pointer;
