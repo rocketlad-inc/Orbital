@@ -419,7 +419,7 @@ async function handleAccept(req, env, { session, params }) {
       .bind(nowMs, caller.id, tradeId),
   );
 
-  // 5. Chronicle entry.
+  // 5. Chronicle entry — the trade itself.
   const chronicleId = newId();
   stmts.push(
     env.DB
@@ -446,6 +446,27 @@ async function handleAccept(req, env, { session, params }) {
         nowMs,
       ),
   );
+
+  // 5b. One treaty_signed chronicle per pact created. Lets the in-game
+  // log surface diplomatic shifts as discrete events (not just buried
+  // in the trade_accepted payload), so playtesters see PACT SIGNED
+  // entries the same way they see PACT BROKEN later.
+  for (const t of treatyIds) {
+    stmts.push(
+      env.DB
+        .prepare(
+          `INSERT INTO chronicle_entries
+           (id, game_id, tick_number, kind, actor_faction_id, target_faction_id, payload, visibility, created_at_ms)
+           VALUES (?, ?, ?, 'treaty_signed', ?, ?, ?, 'public', ?)`,
+        )
+        .bind(
+          newId(), gameId, tick,
+          proposer.id, responder.id,
+          JSON.stringify({ treaty_id: t.id, kind: t.kind, source_trade_id: tradeId }),
+          nowMs,
+        ),
+    );
+  }
 
   await env.DB.batch(stmts);
 
@@ -628,6 +649,97 @@ async function handleCounter(req, env, { session, params }) {
   return json({ trade: tradeRowToJson(row) }, { status: 201 });
 }
 
+// ---------- POST /api/games/:gameId/treaties/:treatyId/break ----------
+//
+// Unilateral pact-break. Either signatory can fire this; the treaty
+// flips from 'active' to 'broken' and a treaty_broken chronicle entry
+// fires. The breaker is named in chronicle.actor_faction_id and on
+// treaties.breaker_faction_id so downstream UIs can render
+// "Lornian Empire BROKE the NAP with Sean."
+//
+// Hostility is implicit: once the pact is broken, the combat code
+// (worker/room.js — t.status = 'active' check) starts allowing damage
+// between the two factions on the very next combat tick. There is no
+// separate 'declare war' action — break the peace and the war begins.
+async function handleBreakTreaty(req, env, { session, params }) {
+  const gameId = params.gameId;
+  const treatyId = params.treatyId;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  if (typeof treatyId !== 'string' || !treatyId) {
+    return err(400, 'bad_request', 'invalid treaty id');
+  }
+
+  const game = await loadGame(env, gameId);
+  if (!game) return err(404, 'not_found', 'game not found');
+
+  const caller = await callerFaction(env, gameId, session.user_id);
+  if (!caller) return err(403, 'not_a_faction', 'you do not own a faction in this game');
+
+  // Verify the treaty exists, is active, and the caller is a signatory.
+  const treaty = await env.DB
+    .prepare(
+      `SELECT t.id, t.kind, t.status
+         FROM treaties t
+         JOIN treaty_signatories ts ON ts.treaty_id = t.id
+        WHERE t.id = ? AND t.game_id = ? AND ts.faction_id = ?`,
+    )
+    .bind(treatyId, gameId, caller.id)
+    .first();
+  if (!treaty) return err(404, 'not_found', 'treaty not found, or you are not a signatory');
+  if (treaty.status !== 'active') {
+    return err(409, 'not_active', `treaty is ${treaty.status}`);
+  }
+
+  // Pull the other signatories so the chronicle gets a target_faction_id.
+  const others = (await env.DB
+    .prepare(
+      `SELECT faction_id FROM treaty_signatories
+        WHERE treaty_id = ? AND faction_id != ?`,
+    )
+    .bind(treatyId, caller.id)
+    .all()).results ?? [];
+  const targetId = others[0]?.faction_id ?? null;
+
+  const tick = game.current_tick ?? 0;
+  const nowMs = Date.now();
+
+  await env.DB.batch([
+    env.DB
+      .prepare(
+        `UPDATE treaties
+            SET status = 'broken',
+                broken_at_tick = ?,
+                breaker_faction_id = ?
+          WHERE id = ? AND status = 'active'`,
+      )
+      .bind(tick, caller.id, treatyId),
+    env.DB
+      .prepare(
+        `INSERT INTO chronicle_entries
+         (id, game_id, tick_number, kind, actor_faction_id, target_faction_id, payload, visibility, created_at_ms)
+         VALUES (?, ?, ?, 'treaty_broken', ?, ?, ?, 'public', ?)`,
+      )
+      .bind(
+        newId(), gameId, tick,
+        caller.id, targetId,
+        JSON.stringify({ treaty_id: treatyId, kind: treaty.kind }),
+        nowMs,
+      ),
+  ]);
+
+  // Push a WS event so the other signatory sees the break immediately
+  // (no waiting for the next /state poll).
+  notifyRoom(env, gameId, {
+    kind: 'treaty',
+    event: 'broken',
+    treaty_id: treatyId,
+    treaty_kind: treaty.kind,
+    breaker_faction_id: caller.id,
+  });
+
+  return json({ ok: true, treaty: { id: treatyId, status: 'broken' } });
+}
+
 // ---------- GET /api/games/:gameId/pacts ----------
 
 async function handleListPacts(req, env, { session, params }) {
@@ -723,5 +835,11 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/pacts$/,
     auth: 'required',
     handle: handleListPacts,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/treaties\/(?<treatyId>[^/]+)\/break$/,
+    auth: 'required',
+    handle: handleBreakTreaty,
   },
 ];

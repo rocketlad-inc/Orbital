@@ -281,5 +281,11 @@ export function tradesApi(gameId: string) {
     listPacts() {
       return apiFetch<{ pacts: Pact[]; caller_faction_id: string }>(`/api/games/${gameId}/pacts`);
     },
+    breakTreaty(treatyId: string) {
+      return apiFetch<{ ok: true; treaty: { id: string; status: 'broken' } }>(
+        `/api/games/${gameId}/treaties/${treatyId}/break`,
+        { method: 'POST' },
+      );
+    },
   };
 }

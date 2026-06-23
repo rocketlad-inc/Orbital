@@ -151,6 +151,18 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
           } else if (m.event === 'countered') {
             pushToast('trade', 'Counter-offer received');
           }
+        } else if (m?.kind === 'treaty') {
+          // Treaty WS broadcasts come from worker/trades.js handleBreakTreaty
+          // (and any future treaty-lifecycle handlers). 'broken' is the
+          // notable one for now — implicit war resumes the moment a NAP or
+          // defense pact dies, so the other party needs to know.
+          if (m.event === 'broken') {
+            const kindLabel = m.treaty_kind === 'defense_pact' ? 'Defense Pact'
+              : m.treaty_kind === 'nap' ? 'Non-Aggression Pact'
+              : m.treaty_kind === 'intel_share' ? 'Intel-Share Pact'
+              : 'Treaty';
+            pushToast('trade', `${kindLabel} broken — war resumes`);
+          }
         } else if (m?.kind === 'message') {
           pushToast('message', 'New message in Comms');
           setUnreadMessages((n) => n + 1);
