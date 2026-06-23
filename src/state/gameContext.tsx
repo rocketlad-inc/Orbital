@@ -533,8 +533,15 @@ export function GameContextProvider({
           ? undefined
           : (localShip.plannedTransit ?? serverShip.plannedTransit);
 
-        // queuedTransits: client-only chained legs.
-        const queuedTransits = localShip.queuedTransits ?? serverShip.queuedTransits;
+        // queuedTransits: chained legs. Before commit the chain is
+        // client-only (the server has no idea the preview exists), so keep
+        // the local queue. Once the ship is committed/in-flight the server
+        // reconstructs the whole chain from its node rows — trust that, so a
+        // leg promoting from queued→active (and dropping out of the server
+        // queue) doesn't leave a stale local copy double-drawn behind it.
+        const queuedTransits = serverShip.transit
+          ? serverShip.queuedTransits
+          : (localShip.queuedTransits ?? serverShip.queuedTransits);
 
         const noChange =
           localPlanned.length === 0 &&
