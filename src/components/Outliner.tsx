@@ -92,12 +92,22 @@ export const Outliner: React.FC = () => {
   const handleBodyClick = (bodyId: string) => {
     selectBody(bodyId);
     focusBody(bodyId);
+    // On mobile the outliner overlays most of the canvas, so the
+    // player can't see what they just selected until the drawer
+    // gets out of the way. Collapse after any pick.
+    if (isMobile) setCollapsed(true);
   };
 
   const handleSettlementClick = (settlementId: string, bodyId: string) => {
     selectSettlement(settlementId);
     selectBody(bodyId);
     focusBody(bodyId);
+    if (isMobile) setCollapsed(true);
+  };
+
+  const handleShipClick = (shipId: string) => {
+    selectShip(shipId);
+    if (isMobile) setCollapsed(true);
   };
 
   const settlementHpClass = (s: { hp: number; maxHp: number }) => {
@@ -205,7 +215,7 @@ export const Outliner: React.FC = () => {
                       <div
                         key={ship.id}
                         className={`outliner__ship-row ${uiState.selectedShipId === ship.id ? 'selected' : ''}`}
-                        onClick={(e) => { e.stopPropagation(); selectShip(ship.id); }}
+                        onClick={(e) => { e.stopPropagation(); handleShipClick(ship.id); }}
                       >
                         <span className="outliner__ship-class" title={def.displayName}>
                           <ShipIcon shipClass={ship.class as ShipClassName} size={22} />
@@ -238,7 +248,7 @@ export const Outliner: React.FC = () => {
                   key={ship.id}
                   className={`outliner__ship-row ${uiState.selectedShipId === ship.id ? 'selected' : ''}`}
                   style={{ paddingLeft: 8 }}
-                  onClick={() => selectShip(ship.id)}
+                  onClick={() => handleShipClick(ship.id)}
                 >
                   <span className="outliner__ship-class" title={def.displayName}>
                     <ShipIcon shipClass={ship.class as ShipClassName} size={22} />
