@@ -67,6 +67,16 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
   }, [initialRoomId, gameId]);
   const [incomingTradeCount, setIncomingTradeCount] = useState(0);
   const [unreadMessages, setUnreadMessages] = useState(0);
+  // Modal payload for a freshly-arrived trade offer. Cleared by either
+  // the Dismiss button or by 'Take me there' (which also switches the
+  // dock to the Trades tab). One offer at a time; if a second arrives
+  // while the modal is up, the newer one replaces the older — the older
+  // is already in the Trades tab badge and the EventLog so it isn't
+  // lost.
+  const [pendingTrade, setPendingTrade] = useState<{
+    tradeId: string;
+    proposerName: string;
+  } | null>(null);
   // Transient toast notifications fanned out of the room WebSocket.
   // Each has a unique id so React can key it and a setTimeout dismisses
   // it after a few seconds.
@@ -142,8 +152,15 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
         const m = JSON.parse(ev.data);
         if (m?.kind === 'trade') {
           if (m.event === 'proposed') {
-            pushToast('trade', 'New trade offer received');
+            const proposer = (typeof m.proposer_faction_name === 'string' && m.proposer_faction_name)
+              ? m.proposer_faction_name
+              : 'Another faction';
+            pushToast('trade', `New trade offer from ${proposer}`);
             setIncomingTradeCount((n) => n + 1);
+            setPendingTrade({
+              tradeId: String(m.trade_id ?? ''),
+              proposerName: proposer,
+            });
           } else if (m.event === 'accepted') {
             pushToast('trade', 'Trade accepted');
           } else if (m.event === 'declined') {
@@ -182,6 +199,39 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
   return (
     <>
       {children}
+      {pendingTrade && (
+        <div
+          className="mp-modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="trade-modal-title"
+          onClick={() => setPendingTrade(null)}
+        >
+          <div className="mp-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="mp-modal__title" id="trade-modal-title">
+              ⚖ Incoming Trade Offer
+            </div>
+            <div className="mp-modal__desc">
+              <strong style={{ color: 'var(--mp-friendly)' }}>{pendingTrade.proposerName}</strong>{' '}
+              is offering you a trade. Review and accept, counter, or decline it from the Trades panel.
+            </div>
+            <div className="mp-modal__actions">
+              <button
+                className="mp-btn"
+                onClick={() => setPendingTrade(null)}
+              >Dismiss</button>
+              <button
+                className="mp-btn mp-btn--primary"
+                onClick={() => {
+                  setTab('trades');
+                  setCollapsed(false);
+                  setPendingTrade(null);
+                }}
+              >Take Me There</button>
+            </div>
+          </div>
+        </div>
+      )}
       {toasts.length > 0 && (
         <div className="mp-toasts">
           {toasts.map(t => (
