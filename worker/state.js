@@ -392,6 +392,15 @@ async function handleGetState(req, env, ctx) {
 
   // Only the caller's planned maneuvers are returned — opponents' burn
   // plans are private.
+  // Share allies' committed/in_transit burns so the caller's client
+  // can reconstruct ship.transit for them (without this, ally ships
+  // visibly freeze at their last parked orbit while their own client
+  // shows them mid-flight — same fog-of-war contract as bodies/ships
+  // taught in commit fea4a42). 'planned' nodes are pre-commit previews
+  // and stay private to the owning faction; only the burn-already-
+  // started states leak across the ally line, which matches the
+  // physical observability rule (a torch is visible to anyone with a
+  // sensor on the segment).
   const nodes = (await env.DB
     .prepare(
       `SELECT n.id, n.ship_id, n.sequence, n.anchor_kind, n.anchor_body_id, n.target_body_id,
@@ -401,12 +410,16 @@ async function handleGetState(req, env, ctx) {
               s.parent_body_id AS departure_body_id
          FROM game_ship_nodes n
          JOIN game_ships s ON s.id = n.ship_id
-        WHERE n.game_id = ?
-          AND s.owner_faction_id = ?
+        WHERE n.game_id = ?1
+          AND s.owner_faction_id IN (SELECT value FROM json_each(?2))
+          AND (
+            s.owner_faction_id = ?3
+            OR n.status IN ('committed','in_transit')
+          )
           AND n.status IN ('planned','committed','in_transit')
         ORDER BY n.ship_id, n.sequence`,
     )
-    .bind(gameId, me.id)
+    .bind(gameId, presenceFactionIds, me.id)
     .all()).results ?? [];
 
   // In-flight ship builds for the caller's faction. The tick alarm
