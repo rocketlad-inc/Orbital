@@ -126,8 +126,8 @@
 }
 
 .outliner__body-icon {
-  width: 8px;
-  height: 8px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -153,11 +153,11 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 8px 3px 22px;
+  padding: 6px 8px 6px 22px;
   cursor: pointer;
   border-radius: 2px;
   transition: background 0.1s ease;
-  font-size: 10px;
+  font-size: 11px;
   color: #a8b8c8;
 }
 
@@ -173,11 +173,22 @@
 }
 
 .outliner__ship-class {
-  font-size: 9px;
+  /* Was 9px, way too small to read at a glance. Bumped large so the
+     class glyph reads like a real icon next to the ship/settlement
+     name. Width pin keeps the names left-aligned across rows even
+     when the glyph itself has uneven advance width (e.g. ⌂ vs ◇). */
+  font-size: 20px;
   color: #b8c8d6;
   text-transform: uppercase;
-  margin-right: 4px;
+  margin-right: 8px;
   letter-spacing: 0.05em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  line-height: 1;
 }
 
 .outliner__ship-name {

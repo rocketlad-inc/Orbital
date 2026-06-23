@@ -208,7 +208,7 @@ export const Outliner: React.FC = () => {
                         onClick={(e) => { e.stopPropagation(); selectShip(ship.id); }}
                       >
                         <span className="outliner__ship-class" title={def.displayName}>
-                          <ShipIcon shipClass={ship.class as ShipClassName} size={14} />
+                          <ShipIcon shipClass={ship.class as ShipClassName} size={22} />
                         </span>
                         <span className="outliner__ship-name">{ship.name}</span>
                         {lowFuel && <span className="outliner__ship-status outliner__ship-status--lowfuel">⛽</span>}
@@ -241,7 +241,7 @@ export const Outliner: React.FC = () => {
                   onClick={() => selectShip(ship.id)}
                 >
                   <span className="outliner__ship-class" title={def.displayName}>
-                    <ShipIcon shipClass={ship.class as ShipClassName} size={14} />
+                    <ShipIcon shipClass={ship.class as ShipClassName} size={22} />
                   </span>
                   <span className="outliner__ship-name">
                     {ship.name} → {target?.name || '?'} T-{Math.max(0, eta).toFixed(0)}
