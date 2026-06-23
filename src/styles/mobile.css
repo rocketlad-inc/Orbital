@@ -41,7 +41,16 @@
     display: none !important;
   }
 
-  /* When a ship-panel etc. is inside a bottom sheet, undo the hide. */
+  /* When a ship-panel etc. is inside a bottom sheet, undo the hide AND
+     neutralize the panel's own height/overflow caps. The desktop panels
+     ship with `max-height: 55vh; overflow: hidden;` because they sit on
+     a fixed-position rail; inside the sheet those caps double up with
+     the sheet's own 55vh cap and clip inner content (Recall button,
+     last maneuver row, Combat info) with no way to scroll to it.
+     Reported by playtester: "Buttons get moved off screen on mobile
+     after pulling up ship stuff. Cant scroll down." Letting the inner
+     panel grow + show overflow lets the parent .bottom-sheet__body's
+     own `overflow-y: auto` take over as the single scroll surface. */
   .bottom-sheet__body .ship-panel,
   .bottom-sheet__body .body-inspector,
   .bottom-sheet__body .scenario-selector {
@@ -49,11 +58,23 @@
     position: static !important;
     width: 100% !important;
     max-width: 100% !important;
+    max-height: none !important;
+    overflow: visible !important;
     box-shadow: none !important;
     background: transparent !important;
     border: none !important;
     padding: 0 !important;
     margin: 0 !important;
+  }
+  /* Inner scroll regions of those panels also need to release. Nested
+     overflow inside a sheet body just creates a second scroll context
+     the player has to know about — the sheet body itself should be the
+     single scroll surface. */
+  .bottom-sheet__body .ship-panel > *,
+  .bottom-sheet__body .body-inspector > *,
+  .bottom-sheet__body .scenario-selector > * {
+    max-height: none !important;
+    overflow: visible !important;
   }
 
   /* === TopBar: icon-only nav buttons, drop low-priority bits === */
