@@ -15,13 +15,16 @@
   text-transform: uppercase;
 }
 
-/* Custom-name input */
+/* Custom-name input + COMMIT button (FIFO name queue for upcoming builds) */
 .build-name-row {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
   margin-bottom: 6px;
 }
 
 .build-name-input {
-  width: 100%;
+  flex: 1;
   background: rgba(10, 14, 20, 0.8);
   border: 1px solid #2a3d50;
   border-radius: 3px;
@@ -41,6 +44,75 @@
 .build-name-input::placeholder {
   color: #b8c8d6;
   font-style: italic;
+}
+
+.build-name-commit {
+  flex-shrink: 0;
+  padding: 0 10px;
+  background: rgba(78, 205, 196, 0.18);
+  color: #4ecdc4;
+  border: 1px solid #4ecdc4;
+  border-radius: 2px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 80ms ease, transform 80ms ease;
+}
+.build-name-commit:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.build-name-commit:hover:not(:disabled) {
+  background: rgba(78, 205, 196, 0.34);
+}
+.build-name-commit:active:not(:disabled) {
+  background: rgba(78, 205, 196, 0.55);
+  transform: scale(0.96);
+}
+
+.build-name-queue {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 0 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px dashed rgba(78, 205, 196, 0.18);
+}
+.build-name-queue__label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: #4ecdc4;
+  margin-right: 4px;
+}
+.build-name-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 8px;
+  background: rgba(78, 205, 196, 0.1);
+  border: 1px solid rgba(78, 205, 196, 0.55);
+  border-radius: 10px;
+  color: #d8e4ee;
+  font-size: 10px;
+}
+.build-name-chip__x {
+  background: transparent;
+  border: none;
+  color: #b8c8d6;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  padding: 0 2px;
+  border-radius: 50%;
+}
+.build-name-chip__x:hover {
+  color: #ff5e5e;
+  background: rgba(255, 94, 94, 0.12);
 }
 
 /* Build Queue */
