@@ -443,6 +443,12 @@ export function tickSettlements(
     // entirely -- their harvest cycle above is the only source of
     // their stockpile, which sits there until a freighter ferries it.
     if (s.hasCollector) {
+      // Collector settlements deliver the FULL per-harvest yield to the
+      // pool every tick (no /HARVEST_INTERVAL divide). That's the
+      // strategic value of a collector -- a 10x speedup over the
+      // stockpile-cycle path non-collector settlements run on. SP pool
+      // values are JS Numbers so fractional yields (e.g. 3 * 1.1 * 1.2)
+      // accumulate naturally; the HUD rounds when rendering.
       const body = bodies.find(b => b.id === s.bodyId);
       if (body) {
         const y = settlementYield({ ...s, population: pop }, body);
@@ -451,13 +457,10 @@ export function tickSettlements(
           factionPools[s.ownedBy] = { fuel: 0, ore: 0, credits: 0, science: 0 };
         }
         const pool = factionPools[s.ownedBy];
-        pool.fuel    += (y.fuel    * m) / SETTLEMENT_HARVEST_INTERVAL;
-        pool.ore     += (y.ore     * m) / SETTLEMENT_HARVEST_INTERVAL;
-        pool.credits += (y.credits * m) / SETTLEMENT_HARVEST_INTERVAL;
-        pool.science += (y.science * m) / SETTLEMENT_HARVEST_INTERVAL;
-        // No dirty=true here -- the settlement row itself didn't
-        // change. Only the pool did, and pool mutation is already
-        // visible through the factionPools reference.
+        pool.fuel    += y.fuel    * m;
+        pool.ore     += y.ore     * m;
+        pool.credits += y.credits * m;
+        pool.science += y.science * m;
       }
     }
 
@@ -539,14 +542,23 @@ export function computeIncomePerTick(
     const body = bodies.find(b => b.id === s.bodyId);
     if (!body) continue;
     const y = settlementYield(s, body);
-    const perTick = {
-      fuel:    (y.fuel    * yieldMul) / SETTLEMENT_HARVEST_INTERVAL,
-      ore:     (y.ore     * yieldMul) / SETTLEMENT_HARVEST_INTERVAL,
-      credits: (y.credits * yieldMul) / SETTLEMENT_HARVEST_INTERVAL,
-      science: (y.science * yieldMul) / SETTLEMENT_HARVEST_INTERVAL,
-    };
-    // Per-settlement bucket: collector -> delivered (pool gain),
-    // no collector -> stranded (stockpile gain only).
+    // Collector settlements deliver full yield every tick. Non-collector
+    // settlements harvest once per SETTLEMENT_HARVEST_INTERVAL (10) ticks,
+    // so their per-tick average is yield/10 (still strandeds; freighters
+    // are the only way to actually extract).
+    const perTick = s.hasCollector
+      ? {
+          fuel:    y.fuel    * yieldMul,
+          ore:     y.ore     * yieldMul,
+          credits: y.credits * yieldMul,
+          science: y.science * yieldMul,
+        }
+      : {
+          fuel:    (y.fuel    * yieldMul) / SETTLEMENT_HARVEST_INTERVAL,
+          ore:     (y.ore     * yieldMul) / SETTLEMENT_HARVEST_INTERVAL,
+          credits: (y.credits * yieldMul) / SETTLEMENT_HARVEST_INTERVAL,
+          science: (y.science * yieldMul) / SETTLEMENT_HARVEST_INTERVAL,
+        };
     const bucket = s.hasCollector ? out.delivered : out.stranded;
     bucket.fuel    += perTick.fuel;
     bucket.ore     += perTick.ore;

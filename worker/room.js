@@ -1614,11 +1614,18 @@ export class Room {
       const forgeMul = 1 + Number(r.forge_l ?? 0) * FORGE_PER_LEVEL;
       const mintMul  = 1 + Number(r.mint_l  ?? 0) * MINT_PER_LEVEL;
       const labMul   = 1 + Number(r.lab_l   ?? 0) * LAB_PER_LEVEL;
+      // Full harvest yield delivered every tick (no /HARVEST_INTERVAL
+      // divide). That's the point of building a collector — it speeds
+      // up extraction 10× vs the stockpile cycle non-collector
+      // settlements run on. Yield * popMul * typeMul can still be
+      // fractional (e.g. 3 ore × 1.1 pop × 1.2 city = 3.96), so the
+      // fractional residual accumulates in *_remainder until it crosses
+      // 1 and the integer portion transfers to the pool.
       const delivery = {
-        fuel:    Number(r.y_fuel    ?? 0) * popMul * tm.fuel    / HARVEST_INTERVAL,
-        metal:   Number(r.y_metal   ?? 0) * popMul * tm.metal   * forgeMul / HARVEST_INTERVAL,
-        gold:    Number(r.y_gold    ?? 0) * popMul * tm.gold    * mintMul  / HARVEST_INTERVAL,
-        science: Number(r.y_science ?? 0) * popMul * tm.science * labMul   / HARVEST_INTERVAL,
+        fuel:    Number(r.y_fuel    ?? 0) * popMul * tm.fuel,
+        metal:   Number(r.y_metal   ?? 0) * popMul * tm.metal   * forgeMul,
+        gold:    Number(r.y_gold    ?? 0) * popMul * tm.gold    * mintMul,
+        science: Number(r.y_science ?? 0) * popMul * tm.science * labMul,
       };
       const agg = perFaction.get(r.fid) ?? { fuel: 0, metal: 0, gold: 0, science: 0 };
       agg.fuel    += delivery.fuel;
