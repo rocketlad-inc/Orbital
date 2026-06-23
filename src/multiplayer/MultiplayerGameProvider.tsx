@@ -981,6 +981,13 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
   const onGameMissingRef = useRef(onGameMissing);
   useEffect(() => { onGameMissingRef.current = onGameMissing; }, [onGameMissing]);
 
+  // Tag the audit log with this game's id + mode. This also drives the
+  // logger's per-game reset: entering a new game id clears the previous
+  // game's persisted entries, while refreshing the same game keeps them.
+  useEffect(() => {
+    logger.setSession({ mode: 'multiplayer', gameId });
+  }, [gameId]);
+
   const fetchState = useCallback(async () => {
     if (inflightRef.current) return;
     inflightRef.current = true;
