@@ -18,8 +18,9 @@ import {
 } from '../types';
 import {
   planTorchTransfer, stepTorchShip, DEFAULT_ENGINE_G, fromG,
+  TorchTransfer,
 } from '../physics/torchTransfer';
-import { orbitWorldPos, orbitWorldVelocity } from '../physics/orbitalMechanics';
+import { orbitWorldPos, orbitWorldVelocity, bodyWorldVelocity } from '../physics/orbitalMechanics';
 import { engineGModifier } from '../game/techs';
 
 // Shape of /api/games/:gid/state.
@@ -630,65 +631,102 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   // can draw a dashed preview.
   const shipById = new Map(ships.map(s => [s.id, s]));
   const currentTick = srv.game.current_tick;
-  for (const srvNode of (srv.nodes ?? [])) {
-    if (!srvNode.target_body_id) continue;
-    if (srvNode.status !== 'committed' && srvNode.status !== 'in_transit') continue;
-    const ship = shipById.get(srvNode.ship_id);
+
+  // A ship can have MULTIPLE live nodes when the player chains transfers:
+  // the leg in flight now plus one or more future legs (each a 'committed'
+  // row whose scheduled_t == the previous leg's arrival). Only the ACTIVE
+  // leg becomes ship.transit (solid line); future legs become
+  // ship.queuedTransits (dashed, chained from the prior leg's arrival).
+  //
+  // The old code set ship.transit for EVERY committed/in_transit node, so a
+  // freshly-queued second leg (committed, future scheduled_t) overwrote the
+  // active one and the ship appeared to teleport straight to the second
+  // target — that was the "chaining replaces the node" bug. The server was
+  // always right (it only fires a committed node once scheduled_t arrives);
+  // only this client-side reconstruction was collapsing the chain.
+  const liveNodesByShip = new Map<string, NonNullable<ServerState['nodes']>>();
+  for (const n of (srv.nodes ?? [])) {
+    if (!n.target_body_id) continue;
+    if (n.status !== 'committed' && n.status !== 'in_transit') continue;
+    // Arrived but not yet swept to 'executed' — don't resurrect it.
+    if (n.arrival_at_tick != null && n.arrival_at_tick <= currentTick) continue;
+    const arr = liveNodesByShip.get(n.ship_id);
+    if (arr) arr.push(n);
+    else liveNodesByShip.set(n.ship_id, [n]);
+  }
+
+  for (const [shipId, nodes] of liveNodesByShip) {
+    const ship = shipById.get(shipId);
     if (!ship) continue;
-    const targetLocalId = stripGameId(srvNode.target_body_id) ?? srvNode.target_body_id;
+    // Earliest first so the active leg is processed before the chain.
+    nodes.sort((a, b) => a.scheduled_t - b.scheduled_t);
+
     const faction = factions.find(f => f.id === ship.ownedBy);
     // Same engine-g formula as single-player: stored faction baseline
-    // (if any) scaled by the player's flight-tech tier. Only the local
-    // player's tech is exchanged over the protocol (other factions'
-    // tech is opaque), so non-player ships get the unscaled baseline.
-    // UNIT FIX: faction.engineG comes back from the server in units of
-    // 1g (e.g. 0.05). Multiply by G_ANCHOR via fromG so torch accel
-    // has the right magnitude — see SP gameContext.tsx for the
-    // matching fix. Without this, reconstructed transits ran 530× too
-    // weak and ships visibly drifted off the rendered curve.
+    // scaled by the local player's flight-tech tier (other factions' tech
+    // is opaque over the protocol, so their ships get the baseline).
+    // UNIT FIX: faction.engineG is in units of 1g (e.g. 0.05); fromG scales
+    // it to in-game accel — see SP gameContext.tsx for the matching fix.
     const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
     const techScale = ship.ownedBy === srv.me.faction_id ? engineGModifier(playerTech) : 1;
     const engineAccel = baseAccel * techScale;
 
-    // Launch (pos, vel) for the torch — at scheduled_t, ship is in
-    // its parked orbit. orbitWorldVelocity sums parent's velocity and
-    // the ship's local orbital motion, which matters for fast-orbiting
-    // moons; using parent velocity alone mis-aims the brachistochrone.
-    const launchPos = orbitWorldPos(ship.orbit, srvNode.scheduled_t, bodies);
-    const launchVel = orbitWorldVelocity(ship.orbit, srvNode.scheduled_t, bodies);
+    const queued: TorchTransfer[] = [];
+    let priorPlan: TorchTransfer | null = null;
+    for (const n of nodes) {
+      const targetLocalId = stripGameId(n.target_body_id!) ?? n.target_body_id!;
 
-    const plan = planTorchTransfer(
-      { pos: launchPos, vel: launchVel },
-      targetLocalId,
-      engineAccel, engineAccel,
-      srvNode.scheduled_t, bodies,
-    );
-    if (!plan) continue;
+      // Launch (pos, vel): the active leg launches from the ship's parked
+      // orbit at scheduled_t; a chained future leg launches from the prior
+      // leg's predicted arrival point + that body's velocity, mirroring the
+      // local enqueueTorchTransfer chain so the dashed arc lines up.
+      let launchPos: { x: number; y: number };
+      let launchVel: { x: number; y: number };
+      if (priorPlan) {
+        const pp = priorPlan;  // const capture — keeps the find() closure off the loop var
+        const priorBody = bodies.find(b => b.id === pp.targetBodyId);
+        launchPos = { x: pp.interceptPos.x, y: pp.interceptPos.y };
+        launchVel = priorBody
+          ? bodyWorldVelocity(priorBody, pp.arriveTick, bodies)
+          : { x: 0, y: 0 };
+      } else {
+        launchPos = orbitWorldPos(ship.orbit, n.scheduled_t, bodies);
+        launchVel = orbitWorldVelocity(ship.orbit, n.scheduled_t, bodies);
+      }
 
-    // If the server gave us an authoritative arrival tick, snap the
-    // torch's arriveTick to it. The trip-time math may differ slightly
-    // between the legacy server formula and the new torch one; the
-    // server is canonical for "when does the ship park."
-    if (srvNode.arrival_at_tick != null && srvNode.arrival_at_tick > srvNode.scheduled_t) {
-      plan.arriveTick = srvNode.arrival_at_tick;
-      // Re-derive the flip so the boost/brake split stays symmetric.
-      plan.flipTick = (plan.startTick + plan.arriveTick) / 2;
+      const plan = planTorchTransfer(
+        { pos: launchPos, vel: launchVel },
+        targetLocalId,
+        engineAccel, engineAccel,
+        n.scheduled_t, bodies,
+      );
+      if (!plan) continue;
+
+      // Server is canonical for "when does the ship park" — snap to its
+      // authoritative arrival tick and re-center the flip.
+      if (n.arrival_at_tick != null && n.arrival_at_tick > n.scheduled_t) {
+        plan.arriveTick = n.arrival_at_tick;
+        plan.flipTick = (plan.startTick + plan.arriveTick) / 2;
+      }
+
+      // Active = the burn has started (in_transit) or its scheduled_t has
+      // come up. There is at most one such leg; the rest are future.
+      const isActive = n.status === 'in_transit' || n.scheduled_t <= currentTick;
+      if (isActive && !ship.transit) {
+        const state = {
+          pos: { x: launchPos.x, y: launchPos.y },
+          vel: { x: launchVel.x, y: launchVel.y },
+        };
+        const dt = Math.max(0, currentTick - n.scheduled_t);
+        if (dt > 0) stepTorchShip(state, plan, n.scheduled_t, dt, bodies);
+        ship.transit = { pos: state.pos, vel: state.vel, currentTransfer: plan };
+      } else {
+        queued.push(plan);
+      }
+      priorPlan = plan;
     }
 
-    // Both in_transit and committed (post-Phase-3, committed always
-    // means "burn has started — alarm just hasn't ticked yet") write
-    // ship.transit. The integrated (pos, vel) is computed from launch
-    // to currentTick; for a 0-tick-elapsed committed-this-poll case
-    // the state stays at launchPos which is the right answer.
-    if (srvNode.status === 'in_transit' || srvNode.status === 'committed') {
-      const state = {
-        pos: { x: launchPos.x, y: launchPos.y },
-        vel: { x: launchVel.x, y: launchVel.y },
-      };
-      const dt = Math.max(0, currentTick - srvNode.scheduled_t);
-      if (dt > 0) stepTorchShip(state, plan, srvNode.scheduled_t, dt, bodies);
-      ship.transit = { pos: state.pos, vel: state.vel, currentTransfer: plan };
-    }
+    if (queued.length > 0) ship.queuedTransits = queued;
   }
 
   // Server-side chronicle entries -> human-readable combat log.
@@ -980,6 +1018,13 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
   // Stable ref so the polling effect doesn't tear down each render.
   const onGameMissingRef = useRef(onGameMissing);
   useEffect(() => { onGameMissingRef.current = onGameMissing; }, [onGameMissing]);
+
+  // Tag the audit log with this game's id + mode. This also drives the
+  // logger's per-game reset: entering a new game id clears the previous
+  // game's persisted entries, while refreshing the same game keeps them.
+  useEffect(() => {
+    logger.setSession({ mode: 'multiplayer', gameId });
+  }, [gameId]);
 
   const fetchState = useCallback(async () => {
     if (inflightRef.current) return;

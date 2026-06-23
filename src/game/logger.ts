@@ -44,6 +44,25 @@ export interface SessionMeta {
 /** How many entries we keep before dropping the oldest. */
 const RING_SIZE = 5000;
 
+/** localStorage key + debounce for cross-refresh persistence. Bumping the
+ *  version suffix invalidates any old-shape payloads on upgrade. */
+const STORAGE_KEY = 'orbital:gamelog:v1';
+const PERSIST_DEBOUNCE_MS = 1500;
+
+/** Probe whether localStorage is usable (it throws in private-mode Safari
+ *  and when storage is disabled). Cached once at construction. */
+function canUseStorage(): boolean {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return false;
+    const k = '__orbital_ls_test__';
+    window.localStorage.setItem(k, '1');
+    window.localStorage.removeItem(k);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 class GameLogger {
   private buffer: LogEntry[] = [];
   private head = 0;
@@ -56,6 +75,82 @@ class GameLogger {
   /** Listeners notified after each new entry. UI uses this to refresh
    *  a "log size: NNN" badge without polling. */
   private listeners = new Set<() => void>();
+  /** Cross-refresh persistence. The buffer is mirrored to localStorage so a
+   *  page reload mid-game resumes the same log instead of starting blank. */
+  private storageOk = false;
+  private persistTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The last non-null game id we attached to the log. Distinct from
+   *  session.gameId (which gets nulled on exit-to-menu) so that exiting and
+   *  re-entering the SAME game keeps the log, but entering a DIFFERENT game
+   *  resets it — even with a menu visit in between. */
+  private lastLoggedGameId: string | null = null;
+
+  constructor() {
+    this.storageOk = canUseStorage();
+    this.restore();
+  }
+
+  // ---- Persistence ----
+
+  /** Rehydrate the buffer + session from the last persisted snapshot. The
+   *  saved entries are already chronological (oldest→newest), so we load
+   *  them straight in with head=0. */
+  private restore() {
+    if (!this.storageOk) return;
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const obj = JSON.parse(raw) as {
+        entries?: LogEntry[];
+        session?: SessionMeta;
+        currentTick?: number | null;
+        lastLoggedGameId?: string | null;
+      };
+      if (Array.isArray(obj.entries)) {
+        this.buffer = obj.entries.slice(-RING_SIZE);
+        this.size = this.buffer.length;
+        this.head = 0;
+      }
+      // Keep the original session start (so the export's Duration spans the
+      // whole game, not just since the last refresh) and the last tick.
+      if (obj.session) this.session = { ...this.session, ...obj.session };
+      if (obj.currentTick != null) this.currentTick = obj.currentTick;
+      this.lastLoggedGameId = obj.lastLoggedGameId ?? obj.session?.gameId ?? null;
+    } catch {
+      /* corrupt / unavailable — start fresh */
+    }
+  }
+
+  private schedulePersist() {
+    if (!this.storageOk || this.persistTimer != null) return;
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null;
+      this.flush();
+    }, PERSIST_DEBOUNCE_MS);
+  }
+
+  /** Write the buffer to localStorage immediately. Called on a debounce
+   *  after writes, and synchronously on tab-hide / unload so nothing in the
+   *  debounce window is lost. */
+  flush() {
+    if (!this.storageOk) return;
+    if (this.persistTimer != null) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = null;
+    }
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        v: 1,
+        savedAt: Date.now(),
+        session: this.session,
+        currentTick: this.currentTick,
+        lastLoggedGameId: this.lastLoggedGameId,
+        entries: this.entries(),
+      }));
+    } catch {
+      /* quota exceeded or storage disabled — drop silently */
+    }
+  }
 
   // ---- Configuration ----
 
@@ -65,7 +160,21 @@ class GameLogger {
 
   setSession(partial: Partial<SessionMeta>) {
     this.session = { ...this.session, ...partial };
+    // A new game id means a new game — drop the previous game's entries so
+    // each game gets its own audit. Refreshing within the SAME game keeps
+    // them (the id matches what restore() rehydrated), which is the whole
+    // point of persistence. Compared against lastLoggedGameId (not the
+    // just-overwritten session.gameId) so a menu visit in between is fine.
+    if (partial.gameId) {
+      if (this.lastLoggedGameId && partial.gameId !== this.lastLoggedGameId) {
+        this.buffer = [];
+        this.head = 0;
+        this.size = 0;
+      }
+      this.lastLoggedGameId = partial.gameId;
+    }
     this.info('SESSION', `Session metadata updated`, partial as Record<string, unknown>);
+    this.flush();
   }
 
   getSession(): SessionMeta {
@@ -95,6 +204,7 @@ class GameLogger {
     queueMicrotask(() => {
       for (const l of this.listeners) l();
     });
+    this.schedulePersist();
   }
 
   info(category: LogCategory, msg: string, data?: Record<string, unknown>) {
@@ -129,6 +239,9 @@ class GameLogger {
     this.buffer = [];
     this.head = 0;
     this.size = 0;
+    if (this.storageOk) {
+      try { window.localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+    }
     for (const l of this.listeners) l();
   }
 
@@ -252,10 +365,15 @@ if (typeof window !== 'undefined') {
       prevOnRejection.call(window, ev);
     }
   };
-  // Tab visibility — useful to mark AFK gaps.
+  // Tab visibility — useful to mark AFK gaps. Flush on hide so a tab that
+  // gets backgrounded and then discarded keeps its log.
   document.addEventListener('visibilitychange', () => {
     logger.info('SYSTEM', `Tab ${document.visibilityState}`);
+    if (document.visibilityState === 'hidden') logger.flush();
   });
+  // Final flush on navigate-away / reload so nothing in the debounce window
+  // is lost. pagehide fires more reliably than beforeunload on mobile.
+  window.addEventListener('pagehide', () => logger.flush());
 
   // ----------------------------------------------------------------
   // Mirror console.error / console.warn into the logger so dev-time
