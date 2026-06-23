@@ -1614,11 +1614,18 @@ export class Room {
       const forgeMul = 1 + Number(r.forge_l ?? 0) * FORGE_PER_LEVEL;
       const mintMul  = 1 + Number(r.mint_l  ?? 0) * MINT_PER_LEVEL;
       const labMul   = 1 + Number(r.lab_l   ?? 0) * LAB_PER_LEVEL;
+      // Full harvest yield delivered every tick (no /HARVEST_INTERVAL
+      // divide). That's the point of building a collector — it speeds
+      // up extraction 10× vs the stockpile cycle non-collector
+      // settlements run on. Yield * popMul * typeMul can still be
+      // fractional (e.g. 3 ore × 1.1 pop × 1.2 city = 3.96), so the
+      // fractional residual accumulates in *_remainder until it crosses
+      // 1 and the integer portion transfers to the pool.
       const delivery = {
-        fuel:    Number(r.y_fuel    ?? 0) * popMul * tm.fuel    / HARVEST_INTERVAL,
-        metal:   Number(r.y_metal   ?? 0) * popMul * tm.metal   * forgeMul / HARVEST_INTERVAL,
-        gold:    Number(r.y_gold    ?? 0) * popMul * tm.gold    * mintMul  / HARVEST_INTERVAL,
-        science: Number(r.y_science ?? 0) * popMul * tm.science * labMul   / HARVEST_INTERVAL,
+        fuel:    Number(r.y_fuel    ?? 0) * popMul * tm.fuel,
+        metal:   Number(r.y_metal   ?? 0) * popMul * tm.metal   * forgeMul,
+        gold:    Number(r.y_gold    ?? 0) * popMul * tm.gold    * mintMul,
+        science: Number(r.y_science ?? 0) * popMul * tm.science * labMul,
       };
       const agg = perFaction.get(r.fid) ?? { fuel: 0, metal: 0, gold: 0, science: 0 };
       agg.fuel    += delivery.fuel;
@@ -1629,43 +1636,29 @@ export class Room {
     }
 
     if (perFaction.size > 0) {
-      // Read current remainders for the affected factions, then write
-      // back (pool += whole, remainder = fractional). Batched per
-      // faction; one SELECT + one UPDATE.
+      // Round per-tick delivery to integer and add to the pool. We
+      // dropped the fractional remainder accumulator (migration 0028's
+      // *_remainder columns) because a single SELECT failure against
+      // a not-yet-migrated D1 would silently kill resolveTick mid-tick.
+      // Math.round drift is ~0.5/tick worst-case per resource per
+      // collector -- below the noise floor of the harvest cadence and
+      // building boosts, so not worth the migration fragility.
       for (const [fid, delta] of perFaction) {
-        const row = await this.env.DB
-          .prepare(
-            `SELECT fuel_remainder, metal_remainder, gold_remainder, science_remainder
-               FROM game_factions WHERE id = ?`,
-          )
-          .bind(fid).first();
-        if (!row) continue;
-        const fuelT    = Number(row.fuel_remainder    ?? 0) + delta.fuel;
-        const metalT   = Number(row.metal_remainder   ?? 0) + delta.metal;
-        const goldT    = Number(row.gold_remainder    ?? 0) + delta.gold;
-        const scienceT = Number(row.science_remainder ?? 0) + delta.science;
-        const fuelInt    = Math.floor(fuelT);
-        const metalInt   = Math.floor(metalT);
-        const goldInt    = Math.floor(goldT);
-        const scienceInt = Math.floor(scienceT);
+        const fuelI    = Math.round(delta.fuel);
+        const metalI   = Math.round(delta.metal);
+        const goldI    = Math.round(delta.gold);
+        const scienceI = Math.round(delta.science);
+        if (fuelI + metalI + goldI + scienceI <= 0) continue;
         await this.env.DB
           .prepare(
             `UPDATE game_factions
                 SET fuel    = fuel    + ?,
                     metal   = metal   + ?,
                     gold    = gold    + ?,
-                    science = science + ?,
-                    fuel_remainder    = ?,
-                    metal_remainder   = ?,
-                    gold_remainder    = ?,
-                    science_remainder = ?
+                    science = science + ?
               WHERE id = ?`,
           )
-          .bind(
-            fuelInt, metalInt, goldInt, scienceInt,
-            fuelT - fuelInt, metalT - metalInt, goldT - goldInt, scienceT - scienceInt,
-            fid,
-          )
+          .bind(fuelI, metalI, goldI, scienceI, fid)
           .run();
       }
     }
