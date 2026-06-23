@@ -25,12 +25,12 @@ interface MultiplayerShellProps {
   initialRoomId?: string | null;
 }
 
-// `onExit` stays on the props interface for caller compatibility, but is
-// no longer rendered here — the TopBar title-button drawer's GAME →
-// "Back to Menu" entry is the single source of truth for exiting the
-// match (see App.tsx handleExitMode). Don't destructure it to keep
-// the lint clean.
-export function MultiplayerShell({ children, initialRoomId }: MultiplayerShellProps) {
+// In-GAME, exiting the match is owned by the TopBar title-button
+// drawer's GAME → "Back to Menu" entry (see App.tsx handleExitMode).
+// But PRE-game (in the lobby, no TopBar yet) the only way out is the
+// room's Back button, so we pass `onExit` down to LobbyView for that —
+// it leaves the room and returns to the multiplayer room browser.
+export function MultiplayerShell({ children, initialRoomId, onExit }: MultiplayerShellProps) {
   // `signOut` used to live behind the mp-user-pill (top-right pill with
   // "← Menu", display name, and Sign out). That pill duplicated the
   // TopBar title-button drawer's GAME section ("Back to Menu") and
@@ -240,6 +240,7 @@ export function MultiplayerShell({ children, initialRoomId }: MultiplayerShellPr
                 <LobbyView
                   initialRoomId={initialRoomId ?? null}
                   onEnterGame={(_, gid) => { setGameId(gid); setTab('faction'); }}
+                  onExitRoom={onExit}
                 />
               )}
               {tab === 'faction' && gameId && <FactionPanel gameId={gameId} />}

@@ -27,15 +27,22 @@ const DEFAULT_TICK_INTERVAL_MS = 450_000;
 interface Props {
   onEnterGame: (roomId: string, gameId: string) => void;
   initialRoomId?: string | null;
+  /** Exit the room entirely (back to the multiplayer room browser).
+   *  Supplied by MultiplayerShell. When present, the room's Back button
+   *  uses it instead of the in-component RoomList fallback. */
+  onExitRoom?: () => void;
 }
 
-export function LobbyView({ onEnterGame, initialRoomId }: Props) {
+export function LobbyView({ onEnterGame, initialRoomId, onExitRoom }: Props) {
   const [activeRoomId, setActiveRoomId] = useState<string | null>(initialRoomId ?? null);
 
   return activeRoomId
     ? <RoomDetail
         roomId={activeRoomId}
-        onLeave={() => setActiveRoomId(null)}
+        // Prefer the real exit (→ room browser). The setActiveRoomId(null)
+        // fallback only matters in the standalone RoomList → RoomDetail
+        // flow, which the shell never uses (it always enters with a room).
+        onLeave={() => { if (onExitRoom) onExitRoom(); else setActiveRoomId(null); }}
         onEnterGame={(gid) => onEnterGame(activeRoomId, gid)}
       />
     : <RoomList onJoin={setActiveRoomId} />;
