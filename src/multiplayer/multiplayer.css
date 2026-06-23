@@ -1032,8 +1032,9 @@
   background: rgba(78, 205, 196, 0.06);
 }
 .lobby-body-card.is-mine {
-  border-color: var(--mp-accent);
-  background: rgba(255, 184, 77, 0.08);
+  border-color: var(--mp-friendly);
+  background: rgba(78, 205, 196, 0.10);
+  box-shadow: 0 0 0 1px rgba(78, 205, 196, 0.25);
 }
 .lobby-body-card.is-taken {
   opacity: 0.4;
@@ -1045,7 +1046,9 @@
   color: var(--mp-accent);
   letter-spacing: 0.03em;
 }
-.lobby-body-card.is-mine .lobby-body-card__name { color: var(--mp-accent); }
+/* "Your pick" cards: name flips from amber accent to friendly cyan so
+   the card visibly belongs to you, matching the map legend. */
+.lobby-body-card.is-mine .lobby-body-card__name { color: var(--mp-friendly); }
 .lobby-body-card__sub {
   font-size: 12px;
   color: var(--mp-fg-dim);
@@ -1067,6 +1070,7 @@
   font-weight: 600;
   margin-top: 2px;
 }
+.lobby-body-card.is-mine .lobby-body-card__tag { color: var(--mp-friendly); }
 .lobby-body-card__tag.is-taken { color: var(--mp-fg-dim); }
 
 /* Host-only delete button stacked over their own room cards. */
