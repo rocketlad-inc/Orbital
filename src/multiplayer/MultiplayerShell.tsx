@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from './AuthContext';
 import { LobbyView } from './LobbyView';
 import { FactionPanel } from './FactionPanel';
@@ -77,6 +77,12 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
     tradeId: string;
     proposerName: string;
   } | null>(null);
+  // Caller's own faction id, learned from the trades-list response.
+  // Held in a ref so the WS handler can read the latest value without
+  // re-subscribing. Used to suppress the incoming-trade popup for
+  // trades the local player SENT (the 'proposed' broadcast fans out to
+  // everyone in the room, including the proposer).
+  const myFactionIdRef = useRef<string | null>(null);
   // Transient toast notifications fanned out of the room WebSocket.
   // Each has a unique id so React can key it and a setTimeout dismisses
   // it after a few seconds.
@@ -99,6 +105,9 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
       // caller is the responder. The server scopes the list to caller, so
       // any 'open' entries where proposer !== caller are incoming.
       const callerFactionId = (res.data as any).caller_faction_id;
+      // Remember who we are so the WS handler can tell our own outgoing
+      // proposals apart from genuinely incoming ones.
+      if (callerFactionId) myFactionIdRef.current = callerFactionId;
       setIncomingTradeCount(
         res.data.trades.filter((t) => t.responder_faction_id === callerFactionId).length,
       );
@@ -152,6 +161,13 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
         const m = JSON.parse(ev.data);
         if (m?.kind === 'trade') {
           if (m.event === 'proposed') {
+            // The 'proposed' broadcast fans out to EVERY socket in the
+            // room, including the proposer's. Skip it for our own
+            // outgoing trades — those aren't incoming, so no toast, no
+            // popup, no badge bump.
+            if (m.proposer_faction_id && m.proposer_faction_id === myFactionIdRef.current) {
+              return;
+            }
             const proposer = (typeof m.proposer_faction_name === 'string' && m.proposer_faction_name)
               ? m.proposer_faction_name
               : 'Another faction';
