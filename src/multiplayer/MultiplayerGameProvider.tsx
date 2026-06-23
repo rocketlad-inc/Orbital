@@ -10,6 +10,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from './api';
 import { logger, LogCategory, LogLevel } from '../game/logger';
+import { isNodeCancelPending, reconcilePendingNodeCancels } from './pendingNodeCancels';
 import { GameContextProvider } from '../state/gameContext';
 import { MultiplayerActionsProvider } from './MultiplayerActionsContext';
 import {
@@ -645,15 +646,24 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   // always right (it only fires a committed node once scheduled_t arrives);
   // only this client-side reconstruction was collapsing the chain.
   const liveNodesByShip = new Map<string, NonNullable<ServerState['nodes']>>();
+  const liveNodeIds = new Set<string>();
   for (const n of (srv.nodes ?? [])) {
     if (!n.target_body_id) continue;
     if (n.status !== 'committed' && n.status !== 'in_transit') continue;
     // Arrived but not yet swept to 'executed' — don't resurrect it.
     if (n.arrival_at_tick != null && n.arrival_at_tick <= currentTick) continue;
+    liveNodeIds.add(n.id);
+    // The player just cancelled this leg; the server row is still
+    // 'committed' until the POST lands. Suppress it so the queued leg
+    // stays removed instead of flickering back on this poll.
+    if (isNodeCancelPending(n.id)) continue;
     const arr = liveNodesByShip.get(n.ship_id);
     if (arr) arr.push(n);
     else liveNodesByShip.set(n.ship_id, [n]);
   }
+  // Stop suppressing any pending cancel the server has now applied (the
+  // node is no longer in the live set).
+  reconcilePendingNodeCancels(liveNodeIds);
 
   for (const [shipId, nodes] of liveNodesByShip) {
     const ship = shipById.get(shipId);
@@ -719,8 +729,12 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         };
         const dt = Math.max(0, currentTick - n.scheduled_t);
         if (dt > 0) stepTorchShip(state, plan, n.scheduled_t, dt, bodies);
+        plan.nodeId = n.id;
         ship.transit = { pos: state.pos, vel: state.vel, currentTransfer: plan };
       } else {
+        // Carry the server node id so the UI can cancel this leg
+        // server-side, not just locally.
+        plan.nodeId = n.id;
         queued.push(plan);
       }
       priorPlan = plan;

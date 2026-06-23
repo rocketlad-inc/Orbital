@@ -5,6 +5,7 @@ import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { maintenanceRatesForShip } from '../game/maintenance';
 import { rankHpMul } from '../game/techs';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { markNodeCancelPending, unmarkNodeCancelPending } from '../multiplayer/pendingNodeCancels';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { ShipIcon } from './ShipIcons';
@@ -218,7 +219,11 @@ export const ShipPanel: React.FC = () => {
   const handleRemoveQueuedTransfer = (index: number) => {
     const queue = ship.queuedTransits || [];
     if (index >= queue.length) return;
+    // A queued leg launches from the previous leg's arrival point, so
+    // removing one orphans every leg chained after it — drop the tail too.
+    const removed = queue.slice(index);
     const newQueue = queue.slice(0, index);
+    // Optimistic local removal.
     setGameState({
       ...gameState,
       ships: gameState.ships.map(s =>
@@ -227,6 +232,26 @@ export const ShipPanel: React.FC = () => {
           : s
       ),
     });
+    // Multiplayer: the queued legs are 'committed' server rows. Without a
+    // server-side cancel the next /state poll reconstructs them and they
+    // "come back." Cancel each removed leg's node and mark it pending so
+    // reconstruction suppresses it until the cancel lands (no flicker).
+    if (mpActions) {
+      for (const leg of removed) {
+        if (!leg.nodeId) continue;  // local-only preview leg — nothing to cancel
+        const nodeId = leg.nodeId;
+        markNodeCancelPending(nodeId);
+        mpActions.cancelNode(nodeId).then(res => {
+          if (!res.ok) {
+            // Server kept the leg — stop suppressing it so it reappears
+            // instead of silently executing while hidden.
+            unmarkNodeCancelPending(nodeId);
+            // eslint-disable-next-line no-console
+            console.warn('cancelNode (queued leg) rejected by server:', res.error);
+          }
+        });
+      }
+    }
   };
 
   const handleFormFleet = (peerIds: string[]) => {
