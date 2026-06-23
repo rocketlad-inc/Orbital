@@ -797,6 +797,41 @@ export function drawBody(
     ctx.ctx.textAlign = 'center';
     ctx.ctx.textBaseline = 'top';
     ctx.ctx.fillText(body.name.toUpperCase(), canvasPos.x, canvasPos.y + radius + 14);
+
+    // Neptune's-Pride-style yield readout under the name. Each token
+    // is color-coded to the resource pill (fuel amber, ore silver,
+    // credits gold, science sky-cyan). Zero yields are skipped so
+    // a barren rock doesn't pad three "0" tokens. Stars / black
+    // holes / gas giants without body.resources fall through here.
+    if (body.resources) {
+      const tokens: Array<{ text: string; color: string }> = [];
+      if (body.resources.fuel > 0)    tokens.push({ text: `${body.resources.fuel}F`,    color: '#ffb84d' });
+      if (body.resources.metal > 0)   tokens.push({ text: `${body.resources.metal}O`,   color: '#a0a0a0' });
+      if (body.resources.gold > 0)    tokens.push({ text: `${body.resources.gold}C`,    color: '#ffd700' });
+      if (body.resources.science > 0) tokens.push({ text: `${body.resources.science}S`, color: '#67e8f9' });
+      if (tokens.length > 0) {
+        ctx.ctx.font = '9px monospace';
+        ctx.ctx.textBaseline = 'top';
+        const baseY = canvasPos.y + radius + 26; // name sits at +14 in a 10px font; this lines up just below
+        const gap = 4;
+        // Measure total width to center the row.
+        let totalW = 0;
+        const widths: number[] = [];
+        for (const t of tokens) {
+          const w = ctx.ctx.measureText(t.text).width;
+          widths.push(w);
+          totalW += w;
+        }
+        totalW += gap * (tokens.length - 1);
+        let cursorX = canvasPos.x - totalW / 2;
+        for (let i = 0; i < tokens.length; i++) {
+          ctx.ctx.fillStyle = tokens[i].color;
+          ctx.ctx.textAlign = 'left';
+          ctx.ctx.fillText(tokens[i].text, cursorX, baseY);
+          cursorX += widths[i] + gap;
+        }
+      }
+    }
   }
 }
 
