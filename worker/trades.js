@@ -251,6 +251,7 @@ async function handlePropose(req, env, { session, params }) {
     event: 'proposed',
     trade_id: id,
     proposer_faction_id: proposer.id,
+    proposer_faction_name: proposer.name,
     responder_faction_id: responderId,
   });
 

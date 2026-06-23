@@ -751,6 +751,55 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         return `${t}  🔍 ${owner}: ${msg}`;
       }
 
+      // --------- Diplomacy events ---------
+      // Pact-kind labels — keep in sync with src/multiplayer/api.ts
+      // PACT_LABELS but expanded so the log copy reads grammatically.
+      const pactLabel = (k: string): string => {
+        if (k === 'nap') return 'Non-Aggression Pact';
+        if (k === 'defense_pact') return 'Defense Pact';
+        if (k === 'intel_share') return 'Intel-Share Pact';
+        return 'pact';
+      };
+
+      // Human-readable resource bundle. Drops zero entries so a
+      // pure-pact trade doesn't say "0M 0F 0C 0S".
+      const fmtBundle = (b: unknown): string => {
+        if (!b || typeof b !== 'object') return 'nothing';
+        const o = b as Record<string, number>;
+        const parts: string[] = [];
+        if ((o.metal ?? 0) > 0)   parts.push(`${o.metal} ore`);
+        if ((o.fuel ?? 0) > 0)    parts.push(`${o.fuel} fuel`);
+        if ((o.gold ?? 0) > 0)    parts.push(`${o.gold} credits`);
+        if ((o.science ?? 0) > 0) parts.push(`${o.science} science`);
+        return parts.length ? parts.join(', ') : 'nothing';
+      };
+
+      if (ev.kind === 'trade_accepted') {
+        const proposer = nameOfFaction(ev.actor_faction_id);
+        const responder = nameOfFaction(ev.target_faction_id);
+        const offer = fmtBundle(parsed.offer);
+        const request = fmtBundle(parsed.request);
+        const pacts = Array.isArray(parsed.pacts) ? (parsed.pacts as string[]) : [];
+        const pactTail = pacts.length
+          ? ` + ${pacts.map(pactLabel).join(', ')}`
+          : '';
+        return `${t}  ⚖ ${proposer} traded ${offer} → ${responder} for ${request}${pactTail}`;
+      }
+
+      if (ev.kind === 'treaty_signed') {
+        const a = nameOfFaction(ev.actor_faction_id);
+        const b = nameOfFaction(ev.target_faction_id);
+        const kind = pactLabel((parsed.kind as string) ?? 'pact');
+        return `${t}  🕊 ${a} & ${b} signed ${kind}`;
+      }
+
+      if (ev.kind === 'treaty_broken') {
+        const breaker = nameOfFaction(ev.actor_faction_id);
+        const other = nameOfFaction(ev.target_faction_id);
+        const kind = pactLabel((parsed.kind as string) ?? 'pact');
+        return `${t}  ⚔ ${breaker} broke the ${kind} with ${other} — war resumes`;
+      }
+
       return `${t}  ${ev.kind}`;
     });
 

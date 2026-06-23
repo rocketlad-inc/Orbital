@@ -428,6 +428,11 @@ function logEntryIcon(entry: string): { icon: string; color: string } {
   if (s.includes('discovery') || s.includes('databank') || s.includes('warp gate') || s.includes('stargate')) {
     return { icon: '✦', color: '#67e8f9' };                              // exploration find
   }
+  // Diplomacy buckets — order matters: 'broke ... pact' must match
+  // before the generic 'pact' word in 'signed Defense Pact'.
+  if (s.includes('broke') && s.includes('pact'))   return { icon: '⚔', color: '#ff5e5e' };  // pact broken = war
+  if (s.includes('signed') && s.includes('pact'))  return { icon: '🕊', color: '#67e8f9' };  // pact signed = peace
+  if (s.includes('traded') && s.includes(' → '))   return { icon: '⚖', color: '#fbbf24' };  // resource swap
   if (s.includes('captured')) return { icon: '⚑', color: '#ffd700' };    // piracy / cargo grab
   if (s.includes('destroyed') || s.includes('collapsed')) return { icon: '✖', color: '#ff5e5e' };
   if (s.includes(' hits ')) return { icon: '⚔', color: '#ffb84d' };      // weapons fire
