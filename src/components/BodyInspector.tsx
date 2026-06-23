@@ -540,11 +540,17 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
         el.select();
       }, 0);
     }
-    // gameState.settlements deliberately NOT in deps — that array
-    // updates on every tick/poll, and re-running this effect would
-    // wipe whatever name the player has typed back to the suggestion.
+    // Deps depend on body.id, not body itself. body is computed inline
+    // (gameState.bodies.find(...)) every render, so its REFERENCE
+    // changes on every /state poll even when its contents haven't
+    // logically changed. Depending on the reference would re-fire this
+    // effect every poll and wipe the player's typed name back to the
+    // suggestion (which is exactly what the playtester hit twice).
+    // gameState.settlements also intentionally excluded for the same
+    // reason — the seed is computed once when the prompt opens, not
+    // re-derived as ships move.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [namingType, body]);
+  }, [namingType, body?.id]);
 
   if (!body) return null;
 
