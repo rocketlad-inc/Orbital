@@ -11,6 +11,40 @@
   padding: 0;
 }
 
+/* ============================================================
+   Scrollbars — themed to match the panel chrome.
+   Default browser scrollbars (light grey on white) read like a
+   debug artefact against the dark UI. Global rules so every
+   overflowing panel gets the same treatment.
+   Firefox uses scrollbar-color (thumb track). WebKit uses the
+   pseudo-elements below.
+   ============================================================ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2a3d50 rgba(10, 14, 20, 0.5);
+}
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-track {
+  background: rgba(10, 14, 20, 0.5);
+}
+*::-webkit-scrollbar-thumb {
+  background: #2a3d50;
+  border-radius: 4px;
+  border: 1px solid rgba(10, 14, 20, 0.6);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #4a6275;
+}
+*::-webkit-scrollbar-thumb:active {
+  background: rgba(78, 205, 196, 0.7);
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 @keyframes threatBlink {
   0%, 100% { box-shadow: 0 0 0 0 rgba(255, 48, 48, 0); }
   50% { box-shadow: 0 0 0 4px rgba(255, 48, 48, 0.55); }
