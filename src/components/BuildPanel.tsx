@@ -249,7 +249,7 @@ export const BuildPanel: React.FC = () => {
           const canAfford = shortFuel === 0 && shortOre === 0 && shortCredits === 0;
           const shortBits: string[] = [];
           if (shortFuel    > 0) shortBits.push(`+${shortFuel} fuel`);
-          if (shortOre     > 0) shortBits.push(`+${shortOre} ore`);
+          if (shortOre     > 0) shortBits.push(`+${shortOre} metal`);
           if (shortCredits > 0) shortBits.push(`+${shortCredits} cr`);
           const shortLabel = shortBits.length > 0 ? `Need ${shortBits.join(', ')}` : '';
           return (
@@ -295,7 +295,7 @@ export const BuildPanel: React.FC = () => {
                 <span
                   className="cost-metal"
                   style={shortOre > 0 ? { color: '#ff5e5e', fontWeight: 700 } : undefined}
-                >{def.cost.ore}O</span>
+                >{def.cost.ore}M</span>
                 <span
                   className="cost-money"
                   style={shortCredits > 0 ? { color: '#ff5e5e', fontWeight: 700 } : undefined}
@@ -306,7 +306,7 @@ export const BuildPanel: React.FC = () => {
                 disabled={!canAfford}
                 onClick={() => { setRecentlyQueued(s => new Set(s).add(cls)); handleBuild(cls); }}
                 title={canAfford
-                  ? `Build a ${def.displayName} (${def.cost.fuel}F ${def.cost.ore}O ${def.cost.credits}C, ${def.buildTime} ticks)`
+                  ? `Build a ${def.displayName} (${def.cost.fuel}F ${def.cost.ore}M ${def.cost.credits}C, ${def.buildTime} ticks)`
                   : shortLabel}
               >
                 BUILD · {def.buildTime}t
@@ -352,7 +352,7 @@ export const BuildPanel: React.FC = () => {
 
       <div className="resources-bar">
         <span className="resource">FUEL: {Math.round(playerRes.fuel)}</span>
-        <span className="resource">ORE: {Math.round(playerRes.ore)}</span>
+        <span className="resource">METAL: {Math.round(playerRes.ore)}</span>
         <span className="resource">CR: {Math.round(playerRes.credits)}</span>
       </div>
     </div>

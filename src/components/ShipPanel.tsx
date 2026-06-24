@@ -1290,7 +1290,7 @@ const TradeRouteSection: React.FC<{
       route.cargo.fuel + route.cargo.ore + route.cargo.credits + route.cargo.science;
     const cargoStr = [
       route.cargo.fuel    > 0 ? `${Math.round(route.cargo.fuel)}F`    : null,
-      route.cargo.ore     > 0 ? `${Math.round(route.cargo.ore)}O`     : null,
+      route.cargo.ore     > 0 ? `${Math.round(route.cargo.ore)}M`     : null,
       route.cargo.credits > 0 ? `${Math.round(route.cargo.credits)}C` : null,
       route.cargo.science > 0 ? `${Math.round(route.cargo.science)}S` : null,
     ].filter(Boolean).join(' ');

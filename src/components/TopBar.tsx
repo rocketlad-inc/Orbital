@@ -317,28 +317,28 @@ export const TopBar: React.FC<TopBarProps> = ({
             label="FUEL" modifier="fuel"
             value={playerResources.fuel}
             rate={income.delivered.fuel}
-            stranded={income.stranded.fuel}
+            local={income.local.fuel}
             hasCollector={income.hasCollector}
           />
           <ResourcePill
-            label="ORE" modifier="ore"
+            label="METAL" modifier="ore"
             value={playerResources.ore}
             rate={income.delivered.ore}
-            stranded={income.stranded.ore}
+            local={income.local.ore}
             hasCollector={income.hasCollector}
           />
           <ResourcePill
             label="CR" modifier="credits"
             value={playerResources.credits}
             rate={income.delivered.credits}
-            stranded={income.stranded.credits}
+            local={income.local.credits}
             hasCollector={income.hasCollector}
           />
           <ResourcePill
             label="SCI" modifier="science"
             value={playerResources.science}
             rate={income.delivered.science}
-            stranded={income.stranded.science}
+            local={income.local.science}
             hasCollector={income.hasCollector}
           />
           <div className="resource-pill resource-pill--ships">
@@ -732,16 +732,18 @@ const ResourcePill: React.FC<{
   modifier: string;          // → css className suffix (fuel/ore/credits/science)
   value: number;             // current pool
   rate: number;              // per-tick income arriving in the pool (delivered)
-  stranded: number;          // per-tick income stuck in stockpiles (no collector)
+  local: number;             // per-tick income banking to LOCAL settlement stockpiles (90% of non-collector yield)
   hasCollector: boolean;     // does the empire have any collector at all
-}> = ({ label, modifier, value, rate, stranded, hasCollector }) => {
+}> = ({ label, modifier, value, rate, local, hasCollector }) => {
   const hasRate = rate > 0.01;
-  const isStranded = stranded > 0.01 && !hasCollector;
+  const hasLocal = local > 0.01;
   let tooltip: string;
-  if (isStranded) {
-    tooltip = `${label}: ${Math.round(value)} (pool). ${fmtRate(stranded)}/t piling up at settlements — build a collector to receive it.`;
+  if (hasLocal && !hasCollector) {
+    tooltip = `${label}: ${Math.round(value)} (pool). ${fmtRate(local)}/t banking LOCAL at settlements — spendable on body builds, or send a freighter to vacuum it up. Build a collector for the 10× pump.`;
+  } else if (hasLocal && hasCollector) {
+    tooltip = `${label}: ${Math.round(value)} (pool) — +${fmtRate(rate)}/t delivered, +${fmtRate(local)}/t banking LOCAL at uncollectered settlements.`;
   } else if (hasRate) {
-    tooltip = `${label}: ${Math.round(value)} (pool) — gaining +${fmtRate(rate)} per tick via your collector network.`;
+    tooltip = `${label}: ${Math.round(value)} (pool) — gaining +${fmtRate(rate)} per tick.`;
   } else {
     tooltip = `${label}: ${Math.round(value)} (pool)`;
   }
@@ -757,17 +759,17 @@ const ResourcePill: React.FC<{
           }}
         >+{fmtRate(rate)}/t</div>
       )}
-      {isStranded && (
-        // Red trickle indicator: yield is being produced but has
-        // nowhere to land. ~X/t (with tilde) reads differently from
-        // +X/t so the player can clock the difference at a glance.
+      {hasLocal && (
+        // Amber trickle: yield banking at non-collector settlements.
+        // Not "stranded" anymore — it's spendable locally + freighter-
+        // vacuumable. ~X/t (tilde) reads differently from +X/t (pool).
         <div
           className="resource-pill__rate"
           style={{
-            fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', marginTop: 2, color: '#ff5e5e',
+            fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', marginTop: 2, color: '#ffb84d',
           }}
-          aria-label="stranded — build a collector"
-        >~{fmtRate(stranded)}/t</div>
+          aria-label={`local — ${fmtRate(local)} per tick banking at settlements`}
+        >~{fmtRate(local)}/t LOCAL</div>
       )}
     </div>
   );
@@ -920,7 +922,7 @@ const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
           <div style={{ height: 1, background: '#2a3d50', margin: '8px 0' }} />
 
           <div style={{ fontSize: 10, color: '#b8c8d6' }}>
-            POOL: {Math.round(budget.pool.fuel)} fuel · {Math.round(budget.pool.ore)} ore · {Math.round(budget.pool.credits)} cr
+            POOL: {Math.round(budget.pool.fuel)} fuel · {Math.round(budget.pool.ore)} metal · {Math.round(budget.pool.credits)} cr
           </div>
           {overspending && (
             <div style={{ fontSize: 10, color: '#ff5e5e', marginTop: 4 }}>

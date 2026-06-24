@@ -811,7 +811,7 @@ export function drawBody(
     if (body.resources && showYields) {
       const tokens: Array<{ text: string; color: string }> = [];
       if (body.resources.fuel > 0)    tokens.push({ text: `${body.resources.fuel}F`,    color: '#ffb84d' });
-      if (body.resources.metal > 0)   tokens.push({ text: `${body.resources.metal}O`,   color: '#a0a0a0' });
+      if (body.resources.metal > 0)   tokens.push({ text: `${body.resources.metal}M`,   color: '#a0a0a0' });
       if (body.resources.gold > 0)    tokens.push({ text: `${body.resources.gold}C`,    color: '#ffd700' });
       if (body.resources.science > 0) tokens.push({ text: `${body.resources.science}S`, color: '#67e8f9' });
       if (tokens.length > 0) {

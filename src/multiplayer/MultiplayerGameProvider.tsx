@@ -854,7 +854,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         if (!b || typeof b !== 'object') return 'nothing';
         const o = b as Record<string, number>;
         const parts: string[] = [];
-        if ((o.metal ?? 0) > 0)   parts.push(`${o.metal} ore`);
+        if ((o.metal ?? 0) > 0)   parts.push(`${o.metal} metal`);
         if ((o.fuel ?? 0) > 0)    parts.push(`${o.fuel} fuel`);
         if ((o.gold ?? 0) > 0)    parts.push(`${o.gold} credits`);
         if ((o.science ?? 0) > 0) parts.push(`${o.science} science`);

@@ -86,7 +86,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'resources',
     title: 'Your treasury',
-    body: 'Fuel, ore, credits, science — everything you spend comes from here. The +X/t line is what your settlements deposit per tick. Without a collector, those harvests pile up and never reach you.',
+    body: 'Fuel, metal, credits, science — everything you spend comes from here. The +X/t line is what your settlements deposit per tick. Without a collector, those harvests pile up and never reach you.',
     target: 'topbar-resources',
     placement: 'below',
   },
@@ -133,14 +133,14 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'buildings-strip',
     title: 'Upgrade buildings',
-    body: 'Cities take FORGE (more ore), MINT (more credits), LAB (more science). Stations take WEAPONS (heavier guns) and SHIPYARD (more parallel builds). Costs ramp with every level.',
+    body: 'Cities take FORGE (more metal), MINT (more credits), LAB (more science). Stations take WEAPONS (heavier guns) and SHIPYARD (more parallel builds). Costs ramp with every level.',
     target: 'buildings-strip',
     placement: 'right',
   },
   {
     id: 'dyson-sphere',
     title: 'Dyson Sphere · Engineering Victory',
-    body: 'At a Sol-orbit station you can lay the megaproject foundation. Park freighters at Sol to pipe fuel, ore, credits, and science into it every tick. Fill all four targets and you win — but enemies who blow up the foundation collapse the whole project.',
+    body: 'At a Sol-orbit station you can lay the megaproject foundation. Park freighters at Sol to pipe fuel, metal, credits, and science into it every tick. Fill all four targets and you win — but enemies who blow up the foundation collapse the whole project.',
     target: 'dyson-sphere-section',
     placement: 'above',
   },

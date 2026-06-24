@@ -82,7 +82,7 @@ const CommandBridge_Desktop: React.FC = () => (
       <span className="ux-cb-desk__brand">◉ COMMANDER · SOLAR DIRECTORATE</span>
       <div className="ux-cb-desk__res">
         <StatChip label="FUEL" value="2,481" tone="good" />
-        <StatChip label="ORE" value="1,720" />
+        <StatChip label="METAL" value="1,720" />
         <StatChip label="CRED" value="619" />
         <StatChip label="SCI" value="142" tone="warn" />
       </div>
@@ -113,7 +113,7 @@ const CommandBridge_Desktop: React.FC = () => (
         <div className="mock-section-head">SELECTED · EARTH YARDS</div>
         <div className="mock-bar"><span>HP</span><span className="mock-bar__fill" style={{ width: '78%' }} /><span>78/100</span></div>
         <div className="mock-bar"><span>POP</span><span className="mock-bar__fill" style={{ width: '40%' }} /><span>2/5</span></div>
-        <div className="mock-kv">+3.3 fuel/tick · +2.4 ore</div>
+        <div className="mock-kv">+3.3 fuel/tick · +2.4 metal</div>
         <div className="mock-section-head">BUILD QUEUE</div>
         <FakeRow cols={['Frigate "Aegis"', 'T+8']} />
         <FakeRow cols={['Destroyer "Anvil"', 'T+47']} />
@@ -416,7 +416,7 @@ const EmpireManager_Desktop: React.FC = () => (
       <MiniOrbitalMap />
       <div className="mock-em-stat-strip">
         <StatChip label="FUEL" value="2.4K" tone="good" />
-        <StatChip label="ORE" value="1.7K" />
+        <StatChip label="METAL" value="1.7K" />
         <StatChip label="CRED" value="619" />
         <StatChip label="SCI" value="142" tone="warn" />
       </div>

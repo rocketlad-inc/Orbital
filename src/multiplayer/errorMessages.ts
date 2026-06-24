@@ -75,8 +75,8 @@ export function humanizeMpError(
       // because "insufficient resources" alone leaves the player
       // hunting for which meter to top up.
       switch (domain) {
-        case 'build':    return 'Server: not enough ore + credits. Wait for income from your settlements.';
-        case 'deploy':   return 'Server: not enough ore + credits. Wait for income or grant resources via the admin panel.';
+        case 'build':    return 'Server: not enough metal + credits. Wait for income from your settlements.';
+        case 'deploy':   return 'Server: not enough metal + credits. Wait for income or grant resources via the admin panel.';
         case 'research': return `Server: not enough science. ${fallback}`;
         default:         return `Server: insufficient resources (${fallback}).`;
       }
