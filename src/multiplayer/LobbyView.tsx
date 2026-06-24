@@ -164,6 +164,18 @@ function RoomDetail({
   const [hostInterval, setHostInterval] = useState(DEFAULT_TICK_INTERVAL_MS);
   const settingsInitedRef = useRef(false);
 
+  // Late-join: when the game has already started and this user has no
+  // faction (joined via invite link after start), we show a world
+  // picker instead of dumping them into the game where /state 403s.
+  //   null      = not a latecomer (or undetermined yet)
+  //   'needed'  = show the picker
+  //   'submitting' = late-join POST in flight
+  type LateJoinBody = { id: string; name: string; type: string; yield: { metal: number; fuel: number; gold: number; science: number } };
+  const [lateJoin, setLateJoin] = useState<null | 'needed' | 'submitting'>(null);
+  const [joinableBodies, setJoinableBodies] = useState<LateJoinBody[]>([]);
+  const [lateChoice, setLateChoice] = useState<string | null>(null);
+  const lateJoinCheckedRef = useRef(false);
+
   const refresh = useCallback(async () => {
     const res = await apiFetch<RoomSnapshot>(`/api/lobby/rooms/${roomId}`);
     if (res.ok) setSnap(res.data);
@@ -206,10 +218,67 @@ function RoomDetail({
     };
   }, [roomId, refresh, wsTick]);
 
-  // When we get a game_id, jump out to the game view.
+  // When we get a game_id, decide: enter the game (I have a faction) or
+  // show the late-join world picker (I joined via invite after start and
+  // have no faction yet). joinable-bodies reports already_joined so we
+  // route correctly instead of dumping a factionless user into a /state
+  // that 403s.
   useEffect(() => {
-    if (snap?.game_id) onEnterGame(snap.game_id);
+    const gameId = snap?.game_id;
+    if (!gameId || lateJoinCheckedRef.current) return;
+    lateJoinCheckedRef.current = true;
+    let cancelled = false;
+    (async () => {
+      const res = await apiFetch<{ already_joined: boolean; bodies: LateJoinBody[] }>(
+        `/api/games/${gameId}/joinable-bodies`,
+      );
+      if (cancelled) return;
+      if (res.ok && res.data) {
+        if (res.data.already_joined) {
+          onEnterGame(gameId);
+        } else {
+          setJoinableBodies(res.data.bodies ?? []);
+          setLateJoin('needed');
+        }
+      } else {
+        // Couldn't determine — fall back to the original behavior so a
+        // returning player isn't stranded by a transient error.
+        onEnterGame(gameId);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [snap?.game_id, onEnterGame]);
+
+  async function submitLateJoin() {
+    const gameId = snap?.game_id;
+    if (!gameId || !lateChoice) return;
+    setError(null);
+    setLateJoin('submitting');
+    const res = await apiFetch<{ ok: boolean; faction_id: string }>(
+      `/api/games/${gameId}/late-join`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          chosen_body: lateChoice,
+          empire_name: empireName.trim() || undefined,
+          bio: bio.trim() || undefined,
+        }),
+      },
+    );
+    if (!res.ok) {
+      setError(res.error?.message ?? 'Could not join');
+      setLateJoin('needed');
+      // A body_taken race: refresh the joinable list so the player can
+      // pick another world.
+      const fresh = await apiFetch<{ bodies: LateJoinBody[] }>(`/api/games/${gameId}/joinable-bodies`);
+      if (fresh.ok && fresh.data) {
+        setJoinableBodies(fresh.data.bodies ?? []);
+        setLateChoice(null);
+      }
+      return;
+    }
+    onEnterGame(gameId);
+  }
 
   // Clear the optimistic Ready flag once the server-authoritative
   // snapshot agrees with what we showed locally.
@@ -251,6 +320,83 @@ function RoomDetail({
   const isHost = snap.settings.host_id === user?.id;
   const started = !!snap.game_id;
   const myReady = optimisticReady ?? !!(user && snap.ready[user.id]);
+
+  // Late-join world picker. Shown when the game is already running and
+  // this user has no faction yet (joined via invite link after start).
+  if (lateJoin) {
+    return (
+      <div className="mp-room-detail">
+        <div className="mp-section-title" style={{ marginTop: 4 }}>Join the war</div>
+        <div className="mp-empty" style={{ fontSize: 11, marginBottom: 8, padding: '0 2px' }}>
+          The game is already underway. Pick an unclaimed world to drop your capital on —
+          you start with a city, two frigates, and a freighter.
+        </div>
+
+        <label className="mp-label">Empire name (optional)</label>
+        <input
+          className="mp-input"
+          type="text"
+          maxLength={40}
+          value={empireName}
+          onChange={(e) => setEmpireName(e.target.value)}
+          placeholder="e.g. Verdan Concord"
+        />
+
+        {joinableBodies.length === 0 ? (
+          <div className="mp-empty" style={{ marginTop: 12 }}>
+            No unclaimed capital-worlds remain — there's no open seat in this game.
+          </div>
+        ) : (
+          <>
+            <div className="mp-section-title" style={{ marginTop: 12 }}>Unclaimed worlds</div>
+            <div className="lobby-body-grid">
+              {joinableBodies.map((b) => {
+                const isMine = lateChoice === b.id;
+                return (
+                  <button
+                    key={b.id}
+                    className={`lobby-body-card ${isMine ? 'is-mine' : ''}`}
+                    onClick={() => setLateChoice(isMine ? null : b.id)}
+                    title={isMine ? 'Click to un-pick' : 'Click to claim'}
+                  >
+                    <div className="lobby-body-card__name">{b.name}</div>
+                    <div className="lobby-body-card__sub">{b.type}</div>
+                    <div className="lobby-body-card__yields">
+                      {b.yield.metal > 0 && <span>M{b.yield.metal}</span>}
+                      {b.yield.fuel > 0 && <span>F{b.yield.fuel}</span>}
+                      {b.yield.gold > 0 && <span>G{b.yield.gold}</span>}
+                      {b.yield.science > 0 && <span>S{b.yield.science}</span>}
+                    </div>
+                    {isMine && <div className="lobby-body-card__tag">✓ chosen</div>}
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
+
+        {error && <div className="mp-error">{error}</div>}
+
+        <div className="mp-row" style={{ marginTop: 12, gap: 6 }}>
+          <button
+            className="mp-submit"
+            style={{ width: 'auto', margin: 0, padding: '8px 16px' }}
+            disabled={!lateChoice || lateJoin === 'submitting'}
+            onClick={submitLateJoin}
+          >
+            {lateJoin === 'submitting' ? 'Joining…' : 'Found my capital'}
+          </button>
+          <button
+            className="mp-submit"
+            style={{ width: 'auto', margin: 0, padding: '8px 16px', background: 'transparent', border: '1px solid var(--mp-border)', color: 'var(--mp-fg-dim)' }}
+            onClick={onLeave}
+          >
+            Back
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   async function saveEmpire() {
     setError(null);

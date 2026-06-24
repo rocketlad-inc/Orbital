@@ -1004,7 +1004,288 @@ async function handlePatchMyFaction(req, env, ctx) {
 
 // ---------- routes ----------
 
+// ---------- late join (join an already-started game) ----------
+
+/**
+ * Seed a SINGLE faction into an already-active game. Mirrors the
+ * relevant slices of seedGameWorld but operates on the existing world:
+ * the bodies are already there, so we UPDATE the chosen body to claim
+ * it rather than re-inserting the catalog. The newcomer gets the same
+ * starter package as the original players (capital city + 2 frigates +
+ * 1 freighter + STARTING_RESOURCES) so they're only behind on tech and
+ * map position, not raw fleet.
+ *
+ * Caller must already be a room member; this is enforced by the route
+ * handler. Returns { ok, faction_id } or throws on a precondition
+ * failure (the handler maps thrown messages to 4xx).
+ *
+ * @param {*} env
+ * @param {string} gameId
+ * @param {string} userId
+ * @param {string} chosenTemplateId   body template id, e.g. 'mars'
+ * @param {{ empireName?: string, bio?: string }} identity
+ */
+export async function seedLateFaction(env, gameId, userId, chosenTemplateId, identity = {}) {
+  const game = await env.DB
+    .prepare('SELECT id, status, current_tick FROM games WHERE id = ?')
+    .bind(gameId).first();
+  if (!game) throw new Error('not_found:game not found');
+  if (game.status !== 'active') throw new Error('not_active:game is not active');
+
+  // No double-seeding: UNIQUE(game_id,user_id) would reject anyway, but
+  // surface a clean message.
+  const existing = await env.DB
+    .prepare('SELECT 1 AS x FROM game_factions WHERE game_id = ? AND user_id = ?')
+    .bind(gameId, userId).first();
+  if (existing) throw new Error('already_joined:you already have a faction in this game');
+
+  // The chosen body must be capital-eligible AND currently unclaimed.
+  if (!isValidStartingBody(chosenTemplateId)) {
+    throw new Error('bad_body:that world cannot host a capital');
+  }
+  const bodyRowId = `${gameId}:${chosenTemplateId}`;
+  const body = await env.DB
+    .prepare('SELECT id, template_id, name, type, radius, owner_faction_id FROM game_bodies WHERE id = ? AND game_id = ?')
+    .bind(bodyRowId, gameId).first();
+  if (!body) throw new Error('bad_body:no such world in this game');
+  if (body.owner_faction_id != null) throw new Error('body_taken:that world is already claimed');
+
+  // Next slot = max existing + 1. Slot drives faction id, color, and a
+  // default name when the player didn't supply an empire name.
+  const slotRow = await env.DB
+    .prepare('SELECT COALESCE(MAX(slot), -1) AS maxSlot FROM game_factions WHERE game_id = ?')
+    .bind(gameId).first();
+  const slot = Number(slotRow?.maxSlot ?? -1) + 1;
+  const factionId = `${gameId}:f${slot}`;
+  const tick = Number(game.current_tick ?? 0);
+  const now = Date.now();
+
+  const empire = (typeof identity.empireName === 'string' ? identity.empireName.trim() : '') || null;
+  const bio = (typeof identity.bio === 'string' && identity.bio.trim()) ? identity.bio.trim() : null;
+  const name = empire || FACTION_NAMES[slot % FACTION_NAMES.length];
+  const color = FACTION_COLORS[slot % FACTION_COLORS.length];
+
+  const stmts = [];
+
+  // 1) faction row — same starting resources as the founders.
+  stmts.push(
+    env.DB.prepare(
+      `INSERT INTO game_factions
+        (id, game_id, user_id, slot, name, color, status, bio,
+         capital_body_id, reputation, senate_weight,
+         metal, fuel, gold, science,
+         research_tech_id, research_progress, joined_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'active', ?,
+               ?, 0, 1,
+               ?, ?, ?, ?,
+               NULL, 0, ?)`,
+    ).bind(
+      factionId, gameId, userId, slot, name, color, bio,
+      bodyRowId,
+      STARTING_RESOURCES.metal, STARTING_RESOURCES.fuel,
+      STARTING_RESOURCES.gold, STARTING_RESOURCES.science,
+      now,
+    ),
+  );
+
+  // 2) claim the chosen body — develop it like a capital.
+  stmts.push(
+    env.DB.prepare(
+      `UPDATE game_bodies
+          SET owner_faction_id = ?, development_level = ?, shipyard_level = 1,
+              claimed_at_tick = ?, developed_at_tick = ?
+        WHERE id = ? AND game_id = ? AND owner_faction_id IS NULL`,
+    ).bind(factionId, HOME_DEVELOPMENT_LEVEL, tick, tick, bodyRowId, gameId),
+  );
+
+  // 3) starter fleet — 2 frigates + 1 freighter parked at the capital.
+  STARTER_FLEET.forEach((ship, i) => {
+    const id = `${gameId}:s${slot}_${chosenTemplateId}_${i}`;
+    const rp = (body.radius ?? 10) * 1.5;
+    const ra = (body.radius ?? 10) * 2.0;
+    // Spread ships around the body without needing the seed RNG.
+    const omega = (i / STARTER_FLEET.length) * Math.PI * 2;
+    const m0 = ((i + 1) / (STARTER_FLEET.length + 1)) * Math.PI * 2;
+    const stats = SHIP_COMBAT_STATS[ship.class] ?? { hp: 50, damage_per_tick: 0 };
+    stmts.push(
+      env.DB.prepare(
+        `INSERT INTO game_ships
+          (id, game_id, owner_faction_id, name, ship_class, parent_body_id,
+           orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
+           fuel, fuel_max, status, built_at_tick,
+           hp, hp_max, damage_per_tick)
+         VALUES (?, ?, ?, ?, ?, ?,
+                 ?, ?, ?, ?, ?, 1,
+                 ?, ?, 'active', ?,
+                 ?, ?, ?)`,
+      ).bind(
+        id, gameId, factionId, `${ship.baseName} of ${body.name}`, ship.class, bodyRowId,
+        rp, ra, omega, m0, tick,
+        ship.fuelMax, ship.fuelMax, tick,
+        stats.hp, stats.hp, stats.damage_per_tick,
+      ),
+    );
+  });
+
+  // 4) capital city — pop 1, auto-collector, so harvest starts immediately.
+  const cityId = `${gameId}:c${slot}_${chosenTemplateId}`;
+  stmts.push(
+    env.DB.prepare(
+      `INSERT INTO game_settlements
+        (id, game_id, body_id, owner_faction_id, type, name,
+         hp, hp_max, population,
+         surface_angle, orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch,
+         created_at_tick, last_growth_tick, last_harvest_tick,
+         has_collector, collector_built_tick)
+       VALUES (?, ?, ?, ?, 'city', ?,
+               ?, ?, 1,
+               ?, NULL, NULL, NULL, NULL, NULL,
+               ?, ?, ?,
+               1, ?)`,
+    ).bind(
+      cityId, gameId, bodyRowId, factionId, `${name} Capital`,
+      STARTER_CITY_HP, STARTER_CITY_HP,
+      0, tick, tick, tick, tick,
+    ),
+  );
+
+  // 5) chronicle — public so everyone sees the new arrival.
+  const payload = { faction_id: factionId, name, color, slot, capital_body_id: bodyRowId, capital_name: body.name };
+  stmts.push(
+    env.DB.prepare(
+      `INSERT INTO chronicle_entries
+         (id, game_id, tick_number, kind, payload, visibility, created_at_ms)
+       VALUES (?, ?, ?, 'faction_joined', ?, 'public', ?)`,
+    ).bind(newEntryId(), gameId, tick, JSON.stringify(payload), now),
+  );
+
+  await env.DB.batch(stmts);
+  return { ok: true, faction_id: factionId, slot, name };
+}
+
+/**
+ * GET /api/games/:gameId/joinable-bodies
+ * Lists capital-eligible worlds that are still unclaimed, for the
+ * late-join world picker. Auth required + room membership (the invite
+ * link funnels the newcomer through join-by-code first, which inserts
+ * the room_members row). Also reports whether the caller already has a
+ * faction (so the client can route them straight into the game).
+ */
+async function handleJoinableBodies(_req, env, ctx) {
+  const { session, params } = ctx;
+  const gameId = params.gameId;
+  if (!GAME_ID_RE.test(gameId)) return errResponse(400, 'bad_request', 'invalid game id');
+
+  const game = await env.DB
+    .prepare('SELECT status FROM games WHERE id = ?')
+    .bind(gameId).first();
+  if (!game) return errResponse(404, 'not_found', 'game not found');
+
+  const mine = await env.DB
+    .prepare('SELECT id FROM game_factions WHERE game_id = ? AND user_id = ?')
+    .bind(gameId, session.user_id).first();
+
+  // Unclaimed, capital-eligible worlds. We intersect STARTING_BODY_IDS
+  // (terrestrial + moon) with the live owner_faction_id IS NULL set.
+  const rows = (await env.DB
+    .prepare(
+      `SELECT template_id, name, type, yield_metal, yield_fuel, yield_gold, yield_science
+         FROM game_bodies
+        WHERE game_id = ? AND owner_faction_id IS NULL
+        ORDER BY name ASC`,
+    )
+    .bind(gameId).all()).results ?? [];
+  const joinable = rows
+    .filter(r => isValidStartingBody(r.template_id))
+    .map(r => ({
+      id: r.template_id,
+      name: r.name,
+      type: r.type,
+      yield: { metal: r.yield_metal, fuel: r.yield_fuel, gold: r.yield_gold, science: r.yield_science },
+    }));
+
+  return jsonResponse({
+    game_status: game.status,
+    already_joined: !!mine,
+    faction_id: mine?.id ?? null,
+    bodies: joinable,
+  });
+}
+
+/**
+ * POST /api/games/:gameId/late-join   { chosen_body, empire_name?, bio? }
+ * Seeds a faction for a room member into an active game. The invite
+ * link is the authorization (matches the pre-start join model): anyone
+ * who is a room member and has no faction yet may claim an unclaimed
+ * world. Self-heals room membership so an explicit invite isn't blocked
+ * by the room's max_players cap.
+ */
+async function handleLateJoin(req, env, ctx) {
+  const { session, params } = ctx;
+  const gameId = params.gameId;
+  if (!GAME_ID_RE.test(gameId)) return errResponse(400, 'bad_request', 'invalid game id');
+
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return errResponse(400, 'bad_request', 'invalid body');
+  const chosen = body.chosen_body;
+  if (typeof chosen !== 'string' || !chosen) {
+    return errResponse(400, 'bad_request', 'chosen_body required');
+  }
+
+  // Ensure room membership. An explicit late-join via invite link
+  // bypasses the max_players cap on purpose — the host chose to bring
+  // this person in, and the real constraint is unclaimed worlds.
+  if (!(await isRoomMember(env, gameId, session.user_id))) {
+    await env.DB
+      .prepare('INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)')
+      .bind(gameId, session.user_id, Date.now())
+      .run();
+  }
+
+  let result;
+  try {
+    result = await seedLateFaction(env, gameId, session.user_id, chosen, {
+      empireName: body.empire_name,
+      bio: body.bio,
+    });
+  } catch (e) {
+    const msg = String(e?.message || e);
+    const [code, ...rest] = msg.split(':');
+    const message = rest.join(':') || msg;
+    const statusByCode = {
+      not_found: 404, not_active: 409, already_joined: 409,
+      bad_body: 400, body_taken: 409,
+    };
+    return errResponse(statusByCode[code] ?? 500, code || 'error', message);
+  }
+
+  // Mirror the new member into the Room DO so presence/WS stays in sync,
+  // and broadcast so other clients refresh their faction roster.
+  try {
+    const stub = env.ROOM.get(env.ROOM.idFromName(gameId));
+    await stub.fetch('https://room/notify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'faction_joined', faction_id: result.faction_id, name: result.name }),
+    });
+  } catch { /* best-effort */ }
+
+  return jsonResponse(result);
+}
+
 export const routes = [
+  {
+    method: 'GET',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/joinable-bodies$/,
+    auth: 'required',
+    handle: handleJoinableBodies,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/late-join$/,
+    auth: 'required',
+    handle: handleLateJoin,
+  },
   {
     method: 'GET',
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/factions$/,
