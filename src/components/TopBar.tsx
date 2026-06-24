@@ -16,7 +16,7 @@ import { logger } from '../game/logger';
 import { SaveLoadModal } from './SaveLoadModal';
 import { AdminGrantModal } from './AdminGrantModal';
 import { computeIncomePerTick } from '../game/settlements';
-import { TECH_DEFS } from '../game/techs';
+import { TECH_DEFS, nextLevelCost, TECH_MAX_LEVEL, type TechId } from '../game/techs';
 import { useTutorial } from '../state/tutorial';
 import { TUTORIAL_STEP_COUNT } from '../game/tutorialSteps';
 import type { GameState } from '../types';
@@ -383,7 +383,32 @@ export const TopBar: React.FC<TopBarProps> = ({
           {(() => {
             const lvls = gameState.factionTech?.player?.levels || {};
             const total = Object.values(lvls).reduce((s, n) => s + (n ?? 0), 0);
-            return total > 0 ? <span className="badge">{total}</span> : null;
+            // Per Ben/Sean: highlight when a tech is affordable so the
+            // player notices research opportunities. Green pulsing dot
+            // sits next to the level badge.
+            const science = gameState.resources?.player?.science ?? 0;
+            const techState = gameState.factionTech?.player;
+            let affordable = 0;
+            if (techState) {
+              const levels = techState.levels || {};
+              for (const id of Object.keys(TECH_DEFS) as TechId[]) {
+                const cur = levels[id] ?? 0;
+                if (cur >= TECH_MAX_LEVEL) continue;
+                if (nextLevelCost(cur, TECH_DEFS[id]) <= science) affordable++;
+              }
+            }
+            return (
+              <>
+                {total > 0 && <span className="badge">{total}</span>}
+                {affordable > 0 && (
+                  <span
+                    className="nav-button__attention-dot"
+                    title={`${affordable} tech${affordable === 1 ? '' : 's'} affordable`}
+                    aria-label={`${affordable} affordable`}
+                  />
+                )}
+              </>
+            );
           })()}
         </button>
       </div>

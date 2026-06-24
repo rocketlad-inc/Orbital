@@ -1,0 +1,212 @@
+/* ============================================================
+   SituationLog — right-edge attention dock, sibling of mp-dock.
+   Sits ABOVE the MP dock when both are collapsed (top: 60),
+   so the user sees two stacked pills.
+   ============================================================ */
+
+.sit-dock {
+  position: fixed;
+  right: 8px;
+  z-index: 3100;            /* above mp-dock baseline (3000), below modals */
+  font-family: var(--font-body, 'JetBrains Mono', monospace);
+  color: #d8e4ee;
+}
+
+/* ----- Collapsed pill (stacked above the mp-dock pill) ----- */
+
+.sit-dock--collapsed { top: 60px; }
+
+.sit-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(10, 14, 20, 0.94);
+  border: 1px solid #2a3d50;
+  border-radius: 3px;
+  color: #b8c8d6;
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease;
+}
+.sit-pill:hover {
+  border-color: #4ecdc4;
+  color: #4ecdc4;
+}
+
+.sit-pill__count {
+  position: relative;
+  font-size: 11px;
+  font-weight: 700;
+  color: #ffb84d;
+  letter-spacing: 0.04em;
+}
+.sit-pill__warn-dot {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ff5e5e;
+  box-shadow: 0 0 4px rgba(255, 94, 94, 0.7);
+}
+
+/* ----- Open panel ----- */
+
+.sit-dock--open {
+  top: 60px;
+  bottom: 12px;
+  width: 360px;
+}
+
+.sit-panel {
+  width: 100%;
+  height: 100%;
+  background: rgba(10, 14, 20, 0.96);
+  border: 1px solid #2a3d50;
+  border-radius: 3px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  backdrop-filter: blur(6px);
+}
+
+.sit-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid #2a3d50;
+}
+.sit-panel__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-display, sans-serif);
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #ffb84d;
+}
+.sit-panel__close {
+  background: transparent;
+  border: 1px solid #2a3d50;
+  color: #b8c8d6;
+  width: 24px;
+  height: 24px;
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+.sit-panel__close:hover { color: #ff5e5e; border-color: #ff5e5e; }
+
+.sit-panel__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 10px 12px;
+}
+
+/* ----- Empty state ----- */
+.sit-panel__empty {
+  padding: 32px 18px;
+  text-align: center;
+  color: #8a9fb3;
+}
+.sit-panel__empty-icon {
+  font-size: 28px;
+  color: #4ecdc4;
+  margin-bottom: 8px;
+}
+.sit-panel__empty-sub {
+  font-size: 11px;
+  color: #5a6e80;
+  margin-top: 10px;
+  line-height: 1.5;
+}
+
+/* ----- Grouped header sections ----- */
+
+.sit-group {
+  margin-bottom: 12px;
+}
+.sit-group__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 4px 4px 4px 2px;
+  border-bottom: 1px solid #1a2530;
+}
+.sit-group__label {
+  font-family: var(--font-display, sans-serif);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #8a9fb3;
+}
+.sit-group__count {
+  font-size: 11px;
+  color: #ffb84d;
+  padding: 1px 7px;
+  background: rgba(255, 184, 77, 0.12);
+  border-radius: 8px;
+}
+
+.sit-group__list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+
+/* ----- Per-item buttons ----- */
+
+.sit-item {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-left: 3px solid #2a3d50;
+  border-radius: 0;
+  color: inherit;
+  padding: 7px 10px;
+  margin: 2px 0;
+  cursor: pointer;
+  transition: background 0.1s ease, border-color 0.1s ease;
+}
+.sit-item:hover {
+  background: rgba(78, 205, 196, 0.06);
+  border-left-color: #4ecdc4;
+}
+
+.sit-item--warn        { border-left-color: #ffb84d; }
+.sit-item--warn:hover  { background: rgba(255, 184, 77, 0.08); border-left-color: #ff8c40; }
+
+.sit-item__title {
+  font-size: 12px;
+  color: #d8e4ee;
+  letter-spacing: 0.02em;
+  line-height: 1.35;
+}
+.sit-item__sub {
+  font-size: 11px;
+  color: #8a9fb3;
+  margin-top: 2px;
+  letter-spacing: 0.02em;
+}
+
+/* ----- Mobile: collapse to a smaller pill, panel goes full-bleed ----- */
+
+@media (max-width: 768px) {
+  .sit-dock--open {
+    width: auto;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    top: auto;
+    max-height: 60vh;
+  }
+  .sit-pill { padding: 8px 12px; }      /* touch-friendly */
+  .sit-pill__count { font-size: 13px; }
+}

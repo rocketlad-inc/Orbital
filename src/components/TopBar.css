@@ -802,3 +802,20 @@
   border-radius: 2px;
   color: #4ecdc4;
 }
+
+/* Attention dot — green when a tech (or other actionable thing) is affordable. Sits next to the badge, pulses to draw the eye. */
+.nav-button__attention-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4ecdc4;
+  box-shadow: 0 0 6px rgba(78, 205, 196, 0.7);
+  margin-left: 6px;
+  animation: attn-pulse 1.6s ease-in-out infinite;
+  vertical-align: middle;
+}
+@keyframes attn-pulse {
+  0%, 100% { transform: scale(1);  box-shadow: 0 0 4px rgba(78, 205, 196, 0.5); }
+  50%      { transform: scale(1.3); box-shadow: 0 0 10px rgba(78, 205, 196, 0.95); }
+}
