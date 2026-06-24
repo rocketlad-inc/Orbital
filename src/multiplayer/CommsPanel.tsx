@@ -31,6 +31,26 @@ function channelKey(ch: ChannelId): string {
   return typeof ch === 'string' ? ch : `dm:${ch.factionId}`;
 }
 
+/** Chat-style relative timestamp. Today: HH:MM. Yesterday: "Yest HH:MM".
+ *  This week: short weekday + HH:MM. Older: M/D HH:MM. Locale-aware
+ *  via toLocaleTimeString — uses the user's 12/24h preference. Full
+ *  timestamp is on the title attr for the rare time someone hovers. */
+function formatChatTime(ms: number): string {
+  const d = new Date(ms);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (sameDay) return time;
+  const yest = new Date(now); yest.setDate(now.getDate() - 1);
+  if (d.toDateString() === yest.toDateString()) return `Yest ${time}`;
+  const ageDays = (now.getTime() - d.getTime()) / 86_400_000;
+  if (ageDays < 7) {
+    const wd = d.toLocaleDateString([], { weekday: 'short' });
+    return `${wd} ${time}`;
+  }
+  return `${d.getMonth() + 1}/${d.getDate()} ${time}`;
+}
+
 interface Props {
   gameId: string;
   /** Lets the shell badge react instantly when we mark messages
@@ -258,6 +278,18 @@ export function CommsPanel({ gameId, onUnreadDelta }: Props) {
                     {groupNote}
                   </span>
                 )}
+              </span>
+              <span
+                title={new Date(m.sent_at_ms).toLocaleString()}
+                style={{
+                  marginLeft: 6,
+                  fontSize: 10,
+                  color: 'var(--mp-fg-dim)',
+                  letterSpacing: '0.02em',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {formatChatTime(m.sent_at_ms)}
               </span>
               <span>{m.body}</span>
             </div>
