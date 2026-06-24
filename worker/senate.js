@@ -490,6 +490,20 @@ async function handleWithdraw(_req, env, { params, session }) {
  *          cost, combat damage) see them on the same tick they ratify.
  */
 export async function resolveSenate(env, gameId, tick) {
+  // Phase 0: rescue any proposal stuck in 'debating' past its FULL
+  // window (vote_closes_at_tick already elapsed). This handles
+  // proposals that survived a code/schema gap where Phase 1 never
+  // fired. Force them to 'failed' so the senate doesn't accrete
+  // permanent zombies. Idempotent: it only catches rows whose entire
+  // debate+vote schedule has already passed.
+  try {
+    await env.DB
+      .prepare("UPDATE senate_proposals SET status = 'failed', resolved_at_tick = ? WHERE game_id = ? AND status = 'debating' AND vote_closes_at_tick <= ?")
+      .bind(tick, gameId, tick).run();
+  } catch (e) {
+    console.error("resolveSenate: zombie reap failed", e);
+  }
+
   let opened = 0;
   try {
     const res = await env.DB

@@ -30,6 +30,7 @@ export function SenatePanel({ gameId }: { gameId: string }) {
   const [factions, setFactions] = useState<Faction[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [myFactionId, setMyFactionId] = useState<string | null>(null);
 
   // Composer state
   const [sliderId, setSliderId] = useState<string>('');
@@ -62,6 +63,18 @@ export function SenatePanel({ gameId }: { gameId: string }) {
     const t = setInterval(refresh, 5000);
     return () => clearInterval(t);
   }, [refresh]);
+
+  // Learn caller's faction id once so the Withdraw button knows when
+  // to show (proposer-only on the server side; client mirrors to
+  // avoid a confusing 403 click).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const res = await apiFetch<{ faction: { id: string } }>(`/api/games/${gameId}/me`);
+      if (!cancelled && res.ok && res.data?.faction?.id) setMyFactionId(res.data.faction.id);
+    })();
+    return () => { cancelled = true; };
+  }, [gameId]);
 
   // External refresh — MultiplayerShell broadcasts a 'mp:senate-refresh'
   // window event when a WS notification arrives, so the panel reacts
@@ -119,6 +132,24 @@ export function SenatePanel({ gameId }: { gameId: string }) {
     if (!res.ok) setError(res.error?.message ?? 'Vote failed');
     refresh();
   }
+
+  async function withdraw(proposalId: string) {
+    setError(null);
+    const res = await apiFetch(`/api/games/${gameId}/senate/proposals/${proposalId}/withdraw`, {
+      method: 'POST',
+    });
+    if (!res.ok) setError(res.error?.message ?? 'Withdraw failed');
+    refresh();
+  }
+
+  // Caller's own faction id is needed to gate the Withdraw button. We
+  // know it by looking up which proposal the caller proposed AND has
+  // a faction row (the proposer_faction_id field on those proposals).
+  // For new games the SenatePanel can derive it from the factions
+  // list, but more reliably we just remember which proposals the
+  // caller has voted on or owns. Simplest: pull /me to learn faction
+  // id once, since SenatePanel already has access to /factions.
+  // Track it once and reuse.
 
   // Order proposals: VOTING first (act now), then DEBATING, then
   // resolved. Within each group, soonest-closing first.
@@ -294,6 +325,29 @@ export function SenatePanel({ gameId }: { gameId: string }) {
               <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginTop: 4, fontStyle: 'italic' }}>
                 Voting opens in {ticksUntilOpen} tick{ticksUntilOpen === 1 ? '' : 's'}.
                 {my && <> Your early vote: <strong>{my}</strong></>}
+              </div>
+            )}
+            {/* Withdraw is proposer-only + debating-only (server-side gate). Mirror
+                that here so the button doesn't show up where it can't do anything. */}
+            {p.status === 'debating' && myFactionId && p.proposer_faction_id === myFactionId && (
+              <div style={{ marginTop: 6 }}>
+                <button
+                  onClick={() => { void withdraw(p.id); }}
+                  style={{
+                    background: 'transparent',
+                    border: '1px solid var(--mp-border)',
+                    color: 'var(--mp-fg-dim)',
+                    padding: '4px 10px',
+                    fontSize: 10,
+                    letterSpacing: '0.08em',
+                    textTransform: 'uppercase',
+                    cursor: 'pointer',
+                    borderRadius: 2,
+                  }}
+                  title="Pull this proposal off the floor before voting opens"
+                >
+                  ✕ Withdraw
+                </button>
               </div>
             )}
           </div>
