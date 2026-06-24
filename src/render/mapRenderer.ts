@@ -2057,65 +2057,120 @@ export function drawShipGhost(
 // these conditionally on `useMapLayers().isOn(...)`.
 // ============================================================
 
+// ============================================================
+// Trajectory-line palette — by relationship, not by owning-faction
+// color.
+//
+// Playtester showed a screenshot with every transfer line in warm
+// amber (because most factions in his game had warm-toned palettes)
+// and called it "spaghetti." Fix: ignore the owner's faction color
+// for transit lines and bucket into THREE roles instead, so the
+// player can scan-classify by hue alone:
+//
+//   - MINE     (your ships):              cyan, prominent
+//   - NEUTRAL  (allies / NAPs / peace):   muted sage, dimmed
+//   - HOSTILE  (no pact = free-fire):     amber, prominent
+//   - INCOMING (hostile, aimed at YOUR
+//                body):                   red, pulsing glow,
+//                                          drawn last so it
+//                                          sits on top.
+//
+// Convention preserved: SOLID = currently burning. DASHED is set
+// by callers for queued / planned legs (drawTorchTrajectory honors
+// the isDashed flag).
+// ============================================================
+
+const TRAJECTORY_COLORS = {
+  mine:     '#4ecdc4', // cyan — matches the player's existing brand
+  neutral:  '#8fb89a', // muted sage — "non-hostile, but not you"
+  hostile:  '#ff8a40', // warm amber — "free-fire faction"
+  incoming: '#ff3030', // bright red — "aimed at YOUR body"
+} as const;
+
+type TrajectoryRole = 'mine' | 'neutral' | 'hostile';
+
+/** Classify a ship's transit line by relationship to the viewer.
+ *  Returns one of the three primary roles; the 'incoming' upgrade
+ *  is decided per-target by drawEnemyTrajectoriesLayer. */
+function trajectoryRole(
+  ship: Ship,
+  playerFactionId: string,
+  allies: ReadonlySet<string>,
+): TrajectoryRole {
+  if (ship.ownedBy === playerFactionId) return 'mine';
+  if (allies.has(ship.ownedBy)) return 'neutral';
+  return 'hostile';
+}
+
 /**
- * Faint Bezier arc for every ship currently in transit, colored by
- * the owning faction. Already-selected ships keep their own (brighter)
- * arc drawn elsewhere — this is the "at-a-glance everyone-is-going-
- * somewhere" overview that lets players plan around traffic.
+ * Background pass: every ship currently in transit, colored by
+ * relationship to the viewer. Owns the "mine" and "neutral" lines;
+ * skips hostile ships entirely so drawEnemyTrajectoriesLayer can
+ * paint those on top with proper threat treatment (avoids the
+ * dim-then-bright re-draw).
  */
 export function drawAllTransfersLayer(
   ships: Ship[],
   ctx: RenderContext,
+  playerFactionId: string,
+  allies: ReadonlySet<string>,
 ) {
   for (const ship of ships) {
-    const color = shipColor(ship, ctx.factions);
+    if (!ship.transit) continue;
+    const role = trajectoryRole(ship, playerFactionId, allies);
+    if (role === 'hostile') continue; // owned by the next pass
+
     ctx.ctx.save();
-    ctx.ctx.globalAlpha = 0.45;
-    if (ship.transit) {
-      drawTorchTrajectory(ship.transit.currentTransfer, ctx.bodies, ctx, color, false);
-    }
+    ctx.ctx.globalAlpha = role === 'mine' ? 0.55 : 0.3;
+    ctx.ctx.lineWidth = role === 'mine' ? 1.5 : 1.2;
+    drawTorchTrajectory(
+      ship.transit.currentTransfer, ctx.bodies, ctx,
+      TRAJECTORY_COLORS[role],
+      false,
+    );
     ctx.ctx.restore();
   }
 }
 
 /**
- * Highlight enemy ships whose transfer ends at one of the player's
- * bodies. The base arc gets a red glow + the arrival body gets a
- * pulsing "INCOMING" ring. Filters by `visibleShipIds` so fog of
- * war stays honored — you only see threats your sensors can see.
+ * Foreground pass: hostile transit lines (no-pact factions). Lines
+ * aimed at a body the viewer owns escalate to bright-red + a soft
+ * glow so the player can clock incoming threats at a glance. Honors
+ * fog of war via visibleShipIds.
  */
 export function drawEnemyTrajectoriesLayer(
   ships: Ship[],
   bodies: Body[],
   visibleShipIds: Set<string>,
   playerFactionId: string,
+  allies: ReadonlySet<string>,
   ctx: RenderContext,
 ) {
   for (const ship of ships) {
-    if (ship.ownedBy === playerFactionId) continue;
+    if (trajectoryRole(ship, playerFactionId, allies) !== 'hostile') continue;
     if (!visibleShipIds.has(ship.id)) continue;
+    if (!ship.transit) continue;
 
-    // Find the target body from the torch plan to drive the
-    // "is this aimed at me?" intensity.
-    let targetBodyId: string | undefined;
-    if (ship.transit) targetBodyId = ship.transit.currentTransfer.targetBodyId;
-    else continue;
-
+    const targetBodyId = ship.transit.currentTransfer.targetBodyId;
     const target = bodies.find(b => b.id === targetBodyId);
     const targetOwned = target?.ownedBy === playerFactionId;
-    const color = targetOwned ? '#ff3030' : '#ff8a40';
+    const color = targetOwned ? TRAJECTORY_COLORS.incoming : TRAJECTORY_COLORS.hostile;
+
     ctx.ctx.save();
-    ctx.ctx.globalAlpha = targetOwned ? 0.85 : 0.5;
+    ctx.ctx.globalAlpha = targetOwned ? 0.85 : 0.65;
+    ctx.ctx.lineWidth = targetOwned ? 2 : 1.5;
     ctx.ctx.shadowColor = color;
-    // shadowBlur is canvas-pixel based; a fixed 6 stays the same
-    // on screen at every zoom. At full zoom-out the trajectory line
-    // becomes a short stub and that 6px halo paints a red smear
-    // around it. Scale with the destruction flash treatment.
+    // shadowBlur is canvas-pixel-based; scale with sqrt(zoom) so it
+    // doesn't paint a red smear across the whole inner system at
+    // full zoom-out. Matches the destruction-flash treatment.
     const blurFactor = Math.min(1.2, Math.max(0.3, Math.sqrt(ctx.camera.scale)));
-    ctx.ctx.shadowBlur = targetOwned ? 6 * blurFactor : 0;
-    if (ship.transit) {
-      drawTorchTrajectory(ship.transit.currentTransfer, bodies, ctx, color, !targetOwned);
-    }
+    ctx.ctx.shadowBlur = targetOwned ? 8 * blurFactor : 0;
+    drawTorchTrajectory(
+      ship.transit.currentTransfer, bodies, ctx, color,
+      // Solid arc when aimed at me (max urgency); dashed when just
+      // passing through hostile-but-not-targeting-me space.
+      !targetOwned,
+    );
     ctx.ctx.restore();
   }
 }

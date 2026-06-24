@@ -659,7 +659,7 @@ export class Room {
     const builds = (await this.env.DB
       .prepare(
         `SELECT id, body_id, faction_id, ship_class, completes_at_tick,
-                icon_variant
+                icon_variant, ship_name
            FROM game_body_build_queue
           WHERE game_id = ?
             AND cancelled_at_tick IS NULL
@@ -684,7 +684,12 @@ export class Room {
       const rp = (body.radius || 4) + 4;
       const ra = rp; // circular orbit
       const shipId = `${gameId}:s${tick}_${b.id.slice(-6)}`;
-      const shipName = `${b.ship_class.charAt(0).toUpperCase()}${b.ship_class.slice(1)} T${tick}`;
+      // Honor the player's custom name from BuildPanel if they queued
+      // one; otherwise fall back to the legacy auto-name so older
+      // queue rows (pre-0029 migration) still complete cleanly.
+      const shipName = (typeof b.ship_name === 'string' && b.ship_name.trim().length > 0)
+        ? b.ship_name.trim()
+        : `${b.ship_class.charAt(0).toUpperCase()}${b.ship_class.slice(1)} T${tick}`;
 
       await this.env.DB.batch([
         this.env.DB

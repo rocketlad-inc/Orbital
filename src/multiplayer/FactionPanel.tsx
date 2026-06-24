@@ -14,7 +14,10 @@ const PACT_RANK: Record<PactKind, number> = {
 
 const STATUS_LABEL = {
   defense_pact: 'ALLIED',
-  nap: 'NAP',
+  // ☮ peace sign — the acronym "NAP" was opaque to playtesters;
+  // glyph + the word "PEACE" reads as the intent at a glance and
+  // matches the cool-cyan no-combat coloring.
+  nap: '☮ PEACE',
   intel_share: 'INTEL',
   war: 'WAR',
   self: '',

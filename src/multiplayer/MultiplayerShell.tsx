@@ -174,12 +174,13 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
     return () => { cancelled = true; clearInterval(id); };
   }, [gameId]);
 
-  // Clear the unread badge when the user opens Comms — they're reading
-  // them now. (Server-side read_at_ms is set when CommsPanel marks
-  // individual messages read; this is just optimistic UI.)
-  useEffect(() => {
-    if (tab === 'comms') setUnreadMessages(0);
-  }, [tab]);
+  // CommsPanel now marks messages read on the server as the player
+  // views each channel, and decrements `unreadMessages` via the
+  // onUnreadDelta callback so the badge tracks reality channel-by-
+  // channel. The blanket optimistic clear on tab change has been
+  // removed — it was the root cause of the "ping comes back" bug
+  // (zeroed locally, restored 10s later by /unread-count when the
+  // server still had unread DMs in some other thread).
 
   // Listen on the room WebSocket for push events (trade / message /
   // tick / ships_destroyed) and surface them as toasts. The /notify
@@ -373,7 +374,12 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
                 />
               )}
               {tab === 'faction' && gameId && <FactionPanel gameId={gameId} />}
-              {tab === 'comms'   && gameId && <CommsPanel   gameId={gameId} />}
+              {tab === 'comms'   && gameId && (
+                <CommsPanel
+                  gameId={gameId}
+                  onUnreadDelta={(d) => setUnreadMessages((n) => Math.max(0, n + d))}
+                />
+              )}
               {tab === 'senate'  && gameId && <SenatePanel  gameId={gameId} />}
               {tab === 'trades'  && gameId && <TradesPanel  gameId={gameId} />}
             </div>

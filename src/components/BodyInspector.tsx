@@ -20,6 +20,7 @@ import {
   planTorchTransfer, fromG,
 } from '../physics/torchTransfer';
 import { bodyPosition } from '../physics/orbitalMechanics';
+import { EditableName } from './EditableName';
 import './BodyInspector.css';
 
 /** Per-Δv fuel cost when an asteroid is rammed via Trajectory Control
@@ -506,7 +507,7 @@ interface SettlementsSectionProps {
 const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFilter }) => {
   const {
     gameState, deploySettlement, selectSettlement, selectedSettlementId,
-    buildCollector, queueBuilding, cancelBuilding,
+    buildCollector, queueBuilding, cancelBuilding, renameSettlement,
   } = useGameContext();
   // Non-null only in multiplayer: mirror the local deploy to the server.
   const mpActions = useMultiplayerActions();
@@ -740,7 +741,31 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                 className="settlement-name"
                 style={{ color: owner?.color, display: 'flex', alignItems: 'center', gap: 6 }}
               >
-                <span>{s.type === 'city' ? '■' : '◆'} {s.name}</span>
+                <span
+                  onClick={(e) => {
+                    // The row's onClick toggles selection. When the
+                    // player clicks the name to rename, they don't
+                    // want to also collapse/expand the row.
+                    e.stopPropagation();
+                  }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                >
+                  {s.type === 'city' ? '■' : '◆'}{' '}
+                  <EditableName
+                    value={s.name}
+                    readOnly={s.ownedBy !== 'player'}
+                    ariaLabel={`Rename this ${s.type}`}
+                    onSave={async (next) => {
+                      renameSettlement(s.id, next);
+                      if (mpActions) {
+                        const res = await mpActions.renameSettlement(s.id, next);
+                        if (!res.ok) {
+                          throw new Error(humanizeMpError(res.code, res.error, 'rename'));
+                        }
+                      }
+                    }}
+                  />
+                </span>
                 {s.hasCollector && (
                   // Collector chip: small badge that mirrors the body
                   // inspector's "this is a logistics endpoint" status.

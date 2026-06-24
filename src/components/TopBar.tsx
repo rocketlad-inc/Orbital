@@ -179,8 +179,46 @@ export const TopBar: React.FC<TopBarProps> = ({
 
   const handleSkip = (n: number) => updateTick(gameState.currentTick + n);
 
-  // Games run indefinitely — no tick countdown to surface.
   const tickStr = `T+${Math.floor(gameState.currentTick)}`;
+
+  // Live "next tick in Ns" countdown. The server stamps nextTickAt (epoch
+  // ms) on every /state; we tick a local clock 4×/sec to animate the
+  // remaining time down. Multiplayer only — single-player has no
+  // server-driven cadence (nextTickAt is undefined) and shows the sim-speed
+  // controls instead.
+  const nextTickAt = gameState.nextTickAt;
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (nextTickAt == null) return;
+    const id = setInterval(() => setNowMs(Date.now()), 250);
+    return () => clearInterval(id);
+  }, [nextTickAt]);
+  // Clamp to [0, interval] so clock skew can't show a negative or absurd
+  // value; round up so it counts 3→2→1 and only hits 0 right at the tick.
+  const tickCountdown = nextTickAt == null
+    ? null
+    : Math.max(0, Math.min(
+        gameState.tickIntervalMs != null ? gameState.tickIntervalMs / 1000 : Infinity,
+        Math.ceil((nextTickAt - nowMs) / 100) / 10,
+      ));
+  // Format as whole units (Xh Ym / Xm Ys / Xs) so it reads cleanly and
+  // ticks down a visible step every second at any interval — a raw
+  // "3600.0s" looked frozen. ceil so it counts N→…→1→0 and only shows 0
+  // right at the tick. Width is held steady by .time-display's min-width
+  // (the box must not grow/shrink as the digits change).
+  const tickCountdownLabel = tickCountdown == null
+    ? null
+    : (() => {
+        const total = Math.ceil(tickCountdown);
+        const pad = (n: number) => String(n).padStart(2, '0');
+        if (total >= 3600) {
+          return `${Math.floor(total / 3600)}h ${pad(Math.floor((total % 3600) / 60))}m`;
+        }
+        if (total >= 60) {
+          return `${Math.floor(total / 60)}m ${pad(total % 60)}s`;
+        }
+        return `${total}s`;
+      })();
 
   return (
     <div className="top-bar">
@@ -318,9 +356,14 @@ export const TopBar: React.FC<TopBarProps> = ({
       </div>
 
       <div className="top-bar__time">
-        <div className="time-display">
+        <div className={`time-display${tickCountdownLabel != null ? ' time-display--ticking' : ''}`}>
           <div className="time-display__label">TICK</div>
           <div className="time-display__value">{tickStr}</div>
+          {tickCountdownLabel != null && (
+            <div className="time-display__countdown" title="Time until the next server tick">
+              next in {tickCountdownLabel}
+            </div>
+          )}
         </div>
         {!hideSimControls && !turnBasedActive && !mpTbmActive && (
           // Realtime sim controls. Hidden in Turn-Based Mode (replaced

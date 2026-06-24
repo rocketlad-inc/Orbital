@@ -35,6 +35,14 @@ export const BuildPanel: React.FC = () => {
   const mpActions = useMultiplayerActions();
   const [, setSelectedClass] = useState<ShipClassName | null>(null);
   const [customName, setCustomName] = useState<string>('');
+  // FIFO queue of names committed via the COMMIT button. Each BUILD
+  // consumes the head of this queue if present; otherwise it falls
+  // back to whatever's typed in the input (back-compat with the
+  // original "type then BUILD" flow), or a random pool name. Playtester
+  // reported "custom names dont seem to work" — server-side fix lands
+  // separately, but this lets the player line up several names before
+  // queuing builds in sequence without re-typing each time.
+  const [pendingNames, setPendingNames] = useState<string[]>([]);
   // Per-class icon variant pick. Each row in the build list has its
   // own selector defaulting to DEFAULT_SHIP_ICONS[class]. Map keyed by
   // class because the player might want, e.g. Corvette Raptor and
@@ -74,12 +82,34 @@ export const BuildPanel: React.FC = () => {
   const activeBuildOrders = gameState.buildOrders.filter(bo => bo.bodyId === body.id);
   const existingShipNames = gameState.ships.map(s => s.name);
 
-  const handleBuild = (shipClass: ShipClassName) => {
-    // Custom name takes precedence; fall back to a random pool name
+  const handleCommitName = () => {
     const trimmed = customName.trim();
-    const name = trimmed.length > 0
-      ? trimmed
-      : getRandomName(shipClass, existingShipNames);
+    if (trimmed.length === 0) return;
+    setPendingNames(prev => [...prev, trimmed]);
+    setCustomName('');
+  };
+
+  const dequeueName = () => {
+    if (pendingNames.length > 0) {
+      const [head, ...rest] = pendingNames;
+      setPendingNames(rest);
+      return head;
+    }
+    const typed = customName.trim();
+    if (typed.length > 0) {
+      setCustomName('');
+      return typed;
+    }
+    return null;
+  };
+
+  const handleBuild = (shipClass: ShipClassName) => {
+    // Name resolution priority:
+    //   1. head of pendingNames (committed via COMMIT button)
+    //   2. whatever's typed in the input right now (legacy flow)
+    //   3. random pool name
+    const fromQueue = dequeueName();
+    const name = fromQueue ?? getRandomName(shipClass, existingShipNames);
     const variant = iconChoice[shipClass];
     if (mpActions) {
       // Multiplayer: server is canonical for resource deduction + queue
@@ -93,13 +123,19 @@ export const BuildPanel: React.FC = () => {
         .then(res => {
           if (!res.ok) {
             setBuildError(humanizeMpError(res.code, res.error, 'build'));
+            // Server rejected the build — put the name back at the
+            // head of the queue so the player doesn't lose what they
+            // committed. (Only if we pulled from the queue; typed
+            // names already cleared from the input.)
+            if (fromQueue) setPendingNames(prev => [fromQueue, ...prev]);
           }
         });
-      setCustomName('');
     } else {
       // Single-player: local state is canonical.
       const success = buildShip(body.id, shipClass, name, variant);
-      if (success) setCustomName('');
+      if (!success && fromQueue) {
+        setPendingNames(prev => [fromQueue, ...prev]);
+      }
     }
     setSelectedClass(null);
   };
@@ -115,9 +151,48 @@ export const BuildPanel: React.FC = () => {
           placeholder="Custom name (optional)"
           value={customName}
           onChange={(e) => setCustomName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && customName.trim().length > 0) {
+              e.preventDefault();
+              handleCommitName();
+            }
+          }}
           maxLength={32}
         />
+        <button
+          type="button"
+          className="build-name-commit"
+          onClick={handleCommitName}
+          disabled={customName.trim().length === 0}
+          title="Save this name for the next ship you BUILD"
+        >
+          COMMIT
+        </button>
       </div>
+
+      {pendingNames.length > 0 && (
+        <div className="build-name-queue">
+          <div className="build-name-queue__label">
+            NEXT BUILD{pendingNames.length > 1 ? `S (${pendingNames.length})` : ''}:
+          </div>
+          {pendingNames.map((n, i) => (
+            <span key={`${n}:${i}`} className="build-name-chip">
+              {n}
+              <button
+                type="button"
+                className="build-name-chip__x"
+                onClick={() =>
+                  setPendingNames(prev => prev.filter((_, idx) => idx !== i))
+                }
+                aria-label={`Remove ${n} from the build-name queue`}
+                title="Remove from the queue"
+              >
+                ✕
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
 
       {activeBuildOrders.length > 0 && (
         <div className="build-queue">

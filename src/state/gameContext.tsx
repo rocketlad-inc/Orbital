@@ -357,6 +357,11 @@ interface GameContextType {
     iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F',
   ) => boolean;
   cancelBuild: (buildOrderId: string) => void;
+  /** Rename one of the player's ships. Trims + length-caps (1..32).
+   *  Returns true on success, false on bad input / missing ship /
+   *  not-owner / destroyed. Mirrors the MP server's validation so
+   *  SP and MP behave identically. */
+  renameShip: (shipId: string, name: string) => boolean;
 
   // Fleet management
   createFleet: (name: string, shipIds: string[]) => void;
@@ -367,6 +372,9 @@ interface GameContextType {
   // Settlements
   deploySettlement: (bodyId: string, type: SettlementType, name?: string) => boolean;
   damageSettlement: (settlementId: string, dmg: number) => void;
+  /** Rename a city or station the player owns. Same shape + validation
+   *  as renameShip. */
+  renameSettlement: (settlementId: string, name: string) => boolean;
   /** Upgrade an existing settlement with a collector. Drains the
    *  player's ore/credits (COLLECTOR_COST). Returns true on success,
    *  false if the settlement isn't owned by the player, already has a
@@ -2112,9 +2120,63 @@ export function GameContextProvider({
     });
   }, []);
 
+  const renameShip = useCallback((shipId: string, name: string): boolean => {
+    const trimmed = name.trim();
+    if (trimmed.length === 0 || trimmed.length > 32) {
+      logger.warn('ACTION', `renameShip: name failed length check`, { len: trimmed.length });
+      return false;
+    }
+    let renamed = false;
+    setGameStateInternal(prev => {
+      const ship = prev.ships.find(s => s.id === shipId);
+      if (!ship) {
+        logger.warn('ACTION', `renameShip: ship not found`, { shipId });
+        return prev;
+      }
+      if (ship.ownedBy !== 'player') {
+        logger.warn('ACTION', `renameShip: not owner`, { shipId, ownedBy: ship.ownedBy });
+        return prev;
+      }
+      if (ship.name === trimmed) return prev;
+      renamed = true;
+      return {
+        ...prev,
+        ships: prev.ships.map(s => s.id === shipId ? { ...s, name: trimmed } : s),
+      };
+    });
+    return renamed;
+  }, []);
+
   // ---- Settlements ----
   const selectSettlement = useCallback((id: string | undefined) => {
     setSelectedSettlementId(id);
+  }, []);
+
+  const renameSettlement = useCallback((settlementId: string, name: string): boolean => {
+    const trimmed = name.trim();
+    if (trimmed.length === 0 || trimmed.length > 32) {
+      logger.warn('ACTION', `renameSettlement: name failed length check`, { len: trimmed.length });
+      return false;
+    }
+    let renamed = false;
+    setGameStateInternal(prev => {
+      const s = prev.settlements.find(x => x.id === settlementId);
+      if (!s) {
+        logger.warn('ACTION', `renameSettlement: settlement not found`, { settlementId });
+        return prev;
+      }
+      if (s.ownedBy !== 'player') {
+        logger.warn('ACTION', `renameSettlement: not owner`, { settlementId, ownedBy: s.ownedBy });
+        return prev;
+      }
+      if (s.name === trimmed) return prev;
+      renamed = true;
+      return {
+        ...prev,
+        settlements: prev.settlements.map(x => x.id === settlementId ? { ...x, name: trimmed } : x),
+      };
+    });
+    return renamed;
   }, []);
 
   const deploySettlement = useCallback((bodyId: string, type: SettlementType, name?: string): boolean => {
@@ -2637,9 +2699,9 @@ export function GameContextProvider({
     setTargetSelectionMode,
     addManeuverNode, commitManeuverNode, deleteManeuverNode,
     launchTorchTransfer, enqueueTorchTransfer, planTorchPreview, cancelTorchPreview,
-    buildShip, cancelBuild,
+    buildShip, cancelBuild, renameShip,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
-    deploySettlement, damageSettlement, buildCollector,
+    deploySettlement, damageSettlement, renameSettlement, buildCollector,
     queueBuilding, cancelBuilding,
     initiateDysonSphere,
     createTradeRoute, cancelTradeRoute,

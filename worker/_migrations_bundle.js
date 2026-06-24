@@ -1213,4 +1213,17 @@ ALTER TABLE game_factions ADD COLUMN metal_remainder   REAL NOT NULL DEFAULT 0;
 ALTER TABLE game_factions ADD COLUMN gold_remainder    REAL NOT NULL DEFAULT 0;
 ALTER TABLE game_factions ADD COLUMN science_remainder REAL NOT NULL DEFAULT 0;
 ` },
+  { name: "0029_build_queue_ship_name.sql", sql: `-- Persist the player's custom ship name through the build queue.
+--
+-- Background: handleQueueBuild accepted body.ship_name per its own
+-- docstring but never read it. The completion handler in room.js then
+-- generated a default \`\${shipClass} T\${tick}\` name, so every custom
+-- name typed in BuildPanel silently dropped. Playtester reported
+-- "custom names for ships dosnt seem to work".
+--
+-- Additive-only: nullable column with no default. Existing queued
+-- rows stay NULL and fall through to the legacy default name at
+-- completion time.
+ALTER TABLE game_body_build_queue ADD COLUMN ship_name TEXT;
+` },
 ];
