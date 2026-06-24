@@ -201,6 +201,22 @@ export const TopBar: React.FC<TopBarProps> = ({
         gameState.tickIntervalMs != null ? gameState.tickIntervalMs / 1000 : Infinity,
         Math.ceil((nextTickAt - nowMs) / 100) / 10,
       ));
+  // Format for legibility across the whole interval range. A 1-hour
+  // interval as "3600.0s" looks frozen (the tenths barely move and there's
+  // no minute/hour sense); H:MM:SS / M:SS ticks visibly every second.
+  // Sub-minute keeps the snappy decimal-seconds readout.
+  const tickCountdownLabel = tickCountdown == null
+    ? null
+    : tickCountdown >= 60
+      ? (() => {
+          const total = Math.floor(tickCountdown);
+          const h = Math.floor(total / 3600);
+          const m = Math.floor((total % 3600) / 60);
+          const s = total % 60;
+          const pad = (n: number) => String(n).padStart(2, '0');
+          return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+        })()
+      : `${tickCountdown.toFixed(1)}s`;
 
   return (
     <div className="top-bar">
@@ -341,9 +357,9 @@ export const TopBar: React.FC<TopBarProps> = ({
         <div className="time-display">
           <div className="time-display__label">TICK</div>
           <div className="time-display__value">{tickStr}</div>
-          {tickCountdown != null && (
+          {tickCountdownLabel != null && (
             <div className="time-display__countdown" title="Time until the next server tick">
-              next in {tickCountdown.toFixed(1)}s
+              next in {tickCountdownLabel}
             </div>
           )}
         </div>
