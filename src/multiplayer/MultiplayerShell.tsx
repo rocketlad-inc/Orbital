@@ -61,6 +61,34 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
   const [invite, setInvite] = useState<{ code: string | null; isHost: boolean } | null>(null);
   const [inviteCopied, setInviteCopied] = useState(false);
 
+  // Mutex with the Situation Log dock. When SitLog opens it dispatches
+  // 'mp:situation-open'; we collapse in response. Vice versa: when our
+  // dock is opened, we dispatch 'mp:dock-open' so SitLog closes.
+  useEffect(() => {
+    const onSitOpen = () => setCollapsed(true);
+    window.addEventListener('mp:situation-open', onSitOpen);
+    return () => window.removeEventListener('mp:situation-open', onSitOpen);
+  }, []);
+  useEffect(() => {
+    if (!collapsed) {
+      try { window.dispatchEvent(new CustomEvent('mp:dock-open')); } catch { /* noop */ }
+    }
+  }, [collapsed]);
+  // SitLog clicks on vote / trade items dispatch 'orbital:open-panel'
+  // with the panel id; switch tabs + un-collapse in response.
+  useEffect(() => {
+    const onOpenPanel = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      const panel = detail?.panel;
+      if (panel === 'senate' || panel === 'trades' || panel === 'faction' || panel === 'comms') {
+        setTab(panel);
+        setCollapsed(false);
+      }
+    };
+    window.addEventListener('orbital:open-panel', onOpenPanel as EventListener);
+    return () => window.removeEventListener('orbital:open-panel', onOpenPanel as EventListener);
+  }, []);
+
   // If the player arrives in a room where a game is already active and the
   // tab is still 'lobby' (which is now hidden), jump them to Faction so
   // they're not staring at a blank dock body.
@@ -122,6 +150,10 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
     return () => { cancelled = true; clearInterval(id); };
   }, [initialRoomId, gameId]);
   const [incomingTradeCount, setIncomingTradeCount] = useState(0);
+  // Mirror pattern for senate: count of active proposals the caller
+  // hasn't voted on. Bumped by WS 'senate.proposed' broadcasts and
+  // cleared when the player opens the Senate tab.
+  const [incomingProposalCount, setIncomingProposalCount] = useState(0);
   const [unreadMessages, setUnreadMessages] = useState(0);
   // Modal payload for a freshly-arrived trade offer. Cleared by either
   // the Dismiss button or by 'Take me there' (which also switches the
@@ -142,7 +174,7 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
   // Transient toast notifications fanned out of the room WebSocket.
   // Each has a unique id so React can key it and a setTimeout dismisses
   // it after a few seconds.
-  const [toasts, setToasts] = useState<Array<{ id: string; text: string; kind: 'trade' | 'message' | 'tick' | 'combat' }>>([]);
+  const [toasts, setToasts] = useState<Array<{ id: string; text: string; kind: 'trade' | 'message' | 'tick' | 'combat' | 'senate' }>>([]);
 
   // Poll for incoming trade count so the Trades tab can show a badge
   // even when the user is on a different tab.
@@ -205,7 +237,7 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
     if (!gameId) return;
     const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${scheme}://${window.location.host}/api/rooms/${gameId}/ws`);
-    const pushToast = (kind: 'trade' | 'message' | 'tick' | 'combat', text: string) => {
+    const pushToast = (kind: 'trade' | 'message' | 'tick' | 'combat' | 'senate', text: string) => {
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       setToasts((cur) => [...cur, { id, text, kind }]);
       // Auto-dismiss
@@ -253,6 +285,39 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
               : 'Treaty';
             pushToast('trade', `${kindLabel} broken — war resumes`);
           }
+        } else if (m?.kind === 'senate') {
+          // Server emits two kinds of senate broadcasts:
+          //   - 'proposed' when a new proposal lands (from create handler)
+          //   - 'resolved' when phase advance opens/resolves proposals
+          //                (from resolveSenate after a tick)
+          // Suppress the toast for our OWN proposals so the proposer
+          // doesn't get pinged about their own work.
+          const proposer = (typeof m.proposer_faction_name === 'string' && m.proposer_faction_name)
+            ? m.proposer_faction_name : null;
+          if (m.event === 'proposed') {
+            if (m.proposer_faction_id && m.proposer_faction_id === myFactionIdRef.current) {
+              // Own proposal -- skip the toast but still bump no count
+              // (we know we just proposed it).
+            } else {
+              const title = (typeof m.title === 'string' && m.title) ? m.title : 'A new proposal';
+              const from  = proposer ? ` from ${proposer}` : '';
+              pushToast('senate', `${title}${from}`);
+              setIncomingProposalCount((n) => n + 1);
+            }
+          } else if (m.event === 'resolved') {
+            const opened = Number(m.opened ?? 0);
+            const resolved = Number(m.resolved ?? 0);
+            if (opened > 0) {
+              pushToast('senate', `${opened} proposal${opened > 1 ? 's' : ''} now open for voting`);
+              setIncomingProposalCount((n) => n + opened);
+            }
+            if (resolved > 0) {
+              pushToast('senate', `${resolved} proposal${resolved > 1 ? 's' : ''} resolved`);
+            }
+          }
+          // Either way, nudge the panel to re-poll right now so it shows
+          // the change without waiting for its 5s interval.
+          try { window.dispatchEvent(new Event('mp:senate-refresh')); } catch { /* noop */ }
         } else if (m?.kind === 'message') {
           pushToast('message', 'New message in Comms');
           setUnreadMessages((n) => n + 1);
@@ -310,7 +375,7 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
           {toasts.map(t => (
             <div key={t.id} className={`mp-toast mp-toast--${t.kind}`}>
               <span className="mp-toast__icon">
-                {t.kind === 'trade' ? '⚖' : t.kind === 'message' ? '✉' : t.kind === 'combat' ? '✸' : '◷'}
+                {t.kind === 'senate' ? '🏛' : t.kind === 'trade' ? '⚖' : t.kind === 'message' ? '✉' : t.kind === 'combat' ? '✸' : '◷'}
               </span>
               <span className="mp-toast__text">{t.text}</span>
             </div>
@@ -389,8 +454,24 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
               <button
                 className={tab === 'senate' ? 'active' : ''}
                 disabled={!gameId}
-                onClick={() => gameId && setTab('senate')}
-              >Senate</button>
+                onClick={() => {
+                  if (!gameId) return;
+                  setTab('senate');
+                  // Opening the Senate tab is acknowledging the queue.
+                  setIncomingProposalCount(0);
+                }}
+                title={incomingProposalCount > 0
+                  ? `${incomingProposalCount} new proposal${incomingProposalCount > 1 ? 's' : ''} — vote now`
+                  : 'Senate'}
+              >
+                Senate{incomingProposalCount > 0 && (
+                  <span style={{
+                    marginLeft: 4, padding: '0 5px', fontSize: 9,
+                    background: '#ffb84d', color: '#0a0e14', borderRadius: 8,
+                    fontWeight: 700,
+                  }}>{incomingProposalCount}</span>
+                )}
+              </button>
               <button
                 className={tab === 'trades' ? 'active' : ''}
                 disabled={!gameId}

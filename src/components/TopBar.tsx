@@ -16,11 +16,12 @@ import { logger } from '../game/logger';
 import { SaveLoadModal } from './SaveLoadModal';
 import { AdminGrantModal } from './AdminGrantModal';
 import { computeIncomePerTick } from '../game/settlements';
-import { TECH_DEFS } from '../game/techs';
+import { TECH_DEFS, nextLevelCost, TECH_MAX_LEVEL, type TechId } from '../game/techs';
 import { useTutorial } from '../state/tutorial';
 import { TUTORIAL_STEP_COUNT } from '../game/tutorialSteps';
 import type { GameState } from '../types';
 import './TopBar.css';
+import { GIT_SHA } from '../_version';
 
 // Hint text under the Restart Tutorial menu item. Pulled out to a
 // constant so it doesn't allocate a new string every render.
@@ -262,7 +263,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         data-tutorial-id="menu-button"
       >
         <div className="top-bar__title-main">ORBITAL</div>
-        <div className="top-bar__title-sub">v0.3 · menu</div>
+        <div className="top-bar__title-sub" title={`Build ${GIT_SHA}`}>v0.3 · {GIT_SHA.slice(0,7)}</div>
       </button>
 
       {menuOpen && (
@@ -316,28 +317,28 @@ export const TopBar: React.FC<TopBarProps> = ({
             label="FUEL" modifier="fuel"
             value={playerResources.fuel}
             rate={income.delivered.fuel}
-            stranded={income.stranded.fuel}
+            local={income.local.fuel}
             hasCollector={income.hasCollector}
           />
           <ResourcePill
             label="METAL" modifier="ore"
             value={playerResources.ore}
             rate={income.delivered.ore}
-            stranded={income.stranded.ore}
+            local={income.local.ore}
             hasCollector={income.hasCollector}
           />
           <ResourcePill
             label="CR" modifier="credits"
             value={playerResources.credits}
             rate={income.delivered.credits}
-            stranded={income.stranded.credits}
+            local={income.local.credits}
             hasCollector={income.hasCollector}
           />
           <ResourcePill
             label="SCI" modifier="science"
             value={playerResources.science}
             rate={income.delivered.science}
-            stranded={income.stranded.science}
+            local={income.local.science}
             hasCollector={income.hasCollector}
           />
           <div className="resource-pill resource-pill--ships">
@@ -382,7 +383,32 @@ export const TopBar: React.FC<TopBarProps> = ({
           {(() => {
             const lvls = gameState.factionTech?.player?.levels || {};
             const total = Object.values(lvls).reduce((s, n) => s + (n ?? 0), 0);
-            return total > 0 ? <span className="badge">{total}</span> : null;
+            // Per Ben/Sean: highlight when a tech is affordable so the
+            // player notices research opportunities. Green pulsing dot
+            // sits next to the level badge.
+            const science = gameState.resources?.player?.science ?? 0;
+            const techState = gameState.factionTech?.player;
+            let affordable = 0;
+            if (techState) {
+              const levels = techState.levels || {};
+              for (const id of Object.keys(TECH_DEFS) as TechId[]) {
+                const cur = levels[id] ?? 0;
+                if (cur >= TECH_MAX_LEVEL) continue;
+                if (nextLevelCost(cur, TECH_DEFS[id]) <= science) affordable++;
+              }
+            }
+            return (
+              <>
+                {total > 0 && <span className="badge">{total}</span>}
+                {affordable > 0 && (
+                  <span
+                    className="nav-button__attention-dot"
+                    title={`${affordable} tech${affordable === 1 ? '' : 's'} affordable`}
+                    aria-label={`${affordable} affordable`}
+                  />
+                )}
+              </>
+            );
           })()}
         </button>
       </div>
@@ -706,16 +732,18 @@ const ResourcePill: React.FC<{
   modifier: string;          // → css className suffix (fuel/ore/credits/science)
   value: number;             // current pool
   rate: number;              // per-tick income arriving in the pool (delivered)
-  stranded: number;          // per-tick income stuck in stockpiles (no collector)
+  local: number;             // per-tick income banking to LOCAL settlement stockpiles (90% of non-collector yield)
   hasCollector: boolean;     // does the empire have any collector at all
-}> = ({ label, modifier, value, rate, stranded, hasCollector }) => {
+}> = ({ label, modifier, value, rate, local, hasCollector }) => {
   const hasRate = rate > 0.01;
-  const isStranded = stranded > 0.01 && !hasCollector;
+  const hasLocal = local > 0.01;
   let tooltip: string;
-  if (isStranded) {
-    tooltip = `${label}: ${Math.round(value)} (pool). ${fmtRate(stranded)}/t piling up at settlements — build a collector to receive it.`;
+  if (hasLocal && !hasCollector) {
+    tooltip = `${label}: ${Math.round(value)} (pool). ${fmtRate(local)}/t banking LOCAL at settlements — spendable on body builds, or send a freighter to vacuum it up. Build a collector for the 10× pump.`;
+  } else if (hasLocal && hasCollector) {
+    tooltip = `${label}: ${Math.round(value)} (pool) — +${fmtRate(rate)}/t delivered, +${fmtRate(local)}/t banking LOCAL at uncollectered settlements.`;
   } else if (hasRate) {
-    tooltip = `${label}: ${Math.round(value)} (pool) — gaining +${fmtRate(rate)} per tick via your collector network.`;
+    tooltip = `${label}: ${Math.round(value)} (pool) — gaining +${fmtRate(rate)} per tick.`;
   } else {
     tooltip = `${label}: ${Math.round(value)} (pool)`;
   }
@@ -731,17 +759,17 @@ const ResourcePill: React.FC<{
           }}
         >+{fmtRate(rate)}/t</div>
       )}
-      {isStranded && (
-        // Red trickle indicator: yield is being produced but has
-        // nowhere to land. ~X/t (with tilde) reads differently from
-        // +X/t so the player can clock the difference at a glance.
+      {hasLocal && (
+        // Amber trickle: yield banking at non-collector settlements.
+        // Not "stranded" anymore — it's spendable locally + freighter-
+        // vacuumable. ~X/t (tilde) reads differently from +X/t (pool).
         <div
           className="resource-pill__rate"
           style={{
-            fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', marginTop: 2, color: '#ff5e5e',
+            fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', marginTop: 2, color: '#ffb84d',
           }}
-          aria-label="stranded — build a collector"
-        >~{fmtRate(stranded)}/t</div>
+          aria-label={`local — ${fmtRate(local)} per tick banking at settlements`}
+        >~{fmtRate(local)}/t LOCAL</div>
       )}
     </div>
   );
@@ -1209,7 +1237,7 @@ const SideMenu: React.FC<SideMenuProps> = ({
         <header className="side-menu__head">
           <div>
             <div className="side-menu__brand">ORBITAL</div>
-            <div className="side-menu__brand-sub">v0.3 alpha</div>
+            <div className="side-menu__brand-sub" title={`Build ${GIT_SHA}`}>v0.3 alpha · {GIT_SHA.slice(0,7)}</div>
           </div>
           <button className="side-menu__close" onClick={onClose} title="Close (Esc)">×</button>
         </header>

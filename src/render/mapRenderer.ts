@@ -1570,11 +1570,14 @@ function drawThrustExhaust(
  * fresh each tick), ship.transit.vel for the heading. Falls back to a
  * dot+tick line when no ship icon is available.
  *
- * Flip-and-burn orientation: during BOOST the ship points along its
- * velocity vector (engine at the trailing edge, exhaust streams behind).
- * At flipTick the ship rotates 180° to BRAKE — engine now points along
- * the velocity vector, exhaust streams AHEAD of motion as the ship
- * decelerates. That's the moment everyone in space-sim land waits for.
+ * Orientation: the nose always points AT THE DESTINATION for the whole
+ * flight. The earlier implementation modelled a flip-and-burn (boost
+ * facing intercept, brake flipped 180° to face backward) — physically
+ * correct for a real torch ship, but playtester read the half-flight
+ * "backwards ship" as a bug. Now we keep the icon oriented toward the
+ * intercept point for both phases; coast (outside the burn window)
+ * falls back to velocity direction so a ship that's already arrived
+ * or hasn't started yet isn't lurching to face an arbitrary point.
  */
 function drawTorchTransitShip(
   ship: Ship,
@@ -1603,36 +1606,26 @@ function drawTorchTransitShip(
   const isBrake = ctx.t >= currentTransfer.flipTick && ctx.t < currentTransfer.arriveTick;
   const thrusting = isBoost || isBrake;
 
-  // Ship's nose ALWAYS points in the thrust direction — that's where
-  // the engine is firing. NOT velocity direction. Big difference early
-  // in boost when the ship still has substantial inherited orbital
-  // velocity perpendicular to the thrust axis: the rocket points where
-  // it's pushing, not where it's currently drifting.
-  //
-  //   BOOST  → thrust toward intercept point (the moving-target aim)
-  //   BRAKE  → thrust opposite the ship's velocity (so the engine
-  //            naturally ends up pointed "ahead" of motion — the
-  //            classic flip-and-burn silhouette)
-  //   COAST  → no thrust; fall back to velocity direction so the icon
-  //            isn't lurching to face an arbitrary reference
-  let thrustX: number, thrustY: number;
-  if (isBoost) {
+  // Ship's nose points at the destination for the entire burn —
+  // BOOST and BRAKE both. The old flip-and-burn (brake = nose flipped
+  // 180°) was physically correct but read as a backwards-ship bug to
+  // playtesters. Coast (outside the burn window) falls back to
+  // velocity direction so an arriving/idle ship isn't lurching to
+  // face a now-irrelevant intercept.
+  let facingX: number, facingY: number;
+  if (thrusting) {
     const dx = currentTransfer.interceptPos.x - lerpedPos.x;
     const dy = currentTransfer.interceptPos.y - lerpedPos.y;
     const d = Math.sqrt(dx * dx + dy * dy);
-    thrustX = d > 1e-9 ? dx / d : 1;
-    thrustY = d > 1e-9 ? dy / d : 0;
-  } else if (isBrake) {
-    const vMag = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
-    thrustX = vMag > 1e-9 ? -vel.x / vMag : 1;
-    thrustY = vMag > 1e-9 ? -vel.y / vMag : 0;
+    facingX = d > 1e-9 ? dx / d : 1;
+    facingY = d > 1e-9 ? dy / d : 0;
   } else {
     const vMag = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
-    thrustX = vMag > 1e-9 ? vel.x / vMag : 1;
-    thrustY = vMag > 1e-9 ? vel.y / vMag : 0;
+    facingX = vMag > 1e-9 ? vel.x / vMag : 1;
+    facingY = vMag > 1e-9 ? vel.y / vMag : 0;
   }
   // Canvas y axis inverts.
-  const heading = Math.atan2(-thrustY, thrustX);
+  const heading = Math.atan2(-facingY, facingX);
 
   const iconSize = isSelected ? 22 : 18;
 

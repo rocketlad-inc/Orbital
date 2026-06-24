@@ -37,6 +37,7 @@ import { computeIncomingThreats, threatenedBodyIds } from '../game/threats';
 import { computeVisibility, factionSensorRings, GHOST_LIFETIME_TICKS } from '../game/visibility';
 import { useCanvasTouchInput } from '../hooks/useCanvasTouchInput';
 import { isCoarsePointer } from '../hooks/useIsMobile';
+import { GIT_SHA } from '../_version';
 import './MapCanvas.css';
 
 /** Extra hit-radius padding when the primary input is touch. Apple/Material
@@ -1046,5 +1047,5 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
   }
 
   ctx.ctx.textAlign = 'right';
-  ctx.ctx.fillText('v0.3.0-torch', ctx.canvas.width - 16, ctx.canvas.height - 16);
+  ctx.ctx.fillText(`v0.3 · ${GIT_SHA.slice(0,7)}`, ctx.canvas.width - 16, ctx.canvas.height - 16);
 }

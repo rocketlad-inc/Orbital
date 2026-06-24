@@ -1,3 +1,4 @@
+import { resolveSenate, getActiveSliders } from './senate.js';
 import { recomputeBodyOwnership } from './factions.js';
 
 // Room Durable Object. One instance per game room, keyed by room id.
@@ -128,6 +129,28 @@ export class Room {
       const firstTickAt = (body.started_at ?? Date.now()) + (body.tick_interval_ms ?? 86400000);
       try { await this.state.storage.setAlarm(firstTickAt); } catch (e) {
         console.error('setAlarm failed', e);
+      }
+      return new Response(null, { status: 204 });
+    }
+    if (url.pathname === '/rearm' && req.method === 'POST') {
+      // Re-arm the DO alarm to the games row's current next_tick_at.
+      // Called by handleChangeTickInterval after it moves next_tick_at:
+      // without this the OLD alarm stays pending at the previous
+      // schedule, fires early, and (pre-guard) advanced a premature tick.
+      // Body: { gameId }
+      const body = await req.json().catch(() => ({}));
+      const gid = typeof body?.gameId === 'string' ? body.gameId : null;
+      if (!gid) return new Response(null, { status: 400 });
+      const row = await this.env.DB
+        .prepare('SELECT next_tick_at, status, turn_based_enabled FROM games WHERE id = ?')
+        .bind(gid).first();
+      if (!row || row.status !== 'active' || row.turn_based_enabled === 1) {
+        return new Response(null, { status: 204 });
+      }
+      if (row.next_tick_at != null) {
+        try { await this.state.storage.setAlarm(row.next_tick_at); } catch (e) {
+          console.error('rearm setAlarm failed', e);
+        }
       }
       return new Response(null, { status: 204 });
     }
@@ -506,6 +529,25 @@ export class Room {
     const startTick = game.current_tick ?? 0;
     const scheduled = game.next_tick_at ?? now;
 
+    // Early/stale-fire guard. CF can fire an alarm that was armed under a
+    // schedule that's since moved — most commonly when the host changes
+    // the tick interval (handleChangeTickInterval pushes next_tick_at out
+    // but the previously-armed DO alarm is still pending at the OLD time).
+    // If the authoritative next tick is still in the future, do NOT
+    // advance: just re-arm to next_tick_at and return.
+    //
+    // Without this, a stale early fire advanced a premature tick AND then
+    // rescheduled to scheduled + interval — pushing the next legitimate
+    // tick ~2 intervals past now. On a 1h cadence that's a 2h gap that
+    // reads as "one tick then frozen." (next_tick_at NULL → scheduled =
+    // now → guard is skipped, so orphan recovery still advances.)
+    if (scheduled - now > 1000) {
+      try { await this.state.storage.setAlarm(scheduled); } catch (e) {
+        console.error('setAlarm (early-fire re-arm) failed', e);
+      }
+      return;
+    }
+
     // Catch-up loop. CF DO alarms are best-effort and the cron fall-back
     // only fires once per minute, so a hibernating DO + sporadic cron can
     // accumulate hours of missed ticks (4h wall-clock vs. 38 actual ticks
@@ -833,6 +875,100 @@ export class Room {
           .prepare("UPDATE game_ship_nodes SET status = 'executed', executed_at_tick = ? WHERE id = ?")
           .bind(tick, n.id),
       ]);
+
+      // Ad-hoc pickup: a freighter arriving at an owned body does a
+      // ONE-SHOT vacuum of every owned-settlement stockpile here, up
+      // to CARGO_CAP per resource type. Fires regardless of whether
+      // the ship is on a trade route — the trade-route pickup block
+      // further down handles routed freighters separately, but this
+      // covers the "just sent the Pella to grab the Pluto stockpile"
+      // case the playtester wants. Pickup is one-shot per arrival
+      // because the loop runs once per status='in_transit' node; a
+      // parked freighter doesn't passive-drip.
+      try {
+        const ship = await this.env.DB
+          .prepare('SELECT ship_class, owner_faction_id FROM game_ships WHERE id = ? AND status = ?')
+          .bind(n.ship_id, 'active')
+          .first();
+        if (ship && ship.ship_class === 'freighter') {
+          // Only pickup if this freighter isn't already on a trade
+          // route hauling cargo (avoid double-pickup with the
+          // trade-route block).
+          const onRouteWithCargo = await this.env.DB
+            .prepare(
+              `SELECT 1 AS x FROM game_trade_routes
+                 WHERE ship_id = ?
+                   AND (cargo_fuel + cargo_metal + cargo_gold + cargo_science) > 0
+                 LIMIT 1`,
+            )
+            .bind(n.ship_id).first();
+          if (!onRouteWithCargo) {
+            const PICKUP_CAP = 500;  // matches CARGO_CAP further down
+            const stocks = (await this.env.DB
+              .prepare(
+                `SELECT id, stockpile_fuel, stockpile_metal, stockpile_gold, stockpile_science
+                   FROM game_settlements
+                  WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+                    AND destroyed_at_tick IS NULL`,
+              )
+              .bind(gameId, n.target_body_id, ship.owner_faction_id)
+              .all()).results ?? [];
+            let cf = 0, cm = 0, cg = 0, csci = 0;
+            for (const s of stocks) {
+              const take = {
+                f:  Math.min(PICKUP_CAP - cf,   Number(s.stockpile_fuel    ?? 0)),
+                m:  Math.min(PICKUP_CAP - cm,   Number(s.stockpile_metal   ?? 0)),
+                g:  Math.min(PICKUP_CAP - cg,   Number(s.stockpile_gold    ?? 0)),
+                sc: Math.min(PICKUP_CAP - csci, Number(s.stockpile_science ?? 0)),
+              };
+              if (take.f + take.m + take.g + take.sc <= 0) continue;
+              cf += take.f; cm += take.m; cg += take.g; csci += take.sc;
+              await this.env.DB
+                .prepare(
+                  `UPDATE game_settlements
+                      SET stockpile_fuel    = stockpile_fuel    - ?,
+                          stockpile_metal   = stockpile_metal   - ?,
+                          stockpile_gold    = stockpile_gold    - ?,
+                          stockpile_science = stockpile_science - ?
+                    WHERE id = ?`,
+                )
+                .bind(take.f, take.m, take.g, take.sc, s.id)
+                .run();
+              if (cf >= PICKUP_CAP && cm >= PICKUP_CAP && cg >= PICKUP_CAP && csci >= PICKUP_CAP) break;
+            }
+            // If we picked anything up, stash it in the trade_routes
+            // row associated with this ship if one exists; otherwise
+            // hand straight to the faction pool (the freighter is
+            // doing manual logistics, no route to buffer cargo on).
+            if (cf + cm + cg + csci > 0) {
+              const route = await this.env.DB
+                .prepare('SELECT id FROM game_trade_routes WHERE ship_id = ? LIMIT 1')
+                .bind(n.ship_id).first();
+              if (route) {
+                await this.env.DB
+                  .prepare(
+                    `UPDATE game_trade_routes
+                        SET cargo_fuel = cargo_fuel + ?, cargo_metal = cargo_metal + ?,
+                            cargo_gold = cargo_gold + ?, cargo_science = cargo_science + ?
+                      WHERE id = ?`,
+                  )
+                  .bind(cf, cm, cg, csci, route.id).run();
+              } else {
+                await this.env.DB
+                  .prepare(
+                    `UPDATE game_factions
+                        SET fuel    = fuel    + ?, metal   = metal   + ?,
+                            gold    = gold    + ?, science = science + ?
+                      WHERE id = ?`,
+                  )
+                  .bind(cf, cm, cg, csci, ship.owner_faction_id).run();
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error('ad-hoc freighter pickup failed (non-fatal)', e);
+      }
     }
 
     // 2d. Body secret reveal + persistent portal warp.
@@ -870,6 +1006,25 @@ export class Room {
       console.error('resolveAsteroidImpacts failed', e);
     }
 
+    // 2b-bis. Senate phase advance. Idempotent + non-throwing -- a
+    //         senate-side failure must not kill combat/dyson/economy
+    //         that follow. Runs BEFORE combat so a ratified
+    //         combat_damage_multiplier applies on the same tick.
+    try {
+      await resolveSenate(this.env, gameId, tick);
+    } catch (e) {
+      console.error('resolveSenate failed', e);
+    }
+
+    // Senate effects active this tick. Cached in a closure local so
+    // every downstream consumer reads the same snapshot without
+    // hammering D1 once per attacker. Falls through to slider defaults
+    // (1.0 multipliers, 0% tariff) on any error.
+    let senateSliders = {};
+    try { senateSliders = await getActiveSliders(this.env, gameId, tick); }
+    catch (e) { console.error('getActiveSliders failed', e); }
+    const combatDamageMult = Number(senateSliders.combat_damage_multiplier ?? 1);
+
     // 2c. Trade route auto-pilot.
     //
     // For each active route, look at the freighter. Skip if it has any
@@ -894,7 +1049,13 @@ export class Room {
     // source of truth for "ship is in transit" so we don't need to
     // re-implement the Bezier model.
     try {
-      const CARGO_CAP = 50;
+      // Per-resource cargo cap. Raised 50 -> 500 alongside the
+      // 10%/90% economy rewrite — non-collector stockpiles now grow
+      // fast enough that a 50-unit hold was a thimble. 500 lets one
+      // freighter visit empty a typical settlement stockpile in one
+      // round trip while keeping tonnage a real ship stat (a busy
+      // hub may still need multiple runs).
+      const CARGO_CAP = 500;
       const routes = (await this.env.DB
         .prepare(
           `SELECT id, owner_faction_id, ship_id, origin_body_id, dest_body_id, status,
@@ -1260,7 +1421,7 @@ export class Room {
         // hp_max / damage_per_tick already stamped on the ship row when
         // they were last upgraded — see lobby/upgrade endpoints).
         const rankMul = 1 + 0.01 * Math.max(0, attacker.rank ?? 0);
-        const split = (attacker.damage_per_tick * rankMul) / targets.length;
+        const split = (attacker.damage_per_tick * rankMul * combatDamageMult) / targets.length;
         for (const t of targets) {
           addDamage(t.id, attacker.owner_faction_id, attacker.id, split);
         }
@@ -1503,19 +1664,30 @@ export class Room {
         .run();
     }
 
-    // 3.5 Yield harvest. Every SETTLEMENT_HARVEST_INTERVAL=10 ticks, each
-    //     settlement converts its body's yield into stockpile, scaled by
-    //     population and the settlement type's bias (cities -> metal,
-    //     stations -> science).
-    //     Also: every POP_GROWTH_INTERVAL=20 ticks, settlement population
-    //     grows by 1 (capped at POP_MAX). Growing populations harvest more
-    //     because the popMult above scales with population.
-    const HARVEST_INTERVAL = 10;
+    // 3.5 Per-tick yield distribution.
+    //
+    // Replaces the previous "every 10 ticks harvest to stockpile +
+    // every tick collector delivery to pool" two-pass system with a
+    // single per-tick split:
+    //
+    //   With collector    : 100% of effective yield -> faction pool
+    //   Without collector : 10% to faction pool + 90% to local stockpile
+    //
+    // Local stockpile (LOCAL bucket on the HUD) is freighter-vacuumable
+    // and spendable on local body builds — it isn't dead weight. The
+    // 10% trickle ensures even uncollectered worlds contribute SOMETHING
+    // to the empire pool every tick so the player doesn't sit at zero
+    // income until they build the first collector.
+    //
+    // Effective yield = base body yield * popMult * typeMult * buildingMults.
+    // Buildings: forge boosts metal, mint boosts gold, lab boosts science.
+    // Population is still grown by the POP_GROWTH_INTERVAL pass below.
     const POP_GROWTH_INTERVAL = 20;
     const POP_MAX = 10;
     const settlements = (await this.env.DB
       .prepare(
-        `SELECT s.id, s.body_id, s.type, s.population, s.last_harvest_tick, s.last_growth_tick,
+        `SELECT s.id, s.owner_faction_id AS fid, s.body_id, s.type, s.population,
+                s.last_growth_tick, s.has_collector, s.buildings_json,
                 b.yield_metal, b.yield_fuel, b.yield_gold, b.yield_science
            FROM game_settlements s
            JOIN game_bodies b ON b.id = s.body_id
@@ -1524,12 +1696,11 @@ export class Room {
       .bind(gameId)
       .all()).results ?? [];
 
-    // Population growth pass — independent of harvest cadence.
+    // Population growth pass — independent of yield cadence.
     for (const s of settlements) {
       const lastGrowth = s.last_growth_tick ?? 0;
       if (tick - lastGrowth < POP_GROWTH_INTERVAL) continue;
       if ((s.population ?? 1) >= POP_MAX) {
-        // Even at cap, update last_growth_tick so we don't burn cycles.
         await this.env.DB
           .prepare('UPDATE game_settlements SET last_growth_tick = ? WHERE id = ?')
           .bind(tick, s.id).run();
@@ -1538,130 +1709,78 @@ export class Room {
       await this.env.DB
         .prepare('UPDATE game_settlements SET population = population + 1, last_growth_tick = ? WHERE id = ?')
         .bind(tick, s.id).run();
-      s.population = (s.population ?? 1) + 1;  // keep local copy in sync for harvest pass below
+      s.population = (s.population ?? 1) + 1;
     }
 
-    for (const s of settlements) {
-      const last = s.last_harvest_tick ?? 0;
-      if (tick - last < HARVEST_INTERVAL) continue;
-      const popMult = 1 + 0.1 * Math.max(0, (s.population ?? 1) - 1);
-      const typeMult = s.type === 'city'
-        ? { metal: 1.2, fuel: 1.0, gold: 1.0, science: 0.8 }
-        : { metal: 0.8, fuel: 1.1, gold: 1.0, science: 1.4 };
-      const addMetal   = Math.round(s.yield_metal   * popMult * typeMult.metal);
-      const addFuel    = Math.round(s.yield_fuel    * popMult * typeMult.fuel);
-      const addGold    = Math.round(s.yield_gold    * popMult * typeMult.gold);
-      const addScience = Math.round(s.yield_science * popMult * typeMult.science);
-      await this.env.DB
-        .prepare(
-          `UPDATE game_settlements
-              SET stockpile_metal   = stockpile_metal   + ?,
-                  stockpile_fuel    = stockpile_fuel    + ?,
-                  stockpile_gold    = stockpile_gold    + ?,
-                  stockpile_science = stockpile_science + ?,
-                  last_harvest_tick = ?
-            WHERE id = ?`,
-        )
-        .bind(addMetal, addFuel, addGold, addScience, tick, s.id)
-        .run();
-    }
-
-    // 3.6 Direct yield delivery — per-collector, every tick, fractional.
-    //
-    // Settlements with has_collector = 1 are plumbed straight into the
-    // faction pool: every tick they deliver (yield / HARVEST_INTERVAL)
-    // per resource directly to the pool. No stockpile involvement on
-    // collector settlements. The fractional residual lives in the
-    // *_remainder columns (migration 0027) so the per-tick delivery
-    // matches what the income pill on the HUD promises.
-    //
-    // Non-collector settlements continue to accumulate stockpile via
-    // the harvest cycle (every HARVEST_INTERVAL=10 ticks); that
-    // stockpile no longer auto-drains. Only trade-route freighters or
-    // a freshly-built collector on that settlement extract it.
-    //
-    // Sum per-faction across all collector settlements in a single
-    // pass, then apply one batched UPDATE per faction (pool += integer
-    // portion of (remainder + delivery), remainder = fractional part).
-    // HARVEST_INTERVAL = 10 is already declared at the top of the
-    // harvest section above; reuse it.
-    //
-    // NOTE: building levels live in the buildings_json TEXT column
-    // ({"forge":2,"mint":0,"lab":1}), NOT in forge_level/mint_level/
-    // lab_level columns (those don't exist). Referencing the phantom
-    // columns made this SELECT throw 'no such column: s.forge_level'
-    // every tick, which killed resolveTick right here -- pool never
-    // updated and everything after this block (combat, dyson, victory)
-    // silently stopped too. Pull buildings_json and parse per row.
-    // Wrapped: a SQL/parse error in collector delivery must NOT
-    // kill the rest of resolveTick (combat, dyson, victory). This
-    // block silently killed the whole tick when it referenced
-    // phantom forge_level columns — never again.
-    try {
-    const collectorRows = (await this.env.DB
-      .prepare(
-        `SELECT s.owner_faction_id AS fid,
-                s.id AS sid, s.population AS pop, s.type AS stype,
-                s.buildings_json AS buildings,
-                b.yield_metal   AS y_metal,
-                b.yield_fuel    AS y_fuel,
-                b.yield_gold    AS y_gold,
-                b.yield_science AS y_science
-           FROM game_settlements s
-           JOIN game_bodies b ON b.id = s.body_id
-          WHERE s.game_id = ?
-            AND s.destroyed_at_tick IS NULL
-            AND s.has_collector = 1`,
-      )
-      .bind(gameId)
-      .all()).results ?? [];
-
-    // Yield multipliers — mirror src/game/settlements.ts settlementYield()
-    // AND the harvest block above (which uses 0.1 per pop) so server,
-    // SP, and the client income pill all agree.
+    // Yield multipliers — kept in sync with src/game/settlements.ts.
     const YIELD_MULT_PER_POP = 0.1;
     const FORGE_PER_LEVEL = 0.25;
     const MINT_PER_LEVEL  = 0.25;
     const LAB_PER_LEVEL   = 0.20;
     const TYPE_MUL_CITY    = { fuel: 1.0, metal: 1.2, gold: 1.0, science: 0.8 };
     const TYPE_MUL_STATION = { fuel: 1.1, metal: 0.8, gold: 1.0, science: 1.4 };
+    const NO_COLLECTOR_POOL_FRACTION = 0.10;       // 10% to faction pool
+    const NO_COLLECTOR_STOCK_FRACTION = 0.90;       // 90% to local stockpile
 
-    const perFaction = new Map();
-    for (const r of collectorRows) {
-      const tm = r.stype === 'city' ? TYPE_MUL_CITY : TYPE_MUL_STATION;
-      const popMul = 1 + YIELD_MULT_PER_POP * Math.max(0, Number(r.pop ?? 1) - 1);
-      let bld = {};
-      if (r.buildings) { try { bld = JSON.parse(r.buildings) ?? {}; } catch { bld = {}; } }
-      const forgeMul = 1 + Number(bld.forge ?? 0) * FORGE_PER_LEVEL;
-      const mintMul  = 1 + Number(bld.mint  ?? 0) * MINT_PER_LEVEL;
-      const labMul   = 1 + Number(bld.lab   ?? 0) * LAB_PER_LEVEL;
-      // Full harvest yield delivered to the pool every tick (no
-      // /HARVEST_INTERVAL divide) — that's the point of a collector:
-      // 10x faster extraction than the stockpile cycle non-collector
-      // settlements run on.
-      const delivery = {
-        fuel:    Number(r.y_fuel    ?? 0) * popMul * tm.fuel,
-        metal:   Number(r.y_metal   ?? 0) * popMul * tm.metal   * forgeMul,
-        gold:    Number(r.y_gold    ?? 0) * popMul * tm.gold    * mintMul,
-        science: Number(r.y_science ?? 0) * popMul * tm.science * labMul,
-      };
-      const agg = perFaction.get(r.fid) ?? { fuel: 0, metal: 0, gold: 0, science: 0 };
-      agg.fuel    += delivery.fuel;
-      agg.metal   += delivery.metal;
-      agg.gold    += delivery.gold;
-      agg.science += delivery.science;
-      perFaction.set(r.fid, agg);
-    }
+    // Aggregate per-faction pool deltas; apply per-settlement
+    // stockpile deltas individually. Wrapped: yield distribution must
+    // NEVER kill resolveTick (combat, dyson, victory all run after).
+    try {
+      const perFactionPool = new Map();
+      for (const s of settlements) {
+        const tm = s.type === 'city' ? TYPE_MUL_CITY : TYPE_MUL_STATION;
+        const popMul = 1 + YIELD_MULT_PER_POP * Math.max(0, Number(s.population ?? 1) - 1);
+        let bld = {};
+        if (s.buildings_json) { try { bld = JSON.parse(s.buildings_json) ?? {}; } catch { bld = {}; } }
+        const forgeMul = 1 + Number(bld.forge ?? 0) * FORGE_PER_LEVEL;
+        const mintMul  = 1 + Number(bld.mint  ?? 0) * MINT_PER_LEVEL;
+        const labMul   = 1 + Number(bld.lab   ?? 0) * LAB_PER_LEVEL;
+        const yieldFull = {
+          fuel:    Number(s.yield_fuel    ?? 0) * popMul * tm.fuel,
+          metal:   Number(s.yield_metal   ?? 0) * popMul * tm.metal   * forgeMul,
+          gold:    Number(s.yield_gold    ?? 0) * popMul * tm.gold    * mintMul,
+          science: Number(s.yield_science ?? 0) * popMul * tm.science * labMul,
+        };
 
-    if (perFaction.size > 0) {
-      // Round per-tick delivery to integer and add to the pool. We
-      // dropped the fractional remainder accumulator (migration 0028's
-      // *_remainder columns) because a single SELECT failure against
-      // a not-yet-migrated D1 would silently kill resolveTick mid-tick.
-      // Math.round drift is ~0.5/tick worst-case per resource per
-      // collector -- below the noise floor of the harvest cadence and
-      // building boosts, so not worth the migration fragility.
-      for (const [fid, delta] of perFaction) {
+        const toPoolFraction  = s.has_collector ? 1.0 : NO_COLLECTOR_POOL_FRACTION;
+        const toStockFraction = s.has_collector ? 0.0 : NO_COLLECTOR_STOCK_FRACTION;
+
+        const poolDelta = {
+          fuel:    yieldFull.fuel    * toPoolFraction,
+          metal:   yieldFull.metal   * toPoolFraction,
+          gold:    yieldFull.gold    * toPoolFraction,
+          science: yieldFull.science * toPoolFraction,
+        };
+        const agg = perFactionPool.get(s.fid) ?? { fuel: 0, metal: 0, gold: 0, science: 0 };
+        agg.fuel    += poolDelta.fuel;
+        agg.metal   += poolDelta.metal;
+        agg.gold    += poolDelta.gold;
+        agg.science += poolDelta.science;
+        perFactionPool.set(s.fid, agg);
+
+        if (toStockFraction > 0) {
+          const sf = Math.round(yieldFull.fuel    * toStockFraction);
+          const sm = Math.round(yieldFull.metal   * toStockFraction);
+          const sg = Math.round(yieldFull.gold    * toStockFraction);
+          const ss = Math.round(yieldFull.science * toStockFraction);
+          if (sf + sm + sg + ss > 0) {
+            await this.env.DB
+              .prepare(
+                `UPDATE game_settlements
+                    SET stockpile_fuel    = stockpile_fuel    + ?,
+                        stockpile_metal   = stockpile_metal   + ?,
+                        stockpile_gold    = stockpile_gold    + ?,
+                        stockpile_science = stockpile_science + ?
+                  WHERE id = ?`,
+              )
+              .bind(sf, sm, sg, ss, s.id)
+              .run();
+          }
+        }
+      }
+
+      // Apply pool deltas — one UPDATE per faction.
+      for (const [fid, delta] of perFactionPool) {
         const fuelI    = Math.round(delta.fuel);
         const metalI   = Math.round(delta.metal);
         const goldI    = Math.round(delta.gold);
@@ -1670,18 +1789,14 @@ export class Room {
         await this.env.DB
           .prepare(
             `UPDATE game_factions
-                SET fuel    = fuel    + ?,
-                    metal   = metal   + ?,
-                    gold    = gold    + ?,
-                    science = science + ?
+                SET fuel = fuel + ?, metal = metal + ?, gold = gold + ?, science = science + ?
               WHERE id = ?`,
           )
           .bind(fuelI, metalI, goldI, scienceI, fid)
           .run();
       }
-    }
     } catch (e) {
-      console.error('collector delivery failed (non-fatal)', e);
+      console.error('per-tick yield distribution failed (non-fatal)', e);
     }
 
     // Stamp last_combat_tick on every ship that fired this tick. Done
