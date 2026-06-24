@@ -27,6 +27,8 @@ import {
   GhostIntel,
   worldToCanvas,
   RenderContext,
+  TRAJECTORY_COLORS,
+  trajectoryRole,
 } from '../render/mapRenderer';
 import { bodyPosition } from '../physics/orbitalMechanics';
 import { COLORS, withOpacity } from '../render/colors';
@@ -490,9 +492,31 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // Trade-route legs render in cyan so the player can pick out
         // "this freighter is on a recurring run" vs "this is a
         // one-shot transfer I ordered" at a glance.
+        //
+        // Otherwise: color by relationship to the viewer (mine/
+        // neutral/hostile) so every transit is classifiable without
+        // selecting it. Was previously hard-coded to COLORS.arcTransfer
+        // (amber) here, which silently overwrote drawAllTransfersLayer's
+        // relationship paint with a uniform color — playtester saw
+        // "trajectory colors only show up when you've selected a ship."
         const tradeLeg = gameState.tradeRoutes?.find(r => r.shipId === ship.id);
-        const arcColor = tradeLeg ? COLORS.arcTradeRoute : COLORS.arcTransfer;
+        const role = trajectoryRole(ship, 'player', alliedSet);
+        const arcColor = tradeLeg
+          ? COLORS.arcTradeRoute
+          : TRAJECTORY_COLORS[role];
+        ctx.save();
+        // Selected ships get full opacity + the split-phase (green/
+        // pink) coloring; unselected ones dim a bit so the system
+        // isn't a wall of solid color. Hostile stays prominent;
+        // neutral fades hardest because it's "you don't have to
+        // care about this."
+        ctx.globalAlpha = isSelected
+          ? 1
+          : role === 'mine'    ? 0.85
+          : role === 'hostile' ? 0.85
+          : 0.45;                                    // neutral
         const samples = drawTorchTrajectory(plan, gameState.bodies, renderContext, arcColor, false, isSelected && !tradeLeg);
+        ctx.restore();
         drawTransitShip(ship, renderContext, isSelected, samples);
 
         const arrivalBody = gameState.bodies.find(b => b.id === plan.targetBodyId);

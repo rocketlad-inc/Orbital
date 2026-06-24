@@ -3,7 +3,7 @@
 // Title | Resources | Nav buttons | Time / Sim controls | Alerts
 // ============================================================
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useGameContext } from '../state/gameContext';
 import { useTurnBasedSettings } from '../state/turnBasedSettings';
@@ -50,9 +50,21 @@ interface TopBarProps {
 
 interface Alert {
   id: string;
-  level: 'info' | 'warn' | 'danger';
+  /** Glyph + color, matching the event-log panel's per-type classification
+   *  (logEntryIcon) so a chip reads the same as its log row. Drives the
+   *  chip's icon, border, and text colour. */
+  icon: string;
+  color: string;
+  /** Short type label shown as the details-popover eyebrow. */
+  category: string;
+  /** Compact label for the chip (ellipsised when long). */
   text: string;
+  /** Full, untruncated text shown in the click-to-open details box. */
+  detail: string;
+  /** Optional secondary action surfaced as a button inside the details box
+   *  (e.g. jump to the ship the alert is about), with its button label. */
   onClick?: () => void;
+  actionLabel?: string;
 }
 
 const SIM_SPEEDS = [1, 10, 100, 1000, 10000, 100000];
@@ -75,6 +87,9 @@ export const TopBar: React.FC<TopBarProps> = ({
   const mpTbmActive = !!mpTurnStatus?.turn_based_enabled;
   const { user, signOut } = useAuth();
   const [dismissedAlertIds, setDismissedAlertIds] = useState<Set<string>>(new Set());
+  // The alert whose full details popover is open (null = closed). Clicking a
+  // notification chip opens it; see AlertDetailsModal.
+  const [detailAlert, setDetailAlert] = useState<Alert | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   // Save / Load modal state. Lifted into TopBar (rather than SideMenu)
@@ -120,14 +135,21 @@ export const TopBar: React.FC<TopBarProps> = ({
   const alerts = useMemo<Alert[]>(() => {
     const out: Alert[] = [];
 
-    // Recent combat events (top 2)
+    // Recent chronicle events (top 2). These are the same strings the
+    // EventLogPanel shows, so we classify each with logEntryIcon to give the
+    // chip the matching icon + colour (a discovery reads cyan, destruction
+    // red, etc.) rather than a flat "danger" red for everything.
     if (gameState.combatLog.length > 0) {
       const recent = gameState.combatLog.slice(-2);
       recent.forEach((msg, i) => {
+        const cls = logEntryIcon(msg);
         out.push({
           id: `combat-${gameState.combatLog.length - recent.length + i}`,
-          level: 'danger',
+          icon: cls.icon,
+          color: cls.color,
+          category: cls.label,
           text: msg.length > 60 ? msg.slice(0, 60) + '…' : msg,
+          detail: msg,
         });
       });
     }
@@ -144,11 +166,16 @@ export const TopBar: React.FC<TopBarProps> = ({
         const eta = arrivalTick - gameState.currentTick;
         if (eta <= 5 && eta > 0) {
           const target = gameState.bodies.find(b => b.id === targetBodyId);
+          const text = `${ship.name} arriving at ${target?.name || '?'} in T-${eta.toFixed(0)}`;
           out.push({
             id: `arrive-${ship.id}`,
-            level: 'info',
-            text: `${ship.name} arriving at ${target?.name || '?'} in T-${eta.toFixed(0)}`,
+            icon: '→',
+            color: '#4ecdc4',
+            category: 'Arrival',
+            text,
+            detail: text,
             onClick: () => selectShip(ship.id),
+            actionLabel: 'Go to ship',
           });
         }
       }
@@ -157,11 +184,16 @@ export const TopBar: React.FC<TopBarProps> = ({
     // Low fuel ships
     for (const ship of playerShips) {
       if (ship.fuel < 20) {
+        const text = `${ship.name} low fuel (${Math.round(ship.fuel)})`;
         out.push({
           id: `lowfuel-${ship.id}`,
-          level: 'warn',
-          text: `${ship.name} low fuel (${Math.round(ship.fuel)})`,
+          icon: '⚠',
+          color: '#ffb84d',
+          category: 'Low fuel',
+          text,
+          detail: text,
           onClick: () => selectShip(ship.id),
+          actionLabel: 'Go to ship',
         });
       }
     }
@@ -419,10 +451,13 @@ export const TopBar: React.FC<TopBarProps> = ({
         {alerts.slice(0, 4).map(alert => (
           <div
             key={alert.id}
-            className={`alert-chip alert-chip--${alert.level}`}
-            onClick={() => alert.onClick?.()}
+            className="alert-chip"
+            style={{ borderColor: alert.color, color: alert.color, background: hexToRgba(alert.color, 0.12) }}
+            onClick={() => setDetailAlert(alert)}
+            title="Click for details"
           >
-            <span>{alert.text}</span>
+            <span className="alert-chip__icon" aria-hidden="true">{alert.icon}</span>
+            <span className="alert-chip__text">{alert.text}</span>
             <button
               className="alert-chip__dismiss"
               onClick={(e) => { e.stopPropagation(); dismissAlert(alert.id); }}
@@ -447,6 +482,10 @@ export const TopBar: React.FC<TopBarProps> = ({
           onClose={() => setLogOpen(false)}
         />
       )}
+
+      {detailAlert && (
+        <AlertDetailsModal alert={detailAlert} onClose={() => setDetailAlert(null)} />
+      )}
     </div>
   );
 };
@@ -464,23 +503,85 @@ export const TopBar: React.FC<TopBarProps> = ({
  * so e.g. "The Dyson Sphere … destroyed" reads as a Dyson event, not a
  * plain destruction. Glyphs stay in the unicode family the rest of the
  * UI uses (◆ ■ ⚛ …) so they render without an icon font. */
-function logEntryIcon(entry: string): { icon: string; color: string } {
+function logEntryIcon(entry: string): { icon: string; color: string; label: string } {
   const s = entry.toLowerCase();
-  if (s.includes('dyson')) return { icon: '☀', color: '#fbbf24' };       // megaproject
-  if (s.includes('victory') || s.includes(' wins')) return { icon: '♛', color: '#6ee7b7' };
+  if (s.includes('dyson')) return { icon: '☀', color: '#fbbf24', label: 'Megaproject' };
+  if (s.includes('victory') || s.includes(' wins')) return { icon: '♛', color: '#6ee7b7', label: 'Victory' };
   if (s.includes('discovery') || s.includes('databank') || s.includes('warp gate') || s.includes('stargate')) {
-    return { icon: '✦', color: '#67e8f9' };                              // exploration find
+    return { icon: '✦', color: '#67e8f9', label: 'Discovery' };
   }
   // Diplomacy buckets — order matters: 'broke ... pact' must match
   // before the generic 'pact' word in 'signed Defense Pact'.
-  if (s.includes('broke') && s.includes('pact'))   return { icon: '⚔', color: '#ff5e5e' };  // pact broken = war
-  if (s.includes('signed') && s.includes('pact'))  return { icon: '🕊', color: '#67e8f9' };  // pact signed = peace
-  if (s.includes('traded') && s.includes(' → '))   return { icon: '⚖', color: '#fbbf24' };  // resource swap
-  if (s.includes('captured')) return { icon: '⚑', color: '#ffd700' };    // piracy / cargo grab
-  if (s.includes('destroyed') || s.includes('collapsed')) return { icon: '✖', color: '#ff5e5e' };
-  if (s.includes(' hits ')) return { icon: '⚔', color: '#ffb84d' };      // weapons fire
-  return { icon: '›', color: '#8a9fb3' };                                // generic milestone
+  if (s.includes('broke') && s.includes('pact'))   return { icon: '⚔', color: '#ff5e5e', label: 'Pact broken' };
+  // Text-presentation peace symbol (☮ + VS15) so it honours the cyan color
+  // and stays monochrome like the other glyphs — the dove emoji rendered
+  // colour-locked and inconsistent across OSes.
+  if (s.includes('signed') && s.includes('pact'))  return { icon: '☮︎', color: '#67e8f9', label: 'Pact signed' };
+  if (s.includes('traded') && s.includes(' → '))   return { icon: '⚖', color: '#fbbf24', label: 'Trade' };
+  if (s.includes('captured')) return { icon: '⚑', color: '#ffd700', label: 'Capture' };
+  if (s.includes('destroyed') || s.includes('collapsed')) return { icon: '✖', color: '#ff5e5e', label: 'Destruction' };
+  if (s.includes(' hits ')) return { icon: '⚔', color: '#ffb84d', label: 'Combat' };
+  return { icon: '›', color: '#8a9fb3', label: 'Event' };
 }
+
+/** #rrggbb (or #rgb) → rgba() string. Used to tint a chip's background with
+ *  its own per-type colour at low alpha so border/text/fill stay coherent. */
+function hexToRgba(hex: string, alpha: number): string {
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+/**
+ * Click-to-open details for a top-bar notification chip. The chip itself is
+ * truncated; this centred popover shows the full, untruncated text plus the
+ * event's type, and surfaces the chip's optional action (e.g. jump to ship).
+ * Portaled to <body>, dismissed by backdrop / close button / Esc — same
+ * pattern as EventLogPanel and the save/load modal.
+ */
+const AlertDetailsModal: React.FC<{ alert: Alert; onClose: () => void }> = ({ alert, onClose }) => {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    // Move focus into the dialog so keyboard/screen-reader users land here
+    // and Esc/Enter act on it rather than the map behind.
+    closeRef.current?.focus();
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return createPortal(
+    <div className="alert-detail__backdrop" onClick={onClose}>
+      <div
+        className="alert-detail"
+        style={{ borderColor: alert.color }}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${alert.category} details`}
+      >
+        <header className="alert-detail__head">
+          <span className="alert-detail__icon" style={{ color: alert.color }} aria-hidden="true">{alert.icon}</span>
+          <span className="alert-detail__category" style={{ color: alert.color }}>{alert.category}</span>
+          <button ref={closeRef} className="alert-detail__close" onClick={onClose} title="Close (Esc)">×</button>
+        </header>
+        <div className="alert-detail__body">{alert.detail}</div>
+        {alert.onClick && (
+          <footer className="alert-detail__foot">
+            <button
+              className="alert-detail__action"
+              onClick={() => { alert.onClick?.(); onClose(); }}
+            >{alert.actionLabel ?? 'Select ship'}</button>
+          </footer>
+        )}
+      </div>
+    </div>,
+    document.body,
+  );
+};
 
 const EventLogPanel: React.FC<{
   entries: string[];

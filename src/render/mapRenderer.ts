@@ -2080,19 +2080,19 @@ export function drawShipGhost(
 // the isDashed flag).
 // ============================================================
 
-const TRAJECTORY_COLORS = {
+export const TRAJECTORY_COLORS = {
   mine:     '#4ecdc4', // cyan — matches the player's existing brand
   neutral:  '#8fb89a', // muted sage — "non-hostile, but not you"
   hostile:  '#ff8a40', // warm amber — "free-fire faction"
   incoming: '#ff3030', // bright red — "aimed at YOUR body"
 } as const;
 
-type TrajectoryRole = 'mine' | 'neutral' | 'hostile';
+export type TrajectoryRole = 'mine' | 'neutral' | 'hostile';
 
 /** Classify a ship's transit line by relationship to the viewer.
  *  Returns one of the three primary roles; the 'incoming' upgrade
  *  is decided per-target by drawEnemyTrajectoriesLayer. */
-function trajectoryRole(
+export function trajectoryRole(
   ship: Ship,
   playerFactionId: string,
   allies: ReadonlySet<string>,
