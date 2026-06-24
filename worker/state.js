@@ -25,6 +25,97 @@ function err(status, code, message) {
   return json({ error: { code, message } }, { status });
 }
 
+// ============================================================
+// Sensor-range reveal (server mirror of src/game/visibility.ts).
+//
+// The server's CTE fog is presence-based: you see a body's occupants only
+// if you have a ship parked there / own it / are at an adjacent body. The
+// CLIENT, however, reveals anything inside a friendly sensor radius — which
+// is why a player can see Mars + its yields but not the enemy fleet there.
+// This closes that gap: we compute which bodies fall inside any friendly
+// sensor radius (same ranges + circular-orbit positions the client uses)
+// and feed that set into visible_bodies so enemy ships/stations there are
+// sent. Occlusion is intentionally NOT replicated — the server reveals a
+// superset and the client's line-of-sight model does the final hiding, so
+// we never WITHHOLD something the client would draw.
+//
+// KEEP IN SYNC with SHIP_SENSOR_RANGE / SETTLEMENT_SENSOR_RANGE and
+// ORBITAL_SPEED_SCALE in the client. Positions use the cheap circular
+// shortcut (bodyPosition's common path); eccentric Kuiper orbits and ram
+// trajectories are approximated as circular, which is fine for a generous
+// coverage radius.
+const SHIP_SENSOR_RANGE = { corvette: 150, frigate: 200, destroyer: 175, freighter: 100 };
+const SETTLEMENT_SENSOR_RANGE = { city: 250, station: 400 };
+const DEFAULT_SHIP_SENSOR_RANGE = 25;
+const DEFAULT_SETTLEMENT_SENSOR_RANGE = 40;
+const ORBITAL_SPEED_SCALE = 0.5;
+const TWO_PI = Math.PI * 2;
+
+/**
+ * Body ids that fall within any friendly (caller + ally) sensor radius.
+ * @param bodies     rows: { id, parent_body_id, orbit_radius, orbit_period, angle0 }
+ * @param ships      friendly active ships: { ship_class, parent_body_id,
+ *                   target_body_id, scheduled_t, arrival_at_tick }  (transit
+ *                   fields null when parked)
+ * @param settlements friendly settlements: { body_id, type }
+ * @param tick       current game tick
+ */
+function computeSensorVisibleBodyIds(bodies, ships, settlements, tick) {
+  const byId = new Map(bodies.map(b => [b.id, b]));
+  const posCache = new Map();
+  function bodyPos(b) {
+    if (!b) return { x: 0, y: 0 };
+    const cached = posCache.get(b.id);
+    if (cached) return cached;
+    let p;
+    if (!b.parent_body_id) {
+      p = { x: 0, y: 0 };
+    } else {
+      const pp = bodyPos(byId.get(b.parent_body_id));
+      const r = b.orbit_radius ?? 0;
+      const period = b.orbit_period ?? 0;
+      const angle = (b.angle0 ?? 0) + (period > 0 ? (TWO_PI * tick * ORBITAL_SPEED_SCALE / period) : 0);
+      p = { x: pp.x + Math.cos(angle) * r, y: pp.y + Math.sin(angle) * r };
+    }
+    posCache.set(b.id, p);
+    return p;
+  }
+
+  const sensors = [];
+  for (const s of ships) {
+    const range = SHIP_SENSOR_RANGE[s.ship_class] ?? DEFAULT_SHIP_SENSOR_RANGE;
+    let pos;
+    if (s.target_body_id != null && s.arrival_at_tick != null && s.arrival_at_tick > s.scheduled_t) {
+      // In transit: the server doesn't track the live torch position, so
+      // approximate it as a straight-line lerp between origin and target by
+      // flight progress. Good enough for a 100–200u coverage radius.
+      const origin = bodyPos(byId.get(s.parent_body_id));
+      const target = bodyPos(byId.get(s.target_body_id));
+      const frac = Math.max(0, Math.min(1, (tick - s.scheduled_t) / (s.arrival_at_tick - s.scheduled_t)));
+      pos = { x: origin.x + (target.x - origin.x) * frac, y: origin.y + (target.y - origin.y) * frac };
+    } else {
+      pos = bodyPos(byId.get(s.parent_body_id));
+    }
+    sensors.push({ pos, r2: range * range });
+  }
+  for (const st of settlements) {
+    const range = SETTLEMENT_SENSOR_RANGE[st.type] ?? DEFAULT_SETTLEMENT_SENSOR_RANGE;
+    sensors.push({ pos: bodyPos(byId.get(st.body_id)), r2: range * range });
+  }
+  if (sensors.length === 0) return [];
+
+  const visible = [];
+  for (const b of bodies) {
+    const bp = bodyPos(b);
+    for (const sen of sensors) {
+      const dx = bp.x - sen.pos.x;
+      const dy = bp.y - sen.pos.y;
+      if (dx * dx + dy * dy <= sen.r2) { visible.push(b.id); break; }
+    }
+  }
+  return visible;
+}
+
 async function handleGetState(req, env, ctx) {
   const gameId = ctx.params.gameId;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -130,6 +221,45 @@ async function handleGetState(req, env, ctx) {
   // a variable placeholder count.
   const presenceFactionIds = JSON.stringify([me.id, ...allyIds]);
 
+  // Sensor-range reveal. Load orbital params for every body (positions
+  // aren't secret) plus the caller's + allies' active ships and
+  // settlements, compute which bodies sit inside a friendly sensor radius,
+  // and feed that id set into each visible_bodies CTE below as ?3. This is
+  // what lets you see an enemy fleet/station at a body your sensors reach
+  // without having to physically park there. See computeSensorVisibleBodyIds.
+  const sensorBodies = (await env.DB
+    .prepare(
+      `SELECT id, parent_body_id, orbit_radius, orbit_period, angle0
+         FROM game_bodies WHERE game_id = ?1 AND destroyed_at_tick IS NULL`,
+    )
+    .bind(gameId)
+    .all()).results ?? [];
+  const sensorShips = (await env.DB
+    .prepare(
+      `SELECT s.ship_class, s.parent_body_id,
+              n.target_body_id, n.scheduled_t, n.arrival_at_tick
+         FROM game_ships s
+         LEFT JOIN game_ship_nodes n
+           ON n.ship_id = s.id AND n.status = 'in_transit'
+        WHERE s.game_id = ?1
+          AND s.owner_faction_id IN (SELECT value FROM json_each(?2))
+          AND s.status = 'active'`,
+    )
+    .bind(gameId, presenceFactionIds)
+    .all()).results ?? [];
+  const sensorSettlements = (await env.DB
+    .prepare(
+      `SELECT body_id, type FROM game_settlements
+        WHERE game_id = ?1
+          AND owner_faction_id IN (SELECT value FROM json_each(?2))
+          AND destroyed_at_tick IS NULL`,
+    )
+    .bind(gameId, presenceFactionIds)
+    .all()).results ?? [];
+  const sensorVisibleBodyIds = JSON.stringify(
+    computeSensorVisibleBodyIds(sensorBodies, sensorShips, sensorSettlements, game.current_tick),
+  );
+
   // Sensor-radius fog. The caller "sees" a body if any of the following:
   //   (1) presence — they own it OR a ship of theirs is orbiting it
   //   (2) sibling-by-parent — it's a moon of a body in (1), so a ship at
@@ -192,6 +322,12 @@ async function handleGetState(req, env, ctx) {
           WHERE game_id = ?1
             AND destroyed_at_tick IS NULL
             AND parent_body_id IN (SELECT id FROM my_parents_visible)
+         UNION
+         -- (5) sensor range — bodies inside a friendly sensor radius,
+         --     computed in JS (computeSensorVisibleBodyIds) and passed in
+         --     as ?3. Matches the client's sensor model so you see enemy
+         --     units your scopes can reach without parking there.
+         SELECT value FROM json_each(?3)
        )
        SELECT id, template_id, name, type, parent_body_id, radius, soi, mu,
               orbit_radius, orbit_period, angle0, color,
@@ -210,7 +346,7 @@ async function handleGetState(req, env, ctx) {
         WHERE game_id = ?1
           AND destroyed_at_tick IS NULL`,
     )
-    .bind(gameId, presenceFactionIds)
+    .bind(gameId, presenceFactionIds, sensorVisibleBodyIds)
     .all()).results ?? [];
 
   // Body geometry is physical reality, always visible. But who owns a
@@ -303,6 +439,10 @@ async function handleGetState(req, env, ctx) {
          SELECT id FROM game_bodies
           WHERE game_id = ?1 AND destroyed_at_tick IS NULL
             AND parent_body_id IN (SELECT id FROM my_parents_visible)
+         UNION
+         -- Sensor range — bodies inside a friendly sensor radius (?3,
+         -- computed in JS). Reveals enemy units your scopes can reach.
+         SELECT value FROM json_each(?3)
        )
        SELECT id, name, ship_class, owner_faction_id, parent_body_id,
               orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
@@ -316,7 +456,7 @@ async function handleGetState(req, env, ctx) {
           AND (owner_faction_id IN (SELECT value FROM json_each(?2))
                OR parent_body_id IN (SELECT bid FROM visible_bodies))`,
     )
-    .bind(gameId, presenceFactionIds)
+    .bind(gameId, presenceFactionIds, sensorVisibleBodyIds)
     .all()).results ?? [];
 
   // Settlements: same visibility set as ships/bodies above.
@@ -357,6 +497,10 @@ async function handleGetState(req, env, ctx) {
          SELECT id FROM game_bodies
           WHERE game_id = ?1 AND destroyed_at_tick IS NULL
             AND parent_body_id IN (SELECT id FROM my_parents_visible)
+         UNION
+         -- Sensor range — bodies inside a friendly sensor radius (?3,
+         -- computed in JS). Reveals enemy units your scopes can reach.
+         SELECT value FROM json_each(?3)
        )
        SELECT id, body_id, owner_faction_id, type, name,
               hp, hp_max, population,
@@ -371,7 +515,7 @@ async function handleGetState(req, env, ctx) {
           AND (owner_faction_id IN (SELECT value FROM json_each(?2))
                OR body_id IN (SELECT bid FROM visible_bodies))`,
     )
-    .bind(gameId, presenceFactionIds)
+    .bind(gameId, presenceFactionIds, sensorVisibleBodyIds)
     .all()).results ?? [];
 
   // Recent public chronicle entries — combat results, key events. Surfaced
