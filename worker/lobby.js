@@ -592,10 +592,22 @@ async function handleChangeTickInterval(req, env, ctx) {
     .prepare('UPDATE games SET tick_interval_ms = ?, next_tick_at = ? WHERE id = ?')
     .bind(newInterval, nextAt, roomId)
     .run();
-  // The cron-driven scheduled handler in worker/index.js picks up the new
-  // next_tick_at within ~1 minute, so we don't need to round-trip the DO
-  // to re-arm. The DO's own alarm will be re-armed naturally on its next
-  // tick fire.
+  // Re-arm the DO alarm to the new next_tick_at. WITHOUT this, the
+  // previously-armed alarm stays pending at the OLD schedule. It fires
+  // early, and the alarm handler's early-fire guard now makes that a
+  // no-op re-arm — but only after the stale alarm happens to fire. Doing
+  // it here makes the new cadence take effect immediately rather than
+  // waiting on the stale alarm or the once-a-minute cron. Best-effort:
+  // the cron + early-fire guard are the backstop if this poke fails.
+  try {
+    await roomStub(env, roomId).fetch('https://room/rearm', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ gameId: roomId }),
+    });
+  } catch (e) {
+    console.error('tick-interval rearm poke failed', e);
+  }
   return json({ ok: true, tick_interval_ms: newInterval, next_tick_at: nextAt });
 }
 

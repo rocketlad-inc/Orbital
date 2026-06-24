@@ -32,3 +32,5 @@ build/
 .claude/worktrees/
 .claude/scheduled_tasks.lock
 .claude/agents/
+# Auto-generated build SHA (scripts/bundle-migrations.js)
+src/_version.ts

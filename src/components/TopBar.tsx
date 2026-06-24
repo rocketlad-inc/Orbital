@@ -21,6 +21,7 @@ import { useTutorial } from '../state/tutorial';
 import { TUTORIAL_STEP_COUNT } from '../game/tutorialSteps';
 import type { GameState } from '../types';
 import './TopBar.css';
+import { GIT_SHA } from '../_version';
 
 // Hint text under the Restart Tutorial menu item. Pulled out to a
 // constant so it doesn't allocate a new string every render.
@@ -262,7 +263,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         data-tutorial-id="menu-button"
       >
         <div className="top-bar__title-main">ORBITAL</div>
-        <div className="top-bar__title-sub">v0.3 · menu</div>
+        <div className="top-bar__title-sub" title={`Build ${GIT_SHA}`}>v0.3 · {GIT_SHA.slice(0,7)}</div>
       </button>
 
       {menuOpen && (
@@ -1209,7 +1210,7 @@ const SideMenu: React.FC<SideMenuProps> = ({
         <header className="side-menu__head">
           <div>
             <div className="side-menu__brand">ORBITAL</div>
-            <div className="side-menu__brand-sub">v0.3 alpha</div>
+            <div className="side-menu__brand-sub" title={`Build ${GIT_SHA}`}>v0.3 alpha · {GIT_SHA.slice(0,7)}</div>
           </div>
           <button className="side-menu__close" onClick={onClose} title="Close (Esc)">×</button>
         </header>

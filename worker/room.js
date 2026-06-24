@@ -1,3 +1,4 @@
+import { resolveSenate, getActiveSliders } from './senate.js';
 import { recomputeBodyOwnership } from './factions.js';
 
 // Room Durable Object. One instance per game room, keyed by room id.
@@ -128,6 +129,28 @@ export class Room {
       const firstTickAt = (body.started_at ?? Date.now()) + (body.tick_interval_ms ?? 86400000);
       try { await this.state.storage.setAlarm(firstTickAt); } catch (e) {
         console.error('setAlarm failed', e);
+      }
+      return new Response(null, { status: 204 });
+    }
+    if (url.pathname === '/rearm' && req.method === 'POST') {
+      // Re-arm the DO alarm to the games row's current next_tick_at.
+      // Called by handleChangeTickInterval after it moves next_tick_at:
+      // without this the OLD alarm stays pending at the previous
+      // schedule, fires early, and (pre-guard) advanced a premature tick.
+      // Body: { gameId }
+      const body = await req.json().catch(() => ({}));
+      const gid = typeof body?.gameId === 'string' ? body.gameId : null;
+      if (!gid) return new Response(null, { status: 400 });
+      const row = await this.env.DB
+        .prepare('SELECT next_tick_at, status, turn_based_enabled FROM games WHERE id = ?')
+        .bind(gid).first();
+      if (!row || row.status !== 'active' || row.turn_based_enabled === 1) {
+        return new Response(null, { status: 204 });
+      }
+      if (row.next_tick_at != null) {
+        try { await this.state.storage.setAlarm(row.next_tick_at); } catch (e) {
+          console.error('rearm setAlarm failed', e);
+        }
       }
       return new Response(null, { status: 204 });
     }
@@ -506,6 +529,25 @@ export class Room {
     const startTick = game.current_tick ?? 0;
     const scheduled = game.next_tick_at ?? now;
 
+    // Early/stale-fire guard. CF can fire an alarm that was armed under a
+    // schedule that's since moved — most commonly when the host changes
+    // the tick interval (handleChangeTickInterval pushes next_tick_at out
+    // but the previously-armed DO alarm is still pending at the OLD time).
+    // If the authoritative next tick is still in the future, do NOT
+    // advance: just re-arm to next_tick_at and return.
+    //
+    // Without this, a stale early fire advanced a premature tick AND then
+    // rescheduled to scheduled + interval — pushing the next legitimate
+    // tick ~2 intervals past now. On a 1h cadence that's a 2h gap that
+    // reads as "one tick then frozen." (next_tick_at NULL → scheduled =
+    // now → guard is skipped, so orphan recovery still advances.)
+    if (scheduled - now > 1000) {
+      try { await this.state.storage.setAlarm(scheduled); } catch (e) {
+        console.error('setAlarm (early-fire re-arm) failed', e);
+      }
+      return;
+    }
+
     // Catch-up loop. CF DO alarms are best-effort and the cron fall-back
     // only fires once per minute, so a hibernating DO + sporadic cron can
     // accumulate hours of missed ticks (4h wall-clock vs. 38 actual ticks
@@ -869,6 +911,25 @@ export class Room {
     } catch (e) {
       console.error('resolveAsteroidImpacts failed', e);
     }
+
+    // 2b-bis. Senate phase advance. Idempotent + non-throwing -- a
+    //         senate-side failure must not kill combat/dyson/economy
+    //         that follow. Runs BEFORE combat so a ratified
+    //         combat_damage_multiplier applies on the same tick.
+    try {
+      await resolveSenate(this.env, gameId, tick);
+    } catch (e) {
+      console.error('resolveSenate failed', e);
+    }
+
+    // Senate effects active this tick. Cached in a closure local so
+    // every downstream consumer reads the same snapshot without
+    // hammering D1 once per attacker. Falls through to slider defaults
+    // (1.0 multipliers, 0% tariff) on any error.
+    let senateSliders = {};
+    try { senateSliders = await getActiveSliders(this.env, gameId, tick); }
+    catch (e) { console.error('getActiveSliders failed', e); }
+    const combatDamageMult = Number(senateSliders.combat_damage_multiplier ?? 1);
 
     // 2c. Trade route auto-pilot.
     //
@@ -1260,7 +1321,7 @@ export class Room {
         // hp_max / damage_per_tick already stamped on the ship row when
         // they were last upgraded — see lobby/upgrade endpoints).
         const rankMul = 1 + 0.01 * Math.max(0, attacker.rank ?? 0);
-        const split = (attacker.damage_per_tick * rankMul) / targets.length;
+        const split = (attacker.damage_per_tick * rankMul * combatDamageMult) / targets.length;
         for (const t of targets) {
           addDamage(t.id, attacker.owner_faction_id, attacker.id, split);
         }

@@ -34,6 +34,7 @@ import { PhysicsSandbox } from './physicsSandbox/PhysicsSandbox';
 import { TorchSandbox } from './torchSandbox/TorchSandbox';
 import { ModePicker, GameMode } from './ModePicker';
 import { MultiplayerShell } from './multiplayer/MultiplayerShell';
+import { VersionBanner } from './components/VersionBanner';
 import { MultiplayerLobby } from './multiplayer/MultiplayerLobby';
 import { MultiplayerGameProvider } from './multiplayer/MultiplayerGameProvider';
 import { apiFetch, RoomSummary } from './multiplayer/api';
@@ -420,8 +421,29 @@ function AppShell() {
       if (cancelled) return;
       if (res.ok) {
         const gid = (res.data.settings?.game_id ?? res.data.game_id) || null;
-        setRoomGameId(gid);
         setRoomHostId(res.data.settings?.host_id ?? null);
+        if (!gid) {
+          // No game yet — stay in the lobby tab as before.
+          setRoomGameId(null);
+          return;
+        }
+        // CRITICAL for late-join: a fresh joiner via invite link is a
+        // room_member but has no faction row yet. Promoting roomGameId
+        // mounts MultiplayerGameProvider which calls /state -> 403
+        // ("not_member" / "Couldn't load game state"). Check
+        // /joinable-bodies first; only mount the game canvas when the
+        // caller actually has a faction. Otherwise leave roomGameId
+        // null so the shell stays in lobby mode and LobbyView's
+        // late-join picker runs.
+        try {
+          const fac = await apiFetch<{ already_joined: boolean }>(`/api/games/${gid}/joinable-bodies`);
+          if (cancelled) return;
+          if (fac.ok && fac.data && !fac.data.already_joined) {
+            setRoomGameId(null);  // hold at lobby for the picker
+            return;
+          }
+        } catch { /* fall through to the original promote */ }
+        setRoomGameId(gid);
         return;
       }
       // 404 = room is gone. 403 = we're not a member anymore (kicked, or
@@ -642,6 +664,7 @@ export function App() {
   return (
     <ErrorBoundary scope="App">
       <AppRouter />
+      <VersionBanner />
     </ErrorBoundary>
   );
 }

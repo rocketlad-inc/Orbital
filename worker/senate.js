@@ -64,9 +64,36 @@ const SLIDER_CATALOG = [
 
 const SLIDER_BY_ID = Object.fromEntries(SLIDER_CATALOG.map((s) => [s.id, s]));
 
+// Defaults when a proposal doesn't specify per-proposal durations. The
+// new schema's debate_ticks/vote_ticks columns are nullable so legacy
+// rows fall through to these constants on read.
 const DEBATE_TICKS = 2;
 const VOTE_TICKS = 1;
 const EFFECT_TICKS = 7;
+
+// Per-proposal duration ranges. Loose enough for real deliberation
+// (e.g. a full day at 1h ticks for debate) but bounded so a single
+// proposer can't park a slider effect forever by setting the vote
+// window absurdly long.
+const DEBATE_MIN = 1, DEBATE_MAX = 48;
+const VOTE_MIN   = 1, VOTE_MAX   = 24;
+
+function clampInt(v, min, max, fallback) {
+  const n = Math.floor(Number(v));
+  if (!Number.isFinite(n)) return fallback;
+  if (n < min) return min;
+  if (n > max) return max;
+  return n;
+}
+
+function effectiveDebateTicks(row) {
+  return (row && row.debate_ticks != null && Number.isFinite(Number(row.debate_ticks)))
+    ? Number(row.debate_ticks) : DEBATE_TICKS;
+}
+function effectiveVoteTicks(row) {
+  return (row && row.vote_ticks != null && Number.isFinite(Number(row.vote_ticks)))
+    ? Number(row.vote_ticks) : VOTE_TICKS;
+}
 
 // ---------- response helpers ----------
 
@@ -193,6 +220,8 @@ function shapeProposal(row, totals, callerVote) {
     vote_closes_at_tick: row.vote_closes_at_tick,
     resolved_at_tick: row.resolved_at_tick,
     effect_until_tick: row.effect_until_tick,
+    debate_ticks: effectiveDebateTicks(row),
+    vote_ticks:   effectiveVoteTicks(row),
     totals,
     caller_vote: callerVote ?? null,
   };
@@ -264,24 +293,58 @@ async function handleCreateProposal(req, env, { params, session }) {
     .first();
   if (active) return err(429, 'cooldown', 'your faction already has an active proposal');
 
+  // Per-proposal durations. Defaults match the legacy constants so a
+  // client that doesn't send these fields gets the old behaviour.
+  const debateTicks = clampInt(body.debate_ticks, DEBATE_MIN, DEBATE_MAX, DEBATE_TICKS);
+  const voteTicks   = clampInt(body.vote_ticks,   VOTE_MIN,   VOTE_MAX,   VOTE_TICKS);
+
   const id = newId('prop');
   const proposedAt = ctx.game.current_tick;
-  const voteOpens = proposedAt + DEBATE_TICKS;
-  const voteCloses = voteOpens + VOTE_TICKS;
-  const payload = JSON.stringify({ slider_id, target_value: v });
+  const voteOpens  = proposedAt + debateTicks;
+  const voteCloses = voteOpens + voteTicks;
+  const payload    = JSON.stringify({ slider_id, target_value: v });
 
   await env.DB
     .prepare(
       `INSERT INTO senate_proposals
         (id, game_id, proposer_faction_id, kind, title, summary, payload, status,
-         proposed_at_tick, vote_opens_at_tick, vote_closes_at_tick)
-       VALUES (?, ?, ?, 'slider_law', ?, ?, ?, 'debating', ?, ?, ?)`,
+         proposed_at_tick, vote_opens_at_tick, vote_closes_at_tick,
+         debate_ticks, vote_ticks)
+       VALUES (?, ?, ?, 'slider_law', ?, ?, ?, 'debating', ?, ?, ?, ?, ?)`,
     )
-    .bind(id, gameId, ctx.faction.id, title.trim(), summary.trim(), payload, proposedAt, voteOpens, voteCloses)
+    .bind(
+      id, gameId, ctx.faction.id, title.trim(), summary.trim(), payload,
+      proposedAt, voteOpens, voteCloses, debateTicks, voteTicks,
+    )
     .run();
 
   const row = await env.DB.prepare('SELECT * FROM senate_proposals WHERE id = ?').bind(id).first();
   const shaped = await shapeOne(env, row, ctx.faction.id);
+
+  // Broadcast so other clients show the new proposal immediately
+  // (badge + toast) instead of waiting up to 5s for the next poll.
+  try {
+    const stub = env.ROOM.get(env.ROOM.idFromName(gameId));
+    await stub.fetch('https://room/notify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        kind: 'senate',
+        event: 'proposed',
+        proposal_id: id,
+        proposer_faction_id: ctx.faction.id,
+        proposer_faction_name: ctx.faction.name,
+        title: title.trim(),
+        slider_id,
+        target_value: v,
+        debate_ticks: debateTicks,
+        vote_ticks: voteTicks,
+        vote_opens_at_tick: voteOpens,
+        vote_closes_at_tick: voteCloses,
+      }),
+    });
+  } catch { /* best-effort */ }
+
   return json({ proposal: shaped }, { status: 201 });
 }
 
@@ -415,83 +478,128 @@ async function handleWithdraw(_req, env, { params, session }) {
 // For now, the host can poke this endpoint to advance the game by one tick
 // and trigger senate phase transitions (debating->voting, voting->resolved).
 
+/**
+ * Resolve the Senate for a given tick. Idempotent and non-throwing: a
+ * failure here must NOT kill the surrounding resolveTick. Returns a
+ * summary so the caller can log/test.
+ *
+ * Phase 1: debating -> voting where vote_opens_at_tick <= tick.
+ * Phase 2: voting -> passed/failed where vote_closes_at_tick <= tick.
+ *          Passed proposals write a senate_effects row spanning
+ *          [tick, tick+EFFECT_TICKS) so downstream consumers (build
+ *          cost, combat damage) see them on the same tick they ratify.
+ */
+export async function resolveSenate(env, gameId, tick) {
+  // Phase 0: rescue any proposal stuck in 'debating' past its FULL
+  // window (vote_closes_at_tick already elapsed). This handles
+  // proposals that survived a code/schema gap where Phase 1 never
+  // fired. Force them to 'failed' so the senate doesn't accrete
+  // permanent zombies. Idempotent: it only catches rows whose entire
+  // debate+vote schedule has already passed.
+  try {
+    await env.DB
+      .prepare("UPDATE senate_proposals SET status = 'failed', resolved_at_tick = ? WHERE game_id = ? AND status = 'debating' AND vote_closes_at_tick <= ?")
+      .bind(tick, gameId, tick).run();
+  } catch (e) {
+    console.error("resolveSenate: zombie reap failed", e);
+  }
+
+  let opened = 0;
+  try {
+    const res = await env.DB
+      .prepare("UPDATE senate_proposals SET status = 'voting' WHERE game_id = ? AND status = 'debating' AND vote_opens_at_tick <= ?")
+      .bind(gameId, tick).run();
+    opened = res?.meta?.changes ?? 0;
+  } catch (e) {
+    console.error("resolveSenate: phase 1 failed", e);
+  }
+
+  const toResolve = (await env.DB
+    .prepare("SELECT * FROM senate_proposals WHERE game_id = ? AND status = 'voting' AND vote_closes_at_tick <= ?")
+    .bind(gameId, tick).all()).results ?? [];
+
+  let resolved = 0;
+  for (const p of toResolve) {
+    try {
+      const totals = await loadProposalTotals(env, p.id);
+      const passed = totals.yea.weight > totals.nay.weight;
+      const status = passed ? "passed" : "failed";
+      const effectUntil = passed ? tick + EFFECT_TICKS : null;
+      await env.DB
+        .prepare("UPDATE senate_proposals SET status = ?, resolved_at_tick = ?, effect_until_tick = ? WHERE id = ?")
+        .bind(status, tick, effectUntil, p.id).run();
+
+      let payload = {};
+      try { payload = JSON.parse(p.payload || "{}"); } catch { /* keep default */ }
+
+      if (passed && payload.slider_id && SLIDER_BY_ID[payload.slider_id]) {
+        const effectId = newId("eff");
+        await env.DB
+          .prepare(
+            "INSERT INTO senate_effects " +
+            "(id, game_id, slider_id, value, proposal_id, active_from_tick, active_until_tick, created_at_tick, created_at_ms) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+          )
+          .bind(effectId, gameId, payload.slider_id, Number(payload.target_value), p.id, tick, effectUntil, tick, Date.now())
+          .run();
+      }
+
+      const chronicleId = newId("chr");
+      await env.DB
+        .prepare(
+          "INSERT INTO chronicle_entries (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms) " +
+          "VALUES (?, ?, ?, 'senate_vote', ?, ?, 'public', ?)"
+        )
+        .bind(
+          chronicleId, gameId, tick, p.proposer_faction_id,
+          JSON.stringify({
+            proposal_id: p.id,
+            title: p.title,
+            slider_id: payload.slider_id,
+            target_value: payload.target_value,
+            outcome: status,
+            yea_weight: totals.yea.weight,
+            nay_weight: totals.nay.weight,
+            abstain_weight: totals.abstain.weight,
+            effect_until_tick: effectUntil,
+          }),
+          Date.now(),
+        ).run();
+
+      resolved += 1;
+    } catch (e) {
+      console.error("resolveSenate: proposal resolution failed", e, { proposalId: p.id });
+    }
+  }
+
+  if (opened > 0 || resolved > 0) {
+    try {
+      const stub = env.ROOM.get(env.ROOM.idFromName(gameId));
+      await stub.fetch("https://room/notify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ kind: "senate", event: "resolved", opened, resolved, tick }),
+      });
+    } catch { /* swallow */ }
+  }
+
+  return { opened, resolved };
+}
+
 async function handleDevTick(_req, env, { params, session }) {
   const { gameId } = params;
   const game = await env.DB
-    .prepare('SELECT g.id, g.current_tick, r.host_id FROM games g JOIN rooms r ON r.id = g.id WHERE g.id = ?')
+    .prepare("SELECT g.id, g.current_tick, r.host_id FROM games g JOIN rooms r ON r.id = g.id WHERE g.id = ?")
     .bind(gameId)
     .first();
-  if (!game) return err(404, 'not_found', 'game not found');
-  if (game.host_id !== session.user_id) return err(403, 'not_host', 'only the host may advance the tick');
+  if (!game) return err(404, "not_found", "game not found");
+  if (game.host_id !== session.user_id) return err(403, "not_host", "only the host may advance the tick");
 
   const newTick = (game.current_tick ?? 0) + 1;
-  await env.DB.prepare('UPDATE games SET current_tick = ? WHERE id = ?').bind(newTick, gameId).run();
+  await env.DB.prepare("UPDATE games SET current_tick = ? WHERE id = ?").bind(newTick, gameId).run();
 
-  // Phase 1: debating -> voting once vote_opens_at_tick reached.
-  await env.DB
-    .prepare(`UPDATE senate_proposals SET status = 'voting' WHERE game_id = ? AND status = 'debating' AND vote_opens_at_tick <= ?`)
-    .bind(gameId, newTick)
-    .run();
-
-  // Phase 2: voting -> resolved once vote_closes_at_tick reached.
-  const toResolve = await env.DB
-    .prepare(`SELECT * FROM senate_proposals WHERE game_id = ? AND status = 'voting' AND vote_closes_at_tick <= ?`)
-    .bind(gameId, newTick)
-    .all();
-
-  for (const p of toResolve.results ?? []) {
-    const totals = await loadProposalTotals(env, p.id);
-    const passed = totals.yea.weight > totals.nay.weight;
-    const status = passed ? 'passed' : 'failed';
-    const effectUntil = passed ? newTick + EFFECT_TICKS : null;
-    await env.DB
-      .prepare(`UPDATE senate_proposals SET status = ?, resolved_at_tick = ?, effect_until_tick = ? WHERE id = ?`)
-      .bind(status, newTick, effectUntil, p.id)
-      .run();
-
-    let payload = {};
-    try { payload = JSON.parse(p.payload || '{}'); } catch { payload = {}; }
-
-    if (passed && payload.slider_id && SLIDER_BY_ID[payload.slider_id]) {
-      const effectId = newId('eff');
-      await env.DB
-        .prepare(
-          `INSERT INTO senate_effects
-            (id, game_id, slider_id, value, proposal_id, active_from_tick, active_until_tick, created_at_tick, created_at_ms)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .bind(effectId, gameId, payload.slider_id, Number(payload.target_value), p.id, newTick, effectUntil, newTick, Date.now())
-        .run();
-    }
-
-    const chronicleId = newId('chr');
-    await env.DB
-      .prepare(
-        `INSERT INTO chronicle_entries (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
-         VALUES (?, ?, ?, 'senate_vote', ?, ?, 'public', ?)`,
-      )
-      .bind(
-        chronicleId,
-        gameId,
-        newTick,
-        p.proposer_faction_id,
-        JSON.stringify({
-          proposal_id: p.id,
-          title: p.title,
-          slider_id: payload.slider_id,
-          target_value: payload.target_value,
-          outcome: status,
-          yea_weight: totals.yea.weight,
-          nay_weight: totals.nay.weight,
-          abstain_weight: totals.abstain.weight,
-          effect_until_tick: effectUntil,
-        }),
-        Date.now(),
-      )
-      .run();
-  }
-
-  return json({ ok: true, current_tick: newTick, resolved: (toResolve.results ?? []).length });
+  const { opened, resolved } = await resolveSenate(env, gameId, newTick);
+  return json({ ok: true, current_tick: newTick, opened, resolved });
 }
 
 // ---------- routes ----------
