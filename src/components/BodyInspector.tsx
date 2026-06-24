@@ -928,6 +928,27 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
             <div className="deploy-hint">{noFreighterHint}</div>
           )}
 
+          {/* Freighter present but can't afford — name the shortfall so the
+              disabled button isn't a mystery. Per-resource so the player
+              sees exactly what they're short (almost always credits early,
+              given the collector economy). */}
+          {canBuildHere && (showCityDeploy || showStationDeploy) && playerRes && (() => {
+            const shortfalls: string[] = [];
+            const checkDef = showStationDeploy && !canAffordStation
+              ? SETTLEMENT_DEFS.station
+              : (showCityDeploy && !canAffordCity ? SETTLEMENT_DEFS.city : null);
+            if (!checkDef) return null;
+            if (playerRes.fuel < checkDef.cost.fuel) shortfalls.push(`${Math.ceil(checkDef.cost.fuel - playerRes.fuel)} fuel`);
+            if (playerRes.ore < checkDef.cost.ore) shortfalls.push(`${Math.ceil(checkDef.cost.ore - playerRes.ore)} ore`);
+            if (playerRes.credits < checkDef.cost.credits) shortfalls.push(`${Math.ceil(checkDef.cost.credits - playerRes.credits)} credits`);
+            if (shortfalls.length === 0) return null;
+            return (
+              <div className="deploy-hint" style={{ color: '#ff5e5e' }}>
+                Short {shortfalls.join(' + ')} for a {checkDef.displayName.toLowerCase()}.
+              </div>
+            );
+          })()}
+
           {deployError && (
             // Server rejected the deploy. Show why so the player can
             // act on it instead of clicking the button again with the
