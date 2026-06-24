@@ -174,6 +174,15 @@
   color: #d8e4ee;
 }
 
+.time-display__countdown {
+  font-size: 9px;
+  color: #7a8b9a;
+  letter-spacing: 0.04em;
+  margin-top: 3px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 
 .sim-controls {
   display: flex;

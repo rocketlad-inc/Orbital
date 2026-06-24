@@ -980,6 +980,8 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
 
   return {
     currentTick: srv.game.current_tick,
+    nextTickAt: srv.game.next_tick_at,
+    tickIntervalMs: srv.game.tick_interval_ms,
     bodies,
     ships,
     fleets: [],

@@ -524,6 +524,12 @@ export interface GameState {
   factionTech: Record<string, FactionTechStateBase>; // factionId → tech progress
   combatLog: string[];                 // recent combat events
   lastHarvestTick: number;             // tick when resources were last collected
+  /** Wall-clock epoch (ms) the server expects to fire the next tick, and
+   *  the configured tick interval. Multiplayer only — the server drives the
+   *  clock, so the TopBar can show a live "next tick in Ns" countdown.
+   *  Undefined in single-player (the local sim loop owns the cadence). */
+  nextTickAt?: number | null;
+  tickIntervalMs?: number;
   /** Active trade routes (freighter ↔ collector). Empty when no
    *  freighter has been assigned. Persisted with the save. Currently
    *  data-only — the execution loop lands next turn. */

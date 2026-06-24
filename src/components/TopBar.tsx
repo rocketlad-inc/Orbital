@@ -179,8 +179,28 @@ export const TopBar: React.FC<TopBarProps> = ({
 
   const handleSkip = (n: number) => updateTick(gameState.currentTick + n);
 
-  // Games run indefinitely — no tick countdown to surface.
   const tickStr = `T+${Math.floor(gameState.currentTick)}`;
+
+  // Live "next tick in Ns" countdown. The server stamps nextTickAt (epoch
+  // ms) on every /state; we tick a local clock 4×/sec to animate the
+  // remaining time down. Multiplayer only — single-player has no
+  // server-driven cadence (nextTickAt is undefined) and shows the sim-speed
+  // controls instead.
+  const nextTickAt = gameState.nextTickAt;
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (nextTickAt == null) return;
+    const id = setInterval(() => setNowMs(Date.now()), 250);
+    return () => clearInterval(id);
+  }, [nextTickAt]);
+  // Clamp to [0, interval] so clock skew can't show a negative or absurd
+  // value; round up so it counts 3→2→1 and only hits 0 right at the tick.
+  const tickCountdown = nextTickAt == null
+    ? null
+    : Math.max(0, Math.min(
+        gameState.tickIntervalMs != null ? gameState.tickIntervalMs / 1000 : Infinity,
+        Math.ceil((nextTickAt - nowMs) / 100) / 10,
+      ));
 
   return (
     <div className="top-bar">
@@ -321,6 +341,11 @@ export const TopBar: React.FC<TopBarProps> = ({
         <div className="time-display">
           <div className="time-display__label">TICK</div>
           <div className="time-display__value">{tickStr}</div>
+          {tickCountdown != null && (
+            <div className="time-display__countdown" title="Time until the next server tick">
+              next in {tickCountdown.toFixed(1)}s
+            </div>
+          )}
         </div>
         {!hideSimControls && !turnBasedActive && !mpTbmActive && (
           // Realtime sim controls. Hidden in Turn-Based Mode (replaced
