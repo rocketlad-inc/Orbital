@@ -787,9 +787,26 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                 <span>POP {s.population}</span>
                 <span className="yield">{yieldStr || '–'}/harvest</span>
               </div>
-              {(s.stockpile.fuel > 0 || s.stockpile.ore > 0 || s.stockpile.credits > 0) && (
-                <div className="settlement-stockpile">
-                  STOCK: {Math.round(s.stockpile.fuel)}F {Math.round(s.stockpile.ore)}O {Math.round(s.stockpile.credits)}C
+              {/* LOCAL stockpile — 90% of non-collector yield banks here.
+                  Spendable on local body builds, vacuumable by freighters.
+                  Hide when settlement is collectored AND nothing banked
+                  (collectored settlements push 100% straight to pool). */}
+              {(s.stockpile.fuel > 0 || s.stockpile.ore > 0 || s.stockpile.credits > 0 || s.stockpile.science > 0) && (
+                <div
+                  className="settlement-stockpile"
+                  title={
+                    s.hasCollector
+                      ? 'LOCAL stockpile remaining from before this settlement got a collector. Spend locally or send a freighter.'
+                      : 'LOCAL stockpile (90% of yield banks here). Spend on local body builds, or land a freighter to vacuum it up to your pool.'
+                  }
+                  style={{
+                    color: s.hasCollector ? '#7a8b9a' : '#ffb84d',
+                    fontWeight: 600,
+                  }}
+                >
+                  LOCAL: {Math.round(s.stockpile.fuel)}F {Math.round(s.stockpile.ore)}O {Math.round(s.stockpile.credits)}C{
+                    s.stockpile.science > 0 ? ` ${Math.round(s.stockpile.science)}S` : ''
+                  }
                 </div>
               )}
               {isMine && !s.hasCollector && (
@@ -817,8 +834,8 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                   }}
                   disabled={!canAffordCollector}
                   title={canAffordCollector
-                    ? `Build a collector here. Drains ${COLLECTOR_COST.ore}O / ${COLLECTOR_COST.credits}C from your pool.`
-                    : `Need ${COLLECTOR_COST.ore} ore + ${COLLECTOR_COST.credits} credits.`}
+                    ? `Upgrade to collector: pumps 100% of this settlement's yield straight to your pool every tick (10× the non-collector trickle). Stops the LOCAL stockpile from growing here. Cost: ${COLLECTOR_COST.credits}C.`
+                    : `Need ${COLLECTOR_COST.credits} credits.`}
                   style={{
                     marginTop: 6,
                     padding: '4px 10px',
