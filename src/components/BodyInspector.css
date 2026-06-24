@@ -62,7 +62,7 @@
      FOLLOW + close button — isn't occluded. Fixed max-height (not
      vh) so the side cards below it can start at a fixed offset that
      holds across every screen height. */
-  top: 60px;
+  top: 94px;
   left: 50%;
   transform: translateX(-50%);
   width: 520px;

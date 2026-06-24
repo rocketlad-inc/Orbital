@@ -897,7 +897,7 @@ function generateBuildingCandidates(ctx: AIContext): AIActionIntent[] {
         case 'forge':
           weight = ctx.weights.yieldBuilding;
           baseScore = 1.5;
-          reason = `forge L${level + 1} (+ore yield)`;
+          reason = `forge L${level + 1} (+metal yield)`;
           break;
         case 'mint':
           weight = ctx.weights.yieldBuilding;

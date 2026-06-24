@@ -3,12 +3,16 @@
    sim speed, nav buttons, and alerts
    ============================================================ */
 
+/* Height was 44 — too short once the per-pill stranded readout joined
+   the rate line. Bumped to 78 so all four lines (label / value /
+   +N/t rate / ~N/t LOCAL) sit cleanly. Every downstream component
+   that anchors to "below the top bar" was offset accordingly. */
 .top-bar {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
-  height: 44px;
+  height: 78px;
   z-index: 1000;
   display: flex;
   align-items: center;

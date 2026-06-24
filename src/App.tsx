@@ -36,6 +36,7 @@ import { ModePicker, GameMode } from './ModePicker';
 import { MultiplayerShell } from './multiplayer/MultiplayerShell';
 import { VersionBanner } from './components/VersionBanner';
 import { SituationLog } from './components/SituationLog';
+import { DockRail } from './components/DockRail';
 import { MultiplayerLobby } from './multiplayer/MultiplayerLobby';
 import { MultiplayerGameProvider } from './multiplayer/MultiplayerGameProvider';
 import { apiFetch, RoomSummary } from './multiplayer/api';
@@ -162,10 +163,10 @@ function GameUI({
         <Outliner />
       </div>
 
-      {/* SituationLog — right-edge attention dock. Sibling to the MP dock;
-          they mutex via window events so only one is open at a time. Mounted
-          inside GameUI so it has access to GameContext (SP + MP both wrap
-          GameUI in a context). */}
+      {/* DockRail — single source of truth for which side panel is open.
+          Owns the icon column + active state; SituationLog and MultiplayerShell
+          render their panels in response to its events. */}
+      <DockRail />
       <SituationLog />
 
       {/* SP-only: listen for 'orbital:open-panel' so SitLog clicks on
