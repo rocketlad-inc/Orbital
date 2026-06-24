@@ -89,28 +89,34 @@ export const VersionBanner: React.FC = () => {
         v{SHORT(GIT_SHA)}{mismatch && serverSha ? ` → ${SHORT(serverSha)}` : ''}
       </div>
 
-      {/* Top banner — only when the server is genuinely newer. Dismissible
-          (a hard reload would replace it anyway) but bumps back on the next
-          new mismatch. */}
+      {/* Center-screen banner — only when the server is genuinely newer.
+          Pulled out of the top strip because it was overlapping the
+          TopBar resource pills and nav buttons (playtester noted the
+          collision). Centered as a floating chip so it's unambiguous
+          and dismissible (a hard reload would replace it anyway). */}
       {mismatch && !dismissed && (
         <div
           style={{
             position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
             zIndex: 10001,
-            background: 'rgba(255, 184, 77, 0.12)',
-            borderBottom: '1px solid #ffb84d',
+            background: 'rgba(10, 14, 20, 0.96)',
+            border: '1px solid #ffb84d',
+            borderRadius: 6,
+            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.55), 0 0 24px rgba(255, 184, 77, 0.25)',
             color: '#ffb84d',
-            padding: '8px 16px',
+            padding: '14px 20px',
             fontFamily: 'var(--font-body, monospace)',
-            fontSize: 12,
+            fontSize: 13,
             letterSpacing: '0.04em',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            gap: 12,
+            gap: 14,
+            maxWidth: 'min(520px, calc(100vw - 32px))',
+            backdropFilter: 'blur(8px)',
           }}
         >
           <span>
