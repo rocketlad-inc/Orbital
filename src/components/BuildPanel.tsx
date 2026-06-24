@@ -237,15 +237,27 @@ export const BuildPanel: React.FC = () => {
         </div>
       )}
 
+      {/* LOCAL-first: sum the stockpiles of every player-owned
+          settlement at this body so the affordability calc matches
+          the server's spend logic in worker/actions.js handleQueueBuild. */}
       <div className="build-classes">
         {BUILDABLE_CLASSES.map(cls => {
           const def = SHIP_CLASSES[cls];
           // Per-resource shortages so the UI can colour each cost
           // individually + surface the deficit explicitly. Previously the
           // BUILD button just greyed out with no indication of why.
-          const shortFuel    = Math.max(0, def.cost.fuel    - playerRes.fuel);
-          const shortOre     = Math.max(0, def.cost.ore     - playerRes.ore);
-          const shortCredits = Math.max(0, def.cost.credits - playerRes.credits);
+          const localF = gameState.settlements
+            .filter(s => s.ownedBy === 'player' && s.bodyId === body.id)
+            .reduce((a, s) => a + s.stockpile.fuel, 0);
+          const localO = gameState.settlements
+            .filter(s => s.ownedBy === 'player' && s.bodyId === body.id)
+            .reduce((a, s) => a + s.stockpile.ore, 0);
+          const localC = gameState.settlements
+            .filter(s => s.ownedBy === 'player' && s.bodyId === body.id)
+            .reduce((a, s) => a + s.stockpile.credits, 0);
+          const shortFuel    = Math.max(0, def.cost.fuel    - playerRes.fuel    - localF);
+          const shortOre     = Math.max(0, def.cost.ore     - playerRes.ore     - localO);
+          const shortCredits = Math.max(0, def.cost.credits - playerRes.credits - localC);
           const canAfford = shortFuel === 0 && shortOre === 0 && shortCredits === 0;
           const shortBits: string[] = [];
           if (shortFuel    > 0) shortBits.push(`+${shortFuel} fuel`);

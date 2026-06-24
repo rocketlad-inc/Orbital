@@ -722,9 +722,11 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
         ].filter(Boolean).join(' ');
         const isMine = s.ownedBy === 'player';
         const playerRes = gameState.resources['player'];
+        // LOCAL-first: this settlement's own stockpile counts toward
+        // collector affordability before the faction pool does.
         const canAffordCollector = !!playerRes
-          && playerRes.ore >= COLLECTOR_COST.ore
-          && playerRes.credits >= COLLECTOR_COST.credits;
+          && s.stockpile.ore     + playerRes.ore     >= COLLECTOR_COST.ore
+          && s.stockpile.credits + playerRes.credits >= COLLECTOR_COST.credits;
 
         return (
           <div
@@ -1052,10 +1054,15 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
         const ticks = buildingTimeForNextLevel(kind, level);
         const inFlight = q?.kind === kind;
         const queueBusy = !!q && !inFlight;
+        // LOCAL-first: this settlement's own stockpile counts toward
+        // affordability before the faction pool kicks in.
+        const localF = settlement.stockpile.fuel;
+        const localO = settlement.stockpile.ore;
+        const localC = settlement.stockpile.credits;
         const canAfford = !!playerRes
-          && playerRes.fuel    >= cost.fuel
-          && playerRes.ore     >= cost.ore
-          && playerRes.credits >= cost.credits;
+          && localF + playerRes.fuel    >= cost.fuel
+          && localO + playerRes.ore     >= cost.ore
+          && localC + playerRes.credits >= cost.credits;
         const canQueue = !queueBusy && !inFlight && canAfford;
 
         const costParts: string[] = [];
