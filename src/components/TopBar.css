@@ -257,7 +257,10 @@
      dismiss button off the right edge of the top bar (or off-screen).
      The inner text span ellipsizes; the dismiss stays anchored on the
      right at its natural size. */
-  max-width: 280px;
+  /* Chips now carry just an icon + entity name; cap at 160 so the
+     row stays uncluttered and several chips fit before the Log
+     toggle. The full text still lives in the click-to-open detail. */
+  max-width: 160px;
   min-width: 0;
 }
 
