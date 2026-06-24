@@ -297,10 +297,44 @@ async function handleQueueBuild(req, env, ctx) {
     build_ticks: cost.build_ticks,
   };
 
-  // Fuel was removed from the economy; only metal + gold are spent on builds.
-  if (me.metal < scaledCost.metal || me.gold < scaledCost.gold) {
-    return err(409, 'insufficient_resources', `need ${scaledCost.metal}M ${scaledCost.gold}G`);
+  // Local-first spend: drain settlement stockpiles at this body before
+  // touching the faction pool. Lets a remote uncollectered settlement
+  // self-fund ship builds from its banked LOCAL bucket.
+  const localStocks = (await env.DB
+    .prepare(
+      `SELECT id, stockpile_metal, stockpile_gold
+         FROM game_settlements
+        WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+          AND destroyed_at_tick IS NULL`,
+    )
+    .bind(gameId, bodyId, me.id)
+    .all()).results ?? [];
+  let localMetal = 0, localGold = 0;
+  for (const s of localStocks) {
+    localMetal += Number(s.stockpile_metal ?? 0);
+    localGold  += Number(s.stockpile_gold  ?? 0);
   }
+  if (localMetal + me.metal < scaledCost.metal || localGold + me.gold < scaledCost.gold) {
+    return err(409, 'insufficient_resources', `need ${scaledCost.metal}M ${scaledCost.gold}G (LOCAL+pool)`);
+  }
+
+  // Plan the per-settlement draws (FIFO across settlements; small
+  // amounts of remainder fall to the pool). One UPDATE per settlement
+  // that contributes, plus one for the pool if it covers any shortfall.
+  let needMetal = scaledCost.metal;
+  let needGold  = scaledCost.gold;
+  const settlementDrains = [];
+  for (const s of localStocks) {
+    if (needMetal <= 0 && needGold <= 0) break;
+    const takeM = Math.min(needMetal, Number(s.stockpile_metal ?? 0));
+    const takeG = Math.min(needGold,  Number(s.stockpile_gold  ?? 0));
+    if (takeM + takeG <= 0) continue;
+    settlementDrains.push({ id: s.id, metal: takeM, gold: takeG });
+    needMetal -= takeM;
+    needGold  -= takeG;
+  }
+  const poolDrawMetal = needMetal;  // remainder
+  const poolDrawGold  = needGold;
 
   const game = await env.DB
     .prepare('SELECT current_tick FROM games WHERE id = ?')
@@ -311,7 +345,7 @@ async function handleQueueBuild(req, env, ctx) {
 
   const orderId = `${bodyId}:b${Date.now().toString(36)}`;
 
-  await env.DB.batch([
+  const batchStmts = [
     env.DB
       .prepare(
         `INSERT INTO game_body_build_queue
@@ -319,13 +353,27 @@ async function handleQueueBuild(req, env, ctx) {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(orderId, gameId, bodyId, me.id, shipClass, startTick, completeTick, iconVariant, shipName),
-    env.DB
-      .prepare(
-        `UPDATE game_factions SET metal = metal - ?, gold = gold - ?
-          WHERE id = ?`,
-      )
-      .bind(scaledCost.metal, scaledCost.gold, me.id),
-  ]);
+  ];
+  for (const d of settlementDrains) {
+    batchStmts.push(
+      env.DB
+        .prepare(
+          `UPDATE game_settlements
+              SET stockpile_metal = stockpile_metal - ?,
+                  stockpile_gold  = stockpile_gold  - ?
+            WHERE id = ?`,
+        )
+        .bind(d.metal, d.gold, d.id),
+    );
+  }
+  if (poolDrawMetal > 0 || poolDrawGold > 0) {
+    batchStmts.push(
+      env.DB
+        .prepare('UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ?')
+        .bind(poolDrawMetal, poolDrawGold, me.id),
+    );
+  }
+  await env.DB.batch(batchStmts);
 
   return json({
     order: {
@@ -991,14 +1039,40 @@ async function handleQueueBuilding(req, env, ctx) {
     cost: { ore: cost.metal, credits: cost.gold },
   };
 
-  await env.DB.batch([
+  // Local-first spend: drain this settlement's stockpile before
+  // touching the faction pool.
+  const stockRow = await env.DB
+    .prepare('SELECT stockpile_metal, stockpile_gold FROM game_settlements WHERE id = ?')
+    .bind(settlementId).first();
+  const localMetal = Number(stockRow?.stockpile_metal ?? 0);
+  const localGold  = Number(stockRow?.stockpile_gold  ?? 0);
+  if (localMetal + me.metal < cost.metal || localGold + me.gold < cost.gold) {
+    return err(409, 'insufficient_resources', `need ${cost.metal}M ${cost.gold}G (LOCAL+pool)`);
+  }
+  const takeLocalMetal = Math.min(cost.metal, localMetal);
+  const takeLocalGold  = Math.min(cost.gold,  localGold);
+  const takePoolMetal  = cost.metal - takeLocalMetal;
+  const takePoolGold   = cost.gold  - takeLocalGold;
+
+  const batchStmts = [
     env.DB
-      .prepare('UPDATE game_settlements SET building_order_json = ? WHERE id = ?')
-      .bind(JSON.stringify(order), settlementId),
-    env.DB
-      .prepare('UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ?')
-      .bind(cost.metal, cost.gold, me.id),
-  ]);
+      .prepare(
+        `UPDATE game_settlements
+            SET building_order_json = ?,
+                stockpile_metal = stockpile_metal - ?,
+                stockpile_gold  = stockpile_gold  - ?
+          WHERE id = ?`,
+      )
+      .bind(JSON.stringify(order), takeLocalMetal, takeLocalGold, settlementId),
+  ];
+  if (takePoolMetal > 0 || takePoolGold > 0) {
+    batchStmts.push(
+      env.DB
+        .prepare('UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ?')
+        .bind(takePoolMetal, takePoolGold, me.id),
+    );
+  }
+  await env.DB.batch(batchStmts);
 
   return json({ ok: true, order, cost });
 }
@@ -1063,22 +1137,48 @@ async function handleBuildCollector(req, env, ctx) {
   if (settlement.has_collector === 1) {
     return err(409, 'already_collector', 'this settlement already has a collector');
   }
-  if (me.metal < COLLECTOR_COST.metal || me.gold < COLLECTOR_COST.gold) {
+
+  // Local-first spend: a stockpile-rich settlement can self-fund its
+  // own promotion to collector status. Once the collector flips on,
+  // the 90%/tick stockpile growth stops — so this is a one-time
+  // "graduate the bank" moment that feels great.
+  const stockRow = await env.DB
+    .prepare('SELECT stockpile_metal, stockpile_gold FROM game_settlements WHERE id = ?')
+    .bind(settlementId).first();
+  const localMetal = Number(stockRow?.stockpile_metal ?? 0);
+  const localGold  = Number(stockRow?.stockpile_gold  ?? 0);
+  if (localMetal + me.metal < COLLECTOR_COST.metal || localGold + me.gold < COLLECTOR_COST.gold) {
     return err(409, 'insufficient_resources',
-      `need ${COLLECTOR_COST.metal} ore + ${COLLECTOR_COST.gold} credits`);
+      `need ${COLLECTOR_COST.metal} ore + ${COLLECTOR_COST.gold} credits (LOCAL+pool)`);
   }
+  const takeLocalMetal = Math.min(COLLECTOR_COST.metal, localMetal);
+  const takeLocalGold  = Math.min(COLLECTOR_COST.gold,  localGold);
+  const takePoolMetal  = COLLECTOR_COST.metal - takeLocalMetal;
+  const takePoolGold   = COLLECTOR_COST.gold  - takeLocalGold;
 
   const game = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
   const tick = game?.current_tick ?? 0;
 
-  await env.DB.batch([
+  const batchStmts = [
     env.DB
-      .prepare('UPDATE game_settlements SET has_collector = 1, collector_built_tick = ? WHERE id = ?')
-      .bind(tick, settlementId),
-    env.DB
-      .prepare('UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ?')
-      .bind(COLLECTOR_COST.metal, COLLECTOR_COST.gold, me.id),
-  ]);
+      .prepare(
+        `UPDATE game_settlements
+            SET has_collector = 1,
+                collector_built_tick = ?,
+                stockpile_metal = stockpile_metal - ?,
+                stockpile_gold  = stockpile_gold  - ?
+          WHERE id = ?`,
+      )
+      .bind(tick, takeLocalMetal, takeLocalGold, settlementId),
+  ];
+  if (takePoolMetal > 0 || takePoolGold > 0) {
+    batchStmts.push(
+      env.DB
+        .prepare('UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ?')
+        .bind(takePoolMetal, takePoolGold, me.id),
+    );
+  }
+  await env.DB.batch(batchStmts);
 
   return json({
     ok: true,

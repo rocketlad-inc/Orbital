@@ -2046,13 +2046,31 @@ export function GameContextProvider({
     const oreCost = Math.ceil(classDef.cost.ore * costMul);
     const creditCost = Math.ceil(classDef.cost.credits * costMul);
 
-    // Check resources
+    // Local-first spend: drain settlement stockpiles at this body
+    // before touching the faction pool. Mirrors worker/actions.js
+    // handleQueueBuild. Lets a remote uncollectered settlement
+    // self-fund ship builds from its banked LOCAL bucket.
     const res = gameState.resources['player'];
-    if (!res || res.fuel < fuelCost || res.ore < oreCost || res.credits < creditCost) {
-      logger.warn('ACTION', `buildShip: insufficient resources`, {
+    if (!res) {
+      logger.warn('ACTION', `buildShip: no player resources`);
+      return false;
+    }
+    const localSettlements = gameState.settlements.filter(
+      s => s.ownedBy === 'player' && s.bodyId === bodyId,
+    );
+    const localFuel    = localSettlements.reduce((a, s) => a + s.stockpile.fuel,    0);
+    const localOre     = localSettlements.reduce((a, s) => a + s.stockpile.ore,     0);
+    const localCredits = localSettlements.reduce((a, s) => a + s.stockpile.credits, 0);
+    if (
+      localFuel    + res.fuel    < fuelCost ||
+      localOre     + res.ore     < oreCost  ||
+      localCredits + res.credits < creditCost
+    ) {
+      logger.warn('ACTION', `buildShip: insufficient resources (LOCAL+pool)`, {
         shipClass, bodyId, name,
         need: { fuel: fuelCost, ore: oreCost, credits: creditCost },
-        have: res ? { fuel: res.fuel, ore: res.ore, credits: res.credits } : null,
+        local: { fuel: localFuel, ore: localOre, credits: localCredits },
+        pool:  { fuel: res.fuel, ore: res.ore, credits: res.credits },
       });
       return false;
     }
@@ -2060,6 +2078,20 @@ export function GameContextProvider({
       cost: { fuel: -fuelCost, ore: -oreCost, credits: -creditCost },
       buildTime: classDef.buildTime,
     });
+
+    // Plan FIFO draws across settlements; remainder hits the pool.
+    let needF = fuelCost, needO = oreCost, needC = creditCost;
+    const drainPlan: Record<string, { fuel: number; ore: number; credits: number }> = {};
+    for (const s of localSettlements) {
+      if (needF <= 0 && needO <= 0 && needC <= 0) break;
+      const takeF = Math.min(needF, s.stockpile.fuel);
+      const takeO = Math.min(needO, s.stockpile.ore);
+      const takeC = Math.min(needC, s.stockpile.credits);
+      if (takeF + takeO + takeC <= 0) continue;
+      drainPlan[s.id] = { fuel: takeF, ore: takeO, credits: takeC };
+      needF -= takeF; needO -= takeO; needC -= takeC;
+    }
+    const poolDrawF = needF, poolDrawO = needO, poolDrawC = needC;
 
     setGameStateInternal(prev => {
       const playerRes = prev.resources['player'];
@@ -2079,13 +2111,26 @@ export function GameContextProvider({
       return {
         ...prev,
         buildOrders: [...prev.buildOrders, buildOrder],
+        settlements: prev.settlements.map(s => {
+          const d = drainPlan[s.id];
+          if (!d) return s;
+          return {
+            ...s,
+            stockpile: {
+              fuel:    s.stockpile.fuel    - d.fuel,
+              ore:     s.stockpile.ore     - d.ore,
+              credits: s.stockpile.credits - d.credits,
+              science: s.stockpile.science,
+            },
+          };
+        }),
         resources: {
           ...prev.resources,
           player: {
             ...playerRes,
-            fuel: playerRes.fuel - fuelCost,
-            ore: playerRes.ore - oreCost,
-            credits: playerRes.credits - creditCost,
+            fuel:    playerRes.fuel    - poolDrawF,
+            ore:     playerRes.ore     - poolDrawO,
+            credits: playerRes.credits - poolDrawC,
           },
         },
       };
@@ -2388,32 +2433,63 @@ export function GameContextProvider({
         return prev;
       }
       const pool = prev.resources['player'];
-      if (!pool || pool.ore < COLLECTOR_COST.ore || pool.credits < COLLECTOR_COST.credits) {
-        logger.warn('ACTION', 'buildCollector: insufficient resources', {
+      // Local-first: drain the settlement's own stockpile before
+      // touching the faction pool. Mirrors worker/actions.js
+      // handleBuildCollector — a stockpile-rich settlement can
+      // self-fund its promotion to collector status.
+      const localF = target.stockpile.fuel;
+      const localO = target.stockpile.ore;
+      const localC = target.stockpile.credits;
+      if (
+        !pool ||
+        localF + pool.fuel    < COLLECTOR_COST.fuel    ||
+        localO + pool.ore     < COLLECTOR_COST.ore     ||
+        localC + pool.credits < COLLECTOR_COST.credits
+      ) {
+        logger.warn('ACTION', 'buildCollector: insufficient resources (LOCAL+pool)', {
           settlementId,
           need: COLLECTOR_COST,
-          have: pool ? { ore: pool.ore, credits: pool.credits } : null,
+          local: { fuel: localF, ore: localO, credits: localC },
+          pool: pool ? { fuel: pool.fuel, ore: pool.ore, credits: pool.credits } : null,
         });
         return prev;
       }
+      const takeLocalF = Math.min(COLLECTOR_COST.fuel,    localF);
+      const takeLocalO = Math.min(COLLECTOR_COST.ore,     localO);
+      const takeLocalC = Math.min(COLLECTOR_COST.credits, localC);
+      const takePoolF = COLLECTOR_COST.fuel    - takeLocalF;
+      const takePoolO = COLLECTOR_COST.ore     - takeLocalO;
+      const takePoolC = COLLECTOR_COST.credits - takeLocalC;
       logger.info('ACTION', `Built collector at ${target.name}`, {
         cost: { ore: -COLLECTOR_COST.ore, credits: -COLLECTOR_COST.credits },
+        fromLocal: { fuel: takeLocalF, ore: takeLocalO, credits: takeLocalC },
+        fromPool:  { fuel: takePoolF,  ore: takePoolO,  credits: takePoolC  },
       });
       ok = true;
       return {
         ...prev,
         settlements: prev.settlements.map(s =>
           s.id === settlementId
-            ? { ...s, hasCollector: true, collectorBuiltTick: prev.currentTick }
+            ? {
+                ...s,
+                hasCollector: true,
+                collectorBuiltTick: prev.currentTick,
+                stockpile: {
+                  fuel:    s.stockpile.fuel    - takeLocalF,
+                  ore:     s.stockpile.ore     - takeLocalO,
+                  credits: s.stockpile.credits - takeLocalC,
+                  science: s.stockpile.science,
+                },
+              }
             : s,
         ),
         resources: {
           ...prev.resources,
           player: {
             ...pool,
-            fuel: pool.fuel - COLLECTOR_COST.fuel,
-            ore: pool.ore - COLLECTOR_COST.ore,
-            credits: pool.credits - COLLECTOR_COST.credits,
+            fuel:    pool.fuel    - takePoolF,
+            ore:     pool.ore     - takePoolO,
+            credits: pool.credits - takePoolC,
           },
         },
       };
@@ -2454,13 +2530,30 @@ export function GameContextProvider({
       const currentLevel = buildingLevel(target, kind);
       const cost = buildingCostForNextLevel(kind, currentLevel);
       const pool = prev.resources['player'];
-      if (!pool || pool.fuel < cost.fuel || pool.ore < cost.ore || pool.credits < cost.credits) {
-        logger.warn('ACTION', 'queueBuilding: insufficient resources', {
+      // Local-first: this settlement's stockpile funds its own
+      // upgrades. Mirrors worker/actions.js handleQueueBuilding.
+      const localF = target.stockpile.fuel;
+      const localO = target.stockpile.ore;
+      const localC = target.stockpile.credits;
+      if (
+        !pool ||
+        localF + pool.fuel    < cost.fuel    ||
+        localO + pool.ore     < cost.ore     ||
+        localC + pool.credits < cost.credits
+      ) {
+        logger.warn('ACTION', 'queueBuilding: insufficient resources (LOCAL+pool)', {
           settlementId, kind, currentLevel, need: cost,
-          have: pool ? { fuel: pool.fuel, ore: pool.ore, credits: pool.credits } : null,
+          local: { fuel: localF, ore: localO, credits: localC },
+          pool:  pool ? { fuel: pool.fuel, ore: pool.ore, credits: pool.credits } : null,
         });
         return prev;
       }
+      const takeLocalF = Math.min(cost.fuel,    localF);
+      const takeLocalO = Math.min(cost.ore,     localO);
+      const takeLocalC = Math.min(cost.credits, localC);
+      const takePoolF  = cost.fuel    - takeLocalF;
+      const takePoolO  = cost.ore     - takeLocalO;
+      const takePoolC  = cost.credits - takeLocalC;
 
       const ticks = buildingTimeForNextLevel(kind, currentLevel);
       const order: SettlementBuildOrder = {
@@ -2473,20 +2566,33 @@ export function GameContextProvider({
       };
       logger.info('ACTION', `Queued ${def.displayName} L${currentLevel + 1} at ${target.name}`, {
         cost, ticks,
+        fromLocal: { fuel: takeLocalF, ore: takeLocalO, credits: takeLocalC },
+        fromPool:  { fuel: takePoolF,  ore: takePoolO,  credits: takePoolC  },
       });
       ok = true;
       return {
         ...prev,
         settlements: prev.settlements.map(s =>
-          s.id === settlementId ? { ...s, buildingQueue: order } : s,
+          s.id === settlementId
+            ? {
+                ...s,
+                buildingQueue: order,
+                stockpile: {
+                  fuel:    s.stockpile.fuel    - takeLocalF,
+                  ore:     s.stockpile.ore     - takeLocalO,
+                  credits: s.stockpile.credits - takeLocalC,
+                  science: s.stockpile.science,
+                },
+              }
+            : s,
         ),
         resources: {
           ...prev.resources,
           player: {
             ...pool,
-            fuel:    pool.fuel    - cost.fuel,
-            ore:     pool.ore     - cost.ore,
-            credits: pool.credits - cost.credits,
+            fuel:    pool.fuel    - takePoolF,
+            ore:     pool.ore     - takePoolO,
+            credits: pool.credits - takePoolC,
           },
         },
       };
