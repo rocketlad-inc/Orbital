@@ -144,12 +144,17 @@ export const TopBar: React.FC<TopBarProps> = ({
       const recent = gameState.combatLog.slice(-2);
       recent.forEach((msg, i) => {
         const cls = logEntryIcon(msg);
+        // Per Lorne: chips should read "icon + name" — no verbose
+        // sentence. We pull the primary entity (ship / body / faction)
+        // out of the chronicle string; the full message still shows
+        // in the click-to-open details popover.
+        const name = extractPrimaryName(msg);
         out.push({
           id: `combat-${gameState.combatLog.length - recent.length + i}`,
           icon: cls.icon,
           color: cls.color,
           category: cls.label,
-          text: msg.length > 60 ? msg.slice(0, 60) + '…' : msg,
+          text: name,
           detail: msg,
         });
       });
@@ -167,14 +172,14 @@ export const TopBar: React.FC<TopBarProps> = ({
         const eta = arrivalTick - gameState.currentTick;
         if (eta <= 5 && eta > 0) {
           const target = gameState.bodies.find(b => b.id === targetBodyId);
-          const text = `${ship.name} arriving at ${target?.name || '?'} in T-${eta.toFixed(0)}`;
+          const detail = `${ship.name} arriving at ${target?.name || '?'} in T-${eta.toFixed(0)}`;
           out.push({
             id: `arrive-${ship.id}`,
             icon: '→',
             color: '#4ecdc4',
             category: 'Arrival',
-            text,
-            detail: text,
+            text: ship.name,   // chip stays compact; sentence lives in detail
+            detail,
             onClick: () => selectShip(ship.id),
             actionLabel: 'Go to ship',
           });
@@ -185,14 +190,14 @@ export const TopBar: React.FC<TopBarProps> = ({
     // Low fuel ships
     for (const ship of playerShips) {
       if (ship.fuel < 20) {
-        const text = `${ship.name} low fuel (${Math.round(ship.fuel)})`;
+        const detail = `${ship.name} low fuel (${Math.round(ship.fuel)})`;
         out.push({
           id: `lowfuel-${ship.id}`,
           icon: '⚠',
           color: '#ffb84d',
           category: 'Low fuel',
-          text,
-          detail: text,
+          text: ship.name,
+          detail,
           onClick: () => selectShip(ship.id),
           actionLabel: 'Go to ship',
         });
@@ -553,6 +558,26 @@ function logEntryIcon(entry: string): { icon: string; color: string; label: stri
   if (s.includes('destroyed') || s.includes('collapsed')) return { icon: '✖', color: '#ff5e5e', label: 'Destruction' };
   if (s.includes(' hits ')) return { icon: '⚔', color: '#ffb84d', label: 'Combat' };
   return { icon: '›', color: '#8a9fb3', label: 'Event' };
+}
+
+/** Pull the primary entity name (ship / body / faction) out of a
+ *  chronicle line. Chronicle strings are freeform but typically lead
+ *  with the actor: "Corvette-3 hits Frigate-1", "Earth captured by ...".
+ *  We grab the first run of capitalised / numbered tokens. Fallback:
+ *  the first 18 chars, ellipsised — better than an empty chip. */
+function extractPrimaryName(msg: string): string {
+  // Strip leading punctuation/quotes ("The ", '"…"') so the first real
+  // word lines up at index 0. Matches a contiguous run of words that
+  // start with a capital letter or a digit, joined by spaces / hyphens.
+  const cleaned = msg.replace(/^["'\s]+/, '').replace(/^The\s+/, '');
+  const m = cleaned.match(/^([A-Z][A-Za-z0-9-]*(?:[\s-]+[A-Z0-9][A-Za-z0-9-]*)*)/);
+  if (m && m[1]) {
+    const name = m[1].trim();
+    return name.length > 22 ? name.slice(0, 22) + '…' : name;
+  }
+  // Couldn't find a capital-led name. Truncate hard so the chip stays
+  // compact rather than ellipsising to nothing.
+  return cleaned.length > 18 ? cleaned.slice(0, 18) + '…' : cleaned;
 }
 
 /** Build a synthetic Alert for an EventLogPanel row so its click handler
