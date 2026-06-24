@@ -34,6 +34,7 @@ import { PhysicsSandbox } from './physicsSandbox/PhysicsSandbox';
 import { TorchSandbox } from './torchSandbox/TorchSandbox';
 import { ModePicker, GameMode } from './ModePicker';
 import { MultiplayerShell } from './multiplayer/MultiplayerShell';
+import { VersionBanner } from './components/VersionBanner';
 import { MultiplayerLobby } from './multiplayer/MultiplayerLobby';
 import { MultiplayerGameProvider } from './multiplayer/MultiplayerGameProvider';
 import { apiFetch, RoomSummary } from './multiplayer/api';
@@ -663,6 +664,7 @@ export function App() {
   return (
     <ErrorBoundary scope="App">
       <AppRouter />
+      <VersionBanner />
     </ErrorBoundary>
   );
 }
