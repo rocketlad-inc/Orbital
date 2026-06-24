@@ -61,6 +61,34 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
   const [invite, setInvite] = useState<{ code: string | null; isHost: boolean } | null>(null);
   const [inviteCopied, setInviteCopied] = useState(false);
 
+  // Mutex with the Situation Log dock. When SitLog opens it dispatches
+  // 'mp:situation-open'; we collapse in response. Vice versa: when our
+  // dock is opened, we dispatch 'mp:dock-open' so SitLog closes.
+  useEffect(() => {
+    const onSitOpen = () => setCollapsed(true);
+    window.addEventListener('mp:situation-open', onSitOpen);
+    return () => window.removeEventListener('mp:situation-open', onSitOpen);
+  }, []);
+  useEffect(() => {
+    if (!collapsed) {
+      try { window.dispatchEvent(new CustomEvent('mp:dock-open')); } catch { /* noop */ }
+    }
+  }, [collapsed]);
+  // SitLog clicks on vote / trade items dispatch 'orbital:open-panel'
+  // with the panel id; switch tabs + un-collapse in response.
+  useEffect(() => {
+    const onOpenPanel = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      const panel = detail?.panel;
+      if (panel === 'senate' || panel === 'trades' || panel === 'faction' || panel === 'comms') {
+        setTab(panel);
+        setCollapsed(false);
+      }
+    };
+    window.addEventListener('orbital:open-panel', onOpenPanel as EventListener);
+    return () => window.removeEventListener('orbital:open-panel', onOpenPanel as EventListener);
+  }, []);
+
   // If the player arrives in a room where a game is already active and the
   // tab is still 'lobby' (which is now hidden), jump them to Faction so
   // they're not staring at a blank dock body.
