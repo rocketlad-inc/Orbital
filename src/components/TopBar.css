@@ -161,6 +161,16 @@
   line-height: 1;
 }
 
+/* Only when the live countdown is present (multiplayer) do we reserve a
+   fixed footprint, so its text width changing every second ("30s" → "9s"
+   → "1m 05s") can't grow/shrink the box and shove the rest of the top bar
+   around. Sized for the widest realistic readout ("next in 59m 50s").
+   Single-player has no countdown, so its TICK box stays natural-width. */
+.time-display--ticking {
+  min-width: 104px;
+  flex: 0 0 auto;
+}
+
 .time-display__label {
   font-size: 9px;
   color: #b8c8d6;
