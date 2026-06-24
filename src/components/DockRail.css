@@ -4,7 +4,7 @@
 
 .dock-rail {
   position: fixed;
-  top: 60px;
+  top: 94px;
   right: 8px;
   z-index: 3200;             /* above panels (3000-3100), below modals */
   display: flex;
@@ -111,7 +111,7 @@
 */
 .dock-panel {
   position: fixed;
-  top: 60px;
+  top: 94px;
   bottom: 12px;
   right: var(--dock-rail-right);
   width: 360px;
@@ -151,7 +151,7 @@
   .dock-panel {
     right: 8px;
     left: 8px;
-    top: 60px;
+    top: 94px;
     bottom: 72px;             /* clear of the rail at the bottom */
     width: auto;
   }
