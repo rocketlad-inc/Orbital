@@ -201,22 +201,24 @@ export const TopBar: React.FC<TopBarProps> = ({
         gameState.tickIntervalMs != null ? gameState.tickIntervalMs / 1000 : Infinity,
         Math.ceil((nextTickAt - nowMs) / 100) / 10,
       ));
-  // Format for legibility across the whole interval range. A 1-hour
-  // interval as "3600.0s" looks frozen (the tenths barely move and there's
-  // no minute/hour sense); H:MM:SS / M:SS ticks visibly every second.
-  // Sub-minute keeps the snappy decimal-seconds readout.
+  // Format as whole units (Xh Ym / Xm Ys / Xs) so it reads cleanly and
+  // ticks down a visible step every second at any interval — a raw
+  // "3600.0s" looked frozen. ceil so it counts N→…→1→0 and only shows 0
+  // right at the tick. Width is held steady by .time-display's min-width
+  // (the box must not grow/shrink as the digits change).
   const tickCountdownLabel = tickCountdown == null
     ? null
-    : tickCountdown >= 60
-      ? (() => {
-          const total = Math.floor(tickCountdown);
-          const h = Math.floor(total / 3600);
-          const m = Math.floor((total % 3600) / 60);
-          const s = total % 60;
-          const pad = (n: number) => String(n).padStart(2, '0');
-          return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
-        })()
-      : `${tickCountdown.toFixed(1)}s`;
+    : (() => {
+        const total = Math.ceil(tickCountdown);
+        const pad = (n: number) => String(n).padStart(2, '0');
+        if (total >= 3600) {
+          return `${Math.floor(total / 3600)}h ${pad(Math.floor((total % 3600) / 60))}m`;
+        }
+        if (total >= 60) {
+          return `${Math.floor(total / 60)}m ${pad(total % 60)}s`;
+        }
+        return `${total}s`;
+      })();
 
   return (
     <div className="top-bar">
@@ -354,7 +356,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       </div>
 
       <div className="top-bar__time">
-        <div className="time-display">
+        <div className={`time-display${tickCountdownLabel != null ? ' time-display--ticking' : ''}`}>
           <div className="time-display__label">TICK</div>
           <div className="time-display__value">{tickStr}</div>
           {tickCountdownLabel != null && (
