@@ -480,6 +480,11 @@ export const TopBar: React.FC<TopBarProps> = ({
         <EventLogPanel
           entries={gameState.combatLog}
           onClose={() => setLogOpen(false)}
+          // Click a log row → reuse the same details popover the chips use.
+          // The two overlays stack: the details modal sits above the panel
+          // (z-index 6100 vs 6000/6001), so closing the modal returns the
+          // player to the log list rather than back to the map.
+          onEntryClick={(entry, i) => setDetailAlert(alertFromLogEntry(entry, i))}
         />
       )}
 
@@ -524,6 +529,24 @@ function logEntryIcon(entry: string): { icon: string; color: string; label: stri
   return { icon: '›', color: '#8a9fb3', label: 'Event' };
 }
 
+/** Build a synthetic Alert for an EventLogPanel row so its click handler
+ *  can reuse the same AlertDetailsModal the top-bar chips use. The combat
+ *  log is a plain string array on the client (server pre-formats each
+ *  message), so the icon/category come from the keyword classifier and the
+ *  full row text becomes the modal body verbatim. No action button — log
+ *  entries are historical, there's no "go to ship" target. */
+function alertFromLogEntry(entry: string, index: number): Alert {
+  const cls = logEntryIcon(entry);
+  return {
+    id: `logrow-${index}`,
+    icon: cls.icon,
+    color: cls.color,
+    category: cls.label,
+    text: entry,
+    detail: entry,
+  };
+}
+
 /** #rrggbb (or #rgb) → rgba() string. Used to tint a chip's background with
  *  its own per-type colour at low alpha so border/text/fill stay coherent. */
 function hexToRgba(hex: string, alpha: number): string {
@@ -545,12 +568,21 @@ function hexToRgba(hex: string, alpha: number): string {
 const AlertDetailsModal: React.FC<{ alert: Alert; onClose: () => void }> = ({ alert, onClose }) => {
   const closeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
+    // Capture-phase + stopImmediatePropagation so Esc closes ONLY this
+    // modal even when a deeper overlay (the EventLogPanel) also has a
+    // window-level Esc listener — otherwise pressing Esc would close both
+    // and dump the player back to the map after a single row peek.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopImmediatePropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
     // Move focus into the dialog so keyboard/screen-reader users land here
     // and Esc/Enter act on it rather than the map behind.
     closeRef.current?.focus();
-    return () => window.removeEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, [onClose]);
 
   return createPortal(
@@ -586,7 +618,11 @@ const AlertDetailsModal: React.FC<{ alert: Alert; onClose: () => void }> = ({ al
 const EventLogPanel: React.FC<{
   entries: string[];
   onClose: () => void;
-}> = ({ entries, onClose }) => {
+  /** Click a row to open the same details popover the top-bar chips use.
+   *  Optional so the panel still works as a passive list if no handler is
+   *  threaded in. */
+  onEntryClick?: (entry: string, index: number) => void;
+}> = ({ entries, onClose, onEntryClick }) => {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
@@ -610,15 +646,30 @@ const EventLogPanel: React.FC<{
           ) : (
             entries.map((entry, i) => {
               const { icon, color } = logEntryIcon(entry);
-              return (
-                <div key={i} className="event-log__row">
+              // Render rows as <button> when interactive so keyboard users
+              // can Tab + Enter to open details; fall back to a static div
+              // when no handler is provided (passive panel).
+              const handleClick = onEntryClick ? () => onEntryClick(entry, i) : undefined;
+              const commonChildren = (
+                <>
                   <span
                     className="event-log__icon"
                     style={{ color }}
                     aria-hidden="true"
                   >{icon}</span>
                   <span className="event-log__text">{entry}</span>
-                </div>
+                </>
+              );
+              return handleClick ? (
+                <button
+                  key={i}
+                  type="button"
+                  className="event-log__row event-log__row--clickable"
+                  onClick={handleClick}
+                  title="Show details"
+                >{commonChildren}</button>
+              ) : (
+                <div key={i} className="event-log__row">{commonChildren}</div>
               );
             })
           )}
