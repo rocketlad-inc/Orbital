@@ -167,14 +167,73 @@
   text-transform: uppercase;
   color: var(--mp-accent);
 }
-.mp-dock-head button {
+.mp-dock-head__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.mp-dock-head__title .mp-dock-icon { color: var(--mp-accent); }
+
+/* Expanded: small ">>" collapse button. */
+.mp-dock-collapse-btn {
   background: transparent;
   border: 1px solid var(--mp-border);
   color: var(--mp-fg-dim);
   cursor: pointer;
   font: inherit;
-  font-size: 13px;
-  padding: 2px 8px;
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px 9px;
+  border-radius: 3px;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.mp-dock-collapse-btn:hover {
+  color: var(--mp-accent);
+  border-color: var(--mp-accent);
+  background: rgba(255, 184, 77, 0.08);
+}
+
+/* Collapsed stub: the whole head becomes one clear "open multiplayer"
+   button with the people glyph (was a bare ▸ + ⤡ that said nothing). */
+.mp-dock.collapsed .mp-dock-head {
+  padding: 0;
+  border-bottom: none;
+}
+.mp-dock-open-btn {
+  position: relative;
+  width: 100%;
+  padding: 10px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Faint always-on tint so the collapsed stub reads as a clickable
+     control against the dark map, not just a floating glyph. */
+  background: rgba(255, 184, 77, 0.06);
+  border: none;
+  color: var(--mp-accent);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.mp-dock-open-btn .mp-dock-icon { width: 20px; height: 20px; }
+.mp-dock-open-btn:hover { background: rgba(255, 184, 77, 0.16); }
+
+/* Unread-comms badge on the collapsed stub so activity is visible while
+   the dock is tucked away. */
+.mp-dock-badge {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: #4ecdc4;
+  color: #0a0e14;
+  font-family: var(--mp-mono);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
 }
 
 .mp-tablist {
