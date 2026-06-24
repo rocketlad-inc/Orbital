@@ -1,3 +1,4 @@
+import { resolveSenate, getActiveSliders } from './senate.js';
 import { recomputeBodyOwnership } from './factions.js';
 
 // Room Durable Object. One instance per game room, keyed by room id.
@@ -911,6 +912,25 @@ export class Room {
       console.error('resolveAsteroidImpacts failed', e);
     }
 
+    // 2b-bis. Senate phase advance. Idempotent + non-throwing -- a
+    //         senate-side failure must not kill combat/dyson/economy
+    //         that follow. Runs BEFORE combat so a ratified
+    //         combat_damage_multiplier applies on the same tick.
+    try {
+      await resolveSenate(this.env, gameId, tick);
+    } catch (e) {
+      console.error('resolveSenate failed', e);
+    }
+
+    // Senate effects active this tick. Cached in a closure local so
+    // every downstream consumer reads the same snapshot without
+    // hammering D1 once per attacker. Falls through to slider defaults
+    // (1.0 multipliers, 0% tariff) on any error.
+    let senateSliders = {};
+    try { senateSliders = await getActiveSliders(this.env, gameId, tick); }
+    catch (e) { console.error('getActiveSliders failed', e); }
+    const combatDamageMult = Number(senateSliders.combat_damage_multiplier ?? 1);
+
     // 2c. Trade route auto-pilot.
     //
     // For each active route, look at the freighter. Skip if it has any
@@ -1301,7 +1321,7 @@ export class Room {
         // hp_max / damage_per_tick already stamped on the ship row when
         // they were last upgraded — see lobby/upgrade endpoints).
         const rankMul = 1 + 0.01 * Math.max(0, attacker.rank ?? 0);
-        const split = (attacker.damage_per_tick * rankMul) / targets.length;
+        const split = (attacker.damage_per_tick * rankMul * combatDamageMult) / targets.length;
         for (const t of targets) {
           addDamage(t.id, attacker.owner_faction_id, attacker.id, split);
         }

@@ -1,3 +1,4 @@
+import { getActiveSliders } from './senate.js';
 import { recomputeBodyOwnership } from './factions.js';
 
 // Player-action endpoints: things the client wants the server to remember.
@@ -277,9 +278,28 @@ async function handleQueueBuild(req, env, ctx) {
   // (recomputeBodyOwnership requires the most settlements at the body)
   // is the real gate.
 
+  // Senate effect: ship_build_cost_multiplier scales metal + gold at
+  // queue time. Default 1.0 (no effect) when no proposal is active.
+  // build_ticks is left alone -- balance lever, not the same dial.
+  let buildCostMult = 1;
+  try {
+    const tickRow = await env.DB
+      .prepare('SELECT current_tick FROM games WHERE id = ?')
+      .bind(gameId).first();
+    const sliders = await getActiveSliders(env, gameId, tickRow?.current_tick ?? 0);
+    const v = Number(sliders.ship_build_cost_multiplier);
+    if (Number.isFinite(v) && v > 0) buildCostMult = v;
+  } catch { /* default */ }
+  const scaledCost = {
+    metal: Math.ceil(cost.metal * buildCostMult),
+    fuel:  Math.ceil(cost.fuel  * buildCostMult),
+    gold:  Math.ceil(cost.gold  * buildCostMult),
+    build_ticks: cost.build_ticks,
+  };
+
   // Fuel was removed from the economy; only metal + gold are spent on builds.
-  if (me.metal < cost.metal || me.gold < cost.gold) {
-    return err(409, 'insufficient_resources', `need ${cost.metal}M ${cost.gold}G`);
+  if (me.metal < scaledCost.metal || me.gold < scaledCost.gold) {
+    return err(409, 'insufficient_resources', `need ${scaledCost.metal}M ${scaledCost.gold}G`);
   }
 
   const game = await env.DB
@@ -304,7 +324,7 @@ async function handleQueueBuild(req, env, ctx) {
         `UPDATE game_factions SET metal = metal - ?, gold = gold - ?
           WHERE id = ?`,
       )
-      .bind(cost.metal, cost.gold, me.id),
+      .bind(scaledCost.metal, scaledCost.gold, me.id),
   ]);
 
   return json({

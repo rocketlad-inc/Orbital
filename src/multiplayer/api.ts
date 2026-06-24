@@ -181,7 +181,16 @@ export type SenateSlider = {
   min: number;
   max: number;
   default: number;
-  effective: number;
+  step: number;
+  /** Current effective value after applying any active senate_effects
+   *  row. Server emits this as `effective_value`. */
+  effective_value: number;
+};
+
+export type SenateVoteTotals = {
+  yea:     { weight: number; count: number };
+  nay:     { weight: number; count: number };
+  abstain: { weight: number; count: number };
 };
 
 export type SenateProposal = {
@@ -197,8 +206,12 @@ export type SenateProposal = {
   vote_closes_at_tick: number;
   resolved_at_tick: number | null;
   effect_until_tick: number | null;
-  votes?: { yea: number; nay: number; abstain: number };
-  my_vote?: 'yea' | 'nay' | 'abstain' | null;
+  /** Per-proposal deliberation/voting windows (in ticks). Default
+   *  values fall through when the row predates the per-proposal cols. */
+  debate_ticks: number;
+  vote_ticks: number;
+  totals: SenateVoteTotals;
+  caller_vote: 'yea' | 'nay' | 'abstain' | null;
 };
 
 // ============================================================
