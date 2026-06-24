@@ -8,6 +8,7 @@ import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext'
 import { markNodeCancelPending, unmarkNodeCancelPending } from '../multiplayer/pendingNodeCancels';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { EditableName } from './EditableName';
 import { ShipIcon } from './ShipIcons';
 import { DEFAULT_ENGINE_G } from '../physics/torchTransfer';
 import {
@@ -23,7 +24,7 @@ export const ShipPanel: React.FC = () => {
     deleteManeuverNode, setTargetSelectionMode,
     launchTorchTransfer, enqueueTorchTransfer, planTorchPreview, cancelTorchPreview,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
-    createTradeRoute, cancelTradeRoute,
+    createTradeRoute, cancelTradeRoute, renameShip,
   } = useGameContext();
 
   // In multiplayer this is non-null and we post intent to the server in
@@ -389,7 +390,26 @@ export const ShipPanel: React.FC = () => {
       <div className="ship-panel" data-tutorial-id="ship-panel">
         <div className="panel-header">
           <span>
-            SHIP: {ship.name}
+            SHIP:{' '}
+            <EditableName
+              value={ship.name}
+              readOnly={ship.ownedBy !== 'player'}
+              ariaLabel="Rename this ship"
+              onSave={async (next) => {
+                // Optimistic local rename so the header updates
+                // instantly. MP /state poll reconciles within ~1.5s
+                // if the server rejects.
+                renameShip(ship.id, next);
+                if (mpActions) {
+                  const res = await mpActions.renameShip(ship.id, next);
+                  if (!res.ok) {
+                    throw new Error(humanizeMpError(res.code, res.error, 'rename'));
+                  }
+                }
+              }}
+            />
+            {/* Class chip moved out of the editable name so the
+                pencil doesn't make the rank+class jiggle. */}
             {(ship.rank ?? 0) > 0 && (
               // Veterancy chip — every kill +1 rank, +1% damage/HP.
               // The number is what other systems also surface (combat

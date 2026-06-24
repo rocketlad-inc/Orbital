@@ -1493,7 +1493,86 @@ async function handleRamAsteroid(req, env, ctx) {
   }, { status: 201 });
 }
 
+// PATCH /api/games/:gameId/ships/:shipId
+// body: { name: string } — 1..32 chars after trim. Owner-gated; rejects
+// destroyed ships. Player-driven rename for in-flight + parked hulls.
+async function handleRenameShip(req, env, ctx) {
+  const { gameId, shipId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  if (!SHIP_ID_RE.test(shipId)) return err(400, 'bad_request', 'invalid ship id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+  if (typeof body.name !== 'string') return err(400, 'bad_request', 'name must be a string');
+  const name = body.name.trim();
+  if (name.length === 0) return err(400, 'bad_request', 'name required');
+  if (name.length > 32) return err(400, 'bad_request', 'name too long (max 32 chars)');
+
+  const ship = await env.DB
+    .prepare('SELECT owner_faction_id, status FROM game_ships WHERE id = ? AND game_id = ?')
+    .bind(shipId, gameId)
+    .first();
+  if (!ship) return err(404, 'not_found', 'ship not found');
+  if (ship.owner_faction_id !== me.id) return err(403, 'not_owner', 'you do not own this ship');
+  if (ship.status === 'destroyed') return err(409, 'destroyed', 'cannot rename a destroyed ship');
+
+  await env.DB
+    .prepare('UPDATE game_ships SET name = ? WHERE id = ?')
+    .bind(name, shipId)
+    .run();
+  return json({ ok: true, id: shipId, name });
+}
+
+// PATCH /api/games/:gameId/settlements/:settlementId
+// body: { name: string } — 1..32 chars after trim. Owner-gated; rejects
+// destroyed settlements. Same shape as handleRenameShip.
+async function handleRenameSettlement(req, env, ctx) {
+  const { gameId, settlementId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  // Settlement IDs are server-generated (`${bodyId}:c` style) so the
+  // DB lookup is the gate — no separate regex check is needed.
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+  if (typeof body.name !== 'string') return err(400, 'bad_request', 'name must be a string');
+  const name = body.name.trim();
+  if (name.length === 0) return err(400, 'bad_request', 'name required');
+  if (name.length > 32) return err(400, 'bad_request', 'name too long (max 32 chars)');
+
+  const s = await env.DB
+    .prepare('SELECT owner_faction_id, destroyed_at_tick FROM game_settlements WHERE id = ? AND game_id = ?')
+    .bind(settlementId, gameId)
+    .first();
+  if (!s) return err(404, 'not_found', 'settlement not found');
+  if (s.owner_faction_id !== me.id) return err(403, 'not_owner', 'you do not own this settlement');
+  if (s.destroyed_at_tick != null) return err(409, 'destroyed', 'cannot rename a destroyed settlement');
+
+  await env.DB
+    .prepare('UPDATE game_settlements SET name = ? WHERE id = ?')
+    .bind(name, settlementId)
+    .run();
+  return json({ ok: true, id: settlementId, name });
+}
+
 export const routes = [
+  {
+    method: 'PATCH',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/ships\/(?<shipId>[^/]+)$/,
+    auth: 'required',
+    handle: handleRenameShip,
+  },
+  {
+    method: 'PATCH',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/settlements\/(?<settlementId>[^/]+)$/,
+    auth: 'required',
+    handle: handleRenameSettlement,
+  },
   {
     method: 'POST',
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/ships\/(?<shipId>[^/]+)\/transfer$/,
