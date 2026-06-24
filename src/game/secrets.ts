@@ -65,7 +65,7 @@ export const SECRET_DEFS: Record<BodySecretKind, SecretDef> = {
   resource_cache: {
     kind: 'resource_cache',
     displayName: 'Hidden Resource Cache',
-    discoveryMessage: 'DISCOVERY: a buried cache — +500 ore + 500 credits to your pool.',
+    discoveryMessage: 'DISCOVERY: a buried cache — +500 metal + 500 credits to your pool.',
     hostCategories: ['inner', 'belt'],
   },
   ancient_databank: {

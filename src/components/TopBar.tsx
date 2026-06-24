@@ -320,7 +320,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             hasCollector={income.hasCollector}
           />
           <ResourcePill
-            label="ORE" modifier="ore"
+            label="METAL" modifier="ore"
             value={playerResources.ore}
             rate={income.delivered.ore}
             stranded={income.stranded.ore}
@@ -894,7 +894,7 @@ const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
           <div style={{ height: 1, background: '#2a3d50', margin: '8px 0' }} />
 
           <div style={{ fontSize: 10, color: '#b8c8d6' }}>
-            POOL: {Math.round(budget.pool.fuel)} fuel · {Math.round(budget.pool.ore)} ore · {Math.round(budget.pool.credits)} cr
+            POOL: {Math.round(budget.pool.fuel)} fuel · {Math.round(budget.pool.ore)} metal · {Math.round(budget.pool.credits)} cr
           </div>
           {overspending && (
             <div style={{ fontSize: 10, color: '#ff5e5e', marginTop: 4 }}>

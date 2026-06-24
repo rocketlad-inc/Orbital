@@ -321,7 +321,7 @@ export const BodyInspector: React.FC = () => {
             <div className="body-focus__yields" data-tutorial-id="body-production">
               <div className="body-focus__yield-row">
                 {production.fuel > 0 && <span>+{Math.round(production.fuel)}F</span>}
-                {production.ore > 0 && <span>+{Math.round(production.ore)}O</span>}
+                {production.ore > 0 && <span>+{Math.round(production.ore)}M</span>}
                 {production.credits > 0 && <span>+{Math.round(production.credits)}C</span>}
                 <span style={{ color: '#7a8a9a' }}>/ harvest</span>
               </div>
@@ -717,7 +717,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
         const yieldRate = settlementYield(s, body);
         const yieldStr = [
           yieldRate.fuel > 0.05 ? `+${yieldRate.fuel.toFixed(1)}F` : null,
-          yieldRate.ore > 0.05 ? `+${yieldRate.ore.toFixed(1)}O` : null,
+          yieldRate.ore > 0.05 ? `+${yieldRate.ore.toFixed(1)}M` : null,
           yieldRate.credits > 0.05 ? `+${yieldRate.credits.toFixed(1)}C` : null,
         ].filter(Boolean).join(' ');
         const isMine = s.ownedBy === 'player';
@@ -789,7 +789,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
               </div>
               {(s.stockpile.fuel > 0 || s.stockpile.ore > 0 || s.stockpile.credits > 0) && (
                 <div className="settlement-stockpile">
-                  STOCK: {Math.round(s.stockpile.fuel)}F {Math.round(s.stockpile.ore)}O {Math.round(s.stockpile.credits)}C
+                  STOCK: {Math.round(s.stockpile.fuel)}F {Math.round(s.stockpile.ore)}M {Math.round(s.stockpile.credits)}C
                 </div>
               )}
               {isMine && !s.hasCollector && (
@@ -817,8 +817,8 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                   }}
                   disabled={!canAffordCollector}
                   title={canAffordCollector
-                    ? `Build a collector here. Drains ${COLLECTOR_COST.ore}O / ${COLLECTOR_COST.credits}C from your pool.`
-                    : `Need ${COLLECTOR_COST.ore} ore + ${COLLECTOR_COST.credits} credits.`}
+                    ? `Build a collector here. Drains ${COLLECTOR_COST.ore}M / ${COLLECTOR_COST.credits}C from your pool.`
+                    : `Need ${COLLECTOR_COST.ore} metal + ${COLLECTOR_COST.credits} credits.`}
                   style={{
                     marginTop: 6,
                     padding: '4px 10px',
@@ -829,7 +829,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                     fontFamily: 'inherit', fontSize: 10, fontWeight: 600, letterSpacing: '0.08em',
                     cursor: canAffordCollector ? 'pointer' : 'default',
                   }}
-                >+ COLLECTOR ({COLLECTOR_COST.ore}O / {COLLECTOR_COST.credits}C)</button>
+                >+ COLLECTOR ({COLLECTOR_COST.ore}M / {COLLECTOR_COST.credits}C)</button>
               )}
               {isMine && (
                 <div data-tutorial-id="buildings-strip">
@@ -901,8 +901,8 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                 onClick={() => handleStartDeploy('city')}
                 title={
                   !canBuildHere ? noFreighterHint
-                  : !canAffordCity ? `Need ${SETTLEMENT_DEFS.city.cost.fuel}F/${SETTLEMENT_DEFS.city.cost.ore}O/${SETTLEMENT_DEFS.city.cost.credits}C`
-                  : `Deploy a city (${SETTLEMENT_DEFS.city.cost.fuel}F/${SETTLEMENT_DEFS.city.cost.ore}O/${SETTLEMENT_DEFS.city.cost.credits}C)`
+                  : !canAffordCity ? `Need ${SETTLEMENT_DEFS.city.cost.fuel}F/${SETTLEMENT_DEFS.city.cost.ore}M/${SETTLEMENT_DEFS.city.cost.credits}C`
+                  : `Deploy a city (${SETTLEMENT_DEFS.city.cost.fuel}F/${SETTLEMENT_DEFS.city.cost.ore}M/${SETTLEMENT_DEFS.city.cost.credits}C)`
                 }
               >
                 ■ DEPLOY CITY
@@ -915,8 +915,8 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                 onClick={() => handleStartDeploy('station')}
                 title={
                   !canBuildHere ? noFreighterHint
-                  : !canAffordStation ? `Need ${SETTLEMENT_DEFS.station.cost.fuel}F/${SETTLEMENT_DEFS.station.cost.ore}O/${SETTLEMENT_DEFS.station.cost.credits}C`
-                  : `Deploy a station (${SETTLEMENT_DEFS.station.cost.fuel}F/${SETTLEMENT_DEFS.station.cost.ore}O/${SETTLEMENT_DEFS.station.cost.credits}C)`
+                  : !canAffordStation ? `Need ${SETTLEMENT_DEFS.station.cost.fuel}F/${SETTLEMENT_DEFS.station.cost.ore}M/${SETTLEMENT_DEFS.station.cost.credits}C`
+                  : `Deploy a station (${SETTLEMENT_DEFS.station.cost.fuel}F/${SETTLEMENT_DEFS.station.cost.ore}M/${SETTLEMENT_DEFS.station.cost.credits}C)`
                 }
               >
                 ◆ DEPLOY STATION
@@ -939,7 +939,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
               : (showCityDeploy && !canAffordCity ? SETTLEMENT_DEFS.city : null);
             if (!checkDef) return null;
             if (playerRes.fuel < checkDef.cost.fuel) shortfalls.push(`${Math.ceil(checkDef.cost.fuel - playerRes.fuel)} fuel`);
-            if (playerRes.ore < checkDef.cost.ore) shortfalls.push(`${Math.ceil(checkDef.cost.ore - playerRes.ore)} ore`);
+            if (playerRes.ore < checkDef.cost.ore) shortfalls.push(`${Math.ceil(checkDef.cost.ore - playerRes.ore)} metal`);
             if (playerRes.credits < checkDef.cost.credits) shortfalls.push(`${Math.ceil(checkDef.cost.credits - playerRes.credits)} credits`);
             if (shortfalls.length === 0) return null;
             return (
@@ -1043,7 +1043,7 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
 
         const costParts: string[] = [];
         if (cost.fuel    > 0) costParts.push(`${cost.fuel}F`);
-        if (cost.ore     > 0) costParts.push(`${cost.ore}O`);
+        if (cost.ore     > 0) costParts.push(`${cost.ore}M`);
         if (cost.credits > 0) costParts.push(`${cost.credits}C`);
         const costStr = costParts.join(' ');
 
@@ -1469,7 +1469,7 @@ const DysonSpherePanel: React.FC = () => {
       }}>
         The Sol megaproject. Lay the foundation at a Sol-orbit station,
         then park freighters here to deliver resources every tick.
-        Target: 10K fuel · 15K ore · 15K credits · 10K science.
+        Target: 10K fuel · 15K metal · 15K credits · 10K science.
         Completing it wins the match by Engineering Victory.
       </div>
 
@@ -1549,7 +1549,7 @@ const DysonSphereProgress: React.FC = () => {
 
   const rows: Array<{ label: string; acc: number; tgt: number; color: string }> = [
     { label: 'Fuel',    acc: dyson.accumulated.fuel,    tgt: dyson.target.fuel,    color: '#ffb84d' },
-    { label: 'Ore',     acc: dyson.accumulated.ore,     tgt: dyson.target.ore,     color: '#a0a0a0' },
+    { label: 'Metal',   acc: dyson.accumulated.ore,     tgt: dyson.target.ore,     color: '#a0a0a0' },
     { label: 'Credits', acc: dyson.accumulated.credits, tgt: dyson.target.credits, color: '#ffd700' },
     { label: 'Science', acc: dyson.accumulated.science, tgt: dyson.target.science, color: '#6ee7b7' },
   ];
@@ -1612,7 +1612,7 @@ const DysonSphereProgress: React.FC = () => {
           marginTop: 8, fontSize: 9, color: '#a8b8c8', fontStyle: 'italic', lineHeight: 1.4,
         }}>
           Park more freighters at Sol to speed delivery. Each one drains
-          your pool by 5F · 10O · 10C · 5S per tick. Foundation
+          your pool by 5F · 10M · 10C · 5S per tick. Foundation
           destruction wipes everything — defend it.
         </div>
       )}

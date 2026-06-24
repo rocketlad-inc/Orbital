@@ -108,7 +108,7 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
                 {' · stockpile '}
                 <span style={{ color: '#ffb84d' }}>{Math.floor(playerStats.stockpile.fuel)}F</span>
                 {' '}
-                <span style={{ color: '#a0a0a0' }}>{Math.floor(playerStats.stockpile.ore)}O</span>
+                <span style={{ color: '#a0a0a0' }}>{Math.floor(playerStats.stockpile.ore)}M</span>
                 {' '}
                 <span style={{ color: '#ffd700' }}>{Math.floor(playerStats.stockpile.credits)}C</span>
               </>
@@ -201,7 +201,7 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
                           {yields.fuel > 0 ? `+${yields.fuel.toFixed(1)}` : '—'} fuel
                         </span>
                         <span className={`prod-rate ${yields.ore > 0 ? 'prod-rate--ore' : 'prod-rate--zero'}`}>
-                          {yields.ore > 0 ? `+${yields.ore.toFixed(1)}` : '—'} ore
+                          {yields.ore > 0 ? `+${yields.ore.toFixed(1)}` : '—'} metal
                         </span>
                         <span className={`prod-rate ${yields.credits > 0 ? 'prod-rate--credits' : 'prod-rate--zero'}`}>
                           {yields.credits > 0 ? `+${yields.credits.toFixed(1)}` : '—'} CR
@@ -215,7 +215,7 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
                             <span className="prod-rate prod-rate--fuel">{Math.floor(s.stockpile.fuel)}F</span>
                           )}
                           {s.stockpile.ore > 0 && (
-                            <span className="prod-rate prod-rate--ore">{Math.floor(s.stockpile.ore)}O</span>
+                            <span className="prod-rate prod-rate--ore">{Math.floor(s.stockpile.ore)}M</span>
                           )}
                           {s.stockpile.credits > 0 && (
                             <span className="prod-rate prod-rate--credits">{Math.floor(s.stockpile.credits)}C</span>

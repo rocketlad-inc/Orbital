@@ -189,7 +189,7 @@ export const AdminGrantModal: React.FC<Props> = ({ onClose, mpGameId }) => {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             {([
               ['FUEL',    fuel,    setFuel,    '#7fffa1'],
-              ['ORE',     ore,     setOre,     '#ffb84d'],
+              ['METAL',   ore,     setOre,     '#ffb84d'],
               ['CREDITS', credits, setCredits, '#4ecdc4'],
               ['SCIENCE', science, setScience, '#bd93f9'],
             ] as Array<[string, string, (s: string) => void, string]>).map(([label, val, setVal, color]) => (

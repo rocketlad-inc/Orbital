@@ -177,7 +177,7 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
           <FeatureCard
             icon="■"
             title="Cities, stations & upgrades"
-            body="Drop cities for ore, mints, and labs. Station shipyards in orbit for fleet production and weapon platforms. Every settlement levels up — forges deepen, weapons heavier, science compounds."
+            body="Drop cities for metal, mints, and labs. Station shipyards in orbit for fleet production and weapon platforms. Every settlement levels up — forges deepen, weapons heavier, science compounds."
           />
           <FeatureCard
             icon="◈"

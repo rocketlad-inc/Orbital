@@ -102,7 +102,7 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
     costScaling: 1.6,
     baseBuildTicks: 20,
     buildTimeScaling: 1.3,
-    description: '+25% ore output per level. Spends credits to compound this city\'s metal yield.',
+    description: '+25% metal output per level. Spends credits to compound this city\'s metal yield.',
     yieldBoost: { resource: 'ore', perLevel: 0.25 },
   },
   mint: {
@@ -112,7 +112,7 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
     costScaling: 1.6,
     baseBuildTicks: 20,
     buildTimeScaling: 1.3,
-    description: '+25% credits output per level. Spends ore to compound this city\'s coinage yield.',
+    description: '+25% credits output per level. Spends metal to compound this city\'s coinage yield.',
     yieldBoost: { resource: 'credits', perLevel: 0.25 },
   },
   lab: {
