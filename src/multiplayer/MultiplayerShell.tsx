@@ -19,6 +19,22 @@ import { tradesApi, apiFetch, RoomSnapshot } from './api';
 
 type Tab = 'lobby' | 'faction' | 'comms' | 'senate' | 'trades';
 
+/** "Players" glyph for the multiplayer dock — a group-of-people icon reads
+ *  unambiguously as the multiplayer/diplomacy panel, replacing the old bare
+ *  ▸ / ⤡ arrows. Inherits colour via currentColor. */
+const MpPeopleIcon: React.FC = () => (
+  <svg
+    className="mp-dock-icon" viewBox="0 0 24 24" width="18" height="18"
+    fill="none" stroke="currentColor" strokeWidth="1.8"
+    strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+  >
+    <circle cx="9" cy="8" r="3.1" />
+    <path d="M3.5 19.5a5.5 5.5 0 0 1 11 0" />
+    <path d="M16 5.3a3.1 3.1 0 0 1 0 5.7" />
+    <path d="M17.2 14.5a5.5 5.5 0 0 1 3.3 5" />
+  </svg>
+);
+
 interface MultiplayerShellProps {
   children: React.ReactNode;
   onExit?: () => void;
@@ -263,8 +279,32 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
       )}
       <div className={`mp-dock ${collapsed ? 'collapsed' : ''}`}>
         <div className="mp-dock-head">
-          <span>{collapsed ? '▸' : 'MULTIPLAYER'}</span>
-          <button onClick={() => setCollapsed((c) => !c)}>{collapsed ? '⤡' : '×'}</button>
+          {collapsed ? (
+            <button
+              className="mp-dock-open-btn"
+              onClick={() => setCollapsed(false)}
+              title="Open multiplayer panel"
+              aria-label="Open multiplayer panel"
+            >
+              <MpPeopleIcon />
+              {unreadMessages > 0 && (
+                <span className="mp-dock-badge">{unreadMessages > 9 ? '9+' : unreadMessages}</span>
+              )}
+            </button>
+          ) : (
+            <>
+              <span className="mp-dock-head__title">
+                <MpPeopleIcon />
+                Multiplayer
+              </span>
+              <button
+                className="mp-dock-collapse-btn"
+                onClick={() => setCollapsed(true)}
+                title="Collapse panel"
+                aria-label="Collapse multiplayer panel"
+              >»</button>
+            </>
+          )}
         </div>
         {!collapsed && (
           <>

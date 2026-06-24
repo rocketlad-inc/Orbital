@@ -257,10 +257,17 @@
   min-width: 0;
 }
 
+/* Per-type glyph (matches the event-log icon). Fixed, never shrinks. */
+.alert-chip__icon {
+  flex: 0 0 auto;
+  font-size: 12px;
+  line-height: 1;
+}
+
 /* Text inner span — flexes to fill, ellipsizes when it overruns the
    chip's max-width. Without this the entire chip overflowed and the
    close button became unreachable on smaller screens. */
-.alert-chip > span:first-child {
+.alert-chip__text {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -271,23 +278,9 @@
   transform: translateY(-1px);
 }
 
-.alert-chip--info {
-  background: rgba(78, 205, 196, 0.15);
-  border: 1px solid #4ecdc4;
-  color: #4ecdc4;
-}
-
-.alert-chip--warn {
-  background: rgba(255, 184, 77, 0.15);
-  border: 1px solid #ffb84d;
-  color: #ffb84d;
-}
-
-.alert-chip--danger {
-  background: rgba(255, 94, 94, 0.15);
-  border: 1px solid #ff5e5e;
-  color: #ff5e5e;
-}
+/* Chip border/text/background colour is now driven inline from the event's
+   per-type colour (logEntryIcon) — see TopBar.tsx — so the old fixed
+   --info/--warn/--danger level variants are gone. */
 
 .alert-chip__dismiss {
   background: none;
@@ -307,6 +300,109 @@
 @keyframes alert-slide-in {
   from { opacity: 0; transform: translateY(-6px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* ---- Notification details popover (click a chip) ---------------- */
+.alert-detail__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 6100;            /* above the map + panels, like the event log */
+  background: rgba(5, 8, 14, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: alert-detail-fade 0.15s ease-out;
+}
+.alert-detail {
+  width: min(440px, 92vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, #131c27 0%, #070b13 100%);
+  border: 1px solid #2a3d50;   /* overridden inline with the event colour */
+  border-radius: 8px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+  font-family: var(--font-body);
+  color: #d8e4ee;
+  animation: alert-detail-pop 0.18s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.alert-detail__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 16px;
+  border-bottom: 1px solid #2a3d50;
+}
+.alert-detail__icon {
+  font-size: 16px;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+.alert-detail__category {
+  flex: 1 1 auto;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.alert-detail__close {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid #2a3d50;
+  border-radius: 4px;
+  color: #b8c8d6;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.alert-detail__close:hover {
+  color: #ff5e5e;
+  border-color: #ff5e5e;
+}
+.alert-detail__body {
+  padding: 16px;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #d8e4ee;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.alert-detail__foot {
+  padding: 12px 16px;
+  border-top: 1px solid #2a3d50;
+  display: flex;
+  justify-content: flex-end;
+}
+.alert-detail__action {
+  background: rgba(78, 205, 196, 0.12);
+  border: 1px solid #4ecdc4;
+  color: #4ecdc4;
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.alert-detail__action:hover {
+  background: rgba(78, 205, 196, 0.22);
+}
+@keyframes alert-detail-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes alert-detail-pop {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* =================================================================
