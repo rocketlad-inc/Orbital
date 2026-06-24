@@ -248,6 +248,21 @@ async function handleQueueBuild(req, env, ctx) {
     }
     iconVariant = body.icon_variant;
   }
+  // Optional player-typed custom name. The docstring above promised
+  // ship_name was honored; the original implementation never read
+  // it and the completion handler hard-coded `Corvette T142` style
+  // names, so every custom name was silently dropped. NULL falls
+  // through to that legacy generated name at completion time.
+  let shipName = null;
+  if (typeof body.ship_name === 'string') {
+    const trimmed = body.ship_name.trim();
+    if (trimmed.length > 0) {
+      if (trimmed.length > 32) {
+        return err(400, 'bad_request', 'ship_name too long (max 32 chars)');
+      }
+      shipName = trimmed;
+    }
+  }
   const cost = SHIP_BUILD_COST[shipClass];
 
   const bodyRow = await env.DB
@@ -280,10 +295,10 @@ async function handleQueueBuild(req, env, ctx) {
     env.DB
       .prepare(
         `INSERT INTO game_body_build_queue
-          (id, game_id, body_id, faction_id, ship_class, queued_at_tick, completes_at_tick, icon_variant)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, game_id, body_id, faction_id, ship_class, queued_at_tick, completes_at_tick, icon_variant, ship_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .bind(orderId, gameId, bodyId, me.id, shipClass, startTick, completeTick, iconVariant),
+      .bind(orderId, gameId, bodyId, me.id, shipClass, startTick, completeTick, iconVariant, shipName),
     env.DB
       .prepare(
         `UPDATE game_factions SET metal = metal - ?, gold = gold - ?
