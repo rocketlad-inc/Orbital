@@ -124,6 +124,14 @@ export interface MultiplayerActions {
    *  starts here — there is no abort endpoint. */
   ram: (intent: RamIntent) => Promise<MpActionResult>;
 
+  /** Rename a ship the caller owns. Server trims + length-caps the
+   *  name (1..32 chars). Rejects destroyed ships with code=destroyed
+   *  and non-owners with code=not_owner. */
+  renameShip: (shipId: string, name: string) => Promise<MpActionResult>;
+  /** Rename a city or station the caller owns. Same validation +
+   *  error codes as renameShip. */
+  renameSettlement: (settlementId: string, name: string) => Promise<MpActionResult>;
+
   // --- Turn-Based Mode (MP) ---
   /** Host-only: enable/disable TBM and set ticks_per_turn for this game.
    *  Errors carry not_host so non-hosts see why the toggle didn't take. */
@@ -275,6 +283,38 @@ export function MultiplayerActionsProvider({
         ok: false,
         code: res.error?.code,
         error: res.error?.message ?? 'Server rejected the settlement deploy.',
+      };
+    },
+    async renameShip(shipId, name) {
+      const res = await apiFetch(`/api/games/${gameId}/ships/${encodeURIComponent(qualify(shipId))}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name }),
+      });
+      if (res.ok) {
+        logger.info('ACTION', 'Ship renamed', { ship: shipId, name });
+        return { ok: true };
+      }
+      console.warn('renameShip failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the rename.',
+      };
+    },
+    async renameSettlement(settlementId, name) {
+      const res = await apiFetch(`/api/games/${gameId}/settlements/${encodeURIComponent(qualify(settlementId))}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name }),
+      });
+      if (res.ok) {
+        logger.info('ACTION', 'Settlement renamed', { settlement: settlementId, name });
+        return { ok: true };
+      }
+      console.warn('renameSettlement failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the rename.',
       };
     },
     async research(intent) {
