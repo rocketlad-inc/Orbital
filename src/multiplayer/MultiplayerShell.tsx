@@ -40,6 +40,10 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
   const [collapsed, setCollapsed] = useState(false);
   const [tab, setTab] = useState<Tab>('lobby');
   const [gameId, setGameId] = useState<string | null>(null);
+  // Host-only mid-game invite: the room's invite code stays valid after
+  // start, so the host can pull a latecomer into an unclaimed world.
+  const [invite, setInvite] = useState<{ code: string | null; isHost: boolean } | null>(null);
+  const [inviteCopied, setInviteCopied] = useState(false);
 
   // If the player arrives in a room where a game is already active and the
   // tab is still 'lobby' (which is now hidden), jump them to Faction so
@@ -48,18 +52,54 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
     if (gameId && tab === 'lobby') setTab('faction');
   }, [gameId, tab]);
 
+  // Pull the room's invite code + host flag once we're in a game, so the
+  // host can invite a latecomer mid-match. game.id === room.id here.
+  useEffect(() => {
+    if (!gameId) { setInvite(null); return; }
+    let cancelled = false;
+    (async () => {
+      const res = await apiFetch<RoomSnapshot>(`/api/lobby/rooms/${gameId}`);
+      if (cancelled || !res.ok || !res.data) return;
+      setInvite({
+        code: res.data.settings.invite_code ?? null,
+        isHost: res.data.settings.host_id === user?.id,
+      });
+    })();
+    return () => { cancelled = true; };
+  }, [gameId, user?.id]);
+
+  async function copyInvite() {
+    if (!invite?.code) return;
+    try { await navigator.clipboard.writeText(invite.code); } catch { /* ignore */ }
+    setInviteCopied(true);
+    setTimeout(() => setInviteCopied(false), 2500);
+  }
+
   // Detect game_id by polling the room snapshot ourselves rather than
   // relying on LobbyView mounting — that tab is hidden once a game has
   // started, but a returning player still needs to discover it.
+  //
+  // CRITICAL for late-join: only enter the game (setGameId) if this user
+  // actually HAS a faction. A latecomer who joined via invite link after
+  // start is a room member with no faction; auto-entering would mount the
+  // game canvas and 403 on /state. For them we leave gameId null and keep
+  // the lobby tab active, where LobbyView shows the world picker.
   useEffect(() => {
     if (!initialRoomId || gameId) return;
     let cancelled = false;
     const poll = async () => {
       const res = await apiFetch<RoomSnapshot>(`/api/lobby/rooms/${initialRoomId}`);
+      if (cancelled || !res.ok || !res.data.game_id) return;
+      const gid = res.data.game_id;
+      const fac = await apiFetch<{ already_joined: boolean }>(`/api/games/${gid}/joinable-bodies`);
       if (cancelled) return;
-      if (res.ok && res.data.game_id) {
-        setGameId(res.data.game_id);
+      if (fac.ok && fac.data && !fac.data.already_joined) {
+        // Latecomer without a faction — keep them in the lobby tab so the
+        // late-join picker (in LobbyView) can run.
+        setTab('lobby');
+        return;
       }
+      setGameId(gid);
     };
     poll();
     const id = setInterval(poll, 5000);
@@ -263,7 +303,18 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
       <div className={`mp-dock ${collapsed ? 'collapsed' : ''}`}>
         <div className="mp-dock-head">
           <span>{collapsed ? '▸' : 'MULTIPLAYER'}</span>
-          <button onClick={() => setCollapsed((c) => !c)}>{collapsed ? '⤡' : '×'}</button>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            {!collapsed && gameId && invite?.isHost && invite.code && (
+              <button
+                onClick={copyInvite}
+                title="Copy the invite code — a friend can join an unclaimed world mid-game"
+                style={{ fontSize: 11, letterSpacing: '0.04em' }}
+              >
+                {inviteCopied ? `✓ ${invite.code}` : '⧉ Invite'}
+              </button>
+            )}
+            <button onClick={() => setCollapsed((c) => !c)}>{collapsed ? '⤡' : '×'}</button>
+          </div>
         </div>
         {!collapsed && (
           <>
