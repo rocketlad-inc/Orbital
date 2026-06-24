@@ -1,74 +1,12 @@
 /* ============================================================
-   SituationLog — right-edge attention dock, sibling of mp-dock.
-   Sits ABOVE the MP dock when both are collapsed (top: 60),
-   so the user sees two stacked pills.
+   SituationLog — panel content only. The DockRail owns the icon +
+   open/close state; positioning + slide animation come from
+   .dock-panel in DockRail.css.
    ============================================================ */
 
-.sit-dock {
-  position: fixed;
-  right: 8px;
-  z-index: 3100;            /* above mp-dock baseline (3000), below modals */
+.sit-panel-shell {
   font-family: var(--font-body, 'JetBrains Mono', monospace);
   color: #d8e4ee;
-}
-
-/* ----- Collapsed pill (stacked above the mp-dock pill) ----- */
-
-.sit-dock--collapsed { top: 60px; }
-
-.sit-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  background: rgba(10, 14, 20, 0.94);
-  border: 1px solid #2a3d50;
-  border-radius: 3px;
-  color: #b8c8d6;
-  cursor: pointer;
-  transition: border-color 0.12s ease, color 0.12s ease;
-}
-.sit-pill:hover {
-  border-color: #4ecdc4;
-  color: #4ecdc4;
-}
-
-.sit-pill__count {
-  position: relative;
-  font-size: 11px;
-  font-weight: 700;
-  color: #ffb84d;
-  letter-spacing: 0.04em;
-}
-.sit-pill__warn-dot {
-  position: absolute;
-  top: -4px;
-  right: -6px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #ff5e5e;
-  box-shadow: 0 0 4px rgba(255, 94, 94, 0.7);
-}
-
-/* ----- Open panel ----- */
-
-.sit-dock--open {
-  top: 60px;
-  bottom: 12px;
-  width: 360px;
-}
-
-.sit-panel {
-  width: 100%;
-  height: 100%;
-  background: rgba(10, 14, 20, 0.96);
-  border: 1px solid #2a3d50;
-  border-radius: 3px;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  backdrop-filter: blur(6px);
 }
 
 .sit-panel__head {
@@ -107,7 +45,7 @@
   padding: 8px 10px 12px;
 }
 
-/* ----- Empty state ----- */
+/* Empty state */
 .sit-panel__empty {
   padding: 32px 18px;
   text-align: center;
@@ -125,11 +63,8 @@
   line-height: 1.5;
 }
 
-/* ----- Grouped header sections ----- */
-
-.sit-group {
-  margin-bottom: 12px;
-}
+/* Grouped category sections */
+.sit-group { margin-bottom: 12px; }
 .sit-group__head {
   display: flex;
   align-items: baseline;
@@ -152,14 +87,9 @@
   border-radius: 8px;
 }
 
-.sit-group__list {
-  list-style: none;
-  margin: 4px 0 0;
-  padding: 0;
-}
+.sit-group__list { list-style: none; margin: 4px 0 0; padding: 0; }
 
-/* ----- Per-item buttons ----- */
-
+/* Item buttons */
 .sit-item {
   display: flex;
   flex-direction: column;
@@ -179,9 +109,8 @@
   background: rgba(78, 205, 196, 0.06);
   border-left-color: #4ecdc4;
 }
-
-.sit-item--warn        { border-left-color: #ffb84d; }
-.sit-item--warn:hover  { background: rgba(255, 184, 77, 0.08); border-left-color: #ff8c40; }
+.sit-item--warn       { border-left-color: #ffb84d; }
+.sit-item--warn:hover { background: rgba(255, 184, 77, 0.08); border-left-color: #ff8c40; }
 
 .sit-item__title {
   font-size: 12px;
@@ -194,19 +123,4 @@
   color: #8a9fb3;
   margin-top: 2px;
   letter-spacing: 0.02em;
-}
-
-/* ----- Mobile: collapse to a smaller pill, panel goes full-bleed ----- */
-
-@media (max-width: 768px) {
-  .sit-dock--open {
-    width: auto;
-    left: 8px;
-    right: 8px;
-    bottom: 8px;
-    top: auto;
-    max-height: 60vh;
-  }
-  .sit-pill { padding: 8px 12px; }      /* touch-friendly */
-  .sit-pill__count { font-size: 13px; }
 }

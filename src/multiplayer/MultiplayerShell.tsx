@@ -53,7 +53,17 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
   // ACCOUNT section ("Sign Out"), and visually competed with the
   // Outliner + Comms toasts. Removed; signOut import goes with it.
   const { user } = useAuth();
-  const [collapsed, setCollapsed] = useState(false);
+  // Open/close state owned by the DockRail. `collapsed` is now derived
+  // (kept for any descendant code paths that read it); setCollapsed
+  // proxies to the rail so all open/close decisions funnel through one
+  // event channel.
+  const [railOpen, setRailOpen] = useState(false);
+  const [railMounted, setRailMounted] = useState(false);
+  const collapsed = !railOpen;
+  void collapsed;  /* preserved for any descendant code paths still referencing it */
+  const setCollapsed = (next: boolean) => {
+    try { window.dispatchEvent(new CustomEvent('dockrail:set', { detail: { active: next ? null : 'multiplayer' } })); } catch {}
+  };
   const [tab, setTab] = useState<Tab>('lobby');
   const [gameId, setGameId] = useState<string | null>(null);
   // Host-only mid-game invite: the room's invite code stays valid after
@@ -61,28 +71,32 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
   const [invite, setInvite] = useState<{ code: string | null; isHost: boolean } | null>(null);
   const [inviteCopied, setInviteCopied] = useState(false);
 
-  // Mutex with the Situation Log dock. When SitLog opens it dispatches
-  // 'mp:situation-open'; we collapse in response. Vice versa: when our
-  // dock is opened, we dispatch 'mp:dock-open' so SitLog closes.
+  // DockRail-driven open/close. Listening for 'dockrail:active' means we
+  // open ONLY when the rail says we should; toggling our setCollapsed
+  // helper just dispatches a 'dockrail:set' so the rail stays the single
+  // source of truth. railMounted gates rendering during the slide-out
+  // animation so the panel still gets one frame to fade.
   useEffect(() => {
-    const onSitOpen = () => setCollapsed(true);
-    window.addEventListener('mp:situation-open', onSitOpen);
-    return () => window.removeEventListener('mp:situation-open', onSitOpen);
+    const onActive = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      const open = detail?.active === 'multiplayer';
+      setRailOpen(open);
+      if (open) setRailMounted(true);
+      else setTimeout(() => setRailMounted(false), 250);
+    };
+    window.addEventListener('dockrail:active', onActive as EventListener);
+    return () => window.removeEventListener('dockrail:active', onActive as EventListener);
   }, []);
-  useEffect(() => {
-    if (!collapsed) {
-      try { window.dispatchEvent(new CustomEvent('mp:dock-open')); } catch { /* noop */ }
-    }
-  }, [collapsed]);
+
   // SitLog clicks on vote / trade items dispatch 'orbital:open-panel'
-  // with the panel id; switch tabs + un-collapse in response.
+  // with the panel id; switch tabs + open ourselves via the rail.
   useEffect(() => {
     const onOpenPanel = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       const panel = detail?.panel;
       if (panel === 'senate' || panel === 'trades' || panel === 'faction' || panel === 'comms') {
         setTab(panel);
-        setCollapsed(false);
+        try { window.dispatchEvent(new CustomEvent('dockrail:set', { detail: { active: 'multiplayer' } })); } catch {}
       }
     };
     window.addEventListener('orbital:open-panel', onOpenPanel as EventListener);
@@ -155,6 +169,18 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
   // cleared when the player opens the Senate tab.
   const [incomingProposalCount, setIncomingProposalCount] = useState(0);
   const [unreadMessages, setUnreadMessages] = useState(0);
+
+  // Aggregate badge for the multiplayer rail icon: total attention across
+  // unread messages + incoming trades + incoming proposals.
+  useEffect(() => {
+    const count = (unreadMessages | 0) + (incomingTradeCount | 0) + (incomingProposalCount | 0);
+    const hasWarn = (incomingTradeCount > 0) || (incomingProposalCount > 0);
+    try {
+      window.dispatchEvent(new CustomEvent('dockrail:badge', {
+        detail: { which: 'multiplayer', count, hasWarn },
+      }));
+    } catch {}
+  }, [unreadMessages, incomingTradeCount, incomingProposalCount]);
   // Modal payload for a freshly-arrived trade offer. Cleared by either
   // the Dismiss button or by 'Take me there' (which also switches the
   // dock to the Trades tab). One offer at a time; if a second arrives
@@ -382,48 +408,33 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
           ))}
         </div>
       )}
-      <div className={`mp-dock ${collapsed ? 'collapsed' : ''}`}>
+      {railMounted && (
+      <div className={`dock-panel mp-dock${railOpen ? ' is-open' : ''}`}>
         <div className="mp-dock-head">
-          {collapsed ? (
+          <span className="mp-dock-head__title">
+            <MpPeopleIcon />
+            Multiplayer
+          </span>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            {gameId && invite?.isHost && invite.code && (
+              <button
+                className="mp-dock-collapse-btn"
+                onClick={copyInvite}
+                title="Copy the invite code — a friend can join an unclaimed world mid-game"
+                style={{ fontSize: 11, letterSpacing: '0.04em' }}
+              >
+                {inviteCopied ? `✓ ${invite.code}` : '⧉ Invite'}
+              </button>
+            )}
             <button
-              className="mp-dock-open-btn"
-              onClick={() => setCollapsed(false)}
-              title="Open multiplayer panel"
-              aria-label="Open multiplayer panel"
-            >
-              <MpPeopleIcon />
-              {unreadMessages > 0 && (
-                <span className="mp-dock-badge">{unreadMessages > 9 ? '9+' : unreadMessages}</span>
-              )}
-            </button>
-          ) : (
-            <>
-              <span className="mp-dock-head__title">
-                <MpPeopleIcon />
-                Multiplayer
-              </span>
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                {gameId && invite?.isHost && invite.code && (
-                  <button
-                    className="mp-dock-collapse-btn"
-                    onClick={copyInvite}
-                    title="Copy the invite code — a friend can join an unclaimed world mid-game"
-                    style={{ fontSize: 11, letterSpacing: '0.04em' }}
-                  >
-                    {inviteCopied ? `✓ ${invite.code}` : '⧉ Invite'}
-                  </button>
-                )}
-                <button
-                  className="mp-dock-collapse-btn"
-                  onClick={() => setCollapsed(true)}
-                  title="Collapse panel"
-                  aria-label="Collapse multiplayer panel"
-                >»</button>
-              </div>
-            </>
-          )}
+              className="mp-dock-collapse-btn"
+              onClick={() => setCollapsed(true)}
+              title="Close panel"
+              aria-label="Close multiplayer panel"
+            >×</button>
+          </div>
         </div>
-        {!collapsed && (
+        {railOpen && (
           <>
             <div className="mp-tablist">
               {/* Lobby only matters while the host is still setting up. Once a
@@ -508,6 +519,7 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
           </>
         )}
       </div>
+      )}
     </>
   );
 }
