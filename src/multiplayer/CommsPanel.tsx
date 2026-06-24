@@ -209,11 +209,55 @@ export function CommsPanel({ gameId, onUnreadDelta }: Props) {
           const sender = factionsById.get(m.claimed_sender_faction_id);
           const isGroup = m.scope === 'group';
           const isMine = m.claimed_sender_faction_id === me?.id;
+          // For a group message, list the OTHER recipients (excluding
+          // both me and whichever faction owns this channel) so the
+          // bare "[group]" tag actually tells the player who else got
+          // it. If we're in the Confederacy channel and MCRN group-
+          // sent to me + Confederacy + Belt, this renders as
+          //   "MCRN [also to: Belt]"
+          // making it obvious the cabal extends past the current DM.
+          let groupNote: string | null = null;
+          if (isGroup && m.recipient_faction_ids) {
+            const others = m.recipient_faction_ids
+              .filter((fid) => fid !== me?.id)
+              .filter((fid) => typeof channel === 'string' || fid !== channel.factionId)
+              .map((fid) => factionsById.get(fid)?.name ?? '???');
+            if (isMine) {
+              // For my own outgoing group message, ALL non-me
+              // recipients are "also to" (the channel's faction is
+              // the primary, the rest are co-recipients).
+              groupNote = `also to: ${others.join(', ')}`;
+            } else if (others.length > 0) {
+              groupNote = `also to: ${others.join(', ')}`;
+            } else {
+              // Group message with only two participants (me + sender)
+              // — semantically identical to a DM, no extra label needed.
+              groupNote = null;
+            }
+          }
           return (
             <div key={m.id} className="mp-chat-line">
               <span className="who" style={{ color: sender?.color ?? 'var(--mp-accent)' }}>
                 {isMine ? 'You' : sender?.name ?? 'unknown'}
-                {isGroup && ' [group]'}
+                {groupNote && (
+                  <span
+                    title="Group message — went to more than just this DM thread."
+                    style={{
+                      marginLeft: 6,
+                      padding: '0 5px',
+                      fontSize: 10,
+                      fontWeight: 400,
+                      letterSpacing: '0.04em',
+                      background: 'rgba(255, 184, 77, 0.12)',
+                      border: '1px solid rgba(255, 184, 77, 0.55)',
+                      borderRadius: 8,
+                      color: '#ffb84d',
+                      verticalAlign: 'baseline',
+                    }}
+                  >
+                    {groupNote}
+                  </span>
+                )}
               </span>
               <span>{m.body}</span>
             </div>
