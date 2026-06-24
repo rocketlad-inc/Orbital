@@ -370,7 +370,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // the boundary visible everywhere; it's been removed.
     // All ship transfer arcs — faint, beneath bodies.
     if (layerOn('transfers')) {
-      drawAllTransfersLayer(gameState.ships, renderContext);
+      drawAllTransfersLayer(gameState.ships, renderContext, 'player', alliedSet);
     }
     // Incoming enemy trajectories — bright red glow for arcs ending at
     // a player body, dim warning hue for everything else. Honors fog
@@ -381,6 +381,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         gameState.bodies,
         visibleShipIds,
         'player',
+        alliedSet,
         renderContext,
       );
     }
