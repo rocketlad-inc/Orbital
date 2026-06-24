@@ -132,11 +132,11 @@ export const Outliner: React.FC = () => {
           <button
             className="outliner__toggle"
             onClick={() => setCollapsed(false)}
-            title="Show holdings"
-            aria-label="Show holdings"
+            title={`Show holdings${trackedCount > 0 ? ` (${trackedCount})` : ''}`}
+            aria-label={`Show holdings${trackedCount > 0 ? `: ${trackedCount}` : ''}`}
           >
-            {isMobile ? '☰' : '‹'}
-            {isMobile && trackedCount > 0 && (
+            <span className="outliner__toggle-icon">☰</span>
+            {trackedCount > 0 && (
               <span className="outliner__toggle-badge">{trackedCount}</span>
             )}
           </button>

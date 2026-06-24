@@ -41,9 +41,43 @@
   transition: width 0.2s ease, transform 0.2s ease;
 }
 
+/* Collapsed pill on desktop: pulled out of the parent rail's chrome
+   so it reads as its own affordance — bordered, glowy, finger-target
+   sized. The bare `‹` arrow + transparent background was too easy to
+   miss against the dark map ("the outliner button isnt clear when
+   collapsed" — playtester). Mobile keeps its own override below. */
 .outliner--collapsed {
-  width: 32px;
+  width: auto;
   flex: 0 0 auto;
+  border: 1px solid #4ecdc4;
+  background: rgba(10, 14, 20, 0.92);
+  border-radius: 22px;
+  box-shadow: 0 0 12px rgba(78, 205, 196, 0.25);
+}
+.outliner--collapsed .outliner__header {
+  border-bottom: none;
+  padding: 0;
+  background: transparent;
+}
+.outliner--collapsed .outliner__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  font-size: 18px;
+  line-height: 1;
+  min-height: 36px;
+  min-width: 44px;
+  color: #4ecdc4;
+}
+.outliner--collapsed .outliner__toggle:hover {
+  color: #6ee7b7;
+  background: rgba(78, 205, 196, 0.12);
+  border-radius: 22px;
+}
+.outliner__toggle-icon {
+  font-size: 18px;
+  line-height: 1;
 }
 
 .outliner__header {
