@@ -743,6 +743,29 @@
   background: rgba(255, 184, 77, 0.04);
   border-left-color: #ffb84d;
 }
+
+/* Clickable variant — the row is rendered as a <button> so Tab/Enter work
+   and the cursor flips to pointer. Resets the browser's default button
+   chrome so it looks identical to the static div variant. */
+.event-log__row--clickable {
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  color: inherit;
+  border-top: none;
+  border-right: none;
+  border-bottom: none;
+  cursor: pointer;
+  transition: background 0.15s ease, border-left-color 0.15s ease;
+}
+.event-log__row--clickable:hover {
+  background: rgba(255, 184, 77, 0.08);
+}
+.event-log__row--clickable:focus-visible {
+  outline: none;
+  background: rgba(255, 184, 77, 0.1);
+  border-left-color: #ffb84d;
+}
 .event-log__icon {
   flex: 0 0 auto;
   width: 16px;
