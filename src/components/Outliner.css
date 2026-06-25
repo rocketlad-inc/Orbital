@@ -60,20 +60,27 @@
   background: transparent;
 }
 .outliner--collapsed .outliner__toggle {
-  display: inline-flex;
+  /* Fill the whole visible pill — the wrapper .outliner--collapsed gets
+     stretched to the full left-rail width (280px) by the parent flex's
+     default align-items: stretch, so the button used to be a small island
+     of clickability with a wide UNCLICKABLE strip to its right inside the
+     same teal border. Now the whole pill is one click target. */
+  display: flex;
+  width: 100%;
   align-items: center;
+  justify-content: flex-start;
   gap: 6px;
   padding: 8px 14px;
   font-size: 18px;
   line-height: 1;
   min-height: 36px;
   min-width: 44px;
+  border-radius: 22px;
   color: #4ecdc4;
 }
 .outliner--collapsed .outliner__toggle:hover {
   color: #6ee7b7;
   background: rgba(78, 205, 196, 0.12);
-  border-radius: 22px;
 }
 .outliner__toggle-icon {
   font-size: 18px;

@@ -1271,6 +1271,16 @@ export function drawTorchTrajectory(
   color: string = COLORS.arcTransfer,
   isDashed: boolean = false,
   splitPhaseColors: boolean = false,
+  /**
+   * When set, the segment of the trajectory BEHIND the ship (between
+   * startTick and currentTick) fades from near-invisible at the launch
+   * point to full alpha at the ship's position. Reduces visual clutter
+   * for fleets in flight — the player sees where the ship is going, with
+   * just a soft trail of where it's been. Pass plan.startTick (or older)
+   * to disable; pass current sim tick to enable. Honors the caller's
+   * existing globalAlpha (it multiplies into the fade).
+   */
+  currentTick?: number,
 ): Array<{ t: number; x: number; y: number }> {
   // Playtester said the curved torch arcs were unreadable —
   // straight-line mode draws a single segment from start to end.
@@ -1292,6 +1302,31 @@ export function drawTorchTrajectory(
     );
   }
   if (samples.length < 2) return samples;
+
+  // Trail fade: the trajectory behind the ship dims along its length so
+  // the launch point is barely visible while the path ahead reads clear.
+  // Only active when caller passes a sim tick within the burn window
+  // (and we're not in split-phase debug mode). In STRAIGHT_LINE mode the
+  // two-sample polyline doesn't have enough granularity to read as a
+  // gradient, so we sub-sample the chord on the fly.
+  const fadeActive = currentTick != null
+    && currentTick > plan.startTick
+    && currentTick < plan.arriveTick
+    && !splitPhaseColors;
+  if (fadeActive && samples.length === 2) {
+    const N = 24;
+    const a = samples[0];
+    const b = samples[1];
+    samples = [];
+    for (let i = 0; i <= N; i++) {
+      const k = i / N;
+      samples.push({
+        t: a.t + (b.t - a.t) * k,
+        x: a.x + (b.x - a.x) * k,
+        y: a.y + (b.y - a.y) * k,
+      });
+    }
+  }
 
   if (isDashed) ctx.ctx.setLineDash([5, 5]);
   ctx.ctx.lineWidth = 1.5;
@@ -1319,6 +1354,37 @@ export function drawTorchTrajectory(
       else ctx.ctx.lineTo(cp.x, cp.y);
     }
     ctx.ctx.stroke();
+  } else if (fadeActive) {
+    // Per-segment alpha gradient. The caller's globalAlpha is the
+    // "ceiling"; segments multiply against it so a 0.55 caller stays a
+    // 0.55 ceiling at the ship and walks down to ~0 at launch.
+    //
+    // Drawing each segment as its own stroke() means N+1 canvas calls
+    // (~24-80) — fine for a per-frame UI overlay. The endpoint of one
+    // stroke and the start of the next share a coordinate so the line
+    // stays visually continuous.
+    const baseAlpha = ctx.ctx.globalAlpha;
+    ctx.ctx.strokeStyle = color;
+    const cur = currentTick as number;
+    for (let i = 0; i < samples.length - 1; i++) {
+      const segT = (samples[i].t + samples[i + 1].t) / 2;
+      let alphaMul = 1;
+      if (segT < cur) {
+        const denom = Math.max(1e-6, cur - plan.startTick);
+        const k = Math.max(0, Math.min(1, (segT - plan.startTick) / denom));
+        // Eased curve: nothing visible at the launch point, lifts toward
+        // the ship — Math.pow(k, 1.6) hides the tail faster than linear.
+        alphaMul = Math.pow(k, 1.6);
+      }
+      ctx.ctx.globalAlpha = baseAlpha * alphaMul;
+      const A = worldToCanvas(samples[i].x, samples[i].y, ctx);
+      const B = worldToCanvas(samples[i + 1].x, samples[i + 1].y, ctx);
+      ctx.ctx.beginPath();
+      ctx.ctx.moveTo(A.x, A.y);
+      ctx.ctx.lineTo(B.x, B.y);
+      ctx.ctx.stroke();
+    }
+    ctx.ctx.globalAlpha = baseAlpha;
   } else {
     ctx.ctx.strokeStyle = color;
     ctx.ctx.beginPath();
@@ -2120,6 +2186,8 @@ export function drawAllTransfersLayer(
       ship.transit.currentTransfer, ctx.bodies, ctx,
       TRAJECTORY_COLORS[role],
       false,
+      false,
+      ctx.t,           // enable trail fade behind the ship
     );
     ctx.ctx.restore();
   }
@@ -2163,6 +2231,8 @@ export function drawEnemyTrajectoriesLayer(
       // Solid arc when aimed at me (max urgency); dashed when just
       // passing through hostile-but-not-targeting-me space.
       !targetOwned,
+      false,
+      ctx.t,           // enable trail fade behind the ship
     );
     ctx.ctx.restore();
   }

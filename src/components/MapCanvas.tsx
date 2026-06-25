@@ -516,7 +516,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           : role === 'mine'    ? 0.85
           : role === 'hostile' ? 0.85
           : 0.45;                                    // neutral
-        const samples = drawTorchTrajectory(plan, gameState.bodies, renderContext, arcColor, false, isSelected && !tradeLeg);
+        // Pass currentTick so the segment behind the ship fades out
+        // gradually — reduces visual noise from many in-flight ships.
+        // Auto-disabled inside drawTorchTrajectory when splitPhaseColors
+        // is on (selected ship: player wants the full green/pink arc).
+        const samples = drawTorchTrajectory(
+          plan, gameState.bodies, renderContext, arcColor,
+          false, isSelected && !tradeLeg, gameState.currentTick,
+        );
         ctx.restore();
         drawTransitShip(ship, renderContext, isSelected, samples);
 
