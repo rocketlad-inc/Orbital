@@ -15,6 +15,8 @@
 //
 // Resource payload uses server faction columns: metal, fuel, gold, science.
 
+import { getActiveSliders } from './senate.js';
+
 const GAME_ID_RE    = /^[A-Za-z0-9_-]{6,32}$/;
 const TRADE_ID_RE   = /^[A-Za-z0-9_-]{6,64}$/;
 // Faction IDs are formatted "${gameId}:f${slot}" (see seedGameWorld in
@@ -344,18 +346,33 @@ async function handleAccept(req, env, { session, params }) {
   const nowMs = Date.now();
   const tick = game.current_tick ?? 0;
 
+  // Senate trade tariff. Slider value is a percentage (0–50); each side
+  // pays the full amount it offered, but RECEIVES (1 - tariff) of the
+  // counter-offer. The differential evaporates — there's no senate
+  // treasury to bank it, the resources are simply skimmed off the
+  // transaction. Defaults to 0% so an un-legislated game behaves as
+  // before this slider was wired.
+  let tariffPct = 0;
+  try {
+    const sliders = await getActiveSliders(env, gameId, tick);
+    tariffPct = Math.max(0, Math.min(100, Number(sliders.trade_tariff_pct ?? 0)));
+  } catch { /* leave at 0 */ }
+  const receiveMul = 1 - (tariffPct / 100);
+
   // Build atomic batch.
   const stmts = [];
 
   // 1. Transfer resources from proposer to responder (proposer's offer).
   // 2. Transfer resources from responder to proposer (proposer's request).
   // Combined update so each row is touched only once: proposer pays offer_X
-  // and receives request_X; responder is the inverse.
+  // and receives request_X * receiveMul; responder is the inverse. The
+  // floors round down so a 13% tariff on 100 reads as the recipient losing
+  // 13 — never gaining a phantom unit from rounding the other way.
   const proposerDelta = {};
   const responderDelta = {};
   for (const k of RESOURCE_KEYS) {
-    proposerDelta[k] = -trade[`offer_${k}`] + trade[`request_${k}`];
-    responderDelta[k] = +trade[`offer_${k}`] - trade[`request_${k}`];
+    proposerDelta[k] = -trade[`offer_${k}`] + Math.floor(trade[`request_${k}`] * receiveMul);
+    responderDelta[k] = -trade[`request_${k}`] + Math.floor(trade[`offer_${k}`] * receiveMul);
   }
 
   stmts.push(
