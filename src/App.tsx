@@ -36,6 +36,7 @@ import { ModePicker, GameMode } from './ModePicker';
 import { MultiplayerShell } from './multiplayer/MultiplayerShell';
 import { VersionBanner } from './components/VersionBanner';
 import { SituationLog } from './components/SituationLog';
+import { EventLog } from './components/EventLog';
 import { DockRail } from './components/DockRail';
 import { MultiplayerLobby } from './multiplayer/MultiplayerLobby';
 import { MultiplayerGameProvider } from './multiplayer/MultiplayerGameProvider';
@@ -168,6 +169,7 @@ function GameUI({
           render their panels in response to its events. */}
       <DockRail />
       <SituationLog />
+      <EventLog />
 
       {/* SP-only: listen for 'orbital:open-panel' so SitLog clicks on
           a research item open the Research tab. MP has its own listener

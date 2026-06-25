@@ -3,7 +3,7 @@
 // Title | Resources | Nav buttons | Time / Sim controls | Alerts
 // ============================================================
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useGameContext } from '../state/gameContext';
 import { useTurnBasedSettings } from '../state/turnBasedSettings';
@@ -49,25 +49,6 @@ interface TopBarProps {
   onLoadSave?: (state: GameState) => void;
 }
 
-interface Alert {
-  id: string;
-  /** Glyph + color, matching the event-log panel's per-type classification
-   *  (logEntryIcon) so a chip reads the same as its log row. Drives the
-   *  chip's icon, border, and text colour. */
-  icon: string;
-  color: string;
-  /** Short type label shown as the details-popover eyebrow. */
-  category: string;
-  /** Compact label for the chip (ellipsised when long). */
-  text: string;
-  /** Full, untruncated text shown in the click-to-open details box. */
-  detail: string;
-  /** Optional secondary action surfaced as a button inside the details box
-   *  (e.g. jump to the ship the alert is about), with its button label. */
-  onClick?: () => void;
-  actionLabel?: string;
-}
-
 const SIM_SPEEDS = [1, 10, 100, 1000, 10000, 100000];
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -76,7 +57,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   canSaveLoad = false, onLoadSave,
 }) => {
   const {
-    gameState, simSpeed, setSimSpeed, updateTick, selectShip,
+    gameState, simSpeed, setSimSpeed, updateTick,
     turnBasedActive, commitTurn,
   } = useGameContext();
   // MP turn status: only present when wrapped in MultiplayerActionsProvider.
@@ -87,42 +68,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   const { status: mpTurnStatus, refresh: refreshTurnStatus } = useMpTurnStatus();
   const mpTbmActive = !!mpTurnStatus?.turn_based_enabled;
   const { user, signOut } = useAuth();
-  const [dismissedAlertIds, setDismissedAlertIds] = useState<Set<string>>(new Set());
-  // The alert whose full details popover is open (null = closed). Clicking a
-  // notification chip opens it; see AlertDetailsModal.
-  const [detailAlert, setDetailAlert] = useState<Alert | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [logOpen, setLogOpen] = useState(false);
-  // Track how many entries the player had ALREADY seen the last time
-  // they opened the log. Persisted per game so coming back after a
-  // break shows you what's new since you logged off. SP uses 'sp' as
-  // the bucket id since adminGameId is MP-only.
-  const eventLogStorageKey = `eventLog:lastReadCount:${adminGameId ?? 'sp'}`;
-  const [lastReadCount, setLastReadCount] = useState<number>(() => {
-    try {
-      const raw = typeof window !== 'undefined' ? window.localStorage.getItem(eventLogStorageKey) : null;
-      const n = raw != null ? parseInt(raw, 10) : 0;
-      return Number.isFinite(n) && n >= 0 ? n : 0;
-    } catch { return 0; }
-  });
-  // Re-read when the gameId changes (e.g. host swapped games).
-  useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(eventLogStorageKey);
-      const n = raw != null ? parseInt(raw, 10) : 0;
-      setLastReadCount(Number.isFinite(n) && n >= 0 ? n : 0);
-    } catch { /* ignore */ }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventLogStorageKey]);
-  // If new entries arrive AFTER trimming (combatLog is bounded server-side),
-  // the lastReadCount can exceed combatLog.length. Clamp on the fly so the
-  // new-count math doesn't go negative or claim everything is unread.
-  const clampedLastRead = Math.min(lastReadCount, gameState.combatLog.length);
-  const eventLogNewCount = Math.max(0, gameState.combatLog.length - clampedLastRead);
-  const markLogRead = () => {
-    setLastReadCount(gameState.combatLog.length);
-    try { window.localStorage.setItem(eventLogStorageKey, String(gameState.combatLog.length)); } catch { /* ignore */ }
-  };
   // Save / Load modal state. Lifted into TopBar (rather than SideMenu)
   // because closing the menu shouldn't kill the modal — players want to
   // see the picker without the menu also occupying the screen.
@@ -162,88 +108,13 @@ export const TopBar: React.FC<TopBarProps> = ({
     );
   }, [gameState.settlements, gameState.bodies, gameState.ships, gameState.factionTech]);
 
-  // Derive alerts from game state
-  const alerts = useMemo<Alert[]>(() => {
-    const out: Alert[] = [];
-
-    // Recent chronicle events (top 2). These are the same strings the
-    // EventLogPanel shows, so we classify each with logEntryIcon to give the
-    // chip the matching icon + colour (a discovery reads cyan, destruction
-    // red, etc.) rather than a flat "danger" red for everything.
-    if (gameState.combatLog.length > 0) {
-      const recent = gameState.combatLog.slice(-2);
-      recent.forEach((msg, i) => {
-        const cls = logEntryIcon(msg);
-        // Per Lorne: chips should read "icon + name" — no verbose
-        // sentence. We pull the primary entity (ship / body / faction)
-        // out of the chronicle string; the full message still shows
-        // in the click-to-open details popover.
-        const name = extractPrimaryName(msg);
-        out.push({
-          id: `combat-${gameState.combatLog.length - recent.length + i}`,
-          icon: cls.icon,
-          color: cls.color,
-          category: cls.label,
-          text: name,
-          detail: msg,
-        });
-      });
-    }
-
-    // Ships arriving soon (within 5 ticks).
-    for (const ship of playerShips) {
-      let targetBodyId: string | undefined;
-      let arrivalTick: number | undefined;
-      if (ship.transit) {
-        targetBodyId = ship.transit.currentTransfer.targetBodyId;
-        arrivalTick = ship.transit.currentTransfer.arriveTick;
-      }
-      if (targetBodyId && arrivalTick !== undefined) {
-        const eta = arrivalTick - gameState.currentTick;
-        if (eta <= 5 && eta > 0) {
-          const target = gameState.bodies.find(b => b.id === targetBodyId);
-          const detail = `${ship.name} arriving at ${target?.name || '?'} in T-${eta.toFixed(0)}`;
-          out.push({
-            id: `arrive-${ship.id}`,
-            icon: '→',
-            color: '#4ecdc4',
-            category: 'Arrival',
-            text: ship.name,   // chip stays compact; sentence lives in detail
-            detail,
-            onClick: () => selectShip(ship.id),
-            actionLabel: 'Go to ship',
-          });
-        }
-      }
-    }
-
-    // Low fuel ships
-    for (const ship of playerShips) {
-      if (ship.fuel < 20) {
-        const detail = `${ship.name} low fuel (${Math.round(ship.fuel)})`;
-        out.push({
-          id: `lowfuel-${ship.id}`,
-          icon: '⚠',
-          color: '#ffb84d',
-          category: 'Low fuel',
-          text: ship.name,
-          detail,
-          onClick: () => selectShip(ship.id),
-          actionLabel: 'Go to ship',
-        });
-      }
-    }
-
-    return out.filter(a => !dismissedAlertIds.has(a.id));
-  }, [gameState, playerShips, dismissedAlertIds, selectShip]);
-
-  const dismissAlert = (id: string) => {
-    setDismissedAlertIds(prev => {
-      const next = new Set(prev);
-      next.add(id);
-      return next;
-    });
-  };
+  // The alert-chip derivation that used to live here (recent combat events,
+  // ships arriving soon, low-fuel ships) is gone — both the EventLog dock
+  // panel (full chronicle) and the SituationLog dock panel (arrivals + low
+  // fuel + every other attention category) cover the same ground without
+  // crowding the top bar. extractPrimaryName / logEntryIcon / hexToRgba /
+  // alertFromLogEntry / AlertDetailsModal / EventLogPanel moved into
+  // src/components/EventLog.tsx with the panel itself.
 
   const handleSkip = (n: number) => updateTick(gameState.currentTick + n);
 
@@ -508,303 +379,18 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
       </div>
 
-      <div className="top-bar__alerts">
-        {alerts.slice(0, 4).map(alert => (
-          <div
-            key={alert.id}
-            className="alert-chip"
-            style={{ borderColor: alert.color, color: alert.color, background: hexToRgba(alert.color, 0.12) }}
-            onClick={() => setDetailAlert(alert)}
-            title="Click for details"
-          >
-            <span className="alert-chip__icon" aria-hidden="true">{alert.icon}</span>
-            <span className="alert-chip__text">{alert.text}</span>
-            <button
-              className="alert-chip__dismiss"
-              onClick={(e) => { e.stopPropagation(); dismissAlert(alert.id); }}
-              title="Dismiss"
-            >×</button>
-          </div>
-        ))}
-        {gameState.combatLog.length > 0 && (
-          <button
-            className={`top-bar__log-toggle${eventLogNewCount > 0 ? ' has-new' : ''}`}
-            onClick={() => setLogOpen(true)}
-            title={
-              eventLogNewCount > 0
-                ? `${eventLogNewCount} new since you last opened the log`
-                : 'Open full event log'
-            }
-          >
-            ☰ Log
-            {eventLogNewCount > 0 ? (
-              <span className="top-bar__log-toggle__pip">{eventLogNewCount}</span>
-            ) : (
-              <span className="top-bar__log-toggle__total"> ({gameState.combatLog.length})</span>
-            )}
-          </button>
-        )}
-      </div>
-
-      {logOpen && (
-        <EventLogPanel
-          entries={gameState.combatLog}
-          newSinceIndex={clampedLastRead}
-          onClose={() => { markLogRead(); setLogOpen(false); }}
-        />
-      )}
-
-      {detailAlert && (
-        <AlertDetailsModal alert={detailAlert} onClose={() => setDetailAlert(null)} />
-      )}
+      {/* The alert chips + ☰ Log (N) pill used to live here. The
+          chronicle is now its own DockRail panel (EventLog.tsx) and
+          the chips were dropped — they crowded the top bar and split
+          attention with both the Situation Log + Event Log on the
+          rail. The empty .top-bar__alerts div is left as a flex
+          spacer so the time controls + MP button keep their existing
+          right-edge anchor. */}
+      <div className="top-bar__alerts" />
     </div>
   );
 };
 
-// Full chronicle history. The top-bar ticker only shows the last 2-4
-// entries to stay compact; this drawer surfaces the full server-pushed
-// combatLog (gameState.combatLog) in chronological order.
-
-/**
- * Classify a free-text event-log line into an icon + color by keyword.
- * The log is just strings (combat.ts / secrets.ts / dysonSphere push
- * pre-formatted messages), so we sniff the text rather than carry a
- * structured kind. Order matters: more specific categories (Dyson,
- * discovery) are checked before the generic "destroyed"/"hits" buckets
- * so e.g. "The Dyson Sphere … destroyed" reads as a Dyson event, not a
- * plain destruction. Glyphs stay in the unicode family the rest of the
- * UI uses (◆ ■ ⚛ …) so they render without an icon font. */
-function logEntryIcon(entry: string): { icon: string; color: string; label: string } {
-  const s = entry.toLowerCase();
-  if (s.includes('dyson')) return { icon: '☀', color: '#fbbf24', label: 'Megaproject' };
-  if (s.includes('victory') || s.includes(' wins')) return { icon: '♛', color: '#6ee7b7', label: 'Victory' };
-  if (s.includes('discovery') || s.includes('databank') || s.includes('warp gate') || s.includes('stargate')) {
-    return { icon: '✦', color: '#67e8f9', label: 'Discovery' };
-  }
-  // Diplomacy buckets — order matters: 'broke ... pact' must match
-  // before the generic 'pact' word in 'signed Defense Pact'.
-  if (s.includes('broke') && s.includes('pact'))   return { icon: '⚔', color: '#ff5e5e', label: 'Pact broken' };
-  // Text-presentation peace symbol (☮ + VS15) so it honours the cyan color
-  // and stays monochrome like the other glyphs — the dove emoji rendered
-  // colour-locked and inconsistent across OSes.
-  if (s.includes('signed') && s.includes('pact'))  return { icon: '☮︎', color: '#67e8f9', label: 'Pact signed' };
-  if (s.includes('traded') && s.includes(' → '))   return { icon: '⚖', color: '#fbbf24', label: 'Trade' };
-  if (s.includes('captured')) return { icon: '⚑', color: '#ffd700', label: 'Capture' };
-  if (s.includes('destroyed') || s.includes('collapsed')) return { icon: '✖', color: '#ff5e5e', label: 'Destruction' };
-  if (s.includes(' hits ')) return { icon: '⚔', color: '#ffb84d', label: 'Combat' };
-  return { icon: '›', color: '#8a9fb3', label: 'Event' };
-}
-
-/** Pull the primary entity name (ship / body / faction) out of a
- *  chronicle line. Chronicle strings are freeform but typically lead
- *  with the actor: "Corvette-3 hits Frigate-1", "Earth captured by ...".
- *  We grab the first run of capitalised / numbered tokens. Fallback:
- *  the first 18 chars, ellipsised — better than an empty chip. */
-function extractPrimaryName(msg: string): string {
-  // Strip leading punctuation/quotes ("The ", '"…"') so the first real
-  // word lines up at index 0. Matches a contiguous run of words that
-  // start with a capital letter or a digit, joined by spaces / hyphens.
-  const cleaned = msg.replace(/^["'\s]+/, '').replace(/^The\s+/, '');
-  const m = cleaned.match(/^([A-Z][A-Za-z0-9-]*(?:[\s-]+[A-Z0-9][A-Za-z0-9-]*)*)/);
-  if (m && m[1]) {
-    const name = m[1].trim();
-    return name.length > 22 ? name.slice(0, 22) + '…' : name;
-  }
-  // Couldn't find a capital-led name. Truncate hard so the chip stays
-  // compact rather than ellipsising to nothing.
-  return cleaned.length > 18 ? cleaned.slice(0, 18) + '…' : cleaned;
-}
-
-// alertFromLogEntry removed in event-log phase 1: log rows now expand
-// inline instead of opening the AlertDetailsModal pop-out. Top-bar
-// chips still use AlertDetailsModal for their own click-to-open
-// behaviour — that path is unchanged.
-
-/** #rrggbb (or #rgb) → rgba() string. Used to tint a chip's background with
- *  its own per-type colour at low alpha so border/text/fill stay coherent. */
-function hexToRgba(hex: string, alpha: number): string {
-  const h = hex.replace('#', '');
-  const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
-  const r = parseInt(full.slice(0, 2), 16);
-  const g = parseInt(full.slice(2, 4), 16);
-  const b = parseInt(full.slice(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-/**
- * Click-to-open details for a top-bar notification chip. The chip itself is
- * truncated; this centred popover shows the full, untruncated text plus the
- * event's type, and surfaces the chip's optional action (e.g. jump to ship).
- * Portaled to <body>, dismissed by backdrop / close button / Esc — same
- * pattern as EventLogPanel and the save/load modal.
- */
-const AlertDetailsModal: React.FC<{ alert: Alert; onClose: () => void }> = ({ alert, onClose }) => {
-  const closeRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    // Capture-phase + stopImmediatePropagation so Esc closes ONLY this
-    // modal even when a deeper overlay (the EventLogPanel) also has a
-    // window-level Esc listener — otherwise pressing Esc would close both
-    // and dump the player back to the map after a single row peek.
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopImmediatePropagation();
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', onKey, true);
-    // Move focus into the dialog so keyboard/screen-reader users land here
-    // and Esc/Enter act on it rather than the map behind.
-    closeRef.current?.focus();
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [onClose]);
-
-  return createPortal(
-    <div className="alert-detail__backdrop" onClick={onClose}>
-      <div
-        className="alert-detail"
-        style={{ borderColor: alert.color }}
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-label={`${alert.category} details`}
-      >
-        <header className="alert-detail__head">
-          <span className="alert-detail__icon" style={{ color: alert.color }} aria-hidden="true">{alert.icon}</span>
-          <span className="alert-detail__category" style={{ color: alert.color }}>{alert.category}</span>
-          <button ref={closeRef} className="alert-detail__close" onClick={onClose} title="Close (Esc)">×</button>
-        </header>
-        <div className="alert-detail__body">{alert.detail}</div>
-        {alert.onClick && (
-          <footer className="alert-detail__foot">
-            <button
-              className="alert-detail__action"
-              onClick={() => { alert.onClick?.(); onClose(); }}
-            >{alert.actionLabel ?? 'Select ship'}</button>
-          </footer>
-        )}
-      </div>
-    </div>,
-    document.body,
-  );
-};
-
-const EventLogPanel: React.FC<{
-  entries: string[];
-  /** Entries at index >= newSinceIndex are tagged as "new" — they get
-   *  the gold-glow pulse until the player closes the panel (which
-   *  marks-read via the parent's onClose). */
-  newSinceIndex: number;
-  onClose: () => void;
-}> = ({ entries, newSinceIndex, onClose }) => {
-  // Track which rows are expanded. Click toggles. Multiple rows can be
-  // open simultaneously — the player might want to compare two combat
-  // results without losing context.
-  const [expanded, setExpanded] = useState<Set<number>>(new Set());
-  const toggle = (i: number) => {
-    setExpanded(prev => {
-      const next = new Set(prev);
-      if (next.has(i)) next.delete(i); else next.add(i);
-      return next;
-    });
-  };
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  // Portal to <body> so this overlay isn't trapped by .top-bar's
-  // backdrop-filter (which promotes the top-bar to a containing block
-  // for position:fixed descendants and breaks the right-edge anchor).
-  return createPortal(
-    <>
-      <div className="event-log__backdrop" onClick={onClose} />
-      <aside className="event-log">
-        <header className="event-log__head">
-          <div className="event-log__title">EVENT LOG</div>
-          <button className="event-log__close" onClick={onClose} title="Close (Esc)">×</button>
-        </header>
-        <div className="event-log__body">
-          {entries.length === 0 ? (
-            <div className="event-log__empty">No events yet. Combat results and game milestones will appear here.</div>
-          ) : (
-            // Render newest-first so the player sees fresh activity at
-            // the top. combatLog is append-only, so the last index is
-            // the most recent.
-            entries.map((entry, displayIndex) => {
-              // displayIndex is the position in entries[]. We render
-              // newest-first by reversing later — keep the original
-              // index here for "is this new?" gating.
-              return { entry, index: displayIndex };
-            }).reverse().map(({ entry, index: i }) => {
-              const { icon, color, label } = logEntryIcon(entry);
-              const isNew = i >= newSinceIndex;
-              const isOpen = expanded.has(i);
-              // For phase 1 the body just echoes the headline. Phase 2
-              // (template engine) and phase 4 (flavor banks) fill this
-              // with real prose; until then we surface the same text
-              // styled as a quote so the click-expand interaction has
-              // SOMETHING to reveal. Editable in phase 3.
-              return (
-                <div
-                  key={i}
-                  className={
-                    'event-log__row'
-                    + (isOpen ? ' is-open' : '')
-                    + (isNew ? ' is-new' : '')
-                  }
-                  style={{
-                    // Per-category left-border + accent driven by the
-                    // logEntryIcon classifier. Tints stay subtle so the
-                    // body text contrast doesn't suffer.
-                    borderLeftColor: color,
-                  } as React.CSSProperties}
-                >
-                  <button
-                    type="button"
-                    className="event-log__row__headline"
-                    onClick={() => toggle(i)}
-                    title={isOpen ? 'Collapse' : 'Expand'}
-                  >
-                    <span
-                      className="event-log__icon"
-                      style={{ color }}
-                      aria-hidden="true"
-                    >{icon}</span>
-                    <span className="event-log__text">{entry}</span>
-                    <span
-                      className="event-log__chevron"
-                      aria-hidden="true"
-                    >{isOpen ? '▾' : '▸'}</span>
-                  </button>
-                  {isOpen && (
-                    <div className="event-log__row__body">
-                      <div className="event-log__row__category" style={{ color }}>
-                        {label}
-                      </div>
-                      <div className="event-log__row__flavor">
-                        {/* Phase 1 placeholder. Real flavor lands in
-                            phase 2+ once the template engine + banks
-                            are wired in. For now we echo the headline
-                            so the expand state has something to show. */}
-                        {entry}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          )}
-        </div>
-        <footer className="event-log__foot">
-          {entries.length} entries · Press <kbd>Esc</kbd> to close
-        </footer>
-      </aside>
-    </>,
-    document.body,
-  );
-};
 
 // ----------------------------------------------------------------
 // Resource pill with per-tick income subtext.

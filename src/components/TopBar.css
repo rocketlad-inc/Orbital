@@ -738,55 +738,23 @@
   font-size: 14px;
   line-height: 1.5;
   color: #c5d3df;
+  padding: 8px 12px;
   background: rgba(255, 255, 255, 0.02);
-  /* borderLeftColor is set inline per-category by EventLogPanel using
-     the same color logEntryIcon returns for the row's icon. We keep
-     a baseline width here. */
-  border-left: 3px solid #2a3d50;
+  border-left: 2px solid #2a3d50;
   border-radius: 0 3px 3px 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  transition: background 0.12s ease, box-shadow 0.24s ease;
-}
-.event-log__row:hover {
-  background: rgba(255, 184, 77, 0.04);
-}
-.event-log__row.is-open {
-  background: rgba(78, 205, 196, 0.05);
-}
-/* Gold glow on entries newer than the last time the panel was opened.
-   Pulses gently until the player closes the panel (which marks-read). */
-.event-log__row.is-new {
-  box-shadow: 0 0 12px rgba(255, 215, 0, 0.35), inset 0 0 0 1px rgba(255, 215, 0, 0.25);
-  animation: event-log-new-pulse 2.4s ease-in-out infinite;
-}
-@keyframes event-log-new-pulse {
-  0%, 100% { box-shadow: 0 0 8px rgba(255, 215, 0, 0.25), inset 0 0 0 1px rgba(255, 215, 0, 0.20); }
-  50%      { box-shadow: 0 0 16px rgba(255, 215, 0, 0.45), inset 0 0 0 1px rgba(255, 215, 0, 0.35); }
-}
-
-/* Clickable headline — icon + text + chevron. Rendered as a <button>
-   so keyboard users can Tab + Enter to expand. */
-.event-log__row__headline {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  padding: 8px 12px;
-  background: transparent;
-  border: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  width: 100%;
 }
-.event-log__row__headline:hover { background: rgba(255, 184, 77, 0.05); }
-.event-log__row__headline:focus-visible {
-  outline: none;
-  background: rgba(255, 184, 77, 0.1);
+.event-log__row:hover {
+  background: rgba(255, 184, 77, 0.04);
+  border-left-color: #ffb84d;
 }
 
+/* .event-log__row--clickable rules removed in phase-1 of the
+   EventLog overhaul — rows now expand inline via a headline button
+   inside the row container, owned by EventLog.css with the
+   .event-log-shell scoping. No selectors here match those rules. */
 .event-log__icon {
   flex: 0 0 auto;
   width: 16px;
@@ -797,67 +765,6 @@
 .event-log__text {
   flex: 1 1 auto;
   min-width: 0;
-}
-.event-log__chevron {
-  flex: 0 0 auto;
-  color: #7a8b9a;
-  font-size: 12px;
-  line-height: 1.5;
-  width: 14px;
-  text-align: center;
-}
-
-/* Revealed body — appears below the headline on click. Hosts the
-   category eyebrow + flavor prose. Phase-1 placeholder; phase 2+
-   swaps in real flavor + the edit affordance. */
-.event-log__row__body {
-  padding: 4px 14px 12px 38px;
-  font-size: 13px;
-  line-height: 1.55;
-  color: #b8c8d6;
-  border-top: 1px solid rgba(78, 205, 196, 0.08);
-  background: rgba(10, 14, 20, 0.4);
-}
-.event-log__row__category {
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  margin-bottom: 4px;
-  opacity: 0.85;
-}
-.event-log__row__flavor {
-  font-style: italic;
-  color: #c5d3df;
-}
-
-/* New-count pip on the top-bar Log button. Gold chip, matches the
-   outliner badge style. Replaces the bare "Log (30)" count when
-   there are unread entries. */
-.top-bar__log-toggle__pip {
-  display: inline-block;
-  min-width: 18px;
-  height: 18px;
-  margin-left: 6px;
-  padding: 0 5px;
-  background: #ffd700;
-  color: #0a0e14;
-  font-family: var(--font-display, 'JetBrains Mono', monospace);
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 18px;
-  text-align: center;
-  border-radius: 9px;
-  letter-spacing: 0.02em;
-}
-.top-bar__log-toggle__total {
-  color: #7a8b9a;
-  font-size: 11px;
-  margin-left: 4px;
-}
-.top-bar__log-toggle.has-new {
-  border-color: #ffd700;
-  color: #ffd700;
 }
 
 .event-log__empty {
