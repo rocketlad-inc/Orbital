@@ -463,6 +463,26 @@ async function handleDeploySettlement(req, env, ctx) {
     return err(409, 'no_surface', 'cannot found a city on this body type');
   }
 
+  // One city + one station per body — enforce server-side (the client
+  // already hides the deploy button, but the server is the source of
+  // truth; without this a stale/forged client could stack settlements).
+  // Counts any LIVING settlement of this type at the body regardless of
+  // owner: a body can't host two cities even for different factions
+  // under the one-settlement-per-body rule.
+  const existing = await env.DB
+    .prepare(
+      `SELECT 1 AS x FROM game_settlements
+        WHERE game_id = ? AND body_id = ? AND type = ?
+          AND destroyed_at_tick IS NULL
+        LIMIT 1`,
+    )
+    .bind(gameId, bodyId, type)
+    .first();
+  if (existing) {
+    return err(409, 'occupied',
+      `this body already has a ${type} — only one ${type} per body`);
+  }
+
   // Caller needs a FREIGHTER orbiting here OR they already own the body.
   // Combat ships don't carry construction materials, so requiring a
   // freighter matches the client gate (BodyInspector.tsx) and the SP
