@@ -351,6 +351,43 @@ async function handleListRooms(_req, env) {
 // "resume" shortcut and (when there's a single in-progress game) to
 // auto-redirect users back into their active game.
 async function handleListMyRooms(_req, env, session) {
+  // Defensive self-heal: re-insert missing room_members rows for any
+  // active game where the user owns a faction. game_factions is the
+  // canonical "this user belongs in this room" record — /state and
+  // /joinable-bodies both auth off it, not room_members, so a missing
+  // membership row is a UI-only orphan: the client polls /state fine
+  // but the lobby's My Games filter (which DOES key off room_members)
+  // shows nothing, and the player looks kicked.
+  //
+  // Player-reported repro: latecomer joined via late-join (writes
+  // room_members + game_factions), played for a while, hard-reset, came
+  // back — game_factions intact, room_members row gone. Root cause of
+  // the deletion is still unknown (host-kick is the only DELETE I can
+  // find and it's blocked after game start), but the recovery is
+  // unambiguous: if the faction exists, the membership should exist.
+  //
+  // INSERT OR IGNORE is safe and idempotent; the inner SELECT filters to
+  // rooms whose backing game exists and is active or in lobby, so we
+  // don't resurrect membership for completed/abandoned matches.
+  try {
+    await env.DB
+      .prepare(
+        `INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at)
+         SELECT g.id, gf.user_id, ?1
+           FROM game_factions gf
+           JOIN games g ON g.id = gf.game_id
+          WHERE gf.user_id = ?2
+            AND g.status IN ('active', 'lobby')`,
+      )
+      .bind(Date.now(), session.user_id)
+      .run();
+  } catch (e) {
+    // Best-effort: if the self-heal fails, fall through to the existing
+    // query. Worst case the player still sees the empty list — same as
+    // before this commit, no regression.
+    console.warn('handleListMyRooms: self-heal insert failed', e);
+  }
+
   const rows = await env.DB
     .prepare(
       `SELECT r.id, r.name, r.status, r.max_players, r.host_id, u.display_name AS host_name,
