@@ -78,6 +78,53 @@ const EFFECT_TICKS = 7;
 const DEBATE_MIN = 1, DEBATE_MAX = 48;
 const VOTE_MIN   = 1, VOTE_MAX   = 24;
 
+// ============================================================
+// Bill kinds
+// ------------------------------------------------------------
+// 'slider_law' is the original — adjusts a global multiplier for
+// EFFECT_TICKS ticks. The four new TARGETED kinds carry a
+// `target_faction_id` in their payload and write a senate_effects
+// row with effect_kind set to the bill kind + target set on it,
+// so runtime checks (combat, harvest, trade) can ask "does this
+// faction have an active <kind> aimed at it?" in one indexed lookup.
+//
+// Reparations is the odd one out: no ongoing effect, just a
+// one-shot credits transfer at resolution time. It still writes
+// a chronicle entry so the event log records it.
+//
+// 'chancellor_vote' is the win-condition bill: passing it ends the
+// match with victory_type='chancellor', winner = candidate. Each
+// faction can call this exactly ONCE per game (a failed/withdrawn
+// proposal does not refund the attempt — see ONE_PER_GAME_STATUSES).
+// ============================================================
+const BILL_KINDS = new Set([
+  'slider_law', 'trade_embargo', 'war_authorization',
+  'production_sanction', 'reparations', 'chancellor_vote',
+]);
+const TARGETED_BILL_KINDS = new Set([
+  'trade_embargo', 'war_authorization',
+  'production_sanction', 'reparations', 'chancellor_vote',
+]);
+const ONGOING_EFFECT_KINDS = new Set([
+  'trade_embargo', 'war_authorization', 'production_sanction',
+]);
+const ONE_PER_GAME_KINDS = new Set(['chancellor_vote']);
+/** Statuses that count against the "once per game" limit. A withdrawn
+ *  proposal returns the slot; a failed or voted-down one does not. */
+const ONE_PER_GAME_STATUSES = new Set(['debating', 'voting', 'passed', 'failed']);
+
+// Ongoing-effect durations. Sanctions hit harder than slider laws and
+// last longer so the political consequence is felt.
+const EMBARGO_EFFECT_TICKS         = 14;
+const WAR_AUTH_EFFECT_TICKS        = 21;
+const PROD_SANCTION_EFFECT_TICKS   = 14;
+const PROD_SANCTION_MULTIPLIER     = 0.5;   // half yield while active
+
+/** Reparations: target pays this many credits to every other active
+ *  faction. Capped by what the target actually has — they don't go
+ *  negative; the transfer is shrunk proportionally if they can't pay. */
+const REPARATIONS_PER_FACTION = 200;
+
 function clampInt(v, min, max, fallback) {
   const n = Math.floor(Number(v));
   if (!Number.isFinite(n)) return fallback;
@@ -155,11 +202,16 @@ async function planetCount(env, gameId, factionId) {
  * to the catalog default if none exists.
  */
 export async function getActiveSliders(env, gameId, currentTick) {
+  // Filter by effect_kind='slider' so the targeted-sanction rows
+  // (trade_embargo, war_authorization, production_sanction — which keep
+  // slider_id NULL) don't accidentally short-circuit through the SLIDER_BY_ID
+  // gate below if anything ever wrote a stray non-null slider_id on them.
   const rows = await env.DB
     .prepare(
       `SELECT slider_id, value, active_from_tick, active_until_tick, created_at_ms
          FROM senate_effects
         WHERE game_id = ?
+          AND effect_kind = 'slider'
           AND active_from_tick <= ?
           AND active_until_tick > ?`,
     )
@@ -178,7 +230,8 @@ export async function getActiveSliders(env, gameId, currentTick) {
 async function listActiveEffectRows(env, gameId, currentTick) {
   const rows = await env.DB
     .prepare(
-      `SELECT id, slider_id, value, active_from_tick, active_until_tick
+      `SELECT id, slider_id, value, effect_kind, target_faction_id,
+              active_from_tick, active_until_tick
          FROM senate_effects
         WHERE game_id = ?
           AND active_until_tick > ?
@@ -187,6 +240,32 @@ async function listActiveEffectRows(env, gameId, currentTick) {
     .bind(gameId, currentTick)
     .all();
   return rows.results ?? [];
+}
+
+/**
+ * Is there an active <effectKind> sanction aimed at <factionId> right
+ * now? Used by combat (war_authorization), trade-route delivery
+ * (trade_embargo), and body harvest (production_sanction). Returns a
+ * boolean; callers don't need the row contents.
+ *
+ * Cheap: single indexed query (idx_senate_effects_target). Safe to call
+ * once per tick per relevant entity.
+ */
+export async function hasActiveSanction(env, gameId, currentTick, factionId, effectKind) {
+  if (!factionId || !effectKind) return false;
+  const row = await env.DB
+    .prepare(
+      `SELECT 1 AS x FROM senate_effects
+        WHERE game_id = ?
+          AND effect_kind = ?
+          AND target_faction_id = ?
+          AND active_from_tick <= ?
+          AND active_until_tick > ?
+        LIMIT 1`,
+    )
+    .bind(gameId, effectKind, factionId, currentTick, currentTick)
+    .first();
+  return !!row;
 }
 
 // ---------- proposal shaping ----------
@@ -271,14 +350,14 @@ async function handleCreateProposal(req, env, { params, session }) {
 
   const body = await readJson(req);
   if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
-  const { slider_id, target_value, title, summary } = body;
 
-  const slider = SLIDER_BY_ID[slider_id];
-  if (!slider) return err(400, 'bad_request', 'unknown slider_id');
-  const v = Number(target_value);
-  if (!Number.isFinite(v)) return err(400, 'bad_request', 'target_value must be a number');
-  if (v < slider.min || v > slider.max) return err(400, 'bad_request', `target_value out of range [${slider.min}, ${slider.max}]`);
+  // Bill kind. Defaults to 'slider_law' so a legacy client that doesn't
+  // send `kind` keeps working — only the new fields (target_faction_id,
+  // candidate_faction_id) are required for the new kinds.
+  const kind = typeof body.kind === 'string' ? body.kind : 'slider_law';
+  if (!BILL_KINDS.has(kind)) return err(400, 'bad_request', `unknown bill kind '${kind}'`);
 
+  const { title, summary } = body;
   if (typeof title !== 'string' || title.trim().length < 1 || title.length > 80) {
     return err(400, 'bad_request', 'title must be 1-80 chars');
   }
@@ -286,12 +365,36 @@ async function handleCreateProposal(req, env, { params, session }) {
     return err(400, 'bad_request', 'summary must be 1-500 chars');
   }
 
-  // 1-active-proposal-per-faction cooldown
+  // 1-active-proposal-per-faction cooldown (any kind, any status that's
+  // still resolving) — keeps a single faction from spamming the docket.
   const active = await env.DB
     .prepare(`SELECT id FROM senate_proposals WHERE game_id = ? AND proposer_faction_id = ? AND status IN ('debating','voting') LIMIT 1`)
     .bind(gameId, ctx.faction.id)
     .first();
   if (active) return err(429, 'cooldown', 'your faction already has an active proposal');
+
+  // Per-faction lifetime gate for one-shot kinds (e.g. chancellor_vote).
+  // Withdrawn proposals don't count — the player can re-aim. Resolved
+  // ones (passed/failed) do count: a failed chancellor bid burns your shot.
+  if (ONE_PER_GAME_KINDS.has(kind)) {
+    const past = await env.DB
+      .prepare(
+        `SELECT id FROM senate_proposals
+          WHERE game_id = ?
+            AND proposer_faction_id = ?
+            AND kind = ?
+            AND status IN ('debating','voting','passed','failed')
+          LIMIT 1`,
+      )
+      .bind(gameId, ctx.faction.id, kind)
+      .first();
+    if (past) return err(409, 'already_used', `your faction has already attempted a ${kind} this game`);
+  }
+
+  // Per-kind validation + payload shape. Each kind owns its own narrow
+  // contract so a malformed bill never reaches resolution time.
+  const payload = await buildBillPayload(env, gameId, ctx.faction.id, kind, body);
+  if (payload.error) return payload.error;
 
   // Per-proposal durations. Defaults match the legacy constants so a
   // client that doesn't send these fields gets the old behaviour.
@@ -302,7 +405,6 @@ async function handleCreateProposal(req, env, { params, session }) {
   const proposedAt = ctx.game.current_tick;
   const voteOpens  = proposedAt + debateTicks;
   const voteCloses = voteOpens + voteTicks;
-  const payload    = JSON.stringify({ slider_id, target_value: v });
 
   await env.DB
     .prepare(
@@ -310,10 +412,11 @@ async function handleCreateProposal(req, env, { params, session }) {
         (id, game_id, proposer_faction_id, kind, title, summary, payload, status,
          proposed_at_tick, vote_opens_at_tick, vote_closes_at_tick,
          debate_ticks, vote_ticks)
-       VALUES (?, ?, ?, 'slider_law', ?, ?, ?, 'debating', ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'debating', ?, ?, ?, ?, ?)`,
     )
     .bind(
-      id, gameId, ctx.faction.id, title.trim(), summary.trim(), payload,
+      id, gameId, ctx.faction.id, kind, title.trim(), summary.trim(),
+      JSON.stringify(payload.data),
       proposedAt, voteOpens, voteCloses, debateTicks, voteTicks,
     )
     .run();
@@ -335,8 +438,8 @@ async function handleCreateProposal(req, env, { params, session }) {
         proposer_faction_id: ctx.faction.id,
         proposer_faction_name: ctx.faction.name,
         title: title.trim(),
-        slider_id,
-        target_value: v,
+        bill_kind: kind,
+        ...payload.broadcast,           // per-kind extras (slider_id, target name, candidate name…)
         debate_ticks: debateTicks,
         vote_ticks: voteTicks,
         vote_opens_at_tick: voteOpens,
@@ -346,6 +449,55 @@ async function handleCreateProposal(req, env, { params, session }) {
   } catch { /* best-effort */ }
 
   return json({ proposal: shaped }, { status: 201 });
+}
+
+/**
+ * Per-kind payload builder. Returns either `{ data, broadcast }` on
+ * success or `{ error }` (a Response) on validation failure. Keeps the
+ * validation per-kind so the main handler stays a thin dispatcher.
+ *
+ * For TARGETED kinds we look up the target faction to: (a) reject
+ * targeting yourself, (b) reject targeting a non-existent faction, and
+ * (c) embed the target's display name in the broadcast payload so
+ * clients can show "Embargo against Mars Confederacy" in the toast
+ * without an extra round-trip.
+ */
+async function buildBillPayload(env, gameId, proposerFactionId, kind, body) {
+  if (kind === 'slider_law') {
+    const slider = SLIDER_BY_ID[body.slider_id];
+    if (!slider) return { error: err(400, 'bad_request', 'unknown slider_id') };
+    const v = Number(body.target_value);
+    if (!Number.isFinite(v)) return { error: err(400, 'bad_request', 'target_value must be a number') };
+    if (v < slider.min || v > slider.max) return { error: err(400, 'bad_request', `target_value out of range [${slider.min}, ${slider.max}]`) };
+    return {
+      data: { slider_id: body.slider_id, target_value: v },
+      broadcast: { slider_id: body.slider_id, target_value: v },
+    };
+  }
+
+  // The four targeted-sanction kinds + chancellor_vote all carry a
+  // single faction id pointer in the payload. Look it up once.
+  const targetField = kind === 'chancellor_vote' ? 'candidate_faction_id' : 'target_faction_id';
+  const targetId = body[targetField];
+  if (typeof targetId !== 'string' || !targetId) {
+    return { error: err(400, 'bad_request', `${targetField} required for ${kind}`) };
+  }
+  // Self-targeting rule:
+  //   - chancellor_vote: ALLOWED (you can nominate yourself; commonly do)
+  //   - all sanction kinds: REJECTED (no self-flagellation theatre)
+  if (kind !== 'chancellor_vote' && targetId === proposerFactionId) {
+    return { error: err(400, 'self_target', 'cannot target your own faction') };
+  }
+  const target = await env.DB
+    .prepare('SELECT id, name FROM game_factions WHERE id = ? AND game_id = ? AND status = ?')
+    .bind(targetId, gameId, 'active')
+    .first();
+  if (!target) return { error: err(404, 'not_found', `target faction not found / not active`) };
+
+  return {
+    data: { [targetField]: targetId },
+    broadcast: { [targetField]: targetId, target_faction_name: target.name },
+  };
 }
 
 async function handleListProposals(req, env, { url, params, session }) {
@@ -478,6 +630,163 @@ async function handleWithdraw(_req, env, { params, session }) {
 // For now, the host can poke this endpoint to advance the game by one tick
 // and trigger senate phase transitions (debating->voting, voting->resolved).
 
+/** How long each bill kind's effect lasts after passing, in ticks.
+ *  slider_law uses the legacy EFFECT_TICKS (7) so existing balance
+ *  doesn't shift; sanctions bite for longer; one-shot kinds don't
+ *  read this. */
+const EFFECT_TICKS_BY_KIND = {
+  slider_law:           EFFECT_TICKS,
+  trade_embargo:        EMBARGO_EFFECT_TICKS,
+  war_authorization:    WAR_AUTH_EFFECT_TICKS,
+  production_sanction:  PROD_SANCTION_EFFECT_TICKS,
+  reparations:          0,   // one-shot
+  chancellor_vote:      0,   // one-shot, ends the match
+};
+
+/**
+ * Apply the per-kind effects of a PASSED bill. Returns an object of
+ * extra fields to merge into the chronicle entry for transparency
+ * (target name, amount transferred, etc.) — or `null` if the bill kind
+ * has no side effects beyond the chronicle row itself.
+ *
+ * Idempotency: only ever called from resolveSenate at the tick a bill
+ * transitions to status='passed', so it runs exactly once per bill.
+ *
+ * Effect-row strategy:
+ *   slider_law → 1 row, no target, slider_id + value set
+ *   trade_embargo / war_authorization / production_sanction →
+ *     1 row each, target_faction_id set, slider_id NULL, value NULL
+ *   reparations → no effect row; mutates target.gold and recipients
+ *     atomically inside this call
+ *   chancellor_vote → no effect row; mutates games.status / winner /
+ *     victory_type to end the match
+ */
+async function applyBillEffects(env, gameId, tick, proposal, payload, effectUntil) {
+  const kind = proposal.kind;
+  const now = Date.now();
+
+  if (kind === 'slider_law') {
+    if (!payload.slider_id || !SLIDER_BY_ID[payload.slider_id]) return null;
+    const effectId = newId("eff");
+    await env.DB
+      .prepare(
+        "INSERT INTO senate_effects " +
+        "(id, game_id, slider_id, value, effect_kind, target_faction_id, proposal_id, active_from_tick, active_until_tick, created_at_tick, created_at_ms) " +
+        "VALUES (?, ?, ?, ?, 'slider', NULL, ?, ?, ?, ?, ?)"
+      )
+      .bind(effectId, gameId, payload.slider_id, Number(payload.target_value), proposal.id, tick, effectUntil, tick, now)
+      .run();
+    return null;
+  }
+
+  if (ONGOING_EFFECT_KINDS.has(kind)) {
+    const target = payload.target_faction_id;
+    if (!target) return null;
+    const effectId = newId("eff");
+    await env.DB
+      .prepare(
+        "INSERT INTO senate_effects " +
+        "(id, game_id, slider_id, value, effect_kind, target_faction_id, proposal_id, active_from_tick, active_until_tick, created_at_tick, created_at_ms) " +
+        "VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)"
+      )
+      .bind(effectId, gameId, kind, target, proposal.id, tick, effectUntil, tick, now)
+      .run();
+
+    // war_authorization side effect: break any active peace pacts
+    // (NAP, defense_pact, intel_share) that the target is signed onto.
+    // Without this, formally declaring war while still in a NAP would
+    // be incoherent — the Senate has overruled the treaty.
+    if (kind === 'war_authorization') {
+      await env.DB
+        .prepare(
+          `UPDATE treaties SET status = 'broken', broken_at_tick = ?
+            WHERE game_id = ?
+              AND status = 'active'
+              AND broken_at_tick IS NULL
+              AND id IN (
+                SELECT t.id FROM treaties t
+                JOIN treaty_signatories ts ON ts.treaty_id = t.id
+               WHERE t.game_id = ? AND ts.faction_id = ?
+              )`,
+        )
+        .bind(tick, gameId, gameId, target)
+        .run();
+    }
+    return { target_faction_id: target };
+  }
+
+  if (kind === 'reparations') {
+    const target = payload.target_faction_id;
+    if (!target) return null;
+    // Recipients: every other active faction (not the target, not eliminated).
+    const recipients = (await env.DB
+      .prepare(`SELECT id FROM game_factions WHERE game_id = ? AND status = 'active' AND id != ?`)
+      .bind(gameId, target)
+      .all()).results ?? [];
+    if (recipients.length === 0) return { transferred: 0, recipients: 0 };
+
+    // Target pays REPARATIONS_PER_FACTION per recipient, capped by their
+    // current gold (no negative balances). If they can't pay full freight
+    // we pro-rate so every recipient gets the same partial slice.
+    const targetRow = await env.DB
+      .prepare(`SELECT gold FROM game_factions WHERE id = ? AND game_id = ?`)
+      .bind(target, gameId).first();
+    const targetGold = Number(targetRow?.gold ?? 0);
+    const desired = REPARATIONS_PER_FACTION * recipients.length;
+    const totalTransfer = Math.min(targetGold, desired);
+    const perRecipient = Math.floor(totalTransfer / recipients.length);
+    if (perRecipient <= 0) return { transferred: 0, recipients: recipients.length, capped: true };
+
+    const actualTotal = perRecipient * recipients.length;
+    await env.DB
+      .prepare(`UPDATE game_factions SET gold = gold - ? WHERE id = ? AND game_id = ?`)
+      .bind(actualTotal, target, gameId)
+      .run();
+    for (const r of recipients) {
+      await env.DB
+        .prepare(`UPDATE game_factions SET gold = gold + ? WHERE id = ? AND game_id = ?`)
+        .bind(perRecipient, r.id, gameId)
+        .run();
+    }
+    return { transferred: actualTotal, per_recipient: perRecipient, recipients: recipients.length };
+  }
+
+  if (kind === 'chancellor_vote') {
+    const candidate = payload.candidate_faction_id;
+    if (!candidate) return null;
+    // Verify candidate is still around (eliminated mid-vote means the
+    // chancellorship is moot). Fail closed: pass becomes a no-op.
+    const cand = await env.DB
+      .prepare(`SELECT id, name FROM game_factions WHERE id = ? AND game_id = ? AND status = 'active'`)
+      .bind(candidate, gameId).first();
+    if (!cand) return { invalidated: true };
+
+    // End the match. The existing chronicle 'victory' kind + the games
+    // row mutation are the same path the three objective victories take
+    // (see room.js checkVictory) — VictoryOverlay listens on
+    // game.status === 'completed'.
+    const completedAt = Date.now();
+    await env.DB
+      .prepare(`UPDATE games SET status = 'completed', winner_faction_id = ?, victory_type = 'chancellor', completed_at = ? WHERE id = ?`)
+      .bind(candidate, completedAt, gameId)
+      .run();
+    const chronicleId = newId("chr");
+    await env.DB
+      .prepare(
+        "INSERT INTO chronicle_entries (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms) " +
+        "VALUES (?, ?, ?, 'victory', ?, ?, 'public', ?)"
+      )
+      .bind(
+        chronicleId, gameId, tick, candidate,
+        JSON.stringify({ victoryType: 'chancellor', detail: `${cand.name} elected Supreme Chancellor by senate vote` }),
+        completedAt,
+      ).run();
+    return { winner_faction_id: candidate, victory_type: 'chancellor' };
+  }
+
+  return null;
+}
+
 /**
  * Resolve the Senate for a given tick. Idempotent and non-throwing: a
  * failure here must NOT kill the surrounding resolveTick. Returns a
@@ -518,13 +827,20 @@ export async function resolveSenate(env, gameId, tick) {
     .prepare("SELECT * FROM senate_proposals WHERE game_id = ? AND status = 'voting' AND vote_closes_at_tick <= ?")
     .bind(gameId, tick).all()).results ?? [];
 
+  // Vote-window-elapsed proposals: tally + dispatch on bill kind.
+  // Per-kind effect ticks live in EFFECT_TICKS_BY_KIND below so each bill
+  // can choose how long its sanction bites without changing the slider_law
+  // legacy of 7-tick windows.
   let resolved = 0;
   for (const p of toResolve) {
     try {
       const totals = await loadProposalTotals(env, p.id);
       const passed = totals.yea.weight > totals.nay.weight;
       const status = passed ? "passed" : "failed";
-      const effectUntil = passed ? tick + EFFECT_TICKS : null;
+      const effectTicks = EFFECT_TICKS_BY_KIND[p.kind] ?? EFFECT_TICKS;
+      const effectUntil = passed && ONGOING_EFFECT_KINDS.has(p.kind) ? tick + effectTicks
+                       : passed && p.kind === 'slider_law' ? tick + effectTicks
+                       : null;  // one-shot kinds (reparations, chancellor_vote) don't park an effect
       await env.DB
         .prepare("UPDATE senate_proposals SET status = ?, resolved_at_tick = ?, effect_until_tick = ? WHERE id = ?")
         .bind(status, tick, effectUntil, p.id).run();
@@ -532,17 +848,9 @@ export async function resolveSenate(env, gameId, tick) {
       let payload = {};
       try { payload = JSON.parse(p.payload || "{}"); } catch { /* keep default */ }
 
-      if (passed && payload.slider_id && SLIDER_BY_ID[payload.slider_id]) {
-        const effectId = newId("eff");
-        await env.DB
-          .prepare(
-            "INSERT INTO senate_effects " +
-            "(id, game_id, slider_id, value, proposal_id, active_from_tick, active_until_tick, created_at_tick, created_at_ms) " +
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-          )
-          .bind(effectId, gameId, payload.slider_id, Number(payload.target_value), p.id, tick, effectUntil, tick, Date.now())
-          .run();
-      }
+      // Per-kind effect application. The chronicle entry (further down)
+      // captures the kind + outcome for every bill regardless.
+      const sideEffects = passed ? await applyBillEffects(env, gameId, tick, p, payload, effectUntil) : null;
 
       const chronicleId = newId("chr");
       await env.DB
@@ -555,13 +863,14 @@ export async function resolveSenate(env, gameId, tick) {
           JSON.stringify({
             proposal_id: p.id,
             title: p.title,
-            slider_id: payload.slider_id,
-            target_value: payload.target_value,
+            bill_kind: p.kind,
+            payload,
             outcome: status,
             yea_weight: totals.yea.weight,
             nay_weight: totals.nay.weight,
             abstain_weight: totals.abstain.weight,
             effect_until_tick: effectUntil,
+            ...(sideEffects ?? {}),
           }),
           Date.now(),
         ).run();
