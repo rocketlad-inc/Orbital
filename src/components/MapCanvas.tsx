@@ -930,6 +930,20 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     updateCamera,
     onTap: handleTapAt,
     onDoubleTap: handleFocusAt,
+    // Touch pan + sticky focused body: when the player pans with their
+    // capital still focused, the stored camera.x/y is the pre-focus
+    // origin (0, 0) — the Sun. Without this snapshot, dropping focus
+    // mid-pan yanked the camera to world (0, 0). Mirror the desktop
+    // mousedown's snapshot-before-release behaviour by reading the
+    // focused body's CURRENT world position and starting the pan from
+    // there. The hook caches the callback in a ref so the consumer's
+    // identity doesn't churn the effect — safe to redeclare each render.
+    getReleaseFocusPos: () => {
+      if (!camera.focusedBodyId) return null;
+      const focused = gameState.bodies.find(b => b.id === camera.focusedBodyId);
+      if (!focused) return null;
+      return bodyPosition(focused, gameState.currentTick, gameState.bodies);
+    },
   });
 
   useEffect(() => {
