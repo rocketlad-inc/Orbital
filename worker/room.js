@@ -1,4 +1,4 @@
-import { resolveSenate, getActiveSliders } from './senate.js';
+import { resolveSenate, getActiveSliders, hasActiveSanction } from './senate.js';
 import { recomputeBodyOwnership } from './factions.js';
 
 // Room Durable Object. One instance per game room, keyed by room id.
@@ -1024,6 +1024,26 @@ export class Room {
     try { senateSliders = await getActiveSliders(this.env, gameId, tick); }
     catch (e) { console.error('getActiveSliders failed', e); }
     const combatDamageMult = Number(senateSliders.combat_damage_multiplier ?? 1);
+    // Senate fuel-yield slider: applied to every settlement's fuel
+    // yield at distribution time (see ~line 1760). Previously declared
+    // in the catalog but no consumer read it, so passing "Fuel Yield 1.5"
+    // was a vote with no consequence — wire it here.
+    const fuelYieldMult = Number(senateSliders.fuel_yield_multiplier ?? 1);
+
+    // Senate sanction cache for this tick. Used by trade routes
+    // (trade_embargo), combat damage (war_authorization), and body
+    // harvest (production_sanction). One D1 query per faction per
+    // sanction kind, memoised so a hostile fleet hitting the same target
+    // 200 times this tick still pays only one DB hit for that target.
+    const sanctionCache = new Map();
+    const sanctioned = async (factionId, kind) => {
+      if (!factionId) return false;
+      const key = `${factionId}|${kind}`;
+      if (sanctionCache.has(key)) return sanctionCache.get(key);
+      const v = await hasActiveSanction(this.env, gameId, tick, factionId, kind);
+      sanctionCache.set(key, v);
+      return v;
+    };
 
     // 2c. Trade route auto-pilot.
     //
@@ -1157,6 +1177,11 @@ export class Room {
             .bind(tick, r.id).run();
           continue;
         }
+        // Senate trade embargo: if this route's owner is under embargo
+        // right now, the freighter sits idle this tick — no pickup, no
+        // delivery, no new leg planned. Resumes the moment the embargo
+        // expires (senate_effects.active_until_tick clears).
+        if (await sanctioned(r.owner_faction_id, 'trade_embargo')) continue;
         if (ship.ship_class !== 'freighter') continue;
 
         // Skip if already mid-transit (any committed or in_transit node).
@@ -1421,9 +1446,14 @@ export class Room {
         // hp_max / damage_per_tick already stamped on the ship row when
         // they were last upgraded — see lobby/upgrade endpoints).
         const rankMul = 1 + 0.01 * Math.max(0, attacker.rank ?? 0);
-        const split = (attacker.damage_per_tick * rankMul * combatDamageMult) / targets.length;
+        const baseSplit = (attacker.damage_per_tick * rankMul * combatDamageMult) / targets.length;
         for (const t of targets) {
-          addDamage(t.id, attacker.owner_faction_id, attacker.id, split);
+          // Senate war authorization: damage TO a faction the senate has
+          // formally declared war on is doubled. Per-target (not per-
+          // attacker) so a single attacker shooting multiple factions
+          // applies the multiplier only to the sanctioned ones.
+          const warAuthMul = (await sanctioned(t.owner_faction_id, 'war_authorization')) ? 2 : 1;
+          addDamage(t.id, attacker.owner_faction_id, attacker.id, baseSplit * warAuthMul);
         }
         firedShipIds.add(attacker.id);
       }
@@ -1735,11 +1765,23 @@ export class Room {
         const forgeMul = 1 + Number(bld.forge ?? 0) * FORGE_PER_LEVEL;
         const mintMul  = 1 + Number(bld.mint  ?? 0) * MINT_PER_LEVEL;
         const labMul   = 1 + Number(bld.lab   ?? 0) * LAB_PER_LEVEL;
+        // Senate production sanction: while active, the target faction's
+        // settlement yields are halved across every resource at the
+        // source. Hits both pool and stockpile pathways uniformly so the
+        // sanction is felt the same whether the settlement has a
+        // collector or not. Cached per faction so a sanctioned player
+        // with 30 settlements still does 1 lookup, not 30.
+        // Mirrors PROD_SANCTION_MULTIPLIER in worker/senate.js — keep
+        // these two values in sync.
+        const prodMul = (await sanctioned(s.fid, 'production_sanction')) ? 0.5 : 1;
         const yieldFull = {
-          fuel:    Number(s.yield_fuel    ?? 0) * popMul * tm.fuel,
-          metal:   Number(s.yield_metal   ?? 0) * popMul * tm.metal   * forgeMul,
-          gold:    Number(s.yield_gold    ?? 0) * popMul * tm.gold    * mintMul,
-          science: Number(s.yield_science ?? 0) * popMul * tm.science * labMul,
+          // Senate fuel-yield slider: applied here (only fuel) so a
+          // global "Fuel Yield 1.5×" law actually does something. The
+          // slider was previously declared in the catalog and never read.
+          fuel:    Number(s.yield_fuel    ?? 0) * popMul * tm.fuel              * prodMul * fuelYieldMult,
+          metal:   Number(s.yield_metal   ?? 0) * popMul * tm.metal   * forgeMul * prodMul,
+          gold:    Number(s.yield_gold    ?? 0) * popMul * tm.gold    * mintMul  * prodMul,
+          science: Number(s.yield_science ?? 0) * popMul * tm.science * labMul   * prodMul,
         };
 
         const toPoolFraction  = s.has_collector ? 1.0 : NO_COLLECTOR_POOL_FRACTION;

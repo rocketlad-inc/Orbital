@@ -15,7 +15,7 @@ import { GameContextProvider } from '../state/gameContext';
 import { MultiplayerActionsProvider } from './MultiplayerActionsContext';
 import {
   Body, Ship, Faction, GameState, OrbitElements, FactionResources, FactionTechStateBase,
-  Settlement, ManeuverNode,
+  Settlement, ManeuverNode, ChronicleFocus,
 } from '../types';
 import {
   planTorchTransfer, stepTorchShip, DEFAULT_ENGINE_G, fromG,
@@ -23,6 +23,10 @@ import {
 } from '../physics/torchTransfer';
 import { orbitWorldPos, orbitWorldVelocity, bodyWorldVelocity } from '../physics/orbitalMechanics';
 import { engineGModifier } from '../game/techs';
+import {
+  generateFlavor,
+  type FlavorContext, type FlavorFaction, type FlavorBody,
+} from '../game/flavorEngine';
 
 // Shape of /api/games/:gid/state.
 interface ServerState {
@@ -60,6 +64,10 @@ interface ServerState {
     /** Faction ids the caller is allied with (active defense-pact /
      *  intel-share). Drives shared sensor vision. */
     ally_faction_ids?: string[];
+    /** Faction ids the caller has ANY active peace treaty with (nap +
+     *  defense-pact + intel-share). Superset of ally_faction_ids. Used
+     *  by threat detection only — sensors stay on the narrower ally set. */
+    peace_faction_ids?: string[];
   };
   factions: Array<{
     id: string; slot: number; name: string; color: string; status: string;
@@ -887,6 +895,14 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         return `${t}  ⚔ ${breaker} broke the ${kind} with ${other} — war resumes`;
       }
 
+      if (ev.kind === 'senate_vote') {
+        // Was falling through to the raw "senate_vote" kind. Build a
+        // real headline: the bill title + outcome.
+        const title = (parsed.title as string) ?? 'a motion';
+        const outcome = (parsed.outcome as string) ?? 'resolved';
+        return `${t}  ⚖ Senate: “${title}” ${outcome}`;
+      }
+
       return `${t}  ${ev.kind}`;
     };
 
@@ -912,6 +928,42 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       });
     }
     return msg;
+  });
+
+  // Prose flavor for the event log — parallel-indexed with combatLog.
+  // Resolved from the SAME structured chronicle events the headlines
+  // came from (factions + bodies are in scope here), so the EventLog
+  // can reveal a narrative body when a row is expanded. null where the
+  // event kind has no flavor bank or its payload couldn't be enriched;
+  // the panel falls back to echoing the headline in that case.
+  const flavorFactions = new Map<string, FlavorFaction>(
+    srv.factions.map(f => [f.id, { id: f.id, name: f.name, capitalBodyId: f.capital_body_id }]),
+  );
+  const flavorBodies = new Map<string, FlavorBody>(
+    srv.bodies.map(b => [b.id, { id: b.id, name: b.name, type: b.type, orbitRadius: b.orbit_radius ?? undefined }]),
+  );
+  const flavorCtx: FlavorContext = { factions: flavorFactions, bodies: flavorBodies };
+  const chronicleFlavor: (string | null)[] = orderedEvents.map(ev => {
+    let payload: Record<string, unknown> = {};
+    try { payload = JSON.parse(ev.payload || '{}'); } catch { /* ignore */ }
+    return generateFlavor({
+      id: ev.id,
+      kind: ev.kind,
+      tick: ev.tick_number,
+      actorFactionId: ev.actor_faction_id,
+      targetFactionId: ev.target_faction_id,
+      payload,
+    }, flavorCtx);
+  });
+
+  // Focus target for each event's "take me there" button. Prefer the
+  // ship id (most specific), fall back to the body id. Destroyed-entity
+  // events still carry the id; the EventLog re-validates existence at
+  // click time so a button never sends the camera to a vanished ship.
+  const chronicleFocus: (ChronicleFocus | null)[] = orderedEvents.map(ev => {
+    if (ev.ship_id) return { kind: 'ship', shipId: ev.ship_id };
+    if (ev.body_id) return { kind: 'body', bodyId: ev.body_id };
+    return null;
   });
 
   // Server-side build queue → client BuildOrder[]. Drives the BuildPanel
@@ -992,6 +1044,8 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     resources: { [PLAYER_TOKEN]: playerRes },
     factionTech: { [PLAYER_TOKEN]: playerTech },
     combatLog,
+    chronicleFlavor,
+    chronicleFocus,
     lastHarvestTick: srv.game.current_tick,
     tradeRoutes,
     dysonSphere,
@@ -999,6 +1053,9 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     // the caller is remapped to PLAYER_TOKEN — so ally-owned ships carry
     // these ids and the fog-of-war friendly check matches directly.
     alliedFactionIds: srv.me.ally_faction_ids ?? [],
+    // Same id space as alliedFactionIds — peace partners are also other
+    // server-side faction ids. Used by computeIncomingThreats only.
+    peaceFactionIds: srv.me.peace_faction_ids ?? [],
   };
 }
 

@@ -508,6 +508,12 @@ export interface FactionTechStateBase {
   queue?: string[];
 }
 
+/** Where an EventLog row's "take me there" button should send the
+ *  camera. Resolved from the chronicle event's body_id / ship_id. */
+export type ChronicleFocus =
+  | { kind: 'body'; bodyId: string }
+  | { kind: 'ship'; shipId: string };
+
 /**
  * Complete game state snapshot
  */
@@ -522,7 +528,22 @@ export interface GameState {
   buildOrders: BuildOrder[];           // ships under construction
   resources: Record<string, FactionResources>; // factionId → resources
   factionTech: Record<string, FactionTechStateBase>; // factionId → tech progress
-  combatLog: string[];                 // recent combat events
+  combatLog: string[];                 // recent combat events (machine-truth headlines)
+  /** Prose flavor for each combatLog entry, parallel-indexed. Resolved
+   *  from the structured chronicle event via src/game/flavorEngine.ts.
+   *  null where the event kind has no flavor bank or its data couldn't
+   *  be enriched (the EventLog falls back to echoing the headline).
+   *  Multiplayer only — the SP sim emits pre-formatted strings without
+   *  structured payloads, so SP leaves this undefined. */
+  chronicleFlavor?: (string | null)[];
+  /** Focus target for each combatLog entry, parallel-indexed. Lets the
+   *  expanded EventLog row offer a "take me there" button that centers
+   *  the camera on the body/ship the event happened at. null where the
+   *  event has no locatable target (e.g. a senate vote). Multiplayer
+   *  only — built from the structured chronicle event's body_id/ship_id
+   *  in MultiplayerGameProvider. The EventLog still validates the target
+   *  still exists at click time before focusing. */
+  chronicleFocus?: (ChronicleFocus | null)[];
   lastHarvestTick: number;             // tick when resources were last collected
   /** Wall-clock epoch (ms) the server expects to fire the next tick, and
    *  the configured tick interval. Multiplayer only — the server drives the
@@ -544,6 +565,14 @@ export interface GameState {
    *  which has no diplomacy. */
   alliedFactionIds?: string[];
 
+  /** Faction ids the local player has ANY active peace treaty with — NAP,
+   *  defense pact, or intel share. Superset of alliedFactionIds (which is
+   *  the two pacts that also share vision). Used by threat detection so
+   *  an inbound ship from a NAP partner doesn't get painted as a threat
+   *  even though they don't share sensors with you — peace is peace.
+   *  Empty/undefined in single-player. */
+  peaceFactionIds?: string[];
+
   // Match shape — populated in single-player by setup, in multiplayer by
   // the server. The match ends when status flips to 'completed', either
   // via a host-initiated abandon or when one of the three victory
@@ -551,8 +580,10 @@ export interface GameState {
   status?: 'lobby' | 'active' | 'completed' | 'abandoned';
   winnerFactionId?: string;            // set when status flips to 'completed'
   /** Legacy labels (hegemony/wealth/tiebreak) stay in the union for
-   *  back-compat with replays from before three-conditions landed. */
-  victoryType?: 'engineering' | 'military' | 'science' | 'hegemony' | 'wealth' | 'tiebreak';
+   *  back-compat with replays from before three-conditions landed.
+   *  'chancellor' is the server-only senate election win — fires when
+   *  a chancellor_vote bill passes (see worker/senate.js). */
+  victoryType?: 'engineering' | 'military' | 'science' | 'chancellor' | 'hegemony' | 'wealth' | 'tiebreak';
 
   /** Dyson-Sphere megaproject state. Present only after a faction has
    *  begun construction at a Sol station; completing it triggers

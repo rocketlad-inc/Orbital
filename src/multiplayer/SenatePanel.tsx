@@ -7,6 +7,38 @@ import { apiFetch, Faction, SenateProposal, SenateSlider } from './api';
 const DEBATE_MIN = 1, DEBATE_MAX = 48, DEBATE_DEFAULT = 2;
 const VOTE_MIN   = 1, VOTE_MAX   = 24, VOTE_DEFAULT   = 1;
 
+/** Bill kinds the server accepts. Slider law is the legacy default.
+ *  Targeted sanctions plus the Chancellor election bill all carry a
+ *  faction-id pointer; we drive the right composer fields off this. */
+type BillKind =
+  | 'slider_law'
+  | 'trade_embargo'
+  | 'war_authorization'
+  | 'production_sanction'
+  | 'reparations'
+  | 'chancellor_vote';
+
+const BILL_KIND_LABELS: Record<BillKind, string> = {
+  slider_law:          'Slider Law (global multiplier)',
+  trade_embargo:       'Trade Embargo (target loses trade for 14t)',
+  war_authorization:   'War Authorization (2× damage TO target, 21t)',
+  production_sanction: 'Production Sanction (½ target yield, 14t)',
+  reparations:         'Reparations (target pays credits to all)',
+  chancellor_vote:     'Call for Supreme Chancellor (election — game-ending)',
+};
+
+/** Bill kinds that need a faction id in their payload. Drives the target
+ *  picker render below; chancellor_vote uses candidate_faction_id, the
+ *  rest use target_faction_id. */
+const NEEDS_TARGET: Record<BillKind, boolean> = {
+  slider_law:          false,
+  trade_embargo:       true,
+  war_authorization:   true,
+  production_sanction: true,
+  reparations:         true,
+  chancellor_vote:     true,
+};
+
 const STATUS_COLORS: Record<SenateProposal['status'], string> = {
   debating:  '#ffb84d',   // amber: still cooking
   voting:    '#6ee7b7',   // green: act now
@@ -33,8 +65,10 @@ export function SenatePanel({ gameId }: { gameId: string }) {
   const [myFactionId, setMyFactionId] = useState<string | null>(null);
 
   // Composer state
+  const [kind, setKind] = useState<BillKind>('slider_law');
   const [sliderId, setSliderId] = useState<string>('');
   const [target, setTarget] = useState<number>(1);
+  const [targetFactionId, setTargetFactionId] = useState<string>('');
   const [title, setTitle] = useState('');
   const [summary, setSummary] = useState('');
   const [debateTicks, setDebateTicks] = useState<number>(DEBATE_DEFAULT);
@@ -99,26 +133,47 @@ export function SenatePanel({ gameId }: { gameId: string }) {
   async function propose(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (!selectedSlider) return;
     if (!title.trim() || !summary.trim()) {
       setError('Title and summary are required.');
       return;
     }
+    // Per-kind body shape — server validates each branch in
+    // buildBillPayload (worker/senate.js). Mirror the same field names
+    // here so a 400 surfaces as a real message instead of an opaque
+    // "bad request" the user can't act on.
+    const body: Record<string, unknown> = {
+      kind,
+      title: title.trim(),
+      summary: summary.trim(),
+      debate_ticks: debateTicks,
+      vote_ticks: voteTicks,
+    };
+    if (kind === 'slider_law') {
+      if (!selectedSlider) { setError('Pick a slider.'); return; }
+      body.slider_id = selectedSlider.id;
+      body.target_value = target;
+    } else if (kind === 'chancellor_vote') {
+      if (!targetFactionId) { setError('Pick a candidate.'); return; }
+      body.candidate_faction_id = targetFactionId;
+    } else {
+      // Targeted sanctions: trade_embargo, war_authorization,
+      // production_sanction, reparations
+      if (!targetFactionId) { setError('Pick a target faction.'); return; }
+      if (targetFactionId === myFactionId) {
+        setError('Cannot target your own faction.');
+        return;
+      }
+      body.target_faction_id = targetFactionId;
+    }
     setBusy(true);
     const res = await apiFetch(`/api/games/${gameId}/senate/proposals`, {
       method: 'POST',
-      body: JSON.stringify({
-        slider_id: selectedSlider.id,
-        target_value: target,
-        title: title.trim(),
-        summary: summary.trim(),
-        debate_ticks: debateTicks,
-        vote_ticks: voteTicks,
-      }),
+      body: JSON.stringify(body),
     });
     setBusy(false);
     if (!res.ok) { setError(res.error?.message ?? 'Could not propose'); return; }
     setTitle(''); setSummary('');
+    setTargetFactionId('');
     setDebateTicks(DEBATE_DEFAULT); setVoteTicks(VOTE_DEFAULT);
     refresh();
   }
@@ -168,42 +223,90 @@ export function SenatePanel({ gameId }: { gameId: string }) {
 
   return (
     <div>
-      <div className="mp-section-title">Propose a law</div>
+      <div className="mp-section-title">Propose a bill</div>
       <form onSubmit={propose}>
-        <label className="mp-label">Slider</label>
+        <label className="mp-label">Kind</label>
         <select
           className="mp-select"
-          value={sliderId}
+          value={kind}
           onChange={(e) => {
-            setSliderId(e.target.value);
-            const s = sliders.find((x) => x.id === e.target.value);
-            if (s) setTarget(s.effective_value);
+            setKind(e.target.value as BillKind);
+            setTargetFactionId('');     // reset so a stale target doesn't carry across kinds
           }}
         >
-          {sliders.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.label} (now {fmtNum(s.effective_value)})
-            </option>
+          {(Object.keys(BILL_KIND_LABELS) as BillKind[]).map(k => (
+            <option key={k} value={k}>{BILL_KIND_LABELS[k]}</option>
           ))}
         </select>
-        {selectedSlider && (
+
+        {kind === 'slider_law' && (
           <>
-            <div style={{ fontSize: 11, color: 'var(--mp-fg-dim)', marginTop: 4 }}>
-              {selectedSlider.description}
-            </div>
+            <label className="mp-label">Slider</label>
+            <select
+              className="mp-select"
+              value={sliderId}
+              onChange={(e) => {
+                setSliderId(e.target.value);
+                const s = sliders.find((x) => x.id === e.target.value);
+                if (s) setTarget(s.effective_value);
+              }}
+            >
+              {sliders.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label} (now {fmtNum(s.effective_value)})
+                </option>
+              ))}
+            </select>
+            {selectedSlider && (
+              <>
+                <div style={{ fontSize: 11, color: 'var(--mp-fg-dim)', marginTop: 4 }}>
+                  {selectedSlider.description}
+                </div>
+                <label className="mp-label">
+                  Target value (range {selectedSlider.min}–{selectedSlider.max}; default {selectedSlider.default})
+                </label>
+                <input
+                  className="mp-input"
+                  type="number"
+                  inputMode="decimal"
+                  step={selectedSlider.step || 'any'}
+                  min={selectedSlider.min}
+                  max={selectedSlider.max}
+                  value={target}
+                  onChange={(e) => setTarget(parseFloat(e.target.value))}
+                />
+              </>
+            )}
+          </>
+        )}
+
+        {NEEDS_TARGET[kind] && (
+          <>
             <label className="mp-label">
-              Target value (range {selectedSlider.min}–{selectedSlider.max}; default {selectedSlider.default})
+              {kind === 'chancellor_vote' ? 'Candidate (can be yourself)' : 'Target faction'}
             </label>
-            <input
-              className="mp-input"
-              type="number"
-              inputMode="decimal"
-              step={selectedSlider.step || 'any'}
-              min={selectedSlider.min}
-              max={selectedSlider.max}
-              value={target}
-              onChange={(e) => setTarget(parseFloat(e.target.value))}
-            />
+            <select
+              className="mp-select"
+              value={targetFactionId}
+              onChange={(e) => setTargetFactionId(e.target.value)}
+            >
+              <option value="">— choose —</option>
+              {factions
+                // Sanctions can't target self; chancellor_vote can. Filter
+                // accordingly so an invalid choice isn't even presented.
+                .filter(f => kind === 'chancellor_vote' || f.id !== myFactionId)
+                .map(f => (
+                  <option key={f.id} value={f.id}>
+                    {f.name}{f.id === myFactionId ? ' (you)' : ''}
+                  </option>
+                ))}
+            </select>
+            {kind === 'chancellor_vote' && (
+              <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginTop: 4, fontStyle: 'italic' }}>
+                One attempt per faction per game. If this bill PASSES, the
+                candidate wins — match ends. Failed bids burn your shot.
+              </div>
+            )}
           </>
         )}
         <label className="mp-label">Title</label>
@@ -294,14 +397,21 @@ export function SenatePanel({ gameId }: { gameId: string }) {
               )}
             </div>
             <div className="psummary">{p.summary}</div>
-            {p.payload?.slider_id && (
-              <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginTop: 4 }}>
-                Sets <strong>{p.payload.slider_id}</strong> to <strong>{fmtNum(p.payload.target_value)}</strong>
-                {p.effect_until_tick != null && p.status === 'passed' && (
-                  <> · active until tick {p.effect_until_tick}</>
-                )}
-              </div>
-            )}
+            <ProposalEffectLine
+              proposal={p}
+              factionsById={factionsById}
+            />
+            {/* New bill-kind tag — small chip showing what kind of bill
+                this is, since slider-law and a chancellor-vote look very
+                different in consequence. */}
+            <div style={{
+              display: 'inline-block', fontSize: 9, color: '#b8c8d6',
+              border: '1px solid #2a3d50', borderRadius: 8,
+              padding: '1px 6px', marginTop: 4, letterSpacing: '0.08em',
+              textTransform: 'uppercase',
+            }}>
+              {(BILL_KIND_LABELS[p.kind as BillKind] ?? p.kind).split(' (')[0]}
+            </div>
 
             <VoteBar totals={p.totals} />
 
@@ -362,6 +472,45 @@ function fmtNum(n: number | undefined): string {
   if (n == null || !Number.isFinite(n)) return '—';
   if (Math.abs(n - Math.round(n)) < 1e-9) return String(Math.round(n));
   return n.toFixed(2).replace(/\.?0+$/, '');
+}
+
+/**
+ * One-line summary of what a bill DOES, switching on kind. Sits under the
+ * proposal's freeform summary so the player can see the mechanical
+ * effect at a glance — "Embargoes Mars Confederacy" — without having to
+ * read the proposer's prose to understand the consequences.
+ */
+function ProposalEffectLine({
+  proposal: p,
+  factionsById,
+}: {
+  proposal: SenateProposal;
+  factionsById: Map<string, Faction>;
+}) {
+  const k = p.kind as BillKind;
+  const targetId = p.payload?.target_faction_id || p.payload?.candidate_faction_id;
+  const targetName = targetId ? (factionsById.get(targetId)?.name ?? targetId) : null;
+  const wrap = (s: React.ReactNode) => (
+    <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginTop: 4 }}>
+      {s}
+      {p.effect_until_tick != null && p.status === 'passed' && (
+        <> · active until tick {p.effect_until_tick}</>
+      )}
+    </div>
+  );
+
+  if (k === 'slider_law' && p.payload?.slider_id) {
+    return wrap(<>
+      Sets <strong>{p.payload.slider_id}</strong> to <strong>{fmtNum(p.payload.target_value)}</strong>
+    </>);
+  }
+  if (!targetName) return null;
+  if (k === 'trade_embargo')       return wrap(<>Embargoes <strong>{targetName}</strong> from trade for 14 ticks</>);
+  if (k === 'war_authorization')   return wrap(<>Doubles damage TO <strong>{targetName}</strong> for 21 ticks (peace pacts broken)</>);
+  if (k === 'production_sanction') return wrap(<>Halves <strong>{targetName}</strong>'s yields for 14 ticks</>);
+  if (k === 'reparations')         return wrap(<><strong>{targetName}</strong> pays reparations to every other faction</>);
+  if (k === 'chancellor_vote')     return wrap(<>If passed, <strong>{targetName}</strong> wins the game as Supreme Chancellor</>);
+  return null;
 }
 
 // Vote weight bar. Source of truth for ratification is WEIGHT (one
