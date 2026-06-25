@@ -62,6 +62,13 @@
    EventLog.tsx using the color logEntryIcon returns. */
 .event-log-shell .event-log__row {
   width: 100%;
+  /* CRITICAL: the body is a flex column with many rows + overflow-y:
+     auto. Without flex-shrink:0 the flex algorithm compresses rows to
+     fit the container (observed: 40px rows squashed to 7px), and the
+     row's own overflow:hidden then clips the headline text to a sliver.
+     flex-shrink:0 keeps each row at its content height and lets the
+     body scroll instead. */
+  flex: 0 0 auto;
   font-size: 12px;
   line-height: 1.45;
   color: #c5d3df;
