@@ -1012,28 +1012,36 @@ export function GameContextProvider({
           return { ...route, cargo };
         }
 
-        // DELIVERY — at dest body with cargo in the hold. Dump
-        // everything into the faction pool and head home. Bump the
-        // freighter's tradesCompleted counter for the ShipPanel
-        // trade log.
-        if (here === route.destBodyId && cargoTotal > 0) {
-          if (!factionPools[ship.ownedBy]) {
-            factionPools[ship.ownedBy] = { fuel: 0, ore: 0, credits: 0, science: 0 };
+        // DELIVERY — at dest body. Dump whatever's in the hold
+        // (might be 0 if pickup was empty last cycle) and head home.
+        // Empty-cargo arrivals MUST still trigger the return leg —
+        // without that the freighter gets stuck at dest forever
+        // because the PICKUP branch only fires at origin and the
+        // OFF-COURSE branch sees us already at target. Mirrors the
+        // server fix in worker/room.js for the same bug.
+        // Only bump tradesCompleted on real cargo deliveries so the
+        // ShipPanel "trades completed" counter still tracks real runs.
+        if (here === route.destBodyId) {
+          if (cargoTotal > 0) {
+            if (!factionPools[ship.ownedBy]) {
+              factionPools[ship.ownedBy] = { fuel: 0, ore: 0, credits: 0, science: 0 };
+            }
+            const pool = factionPools[ship.ownedBy];
+            pool.fuel    += cargo.fuel;
+            pool.ore     += cargo.ore;
+            pool.credits += cargo.credits;
+            pool.science += cargo.science;
+            logger.info('SIM', `Trade route: ${ship.name} delivered ${Math.round(cargoTotal)}u to ${route.destBodyId}`);
           }
-          const pool = factionPools[ship.ownedBy];
-          pool.fuel    += cargo.fuel;
-          pool.ore     += cargo.ore;
-          pool.credits += cargo.credits;
-          pool.science += cargo.science;
-          logger.info('SIM', `Trade route: ${ship.name} delivered ${Math.round(cargoTotal)}u to ${route.destBodyId}`);
-          const completed = (ship.tradesCompleted ?? 0) + 1;
+          const completed = (ship.tradesCompleted ?? 0) + (cargoTotal > 0 ? 1 : 0);
           const next = launchFreighterTorch(ship, route.originBodyId);
           if (next) {
             nextShips[shipIdx] = { ...next, tradesCompleted: completed };
             return { ...route, cargo: { fuel: 0, ore: 0, credits: 0, science: 0 }, status: 'returning' as const };
           }
-          // Even if launch failed (no fuel etc.) still credit the
-          // delivery — the cargo did land.
+          // Even if launch failed (no fuel etc.) still credit any
+          // delivery — the cargo did land. Status stays 'outbound'
+          // so the next tick retries the return-leg launch.
           nextShips[shipIdx] = { ...ship, tradesCompleted: completed };
           return { ...route, cargo: { fuel: 0, ore: 0, credits: 0, science: 0 } };
         }

@@ -305,35 +305,141 @@ export const BodyInspector: React.FC = () => {
           );
         })()}
 
-        {/* Yields — single-row of small chips instead of a 2×2 grid.
-            The "POTENTIAL YIELD / HARVEST" title is dropped; the row
-            speaks for itself with the +N units. */}
+        {/* Per-tick yield + body-level LOCAL stockpile + trade-route
+            warning. The body is the unit of resource accounting now
+            (city + station on the same body share one logical bucket)
+            so we sum stockpiles across owned settlements and surface
+            one combined readout in the top card. */}
         {body.resources && (() => {
-          const production = bodyProductionRates(body);
-          const hasProduction = production.fuel > 0 || production.ore > 0 || production.credits > 0;
-          if (!hasProduction) return null;
           const settlementsHere = gameState.settlements.filter(s => s.bodyId === body.id);
           const playerSettlements = settlementsHere.filter(s => s.ownedBy === 'player');
           const freightersHere = gameState.ships.filter(
             s => s.class === 'freighter' && !s.transit && s.orbit.parentBodyId === body.id && s.ownedBy === 'player'
           );
+
+          // Per-tick contribution to the faction POOL from this body.
+          // Collector settlements pump 100% of settlementYield per tick;
+          // non-collector settlements trickle 10% to pool + 90% to local.
+          // Mirrors src/game/settlements.ts tickSettlements + matches
+          // worker/room.js. Use settlementYield since it bakes in
+          // population, type, and building modifiers.
+          let poolF = 0, poolO = 0, poolC = 0, poolS = 0;
+          let localPerTickF = 0, localPerTickO = 0, localPerTickC = 0, localPerTickS = 0;
+          for (const s of playerSettlements) {
+            const y = settlementYield(s, body);
+            if (s.hasCollector) {
+              poolF += y.fuel; poolO += y.ore; poolC += y.credits; poolS += y.science;
+            } else {
+              poolF += y.fuel * 0.1; poolO += y.ore * 0.1; poolC += y.credits * 0.1; poolS += y.science * 0.1;
+              localPerTickF += y.fuel * 0.9; localPerTickO += y.ore * 0.9;
+              localPerTickC += y.credits * 0.9; localPerTickS += y.science * 0.9;
+            }
+          }
+          const hasPoolFlow = poolF + poolO + poolC + poolS > 0.01;
+          const hasLocalFlow = localPerTickF + localPerTickO + localPerTickC + localPerTickS > 0.01;
+
+          // Body-level LOCAL stockpile = sum across owned settlements.
+          const localStockF = playerSettlements.reduce((a, s) => a + s.stockpile.fuel,    0);
+          const localStockO = playerSettlements.reduce((a, s) => a + s.stockpile.ore,     0);
+          const localStockC = playerSettlements.reduce((a, s) => a + s.stockpile.credits, 0);
+          const localStockS = playerSettlements.reduce((a, s) => a + s.stockpile.science, 0);
+          const hasStockpile = localStockF + localStockO + localStockC + localStockS > 0;
+
+          // Is there an active trade route picking up FROM this body?
+          const routeFromHere = (gameState.tradeRoutes ?? []).some(
+            r => r.ownedBy === 'player' && r.originBodyId === body.id,
+          );
+          const allCollectered = playerSettlements.length > 0
+            && playerSettlements.every(s => s.hasCollector);
+
+          // Setup pitch when there's no settlement yet — keep the old
+          // copy here so the player still knows what to do.
+          if (playerSettlements.length === 0) {
+            const production = bodyProductionRates(body);
+            const hasProduction = production.fuel > 0 || production.ore > 0 || production.credits > 0;
+            if (!hasProduction) return null;
+            return (
+              <div className="body-focus__yields" data-tutorial-id="body-production">
+                <div className="body-focus__yield-row">
+                  {production.fuel > 0 && <span>+{Math.round(production.fuel)}F</span>}
+                  {production.ore > 0 && <span>+{Math.round(production.ore)}M</span>}
+                  {production.credits > 0 && <span>+{Math.round(production.credits)}C</span>}
+                  <span style={{ color: '#7a8a9a' }}>/ tick if settled</span>
+                </div>
+                <div className="body-focus__yield-note">
+                  {freightersHere.length === 0
+                    ? 'No settlement yet — park a freighter, then deploy.'
+                    : 'Freighter in orbit; deploy below to start harvesting.'}
+                </div>
+              </div>
+            );
+          }
+
+          const fmt = (n: number) => n >= 10 ? Math.round(n).toString() : n.toFixed(1);
+
           return (
             <div className="body-focus__yields" data-tutorial-id="body-production">
-              <div className="body-focus__yield-row">
-                {production.fuel > 0 && <span>+{Math.round(production.fuel)}F</span>}
-                {production.ore > 0 && <span>+{Math.round(production.ore)}M</span>}
-                {production.credits > 0 && <span>+{Math.round(production.credits)}C</span>}
-                <span style={{ color: '#7a8a9a' }}>/ harvest</span>
-              </div>
-              <div className="body-focus__yield-note">
-                {playerSettlements.length === 0
-                  ? freightersHere.length === 0
-                    ? 'No settlement yet — park a freighter, then deploy.'
-                    : 'Freighter in orbit; deploy below to start harvesting.'
-                  : freightersHere.length === 0
-                    ? `${playerSettlements.length} settlement${playerSettlements.length > 1 ? 's' : ''} stockpiling — send a freighter.`
-                    : `${playerSettlements.length} extracting · ${freightersHere.length} ferrying.`}
-              </div>
+              {/* BIG per-tick yield to the pool */}
+              {hasPoolFlow && (
+                <div
+                  className="body-focus__yield-row"
+                  style={{ fontSize: 18, fontWeight: 700, gap: 10, marginBottom: 4 }}
+                >
+                  {poolF > 0.01 && <span style={{ color: '#ffb84d' }}>+{fmt(poolF)}F</span>}
+                  {poolO > 0.01 && <span style={{ color: '#a0a0a0' }}>+{fmt(poolO)}M</span>}
+                  {poolC > 0.01 && <span style={{ color: '#ffd700' }}>+{fmt(poolC)}C</span>}
+                  {poolS > 0.01 && <span style={{ color: '#6ee7b7' }}>+{fmt(poolS)}S</span>}
+                  <span style={{ color: '#7a8a9a', fontSize: 12, fontWeight: 400 }}>
+                    /tick → pool
+                  </span>
+                </div>
+              )}
+
+              {/* Body-level LOCAL stockpile + the per-tick build rate. */}
+              {(hasStockpile || hasLocalFlow) && (
+                <div style={{ fontSize: 13, color: '#a8b8c8', marginBottom: 2 }}>
+                  <span style={{ color: '#7a8a9a', letterSpacing: '0.08em' }}>LOCAL: </span>
+                  {Math.round(localStockF)}F {Math.round(localStockO)}M {Math.round(localStockC)}C
+                  {localStockS > 0 ? ` ${Math.round(localStockS)}S` : ''}
+                  {hasLocalFlow && (
+                    <span style={{ color: '#7a8a9a', marginLeft: 8 }}>
+                      ({/* per-tick LOCAL fill rate */}
+                      {localPerTickF > 0.01 && `+${fmt(localPerTickF)}F `}
+                      {localPerTickO > 0.01 && `+${fmt(localPerTickO)}M `}
+                      {localPerTickC > 0.01 && `+${fmt(localPerTickC)}C`}
+                      <span style={{ color: '#7a8a9a' }}>/tick</span>)
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* Trade-route call-to-action. Red when there's stockpile
+                  flowing AND no route AND not every settlement has a
+                  collector. Silent when the player is already moving
+                  this body's output via collector or trade route. */}
+              {hasLocalFlow && !allCollectered && !routeFromHere && freightersHere.length === 0 && (
+                <div style={{
+                  fontSize: 12,
+                  color: '#ff5e5e',
+                  marginTop: 4,
+                  padding: '4px 8px',
+                  background: 'rgba(255, 94, 94, 0.08)',
+                  border: '1px solid rgba(255, 94, 94, 0.4)',
+                  borderRadius: 3,
+                }}>
+                  ⚠ Establish trade route to a collector — or spend it locally.
+                </div>
+              )}
+              {hasLocalFlow && !allCollectered && routeFromHere && (
+                <div className="body-focus__yield-note" style={{ color: '#6ee7b7' }}>
+                  Trade route active — freighter en route.
+                </div>
+              )}
+              {hasLocalFlow && !allCollectered && !routeFromHere && freightersHere.length > 0 && (
+                <div className="body-focus__yield-note" style={{ color: '#6ee7b7' }}>
+                  Freighter in orbit — pickup on arrival.
+                </div>
+              )}
             </div>
           );
         })()}
@@ -789,28 +895,10 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                 <span>POP {s.population}</span>
                 <span className="yield">{yieldStr || '–'}/harvest</span>
               </div>
-              {/* LOCAL stockpile — 90% of non-collector yield banks here.
-                  Spendable on local body builds, vacuumable by freighters.
-                  Hide when settlement is collectored AND nothing banked
-                  (collectored settlements push 100% straight to pool). */}
-              {(s.stockpile.fuel > 0 || s.stockpile.ore > 0 || s.stockpile.credits > 0 || s.stockpile.science > 0) && (
-                <div
-                  className="settlement-stockpile"
-                  title={
-                    s.hasCollector
-                      ? 'LOCAL stockpile remaining from before this settlement got a collector. Spend locally or send a freighter.'
-                      : 'LOCAL stockpile (90% of yield banks here). Spend on local body builds, or land a freighter to vacuum it up to your pool.'
-                  }
-                  style={{
-                    color: s.hasCollector ? '#7a8b9a' : '#ffb84d',
-                    fontWeight: 600,
-                  }}
-                >
-                  LOCAL: {Math.round(s.stockpile.fuel)}F {Math.round(s.stockpile.ore)}M {Math.round(s.stockpile.credits)}C{
-                    s.stockpile.science > 0 ? ` ${Math.round(s.stockpile.science)}S` : ''
-                  }
-                </div>
-              )}
+              {/* Per-settlement LOCAL row removed — the top card now
+                  surfaces a body-level LOCAL total (sum across city +
+                  station). Stockpile is still drained per-settlement
+                  internally; this is just a UI consolidation. */}
               {isMine && !s.hasCollector && (
                 <button
                   data-tutorial-id="collector-button"
