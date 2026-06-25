@@ -15,7 +15,7 @@ import { GameContextProvider } from '../state/gameContext';
 import { MultiplayerActionsProvider } from './MultiplayerActionsContext';
 import {
   Body, Ship, Faction, GameState, OrbitElements, FactionResources, FactionTechStateBase,
-  Settlement, ManeuverNode, ChronicleFocus,
+  Settlement, ManeuverNode, ChronicleFocus, ChronicleEditMeta,
 } from '../types';
 import {
   planTorchTransfer, stepTorchShip, DEFAULT_ENGINE_G, fromG,
@@ -64,6 +64,9 @@ interface ServerState {
     /** Faction ids the caller is allied with (active defense-pact /
      *  intel-share). Drives shared sensor vision. */
     ally_faction_ids?: string[];
+    /** True when the caller is the room host — can edit any event's
+     *  flavor, not just events they were a party to. */
+    is_host?: boolean;
   };
   factions: Array<{
     id: string; slot: number; name: string; color: string; status: string;
@@ -208,6 +211,12 @@ interface ServerState {
     ship_id: string | null;
     payload: string;
     created_at_ms: number;
+    /** Player-authored flavor override (EventLog Phase 3). When set it
+     *  replaces the generated flavor; flavor_edited_by drives the
+     *  attribution footer. */
+    flavor_override?: string | null;
+    flavor_edited_by?: string | null;
+    flavor_edited_at_ms?: number | null;
   }>;
   /** In-flight ship builds for the caller's faction. The tick alarm
    *  spawns the ship into `ships` when completes_at_tick is reached;
@@ -940,6 +949,10 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   );
   const flavorCtx: FlavorContext = { factions: flavorFactions, bodies: flavorBodies };
   const chronicleFlavor: (string | null)[] = orderedEvents.map(ev => {
+    // A player-authored override always wins over the generated flavor.
+    if (typeof ev.flavor_override === 'string' && ev.flavor_override.length > 0) {
+      return ev.flavor_override;
+    }
     let payload: Record<string, unknown> = {};
     try { payload = JSON.parse(ev.payload || '{}'); } catch { /* ignore */ }
     return generateFlavor({
@@ -950,6 +963,25 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       targetFactionId: ev.target_faction_id,
       payload,
     }, flavorCtx);
+  });
+
+  // Edit metadata for each event, parallel-indexed: the chronicle id to
+  // PATCH, whether it's currently overridden, who last edited (for the
+  // attribution footer), and whether THIS caller may edit it (party to
+  // the event, or host).
+  const callerIsHost = !!srv.me.is_host;
+  const chronicleMeta: (ChronicleEditMeta | null)[] = orderedEvents.map(ev => {
+    const isParty =
+      ev.actor_faction_id === callerFactionId || ev.target_faction_id === callerFactionId;
+    const editedByName = ev.flavor_edited_by
+      ? (factionNameById.get(ev.flavor_edited_by) ?? null)
+      : null;
+    return {
+      entryId: ev.id,
+      isOverride: typeof ev.flavor_override === 'string' && ev.flavor_override.length > 0,
+      editedByName,
+      canEdit: isParty || callerIsHost,
+    };
   });
 
   // Focus target for each event's "take me there" button. Prefer the
@@ -1042,6 +1074,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     combatLog,
     chronicleFlavor,
     chronicleFocus,
+    chronicleMeta,
     lastHarvestTick: srv.game.current_tick,
     tradeRoutes,
     dysonSphere,
@@ -1166,7 +1199,13 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
       ws.addEventListener('message', (ev) => {
         try {
           const msg = JSON.parse(ev.data);
-          if (msg?.type === 'tick' || msg?.type === 'game_completed') fetchState();
+          // tick / completion drive the sim clock; a chronicle notify
+          // (flavor edit) means an event's prose changed — refetch so
+          // every client, including the editor, sees it immediately
+          // instead of waiting up to 1.5s for the next /state poll.
+          if (msg?.type === 'tick' || msg?.type === 'game_completed' || msg?.kind === 'chronicle') {
+            fetchState();
+          }
         } catch { /* ignore non-json */ }
       });
       const reschedule = () => {

@@ -20,6 +20,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
+import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import type { ChronicleFocus } from '../types';
 import './DockRail.css';
 import './EventLog.css';
@@ -78,10 +79,43 @@ function readBookmarkKey(): string {
  */
 export const EventLog: React.FC = () => {
   const { gameState, selectShip, selectBody, focusBody } = useGameContext();
+  const mpActions = useMultiplayerActions();
   const entries = gameState.combatLog;
   const flavors = gameState.chronicleFlavor;
   const focuses = gameState.chronicleFocus;
+  const metas = gameState.chronicleMeta;
   const totalCount = entries.length;
+
+  // Inline flavor editing (Phase 3). editingIndex is the originalIndex
+  // of the row whose textarea is open; draft holds the in-progress text;
+  // saving guards against double-submit.
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const beginEdit = (i: number, current: string) => {
+    setEditingIndex(i);
+    setDraft(current);
+    setEditError(null);
+  };
+  const cancelEdit = () => { setEditingIndex(null); setDraft(''); setEditError(null); };
+  const saveEdit = async (entryId: string) => {
+    if (!mpActions || saving) return;
+    setSaving(true);
+    setEditError(null);
+    const res = await mpActions.editChronicleFlavor(entryId, draft.trim() || null);
+    setSaving(false);
+    if (res.ok) { cancelEdit(); }
+    else { setEditError(res.error ?? 'Could not save.'); }
+  };
+  const revertEdit = async (entryId: string) => {
+    if (!mpActions || saving) return;
+    setSaving(true);
+    await mpActions.editChronicleFlavor(entryId, null);
+    setSaving(false);
+    cancelEdit();
+  };
 
   // "Take me there" — center the camera on the event's body/ship if it
   // still exists. Re-validate against live state so a button never
@@ -263,29 +297,86 @@ export const EventLog: React.FC = () => {
                       </button>
                       {isOpen && (() => {
                         const onFocus = resolveFocus(focuses?.[i]);
+                        const meta = metas?.[i] ?? null;
+                        const flavorText = flavors?.[i] ?? entry;
+                        const isEditing = editingIndex === i;
                         return (
                           <div className="event-log__row__body">
                             <div className="event-log__row__category" style={{ color }}>
                               {label}
                             </div>
-                            <div className="event-log__row__flavor">
-                              {/* Prose flavor resolved from the structured
-                                  chronicle event (flavorEngine). Falls back
-                                  to echoing the headline when the event kind
-                                  has no bank or its payload couldn't be
-                                  enriched. Editing lands in phase 3. */}
-                              {flavors?.[i] ?? entry}
-                            </div>
-                            {onFocus && (
-                              <button
-                                type="button"
-                                className="event-log__row__focus"
-                                style={{ borderColor: color, color }}
-                                onClick={onFocus}
-                                title="Center the camera on this location"
-                              >
-                                ◎ Take me there
-                              </button>
+
+                            {isEditing ? (
+                              <div className="event-log__row__edit">
+                                <textarea
+                                  className="event-log__row__edit-area"
+                                  value={draft}
+                                  maxLength={500}
+                                  rows={4}
+                                  autoFocus
+                                  placeholder="Rewrite this event in your own words…"
+                                  onChange={(e) => setDraft(e.target.value)}
+                                />
+                                <div className="event-log__row__edit-actions">
+                                  <button
+                                    type="button"
+                                    className="event-log__row__edit-save"
+                                    disabled={saving}
+                                    onClick={() => meta && saveEdit(meta.entryId)}
+                                  >{saving ? 'Saving…' : 'Save'}</button>
+                                  <button
+                                    type="button"
+                                    className="event-log__row__edit-cancel"
+                                    disabled={saving}
+                                    onClick={cancelEdit}
+                                  >Cancel</button>
+                                  {meta?.isOverride && (
+                                    <button
+                                      type="button"
+                                      className="event-log__row__edit-revert"
+                                      disabled={saving}
+                                      onClick={() => revertEdit(meta.entryId)}
+                                      title="Discard the custom text and restore the generated flavor"
+                                    >Revert to default</button>
+                                  )}
+                                </div>
+                                {editError && <div className="event-log__row__edit-error">{editError}</div>}
+                              </div>
+                            ) : (
+                              <>
+                                <div className="event-log__row__flavor">
+                                  {flavorText}
+                                </div>
+                                {/* Attribution footer for player-rewritten events. */}
+                                {meta?.isOverride && meta.editedByName && (
+                                  <div className="event-log__row__attribution">
+                                    — rewritten by {meta.editedByName}
+                                  </div>
+                                )}
+                                <div className="event-log__row__actions">
+                                  {onFocus && (
+                                    <button
+                                      type="button"
+                                      className="event-log__row__focus"
+                                      style={{ borderColor: color, color }}
+                                      onClick={onFocus}
+                                      title="Center the camera on this location"
+                                    >
+                                      ◎ Take me there
+                                    </button>
+                                  )}
+                                  {meta?.canEdit && mpActions && (
+                                    <button
+                                      type="button"
+                                      className="event-log__row__edit-btn"
+                                      onClick={() => beginEdit(i, meta.isOverride ? flavorText : '')}
+                                      title={meta.isOverride ? 'Rewrite this event' : 'Add your own flavor to this event'}
+                                    >
+                                      ✎ {meta.isOverride ? 'Edit' : 'Rewrite'}
+                                    </button>
+                                  )}
+                                </div>
+                              </>
                             )}
                           </div>
                         );
