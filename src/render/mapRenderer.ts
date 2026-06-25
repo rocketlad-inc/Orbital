@@ -1606,19 +1606,41 @@ function drawTorchTransitShip(
   const isBrake = ctx.t >= currentTransfer.flipTick && ctx.t < currentTransfer.arriveTick;
   const thrusting = isBoost || isBrake;
 
-  // Ship's nose points at the destination for the entire burn —
-  // BOOST and BRAKE both. The old flip-and-burn (brake = nose flipped
-  // 180°) was physically correct but read as a backwards-ship bug to
-  // playtesters. Coast (outside the burn window) falls back to
-  // velocity direction so an arriving/idle ship isn't lurching to
-  // face a now-irrelevant intercept.
+  // Ship's nose points at the TARGET BODY's CURRENT position for the
+  // whole transfer — boost, brake, and coast all use the same rule.
+  //
+  // Previous iterations split this two ways:
+  //   1) thrust → point at currentTransfer.interceptPos (a frozen lead-
+  //      point computed at transfer start). As the ship approached
+  //      that point the dx/dy vector shrank to ~0 and the rotation
+  //      swung wildly, then in the brief coast tail the icon snapped
+  //      to a velocity that was already braking toward zero.
+  //   2) coast → point along velocity. On multi-leg trade routes the
+  //      transition from leg-1 brake (vel decreasing) to leg-2 start
+  //      had a window where vel still pointed back at the origin
+  //      while the next intercept was the other way — the icon
+  //      visibly reversed.
+  //
+  // Using the live body position is robust against both. Falls back
+  // to velocity only when the target body has been destroyed or
+  // somehow can't be looked up.
   let facingX: number, facingY: number;
-  if (thrusting) {
-    const dx = currentTransfer.interceptPos.x - lerpedPos.x;
-    const dy = currentTransfer.interceptPos.y - lerpedPos.y;
+  const targetBody = ctx.bodies.find(b => b.id === currentTransfer.targetBodyId);
+  const targetPos = targetBody ? bodyPosition(targetBody, ctx.t, ctx.bodies) : null;
+  if (targetPos) {
+    const dx = targetPos.x - lerpedPos.x;
+    const dy = targetPos.y - lerpedPos.y;
     const d = Math.sqrt(dx * dx + dy * dy);
-    facingX = d > 1e-9 ? dx / d : 1;
-    facingY = d > 1e-9 ? dy / d : 0;
+    if (d > 1e-3) {
+      facingX = dx / d;
+      facingY = dy / d;
+    } else {
+      // On top of the target — keep last-known velocity rather than
+      // snapping to +x.
+      const vMag = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
+      facingX = vMag > 1e-9 ? vel.x / vMag : 1;
+      facingY = vMag > 1e-9 ? vel.y / vMag : 0;
+    }
   } else {
     const vMag = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
     facingX = vMag > 1e-9 ? vel.x / vMag : 1;
