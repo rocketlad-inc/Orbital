@@ -1648,8 +1648,12 @@ export class Room {
     //
     //      Skipped for ships in transit (they're not orbiting any body's
     //      infrastructure).
-    const REPAIR_CITY = 2;
-    const REPAIR_STATION = 1;
+    // Station is now the SOLE repair source (cities don't heal hulls),
+    // so its repair rate is bumped 1 -> 2 to roughly match the old
+    // lone-city heal — a station is a proper dry dock. REPAIR_CITY is
+    // retained but unused so the diff stays readable; remove later.
+    const REPAIR_CITY = 0;
+    const REPAIR_STATION = 2;
     const REFUEL_BASE = 1;
     const REFUEL_STATION = 2;
     // One ship-row fetch with the joinable owner-status data. status='active'
@@ -1697,12 +1701,14 @@ export class Room {
       if (ship.in_transit) continue;
       const localStations = (settlementsByBody.get(ship.parent_body_id) ?? [])
         .filter(st => st.owner_faction_id === ship.owner_faction_id);
+      // Station-only repair: hull HP regen requires a friendly STATION
+      // in orbit (the orbital repair infrastructure). Cities no longer
+      // heal ships — they're surface industry, not a dry dock. Base
+      // refuel (owning the body) stays as a small logistics presence.
       let repairRate = 0;
       let refuelRate = ship.body_owner === ship.owner_faction_id ? REFUEL_BASE : 0;
       for (const st of localStations) {
-        if (st.type === 'city') {
-          repairRate += REPAIR_CITY;
-        } else if (st.type === 'station') {
+        if (st.type === 'station') {
           repairRate += REPAIR_STATION;
           refuelRate += REFUEL_STATION;
         }

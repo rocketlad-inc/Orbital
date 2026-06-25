@@ -5,6 +5,7 @@
 import React, { useState, useEffect } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { BUILDABLE_CLASSES, SHIP_CLASSES, ShipClassName } from '../game/shipClasses';
+import { shipyardSlotsAtBody } from '../game/settlements';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import {
@@ -82,6 +83,15 @@ export const BuildPanel: React.FC = () => {
   const activeBuildOrders = gameState.buildOrders.filter(bo => bo.bodyId === body.id);
   const existingShipNames = gameState.ships.map(s => s.name);
 
+  // Build slots: 1 base + 1 per Shipyard level on owned stations here.
+  // Mirrors the server gate in worker/actions.js handleQueueBuild and
+  // src/game/settlements.ts shipyardSlotsAtBody. Pending (committed-but-
+  // not-built) names count too — each will consume a slot when queued —
+  // so the player sees the true remaining capacity.
+  const totalSlots = shipyardSlotsAtBody(body.id, 'player', gameState.settlements);
+  const usedSlots = activeBuildOrders.length;
+  const slotsFull = usedSlots >= totalSlots;
+
   const handleCommitName = () => {
     const trimmed = customName.trim();
     if (trimmed.length === 0) return;
@@ -143,6 +153,27 @@ export const BuildPanel: React.FC = () => {
   return (
     <div className="build-panel">
       <div className="section-title">BUILD</div>
+
+      {/* Build slots — visible capacity. Filled pips = builds in flight,
+          hollow = free. Full row turns amber with a "build a Shipyard"
+          nudge so the player knows how to get more. */}
+      <div className={`build-slots${slotsFull ? ' build-slots--full' : ''}`}>
+        <span className="build-slots__label">BUILD SLOTS</span>
+        <span className="build-slots__pips" aria-hidden="true">
+          {Array.from({ length: totalSlots }).map((_, i) => (
+            <span
+              key={i}
+              className={`build-slots__pip${i < usedSlots ? ' is-filled' : ''}`}
+            />
+          ))}
+        </span>
+        <span className="build-slots__count">{usedSlots}/{totalSlots}</span>
+      </div>
+      {slotsFull && (
+        <div className="build-slots__hint">
+          All slots busy — wait for a build to finish, or add/upgrade a Shipyard on a station here for more.
+        </div>
+      )}
 
       <div className="build-name-row">
         <input
@@ -315,11 +346,14 @@ export const BuildPanel: React.FC = () => {
               </div>
               <button
                 className={`build-btn${recentlyQueued.has(cls) ? ' build-btn--just-queued' : ''}`}
-                disabled={!canAfford}
+                disabled={!canAfford || slotsFull}
                 onClick={() => { setRecentlyQueued(s => new Set(s).add(cls)); handleBuild(cls); }}
-                title={canAfford
-                  ? `Build a ${def.displayName} (${def.cost.fuel}F ${def.cost.ore}M ${def.cost.credits}C, ${def.buildTime} ticks)`
-                  : shortLabel}
+                title={
+                  slotsFull
+                    ? `All ${totalSlots} build slots busy — finish a build or add a Shipyard`
+                    : canAfford
+                      ? `Build a ${def.displayName} (${def.cost.fuel}F ${def.cost.ore}M ${def.cost.credits}C, ${def.buildTime} ticks)`
+                      : shortLabel}
               >
                 BUILD · {def.buildTime}t
               </button>

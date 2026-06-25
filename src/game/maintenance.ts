@@ -6,16 +6,15 @@ import { Ship, Body, Settlement } from '../types';
 import { getShipClass, ShipClassName } from './shipClasses';
 import { rankHpMul } from './techs';
 
-/** HP restored per tick when orbiting an owned body with a city.
- *  Cities have the heavier industrial repair docks. */
-export const REPAIR_PER_TICK_CITY = 2;
+/** Cities no longer repair hulls — repair is station-only (the
+ *  orbital dry dock). Kept at 0 so any stray reference is inert. */
+export const REPAIR_PER_TICK_CITY = 0;
 
-/** HP restored per tick when orbiting an owned body with a station.
- *  Stations are orbital — a docked ship sharing the same body gets
- *  patched up by station crews/auto-fabbers. Half of city repair
- *  because the orbital footprint is smaller, but stacks with city
- *  repair when both are present at the same body. */
-export const REPAIR_PER_TICK_STATION = 1;
+/** HP restored per tick when orbiting an owned body with a STATION.
+ *  Stations are the sole repair source now — a docked ship is patched
+ *  up by station crews/auto-fabbers. Bumped 1 -> 2 to match the old
+ *  lone-city heal now that cities don't contribute. */
+export const REPAIR_PER_TICK_STATION = 2;
 
 /** Base fuel restored per tick when orbiting an owned body (no settlement) */
 export const REFUEL_PER_TICK_BASE = 1;
@@ -69,12 +68,15 @@ export function maintenanceRatesForShip(
   // Rules (b) and (c): walk all settlements at this body and credit
   // each one you own. No body-ownership gate on this loop — your
   // infrastructure is your infrastructure.
+  // Station-only repair: only a friendly STATION in orbit repairs a
+  // hull (and refuels). Cities are surface industry — they no longer
+  // heal ships. Mirrors worker/room.js maintenance. hasCity is still
+  // tracked for any UI that wants to show "city present" separately.
   for (const st of settlements) {
     if (st.bodyId !== body.id) continue;
     if (st.ownedBy !== ship.ownedBy) continue;
     if (st.type === 'city') {
       hasCity = true;
-      repairRate += REPAIR_PER_TICK_CITY;
     } else if (st.type === 'station') {
       hasStation = true;
       refuelRate += REFUEL_PER_TICK_STATION;
