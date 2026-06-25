@@ -27,6 +27,14 @@ interface TouchInputOptions {
   onDoubleTap: (canvasX: number, canvasY: number) => void;
   /** Optional: fired on long-press (~500ms hold, no movement). */
   onLongPress?: (canvasX: number, canvasY: number) => void;
+  /** Optional: when the user starts a pan with a focused body set (camera
+   *  follows that body each frame), the stored camera.x/y is stale —
+   *  usually the pre-focus origin (0,0). Panning from those stale values
+   *  jolts the camera to world (0,0), i.e. the Sun. Supply this callback
+   *  to return the focused body's CURRENT world position; the hook uses
+   *  it as the panning origin instead. Matches the desktop mousedown
+   *  path's snapshot-before-release behaviour in MapCanvas. */
+  getReleaseFocusPos?: () => { x: number; y: number } | null;
 }
 
 interface ActivePointer {
@@ -58,6 +66,7 @@ export function useCanvasTouchInput({
   onTap,
   onDoubleTap,
   onLongPress,
+  getReleaseFocusPos,
 }: TouchInputOptions) {
   // Keep camera in a ref so the effect doesn't re-bind on every tiny update.
   const cameraRef = useRef(camera);
@@ -68,6 +77,9 @@ export function useCanvasTouchInput({
 
   const callbacksRef = useRef({ onTap, onDoubleTap, onLongPress });
   callbacksRef.current = { onTap, onDoubleTap, onLongPress };
+
+  const getReleaseFocusPosRef = useRef(getReleaseFocusPos);
+  getReleaseFocusPosRef.current = getReleaseFocusPos;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -183,12 +195,43 @@ export function useCanvasTouchInput({
         // the focus. The desktop handler does this same release in
         // MapCanvas's mousedown; the touch handler was missing it,
         // which is why the player could pinch-zoom but couldn't pan.
+        //
+        // SNAPSHOT-BEFORE-RELEASE: when focusedBodyId is set, cam.x/y is
+        // usually the stale pre-focus origin (0, 0) — the Sun. Panning
+        // off `cam.x - dx/scale` from there yanked the camera straight
+        // to the origin. Ask the consumer (MapCanvas) for the focused
+        // body's CURRENT world position and pan from THAT instead, so
+        // releasing focus is seamless — the screen continues from where
+        // it was, not from a stored value that hasn't been touched all
+        // game. Mirror of the desktop mousedown fix in MapCanvas.tsx
+        // (search: "Snapshot the focused-body world pos instead").
         const cam = cameraRef.current as CameraLike & { focusedBodyId?: string };
+        let originX = cam.x;
+        let originY = cam.y;
+        let releasingFocus = false;
+        if (cam.focusedBodyId && getReleaseFocusPosRef.current) {
+          const snap = getReleaseFocusPosRef.current();
+          if (snap) { originX = snap.x; originY = snap.y; }
+          releasingFocus = true;
+        }
+        const newX = originX - dx / cam.scale;
+        const newY = originY - dy / cam.scale;
         const updates: Partial<CameraLike> & { focusedBodyId?: string | undefined } = {
-          x: cam.x - dx / cam.scale,
-          y: cam.y - dy / cam.scale,
+          x: newX,
+          y: newY,
         };
-        if (cam.focusedBodyId) updates.focusedBodyId = undefined;
+        if (releasingFocus) updates.focusedBodyId = undefined;
+        // Write into the ref synchronously too so a follow-up pointermove
+        // arriving before React commits this update doesn't see the stale
+        // focused/origin values and re-snapshot (causing a small jitter
+        // on the second move of the drag). React's prop will overwrite
+        // this on next render — same end state.
+        cameraRef.current = {
+          ...cam,
+          x: newX,
+          y: newY,
+          ...(releasingFocus ? { focusedBodyId: undefined } : {}),
+        };
         updateCameraRef.current(updates);
       }
     };
