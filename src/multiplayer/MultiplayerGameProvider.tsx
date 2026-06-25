@@ -891,6 +891,14 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         return `${t}  ⚔ ${breaker} broke the ${kind} with ${other} — war resumes`;
       }
 
+      if (ev.kind === 'senate_vote') {
+        // Was falling through to the raw "senate_vote" kind. Build a
+        // real headline: the bill title + outcome.
+        const title = (parsed.title as string) ?? 'a motion';
+        const outcome = (parsed.outcome as string) ?? 'resolved';
+        return `${t}  ⚖ Senate: “${title}” ${outcome}`;
+      }
+
       return `${t}  ${ev.kind}`;
     };
 

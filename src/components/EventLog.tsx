@@ -49,6 +49,7 @@ function logEntryIcon(entry: string): { icon: string; color: string; label: stri
   // and stays monochrome like the other glyphs — the dove emoji rendered
   // colour-locked and inconsistent across OSes.
   if (s.includes('signed') && s.includes('pact'))  return { icon: '☮︎', color: '#a78bfa', label: 'Pact signed' };
+  if (s.includes('senate')) return { icon: '§', color: '#ffd700', label: 'Senate' };
   if (s.includes('traded') && s.includes(' → '))   return { icon: '⚖', color: '#ffb84d', label: 'Trade' };
   if (s.includes('captured')) return { icon: '⚑', color: '#ffd700', label: 'Capture' };
   if (s.includes('founded')) return { icon: '⌂', color: '#6ee7b7', label: 'Settlement' };
