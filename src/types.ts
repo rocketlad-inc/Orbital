@@ -551,6 +551,14 @@ export interface GameState {
    *  which has no diplomacy. */
   alliedFactionIds?: string[];
 
+  /** Faction ids the local player has ANY active peace treaty with — NAP,
+   *  defense pact, or intel share. Superset of alliedFactionIds (which is
+   *  the two pacts that also share vision). Used by threat detection so
+   *  an inbound ship from a NAP partner doesn't get painted as a threat
+   *  even though they don't share sensors with you — peace is peace.
+   *  Empty/undefined in single-player. */
+  peaceFactionIds?: string[];
+
   // Match shape — populated in single-player by setup, in multiplayer by
   // the server. The match ends when status flips to 'completed', either
   // via a host-initiated abandon or when one of the three victory
