@@ -57,34 +57,59 @@
   gap: 6px;
 }
 
+/* Row is a container now (headline button + optional body), not a
+   button itself. borderLeftColor is set inline per-category by
+   EventLog.tsx using the color logEntryIcon returns. */
 .event-log-shell .event-log__row {
   width: 100%;
   font-size: 12px;
   line-height: 1.45;
   color: #c5d3df;
-  padding: 7px 10px;
   background: rgba(255, 255, 255, 0.02);
-  border-left: 2px solid #2a3d50;
+  border-left: 3px solid #2a3d50;
   border-radius: 0 3px 3px 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: background 0.12s ease, box-shadow 0.24s ease;
+}
+.event-log-shell .event-log__row.is-open {
+  background: rgba(78, 205, 196, 0.05);
+}
+/* Gold glow + soft pulse on rows newer than the player's last-read
+   bookmark. Clears the moment the panel opens (which writes the
+   bookmark to combatLog.length, dropping isNew to false). */
+.event-log-shell .event-log__row.is-new {
+  box-shadow: 0 0 12px rgba(255, 215, 0, 0.35), inset 0 0 0 1px rgba(255, 215, 0, 0.25);
+  animation: event-log-new-pulse 2.4s ease-in-out infinite;
+}
+@keyframes event-log-new-pulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(255, 215, 0, 0.25), inset 0 0 0 1px rgba(255, 215, 0, 0.20); }
+  50%      { box-shadow: 0 0 16px rgba(255, 215, 0, 0.45), inset 0 0 0 1px rgba(255, 215, 0, 0.35); }
+}
+
+/* Clickable headline — always visible. Rendered as a <button> so
+   Tab + Enter expand the row. The container row absorbs hover so
+   the headline doesn't need its own hover bg. */
+.event-log-shell .event-log__row__headline {
   display: flex;
   align-items: baseline;
   gap: 8px;
+  padding: 7px 10px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
   text-align: left;
-  font-family: inherit;
-  border-top: none;
-  border-right: none;
-  border-bottom: none;
+  width: 100%;
   cursor: pointer;
-  transition: background 0.15s ease, border-left-color 0.15s ease;
 }
-.event-log-shell .event-log__row:hover {
-  background: rgba(255, 184, 77, 0.08);
-  border-left-color: #ffb84d;
+.event-log-shell .event-log__row__headline:hover {
+  background: rgba(255, 184, 77, 0.05);
 }
-.event-log-shell .event-log__row:focus-visible {
+.event-log-shell .event-log__row__headline:focus-visible {
   outline: none;
   background: rgba(255, 184, 77, 0.1);
-  border-left-color: #ffb84d;
 }
 
 .event-log-shell .event-log__icon {
@@ -98,6 +123,37 @@
   flex: 1 1 auto;
   min-width: 0;
   word-break: break-word;
+}
+.event-log-shell .event-log__chevron {
+  flex: 0 0 auto;
+  color: #7a8b9a;
+  font-size: 11px;
+  line-height: 1.45;
+  width: 12px;
+  text-align: center;
+}
+
+/* Expanded body — category eyebrow + flavor prose. Phase-1
+   placeholder; phase 2+ swaps in real flavor + edit affordance. */
+.event-log-shell .event-log__row__body {
+  padding: 4px 12px 10px 30px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #b8c8d6;
+  border-top: 1px solid rgba(78, 205, 196, 0.08);
+  background: rgba(10, 14, 20, 0.4);
+}
+.event-log-shell .event-log__row__category {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+  opacity: 0.85;
+}
+.event-log-shell .event-log__row__flavor {
+  font-style: italic;
+  color: #c5d3df;
 }
 
 .event-log-shell .event-log__empty {
