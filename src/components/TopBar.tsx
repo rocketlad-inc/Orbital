@@ -93,6 +93,36 @@ export const TopBar: React.FC<TopBarProps> = ({
   const [detailAlert, setDetailAlert] = useState<Alert | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
+  // Track how many entries the player had ALREADY seen the last time
+  // they opened the log. Persisted per game so coming back after a
+  // break shows you what's new since you logged off. SP uses 'sp' as
+  // the bucket id since adminGameId is MP-only.
+  const eventLogStorageKey = `eventLog:lastReadCount:${adminGameId ?? 'sp'}`;
+  const [lastReadCount, setLastReadCount] = useState<number>(() => {
+    try {
+      const raw = typeof window !== 'undefined' ? window.localStorage.getItem(eventLogStorageKey) : null;
+      const n = raw != null ? parseInt(raw, 10) : 0;
+      return Number.isFinite(n) && n >= 0 ? n : 0;
+    } catch { return 0; }
+  });
+  // Re-read when the gameId changes (e.g. host swapped games).
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(eventLogStorageKey);
+      const n = raw != null ? parseInt(raw, 10) : 0;
+      setLastReadCount(Number.isFinite(n) && n >= 0 ? n : 0);
+    } catch { /* ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventLogStorageKey]);
+  // If new entries arrive AFTER trimming (combatLog is bounded server-side),
+  // the lastReadCount can exceed combatLog.length. Clamp on the fly so the
+  // new-count math doesn't go negative or claim everything is unread.
+  const clampedLastRead = Math.min(lastReadCount, gameState.combatLog.length);
+  const eventLogNewCount = Math.max(0, gameState.combatLog.length - clampedLastRead);
+  const markLogRead = () => {
+    setLastReadCount(gameState.combatLog.length);
+    try { window.localStorage.setItem(eventLogStorageKey, String(gameState.combatLog.length)); } catch { /* ignore */ }
+  };
   // Save / Load modal state. Lifted into TopBar (rather than SideMenu)
   // because closing the menu shouldn't kill the modal — players want to
   // see the picker without the menu also occupying the screen.
@@ -498,11 +528,20 @@ export const TopBar: React.FC<TopBarProps> = ({
         ))}
         {gameState.combatLog.length > 0 && (
           <button
-            className="top-bar__log-toggle"
+            className={`top-bar__log-toggle${eventLogNewCount > 0 ? ' has-new' : ''}`}
             onClick={() => setLogOpen(true)}
-            title="Open full event log"
+            title={
+              eventLogNewCount > 0
+                ? `${eventLogNewCount} new since you last opened the log`
+                : 'Open full event log'
+            }
           >
-            ☰ Log ({gameState.combatLog.length})
+            ☰ Log
+            {eventLogNewCount > 0 ? (
+              <span className="top-bar__log-toggle__pip">{eventLogNewCount}</span>
+            ) : (
+              <span className="top-bar__log-toggle__total"> ({gameState.combatLog.length})</span>
+            )}
           </button>
         )}
       </div>
@@ -510,12 +549,8 @@ export const TopBar: React.FC<TopBarProps> = ({
       {logOpen && (
         <EventLogPanel
           entries={gameState.combatLog}
-          onClose={() => setLogOpen(false)}
-          // Click a log row → reuse the same details popover the chips use.
-          // The two overlays stack: the details modal sits above the panel
-          // (z-index 6100 vs 6000/6001), so closing the modal returns the
-          // player to the log list rather than back to the map.
-          onEntryClick={(entry, i) => setDetailAlert(alertFromLogEntry(entry, i))}
+          newSinceIndex={clampedLastRead}
+          onClose={() => { markLogRead(); setLogOpen(false); }}
         />
       )}
 
@@ -580,23 +615,10 @@ function extractPrimaryName(msg: string): string {
   return cleaned.length > 18 ? cleaned.slice(0, 18) + '…' : cleaned;
 }
 
-/** Build a synthetic Alert for an EventLogPanel row so its click handler
- *  can reuse the same AlertDetailsModal the top-bar chips use. The combat
- *  log is a plain string array on the client (server pre-formats each
- *  message), so the icon/category come from the keyword classifier and the
- *  full row text becomes the modal body verbatim. No action button — log
- *  entries are historical, there's no "go to ship" target. */
-function alertFromLogEntry(entry: string, index: number): Alert {
-  const cls = logEntryIcon(entry);
-  return {
-    id: `logrow-${index}`,
-    icon: cls.icon,
-    color: cls.color,
-    category: cls.label,
-    text: entry,
-    detail: entry,
-  };
-}
+// alertFromLogEntry removed in event-log phase 1: log rows now expand
+// inline instead of opening the AlertDetailsModal pop-out. Top-bar
+// chips still use AlertDetailsModal for their own click-to-open
+// behaviour — that path is unchanged.
 
 /** #rrggbb (or #rgb) → rgba() string. Used to tint a chip's background with
  *  its own per-type colour at low alpha so border/text/fill stay coherent. */
@@ -668,12 +690,24 @@ const AlertDetailsModal: React.FC<{ alert: Alert; onClose: () => void }> = ({ al
 
 const EventLogPanel: React.FC<{
   entries: string[];
+  /** Entries at index >= newSinceIndex are tagged as "new" — they get
+   *  the gold-glow pulse until the player closes the panel (which
+   *  marks-read via the parent's onClose). */
+  newSinceIndex: number;
   onClose: () => void;
-  /** Click a row to open the same details popover the top-bar chips use.
-   *  Optional so the panel still works as a passive list if no handler is
-   *  threaded in. */
-  onEntryClick?: (entry: string, index: number) => void;
-}> = ({ entries, onClose, onEntryClick }) => {
+}> = ({ entries, newSinceIndex, onClose }) => {
+  // Track which rows are expanded. Click toggles. Multiple rows can be
+  // open simultaneously — the player might want to compare two combat
+  // results without losing context.
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const toggle = (i: number) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i); else next.add(i);
+      return next;
+    });
+  };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
@@ -695,32 +729,70 @@ const EventLogPanel: React.FC<{
           {entries.length === 0 ? (
             <div className="event-log__empty">No events yet. Combat results and game milestones will appear here.</div>
           ) : (
-            entries.map((entry, i) => {
-              const { icon, color } = logEntryIcon(entry);
-              // Render rows as <button> when interactive so keyboard users
-              // can Tab + Enter to open details; fall back to a static div
-              // when no handler is provided (passive panel).
-              const handleClick = onEntryClick ? () => onEntryClick(entry, i) : undefined;
-              const commonChildren = (
-                <>
-                  <span
-                    className="event-log__icon"
-                    style={{ color }}
-                    aria-hidden="true"
-                  >{icon}</span>
-                  <span className="event-log__text">{entry}</span>
-                </>
-              );
-              return handleClick ? (
-                <button
+            // Render newest-first so the player sees fresh activity at
+            // the top. combatLog is append-only, so the last index is
+            // the most recent.
+            entries.map((entry, displayIndex) => {
+              // displayIndex is the position in entries[]. We render
+              // newest-first by reversing later — keep the original
+              // index here for "is this new?" gating.
+              return { entry, index: displayIndex };
+            }).reverse().map(({ entry, index: i }) => {
+              const { icon, color, label } = logEntryIcon(entry);
+              const isNew = i >= newSinceIndex;
+              const isOpen = expanded.has(i);
+              // For phase 1 the body just echoes the headline. Phase 2
+              // (template engine) and phase 4 (flavor banks) fill this
+              // with real prose; until then we surface the same text
+              // styled as a quote so the click-expand interaction has
+              // SOMETHING to reveal. Editable in phase 3.
+              return (
+                <div
                   key={i}
-                  type="button"
-                  className="event-log__row event-log__row--clickable"
-                  onClick={handleClick}
-                  title="Show details"
-                >{commonChildren}</button>
-              ) : (
-                <div key={i} className="event-log__row">{commonChildren}</div>
+                  className={
+                    'event-log__row'
+                    + (isOpen ? ' is-open' : '')
+                    + (isNew ? ' is-new' : '')
+                  }
+                  style={{
+                    // Per-category left-border + accent driven by the
+                    // logEntryIcon classifier. Tints stay subtle so the
+                    // body text contrast doesn't suffer.
+                    borderLeftColor: color,
+                  } as React.CSSProperties}
+                >
+                  <button
+                    type="button"
+                    className="event-log__row__headline"
+                    onClick={() => toggle(i)}
+                    title={isOpen ? 'Collapse' : 'Expand'}
+                  >
+                    <span
+                      className="event-log__icon"
+                      style={{ color }}
+                      aria-hidden="true"
+                    >{icon}</span>
+                    <span className="event-log__text">{entry}</span>
+                    <span
+                      className="event-log__chevron"
+                      aria-hidden="true"
+                    >{isOpen ? '▾' : '▸'}</span>
+                  </button>
+                  {isOpen && (
+                    <div className="event-log__row__body">
+                      <div className="event-log__row__category" style={{ color }}>
+                        {label}
+                      </div>
+                      <div className="event-log__row__flavor">
+                        {/* Phase 1 placeholder. Real flavor lands in
+                            phase 2+ once the template engine + banks
+                            are wired in. For now we echo the headline
+                            so the expand state has something to show. */}
+                        {entry}
+                      </div>
+                    </div>
+                  )}
+                </div>
               );
             })
           )}
