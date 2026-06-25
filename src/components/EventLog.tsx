@@ -20,6 +20,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
+import type { ChronicleFocus } from '../types';
 import './DockRail.css';
 import './EventLog.css';
 
@@ -48,6 +49,7 @@ function logEntryIcon(entry: string): { icon: string; color: string; label: stri
   // and stays monochrome like the other glyphs — the dove emoji rendered
   // colour-locked and inconsistent across OSes.
   if (s.includes('signed') && s.includes('pact'))  return { icon: '☮︎', color: '#a78bfa', label: 'Pact signed' };
+  if (s.includes('senate')) return { icon: '§', color: '#ffd700', label: 'Senate' };
   if (s.includes('traded') && s.includes(' → '))   return { icon: '⚖', color: '#ffb84d', label: 'Trade' };
   if (s.includes('captured')) return { icon: '⚑', color: '#ffd700', label: 'Capture' };
   if (s.includes('founded')) return { icon: '⌂', color: '#6ee7b7', label: 'Settlement' };
@@ -75,10 +77,36 @@ function readBookmarkKey(): string {
  * Pattern mirrors SituationLog exactly so the two panels feel cohesive.
  */
 export const EventLog: React.FC = () => {
-  const { gameState } = useGameContext();
+  const { gameState, selectShip, selectBody, focusBody } = useGameContext();
   const entries = gameState.combatLog;
   const flavors = gameState.chronicleFlavor;
+  const focuses = gameState.chronicleFocus;
   const totalCount = entries.length;
+
+  // "Take me there" — center the camera on the event's body/ship if it
+  // still exists. Re-validate against live state so a button never
+  // sends the camera to a ship that's since been destroyed or a body
+  // that was wiped. Returns false when the target is gone (the caller
+  // hides the button).
+  const resolveFocus = (f: ChronicleFocus | null | undefined): (() => void) | null => {
+    if (!f) return null;
+    if (f.kind === 'ship') {
+      const ship = gameState.ships.find(s => s.id === f.shipId);
+      if (!ship) return null;
+      return () => {
+        selectShip(ship.id);
+        if (ship.orbit?.parentBodyId) focusBody(ship.orbit.parentBodyId);
+        close();
+      };
+    }
+    const body = gameState.bodies.find(b => b.id === f.bodyId);
+    if (!body) return null;
+    return () => {
+      selectBody(body.id);
+      focusBody(body.id);
+      close();
+    };
+  };
 
   const [open, setOpen] = useState(false);
   // Keep the panel mounted for one transition cycle after `open`
@@ -233,21 +261,35 @@ export const EventLog: React.FC = () => {
                           aria-hidden="true"
                         >{isOpen ? '▾' : '▸'}</span>
                       </button>
-                      {isOpen && (
-                        <div className="event-log__row__body">
-                          <div className="event-log__row__category" style={{ color }}>
-                            {label}
+                      {isOpen && (() => {
+                        const onFocus = resolveFocus(focuses?.[i]);
+                        return (
+                          <div className="event-log__row__body">
+                            <div className="event-log__row__category" style={{ color }}>
+                              {label}
+                            </div>
+                            <div className="event-log__row__flavor">
+                              {/* Prose flavor resolved from the structured
+                                  chronicle event (flavorEngine). Falls back
+                                  to echoing the headline when the event kind
+                                  has no bank or its payload couldn't be
+                                  enriched. Editing lands in phase 3. */}
+                              {flavors?.[i] ?? entry}
+                            </div>
+                            {onFocus && (
+                              <button
+                                type="button"
+                                className="event-log__row__focus"
+                                style={{ borderColor: color, color }}
+                                onClick={onFocus}
+                                title="Center the camera on this location"
+                              >
+                                ◎ Take me there
+                              </button>
+                            )}
                           </div>
-                          <div className="event-log__row__flavor">
-                            {/* Prose flavor resolved from the structured
-                                chronicle event (flavorEngine). Falls back
-                                to echoing the headline when the event kind
-                                has no bank or its payload couldn't be
-                                enriched. Editing lands in phase 3. */}
-                            {flavors?.[i] ?? entry}
-                          </div>
-                        </div>
-                      )}
+                        );
+                      })()}
                     </div>
                   );
                 })

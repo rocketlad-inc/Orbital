@@ -15,7 +15,7 @@ import { GameContextProvider } from '../state/gameContext';
 import { MultiplayerActionsProvider } from './MultiplayerActionsContext';
 import {
   Body, Ship, Faction, GameState, OrbitElements, FactionResources, FactionTechStateBase,
-  Settlement, ManeuverNode,
+  Settlement, ManeuverNode, ChronicleFocus,
 } from '../types';
 import {
   planTorchTransfer, stepTorchShip, DEFAULT_ENGINE_G, fromG,
@@ -895,6 +895,14 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         return `${t}  ⚔ ${breaker} broke the ${kind} with ${other} — war resumes`;
       }
 
+      if (ev.kind === 'senate_vote') {
+        // Was falling through to the raw "senate_vote" kind. Build a
+        // real headline: the bill title + outcome.
+        const title = (parsed.title as string) ?? 'a motion';
+        const outcome = (parsed.outcome as string) ?? 'resolved';
+        return `${t}  ⚖ Senate: “${title}” ${outcome}`;
+      }
+
       return `${t}  ${ev.kind}`;
     };
 
@@ -946,6 +954,16 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       targetFactionId: ev.target_faction_id,
       payload,
     }, flavorCtx);
+  });
+
+  // Focus target for each event's "take me there" button. Prefer the
+  // ship id (most specific), fall back to the body id. Destroyed-entity
+  // events still carry the id; the EventLog re-validates existence at
+  // click time so a button never sends the camera to a vanished ship.
+  const chronicleFocus: (ChronicleFocus | null)[] = orderedEvents.map(ev => {
+    if (ev.ship_id) return { kind: 'ship', shipId: ev.ship_id };
+    if (ev.body_id) return { kind: 'body', bodyId: ev.body_id };
+    return null;
   });
 
   // Server-side build queue → client BuildOrder[]. Drives the BuildPanel
@@ -1027,6 +1045,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     factionTech: { [PLAYER_TOKEN]: playerTech },
     combatLog,
     chronicleFlavor,
+    chronicleFocus,
     lastHarvestTick: srv.game.current_tick,
     tradeRoutes,
     dysonSphere,

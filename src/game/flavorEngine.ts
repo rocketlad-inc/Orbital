@@ -74,9 +74,10 @@ const KIND_MAP: Record<string, string> = {
   treaty_signed:        'pact_signed',
   treaty_broken:        'pact_broken',
   asteroid_impact:      'asteroid_impact',
+  senate_vote:          'vote_resolved',
   // No banks wired for these server kinds yet (or the server doesn't
-  // emit them under these names): vote_opened, vote_resolved,
-  // tech_advanced, ship_damaged, trade_declined, asteroid_launched.
+  // emit them under these names): vote_opened, tech_advanced,
+  // trade_declined, asteroid_launched.
 };
 
 // Secret-kind -> readable {secretName}. Matches the secrets the
@@ -308,6 +309,17 @@ function resolveVars(ev: FlavorEvent, ctx: FlavorContext): Record<string, string
         partnerLeaderTitle: b ? leaderTitle(b.name) : undefined,
         pactType: PACT_LABEL[str('kind') ?? ''] ?? undefined,
         distance: distanceBucket(partnerCap),
+        tick,
+      };
+    }
+    case 'senate_vote': {
+      // outcome is the server's status string ('passed' / 'failed' /
+      // etc.). title is the bill's display name. proposer = actor.
+      const outcome = str('outcome');
+      return {
+        actor: facName(actorFac),
+        voteTitle: str('title'),
+        voteOutcome: outcome,
         tick,
       };
     }
