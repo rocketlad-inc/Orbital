@@ -100,16 +100,14 @@
 }
 
 /* Clickable headline — always visible. Rendered as a <button> so
-   Tab + Enter expand the row. The container row absorbs hover so
-   the headline doesn't need its own hover bg. */
+   Tab + Enter expand the row. Column layout: a colored category kicker
+   on top, then the icon + text + chevron row. The container row
+   absorbs hover so the headline doesn't need its own hover bg. */
 .event-log-shell .event-log__row__headline {
   display: flex;
-  /* flex-start (not baseline) so the icon + chevron pin to the TOP of
-     a headline that wraps to multiple lines, instead of floating to
-     the last line's baseline. */
-  align-items: flex-start;
-  gap: 8px;
-  padding: 8px 10px;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 10px;
   background: transparent;
   border: none;
   color: inherit;
@@ -124,6 +122,26 @@
 .event-log-shell .event-log__row__headline:focus-visible {
   outline: none;
   background: rgba(255, 184, 77, 0.1);
+}
+
+/* Category kicker — tiny colored uppercase label above the headline,
+   color-coded per category (set inline from logEntryIcon). */
+.event-log-shell .event-log__row__kicker {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+/* The icon + text + chevron sit on one row beneath the kicker.
+   flex-start so the icon + chevron pin to the TOP of a headline that
+   wraps to multiple lines, instead of floating to the last baseline. */
+.event-log-shell .event-log__row__headline-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
 }
 
 .event-log-shell .event-log__icon {

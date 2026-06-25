@@ -18,12 +18,54 @@
 // a template engine. Phase 3 layers editability + server-side sync.
 // ============================================================
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import type { ChronicleFocus } from '../types';
 import './DockRail.css';
 import './EventLog.css';
+
+// Escape a string for safe use inside a RegExp.
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Split `text` into React nodes, wrapping each occurrence of a faction
+ * name (plus an optional possessive 's / 's) in a span tinted with that
+ * faction's color. Faction names are distinctive proper nouns, so a
+ * straight substring match reads cleanly; we match longest-name-first
+ * so "Confederacy of Independent Systems" wins over a bare prefix.
+ * Returns the original string untouched when nothing matches (so plain
+ * lines don't pay for an array of nodes).
+ */
+function colorizeFactions(
+  text: string,
+  re: RegExp | null,
+  colorByName: Map<string, string>,
+): React.ReactNode {
+  if (!re || !text) return text;
+  re.lastIndex = 0;
+  const out: React.ReactNode[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  let key = 0;
+  while ((m = re.exec(text)) !== null) {
+    const whole = m[0];          // name (+ optional possessive)
+    const name = m[1];           // the faction name itself
+    const start = m.index;
+    if (start > last) out.push(text.slice(last, start));
+    const color = colorByName.get(name);
+    out.push(
+      <span key={`f${key++}`} style={{ color, fontWeight: 600 }}>{whole}</span>,
+    );
+    last = start + whole.length;
+    if (whole.length === 0) re.lastIndex++; // guard against zero-width loops
+  }
+  if (out.length === 0) return text;
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
 
 /**
  * Classify a free-text chronicle line into an icon + color + label
@@ -85,6 +127,29 @@ export const EventLog: React.FC = () => {
   const focuses = gameState.chronicleFocus;
   const metas = gameState.chronicleMeta;
   const totalCount = entries.length;
+
+  // Faction name -> color, plus a longest-first regex that matches any
+  // faction name (with an optional possessive). Rebuilt only when the
+  // roster or a faction's color changes. Used to tint player names in
+  // both the headline and the flavor prose.
+  const factionColorByName = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const f of gameState.factions) {
+      if (f.name && f.color) m.set(f.name, f.color);
+    }
+    return m;
+  }, [gameState.factions]);
+  const factionRe = useMemo(() => {
+    const names = Array.from(factionColorByName.keys())
+      .filter(n => n.length > 0)
+      .sort((a, b) => b.length - a.length); // longest first
+    if (names.length === 0) return null;
+    const alt = names.map(escapeRe).join('|');
+    // Capture the name in group 1; allow a trailing straight/curly
+    // possessive so "BEN's" colors the apostrophe-s too.
+    return new RegExp(`(${alt})(?:['’]s)?`, 'g');
+  }, [factionColorByName]);
+  const tint = (text: string) => colorizeFactions(text, factionRe, factionColorByName);
 
   // Inline flavor editing (Phase 3). editingIndex is the originalIndex
   // of the row whose textarea is open; draft holds the in-progress text;
@@ -284,16 +349,23 @@ export const EventLog: React.FC = () => {
                         onClick={() => toggleExpand(i)}
                         title={isOpen ? 'Collapse' : 'Expand'}
                       >
-                        <span
-                          className="event-log__icon"
-                          style={{ color }}
-                          aria-hidden="true"
-                        >{icon}</span>
-                        <span className="event-log__text">{entry}</span>
-                        <span
-                          className="event-log__chevron"
-                          aria-hidden="true"
-                        >{isOpen ? '▾' : '▸'}</span>
+                        {/* Category kicker — colored per category so the
+                            log is scannable by type at a glance. */}
+                        <span className="event-log__row__kicker" style={{ color }}>
+                          {label}
+                        </span>
+                        <span className="event-log__row__headline-main">
+                          <span
+                            className="event-log__icon"
+                            style={{ color }}
+                            aria-hidden="true"
+                          >{icon}</span>
+                          <span className="event-log__text">{tint(entry)}</span>
+                          <span
+                            className="event-log__chevron"
+                            aria-hidden="true"
+                          >{isOpen ? '▾' : '▸'}</span>
+                        </span>
                       </button>
                       {isOpen && (() => {
                         const onFocus = resolveFocus(focuses?.[i]);
@@ -302,10 +374,6 @@ export const EventLog: React.FC = () => {
                         const isEditing = editingIndex === i;
                         return (
                           <div className="event-log__row__body">
-                            <div className="event-log__row__category" style={{ color }}>
-                              {label}
-                            </div>
-
                             {isEditing ? (
                               <div className="event-log__row__edit">
                                 <textarea
@@ -345,7 +413,7 @@ export const EventLog: React.FC = () => {
                             ) : (
                               <>
                                 <div className="event-log__row__flavor">
-                                  {flavorText}
+                                  {tint(flavorText)}
                                 </div>
                                 {/* Attribution footer for player-rewritten events. */}
                                 {meta?.isOverride && meta.editedByName && (
