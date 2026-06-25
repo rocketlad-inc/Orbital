@@ -253,19 +253,32 @@ async function listActiveEffectRows(env, gameId, currentTick) {
  */
 export async function hasActiveSanction(env, gameId, currentTick, factionId, effectKind) {
   if (!factionId || !effectKind) return false;
-  const row = await env.DB
-    .prepare(
-      `SELECT 1 AS x FROM senate_effects
-        WHERE game_id = ?
-          AND effect_kind = ?
-          AND target_faction_id = ?
-          AND active_from_tick <= ?
-          AND active_until_tick > ?
-        LIMIT 1`,
-    )
-    .bind(gameId, effectKind, factionId, currentTick, currentTick)
-    .first();
-  return !!row;
+  // Defensive: sanctions are an optional overlay queried from the
+  // hot tick loop (trade auto-pilot, combat). The effect_kind /
+  // target_faction_id columns arrived in migration 0031; if a game's
+  // DB hasn't applied it yet (new worker code racing the migration),
+  // this query throws "no such column" and — because the caller wraps
+  // the whole trade loop in one try/catch — stalls EVERY freighter for
+  // EVERY player. A missing sanction table must never break core
+  // trade or combat: on any DB error, treat the faction as un-sanctioned.
+  try {
+    const row = await env.DB
+      .prepare(
+        `SELECT 1 AS x FROM senate_effects
+          WHERE game_id = ?
+            AND effect_kind = ?
+            AND target_faction_id = ?
+            AND active_from_tick <= ?
+            AND active_until_tick > ?
+          LIMIT 1`,
+      )
+      .bind(gameId, effectKind, factionId, currentTick, currentTick)
+      .first();
+    return !!row;
+  } catch (e) {
+    console.error('hasActiveSanction query failed (treating as un-sanctioned)', e);
+    return false;
+  }
 }
 
 // ---------- proposal shaping ----------
