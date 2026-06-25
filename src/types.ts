@@ -551,8 +551,10 @@ export interface GameState {
   status?: 'lobby' | 'active' | 'completed' | 'abandoned';
   winnerFactionId?: string;            // set when status flips to 'completed'
   /** Legacy labels (hegemony/wealth/tiebreak) stay in the union for
-   *  back-compat with replays from before three-conditions landed. */
-  victoryType?: 'engineering' | 'military' | 'science' | 'hegemony' | 'wealth' | 'tiebreak';
+   *  back-compat with replays from before three-conditions landed.
+   *  'chancellor' is the server-only senate election win — fires when
+   *  a chancellor_vote bill passes (see worker/senate.js). */
+  victoryType?: 'engineering' | 'military' | 'science' | 'chancellor' | 'hegemony' | 'wealth' | 'tiebreak';
 
   /** Dyson-Sphere megaproject state. Present only after a faction has
    *  begun construction at a Sol station; completing it triggers

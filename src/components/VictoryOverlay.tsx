@@ -16,6 +16,7 @@ const VICTORY_LABEL: Record<string, string> = {
   engineering: 'ENGINEERING VICTORY',
   military:    'MILITARY VICTORY',
   science:     'SCIENCE VICTORY',
+  chancellor:  'POLITICAL VICTORY',
   // Legacy types kept for back-compat with old replays.
   hegemony: 'HEGEMONY VICTORY',
   wealth:   'ECONOMIC VICTORY',
@@ -26,6 +27,7 @@ const VICTORY_BLURB: Record<string, string> = {
   engineering: 'completed the Sol Dyson Sphere',
   military:    'eliminated every rival empire',
   science:     'mastered every tech track',
+  chancellor:  'was elected Supreme Chancellor by a majority of the Senate',
   // Legacy types kept for back-compat with old replays.
   hegemony: 'controls the most worlds at game end',
   wealth:   'amassed the greatest wealth at game end',
