@@ -46,14 +46,18 @@
   border-color: #4a6378;
 }
 
-/* column-reverse keeps the most recent entry on top while still
-   letting the body element grow downward from the head. */
+/* Normal column flow (top-anchored). The component renders rows
+   newest-first, so newest sits at the top. Crucially, top-anchored
+   flow means an expanding row pushes the rows BELOW it down — the
+   clicked headline stays put and its body opens downward. (The old
+   column-reverse bottom-anchored the list, so expansion shoved the
+   clicked row UP, which read as "expanding upward".) */
 .event-log-shell .event-log__body {
   flex: 1;
   overflow-y: auto;
   padding: 10px 14px 14px;
   display: flex;
-  flex-direction: column-reverse;
+  flex-direction: column;
   gap: 6px;
 }
 
