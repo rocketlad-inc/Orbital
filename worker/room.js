@@ -1180,6 +1180,12 @@ export class Room {
       };
 
       for (const r of routes) {
+       // Per-route isolation: wrap each route so one bad route (a
+       // throwing sanction check, a missing body in computeLegTicks,
+       // etc.) can't abort the WHOLE loop and freeze every other
+       // player's freighters. The outer try/catch logs; this inner one
+       // keeps the remaining routes moving.
+       try {
         if (r.status === 'paused') continue;
         const ship = await this.env.DB
           .prepare("SELECT id, owner_faction_id, parent_body_id, ship_class, status FROM game_ships WHERE id = ?")
@@ -1339,6 +1345,11 @@ export class Room {
         if (here !== target) {
           await planLeg(target);
         }
+       } catch (routeErr) {
+         // One route blew up — log it and move on to the next so a
+         // single bad route can't freeze everyone else's logistics.
+         console.error('trade route failed for ship', r.ship_id, routeErr);
+       }
       }
     } catch (e) {
       console.error('trade-route auto-pilot failed', e);
