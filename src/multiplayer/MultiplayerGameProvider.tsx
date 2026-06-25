@@ -67,6 +67,10 @@ interface ServerState {
     /** True when the caller is the room host — can edit any event's
      *  flavor, not just events they were a party to. */
     is_host?: boolean;
+    /** Faction ids the caller has ANY active peace treaty with (nap +
+     *  defense-pact + intel-share). Superset of ally_faction_ids. Used
+     *  by threat detection only — sensors stay on the narrower ally set. */
+    peace_faction_ids?: string[];
   };
   factions: Array<{
     id: string; slot: number; name: string; color: string; status: string;
@@ -1082,6 +1086,9 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     // the caller is remapped to PLAYER_TOKEN — so ally-owned ships carry
     // these ids and the fog-of-war friendly check matches directly.
     alliedFactionIds: srv.me.ally_faction_ids ?? [],
+    // Same id space as alliedFactionIds — peace partners are also other
+    // server-side faction ids. Used by computeIncomingThreats only.
+    peaceFactionIds: srv.me.peace_faction_ids ?? [],
   };
 }
 

@@ -215,6 +215,31 @@ async function handleGetState(req, env, ctx) {
     .all()).results ?? [];
   const allyIds = allyRows.map(r => r.ally_id);
 
+  // Peace partners — superset of allies that also includes NAP-only
+  // partners. Used by client threat detection so an inbound ship from
+  // anyone we have an active peace treaty with (any kind) doesn't get
+  // painted as a threat. NAPs are NOT included in alliedFactionIds (no
+  // shared vision), so we run a separate query. Player report: MCRN
+  // ships were flagged as a threat after Confederacy signed NAP +
+  // Intel-Share with them, because threats.ts had no peace check at all.
+  const peaceRows = (await env.DB
+    .prepare(
+      `SELECT DISTINCT ts2.faction_id AS peace_id
+         FROM treaties t
+         JOIN treaty_signatories ts1
+           ON ts1.treaty_id = t.id AND ts1.faction_id = ?2 AND ts1.signed_at_tick IS NOT NULL
+         JOIN treaty_signatories ts2
+           ON ts2.treaty_id = t.id AND ts2.faction_id != ?2 AND ts2.signed_at_tick IS NOT NULL
+        WHERE t.game_id = ?1
+          AND t.status = 'active'
+          AND t.broken_at_tick IS NULL
+          AND t.kind IN ('nap', 'defense_pact', 'intel_share')
+          AND (t.expires_at_tick IS NULL OR t.expires_at_tick > ?3)`,
+    )
+    .bind(gameId, me.id, game.current_tick)
+    .all()).results ?? [];
+  const peaceIds = peaceRows.map(r => r.peace_id);
+
   // Faction ids whose presence illuminates the map for the caller:
   // the caller plus every ally. Passed to the fog CTEs as a JSON array
   // (json_each) so the IN-list works for any number of allies without
@@ -672,6 +697,12 @@ async function handleGetState(req, env, ctx) {
       // Allies (active defense-pact / intel-share). The client treats
       // these faction ids as friendly for fog of war — shared vision.
       ally_faction_ids: allyIds,
+      // Peace partners (active nap / defense-pact / intel-share). Superset
+      // of ally_faction_ids — adds NAP-only partners. Used by client
+      // threat detection so an inbound ship from a peace partner doesn't
+      // get painted as a threat. Sensors / fog are still gated on the
+      // narrower ally set.
+      peace_faction_ids: peaceIds,
     },
     factions,
     bodies,

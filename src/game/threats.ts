@@ -69,6 +69,13 @@ export function computeIncomingThreats(
     // Self-filter — the original sensitivity bug was that own ships
     // were firing threats. Keep this guard tight.
     if (ship.ownedBy === forFaction) continue;
+    // Peace-treaty filter. If we have an active NAP, defense pact, or
+    // intel-share with this ship's owner, it's not a threat — even if
+    // it's flying straight at our planet. Player report: MCRN ships
+    // were flagged as a threat to the Confederacy after they'd signed
+    // both NAP and Intel-Share. Server populates peaceFactionIds; SP
+    // has no diplomacy so the field is undefined and this guard skips.
+    if (gameState.peaceFactionIds?.includes(ship.ownedBy)) continue;
 
     const body = gameState.bodies.find(b => b.id === targetBodyId);
 
