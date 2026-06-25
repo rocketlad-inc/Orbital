@@ -111,13 +111,13 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
   if (!mounted) return null;
 
   return (
-    <div className={`dock-panel sit-panel-shell${open ? ' is-open' : ''}`} role="region" aria-label="Situation Log">
+    <div className={`dock-panel sit-panel-shell${open ? ' is-open' : ''}`} role="region" aria-label="Situation Report">
       <div className="sit-panel__head">
         <span className="sit-panel__title">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <path d="M5 6h14M5 10h14M5 14h9M5 18h9" />
           </svg>
-          SITUATION LOG
+          SITUATION REPORT
         </span>
         <button onClick={close} className="sit-panel__close" aria-label="Close">×</button>
       </div>
