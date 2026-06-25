@@ -52,15 +52,30 @@ const ORBITAL_SPEED_SCALE = 0.5;
 const TWO_PI = Math.PI * 2;
 
 /**
- * Body ids that fall within any friendly (caller + ally) sensor radius.
- * @param bodies     rows: { id, parent_body_id, orbit_radius, orbit_period, angle0 }
- * @param ships      friendly active ships: { ship_class, parent_body_id,
- *                   target_body_id, scheduled_t, arrival_at_tick }  (transit
- *                   fields null when parked)
- * @param settlements friendly settlements: { body_id, type }
- * @param tick       current game tick
+ * Build the friendly sensor list + shared position helpers used by both
+ * the body-visibility pass and the ship-visibility pass.
+ *
+ * Returns { sensors, bodyPos, shipPos }:
+ *   sensors  — Array<{ pos: {x,y}, r2: number }>
+ *   bodyPos  — function(body) -> { x, y }   (orbit position at `tick`,
+ *                                            recursively over parents)
+ *   shipPos  — function(ship) -> { x, y }   (transit lerp if in flight,
+ *                                            else parent body position)
+ *
+ * Ship-class / settlement-type sensor ranges + the circular-orbit shortcut
+ * mirror the client (src/game/visibility.ts). In-transit position is a
+ * straight-line lerp between origin and target by flight progress — the
+ * server doesn't track the live torch state, but for a 100-200u sensor
+ * radius the lerp error is well inside the noise.
+ *
+ * @param bodies         all undestroyed bodies (rows: id, parent_body_id,
+ *                       orbit_radius, orbit_period, angle0)
+ * @param friendlyShips  ships whose sensors illuminate the map for the
+ *                       caller (caller + allies)
+ * @param settlements    same for friendly settlements
+ * @param tick           current game tick
  */
-function computeSensorVisibleBodyIds(bodies, ships, settlements, tick) {
+function buildFriendlySensors(bodies, friendlyShips, settlements, tick) {
   const byId = new Map(bodies.map(b => [b.id, b]));
   const posCache = new Map();
   function bodyPos(b) {
@@ -80,30 +95,31 @@ function computeSensorVisibleBodyIds(bodies, ships, settlements, tick) {
     posCache.set(b.id, p);
     return p;
   }
-
-  const sensors = [];
-  for (const s of ships) {
-    const range = SHIP_SENSOR_RANGE[s.ship_class] ?? DEFAULT_SHIP_SENSOR_RANGE;
-    let pos;
+  function shipPos(s) {
     if (s.target_body_id != null && s.arrival_at_tick != null && s.arrival_at_tick > s.scheduled_t) {
-      // In transit: the server doesn't track the live torch position, so
-      // approximate it as a straight-line lerp between origin and target by
-      // flight progress. Good enough for a 100–200u coverage radius.
       const origin = bodyPos(byId.get(s.parent_body_id));
       const target = bodyPos(byId.get(s.target_body_id));
       const frac = Math.max(0, Math.min(1, (tick - s.scheduled_t) / (s.arrival_at_tick - s.scheduled_t)));
-      pos = { x: origin.x + (target.x - origin.x) * frac, y: origin.y + (target.y - origin.y) * frac };
-    } else {
-      pos = bodyPos(byId.get(s.parent_body_id));
+      return { x: origin.x + (target.x - origin.x) * frac, y: origin.y + (target.y - origin.y) * frac };
     }
-    sensors.push({ pos, r2: range * range });
+    return bodyPos(byId.get(s.parent_body_id));
+  }
+
+  const sensors = [];
+  for (const s of friendlyShips) {
+    const range = SHIP_SENSOR_RANGE[s.ship_class] ?? DEFAULT_SHIP_SENSOR_RANGE;
+    sensors.push({ pos: shipPos(s), r2: range * range });
   }
   for (const st of settlements) {
     const range = SETTLEMENT_SENSOR_RANGE[st.type] ?? DEFAULT_SETTLEMENT_SENSOR_RANGE;
     sensors.push({ pos: bodyPos(byId.get(st.body_id)), r2: range * range });
   }
-  if (sensors.length === 0) return [];
+  return { sensors, bodyPos, shipPos };
+}
 
+/** Body ids that fall within any friendly sensor radius. */
+function computeSensorVisibleBodyIds(bodies, sensors, bodyPos) {
+  if (sensors.length === 0) return [];
   const visible = [];
   for (const b of bodies) {
     const bp = bodyPos(b);
@@ -111,6 +127,34 @@ function computeSensorVisibleBodyIds(bodies, ships, settlements, tick) {
       const dx = bp.x - sen.pos.x;
       const dy = bp.y - sen.pos.y;
       if (dx * dx + dy * dy <= sen.r2) { visible.push(b.id); break; }
+    }
+  }
+  return visible;
+}
+
+/**
+ * Ship ids whose CURRENT WORLD POSITION falls within any friendly sensor
+ * radius. This is the rule the player intuitively expects: a hostile ship
+ * flying right through your fleet's sensor cone should appear, regardless
+ * of whether either its origin or destination body is in your visibility
+ * set. Closes the long-standing gap where an enemy ship in transit between
+ * two bodies you couldn't see was invisible even when it was physically
+ * inside one of your sensor radii. Mirror of the body-visibility check
+ * above; cost is O(ships × sensors) per state poll.
+ *
+ * @param candidateShips ships to test — typically every non-friendly active
+ *                       ship in the game (own/allied ships are already
+ *                       visible via the presence rule).
+ */
+function computeSensorVisibleShipIds(candidateShips, sensors, shipPos) {
+  if (sensors.length === 0 || candidateShips.length === 0) return [];
+  const visible = [];
+  for (const s of candidateShips) {
+    const sp = shipPos(s);
+    for (const sen of sensors) {
+      const dx = sp.x - sen.pos.x;
+      const dy = sp.y - sen.pos.y;
+      if (dx * dx + dy * dy <= sen.r2) { visible.push(s.id); break; }
     }
   }
   return visible;
@@ -281,8 +325,34 @@ async function handleGetState(req, env, ctx) {
     )
     .bind(gameId, presenceFactionIds)
     .all()).results ?? [];
+  const { sensors, bodyPos, shipPos } = buildFriendlySensors(
+    sensorBodies, sensorShips, sensorSettlements, game.current_tick,
+  );
   const sensorVisibleBodyIds = JSON.stringify(
-    computeSensorVisibleBodyIds(sensorBodies, sensorShips, sensorSettlements, game.current_tick),
+    computeSensorVisibleBodyIds(sensorBodies, sensors, bodyPos),
+  );
+
+  // Non-friendly ship candidates for the sensor-on-ship visibility pass.
+  // An enemy ship parked at a body in visible_bodies is already covered by
+  // the parent_body_id rule below; this pass adds the IN-FLIGHT case where
+  // a hostile is crossing a friendly sensor cone between two bodies you
+  // can't see. Load all non-presence active ships with the same in-transit
+  // fields used for friendly sensor positioning so shipPos() can lerp.
+  const candidateEnemyShips = sensors.length > 0 ? ((await env.DB
+    .prepare(
+      `SELECT s.id, s.ship_class, s.parent_body_id,
+              n.target_body_id, n.scheduled_t, n.arrival_at_tick
+         FROM game_ships s
+         LEFT JOIN game_ship_nodes n
+           ON n.ship_id = s.id AND n.status = 'in_transit'
+        WHERE s.game_id = ?1
+          AND s.status = 'active'
+          AND s.owner_faction_id NOT IN (SELECT value FROM json_each(?2))`,
+    )
+    .bind(gameId, presenceFactionIds)
+    .all()).results ?? []) : [];
+  const sensorVisibleShipIds = JSON.stringify(
+    computeSensorVisibleShipIds(candidateEnemyShips, sensors, shipPos),
   );
 
   // Sensor-radius fog. The caller "sees" a body if any of the following:
@@ -479,9 +549,16 @@ async function handleGetState(req, env, ctx) {
         WHERE game_id = ?1
           AND status = 'active'
           AND (owner_faction_id IN (SELECT value FROM json_each(?2))
-               OR parent_body_id IN (SELECT bid FROM visible_bodies))`,
+               OR parent_body_id IN (SELECT bid FROM visible_bodies)
+               -- Sensor-on-SHIP reveal: a hostile whose current world
+               -- position falls inside a friendly sensor radius shows
+               -- up, even if neither its origin nor destination body is
+               -- visible. ?4 = JSON array of ship ids computed in JS via
+               -- computeSensorVisibleShipIds against the same sensor list
+               -- used for body visibility.
+               OR id IN (SELECT value FROM json_each(?4)))`,
     )
-    .bind(gameId, presenceFactionIds, sensorVisibleBodyIds)
+    .bind(gameId, presenceFactionIds, sensorVisibleBodyIds, sensorVisibleShipIds)
     .all()).results ?? [];
 
   // Settlements: same visibility set as ships/bodies above.
