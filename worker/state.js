@@ -543,13 +543,20 @@ async function handleGetState(req, env, ctx) {
     .bind(gameId, presenceFactionIds, sensorVisibleBodyIds)
     .all()).results ?? [];
 
+  // Host flag for the EventLog flavor-edit gate. game.id === room.id.
+  const hostRow = await env.DB
+    .prepare('SELECT host_id FROM rooms WHERE id = ?')
+    .bind(gameId).first();
+  const isHost = !!hostRow && hostRow.host_id === ctx.session.user_id;
+
   // Recent public chronicle entries — combat results, key events. Surfaced
   // as a combat log on the canvas. Capped at 30 so the snapshot stays
   // small as the game ages.
   const events = (await env.DB
     .prepare(
       `SELECT id, tick_number, kind, actor_faction_id, target_faction_id,
-              body_id, ship_id, payload, created_at_ms
+              body_id, ship_id, payload, created_at_ms,
+              flavor_override, flavor_edited_by, flavor_edited_at_ms
          FROM chronicle_entries
         WHERE game_id = ?
           AND visibility = 'public'
@@ -668,6 +675,11 @@ async function handleGetState(req, env, ctx) {
       name: me.name,
       color: me.color,
       status: me.status,
+      // Host flag — the game id IS the room id, so a single lookup
+      // tells the client whether this player can edit any event's
+      // flavor (host) vs only events they were a party to. Resolved
+      // just above the return.
+      is_host: isHost,
       capital_body_id: me.capital_body_id,
       resources: {
         metal: me.metal,

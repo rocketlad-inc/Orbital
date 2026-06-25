@@ -1680,6 +1680,74 @@ async function handleRenameSettlement(req, env, ctx) {
   return json({ ok: true, id: settlementId, name });
 }
 
+// PATCH /api/games/:gameId/chronicle/:entryId/flavor
+// body: { flavor: string | null }
+//   - non-empty string sets a custom flavor override (max 500 chars)
+//   - null / empty string reverts to the generated flavor
+// Permission: caller's faction must be the event's actor OR target,
+// OR the caller is the room host. Last-write-wins.
+async function handleEditChronicleFlavor(req, env, ctx) {
+  const { gameId, entryId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+  let flavor = null;
+  if (typeof body.flavor === 'string') {
+    const trimmed = body.flavor.trim();
+    if (trimmed.length > 0) {
+      if (trimmed.length > 500) return err(400, 'bad_request', 'flavor too long (max 500 chars)');
+      flavor = trimmed;
+    }
+  } else if (body.flavor != null) {
+    return err(400, 'bad_request', 'flavor must be a string or null');
+  }
+
+  const entry = await env.DB
+    .prepare('SELECT actor_faction_id, target_faction_id FROM chronicle_entries WHERE id = ? AND game_id = ?')
+    .bind(entryId, gameId)
+    .first();
+  if (!entry) return err(404, 'not_found', 'event not found');
+
+  // Permission: party to the event, or host. game.id === room.id.
+  const isParty = entry.actor_faction_id === me.id || entry.target_faction_id === me.id;
+  let isHost = false;
+  if (!isParty) {
+    const room = await env.DB.prepare('SELECT host_id FROM rooms WHERE id = ?').bind(gameId).first();
+    isHost = !!room && room.host_id === ctx.session.user_id;
+  }
+  if (!isParty && !isHost) {
+    return err(403, 'not_party', 'only a faction involved in this event (or the host) can rewrite it');
+  }
+
+  if (flavor == null) {
+    // Revert: clear the override + its attribution.
+    await env.DB
+      .prepare('UPDATE chronicle_entries SET flavor_override = NULL, flavor_edited_by = NULL, flavor_edited_at_ms = NULL WHERE id = ?')
+      .bind(entryId)
+      .run();
+  } else {
+    await env.DB
+      .prepare('UPDATE chronicle_entries SET flavor_override = ?, flavor_edited_by = ?, flavor_edited_at_ms = ? WHERE id = ?')
+      .bind(flavor, me.id, Date.now(), entryId)
+      .run();
+  }
+
+  // Nudge other clients to refresh sooner than their next poll.
+  try {
+    await env.ROOM.get(env.ROOM.idFromName(gameId)).fetch('https://room/notify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ kind: 'chronicle', event: 'flavor_edited', entry_id: entryId }),
+    });
+  } catch { /* best-effort */ }
+
+  return json({ ok: true, entry_id: entryId, flavor, edited_by: flavor ? me.id : null });
+}
+
 export const routes = [
   {
     method: 'PATCH',
@@ -1692,6 +1760,12 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/settlements\/(?<settlementId>[^/]+)$/,
     auth: 'required',
     handle: handleRenameSettlement,
+  },
+  {
+    method: 'PATCH',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/chronicle\/(?<entryId>[^/]+)\/flavor$/,
+    auth: 'required',
+    handle: handleEditChronicleFlavor,
   },
   {
     method: 'POST',

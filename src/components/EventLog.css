@@ -196,6 +196,110 @@
   transform: scale(0.97);
 }
 
+/* Row action bar — focus + edit buttons sit on one line. */
+.event-log-shell .event-log__row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.event-log-shell .event-log__row__actions .event-log__row__focus {
+  margin-top: 0;
+}
+
+/* Edit / Rewrite button — muted until hovered so it doesn't compete
+   with "Take me there". */
+.event-log-shell .event-log__row__edit-btn {
+  padding: 5px 12px;
+  background: transparent;
+  border: 1px solid #4a6378;
+  border-radius: 3px;
+  color: #b8c8d6;
+  font-family: var(--font-display, 'JetBrains Mono', monospace);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.event-log-shell .event-log__row__edit-btn:hover {
+  border-color: #ffb84d;
+  color: #ffb84d;
+  background: rgba(255, 184, 77, 0.08);
+}
+
+/* Attribution footer for player-rewritten events. */
+.event-log-shell .event-log__row__attribution {
+  margin-top: 6px;
+  font-size: 11px;
+  font-style: italic;
+  color: #7a8b9a;
+}
+
+/* Inline edit area. */
+.event-log-shell .event-log__row__edit {
+  margin-top: 6px;
+}
+.event-log-shell .event-log__row__edit-area {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(10, 14, 20, 0.9);
+  border: 1px solid #4a6378;
+  border-radius: 3px;
+  color: #d8e4ee;
+  font-family: var(--font-body);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 8px 10px;
+  resize: vertical;
+}
+.event-log-shell .event-log__row__edit-area:focus {
+  outline: none;
+  border-color: #ffb84d;
+}
+.event-log-shell .event-log__row__edit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.event-log-shell .event-log__row__edit-save,
+.event-log-shell .event-log__row__edit-cancel,
+.event-log-shell .event-log__row__edit-revert {
+  padding: 5px 12px;
+  border-radius: 3px;
+  font-family: var(--font-display, 'JetBrains Mono', monospace);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.event-log-shell .event-log__row__edit-save {
+  background: #ffb84d;
+  color: #0a0e14;
+}
+.event-log-shell .event-log__row__edit-save:disabled { opacity: 0.5; cursor: wait; }
+.event-log-shell .event-log__row__edit-cancel {
+  background: transparent;
+  border-color: #4a6378;
+  color: #b8c8d6;
+}
+.event-log-shell .event-log__row__edit-revert {
+  background: transparent;
+  border-color: rgba(255, 94, 94, 0.5);
+  color: #ff8a80;
+  margin-left: auto;
+}
+.event-log-shell .event-log__row__edit-revert:hover {
+  background: rgba(255, 94, 94, 0.1);
+}
+.event-log-shell .event-log__row__edit-error {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #ff8a80;
+}
+
 .event-log-shell .event-log__empty {
   color: #b8c8d6;
   font-size: 13px;

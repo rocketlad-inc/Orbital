@@ -514,6 +514,19 @@ export type ChronicleFocus =
   | { kind: 'body'; bodyId: string }
   | { kind: 'ship'; shipId: string };
 
+/** Edit state for an EventLog row's player-authored flavor (Phase 3). */
+export interface ChronicleEditMeta {
+  /** Chronicle entry id — the target of the PATCH .../chronicle/:id/flavor. */
+  entryId: string;
+  /** True when a custom flavor override is currently set. */
+  isOverride: boolean;
+  /** Display name of the faction that last edited, or null. Drives the
+   *  "— rewritten by X" attribution footer. */
+  editedByName: string | null;
+  /** Whether the local player may edit this event (party to it, or host). */
+  canEdit: boolean;
+}
+
 /**
  * Complete game state snapshot
  */
@@ -544,6 +557,10 @@ export interface GameState {
    *  in MultiplayerGameProvider. The EventLog still validates the target
    *  still exists at click time before focusing. */
   chronicleFocus?: (ChronicleFocus | null)[];
+  /** Per-entry edit state (Phase 3): override flag, attribution, and
+   *  whether the local player can edit. Parallel-indexed with combatLog.
+   *  Multiplayer only. */
+  chronicleMeta?: (ChronicleEditMeta | null)[];
   lastHarvestTick: number;             // tick when resources were last collected
   /** Wall-clock epoch (ms) the server expects to fire the next tick, and
    *  the configured tick interval. Multiplayer only — the server drives the
