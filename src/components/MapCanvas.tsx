@@ -522,7 +522,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // is on (selected ship: player wants the full green/pink arc).
         const samples = drawTorchTrajectory(
           plan, gameState.bodies, renderContext, arcColor,
-          false, isSelected && !tradeLeg, gameState.currentTick,
+          // Dashed when this leg belongs to a trade route — the
+          // dash + green colour double-cue tells the player "this is
+          // a recurring run" (vs a one-shot transfer, drawn solid in
+          // the relationship colour). Useful for colourblind viewers
+          // who can't lean on hue alone.
+          !!tradeLeg,
+          isSelected && !tradeLeg, gameState.currentTick,
         );
         ctx.restore();
         drawTransitShip(ship, renderContext, isSelected, samples);
