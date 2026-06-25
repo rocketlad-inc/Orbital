@@ -1024,6 +1024,11 @@ export class Room {
     try { senateSliders = await getActiveSliders(this.env, gameId, tick); }
     catch (e) { console.error('getActiveSliders failed', e); }
     const combatDamageMult = Number(senateSliders.combat_damage_multiplier ?? 1);
+    // Senate fuel-yield slider: applied to every settlement's fuel
+    // yield at distribution time (see ~line 1760). Previously declared
+    // in the catalog but no consumer read it, so passing "Fuel Yield 1.5"
+    // was a vote with no consequence — wire it here.
+    const fuelYieldMult = Number(senateSliders.fuel_yield_multiplier ?? 1);
 
     // Senate sanction cache for this tick. Used by trade routes
     // (trade_embargo), combat damage (war_authorization), and body
@@ -1770,7 +1775,10 @@ export class Room {
         // these two values in sync.
         const prodMul = (await sanctioned(s.fid, 'production_sanction')) ? 0.5 : 1;
         const yieldFull = {
-          fuel:    Number(s.yield_fuel    ?? 0) * popMul * tm.fuel              * prodMul,
+          // Senate fuel-yield slider: applied here (only fuel) so a
+          // global "Fuel Yield 1.5×" law actually does something. The
+          // slider was previously declared in the catalog and never read.
+          fuel:    Number(s.yield_fuel    ?? 0) * popMul * tm.fuel              * prodMul * fuelYieldMult,
           metal:   Number(s.yield_metal   ?? 0) * popMul * tm.metal   * forgeMul * prodMul,
           gold:    Number(s.yield_gold    ?? 0) * popMul * tm.gold    * mintMul  * prodMul,
           science: Number(s.yield_science ?? 0) * popMul * tm.science * labMul   * prodMul,
