@@ -20,19 +20,20 @@
 import React, { useEffect, useState } from 'react';
 import './DockRail.css';
 
-export type DockRailKey = 'situation' | 'multiplayer';
+export type DockRailKey = 'situation' | 'eventlog' | 'multiplayer';
 
 interface Badge {
   count: number;
   hasWarn: boolean;
 }
 
-const ICON_KEYS: DockRailKey[] = ['situation', 'multiplayer'];
+const ICON_KEYS: DockRailKey[] = ['situation', 'eventlog', 'multiplayer'];
 
 export const DockRail: React.FC = () => {
   const [active, setActive] = useState<DockRailKey | null>(null);
   const [badges, setBadges] = useState<Record<DockRailKey, Badge>>({
     situation:   { count: 0, hasWarn: false },
+    eventlog:    { count: 0, hasWarn: false },
     multiplayer: { count: 0, hasWarn: false },
   });
 
@@ -93,6 +94,14 @@ export const DockRail: React.FC = () => {
         onClick={() => toggle('situation')}
       />
       <DockButton
+        which="eventlog"
+        active={active === 'eventlog'}
+        badge={badges.eventlog}
+        icon={<EventLogIcon />}
+        label="Event Log"
+        onClick={() => toggle('eventlog')}
+      />
+      <DockButton
         which="multiplayer"
         active={active === 'multiplayer'}
         badge={badges.multiplayer}
@@ -142,6 +151,18 @@ const DockButton: React.FC<DockButtonProps> = ({ active, badge, icon, label, onC
 const SitIcon: React.FC = () => (
   <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     <path d="M5 6h14M5 10h14M5 14h9M5 18h9" />
+  </svg>
+);
+
+/** Event Log — timeline-with-bullet-dots. Distinct from SitIcon's
+ *  plain hamburger so the two adjacent rail buttons read as
+ *  different concepts ("attention items now" vs "history of events"). */
+const EventLogIcon: React.FC = () => (
+  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <circle cx="6" cy="6" r="1.4" fill="currentColor" stroke="none" />
+    <circle cx="6" cy="12" r="1.4" fill="currentColor" stroke="none" />
+    <circle cx="6" cy="18" r="1.4" fill="currentColor" stroke="none" />
+    <path d="M11 6h9M11 12h9M11 18h6" />
   </svg>
 );
 
