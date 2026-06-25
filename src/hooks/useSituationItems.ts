@@ -281,24 +281,31 @@ export function useSituationItems(
       });
     }
 
-    // ---- 5) Stranded stockpiles ----
-    // Settlement of mine with stockpile > 0 AND no collector AND no
-    // freighter inbound to pick up. v1 rule: skip the "inbound" check
-    // (would need ship+body lookup); just gate on stockpile + missing
-    // collector. Threshold = 1 to avoid spamming for tiny dust.
+    // ---- 5) Stranded stockpiles (grouped per body) ----
+    // The stockpile model is per-body in the UI (city + station on the
+    // same body share one logical bucket). Group non-collector
+    // settlement stockpiles by body and emit ONE item per body, so a
+    // single planet with both a city + station banking ore doesn't
+    // double-list. v1 rule: skip the "freighter inbound" check; just
+    // gate on stockpile + at-least-one-uncollectered settlement.
+    // Threshold = 1 to avoid spamming for tiny dust.
+    const stockByBody = new Map<string, number>();
     for (const s of gameState.settlements) {
       if (s.ownedBy !== factionId) continue;
       if (s.hasCollector) continue;
       const stock = s.stockpile;
       const total = (stock?.fuel ?? 0) + (stock?.ore ?? 0) + (stock?.credits ?? 0) + (stock?.science ?? 0);
       if (total < 1) continue;
-      const body = bodies.find(b => b.id === s.bodyId);
+      stockByBody.set(s.bodyId, (stockByBody.get(s.bodyId) ?? 0) + total);
+    }
+    for (const [bodyId, total] of stockByBody) {
+      const body = bodies.find(b => b.id === bodyId);
       items.push({
-        id: `stranded:${s.id}`,
+        id: `stranded:body:${bodyId}`,
         category: 'stranded',
-        title: `${s.name} stockpile growing`,
-        subtitle: `${body?.name ?? '?'} — no collector built`,
-        focus: { kind: 'body', bodyId: s.bodyId },
+        title: `${body?.name ?? '?'} stockpile growing`,
+        subtitle: `${Math.round(total)} units banked — no collector or trade route`,
+        focus: { kind: 'body', bodyId },
         severity: 'normal',
       });
     }
