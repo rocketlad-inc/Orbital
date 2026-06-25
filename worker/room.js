@@ -206,17 +206,33 @@ export class Room {
 
       const now = Date.now();
       // Orphan recovery: active wall-clock game with NULL next_tick_at
-      // (TBM was on at some point, or the column got cleared). Set it
-      // to "now" so the tick can fire immediately rather than waiting
-      // indefinitely. Skip for TBM games — those are intentionally paused.
+      // (TBM was on at some point, or the column got cleared). Skip for
+      // TBM games — those are intentionally paused.
+      //
+      // Behaviour split by `force`:
+      //   - self-heal (force=false): set next_tick_at one interval out so
+      //     the natural alarm fires it, then bail. We DON'T tick now —
+      //     the player isn't asking us to, and ticking on every poll
+      //     would burst-fire if the DO is orphaned for a while.
+      //   - host force (force=true): set next_tick_at to `now` so the
+      //     due check below treats it as ready, then fall through to
+      //     alarm(). Player-report: the force-tick button read "No
+      //     change" because this branch unconditionally returned 204
+      //     even when force was set — silently rescheduling without
+      //     ever advancing the sim.
       if (game.next_tick_at == null && game.turn_based_enabled !== 1) {
         const interval = game.tick_interval_ms ?? 60_000;
-        const nextAt = Date.now() + interval;
+        const nextAt = force ? now : Date.now() + interval;
         await this.env.DB
           .prepare('UPDATE games SET next_tick_at = ? WHERE id = ?')
           .bind(nextAt, started.gameId).run();
-        try { await this.state.storage.setAlarm(nextAt); } catch {}
-        return new Response(null, { status: 204 });
+        if (!force) {
+          try { await this.state.storage.setAlarm(nextAt); } catch {}
+          return new Response(null, { status: 204 });
+        }
+        // Force: keep the local copy in sync so the due check below
+        // sees the freshly-armed schedule, then fall through to alarm().
+        game.next_tick_at = nextAt;
       }
       const due = game.next_tick_at != null && game.next_tick_at <= now;
       if (!force && !due) {
