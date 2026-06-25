@@ -508,6 +508,12 @@ export interface FactionTechStateBase {
   queue?: string[];
 }
 
+/** Where an EventLog row's "take me there" button should send the
+ *  camera. Resolved from the chronicle event's body_id / ship_id. */
+export type ChronicleFocus =
+  | { kind: 'body'; bodyId: string }
+  | { kind: 'ship'; shipId: string };
+
 /**
  * Complete game state snapshot
  */
@@ -530,6 +536,14 @@ export interface GameState {
    *  Multiplayer only — the SP sim emits pre-formatted strings without
    *  structured payloads, so SP leaves this undefined. */
   chronicleFlavor?: (string | null)[];
+  /** Focus target for each combatLog entry, parallel-indexed. Lets the
+   *  expanded EventLog row offer a "take me there" button that centers
+   *  the camera on the body/ship the event happened at. null where the
+   *  event has no locatable target (e.g. a senate vote). Multiplayer
+   *  only — built from the structured chronicle event's body_id/ship_id
+   *  in MultiplayerGameProvider. The EventLog still validates the target
+   *  still exists at click time before focusing. */
+  chronicleFocus?: (ChronicleFocus | null)[];
   lastHarvestTick: number;             // tick when resources were last collected
   /** Wall-clock epoch (ms) the server expects to fire the next tick, and
    *  the configured tick interval. Multiplayer only — the server drives the

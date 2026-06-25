@@ -15,7 +15,7 @@ import { GameContextProvider } from '../state/gameContext';
 import { MultiplayerActionsProvider } from './MultiplayerActionsContext';
 import {
   Body, Ship, Faction, GameState, OrbitElements, FactionResources, FactionTechStateBase,
-  Settlement, ManeuverNode,
+  Settlement, ManeuverNode, ChronicleFocus,
 } from '../types';
 import {
   planTorchTransfer, stepTorchShip, DEFAULT_ENGINE_G, fromG,
@@ -944,6 +944,16 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     }, flavorCtx);
   });
 
+  // Focus target for each event's "take me there" button. Prefer the
+  // ship id (most specific), fall back to the body id. Destroyed-entity
+  // events still carry the id; the EventLog re-validates existence at
+  // click time so a button never sends the camera to a vanished ship.
+  const chronicleFocus: (ChronicleFocus | null)[] = orderedEvents.map(ev => {
+    if (ev.ship_id) return { kind: 'ship', shipId: ev.ship_id };
+    if (ev.body_id) return { kind: 'body', bodyId: ev.body_id };
+    return null;
+  });
+
   // Server-side build queue → client BuildOrder[]. Drives the BuildPanel
   // "BUILDING" strip while the alarm grinds toward completes_at_tick.
   // Without this, optimistic local state survived ~1.5s until the next
@@ -1023,6 +1033,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     factionTech: { [PLAYER_TOKEN]: playerTech },
     combatLog,
     chronicleFlavor,
+    chronicleFocus,
     lastHarvestTick: srv.game.current_tick,
     tradeRoutes,
     dysonSphere,
