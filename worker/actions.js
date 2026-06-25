@@ -285,11 +285,45 @@ async function handleQueueBuild(req, env, ctx) {
     .first();
   if (!bodyRow) return err(404, 'not_found', 'body not found');
   if (bodyRow.owner_faction_id !== me.id) return err(403, 'not_owner', 'you do not own this body');
-  // shipyard_level gate removed: schema declared the column with
-  // DEFAULT 0 (migrations/0003_game_state.sql) and nothing ever wrote
-  // to it, so every MP build 409'd as no_shipyard. Body ownership
-  // (recomputeBodyOwnership requires the most settlements at the body)
-  // is the real gate.
+
+  // Build-slot gate. Every owned body has 1 base slot; each level of a
+  // Shipyard (a station building) adds one more concurrent slot. This
+  // mirrors src/game/settlements.ts shipyardSlotsAtBody and was the
+  // missing server-side enforcement that let MP players queue unlimited
+  // ships at once (the old shipyard_level COLUMN gate was dead — this
+  // reads the live buildings_json instead). In-flight builds = rows in
+  // game_body_build_queue not yet completed/cancelled.
+  const yardRows = (await env.DB
+    .prepare(
+      `SELECT buildings_json FROM game_settlements
+        WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+          AND type = 'station' AND destroyed_at_tick IS NULL`,
+    )
+    .bind(gameId, bodyId, me.id)
+    .all()).results ?? [];
+  let shipyardLevels = 0;
+  for (const row of yardRows) {
+    if (!row.buildings_json) continue;
+    try {
+      const b = JSON.parse(row.buildings_json) || {};
+      shipyardLevels += Number(b.shipyard ?? 0) || 0;
+    } catch { /* ignore malformed */ }
+  }
+  const slots = 1 + shipyardLevels;
+  // Completed builds are DELETED from this table (room.js), so any row
+  // that still exists and isn't cancelled is an in-flight build.
+  const inFlight = await env.DB
+    .prepare(
+      `SELECT COUNT(*) AS c FROM game_body_build_queue
+        WHERE game_id = ? AND body_id = ? AND faction_id = ?
+          AND cancelled_at_tick IS NULL`,
+    )
+    .bind(gameId, bodyId, me.id)
+    .first();
+  if ((inFlight?.c ?? 0) >= slots) {
+    return err(409, 'no_slots',
+      `all ${slots} build slot${slots === 1 ? '' : 's'} at this body are busy — wait for one to finish or build a Shipyard`);
+  }
 
   // Senate effect: ship_build_cost_multiplier scales metal + gold at
   // queue time. Default 1.0 (no effect) when no proposal is active.
@@ -427,6 +461,26 @@ async function handleDeploySettlement(req, env, ctx) {
   // Surface settlements require a landable surface — no gas giants or the star.
   if (type === 'city' && (bodyRow.type === 'star' || bodyRow.type === 'gas-giant' || bodyRow.type === 'ice-giant')) {
     return err(409, 'no_surface', 'cannot found a city on this body type');
+  }
+
+  // One city + one station per body — enforce server-side (the client
+  // already hides the deploy button, but the server is the source of
+  // truth; without this a stale/forged client could stack settlements).
+  // Counts any LIVING settlement of this type at the body regardless of
+  // owner: a body can't host two cities even for different factions
+  // under the one-settlement-per-body rule.
+  const existing = await env.DB
+    .prepare(
+      `SELECT 1 AS x FROM game_settlements
+        WHERE game_id = ? AND body_id = ? AND type = ?
+          AND destroyed_at_tick IS NULL
+        LIMIT 1`,
+    )
+    .bind(gameId, bodyId, type)
+    .first();
+  if (existing) {
+    return err(409, 'occupied',
+      `this body already has a ${type} — only one ${type} per body`);
   }
 
   // Caller needs a FREIGHTER orbiting here OR they already own the body.

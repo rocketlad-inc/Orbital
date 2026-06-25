@@ -95,6 +95,12 @@ export function humanizeMpError(
     case 'no_surface':
       return 'Server: a city cannot be deployed on this body type (stars / gas giants / ice giants have no surface).';
 
+    case 'no_slots':
+      return 'All build slots at this body are busy. Wait for one to finish, or build / upgrade a Shipyard for more slots.';
+
+    case 'occupied':
+      return 'Server: this body already has that settlement type — only one city and one station per body.';
+
     // RAM-specific codes
     case 'wrong_type':
       return 'Server: only rogue asteroid bodies can be rammed.';

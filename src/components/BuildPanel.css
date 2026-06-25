@@ -15,6 +15,71 @@
   text-transform: uppercase;
 }
 
+/* Build-slot capacity bar. Filled pips = builds in flight; hollow =
+   free. Goes amber when full. */
+.build-slots {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding: 5px 8px;
+  background: rgba(78, 205, 196, 0.06);
+  border: 1px solid rgba(78, 205, 196, 0.25);
+  border-radius: 3px;
+}
+.build-slots--full {
+  background: rgba(255, 184, 77, 0.08);
+  border-color: rgba(255, 184, 77, 0.45);
+}
+.build-slots__label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #b8c8d6;
+  text-transform: uppercase;
+}
+.build-slots__pips {
+  display: inline-flex;
+  gap: 4px;
+  flex: 1;
+  flex-wrap: wrap;
+}
+.build-slots__pip {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid #4ecdc4;
+  background: transparent;
+  box-sizing: border-box;
+}
+.build-slots__pip.is-filled {
+  background: #4ecdc4;
+  box-shadow: 0 0 5px rgba(78, 205, 196, 0.6);
+}
+.build-slots--full .build-slots__pip {
+  border-color: #ffb84d;
+}
+.build-slots--full .build-slots__pip.is-filled {
+  background: #ffb84d;
+  box-shadow: 0 0 5px rgba(255, 184, 77, 0.6);
+}
+.build-slots__count {
+  font-size: 11px;
+  font-weight: 700;
+  color: #d8e4ee;
+  font-variant-numeric: tabular-nums;
+}
+.build-slots__hint {
+  font-size: 11px;
+  color: #ffb84d;
+  line-height: 1.4;
+  margin-bottom: 8px;
+  padding: 4px 8px;
+  background: rgba(255, 184, 77, 0.06);
+  border-left: 2px solid #ffb84d;
+  border-radius: 0 3px 3px 0;
+}
+
 /* Custom-name input + COMMIT button (FIFO name queue for upcoming builds) */
 .build-name-row {
   display: flex;
