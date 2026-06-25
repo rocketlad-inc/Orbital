@@ -89,7 +89,7 @@ export const DockRail: React.FC = () => {
         active={active === 'situation'}
         badge={badges.situation}
         icon={<SitIcon />}
-        label="Situation Log"
+        label="Situation Report"
         onClick={() => toggle('situation')}
       />
       <DockButton

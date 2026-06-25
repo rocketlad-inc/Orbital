@@ -49,6 +49,23 @@ export async function apiFetch<T = unknown>(
     });
     return { ok: false, status: 0, error: { code: 'network_error', message: 'Network error' } };
   }
+  // HTTP 204 No Content is a valid empty success — many worker endpoints
+  // (trade decline / cancel, messages read, sign-out, room admin pokes)
+  // return `Response(null, { status: 204 })` with no content-type and no
+  // body. Without this short-circuit those fall into the non-JSON guard
+  // below and the client paints a misleading "Multiplayer backend not
+  // running" error even though the action succeeded. Player-reported as
+  // "I denied the trade and it said 'Multiplayer backend not running'
+  // but then the trade went away as it should."
+  if (res.status === 204) {
+    const ms = Math.round(performance.now() - t0);
+    const silent = method === 'GET' && (
+      SILENT_GET_PREFIXES.some(p => path.startsWith(p))
+      || SILENT_GET_PATTERNS.some(re => re.test(path))
+    );
+    if (!silent) logger.info('API', `${method} ${path} 204`, { ms });
+    return { ok: true, status: 204, data: null as unknown as T };
+  }
   // The dev server falls back to index.html for unknown routes, which would
   // come back as `200 text/html`. Reject anything that isn't JSON so the
   // worker-less dev mode reads as "unauthenticated" instead of crashing.
