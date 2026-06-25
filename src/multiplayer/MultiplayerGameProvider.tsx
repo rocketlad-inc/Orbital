@@ -23,6 +23,10 @@ import {
 } from '../physics/torchTransfer';
 import { orbitWorldPos, orbitWorldVelocity, bodyWorldVelocity } from '../physics/orbitalMechanics';
 import { engineGModifier } from '../game/techs';
+import {
+  generateFlavor,
+  type FlavorContext, type FlavorFaction, type FlavorBody,
+} from '../game/flavorEngine';
 
 // Shape of /api/games/:gid/state.
 interface ServerState {
@@ -914,6 +918,32 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     return msg;
   });
 
+  // Prose flavor for the event log — parallel-indexed with combatLog.
+  // Resolved from the SAME structured chronicle events the headlines
+  // came from (factions + bodies are in scope here), so the EventLog
+  // can reveal a narrative body when a row is expanded. null where the
+  // event kind has no flavor bank or its payload couldn't be enriched;
+  // the panel falls back to echoing the headline in that case.
+  const flavorFactions = new Map<string, FlavorFaction>(
+    srv.factions.map(f => [f.id, { id: f.id, name: f.name, capitalBodyId: f.capital_body_id }]),
+  );
+  const flavorBodies = new Map<string, FlavorBody>(
+    srv.bodies.map(b => [b.id, { id: b.id, name: b.name, type: b.type, orbitRadius: b.orbit_radius ?? undefined }]),
+  );
+  const flavorCtx: FlavorContext = { factions: flavorFactions, bodies: flavorBodies };
+  const chronicleFlavor: (string | null)[] = orderedEvents.map(ev => {
+    let payload: Record<string, unknown> = {};
+    try { payload = JSON.parse(ev.payload || '{}'); } catch { /* ignore */ }
+    return generateFlavor({
+      id: ev.id,
+      kind: ev.kind,
+      tick: ev.tick_number,
+      actorFactionId: ev.actor_faction_id,
+      targetFactionId: ev.target_faction_id,
+      payload,
+    }, flavorCtx);
+  });
+
   // Server-side build queue → client BuildOrder[]. Drives the BuildPanel
   // "BUILDING" strip while the alarm grinds toward completes_at_tick.
   // Without this, optimistic local state survived ~1.5s until the next
@@ -992,6 +1022,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     resources: { [PLAYER_TOKEN]: playerRes },
     factionTech: { [PLAYER_TOKEN]: playerTech },
     combatLog,
+    chronicleFlavor,
     lastHarvestTick: srv.game.current_tick,
     tradeRoutes,
     dysonSphere,
