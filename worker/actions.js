@@ -95,25 +95,38 @@ async function handleCommitTransfer(req, env, ctx) {
   // longer reject a burn for insufficient fuel.
   const fuelCost = Math.max(0, Number(body.fuel_cost ?? 0));
 
-  // Find next sequence for this ship.
-  const last = await env.DB
-    .prepare('SELECT MAX(sequence) AS m FROM game_ship_nodes WHERE ship_id = ?')
-    .bind(shipId)
-    .first();
-  const seq = (last?.m ?? -1) + 1;
-
-  const nodeId = `${shipId}:n${seq}`;
+  // Assign the sequence ATOMICALLY inside the INSERT. The old code read
+  // MAX(sequence) then inserted MAX+1 in two steps — two commits for the
+  // same ship racing (double-click, client retry, or a burst of chained
+  // legs) both read the same MAX and both tried to insert the same
+  // sequence, blowing up on UNIQUE(ship_id, sequence). Computing the
+  // next sequence in a subquery makes the read+write one statement;
+  // SQLite/D1 serialize writers, so the second insert sees the first's
+  // committed row and gets a distinct sequence. The node id no longer
+  // embeds the sequence (it's opaque to the client — only round-tripped
+  // for cancel), so a timestamp+random id keeps the PRIMARY KEY unique
+  // without needing to know the sequence up front.
+  const nodeId = `${shipId}:n${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   await env.DB
     .prepare(
       `INSERT INTO game_ship_nodes
         (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
          scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
          status, committed_at_tick)
-       VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, ?, ?, ?, ?, 'committed',
-               (SELECT current_tick FROM games WHERE id = ?))`,
+       SELECT ?, ?, ?,
+              COALESCE((SELECT MAX(sequence) FROM game_ship_nodes WHERE ship_id = ?), -1) + 1,
+              'absolute', ?, ?, ?, ?, ?, ?, ?, 'committed',
+              (SELECT current_tick FROM games WHERE id = ?)`,
     )
-    .bind(nodeId, gameId, shipId, seq, targetBodyId, scheduledT, arrivalT, dvP, dvN, dvR, fuelCost, gameId)
+    .bind(nodeId, gameId, shipId, shipId, targetBodyId, scheduledT, arrivalT, dvP, dvN, dvR, fuelCost, gameId)
     .run();
+
+  // Read back the sequence the subquery assigned, for the response.
+  const inserted = await env.DB
+    .prepare('SELECT sequence FROM game_ship_nodes WHERE id = ?')
+    .bind(nodeId)
+    .first();
+  const seq = inserted?.sequence ?? null;
 
   return json({ node: { id: nodeId, ship_id: shipId, sequence: seq, status: 'committed', scheduled_t: scheduledT } }, { status: 201 });
 }
