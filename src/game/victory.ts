@@ -20,10 +20,12 @@
 import { GameState, Faction } from '../types';
 import { allTechsMaxed } from './techs';
 
-/** New victory types added in the three-conditions PR.
+/** New victory types added in the three-conditions PR plus 'chancellor'
+ *  for the Senate election win (server-only — fires when a
+ *  chancellor_vote bill passes; the client just renders the overlay).
  *  Older labels (hegemony/wealth/tiebreak) still compile in the
  *  VictoryOverlay's label table for back-compat with replays. */
-export type VictoryType = 'engineering' | 'military' | 'science';
+export type VictoryType = 'engineering' | 'military' | 'science' | 'chancellor';
 
 export interface VictoryResolution {
   winnerFactionId: string;
