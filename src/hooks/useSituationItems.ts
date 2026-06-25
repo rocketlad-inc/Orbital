@@ -197,15 +197,28 @@ export function useSituationItems(
     const bodyName = (id: string | undefined) =>
       (id && bodies.find(b => b.id === id)?.name) || '?';
 
+    // A ship assigned to an active trade route is "given orders" for our
+    // purposes — it has a job, even when between legs and not currently
+    // in transit. Without this, a routed freighter that just arrived at
+    // its dest body would linger in "Recently Arrived → Awaiting orders"
+    // until the 10-tick fallback expired, contradicting the panel's own
+    // copy. Computed once here so categories 1, 2, and 4 all share it.
+    const routedShipIds = new Set(
+      (gameState.tradeRoutes || [])
+        .filter((r: TradeRoute) => r.ownedBy === factionId && r.status !== 'paused')
+        .map((r: TradeRoute) => r.shipId),
+    );
+
     // ---- 1) Recently arrived ----
-    // Conditions: stamp exists, ship still has no pending orders, age
-    // < 10 ticks. The "no pending orders" check makes "until acted on"
-    // automatic — the moment the player queues a transfer, the next
-    // render drops the item.
+    // Conditions: stamp exists, ship still has no pending orders AND
+    // isn't on an active trade route, age < 10 ticks. The "no pending
+    // orders" check makes "until acted on" automatic — queueing a
+    // transfer or assigning a route drops the item next render.
     for (const [shipId, arrivedAt] of arrivedAtRef.current) {
       const ship = byId.get(shipId);
       if (!ship) continue;
       if (shipHasPendingOrders(ship)) continue;
+      if (routedShipIds.has(ship.id)) continue;
       if (tick - arrivedAt > 10) continue;
       const where = bodyName(ship.orbit.parentBodyId);
       items.push({
@@ -219,10 +232,14 @@ export function useSituationItems(
     }
 
     // ---- 2) Newly created ----
+    // Same orders+route gate as section 1: a freshly built freighter that
+    // immediately gets a trade route assigned has been "acted on" and
+    // shouldn't sit in "Newly created → Awaiting orders."
     for (const [shipId, createdAt] of createdAtRef.current) {
       const ship = byId.get(shipId);
       if (!ship) continue;
       if (shipHasPendingOrders(ship)) continue;
+      if (routedShipIds.has(ship.id)) continue;
       if (tick - createdAt > 10) continue;
       const where = bodyName(ship.orbit.parentBodyId);
       items.push({
@@ -261,11 +278,7 @@ export function useSituationItems(
     }
 
     // ---- 4) Idle freighters ----
-    const routedShipIds = new Set(
-      (gameState.tradeRoutes || [])
-        .filter((r: TradeRoute) => r.ownedBy === factionId && r.status !== 'paused')
-        .map((r: TradeRoute) => r.shipId),
-    );
+    // `routedShipIds` is shared with sections 1 + 2 — declared above.
     for (const ship of mine) {
       if (ship.class !== 'freighter') continue;
       if (shipHasPendingOrders(ship)) continue;
