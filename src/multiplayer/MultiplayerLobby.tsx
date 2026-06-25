@@ -546,6 +546,16 @@ function RoomCard({
 }) {
   const inGame = room.game_status === 'active';
   const isWaiting = !room.game_status || room.game_status !== 'active';
+  // Capacity gate. The server already enforces this and returns
+  // `room_full` (worker/index.js:471) — but a green "Join →" button on
+  // a 7/7 row makes it feel like the click should work, and the error
+  // only surfaces AFTER the network round-trip. Reflect the capacity up
+  // front: render the row in a disabled "Full" state for browse
+  // visitors, suppress the click handler, and dim the CTA. Resume from
+  // My Games stays enabled regardless — an already-seated player is
+  // returning to a seat, not consuming a new one.
+  const isFull = room.member_count >= room.max_players;
+  const browseAndFull = variant === 'browse' && isFull;
 
   // Dot meter: ●●●○○ for 3/5 — easier to scan than "3/5".
   const seats = Array.from({ length: room.max_players }, (_, i) => i < room.member_count);
@@ -555,7 +565,12 @@ function RoomCard({
   const tickLabel = formatTickRate(room.tick_interval_ms);
 
   return (
-    <button className={`mp-room-card ${inGame ? 'is-active' : ''}`} onClick={onClick} disabled={loading}>
+    <button
+      className={`mp-room-card ${inGame ? 'is-active' : ''} ${browseAndFull ? 'is-full' : ''}`}
+      onClick={browseAndFull ? undefined : onClick}
+      disabled={loading || browseAndFull}
+      title={browseAndFull ? 'Room is full' : undefined}
+    >
       <div className="mp-room-card__head">
         <span className="mp-room-card__name">{room.name}</span>
         <span className={`mp-room-card__pill ${inGame ? 'is-active' : 'is-lobby'}`}>
@@ -584,7 +599,9 @@ function RoomCard({
             ? (variant === 'my' ? 'Resuming…' : 'Joining…')
             : variant === 'my'
               ? 'Resume →'
-              : inGame ? 'Spectate →' : 'Join →'}
+              : browseAndFull
+                ? 'Full'
+                : inGame ? 'Spectate →' : 'Join →'}
         </span>
       </div>
     </button>
