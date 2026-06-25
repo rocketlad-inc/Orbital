@@ -522,7 +522,14 @@ export interface GameState {
   buildOrders: BuildOrder[];           // ships under construction
   resources: Record<string, FactionResources>; // factionId → resources
   factionTech: Record<string, FactionTechStateBase>; // factionId → tech progress
-  combatLog: string[];                 // recent combat events
+  combatLog: string[];                 // recent combat events (machine-truth headlines)
+  /** Prose flavor for each combatLog entry, parallel-indexed. Resolved
+   *  from the structured chronicle event via src/game/flavorEngine.ts.
+   *  null where the event kind has no flavor bank or its data couldn't
+   *  be enriched (the EventLog falls back to echoing the headline).
+   *  Multiplayer only — the SP sim emits pre-formatted strings without
+   *  structured payloads, so SP leaves this undefined. */
+  chronicleFlavor?: (string | null)[];
   lastHarvestTick: number;             // tick when resources were last collected
   /** Wall-clock epoch (ms) the server expects to fire the next tick, and
    *  the configured tick interval. Multiplayer only — the server drives the

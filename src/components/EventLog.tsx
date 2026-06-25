@@ -77,6 +77,7 @@ function readBookmarkKey(): string {
 export const EventLog: React.FC = () => {
   const { gameState } = useGameContext();
   const entries = gameState.combatLog;
+  const flavors = gameState.chronicleFlavor;
   const totalCount = entries.length;
 
   const [open, setOpen] = useState(false);
@@ -238,10 +239,12 @@ export const EventLog: React.FC = () => {
                             {label}
                           </div>
                           <div className="event-log__row__flavor">
-                            {/* Phase-1 placeholder. Real flavor lands in
-                                phase 2+ once the template engine + banks
-                                are wired in; editing comes in phase 3. */}
-                            {entry}
+                            {/* Prose flavor resolved from the structured
+                                chronicle event (flavorEngine). Falls back
+                                to echoing the headline when the event kind
+                                has no bank or its payload couldn't be
+                                enriched. Editing lands in phase 3. */}
+                            {flavors?.[i] ?? entry}
                           </div>
                         </div>
                       )}
