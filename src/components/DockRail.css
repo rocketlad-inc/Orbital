@@ -138,21 +138,83 @@
   pointer-events: auto;
 }
 
-/* Mobile: collapse the rail to the corner; panels go full-bleed.
-   Touch-friendly button sizing on coarse pointer. */
+/* Mobile: full-width horizontal strip pinned to the bottom edge.
+   Earlier iteration tucked the rail into the bottom-right corner with
+   44px buttons — that bled over the bottom-sheet (ShipPanel, body
+   inspector) and ate the right side of the sheet where the commit
+   buttons sit. Playtester report: "the three buttons are in the way
+   of the commit button on ships."
+
+   New layout: bar spans the full width, sheets and other bottom-anchored
+   UI clear it via --mobile-rail-height. Buttons are 60×60 (Apple HIG
+   recommends ≥44pt; freighter-thumb on a moving phone wants more).
+   The bar includes the iOS home-indicator safe-area so we don't bake
+   in a hard 72px on devices that need 90+. */
+:root {
+  --mobile-rail-height: 72px;
+}
 @media (max-width: 768px) {
   .dock-rail {
     top: auto;
-    bottom: 16px;
-    right: 8px;
-    flex-direction: row-reverse;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: auto;
+    height: var(--mobile-rail-height);
+    padding: 6px 12px;
+    padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+    gap: 0;
+    flex-direction: row;
+    justify-content: space-around;
+    align-items: center;
+    background: rgba(10, 14, 20, 0.97);
+    border-top: 1px solid #2a3d50;
+    backdrop-filter: blur(8px);
   }
-  .dock-rail__btn { width: 44px; height: 44px; }
+  .dock-rail__btn {
+    width: 60px;
+    height: 60px;
+    border-radius: 8px;
+  }
+  .dock-rail__icon { width: 28px; height: 28px; }
+  .dock-rail__icon svg { width: 26px; height: 26px; }
+  .dock-rail__badge {
+    top: 2px;
+    right: 2px;
+    min-width: 20px;
+    height: 20px;
+    line-height: 20px;
+    font-size: 11px;
+  }
+  /* The nub points LEFT on desktop because the panel sits to the
+     panel sits to the left of the rail. On mobile the panel is full-
+     bleed above the rail, so a downward-into-the-button nub reads
+     better — but keep it subtle, not load-bearing. Hidden for now to
+     avoid a stray triangle dangling above the active button. */
+  .dock-rail__nub { display: none; }
+
+  /* Active button gets a top accent bar so the player can see "this
+     is the open panel" without relying on the (now-hidden) nub. */
+  .dock-rail__btn.is-active {
+    border-top: 2px solid #4ecdc4;
+  }
+
   .dock-panel {
     right: 8px;
     left: 8px;
     top: 94px;
-    bottom: 72px;             /* clear of the rail at the bottom */
+    bottom: calc(var(--mobile-rail-height) + 8px); /* clear of the rail */
     width: auto;
+  }
+}
+
+/* Bottom-anchored UI (BottomSheet, AI activity dock) clears the
+   mobile rail. Declared here rather than in each component so the
+   single source of truth for "how tall is the bottom rail" stays in
+   one file. */
+@media (max-width: 768px) {
+  .bottom-sheet {
+    bottom: var(--mobile-rail-height) !important;
+    border-radius: 16px 16px 0 0;
   }
 }
