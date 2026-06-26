@@ -387,11 +387,17 @@ const STARTER_CITY_HP = 100;
 // Combat stats by ship class. Mirrors src/game/shipClasses.ts on the
 // client side. Used both by seedGameWorld (starter fleet) and by the
 // Room DO tick resolver (build completions + combat resolution).
+// HP must match src/game/shipClasses.ts — the client renders the HP bar
+// against ITS own per-class hp value, so any mismatch shows up as a
+// permanently-half-empty bar from frame one (the "why are my ships
+// damaged with zero combat" bug). Frigate 80 -> 100 and freighter 30 ->
+// 60 to match client. See migrations/0033_align_ship_hp_with_client.sql
+// for the existing-fleet heal + cap bump.
 export const SHIP_COMBAT_STATS = {
   corvette:  { hp: 40,  damage_per_tick: 5 },
-  frigate:   { hp: 80,  damage_per_tick: 10 },
+  frigate:   { hp: 100, damage_per_tick: 10 },
   destroyer: { hp: 200, damage_per_tick: 18 },
-  freighter: { hp: 30,  damage_per_tick: 0 },
+  freighter: { hp: 60,  damage_per_tick: 0 },
 };
 
 const STARTER_FLEET = [
