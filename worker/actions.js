@@ -976,7 +976,7 @@ async function handleAdminGrant(req, env, ctx) {
 
 // POST /api/games/:gameId/settlements/:settlementId/collector
 // Upgrades an existing player-owned settlement to a logistics endpoint.
-// Charges COLLECTOR_COST (500 credits) and flips
+// Charges COLLECTOR_COST (150 credits) and flips
 // has_collector = 1 atomically. Failure modes:
 //   404 not_found          — settlement missing or different game
 //   403 not_owner          — settlement belongs to a different faction
@@ -985,7 +985,12 @@ async function handleAdminGrant(req, env, ctx) {
 //
 // Capitals already have has_collector = 1 from seedGameWorld so the
 // "already_collector" guard catches the no-op double-build attempt.
-const COLLECTOR_COST = { metal: 0, gold: 500 };
+//
+// Must match src/game/settlements.ts COLLECTOR_COST — the client cost
+// label reads the constant from there. Drift between the two = client
+// shows N, server charges M, players see "insufficient_resources"
+// errors on what looked like an affordable build.
+const COLLECTOR_COST = { metal: 0, gold: 150 };
 
 // Settlement upgrade buildings — server mirror of BUILDING_DEFS in
 // src/game/settlements.ts. KEEP IN SYNC. Cost compounds geometrically

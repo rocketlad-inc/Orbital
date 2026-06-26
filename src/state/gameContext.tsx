@@ -498,6 +498,13 @@ export function GameContextProvider({
     () => externalState ?? initialState ?? emptyGameState()
   );
 
+  // Live mirror of gameState, kept in sync via the effect below. Read by
+  // callbacks that need the LATEST state at call time without relying on
+  // React's eager-state-computation behaviour inside a setState updater
+  // (see launchTorchTransfer for the bulk-fleet bug this fixes).
+  const gameStateRef = useRef<GameState>(gameState);
+  useEffect(() => { gameStateRef.current = gameState; }, [gameState]);
+
   // Replace gameState whenever the external snapshot changes reference.
   //
   // Important: in multiplayer the /state poll arrives every ~1.5s. A naive
@@ -1851,34 +1858,60 @@ export function GameContextProvider({
    *  the player UI. Returns the launched plan on success so the caller
    *  can post the matching arrival tick to the MP server. */
   const launchTorchTransfer = useCallback((shipId: string, targetBodyId: string): TorchTransfer | null => {
-    let launchedPlan: TorchTransfer | null = null;
+    // Compute the plan EAGERLY using the live state from the ref, NOT
+    // inside the setGameStateInternal updater. Why this matters:
+    //
+    // React applies an "eager state computation" optimization where the
+    // FIRST queued updater in a dispatch is run synchronously, so any
+    // side-effect inside it (like `launchedPlan = plan`) is observable
+    // on the same tick. Subsequent updaters in the same synchronous
+    // batch are NOT eager — they run only at next render. The old
+    // version of this function relied on `let launchedPlan; setState(p
+    // => { launchedPlan = ...; return ... }); return launchedPlan;` —
+    // which works for a single call, but in a bulk-fleet loop only the
+    // first call returned a real plan; every later call returned null,
+    // the loop's `if (!plan) continue;` skipped them, and only the
+    // first ship received an MP transfer order. Playtester report
+    // (clownking, 2026-06-26): "when giving orders to multiple ships
+    // through the fleet menu, it only gives the order to the first
+    // ship starting from the top of the list of selected ships."
+    //
+    // The applier-only updater below still uses the functional form so
+    // a queue of bulk calls chains correctly: each prev is the result
+    // of the previous one's update, and the bail-out re-check protects
+    // against a race where the ship somehow became in-transit between
+    // the eager plan and the apply.
+    const live = gameStateRef.current;
+    const ship = live.ships.find(s => s.id === shipId);
+    if (!ship || ship.transit) return null;
+
+    const faction = live.factions.find(f => f.id === ship.ownedBy);
+    const tech = live.factionTech?.[ship.ownedBy];
+    // UNIT FIX: faction.engineG is stored in G (e.g. 0.05) per migration 0017's
+    // default; G_ANCHOR is the in-game accel that equals 1g. Without the
+    // conversion the torch acceleration is 530× too weak and ships coast off
+    // in roughly their inherited orbital direction instead of arriving.
+    const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
+    const engineAccel = baseAccel * engineGModifier(tech);
+    const tick = live.currentTick;
+
+    const launchPos = orbitWorldPos(ship.orbit, tick, live.bodies);
+    const launchVel = orbitWorldVelocity(ship.orbit, tick, live.bodies);
+
+    const plan = planTorchTransfer(
+      { pos: launchPos, vel: launchVel },
+      targetBodyId,
+      engineAccel, engineAccel,
+      tick, live.bodies,
+    );
+    if (!plan) return null;
+
     setGameStateInternal(prev => {
-      const ship = prev.ships.find(s => s.id === shipId);
-      if (!ship) return prev;
-      if (ship.transit) return prev;
-
-      const faction = prev.factions.find(f => f.id === ship.ownedBy);
-      const tech = prev.factionTech?.[ship.ownedBy];
-      // UNIT FIX: faction.engineG is stored in G (e.g. 0.05) per migration 0017's
-      // default; G_ANCHOR is the in-game accel that equals 1g. Without the
-      // conversion the torch acceleration is 530× too weak and ships coast off
-      // in roughly their inherited orbital direction instead of arriving.
-      const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
-      const engineAccel = baseAccel * engineGModifier(tech);
-      const tick = prev.currentTick;
-
-      const launchPos = orbitWorldPos(ship.orbit, tick, prev.bodies);
-      const launchVel = orbitWorldVelocity(ship.orbit, tick, prev.bodies);
-
-      const plan = planTorchTransfer(
-        { pos: launchPos, vel: launchVel },
-        targetBodyId,
-        engineAccel, engineAccel,
-        tick, prev.bodies,
-      );
-      if (!plan) return prev;
-
-      launchedPlan = plan;
+      const cur = prev.ships.find(s => s.id === shipId);
+      // Bail out only if the ship has *legitimately* changed shape
+      // (gone, already in transit by a parallel update). Otherwise
+      // apply the precomputed plan.
+      if (!cur || cur.transit) return prev;
       return {
         ...prev,
         ships: prev.ships.map(s =>
@@ -1900,7 +1933,7 @@ export function GameContextProvider({
         ),
       };
     });
-    return launchedPlan;
+    return plan;
   }, []);
 
   /** Append a chained torch leg. The new leg is planned starting from
