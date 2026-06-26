@@ -197,6 +197,79 @@ async function handleUpdateSettings(req, env, ctx) {
   return json({ settings });
 }
 
+/**
+ * POST /api/lobby/rooms/:roomId/admin-add-member  { email }
+ *
+ * Host-only recovery tool: explicitly pin a user back into the room by
+ * email. Bypasses the max_players cap (the host is making an explicit
+ * call — same intent as late-join's bypass) and skips the password gate
+ * for the same reason.
+ *
+ * Built because: a player who already has a game_factions row in this
+ * room's game but somehow lost their room_members row gets locked out
+ * of My Games. The handleListMyRooms self-heal SHOULD fix this on
+ * refresh, but if it doesn't fire (deploy lag, account mismatch on the
+ * player's side, anything we haven't diagnosed), the host needs an
+ * out-of-band way to re-seat them. Idempotent — adding an existing
+ * member is a no-op.
+ *
+ * Also handles the case where a user doesn't have a faction yet (a true
+ * latecomer the host wants to invite past the cap) — same insert, no
+ * faction probe required. The auth model is "the host vouches for this
+ * person", not "the player has already paid the dues".
+ *
+ * Response: { user_id, display_name, already_member } so the host can
+ * confirm exactly who was added (or that they were already in).
+ */
+async function handleAdminAddMember(req, env, ctx) {
+  const roomId = ctx.params.roomId;
+  const g = await requireHost(env, roomId, ctx.session);
+  if (g.error) return g.error;
+
+  const body = await readJson(req);
+  const rawEmail = typeof body?.email === 'string' ? body.email.trim() : '';
+  if (!rawEmail) return err(400, 'bad_request', 'email required');
+  // Case-insensitive match — users.email is UNIQUE but the index is
+  // declared on LOWER(email) (see migration 0001), so a literal LIKE
+  // match against the raw-cased value can miss. Use LOWER on both sides.
+  const user = await env.DB
+    .prepare('SELECT id, display_name FROM users WHERE LOWER(email) = LOWER(?)')
+    .bind(rawEmail)
+    .first();
+  if (!user) return err(404, 'user_not_found', 'no user with that email');
+
+  const existing = await env.DB
+    .prepare('SELECT 1 AS x FROM room_members WHERE room_id = ? AND user_id = ?')
+    .bind(roomId, user.id)
+    .first();
+
+  if (!existing) {
+    // INSERT OR IGNORE for safety against a race where the same user
+    // joined themselves between the check and the insert.
+    await env.DB
+      .prepare('INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)')
+      .bind(roomId, user.id, Date.now())
+      .run();
+    await env.DB.prepare('UPDATE rooms SET updated_at = ? WHERE id = ?').bind(Date.now(), roomId).run();
+
+    // Mirror into the Room DO so the live members map matches D1 and
+    // any active WS client refreshes its presence list. Best-effort.
+    try {
+      await roomStub(env, roomId).fetch('https://room/member-add', {
+        method: 'POST',
+        body: JSON.stringify({ userId: user.id, displayName: user.display_name ?? 'player' }),
+      });
+    } catch { /* swallow — D1 is canonical */ }
+  }
+
+  return json({
+    ok: true,
+    user_id: user.id,
+    display_name: user.display_name,
+    already_member: !!existing,
+  });
+}
+
 async function handleKick(req, env, ctx) {
   const roomId = ctx.params.roomId;
   const g = await requireHost(env, roomId, ctx.session);
@@ -617,6 +690,7 @@ export const routes = [
   { method: 'GET',  pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/settings$/, auth: 'required', handle: handleGetSettings },
   { method: 'PATCH',pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/settings$/, auth: 'required', handle: handleUpdateSettings },
   { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/kick$/, auth: 'required', handle: handleKick },
+  { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/admin-add-member$/, auth: 'required', handle: handleAdminAddMember },
   { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/start$/, auth: 'required', handle: handleStart },
   { method: 'POST', pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/force-tick$/, auth: 'required', handle: handleForceTick },
   { method: 'PATCH',pattern: /^\/api\/lobby\/rooms\/(?<roomId>[^/]+)\/tick-interval$/, auth: 'required', handle: handleChangeTickInterval },
