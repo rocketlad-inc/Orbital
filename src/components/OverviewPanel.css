@@ -5,7 +5,10 @@
 
 .overview-panel {
   position: fixed;
-  top: 52px;
+  /* top-bar height grew from 44 to 78; this anchor was left behind, so the
+     Settlements / Fleet / Research overlays were sliding up under the resource
+     bar and clipping the header row. 78 + 8 gap = 86. */
+  top: 86px;
   left: 16px;
   right: 264px;  /* desktop: leave room for the right-side Outliner */
   bottom: 16px;
@@ -30,8 +33,11 @@
   .overview-panel {
     left: 8px;
     right: 8px;
-    top: 52px;
-    bottom: 8px;
+    top: 86px;
+    /* On the narrow tier (≤768) the DockRail is a 72px bottom strip
+       (see DockRail.css --mobile-rail-height). Clear it so the overlay
+       doesn't paint underneath the rail buttons. */
+    bottom: calc(var(--mobile-rail-height, 8px) + 8px);
   }
 }
 
