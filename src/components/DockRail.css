@@ -153,6 +153,11 @@
 :root {
   --mobile-rail-height: 72px;
 }
+
+/* Mobile-only buttons (Settlements / Fleet / Research) live in the
+   DOM at every viewport — desktop hides them and uses the top-bar
+   nav instead. The @media block below un-hides them on narrow viewports. */
+.dock-rail__btn--mobile-only { display: none; }
 @media (max-width: 768px) {
   .dock-rail {
     top: auto;
@@ -171,13 +176,20 @@
     border-top: 1px solid #2a3d50;
     backdrop-filter: blur(8px);
   }
+  /* Six buttons total on mobile (Situation / Event Log / Multiplayer +
+     Settlements / Fleet / Research). At 60×60 they overrun a 375px
+     viewport, so step down to 52×52 — still 18% above the 44pt Apple
+     HIG floor, fits 6 buttons + 5 gaps + edge padding on iPhone SE. */
   .dock-rail__btn {
-    width: 60px;
-    height: 60px;
+    width: 52px;
+    height: 52px;
     border-radius: 8px;
   }
-  .dock-rail__icon { width: 28px; height: 28px; }
-  .dock-rail__icon svg { width: 26px; height: 26px; }
+  .dock-rail__icon { width: 24px; height: 24px; }
+  .dock-rail__icon svg { width: 22px; height: 22px; }
+
+  /* Un-hide the mobile-only nav buttons. */
+  .dock-rail__btn--mobile-only { display: flex; }
   .dock-rail__badge {
     top: 2px;
     right: 2px;
