@@ -206,17 +206,33 @@ export class Room {
 
       const now = Date.now();
       // Orphan recovery: active wall-clock game with NULL next_tick_at
-      // (TBM was on at some point, or the column got cleared). Set it
-      // to "now" so the tick can fire immediately rather than waiting
-      // indefinitely. Skip for TBM games — those are intentionally paused.
+      // (TBM was on at some point, or the column got cleared). Skip for
+      // TBM games — those are intentionally paused.
+      //
+      // Behaviour split by `force`:
+      //   - self-heal (force=false): set next_tick_at one interval out so
+      //     the natural alarm fires it, then bail. We DON'T tick now —
+      //     the player isn't asking us to, and ticking on every poll
+      //     would burst-fire if the DO is orphaned for a while.
+      //   - host force (force=true): set next_tick_at to `now` so the
+      //     due check below treats it as ready, then fall through to
+      //     alarm(). Player-report: the force-tick button read "No
+      //     change" because this branch unconditionally returned 204
+      //     even when force was set — silently rescheduling without
+      //     ever advancing the sim.
       if (game.next_tick_at == null && game.turn_based_enabled !== 1) {
         const interval = game.tick_interval_ms ?? 60_000;
-        const nextAt = Date.now() + interval;
+        const nextAt = force ? now : Date.now() + interval;
         await this.env.DB
           .prepare('UPDATE games SET next_tick_at = ? WHERE id = ?')
           .bind(nextAt, started.gameId).run();
-        try { await this.state.storage.setAlarm(nextAt); } catch {}
-        return new Response(null, { status: 204 });
+        if (!force) {
+          try { await this.state.storage.setAlarm(nextAt); } catch {}
+          return new Response(null, { status: 204 });
+        }
+        // Force: keep the local copy in sync so the due check below
+        // sees the freshly-armed schedule, then fall through to alarm().
+        game.next_tick_at = nextAt;
       }
       const due = game.next_tick_at != null && game.next_tick_at <= now;
       if (!force && !due) {
@@ -1164,6 +1180,12 @@ export class Room {
       };
 
       for (const r of routes) {
+       // Per-route isolation: wrap each route so one bad route (a
+       // throwing sanction check, a missing body in computeLegTicks,
+       // etc.) can't abort the WHOLE loop and freeze every other
+       // player's freighters. The outer try/catch logs; this inner one
+       // keeps the remaining routes moving.
+       try {
         if (r.status === 'paused') continue;
         const ship = await this.env.DB
           .prepare("SELECT id, owner_faction_id, parent_body_id, ship_class, status FROM game_ships WHERE id = ?")
@@ -1323,6 +1345,11 @@ export class Room {
         if (here !== target) {
           await planLeg(target);
         }
+       } catch (routeErr) {
+         // One route blew up — log it and move on to the next so a
+         // single bad route can't freeze everyone else's logistics.
+         console.error('trade route failed for ship', r.ship_id, routeErr);
+       }
       }
     } catch (e) {
       console.error('trade-route auto-pilot failed', e);
@@ -1621,8 +1648,12 @@ export class Room {
     //
     //      Skipped for ships in transit (they're not orbiting any body's
     //      infrastructure).
-    const REPAIR_CITY = 2;
-    const REPAIR_STATION = 1;
+    // Station is now the SOLE repair source (cities don't heal hulls),
+    // so its repair rate is bumped 1 -> 2 to roughly match the old
+    // lone-city heal — a station is a proper dry dock. REPAIR_CITY is
+    // retained but unused so the diff stays readable; remove later.
+    const REPAIR_CITY = 0;
+    const REPAIR_STATION = 2;
     const REFUEL_BASE = 1;
     const REFUEL_STATION = 2;
     // One ship-row fetch with the joinable owner-status data. status='active'
@@ -1670,12 +1701,14 @@ export class Room {
       if (ship.in_transit) continue;
       const localStations = (settlementsByBody.get(ship.parent_body_id) ?? [])
         .filter(st => st.owner_faction_id === ship.owner_faction_id);
+      // Station-only repair: hull HP regen requires a friendly STATION
+      // in orbit (the orbital repair infrastructure). Cities no longer
+      // heal ships — they're surface industry, not a dry dock. Base
+      // refuel (owning the body) stays as a small logistics presence.
       let repairRate = 0;
       let refuelRate = ship.body_owner === ship.owner_faction_id ? REFUEL_BASE : 0;
       for (const st of localStations) {
-        if (st.type === 'city') {
-          repairRate += REPAIR_CITY;
-        } else if (st.type === 'station') {
+        if (st.type === 'station') {
           repairRate += REPAIR_STATION;
           refuelRate += REFUEL_STATION;
         }

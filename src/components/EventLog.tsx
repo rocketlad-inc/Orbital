@@ -18,11 +18,54 @@
 // a template engine. Phase 3 layers editability + server-side sync.
 // ============================================================
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
+import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import type { ChronicleFocus } from '../types';
 import './DockRail.css';
 import './EventLog.css';
+
+// Escape a string for safe use inside a RegExp.
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Split `text` into React nodes, wrapping each occurrence of a faction
+ * name (plus an optional possessive 's / 's) in a span tinted with that
+ * faction's color. Faction names are distinctive proper nouns, so a
+ * straight substring match reads cleanly; we match longest-name-first
+ * so "Confederacy of Independent Systems" wins over a bare prefix.
+ * Returns the original string untouched when nothing matches (so plain
+ * lines don't pay for an array of nodes).
+ */
+function colorizeFactions(
+  text: string,
+  re: RegExp | null,
+  colorByName: Map<string, string>,
+): React.ReactNode {
+  if (!re || !text) return text;
+  re.lastIndex = 0;
+  const out: React.ReactNode[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  let key = 0;
+  while ((m = re.exec(text)) !== null) {
+    const whole = m[0];          // name (+ optional possessive)
+    const name = m[1];           // the faction name itself
+    const start = m.index;
+    if (start > last) out.push(text.slice(last, start));
+    const color = colorByName.get(name);
+    out.push(
+      <span key={`f${key++}`} style={{ color, fontWeight: 600 }}>{whole}</span>,
+    );
+    last = start + whole.length;
+    if (whole.length === 0) re.lastIndex++; // guard against zero-width loops
+  }
+  if (out.length === 0) return text;
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
 
 /**
  * Classify a free-text chronicle line into an icon + color + label
@@ -78,10 +121,66 @@ function readBookmarkKey(): string {
  */
 export const EventLog: React.FC = () => {
   const { gameState, selectShip, selectBody, focusBody } = useGameContext();
+  const mpActions = useMultiplayerActions();
   const entries = gameState.combatLog;
   const flavors = gameState.chronicleFlavor;
   const focuses = gameState.chronicleFocus;
+  const metas = gameState.chronicleMeta;
   const totalCount = entries.length;
+
+  // Faction name -> color, plus a longest-first regex that matches any
+  // faction name (with an optional possessive). Rebuilt only when the
+  // roster or a faction's color changes. Used to tint player names in
+  // both the headline and the flavor prose.
+  const factionColorByName = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const f of gameState.factions) {
+      if (f.name && f.color) m.set(f.name, f.color);
+    }
+    return m;
+  }, [gameState.factions]);
+  const factionRe = useMemo(() => {
+    const names = Array.from(factionColorByName.keys())
+      .filter(n => n.length > 0)
+      .sort((a, b) => b.length - a.length); // longest first
+    if (names.length === 0) return null;
+    const alt = names.map(escapeRe).join('|');
+    // Capture the name in group 1; allow a trailing straight/curly
+    // possessive so "BEN's" colors the apostrophe-s too.
+    return new RegExp(`(${alt})(?:['’]s)?`, 'g');
+  }, [factionColorByName]);
+  const tint = (text: string) => colorizeFactions(text, factionRe, factionColorByName);
+
+  // Inline flavor editing (Phase 3). editingIndex is the originalIndex
+  // of the row whose textarea is open; draft holds the in-progress text;
+  // saving guards against double-submit.
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const beginEdit = (i: number, current: string) => {
+    setEditingIndex(i);
+    setDraft(current);
+    setEditError(null);
+  };
+  const cancelEdit = () => { setEditingIndex(null); setDraft(''); setEditError(null); };
+  const saveEdit = async (entryId: string) => {
+    if (!mpActions || saving) return;
+    setSaving(true);
+    setEditError(null);
+    const res = await mpActions.editChronicleFlavor(entryId, draft.trim() || null);
+    setSaving(false);
+    if (res.ok) { cancelEdit(); }
+    else { setEditError(res.error ?? 'Could not save.'); }
+  };
+  const revertEdit = async (entryId: string) => {
+    if (!mpActions || saving) return;
+    setSaving(true);
+    await mpActions.editChronicleFlavor(entryId, null);
+    setSaving(false);
+    cancelEdit();
+  };
 
   // "Take me there" — center the camera on the event's body/ship if it
   // still exists. Re-validate against live state so a button never
@@ -250,42 +349,102 @@ export const EventLog: React.FC = () => {
                         onClick={() => toggleExpand(i)}
                         title={isOpen ? 'Collapse' : 'Expand'}
                       >
-                        <span
-                          className="event-log__icon"
-                          style={{ color }}
-                          aria-hidden="true"
-                        >{icon}</span>
-                        <span className="event-log__text">{entry}</span>
-                        <span
-                          className="event-log__chevron"
-                          aria-hidden="true"
-                        >{isOpen ? '▾' : '▸'}</span>
+                        {/* Category kicker — colored per category so the
+                            log is scannable by type at a glance. */}
+                        <span className="event-log__row__kicker" style={{ color }}>
+                          {label}
+                        </span>
+                        <span className="event-log__row__headline-main">
+                          <span
+                            className="event-log__icon"
+                            style={{ color }}
+                            aria-hidden="true"
+                          >{icon}</span>
+                          <span className="event-log__text">{tint(entry)}</span>
+                          <span
+                            className="event-log__chevron"
+                            aria-hidden="true"
+                          >{isOpen ? '▾' : '▸'}</span>
+                        </span>
                       </button>
                       {isOpen && (() => {
                         const onFocus = resolveFocus(focuses?.[i]);
+                        const meta = metas?.[i] ?? null;
+                        const flavorText = flavors?.[i] ?? entry;
+                        const isEditing = editingIndex === i;
                         return (
                           <div className="event-log__row__body">
-                            <div className="event-log__row__category" style={{ color }}>
-                              {label}
-                            </div>
-                            <div className="event-log__row__flavor">
-                              {/* Prose flavor resolved from the structured
-                                  chronicle event (flavorEngine). Falls back
-                                  to echoing the headline when the event kind
-                                  has no bank or its payload couldn't be
-                                  enriched. Editing lands in phase 3. */}
-                              {flavors?.[i] ?? entry}
-                            </div>
-                            {onFocus && (
-                              <button
-                                type="button"
-                                className="event-log__row__focus"
-                                style={{ borderColor: color, color }}
-                                onClick={onFocus}
-                                title="Center the camera on this location"
-                              >
-                                ◎ Take me there
-                              </button>
+                            {isEditing ? (
+                              <div className="event-log__row__edit">
+                                <textarea
+                                  className="event-log__row__edit-area"
+                                  value={draft}
+                                  maxLength={500}
+                                  rows={4}
+                                  autoFocus
+                                  placeholder="Rewrite this event in your own words…"
+                                  onChange={(e) => setDraft(e.target.value)}
+                                />
+                                <div className="event-log__row__edit-actions">
+                                  <button
+                                    type="button"
+                                    className="event-log__row__edit-save"
+                                    disabled={saving}
+                                    onClick={() => meta && saveEdit(meta.entryId)}
+                                  >{saving ? 'Saving…' : 'Save'}</button>
+                                  <button
+                                    type="button"
+                                    className="event-log__row__edit-cancel"
+                                    disabled={saving}
+                                    onClick={cancelEdit}
+                                  >Cancel</button>
+                                  {meta?.isOverride && (
+                                    <button
+                                      type="button"
+                                      className="event-log__row__edit-revert"
+                                      disabled={saving}
+                                      onClick={() => revertEdit(meta.entryId)}
+                                      title="Discard the custom text and restore the generated flavor"
+                                    >Revert to default</button>
+                                  )}
+                                </div>
+                                {editError && <div className="event-log__row__edit-error">{editError}</div>}
+                              </div>
+                            ) : (
+                              <>
+                                <div className="event-log__row__flavor">
+                                  {tint(flavorText)}
+                                </div>
+                                {/* Attribution footer for player-rewritten events. */}
+                                {meta?.isOverride && meta.editedByName && (
+                                  <div className="event-log__row__attribution">
+                                    — rewritten by {meta.editedByName}
+                                  </div>
+                                )}
+                                <div className="event-log__row__actions">
+                                  {onFocus && (
+                                    <button
+                                      type="button"
+                                      className="event-log__row__focus"
+                                      style={{ borderColor: color, color }}
+                                      onClick={onFocus}
+                                      title="Center the camera on this location"
+                                    >
+                                      ◎ Take me there
+                                    </button>
+                                  )}
+                                  {meta?.canEdit && mpActions && (
+                                    <button
+                                      type="button"
+                                      className="event-log__row__edit-btn"
+                                      onClick={() => beginEdit(i, meta.isOverride ? flavorText : '')}
+                                      title={meta.isOverride ? 'Rewrite this event' : 'Add your own flavor to this event'}
+                                    >
+                                      ✎ {meta.isOverride ? 'Edit' : 'Rewrite'}
+                                    </button>
+                                  )}
+                                </div>
+                              </>
                             )}
                           </div>
                         );

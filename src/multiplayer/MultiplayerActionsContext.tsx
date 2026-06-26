@@ -131,6 +131,10 @@ export interface MultiplayerActions {
   /** Rename a city or station the caller owns. Same validation +
    *  error codes as renameShip. */
   renameSettlement: (settlementId: string, name: string) => Promise<MpActionResult>;
+  /** Rewrite (or revert) a chronicle event's flavor text. Pass null to
+   *  revert to the generated flavor. Server gates on party-to-event or
+   *  host; rejections carry code=not_party. */
+  editChronicleFlavor: (entryId: string, flavor: string | null) => Promise<MpActionResult>;
 
   // --- Turn-Based Mode (MP) ---
   /** Host-only: enable/disable TBM and set ticks_per_turn for this game.
@@ -315,6 +319,22 @@ export function MultiplayerActionsProvider({
         ok: false,
         code: res.error?.code,
         error: res.error?.message ?? 'Server rejected the rename.',
+      };
+    },
+    async editChronicleFlavor(entryId, flavor) {
+      const res = await apiFetch(`/api/games/${gameId}/chronicle/${encodeURIComponent(entryId)}/flavor`, {
+        method: 'PATCH',
+        body: JSON.stringify({ flavor }),
+      });
+      if (res.ok) {
+        logger.info('ACTION', flavor == null ? 'Chronicle flavor reverted' : 'Chronicle flavor edited', { entry: entryId });
+        return { ok: true };
+      }
+      console.warn('editChronicleFlavor failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the edit.',
       };
     },
     async research(intent) {

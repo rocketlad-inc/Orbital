@@ -31,6 +31,7 @@ import {
   trajectoryRole,
 } from '../render/mapRenderer';
 import { bodyPosition } from '../physics/orbitalMechanics';
+import { torchPositionFromSamples } from '../physics/torchTransfer';
 import { COLORS, withOpacity } from '../render/colors';
 import { shipWorldPosition } from '../game/combat';
 import { computeIncomingThreats, threatenedBodyIds } from '../game/threats';
@@ -98,6 +99,16 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   const prevShipIdsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const prevSettlementIdsRef = useRef<Map<string, { x: number; y: number; bodyId: string }>>(new Map());
   const destructionFlashesRef = useRef<Map<string, { pos: { x: number; y: number }; startTick: number; baseRadius?: number }>>(new Map());
+  // Last-rendered CANVAS position of every in-transit ship, populated by
+  // the render loop and consumed by the click hit-test. The visual ship
+  // sits on a polyline lerp (drawTorchTransitShip's lerpedPos) while
+  // ship.transit.pos is an independent integration; the two can disagree
+  // by several pixels mid-segment. Storing what the renderer actually
+  // drew makes visual == clickable by construction — no more "I see the
+  // ship but my click goes through it." Reset each frame so a destroyed
+  // ship doesn't keep an undead hitbox. Parked ships hit the regular
+  // getShipCanvasPos path; this map only exists for transit ships.
+  const transitShipCanvasPosRef = useRef<Map<string, { x: number; y: number }>>(new Map());
 
   // Map layers: source of truth lives in MapLayersProvider (state +
   // localStorage). The Set is surfaced as a render dep so toggling
@@ -147,6 +158,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // (a) record damage flashes on hit and (b) remember positions
     // for any disappearing entries so destruction has a place to draw.
     const curShipIds = new Map<string, { x: number; y: number }>();
+    // Reset the transit-ship canvas-position cache — it gets repopulated
+    // per-frame by the per-ship overlay below. A ship that arrived and
+    // dropped out of transit shouldn't keep its old hitbox.
+    transitShipCanvasPosRef.current.clear();
     for (const ship of gameState.ships) {
       // Position now; ships in transit use the torch trajectory so they
       // explode at the spot they were on the burn when killed.
@@ -532,6 +547,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         );
         ctx.restore();
         drawTransitShip(ship, renderContext, isSelected, samples);
+        // Cache the canvas position the renderer just drew at, so the
+        // click hit-test uses the SAME polyline-lerped point (not the
+        // diverging ship.transit.pos integration). Matches the lerp
+        // drawTorchTransitShip does internally. See transitShipCanvasPosRef.
+        if (samples && samples.length > 0) {
+          const lerped = torchPositionFromSamples(samples, gameState.currentTick);
+          const cp = worldToCanvas(lerped.x, lerped.y, renderContext);
+          transitShipCanvasPosRef.current.set(ship.id, cp);
+        }
 
         const arrivalBody = gameState.bodies.find(b => b.id === plan.targetBodyId);
         if (arrivalBody) {
@@ -845,12 +869,21 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
 
       for (const ship of gameState.ships) {
-        const shipPos = getShipCanvasPos(ship, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
-        // Match the rendered icon footprint (18px → 22px when selected). The
-        // old 10px target was tighter than the icon itself, so dead-center
-        // clicks on the visible icon could still miss. Now anything that
-        // visually overlaps the icon registers.
-        if (Math.hypot(canvasX - shipPos.x, canvasY - shipPos.y) < 14 + TOUCH_HIT_PADDING) {
+        // Prefer the cached canvas position the renderer just used for
+        // in-transit ships (matches the lerp drawTorchTransitShip does,
+        // which can disagree with ship.transit.pos mid-segment by enough
+        // pixels to make clicks miss the visible icon). Falls back to
+        // getShipCanvasPos for parked ships and the rare case where the
+        // ship is in transit but the render-loop pass for it hasn't run
+        // yet (first frame after mount, fog-hidden, etc.).
+        const cached = ship.transit ? transitShipCanvasPosRef.current.get(ship.id) : undefined;
+        const shipPos = cached ?? getShipCanvasPos(ship, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
+        // Wider hit radius for in-transit ships — they're moving, so the
+        // player aims slightly behind where they end up by the time the
+        // click event fires. 14px for parked, 20px for transit. Touch
+        // padding stacks on top for coarse-pointer devices.
+        const hitRadius = (ship.transit ? 20 : 14) + TOUCH_HIT_PADDING;
+        if (Math.hypot(canvasX - shipPos.x, canvasY - shipPos.y) < hitRadius) {
           selectShip(ship.id);
           return;
         }

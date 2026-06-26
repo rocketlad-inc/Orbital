@@ -95,25 +95,38 @@ async function handleCommitTransfer(req, env, ctx) {
   // longer reject a burn for insufficient fuel.
   const fuelCost = Math.max(0, Number(body.fuel_cost ?? 0));
 
-  // Find next sequence for this ship.
-  const last = await env.DB
-    .prepare('SELECT MAX(sequence) AS m FROM game_ship_nodes WHERE ship_id = ?')
-    .bind(shipId)
-    .first();
-  const seq = (last?.m ?? -1) + 1;
-
-  const nodeId = `${shipId}:n${seq}`;
+  // Assign the sequence ATOMICALLY inside the INSERT. The old code read
+  // MAX(sequence) then inserted MAX+1 in two steps — two commits for the
+  // same ship racing (double-click, client retry, or a burst of chained
+  // legs) both read the same MAX and both tried to insert the same
+  // sequence, blowing up on UNIQUE(ship_id, sequence). Computing the
+  // next sequence in a subquery makes the read+write one statement;
+  // SQLite/D1 serialize writers, so the second insert sees the first's
+  // committed row and gets a distinct sequence. The node id no longer
+  // embeds the sequence (it's opaque to the client — only round-tripped
+  // for cancel), so a timestamp+random id keeps the PRIMARY KEY unique
+  // without needing to know the sequence up front.
+  const nodeId = `${shipId}:n${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   await env.DB
     .prepare(
       `INSERT INTO game_ship_nodes
         (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
          scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
          status, committed_at_tick)
-       VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, ?, ?, ?, ?, 'committed',
-               (SELECT current_tick FROM games WHERE id = ?))`,
+       SELECT ?, ?, ?,
+              COALESCE((SELECT MAX(sequence) FROM game_ship_nodes WHERE ship_id = ?), -1) + 1,
+              'absolute', ?, ?, ?, ?, ?, ?, ?, 'committed',
+              (SELECT current_tick FROM games WHERE id = ?)`,
     )
-    .bind(nodeId, gameId, shipId, seq, targetBodyId, scheduledT, arrivalT, dvP, dvN, dvR, fuelCost, gameId)
+    .bind(nodeId, gameId, shipId, shipId, targetBodyId, scheduledT, arrivalT, dvP, dvN, dvR, fuelCost, gameId)
     .run();
+
+  // Read back the sequence the subquery assigned, for the response.
+  const inserted = await env.DB
+    .prepare('SELECT sequence FROM game_ship_nodes WHERE id = ?')
+    .bind(nodeId)
+    .first();
+  const seq = inserted?.sequence ?? null;
 
   return json({ node: { id: nodeId, ship_id: shipId, sequence: seq, status: 'committed', scheduled_t: scheduledT } }, { status: 201 });
 }
@@ -272,11 +285,45 @@ async function handleQueueBuild(req, env, ctx) {
     .first();
   if (!bodyRow) return err(404, 'not_found', 'body not found');
   if (bodyRow.owner_faction_id !== me.id) return err(403, 'not_owner', 'you do not own this body');
-  // shipyard_level gate removed: schema declared the column with
-  // DEFAULT 0 (migrations/0003_game_state.sql) and nothing ever wrote
-  // to it, so every MP build 409'd as no_shipyard. Body ownership
-  // (recomputeBodyOwnership requires the most settlements at the body)
-  // is the real gate.
+
+  // Build-slot gate. Every owned body has 1 base slot; each level of a
+  // Shipyard (a station building) adds one more concurrent slot. This
+  // mirrors src/game/settlements.ts shipyardSlotsAtBody and was the
+  // missing server-side enforcement that let MP players queue unlimited
+  // ships at once (the old shipyard_level COLUMN gate was dead — this
+  // reads the live buildings_json instead). In-flight builds = rows in
+  // game_body_build_queue not yet completed/cancelled.
+  const yardRows = (await env.DB
+    .prepare(
+      `SELECT buildings_json FROM game_settlements
+        WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+          AND type = 'station' AND destroyed_at_tick IS NULL`,
+    )
+    .bind(gameId, bodyId, me.id)
+    .all()).results ?? [];
+  let shipyardLevels = 0;
+  for (const row of yardRows) {
+    if (!row.buildings_json) continue;
+    try {
+      const b = JSON.parse(row.buildings_json) || {};
+      shipyardLevels += Number(b.shipyard ?? 0) || 0;
+    } catch { /* ignore malformed */ }
+  }
+  const slots = 1 + shipyardLevels;
+  // Completed builds are DELETED from this table (room.js), so any row
+  // that still exists and isn't cancelled is an in-flight build.
+  const inFlight = await env.DB
+    .prepare(
+      `SELECT COUNT(*) AS c FROM game_body_build_queue
+        WHERE game_id = ? AND body_id = ? AND faction_id = ?
+          AND cancelled_at_tick IS NULL`,
+    )
+    .bind(gameId, bodyId, me.id)
+    .first();
+  if ((inFlight?.c ?? 0) >= slots) {
+    return err(409, 'no_slots',
+      `all ${slots} build slot${slots === 1 ? '' : 's'} at this body are busy — wait for one to finish or build a Shipyard`);
+  }
 
   // Senate effect: ship_build_cost_multiplier scales metal + gold at
   // queue time. Default 1.0 (no effect) when no proposal is active.
@@ -414,6 +461,26 @@ async function handleDeploySettlement(req, env, ctx) {
   // Surface settlements require a landable surface — no gas giants or the star.
   if (type === 'city' && (bodyRow.type === 'star' || bodyRow.type === 'gas-giant' || bodyRow.type === 'ice-giant')) {
     return err(409, 'no_surface', 'cannot found a city on this body type');
+  }
+
+  // One city + one station per body — enforce server-side (the client
+  // already hides the deploy button, but the server is the source of
+  // truth; without this a stale/forged client could stack settlements).
+  // Counts any LIVING settlement of this type at the body regardless of
+  // owner: a body can't host two cities even for different factions
+  // under the one-settlement-per-body rule.
+  const existing = await env.DB
+    .prepare(
+      `SELECT 1 AS x FROM game_settlements
+        WHERE game_id = ? AND body_id = ? AND type = ?
+          AND destroyed_at_tick IS NULL
+        LIMIT 1`,
+    )
+    .bind(gameId, bodyId, type)
+    .first();
+  if (existing) {
+    return err(409, 'occupied',
+      `this body already has a ${type} — only one ${type} per body`);
   }
 
   // Caller needs a FREIGHTER orbiting here OR they already own the body.
@@ -1680,6 +1747,74 @@ async function handleRenameSettlement(req, env, ctx) {
   return json({ ok: true, id: settlementId, name });
 }
 
+// PATCH /api/games/:gameId/chronicle/:entryId/flavor
+// body: { flavor: string | null }
+//   - non-empty string sets a custom flavor override (max 500 chars)
+//   - null / empty string reverts to the generated flavor
+// Permission: caller's faction must be the event's actor OR target,
+// OR the caller is the room host. Last-write-wins.
+async function handleEditChronicleFlavor(req, env, ctx) {
+  const { gameId, entryId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+  let flavor = null;
+  if (typeof body.flavor === 'string') {
+    const trimmed = body.flavor.trim();
+    if (trimmed.length > 0) {
+      if (trimmed.length > 500) return err(400, 'bad_request', 'flavor too long (max 500 chars)');
+      flavor = trimmed;
+    }
+  } else if (body.flavor != null) {
+    return err(400, 'bad_request', 'flavor must be a string or null');
+  }
+
+  const entry = await env.DB
+    .prepare('SELECT actor_faction_id, target_faction_id FROM chronicle_entries WHERE id = ? AND game_id = ?')
+    .bind(entryId, gameId)
+    .first();
+  if (!entry) return err(404, 'not_found', 'event not found');
+
+  // Permission: party to the event, or host. game.id === room.id.
+  const isParty = entry.actor_faction_id === me.id || entry.target_faction_id === me.id;
+  let isHost = false;
+  if (!isParty) {
+    const room = await env.DB.prepare('SELECT host_id FROM rooms WHERE id = ?').bind(gameId).first();
+    isHost = !!room && room.host_id === ctx.session.user_id;
+  }
+  if (!isParty && !isHost) {
+    return err(403, 'not_party', 'only a faction involved in this event (or the host) can rewrite it');
+  }
+
+  if (flavor == null) {
+    // Revert: clear the override + its attribution.
+    await env.DB
+      .prepare('UPDATE chronicle_entries SET flavor_override = NULL, flavor_edited_by = NULL, flavor_edited_at_ms = NULL WHERE id = ?')
+      .bind(entryId)
+      .run();
+  } else {
+    await env.DB
+      .prepare('UPDATE chronicle_entries SET flavor_override = ?, flavor_edited_by = ?, flavor_edited_at_ms = ? WHERE id = ?')
+      .bind(flavor, me.id, Date.now(), entryId)
+      .run();
+  }
+
+  // Nudge other clients to refresh sooner than their next poll.
+  try {
+    await env.ROOM.get(env.ROOM.idFromName(gameId)).fetch('https://room/notify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ kind: 'chronicle', event: 'flavor_edited', entry_id: entryId }),
+    });
+  } catch { /* best-effort */ }
+
+  return json({ ok: true, entry_id: entryId, flavor, edited_by: flavor ? me.id : null });
+}
+
 export const routes = [
   {
     method: 'PATCH',
@@ -1692,6 +1827,12 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/settlements\/(?<settlementId>[^/]+)$/,
     auth: 'required',
     handle: handleRenameSettlement,
+  },
+  {
+    method: 'PATCH',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/chronicle\/(?<entryId>[^/]+)\/flavor$/,
+    auth: 'required',
+    handle: handleEditChronicleFlavor,
   },
   {
     method: 'POST',

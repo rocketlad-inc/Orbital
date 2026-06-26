@@ -1185,6 +1185,24 @@ async function handleJoinableBodies(_req, env, ctx) {
     .prepare('SELECT id FROM game_factions WHERE game_id = ? AND user_id = ?')
     .bind(gameId, session.user_id).first();
 
+  // Defensive self-heal: if the caller already owns a faction here but
+  // their room_members row is missing (the orphaned-membership bug —
+  // see worker/index.js handleListMyRooms for the long story), put the
+  // row back. Without this an invite-link revisit reports
+  // already_joined=true but the lobby UI still shows nothing under My
+  // Games because that filter keys off room_members. INSERT OR IGNORE
+  // is a no-op when the row is already there.
+  if (mine) {
+    try {
+      await env.DB
+        .prepare('INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)')
+        .bind(gameId, session.user_id, Date.now())
+        .run();
+    } catch (e) {
+      console.warn('handleJoinableBodies: self-heal insert failed', e);
+    }
+  }
+
   // Unclaimed, capital-eligible worlds. We intersect STARTING_BODY_IDS
   // (terrestrial + moon) with the live owner_faction_id IS NULL set.
   const rows = (await env.DB

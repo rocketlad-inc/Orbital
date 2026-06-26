@@ -351,6 +351,43 @@ async function handleListRooms(_req, env) {
 // "resume" shortcut and (when there's a single in-progress game) to
 // auto-redirect users back into their active game.
 async function handleListMyRooms(_req, env, session) {
+  // Defensive self-heal: re-insert missing room_members rows for any
+  // active game where the user owns a faction. game_factions is the
+  // canonical "this user belongs in this room" record — /state and
+  // /joinable-bodies both auth off it, not room_members, so a missing
+  // membership row is a UI-only orphan: the client polls /state fine
+  // but the lobby's My Games filter (which DOES key off room_members)
+  // shows nothing, and the player looks kicked.
+  //
+  // Player-reported repro: latecomer joined via late-join (writes
+  // room_members + game_factions), played for a while, hard-reset, came
+  // back — game_factions intact, room_members row gone. Root cause of
+  // the deletion is still unknown (host-kick is the only DELETE I can
+  // find and it's blocked after game start), but the recovery is
+  // unambiguous: if the faction exists, the membership should exist.
+  //
+  // INSERT OR IGNORE is safe and idempotent; the inner SELECT filters to
+  // rooms whose backing game exists and is active or in lobby, so we
+  // don't resurrect membership for completed/abandoned matches.
+  try {
+    await env.DB
+      .prepare(
+        `INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at)
+         SELECT g.id, gf.user_id, ?1
+           FROM game_factions gf
+           JOIN games g ON g.id = gf.game_id
+          WHERE gf.user_id = ?2
+            AND g.status IN ('active', 'lobby')`,
+      )
+      .bind(Date.now(), session.user_id)
+      .run();
+  } catch (e) {
+    // Best-effort: if the self-heal fails, fall through to the existing
+    // query. Worst case the player still sees the empty list — same as
+    // before this commit, no regression.
+    console.warn('handleListMyRooms: self-heal insert failed', e);
+  }
+
   const rows = await env.DB
     .prepare(
       `SELECT r.id, r.name, r.status, r.max_players, r.host_id, u.display_name AS host_name,
@@ -457,8 +494,25 @@ async function handleJoinRoom(req, env, session, roomId) {
     .bind(roomId, session.user_id)
     .first();
 
-  // Password gate: only enforce for users not already in the room.
-  if (!already && room.password_hash) {
+  // Returning-player check. game_factions.user_id is the canonical "this
+  // user belongs here" record — /state and /joinable-bodies both auth off
+  // it. So a row in game_factions with NO row in room_members is the
+  // orphaned-membership bug (see handleListMyRooms's self-heal): the
+  // player is supposed to be in the room, their membership row just
+  // vanished. Recover them: skip the password gate and the capacity gate
+  // (they're not consuming a new seat, they're reclaiming one) and let
+  // the insert below put the row back. Without this, a latecomer hitting
+  // JOIN BY CODE on a full room gets 403 room_full from the cap check,
+  // even though the system already considers them a player.
+  const returningPlayer = !already && !!(await env.DB
+    .prepare('SELECT 1 AS x FROM game_factions WHERE game_id = ? AND user_id = ?')
+    .bind(roomId, session.user_id)
+    .first());
+
+  // Password gate: only enforce for users brand-new to the room (not
+  // already a member AND not a returning player). A returning player
+  // already passed this gate when they originally joined.
+  if (!already && !returningPlayer && room.password_hash) {
     const body = await readJson(req);
     const supplied = typeof body?.password === 'string' ? body.password : '';
     if (!supplied) return err(401, 'password_required', 'room is password-protected');
@@ -467,10 +521,14 @@ async function handleJoinRoom(req, env, session, roomId) {
   }
 
   if (!already) {
-    const count = await env.DB.prepare('SELECT COUNT(*) AS c FROM room_members WHERE room_id = ?').bind(roomId).first();
-    if ((count?.c ?? 0) >= room.max_players) return err(403, 'room_full', 'room is full');
+    // Capacity gate: skip for returning players (they're not adding a new
+    // seat, just patching one back into the books).
+    if (!returningPlayer) {
+      const count = await env.DB.prepare('SELECT COUNT(*) AS c FROM room_members WHERE room_id = ?').bind(roomId).first();
+      if ((count?.c ?? 0) >= room.max_players) return err(403, 'room_full', 'room is full');
+    }
     await env.DB
-      .prepare('INSERT INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)')
+      .prepare('INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)')
       .bind(roomId, session.user_id, Date.now())
       .run();
     await env.DB.prepare('UPDATE rooms SET updated_at = ? WHERE id = ?').bind(Date.now(), roomId).run();
