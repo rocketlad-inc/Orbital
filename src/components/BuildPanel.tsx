@@ -72,10 +72,25 @@ export const BuildPanel: React.FC = () => {
   if (!uiState.selectedBodyId) return null;
 
   const body = gameState.bodies.find(b => b.id === uiState.selectedBodyId);
-  if (!body || body.ownedBy !== 'player') return null;
+  if (!body) return null;
 
-  // Can only build on terrestrial, dwarf, or moon bodies
-  if (body.type === 'star' || body.type === 'gas_giant' || body.type === 'ice_giant') return null;
+  // Build is allowed wherever the player has any active settlement —
+  // surface city OR orbital station. Stations CAN sit at gas / ice
+  // giants (no city possible there, but the station provides the
+  // shipyard slots), so the old "type must be terrestrial/dwarf/moon"
+  // bail locked out the gas-giant playstyle. Playtester report
+  // (clownking, 2026-06-27): "I have a station around Neptune, and
+  // I upgraded to shipyard level 1 for 1 build slot, but I can't
+  // build any ships."
+  //
+  // Star is the only type still blocked outright — no settlements can
+  // be deployed at stars in the first place, so the gate would never
+  // pass anyway, but we exit early to avoid the settlements scan.
+  if (body.type === 'star') return null;
+  const hasMySettlement = gameState.settlements.some(
+    s => s.bodyId === body.id && s.ownedBy === 'player' && s.destroyedAtTick === undefined,
+  );
+  if (!hasMySettlement) return null;
 
   const playerRes = gameState.resources['player'];
   if (!playerRes) return null;

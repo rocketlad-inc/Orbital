@@ -284,7 +284,26 @@ async function handleQueueBuild(req, env, ctx) {
     .bind(bodyId, gameId)
     .first();
   if (!bodyRow) return err(404, 'not_found', 'body not found');
-  if (bodyRow.owner_faction_id !== me.id) return err(403, 'not_owner', 'you do not own this body');
+  // Build is allowed at any body where the player owns an active
+  // settlement — surface city OR orbital station. Body ownership
+  // (game_bodies.owner_faction_id) is derived from settlement counts in
+  // recomputeBodyOwnership, so on a contested gas giant where another
+  // faction has more settlements, body owner won't be us even though we
+  // legitimately have a station here with shipyard slots. The
+  // settlement-presence check is the right gate — body ownership stays
+  // as a fast-path skip when it's clearly ours.
+  if (bodyRow.owner_faction_id !== me.id) {
+    const mineHere = await env.DB
+      .prepare(
+        `SELECT 1 AS x FROM game_settlements
+          WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+            AND destroyed_at_tick IS NULL
+          LIMIT 1`,
+      )
+      .bind(gameId, bodyId, me.id)
+      .first();
+    if (!mineHere) return err(403, 'not_owner', 'no settlement of yours at this body');
+  }
 
   // Build-slot gate. Every owned body has 1 base slot; each level of a
   // Shipyard (a station building) adds one more concurrent slot. This
