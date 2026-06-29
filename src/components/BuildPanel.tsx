@@ -87,8 +87,11 @@ export const BuildPanel: React.FC = () => {
   // be deployed at stars in the first place, so the gate would never
   // pass anyway, but we exit early to avoid the settlements scan.
   if (body.type === 'star') return null;
+  // Settlement type has no destroyedAtTick — the server filters destroyed
+  // rows out before /state sends the list, so anything present here is
+  // alive by construction.
   const hasMySettlement = gameState.settlements.some(
-    s => s.bodyId === body.id && s.ownedBy === 'player' && s.destroyedAtTick === undefined,
+    s => s.bodyId === body.id && s.ownedBy === 'player',
   );
   if (!hasMySettlement) return null;
 
