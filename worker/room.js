@@ -1788,11 +1788,41 @@ export class Room {
     const NO_COLLECTOR_POOL_FRACTION = 0.10;       // 10% to faction pool
     const NO_COLLECTOR_STOCK_FRACTION = 0.90;       // 90% to local stockpile
 
-    // Aggregate per-faction pool deltas; apply per-settlement
+    // Aggregate per-faction pool deltas; apply per-(body,faction)
     // stockpile deltas individually. Wrapped: yield distribution must
     // NEVER kill resolveTick (combat, dyson, victory all run after).
     try {
       const perFactionPool = new Map();
+
+      // Per-body local stockpile pre-pass. Lorne's call: ONE local
+      // pool per body, shared between a city and any stations of the
+      // same faction at that body. A collector anywhere in the group
+      // flips the WHOLE group to 100% pool; otherwise the group's
+      // 90% stockpile share gets written to the primary holder
+      // (prefer city → fall back to station). This is what makes a
+      // station's yield reach the city's local pile instead of
+      // stranding in a separate station-only stockpile, and what makes
+      // a collector on a city also collect for the station orbiting it.
+      // Keyed (body, faction) so two factions sharing a body still keep
+      // their stockpiles independent.
+      const groupKey = (s) => `${s.body_id}|${s.fid}`;
+      const groupHasCollector = new Map();
+      const groupPrimary = new Map(); // groupKey -> { id, type }
+      for (const s of settlements) {
+        const k = groupKey(s);
+        if (s.has_collector) groupHasCollector.set(k, true);
+        const cur = groupPrimary.get(k);
+        // Prefer 'city' as the stockpile holder. If there's no city
+        // (gas-giant cases like clownking's Neptune), the station's own
+        // row collects — same row that already shows in the inspector.
+        if (!cur || (cur.type === 'station' && s.type === 'city')) {
+          groupPrimary.set(k, { id: s.id, type: s.type });
+        }
+      }
+      // Per-group stockpile accumulators so a city + station at the
+      // same body write ONE UPDATE to the primary's row instead of two.
+      const perGroupStock = new Map(); // groupKey -> { targetId, f, m, g, sc }
+
       for (const s of settlements) {
         const tm = s.type === 'city' ? TYPE_MUL_CITY : TYPE_MUL_STATION;
         const popMul = 1 + YIELD_MULT_PER_POP * Math.max(0, Number(s.population ?? 1) - 1);
@@ -1820,8 +1850,13 @@ export class Room {
           science: Number(s.yield_science ?? 0) * popMul * tm.science * labMul   * prodMul,
         };
 
-        const toPoolFraction  = s.has_collector ? 1.0 : NO_COLLECTOR_POOL_FRACTION;
-        const toStockFraction = s.has_collector ? 0.0 : NO_COLLECTOR_STOCK_FRACTION;
+        // Collector status is now per (body, faction) group — see
+        // pre-pass above. A city's collector covers any station at the
+        // same body, and vice versa.
+        const gk = groupKey(s);
+        const groupCollector = groupHasCollector.get(gk) === true;
+        const toPoolFraction  = groupCollector ? 1.0 : NO_COLLECTOR_POOL_FRACTION;
+        const toStockFraction = groupCollector ? 0.0 : NO_COLLECTOR_STOCK_FRACTION;
 
         const poolDelta = {
           fuel:    yieldFull.fuel    * toPoolFraction,
@@ -1842,19 +1877,38 @@ export class Room {
           const sg = Math.round(yieldFull.gold    * toStockFraction);
           const ss = Math.round(yieldFull.science * toStockFraction);
           if (sf + sm + sg + ss > 0) {
-            await this.env.DB
-              .prepare(
-                `UPDATE game_settlements
-                    SET stockpile_fuel    = stockpile_fuel    + ?,
-                        stockpile_metal   = stockpile_metal   + ?,
-                        stockpile_gold    = stockpile_gold    + ?,
-                        stockpile_science = stockpile_science + ?
-                  WHERE id = ?`,
-              )
-              .bind(sf, sm, sg, ss, s.id)
-              .run();
+            // Accumulate into the GROUP's primary stockpile holder.
+            // Two settlements at the same body (city + station) feed
+            // ONE UPDATE on the city's row below. If no city is
+            // present (gas-giant body) the station's own row collects.
+            const primary = groupPrimary.get(gk);
+            const targetId = primary?.id ?? s.id;
+            const agg = perGroupStock.get(gk) ?? { targetId, f: 0, m: 0, g: 0, sc: 0 };
+            agg.f  += sf;
+            agg.m  += sm;
+            agg.g  += sg;
+            agg.sc += ss;
+            perGroupStock.set(gk, agg);
           }
         }
+      }
+
+      // Flush per-group stockpile UPDATEs — one per (body, faction)
+      // rather than one per settlement, so a city + station combine
+      // into a single write at the city's row.
+      for (const [, agg] of perGroupStock) {
+        if (agg.f + agg.m + agg.g + agg.sc <= 0) continue;
+        await this.env.DB
+          .prepare(
+            `UPDATE game_settlements
+                SET stockpile_fuel    = stockpile_fuel    + ?,
+                    stockpile_metal   = stockpile_metal   + ?,
+                    stockpile_gold    = stockpile_gold    + ?,
+                    stockpile_science = stockpile_science + ?
+              WHERE id = ?`,
+          )
+          .bind(agg.f, agg.m, agg.g, agg.sc, agg.targetId)
+          .run();
       }
 
       // Apply pool deltas — one UPDATE per faction.
