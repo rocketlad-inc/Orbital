@@ -46,6 +46,20 @@ import './MapCanvas.css';
  *  than enlarge the rendered icon. */
 const TOUCH_HIT_PADDING = isCoarsePointer() ? 16 : 0;
 
+/**
+ * Below this camera scale, parked ships at a body collapse into a single
+ * "N ships" cluster badge rendered next to the body. Reduces the visual
+ * noise when zoomed out far enough that ship sprites + labels pile on top
+ * of each other (playtester report: solar-system view = unreadable smear
+ * of overlapping triangles). 0.6 chosen empirically — above 0.6 individual
+ * ships are still legible; below, they overlap.
+ *
+ * The selected ship and any in-transit ship always render in full so the
+ * player can still track them across the zoomed-out view; only the
+ * stationary at-body clusters collapse.
+ */
+const CLUSTER_ZOOM_THRESHOLD = 0.6;
+
 interface MapCanvasProps {
   width?: number;
   height?: number;
@@ -487,6 +501,18 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       drawOwnershipLayer(gameState.bodies, renderContext);
     }
 
+    // Per-body cluster accumulator. Active only at low zoom — see
+    // CLUSTER_ZOOM_THRESHOLD. Counts PARKED (non-transit) ships per
+    // body so we can render a single "N⌖" badge next to the body
+    // instead of N overlapping triangles + labels.
+    const clusterMode = camera.scale < CLUSTER_ZOOM_THRESHOLD;
+    const bodyClusters = new Map<string, { mine: number; other: number }>();
+    const bumpCluster = (bodyId: string, mine: boolean) => {
+      const cur = bodyClusters.get(bodyId) ?? { mine: 0, other: 0 };
+      if (mine) cur.mine += 1; else cur.other += 1;
+      bodyClusters.set(bodyId, cur);
+    };
+
     // Draw ships
     for (const ship of gameState.ships) {
       // Fog of war: skip enemy ships the player can't currently see
@@ -494,6 +520,20 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
       const isSelected = uiState.selectedShipId === ship.id;
       const formation = formationMap.get(ship.id);
+
+      // Cluster collapse: at low zoom, skip the individual draw for
+      // parked ships and accumulate a count under their parent body.
+      // In-transit ships keep drawing — their trajectory arcs spread
+      // them out so clustering at a body wouldn't be coherent — and
+      // the selected ship stays visible so the player can find what
+      // they picked.
+      if (clusterMode && !ship.transit && !isSelected) {
+        const bodyId = ship.orbit?.parentBodyId;
+        if (bodyId) {
+          bumpCluster(bodyId, ship.ownedBy === 'player');
+          continue;
+        }
+      }
 
       if (ship.transit) {
         // Torch transit — preferred path post-migration. Selected ship
@@ -601,6 +641,62 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         drawShip(ship, renderContext, isSelected, formation);
         if (isSelected) drawApsisMarkers(ship, renderContext);
       }
+    }
+
+    // Cluster badges. One per body that had its parked ships collapsed
+    // into the bodyClusters accumulator above. Position: a small offset
+    // up-and-right of the body so it doesn't overlap the body label.
+    // Colour: cyan for player-only, red for enemy-only, amber for mixed.
+    // Format: just the total count + a tiny ship glyph. Players see the
+    // density at a glance and click-to-zoom for detail.
+    if (clusterMode && bodyClusters.size > 0) {
+      const c2d = ctx;
+      c2d.save();
+      c2d.font = "700 11px var(--font-mono, ui-monospace, Menlo, Consolas, monospace)";
+      c2d.textAlign = 'left';
+      c2d.textBaseline = 'middle';
+      for (const [bodyId, counts] of bodyClusters) {
+        const body = gameState.bodies.find(b => b.id === bodyId);
+        if (!body) continue;
+        const bp = bodyPosition(body, gameState.currentTick, gameState.bodies);
+        const cp = worldToCanvas(bp.x, bp.y, renderContext);
+        const total = counts.mine + counts.other;
+        if (total <= 0) continue;
+        // Colour cue.
+        let fill = '#4ecdc4';   // mine-only cyan
+        let stroke = '#1a3a3a';
+        if (counts.mine === 0)        { fill = '#ff5e5e'; stroke = '#3a1a1a'; }
+        else if (counts.other > 0)    { fill = '#ffb84d'; stroke = '#3a2a10'; }
+        // Pill placement: up-right of the body marker.
+        const radius = Math.max(3, (body.radius ?? 4) * camera.scale);
+        const pillX = cp.x + radius + 6;
+        const pillY = cp.y - radius - 6;
+        const label = `▸${total}`;
+        const padX = 5;
+        const textW = c2d.measureText(label).width;
+        const pillW = textW + padX * 2;
+        const pillH = 14;
+        c2d.fillStyle = 'rgba(10, 14, 20, 0.92)';
+        c2d.strokeStyle = stroke;
+        c2d.lineWidth = 1;
+        c2d.beginPath();
+        // Rounded rect via roundRect (widely supported in Chromium/Firefox
+        // since 2023). Falls back to a plain rect on older engines. Cast
+        // through any so TS doesn't narrow the canvas type to never in
+        // the fallback branch.
+        const rr = 4;
+        const anyCtx = c2d as any;
+        if (typeof anyCtx.roundRect === 'function') {
+          anyCtx.roundRect(pillX, pillY - pillH / 2, pillW, pillH, rr);
+        } else {
+          anyCtx.rect(pillX, pillY - pillH / 2, pillW, pillH);
+        }
+        c2d.fill();
+        c2d.stroke();
+        c2d.fillStyle = fill;
+        c2d.fillText(label, pillX + padX, pillY + 0.5);
+      }
+      c2d.restore();
     }
 
     // Draw fog-of-war ghosts for enemies currently out of sensor range but
