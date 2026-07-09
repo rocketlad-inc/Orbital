@@ -162,7 +162,12 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const renderHpBar = (ship: { hp?: number; class: string }) => {
     const def = getShipClass(ship.class as ShipClassName);
     const hp = ship.hp ?? def.hp;
-    const ratio = hp / def.hp;
+    // Effective max is the larger of base and current hp: armor tech and
+    // per-kill rank push real max above the base class hp, so a teched /
+    // veteran ship would otherwise read "108/100" with the fill bar
+    // overrunning its track. Clamp the label denominator and the width.
+    const maxHp = Math.max(def.hp, hp);
+    const ratio = Math.min(1, hp / maxHp);
     const hpClass = ratio > 0.66 ? 'good' : ratio > 0.33 ? 'mid' : 'low';
     return (
       <div className="status-bar">
@@ -172,7 +177,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
             style={{ width: `${ratio * 100}%` }}
           />
         </div>
-        <span className="status-bar__text">{Math.round(hp)}/{def.hp}</span>
+        <span className="status-bar__text">{Math.round(hp)}/{Math.round(maxHp)}</span>
       </div>
     );
   };

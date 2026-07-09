@@ -11,6 +11,8 @@
 // header in migrations/0003_game_state.sql.
 // ============================================================================
 
+import { verifyPassword } from './auth.js';
+
 // ---------- static catalog ----------
 //
 // Mirror of src/state/mockGameState.ts SHARED_BODIES — the actual real
@@ -1256,10 +1258,33 @@ async function handleLateJoin(req, env, ctx) {
     return errResponse(400, 'bad_request', 'chosen_body required');
   }
 
-  // Ensure room membership. An explicit late-join via invite link
-  // bypasses the max_players cap on purpose — the host chose to bring
-  // this person in, and the real constraint is unclaimed worlds.
-  if (!(await isRoomMember(env, gameId, session.user_id))) {
+  // SECURITY: enforce the room password for genuine newcomers, mirroring
+  // handleJoinRoom. Previously late-join gated only on room membership and
+  // then inserted the membership itself, so a brand-new user who knew any
+  // active game's id (trivially enumerable via GET /api/rooms) could claim
+  // a free faction + fleet + starting resources in a password-protected
+  // game they were never invited to. A returning player (already has a
+  // game_factions row — membership just vanished) skips the gate, exactly
+  // as handleJoinRoom does, since they already passed it on first join.
+  const alreadyMember = await isRoomMember(env, gameId, session.user_id);
+  if (!alreadyMember) {
+    const room = await env.DB
+      .prepare('SELECT password_hash FROM rooms WHERE id = ?')
+      .bind(gameId)
+      .first();
+    const returningPlayer = !!(await env.DB
+      .prepare('SELECT 1 AS x FROM game_factions WHERE game_id = ? AND user_id = ?')
+      .bind(gameId, session.user_id)
+      .first());
+    if (!returningPlayer && room?.password_hash) {
+      const supplied = typeof body.password === 'string' ? body.password : '';
+      if (!supplied) return errResponse(401, 'password_required', 'room is password-protected');
+      const ok = await verifyPassword(supplied, room.password_hash);
+      if (!ok) return errResponse(403, 'bad_password', 'incorrect password');
+    }
+    // Explicit late-join intentionally bypasses the max_players cap — the
+    // host chose to bring this person in; the real constraint is unclaimed
+    // worlds (enforced in seedLateFaction).
     await env.DB
       .prepare('INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)')
       .bind(gameId, session.user_id, Date.now())

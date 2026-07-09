@@ -696,11 +696,20 @@ async function applyBillEffects(env, gameId, tick, proposal, payload, effectUnti
     const target = payload.target_faction_id;
     if (!target) return null;
     const effectId = newId("eff");
+    // slider_id + value are declared NOT NULL (migration 0004), but a
+    // sanction bill is not a slider law and has no slider/value. Write
+    // sentinels ('' / 0) instead of NULL — the previous NULLs threw a
+    // NOT NULL constraint violation, which the per-proposal catch
+    // swallowed AFTER the bill was already marked 'passed', so every
+    // embargo / war authorization / production sanction silently wrote
+    // no effect row and hasActiveSanction() always returned false.
+    // getActiveSliders() filters on effect_kind='slider', so the ''
+    // slider_id here never pollutes slider reads.
     await env.DB
       .prepare(
         "INSERT INTO senate_effects " +
         "(id, game_id, slider_id, value, effect_kind, target_faction_id, proposal_id, active_from_tick, active_until_tick, created_at_tick, created_at_ms) " +
-        "VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)"
+        "VALUES (?, ?, '', 0, ?, ?, ?, ?, ?, ?, ?)"
       )
       .bind(effectId, gameId, kind, target, proposal.id, tick, effectUntil, tick, now)
       .run();

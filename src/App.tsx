@@ -183,7 +183,7 @@ function GameUI({
       {/* DockRail — single source of truth for which side panel is open.
           Owns the icon column + active state; SituationLog and MultiplayerShell
           render their panels in response to its events. */}
-      <DockRail />
+      <DockRail isMultiplayer={isMultiplayer} />
       <SituationLog />
       <EventLog />
 

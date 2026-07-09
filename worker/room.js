@@ -910,18 +910,27 @@ export class Room {
           .bind(n.ship_id, 'active')
           .first();
         if (ship && ship.ship_class === 'freighter') {
-          // Only pickup if this freighter isn't already on a trade
-          // route hauling cargo (avoid double-pickup with the
-          // trade-route block).
-          const onRouteWithCargo = await this.env.DB
+          // Skip ANY freighter on an active trade route — the route
+          // state machine below owns pickup/delivery for routed ships
+          // end-to-end. The old guard only skipped routed ships that
+          // were ALREADY carrying cargo, so a freighter RETURNING to
+          // its origin (cargo=0) got ad-hoc-vacuumed and its haul
+          // stashed into the route's cargo columns; next tick the
+          // route machine saw cargo>0 at origin (PICKUP wants cargo=0,
+          // DELIVERY wants dest) and none of its branches could move
+          // the ship — the route deadlocked on its first return leg
+          // with up to 500/resource frozen in cargo. Gating on route
+          // membership (not cargo) hands routed freighters exclusively
+          // to the state machine; manual freighters (no route) still
+          // get ad-hoc pickup.
+          const onActiveRoute = await this.env.DB
             .prepare(
               `SELECT 1 AS x FROM game_trade_routes
-                 WHERE ship_id = ?
-                   AND (cargo_fuel + cargo_metal + cargo_gold + cargo_science) > 0
+                 WHERE ship_id = ? AND cancelled_at_tick IS NULL
                  LIMIT 1`,
             )
             .bind(n.ship_id).first();
-          if (!onRouteWithCargo) {
+          if (!onActiveRoute) {
             const PICKUP_CAP = 500;  // matches CARGO_CAP further down
             const stocks = (await this.env.DB
               .prepare(
@@ -955,33 +964,20 @@ export class Room {
                 .run();
               if (cf >= PICKUP_CAP && cm >= PICKUP_CAP && cg >= PICKUP_CAP && csci >= PICKUP_CAP) break;
             }
-            // If we picked anything up, stash it in the trade_routes
-            // row associated with this ship if one exists; otherwise
-            // hand straight to the faction pool (the freighter is
-            // doing manual logistics, no route to buffer cargo on).
+            // We're only here for freighters with NO active route (the
+            // guard above excluded routed ships), so this is manual
+            // logistics: hand the pickup straight to the faction pool.
+            // Do NOT stash into any trade_routes row — a cancelled
+            // route row would swallow the cargo permanently.
             if (cf + cm + cg + csci > 0) {
-              const route = await this.env.DB
-                .prepare('SELECT id FROM game_trade_routes WHERE ship_id = ? LIMIT 1')
-                .bind(n.ship_id).first();
-              if (route) {
-                await this.env.DB
-                  .prepare(
-                    `UPDATE game_trade_routes
-                        SET cargo_fuel = cargo_fuel + ?, cargo_metal = cargo_metal + ?,
-                            cargo_gold = cargo_gold + ?, cargo_science = cargo_science + ?
-                      WHERE id = ?`,
-                  )
-                  .bind(cf, cm, cg, csci, route.id).run();
-              } else {
-                await this.env.DB
-                  .prepare(
-                    `UPDATE game_factions
-                        SET fuel    = fuel    + ?, metal   = metal   + ?,
-                            gold    = gold    + ?, science = science + ?
-                      WHERE id = ?`,
-                  )
-                  .bind(cf, cm, cg, csci, ship.owner_faction_id).run();
-              }
+              await this.env.DB
+                .prepare(
+                  `UPDATE game_factions
+                      SET fuel    = fuel    + ?, metal   = metal   + ?,
+                          gold    = gold    + ?, science = science + ?
+                    WHERE id = ?`,
+                )
+                .bind(cf, cm, cg, csci, ship.owner_faction_id).run();
             }
           }
         }
@@ -1911,20 +1907,37 @@ export class Room {
           .run();
       }
 
-      // Apply pool deltas — one UPDATE per faction.
+      // Apply pool deltas — one UPDATE per faction, carrying sub-integer
+      // fractions in the *_remainder columns (migration 0028) instead of
+      // Math.round-and-dropping them. The old rounding silently destroyed
+      // the entire income of small non-collector colonies: a body giving
+      // e.g. 0.4 science/tick to the pool rounded to 0 EVERY tick,
+      // forever — defeating the documented "even uncollectered worlds
+      // contribute SOMETHING every tick" 10% trickle. `CAST(x AS INTEGER)`
+      // truncates toward zero in SQLite; deltas are non-negative (yields),
+      // so truncate == floor. new_pool += floor(remainder + delta);
+      // new_remainder = (remainder + delta) - floor(remainder + delta).
       for (const [fid, delta] of perFactionPool) {
-        const fuelI    = Math.round(delta.fuel);
-        const metalI   = Math.round(delta.metal);
-        const goldI    = Math.round(delta.gold);
-        const scienceI = Math.round(delta.science);
-        if (fuelI + metalI + goldI + scienceI <= 0) continue;
+        if (delta.fuel + delta.metal + delta.gold + delta.science <= 0) continue;
         await this.env.DB
           .prepare(
-            `UPDATE game_factions
-                SET fuel = fuel + ?, metal = metal + ?, gold = gold + ?, science = science + ?
-              WHERE id = ?`,
+            `UPDATE game_factions SET
+               fuel    = fuel    + CAST(fuel_remainder    + ? AS INTEGER),
+               metal   = metal   + CAST(metal_remainder   + ? AS INTEGER),
+               gold    = gold    + CAST(gold_remainder    + ? AS INTEGER),
+               science = science + CAST(science_remainder + ? AS INTEGER),
+               fuel_remainder    = (fuel_remainder    + ?) - CAST(fuel_remainder    + ? AS INTEGER),
+               metal_remainder   = (metal_remainder   + ?) - CAST(metal_remainder   + ? AS INTEGER),
+               gold_remainder    = (gold_remainder    + ?) - CAST(gold_remainder    + ? AS INTEGER),
+               science_remainder = (science_remainder + ?) - CAST(science_remainder + ? AS INTEGER)
+             WHERE id = ?`,
           )
-          .bind(fuelI, metalI, goldI, scienceI, fid)
+          .bind(
+            delta.fuel, delta.metal, delta.gold, delta.science,
+            delta.fuel, delta.fuel, delta.metal, delta.metal,
+            delta.gold, delta.gold, delta.science, delta.science,
+            fid,
+          )
           .run();
       }
     } catch (e) {
@@ -1995,9 +2008,17 @@ export class Room {
             });
           }
         } else {
+          // Apply damage RELATIVE to the ship's current DB hp, not the
+          // pre-maintenance `allShips` snapshot. Section 3.45 (ship
+          // maintenance) already wrote `hp = old + repairRate` to the
+          // row this tick; an absolute `hp = snapshot.hp - dmg` write
+          // here would overwrite (erase) that station repair. So a
+          // fleet tanking at its own dry-dock under fire got ZERO
+          // effective healing — precisely the case stations exist for.
+          // MAX(0, …) keeps the floor without needing the snapshot.
           await this.env.DB
-            .prepare('UPDATE game_ships SET hp = ? WHERE id = ?')
-            .bind(newHp, shipId)
+            .prepare('UPDATE game_ships SET hp = MAX(0, hp - ?) WHERE id = ?')
+            .bind(entry.total, shipId)
             .run();
         }
       }
@@ -2798,9 +2819,9 @@ export class Room {
               AND owner_faction_id = ?
               AND ship_class = 'freighter'
               AND status = 'active'
-              AND parent_body_id = 'sol'`,
+              AND parent_body_id = ?`,
       )
-      .bind(gameId, ctrl)
+      .bind(gameId, ctrl, `${gameId}:sol`)
       .all()).results ?? [];
     const n = freighters.length;
     if (n === 0) {
@@ -2937,13 +2958,13 @@ export class Room {
     if (factions.length >= 2) {
       const settled = (await this.env.DB
         .prepare(
-          `SELECT DISTINCT faction_id
+          `SELECT DISTINCT owner_faction_id
              FROM game_settlements
             WHERE game_id = ? AND destroyed_at_tick IS NULL`,
         )
         .bind(gameId)
         .all()).results ?? [];
-      const factionsWithSettlements = new Set(settled.map(r => r.faction_id));
+      const factionsWithSettlements = new Set(settled.map(r => r.owner_faction_id));
       for (const candidate of factions) {
         let anyRivalAlive = false;
         for (const f of factions) {

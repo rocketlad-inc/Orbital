@@ -186,14 +186,23 @@ async function handleCancelBuild(req, env, ctx) {
     .first();
   const tick = game?.current_tick ?? 0;
 
-  await env.DB.batch([
-    env.DB
-      .prepare('UPDATE game_body_build_queue SET cancelled_at_tick = ? WHERE id = ?')
-      .bind(tick, orderId),
-    env.DB
-      .prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?')
-      .bind(cost?.metal ?? 0, cost?.gold ?? 0, me.id),
-  ]);
+  // Flip the cancel flag FIRST, guarded on it still being NULL, and only
+  // refund if this statement actually changed a row. Two concurrent
+  // cancels would both pass the read-check above; SQLite serializes the
+  // guarded UPDATE, so exactly one flips NULL->tick (changes=1, refunds)
+  // and the rest see changes=0 (no double refund). Was: an unguarded
+  // batch where every racing request refunded.
+  const flip = await env.DB
+    .prepare('UPDATE game_body_build_queue SET cancelled_at_tick = ? WHERE id = ? AND cancelled_at_tick IS NULL')
+    .bind(tick, orderId)
+    .run();
+  if (!flip.meta?.changes) {
+    return err(409, 'already_cancelled', 'this build was already cancelled');
+  }
+  await env.DB
+    .prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?')
+    .bind(cost?.metal ?? 0, cost?.gold ?? 0, me.id)
+    .run();
 
   return json({
     ok: true,
@@ -1237,16 +1246,19 @@ async function handleCancelBuilding(req, env, ctx) {
     return json({ ok: true, refund: null });
   }
 
-  // Refund cost-at-queue-time.
+  // Refund cost-at-queue-time. Guarded flip (building_order_json still
+  // set) + refund-only-if-changed (see handleCancelBuild) so two
+  // concurrent cancels can't both refund.
   const refund = buildingCostAt(order.kind, Math.max(0, (order.target_level ?? 1) - 1));
-  await env.DB.batch([
-    env.DB
-      .prepare('UPDATE game_settlements SET building_order_json = NULL WHERE id = ?')
-      .bind(settlementId),
-    env.DB
-      .prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?')
-      .bind(refund?.metal ?? 0, refund?.gold ?? 0, me.id),
-  ]);
+  const flip = await env.DB
+    .prepare('UPDATE game_settlements SET building_order_json = NULL WHERE id = ? AND building_order_json IS NOT NULL')
+    .bind(settlementId)
+    .run();
+  if (!flip.meta?.changes) return err(409, 'already_cancelled', 'nothing to cancel');
+  await env.DB
+    .prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?')
+    .bind(refund?.metal ?? 0, refund?.gold ?? 0, me.id)
+    .run();
   return json({ ok: true, refund });
 }
 async function handleBuildCollector(req, env, ctx) {
@@ -1426,14 +1438,17 @@ async function handleCancelTradeRoute(req, env, ctx) {
   const metal   = Number(route.cargo_metal   ?? 0);
   const gold    = Number(route.cargo_gold    ?? 0);
   const science = Number(route.cargo_science ?? 0);
-  await env.DB.batch([
-    env.DB
-      .prepare('UPDATE game_trade_routes SET cancelled_at_tick = ?, cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0 WHERE id = ?')
-      .bind(tick, routeId),
-    env.DB
-      .prepare('UPDATE game_factions SET fuel = fuel + ?, metal = metal + ?, gold = gold + ?, science = science + ? WHERE id = ?')
-      .bind(fuel, metal, gold, science, me.id),
-  ]);
+  // Guarded flip + refund-only-if-changed (see handleCancelBuild) so two
+  // concurrent cancels can't both refund the cargo.
+  const flip = await env.DB
+    .prepare('UPDATE game_trade_routes SET cancelled_at_tick = ?, cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0 WHERE id = ? AND cancelled_at_tick IS NULL')
+    .bind(tick, routeId)
+    .run();
+  if (!flip.meta?.changes) return err(409, 'already_cancelled', 'already cancelled');
+  await env.DB
+    .prepare('UPDATE game_factions SET fuel = fuel + ?, metal = metal + ?, gold = gold + ?, science = science + ? WHERE id = ?')
+    .bind(fuel, metal, gold, science, me.id)
+    .run();
 
   return json({ ok: true, refund: { fuel, metal, gold, science } });
 }
@@ -1483,16 +1498,19 @@ async function handleInitiateDyson(req, env, ctx) {
   // Settlement validity.
   const station = await env.DB
     .prepare(
-      `SELECT id, faction_id, body_id, type, destroyed_at_tick
+      `SELECT id, owner_faction_id, body_id, type, destroyed_at_tick
          FROM game_settlements WHERE id = ? AND game_id = ?`,
     )
     .bind(stationId, gameId)
     .first();
   if (!station) return err(404, 'not_found', 'station not found');
   if (station.destroyed_at_tick != null) return err(409, 'destroyed', 'station is destroyed');
-  if (station.faction_id !== me.id) return err(403, 'not_owner', 'not your station');
+  // Column is owner_faction_id (not faction_id — the phantom column that
+  // 500'd this endpoint on every call), and body ids are game-namespaced
+  // as `${gameId}:sol` (not the bare literal 'sol' that always 409'd).
+  if (station.owner_faction_id !== me.id) return err(403, 'not_owner', 'not your station');
   if (station.type !== 'station') return err(409, 'not_a_station', 'foundation must be a station');
-  if (station.body_id !== 'sol') return err(409, 'not_at_sol', 'foundation must orbit Sol');
+  if (station.body_id !== `${gameId}:sol`) return err(409, 'not_at_sol', 'foundation must orbit Sol');
 
   const gameRow = await env.DB
     .prepare('SELECT current_tick FROM games WHERE id = ?')
