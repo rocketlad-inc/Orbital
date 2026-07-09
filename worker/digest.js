@@ -29,6 +29,13 @@ const DIGEST_HOUR_UTC = 21;
 const MIN_INTERVAL_MS = 20 * 60 * 60 * 1000;
 const FIRST_RUN_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 
+/** Forced editions (the host's "Publish Herald Now" button) always
+ *  cover a fixed trailing window from the moment they're clicked,
+ *  regardless of when the last edition ran — "show me the last 12
+ *  hours" rather than "show me since last time," so repeated manual
+ *  runs behave predictably instead of drifting with digest_state. */
+const FORCE_LOOKBACK_MS = 12 * 60 * 60 * 1000;
+
 /** Stories per section before we clamp to "...and N more incidents". */
 const MAX_STORIES_PER_SECTION = 4;
 
@@ -682,7 +689,10 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta) {
  * @param opts.force  true = skip the once-per-day interval gate AND
  *   post a "quiet day" edition when there's nothing to report (the
  *   button should always visibly do something); the cron leaves both
- *   behaviors off.
+ *   behaviors off. Forced runs also use a fixed trailing 12h window
+ *   (FORCE_LOOKBACK_MS) instead of the incremental high-water mark,
+ *   so "Publish Herald Now" always shows the last 12 hours no matter
+ *   when it's clicked or how recently a digest last ran.
  * @returns {posted: boolean, events: number, reason?: string}
  */
 export async function runDigestForGame(env, game, { force = false } = {}) {
@@ -699,7 +709,12 @@ export async function runDigestForGame(env, game, { force = false } = {}) {
     return { posted: false, events: 0, reason: 'already_ran_today' };
   }
 
-  const sinceMs = state?.last_entry_ms || (now - FIRST_RUN_LOOKBACK_MS);
+  // Forced (button) editions: always the trailing 12h from right now.
+  // Scheduled (cron) editions: incremental — since the last edition's
+  // high-water mark, falling back to a 24h lookback on the very first run.
+  const sinceMs = force
+    ? now - FORCE_LOOKBACK_MS
+    : (state?.last_entry_ms || (now - FIRST_RUN_LOOKBACK_MS));
 
   // Public entries only — the digest goes to a shared channel, so
   // faction-scoped intel (visibility = JSON array) must not leak.
