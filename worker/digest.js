@@ -149,6 +149,103 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta) {
 }
 
 /**
+ * Digest one game. Shared by the daily cron and the host's
+ * "publish now" button.
+ *
+ * @param game  { id, current_tick, name }
+ * @param opts.force  true = skip the once-per-day interval gate AND
+ *   post a "quiet day" edition when there's nothing to report (the
+ *   button should always visibly do something); the cron leaves both
+ *   behaviors off.
+ * @returns {posted: boolean, events: number, reason?: string}
+ */
+export async function runDigestForGame(env, game, { force = false } = {}) {
+  const webhook = env.DISCORD_DIGEST_WEBHOOK;
+  if (!webhook) return { posted: false, events: 0, reason: 'webhook_not_configured' };
+
+  const now = Date.now();
+  const state = await env.DB
+    .prepare('SELECT last_digest_ms, last_entry_ms, trades_snapshot FROM digest_state WHERE game_id = ?')
+    .bind(game.id)
+    .first();
+  const lastDigestMs = state?.last_digest_ms ?? 0;
+  if (!force && now - lastDigestMs < MIN_INTERVAL_MS) {
+    return { posted: false, events: 0, reason: 'already_ran_today' };
+  }
+
+  const sinceMs = state?.last_entry_ms || (now - FIRST_RUN_LOOKBACK_MS);
+
+  // Public entries only — the digest goes to a shared channel, so
+  // faction-scoped intel (visibility = JSON array) must not leak.
+  const rows = (await env.DB
+    .prepare(
+      `SELECT kind, actor_faction_id, target_faction_id, payload, created_at_ms
+         FROM chronicle_entries
+        WHERE game_id = ? AND created_at_ms > ? AND visibility = 'public'
+        ORDER BY created_at_ms ASC
+        LIMIT 200`,
+    )
+    .bind(game.id, sinceMs)
+    .all()).results ?? [];
+
+  const factions = (await env.DB
+    .prepare('SELECT id, name FROM game_factions WHERE game_id = ?')
+    .bind(game.id)
+    .all()).results ?? [];
+  const factionNames = new Map(factions.map(f => [f.id, f.name]));
+
+  const tradesNow = (await env.DB
+    .prepare(`SELECT COALESCE(SUM(trades_completed), 0) AS n
+                FROM game_ships WHERE game_id = ? AND status = 'active'`)
+    .bind(game.id)
+    .first())?.n ?? 0;
+  const tradesDelta = Math.max(0, tradesNow - (state?.trades_snapshot ?? tradesNow));
+
+  let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, tradesDelta);
+
+  // Forced editions always publish — a quiet day gets a short
+  // "all quiet" bulletin so the host's test button visibly works.
+  if (!embed && force) {
+    embed = {
+      title: `🗞️  The Orbital Herald — ${game.name ?? game.id}`,
+      description: `*Special edition, tick T+${game.current_tick ?? 0}.*\n\nAll quiet across the system. No battles, no new colonies, no discoveries to report since the last edition. The presses idle; the void abides.`,
+      color: SECTION_META.colonies.color,
+      footer: { text: 'Host-triggered edition · The Orbital Herald' },
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  // Advance the high-water mark whether or not we post — a fully
+  // quiet day should not accumulate into tomorrow's window as
+  // "yesterday's news".
+  const maxEntryMs = rows.length > 0 ? rows[rows.length - 1].created_at_ms : now;
+  await env.DB
+    .prepare(
+      `INSERT INTO digest_state (game_id, last_digest_ms, last_entry_ms, trades_snapshot)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(game_id) DO UPDATE SET
+         last_digest_ms = excluded.last_digest_ms,
+         last_entry_ms = excluded.last_entry_ms,
+         trades_snapshot = excluded.trades_snapshot`,
+    )
+    .bind(game.id, now, maxEntryMs, tradesNow)
+    .run();
+
+  if (!embed) return { posted: false, events: rows.length, reason: 'quiet_day' };
+
+  const res = await fetch(webhook, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ embeds: [embed] }),
+  });
+  if (!res.ok) {
+    console.error(`digest webhook post failed for ${game.id}: ${res.status} ${await res.text().catch(() => '')}`);
+    return { posted: false, events: rows.length, reason: `webhook_${res.status}` };
+  }
+  return { posted: true, events: rows.length };
+}
+
+/**
  * Entry point — called from the every-minute cron. Cheap early-outs:
  * no webhook secret, wrong hour, or already digested recently.
  */
@@ -164,73 +261,10 @@ export async function maybeRunDailyDigest(env) {
                 FROM games g JOIN rooms r ON r.id = g.id
                WHERE g.status = 'active'`)
     .all()).results ?? [];
-  if (games.length === 0) return;
 
   for (const game of games) {
     try {
-      const state = await env.DB
-        .prepare('SELECT last_digest_ms, last_entry_ms, trades_snapshot FROM digest_state WHERE game_id = ?')
-        .bind(game.id)
-        .first();
-      const lastDigestMs = state?.last_digest_ms ?? 0;
-      if (now - lastDigestMs < MIN_INTERVAL_MS) continue;   // already ran today
-
-      const sinceMs = state?.last_entry_ms || (now - FIRST_RUN_LOOKBACK_MS);
-
-      // Public entries only — the digest goes to a shared channel, so
-      // faction-scoped intel (visibility = JSON array) must not leak.
-      const rows = (await env.DB
-        .prepare(
-          `SELECT kind, actor_faction_id, target_faction_id, payload, created_at_ms
-             FROM chronicle_entries
-            WHERE game_id = ? AND created_at_ms > ? AND visibility = 'public'
-            ORDER BY created_at_ms ASC
-            LIMIT 200`,
-        )
-        .bind(game.id, sinceMs)
-        .all()).results ?? [];
-
-      const factions = (await env.DB
-        .prepare('SELECT id, name FROM game_factions WHERE game_id = ?')
-        .bind(game.id)
-        .all()).results ?? [];
-      const factionNames = new Map(factions.map(f => [f.id, f.name]));
-
-      const tradesNow = (await env.DB
-        .prepare(`SELECT COALESCE(SUM(trades_completed), 0) AS n
-                    FROM game_ships WHERE game_id = ? AND status = 'active'`)
-        .bind(game.id)
-        .first())?.n ?? 0;
-      const tradesDelta = Math.max(0, tradesNow - (state?.trades_snapshot ?? tradesNow));
-
-      const embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, tradesDelta);
-
-      // Advance the high-water mark whether or not we post — a fully
-      // quiet day should not accumulate into tomorrow's window as
-      // "yesterday's news".
-      const maxEntryMs = rows.length > 0 ? rows[rows.length - 1].created_at_ms : now;
-      await env.DB
-        .prepare(
-          `INSERT INTO digest_state (game_id, last_digest_ms, last_entry_ms, trades_snapshot)
-           VALUES (?, ?, ?, ?)
-           ON CONFLICT(game_id) DO UPDATE SET
-             last_digest_ms = excluded.last_digest_ms,
-             last_entry_ms = excluded.last_entry_ms,
-             trades_snapshot = excluded.trades_snapshot`,
-        )
-        .bind(game.id, now, maxEntryMs, tradesNow)
-        .run();
-
-      if (!embed) continue;                          // quiet day — skip post
-
-      const res = await fetch(webhook, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ embeds: [embed] }),
-      });
-      if (!res.ok) {
-        console.error(`digest webhook post failed for ${game.id}: ${res.status} ${await res.text().catch(() => '')}`);
-      }
+      await runDigestForGame(env, game, { force: false });
     } catch (e) {
       // One game's digest failure must not block the others.
       console.error(`daily digest failed for game ${game.id}`, e);

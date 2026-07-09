@@ -1,5 +1,6 @@
 import { getActiveSliders } from './senate.js';
 import { recomputeBodyOwnership } from './factions.js';
+import { runDigestForGame } from './digest.js';
 
 // Player-action endpoints: things the client wants the server to remember.
 //
@@ -928,6 +929,44 @@ async function handleTurnStatus(req, env, ctx) {
 // wants to rebalance mid-playtest. Rejects 403 if the caller isn't the
 // room host. Clamps each pool floor to 0 — drains never go negative.
 // ============================================================
+
+// Admin: publish The Orbital Herald now (host-only).
+// POST /api/games/:gameId/admin/digest-now
+// Fires the Discord digest for this game immediately, bypassing the
+// once-per-day gate. A quiet day still posts a short all-quiet special
+// edition so the button visibly works. Returns { posted, events, reason? }.
+// 403 non-host; 409 webhook_not_configured when the secret is absent.
+async function handleDigestNow(req, env, ctx) {
+  const { gameId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const room = await env.DB
+    .prepare('SELECT host_id, name FROM rooms WHERE id = ?')
+    .bind(gameId)
+    .first();
+  if (!room || room.host_id !== ctx.session.user_id) {
+    return err(403, 'not_host', 'only the host can publish the digest');
+  }
+
+  const game = await env.DB
+    .prepare('SELECT id, current_tick FROM games WHERE id = ?')
+    .bind(gameId)
+    .first();
+  if (!game) return err(404, 'not_found', 'game not found');
+
+  const result = await runDigestForGame(
+    env,
+    { id: game.id, current_tick: game.current_tick, name: room.name },
+    { force: true },
+  );
+  if (result.reason === 'webhook_not_configured') {
+    return err(409, 'webhook_not_configured', 'DISCORD_DIGEST_WEBHOOK secret is not set on the worker');
+  }
+  return json({ ok: true, ...result });
+}
 
 async function handleAdminGrant(req, env, ctx) {
   const { gameId } = ctx.params;
@@ -1905,6 +1944,12 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/admin\/grant$/,
     auth: 'required',
     handle: handleAdminGrant,
+  },
+  {
+    method: 'POST',
+    pattern: /^/api/games/(?<gameId>[^/]+)/admin/digest-now$/,
+    auth: 'required',
+    handle: handleDigestNow,
   },
   {
     method: 'POST',
