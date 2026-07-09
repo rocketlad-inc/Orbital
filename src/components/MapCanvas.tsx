@@ -293,6 +293,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       simSpeed,
       damageFlashStart: damageFlashStartRef.current,
       nowMs,
+      // Planet-visual extras: night-side city lights on settled worlds
+      // + focus-zoom building structures read these. Optional in the
+      // RenderContext so the lobby preview can skip them.
+      settlements: gameState.settlements,
+      buildOrders: gameState.buildOrders,
     };
 
     clearCanvas(renderContext);
