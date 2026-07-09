@@ -1947,7 +1947,7 @@ export const routes = [
   },
   {
     method: 'POST',
-    pattern: /^/api/games/(?<gameId>[^/]+)/admin/digest-now$/,
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/admin\/digest-now$/,
     auth: 'required',
     handle: handleDigestNow,
   },
