@@ -52,7 +52,13 @@ export function mulberry32(seed: number): () => number {
 // push more; cap keeps worst-case memory ~10MB (40 × 256² RGBA).
 // ------------------------------------------------------------
 
-const CACHE_CAP = 40;
+// CAP MUST EXCEED THE LIVE BODY COUNT (~60-70 with rogue asteroids +
+// far systems). A cap below it causes classic sequential-scan LRU
+// thrash: every frame, every body misses and REPAINTS its texture —
+// observed as multi-second frames at high zoom. 160 × 256²px RGBA
+// ≈ 40MB worst case, and in practice only bodies that ever exceeded
+// the 8px threshold allocate at all.
+const CACHE_CAP = 160;
 const cache = new Map<string, HTMLCanvasElement | null>();
 
 export function getPlanetTexture(body: Body): HTMLCanvasElement | null {
