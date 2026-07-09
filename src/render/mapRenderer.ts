@@ -1703,6 +1703,21 @@ export function drawRammingBody(
  * a small per-frame jitter on the tail point so the flame looks
  * alive. Total cost: one beginPath + one fill per thrusting ship.
  */
+// Ship thrust flames only read at closer zooms — at system-wide zoom a
+// dozen simultaneous transfers each drag a flame across the map and it
+// turns to clutter. Fade in across this camera-scale band instead of
+// popping. Calibration: the default inner-system view sits at scale
+// ≈ 1 (Earth orbit r=186 spans ~200px), and body focus-zoom clamps to
+// scale 2–60 — so flames are gone at system view and ~60% in at the
+// widest focus zoom. Asteroid-impact flames are exempt: they're a
+// threat indicator, not decoration.
+const THRUST_FADE_LO = 1.2;
+const THRUST_FADE_HI = 2.5;
+
+function thrustVisibility(scale: number): number {
+  return Math.max(0, Math.min(1, (scale - THRUST_FADE_LO) / (THRUST_FADE_HI - THRUST_FADE_LO)));
+}
+
 function drawThrustExhaust(
   ctx2d: CanvasRenderingContext2D,
   enginePos: { x: number; y: number },
@@ -1878,7 +1893,8 @@ function drawTorchTransitShip(
   // the engine). This is correct in BOTH phases: in BRAKE the ship has
   // flipped, so "behind the engine" in world space is now AHEAD of
   // motion — exactly what you'd see when the torch decelerates.
-  if (thrusting) {
+  const thrustVis = thrustVisibility(ctx.camera.scale);
+  if (thrusting && thrustVis > 0) {
     const cosH = Math.cos(heading);
     const sinH = Math.sin(heading);
     drawThrustExhaust(
@@ -1886,7 +1902,7 @@ function drawTorchTransitShip(
       { x: canvasPos.x - cosH * iconSize / 2, y: canvasPos.y - sinH * iconSize / 2 },
       { x: cosH, y: sinH },
       iconSize,
-      isSelected ? 1.0 : 0.85,
+      (isSelected ? 1.0 : 0.85) * thrustVis,
     );
   }
 
