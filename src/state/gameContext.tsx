@@ -1187,8 +1187,16 @@ export function GameContextProvider({
       );
     }
 
-    // Repair and refuel ships at owned bodies (after combat so dead ships are gone)
-    updatedShips = tickMaintenance(updatedShips, updatedSettlements, prev.bodies, tickDelta);
+    // Repair and refuel ships at owned bodies (after combat so dead ships
+    // are gone). Armor tech (+8%/level) raises the per-faction heal cap —
+    // built here from factionTech so SP matches the server's armor-aware
+    // maintenance cap.
+    const hpMul: Record<string, number> = {};
+    for (const [fid, ts] of Object.entries(prev.factionTech ?? {})) {
+      const lvl = ts?.levels?.['armor'] ?? 0;
+      hpMul[fid] = 1 + TECH_DEFS.armor.perLevel * lvl;
+    }
+    updatedShips = tickMaintenance(updatedShips, updatedSettlements, prev.bodies, tickDelta, hpMul);
 
     // Research drain — for each faction with a queued tech, pour available
     // science into the research bar; level up when full. The drain is

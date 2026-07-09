@@ -366,6 +366,19 @@ async function handleQueueBuild(req, env, ctx) {
     const v = Number(sliders.ship_build_cost_multiplier);
     if (Number.isFinite(v) && v > 0) buildCostMult = v;
   } catch { /* default */ }
+  // Construction tech: −5%/level to build cost, floored at 0.25× (mirrors
+  // src/game/techs.ts buildCostModifier, which SP applies in buildShip).
+  // Was ignored server-side, so a construction-teched player paid full
+  // price in MP while SP charged the discount. Stacks with the senate
+  // multiplier.
+  try {
+    const ct = await env.DB
+      .prepare("SELECT level FROM faction_techs WHERE game_id = ? AND faction_id = ? AND tech_id = 'construction'")
+      .bind(gameId, me.id)
+      .first();
+    const lvl = ct?.level ?? 0;
+    buildCostMult *= Math.max(0.25, 1 - 0.05 * lvl);
+  } catch { /* default — no discount */ }
   const scaledCost = {
     metal: Math.ceil(cost.metal * buildCostMult),
     fuel:  Math.ceil(cost.fuel  * buildCostMult),
@@ -692,6 +705,22 @@ async function handleResearch(req, env, ctx) {
         .prepare('UPDATE game_factions SET science = science - ? WHERE id = ?')
         .bind(cost, me.id),
     ]);
+  }
+
+  // Flight tech: stamp the faction's engine_g so the authoritative
+  // server transit math (trade-route + transfer trip times, room.js)
+  // actually gets faster. engine_g was a fixed 0.05 column that nothing
+  // ever wrote, so flight research only sped up the client's optimistic
+  // prediction — which the next /state poll overwrote. Formula mirrors
+  // src/game/techs.ts engineGModifier: base 0.05 × 1/max(0.25, 1 −
+  // 0.06·level).
+  if (techId === 'flight') {
+    const newLevel = curLevel + 1;
+    const engineG = 0.05 * (1 / Math.max(0.25, 1 - 0.06 * newLevel));
+    await env.DB
+      .prepare('UPDATE game_factions SET engine_g = ? WHERE id = ?')
+      .bind(engineG, me.id)
+      .run();
   }
 
   return json({

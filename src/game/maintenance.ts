@@ -97,6 +97,10 @@ export function tickMaintenance(
   settlements: Settlement[],
   bodies: Body[],
   tickDelta: number,
+  /** Per-faction armor-tech HP multiplier (+8%/level). Mirrors the
+   *  server maintenance heal cap so armor research raises the repair
+   *  ceiling in SP the same way it does in MP. Default 1.0. */
+  hpMulByFaction: Record<string, number> = {},
 ): Ship[] {
   if (tickDelta <= 0) return ships;
 
@@ -106,10 +110,9 @@ export function tickMaintenance(
     if (rates.repairRate <= 0 && rates.refuelRate <= 0) return ship;
 
     const classDef = getShipClass(ship.class as ShipClassName);
-    // Rank-boosted HP cap (combat.ts applies the same multiplier on
-    // the destruction check). A veteran cruiser at rank 25 can heal
-    // up to 1.25× its base hp here.
-    const maxHp = classDef.hp * rankHpMul(ship.rank);
+    // Cap = base × rank (+1%/kill) × armor tech (+8%/level). A veteran
+    // cruiser with armor research can heal into its enlarged buffer.
+    const maxHp = classDef.hp * rankHpMul(ship.rank) * (hpMulByFaction[ship.ownedBy] ?? 1);
     const maxFuel = classDef.fuelCapacity;
 
     const currentHp = ship.hp ?? maxHp;

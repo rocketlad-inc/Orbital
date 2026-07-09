@@ -37,6 +37,16 @@ export class Room {
     this.state = state;
     this.env = env;
     this.ready = new Map(); // userId -> boolean (transient)
+    // Re-entrancy guard for the tick loop. A DO is single-threaded but
+    // `await` on a D1 subrequest yields, letting another event in — and
+    // three sources converge on an overdue tick: the scheduled alarm,
+    // the every-minute cron poke (/tick-now), and the fire-and-forget
+    // /state self-heal every polling player issues. Without this flag two
+    // interleaved alarm() runs both read current_tick=N before either
+    // writes it, so tick N+1 resolves twice (double yields / growth /
+    // combat). Set for the duration of a tick pass; a concurrent entry
+    // bails immediately.
+    this.ticking = false;
   }
 
   async fetch(req) {
@@ -290,9 +300,22 @@ export class Room {
       const endTick = startTick + ticksParam;
       const turnN = Number(g.current_turn_number ?? 0);
       const now = Date.now();
-      for (let t = startTick + 1; t <= endTick; t++) {
-        try { await this.resolveTick(gameIdParam, t); }
-        catch (e) { console.error('resolveTick in batch failed', t, e); }
+      // Share the alarm's re-entrancy guard: a leftover scheduled alarm
+      // (or a concurrent turn-advance) must not resolve ticks while this
+      // batch is mid-flight, or the same tick double-applies.
+      if (this.ticking) {
+        return new Response(JSON.stringify({ error: 'tick_in_progress' }), {
+          status: 409, headers: { 'content-type': 'application/json' },
+        });
+      }
+      this.ticking = true;
+      try {
+        for (let t = startTick + 1; t <= endTick; t++) {
+          try { await this.resolveTick(gameIdParam, t); }
+          catch (e) { console.error('resolveTick in batch failed', t, e); }
+        }
+      } finally {
+        this.ticking = false;
       }
       // Bookkeeping: bump current_tick + turn number, wipe stale commits,
       // mark a single game_ticks row so /state shows the new tick.
@@ -487,7 +510,22 @@ export class Room {
   //   3. write current_tick = nextTick, log a game_ticks row, broadcast.
   //
   // Combat resolution + body-yield harvesting are still future work.
+  // Public alarm entry — guarded against re-entrancy (see this.ticking
+  // in the constructor). The scheduled alarm, the cron /tick-now poke,
+  // and the /state self-heal can all converge on an overdue tick; the
+  // guard ensures only one tick pass runs at a time so a tick can't
+  // resolve twice. All the real work lives in _runAlarm().
   async alarm() {
+    if (this.ticking) return;
+    this.ticking = true;
+    try {
+      await this._runAlarm();
+    } finally {
+      this.ticking = false;
+    }
+  }
+
+  async _runAlarm() {
     let started = await this.state.storage.get('gameStarted');
     if (!started?.gameId) {
       // The DO got recycled / migrated / freshly-deployed and lost its
@@ -1385,6 +1423,38 @@ export class Room {
     // tree. Keep in sync if SP's interval changes.
     const AUTO_COMBAT_INTERVAL = 3;
 
+    // --- Canonical combat constants, mirrored from the client (the
+    //     authoritative combat spec — src/game/shipClasses.ts +
+    //     src/game/settlements.ts). MP combat now matches SP exactly:
+    //     each attacker deals FULL damage to EVERY hostile (not split),
+    //     reduced by the target's PDC; settlements bombard with their
+    //     class damage (not a flat 4) and FIRE BACK on hostile ships. ---
+    const SHIP_PDC = { corvette: 0.2, frigate: 0.4, destroyer: 0.6, freighter: 0.1 };
+    const SETTLEMENT_PDC = { city: 0.3, station: 0.5 };
+    const SETTLEMENT_DMG = { city: 6, station: 8 };          // return-fire base
+    const WEAPONS_BUILDING_DMG_PER_LEVEL = 4;                 // station Weapons building
+    const pdcOfShipClass = (cls) => SHIP_PDC[cls] ?? 0;
+    const pdcOfSettlement = (type) => SETTLEMENT_PDC[type] ?? 0;
+
+    // Per-faction tech multipliers for this tick (one indexed query,
+    // bucketed). perLevel values mirror src/game/techs.ts TECH_DEFS.
+    // Only weapons (combat) + armor (HP cap) are read in the tick loop;
+    // industry is re-read in the yield pass, construction/flight are
+    // applied in the request handlers (build cost / engine_g).
+    const combatTechRows = (await this.env.DB
+      .prepare('SELECT faction_id, tech_id, level FROM faction_techs WHERE game_id = ?')
+      .bind(gameId)
+      .all()).results ?? [];
+    const techLvl = new Map(); // fid -> { weapons, armor, ... }
+    for (const r of combatTechRows) {
+      let m = techLvl.get(r.faction_id);
+      if (!m) { m = {}; techLvl.set(r.faction_id, m); }
+      m[r.tech_id] = r.level;
+    }
+    const weaponsMulOf  = (fid) => 1 + 0.10 * (techLvl.get(fid)?.weapons  ?? 0);
+    const armorMulOf    = (fid) => 1 + 0.08 * (techLvl.get(fid)?.armor    ?? 0);
+    const industryMulOf = (fid) => 1 + 0.10 * (techLvl.get(fid)?.industry ?? 0);
+
     // Build a fast at-peace lookup: pacts.has(fA + '|' + fB) === true iff
     // they have an active NAP/defense pact (unordered key).
     const peaceRows = (await this.env.DB
@@ -1444,12 +1514,55 @@ export class Room {
         entry.byShip.set(attackerShipId, (entry.byShip.get(attackerShipId) || 0) + amount);
       }
     };
+    // Settlements are combatants too — fetched here (before the volley
+    // loop) so ships can target them and they can fire back within the
+    // same simultaneous step, matching the client model. buildings_json
+    // carries the Weapons-building level for station return-fire;
+    // last_combat_tick gates the settlement's own cadence.
+    const livingSettlements = (await this.env.DB
+      .prepare(
+        `SELECT id, name, body_id, owner_faction_id, type, hp, hp_max,
+                buildings_json, last_combat_tick
+           FROM game_settlements
+          WHERE game_id = ? AND destroyed_at_tick IS NULL`,
+      )
+      .bind(gameId)
+      .all()).results ?? [];
+    const settlementsByBody = new Map();
+    for (const st of livingSettlements) {
+      if (!settlementsByBody.has(st.body_id)) settlementsByBody.set(st.body_id, []);
+      settlementsByBody.get(st.body_id).push(st);
+    }
+    const weaponsLevelOf = (st) => {
+      if (!st.buildings_json) return 0;
+      try { return Number(JSON.parse(st.buildings_json)?.weapons ?? 0) || 0; } catch { return 0; }
+    };
+    // settlementId -> { total, byFaction: Map } accrued ship→settlement damage.
+    const settlementDamage = new Map();
+    const addSettlementDamage = (sid, fid, amount) => {
+      let e = settlementDamage.get(sid);
+      if (!e) { e = { total: 0, byFaction: new Map() }; settlementDamage.set(sid, e); }
+      e.total += amount;
+      e.byFaction.set(fid, (e.byFaction.get(fid) || 0) + amount);
+    };
+
     // Ships that fired this tick — their last_combat_tick gets bumped
     // to `tick` in a post-loop UPDATE so the next-N-ticks cooldown
     // applies. Tracked here instead of inline so we can batch the writes.
     const firedShipIds = new Set();
-    for (const [, ships] of byBody) {
-      const factions = new Set(ships.map(s => s.owner_faction_id));
+    const firedSettlementIds = new Set();
+    // A body sees hostilities if ≥2 factions are present across ships
+    // AND settlements combined (so a ship attacking an undefended
+    // enemy settlement, or a settlement firing on a lone raider, both
+    // count even when only one faction has ships there).
+    const combatBodyIds = new Set([...byBody.keys(), ...settlementsByBody.keys()]);
+    for (const bodyId of combatBodyIds) {
+      const ships = byBody.get(bodyId) ?? [];
+      const localSettlements = settlementsByBody.get(bodyId) ?? [];
+      const factions = new Set([
+        ...ships.map(s => s.owner_faction_id),
+        ...localSettlements.map(s => s.owner_faction_id),
+      ]);
       if (factions.size < 2) continue;
       for (const attacker of ships) {
         if (!attacker.damage_per_tick || attacker.damage_per_tick <= 0) continue;
@@ -1460,28 +1573,75 @@ export class Room {
         // src/game/combat.ts:134.
         const lastFired = attacker.last_combat_tick ?? -Infinity;
         if (tick - lastFired < AUTO_COMBAT_INTERVAL) continue;
-        // Only target ships from factions we're at war with (no peace pact).
-        const targets = ships.filter(t =>
+        // Hostile ships and settlements from factions we're at war with.
+        const shipTargets = ships.filter(t =>
           t.owner_faction_id !== attacker.owner_faction_id
           && !peace.has(pairKey(attacker.owner_faction_id, t.owner_faction_id)),
         );
-        if (targets.length === 0) continue;
-        // Veterancy: each rank on the attacker = +1% damage (mirrors
-        // src/game/techs.ts RANK_PER_KILL_MUL). Stacks multiplicatively
-        // with the faction-level Weapons tech (which is applied via the
-        // hp_max / damage_per_tick already stamped on the ship row when
-        // they were last upgraded — see lobby/upgrade endpoints).
+        const settlementTargets = localSettlements.filter(t =>
+          t.owner_faction_id !== attacker.owner_faction_id
+          && !peace.has(pairKey(attacker.owner_faction_id, t.owner_faction_id)),
+        );
+        if (shipTargets.length === 0 && settlementTargets.length === 0) continue;
+        // Canonical (client) damage model: FULL damage to EVERY hostile
+        // target, reduced by that target's PDC — NOT split across targets.
+        // Multipliers stack multiplicatively: faction Weapons tech
+        // (+10%/level), attacker veterancy (+1%/rank), and the senate
+        // combat-damage slider. The old server model divided damage by
+        // targets.length and ignored PDC entirely, so a ship shooting N
+        // hostiles dealt 1/N the client's per-target damage and the
+        // client's optimistic prediction constantly showed kills the
+        // server never applied.
         const rankMul = 1 + 0.01 * Math.max(0, attacker.rank ?? 0);
-        const baseSplit = (attacker.damage_per_tick * rankMul * combatDamageMult) / targets.length;
-        for (const t of targets) {
+        const attackPower =
+          attacker.damage_per_tick * weaponsMulOf(attacker.owner_faction_id) * rankMul * combatDamageMult;
+        for (const t of shipTargets) {
           // Senate war authorization: damage TO a faction the senate has
           // formally declared war on is doubled. Per-target (not per-
           // attacker) so a single attacker shooting multiple factions
           // applies the multiplier only to the sanctioned ones.
           const warAuthMul = (await sanctioned(t.owner_faction_id, 'war_authorization')) ? 2 : 1;
-          addDamage(t.id, attacker.owner_faction_id, attacker.id, baseSplit * warAuthMul);
+          const dmg = attackPower * (1 - pdcOfShipClass(t.ship_class)) * warAuthMul;
+          addDamage(t.id, attacker.owner_faction_id, attacker.id, dmg);
+        }
+        // Ships also bombard hostile settlements — class damage reduced
+        // by the settlement's PDC (city 0.3 / station 0.5), NOT the old
+        // flat 4/ship. A destroyer now hits a city far harder than a
+        // corvette does, as it does on the client.
+        for (const t of settlementTargets) {
+          const warAuthMul = (await sanctioned(t.owner_faction_id, 'war_authorization')) ? 2 : 1;
+          const dmg = attackPower * (1 - pdcOfSettlement(t.type)) * warAuthMul;
+          addSettlementDamage(t.id, attacker.owner_faction_id, dmg);
         }
         firedShipIds.add(attacker.id);
+      }
+
+      // Settlements return fire on hostile ships at the same body —
+      // city 6 / station 8 base, plus the station Weapons building
+      // (+4/level), scaled by the owner's Weapons tech, reduced by the
+      // target ship's PDC. Gated by the settlement's own cadence.
+      // Accrues into the SAME hpDeltas the ship volley uses, so it
+      // resolves simultaneously (a settlement and its attacker can kill
+      // each other on the same tick). Settlements never earn veterancy
+      // (no attackerShipId passed), matching the client.
+      for (const st of localSettlements) {
+        const base = (SETTLEMENT_DMG[st.type] ?? 0) + WEAPONS_BUILDING_DMG_PER_LEVEL * weaponsLevelOf(st);
+        if (base <= 0) continue;
+        const lastFired = st.last_combat_tick ?? -Infinity;
+        if (tick - lastFired < AUTO_COMBAT_INTERVAL) continue;
+        const shipTargets = ships.filter(t =>
+          t.owner_faction_id !== st.owner_faction_id
+          && !peace.has(pairKey(st.owner_faction_id, t.owner_faction_id))
+          && (t.damage_per_tick ?? 0) >= 0,
+        );
+        if (shipTargets.length === 0) continue;
+        const power = base * weaponsMulOf(st.owner_faction_id) * combatDamageMult;
+        for (const t of shipTargets) {
+          const warAuthMul = (await sanctioned(t.owner_faction_id, 'war_authorization')) ? 2 : 1;
+          const dmg = power * (1 - pdcOfShipClass(t.ship_class)) * warAuthMul;
+          addDamage(t.id, st.owner_faction_id, null, dmg);
+        }
+        firedSettlementIds.add(st.id);
       }
     }
 
@@ -1513,59 +1673,39 @@ export class Room {
       return best;
     }
 
-    // 3.4 Settlement combat. Hostile ships orbiting the same body as a
-    //     settlement chip away at its hp every tick. Peace pacts still
-    //     suppress (same `peace` set as ship combat). Cities and stations
-    //     can't fight back yet — that's a follow-up.
-    const SETTLEMENT_INCOMING_DAMAGE_PER_HOSTILE_SHIP = 4;
-    // Pull settlement name too so chronicle entries can say "Triton City"
-    // instead of the un-formatted "settlement_destroyed" the log was
-    // showing previously.
-    const livingSettlements = (await this.env.DB
-      .prepare(
-        `SELECT id, name, body_id, owner_faction_id, type, hp, hp_max
-           FROM game_settlements
-          WHERE game_id = ? AND destroyed_at_tick IS NULL`,
-      )
-      .bind(gameId)
-      .all()).results ?? [];
-
+    // 3.4 Settlement damage resolution. Damage was accrued into
+    //     `settlementDamage` during the volley loop above (ships
+    //     bombarding hostile settlements with class damage × (1−PDC),
+    //     not the old flat 4/ship). Peace pacts already suppressed at
+    //     accrual time. Here we just apply it + credit the kill to the
+    //     top-damage faction, and stamp last_combat_tick on settlements
+    //     that fired back so their cadence advances.
     const destroyedSettlements = [];
-    // settlementId -> faction id that landed the killing volley, by largest
-    // ship-count contribution (proxy for damage since per-hostile damage
-    // is flat). Used downstream for the chronicle payload's killer field.
+    // settlementId -> faction id that dealt the most damage (kill credit).
     const settlementKillers = new Map();
     for (const s of livingSettlements) {
-      const shipsHere = byBody.get(s.body_id) ?? [];
-      const hostiles = shipsHere.filter(sh =>
-        sh.owner_faction_id !== s.owner_faction_id
-        && !peace.has(pairKey(sh.owner_faction_id, s.owner_faction_id))
-        && (sh.damage_per_tick ?? 0) > 0,
-      );
-      if (hostiles.length === 0) continue;
-      const incoming = hostiles.length * SETTLEMENT_INCOMING_DAMAGE_PER_HOSTILE_SHIP;
+      const entry = settlementDamage.get(s.id);
+      const incoming = entry?.total ?? 0;
+      const fired = firedSettlementIds.has(s.id);
+      if (incoming <= 0 && !fired) continue;   // untouched this tick
       const newHp = Math.max(0, s.hp - incoming);
-      if (newHp <= 0) {
+      if (incoming > 0 && newHp <= 0) {
         await this.env.DB
           .prepare('UPDATE game_settlements SET hp = 0, destroyed_at_tick = ?, last_combat_tick = ? WHERE id = ?')
           .bind(tick, tick, s.id)
           .run();
         destroyedSettlements.push(s);
-        // Largest hostile-faction presence gets the kill credit. Tie:
-        // first encountered wins (Map iteration order = insertion order).
-        const byFaction = new Map();
-        for (const h of hostiles) {
-          byFaction.set(h.owner_faction_id, (byFaction.get(h.owner_faction_id) || 0) + 1);
-        }
-        let topFid = null, topN = -1;
-        for (const [fid, n] of byFaction) {
-          if (n > topN) { topFid = fid; topN = n; }
+        // Top-damage faction gets the kill credit (tie: first inserted).
+        let topFid = null, topDmg = -1;
+        for (const [fid, dmg] of entry.byFaction) {
+          if (dmg > topDmg) { topFid = fid; topDmg = dmg; }
         }
         if (topFid) settlementKillers.set(s.id, topFid);
       } else {
+        // Survived (or only fired back): persist any hp loss + cadence.
         await this.env.DB
           .prepare('UPDATE game_settlements SET hp = ?, last_combat_tick = ? WHERE id = ?')
-          .bind(newHp, tick, s.id)
+          .bind(newHp, fired ? tick : (s.last_combat_tick ?? tick), s.id)
           .run();
       }
     }
@@ -1713,10 +1853,14 @@ export class Room {
         }
       }
       if (repairRate <= 0 && refuelRate <= 0) continue;
-      // Rank-boosted HP cap so veteran hulls can heal into their
-      // extra buffer. The +1% per rank matches client combat.ts +
-      // src/game/techs.ts rankHpMul.
-      const effectiveMaxHp = (ship.hp_max ?? 0) * (1 + 0.01 * Math.max(0, ship.rank ?? 0));
+      // Effective HP cap = base × rank (+1%/kill) × armor tech (+8%/level).
+      // Rank matches client combat.ts rankHpMul; armor mirrors
+      // src/game/techs.ts hpModifier so an armor-teched fleet can repair
+      // into (and, once the client applies the same cap, display) its
+      // larger buffer. Previously armor tech did nothing server-side.
+      const effectiveMaxHp = (ship.hp_max ?? 0)
+        * (1 + 0.01 * Math.max(0, ship.rank ?? 0))
+        * armorMulOf(ship.owner_faction_id);
       const newHp = Math.min(effectiveMaxHp, (ship.hp ?? effectiveMaxHp) + repairRate);
       const newFuel = Math.min(ship.fuel_max ?? 0, (ship.fuel ?? 0) + refuelRate);
       if (newHp === ship.hp && newFuel === ship.fuel) continue;
@@ -1836,14 +1980,20 @@ export class Room {
         // Mirrors PROD_SANCTION_MULTIPLIER in worker/senate.js — keep
         // these two values in sync.
         const prodMul = (await sanctioned(s.fid, 'production_sanction')) ? 0.5 : 1;
+        // Industry tech: +10%/level to ALL resource yields for the
+        // owning faction (mirrors src/game/techs.ts yieldModifier, which
+        // SP applies via tickSettlements). Previously the server ignored
+        // tech entirely, so an industry-teched empire's income silently
+        // reverted to base the moment /state reconciled.
+        const indMul = industryMulOf(s.fid);
         const yieldFull = {
           // Senate fuel-yield slider: applied here (only fuel) so a
           // global "Fuel Yield 1.5×" law actually does something. The
           // slider was previously declared in the catalog and never read.
-          fuel:    Number(s.yield_fuel    ?? 0) * popMul * tm.fuel              * prodMul * fuelYieldMult,
-          metal:   Number(s.yield_metal   ?? 0) * popMul * tm.metal   * forgeMul * prodMul,
-          gold:    Number(s.yield_gold    ?? 0) * popMul * tm.gold    * mintMul  * prodMul,
-          science: Number(s.yield_science ?? 0) * popMul * tm.science * labMul   * prodMul,
+          fuel:    Number(s.yield_fuel    ?? 0) * popMul * tm.fuel              * prodMul * indMul * fuelYieldMult,
+          metal:   Number(s.yield_metal   ?? 0) * popMul * tm.metal   * forgeMul * prodMul * indMul,
+          gold:    Number(s.yield_gold    ?? 0) * popMul * tm.gold    * mintMul  * prodMul * indMul,
+          science: Number(s.yield_science ?? 0) * popMul * tm.science * labMul   * prodMul * indMul,
         };
 
         // Collector status is now per (body, faction) group — see
