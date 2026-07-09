@@ -12,6 +12,7 @@ import {
 import { verifyGoogleIdToken } from './google.js';
 import { MIGRATIONS } from './_migrations_bundle.js';
 import { GIT_SHA, BUILT_AT } from './_version.js';
+import { maybeRunDailyDigest } from './digest.js';
 
 export { Room } from './room.js';
 
@@ -774,6 +775,17 @@ export default {
         }));
       } catch (e) {
         console.error('scheduled tick advancer failed', e);
+      }
+
+      // Daily Discord digest — self-gating (fires only at
+      // DIGEST_HOUR_UTC, max once per game per ~day). Runs after the
+      // tick pokes so today's final events make today's paper. A
+      // digest failure must never break the tick advancer, hence the
+      // separate catch.
+      try {
+        await maybeRunDailyDigest(env);
+      } catch (e) {
+        console.error('daily digest failed', e);
       }
     })());
   },
