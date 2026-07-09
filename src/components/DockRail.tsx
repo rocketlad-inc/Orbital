@@ -38,7 +38,7 @@ interface Badge {
 const ICON_KEYS: DockRailKey[] = ['situation', 'eventlog', 'multiplayer'];
 const EXTERNAL_KEYS: ExternalPanel[] = ['settlements', 'fleet', 'research'];
 
-export const DockRail: React.FC = () => {
+export const DockRail: React.FC<{ isMultiplayer?: boolean }> = ({ isMultiplayer = false }) => {
   const [active, setActive] = useState<DockRailKey | null>(null);
   // Mirror of App.tsx's activePanel so the 3 mobile-only rail buttons
   // (settlements / fleet / research) can show the right active state
@@ -139,14 +139,21 @@ export const DockRail: React.FC = () => {
         label="Event Log"
         onClick={() => toggle('eventlog')}
       />
-      <DockButton
-        which="multiplayer"
-        active={active === 'multiplayer'}
-        badge={badges.multiplayer}
-        icon={<PeopleIcon />}
-        label="Multiplayer"
-        onClick={() => toggle('multiplayer')}
-      />
+      {/* Multiplayer button only in MP: MultiplayerShell is the sole
+          listener that opens a panel for active==='multiplayer', and it
+          mounts only in MP. In SP the button would highlight, dispatch
+          dockrail:active (closing SitLog/EventLog), and open nothing —
+          a live-looking dead control. */}
+      {isMultiplayer && (
+        <DockButton
+          which="multiplayer"
+          active={active === 'multiplayer'}
+          badge={badges.multiplayer}
+          icon={<PeopleIcon />}
+          label="Multiplayer"
+          onClick={() => toggle('multiplayer')}
+        />
+      )}
 
       {/* Mobile-only buttons: settlements / fleet / research are TopBar
           nav items on desktop. On phones the top bar can't hold both
