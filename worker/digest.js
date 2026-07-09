@@ -3,9 +3,11 @@
 //
 // Reads chronicle_entries since the last digest, CLUSTERS them into
 // narrative stories (one battle, not six identical "X lost a ship"
-// lines), and renders each story from a phrase bank so the same day
-// never reads twice the same way. Posts a Discord embed styled as an
-// in-world news bulletin.
+// lines), WEIGHS each story by newsworthiness, and leads with the
+// biggest one as a real newspaper-style ALL-CAPS headline — the embed
+// title, not buried in a bullet list. Everything else follows below
+// as "in other news," rendered from the same phrase banks so the
+// same day never reads twice the same way.
 //
 // Wiring:
 //   - env.DISCORD_DIGEST_WEBHOOK  (worker secret) — the webhook URL.
@@ -29,6 +31,13 @@ const FIRST_RUN_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 
 /** Stories per section before we clamp to "...and N more incidents". */
 const MAX_STORIES_PER_SECTION = 4;
+
+/** Battle newsworthiness: casualty count first, shape second. A
+ *  6-ship one-sided massacre must always outrank a 2-ship mutual
+ *  skirmish, so all three battle shapes (one-sided/mutual/chaos)
+ *  share this exact formula rather than each having its own base. */
+const BATTLE_BASE_WEIGHT = 380;
+const BATTLE_PER_CASUALTY = 20;
 
 // ------------------------------------------------------------
 // Prose helpers
@@ -72,10 +81,23 @@ function pickTemplate(bankName, bank, used) {
 
 function safeJson(s) { try { return JSON.parse(s || '{}') || {}; } catch { return {}; } }
 
+/** Builds a story object: renders BOTH a body sentence (narrative
+ *  bank) and a short ALL-CAPS headline (headline bank) from the same
+ *  context, tags it with a newsworthiness weight (+ small jitter so
+ *  equal-weight days don't always crown the same kind of story), and
+ *  returns { text, headline, weight }. `text` gets `extra` appended
+ *  verbatim (used for the "settlement also lost" trailing clause). */
+function mkStory(baseWeight, used, narrativeBankName, narrativeBank, headlineBankName, headlineBank, ctx, extra = '') {
+  const text = pickTemplate(narrativeBankName, narrativeBank, used)(ctx) + extra;
+  const headline = pickTemplate(headlineBankName, headlineBank, used)(ctx);
+  return { text, headline, weight: baseWeight + Math.random() };
+}
+
 // ------------------------------------------------------------
-// Phrase banks — each entry is (ctx) => string. Grouped by story
-// shape. Deliberately generous: the more variants, the longer this
-// runs before a playtest group notices a repeat.
+// Phrase banks — narrative (sentence, body copy) paired with headline
+// (short ALL-CAPS, front-page style) for every story shape. Each
+// entry is (ctx) => string. Deliberately generous: the more variants,
+// the longer this runs before a playtest group notices a repeat.
 // ------------------------------------------------------------
 
 const BATTLE_ONE_SIDED_KNOWN = [
@@ -91,6 +113,16 @@ const BATTLE_ONE_SIDED_KNOWN = [
   c => `The skies over ${c.body} ran red for ${c.loser} today, with ${c.winner} claiming ${numWord(c.count)} kill${c.count === 1 ? '' : 's'}${c.namesClause}.`,
 ];
 
+const BATTLE_ONE_SIDED_KNOWN_HEADLINE = [
+  c => `${c.loser.toUpperCase()} ROUTED AT ${c.body.toUpperCase()}`,
+  c => `${c.winner.toUpperCase()} CRUSHES ${c.loser.toUpperCase()} FLEET AT ${c.body.toUpperCase()}`,
+  c => `${numWord(c.count).toUpperCase()} ${c.loser.toUpperCase()} ${shipsWord(c.count).toUpperCase()} DOWN IN ${c.body.toUpperCase()} AMBUSH`,
+  c => `BLOODBATH AT ${c.body.toUpperCase()}: ${c.loser.toUpperCase()} DECIMATED`,
+  c => `${c.winner.toUpperCase()} DOMINANT IN ${c.body.toUpperCase()} STRIKE`,
+  c => `NO SURVIVORS: ${c.loser.toUpperCase()} FLEET WIPED OUT NEAR ${c.body.toUpperCase()}`,
+  c => `${c.body.toUpperCase()} FALLS SILENT AFTER ${c.winner.toUpperCase()} ASSAULT`,
+];
+
 const BATTLE_ONE_SIDED_UNKNOWN = [
   c => `${c.loser} lost ${numWord(c.count)} ${shipsWord(c.count)} near ${c.body} under circumstances that remain unclear${c.namesClause}.`,
   c => `Distress signals went silent over ${c.body} — ${c.loser} confirms ${numWord(c.count)} ${shipsWord(c.count)} destroyed, cause unknown${c.namesClause}.`,
@@ -98,13 +130,28 @@ const BATTLE_ONE_SIDED_UNKNOWN = [
   c => `Wreckage at ${c.body}: ${numWord(c.count)} ${c.loser} ${shipsWord(c.count)} gone, and no one is talking${c.namesClause}.`,
 ];
 
+const BATTLE_ONE_SIDED_UNKNOWN_HEADLINE = [
+  c => `MYSTERY AT ${c.body.toUpperCase()}: ${c.loser.toUpperCase()} LOSES ${c.count === 1 ? 'A SHIP' : numWord(c.count).toUpperCase() + ' SHIPS'}`,
+  c => `${c.loser.toUpperCase()} SHIPS VANISH NEAR ${c.body.toUpperCase()}`,
+  c => `UNEXPLAINED LOSSES REPORTED AT ${c.body.toUpperCase()}`,
+  c => `WHO ATTACKED ${c.loser.toUpperCase()}? ${c.body.toUpperCase()} INCIDENT BAFFLES ANALYSTS`,
+];
+
 const BATTLE_MUTUAL = [
   c => `A fierce engagement erupted over ${c.body} between ${c.factionA} and ${c.factionB}. When the dust settled, ${c.factionA} had lost ${numWord(c.countA)} ${shipsWord(c.countA)}${c.namesAClause}, while ${c.factionB} counted ${numWord(c.countB)} of their own destroyed${c.namesBClause}.`,
   c => `${c.body} became a battlefield today as ${c.factionA} and ${c.factionB} traded blows — ${numWord(c.countA)} ${c.factionA} ${shipsWord(c.countA)} down, ${numWord(c.countB)} from ${c.factionB}.`,
   c => `Neither side backed down at ${c.body}: ${c.factionA} lost ${numWord(c.countA)}, ${c.factionB} lost ${numWord(c.countB)}, and the standoff continues.`,
   c => `Mutual destruction at ${c.body} — ${c.factionA} (${numWord(c.countA)} ${shipsWord(c.countA)}) and ${c.factionB} (${numWord(c.countB)} ${shipsWord(c.countB)}) both paid a steep price.`,
-  c => `The battle for ${c.body} has no clear victor: ${numWord(c.countA)} ${c.factionA} vessels and ${numWord(c.countB)} ${c.factionB} vessels now litter the wreckage field.`,
+  c => `The battle for ${c.body} has no clear victor: ${numWord(c.countA)} ${c.factionA} vessel${plural(c.countA, '')} and ${numWord(c.countB)} ${c.factionB} vessel${plural(c.countB, '')} now litter the wreckage field.`,
   c => `${c.factionA} and ${c.factionB} clashed violently over ${c.body}, each side counting their dead — ${numWord(c.countA)} and ${numWord(c.countB)} ${shipsWord(c.countA + c.countB)} respectively.`,
+];
+
+const BATTLE_MUTUAL_HEADLINE = [
+  c => `WAR ERUPTS AT ${c.body.toUpperCase()}`,
+  c => `${c.factionA.toUpperCase()} AND ${c.factionB.toUpperCase()} CLASH OVER ${c.body.toUpperCase()}`,
+  c => `BLOODY STALEMATE AT ${c.body.toUpperCase()}`,
+  c => `${c.body.toUpperCase()} BURNS AS TWO FLEETS COLLIDE`,
+  c => `NEITHER SIDE YIELDS AT ${c.body.toUpperCase()}`,
 ];
 
 const BATTLE_CHAOS = [
@@ -112,6 +159,13 @@ const BATTLE_CHAOS = [
   c => `A free-for-all erupted at ${c.body} — ${c.sideList}.`,
   c => `No fewer than ${numWord(c.sides.length)} powers traded fire over ${c.body} today: ${c.sideList}.`,
   c => `The battle of ${c.body} drew in ${numWord(c.sides.length)} factions before it was over: ${c.sideList}.`,
+];
+
+const BATTLE_CHAOS_HEADLINE = [
+  c => `CHAOS AT ${c.body.toUpperCase()}: ${numWord(c.sides.length).toUpperCase()}-WAY BATTLE ERUPTS`,
+  c => `FREE-FOR-ALL AT ${c.body.toUpperCase()} LEAVES WRECKAGE ACROSS THE SYSTEM`,
+  c => `${c.body.toUpperCase()} DESCENDS INTO CHAOS`,
+  c => `EVERYONE'S AT WAR: MELEE ENGULFS ${c.body.toUpperCase()}`,
 ];
 
 const ASTEROID_IMPACT = [
@@ -122,10 +176,23 @@ const ASTEROID_IMPACT = [
   c => `A kinetic strike hit ${c.body} today, halving its productivity. ${c.attacker ? `${c.attacker} is believed responsible.` : 'No one has claimed the attack.'}`,
 ];
 
+const ASTEROID_IMPACT_HEADLINE = [
+  c => `ACT OF WAR: ${c.body.toUpperCase()} STRUCK BY ASTEROID`,
+  c => `${(c.attacker ?? 'UNKNOWN FORCES').toUpperCase()} LAUNCHES ROCK AT ${c.body.toUpperCase()}`,
+  c => `${c.body.toUpperCase()} SCARRED IN KINETIC STRIKE`,
+  c => `PANIC AS ASTEROID HITS ${c.body.toUpperCase()}`,
+  c => `${c.body.toUpperCase()} REELS FROM ORBITAL BOMBARDMENT`,
+];
+
 const INDUSTRY_BOTH = [
   c => `${c.faction}'s shipyards ran hot today — ${numWord(c.shipCount)} new ${shipsWord(c.shipCount)} launched${c.shipNamesClause}, alongside ${numWord(c.buildCount)} completed construction project${plural(c.buildCount, '')}.`,
   c => `Industry hums for ${c.faction}: ${numWord(c.shipCount)} hulls rolled out${c.shipNamesClause} and ${numWord(c.buildCount)} upgrade${plural(c.buildCount, '')} finished.`,
-  c => `${c.faction} expanded on every front today — new ships${c.shipNamesClause} and completed infrastructure alike.`,
+  c => `${c.faction} expanded on every front today — ${numWord(c.shipCount)} new ${shipsWord(c.shipCount)}${c.shipNamesClause}, plus ${numWord(c.buildCount)} finished construction project${plural(c.buildCount, '')}.`,
+];
+
+const INDUSTRY_BOTH_HEADLINE = [
+  c => `${c.faction.toUpperCase()} RAMPS UP PRODUCTION ON ALL FRONTS`,
+  c => `BUSY DAY FOR ${c.faction.toUpperCase()} SHIPYARDS AND ENGINEERS`,
 ];
 
 const INDUSTRY_SHIPS_ONLY = [
@@ -137,11 +204,22 @@ const INDUSTRY_SHIPS_ONLY = [
   c => `${c.faction} rolled ${numWord(c.count)} new hull${plural(c.count, '')} off the line${c.namesClause}.`,
 ];
 
+const INDUSTRY_SHIPS_ONLY_HEADLINE = [
+  c => `${c.faction.toUpperCase()} EXPANDS ITS FLEET`,
+  c => `NEW HULLS FOR ${c.faction.toUpperCase()}`,
+  c => `${c.faction.toUpperCase()} SHIPYARDS DELIVER`,
+];
+
 const INDUSTRY_BUILDINGS_ONLY = [
   c => `${c.faction} completed ${numWord(c.count)} construction project${plural(c.count, '')} today.`,
   c => `Infrastructure milestone for ${c.faction}: ${numWord(c.count)} upgrade${plural(c.count, '')} finished.`,
   c => `${c.faction}'s engineers finished ${numWord(c.count)} project${plural(c.count, '')} across their holdings.`,
   c => `Construction crews for ${c.faction} closed out ${numWord(c.count)} project${plural(c.count, '')}.`,
+];
+
+const INDUSTRY_BUILDINGS_ONLY_HEADLINE = [
+  c => `${c.faction.toUpperCase()} UPGRADES INFRASTRUCTURE`,
+  c => `CONSTRUCTION MILESTONE FOR ${c.faction.toUpperCase()}`,
 ];
 
 const COLONY_FOUNDED = [
@@ -152,11 +230,24 @@ const COLONY_FOUNDED = [
   c => `${c.faction}'s colonists made landfall — ${numWord(c.count)} new settlement${plural(c.count, '')}${c.entriesClause}.`,
 ];
 
+const COLONY_FOUNDED_HEADLINE = [
+  c => `${c.faction.toUpperCase()} EXPANDS THE FRONTIER`,
+  c => `NEW SETTLEMENTS RISE FOR ${c.faction.toUpperCase()}`,
+  c => `${c.faction.toUpperCase()} STAKES NEW CLAIM`,
+  c => `${c.faction.toUpperCase()} PLANTS ITS FLAG`,
+];
+
 const FACTION_ARRIVAL = [
   c => `${c.faction} has entered the system, establishing their capital at ${c.body}.`,
   c => `A new power rises: ${c.faction} stakes their claim at ${c.body}.`,
   c => `${c.faction} joins the fray, founding their homeworld on ${c.body}.`,
   c => `Newcomers to the system: ${c.faction} has arrived and settled at ${c.body}.`,
+];
+
+const FACTION_ARRIVAL_HEADLINE = [
+  c => `NEW POWER ENTERS THE SYSTEM: ${c.faction.toUpperCase()}`,
+  c => `${c.faction.toUpperCase()} ARRIVES, SETTLES ${c.body.toUpperCase()}`,
+  c => `A NEW FLAG FLIES OVER ${c.body.toUpperCase()}`,
 ];
 
 const DISCOVERY_LEADIN = [
@@ -168,11 +259,25 @@ const DISCOVERY_LEADIN = [
   'Field notes from the edge of the system: ',
 ];
 
+const DISCOVERY_HEADLINE = [
+  c => `ANCIENT SECRETS UNCOVERED AT ${c.bodyName.toUpperCase()}`,
+  c => `MYSTERY SOLVED AT ${c.bodyName.toUpperCase()}`,
+  c => `EXPEDITION STRIKES GOLD AT ${c.bodyName.toUpperCase()}`,
+  c => `THE PAST SPEAKS: DISCOVERY AT ${c.bodyName.toUpperCase()}`,
+  c => `WHAT WAS FOUND AT ${c.bodyName.toUpperCase()}?`,
+];
+
 const TREATY_SIGNED = [
   c => `${c.a} and ${c.b} have signed ${c.pactName}, formalizing new terms between their peoples.`,
   c => `Diplomats rejoice: ${c.a} and ${c.b} inked ${c.pactName} today.`,
   c => `${c.a} and ${c.b} put pen to paper on ${c.pactName}.`,
   c => `A new accord: ${c.a} and ${c.b} have agreed to ${c.pactName}.`,
+];
+
+const TREATY_SIGNED_HEADLINE = [
+  c => `${c.a.toUpperCase()} AND ${c.b.toUpperCase()} SIGN HISTORIC ACCORD`,
+  c => `PEACE AT LAST: ${c.a.toUpperCase()} AND ${c.b.toUpperCase()} INK DEAL`,
+  c => `NEW ALLIANCE: ${c.a.toUpperCase()} AND ${c.b.toUpperCase()} FORMALIZE TIES`,
 ];
 
 const TREATY_BROKEN = [
@@ -182,16 +287,33 @@ const TREATY_BROKEN = [
   c => `${c.a} has withdrawn from its agreement with ${c.b}, effective immediately.`,
 ];
 
+const TREATY_BROKEN_HEADLINE = [
+  c => `CEASEFIRE COLLAPSES: ${c.a.toUpperCase()} AND ${c.b.toUpperCase()} AT ODDS AGAIN`,
+  c => `${c.a.toUpperCase()} TEARS UP PACT WITH ${c.b.toUpperCase()}`,
+  c => `DIPLOMACY FAILS BETWEEN ${c.a.toUpperCase()} AND ${c.b.toUpperCase()}`,
+  c => `ALLIANCE IN RUINS: ${c.a.toUpperCase()} WALKS AWAY FROM ${c.b.toUpperCase()}`,
+];
+
 const SENATE_PASSED = [
   c => `The Senate has passed "${c.title}" — the ${c.actor} delegation's motion carries.`,
   c => `By vote of the assembly, "${c.title}" is now law.`,
   c => `The chamber rules in favor: "${c.title}" passes.`,
 ];
 
+const SENATE_PASSED_HEADLINE = [
+  c => `SENATE PASSES "${c.title.toUpperCase()}"`,
+  c => `LAWMAKERS APPROVE "${c.title.toUpperCase()}"`,
+];
+
 const SENATE_FAILED = [
   c => `The Senate has rejected "${c.title}", proposed by ${c.actor}.`,
   c => `"${c.title}" fails to carry the chamber.`,
   c => `The assembly votes down "${c.title}".`,
+];
+
+const SENATE_FAILED_HEADLINE = [
+  c => `SENATE REJECTS "${c.title.toUpperCase()}"`,
+  c => `LAWMAKERS BLOCK "${c.title.toUpperCase()}"`,
 ];
 
 const VICTORY = [
@@ -202,10 +324,24 @@ const VICTORY = [
   c => `${c.faction} has achieved what no other power could — total victory.`,
 ];
 
+const VICTORY_HEADLINE = [
+  c => `${c.faction.toUpperCase()} WINS THE WAR`,
+  c => `VICTORY: ${c.faction.toUpperCase()} TRIUMPHANT`,
+  c => `IT IS OVER — ${c.faction.toUpperCase()} REIGNS SUPREME`,
+  c => `${c.faction.toUpperCase()} CLAIMS FINAL VICTORY`,
+  c => `HISTORY IS MADE: ${c.faction.toUpperCase()} PREVAILS`,
+];
+
 const ELIMINATION = [
   c => `${c.faction} has fallen. Their banners lie in the dust.`,
   c => `The story of ${c.faction} ends here.`,
   c => `${c.faction} has been eliminated from the system.`,
+];
+
+const ELIMINATION_HEADLINE = [
+  c => `${c.faction.toUpperCase()} FALLS`,
+  c => `THE END FOR ${c.faction.toUpperCase()}`,
+  c => `${c.faction.toUpperCase()} ELIMINATED FROM THE SYSTEM`,
 ];
 
 const TRADE_LEDGER = [
@@ -215,9 +351,23 @@ const TRADE_LEDGER = [
   c => `Merchant fleets completed ${c.count} delivery run${plural(c.count, '')} today.`,
 ];
 
+const QUIET_DAY_HEADLINE = [
+  () => 'ALL QUIET ACROSS THE SYSTEM',
+  () => 'A DAY OF PEACE — NOTHING TO REPORT',
+  () => 'THE VOID HOLDS ITS BREATH',
+  () => 'SLOW NEWS DAY IN THE BLACK',
+];
+
+const QUIET_DAY_BODY = [
+  () => 'No battles, no new colonies, no discoveries to report since the last edition. The presses idle; the void abides.',
+  () => 'The system rests today. Every faction holds its position; nothing more to tell.',
+  () => 'A rare calm has settled over the system. Even the merchants have little to report.',
+];
+
 // ------------------------------------------------------------
 // Story builders — cluster raw chronicle rows into narrative units
-// per section, then render each via the phrase banks above.
+// per section, then render each via the phrase banks above. Every
+// story returned is { text, headline, weight }.
 // ------------------------------------------------------------
 
 function buildBattleStories(rows, used) {
@@ -258,13 +408,20 @@ function buildBattleStories(rows, used) {
         loser: owner, winner, body: cluster.body, count: bucket.count,
         namesClause: names ? `, including ${names}` : '',
       };
-      const bank = winner ? BATTLE_ONE_SIDED_KNOWN : BATTLE_ONE_SIDED_UNKNOWN;
-      let text = pickTemplate(winner ? 'battle_one_sided' : 'battle_unknown', bank, used)(ctx);
+      let extra = '';
       if (bucket.settlementNames.length > 0) {
         const sNames = nameList(bucket.settlementNames, 2);
-        text += ` The settlement${bucket.settlementNames.length > 1 ? 's' : ''} ${sNames} ${bucket.settlementNames.length > 1 ? 'were' : 'was'} also lost in the fighting.`;
+        extra = ` The settlement${bucket.settlementNames.length > 1 ? 's' : ''} ${sNames} ${bucket.settlementNames.length > 1 ? 'were' : 'was'} also lost in the fighting.`;
       }
-      stories.push(text);
+      // Weight is casualty-count-first, same formula across all three
+      // battle shapes (one-sided/mutual/chaos) — a 6-ship one-sided
+      // massacre must outrank a 2-ship mutual skirmish for the
+      // front-page slot; total dead matters more than the shape of
+      // the fight. BATTLE_BASE_WEIGHT / BATTLE_PER_CASUALTY shared below.
+      const weight = BATTLE_BASE_WEIGHT + BATTLE_PER_CASUALTY * bucket.count;
+      stories.push(winner
+        ? mkStory(weight, used, 'battle_one_sided', BATTLE_ONE_SIDED_KNOWN, 'battle_one_sided_hl', BATTLE_ONE_SIDED_KNOWN_HEADLINE, ctx, extra)
+        : mkStory(weight, used, 'battle_unknown', BATTLE_ONE_SIDED_UNKNOWN, 'battle_unknown_hl', BATTLE_ONE_SIDED_UNKNOWN_HEADLINE, ctx, extra));
     } else if (victims.length === 2 && killerSet.size === 2 && victims.every(v => killerSet.has(v))) {
       // Reciprocal: both victims are also credited as killers of the other — a real mutual battle.
       const [a, b] = victims;
@@ -277,14 +434,17 @@ function buildBattleStories(rows, used) {
         factionB: b, countB: bucketB.count, namesBClause: namesB ? ` (${namesB})` : '',
         body: cluster.body,
       };
-      stories.push(pickTemplate('battle_mutual', BATTLE_MUTUAL, used)(ctx));
+      const weight = BATTLE_BASE_WEIGHT + BATTLE_PER_CASUALTY * (bucketA.count + bucketB.count);
+      stories.push(mkStory(weight, used, 'battle_mutual', BATTLE_MUTUAL, 'battle_mutual_hl', BATTLE_MUTUAL_HEADLINE, ctx));
     } else {
       // 3+ factions, or an asymmetric shape — describe as chaos.
       const sides = victims
         .map(v => ({ faction: v, count: cluster.losses.get(v).count }))
         .sort((a, b) => b.count - a.count);
       const sideList = sides.map(s => `${s.faction} lost ${numWord(s.count)}`).join('; ');
-      stories.push(pickTemplate('battle_chaos', BATTLE_CHAOS, used)({ body: cluster.body, sides, sideList }));
+      const total = sides.reduce((s, x) => s + x.count, 0);
+      const weight = BATTLE_BASE_WEIGHT + BATTLE_PER_CASUALTY * total;
+      stories.push(mkStory(weight, used, 'battle_chaos', BATTLE_CHAOS, 'battle_chaos_hl', BATTLE_CHAOS_HEADLINE, { body: cluster.body, sides, sideList }));
     }
   }
 
@@ -294,7 +454,7 @@ function buildBattleStories(rows, used) {
     const p = safeJson(row.payload);
     const attacker = p.attacker_faction_name ?? null; // not currently stored, kept forward-compat
     const ctx = { attacker, body: p.target_name ?? row.body_id ?? 'a nearby world' };
-    stories.push(pickTemplate('asteroid_impact', ASTEROID_IMPACT, used)(ctx));
+    stories.push(mkStory(700, used, 'asteroid_impact', ASTEROID_IMPACT, 'asteroid_impact_hl', ASTEROID_IMPACT_HEADLINE, ctx));
   }
 
   return stories;
@@ -319,12 +479,13 @@ function buildIndustryStories(rows, used) {
     if (shipCount === 0 && buildCount === 0) continue;
     const shipNames = nameList(bucket.ships);
     const shipNamesClause = shipNames ? ` — ${shipNames}` : '';
+    const weight = 40 + 3 * (shipCount + buildCount); // routine news — rarely the headline
     if (shipCount > 0 && buildCount > 0) {
-      stories.push(pickTemplate('industry_both', INDUSTRY_BOTH, used)({ faction, shipCount, buildCount, shipNamesClause }));
+      stories.push(mkStory(weight, used, 'industry_both', INDUSTRY_BOTH, 'industry_both_hl', INDUSTRY_BOTH_HEADLINE, { faction, shipCount, buildCount, shipNamesClause }));
     } else if (shipCount > 0) {
-      stories.push(pickTemplate('industry_ships', INDUSTRY_SHIPS_ONLY, used)({ faction, count: shipCount, namesClause: shipNamesClause }));
+      stories.push(mkStory(weight, used, 'industry_ships', INDUSTRY_SHIPS_ONLY, 'industry_ships_hl', INDUSTRY_SHIPS_ONLY_HEADLINE, { faction, count: shipCount, namesClause: shipNamesClause }));
     } else {
-      stories.push(pickTemplate('industry_builds', INDUSTRY_BUILDINGS_ONLY, used)({ faction, count: buildCount }));
+      stories.push(mkStory(weight, used, 'industry_builds', INDUSTRY_BUILDINGS_ONLY, 'industry_builds_hl', INDUSTRY_BUILDINGS_ONLY_HEADLINE, { faction, count: buildCount }));
     }
   }
   return stories;
@@ -344,16 +505,15 @@ function buildColonyStories(rows, used) {
   for (const [faction, entries] of byFaction) {
     const bodyNames = nameList(entries.map(e => e.body));
     const entriesClause = bodyNames ? ` at ${bodyNames}` : '';
-    stories.push(pickTemplate('colony_founded', COLONY_FOUNDED, used)({ faction, count: entries.length, entriesClause }));
+    const weight = 100 + 5 * entries.length;
+    stories.push(mkStory(weight, used, 'colony_founded', COLONY_FOUNDED, 'colony_founded_hl', COLONY_FOUNDED_HEADLINE, { faction, count: entries.length, entriesClause }));
   }
 
   for (const row of rows) {
     if (row.kind !== 'faction_joined') continue;
     const p = safeJson(row.payload);
-    stories.push(pickTemplate('faction_arrival', FACTION_ARRIVAL, used)({
-      faction: p.name ?? 'A new faction',
-      body: p.capital_name ?? 'an unclaimed world',
-    }));
+    const ctx = { faction: p.name ?? 'A new faction', body: p.capital_name ?? 'an unclaimed world' };
+    stories.push(mkStory(220, used, 'faction_arrival', FACTION_ARRIVAL, 'faction_arrival_hl', FACTION_ARRIVAL_HEADLINE, ctx));
   }
 
   return stories;
@@ -368,11 +528,10 @@ function buildDiscoveryStories(rows, used) {
     if (!raw) continue;
     const m = raw.match(/^(.+?):\s*DISCOVERY\s*—\s*(.+)$/);
     const leadIn = pickTemplate('discovery_leadin', DISCOVERY_LEADIN, used);
-    if (m) {
-      stories.push(`${leadIn}at ${m[1]}, ${m[2]}`);
-    } else {
-      stories.push(`${leadIn}${raw}`);
-    }
+    const bodyName = m ? m[1] : 'the frontier';
+    const text = m ? `${leadIn}at ${m[1]}, ${m[2]}` : `${leadIn}${raw}`;
+    const headline = pickTemplate('discovery_hl', DISCOVERY_HEADLINE, used)({ bodyName });
+    stories.push({ text, headline, weight: 250 + Math.random() });
   }
   return stories;
 }
@@ -390,19 +549,18 @@ function buildPoliticsStories(rows, used, factionNames) {
   for (const row of rows) {
     const p = safeJson(row.payload);
     if (row.kind === 'treaty_signed') {
-      stories.push(pickTemplate('treaty_signed', TREATY_SIGNED, used)({
-        a: nameOf(row.actor_faction_id), b: nameOf(row.target_faction_id),
-        pactName: PACT_NAMES[p.kind] ?? 'a treaty',
-      }));
+      const ctx = { a: nameOf(row.actor_faction_id), b: nameOf(row.target_faction_id), pactName: PACT_NAMES[p.kind] ?? 'a treaty' };
+      stories.push(mkStory(150, used, 'treaty_signed', TREATY_SIGNED, 'treaty_signed_hl', TREATY_SIGNED_HEADLINE, ctx));
     } else if (row.kind === 'treaty_broken') {
-      stories.push(pickTemplate('treaty_broken', TREATY_BROKEN, used)({
-        a: nameOf(row.actor_faction_id), b: nameOf(row.target_faction_id),
-      }));
+      const ctx = { a: nameOf(row.actor_faction_id), b: nameOf(row.target_faction_id) };
+      stories.push(mkStory(350, used, 'treaty_broken', TREATY_BROKEN, 'treaty_broken_hl', TREATY_BROKEN_HEADLINE, ctx));
     } else if (row.kind === 'senate_vote') {
-      const bank = p.outcome === 'passed' ? SENATE_PASSED : SENATE_FAILED;
-      stories.push(pickTemplate(`senate_${p.outcome}`, bank, used)({
-        title: p.title ?? 'a motion', actor: nameOf(row.actor_faction_id),
-      }));
+      const ctx = { title: p.title ?? 'a motion', actor: nameOf(row.actor_faction_id) };
+      if (p.outcome === 'passed') {
+        stories.push(mkStory(120, used, 'senate_passed', SENATE_PASSED, 'senate_passed_hl', SENATE_PASSED_HEADLINE, ctx));
+      } else {
+        stories.push(mkStory(120, used, 'senate_failed', SENATE_FAILED, 'senate_failed_hl', SENATE_FAILED_HEADLINE, ctx));
+      }
     }
   }
   return stories;
@@ -413,13 +571,14 @@ function buildVictoryStories(rows, used, factionNames) {
   for (const row of rows) {
     const p = safeJson(row.payload);
     if (row.kind === 'victory') {
-      if (typeof p.detail === 'string' && p.detail.length > 0) {
-        stories.push(`${p.detail}.`);
-      } else {
-        stories.push(pickTemplate('victory', VICTORY, used)({ faction: factionNames.get(row.actor_faction_id) ?? 'A faction' }));
-      }
+      const faction = factionNames.get(row.actor_faction_id) ?? 'A faction';
+      const ctx = { faction };
+      const text = (typeof p.detail === 'string' && p.detail.length > 0) ? `${p.detail}.` : pickTemplate('victory', VICTORY, used)(ctx);
+      const headline = pickTemplate('victory_hl', VICTORY_HEADLINE, used)(ctx);
+      stories.push({ text, headline, weight: 1000 + Math.random() });
     } else if (row.kind === 'faction_eliminated') {
-      stories.push(pickTemplate('elimination', ELIMINATION, used)({ faction: factionNames.get(row.actor_faction_id) ?? 'A faction' }));
+      const ctx = { faction: factionNames.get(row.actor_faction_id) ?? 'A faction' };
+      stories.push(mkStory(900, used, 'elimination', ELIMINATION, 'elimination_hl', ELIMINATION_HEADLINE, ctx));
     }
   }
   return stories;
@@ -442,15 +601,19 @@ function fieldFromStories(title, stories) {
   if (stories.length === 0) return null;
   const shown = stories.slice(0, MAX_STORIES_PER_SECTION);
   const more = stories.length - shown.length;
-  let value = shown.join('\n\n');
+  let value = shown.map(s => s.text).join('\n\n');
   if (more > 0) value += `\n\n…and ${more} more incident${more === 1 ? '' : 's'} to report.`;
   if (value.length > 1020) value = value.slice(0, 1017) + '…';
   return { name: title, value };
 }
 
-/** Build the embed for one game. Returns null when the day was
- *  entirely uneventful (no stories + no trades) so we skip the post
- *  rather than spam "nothing happened". */
+/** Build the embed for one game. Headline-forward: the single
+ *  highest-weighted story becomes the embed's ALL-CAPS title (with
+ *  its narrative sentence as the deck, under a masthead line), and is
+ *  removed from its section so it isn't shown twice. Everything else
+ *  renders as before, grouped by section. Returns null when the day
+ *  was entirely uneventful (no stories + no trades) so we skip the
+ *  post rather than spam "nothing happened". */
 function composeEmbed(gameName, tick, rows, factionNames, tradesDelta) {
   const used = new Map(); // bank-name -> Set(indices used this edition)
 
@@ -463,6 +626,23 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta) {
     industry:    buildIndustryStories(rows, used),
   };
 
+  // Find the single most newsworthy story across every section.
+  let topStory = null;
+  let topSection = null;
+  for (const key of Object.keys(sections)) {
+    for (const story of sections[key]) {
+      if (!topStory || story.weight > topStory.weight) { topStory = story; topSection = key; }
+    }
+  }
+
+  if (!topStory && tradesDelta <= 0) return null;
+
+  // Pull the headline story out of its section so it isn't repeated
+  // in the body — it's already "above the fold" in the description.
+  if (topStory) {
+    sections[topSection] = sections[topSection].filter(s => s !== topStory);
+  }
+
   const fields = [];
   for (const key of ['victory', 'battles', 'politics', 'discoveries', 'colonies', 'industry']) {
     const field = fieldFromStories(SECTION_META[key].title, sections[key]);
@@ -473,15 +653,16 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta) {
     fields.push({ name: '📦  Trade ledger', value: pickTemplate('trade_ledger', TRADE_LEDGER, used)({ count: tradesDelta }) });
   }
 
-  if (fields.length === 0) return null;
+  const masthead = `🗞️ **THE ORBITAL HERALD** · ${gameName} · T+${tick}`;
+  const title = topStory ? topStory.headline : pickTemplate('quiet_hl', QUIET_DAY_HEADLINE, used)();
+  const deck = topStory ? topStory.text : pickTemplate('quiet_body', QUIET_DAY_BODY, used)();
+  const description = `${masthead}\n\n${deck}`;
 
-  const color = sections.victory.length > 0 ? SECTION_META.victory.color
-    : sections.battles.length > 0 ? SECTION_META.battles.color
-    : SECTION_META.colonies.color;
+  const color = (topSection && SECTION_META[topSection]) ? SECTION_META[topSection].color : SECTION_META.colonies.color;
 
   return {
-    title: `🗞️  The Orbital Herald — ${gameName}`,
-    description: `*All the news from tick T+${tick}. Reporting from across the system.*`,
+    title,
+    description,
     color,
     fields,
     footer: { text: 'Daily digest · The Orbital Herald' },
@@ -549,12 +730,14 @@ export async function runDigestForGame(env, game, { force = false } = {}) {
 
   let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, tradesDelta);
 
-  // Forced editions always publish — a quiet day gets a short
-  // "all quiet" bulletin so the host's test button visibly works.
+  // Forced editions always publish — a quiet day (no stories, no
+  // trades) still gets a headline-styled "all quiet" bulletin so the
+  // host's test button visibly works.
   if (!embed && force) {
+    const used = new Map();
     embed = {
-      title: `🗞️  The Orbital Herald — ${game.name ?? game.id}`,
-      description: `*Special edition, tick T+${game.current_tick ?? 0}.*\n\nAll quiet across the system. No battles, no new colonies, no discoveries to report since the last edition. The presses idle; the void abides.`,
+      title: pickTemplate('quiet_hl', QUIET_DAY_HEADLINE, used)(),
+      description: `🗞️ **THE ORBITAL HERALD** · ${game.name ?? game.id} · T+${game.current_tick ?? 0} · Special Edition\n\n${pickTemplate('quiet_body', QUIET_DAY_BODY, used)()}`,
       color: SECTION_META.colonies.color,
       footer: { text: 'Host-triggered edition · The Orbital Herald' },
       timestamp: new Date().toISOString(),
