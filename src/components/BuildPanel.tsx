@@ -12,24 +12,8 @@ import {
   ShipIcon, ShipIconVariant, ICON_VARIANT_NAMES,
   ALL_VARIANTS, DEFAULT_SHIP_ICONS,
 } from './ShipIcons';
+import { randomShipName } from '../game/shipNames';
 import './BuildPanel.css';
-
-// Expanse-themed random ship names
-const SHIP_NAMES: Record<ShipClassName, string[]> = {
-  corvette: ['Tachi', 'Razorback', 'Pella', 'Chetzemoka', 'Screaming Firehawk', 'Kittur Chennamma'],
-  frigate: ['Scirocco', 'Hammurabi', 'Xuesen', 'Amberjack', 'Zenobia'],
-  destroyer: ['Donnager', 'Agatha King', 'Truman', 'Barkeith', 'Sagarmatha', 'Jimenez'],
-  freighter: ['Canterbury', 'Somnambulist', 'Weeping Somnambulist', 'Barbapiccola', 'Cerisier'],
-};
-
-function getRandomName(shipClass: ShipClassName, existingNames: string[]): string {
-  const pool = SHIP_NAMES[shipClass];
-  const available = pool.filter(n => !existingNames.includes(n));
-  if (available.length > 0) {
-    return available[Math.floor(Math.random() * available.length)];
-  }
-  return `${pool[0]}-${Math.floor(Math.random() * 100)}`;
-}
 
 export const BuildPanel: React.FC = () => {
   const { gameState, uiState, buildShip, cancelBuild } = useGameContext();
@@ -137,7 +121,7 @@ export const BuildPanel: React.FC = () => {
     //   2. whatever's typed in the input right now (legacy flow)
     //   3. random pool name
     const fromQueue = dequeueName();
-    const name = fromQueue ?? getRandomName(shipClass, existingShipNames);
+    const name = fromQueue ?? randomShipName(shipClass, existingShipNames);
     const variant = iconChoice[shipClass];
     if (mpActions) {
       // Multiplayer: server is canonical for resource deduction + queue
