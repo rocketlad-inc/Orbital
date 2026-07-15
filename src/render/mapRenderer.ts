@@ -2133,13 +2133,38 @@ export function drawCity(
   const flashStartC = ctx.damageFlashStart?.get(settlement.id);
   drawDamageFlash({ x: tipX, y: tipY }, size, flashStartC, ctx.t, ctx, 'damage');
 
-  ctx.ctx.fillStyle = color;
-  ctx.ctx.strokeStyle = '#0a0e14';
-  ctx.ctx.lineWidth = 1;
-  ctx.ctx.beginPath();
-  ctx.ctx.rect(tipX - size / 2, tipY - size / 2, size, size);
-  ctx.ctx.fill();
-  ctx.ctx.stroke();
+  if (orbital) {
+    // Orbital station: a prominent diamond (◆, matching the inspector
+    // glyph) with a bright white rim, so it reads clearly against a
+    // star's glare instead of vanishing as a tiny dark square. Ships
+    // are triangles and cities are squares, so the diamond also makes
+    // "that's a station" legible at a glance.
+    const r = Math.max(7, size * 1.7);
+    ctx.ctx.beginPath();
+    ctx.ctx.moveTo(tipX, tipY - r);
+    ctx.ctx.lineTo(tipX + r, tipY);
+    ctx.ctx.lineTo(tipX, tipY + r);
+    ctx.ctx.lineTo(tipX - r, tipY);
+    ctx.ctx.closePath();
+    ctx.ctx.fillStyle = color;
+    ctx.ctx.fill();
+    ctx.ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+    ctx.ctx.lineWidth = 1.5;
+    ctx.ctx.stroke();
+    // Dark pip in the center for extra contrast on a bright background.
+    ctx.ctx.fillStyle = 'rgba(10, 14, 20, 0.8)';
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(tipX, tipY, Math.max(1.5, r * 0.22), 0, Math.PI * 2);
+    ctx.ctx.fill();
+  } else {
+    ctx.ctx.fillStyle = color;
+    ctx.ctx.strokeStyle = '#0a0e14';
+    ctx.ctx.lineWidth = 1;
+    ctx.ctx.beginPath();
+    ctx.ctx.rect(tipX - size / 2, tipY - size / 2, size, size);
+    ctx.ctx.fill();
+    ctx.ctx.stroke();
+  }
 
   // HP bar if damaged
   if (settlement.hp < settlement.maxHp) {
