@@ -151,7 +151,18 @@
    The bar includes the iOS home-indicator safe-area so we don't bake
    in a hard 72px on devices that need 90+. */
 :root {
-  --mobile-rail-height: 72px;
+  /* Full rendered footprint of the mobile bottom rail = the 72px button
+     row PLUS the iOS home-indicator safe area. Baking the safe area in
+     here (rather than only into the rail's own padding) is load-bearing:
+     everything that clears the rail — the BottomSheet, dock panels, the
+     overview panels — reads this var, and on a notched phone the safe
+     area is real height. Previously the var was a flat 72px while the
+     rail's padding-bottom added the safe area on top, so the rail's
+     52px buttons overflowed past the 72px edge and the bottom sheet
+     (which only cleared 72px) had its commit button hidden UNDER the
+     rail. env() resolves to 0 on desktop / non-notched devices, so this
+     is a no-op there. */
+  --mobile-rail-height: calc(72px + env(safe-area-inset-bottom, 0px));
 }
 
 /* Mobile-only buttons (Settlements / Fleet / Research) live in the
