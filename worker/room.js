@@ -1528,10 +1528,10 @@ export class Room {
       )
       .bind(gameId)
       .all()).results ?? [];
-    const settlementsByBody = new Map();
+    const combatSettlementsByBody = new Map();
     for (const st of livingSettlements) {
-      if (!settlementsByBody.has(st.body_id)) settlementsByBody.set(st.body_id, []);
-      settlementsByBody.get(st.body_id).push(st);
+      if (!combatSettlementsByBody.has(st.body_id)) combatSettlementsByBody.set(st.body_id, []);
+      combatSettlementsByBody.get(st.body_id).push(st);
     }
     const weaponsLevelOf = (st) => {
       if (!st.buildings_json) return 0;
@@ -1555,10 +1555,10 @@ export class Room {
     // AND settlements combined (so a ship attacking an undefended
     // enemy settlement, or a settlement firing on a lone raider, both
     // count even when only one faction has ships there).
-    const combatBodyIds = new Set([...byBody.keys(), ...settlementsByBody.keys()]);
+    const combatBodyIds = new Set([...byBody.keys(), ...combatSettlementsByBody.keys()]);
     for (const bodyId of combatBodyIds) {
       const ships = byBody.get(bodyId) ?? [];
-      const localSettlements = settlementsByBody.get(bodyId) ?? [];
+      const localSettlements = combatSettlementsByBody.get(bodyId) ?? [];
       const factions = new Set([
         ...ships.map(s => s.owner_faction_id),
         ...localSettlements.map(s => s.owner_faction_id),
