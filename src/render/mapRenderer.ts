@@ -2063,15 +2063,7 @@ export function drawCity(
   if (settlement.bodyId !== body.id) return;
   const bodyPos = bodyPosition(body, ctx.t, ctx.bodies);
   const angle = settlement.surfaceAngle ?? 0;
-  // Stations are orbital platforms, not surface cities — float them
-  // clear of the body's disk. Critical at Sol / gas giants, where
-  // "the surface" (body.radius) is buried inside a huge glowing core:
-  // a station pinned there was invisible ("I can't see the station
-  // orbiting the sun"). 1.7× clears the star's tightened corona
-  // (bright mid ends at 1.3×). Cities stay pinned to the surface.
-  const orbital = settlement.type === 'station'
-    || body.type === 'star' || body.type === 'gas_giant' || body.type === 'ice_giant';
-  const surfaceR = orbital ? body.radius * 1.7 : body.radius;
+  const surfaceR = body.radius;
   const worldX = bodyPos.x + surfaceR * Math.cos(angle);
   const worldY = bodyPos.y + surfaceR * Math.sin(angle);
   const canvasPos = worldToCanvas(worldX, worldY, ctx);
@@ -2084,12 +2076,8 @@ export function drawCity(
   // by population, and a distinct silhouette per building (forge /
   // mint / lab / thrusters) that grows with its level. Canvas is
   // rotated so the cluster's "up" is the outward surface normal.
-  // Focus-zoom iso cluster only for SURFACE settlements (cities on a
-  // real surface). An orbital station floats in space, so a building
-  // cluster "standing on the surface" would look wrong — it uses the
-  // clean square marker below at every zoom instead.
   const bodyScreenR = body.radius * ctx.camera.scale;
-  if (bodyScreenR >= 40 && !orbital) {
+  if (bodyScreenR >= 40) {
     const flashIso = ctx.damageFlashStart?.get(settlement.id);
     drawDamageFlash(canvasPos, 12, flashIso, ctx.t, ctx, 'damage');
     ctx.ctx.save();
@@ -2133,38 +2121,13 @@ export function drawCity(
   const flashStartC = ctx.damageFlashStart?.get(settlement.id);
   drawDamageFlash({ x: tipX, y: tipY }, size, flashStartC, ctx.t, ctx, 'damage');
 
-  if (orbital) {
-    // Orbital station: a prominent diamond (◆, matching the inspector
-    // glyph) with a bright white rim, so it reads clearly against a
-    // star's glare instead of vanishing as a tiny dark square. Ships
-    // are triangles and cities are squares, so the diamond also makes
-    // "that's a station" legible at a glance.
-    const r = Math.max(7, size * 1.7);
-    ctx.ctx.beginPath();
-    ctx.ctx.moveTo(tipX, tipY - r);
-    ctx.ctx.lineTo(tipX + r, tipY);
-    ctx.ctx.lineTo(tipX, tipY + r);
-    ctx.ctx.lineTo(tipX - r, tipY);
-    ctx.ctx.closePath();
-    ctx.ctx.fillStyle = color;
-    ctx.ctx.fill();
-    ctx.ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
-    ctx.ctx.lineWidth = 1.5;
-    ctx.ctx.stroke();
-    // Dark pip in the center for extra contrast on a bright background.
-    ctx.ctx.fillStyle = 'rgba(10, 14, 20, 0.8)';
-    ctx.ctx.beginPath();
-    ctx.ctx.arc(tipX, tipY, Math.max(1.5, r * 0.22), 0, Math.PI * 2);
-    ctx.ctx.fill();
-  } else {
-    ctx.ctx.fillStyle = color;
-    ctx.ctx.strokeStyle = '#0a0e14';
-    ctx.ctx.lineWidth = 1;
-    ctx.ctx.beginPath();
-    ctx.ctx.rect(tipX - size / 2, tipY - size / 2, size, size);
-    ctx.ctx.fill();
-    ctx.ctx.stroke();
-  }
+  ctx.ctx.fillStyle = color;
+  ctx.ctx.strokeStyle = '#0a0e14';
+  ctx.ctx.lineWidth = 1;
+  ctx.ctx.beginPath();
+  ctx.ctx.rect(tipX - size / 2, tipY - size / 2, size, size);
+  ctx.ctx.fill();
+  ctx.ctx.stroke();
 
   // HP bar if damaged
   if (settlement.hp < settlement.maxHp) {
