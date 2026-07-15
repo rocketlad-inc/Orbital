@@ -14,7 +14,7 @@
 //     No secret set = digest silently disabled.
 //   - maybeRunDailyDigest(env) is called from the every-minute cron
 //     in worker/index.js. Self-gates: fires only when the UTC hour
-//     matches DIGEST_HOUR_UTC and the game hasn't been digested in
+//     matches noon Eastern (DST-aware) and the game hasn't been digested in
 //     the last ~20 hours (idempotent across cron re-fires).
 //   - runDigestForGame(env, game, { force }) is the shared per-game
 //     worker; { force: true } is used by the host's "Publish Herald
@@ -26,7 +26,23 @@
 //     window since the previous one.
 // ============================================================
 
-const DIGEST_HOUR_UTC = 21;
+/** Publish hour, in US Eastern local time (noon). Checked via Intl
+ *  against the America/New_York zone so it stays at local noon across
+ *  DST — noon EDT in summer (16:00 UTC), noon EST in winter (17:00 UTC)
+ *  — instead of a hardcoded UTC hour that would drift an hour twice a
+ *  year. Cron fires every minute; this gates to the noon-Eastern hour. */
+const DIGEST_HOUR_EASTERN = 12;
+
+/** True during the noon-Eastern clock hour, DST-correct. */
+function isEasternDigestHour(nowMs) {
+  const h = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', hour: 'numeric', hour12: false,
+  }).format(new Date(nowMs));
+  // hour12:false yields "24" for midnight in some ICU builds — normalize.
+  const hour = Number(h) % 24;
+  return hour === DIGEST_HOUR_EASTERN;
+}
+
 const MIN_INTERVAL_MS = 20 * 60 * 60 * 1000;
 const FIRST_RUN_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 const FORCE_LOOKBACK_MS = 12 * 60 * 60 * 1000;
@@ -976,7 +992,7 @@ export async function maybeRunDailyDigest(env) {
   if (!webhook) return;                              // feature off
 
   const now = Date.now();
-  if (new Date(now).getUTCHours() !== DIGEST_HOUR_UTC) return;
+  if (!isEasternDigestHour(now)) return;              // only at noon Eastern
 
   const games = (await env.DB
     .prepare(`SELECT g.id, g.current_tick, r.name

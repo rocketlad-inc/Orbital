@@ -758,21 +758,29 @@ export default {
           .bind(now)
           .all();
         const rows = due.results ?? [];
-        if (rows.length === 0) return;
         // Fan out to each due game's DO. Don't await sequentially —
         // pokes are best-effort; one slow DO shouldn't block the rest.
-        await Promise.all(rows.map(async (r) => {
-          try {
-            const stub = env.ROOM.get(env.ROOM.idFromName(r.id));
-            await stub.fetch('https://room/tick-now', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ force: false, gameId: r.id }),
-            });
-          } catch (e) {
-            console.error(`cron tick poke failed for ${r.id}`, e);
-          }
-        }));
+        // Guarded (not early-return) so an empty due-list — the common
+        // case, since games tick ~hourly so most cron minutes have no
+        // due games — does NOT skip the digest call below. The old
+        // `if (rows.length === 0) return;` returned from this whole
+        // async fn, so the daily digest only had a chance to fire in the
+        // rare minute a game happened to tick during the digest hour —
+        // which is why it almost never auto-published.
+        if (rows.length > 0) {
+          await Promise.all(rows.map(async (r) => {
+            try {
+              const stub = env.ROOM.get(env.ROOM.idFromName(r.id));
+              await stub.fetch('https://room/tick-now', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ force: false, gameId: r.id }),
+              });
+            } catch (e) {
+              console.error(`cron tick poke failed for ${r.id}`, e);
+            }
+          }));
+        }
       } catch (e) {
         console.error('scheduled tick advancer failed', e);
       }
