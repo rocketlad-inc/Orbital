@@ -462,20 +462,25 @@ function drawStarBody(
   radius: number,
   ctx: RenderContext,
 ) {
-  // Corona sizing note: ships orbit Sol at ~1.4× its radius (build
-  // spawns them at body.radius + 4, and Sol's radius is 10 → orbit 14).
-  // The corona multipliers below are deliberately kept UNDER that ratio
-  // for the bright layers so orbiting ships/stations aren't swallowed by
-  // the glare ("the sun eats ships"). The ratio is zoom-invariant, so
-  // this keeps them visible at every zoom. The faint outer halo may
-  // extend past the orbit but is translucent enough (< 0.1 alpha there)
-  // that a ship drawn on top still reads clearly.
+  // Two compounding problems made the sun "eat" orbiting ships/stations
+  // ("I can't see what's in orbit"):
+  //   1. The core disk itself is huge — Sol's radius is 10 vs planets at
+  //      2-3, and zoomed in it filled the viewport.
+  //   2. Ships orbit at only ~1.4× the sun's radius (build spawns them at
+  //      body.radius + 4), so they sat right at the disk edge, and the
+  //      old corona washed out to 2.6×/6.5× radius, burying them.
+  // Fix: draw the whole star (core + corona) at coreR = 0.7× its physical
+  // radius. That shrinks the sun ~30% AND pushes the fixed-ratio orbits
+  // out to ~2× the drawn core, with plenty of clearance. Corona layers
+  // are relative to coreR and pulled in (mid 1.3×, outer 2.4× of coreR)
+  // so the bright glare ends well inside the orbits. Zoom-invariant, so
+  // orbiting things stay visible at every zoom.
+  const coreR = radius * 0.7;
 
-  // Outer halo — faint, pulled in from 6.5× to 2.4× so it no longer
-  // blankets the whole orbital neighborhood.
-  const outerR = radius * 2.4;
+  // Outer halo — faint.
+  const outerR = coreR * 2.4;
   const outer = ctx.ctx.createRadialGradient(
-    canvasPos.x, canvasPos.y, radius * 0.6,
+    canvasPos.x, canvasPos.y, coreR * 0.6,
     canvasPos.x, canvasPos.y, outerR,
   );
   outer.addColorStop(0, 'rgba(255, 209, 128, 0.22)');
@@ -486,11 +491,11 @@ function drawStarBody(
   ctx.ctx.arc(canvasPos.x, canvasPos.y, outerR, 0, Math.PI * 2);
   ctx.ctx.fill();
 
-  // Mid corona — the bright layer that was washing out orbits. Pulled
-  // in from 2.6× to 1.3× so it fades to zero BEFORE the ~1.4× orbit.
-  const midR = radius * 1.3;
+  // Mid corona — the bright layer, kept tight so it fades out before the
+  // orbits.
+  const midR = coreR * 1.3;
   const mid = ctx.ctx.createRadialGradient(
-    canvasPos.x, canvasPos.y, radius * 0.9,
+    canvasPos.x, canvasPos.y, coreR * 0.9,
     canvasPos.x, canvasPos.y, midR,
   );
   mid.addColorStop(0, 'rgba(255, 220, 150, 0.5)');
@@ -502,13 +507,13 @@ function drawStarBody(
   ctx.ctx.fill();
 
   // Hot core
-  const core = ctx.ctx.createRadialGradient(canvasPos.x, canvasPos.y, 0, canvasPos.x, canvasPos.y, radius);
+  const core = ctx.ctx.createRadialGradient(canvasPos.x, canvasPos.y, 0, canvasPos.x, canvasPos.y, coreR);
   core.addColorStop(0, '#fff8e0');
   core.addColorStop(0.55, '#ffd180');
   core.addColorStop(1, body.color || '#ffa940');
   ctx.ctx.fillStyle = core;
   ctx.ctx.beginPath();
-  ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, coreR, 0, Math.PI * 2);
   ctx.ctx.fill();
 }
 
@@ -2058,7 +2063,15 @@ export function drawCity(
   if (settlement.bodyId !== body.id) return;
   const bodyPos = bodyPosition(body, ctx.t, ctx.bodies);
   const angle = settlement.surfaceAngle ?? 0;
-  const surfaceR = body.radius;
+  // Stations are orbital platforms, not surface cities — float them
+  // clear of the body's disk. Critical at Sol / gas giants, where
+  // "the surface" (body.radius) is buried inside a huge glowing core:
+  // a station pinned there was invisible ("I can't see the station
+  // orbiting the sun"). 1.7× clears the star's tightened corona
+  // (bright mid ends at 1.3×). Cities stay pinned to the surface.
+  const orbital = settlement.type === 'station'
+    || body.type === 'star' || body.type === 'gas_giant' || body.type === 'ice_giant';
+  const surfaceR = orbital ? body.radius * 1.7 : body.radius;
   const worldX = bodyPos.x + surfaceR * Math.cos(angle);
   const worldY = bodyPos.y + surfaceR * Math.sin(angle);
   const canvasPos = worldToCanvas(worldX, worldY, ctx);
@@ -2071,8 +2084,12 @@ export function drawCity(
   // by population, and a distinct silhouette per building (forge /
   // mint / lab / thrusters) that grows with its level. Canvas is
   // rotated so the cluster's "up" is the outward surface normal.
+  // Focus-zoom iso cluster only for SURFACE settlements (cities on a
+  // real surface). An orbital station floats in space, so a building
+  // cluster "standing on the surface" would look wrong — it uses the
+  // clean square marker below at every zoom instead.
   const bodyScreenR = body.radius * ctx.camera.scale;
-  if (bodyScreenR >= 40) {
+  if (bodyScreenR >= 40 && !orbital) {
     const flashIso = ctx.damageFlashStart?.get(settlement.id);
     drawDamageFlash(canvasPos, 12, flashIso, ctx.t, ctx, 'damage');
     ctx.ctx.save();
