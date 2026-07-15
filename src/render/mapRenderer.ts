@@ -462,23 +462,19 @@ function drawStarBody(
   radius: number,
   ctx: RenderContext,
 ) {
-  // Two compounding problems made the sun "eat" orbiting ships/stations
-  // ("I can't see what's in orbit"):
-  //   1. The core disk itself is huge — Sol's radius is 10 vs planets at
-  //      2-3, and zoomed in it filled the viewport.
-  //   2. Ships orbit at only ~1.4× the sun's radius (build spawns them at
-  //      body.radius + 4), so they sat right at the disk edge, and the
-  //      old corona washed out to 2.6×/6.5× radius, burying them.
-  // Fix: draw the whole star (core + corona) at coreR = 0.7× its physical
-  // radius. That shrinks the sun ~30% AND pushes the fixed-ratio orbits
-  // out to ~2× the drawn core, with plenty of clearance. Corona layers
-  // are relative to coreR and pulled in (mid 1.3×, outer 2.4× of coreR)
-  // so the bright glare ends well inside the orbits. Zoom-invariant, so
-  // orbiting things stay visible at every zoom.
-  const coreR = radius * 0.7;
+  // Sol's physical radius (10) is huge vs planets (2-3), and things
+  // orbit it tightly: ships at body.radius + 4 = 14, stations at
+  // body.radius + 3 = 13. At full size the sun's disk + corona swallowed
+  // them. The fix draws the ENTIRE sun (core + all corona) at coreR =
+  // 0.55× its physical radius, so the whole footprint ends at
+  // ~0.55×1.7 = 0.94× the physical radius (≈ 9.4 for Sol) — comfortably
+  // INSIDE the 13-unit station orbit. That gives an orbiting station the
+  // same clear black-space gap it has around a small planet, instead of
+  // sitting embedded in the glow. Zoom-invariant.
+  const coreR = radius * 0.55;
 
-  // Outer halo — faint.
-  const outerR = coreR * 2.4;
+  // Outer halo — faint, ends before the orbits (1.7× coreR ≈ 0.94× radius).
+  const outerR = coreR * 1.7;
   const outer = ctx.ctx.createRadialGradient(
     canvasPos.x, canvasPos.y, coreR * 0.6,
     canvasPos.x, canvasPos.y, outerR,
