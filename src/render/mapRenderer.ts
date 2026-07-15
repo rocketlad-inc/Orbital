@@ -462,27 +462,38 @@ function drawStarBody(
   radius: number,
   ctx: RenderContext,
 ) {
-  // Outer halo
-  const outerR = radius * 6.5;
+  // Corona sizing note: ships orbit Sol at ~1.4× its radius (build
+  // spawns them at body.radius + 4, and Sol's radius is 10 → orbit 14).
+  // The corona multipliers below are deliberately kept UNDER that ratio
+  // for the bright layers so orbiting ships/stations aren't swallowed by
+  // the glare ("the sun eats ships"). The ratio is zoom-invariant, so
+  // this keeps them visible at every zoom. The faint outer halo may
+  // extend past the orbit but is translucent enough (< 0.1 alpha there)
+  // that a ship drawn on top still reads clearly.
+
+  // Outer halo — faint, pulled in from 6.5× to 2.4× so it no longer
+  // blankets the whole orbital neighborhood.
+  const outerR = radius * 2.4;
   const outer = ctx.ctx.createRadialGradient(
     canvasPos.x, canvasPos.y, radius * 0.6,
     canvasPos.x, canvasPos.y, outerR,
   );
-  outer.addColorStop(0, 'rgba(255, 209, 128, 0.28)');
-  outer.addColorStop(0.4, 'rgba(255, 154, 60, 0.08)');
+  outer.addColorStop(0, 'rgba(255, 209, 128, 0.22)');
+  outer.addColorStop(0.45, 'rgba(255, 154, 60, 0.06)');
   outer.addColorStop(1, 'rgba(255, 154, 60, 0)');
   ctx.ctx.fillStyle = outer;
   ctx.ctx.beginPath();
   ctx.ctx.arc(canvasPos.x, canvasPos.y, outerR, 0, Math.PI * 2);
   ctx.ctx.fill();
 
-  // Mid corona
-  const midR = radius * 2.6;
+  // Mid corona — the bright layer that was washing out orbits. Pulled
+  // in from 2.6× to 1.3× so it fades to zero BEFORE the ~1.4× orbit.
+  const midR = radius * 1.3;
   const mid = ctx.ctx.createRadialGradient(
     canvasPos.x, canvasPos.y, radius * 0.9,
     canvasPos.x, canvasPos.y, midR,
   );
-  mid.addColorStop(0, 'rgba(255, 220, 150, 0.55)');
+  mid.addColorStop(0, 'rgba(255, 220, 150, 0.5)');
   mid.addColorStop(0.7, 'rgba(255, 180, 80, 0.1)');
   mid.addColorStop(1, 'rgba(255, 154, 60, 0)');
   ctx.ctx.fillStyle = mid;
