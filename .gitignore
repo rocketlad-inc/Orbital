@@ -34,3 +34,9 @@ build/
 .claude/agents/
 # Auto-generated build SHA (scripts/bundle-migrations.js)
 src/_version.ts
+
+# curl cookie jars from local API testing (contain session tokens)
+cookie.txt
+judge.txt
+super.txt
+*.cookies

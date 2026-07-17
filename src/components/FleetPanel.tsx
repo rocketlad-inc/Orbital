@@ -6,9 +6,13 @@
 import React, { useMemo, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
+import { loadoutSummary } from '../game/shipParts';
+import { AUTO_COMBAT_INTERVAL } from '../game/combat';
+import { Body, Ship } from '../types';
 import { ShipIcon } from './ShipIcons';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { humanizeMpError } from '../multiplayer/errorMessages';
+import { openShipDesigner } from './ShipDesigner';
 import './OverviewPanel.css';
 
 interface FleetPanelProps {
@@ -17,6 +21,57 @@ interface FleetPanelProps {
 
 type Filter = 'all' | 'player' | 'enemy';
 
+// Barycenter anchors orbit Sol on a fake, effectively-infinite period so
+// the "every non-root orbits something" rule holds. Any period at this
+// scale means "not a real orbit" — the real bodies top out near 1.7e4,
+// so there's no ambiguity.
+const PRETEND_ORBIT_PERIOD = 1e9;
+
+// A ship counts as "In Combat" if it fired OR took a hit within this many
+// ticks. Auto-combat resolves a volley every AUTO_COMBAT_INTERVAL ticks, so
+// 2× gives one volley of grace — the badge stays lit between salvoes of an
+// ongoing fight and clears a couple ticks after the last shot.
+const COMBAT_RECENT_TICKS = AUTO_COMBAT_INTERVAL * 2;
+
+type ShipStatus = { label: string; cls: string; title: string };
+
+// Single most-relevant status for a ship, in precedence order. A ship in
+// flight can't be in auto-combat (that only happens between hulls sharing a
+// body), so transit/combat are mutually exclusive and the ordering is safe.
+function shipStatus(ship: Ship, currentTick: number, hpRatio: number): ShipStatus {
+  if (ship.transit) {
+    // Auto-retreat fires a server-side transfer to the nearest friendly
+    // shipyard once HP falls to the threshold, so a below-threshold ship in
+    // flight is fleeing, not making a routine trip.
+    if (ship.retreatHpPct != null && hpRatio <= ship.retreatHpPct / 100) {
+      return { label: 'Retreating', cls: 'retreating', title: 'Auto-retreating to a friendly shipyard (HP below threshold)' };
+    }
+    return { label: 'In Transit', cls: 'transit', title: 'Under torch burn between bodies' };
+  }
+  const lastActive = Math.max(ship.lastCombatTick ?? -Infinity, ship.lastDamagedTick ?? -Infinity);
+  if (currentTick - lastActive <= COMBAT_RECENT_TICKS) {
+    return { label: 'In Combat', cls: 'combat', title: 'Fired or took fire in the last few ticks' };
+  }
+  if (ship.plannedTransit) {
+    return { label: 'Planned', cls: 'planned', title: 'A transfer is planned but not yet committed' };
+  }
+  if (ship.stance === 'hold') {
+    return { label: 'Holding Fire', cls: 'holding', title: 'Standing order: never fire' };
+  }
+  return { label: 'Orbiting', cls: 'orbiting', title: 'Parked in a stable orbit' };
+}
+
+// Translucent fill from a hex colour (for faction-tinted badges).
+function hexToRgba(hex: string, alpha: number): string {
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  const n = parseInt(full, 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const {
     gameState, selectShip, focusBody, uiState,
@@ -24,39 +79,151 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   } = useGameContext();
   const mpActions = useMultiplayerActions();
   const [filter, setFilter] = useState<Filter>('player');
+  const [query, setQuery] = useState('');
+  const [collapsedSystems, setCollapsedSystems] = useState<Set<string>>(new Set());
   // Bulk-select set: ship ids the player has checked for a bulk
   // maneuver action. Only player-owned ships can join the set.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkTarget, setBulkTarget] = useState<string>('');
   const [bulkError, setBulkError] = useState<string | null>(null);
+  // Bulk standing orders (MP only). '' = leave that field unchanged;
+  // 'off' clears a threshold. Applied to every selected ship in one
+  // PATCH /ships/orders call.
+  const [bulkStance, setBulkStance] = useState<string>('');
+  const [bulkRetreat, setBulkRetreat] = useState<string>('');
+  const [bulkDetonate, setBulkDetonate] = useState<string>('');
+  const [ordersNotice, setOrdersNotice] = useState<string | null>(null);
+
+  const bodyById = useMemo(
+    () => new Map(gameState.bodies.map(b => [b.id, b])),
+    [gameState.bodies]
+  );
+
+  // Faction id -> { name, color } so the OWNER column shows the empire
+  // name (e.g. "Lornian Empire") in its faction colour, instead of the
+  // raw faction id ("8X7TTVD-L3P_:F1") — the "name bug".
+  const factionById = useMemo(() => {
+    const m = new Map<string, { name: string; color: string }>();
+    for (const f of gameState.factions) m.set(f.id, { name: f.name, color: f.color });
+    return m;
+  }, [gameState.factions]);
+
+  const factionOf = (ownedBy: string): { name: string; color: string } => {
+    if (ownedBy === 'player') return { name: 'You', color: '#4ecdc4' };
+    if (ownedBy === 'enemy') return { name: 'Enemy', color: '#ff5e5e' };
+    const f = factionById.get(ownedBy);
+    if (f) return f;
+    // Last resort (unknown faction id): show the short suffix, not the
+    // whole game-namespaced id.
+    return { name: ownedBy.split(':').pop() ?? ownedBy, color: '#8a9fb3' };
+  };
+
+  // A body roots its own star system when it orbits nothing (Sol), or
+  // when it's one of the barycenter anchors. Those anchors are pinned to
+  // Sol as a *pretend* parent with an effectively-infinite period — the
+  // body model requires every non-root to orbit something — so walking
+  // the parent chain naively would file Centauri and Cygnus under Sol.
+  // The absurd period is the marker that the link isn't a real orbit.
+  const isSystemRoot = (b: Body): boolean =>
+    !b.parent || b.orbitPeriod >= PRETEND_ORBIT_PERIOD;
+
+  // Walk up to the system this body belongs to. Cycle-guarded: a bad
+  // parent chain should degrade to "own system", never hang the panel.
+  const systemRootOf = useMemo(() => {
+    const cache = new Map<string, string>();
+    return (bodyId: string): string => {
+      const hit = cache.get(bodyId);
+      if (hit) return hit;
+      const chain: string[] = [];
+      let cur = bodyById.get(bodyId);
+      const seen = new Set<string>();
+      while (cur && !isSystemRoot(cur) && !seen.has(cur.id)) {
+        seen.add(cur.id);
+        chain.push(cur.id);
+        cur = cur.parent ? bodyById.get(cur.parent) : undefined;
+      }
+      const root = cur?.id ?? bodyId;
+      for (const id of chain) cache.set(id, root);
+      cache.set(bodyId, root);
+      return root;
+    };
+  }, [bodyById]);
+
+  // "Centauri Barycenter" is the anchor's name, but the *system* is just
+  // "Centauri" — drop the bookkeeping noun for the header.
+  const systemLabel = (rootId: string): string => {
+    const root = bodyById.get(rootId);
+    if (!root) return rootId.toUpperCase();
+    return `${root.name.replace(/\s*Barycenter$/i, '')} System`;
+  };
 
   const ships = useMemo(() => {
+    const q = query.trim().toLowerCase();
     return gameState.ships.filter(s => {
-      if (filter === 'player') return s.ownedBy === 'player';
-      if (filter === 'enemy') return s.ownedBy === 'enemy';
-      return true;
+      // 'enemy' means "not mine". The caller's faction is rewritten to
+      // the 'player' token on load and every other faction keeps its raw
+      // id, so nothing is ever literally owned by 'enemy' — matching on
+      // that string left the tab permanently blank.
+      if (filter === 'player' && s.ownedBy !== 'player') return false;
+      if (filter === 'enemy' && s.ownedBy === 'player') return false;
+      if (!q) return true;
+      const def = getShipClass(s.class as ShipClassName);
+      const body = bodyById.get(s.orbit.parentBodyId);
+      const haystack = [
+        s.name,
+        s.class,
+        def.displayName,
+        body?.name ?? s.orbit.parentBodyId,
+        body ? systemLabel(systemRootOf(body.id)) : '',
+        factionOf(s.ownedBy).name,
+      ];
+      return haystack.some(h => h.toLowerCase().includes(q));
     });
-  }, [gameState.ships, filter]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameState.ships, filter, query, bodyById, systemRootOf, factionById]);
 
   // "In transit" = ships with an active torch burn. Bulk-action
   // eligibility excludes them.
   const inTransit = useMemo(() => ships.filter(s => s.transit), [ships]);
   const orbiting = useMemo(() => ships.filter(s => !s.transit), [ships]);
 
-  // Group orbiting ships by parent body id
-  const orbitingByBody = useMemo(() => {
-    const map = new Map<string, typeof orbiting>();
+  // Orbiting ships, grouped by star system and then by body within it.
+  // Systems sort by the root's orbit radius, which reads as "distance
+  // from home": Sol (0), then Centauri, then Cygnus.
+  const systems = useMemo(() => {
+    const bySystem = new Map<string, Map<string, typeof orbiting>>();
     for (const s of orbiting) {
-      const list = map.get(s.orbit.parentBodyId) || [];
+      const root = systemRootOf(s.orbit.parentBodyId);
+      let bodies = bySystem.get(root);
+      if (!bodies) { bodies = new Map(); bySystem.set(root, bodies); }
+      const list = bodies.get(s.orbit.parentBodyId) || [];
       list.push(s);
-      map.set(s.orbit.parentBodyId, list);
+      bodies.set(s.orbit.parentBodyId, list);
     }
-    return Array.from(map.entries()).sort((a, b) => {
-      const aBody = gameState.bodies.find(x => x.id === a[0]);
-      const bBody = gameState.bodies.find(x => x.id === b[0]);
-      return (aBody?.name || '').localeCompare(bBody?.name || '');
+    return Array.from(bySystem.entries())
+      .map(([rootId, bodies]) => ({
+        rootId,
+        label: systemLabel(rootId),
+        shipCount: Array.from(bodies.values()).reduce((n, l) => n + l.length, 0),
+        bodies: Array.from(bodies.entries()).sort((a, b) =>
+          (bodyById.get(a[0])?.name || a[0]).localeCompare(bodyById.get(b[0])?.name || b[0])
+        ),
+      }))
+      .sort((a, b) =>
+        (bodyById.get(a.rootId)?.orbitRadius ?? 0) - (bodyById.get(b.rootId)?.orbitRadius ?? 0)
+        || a.label.localeCompare(b.label)
+      );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orbiting, bodyById, systemRootOf]);
+
+  const toggleSystem = (rootId: string) => {
+    setCollapsedSystems(prev => {
+      const next = new Set(prev);
+      if (next.has(rootId)) next.delete(rootId);
+      else next.add(rootId);
+      return next;
     });
-  }, [orbiting, gameState.bodies]);
+  };
 
   const handleShipClick = (shipId: string) => {
     selectShip(shipId);
@@ -151,30 +318,105 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const clearSelection = () => {
     setSelectedIds(new Set());
     setBulkError(null);
+    setOrdersNotice(null);
+  };
+
+  // Bulk standing orders — one PATCH covering every selected ship.
+  // Server validates ownership of EVERY ship and rejects the whole
+  // batch if any isn't ours (all-or-nothing), so no partial state.
+  const issueBulkOrders = () => {
+    setOrdersNotice(null);
+    if (!mpActions) return;
+    if (visibleSelected.length === 0) { setOrdersNotice('No eligible ships selected'); return; }
+    if (!bulkStance && !bulkRetreat && !bulkDetonate) {
+      setOrdersNotice('Pick at least one order to apply');
+      return;
+    }
+    mpActions.setShipOrders({
+      shipIds: visibleSelected,
+      ...(bulkStance ? { stance: bulkStance as 'attack' | 'defensive' | 'hold' } : {}),
+      ...(bulkRetreat
+        ? { retreatHpPct: bulkRetreat === 'off' ? null : (Number(bulkRetreat) as 25 | 50 | 75) }
+        : {}),
+      ...(bulkDetonate
+        ? { detonateHpPct: bulkDetonate === 'off' ? null : (Number(bulkDetonate) as 25 | 50) }
+        : {}),
+    }).then(res => {
+      if (res.ok) {
+        setOrdersNotice(`Orders set on ${visibleSelected.length} ship${visibleSelected.length === 1 ? '' : 's'}`);
+        setBulkStance('');
+        setBulkRetreat('');
+        setBulkDetonate('');
+      } else {
+        setOrdersNotice(humanizeMpError(res.code, res.error, 'orders'));
+      }
+    });
   };
 
   const ownerBadge = (ownedBy: string) => {
-    if (ownedBy === 'player') return <span className="owner-badge owner-badge--player">Player</span>;
-    if (ownedBy === 'enemy') return <span className="owner-badge owner-badge--enemy">Enemy</span>;
-    return <span className="owner-badge owner-badge--neutral">{ownedBy}</span>;
+    const { name, color } = factionOf(ownedBy);
+    return (
+      <span
+        className="owner-badge"
+        style={{ color, borderColor: color, background: hexToRgba(color, 0.12) }}
+      >
+        {name}
+      </span>
+    );
   };
 
-  const renderHpBar = (ship: { hp?: number; class: string }) => {
+  // Experience tier from veterancy rank (each confirmed kill = +1 rank).
+  const rankTier = (rank: number): string => {
+    if (rank >= 10) return 'Ace';
+    if (rank >= 6) return 'Elite';
+    if (rank >= 3) return 'Veteran';
+    if (rank >= 1) return 'Regular';
+    return 'Rookie';
+  };
+
+  // Experience + kills cell (replaces the fuel bar). Rank IS the total
+  // confirmed-kill count, so kills = rank; the tier gives a quick
+  // qualitative read alongside the raw number.
+  const renderExperience = (ship: { rank?: number }) => {
+    const rank = ship.rank ?? 0;
+    return (
+      <div className="fleet-xp">
+        <span className={`fleet-xp__tier fleet-xp__tier--${rankTier(rank).toLowerCase()}`}>
+          {rankTier(rank)}
+        </span>
+        <span className="fleet-xp__kills" title="Confirmed kills">
+          {rank > 0 ? `${rank} ⚔` : '—'}
+        </span>
+      </div>
+    );
+  };
+
+  // Current HP and effective max, resolved the same way for the HP bar and
+  // the status badge's retreat check.
+  //   - Server-authoritative hpMax when present (designer shield parts +
+  //     tech, migration 0033); class-def fallback for SP/legacy ships.
+  //   - Where the server hasn't sent hpMax, armor tech and per-kill rank
+  //     still push real max above the base class hp, so a teched/veteran
+  //     ship would read "108/100" with the fill bar overrunning its track.
+  //     max(base, hp) clamps the denominator.
+  const hpOf = (ship: { hp?: number; hpMax?: number; class: string }) => {
     const def = getShipClass(ship.class as ShipClassName);
-    const hp = ship.hp ?? def.hp;
-    // Effective max is the larger of base and current hp: armor tech and
-    // per-kill rank push real max above the base class hp, so a teched /
-    // veteran ship would otherwise read "108/100" with the fill bar
-    // overrunning its track. Clamp the label denominator and the width.
-    const maxHp = Math.max(def.hp, hp);
-    const ratio = Math.min(1, hp / maxHp);
+    const hp = ship.hp ?? ship.hpMax ?? def.hp;
+    const maxHp = ship.hpMax ?? Math.max(def.hp, hp);
+    return { hp, maxHp, ratio: maxHp > 0 ? Math.min(1, hp / maxHp) : 0 };
+  };
+
+  const hpRatioOf = (ship: { hp?: number; hpMax?: number; class: string }) => hpOf(ship).ratio;
+
+  const renderHpBar = (ship: { hp?: number; hpMax?: number; class: string }) => {
+    const { hp, maxHp, ratio } = hpOf(ship);
     const hpClass = ratio > 0.66 ? 'good' : ratio > 0.33 ? 'mid' : 'low';
     return (
       <div className="status-bar">
         <div className="status-bar__fill">
           <div
             className={`status-bar__inner status-bar__inner--hp-${hpClass}`}
-            style={{ width: `${ratio * 100}%` }}
+            style={{ width: `${Math.min(100, ratio * 100)}%` }}
           />
         </div>
         <span className="status-bar__text">{Math.round(hp)}/{Math.round(maxHp)}</span>
@@ -182,22 +424,9 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     );
   };
 
-  const renderFuelBar = (ship: { fuel: number; class: string }) => {
-    const def = getShipClass(ship.class as ShipClassName);
-    const ratio = ship.fuel / def.fuelCapacity;
-    const fuelClass = ratio > 0.25 ? 'good' : 'low';
-    return (
-      <div className="status-bar">
-        <div className="status-bar__fill">
-          <div
-            className={`status-bar__inner status-bar__inner--fuel-${fuelClass}`}
-            style={{ width: `${Math.min(100, ratio * 100)}%` }}
-          />
-        </div>
-        <span className="status-bar__text">{Math.round(ship.fuel)}</span>
-      </div>
-    );
-  };
+  // renderFuelBar removed — fuel left the economy
+  // (DESIGN-identity-economy.md §1.1). Its column slot now holds the
+  // ship's Experience (veterancy tier + confirmed kills).
 
   const renderShipRow = (ship: typeof ships[0]) => {
     const def = getShipClass(ship.class as ShipClassName);
@@ -213,14 +442,12 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     const target = targetBodyId ? gameState.bodies.find(b => b.id === targetBodyId) : null;
     const transit = ship.transit;
 
-    let statusBadge;
-    if (transit) {
-      statusBadge = <span className="status-badge status-badge--transit">In Transit</span>;
-    } else if (ship.plannedTransit) {
-      statusBadge = <span className="status-badge status-badge--planned">Planned</span>;
-    } else {
-      statusBadge = <span className="status-badge status-badge--orbiting">Orbiting</span>;
-    }
+    const status = shipStatus(ship, gameState.currentTick, hpRatioOf(ship));
+    const statusBadge = (
+      <span className={`status-badge status-badge--${status.cls}`} title={status.title}>
+        {status.label}
+      </span>
+    );
 
     const eligible = bulkEligibleIds.has(ship.id);
     const checked = selectedIds.has(ship.id);
@@ -230,27 +457,40 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
         className={isSelected ? 'selected' : ''}
         onClick={() => handleShipClick(ship.id)}
       >
-        <td onClick={(e) => e.stopPropagation()} style={{ width: 32, textAlign: 'center' }}>
+        <td onClick={(e) => e.stopPropagation()} className="fleet-check-cell">
           {eligible ? (
-            <input
-              type="checkbox"
-              checked={checked}
-              onChange={() => toggleSelected(ship.id)}
-              title="Add to bulk selection"
-              style={{ cursor: 'pointer' }}
-            />
+            <label className="fleet-check" title="Add to bulk selection">
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => toggleSelected(ship.id)}
+              />
+              <span className="fleet-check__box" aria-hidden />
+            </label>
           ) : (
             <span title="Not eligible (not player-owned, or already in transit/planned)" style={{ opacity: 0.25 }}>—</span>
           )}
         </td>
         <td>
           <div className="body-cell" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ color: '#4ecdc4', flexShrink: 0 }}>
+            <div style={{ color: factionOf(ship.ownedBy).color, flexShrink: 0 }}>
               <ShipIcon shipClass={ship.class as ShipClassName} size={20} />
             </div>
             <div>
               <div className="body-cell__name">{ship.name}</div>
-              <div className="body-cell__type">{def.displayName} · {ship.class}</div>
+              <div className="body-cell__type">
+                {def.displayName}
+                {(() => {
+                  // Show the designer loadout in place of the redundant
+                  // "· corvette" class echo. Null (SP / colony / no parts
+                  // field) falls back to the plain class name so nothing
+                  // reads as empty.
+                  const loadout = loadoutSummary(ship.parts);
+                  return loadout
+                    ? <span className="body-cell__loadout" title="Fitted parts"> · {loadout}</span>
+                    : <> · {ship.class}</>;
+                })()}
+              </div>
             </div>
           </div>
         </td>
@@ -260,11 +500,13 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           {transit && target ? (
             <span>→ <strong style={{ color: '#4ecdc4' }}>{target.name}</strong> · T-{Math.round(eta ?? 0)}</span>
           ) : (
-            <span className="col-muted">{ship.orbit.parentBodyId.toUpperCase()}</span>
+            <span className="col-muted">
+              {bodyById.get(ship.orbit.parentBodyId)?.name ?? ship.orbit.parentBodyId}
+            </span>
           )}
         </td>
         <td>{renderHpBar(ship)}</td>
-        <td>{renderFuelBar(ship)}</td>
+        <td>{renderExperience(ship)}</td>
       </tr>
     );
   };
@@ -272,13 +514,13 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const tableHead = (locationLabel: string) => (
     <thead>
       <tr>
-        <th style={{ width: 32 }}></th>
+        <th style={{ width: 40 }}></th>
         <th>Ship</th>
         <th>Owner</th>
         <th>Status</th>
         <th>{locationLabel}</th>
         <th>HP</th>
-        <th>Fuel</th>
+        <th>Experience</th>
       </tr>
     </thead>
   );
@@ -290,19 +532,55 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           <div className="overview-panel__title-main">Fleet</div>
           <div className="overview-panel__title-sub">{ships.length} ships · {orbiting.length} orbiting · {inTransit.length} in transit</div>
         </div>
+        {/* Ship designer entry point (MP only — the designer is part of
+            the identity-economy release and the SP sim is frozen). */}
+        {mpActions && (
+          <button
+            className="filter-chip"
+            style={{ marginRight: 8 }}
+            onClick={() => openShipDesigner()}
+            title="Design ship loadouts — weapons, shields, engines, detonators. BUILD uses each class's active design."
+          >
+            ⚙ SHIP DESIGNER
+          </button>
+        )}
         <button className="overview-panel__close" onClick={onClose}>✕</button>
       </div>
 
       <div className="overview-panel__filters">
-        {(['player', 'enemy', 'all'] as Filter[]).map(f => (
+        {([
+          ['player', 'Mine'],
+          ['enemy', 'Enemies'],
+          ['all', 'All'],
+        ] as [Filter, string][]).map(([f, label]) => (
           <button
             key={f}
             className={`filter-chip ${filter === f ? 'active' : ''}`}
             onClick={() => setFilter(f)}
           >
-            {f}
+            {label}
           </button>
         ))}
+      </div>
+
+      <div className="fleet-search">
+        <span className="fleet-search__icon" aria-hidden>⌕</span>
+        <input
+          className="fleet-search__input"
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search ships, worlds, systems, owners…"
+          aria-label="Search fleet"
+        />
+        {query && (
+          <button
+            className="fleet-search__clear"
+            onClick={() => setQuery('')}
+            aria-label="Clear search"
+            title="Clear search"
+          >✕</button>
+        )}
       </div>
 
       {visibleSelected.length > 0 && (
@@ -337,12 +615,73 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
             </button>
           </div>
           {bulkError && <div className="fleet-bulk-bar__error">{bulkError}</div>}
+
+          {mpActions && (
+            <div className="fleet-bulk-bar__actions" style={{ marginTop: 6 }}>
+              <label className="fleet-bulk-bar__label">Orders</label>
+              <select
+                className="fleet-bulk-bar__select"
+                value={bulkStance}
+                onChange={(e) => setBulkStance(e.target.value)}
+                title="Stance: attack on sight / return fire only / never fire"
+              >
+                <option value="">Stance: keep</option>
+                <option value="attack">Attack on sight</option>
+                <option value="defensive">Defensive (return fire)</option>
+                <option value="hold">Hold fire</option>
+              </select>
+              <select
+                className="fleet-bulk-bar__select"
+                value={bulkRetreat}
+                onChange={(e) => setBulkRetreat(e.target.value)}
+                title="Auto-retreat to the nearest friendly shipyard station below this HP threshold"
+              >
+                <option value="">Retreat: keep</option>
+                <option value="off">Retreat: off</option>
+                <option value="25">Retreat at 25% HP</option>
+                <option value="50">Retreat at 50% HP</option>
+                <option value="75">Retreat at 75% HP</option>
+              </select>
+              <select
+                className="fleet-bulk-bar__select"
+                value={bulkDetonate}
+                onChange={(e) => setBulkDetonate(e.target.value)}
+                title="Auto-detonate below X% HP: deals damage to every ship in this orbit, friend or foe; this ship is destroyed. No effect on hulls without a detonator part."
+              >
+                <option value="">Detonate: keep</option>
+                <option value="off">Detonate: off</option>
+                <option value="25">Detonate below 25% HP</option>
+                <option value="50">Detonate below 50% HP</option>
+              </select>
+              <button
+                className="fleet-bulk-bar__btn fleet-bulk-bar__btn--primary"
+                onClick={issueBulkOrders}
+                disabled={!bulkStance && !bulkRetreat && !bulkDetonate}
+              >
+                SET ORDERS
+              </button>
+            </div>
+          )}
+          {mpActions && bulkDetonate && bulkDetonate !== 'off' && (
+            <div className="fleet-bulk-bar__error" style={{ color: '#ff9e7a' }}>
+              Auto-detonate below {bulkDetonate}% HP: deals damage to every ship
+              in this orbit, friend or foe; this ship is destroyed. No effect on
+              hulls without a detonator part.
+            </div>
+          )}
+          {ordersNotice && <div className="fleet-bulk-bar__error">{ordersNotice}</div>}
         </div>
       )}
 
       <div className="overview-panel__body">
         {ships.length === 0 ? (
-          <div className="overview-empty">No ships match the current filter.</div>
+          <div className="overview-empty">
+            {query.trim()
+              ? `No ships match “${query.trim()}”.`
+              : filter === 'enemy'
+                ? 'No rival ships are visible to you right now.'
+                : 'No ships match the current filter.'}
+          </div>
         ) : (
           <>
             {inTransit.length > 0 && (
@@ -360,31 +699,51 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               </div>
             )}
 
-            {orbitingByBody.map(([bodyId, bodyShips]) => {
-              const body = gameState.bodies.find(b => b.id === bodyId);
+            {systems.map(system => {
+              const isCollapsed = collapsedSystems.has(system.rootId);
               return (
-                <div className="overview-section" key={bodyId}>
-                  <div className="overview-section__title">
-                    <span
-                      onClick={() => handleBodyClick(bodyId)}
-                      style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
-                      title="Click to focus map"
-                    >
-                      <span style={{
-                        width: 10, height: 10, borderRadius: '50%',
-                        background: body?.color || '#888',
-                        display: 'inline-block',
-                      }} />
-                      Orbiting {body?.name || bodyId}
+                <div className="fleet-system" key={system.rootId}>
+                  <button
+                    className="fleet-system__header"
+                    onClick={() => toggleSystem(system.rootId)}
+                    aria-expanded={!isCollapsed}
+                    title={isCollapsed ? 'Expand system' : 'Collapse system'}
+                  >
+                    <span className={`fleet-system__caret${isCollapsed ? ' fleet-system__caret--collapsed' : ''}`} aria-hidden>▾</span>
+                    <span className="fleet-system__name">{system.label}</span>
+                    <span className="fleet-system__meta">
+                      {system.bodies.length} world{system.bodies.length === 1 ? '' : 's'} · {system.shipCount} ship{system.shipCount === 1 ? '' : 's'}
                     </span>
-                    <span className="overview-section__count">{bodyShips.length} ships</span>
-                  </div>
-                  <table className="overview-table">
-                    {tableHead('Location')}
-                    <tbody>
-                      {bodyShips.map(renderShipRow)}
-                    </tbody>
-                  </table>
+                  </button>
+
+                  {!isCollapsed && system.bodies.map(([bodyId, bodyShips]) => {
+                    const body = bodyById.get(bodyId);
+                    return (
+                      <div className="overview-section" key={bodyId}>
+                        <div className="overview-section__title">
+                          <span
+                            onClick={() => handleBodyClick(bodyId)}
+                            style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
+                            title="Click to focus map"
+                          >
+                            <span style={{
+                              width: 10, height: 10, borderRadius: '50%',
+                              background: body?.color || '#888',
+                              display: 'inline-block',
+                            }} />
+                            Orbiting {body?.name || bodyId}
+                          </span>
+                          <span className="overview-section__count">{bodyShips.length} ships</span>
+                        </div>
+                        <table className="overview-table">
+                          {tableHead('Location')}
+                          <tbody>
+                            {bodyShips.map(renderShipRow)}
+                          </tbody>
+                        </table>
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })}

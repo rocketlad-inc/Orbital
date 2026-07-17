@@ -32,7 +32,8 @@ export type MpErrorDomain =
   | 'research'
   | 'tbm'
   | 'ram'
-  | 'rename';
+  | 'rename'
+  | 'orders';
 
 /**
  * Map a server error code to a user-facing string.
@@ -64,6 +65,7 @@ export function humanizeMpError(
         case 'build':    return 'You no longer own this body. Recapture it before queuing builds here.';
         case 'transfer': return 'You no longer own this ship — it may have been captured or destroyed.';
         case 'rename':   return 'You no longer own this ship or settlement.';
+        case 'orders':   return 'One of the selected ships is not yours — no orders were changed.';
         default:         return `You do not own this resource (${fallback}).`;
       }
 
@@ -78,6 +80,7 @@ export function humanizeMpError(
         case 'deploy':   return 'This body no longer exists in the game.';
         case 'transfer': return 'Target body or ship no longer exists.';
         case 'rename':   return 'This ship or settlement no longer exists.';
+        case 'orders':   return 'One of the selected ships no longer exists — no orders were changed.';
         default:         return `Resource not found (${fallback}).`;
       }
 
@@ -96,12 +99,15 @@ export function humanizeMpError(
       return 'This tech is already at the global cap.';
 
     case 'no_presence':
-      // Possible causes: freighter is enemy's, freighter is still in
-      // transit, or the ship here is a combat class — all variants of
-      // "no qualifying freighter parked here." The BodyInspector hint
-      // disambiguates pre-click; the chip only fires on actual server
-      // rejection, so terse is fine.
-      return 'No freighter of yours parked here yet.';
+      // Legacy deploy gate (pre colony-ship split) — kept so an older
+      // server bundle still gets sensible copy.
+      return 'No qualifying ship of yours parked here yet.';
+
+    case 'need_colony_ship':
+      // Colony/freighter split: cities always consume a Colony Ship;
+      // stations need one too unless you already own a settlement at
+      // the body (then they're built from orbit for metal + credits).
+      return 'Needs a Colony Ship of yours in orbit here — deploying consumes it. (Stations can instead be built from orbit for resources where you already own a settlement.)';
 
     case 'no_surface':
       return 'A city cannot be deployed on this body type — stars, gas giants and ice giants have no surface.';

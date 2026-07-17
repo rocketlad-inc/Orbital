@@ -2,7 +2,7 @@
 // Ship Class Definitions — Expanse-inspired fleet roster
 // ============================================================
 
-export type ShipClassName = 'corvette' | 'frigate' | 'destroyer' | 'freighter';
+export type ShipClassName = 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
 
 export interface ShipClassDef {
   className: ShipClassName;
@@ -49,7 +49,7 @@ const CORVETTE: ShipClassDef = {
   fuelCapacity: 80,
   speedModifier: 0.7,
   cargoCapacity: 0,
-  cost: { fuel: 3, ore: 5, credits: 4 },
+  cost: { fuel: 0, ore: 5, credits: 4 },
   buildTime: 10,
   canHarvest: false,
   size: 3,
@@ -72,7 +72,7 @@ const FRIGATE: ShipClassDef = {
   fuelCapacity: 120,
   speedModifier: 1.0,
   cargoCapacity: 0,
-  cost: { fuel: 7, ore: 10, credits: 8 },
+  cost: { fuel: 0, ore: 10, credits: 8 },
   buildTime: 20,
   canHarvest: false,
   size: 4,
@@ -95,7 +95,7 @@ const DESTROYER: ShipClassDef = {
   fuelCapacity: 150,
   speedModifier: 1.4,
   cargoCapacity: 0,
-  cost: { fuel: 14, ore: 20, credits: 17 },
+  cost: { fuel: 0, ore: 20, credits: 17 },
   buildTime: 40,
   canHarvest: false,
   size: 5,
@@ -118,11 +118,37 @@ const FREIGHTER: ShipClassDef = {
   fuelCapacity: 100,
   speedModifier: 1.3,
   cargoCapacity: 50,
-  cost: { fuel: 5, ore: 7, credits: 5 },
+  cost: { fuel: 0, ore: 7, credits: 5 },
   buildTime: 15,
   canHarvest: true,
   size: 4,
   icon: '□',
+};
+
+/**
+ * Colony Ship — consumable expansion hull (DESIGN-identity-economy §4).
+ * Unarmed, no cargo, slow. Founding a city ALWAYS consumes one; a
+ * station consumes one unless you already own a settlement at the body.
+ * ~3× freighter cost — it is the expansion pacing knob. MP-only verb:
+ * SP's frozen sim never consumes them.
+ */
+const COLONY: ShipClassDef = {
+  className: 'colony',
+  displayName: 'Colony Ship',
+  description: 'Consumable settler transport. Deploying a settlement consumes it.',
+  firepower: 0,
+  hp: 60,
+  pdcRating: 0,
+  range: 0,
+  damagePerTick: 0,
+  fuelCapacity: 60,
+  speedModifier: 1.6,
+  cargoCapacity: 0,
+  cost: { fuel: 0, ore: 20, credits: 15 },
+  buildTime: 30,
+  canHarvest: false,
+  size: 4,
+  icon: '◉',
 };
 
 export const SHIP_CLASSES: Record<ShipClassName, ShipClassDef> = {
@@ -130,10 +156,11 @@ export const SHIP_CLASSES: Record<ShipClassName, ShipClassDef> = {
   frigate: FRIGATE,
   destroyer: DESTROYER,
   freighter: FREIGHTER,
+  colony: COLONY,
 };
 
 /** All buildable ship classes in display order */
-export const BUILDABLE_CLASSES: ShipClassName[] = ['corvette', 'frigate', 'destroyer', 'freighter'];
+export const BUILDABLE_CLASSES: ShipClassName[] = ['corvette', 'frigate', 'destroyer', 'freighter', 'colony'];
 
 /**
  * Get class definition. Never throws — an unknown class returns the

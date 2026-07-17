@@ -4,6 +4,10 @@ import { Ship, Body, Settlement, TradeRoute } from '../types';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { maintenanceRatesForShip } from '../game/maintenance';
 import { rankHpMul } from '../game/techs';
+import {
+  ShipPartId, SHIP_PART_DEFS, countPart, detonatorDamage, detonatorDisclosure,
+  PART_GLYPH, SHIP_SLOT_COUNTS, ALL_PART_IDS, sanitizeParts,
+} from '../game/shipParts';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { markNodeCancelPending, unmarkNodeCancelPending } from '../multiplayer/pendingNodeCancels';
 import { humanizeMpError } from '../multiplayer/errorMessages';
@@ -42,6 +46,9 @@ export const ShipPanel: React.FC = () => {
   // like it worked but the next /state poll silently rewinds the
   // optimistic local state.
   const [transferError, setTransferError] = useState<string | null>(null);
+  // Server-side standing-orders rejection (MP only). Shown inline in the
+  // ORDERS section; the next /state poll rewinds the optimistic change.
+  const [ordersError, setOrdersError] = useState<string | null>(null);
 
   const ship = uiState.selectedShipId
     ? gameState.ships.find(s => s.id === uiState.selectedShipId) || null
@@ -302,14 +309,13 @@ export const ShipPanel: React.FC = () => {
 
   // Maintenance — repair/refuel rates at current location
   const maintenance = maintenanceRatesForShip(ship, gameState.bodies, gameState.settlements);
-  // maxHp factors in veterancy (+1% per rank). Combat.ts + maintenance.ts
-  // both apply the same multiplier, so the displayed cap matches the
-  // actual cap the heal loop fills to.
-  const maxHp = Math.round(shipClass.hp * rankHpMul(ship.rank));
-  const maxFuel = shipClass.fuelCapacity;
+  // maxHp: server-authoritative hp_max when present (MP — includes
+  // designer shield parts + Armor tech stamped at build completion);
+  // otherwise the class def scaled by veterancy (+1% per rank), which
+  // matches what combat.ts + maintenance.ts apply in SP.
+  const maxHp = ship.hpMax ?? Math.round(shipClass.hp * rankHpMul(ship.rank));
   const currentHp = ship.hp ?? maxHp;
   const hpAtMax = currentHp >= maxHp;
-  const fuelAtMax = ship.fuel >= maxFuel;
 
   // Fleet — current fleet (if any) and ships eligible to fleet with at this body
   const currentFleet = ship.fleetId
@@ -336,6 +342,33 @@ export const ShipPanel: React.FC = () => {
   // Desktop is unaffected — the panel docks to the side and doesn't cover
   // the canvas.
   const hideForTargeting = isMobile && uiState.targetSelectionMode;
+
+  // Standing orders (MP only, DESIGN §3). Optimistic local update +
+  // server post; a rejection surfaces inline and the next /state poll
+  // rewinds the optimistic change.
+  const currentStance = ship.stance ?? 'attack';
+  const applyOrders = (patch: {
+    stance?: 'attack' | 'defensive' | 'hold';
+    retreatHpPct?: 25 | 50 | 75 | null;
+    detonateHpPct?: 25 | 50 | null;
+  }) => {
+    if (!mpActions) return;
+    setOrdersError(null);
+    setGameState({
+      ...gameState,
+      ships: gameState.ships.map(s => (s.id === ship.id ? { ...s, ...patch } : s)),
+    });
+    mpActions.setShipOrders({
+      shipIds: [ship.id],
+      ...(patch.stance !== undefined ? { stance: patch.stance } : {}),
+      ...('retreatHpPct' in patch ? { retreatHpPct: patch.retreatHpPct ?? null } : {}),
+      ...('detonateHpPct' in patch ? { detonateHpPct: patch.detonateHpPct ?? null } : {}),
+    }).then(res => {
+      if (!res.ok) {
+        setOrdersError(humanizeMpError(res.code, res.error, 'orders'));
+      }
+    });
+  };
 
   return (
     <>
@@ -493,17 +526,9 @@ export const ShipPanel: React.FC = () => {
                 )}
               </span>
             </div>
-            <div className="stat-row">
-              <span className="label">FUEL</span>
-              <span className="value">
-                {ship.fuel.toFixed(0)}/{maxFuel} kt
-                {maintenance.refuelRate > 0 && !fuelAtMax && (
-                  <span style={{ color: '#ffb84d', marginLeft: 6, fontSize: '9px' }}>
-                    +{maintenance.refuelRate}/t
-                  </span>
-                )}
-              </span>
-            </div>
+            {/* FUEL row removed — fuel left the economy
+                (DESIGN-identity-economy.md §1.1). Transfers are free, so
+                the number never moved and refuelling was decoration. */}
             <div className="stat-row">
               <span className="label">LOCATION</span>
               <span className="value">{locationLabel}</span>
@@ -534,6 +559,17 @@ export const ShipPanel: React.FC = () => {
               </div>
             )}
           </div>
+
+          {/* Ship configuration — the designer loadout as slot chips +
+              a per-part legend. Shown whenever the hull has slots (MP
+              designed ships); SP / colony hulls with 0 slots render
+              nothing. */}
+          <ShipLoadoutSection
+            parts={ship.parts}
+            shipClass={ship.class as ShipClassName}
+            maxHp={maxHp}
+            weaponsLvl={gameState.factionTech['player']?.levels?.weapons ?? 0}
+          />
 
           {/* Freighters show TRADE LOG (delivery count) instead of
               COMBAT RECORD (confirmed kills) — they're cargo haulers,
@@ -768,12 +804,14 @@ export const ShipPanel: React.FC = () => {
             </div>
           )}
 
-          {shipClass.damagePerTick > 0 && (
+          {(ship.damagePerTick ?? shipClass.damagePerTick) > 0 && (
             <div className="engagement-section">
               <div className="section-title">COMBAT</div>
               <div className="stat-row">
                 <span className="label">DAMAGE</span>
-                <span className="value">{shipClass.damagePerTick}/volley</span>
+                {/* Server-authoritative per-volley damage when present
+                    (weapon parts + Weapons tech, stamped at build). */}
+                <span className="value">{ship.damagePerTick ?? shipClass.damagePerTick}/volley</span>
               </div>
               <div className="stat-row">
                 <span className="label">CADENCE</span>
@@ -781,9 +819,125 @@ export const ShipPanel: React.FC = () => {
                     ticks per ship. Single label; no MP branch needed. */}
                 <span className="value">every 3 ticks</span>
               </div>
-              <div className="stat-row" style={{ fontSize: '9px', color: '#b8c8d6', fontStyle: 'italic' }}>
-                Auto-fires at any hostile sharing this body.
+              {/* Engagement blurb tracks the current STANCE — the fixed
+                  "auto-fires at any hostile" copy contradicted a ship set
+                  to DEFEND/HOLD. In SP (no orders) stance defaults to
+                  attack, so this reads the same as before. Hold is tinted
+                  amber since the ship won't fight. */}
+              <div
+                className="stat-row"
+                style={{
+                  fontSize: '9px',
+                  color: currentStance === 'hold' ? '#ffb84d' : '#b8c8d6',
+                  fontStyle: 'italic',
+                }}
+              >
+                {currentStance === 'attack'
+                  ? 'Auto-fires at any hostile sharing this body.'
+                  : currentStance === 'defensive'
+                    ? 'Returns fire only — engages hostiles that attack here.'
+                    : 'Holding fire — will not engage, even under attack.'}
               </div>
+            </div>
+          )}
+
+          {mpActions
+            && ship.ownedBy === 'player'
+            && countPart(ship.parts, 'detonator') > 0 && (
+            <DetonatorSection
+              ship={ship}
+              maxHp={maxHp}
+              weaponsLvl={gameState.factionTech['player']?.levels?.weapons ?? 0}
+              inTransit={!!ship.transit}
+              onDetonate={async () => {
+                const res = await mpActions.detonateShip(ship.id);
+                if (!res.ok) {
+                  setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
+                  return false;
+                }
+                // The ship is gone — close the panel; the next /state
+                // poll removes it from the map.
+                deselectShip();
+                return true;
+              }}
+            />
+          )}
+
+          {mpActions && ship.ownedBy === 'player' && (
+            <div className="orders-config-section">
+              <div className="section-title">ORDERS</div>
+
+              <div className="orders-config-row">
+                <span className="orders-config-label">STANCE</span>
+                <div className="orders-stance-toggle">
+                  {(['attack', 'defensive', 'hold'] as const).map(st => (
+                    <button
+                      key={st}
+                      className={`orders-stance-btn ${currentStance === st ? 'active' : ''}`}
+                      onClick={() => applyOrders({ stance: st })}
+                      title={
+                        st === 'attack' ? 'Attack on sight: engage hostiles in range.'
+                        : st === 'defensive' ? 'Defensive: return fire only.'
+                        : 'Hold fire: never fires. Still takes damage.'
+                      }
+                    >
+                      {st === 'attack' ? 'ATTACK' : st === 'defensive' ? 'DEFEND' : 'HOLD'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="orders-config-row">
+                <span className="orders-config-label">RETREAT AT</span>
+                <select
+                  className="orders-config-select"
+                  value={ship.retreatHpPct ?? ''}
+                  onChange={e => applyOrders({
+                    retreatHpPct: e.target.value
+                      ? (Number(e.target.value) as 25 | 50 | 75)
+                      : null,
+                  })}
+                >
+                  <option value="">OFF</option>
+                  <option value="25">25% HP</option>
+                  <option value="50">50% HP</option>
+                  <option value="75">75% HP</option>
+                </select>
+              </div>
+              <div className="orders-config-hint">
+                Auto-transfer to the nearest friendly shipyard station when HP
+                drops below the threshold. Fires once per damage episode.
+              </div>
+
+              <div className="orders-config-row">
+                <span className="orders-config-label">AUTO-DETONATE</span>
+                <select
+                  className="orders-config-select"
+                  value={ship.detonateHpPct ?? ''}
+                  onChange={e => applyOrders({
+                    detonateHpPct: e.target.value
+                      ? (Number(e.target.value) as 25 | 50)
+                      : null,
+                  })}
+                >
+                  <option value="">OFF</option>
+                  <option value="25">25% HP</option>
+                  <option value="50">50% HP</option>
+                </select>
+              </div>
+              <div className="orders-config-hint orders-config-hint--danger">
+                Auto-detonate below {ship.detonateHpPct ?? 'X'}% HP: deals damage
+                to every ship in this orbit, friend or foe; this ship is
+                destroyed. No effect on hulls without a detonator part.
+              </div>
+
+              {ordersError && (
+                <button
+                  onClick={() => setOrdersError(null)}
+                  className="orders-config-error"
+                  title="Click to dismiss"
+                >⚠ {ordersError}</button>
+              )}
             </div>
           )}
 
@@ -1248,6 +1402,169 @@ const ShipCombatRecord: React.FC<{
             );
           })}
         </ul>
+      )}
+    </div>
+  );
+};
+
+// ----------------------------------------------------------------
+// DetonatorSection — manual trigger for detonator-fitted hulls
+// (ship designer §2.2, MP only).
+//
+// UX REQUIREMENT (spec, explicit): every surface where the detonator
+// appears must state ALL THREE — the damage number, that it hits
+// friend and foe alike, and that the ship is destroyed. The button
+// tooltip, the confirm step, and the section body all carry the full
+// detonatorDisclosure() copy. Two-step confirm so a mis-click can't
+// vaporize a fleet.
+// ----------------------------------------------------------------
+// ----------------------------------------------------------------
+// ShipLoadoutSection — the designer configuration, shown as a strip of
+// slot chips (fitted parts glyph-coded, empty slots dimmed) plus a
+// per-part legend with effects. Detonator rows carry the full §2.2
+// disclosure in their tooltip. Hulls with 0 slots (colony / SP ships
+// without a parts field) render nothing.
+// ----------------------------------------------------------------
+const ShipLoadoutSection: React.FC<{
+  parts: string[] | undefined;
+  shipClass: ShipClassName;
+  maxHp: number;
+  weaponsLvl: number;
+}> = ({ parts, shipClass, maxHp, weaponsLvl }) => {
+  const totalSlots = SHIP_SLOT_COUNTS[shipClass] ?? 0;
+  if (totalSlots === 0) return null;
+  const fitted = sanitizeParts(parts);
+
+  // Slot chips: fitted parts first (in fit order), then dimmed empties.
+  const slots: (ShipPartId | null)[] = [...fitted];
+  while (slots.length < totalSlots) slots.push(null);
+
+  // Legend: distinct parts in a fixed order with counts + effects.
+  const groups = ALL_PART_IDS
+    .map(id => ({ id, n: fitted.filter(p => p === id).length }))
+    .filter(g => g.n > 0);
+
+  return (
+    <div className="ship-loadout">
+      <div className="ship-loadout__head">
+        <span className="section-title">CONFIGURATION</span>
+        <span className="ship-loadout__count">{fitted.length}/{totalSlots} SLOTS</span>
+      </div>
+
+      <div className="ship-loadout__chips">
+        {slots.map((p, i) => (
+          p === null ? (
+            <span key={i} className="ship-loadout__chip ship-loadout__chip--empty" title="Empty slot">·</span>
+          ) : (
+            <span
+              key={i}
+              className={`ship-loadout__chip${p === 'detonator' ? ' ship-loadout__chip--danger' : ''}`}
+              title={SHIP_PART_DEFS[p].name}
+            >
+              {PART_GLYPH[p]}
+            </span>
+          )
+        ))}
+      </div>
+
+      {groups.length === 0 ? (
+        <div className="ship-loadout__bare">Bare hull — no parts fitted.</div>
+      ) : (
+        <div className="ship-loadout__legend">
+          {groups.map(g => {
+            const def = SHIP_PART_DEFS[g.id];
+            const isDet = g.id === 'detonator';
+            return (
+              <div
+                key={g.id}
+                className={`ship-loadout__row${isDet ? ' ship-loadout__row--danger' : ''}`}
+                title={isDet
+                  ? detonatorDisclosure(detonatorDamage(maxHp, g.n, weaponsLvl))
+                  : `${def.name} — ${def.blurb}`}
+              >
+                <span className="ship-loadout__glyph">{PART_GLYPH[g.id]}</span>
+                <span className="ship-loadout__name">
+                  {def.name}{g.n > 1 ? ` ×${g.n}` : ''}
+                </span>
+                <span className="ship-loadout__effect">{def.blurb}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const DetonatorSection: React.FC<{
+  ship: Ship;
+  maxHp: number;
+  weaponsLvl: number;
+  inTransit: boolean;
+  /** Fires the server detonate call. Resolves true on success. */
+  onDetonate: () => Promise<boolean>;
+}> = ({ ship, maxHp, weaponsLvl, inTransit, onDetonate }) => {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  // Reset the confirm step when the selected ship changes.
+  useEffect(() => { setConfirming(false); }, [ship.id]);
+
+  const nDet = countPart(ship.parts, 'detonator');
+  const damage = detonatorDamage(maxHp, nDet, weaponsLvl);
+  const disclosure = detonatorDisclosure(damage);
+
+  return (
+    <div className="engagement-section" style={{ borderColor: '#ff5e5e' }}>
+      <div className="section-title" style={{ color: '#ff5e5e' }}>
+        ☠ DETONATOR ({nDet}×)
+      </div>
+      <div style={{ fontSize: 10, color: '#ffb0b0', lineHeight: 1.5, margin: '4px 0 8px' }}>
+        {disclosure}
+      </div>
+      {inTransit ? (
+        <div style={{ fontSize: 10, color: '#b8c8d6', fontStyle: 'italic' }}>
+          Cannot detonate mid-transfer — wait for arrival.
+        </div>
+      ) : !confirming ? (
+        <button
+          className="maneuver-btn"
+          style={{ borderColor: '#ff5e5e', color: '#ff5e5e' }}
+          onClick={() => setConfirming(true)}
+          title={disclosure}
+        >
+          ☠ DETONATE
+        </button>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ fontSize: 10, color: '#ff5e5e', fontWeight: 700, lineHeight: 1.5 }}>
+            CONFIRM: {disclosure}
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button
+              className="maneuver-btn"
+              disabled={busy}
+              style={{
+                borderColor: '#ff5e5e', color: '#fff',
+                background: 'rgba(255, 94, 94, 0.25)', fontWeight: 700,
+              }}
+              onClick={async () => {
+                setBusy(true);
+                const ok = await onDetonate();
+                setBusy(false);
+                if (!ok) setConfirming(false);
+              }}
+            >
+              {busy ? 'DETONATING…' : '☠ CONFIRM DETONATION'}
+            </button>
+            <button
+              className="maneuver-btn"
+              disabled={busy}
+              onClick={() => setConfirming(false)}
+            >
+              CANCEL
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

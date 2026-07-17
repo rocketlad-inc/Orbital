@@ -12,6 +12,8 @@ import {
   ShipIcon, ShipIconVariant, ICON_VARIANT_NAMES,
   ALL_VARIANTS, DEFAULT_SHIP_ICONS,
 } from './ShipIcons';
+import { openShipDesigner } from './ShipDesigner';
+import { sanitizeParts, partsCost, computeDesignStats, loadoutSummary } from '../game/shipParts';
 import { randomShipName } from '../game/shipNames';
 import './BuildPanel.css';
 
@@ -37,6 +39,7 @@ export const BuildPanel: React.FC = () => {
     frigate:   DEFAULT_SHIP_ICONS.frigate,
     destroyer: DEFAULT_SHIP_ICONS.destroyer,
     freighter: DEFAULT_SHIP_ICONS.freighter,
+    colony:    DEFAULT_SHIP_ICONS.colony,
   });
   // Server-side build rejection shown as a red chip below the rows so
   // the BUILD button never silently resets in MP — mirrors the
@@ -82,17 +85,26 @@ export const BuildPanel: React.FC = () => {
   const playerRes = gameState.resources['player'];
   if (!playerRes) return null;
 
-  const activeBuildOrders = gameState.buildOrders.filter(bo => bo.bodyId === body.id);
+  const ordersHere = gameState.buildOrders.filter(bo => bo.bodyId === body.id);
+  // MP unlimited queue split: 'building' rows occupy slots and show a
+  // progress bar; 'waiting' rows sit below with a position number until
+  // the server promotes them FIFO. SP orders never carry a status —
+  // they're all active.
+  const buildingOrders = ordersHere.filter(bo => bo.status !== 'waiting');
+  const waitingOrders = ordersHere.filter(bo => bo.status === 'waiting');
   const existingShipNames = gameState.ships.map(s => s.name);
 
   // Build slots: 1 base + 1 per Shipyard level on owned stations here.
-  // Mirrors the server gate in worker/actions.js handleQueueBuild and
-  // src/game/settlements.ts shipyardSlotsAtBody. Pending (committed-but-
-  // not-built) names count too — each will consume a slot when queued —
-  // so the player sees the true remaining capacity.
+  // Mirrors the server concurrency in worker/actions.js handleQueueBuild
+  // and src/game/settlements.ts shipyardSlotsAtBody. Pips count ACTIVE
+  // builds only — waiting orders don't consume a slot.
   const totalSlots = shipyardSlotsAtBody(body.id, 'player', gameState.settlements);
-  const usedSlots = activeBuildOrders.length;
+  const usedSlots = buildingOrders.length;
   const slotsFull = usedSlots >= totalSlots;
+  // MP: the queue is unlimited depth — BUILD stays enabled at capacity
+  // and new orders wait for a slot (charged up front, refundable via
+  // cancel). SP keeps the hard gate (single-player engine is frozen).
+  const capacityBlocks = slotsFull && !mpActions;
 
   const handleCommitName = () => {
     const trimmed = customName.trim();
@@ -122,7 +134,17 @@ export const BuildPanel: React.FC = () => {
     //   3. random pool name
     const fromQueue = dequeueName();
     const name = fromQueue ?? randomShipName(shipClass, existingShipNames);
-    const variant = iconChoice[shipClass];
+    // Icon source of truth: the active design owns the ship's look, so
+    // its icon wins whenever a design is set for this class. The inline
+    // per-row picker (iconChoice) only applies to bare-hull builds where
+    // no design exists. Previously handleBuild always sent iconChoice,
+    // so the server's "use the design's icon when the client sends none"
+    // fallback could never fire — designs built with the class-default
+    // icon no matter what you picked in the designer.
+    const activeDesign = mpActions
+      ? gameState.shipDesigns?.find(d => d.shipClass === shipClass && d.isActive)
+      : undefined;
+    const variant = activeDesign?.iconVariant ?? iconChoice[shipClass];
     if (mpActions) {
       // Multiplayer: server is canonical for resource deduction + queue
       // persistence. Skip the local buildShip() — calling it here used
@@ -173,7 +195,9 @@ export const BuildPanel: React.FC = () => {
       </div>
       {slotsFull && (
         <div className="build-slots__hint">
-          All slots busy — wait for a build to finish, or add/upgrade a Shipyard on a station here for more.
+          {mpActions
+            ? 'All slots busy — new builds are charged now and wait in the queue. Add/upgrade a Shipyard for more concurrent slots.'
+            : 'All slots busy — wait for a build to finish, or add/upgrade a Shipyard on a station here for more.'}
         </div>
       )}
 
@@ -227,10 +251,10 @@ export const BuildPanel: React.FC = () => {
         </div>
       )}
 
-      {activeBuildOrders.length > 0 && (
+      {buildingOrders.length > 0 && (
         <div className="build-queue">
           <div className="queue-label">BUILDING</div>
-          {activeBuildOrders.map(bo => {
+          {buildingOrders.map(bo => {
             const progress = (gameState.currentTick - bo.startTick) / (bo.completeTick - bo.startTick);
             const remaining = Math.max(0, bo.completeTick - gameState.currentTick);
             return (
@@ -238,6 +262,11 @@ export const BuildPanel: React.FC = () => {
                 <div className="build-info">
                   <span className="build-name">{bo.shipName}</span>
                   <span className="build-class">{bo.shipClass.toUpperCase()}</span>
+                  {loadoutSummary(bo.parts) && bo.parts && bo.parts.length > 0 && (
+                    <span className="build-loadout" title="Fitted parts (snapshot at queue time)">
+                      {loadoutSummary(bo.parts)}
+                    </span>
+                  )}
                 </div>
                 <div className="build-progress-bar">
                   <div className="build-progress-fill" style={{ width: `${Math.min(100, progress * 100)}%` }} />
@@ -270,12 +299,72 @@ export const BuildPanel: React.FC = () => {
         </div>
       )}
 
+      {/* Waiting orders — queued beyond concurrency (MP unlimited
+          queue). Already paid for; the server promotes them FIFO as
+          active builds finish. Position number instead of a progress
+          bar; cancel refunds like any other order. */}
+      {waitingOrders.length > 0 && (
+        <div className="build-queue build-queue--waiting">
+          <div className="queue-label">QUEUED (waiting for slot)</div>
+          {waitingOrders.map((bo, i) => (
+            <div key={bo.id} className="build-item build-item--waiting" style={{ opacity: 0.75 }}>
+              <div className="build-info">
+                <span
+                  className="build-queue-pos"
+                  style={{ fontSize: 10, opacity: 0.8, marginRight: 6 }}
+                >#{i + 1}</span>
+                <span className="build-name">{bo.shipName}</span>
+                <span className="build-class">{bo.shipClass.toUpperCase()}</span>
+                {loadoutSummary(bo.parts) && bo.parts && bo.parts.length > 0 && (
+                  <span className="build-loadout" title="Fitted parts (snapshot at queue time)">
+                    {loadoutSummary(bo.parts)}
+                  </span>
+                )}
+              </div>
+              <button
+                className="build-cancel"
+                onClick={() => {
+                  cancelBuild(bo.id);
+                  if (mpActions) {
+                    mpActions.cancelBuild(bo.id).then(res => {
+                      if (!res.ok) {
+                        // eslint-disable-next-line no-console
+                        console.warn('cancelBuild rejected by server:', res.error);
+                      }
+                    });
+                  }
+                }}
+                title="Cancel this queued build (refunds the cost)"
+              >✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* LOCAL-first: sum the stockpiles of every player-owned
           settlement at this body so the affordability calc matches
           the server's spend logic in worker/actions.js handleQueueBuild. */}
       <div className="build-classes">
-        {BUILDABLE_CLASSES.map(cls => {
+        {/* Colony ships are an MP-only verb (SP's sim is frozen on the
+            legacy freighter-settle mechanics), so hide the class from
+            the SP build menu — building one there would be a dead end. */}
+        {BUILDABLE_CLASSES.filter(cls => cls !== 'colony' || !!mpActions).map(cls => {
           const def = SHIP_CLASSES[cls];
+          // Ship designer (MP only): BUILD uses the ACTIVE design for
+          // this class. Its parts add to the hull cost and boost the
+          // displayed stats — mirror of the server's handleQueueBuild
+          // snapshot so the row shows what the yard will actually
+          // charge and deliver. No active design = bare hull.
+          const activeDesign = mpActions
+            ? gameState.shipDesigns?.find(d => d.shipClass === cls && d.isActive)
+            : undefined;
+          const designParts = activeDesign ? sanitizeParts(activeDesign.parts) : [];
+          const designCost = partsCost(designParts);
+          const rowCostOre = def.cost.ore + designCost.ore;
+          const rowCostCredits = def.cost.credits + designCost.credits;
+          const designStats = designParts.length > 0
+            ? computeDesignStats(cls, designParts, gameState.factionTech['player']?.levels ?? {})
+            : null;
           // Per-resource shortages so the UI can colour each cost
           // individually + surface the deficit explicitly. Previously the
           // BUILD button just greyed out with no indication of why.
@@ -288,9 +377,9 @@ export const BuildPanel: React.FC = () => {
           const localC = gameState.settlements
             .filter(s => s.ownedBy === 'player' && s.bodyId === body.id)
             .reduce((a, s) => a + s.stockpile.credits, 0);
-          const shortFuel    = Math.max(0, def.cost.fuel    - playerRes.fuel    - localF);
-          const shortOre     = Math.max(0, def.cost.ore     - playerRes.ore     - localO);
-          const shortCredits = Math.max(0, def.cost.credits - playerRes.credits - localC);
+          const shortFuel    = Math.max(0, def.cost.fuel  - playerRes.fuel    - localF);
+          const shortOre     = Math.max(0, rowCostOre     - playerRes.ore     - localO);
+          const shortCredits = Math.max(0, rowCostCredits - playerRes.credits - localC);
           const canAfford = shortFuel === 0 && shortOre === 0 && shortCredits === 0;
           const shortBits: string[] = [];
           if (shortFuel    > 0) shortBits.push(`+${shortFuel} fuel`);
@@ -307,27 +396,69 @@ export const BuildPanel: React.FC = () => {
                     it's a power-user preference, not a build-time
                     decision. Click the icon itself to cycle through
                     variants in-place. */}
-                <button
-                  className="class-icon"
-                  onClick={() => {
-                    const cur = ALL_VARIANTS.indexOf(iconChoice[cls]);
-                    const next = ALL_VARIANTS[(cur + 1) % ALL_VARIANTS.length];
-                    setIconChoice(prev => ({ ...prev, [cls]: next }));
-                  }}
-                  title={`Icon: ${ICON_VARIANT_NAMES[cls][iconChoice[cls]]} (click to cycle)`}
-                  style={{
-                    background: 'transparent', border: 'none',
-                    padding: 0, cursor: 'pointer',
-                    display: 'inline-flex', alignItems: 'center',
-                  }}
-                >
-                  <ShipIcon shipClass={cls} variant={iconChoice[cls]} size={20} />
-                </button>
+                {(() => {
+                  // Effective icon = the active design's icon when one is
+                  // set (it owns the look), else the local per-row pick.
+                  // With a design active, cycling the local override would
+                  // silently do nothing (the build sends the design icon),
+                  // so the click opens the designer instead — where the
+                  // icon actually lives.
+                  const effectiveVariant = activeDesign?.iconVariant ?? iconChoice[cls];
+                  return (
+                    <button
+                      className="class-icon"
+                      onClick={() => {
+                        if (activeDesign) { openShipDesigner(cls); return; }
+                        const cur = ALL_VARIANTS.indexOf(iconChoice[cls]);
+                        const next = ALL_VARIANTS[(cur + 1) % ALL_VARIANTS.length];
+                        setIconChoice(prev => ({ ...prev, [cls]: next }));
+                      }}
+                      title={activeDesign
+                        ? `Icon from design "${activeDesign.name}" — click to change it in the designer`
+                        : `Icon: ${ICON_VARIANT_NAMES[cls][iconChoice[cls]]} (click to cycle)`}
+                      style={{
+                        background: 'transparent', border: 'none',
+                        padding: 0, cursor: 'pointer',
+                        display: 'inline-flex', alignItems: 'center',
+                      }}
+                    >
+                      <ShipIcon shipClass={cls} variant={effectiveVariant} size={20} />
+                    </button>
+                  );
+                })()}
                 <span className="class-name">{def.displayName}</span>
+                {mpActions && (
+                  // Quick-link to the designer, landing on this class's
+                  // tab. Shows the active design's name when one is set
+                  // so the row tells you what BUILD will produce.
+                  <button
+                    onClick={() => openShipDesigner(cls)}
+                    title={activeDesign
+                      ? `Active design: ${activeDesign.name} — click to edit loadouts`
+                      : 'No active design (bare hull) — click to open the ship designer'}
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid #2a3d50', borderRadius: 3,
+                      color: activeDesign ? '#4ecdc4' : '#8aa0b4',
+                      fontFamily: 'inherit', fontSize: 8,
+                      letterSpacing: '0.08em', padding: '2px 6px',
+                      marginLeft: 6, cursor: 'pointer',
+                      maxWidth: 110, overflow: 'hidden',
+                      textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}
+                  >
+                    ⚙ {activeDesign ? activeDesign.name.toUpperCase() : 'DESIGN'}
+                  </button>
+                )}
               </div>
               <div className="class-stats">
-                <span className="stat">FP:{def.firepower}</span>
-                <span className="stat">HP:{def.hp}</span>
+                <span className="stat">FP:{designStats ? designStats.damagePerTick : def.firepower}</span>
+                <span className="stat">HP:{designStats ? designStats.hp : def.hp}</span>
+                {designStats && designStats.travelTimeMult < 1 && (
+                  <span className="stat" title="Engine parts: travel-time multiplier">
+                    ⏱×{designStats.travelTimeMult.toFixed(2)}
+                  </span>
+                )}
                 {def.cargoCapacity > 0 && <span className="stat">CG:{def.cargoCapacity}</span>}
               </div>
               <div className="class-cost" title={shortLabel || undefined}>
@@ -340,21 +471,23 @@ export const BuildPanel: React.FC = () => {
                 <span
                   className="cost-metal"
                   style={shortOre > 0 ? { color: '#ff5e5e', fontWeight: 700 } : undefined}
-                >{def.cost.ore}M</span>
+                >{rowCostOre}M</span>
                 <span
                   className="cost-money"
                   style={shortCredits > 0 ? { color: '#ff5e5e', fontWeight: 700 } : undefined}
-                >{def.cost.credits}C</span>
+                >{rowCostCredits}C</span>
               </div>
               <button
                 className={`build-btn${recentlyQueued.has(cls) ? ' build-btn--just-queued' : ''}`}
-                disabled={!canAfford || slotsFull}
+                disabled={!canAfford || capacityBlocks}
                 onClick={() => { setRecentlyQueued(s => new Set(s).add(cls)); handleBuild(cls); }}
                 title={
-                  slotsFull
+                  capacityBlocks
                     ? `All ${totalSlots} build slots busy — finish a build, or add a Shipyard to a station here`
                     : canAfford
-                      ? `Build a ${def.displayName} (${def.cost.fuel}F ${def.cost.ore}M ${def.cost.credits}C, ${def.buildTime} ticks)`
+                      ? slotsFull
+                        ? `Queue a ${def.displayName}${activeDesign ? ` [${activeDesign.name}]` : ''} (${rowCostOre}M ${rowCostCredits}C, charged now — starts when a slot frees)`
+                        : `Build a ${def.displayName}${activeDesign ? ` [${activeDesign.name}]` : ''} (${rowCostOre}M ${rowCostCredits}C, ${def.buildTime} ticks)`
                       : shortLabel}
               >
                 BUILD · {def.buildTime}t

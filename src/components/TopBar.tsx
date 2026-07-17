@@ -219,13 +219,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 
       {playerResources && (
         <div className="top-bar__resources" data-tutorial-id="topbar-resources">
-          <ResourcePill
-            label="FUEL" modifier="fuel"
-            value={playerResources.fuel}
-            rate={income.delivered.fuel}
-            local={income.local.fuel}
-            hasCollector={income.hasCollector}
-          />
+          {/* FUEL pill removed — fuel is dead (DESIGN-identity-economy.md §1.1) */}
           <ResourcePill
             label="METAL" modifier="ore"
             value={playerResources.ore}
@@ -355,7 +349,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         {!hideSimControls && turnBasedActive && !mpTbmActive && (
           // SP Turn-Based Mode: realtime sim is suppressed. COMMIT TURN
           // jumps the sim by ticksPerTurn. The button carries an inline
-          // budget summary (planned transfer fuel + items count) so the
+          // budget summary (planned orders + ships landing) so the
           // player knows roughly what's about to fire.
           <CommitTurnButton onCommit={commitTurn} />
         )}
@@ -412,7 +406,7 @@ const fmtRate = (n: number) => {
 
 const ResourcePill: React.FC<{
   label: string;
-  modifier: string;          // → css className suffix (fuel/ore/credits/science)
+  modifier: string;          // → css className suffix (ore/credits/science)
   value: number;             // current pool
   rate: number;              // per-tick income arriving in the pool (delivered)
   local: number;             // per-tick income banking to LOCAL settlement stockpiles (90% of non-collector yield)
@@ -461,12 +455,13 @@ const ResourcePill: React.FC<{
 // ----------------------------------------------------------------
 // Turn-Based Mode COMMIT TURN button + budget popover.
 //
-// The bare button shows the planned-spend headline (e.g. "3 orders,
-// -36 fuel"). Hover/tap opens a popover with the full breakdown:
+// The bare button shows the planned-order headline (e.g. "3 orders ·
+// +2 ships"). Hover/tap opens a popover with the full breakdown:
 // every planned transfer, build-in-flight, and research progress.
-// Visual is amber by default, red when planned fuel exceeds the pool
-// (still allowed — the per-tick economy might catch up before each
-// burn fires).
+//
+// Fuel is dead (DESIGN-identity-economy.md §1.1) — transfers are free,
+// so there's no spend to forecast or overspend to warn about. The
+// budget is now purely "what lands this turn".
 // ----------------------------------------------------------------
 
 const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
@@ -483,14 +478,12 @@ const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
     const parts: string[] = [];
     const ordersN = budget.plannedItems.length;
     if (ordersN > 0) parts.push(`${ordersN} order${ordersN === 1 ? '' : 's'}`);
-    if (budget.plannedSpend.fuel > 0) parts.push(`-${budget.plannedSpend.fuel} fuel`);
     const buildsLanding = budget.buildItems.filter(b => b.detail === 'LANDS THIS TURN').length;
     if (buildsLanding > 0) parts.push(`+${buildsLanding} ship${buildsLanding === 1 ? '' : 's'}`);
     return parts.length > 0 ? parts.join(' · ') : 'no orders queued';
   })();
 
-  const overspending = budget.overspend.fuel;
-  const color = overspending ? '#ff5e5e' : '#ffb84d';
+  const color = '#ffb84d';
 
   return (
     <div
@@ -555,7 +548,7 @@ const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
             NEXT TURN · +{ticksPerTurn} ticks
           </div>
 
-          <BudgetRow label="Planned transfers" count={budget.plannedItems.length} delta={`-${budget.plannedSpend.fuel} fuel`} warn={overspending} />
+          <BudgetRow label="Planned transfers" count={budget.plannedItems.length} delta="" />
           {budget.plannedItems.slice(0, 4).map((it, i) => (
             <div key={i} style={{ fontSize: 10, color: '#b8c8d6', paddingLeft: 8 }}>
               · {it.label}{it.detail ? ` — ${it.detail}` : ''}
@@ -605,14 +598,8 @@ const CommitTurnButton: React.FC<{ onCommit: () => void }> = ({ onCommit }) => {
           <div style={{ height: 1, background: '#2a3d50', margin: '8px 0' }} />
 
           <div style={{ fontSize: 10, color: '#b8c8d6' }}>
-            POOL: {Math.round(budget.pool.fuel)} fuel · {Math.round(budget.pool.ore)} metal · {Math.round(budget.pool.credits)} cr
+            POOL: {Math.round(budget.pool.ore)} metal · {Math.round(budget.pool.credits)} cr · {Math.round(budget.pool.science)} sci
           </div>
-          {overspending && (
-            <div style={{ fontSize: 10, color: '#ff5e5e', marginTop: 4 }}>
-              ⚠ Planned fuel ({budget.plannedSpend.fuel}) exceeds pool ({Math.round(budget.pool.fuel)}).
-              Some burns may abort mid-turn.
-            </div>
-          )}
         </div>
       )}
     </div>

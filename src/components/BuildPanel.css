@@ -216,6 +216,15 @@
   letter-spacing: 0.04em;
 }
 
+/* Fitted-parts glyph summary next to the class in a queue row. Brighter
+   than the class label, tight spacing so "⚔×2" stays together. */
+.build-loadout {
+  color: #d8e4ee;
+  font-size: 10px;
+  margin-left: 6px;
+  letter-spacing: 0;
+}
+
 .build-progress-bar {
   width: 50px;
   height: 4px;

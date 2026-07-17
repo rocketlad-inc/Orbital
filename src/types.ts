@@ -216,7 +216,7 @@ export interface Fleet {
 export interface Ship {
   id: string;
   name: string;
-  class: 'corvette' | 'frigate' | 'destroyer' | 'freighter';
+  class: 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
   ownedBy: string;                      // faction id
 
   // Current state
@@ -227,6 +227,19 @@ export interface Ship {
    *  to DEFAULT_SHIP_ICONS[class] when undefined. Values map 1:1 to
    *  ShipIconVariant ('A'..'F') in src/components/ShipIcons.tsx. */
   iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
+  /** Ship-designer parts loadout (multiplayer only, migration 0033).
+   *  Snapshot from the active design at queue time; undefined/empty =
+   *  bare hull = legacy class-def stats. Part ids are ShipPartId
+   *  ('weapon'|'shield'|'engine'|'detonator') — see src/game/shipParts.ts.
+   *  SP ships never carry parts (designer is MP-only; SP AI frozen). */
+  parts?: string[];
+  /** Server-authoritative max HP (multiplayer only). Includes shield
+   *  parts + tech applied at build completion. Undefined falls back to
+   *  the class-def HP (single-player + legacy ships). */
+  hpMax?: number;
+  /** Server-authoritative damage per volley (multiplayer only) —
+   *  includes weapon parts. Undefined = class def. */
+  damagePerTick?: number;
 
   // Orbital position. Always set. During transit it's a stale snapshot
   // of the last parked orbit; rendering and game logic must check
@@ -277,6 +290,18 @@ export interface Ship {
   // on the ShipPanel for freighters with a TRADE LOG view, since
   // freighters can't actually kill. Migration 0025.
   tradesCompleted?: number;
+
+  // === Standing orders (MP, DESIGN-identity-economy.md §3, migration 0034) ===
+  // Stance: attack-on-sight (default, undefined == 'attack'), return-fire
+  // only ('defensive'), or never fire ('hold').
+  stance?: 'attack' | 'defensive' | 'hold';
+  // Auto-retreat threshold (percent of max HP). null/undefined = off.
+  // When set, the server auto-transfers the ship to the nearest friendly
+  // shipyard-station body once hp/hpMax drops to or below the threshold.
+  retreatHpPct?: 25 | 50 | 75 | null;
+  // Dead-man detonate threshold. null/undefined = off. Only meaningful
+  // for hulls carrying a detonator part; inert otherwise.
+  detonateHpPct?: 25 | 50 | null;
 }
 
 /** One confirmed kill credited to a ship. Stored on Ship.combatHistory.
@@ -288,7 +313,7 @@ export interface ShipKillRecord {
   /** Display name of the destroyed ship at the moment it died. */
   targetName: string;
   /** Class of the destroyed ship — useful for "killed 3 corvettes" stats. */
-  targetClass: 'corvette' | 'frigate' | 'destroyer' | 'freighter';
+  targetClass: 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
   /** Body id where the engagement took place. */
   atBodyId: string;
 }
@@ -339,7 +364,11 @@ export interface TorchTransferPlan {
 export interface Faction {
   id: string;
   name: string;
-  color: string;                        // hex color for faction assets
+  color: string;                        // hex color for faction assets (PRIMARY — carries all meaning)
+  /** Secondary trim color (two-tone factions, §5). Decoration only —
+   *  meaning must never be encoded solely in the secondary (colorblind
+   *  safety). Absent → derive via deriveSecondary(color). */
+  color2?: string;
   isPlayer: boolean;
   /** When true, this faction's turn is driven by src/game/factionAI.ts
    *  instead of waiting for player input. Single-player only for v1. */
@@ -375,7 +404,7 @@ export interface AIActivityEntry {
 export interface BuildOrder {
   id: string;
   bodyId: string;                       // where the ship is being built
-  shipClass: 'corvette' | 'frigate' | 'destroyer' | 'freighter';
+  shipClass: 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
   ownedBy: string;                      // faction that ordered it
   startTick: number;                    // tick when construction started
   completeTick: number;                 // tick when ship launches to orbit
@@ -383,6 +412,32 @@ export interface BuildOrder {
   /** Icon variant picked at build time. Copied to Ship.iconVariant
    *  when the build completes. Undefined falls back to the class default. */
   iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
+  /** MP unlimited queue: 'building' = occupying a slot (progress bar),
+   *  'waiting' = queued beyond concurrency, promoted FIFO server-side
+   *  when a slot frees. Undefined (SP / legacy rows) means building. */
+  status?: 'building' | 'waiting';
+  /** Snapshot of the active design's parts at queue time (MP only).
+   *  Lets the queue row show the loadout the ship will launch with —
+   *  which may differ from the CURRENTLY active design if it changed
+   *  after this order was placed. Undefined = bare hull. */
+  parts?: string[];
+}
+
+/**
+ * A saved ship design: hull class + parts loadout + icon variant.
+ * Multiplayer only (server table game_ship_designs, migration 0033).
+ * One design per (player, class) may be active; BUILD snapshots the
+ * active design's parts onto the order at queue time.
+ */
+export interface ShipDesign {
+  id: string;
+  shipClass: 'corvette' | 'frigate' | 'destroyer' | 'freighter';
+  name: string;
+  /** Part ids (ShipPartId in src/game/shipParts.ts). Empty = bare hull. */
+  parts: string[];
+  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
+  isActive: boolean;
+  createdAtMs: number;
 }
 
 /**
@@ -476,7 +531,7 @@ export interface SettlementBuildOrder {
  * (a settlement with a stockpile, e.g. a city) → (a collector) and back
  * indefinitely until the player cancels it. Auto-drain still flows in
  * the background; an active route layers a multiplier on top of that
- * base rate scaled by Flight Dynamics tech.
+ * base rate.
  *
  * NOTE: data shape only this turn. The execution loop, on-map
  * rendering, and piracy-on-death cargo drop land in the next pass —
@@ -572,6 +627,10 @@ export interface GameState {
    *  freighter has been assigned. Persisted with the save. Currently
    *  data-only — the execution loop lands next turn. */
   tradeRoutes?: TradeRoute[];
+  /** The local player's ship-design library (ship designer, §2 of the
+   *  identity-economy release). Multiplayer only — populated from
+   *  /state's ship_designs; undefined in single-player (SP frozen). */
+  shipDesigns?: ShipDesign[];
   aiActivityLog?: AIActivityEntry[];   // optional — rolling log of recent AI decisions
 
   /** Faction ids the local player is allied with — active defense-pact

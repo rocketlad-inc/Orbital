@@ -44,7 +44,7 @@ function err(status, code, message) {
 // shortcut (bodyPosition's common path); eccentric Kuiper orbits and ram
 // trajectories are approximated as circular, which is fine for a generous
 // coverage radius.
-const SHIP_SENSOR_RANGE = { corvette: 150, frigate: 200, destroyer: 175, freighter: 100 };
+const SHIP_SENSOR_RANGE = { corvette: 150, frigate: 200, destroyer: 175, freighter: 100, colony: 75 };
 const SETTLEMENT_SENSOR_RANGE = { city: 250, station: 400 };
 const DEFAULT_SHIP_SENSOR_RANGE = 25;
 const DEFAULT_SETTLEMENT_SENSOR_RANGE = 40;
@@ -208,7 +208,7 @@ async function handleGetState(req, env, ctx) {
   // Caller must be a member of the game.
   const me = await env.DB
     .prepare(
-      `SELECT id, slot, name, color, status,
+      `SELECT id, slot, name, color, color2, status,
               capital_body_id, metal, fuel, gold, science,
               research_tech_id, research_progress, reputation, senate_weight
          FROM game_factions
@@ -227,7 +227,7 @@ async function handleGetState(req, env, ctx) {
 
   const factions = (await env.DB
     .prepare(
-      `SELECT id, slot, name, color, status, capital_body_id, senate_weight, reputation
+      `SELECT id, slot, name, color, color2, status, capital_body_id, senate_weight, reputation
          FROM game_factions
         WHERE game_id = ?
         ORDER BY slot ASC`,
@@ -544,7 +544,8 @@ async function handleGetState(req, env, ctx) {
               fuel, fuel_max, hp, hp_max, damage_per_tick,
               rank, combat_history, trades_completed,
               status, built_at_tick,
-              icon_variant
+              icon_variant, parts_json,
+              stance, retreat_hp_pct, detonate_hp_pct
          FROM game_ships
         WHERE game_id = ?1
           AND status = 'active'
@@ -685,10 +686,24 @@ async function handleGetState(req, env, ctx) {
   const buildQueue = (await env.DB
     .prepare(
       `SELECT id, body_id, ship_class, queued_at_tick, completes_at_tick,
-              icon_variant
+              icon_variant, parts_json, status, started_at_tick, build_ticks
          FROM game_body_build_queue
         WHERE game_id = ? AND faction_id = ?
-          AND cancelled_at_tick IS NULL`,
+          AND cancelled_at_tick IS NULL
+        ORDER BY queued_at_tick ASC, id ASC`,
+    )
+    .bind(gameId, me.id)
+    .all()).results ?? [];
+
+  // Ship designs — the caller's design library (ship designer §2).
+  // Small table (≤12 per class), so shipping it with every /state poll
+  // keeps the designer + BuildPanel in sync without a separate fetch.
+  const shipDesigns = (await env.DB
+    .prepare(
+      `SELECT id, ship_class, name, parts_json, icon_variant, is_active, created_at_ms
+         FROM game_ship_designs
+        WHERE game_id = ? AND faction_id = ?
+        ORDER BY created_at_ms ASC`,
     )
     .bind(gameId, me.id)
     .all()).results ?? [];
@@ -751,6 +766,9 @@ async function handleGetState(req, env, ctx) {
       slot: me.slot,
       name: me.name,
       color: me.color,
+      // Two-tone (§5): secondary trim color. Decoration only — meaning
+      // must stay in the primary. Null for legacy games (client derives).
+      color2: me.color2 ?? null,
       status: me.status,
       // Host flag — the game id IS the room id, so a single lookup
       // tells the client whether this player can edit any event's
@@ -789,6 +807,7 @@ async function handleGetState(req, env, ctx) {
     events,
     build_queue: buildQueue,
     trade_routes: tradeRoutes,
+    ship_designs: shipDesigns,
   });
 }
 

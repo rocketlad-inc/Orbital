@@ -1,5 +1,9 @@
 import { getActiveSliders } from './senate.js';
 import { recomputeBodyOwnership } from './factions.js';
+import {
+  validateParts, partsCost, parsePartsJson,
+  countPart, detonatorDamage,
+} from './shipDesigns.js';
 import { runDigestForGame } from './digest.js';
 
 // Player-action endpoints: things the client wants the server to remember.
@@ -12,16 +16,20 @@ import { runDigestForGame } from './digest.js';
 const GAME_ID_RE   = /^[A-Za-z0-9_-]{6,32}$/;
 const SHIP_ID_RE   = /^[A-Za-z0-9_:-]{6,80}$/;
 const BODY_ID_RE   = /^[A-Za-z0-9_:-]{1,80}$/;
-const SHIP_CLASSES = new Set(['corvette', 'frigate', 'destroyer', 'freighter']);
+const SHIP_CLASSES = new Set(['corvette', 'frigate', 'destroyer', 'freighter', 'colony']);
 
 // Mirrors src/game/shipClasses.ts. Server pays the resource cost in faction
 // columns (metal/fuel/gold). Note ore->metal and credits->gold renames
 // (server schema vs client naming).
 const SHIP_BUILD_COST = {
-  corvette:  { fuel: 3,  metal: 5,  gold: 4,  build_ticks: 10 },
-  frigate:   { fuel: 7,  metal: 10, gold: 8,  build_ticks: 20 },
-  destroyer: { fuel: 14, metal: 20, gold: 17, build_ticks: 40 },
-  freighter: { fuel: 5,  metal: 7,  gold: 5,  build_ticks: 15 },
+  corvette:  { fuel: 0,  metal: 5,  gold: 4,  build_ticks: 10 },
+  frigate:   { fuel: 0,  metal: 10, gold: 8,  build_ticks: 20 },
+  destroyer: { fuel: 0,  metal: 20, gold: 17, build_ticks: 40 },
+  freighter: { fuel: 0,  metal: 7,  gold: 5,  build_ticks: 15 },
+  // Colony ship — consumable expansion hull (DESIGN-identity-economy §4).
+  // ~3x freighter cost: it IS the price of founding a city (deploy
+  // consumes the ship instead of charging SETTLEMENT_COST).
+  colony:    { fuel: 0,  metal: 20, gold: 15, build_ticks: 30 },
 };
 
 function json(data, init = {}) {
@@ -165,7 +173,7 @@ async function handleCancelBuild(req, env, ctx) {
 
   const order = await env.DB
     .prepare(
-      `SELECT id, faction_id, ship_class, completes_at_tick, cancelled_at_tick
+      `SELECT id, faction_id, ship_class, completes_at_tick, cancelled_at_tick, parts_json
          FROM game_body_build_queue
         WHERE id = ? AND game_id = ?`,
     )
@@ -180,6 +188,13 @@ async function handleCancelBuild(req, env, ctx) {
   // Refund the build cost. (fuel was removed from server-side build
   // cost gating, but we keep the column rounding-trip-safe.)
   const cost = SHIP_BUILD_COST[order.ship_class];
+  // Parts were charged at queue time (snapshot of the active design) —
+  // refund them too, or a cancelled fully-loaded destroyer would eat
+  // the loadout price.
+  const orderParts = parsePartsJson(order.ship_class, order.parts_json);
+  const orderPartsCost = partsCost(orderParts);
+  const refundMetal = (cost?.metal ?? 0) + orderPartsCost.metal;
+  const refundGold = (cost?.gold ?? 0) + orderPartsCost.gold;
   const game = await env.DB
     .prepare('SELECT current_tick FROM games WHERE id = ?')
     .bind(gameId)
@@ -199,15 +214,17 @@ async function handleCancelBuild(req, env, ctx) {
   if (!flip.meta?.changes) {
     return err(409, 'already_cancelled', 'this build was already cancelled');
   }
+  // Refund covers hull + the design's parts snapshot (both were charged
+  // at queue time).
   await env.DB
     .prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?')
-    .bind(cost?.metal ?? 0, cost?.gold ?? 0, me.id)
+    .bind(refundMetal, refundGold, me.id)
     .run();
 
   return json({
     ok: true,
     order_id: orderId,
-    refund: { metal: cost?.metal ?? 0, gold: cost?.gold ?? 0 },
+    refund: { metal: refundMetal, gold: refundGold },
   });
 }
 
@@ -289,6 +306,28 @@ async function handleQueueBuild(req, env, ctx) {
   }
   const cost = SHIP_BUILD_COST[shipClass];
 
+  // Ship designer (§2): BUILD uses the caller's ACTIVE design for this
+  // class. The design's parts are SNAPSHOT onto the build order here so
+  // later edits to the design never mutate queued ships. No active
+  // design (or a bare-hull design) = today's ship exactly.
+  const activeDesign = await env.DB
+    .prepare(
+      `SELECT id, parts_json, icon_variant FROM game_ship_designs
+        WHERE game_id = ? AND faction_id = ? AND ship_class = ? AND is_active = 1
+        LIMIT 1`,
+    )
+    .bind(gameId, me.id, shipClass)
+    .first();
+  const designParts = activeDesign ? parsePartsJson(shipClass, activeDesign.parts_json) : [];
+  const designPartsJson = designParts.length > 0 ? JSON.stringify(designParts) : null;
+  const designPartsCost = partsCost(designParts);
+  // Icon fallback chain: explicit BuildPanel pick > design's variant >
+  // class default (NULL). The design variant went through the same
+  // 'A'..'F' validation at design-save time.
+  if (iconVariant == null && activeDesign?.icon_variant && /^[A-F]$/.test(activeDesign.icon_variant)) {
+    iconVariant = activeDesign.icon_variant;
+  }
+
   const bodyRow = await env.DB
     .prepare('SELECT id, owner_faction_id FROM game_bodies WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL')
     .bind(bodyId, gameId)
@@ -315,13 +354,13 @@ async function handleQueueBuild(req, env, ctx) {
     if (!mineHere) return err(403, 'not_owner', 'no settlement of yours at this body');
   }
 
-  // Build-slot gate. Every owned body has 1 base slot; each level of a
-  // Shipyard (a station building) adds one more concurrent slot. This
-  // mirrors src/game/settlements.ts shipyardSlotsAtBody and was the
-  // missing server-side enforcement that let MP players queue unlimited
-  // ships at once (the old shipyard_level COLUMN gate was dead — this
-  // reads the live buildings_json instead). In-flight builds = rows in
-  // game_body_build_queue not yet completed/cancelled.
+  // Build concurrency. Every owned body has 1 base slot; each level of
+  // a Shipyard (a station building) adds one more concurrent slot. This
+  // mirrors src/game/settlements.ts shipyardSlotsAtBody. Since 0037 the
+  // queue is UNLIMITED depth — orders beyond capacity are accepted with
+  // status='waiting' (still charged up front) and promoted FIFO by the
+  // room.js tick pass as active builds complete. Only status='building'
+  // rows count against the slots.
   const yardRows = (await env.DB
     .prepare(
       `SELECT buildings_json FROM game_settlements
@@ -339,20 +378,22 @@ async function handleQueueBuild(req, env, ctx) {
     } catch { /* ignore malformed */ }
   }
   const slots = 1 + shipyardLevels;
-  // Completed builds are DELETED from this table (room.js), so any row
-  // that still exists and isn't cancelled is an in-flight build.
+  // Completed builds are DELETED from this table (room.js), so any
+  // non-cancelled status='building' row is occupying a slot right now.
+  // (Rows predating migration 0037 read status='building' via the
+  // column DEFAULT, which is correct — they were all active.)
   const inFlight = await env.DB
     .prepare(
       `SELECT COUNT(*) AS c FROM game_body_build_queue
         WHERE game_id = ? AND body_id = ? AND faction_id = ?
-          AND cancelled_at_tick IS NULL`,
+          AND cancelled_at_tick IS NULL AND status = 'building'`,
     )
     .bind(gameId, bodyId, me.id)
     .first();
-  if ((inFlight?.c ?? 0) >= slots) {
-    return err(409, 'no_slots',
-      `all ${slots} build slot${slots === 1 ? '' : 's'} at this body are busy — wait for one to finish or build a Shipyard`);
-  }
+  // No rejection when slots are full — the order is accepted as
+  // status='waiting' and promoted FIFO when a slot frees up. The old
+  // 'no_slots' 409 is gone from the normal flow.
+  const startsNow = (inFlight?.c ?? 0) < slots;
 
   // Senate effect: ship_build_cost_multiplier scales metal + gold at
   // queue time. Default 1.0 (no effect) when no proposal is active.
@@ -379,10 +420,14 @@ async function handleQueueBuild(req, env, ctx) {
     const lvl = ct?.level ?? 0;
     buildCostMult *= Math.max(0.25, 1 - 0.05 * lvl);
   } catch { /* default — no discount */ }
+
+  // Parts are added to the hull cost at queue time (empty slots are
+  // free — the bare hull is the budget option). Both multipliers above
+  // scale the whole ship, parts included.
   const scaledCost = {
-    metal: Math.ceil(cost.metal * buildCostMult),
+    metal: Math.ceil((cost.metal + designPartsCost.metal) * buildCostMult),
     fuel:  Math.ceil(cost.fuel  * buildCostMult),
-    gold:  Math.ceil(cost.gold  * buildCostMult),
+    gold:  Math.ceil((cost.gold + designPartsCost.gold) * buildCostMult),
     build_ticks: cost.build_ticks,
   };
 
@@ -430,6 +475,9 @@ async function handleQueueBuild(req, env, ctx) {
     .bind(gameId)
     .first();
   const startTick = game?.current_tick ?? 0;
+  // For a waiting order completes_at_tick is a placeholder (NOT NULL
+  // column) — the completion sweep filters on status='building', and
+  // promotion in room.js rewrites it to promotion_tick + build_ticks.
   const completeTick = startTick + cost.build_ticks;
 
   const orderId = `${bodyId}:b${Date.now().toString(36)}`;
@@ -438,10 +486,12 @@ async function handleQueueBuild(req, env, ctx) {
     env.DB
       .prepare(
         `INSERT INTO game_body_build_queue
-          (id, game_id, body_id, faction_id, ship_class, queued_at_tick, completes_at_tick, icon_variant, ship_name)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, game_id, body_id, faction_id, ship_class, queued_at_tick, completes_at_tick, icon_variant, ship_name,
+           parts_json, status, build_ticks, started_at_tick)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .bind(orderId, gameId, bodyId, me.id, shipClass, startTick, completeTick, iconVariant, shipName),
+      .bind(orderId, gameId, bodyId, me.id, shipClass, startTick, completeTick, iconVariant, shipName,
+            designPartsJson, startsNow ? 'building' : 'waiting', cost.build_ticks, startsNow ? startTick : null),
   ];
   for (const d of settlementDrains) {
     batchStmts.push(
@@ -471,6 +521,8 @@ async function handleQueueBuild(req, env, ctx) {
       ship_class: shipClass,
       queued_at_tick: startTick,
       completes_at_tick: completeTick,
+      parts: designParts,
+      status: startsNow ? 'building' : 'waiting',
     },
   }, { status: 201 });
 }
@@ -525,28 +577,56 @@ async function handleDeploySettlement(req, env, ctx) {
       `this body already has a ${type} — only one ${type} per body`);
   }
 
-  // Caller needs a FREIGHTER orbiting here OR they already own the body.
-  // Combat ships don't carry construction materials, so requiring a
-  // freighter matches the client gate (BodyInspector.tsx) and the SP
-  // gameContext.deploySettlement gate. Without this filter a player can
-  // deploy by sending only a corvette/frigate/destroyer.
-  const presence = await env.DB
+  // Expansion rules (DESIGN-identity-economy §4). Freighters lost the
+  // settle verb — they haul and trade only. Instead:
+  //   city:    REQUIRES a colony ship of yours orbiting this body.
+  //            The ship IS the cost — it is consumed; no SETTLEMENT_COST.
+  //   station: EITHER (a) you already own a settlement at this body →
+  //            build from orbit for SETTLEMENT_COST (no ship needed),
+  //            OR (b) consume a colony ship orbiting here (no resource
+  //            cost). Path (b) is how gas giants + Sol get settled.
+  const colonyShip = await env.DB
     .prepare(
-      `SELECT 1 AS x FROM game_ships
+      `SELECT id, name FROM game_ships
         WHERE game_id = ? AND owner_faction_id = ? AND parent_body_id = ?
-          AND ship_class = 'freighter'
+          AND ship_class = 'colony'
           AND status = 'active'
         LIMIT 1`,
     )
     .bind(gameId, me.id, bodyId)
     .first();
-  if (!presence && bodyRow.owner_faction_id !== me.id) {
-    return err(403, 'no_presence', 'need a freighter at this body to deploy');
-  }
 
-  if (me.metal < SETTLEMENT_COST.metal || me.gold < SETTLEMENT_COST.gold) {
-    return err(409, 'insufficient_resources',
-      `need ${SETTLEMENT_COST.metal}M ${SETTLEMENT_COST.gold}G`);
+  let consumedShip = null; // { id, name } when a colony ship pays the bill
+  let payResourceCost = false;
+  if (type === 'city') {
+    if (!colonyShip) {
+      return err(409, 'need_colony_ship',
+        'founding a city requires a Colony Ship of yours in orbit here (it is consumed)');
+    }
+    consumedShip = colonyShip;
+  } else {
+    // station
+    const mySettlementHere = await env.DB
+      .prepare(
+        `SELECT 1 AS x FROM game_settlements
+          WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+            AND destroyed_at_tick IS NULL
+          LIMIT 1`,
+      )
+      .bind(gameId, bodyId, me.id)
+      .first();
+    if (mySettlementHere) {
+      payResourceCost = true;
+      if (me.metal < SETTLEMENT_COST.metal || me.gold < SETTLEMENT_COST.gold) {
+        return err(409, 'insufficient_resources',
+          `need ${SETTLEMENT_COST.metal}M ${SETTLEMENT_COST.gold}G`);
+      }
+    } else if (colonyShip) {
+      consumedShip = colonyShip;
+    } else {
+      return err(409, 'need_colony_ship',
+        'need a settlement of yours at this body (pay metal/gold) or a Colony Ship in orbit (consumed)');
+    }
   }
 
   const game = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
@@ -564,7 +644,7 @@ async function handleDeploySettlement(req, env, ctx) {
   const surfaceAngle = type === 'city' ? Math.random() * Math.PI * 2 : null;
   const rp = type === 'station' ? (bodyRow.radius || 4) + 3 : null;
 
-  await env.DB.batch([
+  const deployStmts = [
     env.DB
       .prepare(
         `INSERT INTO game_settlements
@@ -581,10 +661,33 @@ async function handleDeploySettlement(req, env, ctx) {
             hp, hp,
             surfaceAngle, rp, rp, tick,
             tick),
-    env.DB
-      .prepare('UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ?')
-      .bind(SETTLEMENT_COST.metal, SETTLEMENT_COST.gold, me.id),
-  ]);
+  ];
+  if (payResourceCost) {
+    deployStmts.push(
+      env.DB
+        .prepare('UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ?')
+        .bind(SETTLEMENT_COST.metal, SETTLEMENT_COST.gold, me.id),
+    );
+  }
+  if (consumedShip) {
+    // The colony ship is spent founding the settlement. Same terminal
+    // shape as combat kills (room.js) so every downstream filter on
+    // status='active' / destroyed_at_tick treats it as gone. Guard on
+    // status='active' so a racing double-deploy can't spend one ship
+    // twice (the second batch's UPDATE hits zero rows — settlement
+    // still inserts, but the one-per-body 'occupied' gate above plus
+    // D1 write serialization make that window effectively closed).
+    deployStmts.push(
+      env.DB
+        .prepare(
+          `UPDATE game_ships
+              SET hp = 0, status = 'destroyed', destroyed_at_tick = ?
+            WHERE id = ? AND status = 'active'`,
+        )
+        .bind(tick, consumedShip.id),
+    );
+  }
+  await env.DB.batch(deployStmts);
 
   // Body ownership = "faction with the most settlements here". The brand
   // new settlement may have just tipped the balance — recompute.
@@ -604,6 +707,9 @@ async function handleDeploySettlement(req, env, ctx) {
       settlement_name: name,
       body_name: bodyName,
       owner_faction_name: factionName,
+      // Set when a colony ship was spent to found this settlement —
+      // lets the chronicle render "founded by CSS Mayflower".
+      consumed_ship_name: consumedShip ? (consumedShip.name ?? null) : null,
     });
     const entryId = `c_${id}`;
     await env.DB
@@ -627,7 +733,9 @@ const TECH_DEFS = {
   weapons:      { baseCost: 40, costScaling: 1.7 },
   armor:        { baseCost: 40, costScaling: 1.7 },
   propulsion:   { baseCost: 35, costScaling: 1.6 },
-  flight:       { baseCost: 50, costScaling: 1.7 },
+  // Flight Dynamics scrapped — speed now comes from engine parts scaled by
+  // Propulsion. A research request for 'flight' now falls through to the
+  // unknown-tech rejection below.
   construction: { baseCost: 50, costScaling: 1.8 },
   industry:     { baseCost: 45, costScaling: 1.7 },
   sensors:      { baseCost: 30, costScaling: 1.5 },
@@ -707,21 +815,9 @@ async function handleResearch(req, env, ctx) {
     ]);
   }
 
-  // Flight tech: stamp the faction's engine_g so the authoritative
-  // server transit math (trade-route + transfer trip times, room.js)
-  // actually gets faster. engine_g was a fixed 0.05 column that nothing
-  // ever wrote, so flight research only sped up the client's optimistic
-  // prediction — which the next /state poll overwrote. Formula mirrors
-  // src/game/techs.ts engineGModifier: base 0.05 × 1/max(0.25, 1 −
-  // 0.06·level).
-  if (techId === 'flight') {
-    const newLevel = curLevel + 1;
-    const engineG = 0.05 * (1 / Math.max(0.25, 1 - 0.06 * newLevel));
-    await env.DB
-      .prepare('UPDATE game_factions SET engine_g = ? WHERE id = ?')
-      .bind(engineG, me.id)
-      .run();
-  }
+  // (Flight Dynamics used to stamp faction.engine_g here. That tech is
+  // scrapped — base acceleration is now fixed and speed comes from engine
+  // parts scaled by Propulsion, so nothing bumps engine_g anymore.)
 
   return json({
     tech_id: techId,
@@ -1097,10 +1193,16 @@ const COLLECTOR_COST = { metal: 0, gold: 150 };
 //
 // (server columns are metal/gold; client uses ore/credits — same thing,
 // different name.)
+// ECONOMY REWORK (DESIGN-identity-economy.md §1.2): each yield building
+// costs the resource it PRODUCES, so compounding is self-limiting.
+// The old cross-feed (forge cost gold, mint cost metal) formed a closed
+// positive-feedback loop that left science 2.5x behind by endgame.
+// Lab gets parity (+25%, 20 ticks — see room.js LAB_PER_LEVEL) and can
+// host on stations (the ×1.4-science settlement type).
 const BUILDING_DEFS = {
-  forge:    { hostType: 'city',    base: { fuel: 0, metal: 0,  gold: 40 }, costScaling: 1.6, baseTicks: 20, timeScaling: 1.3 },
-  mint:     { hostType: 'city',    base: { fuel: 0, metal: 40, gold: 0  }, costScaling: 1.6, baseTicks: 20, timeScaling: 1.3 },
-  lab:      { hostType: 'city',    base: { fuel: 0, metal: 30, gold: 30 }, costScaling: 1.6, baseTicks: 25, timeScaling: 1.3 },
+  forge:    { hostType: 'city',    base: { fuel: 0, metal: 40, gold: 0  }, costScaling: 1.6, baseTicks: 20, timeScaling: 1.3 },
+  mint:     { hostType: 'city',    base: { fuel: 0, metal: 0,  gold: 40 }, costScaling: 1.6, baseTicks: 20, timeScaling: 1.3 },
+  lab:      { hostType: 'any',     base: { fuel: 0, metal: 0,  gold: 40 }, costScaling: 1.6, baseTicks: 20, timeScaling: 1.3 },
   weapons:  { hostType: 'station', base: { fuel: 0, metal: 30, gold: 20 }, costScaling: 1.6, baseTicks: 30, timeScaling: 1.3 },
   shipyard: { hostType: 'station', base: { fuel: 0, metal: 50, gold: 30 }, costScaling: 1.7, baseTicks: 40, timeScaling: 1.3 },
   // Trajectory Control Thrusters — asteroid-weapon enabler. Mirrors
@@ -1156,7 +1258,7 @@ async function handleQueueBuilding(req, env, ctx) {
   if (settlement.owner_faction_id !== me.id) {
     return err(403, 'not_owner', 'you do not own this settlement');
   }
-  if (settlement.type !== BUILDING_DEFS[kind].hostType) {
+  if (BUILDING_DEFS[kind].hostType !== 'any' && settlement.type !== BUILDING_DEFS[kind].hostType) {
     return err(409, 'wrong_host', `${kind} requires a ${BUILDING_DEFS[kind].hostType}`);
   }
   // Body-type gate (e.g. trajectory_thrusters → asteroid only). Without
@@ -1680,9 +1782,15 @@ async function handleRamAsteroid(req, env, ctx) {
   const interceptPosX = num(payload.intercept_pos_x);
   const interceptPosY = num(payload.intercept_pos_y);
   const totalDv = num(payload.total_dv);
-  const fuelCost = num(payload.fuel_cost);
+  // Ram is paid in METAL. It used to cost faction fuel, but P0 removed
+  // fuel from the economy (yields 0, starting pool 0) — which silently
+  // made the ram permanently unaffordable and bricked Trajectory Control
+  // Thrusters, the 800M/1200G building whose whole purpose is this
+  // action. Accepts the legacy `fuel_cost` field name from an older
+  // client bundle so an in-flight tab doesn't 400.
+  const metalCost = num(payload.metal_cost ?? payload.fuel_cost);
   if ([startTick, flipTick, arriveTick, acceleration, startPosX, startPosY,
-       startVelX, startVelY, interceptPosX, interceptPosY, totalDv, fuelCost]
+       startVelX, startVelY, interceptPosX, interceptPosY, totalDv, metalCost]
       .some(v => v == null)) {
     return err(400, 'bad_request', 'plan fields missing or invalid');
   }
@@ -1691,12 +1799,12 @@ async function handleRamAsteroid(req, env, ctx) {
     return err(400, 'bad_request', 'flip_tick must lie between start and arrive');
   }
   if (acceleration <= 0) return err(400, 'bad_request', 'acceleration must be positive');
-  if (fuelCost < 0) return err(400, 'bad_request', 'fuel_cost must be non-negative');
+  if (metalCost < 0) return err(400, 'bad_request', 'metal_cost must be non-negative');
 
-  // Fuel debit. Atomic with the plan write below — if either fails,
-  // the player keeps their fuel.
-  if ((me.fuel ?? 0) < fuelCost) {
-    return err(409, 'insufficient_fuel', `need ${fuelCost} fuel to ram, have ${me.fuel ?? 0}`);
+  // Metal debit. Atomic with the plan write below — if either fails,
+  // the player keeps their metal.
+  if ((me.metal ?? 0) < metalCost) {
+    return err(409, 'insufficient_resources', `need ${metalCost} metal to ram, have ${me.metal ?? 0}`);
   }
 
   const game = await env.DB
@@ -1731,8 +1839,8 @@ async function handleRamAsteroid(req, env, ctx) {
         bodyId, gameId,
       ),
     env.DB
-      .prepare('UPDATE game_factions SET fuel = fuel - ? WHERE id = ?')
-      .bind(fuelCost, me.id),
+      .prepare('UPDATE game_factions SET metal = metal - ? WHERE id = ?')
+      .bind(metalCost, me.id),
     // Reputation hit. Asteroid weapons are atrocities — bypass
     // every diplomatic norm, broadcast their threat to everyone in
     // the system, and the launching faction takes the maximum
@@ -1788,6 +1896,119 @@ async function handleRamAsteroid(req, env, ctx) {
     arrive_at_tick: arriveTick,
     fuel_cost: fuelCost,
   }, { status: 201 });
+}
+
+// PATCH /api/games/:gameId/ships/orders
+// body: { ship_ids: string[], stance?, retreat_hp_pct?, detonate_hp_pct? }
+//
+// Bulk standing-orders update (DESIGN-identity-economy.md §3). Fields are
+// optional-but-at-least-one; an explicitly-null retreat/detonate value
+// clears the threshold ("off"). Ownership is all-or-nothing: if ANY ship
+// in the list is missing, destroyed, or owned by someone else, the whole
+// request is rejected and no ship is touched.
+const STANCES = new Set(['attack', 'defensive', 'hold']);
+const RETREAT_PCTS = new Set([25, 50, 75]);
+const DETONATE_PCTS = new Set([25, 50]);
+
+async function handleSetShipOrders(req, env, ctx) {
+  const { gameId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+
+  const shipIds = body.ship_ids;
+  if (!Array.isArray(shipIds) || shipIds.length === 0) {
+    return err(400, 'bad_request', 'ship_ids must be a non-empty array');
+  }
+  if (shipIds.length > 200) {
+    return err(400, 'bad_request', 'too many ships in one request (max 200)');
+  }
+  const uniqueIds = [...new Set(shipIds)];
+  for (const id of uniqueIds) {
+    if (typeof id !== 'string' || !SHIP_ID_RE.test(id)) {
+      return err(400, 'bad_request', `invalid ship id: ${id}`);
+    }
+  }
+
+  // Field validation. Distinguish "absent" (leave the column alone) from
+  // "explicitly null" (clear the threshold / reset stance to default).
+  const hasStance   = 'stance' in body;
+  const hasRetreat  = 'retreat_hp_pct' in body;
+  const hasDetonate = 'detonate_hp_pct' in body;
+  if (!hasStance && !hasRetreat && !hasDetonate) {
+    return err(400, 'bad_request', 'no order fields supplied');
+  }
+  let stance = null;
+  if (hasStance) {
+    if (body.stance !== null && !STANCES.has(body.stance)) {
+      return err(400, 'bad_request', "stance must be 'attack', 'defensive', or 'hold'");
+    }
+    stance = body.stance; // null resets to default ('attack' behavior)
+  }
+  let retreatPct = null;
+  if (hasRetreat && body.retreat_hp_pct !== null) {
+    const v = Number(body.retreat_hp_pct);
+    if (!RETREAT_PCTS.has(v)) {
+      return err(400, 'bad_request', 'retreat_hp_pct must be null, 25, 50, or 75');
+    }
+    retreatPct = v;
+  }
+  let detonatePct = null;
+  if (hasDetonate && body.detonate_hp_pct !== null) {
+    const v = Number(body.detonate_hp_pct);
+    if (!DETONATE_PCTS.has(v)) {
+      return err(400, 'bad_request', 'detonate_hp_pct must be null, 25, or 50');
+    }
+    detonatePct = v;
+  }
+
+  // Ownership check for EVERY ship — all-or-nothing.
+  const placeholders = uniqueIds.map(() => '?').join(',');
+  const rows = (await env.DB
+    .prepare(
+      `SELECT id, owner_faction_id, status FROM game_ships
+        WHERE game_id = ? AND id IN (${placeholders})`,
+    )
+    .bind(gameId, ...uniqueIds)
+    .all()).results ?? [];
+  const byId = new Map(rows.map(r => [r.id, r]));
+  for (const id of uniqueIds) {
+    const row = byId.get(id);
+    if (!row || row.status !== 'active') {
+      return err(404, 'not_found', `ship not found: ${id}`);
+    }
+    if (row.owner_faction_id !== me.id) {
+      return err(403, 'not_owner', `you do not own ship ${id}`);
+    }
+  }
+
+  // One UPDATE covering all ships. Only the supplied fields are written.
+  const sets = [];
+  const binds = [];
+  if (hasStance)   { sets.push('stance = ?');          binds.push(stance); }
+  if (hasRetreat)  { sets.push('retreat_hp_pct = ?');  binds.push(retreatPct); }
+  if (hasDetonate) { sets.push('detonate_hp_pct = ?'); binds.push(detonatePct); }
+  await env.DB
+    .prepare(
+      `UPDATE game_ships SET ${sets.join(', ')}
+        WHERE game_id = ? AND id IN (${placeholders})`,
+    )
+    .bind(...binds, gameId, ...uniqueIds)
+    .run();
+
+  return json({
+    ok: true,
+    updated: uniqueIds.length,
+    orders: {
+      ...(hasStance ? { stance } : {}),
+      ...(hasRetreat ? { retreat_hp_pct: retreatPct } : {}),
+      ...(hasDetonate ? { detonate_hp_pct: detonatePct } : {}),
+    },
+  });
 }
 
 // PATCH /api/games/:gameId/ships/:shipId
@@ -1925,7 +2146,411 @@ async function handleEditChronicleFlavor(req, env, ctx) {
   return json({ ok: true, entry_id: entryId, flavor, edited_by: flavor ? me.id : null });
 }
 
+// ============================================================
+// Ship designer (DESIGN-identity-economy.md §2)
+//
+// GET    /api/games/:gid/designs           — caller's design library
+// POST   /api/games/:gid/designs           — create (optionally set active)
+// PATCH  /api/games/:gid/designs/:designId — rename / edit parts / set active
+// DELETE /api/games/:gid/designs/:designId
+// POST   /api/games/:gid/ships/:shipId/detonate — manual detonator trigger
+//
+// One ACTIVE design per (faction, ship_class) — enforced on every
+// activate path by clearing siblings in the same batch. BUILD snapshots
+// the active design's parts_json onto the order (handleQueueBuild).
+// ============================================================
+
+const DESIGN_NAME_MAX = 32;
+
+function designToJson(row) {
+  return {
+    id: row.id,
+    ship_class: row.ship_class,
+    name: row.name,
+    parts_json: row.parts_json ?? null,
+    icon_variant: row.icon_variant ?? null,
+    is_active: row.is_active === 1,
+    created_at_ms: row.created_at_ms,
+  };
+}
+
+async function handleListDesigns(req, env, ctx) {
+  const { gameId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const rows = (await env.DB
+    .prepare(
+      `SELECT id, ship_class, name, parts_json, icon_variant, is_active, created_at_ms
+         FROM game_ship_designs
+        WHERE game_id = ? AND faction_id = ?
+        ORDER BY created_at_ms ASC`,
+    )
+    .bind(gameId, me.id)
+    .all()).results ?? [];
+  return json({ designs: rows.map(designToJson) });
+}
+
+async function handleCreateDesign(req, env, ctx) {
+  const { gameId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+
+  const shipClass = body.ship_class;
+  if (typeof shipClass !== 'string' || !SHIP_CLASSES.has(shipClass)) {
+    return err(400, 'bad_request', 'invalid ship_class');
+  }
+  const name = (typeof body.name === 'string' ? body.name.trim() : '');
+  if (name.length === 0) return err(400, 'bad_request', 'design name required');
+  if (name.length > DESIGN_NAME_MAX) {
+    return err(400, 'bad_request', `design name too long (max ${DESIGN_NAME_MAX} chars)`);
+  }
+  const v = validateParts(shipClass, body.parts ?? []);
+  if (!v.ok) return err(400, 'bad_parts', v.error);
+  let iconVariant = null;
+  if (body.icon_variant != null) {
+    if (typeof body.icon_variant !== 'string' || !/^[A-F]$/.test(body.icon_variant)) {
+      return err(400, 'bad_request', 'invalid icon_variant');
+    }
+    iconVariant = body.icon_variant;
+  }
+  const setActive = body.set_active === true;
+
+  // Soft cap so a rogue client can't fill the table: 12 designs per
+  // class is far beyond any legitimate library.
+  const countRow = await env.DB
+    .prepare('SELECT COUNT(*) AS c FROM game_ship_designs WHERE game_id = ? AND faction_id = ? AND ship_class = ?')
+    .bind(gameId, me.id, shipClass)
+    .first();
+  if ((countRow?.c ?? 0) >= 12) {
+    return err(409, 'too_many_designs', 'design library full for this class (max 12) — delete one first');
+  }
+
+  const id = `dsn_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  const partsJson = v.parts.length > 0 ? JSON.stringify(v.parts) : null;
+  const now = Date.now();
+
+  const stmts = [];
+  if (setActive) {
+    stmts.push(
+      env.DB
+        .prepare('UPDATE game_ship_designs SET is_active = 0 WHERE game_id = ? AND faction_id = ? AND ship_class = ?')
+        .bind(gameId, me.id, shipClass),
+    );
+  }
+  stmts.push(
+    env.DB
+      .prepare(
+        `INSERT INTO game_ship_designs
+          (id, game_id, faction_id, ship_class, name, parts_json, icon_variant, is_active, created_at_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(id, gameId, me.id, shipClass, name, partsJson, iconVariant, setActive ? 1 : 0, now),
+  );
+  await env.DB.batch(stmts);
+
+  return json({
+    design: {
+      id, ship_class: shipClass, name, parts_json: partsJson,
+      icon_variant: iconVariant, is_active: setActive, created_at_ms: now,
+    },
+  }, { status: 201 });
+}
+
+async function handlePatchDesign(req, env, ctx) {
+  const { gameId, designId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const row = await env.DB
+    .prepare(
+      `SELECT id, faction_id, ship_class, name, parts_json, icon_variant, is_active, created_at_ms
+         FROM game_ship_designs WHERE id = ? AND game_id = ?`,
+    )
+    .bind(designId, gameId)
+    .first();
+  if (!row) return err(404, 'not_found', 'design not found');
+  if (row.faction_id !== me.id) return err(403, 'not_owner', 'not your design');
+
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+
+  let name = row.name;
+  if (body.name !== undefined) {
+    if (typeof body.name !== 'string') return err(400, 'bad_request', 'name must be a string');
+    const trimmed = body.name.trim();
+    if (trimmed.length === 0) return err(400, 'bad_request', 'design name required');
+    if (trimmed.length > DESIGN_NAME_MAX) {
+      return err(400, 'bad_request', `design name too long (max ${DESIGN_NAME_MAX} chars)`);
+    }
+    name = trimmed;
+  }
+  let partsJson = row.parts_json ?? null;
+  if (body.parts !== undefined) {
+    const v = validateParts(row.ship_class, body.parts ?? []);
+    if (!v.ok) return err(400, 'bad_parts', v.error);
+    partsJson = v.parts.length > 0 ? JSON.stringify(v.parts) : null;
+  }
+  let iconVariant = row.icon_variant ?? null;
+  if (body.icon_variant !== undefined) {
+    if (body.icon_variant === null) iconVariant = null;
+    else if (typeof body.icon_variant === 'string' && /^[A-F]$/.test(body.icon_variant)) {
+      iconVariant = body.icon_variant;
+    } else {
+      return err(400, 'bad_request', 'invalid icon_variant');
+    }
+  }
+
+  // Editing a design NEVER mutates queued or completed ships — parts
+  // were snapshot onto the build order at queue time (spec §2.3).
+  const stmts = [];
+  let isActive = row.is_active === 1;
+  if (body.is_active === true && !isActive) {
+    // One active design per (faction, class): clear siblings first.
+    stmts.push(
+      env.DB
+        .prepare('UPDATE game_ship_designs SET is_active = 0 WHERE game_id = ? AND faction_id = ? AND ship_class = ?')
+        .bind(gameId, me.id, row.ship_class),
+    );
+    isActive = true;
+  } else if (body.is_active === false) {
+    // Deactivate — builds fall back to the bare hull.
+    isActive = false;
+  }
+  stmts.push(
+    env.DB
+      .prepare('UPDATE game_ship_designs SET name = ?, parts_json = ?, icon_variant = ?, is_active = ? WHERE id = ?')
+      .bind(name, partsJson, iconVariant, isActive ? 1 : 0, designId),
+  );
+  await env.DB.batch(stmts);
+
+  return json({
+    design: {
+      id: row.id, ship_class: row.ship_class, name, parts_json: partsJson,
+      icon_variant: iconVariant, is_active: isActive, created_at_ms: row.created_at_ms,
+    },
+  });
+}
+
+async function handleDeleteDesign(req, env, ctx) {
+  const { gameId, designId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const row = await env.DB
+    .prepare('SELECT id, faction_id FROM game_ship_designs WHERE id = ? AND game_id = ?')
+    .bind(designId, gameId)
+    .first();
+  if (!row) return err(404, 'not_found', 'design not found');
+  if (row.faction_id !== me.id) return err(403, 'not_owner', 'not your design');
+
+  // Deleting the active design is allowed — builds simply fall back to
+  // the bare hull until another design is activated. Queued/completed
+  // ships keep their snapshot.
+  await env.DB.prepare('DELETE FROM game_ship_designs WHERE id = ?').bind(designId).run();
+  return json({ ok: true, design_id: designId });
+}
+
+// POST /api/games/:gameId/ships/:shipId/detonate
+//
+// Manual detonator trigger (spec §2.2, decided 2026-07-17):
+//   - damage = 50% of the ship's MAX HP per detonator part, scaled by
+//     the owner's Weapons tech at HALF rate (+5%/lvl), stacking
+//     additively across parts (2 detonators = 100% of max HP, etc.)
+//   - hits EVERY in-orbit ship at the same body — INCLUDING the
+//     owner's own ships. No treaty, stance, or faction filter. The
+//     client UI carries the full-disclosure copy; the server just
+//     executes exactly what the copy promised.
+//   - the detonating ship is CONSUMED (destroyed) regardless of kills.
+//   - chronicle kind 'ship_detonated' with ship_name, body, victims.
+async function handleDetonateShip(req, env, ctx) {
+  const { gameId, shipId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  if (!SHIP_ID_RE.test(shipId)) return err(400, 'bad_request', 'invalid ship id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const ship = await env.DB
+    .prepare(
+      `SELECT id, owner_faction_id, name, ship_class, parent_body_id,
+              hp, hp_max, status, parts_json
+         FROM game_ships WHERE id = ? AND game_id = ?`,
+    )
+    .bind(shipId, gameId)
+    .first();
+  if (!ship) return err(404, 'not_found', 'ship not found');
+  if (ship.owner_faction_id !== me.id) return err(403, 'not_owner', 'you do not own this ship');
+  if (ship.status !== 'active') return err(409, 'destroyed', 'ship is not active');
+
+  // In-orbit only: a ship mid-burn has left the orbital plane — the
+  // blast geometry (same-orbit shrapnel shell) doesn't apply.
+  const inTransit = await env.DB
+    .prepare("SELECT 1 AS x FROM game_ship_nodes WHERE ship_id = ? AND status = 'in_transit' LIMIT 1")
+    .bind(shipId)
+    .first();
+  if (inTransit) return err(409, 'in_transit', 'cannot detonate mid-transfer — wait for arrival');
+
+  const parts = parsePartsJson(ship.ship_class, ship.parts_json);
+  const nDetonators = countPart(parts, 'detonator');
+  if (nDetonators <= 0) return err(409, 'no_detonator', 'this ship carries no detonator');
+
+  // Weapons tech at trigger time, HALF rate (spec §2.2).
+  const weaponsRow = await env.DB
+    .prepare("SELECT level FROM faction_techs WHERE game_id = ? AND faction_id = ? AND tech_id = 'weapons'")
+    .bind(gameId, me.id)
+    .first();
+  const damage = detonatorDamage(ship.hp_max ?? 0, nDetonators, weaponsRow?.level ?? 0);
+
+  const game = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
+  const tick = game?.current_tick ?? 0;
+
+  // Victims: every ACTIVE ship in the same orbit (same parent body),
+  // friend and foe alike — spec says no exceptions, and that includes
+  // the caller's own fleet. In-transit ships (departed but not yet
+  // arrived, still row-parented at the departure body) are excluded —
+  // they're not "in this orbit" anymore.
+  const victims = (await env.DB
+    .prepare(
+      `SELECT s.id, s.name, s.ship_class, s.owner_faction_id, s.hp
+         FROM game_ships s
+        WHERE s.game_id = ? AND s.parent_body_id = ? AND s.status = 'active'
+          AND s.id != ?
+          AND NOT EXISTS (
+            SELECT 1 FROM game_ship_nodes n
+             WHERE n.ship_id = s.id AND n.status = 'in_transit'
+          )`,
+    )
+    .bind(gameId, ship.parent_body_id, shipId)
+    .all()).results ?? [];
+
+  const stmts = [
+    // The ship is consumed. Always.
+    env.DB
+      .prepare("UPDATE game_ships SET hp = 0, status = 'destroyed', destroyed_at_tick = ? WHERE id = ?")
+      .bind(tick, shipId),
+  ];
+  const victimSummaries = [];
+  for (const v of victims) {
+    const newHp = Math.max(0, (v.hp ?? 0) - damage);
+    if (newHp <= 0) {
+      stmts.push(
+        env.DB
+          .prepare("UPDATE game_ships SET hp = 0, status = 'destroyed', destroyed_at_tick = ? WHERE id = ?")
+          .bind(tick, v.id),
+      );
+    } else {
+      stmts.push(
+        env.DB.prepare('UPDATE game_ships SET hp = ? WHERE id = ?').bind(newHp, v.id),
+      );
+    }
+    victimSummaries.push({
+      ship_id: v.id,
+      ship_name: v.name,
+      ship_class: v.ship_class,
+      owner_faction_id: v.owner_faction_id,
+      destroyed: newHp <= 0,
+    });
+  }
+  await env.DB.batch(stmts);
+
+  // Chronicle — public, so everyone at the body learns exactly what
+  // happened (a detonation is not a subtle act).
+  try {
+    const bodyRow = await env.DB
+      .prepare('SELECT name FROM game_bodies WHERE id = ?')
+      .bind(ship.parent_body_id)
+      .first();
+    const facRows = (await env.DB
+      .prepare('SELECT id, name FROM game_factions WHERE game_id = ?')
+      .bind(gameId)
+      .all()).results ?? [];
+    const facName = new Map(facRows.map(f => [f.id, f.name]));
+    const payload = JSON.stringify({
+      ship_id: shipId,
+      ship_name: ship.name,
+      ship_class: ship.ship_class,
+      body_name: bodyRow?.name ?? null,
+      owner_faction_name: facName.get(me.id) ?? null,
+      damage,
+      detonators: nDetonators,
+      victims: victimSummaries.map(v => ({
+        ...v,
+        owner_faction_name: facName.get(v.owner_faction_id) ?? null,
+      })),
+      destroyed_count: victimSummaries.filter(v => v.destroyed).length,
+    });
+    await env.DB
+      .prepare(
+        `INSERT INTO chronicle_entries
+          (id, game_id, tick_number, kind, actor_faction_id, body_id, ship_id, payload, visibility, created_at_ms)
+         VALUES (?, ?, ?, 'ship_detonated', ?, ?, ?, ?, 'public', ?)`,
+      )
+      .bind(`c_det_${shipId.slice(-10)}_${tick}`, gameId, tick, me.id,
+            ship.parent_body_id, shipId, payload, Date.now())
+      .run();
+  } catch (e) {
+    console.error('ship_detonated chronicle insert failed', e);
+  }
+
+  return json({
+    ok: true,
+    ship_id: shipId,
+    damage,
+    detonators: nDetonators,
+    victims: victimSummaries,
+  });
+}
+
 export const routes = [
+  // Ship designer — design library CRUD + detonator trigger. Listed
+  // before the generic /ships/:shipId PATCH so nothing shadows the
+  // more specific paths.
+  {
+    method: 'GET',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/designs$/,
+    auth: 'required',
+    handle: handleListDesigns,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/designs$/,
+    auth: 'required',
+    handle: handleCreateDesign,
+  },
+  {
+    method: 'PATCH',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/designs\/(?<designId>[^/]+)$/,
+    auth: 'required',
+    handle: handlePatchDesign,
+  },
+  {
+    method: 'DELETE',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/designs\/(?<designId>[^/]+)$/,
+    auth: 'required',
+    handle: handleDeleteDesign,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/ships\/(?<shipId>[^/]+)\/detonate$/,
+    auth: 'required',
+    handle: handleDetonateShip,
+  },
+  {
+    // MUST precede the rename route below — its (?<shipId>[^/]+) pattern
+    // would otherwise swallow the literal path segment 'orders'.
+    method: 'PATCH',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/ships\/orders$/,
+    auth: 'required',
+    handle: handleSetShipOrders,
+  },
   {
     method: 'PATCH',
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/ships\/(?<shipId>[^/]+)$/,

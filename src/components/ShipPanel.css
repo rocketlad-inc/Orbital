@@ -317,6 +317,111 @@
   background: rgba(78, 205, 196, 0.2);
 }
 
+/* Standing orders (MP) — stance segmented control + threshold pickers */
+.orders-config-section {
+  border-top: 1px solid #2a3d50;
+  padding-top: 10px;
+  margin-top: 10px;
+  margin-bottom: 10px;
+}
+
+.orders-config-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.orders-config-label {
+  color: #b8c8d6;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 9px;
+  flex-shrink: 0;
+}
+
+.orders-stance-toggle {
+  display: flex;
+  gap: 0;
+  border: 1px solid #2a3d50;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.orders-stance-btn {
+  background: transparent;
+  border: none;
+  border-right: 1px solid #2a3d50;
+  color: #b8c8d6;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 600;
+  font-family: var(--font-body);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  transition: all 0.2s ease;
+}
+
+.orders-stance-btn:last-child {
+  border-right: none;
+}
+
+.orders-stance-btn:hover {
+  background: rgba(78, 205, 196, 0.15);
+  color: #4ecdc4;
+}
+
+.orders-stance-btn.active {
+  background: rgba(78, 205, 196, 0.25);
+  color: #4ecdc4;
+}
+
+.orders-config-select {
+  background: rgba(20, 32, 44, 0.8);
+  border: 1px solid #2a3d50;
+  border-radius: 2px;
+  color: #d8e4ee;
+  font-family: var(--font-body);
+  font-size: 9px;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+.orders-config-select:focus {
+  outline: none;
+  border-color: #4ecdc4;
+}
+
+.orders-config-hint {
+  color: #b8c8d6;
+  font-size: 9px;
+  font-style: italic;
+  line-height: 1.4;
+  margin: 0 0 8px;
+}
+
+.orders-config-hint--danger {
+  color: #ff9e7a;
+}
+
+.orders-config-error {
+  display: block;
+  width: 100%;
+  margin: 4px 0 0;
+  padding: 6px 10px;
+  background: rgba(255, 94, 94, 0.1);
+  border: 1px solid #ff5e5e;
+  border-radius: 4px;
+  color: #ff5e5e;
+  font-size: 10px;
+  line-height: 1.4;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 .advanced-section {
   padding-top: 8px;
   border-top: 1px solid #2a3d50;
@@ -538,3 +643,106 @@
   color: #4ecdc4;
 }
 
+
+/* ---- Ship configuration (designer loadout) ---- */
+.ship-loadout {
+  border-top: 1px solid #2a3d50;
+  padding-top: 10px;
+  margin-top: 10px;
+  margin-bottom: 10px;
+}
+
+.ship-loadout__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+/* section-title already sets colour/spacing; drop its bottom margin so
+   the chips sit tight under the header row. */
+.ship-loadout__head .section-title {
+  margin-bottom: 0;
+}
+
+.ship-loadout__count {
+  color: #b8c8d6;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.ship-loadout__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 8px 0 10px;
+}
+
+.ship-loadout__chip {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  line-height: 1;
+  border: 1px solid #34506a;
+  border-radius: 5px;
+  background: rgba(78, 205, 196, 0.07);
+}
+
+.ship-loadout__chip--empty {
+  color: #4a5c6e;
+  font-size: 16px;
+  border-style: dashed;
+  border-color: #253748;
+  background: transparent;
+}
+
+.ship-loadout__chip--danger {
+  border-color: #ff5e5e;
+  background: rgba(255, 94, 94, 0.1);
+}
+
+.ship-loadout__legend {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.ship-loadout__row {
+  display: grid;
+  grid-template-columns: 16px minmax(90px, auto) 1fr;
+  align-items: baseline;
+  gap: 8px;
+  cursor: default;
+}
+
+.ship-loadout__glyph {
+  font-size: 12px;
+  line-height: 1;
+  text-align: center;
+}
+
+.ship-loadout__name {
+  color: #d8e4ee;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.ship-loadout__effect {
+  color: #8aa0b4;
+  font-size: 9px;
+  text-align: right;
+}
+
+.ship-loadout__row--danger .ship-loadout__name {
+  color: #ff8a8a;
+}
+
+.ship-loadout__bare {
+  color: #8aa0b4;
+  font-size: 10px;
+  font-style: italic;
+}

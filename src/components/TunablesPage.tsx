@@ -53,7 +53,6 @@ const DEFAULTS = {
   weaponsBaseCost: 40, weaponsScaling: 1.7,
   armorBaseCost: 40, armorScaling: 1.7,
   propulsionBaseCost: 35, propulsionScaling: 1.6,
-  flightBaseCost: 50, flightScaling: 1.7,
   constructionBaseCost: 50, constructionScaling: 1.8,
   industryBaseCost: 45, industryScaling: 1.7,
   sensorsBaseCost: 30, sensorsScaling: 1.5,
@@ -61,7 +60,6 @@ const DEFAULTS = {
   weaponsPerLevel: 0.10,     // +10% firepower
   armorPerLevel: 0.08,       // +8% HP
   propulsionPerLevel: 0.06,  // -6% transfer Δv cost
-  flightPerLevel: 0.06,      // -6% travel time
   constructionPerLevel: 0.05,// -5% build cost
   industryPerLevel: 0.10,    // +10% settlement yield
   sensorsPerLevel: 0.12,     // +12% sensor range
@@ -133,8 +131,6 @@ const TUNABLE_FILES: Record<keyof typeof DEFAULTS, string> = {
   armorScaling:          'worker/actions.js TECH_DEFS.armor.costScaling',
   propulsionBaseCost:    'worker/actions.js TECH_DEFS.propulsion.baseCost',
   propulsionScaling:     'worker/actions.js TECH_DEFS.propulsion.costScaling',
-  flightBaseCost:        'worker/actions.js TECH_DEFS.flight.baseCost',
-  flightScaling:         'worker/actions.js TECH_DEFS.flight.costScaling',
   constructionBaseCost:  'worker/actions.js TECH_DEFS.construction.baseCost',
   constructionScaling:   'worker/actions.js TECH_DEFS.construction.costScaling',
   industryBaseCost:      'worker/actions.js TECH_DEFS.industry.baseCost',
@@ -164,7 +160,6 @@ const TUNABLE_FILES: Record<keyof typeof DEFAULTS, string> = {
   weaponsPerLevel:       'src/game/techs.ts TECH_DEFS.weapons.perLevel',
   armorPerLevel:         'src/game/techs.ts TECH_DEFS.armor.perLevel',
   propulsionPerLevel:    'src/game/techs.ts TECH_DEFS.propulsion.perLevel',
-  flightPerLevel:        'src/game/techs.ts TECH_DEFS.flight.perLevel',
   constructionPerLevel:  'src/game/techs.ts TECH_DEFS.construction.perLevel',
   industryPerLevel:      'src/game/techs.ts TECH_DEFS.industry.perLevel',
   sensorsPerLevel:       'src/game/techs.ts TECH_DEFS.sensors.perLevel',
@@ -512,7 +507,6 @@ export const TunablesPage: React.FC<TunablesPageProps> = ({ onBack }) => {
             <TechRow techId="weapons"      label={`Weapons (+${(v.weaponsPerLevel*100).toFixed(0)}% firepower)`}     base={v.weaponsBaseCost}     scaling={v.weaponsScaling}     perLevel={v.weaponsPerLevel}      onBase={x => set('weaponsBaseCost', x)}     onScaling={x => set('weaponsScaling', x)}     onPerLevel={x => set('weaponsPerLevel', x)} />
             <TechRow techId="armor"        label={`Armor (+${(v.armorPerLevel*100).toFixed(0)}% HP)`}                 base={v.armorBaseCost}       scaling={v.armorScaling}       perLevel={v.armorPerLevel}        onBase={x => set('armorBaseCost', x)}       onScaling={x => set('armorScaling', x)}       onPerLevel={x => set('armorPerLevel', x)} />
             <TechRow techId="propulsion"   label={`Propulsion (−${(v.propulsionPerLevel*100).toFixed(0)}% Δv)`}        base={v.propulsionBaseCost}  scaling={v.propulsionScaling}  perLevel={v.propulsionPerLevel}   onBase={x => set('propulsionBaseCost', x)}  onScaling={x => set('propulsionScaling', x)}  onPerLevel={x => set('propulsionPerLevel', x)} />
-            <TechRow techId="flight"       label={`Flight (−${(v.flightPerLevel*100).toFixed(0)}% travel time)`}      base={v.flightBaseCost}      scaling={v.flightScaling}      perLevel={v.flightPerLevel}       onBase={x => set('flightBaseCost', x)}      onScaling={x => set('flightScaling', x)}      onPerLevel={x => set('flightPerLevel', x)} />
             <TechRow techId="construction" label={`Construction (−${(v.constructionPerLevel*100).toFixed(0)}% build cost)`} base={v.constructionBaseCost} scaling={v.constructionScaling} perLevel={v.constructionPerLevel} onBase={x => set('constructionBaseCost', x)} onScaling={x => set('constructionScaling', x)} onPerLevel={x => set('constructionPerLevel', x)} />
             <TechRow techId="industry"     label={`Industry (+${(v.industryPerLevel*100).toFixed(0)}% yield)`}        base={v.industryBaseCost}    scaling={v.industryScaling}    perLevel={v.industryPerLevel}     onBase={x => set('industryBaseCost', x)}    onScaling={x => set('industryScaling', x)}    onPerLevel={x => set('industryPerLevel', x)} />
             <TechRow techId="sensors"      label={`Sensors (+${(v.sensorsPerLevel*100).toFixed(0)}% range)`}          base={v.sensorsBaseCost}     scaling={v.sensorsScaling}     perLevel={v.sensorsPerLevel}      onBase={x => set('sensorsBaseCost', x)}     onScaling={x => set('sensorsScaling', x)}     onPerLevel={x => set('sensorsPerLevel', x)} />
@@ -523,7 +517,6 @@ export const TunablesPage: React.FC<TunablesPageProps> = ({ onBack }) => {
                 { name: 'weapons', base: v.weaponsBaseCost, scaling: v.weaponsScaling, color: '#ff5e5e' },
                 { name: 'armor', base: v.armorBaseCost, scaling: v.armorScaling, color: '#ffb84d' },
                 { name: 'propulsion', base: v.propulsionBaseCost, scaling: v.propulsionScaling, color: '#4ecdc4' },
-                { name: 'flight', base: v.flightBaseCost, scaling: v.flightScaling, color: '#6ee7b7' },
                 { name: 'construction', base: v.constructionBaseCost, scaling: v.constructionScaling, color: '#a89878' },
                 { name: 'industry', base: v.industryBaseCost, scaling: v.industryScaling, color: '#d4a574' },
                 { name: 'sensors', base: v.sensorsBaseCost, scaling: v.sensorsScaling, color: '#67e8f9' },

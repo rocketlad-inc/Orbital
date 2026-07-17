@@ -1,5 +1,6 @@
 import { resolveSenate, getActiveSliders, hasActiveSanction } from './senate.js';
 import { recomputeBodyOwnership } from './factions.js';
+import { parsePartsJson, computeShipStats, countPart, detonatorDamage } from './shipDesigns.js';
 
 // Room Durable Object. One instance per game room, keyed by room id.
 // Uses the WebSocket Hibernation API so idle rooms cost nothing.
@@ -243,6 +244,17 @@ export class Room {
         // Force: keep the local copy in sync so the due check below
         // sees the freshly-armed schedule, then fall through to alarm().
         game.next_tick_at = nextAt;
+      }
+      // Force must also defeat alarm()'s early/stale-fire guard: with a
+      // future next_tick_at the guard sees "not due yet" and bails, so
+      // the host's Force button silently no-opped (advanced:false) for
+      // any normally-scheduled game. Pull the schedule to `now` first so
+      // alarm() advances exactly one tick and re-arms at now + interval.
+      if (force && game.next_tick_at != null && game.next_tick_at > now) {
+        await this.env.DB
+          .prepare('UPDATE games SET next_tick_at = ? WHERE id = ?')
+          .bind(now, started.gameId).run();
+        game.next_tick_at = now;
       }
       const due = game.next_tick_at != null && game.next_tick_at <= now;
       if (!force && !due) {
@@ -761,18 +773,45 @@ export class Room {
     }
 
     // 1. Build completions. Each row spawns one ship in a small circular
-    //    orbit around the building body.
+    //    orbit around the building body. Only ACTIVE rows complete —
+    //    status='waiting' rows (queued beyond concurrency, see 0037)
+    //    carry a placeholder completes_at_tick and are promoted in 1b
+    //    below once a slot frees up. Legacy rows read status='building'
+    //    via the column DEFAULT.
     const builds = (await this.env.DB
       .prepare(
         `SELECT id, body_id, faction_id, ship_class, completes_at_tick,
-                icon_variant, ship_name
+                icon_variant, ship_name, parts_json
            FROM game_body_build_queue
           WHERE game_id = ?
             AND cancelled_at_tick IS NULL
+            AND status = 'building'
             AND completes_at_tick <= ?`,
       )
       .bind(gameId, tick)
       .all()).results ?? [];
+
+    // Faction tech levels (weapons/armor) — part effects scale with
+    // tech at COMPLETION time (worker/shipDesigns.js computeShipStats).
+    // Cached per faction across this tick's builds. Bare-hull orders
+    // (parts_json NULL — every pre-designer queue row) never touch
+    // tech and come out exactly as today's stats.
+    const techCache = new Map();
+    const techLevelsFor = async (factionId) => {
+      let levels = techCache.get(factionId);
+      if (!levels) {
+        const rows = (await this.env.DB
+          .prepare(
+            `SELECT tech_id, level FROM faction_techs
+              WHERE game_id = ? AND faction_id = ? AND tech_id IN ('weapons','armor')`,
+          )
+          .bind(gameId, factionId)
+          .all()).results ?? [];
+        levels = Object.fromEntries(rows.map(r => [r.tech_id, r.level ?? 0]));
+        techCache.set(factionId, levels);
+      }
+      return levels;
+    };
 
     for (const b of builds) {
       const body = await this.env.DB
@@ -781,15 +820,23 @@ export class Room {
         .first();
       if (!body) continue;
 
-      const FUEL_MAX = { corvette: 80, frigate: 200, destroyer: 300, freighter: 400 };
-      // HP must match src/game/shipClasses.ts (client renders bar against the
-      // client cap; mismatch = permanently-half bar). Frigate 80->100 and
-      // freighter 30->60 to align. See migrations/0033.
-      const HP       = { corvette: 40, frigate: 100, destroyer: 200, freighter: 60 };
-      const DMG      = { corvette: 5,  frigate: 10,  destroyer: 18,  freighter: 0 };
+      const FUEL_MAX = { corvette: 80, frigate: 200, destroyer: 300, freighter: 400, colony: 100 };
+      // HP/DMG now come from SHIP_COMBAT_STATS via computeShipStats below
+      // (single source of truth shared with the designer's part math).
+      // Those values already carry origin's client-alignment fix — HP must
+      // match src/game/shipClasses.ts or the client renders a permanently
+      // half-full bar: frigate 80->100, freighter 30->60.
       const fuelMax = FUEL_MAX[b.ship_class] ?? 100;
-      const hp = HP[b.ship_class] ?? 50;
-      const dmg = DMG[b.ship_class] ?? 0;
+      // Ship designer: hull base × part multipliers × tech (spec §2).
+      // parts_json is the snapshot taken at queue time; NULL = bare
+      // hull = the legacy HP/DMG table values exactly.
+      const parts = parsePartsJson(b.ship_class, b.parts_json);
+      const stats = computeShipStats(
+        b.ship_class, parts,
+        parts.length > 0 ? await techLevelsFor(b.faction_id) : {},
+      );
+      const hp = stats.hp;
+      const dmg = stats.damage_per_tick;
       const rp = (body.radius || 4) + 4;
       const ra = rp; // circular orbit
       const shipId = `${gameId}:s${tick}_${b.id.slice(-6)}`;
@@ -813,12 +860,13 @@ export class Room {
                parent_body_id, orbit_rp, orbit_ra, orbit_omega,
                orbit_m0, orbit_epoch, orbit_direction,
                fuel, fuel_max, status, built_at_tick,
-               hp, hp_max, damage_per_tick, icon_variant)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 1, ?, ?, 'active', ?, ?, ?, ?, ?)`,
+               hp, hp_max, damage_per_tick, icon_variant, parts_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 1, ?, ?, 'active', ?, ?, ?, ?, ?, ?)`,
           )
           .bind(shipId, gameId, b.faction_id, shipName, b.ship_class,
                 b.body_id, rp, ra, tick, fuelMax, fuelMax, tick,
-                hp, hp, dmg, b.icon_variant ?? null),
+                hp, hp, dmg, b.icon_variant ?? null,
+                parts.length > 0 ? JSON.stringify(parts) : null),
         this.env.DB
           .prepare('DELETE FROM game_body_build_queue WHERE id = ?')
           .bind(b.id),
@@ -852,6 +900,87 @@ export class Room {
       } catch (e) {
         console.error('ship_built chronicle insert failed', e);
       }
+    }
+
+    // 1b. Promote waiting builds into freed slots — FIFO per
+    //     body+faction (queued_at_tick, then id which embeds a
+    //     Date.now() base36 stamp so same-tick orders keep creation
+    //     order). Concurrency = 1 base slot + 1 per Shipyard level on
+    //     the faction's live stations at the body, mirroring the count
+    //     in worker/actions.js handleQueueBuild. Resources were already
+    //     charged at queue time, so promotion only stamps the schedule:
+    //     started_at_tick = now, completes_at_tick = now + build_ticks
+    //     (falling back to the class table for rows queued before the
+    //     column existed).
+    try {
+      const BUILD_TICKS_BY_CLASS = { corvette: 10, frigate: 20, destroyer: 40, freighter: 15 };
+      const waiting = (await this.env.DB
+        .prepare(
+          `SELECT id, body_id, faction_id, ship_class, build_ticks
+             FROM game_body_build_queue
+            WHERE game_id = ? AND cancelled_at_tick IS NULL AND status = 'waiting'
+            ORDER BY queued_at_tick ASC, id ASC`,
+        )
+        .bind(gameId)
+        .all()).results ?? [];
+      if (waiting.length > 0) {
+        // Group FIFO lists per body+faction ('|' can't appear in ids).
+        const groups = new Map();
+        for (const w of waiting) {
+          const key = `${w.body_id}|${w.faction_id}`;
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key).push(w);
+        }
+        const promotions = [];
+        for (const [key, rows] of groups) {
+          const [bodyId, factionId] = key.split('|');
+          const yardRows = (await this.env.DB
+            .prepare(
+              `SELECT buildings_json FROM game_settlements
+                WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+                  AND type = 'station' AND destroyed_at_tick IS NULL`,
+            )
+            .bind(gameId, bodyId, factionId)
+            .all()).results ?? [];
+          let shipyardLevels = 0;
+          for (const row of yardRows) {
+            if (!row.buildings_json) continue;
+            try {
+              const b = JSON.parse(row.buildings_json) || {};
+              shipyardLevels += Number(b.shipyard ?? 0) || 0;
+            } catch { /* ignore malformed */ }
+          }
+          const slots = 1 + shipyardLevels;
+          const active = await this.env.DB
+            .prepare(
+              `SELECT COUNT(*) AS c FROM game_body_build_queue
+                WHERE game_id = ? AND body_id = ? AND faction_id = ?
+                  AND cancelled_at_tick IS NULL AND status = 'building'`,
+            )
+            .bind(gameId, bodyId, factionId)
+            .first();
+          let free = slots - Number(active?.c ?? 0);
+          for (const w of rows) {
+            if (free <= 0) break;
+            const bt = Number(w.build_ticks) > 0
+              ? Number(w.build_ticks)
+              : (BUILD_TICKS_BY_CLASS[w.ship_class] ?? 20);
+            promotions.push(
+              this.env.DB
+                .prepare(
+                  `UPDATE game_body_build_queue
+                      SET status = 'building', started_at_tick = ?, completes_at_tick = ?
+                    WHERE id = ? AND status = 'waiting' AND cancelled_at_tick IS NULL`,
+                )
+                .bind(tick, tick + bt, w.id),
+            );
+            free -= 1;
+          }
+        }
+        if (promotions.length > 0) await this.env.DB.batch(promotions);
+      }
+    } catch (e) {
+      console.error('build promotion pass failed', e);
     }
 
     // 2a. Depart. A committed node whose scheduled_t has come up: stamp
@@ -1423,8 +1552,9 @@ export class Room {
     // history record itself (target's class/name at moment of death).
     const allShips = (await this.env.DB
       .prepare(
-        `SELECT id, owner_faction_id, parent_body_id, hp, damage_per_tick,
-                rank, combat_history, ship_class, name, last_combat_tick
+        `SELECT id, owner_faction_id, parent_body_id, hp, hp_max, damage_per_tick,
+                rank, combat_history, ship_class, name, last_combat_tick,
+                stance, retreat_hp_pct, detonate_hp_pct
            FROM game_ships
           WHERE game_id = ? AND status = 'active'`,
       )
@@ -1529,6 +1659,30 @@ export class Room {
         entry.byShip.set(attackerShipId, (entry.byShip.get(attackerShipId) || 0) + amount);
       }
     };
+    // Standing orders — stance (DESIGN-identity-economy.md §3).
+    //   attack (default / NULL): engage hostiles in range — legacy behavior.
+    //   defensive: return fire only. Simplest robust rule (per spec): a
+    //     defensive ship engages any faction that is CURRENTLY AGGRESSING
+    //     at this body — i.e. has an armed attack-stance ship parked here.
+    //     Such a ship fires on your ships every cadence window and chips
+    //     your settlements every tick, so "attack-stance armed hostile
+    //     present" == "currently damaging your ships/settlements here".
+    //     Defensive-vs-defensive standoffs correctly never fire.
+    //   hold: never fires. Still takes damage.
+    const effectiveStance = (s) =>
+      (s.stance === 'defensive' || s.stance === 'hold') ? s.stance : 'attack';
+    // aggressorsAtBody: bodyId -> Set<factionId> with at least one armed
+    // attack-stance ship at that body.
+    const aggressorsAtBody = new Map();
+    for (const [bodyId, ships] of byBody) {
+      const set = new Set();
+      for (const s of ships) {
+        if ((s.damage_per_tick ?? 0) > 0 && effectiveStance(s) === 'attack') {
+          set.add(s.owner_faction_id);
+        }
+      }
+      aggressorsAtBody.set(bodyId, set);
+    }
     // Settlements are combatants too — fetched here (before the volley
     // loop) so ships can target them and they can fire back within the
     // same simultaneous step, matching the client model. buildings_json
@@ -1581,6 +1735,9 @@ export class Room {
       if (factions.size < 2) continue;
       for (const attacker of ships) {
         if (!attacker.damage_per_tick || attacker.damage_per_tick <= 0) continue;
+        const stance = effectiveStance(attacker);
+        // hold-fire: never shoots, no matter what.
+        if (stance === 'hold') continue;
         // Cadence gate — only fire if AUTO_COMBAT_INTERVAL ticks have
         // passed since this ship's last volley. NULL last_combat_tick
         // (never fired) reads as -Infinity, so a fresh ship can fire
@@ -1588,14 +1745,23 @@ export class Room {
         // src/game/combat.ts:134.
         const lastFired = attacker.last_combat_tick ?? -Infinity;
         if (tick - lastFired < AUTO_COMBAT_INTERVAL) continue;
+        // Only target ships from factions we're at war with (no peace pact).
+        // Defensive stance additionally requires the target's faction to be
+        // an active aggressor at this body (see aggressorsAtBody above).
+        const aggressors = aggressorsAtBody.get(bodyId) ?? new Set();
         // Hostile ships and settlements from factions we're at war with.
         const shipTargets = ships.filter(t =>
           t.owner_faction_id !== attacker.owner_faction_id
-          && !peace.has(pairKey(attacker.owner_faction_id, t.owner_faction_id)),
+          && !peace.has(pairKey(attacker.owner_faction_id, t.owner_faction_id))
+          && (stance !== 'defensive' || aggressors.has(t.owner_faction_id)),
         );
+        // Stance gates bombardment the same way it gates ship combat:
+        // hold already `continue`d above; defensive only chips the
+        // settlements of a faction actively aggressing at this body.
         const settlementTargets = localSettlements.filter(t =>
           t.owner_faction_id !== attacker.owner_faction_id
-          && !peace.has(pairKey(attacker.owner_faction_id, t.owner_faction_id)),
+          && !peace.has(pairKey(attacker.owner_faction_id, t.owner_faction_id))
+          && (stance !== 'defensive' || aggressors.has(t.owner_faction_id)),
         );
         if (shipTargets.length === 0 && settlementTargets.length === 0) continue;
         // Canonical (client) damage model: FULL damage to EVERY hostile
@@ -1699,6 +1865,8 @@ export class Room {
     // settlementId -> faction id that dealt the most damage (kill credit).
     const settlementKillers = new Map();
     for (const s of livingSettlements) {
+      // Damage was accrued per-attacker in the ship volley loop above
+      // (which already applies stance gating — see settlementTargets).
       const entry = settlementDamage.get(s.id);
       const incoming = entry?.total ?? 0;
       const fired = firedSettlementIds.has(s.id);
@@ -1937,7 +2105,7 @@ export class Room {
     const YIELD_MULT_PER_POP = 0.1;
     const FORGE_PER_LEVEL = 0.25;
     const MINT_PER_LEVEL  = 0.25;
-    const LAB_PER_LEVEL   = 0.20;
+    const LAB_PER_LEVEL   = 0.25; // parity with forge/mint (economy rework §1.2)
     const TYPE_MUL_CITY    = { fuel: 1.0, metal: 1.2, gold: 1.0, science: 0.8 };
     const TYPE_MUL_STATION = { fuel: 1.1, metal: 0.8, gold: 1.0, science: 1.4 };
     const NO_COLLECTOR_POOL_FRACTION = 0.10;       // 10% to faction pool
@@ -2334,6 +2502,331 @@ export class Room {
       }
     }
 
+    // === Standing orders — auto-retreat + dead-man detonate ===
+    // DESIGN-identity-economy.md §3. Runs AFTER damage application so the
+    // hp values read below reflect this tick's combat. Wrapped: an
+    // orders-pass failure must never kill the Dyson/victory passes below.
+    try {
+      // 3.48 Auto-retreat. Any active ship with retreat_hp_pct set whose
+      // hp/hp_max has dropped to or below the threshold gets an automatic
+      // transfer to the nearest friendly body that has a station with
+      // shipyard level >= 1 (stations repair — closes the loop).
+      //
+      // "Once per damage episode" is enforced structurally: a ship with
+      // any committed/in_transit node is skipped (it's already going
+      // somewhere), and a ship already parked at its nearest shipyard
+      // body has no move to make — so once the retreat leg is written
+      // this block goes quiet for that hull until it heals above the
+      // threshold, ships out again, and takes fresh damage.
+      const retreaters = (await this.env.DB
+        .prepare(
+          `SELECT id, name, owner_faction_id, parent_body_id, hp, hp_max, retreat_hp_pct
+             FROM game_ships
+            WHERE game_id = ? AND status = 'active'
+              AND retreat_hp_pct IS NOT NULL
+              AND hp_max > 0
+              AND hp * 100 <= hp_max * retreat_hp_pct`,
+        )
+        .bind(gameId)
+        .all()).results ?? [];
+
+      if (retreaters.length > 0) {
+        // Friendly shipyard bodies per faction: living stations whose
+        // buildings_json carries shipyard >= 1.
+        const stationRows = (await this.env.DB
+          .prepare(
+            `SELECT body_id, owner_faction_id, buildings_json
+               FROM game_settlements
+              WHERE game_id = ? AND type = 'station' AND destroyed_at_tick IS NULL`,
+          )
+          .bind(gameId)
+          .all()).results ?? [];
+        const shipyardBodiesByFaction = new Map(); // fid -> Set<bodyId>
+        for (const st of stationRows) {
+          if (!st.buildings_json) continue;
+          let lvl = 0;
+          try { lvl = Number((JSON.parse(st.buildings_json) ?? {}).shipyard ?? 0) || 0; }
+          catch { /* malformed */ }
+          if (lvl < 1) continue;
+          if (!shipyardBodiesByFaction.has(st.owner_faction_id)) {
+            shipyardBodiesByFaction.set(st.owner_faction_id, new Set());
+          }
+          shipyardBodiesByFaction.get(st.owner_faction_id).add(st.body_id);
+        }
+
+        // Body-position + leg-time helpers. Same circular-orbit recursion
+        // and brachistochrone T = 2·√(d/a) the trade-route auto-pilot
+        // uses (its helpers are scoped to that block, so re-declare).
+        const TWO_PI = 2 * Math.PI;
+        const bodyCache = new Map();
+        const fetchBody = async (id) => {
+          if (bodyCache.has(id)) return bodyCache.get(id);
+          const row = await this.env.DB
+            .prepare(
+              `SELECT id, parent_body_id, orbit_radius, orbit_period, angle0
+                 FROM game_bodies WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL`,
+            )
+            .bind(id, gameId)
+            .first();
+          bodyCache.set(id, row);
+          return row;
+        };
+        const bodyPosAt = async (id, t) => {
+          const b = await fetchBody(id);
+          if (!b || b.parent_body_id == null) return { x: 0, y: 0 };
+          const parent = await bodyPosAt(b.parent_body_id, t);
+          const angle = (b.angle0 ?? 0) + TWO_PI * t / (b.orbit_period || 1);
+          return {
+            x: parent.x + Math.cos(angle) * (b.orbit_radius ?? 0),
+            y: parent.y + Math.sin(angle) * (b.orbit_radius ?? 0),
+          };
+        };
+        const G_ANCHOR = 4 * 132.6;            // mirror physics/torchTransfer.ts
+        const DEFAULT_ENGINE_G = 0.05;
+        const accelCache = new Map();
+        const getFactionAccel = async (factionId) => {
+          if (accelCache.has(factionId)) return accelCache.get(factionId);
+          const f = await this.env.DB
+            .prepare('SELECT engine_g FROM game_factions WHERE id = ?')
+            .bind(factionId)
+            .first();
+          const accel = (f?.engine_g ?? DEFAULT_ENGINE_G) * G_ANCHOR;
+          accelCache.set(factionId, accel);
+          return accel;
+        };
+        const computeLegTicks = async (factionId, originId, destId) => {
+          const accel = await getFactionAccel(factionId);
+          const startPos = await bodyPosAt(originId, tick);
+          let T = 1;
+          for (let i = 0; i < 5; i++) {
+            const destPos = await bodyPosAt(destId, tick + T);
+            const dx = destPos.x - startPos.x;
+            const dy = destPos.y - startPos.y;
+            const d = Math.sqrt(dx * dx + dy * dy);
+            const Tnew = 2 * Math.sqrt(Math.max(d, 0.01) / accel);
+            if (Math.abs(Tnew - T) < 0.05) { T = Tnew; break; }
+            T = Tnew;
+          }
+          return Math.max(1, Math.ceil(T));
+        };
+
+        for (const ship of retreaters) {
+          try {
+            const yards = shipyardBodiesByFaction.get(ship.owner_faction_id);
+            if (!yards || yards.size === 0) continue;   // nowhere to run
+            // Already home? No move to make — station repair takes over.
+            if (yards.has(ship.parent_body_id)) continue;
+
+            // Once per episode: skip if already retreating / in transit.
+            const inFlight = await this.env.DB
+              .prepare(
+                `SELECT 1 AS x FROM game_ship_nodes
+                  WHERE ship_id = ? AND status IN ('committed','in_transit') LIMIT 1`,
+              )
+              .bind(ship.id)
+              .first();
+            if (inFlight) continue;
+
+            // Nearest yard by straight-line distance at the current tick.
+            const herePos = await bodyPosAt(ship.parent_body_id, tick);
+            let bestBodyId = null;
+            let bestD2 = Infinity;
+            for (const yardBodyId of yards) {
+              const p = await bodyPosAt(yardBodyId, tick);
+              const dx = p.x - herePos.x;
+              const dy = p.y - herePos.y;
+              const d2 = dx * dx + dy * dy;
+              if (d2 < bestD2) { bestD2 = d2; bestBodyId = yardBodyId; }
+            }
+            if (!bestBodyId) continue;
+
+            // Insert a committed node — same shape the trade-route
+            // auto-pilot writes; the alarm's depart/arrive passes (2a/2b)
+            // drive the actual transit from here.
+            const legTicks = await computeLegTicks(
+              ship.owner_faction_id, ship.parent_body_id, bestBodyId,
+            );
+            const seqRow = await this.env.DB
+              .prepare('SELECT MAX(sequence) AS m FROM game_ship_nodes WHERE ship_id = ?')
+              .bind(ship.id)
+              .first();
+            const seq = (seqRow?.m ?? -1) + 1;
+            const nodeId = `${ship.id}:rt${tick}:n${seq}`;
+            await this.env.DB
+              .prepare(
+                `INSERT INTO game_ship_nodes
+                   (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
+                    scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
+                    status, committed_at_tick)
+                 VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, 0, 0, 0, 0, 'committed', ?)`,
+              )
+              .bind(nodeId, gameId, ship.id, seq, bestBodyId, tick, tick + legTicks, tick)
+              .run();
+
+            // Chronicle the retreat (best-effort).
+            try {
+              const fromBody = await this.env.DB
+                .prepare('SELECT name FROM game_bodies WHERE id = ?')
+                .bind(ship.parent_body_id).first();
+              const toBody = await this.env.DB
+                .prepare('SELECT name FROM game_bodies WHERE id = ?')
+                .bind(bestBodyId).first();
+              const factionName = (await this.env.DB
+                .prepare('SELECT name FROM game_factions WHERE id = ?')
+                .bind(ship.owner_faction_id).first())?.name ?? null;
+              const entryId = `c${tick}_ret_${ship.id.slice(-8)}_${Math.random().toString(36).slice(2, 6)}`;
+              await this.env.DB
+                .prepare(
+                  `INSERT INTO chronicle_entries
+                    (id, game_id, tick_number, kind, actor_faction_id, body_id, ship_id, payload, visibility, created_at_ms)
+                   VALUES (?, ?, ?, 'ship_retreated', ?, ?, ?, ?, 'public', ?)`,
+                )
+                .bind(
+                  entryId, gameId, tick, ship.owner_faction_id,
+                  ship.parent_body_id, ship.id,
+                  JSON.stringify({
+                    ship_id: ship.id,
+                    ship_name: ship.name ?? '?',
+                    owner_faction_name: factionName,
+                    from_body_id: ship.parent_body_id,
+                    from_body_name: fromBody?.name ?? '?',
+                    to_body_id: bestBodyId,
+                    to_body_name: toBody?.name ?? '?',
+                    hp: ship.hp,
+                    hp_max: ship.hp_max,
+                    retreat_hp_pct: ship.retreat_hp_pct,
+                  }),
+                  Date.now(),
+                )
+                .run();
+            } catch (e) { console.error('ship_retreated chronicle failed', e); }
+          } catch (e) {
+            console.error('retreat failed for ship', ship.id, e);
+          }
+        }
+      }
+
+      // 3.49 Dead-man detonate. Ships with detonate_hp_pct set whose HP
+      // is at/below the threshold auto-trigger their detonator (§2.2) —
+      // but ONLY if the hull actually carries a detonator part. Mirrors
+      // the manual POST /ships/:id/detonate endpoint in worker/actions.js
+      // (server naming convention: endpoint + tick-pass mirror, like
+      // combat + repair). Damage math is shared via detonatorDamage().
+      try {
+        const detonators = (await this.env.DB
+          .prepare(
+            `SELECT s.id, s.name, s.ship_class, s.owner_faction_id, s.parent_body_id,
+                    s.hp, s.hp_max, s.detonate_hp_pct, s.parts_json
+               FROM game_ships s
+              WHERE s.game_id = ? AND s.status = 'active'
+                AND s.detonate_hp_pct IS NOT NULL
+                AND s.hp_max > 0
+                AND s.hp * 100 <= s.hp_max * s.detonate_hp_pct
+                AND NOT EXISTS (
+                  SELECT 1 FROM game_ship_nodes n
+                   WHERE n.ship_id = s.id AND n.status = 'in_transit'
+                )`,
+          )
+          .bind(gameId)
+          .all()).results ?? [];
+        for (const ship of detonators) {
+          const parts = parsePartsJson(ship.ship_class, ship.parts_json);
+          const nDet = countPart(parts, 'detonator');
+          if (nDet <= 0) continue;
+          try {
+            // Weapons tech at trigger time, half rate — same as manual.
+            const weaponsRow = await this.env.DB
+              .prepare("SELECT level FROM faction_techs WHERE game_id = ? AND faction_id = ? AND tech_id = 'weapons'")
+              .bind(gameId, ship.owner_faction_id)
+              .first();
+            const damage = detonatorDamage(ship.hp_max ?? 0, nDet, weaponsRow?.level ?? 0);
+
+            const victims = (await this.env.DB
+              .prepare(
+                `SELECT s.id, s.name, s.ship_class, s.owner_faction_id, s.hp
+                   FROM game_ships s
+                  WHERE s.game_id = ? AND s.parent_body_id = ? AND s.status = 'active'
+                    AND s.id != ?
+                    AND NOT EXISTS (
+                      SELECT 1 FROM game_ship_nodes n
+                       WHERE n.ship_id = s.id AND n.status = 'in_transit'
+                    )`,
+              )
+              .bind(gameId, ship.parent_body_id, ship.id)
+              .all()).results ?? [];
+
+            const stmts = [
+              this.env.DB
+                .prepare("UPDATE game_ships SET hp = 0, status = 'destroyed', destroyed_at_tick = ? WHERE id = ?")
+                .bind(tick, ship.id),
+            ];
+            const victimSummaries = [];
+            for (const v of victims) {
+              const newHp = Math.max(0, (v.hp ?? 0) - damage);
+              stmts.push(
+                newHp <= 0
+                  ? this.env.DB
+                      .prepare("UPDATE game_ships SET hp = 0, status = 'destroyed', destroyed_at_tick = ? WHERE id = ?")
+                      .bind(tick, v.id)
+                  : this.env.DB.prepare('UPDATE game_ships SET hp = ? WHERE id = ?').bind(newHp, v.id),
+              );
+              victimSummaries.push({
+                ship_id: v.id,
+                ship_name: v.name,
+                ship_class: v.ship_class,
+                owner_faction_id: v.owner_faction_id,
+                destroyed: newHp <= 0,
+              });
+            }
+            await this.env.DB.batch(stmts);
+
+            try {
+              const bodyRow = await this.env.DB
+                .prepare('SELECT name FROM game_bodies WHERE id = ?')
+                .bind(ship.parent_body_id)
+                .first();
+              const facRows = (await this.env.DB
+                .prepare('SELECT id, name FROM game_factions WHERE game_id = ?')
+                .bind(gameId)
+                .all()).results ?? [];
+              const facName = new Map(facRows.map(f => [f.id, f.name]));
+              const payload = JSON.stringify({
+                ship_id: ship.id,
+                ship_name: ship.name,
+                ship_class: ship.ship_class,
+                body_name: bodyRow?.name ?? null,
+                owner_faction_name: facName.get(ship.owner_faction_id) ?? null,
+                damage,
+                detonators: nDet,
+                auto: true,
+                detonate_hp_pct: ship.detonate_hp_pct,
+                victims: victimSummaries.map(v => ({
+                  ...v,
+                  owner_faction_name: facName.get(v.owner_faction_id) ?? null,
+                })),
+                destroyed_count: victimSummaries.filter(v => v.destroyed).length,
+              });
+              await this.env.DB
+                .prepare(
+                  `INSERT INTO chronicle_entries
+                    (id, game_id, tick_number, kind, actor_faction_id, body_id, ship_id, payload, visibility, created_at_ms)
+                   VALUES (?, ?, ?, 'ship_detonated', ?, ?, ?, ?, 'public', ?)`,
+                )
+                .bind(`c_det_${ship.id.slice(-10)}_${tick}`, gameId, tick, ship.owner_faction_id,
+                      ship.parent_body_id, ship.id, payload, Date.now())
+                .run();
+            } catch (e) { console.error('auto ship_detonated chronicle failed', e); }
+          } catch (e) {
+            console.error('dead-man detonate failed for ship', ship.id, e);
+          }
+        }
+      } catch (e) {
+        console.error('dead-man detonate pass failed', e);
+      }
+    } catch (e) {
+      console.error('standing-orders pass failed', e);
+    }
+
     // === Dyson Sphere — delivery + damage routing ===========
     // Mirrors the client tick in src/state/gameContext.tsx. Runs after
     // combat so destroyed freighters don't contribute and station HP
@@ -2392,7 +2885,8 @@ export class Room {
   }
 
   /**
-   * Server mirror of src/game/dysonSphere.ts. Each tick:
+   * Server mirror of src/game/dysonSphere.ts (see tickDysonSphere below).
+   * Each tick:
    *   1. Detect foundation-station destruction → collapse sphere.
    *   2. Detect foundation-station damage delta → apply to sphere HP
    *      and proportionally scale accumulated resources.
@@ -2774,7 +3268,7 @@ export class Room {
           // Pick a random tech track. tech ids match the client's
           // TechId union; we keep the list inline rather than import
           // it cross-runtime to avoid bundling the whole tech catalog.
-          const TECH_TRACKS = ['weapons', 'armor', 'propulsion', 'construction', 'industry', 'sensors', 'flight'];
+          const TECH_TRACKS = ['weapons', 'armor', 'propulsion', 'construction', 'industry', 'sensors'];
           const pick = TECH_TRACKS[Math.floor(Math.random() * TECH_TRACKS.length)];
           // Upsert: try update first, fall back to insert if missing.
           const existing = await this.env.DB
@@ -3153,7 +3647,7 @@ export class Room {
       .prepare(`SELECT faction_id, tech_id, level FROM faction_techs WHERE game_id = ?`)
       .bind(gameId)
       .all()).results ?? [];
-    const TECH_TRACKS = ['weapons', 'armor', 'propulsion', 'flight', 'construction', 'industry', 'sensors'];
+    const TECH_TRACKS = ['weapons', 'armor', 'propulsion', 'construction', 'industry', 'sensors'];
     const TECH_MAX_LEVEL = 10;
     const byFaction = new Map();
     for (const r of techRows) {

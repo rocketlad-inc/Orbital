@@ -21,10 +21,9 @@
 export const TECH_MAX_LEVEL = 10;
 
 export type TechId =
-  | 'weapons'        // ship firepower
-  | 'armor'          // ship HP
-  | 'propulsion'     // transfer fuel efficiency
-  | 'flight'         // transfer travel time
+  | 'weapons'        // ship firepower + weapon-part effect
+  | 'armor'          // ship HP + shield-part effect
+  | 'propulsion'     // booster-engine part speed (the only speed tech)
   | 'construction'   // ship build cost reduction
   | 'industry'       // settlement yield
   | 'sensors';       // SOI visibility radius
@@ -48,42 +47,32 @@ export const TECH_DEFS: Record<TechId, TechDef> = {
   weapons: {
     id: 'weapons',
     name: 'Weapons',
-    description: 'PDC velocity, torpedo yield, sustained-fire rate.',
+    description: 'Firepower, targeting, and sustained-fire rate — and the punch of every ⚔ weapon mount you fit in the designer.',
     icon: '⚔',
     perLevel: 0.10,
-    effectText: '+10% ship firepower',
+    effectText: '+10% firepower · stronger ⚔ mounts',
     baseCost: 40,
     costScaling: 1.7,
   },
   armor: {
     id: 'armor',
     name: 'Armor',
-    description: 'Hull plating composition and damage-control routines.',
+    description: 'Hull plating and damage control — and the strength of every 🛡 shield array you fit in the designer.',
     icon: '🛡',
     perLevel: 0.08,
-    effectText: '+8% ship max HP',
+    effectText: '+8% max HP · stronger 🛡 arrays',
     baseCost: 40,
     costScaling: 1.7,
   },
   propulsion: {
     id: 'propulsion',
     name: 'Propulsion',
-    description: 'High-efficiency drives. Less fuel per transfer.',
+    description: 'Drive tuning for the 🔥 booster engines you fit in the designer. Faster transits — but only for ships carrying an engine mount.',
     icon: '🚀',
     perLevel: 0.06,
-    effectText: '-6% transfer Δv cost',
+    effectText: '+6% per 🔥 booster engine',
     baseCost: 35,
     costScaling: 1.6,
-  },
-  flight: {
-    id: 'flight',
-    name: 'Flight Dynamics',
-    description: 'Advanced trajectory planning and high-thrust burns. Faster transits across the system.',
-    icon: '🛸',
-    perLevel: 0.06,
-    effectText: '-6% travel time',
-    baseCost: 50,
-    costScaling: 1.7,
   },
   construction: {
     id: 'construction',
@@ -118,7 +107,7 @@ export const TECH_DEFS: Record<TechId, TechDef> = {
 };
 
 export const ALL_TECH_IDS: TechId[] = [
-  'weapons', 'armor', 'propulsion', 'flight', 'construction', 'industry', 'sensors',
+  'weapons', 'armor', 'propulsion', 'construction', 'industry', 'sensors',
 ];
 
 /**
@@ -216,43 +205,18 @@ export function rankHpMul(rank: number | undefined): number {
   return 1 + RANK_PER_KILL_MUL * Math.max(0, rank ?? 0);
 }
 
-/** Transfer fuel-cost multiplier (lower = cheaper). Clamped at 0.2 of base. */
-export function fuelCostModifier(state: FactionTechState | undefined): number {
-  const reduction = effectAtLevel(TECH_DEFS.propulsion, techLevel(state, 'propulsion'));
-  return Math.max(0.2, 1 - reduction);
-}
-
-/** Travel-time multiplier (lower = faster). Clamped at 0.25 of base so
- *  even fully-maxed players still have to commit ticks to long voyages. */
-export function travelTimeModifier(state: FactionTechState | undefined): number {
-  const reduction = effectAtLevel(TECH_DEFS.flight, techLevel(state, 'flight'));
-  return Math.max(0.25, 1 - reduction);
-}
-
-/** Engine-G multiplier for the torch transfer model. Returns the
- *  factor applied to DEFAULT_ENGINE_G (≈ 0.05g) to give this faction's
- *  current per-ship acceleration. Higher tech = higher g = shorter
- *  trip times AND lower total Δv (peak velocity scales with √(a·d),
- *  total Δv = 2·peakV).
- *
- *  Tied to the `flight` tech so it's the same research line that
- *  shrank Hohmann travel-time under the old model — players who
- *  invested there don't lose progress to the Bezier→Torch migration.
- *  Maxed-out flight tech is currently 4× base = 0.20g (Mars in ~3
- *  days, Pluto in ~12). */
+/** Base per-ship engine-acceleration multiplier for the torch transfer
+ *  model. Was tied to the Flight Dynamics tech (a universal speed line);
+ *  that tech has been scrapped — speed now comes ONLY from 🔥 booster
+ *  engine parts, scaled by Propulsion (see engineAccelMultiplier in
+ *  shipParts.ts). Base acceleration is therefore fixed at DEFAULT_ENGINE_G,
+ *  so this returns a neutral 1. Kept as a named seam (rather than deleting
+ *  the ~5 call sites) so the transfer math reads the same and a future
+ *  universal-speed source could slot back in here. `state` is unused. */
 export function engineGModifier(
-  state: FactionTechState | { levels: Record<string, number> } | undefined,
+  _state?: FactionTechState | { levels: Record<string, number> } | undefined,
 ): number {
-  // Re-uses the same effect curve as travelTimeModifier — at level 0
-  // the reduction is 0 (multiplier = 1), at maxed it's roughly 0.75
-  // (multiplier ≈ 4). Could split into a separate tech later.
-  //
-  // Accepts both FactionTechState (TechId-typed) and the looser
-  // FactionTechStateBase (string-typed) so MP-side callers don't have
-  // to widen-cast at the call site.
-  const lvl = state?.levels?.flight ?? 0;
-  const reduction = effectAtLevel(TECH_DEFS.flight, lvl);
-  return 1 / Math.max(0.25, 1 - reduction);
+  return 1;
 }
 
 /** Build-cost multiplier (lower = cheaper). Clamped at 0.25 of base. */

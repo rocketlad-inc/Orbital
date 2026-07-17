@@ -39,27 +39,27 @@ const BODY_CATALOG = [
     radius: 2, soi: 22, mu: 50,
     orbit_radius: 72, orbit_period: 49, angle0: 4.40,
     color: '#8c8680',
-    yield: { metal: 5, fuel: 0, gold: 2, science: 1 } },
+    yield: { metal: 2, fuel: 0, gold: 4, science: 1 } },
   { id: 'venus', name: 'Venus', type: 'terrestrial', parent: 'sol',
     radius: 3, soi: 43, mu: 150,
     orbit_radius: 134, orbit_period: 126, angle0: 3.18,
     color: '#e8cda0',
-    yield: { metal: 3, fuel: 1, gold: 1, science: 4 } },
+    yield: { metal: 1, fuel: 0, gold: 3, science: 4 } },
   { id: 'earth', name: 'Earth', type: 'terrestrial', parent: 'sol',
     radius: 3, soi: 54, mu: 100,
     orbit_radius: 186, orbit_period: 205, angle0: 1.75,
     color: '#4a90d9',
-    yield: { metal: 3, fuel: 3, gold: 2, science: 5 } },
+    yield: { metal: 2, fuel: 0, gold: 6, science: 3 } },
   { id: 'luna', name: 'Luna', type: 'moon', parent: 'earth',
     radius: 1.5, soi: 8, mu: 5,
     orbit_radius: 20, orbit_period: TWO_PI * Math.sqrt(8000 / 100), angle0: 0,
     color: '#c0c0c0',
-    yield: { metal: 2, fuel: 0, gold: 0, science: 2 } },
+    yield: { metal: 2, fuel: 0, gold: 2, science: 2 } },
   { id: 'mars', name: 'Mars', type: 'terrestrial', parent: 'sol',
     radius: 2.5, soi: 43, mu: 80,
     orbit_radius: 283, orbit_period: 386, angle0: 6.20,
     color: '#c1440e',
-    yield: { metal: 6, fuel: 1, gold: 1, science: 3 } },
+    yield: { metal: 4, fuel: 0, gold: 2, science: 2 } },
 
   // ---- asteroid belt ----
   // Five bodies share the 310-radius orbit, 72° apart (Ceres at 1.20 rad,
@@ -69,27 +69,27 @@ const BODY_CATALOG = [
     radius: 1.5, soi: 9, mu: 0.5,
     orbit_radius: 360, orbit_period: 555, angle0: 1.20,
     color: '#6b6b6b',
-    yield: { metal: 5, fuel: 1, gold: 3, science: 1 } },
+    yield: { metal: 6, fuel: 0, gold: 3, science: 0 } },
   { id: 'vesta', name: 'Vesta', type: 'dwarf', parent: 'sol',
     radius: 1, soi: 6, mu: 0.3,
     orbit_radius: 360, orbit_period: 555, angle0: 2.46,
     color: '#a89888',
-    yield: { metal: 6, fuel: 0, gold: 2, science: 1 } },
+    yield: { metal: 7, fuel: 0, gold: 1, science: 0 } },
   { id: 'pallas', name: 'Pallas', type: 'dwarf', parent: 'sol',
     radius: 1, soi: 5, mu: 0.25,
     orbit_radius: 360, orbit_period: 555, angle0: 3.71,
     color: '#80706a',
-    yield: { metal: 5, fuel: 0, gold: 1, science: 2 } },
+    yield: { metal: 6, fuel: 0, gold: 2, science: 0 } },
   { id: 'hygiea', name: 'Hygiea', type: 'dwarf', parent: 'sol',
     radius: 1, soi: 5, mu: 0.2,
     orbit_radius: 360, orbit_period: 555, angle0: 4.97,
     color: '#75655a',
-    yield: { metal: 5, fuel: 1, gold: 1, science: 1 } },
+    yield: { metal: 6, fuel: 0, gold: 1, science: 0 } },
   { id: 'juno', name: 'Juno', type: 'dwarf', parent: 'sol',
     radius: 1, soi: 5, mu: 0.2,
     orbit_radius: 360, orbit_period: 555, angle0: 6.23,
     color: '#aa9070',
-    yield: { metal: 4, fuel: 0, gold: 3, science: 1 } },
+    yield: { metal: 5, fuel: 0, gold: 3, science: 0 } },
 
   // ---- rogue asteroids (settable; can host Trajectory Control Thrusters) ----
   // Three belt-class entries interspersed with the existing dwarfs, plus
@@ -100,17 +100,17 @@ const BODY_CATALOG = [
     radius: 0.6, soi: 2, mu: 0.04,
     orbit_radius: 345, orbit_period: 525, angle0: 0.4,
     color: '#c8a872',
-    yield: { metal: 8, fuel: 0, gold: 6, science: 0 } },
+    yield: { metal: 7, fuel: 0, gold: 5, science: 0 } },
   { id: 'styx_rock', name: 'Styx', type: 'asteroid', parent: 'sol',
     radius: 0.6, soi: 2, mu: 0.04,
     orbit_radius: 370, orbit_period: 584, angle0: 3.0,
     color: '#7a6858',
-    yield: { metal: 9, fuel: 0, gold: 5, science: 0 } },
+    yield: { metal: 8, fuel: 0, gold: 3, science: 0 } },
   { id: 'iron_anna', name: 'Iron Anna', type: 'asteroid', parent: 'sol',
     radius: 0.7, soi: 2, mu: 0.05,
     orbit_radius: 390, orbit_period: 632, angle0: 5.1,
     color: '#9a7a5a',
-    yield: { metal: 10, fuel: 0, gold: 4, science: 1 } },
+    yield: { metal: 9, fuel: 0, gold: 2, science: 0 } },
   // Kuiper-class — eccentric. rp brings them through inner system on
   // perihelion; ra puts them way past Pluto. Inserter must populate
   // game_bodies.orbit_rp/ra/omega/m0 so bodyPosition uses Kepler.
@@ -119,67 +119,67 @@ const BODY_CATALOG = [
     orbit_radius: 1100, orbit_period: 2960, angle0: 0,
     orbit_rp: 200, orbit_ra: 2000, orbit_omega: 0.4, orbit_m0: 1.2,
     color: '#3a3030',
-    yield: { metal: 9, fuel: 0, gold: 7, science: 0 } },
+    yield: { metal: 3, fuel: 0, gold: 6, science: 1 } },
   { id: 'vagrant', name: 'Vagrant', type: 'asteroid', parent: 'sol',
     radius: 0.5, soi: 2, mu: 0.03,
     orbit_radius: 1450, orbit_period: 4470, angle0: 0,
     orbit_rp: 250, orbit_ra: 2650, orbit_omega: 2.1, orbit_m0: 4.7,
     color: '#5a4838',
-    yield: { metal: 8, fuel: 0, gold: 8, science: 1 } },
+    yield: { metal: 2, fuel: 0, gold: 7, science: 1 } },
   { id: 'augustin', name: 'Augustín', type: 'asteroid', parent: 'sol',
     radius: 0.5, soi: 2, mu: 0.03,
     orbit_radius: 1900, orbit_period: 6660, angle0: 0,
     orbit_rp: 300, orbit_ra: 3500, orbit_omega: 4.6, orbit_m0: 3.1,
     color: '#6a5040',
-    yield: { metal: 7, fuel: 0, gold: 9, science: 1 } },
+    yield: { metal: 2, fuel: 0, gold: 6, science: 2 } },
 
   // ---- gas giants ----
   { id: 'jupiter', name: 'Jupiter', type: 'gas-giant', parent: 'sol',
     radius: 8, soi: 160, mu: 1000,
     orbit_radius: 460, orbit_period: 800, angle0: 0.60,
     color: '#d4a574',
-    yield: { metal: 1, fuel: 6, gold: 1, science: 2 } },
+    yield: { metal: 1, fuel: 0, gold: 9, science: 2 } },
   { id: 'io', name: 'Io', type: 'moon', parent: 'jupiter',
     radius: 1.5, soi: 5, mu: 5,
     orbit_radius: 22, orbit_period: TWO_PI * Math.sqrt(10648 / 1000), angle0: 0,
     color: '#e8d44d',
-    yield: { metal: 3, fuel: 2, gold: 1, science: 2 } },
+    yield: { metal: 2, fuel: 0, gold: 5, science: 1 } },
   { id: 'europa', name: 'Europa', type: 'moon', parent: 'jupiter',
     radius: 1.5, soi: 5, mu: 5,
     orbit_radius: 34, orbit_period: TWO_PI * Math.sqrt(39304 / 1000), angle0: 1.57,
     color: '#b8c8d8',
-    yield: { metal: 1, fuel: 1, gold: 0, science: 6 } },
+    yield: { metal: 1, fuel: 0, gold: 4, science: 3 } },
   { id: 'ganymede', name: 'Ganymede', type: 'moon', parent: 'jupiter',
     radius: 2, soi: 6, mu: 8,
     orbit_radius: 50, orbit_period: TWO_PI * Math.sqrt(125000 / 1000), angle0: 3.14,
     color: '#8a7e72',
-    yield: { metal: 4, fuel: 1, gold: 2, science: 3 } },
+    yield: { metal: 2, fuel: 0, gold: 5, science: 2 } },
   { id: 'callisto', name: 'Callisto', type: 'moon', parent: 'jupiter',
     radius: 2, soi: 6, mu: 6,
     orbit_radius: 75, orbit_period: TWO_PI * Math.sqrt(421875 / 1000), angle0: 4.71,
     color: '#5a5a5a',
-    yield: { metal: 3, fuel: 0, gold: 3, science: 2 } },
+    yield: { metal: 3, fuel: 0, gold: 4, science: 1 } },
 
   { id: 'saturn', name: 'Saturn', type: 'gas-giant', parent: 'sol',
     radius: 7, soi: 140, mu: 600,
     orbit_radius: 843.2, orbit_period: 1987, angle0: 0.87,
     color: '#e8d5a3',
-    yield: { metal: 1, fuel: 5, gold: 2, science: 3 } },
+    yield: { metal: 9, fuel: 0, gold: 1, science: 2 } },
   { id: 'enceladus', name: 'Enceladus', type: 'moon', parent: 'saturn',
     radius: 1, soi: 3, mu: 2,
     orbit_radius: 20, orbit_period: TWO_PI * Math.sqrt(8000 / 600), angle0: 0,
     color: '#f0f0f0',
-    yield: { metal: 1, fuel: 3, gold: 0, science: 6 } },
+    yield: { metal: 5, fuel: 0, gold: 0, science: 3 } },
   { id: 'rhea', name: 'Rhea', type: 'moon', parent: 'saturn',
     radius: 1.5, soi: 4, mu: 4,
     orbit_radius: 37, orbit_period: TWO_PI * Math.sqrt(50653 / 600), angle0: 2.09,
     color: '#a0a0a0',
-    yield: { metal: 3, fuel: 1, gold: 1, science: 2 } },
+    yield: { metal: 6, fuel: 0, gold: 1, science: 1 } },
   { id: 'titan', name: 'Titan', type: 'moon', parent: 'saturn',
     radius: 2, soi: 7, mu: 10,
     orbit_radius: 65, orbit_period: TWO_PI * Math.sqrt(274625 / 600), angle0: 4.19,
     color: '#cc9944',
-    yield: { metal: 2, fuel: 5, gold: 1, science: 5 } },
+    yield: { metal: 7, fuel: 0, gold: 1, science: 2 } },
 
   // ---- ice giants ----
   // Outer system compressed ~35-45% so 200-tick matches can reach them.
@@ -187,56 +187,56 @@ const BODY_CATALOG = [
     radius: 5, soi: 110, mu: 200,
     orbit_radius: 1100, orbit_period: 2960, angle0: 5.47,
     color: '#73c2d6',
-    yield: { metal: 2, fuel: 4, gold: 1, science: 4 } },
+    yield: { metal: 2, fuel: 0, gold: 1, science: 6 } },
   // Uranus has a five-moon system: Miranda, Ariel, Umbriel (new minor
   // moons close in), then Titania and Oberon further out.
   { id: 'miranda', name: 'Miranda', type: 'moon', parent: 'uranus',
     radius: 1, soi: 3, mu: 1.5,
     orbit_radius: 12, orbit_period: TWO_PI * Math.sqrt(1728 / 200), angle0: 0.78,
     color: '#a8a8a8',
-    yield: { metal: 3, fuel: 0, gold: 1, science: 2 } },
+    yield: { metal: 4, fuel: 0, gold: 0, science: 3 } },
   { id: 'ariel', name: 'Ariel', type: 'moon', parent: 'uranus',
     radius: 1, soi: 4, mu: 2.5,
     orbit_radius: 18, orbit_period: TWO_PI * Math.sqrt(5832 / 200), angle0: 2.10,
     color: '#b0a898',
-    yield: { metal: 3, fuel: 0, gold: 2, science: 2 } },
+    yield: { metal: 3, fuel: 0, gold: 0, science: 5 } },
   { id: 'umbriel', name: 'Umbriel', type: 'moon', parent: 'uranus',
     radius: 1, soi: 4, mu: 3,
     orbit_radius: 26, orbit_period: TWO_PI * Math.sqrt(17576 / 200), angle0: 4.60,
     color: '#6a655e',
-    yield: { metal: 4, fuel: 0, gold: 1, science: 1 } },
+    yield: { metal: 3, fuel: 0, gold: 1, science: 4 } },
   { id: 'titania', name: 'Titania', type: 'moon', parent: 'uranus',
     radius: 1.5, soi: 5, mu: 4,
     orbit_radius: 35, orbit_period: TWO_PI * Math.sqrt(42875 / 200), angle0: 0,
     color: '#909090',
-    yield: { metal: 4, fuel: 0, gold: 2, science: 2 } },
+    yield: { metal: 4, fuel: 0, gold: 0, science: 4 } },
   { id: 'oberon', name: 'Oberon', type: 'moon', parent: 'uranus',
     radius: 1.5, soi: 5, mu: 4,
     orbit_radius: 50, orbit_period: TWO_PI * Math.sqrt(125000 / 200), angle0: 3.14,
     color: '#888070',
-    yield: { metal: 3, fuel: 0, gold: 3, science: 2 } },
+    yield: { metal: 4, fuel: 0, gold: 1, science: 4 } },
 
   { id: 'neptune', name: 'Neptune', type: 'ice-giant', parent: 'sol',
     radius: 5, soi: 120, mu: 250,
     orbit_radius: 1500, orbit_period: 4710, angle0: 5.32,
     color: '#3366cc',
-    yield: { metal: 1, fuel: 4, gold: 2, science: 5 } },
+    yield: { metal: 0, fuel: 0, gold: 2, science: 9 } },
   // Neptune's three-moon system: Proteus inner, Triton mid, Nereid outer.
   { id: 'proteus', name: 'Proteus', type: 'moon', parent: 'neptune',
     radius: 1, soi: 4, mu: 3,
     orbit_radius: 28, orbit_period: TWO_PI * Math.sqrt(21952 / 250), angle0: 1.20,
     color: '#7a7a7a',
-    yield: { metal: 3, fuel: 1, gold: 1, science: 2 } },
+    yield: { metal: 1, fuel: 0, gold: 1, science: 5 } },
   { id: 'triton', name: 'Triton', type: 'moon', parent: 'neptune',
     radius: 1.5, soi: 5, mu: 5,
     orbit_radius: 45, orbit_period: TWO_PI * Math.sqrt(91125 / 250), angle0: 0,
     color: '#b8d0e0',
-    yield: { metal: 2, fuel: 2, gold: 1, science: 5 } },
+    yield: { metal: 1, fuel: 0, gold: 2, science: 6 } },
   { id: 'nereid', name: 'Nereid', type: 'moon', parent: 'neptune',
     radius: 1, soi: 4, mu: 2,
     orbit_radius: 78, orbit_period: TWO_PI * Math.sqrt(474552 / 250), angle0: 3.95,
     color: '#aab8c4',
-    yield: { metal: 2, fuel: 1, gold: 2, science: 3 } },
+    yield: { metal: 0, fuel: 0, gold: 1, science: 5 } },
 
   // ---- outer dwarf planets / Kuiper belt ----
   // Compressed in proportion with the ice giants so the Kuiper region
@@ -251,32 +251,32 @@ const BODY_CATALOG = [
     radius: 1, soi: 3, mu: 1,
     orbit_radius: 6, orbit_period: TWO_PI * Math.sqrt(216 / 2), angle0: 0,
     color: '#9a8c7c',
-    yield: { metal: 6, fuel: 0, gold: 1, science: 2 } },
+    yield: { metal: 1, fuel: 0, gold: 5, science: 2 } },
   { id: 'haumea', name: 'Haumea', type: 'dwarf', parent: 'sol',
     radius: 1, soi: 7, mu: 0.8,
     orbit_radius: 2050, orbit_period: 7520, angle0: 0.95,
     color: '#d8d0c0',
-    yield: { metal: 6, fuel: 0, gold: 2, science: 2 } },
+    yield: { metal: 2, fuel: 0, gold: 3, science: 3 } },
   { id: 'makemake', name: 'Makemake', type: 'dwarf', parent: 'sol',
     radius: 1, soi: 7, mu: 0.8,
     orbit_radius: 2200, orbit_period: 8360, angle0: 3.30,
     color: '#c89868',
-    yield: { metal: 5, fuel: 0, gold: 3, science: 2 } },
+    yield: { metal: 1, fuel: 0, gold: 4, science: 3 } },
   { id: 'quaoar', name: 'Quaoar', type: 'dwarf', parent: 'sol',
     radius: 1, soi: 6, mu: 0.6,
     orbit_radius: 2100, orbit_period: 7800, angle0: 5.10,
     color: '#a09080',
-    yield: { metal: 6, fuel: 0, gold: 2, science: 1 } },
+    yield: { metal: 2, fuel: 0, gold: 3, science: 3 } },
   { id: 'eris', name: 'Eris', type: 'dwarf', parent: 'sol',
     radius: 1.5, soi: 9, mu: 1,
     orbit_radius: 2400, orbit_period: 9560, angle0: 1.80,
     color: '#e0e0e0',
-    yield: { metal: 1, fuel: 0, gold: 5, science: 4 } },
+    yield: { metal: 0, fuel: 0, gold: 5, science: 4 } },
   { id: 'sedna', name: 'Sedna', type: 'dwarf', parent: 'sol',
     radius: 1, soi: 8, mu: 0.7,
     orbit_radius: 3500, orbit_period: 16800, angle0: 2.55,
     color: '#b06040',
-    yield: { metal: 7, fuel: 0, gold: 3, science: 3 } },
+    yield: { metal: 1, fuel: 0, gold: 4, science: 4 } },
 ];
 
 // Eligible worlds for ownership = everything that isn't the star (16 worlds).
@@ -369,7 +369,8 @@ const FACTION_COLORS = [
   '#8d6e63', // ferrous
 ];
 
-const STARTING_RESOURCES = { metal: 100, fuel: 200, gold: 50, science: 0 };
+// Fuel is dead (economy rework §1.1) — column kept at 0 for schema compat.
+const STARTING_RESOURCES = { metal: 100, fuel: 0, gold: 50, science: 0 };
 const HOME_DEVELOPMENT_LEVEL = 3;       // capital
 const SECONDARY_DEVELOPMENT_LEVEL = 2;  // unused now that WORLDS_PER_PLAYER = 1
 // One world per faction (the capital). Each capital gets the starter
@@ -400,6 +401,7 @@ export const SHIP_COMBAT_STATS = {
   frigate:   { hp: 100, damage_per_tick: 10 },
   destroyer: { hp: 200, damage_per_tick: 18 },
   freighter: { hp: 60,  damage_per_tick: 0 },
+  colony:    { hp: 60,  damage_per_tick: 0 },
 };
 
 const STARTER_FLEET = [
@@ -521,6 +523,28 @@ function normalizeHex(s) {
   return s.startsWith('#') ? s.toLowerCase() : '#' + s.toLowerCase();
 }
 
+/**
+ * Derive a secondary (trim) color from a primary: lighten dark colors,
+ * darken light ones, by ~35%. Two-tone factions (§5): the secondary is
+ * decoration only — meaning must stay in the primary. Mirror of
+ * deriveSecondary in src/game/colorUtils.ts — keep the two in sync so
+ * server-derived and client-derived fallbacks agree.
+ */
+export function deriveSecondary(hex) {
+  const norm = normalizeHex(hex);
+  if (!norm) return '#888888';
+  const r = parseInt(norm.slice(1, 3), 16);
+  const g = parseInt(norm.slice(3, 5), 16);
+  const b = parseInt(norm.slice(5, 7), 16);
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  const f = 0.35;
+  const clamp = (n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0');
+  if (lum > 0.5) {
+    return `#${clamp(r * (1 - f))}${clamp(g * (1 - f))}${clamp(b * (1 - f))}`;
+  }
+  return `#${clamp(r + (255 - r) * f)}${clamp(g + (255 - g) * f)}${clamp(b + (255 - b) * f)}`;
+}
+
 function newEntryId() {
   const bytes = crypto.getRandomValues(new Uint8Array(9));
   let s = '';
@@ -559,7 +583,8 @@ export async function seedGameWorld(env, gameId) {
   // Pull lobby identity (empire_name, bio, chosen capital) alongside roster.
   const members = await env.DB
     .prepare(
-      `SELECT user_id, joined_at, empire_name, bio, chosen_starting_body
+      `SELECT user_id, joined_at, empire_name, bio, chosen_starting_body,
+              color, color2
          FROM room_members
         WHERE room_id = ?
         ORDER BY joined_at ASC, user_id ASC`,
@@ -594,12 +619,18 @@ export async function seedGameWorld(env, gameId) {
   // Factions: empire_name override (from lobby) wins over the default rotation.
   const factionRows = memberRows.map((m, slot) => {
     const empire = (typeof m.empire_name === 'string' ? m.empire_name.trim() : '') || null;
+    // Two-tone (§5): member-chosen primary wins over the default
+    // rotation; secondary = member pick, else derived from primary.
+    // Secondary is decoration only — meaning must stay in primary.
+    const color = normalizeHex(m.color) || FACTION_COLORS[slot % FACTION_COLORS.length];
+    const color2 = normalizeHex(m.color2) || deriveSecondary(color);
     return {
       id: `${gameId}:f${slot}`,
       slot,
       user_id: m.user_id,
       name: empire || FACTION_NAMES[slot % FACTION_NAMES.length],
-      color: FACTION_COLORS[slot % FACTION_COLORS.length],
+      color,
+      color2,
       bio: (typeof m.bio === 'string' && m.bio.trim()) ? m.bio.trim() : null,
     };
   });
@@ -617,33 +648,48 @@ export async function seedGameWorld(env, gameId) {
       claimed.add(choice);
     }
   });
-  // Second pass: anyone without a choice gets the first un-claimed shuffled
-  // body — but only from STARTING_BODY_IDS, the same terrestrial+moon set the
-  // lobby offers as a manual pick.
-  //
-  // This pool used to be every non-star body in the catalog, which quietly
-  // contradicted the rule STARTING_BODY_OPTIONS exists to enforce ("avoids
-  // highly-asymmetric starts on tiny asteroids"). A player who never opened
-  // the capital picker — i.e. most players — could be seeded onto a rogue
-  // asteroid. Observed in a 3-player test: one faction drew Vagrant (radius
-  // 0.5, rp 250 / ra 2650) and ended up with ~7x the credits of a moon start
-  // off its 8/8 metal+gold yield, while sitting too far out to reach another
-  // body or even see another player all match.
-  const fallbackPool = shuffled.filter(b => !claimed.has(b.id) && STARTING_BODY_IDS.has(b.id));
-  let fallbackIdx = 0;
+  // Second pass: anyone without a choice gets a FAIR fallback capital
+  // (spawn-fairness rules, DESIGN-identity-economy.md §1.5):
+  //   1. Starting-body pool only (terrestrial/moon) — no asteroid capitals.
+  //      (A playtest game once handed a faction "Vagrant", a 0.5-radius
+  //      eccentric rogue asteroid, as its homeworld.)
+  //   2. science >= 2 — with specialized yields a science-dead start
+  //      can never climb the tech tree.
+  //   3. Prefer a region (top-level parent grouping) no other capital
+  //      occupies, so two players don't spawn as next-door moons.
+  const regionOf = (tplId) => {
+    let cur = BODY_CATALOG.find(b => b.id === tplId);
+    while (cur && cur.parent && cur.parent !== 'sol') {
+      cur = BODY_CATALOG.find(b => b.id === cur.parent);
+    }
+    return cur ? cur.id : tplId;
+  };
+  const usedRegions = new Set([...claimed].map(regionOf));
+  const fairPool = shuffled.filter(b =>
+    !claimed.has(b.id) &&
+    (b.type === 'terrestrial' || b.type === 'moon') &&
+    (b.yield.science ?? 0) >= 2,
+  );
   factionRows.forEach(f => {
     if (!f.capital_template_id) {
-      const pick = fallbackPool[fallbackIdx++];
-      // Defensive: STARTING_BODY_OPTIONS is far larger than max_players (8),
-      // so this can only trip if the catalog is edited down.
+      const pick =
+        fairPool.find(b => !claimed.has(b.id) && !usedRegions.has(regionOf(b.id))) ||
+        fairPool.find(b => !claimed.has(b.id)) ||
+        // Last resort still never leaves the lobby's terrestrial+moon
+        // pool — falling back to "any body" is what produced the
+        // Vagrant asteroid capital in the first place. Only the
+        // science>=2 floor is relaxed here.
+        shuffled.find(b => !claimed.has(b.id) && STARTING_BODY_IDS.has(b.id));
+      // Defensive: STARTING_BODY_OPTIONS is far larger than max_players
+      // (8), so this can only trip if the catalog is edited down.
       if (!pick) {
         throw new Error(
-          `seedGameWorld: ran out of valid starting bodies for ${factionRows.length} players ` +
-          `(${fallbackPool.length} available after lobby picks)`,
+          `seedGameWorld: ran out of valid starting bodies for ${factionRows.length} players`,
         );
       }
       f.capital_template_id = pick.id;
       claimed.add(pick.id);
+      usedRegions.add(regionOf(pick.id));
     }
   });
   // Build the ownership map: capital first, then fill remaining worlds.
@@ -678,16 +724,16 @@ export async function seedGameWorld(env, gameId) {
     stmts.push(
       env.DB.prepare(
         `INSERT INTO game_factions
-          (id, game_id, user_id, slot, name, color, status, bio,
+          (id, game_id, user_id, slot, name, color, color2, status, bio,
            capital_body_id, reputation, senate_weight,
            metal, fuel, gold, science,
            research_tech_id, research_progress, joined_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'active', ?,
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?,
                  ?, 0, 1,
                  ?, ?, ?, ?,
                  NULL, 0, ?)`,
       ).bind(
-        f.id, gameId, f.user_id, f.slot, f.name, f.color, f.bio,
+        f.id, gameId, f.user_id, f.slot, f.name, f.color, f.color2, f.bio,
         f.capital_body_id,
         STARTING_RESOURCES.metal, STARTING_RESOURCES.fuel,
         STARTING_RESOURCES.gold, STARTING_RESOURCES.science,
@@ -935,7 +981,7 @@ async function handleListFactions(_req, env, ctx) {
 
   const rows = await env.DB
     .prepare(
-      `SELECT id, user_id, slot, name, color, status, capital_body_id,
+      `SELECT id, user_id, slot, name, color, color2, status, capital_body_id,
               senate_weight, reputation
          FROM game_factions
         WHERE game_id = ?
@@ -954,7 +1000,7 @@ async function handleMyFaction(_req, env, ctx) {
 
   const row = await env.DB
     .prepare(
-      `SELECT id, game_id, user_id, slot, name, color, status,
+      `SELECT id, game_id, user_id, slot, name, color, color2, status,
               capital_body_id, reputation, senate_weight,
               metal, fuel, gold, science,
               research_tech_id, research_progress
@@ -1005,6 +1051,19 @@ async function handlePatchMyFaction(req, env, ctx) {
     binds.push(hex);
   }
 
+  // Two-tone (§5): secondary trim color — decoration only, meaning must
+  // stay in the primary. Nullable (falls back to a derived secondary).
+  if (body.color2 !== undefined) {
+    if (body.color2 === null || body.color2 === '') {
+      updates.push('color2 = NULL');
+    } else {
+      const hex2 = normalizeHex(body.color2);
+      if (!hex2) return errResponse(400, 'bad_request', 'color2 must be a 6-digit hex');
+      updates.push('color2 = ?');
+      binds.push(hex2);
+    }
+  }
+
   if (updates.length === 0) return errResponse(400, 'bad_request', 'nothing to update');
 
   binds.push(gameId, session.user_id);
@@ -1019,7 +1078,7 @@ async function handlePatchMyFaction(req, env, ctx) {
 
   const fresh = await env.DB
     .prepare(
-      `SELECT id, name, color, slot, capital_body_id
+      `SELECT id, name, color, color2, slot, capital_body_id
          FROM game_factions
         WHERE game_id = ? AND user_id = ?`,
     )
@@ -1090,7 +1149,13 @@ export async function seedLateFaction(env, gameId, userId, chosenTemplateId, ide
   const empire = (typeof identity.empireName === 'string' ? identity.empireName.trim() : '') || null;
   const bio = (typeof identity.bio === 'string' && identity.bio.trim()) ? identity.bio.trim() : null;
   const name = empire || FACTION_NAMES[slot % FACTION_NAMES.length];
-  const color = FACTION_COLORS[slot % FACTION_COLORS.length];
+  // Two-tone (§5): honor lobby color prefs when the latecomer set them
+  // (room id == game id); else rotation primary + derived secondary.
+  const prefRow = await env.DB
+    .prepare('SELECT color, color2 FROM room_members WHERE room_id = ? AND user_id = ?')
+    .bind(gameId, userId).first();
+  const color = normalizeHex(prefRow?.color) || FACTION_COLORS[slot % FACTION_COLORS.length];
+  const color2 = normalizeHex(prefRow?.color2) || deriveSecondary(color);
 
   const stmts = [];
 
@@ -1098,16 +1163,16 @@ export async function seedLateFaction(env, gameId, userId, chosenTemplateId, ide
   stmts.push(
     env.DB.prepare(
       `INSERT INTO game_factions
-        (id, game_id, user_id, slot, name, color, status, bio,
+        (id, game_id, user_id, slot, name, color, color2, status, bio,
          capital_body_id, reputation, senate_weight,
          metal, fuel, gold, science,
          research_tech_id, research_progress, joined_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'active', ?,
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?,
                ?, 0, 1,
                ?, ?, ?, ?,
                NULL, 0, ?)`,
     ).bind(
-      factionId, gameId, userId, slot, name, color, bio,
+      factionId, gameId, userId, slot, name, color, color2, bio,
       bodyRowId,
       STARTING_RESOURCES.metal, STARTING_RESOURCES.fuel,
       STARTING_RESOURCES.gold, STARTING_RESOURCES.science,

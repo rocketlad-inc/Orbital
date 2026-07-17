@@ -7,6 +7,18 @@
       "runtimeArgs": ["serve", "-s", "C:/Users/lcfee/OneDrive/Documents/Claude/Projects/Orbital/build", "-l", "5050"],
       "port": 5050,
       "autoPort": true
+    },
+    {
+      "name": "event-hub",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "--prefix", "C:/Users/lcfee/OneDrive/Documents/Claude/Projects/vendor-volunteer",
+        "wrangler", "dev",
+        "--config", "C:/Users/lcfee/OneDrive/Documents/Claude/Projects/vendor-volunteer/wrangler.jsonc",
+        "--persist-to", "C:/Users/lcfee/OneDrive/Documents/Claude/Projects/vendor-volunteer/.wrangler/state",
+        "--port", "8787"
+      ],
+      "port": 8787
     }
   ]
 }

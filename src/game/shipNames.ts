@@ -157,6 +157,36 @@ export const SHIP_NAME_POOLS: Record<ShipClassName, string[]> = {
     'Caravanserai', 'Roadhouse', 'Wayfarer', 'Sojourner', 'Rambler',
     'Vagabond', 'Nomad', 'Tinker', 'Peddler', 'Carter', 'Drayman',
   ],
+  colony: [
+    // Generation ships and famous colony vessels
+    'Nauvoo', 'Mayflower', 'Arboghast', 'Edward Israel', 'Rocinante Ark',
+    // Ships of exploration and settlement
+    'Beagle', 'Endurance', 'Fram', 'Terra Nova II', 'Discovery',
+    'Resolution', 'Investigator', 'Challenger', 'Astrolabe', 'Vostok',
+    'Santa María', 'Half Moon', 'Susan Constant', 'Godspeed',
+    'Speedwell', 'Arbella', 'Fortune', 'Ann', 'Talbot', 'Ark',
+    'Dove', 'Welcome', 'Kalmar Nyckel', 'Zeewijk', 'Batavia',
+    // Founding and first-light
+    'Genesis', 'Foundation', 'Cornerstone', 'Groundbreak', 'First Light',
+    'New Dawn', 'Daybreak', 'Sunrise', 'Threshold', 'Landfall',
+    'Beachhead', 'Homestead', 'Freehold', 'Settlement', 'Township',
+    'Fieldstone', 'Hearthfire', 'Firstborn', 'Origin', 'Inception',
+    // Seeds and growth
+    'Seedling', 'Sower', 'Germinate', 'Sapling', 'Rootstock',
+    'Grafting', 'Cutting', 'Orchard', 'Greenhouse', 'Terrarium',
+    'Biosphere', 'Vivarium', 'Nursery', 'Cradle', 'Seedbank',
+    // Promise and departure
+    'Exodus', 'Diaspora', 'Emigrant', 'Pilgrim', 'Settler',
+    'Colonist', 'Frontier', 'Outward Bound', 'Far Horizon', 'Promised Land',
+    'Canaan', 'Elysium', 'Arcadia', 'Avalon', 'Shangri-La',
+    'Eldorado', 'Zion', 'Vinland', 'Roanoke', 'Jamestown',
+    // Hope
+    'Hopewell', 'Providence', 'Covenant', 'Promise', 'Endeavour II',
+    'Perseverance', 'Constancy', 'Steadfast Hope', 'Bright Prospect',
+    'Fair Wind', 'Safe Harbor', 'New Beginning', 'Second Chance',
+    'Fresh Start', 'Open Country', 'Wide Acres', 'Long Meadow',
+    'Greenfield', 'Fallow', 'Tilth', 'Furrow', 'Plowshare',
+  ],
 };
 
 /**

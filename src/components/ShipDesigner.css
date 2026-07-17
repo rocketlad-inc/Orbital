@@ -1,0 +1,351 @@
+/* ============================================================
+   ShipDesigner — dark sci-fi styling matched to BuildPanel /
+   OverviewPanel (same palette: #0a1018 bg, #2a3d50 borders,
+   #4ecdc4 accents, #ffb84d warnings, #ff5e5e danger).
+   ============================================================ */
+
+.ship-designer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(3, 6, 12, 0.72);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.ship-designer {
+  width: min(720px, 96vw);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, #101a28 0%, #0a1018 100%);
+  border: 1px solid #2a3d50;
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  color: #d8e4ee;
+  font-family: inherit;
+  overflow: hidden;
+}
+
+.ship-designer__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid #2a3d50;
+}
+
+.ship-designer__title {
+  font-size: 13px;
+  letter-spacing: 0.18em;
+  color: #4ecdc4;
+  text-transform: uppercase;
+}
+
+.ship-designer__close {
+  background: transparent;
+  border: none;
+  color: #b8c8d6;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+.ship-designer__close:hover { color: #fff; }
+
+.ship-designer__body {
+  overflow-y: auto;
+  padding: 12px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Class tabs */
+.ship-designer__tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ship-designer__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid #2a3d50;
+  border-radius: 4px;
+  color: #b8c8d6;
+  font-family: inherit;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.ship-designer__tab.active {
+  border-color: #4ecdc4;
+  color: #4ecdc4;
+  background: rgba(78, 205, 196, 0.08);
+}
+
+/* Design library list */
+.ship-designer__list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ship-designer__list-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid #2a3d50;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+}
+.ship-designer__list-row.selected { border-color: #4ecdc4; }
+.ship-designer__list-row-name { flex: 1; color: #d8e4ee; }
+.ship-designer__badge {
+  padding: 1px 6px;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  border-radius: 3px;
+  border: 1px solid #4ecdc4;
+  color: #4ecdc4;
+  background: rgba(78, 205, 196, 0.12);
+}
+.ship-designer__mini-btn {
+  background: transparent;
+  border: 1px solid #2a3d50;
+  border-radius: 3px;
+  color: #b8c8d6;
+  font-family: inherit;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.ship-designer__mini-btn:hover { border-color: #4ecdc4; color: #4ecdc4; }
+.ship-designer__mini-btn--danger:hover { border-color: #ff5e5e; color: #ff5e5e; }
+
+.ship-designer__section-title {
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: #8aa0b4;
+  text-transform: uppercase;
+}
+
+/* Name + icon row */
+.ship-designer__name-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.ship-designer__name-input {
+  flex: 1;
+  padding: 7px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid #2a3d50;
+  border-radius: 3px;
+  color: #d8e4ee;
+  font-family: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.ship-designer__name-input:focus { border-color: #4ecdc4; }
+.ship-designer__icon-btn {
+  background: transparent;
+  border: 1px solid #2a3d50;
+  border-radius: 4px;
+  color: #4ecdc4;
+  padding: 5px 8px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: inherit;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+/* Slot pips */
+.ship-designer__slots {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: #b8c8d6;
+}
+.ship-designer__slot-pip {
+  width: 22px;
+  height: 22px;
+  border: 1px solid #2a3d50;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: #4ecdc4;
+  background: rgba(255, 255, 255, 0.02);
+}
+.ship-designer__slot-pip.filled {
+  border-color: #4ecdc4;
+  background: rgba(78, 205, 196, 0.10);
+}
+.ship-designer__slot-pip.detonator {
+  border-color: #ff5e5e;
+  color: #ff5e5e;
+  background: rgba(255, 94, 94, 0.10);
+}
+
+/* Part cards */
+.ship-designer__part {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid #2a3d50;
+  border-radius: 4px;
+}
+.ship-designer__part--detonator {
+  border-color: rgba(255, 94, 94, 0.55);
+  background: rgba(255, 94, 94, 0.05);
+}
+.ship-designer__part-info { flex: 1; min-width: 0; }
+.ship-designer__part-name {
+  font-size: 11px;
+  color: #d8e4ee;
+  letter-spacing: 0.06em;
+}
+.ship-designer__part-blurb {
+  font-size: 10px;
+  color: #b8c8d6;
+  margin-top: 2px;
+  line-height: 1.4;
+}
+.ship-designer__part-tech {
+  font-size: 9px;
+  color: #8aa0b4;
+  margin-top: 2px;
+  font-style: italic;
+}
+.ship-designer__part-cost {
+  font-size: 10px;
+  color: #ffb84d;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+.ship-designer__part-warning {
+  margin-top: 4px;
+  font-size: 10px;
+  line-height: 1.45;
+  color: #ff8a8a;
+}
+.ship-designer__count {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ship-designer__count-btn {
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: 1px solid #2a3d50;
+  border-radius: 3px;
+  color: #d8e4ee;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  line-height: 1;
+}
+.ship-designer__count-btn:disabled { opacity: 0.3; cursor: default; }
+.ship-designer__count-btn:not(:disabled):hover { border-color: #4ecdc4; color: #4ecdc4; }
+.ship-designer__count-num {
+  min-width: 16px;
+  text-align: center;
+  font-size: 12px;
+  color: #d8e4ee;
+}
+
+/* Stats readout */
+.ship-designer__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 6px;
+}
+.ship-designer__stat {
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid #2a3d50;
+  border-radius: 4px;
+}
+.ship-designer__stat-label {
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  color: #8aa0b4;
+  text-transform: uppercase;
+}
+.ship-designer__stat-value {
+  font-size: 13px;
+  color: #4ecdc4;
+  margin-top: 2px;
+}
+.ship-designer__stat-delta {
+  font-size: 9px;
+  color: #ffb84d;
+  margin-left: 4px;
+}
+
+/* Action buttons */
+.ship-designer__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ship-designer__btn {
+  padding: 8px 14px;
+  background: transparent;
+  border: 1px solid #2a3d50;
+  border-radius: 4px;
+  color: #d8e4ee;
+  font-family: inherit;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+.ship-designer__btn:disabled { opacity: 0.4; cursor: default; }
+.ship-designer__btn--primary {
+  border-color: #4ecdc4;
+  color: #4ecdc4;
+  background: rgba(78, 205, 196, 0.08);
+}
+.ship-designer__btn--primary:not(:disabled):hover { background: rgba(78, 205, 196, 0.16); }
+.ship-designer__btn--danger {
+  border-color: #ff5e5e;
+  color: #ff5e5e;
+}
+
+.ship-designer__error {
+  padding: 6px 10px;
+  background: rgba(255, 94, 94, 0.1);
+  border: 1px solid #ff5e5e;
+  border-radius: 4px;
+  color: #ff5e5e;
+  font-size: 10px;
+  line-height: 1.4;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  font-family: inherit;
+}
+
+.ship-designer__hint {
+  font-size: 9px;
+  color: #8aa0b4;
+  line-height: 1.5;
+}
