@@ -819,8 +819,24 @@ export const ShipPanel: React.FC = () => {
                     ticks per ship. Single label; no MP branch needed. */}
                 <span className="value">every 3 ticks</span>
               </div>
-              <div className="stat-row" style={{ fontSize: '9px', color: '#b8c8d6', fontStyle: 'italic' }}>
-                Auto-fires at any hostile sharing this body.
+              {/* Engagement blurb tracks the current STANCE — the fixed
+                  "auto-fires at any hostile" copy contradicted a ship set
+                  to DEFEND/HOLD. In SP (no orders) stance defaults to
+                  attack, so this reads the same as before. Hold is tinted
+                  amber since the ship won't fight. */}
+              <div
+                className="stat-row"
+                style={{
+                  fontSize: '9px',
+                  color: currentStance === 'hold' ? '#ffb84d' : '#b8c8d6',
+                  fontStyle: 'italic',
+                }}
+              >
+                {currentStance === 'attack'
+                  ? 'Auto-fires at any hostile sharing this body.'
+                  : currentStance === 'defensive'
+                    ? 'Returns fire only — engages hostiles that attack here.'
+                    : 'Holding fire — will not engage, even under attack.'}
               </div>
             </div>
           )}
