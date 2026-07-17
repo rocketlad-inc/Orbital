@@ -157,6 +157,9 @@ interface ServerState {
      *  Replaces the combat-record display on the ShipPanel for
      *  freighters. Migration 0025. */
     trades_completed?: number;
+    /** Game tick this hull last fired in auto-combat. NULL = never fired.
+     *  Drives the FleetPanel "In Combat" status. Migration 0026. */
+    last_combat_tick?: number | null;
     status: string;
     /** Player's icon-variant pick from the build queue ('A'..'F').
      *  NULL means use the class default. Migration 0022. */
@@ -447,6 +450,10 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     orders: [],
     rank: s.rank ?? 0,
     combatHistory,
+    // Surface the server's firing tick so the FleetPanel can flag ships
+    // "In Combat". SP sets lastCombatTick in client combat.ts; MP relies
+    // on this passthrough. NULL (never fired) → undefined.
+    lastCombatTick: s.last_combat_tick ?? undefined,
     tradesCompleted: s.trades_completed ?? 0,
     iconVariant,
     stance,
