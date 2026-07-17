@@ -440,6 +440,7 @@ function translateShipClass(serverClass: string): Ship['class'] {
     case 'frigate':
     case 'destroyer':
     case 'freighter':
+    case 'colony':
       return serverClass;
     case 'cargo':
     case 'hauler':
@@ -1069,7 +1070,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     return {
       id: b.id,
       bodyId: stripGameId(b.body_id) ?? b.body_id,
-      shipClass: b.ship_class as 'corvette' | 'frigate' | 'destroyer' | 'freighter',
+      shipClass: b.ship_class as 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony',
       ownedBy: PLAYER_TOKEN,
       // Progress runs from the tick the build actually STARTED — for
       // orders that waited in the unlimited queue that's the promotion

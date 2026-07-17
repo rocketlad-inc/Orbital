@@ -44,7 +44,7 @@ function err(status, code, message) {
 // shortcut (bodyPosition's common path); eccentric Kuiper orbits and ram
 // trajectories are approximated as circular, which is fine for a generous
 // coverage radius.
-const SHIP_SENSOR_RANGE = { corvette: 150, frigate: 200, destroyer: 175, freighter: 100 };
+const SHIP_SENSOR_RANGE = { corvette: 150, frigate: 200, destroyer: 175, freighter: 100, colony: 75 };
 const SETTLEMENT_SENSOR_RANGE = { city: 250, station: 400 };
 const DEFAULT_SHIP_SENSOR_RANGE = 25;
 const DEFAULT_SETTLEMENT_SENSOR_RANGE = 40;

@@ -761,7 +761,7 @@ export class Room {
         .first();
       if (!body) continue;
 
-      const FUEL_MAX = { corvette: 80, frigate: 200, destroyer: 300, freighter: 400 };
+      const FUEL_MAX = { corvette: 80, frigate: 200, destroyer: 300, freighter: 400, colony: 100 };
       const fuelMax = FUEL_MAX[b.ship_class] ?? 100;
       // Ship designer: hull base × part multipliers × tech (spec §2).
       // parts_json is the snapshot taken at queue time; NULL = bare

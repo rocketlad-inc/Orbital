@@ -37,6 +37,10 @@ const RAM_ASTEROID_G = 0.005;
 
 export const BodyInspector: React.FC = () => {
   const { gameState, camera, uiState, deselectBody, focusBody, updateCamera } = useGameContext();
+  // Non-null only in multiplayer — used to switch the deploy setup
+  // pitch between the legacy SP freighter copy and the MP colony-ship
+  // rules (colony/freighter split).
+  const mpActionsTopCard = useMultiplayerActions();
   const selectedBodyId = uiState.selectedBodyId;
 
   // === Body-focus camera state ===
@@ -367,9 +371,17 @@ export const BodyInspector: React.FC = () => {
                   <span style={{ color: '#7a8a9a' }}>/ tick if settled</span>
                 </div>
                 <div className="body-focus__yield-note">
-                  {freightersHere.length === 0
-                    ? 'No settlement yet — park a freighter, then deploy.'
-                    : 'Freighter in orbit; deploy below to start harvesting.'}
+                  {mpActionsTopCard
+                    // MP: colony/freighter split — freighters can't
+                    // settle any more; expansion runs on Colony Ships.
+                    ? (gameState.ships.some(s =>
+                        s.ownedBy === 'player' && !s.transit
+                        && s.orbit.parentBodyId === body.id && s.class === 'colony')
+                        ? 'Colony Ship in orbit; deploy below to start harvesting.'
+                        : 'No settlement yet — send a Colony Ship, then deploy.')
+                    : (freightersHere.length === 0
+                        ? 'No settlement yet — park a freighter, then deploy.'
+                        : 'Freighter in orbit; deploy below to start harvesting.')}
                 </div>
               </div>
             );
@@ -734,6 +746,50 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
         ? 'That freighter belongs to an enemy. Send YOUR own to deploy.'
         : 'Send a freighter to orbit to deploy';
 
+  // === MP colony/freighter split (DESIGN-identity-economy §4) ===
+  // In multiplayer, freighters lost the settle verb. Instead:
+  //   city:    requires a Colony Ship of yours in orbit — it is CONSUMED
+  //            (the ship is the cost; no metal/credits charged).
+  //   station: built from orbit for 30M 20C where you already own a
+  //            settlement, OR consumes a Colony Ship anywhere else
+  //            (that's how gas giants + Sol get settled).
+  // SP keeps the legacy freighter gate above — its sim is frozen.
+  const isMp = !!mpActions;
+  const playerColonyShipHere = gameState.ships.find(s => {
+    if (s.ownedBy !== 'player') return false;
+    if (s.transit) return false;
+    if (s.orbit.parentBodyId !== bodyId) return false;
+    if (s.class !== 'colony') return false;
+    // Same desync gate as the freighter check: a committed transfer
+    // still on the ship means the server hasn't confirmed arrival yet.
+    if (mpActions && s.orders.some(o =>
+      o.type === 'transfer' && (o.status === 'committed' || o.status === 'planned')
+    )) {
+      return false;
+    }
+    return true;
+  });
+  const colonyShipEnRoute = !playerColonyShipHere && gameState.ships.some(s =>
+    s.ownedBy === 'player' && s.class === 'colony' && (
+      s.transit?.currentTransfer.targetBodyId === bodyId
+      || s.orders.some(o =>
+        o.type === 'transfer'
+        && (o.status === 'committed' || o.status === 'planned')
+        && o.capturedAtBody === bodyId
+      )
+    )
+  );
+  // MP station path (a): you already own a settlement at this body →
+  // build from orbit for resources. Server cost is 30 metal / 20 gold.
+  const MP_STATION_COST = { ore: 30, credits: 20 };
+  const ownSettlementHere = gameState.settlements.some(
+    s => s.bodyId === bodyId && s.ownedBy === 'player'
+  );
+  const mpRes = gameState.resources['player'];
+  const canAffordMpStation = !!mpRes
+    && mpRes.ore >= MP_STATION_COST.ore
+    && mpRes.credits >= MP_STATION_COST.credits;
+
   // One settlement of each type per body. `settlements` is already
   // filtered to this section's type (city panel vs station panel), so
   // a non-empty list means a settlement of that type already sits here
@@ -1004,12 +1060,21 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
             {showCityDeploy && (
               <button
                 className="deploy-btn"
-                disabled={!canBuildHere || !canAffordCity}
+                disabled={isMp
+                  ? !playerColonyShipHere
+                  : (!canBuildHere || !canAffordCity)}
                 onClick={() => handleStartDeploy('city')}
-                title={
-                  !canBuildHere ? noFreighterHint
-                  : !canAffordCity ? `Need ${SETTLEMENT_DEFS.city.cost.fuel}F/${SETTLEMENT_DEFS.city.cost.ore}M/${SETTLEMENT_DEFS.city.cost.credits}C`
-                  : `Deploy a city (${SETTLEMENT_DEFS.city.cost.fuel}F/${SETTLEMENT_DEFS.city.cost.ore}M/${SETTLEMENT_DEFS.city.cost.credits}C)`
+                title={isMp
+                  ? (playerColonyShipHere
+                      ? `Found a city — consumes ${playerColonyShipHere.name} (the Colony Ship in orbit)`
+                      : colonyShipEnRoute
+                        ? 'Your Colony Ship is en route — wait for it to arrive'
+                        : 'Requires a Colony Ship in orbit — founding the city consumes it')
+                  : (
+                    !canBuildHere ? noFreighterHint
+                    : !canAffordCity ? `Need ${SETTLEMENT_DEFS.city.cost.fuel}F/${SETTLEMENT_DEFS.city.cost.ore}M/${SETTLEMENT_DEFS.city.cost.credits}C`
+                    : `Deploy a city (${SETTLEMENT_DEFS.city.cost.fuel}F/${SETTLEMENT_DEFS.city.cost.ore}M/${SETTLEMENT_DEFS.city.cost.credits}C)`
+                  )
                 }
               >
                 ■ DEPLOY CITY
@@ -1018,12 +1083,25 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
             {showStationDeploy && (
               <button
                 className="deploy-btn"
-                disabled={!canBuildHere || !canAffordStation}
+                disabled={isMp
+                  ? !(playerColonyShipHere || (ownSettlementHere && canAffordMpStation))
+                  : (!canBuildHere || !canAffordStation)}
                 onClick={() => handleStartDeploy('station')}
-                title={
-                  !canBuildHere ? noFreighterHint
-                  : !canAffordStation ? `Need ${SETTLEMENT_DEFS.station.cost.fuel}F/${SETTLEMENT_DEFS.station.cost.ore}M/${SETTLEMENT_DEFS.station.cost.credits}C`
-                  : `Deploy a station (${SETTLEMENT_DEFS.station.cost.fuel}F/${SETTLEMENT_DEFS.station.cost.ore}M/${SETTLEMENT_DEFS.station.cost.credits}C)`
+                title={isMp
+                  ? (playerColonyShipHere
+                      ? `Launch a station — consumes ${playerColonyShipHere.name} (the Colony Ship in orbit)`
+                      : ownSettlementHere
+                        ? (canAffordMpStation
+                            ? `Built from orbit: ${MP_STATION_COST.ore}M ${MP_STATION_COST.credits}C`
+                            : `Need ${MP_STATION_COST.ore}M ${MP_STATION_COST.credits}C to build from orbit`)
+                        : colonyShipEnRoute
+                          ? 'Your Colony Ship is en route — wait for it to arrive'
+                          : `Requires a Colony Ship in orbit (consumed) — or own a settlement here first to build from orbit for ${MP_STATION_COST.ore}M ${MP_STATION_COST.credits}C`)
+                  : (
+                    !canBuildHere ? noFreighterHint
+                    : !canAffordStation ? `Need ${SETTLEMENT_DEFS.station.cost.fuel}F/${SETTLEMENT_DEFS.station.cost.ore}M/${SETTLEMENT_DEFS.station.cost.credits}C`
+                    : `Deploy a station (${SETTLEMENT_DEFS.station.cost.fuel}F/${SETTLEMENT_DEFS.station.cost.ore}M/${SETTLEMENT_DEFS.station.cost.credits}C)`
+                  )
                 }
               >
                 ◆ DEPLOY STATION
@@ -1031,7 +1109,20 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
             )}
           </div>
 
-          {!canBuildHere && (showCityDeploy || showStationDeploy) && (
+          {/* Visible hint under the buttons. MP gets colony-ship copy;
+              SP keeps the legacy freighter copy. */}
+          {isMp && !playerColonyShipHere && (showCityDeploy || showStationDeploy) && (
+            <div className="deploy-hint">
+              {colonyShipEnRoute
+                ? 'Your Colony Ship is en route — wait for it to arrive.'
+                : showStationDeploy && ownSettlementHere
+                  ? (canAffordMpStation
+                      ? `Station built from orbit: ${MP_STATION_COST.ore}M ${MP_STATION_COST.credits}C — no ship needed.`
+                      : `Station built from orbit costs ${MP_STATION_COST.ore}M ${MP_STATION_COST.credits}C — not enough in the pool yet.`)
+                  : 'Requires a Colony Ship in orbit — deploying consumes it.'}
+            </div>
+          )}
+          {!isMp && !canBuildHere && (showCityDeploy || showStationDeploy) && (
             <div className="deploy-hint">{noFreighterHint}</div>
           )}
 
@@ -1039,7 +1130,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
               disabled button isn't a mystery. Per-resource so the player
               sees exactly what they're short (almost always credits early,
               given the collector economy). */}
-          {canBuildHere && (showCityDeploy || showStationDeploy) && playerRes && (() => {
+          {!isMp && canBuildHere && (showCityDeploy || showStationDeploy) && playerRes && (() => {
             const shortfalls: string[] = [];
             const checkDef = showStationDeploy && !canAffordStation
               ? SETTLEMENT_DEFS.station

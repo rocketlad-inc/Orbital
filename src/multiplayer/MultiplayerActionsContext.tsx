@@ -26,7 +26,7 @@ export interface TransferIntent {
 
 export interface BuildIntent {
   bodyId: string;
-  shipClass: 'corvette' | 'frigate' | 'destroyer' | 'freighter';
+  shipClass: 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
   shipName?: string;
   /** Player's picked icon variant from the BuildPanel dropdown.
    *  Server validates 'A'..'F'; undefined/null = class default. */

@@ -22,6 +22,7 @@ export const SHIP_SENSOR_RANGE: Record<string, number> = {
   frigate: 200,    // balanced warship
   destroyer: 175,  // heavy weapons, less sensor budget
   freighter: 100,  // civilian
+  colony: 75,      // settler transport — minimal nav sensors
 };
 
 /** Sensor range per settlement type. */

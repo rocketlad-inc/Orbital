@@ -18,7 +18,7 @@ interface Props {
   onBack: () => void;
 }
 
-const CLASSES: ShipIconClass[] = ['corvette', 'frigate', 'destroyer', 'freighter'];
+const CLASSES: ShipIconClass[] = ['corvette', 'frigate', 'destroyer', 'freighter', 'colony'];
 
 // Faction-color samples so we can preview each candidate against the
 // hues it'll actually be rendered with in-game. Mirrors COLORS.neutral
