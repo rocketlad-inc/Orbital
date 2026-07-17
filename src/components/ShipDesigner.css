@@ -157,8 +157,13 @@
   outline: none;
 }
 .ship-designer__name-input:focus { border-color: #4ecdc4; }
+/* Icon picker — a dropdown "chit" so it reads as changeable. */
+.ship-designer__icon-dd {
+  position: relative;
+  flex-shrink: 0;
+}
 .ship-designer__icon-btn {
-  background: transparent;
+  background: rgba(78, 205, 196, 0.06);
   border: 1px solid #2a3d50;
   border-radius: 4px;
   color: #4ecdc4;
@@ -170,6 +175,80 @@
   font-family: inherit;
   font-size: 9px;
   letter-spacing: 0.08em;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.ship-designer__icon-btn:hover,
+.ship-designer__icon-btn.open {
+  border-color: #4ecdc4;
+  background: rgba(78, 205, 196, 0.12);
+}
+.ship-designer__icon-btn-name {
+  text-transform: uppercase;
+}
+.ship-designer__icon-caret {
+  font-size: 8px;
+  opacity: 0.7;
+  margin-left: 1px;
+  transition: transform 0.12s ease;
+}
+.ship-designer__icon-btn.open .ship-designer__icon-caret {
+  transform: rotate(180deg);
+}
+
+.ship-designer__icon-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  min-width: 170px;
+  padding: 4px;
+  background: #0e1622;
+  border: 1px solid #2a3d50;
+  border-radius: 6px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.ship-designer__icon-menu-title {
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #6b8195;
+  padding: 4px 8px 3px;
+}
+.ship-designer__icon-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: #4ecdc4;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+.ship-designer__icon-option:hover {
+  background: rgba(78, 205, 196, 0.12);
+}
+.ship-designer__icon-option.selected {
+  background: rgba(78, 205, 196, 0.16);
+}
+.ship-designer__icon-option-name {
+  flex: 1;
+  font-size: 11px;
+  color: #d8e4ee;
+}
+.ship-designer__icon-default {
+  color: #6b8195;
+  font-size: 9px;
+}
+.ship-designer__icon-check {
+  color: #4ecdc4;
+  font-size: 11px;
 }
 
 /* Slot pips */

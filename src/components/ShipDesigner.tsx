@@ -13,7 +13,7 @@
 // compatibility, one-active-per-class).
 // ============================================================
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions, ServerShipDesign } from '../multiplayer/MultiplayerActionsContext';
 import { ShipClassName, SHIP_CLASSES, BUILDABLE_CLASSES } from '../game/shipClasses';
@@ -73,15 +73,33 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   const [draftName, setDraftName] = useState('');
   const [draftParts, setDraftParts] = useState<ShipPartId[]>([]);
   const [draftIcon, setDraftIcon] = useState<ShipIconVariant | undefined>(undefined);
+  const [iconMenuOpen, setIconMenuOpen] = useState(false);
+  const iconDropdownRef = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Esc closes.
+  // Close the icon dropdown on any outside click while it's open.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    if (!iconMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (iconDropdownRef.current && !iconDropdownRef.current.contains(e.target as Node)) {
+        setIconMenuOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', onDown);
+    return () => window.removeEventListener('mousedown', onDown);
+  }, [iconMenuOpen]);
+
+  // Esc closes the icon dropdown first if it's open, otherwise the modal.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (iconMenuOpen) { setIconMenuOpen(false); return; }
+      onClose();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, iconMenuOpen]);
 
   const stateDesigns = gameState.shipDesigns;
   const classDesigns = useMemo(() => {
@@ -272,17 +290,47 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
               maxLength={32}
               onChange={e => setDraftName(e.target.value)}
             />
-            <button
-              className="ship-designer__icon-btn"
-              onClick={() => {
-                const cur = ALL_VARIANTS.indexOf(iconVariant);
-                setDraftIcon(ALL_VARIANTS[(cur + 1) % ALL_VARIANTS.length]);
-              }}
-              title={`Icon: ${ICON_VARIANT_NAMES[activeClass][iconVariant]} (click to cycle)`}
-            >
-              <ShipIcon shipClass={activeClass} variant={iconVariant} size={18} />
-              {ICON_VARIANT_NAMES[activeClass][iconVariant]}
-            </button>
+            <div className="ship-designer__icon-dd" ref={iconDropdownRef}>
+              <button
+                type="button"
+                className={`ship-designer__icon-btn ${iconMenuOpen ? 'open' : ''}`}
+                onClick={() => setIconMenuOpen(o => !o)}
+                aria-haspopup="listbox"
+                aria-expanded={iconMenuOpen}
+                title="Change ship icon"
+              >
+                <ShipIcon shipClass={activeClass} variant={iconVariant} size={18} />
+                <span className="ship-designer__icon-btn-name">
+                  {ICON_VARIANT_NAMES[activeClass][iconVariant]}
+                </span>
+                <span className="ship-designer__icon-caret" aria-hidden>▾</span>
+              </button>
+              {iconMenuOpen && (
+                <div className="ship-designer__icon-menu" role="listbox" aria-label="Ship icon">
+                  <div className="ship-designer__icon-menu-title">Icon</div>
+                  {ALL_VARIANTS.map(v => {
+                    const isDefault = v === DEFAULT_SHIP_ICONS[activeClass];
+                    return (
+                      <button
+                        key={v}
+                        type="button"
+                        role="option"
+                        aria-selected={v === iconVariant}
+                        className={`ship-designer__icon-option ${v === iconVariant ? 'selected' : ''}`}
+                        onClick={() => { setDraftIcon(v); setIconMenuOpen(false); }}
+                      >
+                        <ShipIcon shipClass={activeClass} variant={v} size={22} />
+                        <span className="ship-designer__icon-option-name">
+                          {ICON_VARIANT_NAMES[activeClass][v]}
+                          {isDefault && <span className="ship-designer__icon-default"> · default</span>}
+                        </span>
+                        {v === iconVariant && <span className="ship-designer__icon-check" aria-hidden>✓</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
             {selected && (
               <button className="ship-designer__mini-btn" onClick={() => loadDesign(null)}>
                 + NEW
