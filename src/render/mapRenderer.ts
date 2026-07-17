@@ -31,6 +31,11 @@ export interface RenderContext {
    *  Keyed by ship/settlement id. Populated by MapCanvas pre-render
    *  pass; consumed by drawDamageFlash. */
   damageFlashStart?: Map<string, number>;
+  /** Wall-clock ms (performance.now()) when each settlement's population
+   *  was last observed increasing. Keyed by settlement id. Drives the
+   *  soft green 'growth' pulse (§E4) — ms-based (600ms) because it's a
+   *  pure-cosmetic celebration, not combat feedback. */
+  growthFlashStart?: Map<string, number>;
   /** Wall-clock ms for the current frame — passed to drawDamageFlash
    *  so all flashes age consistently within one frame. */
   nowMs?: number;
@@ -98,8 +103,14 @@ export const DESTRUCTION_FLASH_DURATION_TICKS = 10;
 
 /** Where in its lifecycle the flash is. Damage = small red ring,
  *  Destruction = bigger orange-white explosion ring. Both share the
- *  same fade curve. */
-export type FlashKind = 'damage' | 'destruction';
+ *  same fade curve. Growth = soft green expanding ring on a settlement
+ *  population increase — NOTE: growth is wall-clock-ms based (caller
+ *  passes startMs/nowMs, 600ms default) while damage/destruction are
+ *  tick-based. */
+export type FlashKind = 'damage' | 'destruction' | 'growth';
+
+/** Growth pulse lifetime — wall-clock, pure cosmetic (§E4). */
+export const GROWTH_FLASH_DURATION_MS = 600;
 
 /**
  * Render a brief glow around a damaged or destroyed ship/settlement
@@ -127,7 +138,9 @@ export function drawDamageFlash(
   if (startTick === undefined) return;
   const dur = durationTicks ?? (kind === 'destruction'
     ? DESTRUCTION_FLASH_DURATION_TICKS
-    : DAMAGE_FLASH_DURATION_TICKS);
+    : kind === 'growth'
+      ? GROWTH_FLASH_DURATION_MS
+      : DAMAGE_FLASH_DURATION_TICKS);
   const age = nowTick - startTick;
   if (age < 0 || age >= dur) return;
 
@@ -163,6 +176,31 @@ export function drawDamageFlash(
     return;
   }
 
+  if (kind === 'growth') {
+    // Population growth (§E4): a soft green ring expanding outward,
+    // additive so it glows over the settlement without muddying it.
+    const ringR = baseRadius * (1.2 + (1 - linear) * 2.4);
+    ctx.ctx.save();
+    ctx.ctx.globalCompositeOperation = 'lighter';
+    const grad = ctx.ctx.createRadialGradient(
+      canvasPos.x, canvasPos.y, baseRadius * 0.3,
+      canvasPos.x, canvasPos.y, ringR,
+    );
+    grad.addColorStop(0, `rgba(110, 231, 183, ${0.20 * freshness})`);
+    grad.addColorStop(1, 'rgba(110, 231, 183, 0)');
+    ctx.ctx.fillStyle = grad;
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(canvasPos.x, canvasPos.y, ringR, 0, Math.PI * 2);
+    ctx.ctx.fill();
+    ctx.ctx.strokeStyle = `rgba(110, 231, 183, ${0.65 * freshness})`;
+    ctx.ctx.lineWidth = 1.5;
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(canvasPos.x, canvasPos.y, ringR, 0, Math.PI * 2);
+    ctx.ctx.stroke();
+    ctx.ctx.restore();
+    return;
+  }
+
   // Damage: small red halo with subtle expansion. Punchy at impact,
   // lingers softly so a sequence of hits reads as continuous fire.
   const haloR = baseRadius * (2.5 + (1 - linear) * 1.5);
@@ -183,6 +221,46 @@ export function drawDamageFlash(
  *  realtime damage flash was wall-clock; the tick-based one is the
  *  new shape. Kept exported so future refactors can find it. */
 export const DAMAGE_FLASH_DURATION_MS = 500;
+
+/**
+ * Corner-bracket selection indicator (§E6) — replaces the dashed
+ * selection circles on bodies, ships, and settlements. Four L-shaped
+ * brackets sit at the corners of a square circumscribing a circle of
+ * radius `r`, and the whole set rotates slowly (0.15 rad/s, wall-clock
+ * — pure cosmetic). Arm length ~r*0.45. One path, one stroke.
+ */
+export function drawSelectionBrackets(
+  c: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  r: number,
+  color: string,
+  nowMs?: number,
+) {
+  const t = nowMs ?? (typeof performance !== 'undefined' ? performance.now() : 0);
+  const rot = (t / 1000) * 0.15;
+  // Square whose corners sit ON the circle of radius r, so the bracket
+  // footprint matches the old dashed circle's radius exactly.
+  const h = r * Math.SQRT1_2;
+  const arm = Math.min(r * 0.45, h * 0.9);
+  c.save();
+  c.translate(x, y);
+  c.rotate(rot);
+  c.strokeStyle = color;
+  c.lineWidth = 1.5;
+  c.beginPath();
+  // Each bracket is an L hugging one corner of the square [-h, h]^2.
+  // sx/sy pick the corner; arms run back along both edges.
+  for (let i = 0; i < 4; i++) {
+    const sx = i & 1 ? -1 : 1;
+    const sy = i & 2 ? -1 : 1;
+    c.moveTo(sx * (h - arm), sy * h);
+    c.lineTo(sx * h, sy * h);
+    c.lineTo(sx * h, sy * (h - arm));
+  }
+  c.stroke();
+  c.restore();
+}
 
 // ============================================================
 // Starfield — procedural backdrop, cached to offscreen canvas
@@ -736,11 +814,20 @@ function drawNightLights(
     }
     const rand = mulberry32(hashStr(s.id));
     const n = 4 + Math.min(6, s.population);
+    const nowM = ctx.nowMs ?? performance.now();
     for (let i = 0; i < n; i++) {
       const rr = radius * (0.68 + rand() * 0.26);
       const ja = a + (rand() - 0.5) * 0.55;
       ctx.ctx.fillStyle = i % 3 === 0 ? '#ffb84d' : '#ffd27a';
-      ctx.ctx.globalAlpha = 0.5 + rand() * 0.5;
+      let alpha = 0.5 + rand() * 0.5;
+      // ~10% of windows flicker (§E3): a slow independent sine per dot.
+      // The same rand() draw is both the pick AND the phase seed, so the
+      // deterministic stream stays one-draw-per-dot for this feature.
+      const flick = rand();
+      if (flick < 0.1) {
+        alpha *= 0.5 + 0.5 * Math.sin(nowM / 1400 + i * 1.7 + flick * 60);
+      }
+      ctx.ctx.globalAlpha = alpha;
       ctx.ctx.beginPath();
       ctx.ctx.arc(
         canvasPos.x + Math.cos(ja) * rr,
@@ -897,6 +984,15 @@ function drawGasGiantBody(
 }
 
 /**
+ * Label fade-in bookkeeping (§E7): wall-clock ms when each zoom-gated
+ * body label first qualified to draw. Entries are deleted the frame the
+ * label disqualifies (drawBody runs for every body every frame, so the
+ * else-branch is a reliable janitor); the size cap is a belt-and-braces
+ * guard against pathological body counts.
+ */
+const labelAppearMs = new Map<string, number>();
+
+/**
  * Draw a celestial body (circle with label) — enhanced with shading, glow,
  * gas giant bands, and a multi-layer sun corona.
  */
@@ -943,15 +1039,9 @@ export function drawBody(
     ctx.ctx.restore();
   }
 
-  // Draw selection/hover ring
+  // Draw selection brackets / hover ring
   if (isSelected) {
-    ctx.ctx.strokeStyle = COLORS.warning;
-    ctx.ctx.lineWidth = 1;
-    ctx.ctx.setLineDash([4, 4]);
-    ctx.ctx.beginPath();
-    ctx.ctx.arc(canvasPos.x, canvasPos.y, radius + 6, 0, Math.PI * 2);
-    ctx.ctx.stroke();
-    ctx.ctx.setLineDash([]);
+    drawSelectionBrackets(ctx.ctx, canvasPos.x, canvasPos.y, radius + 6, COLORS.warning, ctx.nowMs);
   } else if (isHovered) {
     ctx.ctx.strokeStyle = COLORS.info;
     ctx.ctx.lineWidth = 1;
@@ -966,6 +1056,21 @@ export function drawBody(
   // player is pulled all the way out hunting for the far systems.
   const alwaysShowLabel = body.type === 'star' || body.type === 'black_hole' || body.parent === 'sol';
   if (alwaysShowLabel || ctx.camera.scale > 0.4) {
+    // Zoom-gated labels fade in over 150ms (§E7) instead of popping at
+    // the 0.4-scale threshold. Always-on labels skip the bookkeeping.
+    let labelAlpha = 1;
+    if (!alwaysShowLabel) {
+      const nowM = ctx.nowMs ?? performance.now();
+      let appear = labelAppearMs.get(body.id);
+      if (appear === undefined) {
+        if (labelAppearMs.size > 300) labelAppearMs.clear();
+        appear = nowM;
+        labelAppearMs.set(body.id, appear);
+      }
+      labelAlpha = Math.min(1, (nowM - appear) / 150);
+    }
+    ctx.ctx.save();
+    ctx.ctx.globalAlpha *= labelAlpha;
     ctx.ctx.fillStyle = isSelected ? '#ffb84d' : '#8aa0b4';
     ctx.ctx.font = '10px monospace';
     ctx.ctx.textAlign = 'center';
@@ -1006,6 +1111,11 @@ export function drawBody(
         }
       }
     }
+    ctx.ctx.restore();
+  } else {
+    // Label no longer qualifies — forget its appear time so the next
+    // qualification fades in again from zero.
+    labelAppearMs.delete(body.id);
   }
 }
 
@@ -1113,11 +1223,7 @@ export function drawShip(
 
   // Draw selection indicator
   if (isSelected) {
-    ctx.ctx.strokeStyle = COLORS.info;
-    ctx.ctx.lineWidth = 2;
-    ctx.ctx.beginPath();
-    ctx.ctx.arc(canvasPos.x, canvasPos.y, iconSize / 2 + 4, 0, Math.PI * 2);
-    ctx.ctx.stroke();
+    drawSelectionBrackets(ctx.ctx, canvasPos.x, canvasPos.y, iconSize / 2 + 4, COLORS.info, ctx.nowMs);
   }
 
   // Ship name label — hover/selection only (see RenderContext.hoveredShipId).
@@ -1972,11 +2078,7 @@ function drawTorchTransitShip(
   }
 
   if (isSelected) {
-    ctx.ctx.strokeStyle = COLORS.info;
-    ctx.ctx.lineWidth = 2;
-    ctx.ctx.beginPath();
-    ctx.ctx.arc(canvasPos.x, canvasPos.y, iconSize / 2 + 4, 0, Math.PI * 2);
-    ctx.ctx.stroke();
+    drawSelectionBrackets(ctx.ctx, canvasPos.x, canvasPos.y, iconSize / 2 + 4, COLORS.info, ctx.nowMs);
   }
 
   // Ship name — hover/selection only (see RenderContext.hoveredShipId).
@@ -2116,6 +2218,8 @@ export function drawCity(
   if (bodyScreenR >= 40) {
     const flashIso = ctx.damageFlashStart?.get(settlement.id);
     drawDamageFlash(canvasPos, 12, flashIso, ctx.t, ctx, 'damage');
+    const growthIso = ctx.growthFlashStart?.get(settlement.id);
+    drawDamageFlash(canvasPos, 12, growthIso, ctx.nowMs ?? performance.now(), ctx, 'growth');
     ctx.ctx.save();
     ctx.ctx.translate(canvasPos.x, canvasPos.y);
     ctx.ctx.rotate(angle + Math.PI / 2);
@@ -2136,13 +2240,7 @@ export function drawCity(
       ctx.ctx.fillRect(tipIsoX - barW / 2, tipIsoY - barH / 2, barW * hpFrac, barH);
     }
     if (isSelected) {
-      ctx.ctx.strokeStyle = COLORS.warning;
-      ctx.ctx.lineWidth = 1;
-      ctx.ctx.setLineDash([3, 3]);
-      ctx.ctx.beginPath();
-      ctx.ctx.arc(canvasPos.x, canvasPos.y, 28, 0, Math.PI * 2);
-      ctx.ctx.stroke();
-      ctx.ctx.setLineDash([]);
+      drawSelectionBrackets(ctx.ctx, canvasPos.x, canvasPos.y, 28, COLORS.warning, ctx.nowMs);
     }
     return;
   }
@@ -2156,6 +2254,8 @@ export function drawCity(
   // Damage flash underneath the marker
   const flashStartC = ctx.damageFlashStart?.get(settlement.id);
   drawDamageFlash({ x: tipX, y: tipY }, size, flashStartC, ctx.t, ctx, 'damage');
+  const growthStartC = ctx.growthFlashStart?.get(settlement.id);
+  drawDamageFlash({ x: tipX, y: tipY }, size, growthStartC, ctx.nowMs ?? performance.now(), ctx, 'growth');
 
   ctx.ctx.fillStyle = color;
   ctx.ctx.strokeStyle = '#0a0e14';
@@ -2207,13 +2307,7 @@ export function drawCity(
   }
 
   if (isSelected) {
-    ctx.ctx.strokeStyle = COLORS.warning;
-    ctx.ctx.lineWidth = 1;
-    ctx.ctx.setLineDash([3, 3]);
-    ctx.ctx.beginPath();
-    ctx.ctx.arc(tipX, tipY, size + 4, 0, Math.PI * 2);
-    ctx.ctx.stroke();
-    ctx.ctx.setLineDash([]);
+    drawSelectionBrackets(ctx.ctx, tipX, tipY, size + 4, COLORS.warning, ctx.nowMs);
   }
 }
 
@@ -2269,6 +2363,8 @@ export function drawStation(
   // Damage flash underneath the diamond
   const flashStartS = ctx.damageFlashStart?.get(settlement.id);
   drawDamageFlash(canvasPos, size, flashStartS, ctx.t, ctx, 'damage');
+  const growthStartS = ctx.growthFlashStart?.get(settlement.id);
+  drawDamageFlash(canvasPos, size, growthStartS, ctx.nowMs ?? performance.now(), ctx, 'growth');
 
   // Focus zoom — the diamond grows into a station: hub + solar wings,
   // weapon barrels when a Weapons building exists, and an open
@@ -2299,13 +2395,7 @@ export function drawStation(
       ctx.ctx.fillRect(canvasPos.x - barW / 2, barY, barW * hpFrac, barH);
     }
     if (isSelected) {
-      ctx.ctx.strokeStyle = COLORS.warning;
-      ctx.ctx.lineWidth = 1;
-      ctx.ctx.setLineDash([3, 3]);
-      ctx.ctx.beginPath();
-      ctx.ctx.arc(canvasPos.x, canvasPos.y, 30, 0, Math.PI * 2);
-      ctx.ctx.stroke();
-      ctx.ctx.setLineDash([]);
+      drawSelectionBrackets(ctx.ctx, canvasPos.x, canvasPos.y, 30, COLORS.warning, ctx.nowMs);
     }
     return;
   }
@@ -2328,11 +2418,17 @@ export function drawStation(
   // selection ring below stays in its own warning color).
   const beacon2 = settlementColor2(settlement, factions);
   if (beacon2) {
+    // Beacon blink (§E1): alpha 0.4→1.0 sine at 0.5Hz, wall-clock —
+    // matches the iso hub dot's pulse in drawStationStructure.
+    const nowMB = ctx.nowMs ?? performance.now();
+    ctx.ctx.save();
+    ctx.ctx.globalAlpha = 0.7 + 0.3 * Math.sin(Math.PI * nowMB / 1000);
     ctx.ctx.strokeStyle = beacon2;
     ctx.ctx.lineWidth = 1;
     ctx.ctx.beginPath();
     ctx.ctx.arc(canvasPos.x, canvasPos.y, size + 2, 0, Math.PI * 2);
     ctx.ctx.stroke();
+    ctx.ctx.restore();
   }
 
   // HP bar
@@ -2365,13 +2461,7 @@ export function drawStation(
   }
 
   if (isSelected) {
-    ctx.ctx.strokeStyle = COLORS.warning;
-    ctx.ctx.lineWidth = 1;
-    ctx.ctx.setLineDash([3, 3]);
-    ctx.ctx.beginPath();
-    ctx.ctx.arc(canvasPos.x, canvasPos.y, size + 4, 0, Math.PI * 2);
-    ctx.ctx.stroke();
-    ctx.ctx.setLineDash([]);
+    drawSelectionBrackets(ctx.ctx, canvasPos.x, canvasPos.y, size + 4, COLORS.warning, ctx.nowMs);
   }
 }
 

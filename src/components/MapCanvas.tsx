@@ -110,6 +110,32 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   //                        DESTRUCTION_FLASH_DURATION_TICKS.
   const prevDamageTickRef = useRef<Map<string, number>>(new Map());
   const damageFlashStartRef = useRef<Map<string, number>>(new Map());
+  // Population-growth pulse (§E4): prevPop tracks the last observed
+  // population per settlement id; an increase stamps growthFlashStart
+  // with wall-clock ms (the growth pulse is a 600ms cosmetic, so ms —
+  // not ticks — is the right base). Pruned each frame after expiry.
+  const prevPopRef = useRef<Map<string, number>>(new Map());
+  const growthFlashStartRef = useRef<Map<string, number>>(new Map());
+  // Camera easing (§E5). Programmatic camera changes (focusBody,
+  // selectBody-driven moves, initialFocus) tween position+scale over
+  // ~250ms ease-out-cubic; direct user input (wheel/pinch/pan/WASD)
+  // snaps and cancels any active tween.
+  //   camTweenRef       — active tween: rendered-camera snapshot at the
+  //                       moment the target changed, + start ms. The
+  //                       *target* is re-read live each frame (focused
+  //                       bodies orbit while we fly to them).
+  //   prevCamSigRef     — last camera state observed by render(), used
+  //                       to detect programmatic changes.
+  //   lastRenderedCamRef— effective camera actually drawn last frame
+  //                       (tween "from" values come from here).
+  //   directCamInputRef — set by input handlers right before their
+  //                       updateCamera call; consumed by render().
+  const camTweenRef = useRef<{ fromX: number; fromY: number; fromScale: number; startMs: number } | null>(null);
+  const prevCamSigRef = useRef<{ x: number; y: number; scale: number; focusedBodyId?: string } | null>(null);
+  const lastRenderedCamRef = useRef<{ x: number; y: number; scale: number } | null>(null);
+  const directCamInputRef = useRef(false);
+  const tweenRafRef = useRef<number | null>(null);
+  const renderRef = useRef<() => void>(() => {});
   const prevShipIdsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const prevSettlementIdsRef = useRef<Map<string, { x: number; y: number; bodyId: string }>>(new Map());
   const destructionFlashesRef = useRef<Map<string, { pos: { x: number; y: number }; startTick: number; baseRadius?: number }>>(new Map());
@@ -136,6 +162,16 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // sensor coverage became an always-on fog overlay.
   const { enabled: enabledLayers, isOn: layerOn } = useMapLayers();
 
+
+  // Camera updates coming from DIRECT user input (wheel zoom, drag pan,
+  // WASD, touch pan/pinch). These stay 1:1 — no easing — and any active
+  // programmatic tween dies immediately so the user is never fighting
+  // an animation for control of the viewport.
+  const directUpdateCamera = useCallback((partial: Parameters<typeof updateCamera>[0]) => {
+    directCamInputRef.current = true;
+    camTweenRef.current = null;
+    updateCamera(partial);
+  }, [updateCamera]);
 
   // Escape key cancels target selection
   useEffect(() => {
@@ -164,6 +200,49 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         camX = pos.x;
         camY = pos.y;
       }
+    }
+
+    // === Camera easing (§E5) ===
+    // Detect camera-state changes. Direct input (flag set by
+    // directUpdateCamera) snaps; anything else — focusBody, selectBody
+    // side effects, initialFocus — tweens from the camera we actually
+    // rendered last frame to the (live) target over 250ms ease-out.
+    const nowMsCam = performance.now();
+    let camScale = camera.scale;
+    {
+      const prevSig = prevCamSigRef.current;
+      const changed = !prevSig
+        || prevSig.x !== camera.x || prevSig.y !== camera.y
+        || prevSig.scale !== camera.scale
+        || prevSig.focusedBodyId !== camera.focusedBodyId;
+      if (changed) {
+        const from = lastRenderedCamRef.current;
+        if (prevSig && from && !directCamInputRef.current) {
+          camTweenRef.current = {
+            fromX: from.x, fromY: from.y, fromScale: from.scale, startMs: nowMsCam,
+          };
+        } else {
+          camTweenRef.current = null; // first frame or direct input: snap
+        }
+        directCamInputRef.current = false;
+        prevCamSigRef.current = {
+          x: camera.x, y: camera.y, scale: camera.scale,
+          focusedBodyId: camera.focusedBodyId,
+        };
+      }
+      const tw = camTweenRef.current;
+      if (tw) {
+        const tt = (nowMsCam - tw.startMs) / 250;
+        if (tt >= 1) {
+          camTweenRef.current = null;
+        } else {
+          const e = 1 - Math.pow(1 - tt, 3); // ease-out cubic
+          camX = tw.fromX + (camX - tw.fromX) * e;
+          camY = tw.fromY + (camY - tw.fromY) * e;
+          camScale = tw.fromScale + (camera.scale - tw.fromScale) * e;
+        }
+      }
+      lastRenderedCamRef.current = { x: camX, y: camY, scale: camScale };
     }
 
     // === Flash bookkeeping (damage + destruction) ===
@@ -250,6 +329,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         curSettlementIds.set(settlement.id, { x: bp.x, y: bp.y, bodyId: settlement.bodyId });
       }
 
+      // Population growth pulse (§E4): stamp wall-clock ms the frame we
+      // first see the pop tick upward. First observation just seeds.
+      const prevPop = prevPopRef.current.get(settlement.id);
+      if (prevPop !== undefined && settlement.population > prevPop) {
+        growthFlashStartRef.current.set(settlement.id, nowMs);
+      }
+      prevPopRef.current.set(settlement.id, settlement.population);
+
       const cur = settlement.lastDamagedTick;
       if (cur === undefined) continue;
       const prev = prevDamageTickRef.current.get(settlement.id);
@@ -284,11 +371,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         destructionFlashesRef.current.delete(id);
       }
     }
+    // Growth pulses live 600ms (wall clock) — prune expired entries.
+    for (const [id, startMs] of growthFlashStartRef.current) {
+      if (nowMs - startMs >= 700) growthFlashStartRef.current.delete(id);
+    }
 
     const renderContext: RenderContext = {
       ctx,
       canvas: canvasRef.current,
-      camera: { x: camX, y: camY, scale: camera.scale, focusedBodyId: camera.focusedBodyId },
+      camera: { x: camX, y: camY, scale: camScale, focusedBodyId: camera.focusedBodyId },
       t: gameState.currentTick,
       bodies: gameState.bodies,
       // Factions enable per-faction ship coloring (matches settlements).
@@ -297,6 +388,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       factions: gameState.factions,
       simSpeed,
       damageFlashStart: damageFlashStartRef.current,
+      growthFlashStart: growthFlashStartRef.current,
       nowMs,
       // Planet-visual extras: night-side city lights on settled worlds
       // + focus-zoom building structures read these. Optional in the
@@ -788,6 +880,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     }
 
     drawHUD(renderContext, uiState.targetSelectionMode);
+
+    // Camera tween in flight → self-drive one more frame. The normal
+    // render cadence is state-change-driven; a paused sim would freeze
+    // the easing mid-flight without this. renderRef always points at
+    // the latest render closure; the id guard stops frame stacking.
+    if (camTweenRef.current && tweenRafRef.current == null) {
+      tweenRafRef.current = requestAnimationFrame(() => {
+        tweenRafRef.current = null;
+        renderRef.current();
+      });
+    }
     // enabledLayers (Set) is the actual signal for "redraw when a layer
     // toggles" — listing layerOn is redundant (it closes over the same
     // set). The lint rule can't see through that closure.
@@ -802,10 +905,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const deltaY = e.clientY - panState.startY;
         const newCamX = panState.camX - deltaX / camera.scale;
         const newCamY = panState.camY - deltaY / camera.scale;
-        updateCamera({ x: newCamX, y: newCamY });
+        directUpdateCamera({ x: newCamX, y: newCamY });
       }
     },
-    [panState, camera.scale, updateCamera]
+    [panState, camera.scale, directUpdateCamera]
   );
 
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -830,11 +933,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           startCamX = pos.x;
           startCamY = pos.y;
         }
-        updateCamera({ x: startCamX, y: startCamY, focusedBodyId: undefined });
+        directUpdateCamera({ x: startCamX, y: startCamY, focusedBodyId: undefined });
       }
       setPanState({ startX: e.clientX, startY: e.clientY, camX: startCamX, camY: startCamY });
     }
-  }, [camera, gameState.bodies, gameState.currentTick, uiState.targetSelectionMode, setTargetSelectionMode, updateCamera]);
+  }, [camera, gameState.bodies, gameState.currentTick, uiState.targetSelectionMode, setTargetSelectionMode, directUpdateCamera]);
 
   const handleMouseUp = useCallback(() => {
     setPanState(null);
@@ -869,11 +972,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const newScale = Math.max(0.0012, Math.min(50, camera.scale * factor));
       const newCamX = worldBeforeX - (mouseX - canvas.width / 2) / newScale;
       const newCamY = worldBeforeY - (mouseY - canvas.height / 2) / newScale;
-      updateCamera({ x: newCamX, y: newCamY, scale: newScale });
+      directUpdateCamera({ x: newCamX, y: newCamY, scale: newScale });
     };
     canvas.addEventListener('wheel', onWheel, { passive: false });
     return () => canvas.removeEventListener('wheel', onWheel);
-  }, [camera.x, camera.y, camera.scale, updateCamera]);
+  }, [camera.x, camera.y, camera.scale, directUpdateCamera]);
 
   // Arrow keys / WASD pan the camera at a constant on-screen speed
   // (independent of zoom). Held keys produce smooth motion via rAF;
@@ -914,7 +1017,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const worldStep = (PAN_PIXELS_PER_SEC * dt) / camera.scale;
         // Read previous camera fresh from updateCamera's closure each
         // frame so we keep momentum even as state batches.
-        updateCamera({
+        directUpdateCamera({
           x: camera.x + dx * worldStep,
           y: camera.y + dy * worldStep,
           focusedBodyId: undefined,
@@ -950,7 +1053,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       window.removeEventListener('blur', onBlur);
       if (rafId != null) cancelAnimationFrame(rafId);
     };
-  }, [camera.x, camera.y, camera.scale, updateCamera]);
+  }, [camera.x, camera.y, camera.scale, directUpdateCamera]);
 
   // Shared tap/click logic — called by both the mouse onClick handler and
   // the touch-input layer. Hit radii are padded on coarse-pointer devices
@@ -1093,7 +1196,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   useCanvasTouchInput({
     canvasRef,
     camera,
-    updateCamera,
+    // Touch pan/pinch is direct manipulation — route through the
+    // direct wrapper so it snaps and kills any in-flight camera tween.
+    updateCamera: directUpdateCamera,
     onTap: handleTapAt,
     onDoubleTap: handleFocusAt,
     // Touch pan + sticky focused body: when the player pans with their
@@ -1111,6 +1216,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       return bodyPosition(focused, gameState.currentTick, gameState.bodies);
     },
   });
+
+  // Keep renderRef pointed at the freshest render closure so the camera
+  // tween's self-driven frames never call a stale one.
+  useEffect(() => { renderRef.current = render; }, [render]);
+
+  // Unmount-only: kill any pending tween continuation frame.
+  useEffect(() => () => {
+    if (tweenRafRef.current != null) cancelAnimationFrame(tweenRafRef.current);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
