@@ -392,6 +392,7 @@ export const SHIP_COMBAT_STATS = {
   frigate:   { hp: 80,  damage_per_tick: 10 },
   destroyer: { hp: 200, damage_per_tick: 18 },
   freighter: { hp: 30,  damage_per_tick: 0 },
+  colony:    { hp: 60,  damage_per_tick: 0 },
 };
 
 const STARTER_FLEET = [

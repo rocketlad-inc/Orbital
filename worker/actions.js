@@ -11,7 +11,7 @@ import { recomputeBodyOwnership } from './factions.js';
 const GAME_ID_RE   = /^[A-Za-z0-9_-]{6,32}$/;
 const SHIP_ID_RE   = /^[A-Za-z0-9_:-]{6,80}$/;
 const BODY_ID_RE   = /^[A-Za-z0-9_:-]{1,80}$/;
-const SHIP_CLASSES = new Set(['corvette', 'frigate', 'destroyer', 'freighter']);
+const SHIP_CLASSES = new Set(['corvette', 'frigate', 'destroyer', 'freighter', 'colony']);
 
 // Mirrors src/game/shipClasses.ts. Server pays the resource cost in faction
 // columns (metal/fuel/gold). Note ore->metal and credits->gold renames
@@ -21,6 +21,10 @@ const SHIP_BUILD_COST = {
   frigate:   { fuel: 7,  metal: 10, gold: 8,  build_ticks: 20 },
   destroyer: { fuel: 14, metal: 20, gold: 17, build_ticks: 40 },
   freighter: { fuel: 5,  metal: 7,  gold: 5,  build_ticks: 15 },
+  // Colony ship — consumable expansion hull (DESIGN-identity-economy §4).
+  // ~3x freighter cost: it IS the price of founding a city (deploy
+  // consumes the ship instead of charging SETTLEMENT_COST).
+  colony:    { fuel: 0,  metal: 20, gold: 15, build_ticks: 30 },
 };
 
 function json(data, init = {}) {
@@ -483,28 +487,56 @@ async function handleDeploySettlement(req, env, ctx) {
       `this body already has a ${type} — only one ${type} per body`);
   }
 
-  // Caller needs a FREIGHTER orbiting here OR they already own the body.
-  // Combat ships don't carry construction materials, so requiring a
-  // freighter matches the client gate (BodyInspector.tsx) and the SP
-  // gameContext.deploySettlement gate. Without this filter a player can
-  // deploy by sending only a corvette/frigate/destroyer.
-  const presence = await env.DB
+  // Expansion rules (DESIGN-identity-economy §4). Freighters lost the
+  // settle verb — they haul and trade only. Instead:
+  //   city:    REQUIRES a colony ship of yours orbiting this body.
+  //            The ship IS the cost — it is consumed; no SETTLEMENT_COST.
+  //   station: EITHER (a) you already own a settlement at this body →
+  //            build from orbit for SETTLEMENT_COST (no ship needed),
+  //            OR (b) consume a colony ship orbiting here (no resource
+  //            cost). Path (b) is how gas giants + Sol get settled.
+  const colonyShip = await env.DB
     .prepare(
-      `SELECT 1 AS x FROM game_ships
+      `SELECT id, name FROM game_ships
         WHERE game_id = ? AND owner_faction_id = ? AND parent_body_id = ?
-          AND ship_class = 'freighter'
+          AND ship_class = 'colony'
           AND status = 'active'
         LIMIT 1`,
     )
     .bind(gameId, me.id, bodyId)
     .first();
-  if (!presence && bodyRow.owner_faction_id !== me.id) {
-    return err(403, 'no_presence', 'need a freighter at this body to deploy');
-  }
 
-  if (me.metal < SETTLEMENT_COST.metal || me.gold < SETTLEMENT_COST.gold) {
-    return err(409, 'insufficient_resources',
-      `need ${SETTLEMENT_COST.metal}M ${SETTLEMENT_COST.gold}G`);
+  let consumedShip = null; // { id, name } when a colony ship pays the bill
+  let payResourceCost = false;
+  if (type === 'city') {
+    if (!colonyShip) {
+      return err(409, 'need_colony_ship',
+        'founding a city requires a Colony Ship of yours in orbit here (it is consumed)');
+    }
+    consumedShip = colonyShip;
+  } else {
+    // station
+    const mySettlementHere = await env.DB
+      .prepare(
+        `SELECT 1 AS x FROM game_settlements
+          WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+            AND destroyed_at_tick IS NULL
+          LIMIT 1`,
+      )
+      .bind(gameId, bodyId, me.id)
+      .first();
+    if (mySettlementHere) {
+      payResourceCost = true;
+      if (me.metal < SETTLEMENT_COST.metal || me.gold < SETTLEMENT_COST.gold) {
+        return err(409, 'insufficient_resources',
+          `need ${SETTLEMENT_COST.metal}M ${SETTLEMENT_COST.gold}G`);
+      }
+    } else if (colonyShip) {
+      consumedShip = colonyShip;
+    } else {
+      return err(409, 'need_colony_ship',
+        'need a settlement of yours at this body (pay metal/gold) or a Colony Ship in orbit (consumed)');
+    }
   }
 
   const game = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
@@ -522,7 +554,7 @@ async function handleDeploySettlement(req, env, ctx) {
   const surfaceAngle = type === 'city' ? Math.random() * Math.PI * 2 : null;
   const rp = type === 'station' ? (bodyRow.radius || 4) + 3 : null;
 
-  await env.DB.batch([
+  const deployStmts = [
     env.DB
       .prepare(
         `INSERT INTO game_settlements
@@ -539,10 +571,33 @@ async function handleDeploySettlement(req, env, ctx) {
             hp, hp,
             surfaceAngle, rp, rp, tick,
             tick),
-    env.DB
-      .prepare('UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ?')
-      .bind(SETTLEMENT_COST.metal, SETTLEMENT_COST.gold, me.id),
-  ]);
+  ];
+  if (payResourceCost) {
+    deployStmts.push(
+      env.DB
+        .prepare('UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ?')
+        .bind(SETTLEMENT_COST.metal, SETTLEMENT_COST.gold, me.id),
+    );
+  }
+  if (consumedShip) {
+    // The colony ship is spent founding the settlement. Same terminal
+    // shape as combat kills (room.js) so every downstream filter on
+    // status='active' / destroyed_at_tick treats it as gone. Guard on
+    // status='active' so a racing double-deploy can't spend one ship
+    // twice (the second batch's UPDATE hits zero rows — settlement
+    // still inserts, but the one-per-body 'occupied' gate above plus
+    // D1 write serialization make that window effectively closed).
+    deployStmts.push(
+      env.DB
+        .prepare(
+          `UPDATE game_ships
+              SET hp = 0, status = 'destroyed', destroyed_at_tick = ?
+            WHERE id = ? AND status = 'active'`,
+        )
+        .bind(tick, consumedShip.id),
+    );
+  }
+  await env.DB.batch(deployStmts);
 
   // Body ownership = "faction with the most settlements here". The brand
   // new settlement may have just tipped the balance — recompute.
@@ -562,6 +617,9 @@ async function handleDeploySettlement(req, env, ctx) {
       settlement_name: name,
       body_name: bodyName,
       owner_faction_name: factionName,
+      // Set when a colony ship was spent to found this settlement —
+      // lets the chronicle render "founded by CSS Mayflower".
+      consumed_ship_name: consumedShip ? (consumedShip.name ?? null) : null,
     });
     const entryId = `c_${id}`;
     await env.DB

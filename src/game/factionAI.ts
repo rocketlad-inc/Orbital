@@ -981,6 +981,11 @@ const SHIP_NAME_POOLS: Record<ShipClassName, string[]> = {
   frigate: ['Resolute', 'Vanguard', 'Hammer', 'Stalwart', 'Sentinel', 'Bulwark', 'Aegis', 'Defiant'],
   destroyer: ['Tyrant', 'Ironclad', 'Vengeance', 'Wrath', 'Citadel', 'Behemoth', 'Conqueror', 'Dreadnought'],
   freighter: ['Carryall', 'Caravan', 'Pioneer', 'Voyager', 'Drifter', 'Trader', 'Ferry', 'Skipper'],
+  // Colony ships are MP-only; the SP AI never scores them (see
+  // generateBuildCandidates — no branch awards them points, so the
+  // cost penalty leaves score <= 0 and they're skipped). Entry exists
+  // purely to satisfy Record<ShipClassName, ...> completeness.
+  colony: ['Homestead', 'Landfall', 'Hearth', 'Haven', 'Foundation'],
 };
 
 function generateShipName(cls: ShipClassName, ctx: AIContext): string {

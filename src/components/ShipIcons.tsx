@@ -10,7 +10,7 @@ import React from 'react';
 // selection (gallery at ?icons). The picker dropdown at ship construction
 // lets the player override the default per-build.
 export type ShipIconVariant = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
-export type ShipIconClass = 'corvette' | 'frigate' | 'destroyer' | 'freighter';
+export type ShipIconClass = 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
 
 interface IconProps {
   size?: number;
@@ -419,6 +419,27 @@ export const FreighterF: React.FC<IconProps> = (p) => (
   </SVG>
 );
 
+// ===== COLONY SHIP — consumable settler transport =====
+
+/** Colony A — ARK: rounded hull with a habitat dome. One silhouette
+ *  serves all six variant slots — the class is a consumable one-shot,
+ *  so per-build icon variety matters less than instant readability
+ *  ("that's the settler ship"). */
+export const ColonyA: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    {/* Rounded hull */}
+    <path d="M6 13 L22 13 Q28 13 29 16 Q28 19 22 19 L6 19 Q4 16 6 13 Z" />
+    {/* Habitat dome on top */}
+    <path d="M11 13 Q11 7 17 7 Q23 7 23 13" />
+    {/* Dome porthole */}
+    <circle cx="17" cy="10.5" r="1.2" />
+    {/* Belly landing struts */}
+    <path d="M10 19 L10 22 M20 19 L20 22" />
+    {/* Aft engine */}
+    <path d="M6 14 L2 15 L2 17 L6 18" />
+  </SVG>
+);
+
 // ============================================================
 // Selector — render any (class, variant) combination
 // ============================================================
@@ -428,6 +449,7 @@ const REGISTRY: Record<ShipIconClass, Record<ShipIconVariant, React.FC<IconProps
   frigate:   { A: FrigateA,   B: FrigateB,   C: FrigateC,   D: FrigateD,   E: FrigateE,   F: FrigateF   },
   destroyer: { A: DestroyerA, B: DestroyerB, C: DestroyerC, D: DestroyerD, E: DestroyerE, F: DestroyerF },
   freighter: { A: FreighterA, B: FreighterB, C: FreighterC, D: FreighterD, E: FreighterE, F: FreighterF },
+  colony:    { A: ColonyA,    B: ColonyA,    C: ColonyA,    D: ColonyA,    E: ColonyA,    F: ColonyA    },
 };
 
 /** Human-readable names for each variant, surfaced in the picker
@@ -437,6 +459,7 @@ export const ICON_VARIANT_NAMES: Record<ShipIconClass, Record<ShipIconVariant, s
   frigate:   { A: 'Cruciform', B: 'Diamond',   C: 'Triple-Turret', D: 'Starship', E: 'Hawk',       F: 'Carrier'  },
   destroyer: { A: 'Hexagon',   B: 'Wedge',     C: 'Capital',     D: 'Dreadnought', E: 'Railgun',   F: 'Broadside' },
   freighter: { A: 'Containers', B: 'Tug',      C: 'Bulk',        D: 'Tanker',     E: 'Ring',       F: 'Barge'    },
+  colony:    { A: 'Ark',       B: 'Ark',       C: 'Ark',         D: 'Ark',        E: 'Ark',        F: 'Ark'      },
 };
 
 /** Every variant id, ordered for the gallery + picker. */
@@ -448,6 +471,7 @@ export const DEFAULT_SHIP_ICONS: Record<ShipIconClass, ShipIconVariant> = {
   frigate: 'B',
   destroyer: 'B',
   freighter: 'A',
+  colony: 'A',
 };
 
 export interface ShipIconProps extends IconProps {

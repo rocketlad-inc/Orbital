@@ -80,7 +80,7 @@ export function getShipIconImage(
  * well under a 16ms frame budget on any reasonable machine.
  */
 export function prewarmShipIcons(colors: string[]) {
-  const classes: ShipIconClass[] = ['corvette', 'frigate', 'destroyer', 'freighter'];
+  const classes: ShipIconClass[] = ['corvette', 'frigate', 'destroyer', 'freighter', 'colony'];
   for (const c of classes) {
     for (const v of ALL_VARIANTS) {
       for (const color of colors) {

@@ -733,9 +733,9 @@ export class Room {
         .first();
       if (!body) continue;
 
-      const FUEL_MAX = { corvette: 80, frigate: 200, destroyer: 300, freighter: 400 };
-      const HP       = { corvette: 40, frigate: 80,  destroyer: 200, freighter: 30 };
-      const DMG      = { corvette: 5,  frigate: 10,  destroyer: 18,  freighter: 0 };
+      const FUEL_MAX = { corvette: 80, frigate: 200, destroyer: 300, freighter: 400, colony: 100 };
+      const HP       = { corvette: 40, frigate: 80,  destroyer: 200, freighter: 30,  colony: 60 };
+      const DMG      = { corvette: 5,  frigate: 10,  destroyer: 18,  freighter: 0,   colony: 0 };
       const fuelMax = FUEL_MAX[b.ship_class] ?? 100;
       const hp = HP[b.ship_class] ?? 50;
       const dmg = DMG[b.ship_class] ?? 0;

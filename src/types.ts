@@ -216,7 +216,7 @@ export interface Fleet {
 export interface Ship {
   id: string;
   name: string;
-  class: 'corvette' | 'frigate' | 'destroyer' | 'freighter';
+  class: 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
   ownedBy: string;                      // faction id
 
   // Current state
@@ -288,7 +288,7 @@ export interface ShipKillRecord {
   /** Display name of the destroyed ship at the moment it died. */
   targetName: string;
   /** Class of the destroyed ship — useful for "killed 3 corvettes" stats. */
-  targetClass: 'corvette' | 'frigate' | 'destroyer' | 'freighter';
+  targetClass: 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
   /** Body id where the engagement took place. */
   atBodyId: string;
 }
@@ -375,7 +375,7 @@ export interface AIActivityEntry {
 export interface BuildOrder {
   id: string;
   bodyId: string;                       // where the ship is being built
-  shipClass: 'corvette' | 'frigate' | 'destroyer' | 'freighter';
+  shipClass: 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
   ownedBy: string;                      // faction that ordered it
   startTick: number;                    // tick when construction started
   completeTick: number;                 // tick when ship launches to orbit

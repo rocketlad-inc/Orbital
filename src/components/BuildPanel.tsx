@@ -20,6 +20,7 @@ const SHIP_NAMES: Record<ShipClassName, string[]> = {
   frigate: ['Scirocco', 'Hammurabi', 'Xuesen', 'Amberjack', 'Zenobia'],
   destroyer: ['Donnager', 'Agatha King', 'Truman', 'Barkeith', 'Sagarmatha', 'Jimenez'],
   freighter: ['Canterbury', 'Somnambulist', 'Weeping Somnambulist', 'Barbapiccola', 'Cerisier'],
+  colony: ['Nauvoo', 'Mayflower', 'Beagle', 'Endurance', 'Arboghast', 'Edward Israel'],
 };
 
 function getRandomName(shipClass: ShipClassName, existingNames: string[]): string {
@@ -53,6 +54,7 @@ export const BuildPanel: React.FC = () => {
     frigate:   DEFAULT_SHIP_ICONS.frigate,
     destroyer: DEFAULT_SHIP_ICONS.destroyer,
     freighter: DEFAULT_SHIP_ICONS.freighter,
+    colony:    DEFAULT_SHIP_ICONS.colony,
   });
   // Server-side build rejection shown as a red chip below the rows so
   // the BUILD button never silently resets in MP — mirrors the
@@ -272,7 +274,10 @@ export const BuildPanel: React.FC = () => {
           settlement at this body so the affordability calc matches
           the server's spend logic in worker/actions.js handleQueueBuild. */}
       <div className="build-classes">
-        {BUILDABLE_CLASSES.map(cls => {
+        {/* Colony ships are an MP-only verb (SP's sim is frozen on the
+            legacy freighter-settle mechanics), so hide the class from
+            the SP build menu — building one there would be a dead end. */}
+        {BUILDABLE_CLASSES.filter(cls => cls !== 'colony' || !!mpActions).map(cls => {
           const def = SHIP_CLASSES[cls];
           // Per-resource shortages so the UI can colour each cost
           // individually + surface the deficit explicitly. Previously the
