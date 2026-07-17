@@ -1789,6 +1789,119 @@ async function handleRamAsteroid(req, env, ctx) {
   }, { status: 201 });
 }
 
+// PATCH /api/games/:gameId/ships/orders
+// body: { ship_ids: string[], stance?, retreat_hp_pct?, detonate_hp_pct? }
+//
+// Bulk standing-orders update (DESIGN-identity-economy.md §3). Fields are
+// optional-but-at-least-one; an explicitly-null retreat/detonate value
+// clears the threshold ("off"). Ownership is all-or-nothing: if ANY ship
+// in the list is missing, destroyed, or owned by someone else, the whole
+// request is rejected and no ship is touched.
+const STANCES = new Set(['attack', 'defensive', 'hold']);
+const RETREAT_PCTS = new Set([25, 50, 75]);
+const DETONATE_PCTS = new Set([25, 50]);
+
+async function handleSetShipOrders(req, env, ctx) {
+  const { gameId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+
+  const shipIds = body.ship_ids;
+  if (!Array.isArray(shipIds) || shipIds.length === 0) {
+    return err(400, 'bad_request', 'ship_ids must be a non-empty array');
+  }
+  if (shipIds.length > 200) {
+    return err(400, 'bad_request', 'too many ships in one request (max 200)');
+  }
+  const uniqueIds = [...new Set(shipIds)];
+  for (const id of uniqueIds) {
+    if (typeof id !== 'string' || !SHIP_ID_RE.test(id)) {
+      return err(400, 'bad_request', `invalid ship id: ${id}`);
+    }
+  }
+
+  // Field validation. Distinguish "absent" (leave the column alone) from
+  // "explicitly null" (clear the threshold / reset stance to default).
+  const hasStance   = 'stance' in body;
+  const hasRetreat  = 'retreat_hp_pct' in body;
+  const hasDetonate = 'detonate_hp_pct' in body;
+  if (!hasStance && !hasRetreat && !hasDetonate) {
+    return err(400, 'bad_request', 'no order fields supplied');
+  }
+  let stance = null;
+  if (hasStance) {
+    if (body.stance !== null && !STANCES.has(body.stance)) {
+      return err(400, 'bad_request', "stance must be 'attack', 'defensive', or 'hold'");
+    }
+    stance = body.stance; // null resets to default ('attack' behavior)
+  }
+  let retreatPct = null;
+  if (hasRetreat && body.retreat_hp_pct !== null) {
+    const v = Number(body.retreat_hp_pct);
+    if (!RETREAT_PCTS.has(v)) {
+      return err(400, 'bad_request', 'retreat_hp_pct must be null, 25, 50, or 75');
+    }
+    retreatPct = v;
+  }
+  let detonatePct = null;
+  if (hasDetonate && body.detonate_hp_pct !== null) {
+    const v = Number(body.detonate_hp_pct);
+    if (!DETONATE_PCTS.has(v)) {
+      return err(400, 'bad_request', 'detonate_hp_pct must be null, 25, or 50');
+    }
+    detonatePct = v;
+  }
+
+  // Ownership check for EVERY ship — all-or-nothing.
+  const placeholders = uniqueIds.map(() => '?').join(',');
+  const rows = (await env.DB
+    .prepare(
+      `SELECT id, owner_faction_id, status FROM game_ships
+        WHERE game_id = ? AND id IN (${placeholders})`,
+    )
+    .bind(gameId, ...uniqueIds)
+    .all()).results ?? [];
+  const byId = new Map(rows.map(r => [r.id, r]));
+  for (const id of uniqueIds) {
+    const row = byId.get(id);
+    if (!row || row.status !== 'active') {
+      return err(404, 'not_found', `ship not found: ${id}`);
+    }
+    if (row.owner_faction_id !== me.id) {
+      return err(403, 'not_owner', `you do not own ship ${id}`);
+    }
+  }
+
+  // One UPDATE covering all ships. Only the supplied fields are written.
+  const sets = [];
+  const binds = [];
+  if (hasStance)   { sets.push('stance = ?');          binds.push(stance); }
+  if (hasRetreat)  { sets.push('retreat_hp_pct = ?');  binds.push(retreatPct); }
+  if (hasDetonate) { sets.push('detonate_hp_pct = ?'); binds.push(detonatePct); }
+  await env.DB
+    .prepare(
+      `UPDATE game_ships SET ${sets.join(', ')}
+        WHERE game_id = ? AND id IN (${placeholders})`,
+    )
+    .bind(...binds, gameId, ...uniqueIds)
+    .run();
+
+  return json({
+    ok: true,
+    updated: uniqueIds.length,
+    orders: {
+      ...(hasStance ? { stance } : {}),
+      ...(hasRetreat ? { retreat_hp_pct: retreatPct } : {}),
+      ...(hasDetonate ? { detonate_hp_pct: detonatePct } : {}),
+    },
+  });
+}
+
 // PATCH /api/games/:gameId/ships/:shipId
 // body: { name: string } — 1..32 chars after trim. Owner-gated; rejects
 // destroyed ships. Player-driven rename for in-flight + parked hulls.
@@ -2320,6 +2433,14 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/ships\/(?<shipId>[^/]+)\/detonate$/,
     auth: 'required',
     handle: handleDetonateShip,
+  },
+  {
+    // MUST precede the rename route below — its (?<shipId>[^/]+) pattern
+    // would otherwise swallow the literal path segment 'orders'.
+    method: 'PATCH',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/ships\/orders$/,
+    auth: 'required',
+    handle: handleSetShipOrders,
   },
   {
     method: 'PATCH',

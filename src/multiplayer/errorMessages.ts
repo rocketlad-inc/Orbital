@@ -21,7 +21,8 @@ export type MpErrorDomain =
   | 'research'
   | 'tbm'
   | 'ram'
-  | 'rename';
+  | 'rename'
+  | 'orders';
 
 /**
  * Map a server error code to a user-facing string.
@@ -53,6 +54,7 @@ export function humanizeMpError(
         case 'build':    return 'Server: you no longer own this body. Recapture it before queuing builds here.';
         case 'transfer': return 'Server: you no longer own this ship — it may have been captured or destroyed.';
         case 'rename':   return 'Server: you no longer own this ship or settlement.';
+        case 'orders':   return 'Server: one of the selected ships is not yours — no orders were changed.';
         default:         return `Server: you do not own this resource (${fallback}).`;
       }
 
@@ -67,6 +69,7 @@ export function humanizeMpError(
         case 'deploy':   return 'Server: this body no longer exists in the game.';
         case 'transfer': return 'Server: target body or ship no longer exists.';
         case 'rename':   return 'Server: this ship or settlement no longer exists.';
+        case 'orders':   return 'Server: one of the selected ships no longer exists — no orders were changed.';
         default:         return `Server: resource not found (${fallback}).`;
       }
 

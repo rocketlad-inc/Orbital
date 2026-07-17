@@ -290,6 +290,18 @@ export interface Ship {
   // on the ShipPanel for freighters with a TRADE LOG view, since
   // freighters can't actually kill. Migration 0025.
   tradesCompleted?: number;
+
+  // === Standing orders (MP, DESIGN-identity-economy.md §3, migration 0034) ===
+  // Stance: attack-on-sight (default, undefined == 'attack'), return-fire
+  // only ('defensive'), or never fire ('hold').
+  stance?: 'attack' | 'defensive' | 'hold';
+  // Auto-retreat threshold (percent of max HP). null/undefined = off.
+  // When set, the server auto-transfers the ship to the nearest friendly
+  // shipyard-station body once hp/hpMax drops to or below the threshold.
+  retreatHpPct?: 25 | 50 | 75 | null;
+  // Dead-man detonate threshold. null/undefined = off. Only meaningful
+  // for hulls carrying a detonator part; inert otherwise.
+  detonateHpPct?: 25 | 50 | null;
 }
 
 /** One confirmed kill credited to a ship. Stored on Ship.combatHistory.

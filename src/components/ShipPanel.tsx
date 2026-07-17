@@ -45,6 +45,9 @@ export const ShipPanel: React.FC = () => {
   // like it worked but the next /state poll silently rewinds the
   // optimistic local state.
   const [transferError, setTransferError] = useState<string | null>(null);
+  // Server-side standing-orders rejection (MP only). Shown inline in the
+  // ORDERS section; the next /state poll rewinds the optimistic change.
+  const [ordersError, setOrdersError] = useState<string | null>(null);
 
   const ship = uiState.selectedShipId
     ? gameState.ships.find(s => s.id === uiState.selectedShipId) || null
@@ -340,6 +343,33 @@ export const ShipPanel: React.FC = () => {
   // Desktop is unaffected — the panel docks to the side and doesn't cover
   // the canvas.
   const hideForTargeting = isMobile && uiState.targetSelectionMode;
+
+  // Standing orders (MP only, DESIGN §3). Optimistic local update +
+  // server post; a rejection surfaces inline and the next /state poll
+  // rewinds the optimistic change.
+  const currentStance = ship.stance ?? 'attack';
+  const applyOrders = (patch: {
+    stance?: 'attack' | 'defensive' | 'hold';
+    retreatHpPct?: 25 | 50 | 75 | null;
+    detonateHpPct?: 25 | 50 | null;
+  }) => {
+    if (!mpActions) return;
+    setOrdersError(null);
+    setGameState({
+      ...gameState,
+      ships: gameState.ships.map(s => (s.id === ship.id ? { ...s, ...patch } : s)),
+    });
+    mpActions.setShipOrders({
+      shipIds: [ship.id],
+      ...(patch.stance !== undefined ? { stance: patch.stance } : {}),
+      ...('retreatHpPct' in patch ? { retreatHpPct: patch.retreatHpPct ?? null } : {}),
+      ...('detonateHpPct' in patch ? { detonateHpPct: patch.detonateHpPct ?? null } : {}),
+    }).then(res => {
+      if (!res.ok) {
+        setOrdersError(humanizeMpError(res.code, res.error, 'orders'));
+      }
+    });
+  };
 
   return (
     <>
@@ -847,6 +877,82 @@ export const ShipPanel: React.FC = () => {
                 return true;
               }}
             />
+          {mpActions && ship.ownedBy === 'player' && (
+            <div className="orders-config-section">
+              <div className="section-title">ORDERS</div>
+
+              <div className="orders-config-row">
+                <span className="orders-config-label">STANCE</span>
+                <div className="orders-stance-toggle">
+                  {(['attack', 'defensive', 'hold'] as const).map(st => (
+                    <button
+                      key={st}
+                      className={`orders-stance-btn ${currentStance === st ? 'active' : ''}`}
+                      onClick={() => applyOrders({ stance: st })}
+                      title={
+                        st === 'attack' ? 'Attack on sight: engage hostiles in range.'
+                        : st === 'defensive' ? 'Defensive: return fire only.'
+                        : 'Hold fire: never fires. Still takes damage.'
+                      }
+                    >
+                      {st === 'attack' ? 'ATTACK' : st === 'defensive' ? 'DEFEND' : 'HOLD'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="orders-config-row">
+                <span className="orders-config-label">RETREAT AT</span>
+                <select
+                  className="orders-config-select"
+                  value={ship.retreatHpPct ?? ''}
+                  onChange={e => applyOrders({
+                    retreatHpPct: e.target.value
+                      ? (Number(e.target.value) as 25 | 50 | 75)
+                      : null,
+                  })}
+                >
+                  <option value="">OFF</option>
+                  <option value="25">25% HP</option>
+                  <option value="50">50% HP</option>
+                  <option value="75">75% HP</option>
+                </select>
+              </div>
+              <div className="orders-config-hint">
+                Auto-transfer to the nearest friendly shipyard station when HP
+                drops below the threshold. Fires once per damage episode.
+              </div>
+
+              <div className="orders-config-row">
+                <span className="orders-config-label">AUTO-DETONATE</span>
+                <select
+                  className="orders-config-select"
+                  value={ship.detonateHpPct ?? ''}
+                  onChange={e => applyOrders({
+                    detonateHpPct: e.target.value
+                      ? (Number(e.target.value) as 25 | 50)
+                      : null,
+                  })}
+                >
+                  <option value="">OFF</option>
+                  <option value="25">25% HP</option>
+                  <option value="50">50% HP</option>
+                </select>
+              </div>
+              <div className="orders-config-hint orders-config-hint--danger">
+                Auto-detonate below {ship.detonateHpPct ?? 'X'}% HP: deals damage
+                to every ship in this orbit, friend or foe; this ship is
+                destroyed. No effect on hulls without a detonator part.
+              </div>
+
+              {ordersError && (
+                <button
+                  onClick={() => setOrdersError(null)}
+                  className="orders-config-error"
+                  title="Click to dismiss"
+                >⚠ {ordersError}</button>
+              )}
+            </div>
           )}
 
           {transferError && (
