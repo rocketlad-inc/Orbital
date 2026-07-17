@@ -22,6 +22,11 @@ import {
 import { BottomSheet } from './BottomSheet';
 import './ShipPanel.css';
 
+// Order-independent key for a parts loadout, so two designs with the same
+// multiset of parts compare equal regardless of slot order.
+const partsKey = (parts: string[] | undefined): string =>
+  [...sanitizeParts(parts ?? [])].sort().join(',');
+
 export const ShipPanel: React.FC = () => {
   const {
     gameState, uiState, deselectShip, setGameState,
@@ -307,6 +312,24 @@ export const ShipPanel: React.FC = () => {
   // Ship class stats
   const shipClass = getShipClass(ship.class as ShipClassName);
 
+  // Configuration name: match this hull's loadout to one of the player's
+  // saved designs (same class + same parts multiset) so the CLASS row can
+  // read "Brawler MkII" instead of a bare "DESTROYER". Only for the
+  // player's own ships — enemy designs live in their (hidden) library, so
+  // matching a rival hull against our names would mislabel it. Prefer the
+  // active design when several share a loadout. Null → fall back to class.
+  // Plain computation (not useMemo) because this sits after the panel's
+  // early-return guards, where hooks can't run; the filter is tiny.
+  const configName: string | null = (() => {
+    if (ship.ownedBy !== 'player') return null;
+    const key = partsKey(ship.parts);
+    const matches = (gameState.shipDesigns ?? []).filter(
+      d => d.shipClass === ship.class && partsKey(d.parts) === key,
+    );
+    if (matches.length === 0) return null;
+    return (matches.find(d => d.isActive) ?? matches[0]).name;
+  })();
+
   // Maintenance — repair/refuel rates at current location
   const maintenance = maintenanceRatesForShip(ship, gameState.bodies, gameState.settlements);
   // maxHp: server-authoritative hp_max when present (MP — includes
@@ -470,11 +493,22 @@ export const ShipPanel: React.FC = () => {
           <div className="ship-stats" data-tutorial-id="ship-stats">
             <div className="stat-row">
               <span className="label">CLASS</span>
-              <span className="value" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ color: '#4ecdc4', display: 'inline-flex' }}>
+              <span
+                className="value"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}
+                title={configName ? `${configName} · ${ship.class.toUpperCase()}` : undefined}
+              >
+                <span style={{ color: '#4ecdc4', display: 'inline-flex', flexShrink: 0 }}>
                   <ShipIcon shipClass={ship.class as ShipClassName} size={16} />
                 </span>
-                {ship.class.toUpperCase()}
+                {configName ? (
+                  <span className="ship-config-name">
+                    {configName}
+                    <span className="ship-config-class"> · {ship.class.toUpperCase()}</span>
+                  </span>
+                ) : (
+                  ship.class.toUpperCase()
+                )}
               </span>
             </div>
             <div className="stat-row">

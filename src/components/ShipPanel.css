@@ -92,6 +92,19 @@
   font-weight: 500;
 }
 
+/* Configuration name in the CLASS row — clamp long design names so the
+   row can't overflow; the class stays as a muted suffix. */
+.ship-config-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ship-config-class {
+  color: #6b8195;
+  font-weight: 400;
+}
+
 .maneuver-section {
   margin-bottom: 12px;
 }
