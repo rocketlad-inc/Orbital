@@ -648,10 +648,17 @@ function AppShell() {
           />
         </MultiplayerGameProvider>
       ) : (
-        // Pre-game backdrop. NOT using .mp-overlay because that class
-        // applies a backdrop-filter blur to everything beneath it,
-        // including the dock the user needs to reach. Just a flat
-        // dark canvas with a small banner that doesn't intercept clicks.
+        // Pre-game backdrop + the dock rail's Multiplayer icon. The rail
+        // normally lives inside GameUI, which isn't mounted until the game
+        // starts — so pre-game had no way to open the lobby dock the hint
+        // below points at. lobbyOnly renders just the Multiplayer icon
+        // (the other panels need a live game).
+        <>
+        <DockRail isMultiplayer lobbyOnly />
+        {/* Pre-game backdrop. NOT using .mp-overlay because that class
+            applies a backdrop-filter blur to everything beneath it,
+            including the dock the user needs to reach. Just a flat
+            dark canvas with a small banner that doesn't intercept clicks. */}
         <div style={{
           position: 'fixed',
           inset: 0,
@@ -677,6 +684,7 @@ function AppShell() {
             Use the dock on the right to configure the match.
           </div>
         </div>
+        </>
       )}
     </MultiplayerShell>
   );
