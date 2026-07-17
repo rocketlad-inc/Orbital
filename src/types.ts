@@ -227,6 +227,19 @@ export interface Ship {
    *  to DEFAULT_SHIP_ICONS[class] when undefined. Values map 1:1 to
    *  ShipIconVariant ('A'..'F') in src/components/ShipIcons.tsx. */
   iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
+  /** Ship-designer parts loadout (multiplayer only, migration 0033).
+   *  Snapshot from the active design at queue time; undefined/empty =
+   *  bare hull = legacy class-def stats. Part ids are ShipPartId
+   *  ('weapon'|'shield'|'engine'|'detonator') — see src/game/shipParts.ts.
+   *  SP ships never carry parts (designer is MP-only; SP AI frozen). */
+  parts?: string[];
+  /** Server-authoritative max HP (multiplayer only). Includes shield
+   *  parts + tech applied at build completion. Undefined falls back to
+   *  the class-def HP (single-player + legacy ships). */
+  hpMax?: number;
+  /** Server-authoritative damage per volley (multiplayer only) —
+   *  includes weapon parts. Undefined = class def. */
+  damagePerTick?: number;
 
   // Orbital position. Always set. During transit it's a stale snapshot
   // of the last parked orbit; rendering and game logic must check
@@ -383,6 +396,23 @@ export interface BuildOrder {
   /** Icon variant picked at build time. Copied to Ship.iconVariant
    *  when the build completes. Undefined falls back to the class default. */
   iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
+}
+
+/**
+ * A saved ship design: hull class + parts loadout + icon variant.
+ * Multiplayer only (server table game_ship_designs, migration 0033).
+ * One design per (player, class) may be active; BUILD snapshots the
+ * active design's parts onto the order at queue time.
+ */
+export interface ShipDesign {
+  id: string;
+  shipClass: 'corvette' | 'frigate' | 'destroyer' | 'freighter';
+  name: string;
+  /** Part ids (ShipPartId in src/game/shipParts.ts). Empty = bare hull. */
+  parts: string[];
+  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
+  isActive: boolean;
+  createdAtMs: number;
 }
 
 /**
@@ -572,6 +602,10 @@ export interface GameState {
    *  freighter has been assigned. Persisted with the save. Currently
    *  data-only — the execution loop lands next turn. */
   tradeRoutes?: TradeRoute[];
+  /** The local player's ship-design library (ship designer, §2 of the
+   *  identity-economy release). Multiplayer only — populated from
+   *  /state's ship_designs; undefined in single-player (SP frozen). */
+  shipDesigns?: ShipDesign[];
   aiActivityLog?: AIActivityEntry[];   // optional — rolling log of recent AI decisions
 
   /** Faction ids the local player is allied with — active defense-pact

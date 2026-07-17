@@ -15,8 +15,9 @@ import { GameContextProvider } from '../state/gameContext';
 import { MultiplayerActionsProvider } from './MultiplayerActionsContext';
 import {
   Body, Ship, Faction, GameState, OrbitElements, FactionResources, FactionTechStateBase,
-  Settlement, ManeuverNode, ChronicleFocus, ChronicleEditMeta,
+  Settlement, ManeuverNode, ChronicleFocus, ChronicleEditMeta, ShipDesign,
 } from '../types';
+import { sanitizeParts, engineAccelMultiplier } from '../game/shipParts';
 import {
   planTorchTransfer, stepTorchShip, DEFAULT_ENGINE_G, fromG,
   TorchTransfer,
@@ -154,6 +155,9 @@ interface ServerState {
     /** Player's icon-variant pick from the build queue ('A'..'F').
      *  NULL means use the class default. Migration 0022. */
     icon_variant?: string | null;
+    /** Ship-designer parts loadout, JSON array of part ids. NULL =
+     *  bare hull (legacy stats). Migration 0033. */
+    parts_json?: string | null;
   }>;
   settlements?: Array<{
     id: string;
@@ -233,6 +237,18 @@ interface ServerState {
     completes_at_tick: number;
     /** Player's icon pick at queue time, or null for class default. */
     icon_variant?: string | null;
+    /** Snapshot of the active design's parts at queue time. */
+    parts_json?: string | null;
+  }>;
+  /** The caller's ship-design library (ship designer §2, migration 0033). */
+  ship_designs?: Array<{
+    id: string;
+    ship_class: string;
+    name: string;
+    parts_json: string | null;
+    icon_variant: string | null;
+    is_active: boolean | number;
+    created_at_ms: number;
   }>;
   /** Active trade routes for the caller's faction. Server names use
    *  metal/gold; the deserializer below maps to ore/credits to match
@@ -376,6 +392,15 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
   if (s.icon_variant && /^[A-F]$/.test(s.icon_variant)) {
     iconVariant = s.icon_variant as Ship['iconVariant'];
   }
+  // Designer parts loadout. Defensive parse + sanitize so a malformed
+  // blob degrades to bare hull rather than tanking deserialization.
+  let parts: string[] | undefined;
+  if (s.parts_json) {
+    try {
+      const sanitized = sanitizeParts(JSON.parse(s.parts_json));
+      if (sanitized.length > 0) parts = sanitized;
+    } catch { /* bare hull */ }
+  }
   return {
     id: s.id,
     name: s.name,
@@ -383,6 +408,9 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     ownedBy: s.owner_faction_id,
     fuel: s.fuel,
     hp: s.hp,
+    hpMax: s.hp_max,
+    damagePerTick: s.damage_per_tick,
+    parts,
     orbit,
     orders: [],
     rank: s.rank ?? 0,
@@ -543,6 +571,7 @@ function classifyChronicleEvent(kind: string): { category: LogCategory; level: L
   switch (kind) {
     case 'ship_destroyed':
     case 'settlement_destroyed':
+    case 'ship_detonated':
     case 'asteroid_impact':
       return { category: 'COMBAT', level: 'INFO' };
     case 'asteroid_launched':
@@ -696,7 +725,16 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     // it to in-game accel — see SP gameContext.tsx for the matching fix.
     const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
     const techScale = ship.ownedBy === srv.me.faction_id ? engineGModifier(playerTech) : 1;
-    const engineAccel = baseAccel * techScale;
+    // Engine parts: −15% travel time per engine (×Propulsion tech),
+    // realized as an accel boost under T = 2√(d/a). Same multiplier the
+    // planner applied when the leg was committed (gameContext), so the
+    // reconstructed arc's own arrival estimate matches the server's
+    // stored arrival_at_tick instead of fighting it. Other factions'
+    // propulsion tech is opaque over the protocol → tech level 0.
+    const propulsionLvl = ship.ownedBy === srv.me.faction_id
+      ? (playerTech.levels?.propulsion ?? 0)
+      : 0;
+    const engineAccel = baseAccel * techScale * engineAccelMultiplier(ship.parts, propulsionLvl);
 
     const queued: TorchTransfer[] = [];
     let priorPlan: TorchTransfer | null = null;
@@ -799,6 +837,15 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         const tail = parsed.killer_faction_id ? ` by ${killer}` : '';
         const label = sName ? `${sType} ${sName}` : sType;
         return `${t}  ${owner}'s ${label} on ${where} destroyed${tail}`;
+      }
+
+      if (ev.kind === 'ship_detonated') {
+        const name = (parsed.ship_name as string) ?? 'a ship';
+        const where = (parsed.body_name as string) ?? 'orbit';
+        const owner = nameOfFaction(ev.actor_faction_id, parsed.owner_faction_name as string | undefined);
+        const dmg = (parsed.damage as number) ?? 0;
+        const killed = (parsed.destroyed_count as number) ?? 0;
+        return `${t}  💥 ${owner}'s ${name} detonated at ${where} — ${dmg} damage to every ship in orbit, ${killed} destroyed`;
       }
 
       if (ev.kind === 'asteroid_launched') {
@@ -1043,6 +1090,30 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     createdAtTick: r.created_at_tick,
   }));
 
+  // Ship-design library (ship designer §2). Server rows → client
+  // ShipDesign shape; malformed parts blobs degrade to bare hull.
+  const shipDesigns: ShipDesign[] = (srv.ship_designs ?? []).map(d => {
+    let parts: string[] = [];
+    if (d.parts_json) {
+      try { parts = sanitizeParts(JSON.parse(d.parts_json)); } catch { /* bare hull */ }
+    }
+    let iv: ShipDesign['iconVariant'];
+    if (d.icon_variant && /^[A-F]$/.test(d.icon_variant)) {
+      iv = d.icon_variant as ShipDesign['iconVariant'];
+    }
+    return {
+      id: d.id,
+      shipClass: (['corvette', 'frigate', 'destroyer', 'freighter'].includes(d.ship_class)
+        ? d.ship_class
+        : 'frigate') as ShipDesign['shipClass'],
+      name: d.name,
+      parts,
+      iconVariant: iv,
+      isActive: d.is_active === true || d.is_active === 1,
+      createdAtMs: d.created_at_ms,
+    };
+  });
+
   // Dyson Sphere remap. Server returns the controller's faction id +
   // settlement id in namespaced form ("<gameId>:..."). The client
   // GameState stores ownership against PLAYER_TOKEN for the caller and
@@ -1081,6 +1152,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     chronicleMeta,
     lastHarvestTick: srv.game.current_tick,
     tradeRoutes,
+    shipDesigns,
     dysonSphere,
     // Allies keep their own (server) faction ids on the client — only
     // the caller is remapped to PLAYER_TOKEN — so ally-owned ships carry

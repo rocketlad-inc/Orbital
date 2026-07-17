@@ -1,5 +1,9 @@
 import { getActiveSliders } from './senate.js';
 import { recomputeBodyOwnership } from './factions.js';
+import {
+  validateParts, partsCost, parsePartsJson,
+  countPart, detonatorDamage,
+} from './shipDesigns.js';
 
 // Player-action endpoints: things the client wants the server to remember.
 //
@@ -164,7 +168,7 @@ async function handleCancelBuild(req, env, ctx) {
 
   const order = await env.DB
     .prepare(
-      `SELECT id, faction_id, ship_class, completes_at_tick, cancelled_at_tick
+      `SELECT id, faction_id, ship_class, completes_at_tick, cancelled_at_tick, parts_json
          FROM game_body_build_queue
         WHERE id = ? AND game_id = ?`,
     )
@@ -179,6 +183,13 @@ async function handleCancelBuild(req, env, ctx) {
   // Refund the build cost. (fuel was removed from server-side build
   // cost gating, but we keep the column rounding-trip-safe.)
   const cost = SHIP_BUILD_COST[order.ship_class];
+  // Parts were charged at queue time (snapshot of the active design) —
+  // refund them too, or a cancelled fully-loaded destroyer would eat
+  // the loadout price.
+  const orderParts = parsePartsJson(order.ship_class, order.parts_json);
+  const orderPartsCost = partsCost(orderParts);
+  const refundMetal = (cost?.metal ?? 0) + orderPartsCost.metal;
+  const refundGold = (cost?.gold ?? 0) + orderPartsCost.gold;
   const game = await env.DB
     .prepare('SELECT current_tick FROM games WHERE id = ?')
     .bind(gameId)
@@ -191,13 +202,13 @@ async function handleCancelBuild(req, env, ctx) {
       .bind(tick, orderId),
     env.DB
       .prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?')
-      .bind(cost?.metal ?? 0, cost?.gold ?? 0, me.id),
+      .bind(refundMetal, refundGold, me.id),
   ]);
 
   return json({
     ok: true,
     order_id: orderId,
-    refund: { metal: cost?.metal ?? 0, gold: cost?.gold ?? 0 },
+    refund: { metal: refundMetal, gold: refundGold },
   });
 }
 
@@ -279,6 +290,28 @@ async function handleQueueBuild(req, env, ctx) {
   }
   const cost = SHIP_BUILD_COST[shipClass];
 
+  // Ship designer (§2): BUILD uses the caller's ACTIVE design for this
+  // class. The design's parts are SNAPSHOT onto the build order here so
+  // later edits to the design never mutate queued ships. No active
+  // design (or a bare-hull design) = today's ship exactly.
+  const activeDesign = await env.DB
+    .prepare(
+      `SELECT id, parts_json, icon_variant FROM game_ship_designs
+        WHERE game_id = ? AND faction_id = ? AND ship_class = ? AND is_active = 1
+        LIMIT 1`,
+    )
+    .bind(gameId, me.id, shipClass)
+    .first();
+  const designParts = activeDesign ? parsePartsJson(shipClass, activeDesign.parts_json) : [];
+  const designPartsJson = designParts.length > 0 ? JSON.stringify(designParts) : null;
+  const designPartsCost = partsCost(designParts);
+  // Icon fallback chain: explicit BuildPanel pick > design's variant >
+  // class default (NULL). The design variant went through the same
+  // 'A'..'F' validation at design-save time.
+  if (iconVariant == null && activeDesign?.icon_variant && /^[A-F]$/.test(activeDesign.icon_variant)) {
+    iconVariant = activeDesign.icon_variant;
+  }
+
   const bodyRow = await env.DB
     .prepare('SELECT id, owner_faction_id FROM game_bodies WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL')
     .bind(bodyId, gameId)
@@ -337,10 +370,13 @@ async function handleQueueBuild(req, env, ctx) {
     const v = Number(sliders.ship_build_cost_multiplier);
     if (Number.isFinite(v) && v > 0) buildCostMult = v;
   } catch { /* default */ }
+  // Parts are added to the hull cost at queue time (empty slots are
+  // free — the bare hull is the budget option). The senate multiplier
+  // scales the whole ship, parts included.
   const scaledCost = {
-    metal: Math.ceil(cost.metal * buildCostMult),
+    metal: Math.ceil((cost.metal + designPartsCost.metal) * buildCostMult),
     fuel:  Math.ceil(cost.fuel  * buildCostMult),
-    gold:  Math.ceil(cost.gold  * buildCostMult),
+    gold:  Math.ceil((cost.gold + designPartsCost.gold) * buildCostMult),
     build_ticks: cost.build_ticks,
   };
 
@@ -396,10 +432,10 @@ async function handleQueueBuild(req, env, ctx) {
     env.DB
       .prepare(
         `INSERT INTO game_body_build_queue
-          (id, game_id, body_id, faction_id, ship_class, queued_at_tick, completes_at_tick, icon_variant, ship_name)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, game_id, body_id, faction_id, ship_class, queued_at_tick, completes_at_tick, icon_variant, ship_name, parts_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .bind(orderId, gameId, bodyId, me.id, shipClass, startTick, completeTick, iconVariant, shipName),
+      .bind(orderId, gameId, bodyId, me.id, shipClass, startTick, completeTick, iconVariant, shipName, designPartsJson),
   ];
   for (const d of settlementDrains) {
     batchStmts.push(
@@ -429,6 +465,7 @@ async function handleQueueBuild(req, env, ctx) {
       ship_class: shipClass,
       queued_at_tick: startTick,
       completes_at_tick: completeTick,
+      parts: designParts,
     },
   }, { status: 201 });
 }
@@ -1821,7 +1858,403 @@ async function handleEditChronicleFlavor(req, env, ctx) {
   return json({ ok: true, entry_id: entryId, flavor, edited_by: flavor ? me.id : null });
 }
 
+// ============================================================
+// Ship designer (DESIGN-identity-economy.md §2)
+//
+// GET    /api/games/:gid/designs           — caller's design library
+// POST   /api/games/:gid/designs           — create (optionally set active)
+// PATCH  /api/games/:gid/designs/:designId — rename / edit parts / set active
+// DELETE /api/games/:gid/designs/:designId
+// POST   /api/games/:gid/ships/:shipId/detonate — manual detonator trigger
+//
+// One ACTIVE design per (faction, ship_class) — enforced on every
+// activate path by clearing siblings in the same batch. BUILD snapshots
+// the active design's parts_json onto the order (handleQueueBuild).
+// ============================================================
+
+const DESIGN_NAME_MAX = 32;
+
+function designToJson(row) {
+  return {
+    id: row.id,
+    ship_class: row.ship_class,
+    name: row.name,
+    parts_json: row.parts_json ?? null,
+    icon_variant: row.icon_variant ?? null,
+    is_active: row.is_active === 1,
+    created_at_ms: row.created_at_ms,
+  };
+}
+
+async function handleListDesigns(req, env, ctx) {
+  const { gameId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const rows = (await env.DB
+    .prepare(
+      `SELECT id, ship_class, name, parts_json, icon_variant, is_active, created_at_ms
+         FROM game_ship_designs
+        WHERE game_id = ? AND faction_id = ?
+        ORDER BY created_at_ms ASC`,
+    )
+    .bind(gameId, me.id)
+    .all()).results ?? [];
+  return json({ designs: rows.map(designToJson) });
+}
+
+async function handleCreateDesign(req, env, ctx) {
+  const { gameId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+
+  const shipClass = body.ship_class;
+  if (typeof shipClass !== 'string' || !SHIP_CLASSES.has(shipClass)) {
+    return err(400, 'bad_request', 'invalid ship_class');
+  }
+  const name = (typeof body.name === 'string' ? body.name.trim() : '');
+  if (name.length === 0) return err(400, 'bad_request', 'design name required');
+  if (name.length > DESIGN_NAME_MAX) {
+    return err(400, 'bad_request', `design name too long (max ${DESIGN_NAME_MAX} chars)`);
+  }
+  const v = validateParts(shipClass, body.parts ?? []);
+  if (!v.ok) return err(400, 'bad_parts', v.error);
+  let iconVariant = null;
+  if (body.icon_variant != null) {
+    if (typeof body.icon_variant !== 'string' || !/^[A-F]$/.test(body.icon_variant)) {
+      return err(400, 'bad_request', 'invalid icon_variant');
+    }
+    iconVariant = body.icon_variant;
+  }
+  const setActive = body.set_active === true;
+
+  // Soft cap so a rogue client can't fill the table: 12 designs per
+  // class is far beyond any legitimate library.
+  const countRow = await env.DB
+    .prepare('SELECT COUNT(*) AS c FROM game_ship_designs WHERE game_id = ? AND faction_id = ? AND ship_class = ?')
+    .bind(gameId, me.id, shipClass)
+    .first();
+  if ((countRow?.c ?? 0) >= 12) {
+    return err(409, 'too_many_designs', 'design library full for this class (max 12) — delete one first');
+  }
+
+  const id = `dsn_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  const partsJson = v.parts.length > 0 ? JSON.stringify(v.parts) : null;
+  const now = Date.now();
+
+  const stmts = [];
+  if (setActive) {
+    stmts.push(
+      env.DB
+        .prepare('UPDATE game_ship_designs SET is_active = 0 WHERE game_id = ? AND faction_id = ? AND ship_class = ?')
+        .bind(gameId, me.id, shipClass),
+    );
+  }
+  stmts.push(
+    env.DB
+      .prepare(
+        `INSERT INTO game_ship_designs
+          (id, game_id, faction_id, ship_class, name, parts_json, icon_variant, is_active, created_at_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(id, gameId, me.id, shipClass, name, partsJson, iconVariant, setActive ? 1 : 0, now),
+  );
+  await env.DB.batch(stmts);
+
+  return json({
+    design: {
+      id, ship_class: shipClass, name, parts_json: partsJson,
+      icon_variant: iconVariant, is_active: setActive, created_at_ms: now,
+    },
+  }, { status: 201 });
+}
+
+async function handlePatchDesign(req, env, ctx) {
+  const { gameId, designId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const row = await env.DB
+    .prepare(
+      `SELECT id, faction_id, ship_class, name, parts_json, icon_variant, is_active, created_at_ms
+         FROM game_ship_designs WHERE id = ? AND game_id = ?`,
+    )
+    .bind(designId, gameId)
+    .first();
+  if (!row) return err(404, 'not_found', 'design not found');
+  if (row.faction_id !== me.id) return err(403, 'not_owner', 'not your design');
+
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+
+  let name = row.name;
+  if (body.name !== undefined) {
+    if (typeof body.name !== 'string') return err(400, 'bad_request', 'name must be a string');
+    const trimmed = body.name.trim();
+    if (trimmed.length === 0) return err(400, 'bad_request', 'design name required');
+    if (trimmed.length > DESIGN_NAME_MAX) {
+      return err(400, 'bad_request', `design name too long (max ${DESIGN_NAME_MAX} chars)`);
+    }
+    name = trimmed;
+  }
+  let partsJson = row.parts_json ?? null;
+  if (body.parts !== undefined) {
+    const v = validateParts(row.ship_class, body.parts ?? []);
+    if (!v.ok) return err(400, 'bad_parts', v.error);
+    partsJson = v.parts.length > 0 ? JSON.stringify(v.parts) : null;
+  }
+  let iconVariant = row.icon_variant ?? null;
+  if (body.icon_variant !== undefined) {
+    if (body.icon_variant === null) iconVariant = null;
+    else if (typeof body.icon_variant === 'string' && /^[A-F]$/.test(body.icon_variant)) {
+      iconVariant = body.icon_variant;
+    } else {
+      return err(400, 'bad_request', 'invalid icon_variant');
+    }
+  }
+
+  // Editing a design NEVER mutates queued or completed ships — parts
+  // were snapshot onto the build order at queue time (spec §2.3).
+  const stmts = [];
+  let isActive = row.is_active === 1;
+  if (body.is_active === true && !isActive) {
+    // One active design per (faction, class): clear siblings first.
+    stmts.push(
+      env.DB
+        .prepare('UPDATE game_ship_designs SET is_active = 0 WHERE game_id = ? AND faction_id = ? AND ship_class = ?')
+        .bind(gameId, me.id, row.ship_class),
+    );
+    isActive = true;
+  } else if (body.is_active === false) {
+    // Deactivate — builds fall back to the bare hull.
+    isActive = false;
+  }
+  stmts.push(
+    env.DB
+      .prepare('UPDATE game_ship_designs SET name = ?, parts_json = ?, icon_variant = ?, is_active = ? WHERE id = ?')
+      .bind(name, partsJson, iconVariant, isActive ? 1 : 0, designId),
+  );
+  await env.DB.batch(stmts);
+
+  return json({
+    design: {
+      id: row.id, ship_class: row.ship_class, name, parts_json: partsJson,
+      icon_variant: iconVariant, is_active: isActive, created_at_ms: row.created_at_ms,
+    },
+  });
+}
+
+async function handleDeleteDesign(req, env, ctx) {
+  const { gameId, designId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const row = await env.DB
+    .prepare('SELECT id, faction_id FROM game_ship_designs WHERE id = ? AND game_id = ?')
+    .bind(designId, gameId)
+    .first();
+  if (!row) return err(404, 'not_found', 'design not found');
+  if (row.faction_id !== me.id) return err(403, 'not_owner', 'not your design');
+
+  // Deleting the active design is allowed — builds simply fall back to
+  // the bare hull until another design is activated. Queued/completed
+  // ships keep their snapshot.
+  await env.DB.prepare('DELETE FROM game_ship_designs WHERE id = ?').bind(designId).run();
+  return json({ ok: true, design_id: designId });
+}
+
+// POST /api/games/:gameId/ships/:shipId/detonate
+//
+// Manual detonator trigger (spec §2.2, decided 2026-07-17):
+//   - damage = 50% of the ship's MAX HP per detonator part, scaled by
+//     the owner's Weapons tech at HALF rate (+5%/lvl), stacking
+//     additively across parts (2 detonators = 100% of max HP, etc.)
+//   - hits EVERY in-orbit ship at the same body — INCLUDING the
+//     owner's own ships. No treaty, stance, or faction filter. The
+//     client UI carries the full-disclosure copy; the server just
+//     executes exactly what the copy promised.
+//   - the detonating ship is CONSUMED (destroyed) regardless of kills.
+//   - chronicle kind 'ship_detonated' with ship_name, body, victims.
+async function handleDetonateShip(req, env, ctx) {
+  const { gameId, shipId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  if (!SHIP_ID_RE.test(shipId)) return err(400, 'bad_request', 'invalid ship id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const ship = await env.DB
+    .prepare(
+      `SELECT id, owner_faction_id, name, ship_class, parent_body_id,
+              hp, hp_max, status, parts_json
+         FROM game_ships WHERE id = ? AND game_id = ?`,
+    )
+    .bind(shipId, gameId)
+    .first();
+  if (!ship) return err(404, 'not_found', 'ship not found');
+  if (ship.owner_faction_id !== me.id) return err(403, 'not_owner', 'you do not own this ship');
+  if (ship.status !== 'active') return err(409, 'destroyed', 'ship is not active');
+
+  // In-orbit only: a ship mid-burn has left the orbital plane — the
+  // blast geometry (same-orbit shrapnel shell) doesn't apply.
+  const inTransit = await env.DB
+    .prepare("SELECT 1 AS x FROM game_ship_nodes WHERE ship_id = ? AND status = 'in_transit' LIMIT 1")
+    .bind(shipId)
+    .first();
+  if (inTransit) return err(409, 'in_transit', 'cannot detonate mid-transfer — wait for arrival');
+
+  const parts = parsePartsJson(ship.ship_class, ship.parts_json);
+  const nDetonators = countPart(parts, 'detonator');
+  if (nDetonators <= 0) return err(409, 'no_detonator', 'this ship carries no detonator');
+
+  // Weapons tech at trigger time, HALF rate (spec §2.2).
+  const weaponsRow = await env.DB
+    .prepare("SELECT level FROM faction_techs WHERE game_id = ? AND faction_id = ? AND tech_id = 'weapons'")
+    .bind(gameId, me.id)
+    .first();
+  const damage = detonatorDamage(ship.hp_max ?? 0, nDetonators, weaponsRow?.level ?? 0);
+
+  const game = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
+  const tick = game?.current_tick ?? 0;
+
+  // Victims: every ACTIVE ship in the same orbit (same parent body),
+  // friend and foe alike — spec says no exceptions, and that includes
+  // the caller's own fleet. In-transit ships (departed but not yet
+  // arrived, still row-parented at the departure body) are excluded —
+  // they're not "in this orbit" anymore.
+  const victims = (await env.DB
+    .prepare(
+      `SELECT s.id, s.name, s.ship_class, s.owner_faction_id, s.hp
+         FROM game_ships s
+        WHERE s.game_id = ? AND s.parent_body_id = ? AND s.status = 'active'
+          AND s.id != ?
+          AND NOT EXISTS (
+            SELECT 1 FROM game_ship_nodes n
+             WHERE n.ship_id = s.id AND n.status = 'in_transit'
+          )`,
+    )
+    .bind(gameId, ship.parent_body_id, shipId)
+    .all()).results ?? [];
+
+  const stmts = [
+    // The ship is consumed. Always.
+    env.DB
+      .prepare("UPDATE game_ships SET hp = 0, status = 'destroyed', destroyed_at_tick = ? WHERE id = ?")
+      .bind(tick, shipId),
+  ];
+  const victimSummaries = [];
+  for (const v of victims) {
+    const newHp = Math.max(0, (v.hp ?? 0) - damage);
+    if (newHp <= 0) {
+      stmts.push(
+        env.DB
+          .prepare("UPDATE game_ships SET hp = 0, status = 'destroyed', destroyed_at_tick = ? WHERE id = ?")
+          .bind(tick, v.id),
+      );
+    } else {
+      stmts.push(
+        env.DB.prepare('UPDATE game_ships SET hp = ? WHERE id = ?').bind(newHp, v.id),
+      );
+    }
+    victimSummaries.push({
+      ship_id: v.id,
+      ship_name: v.name,
+      ship_class: v.ship_class,
+      owner_faction_id: v.owner_faction_id,
+      destroyed: newHp <= 0,
+    });
+  }
+  await env.DB.batch(stmts);
+
+  // Chronicle — public, so everyone at the body learns exactly what
+  // happened (a detonation is not a subtle act).
+  try {
+    const bodyRow = await env.DB
+      .prepare('SELECT name FROM game_bodies WHERE id = ?')
+      .bind(ship.parent_body_id)
+      .first();
+    const facRows = (await env.DB
+      .prepare('SELECT id, name FROM game_factions WHERE game_id = ?')
+      .bind(gameId)
+      .all()).results ?? [];
+    const facName = new Map(facRows.map(f => [f.id, f.name]));
+    const payload = JSON.stringify({
+      ship_id: shipId,
+      ship_name: ship.name,
+      ship_class: ship.ship_class,
+      body_name: bodyRow?.name ?? null,
+      owner_faction_name: facName.get(me.id) ?? null,
+      damage,
+      detonators: nDetonators,
+      victims: victimSummaries.map(v => ({
+        ...v,
+        owner_faction_name: facName.get(v.owner_faction_id) ?? null,
+      })),
+      destroyed_count: victimSummaries.filter(v => v.destroyed).length,
+    });
+    await env.DB
+      .prepare(
+        `INSERT INTO chronicle_entries
+          (id, game_id, tick_number, kind, actor_faction_id, body_id, ship_id, payload, visibility, created_at_ms)
+         VALUES (?, ?, ?, 'ship_detonated', ?, ?, ?, ?, 'public', ?)`,
+      )
+      .bind(`c_det_${shipId.slice(-10)}_${tick}`, gameId, tick, me.id,
+            ship.parent_body_id, shipId, payload, Date.now())
+      .run();
+  } catch (e) {
+    console.error('ship_detonated chronicle insert failed', e);
+  }
+
+  return json({
+    ok: true,
+    ship_id: shipId,
+    damage,
+    detonators: nDetonators,
+    victims: victimSummaries,
+  });
+}
+
 export const routes = [
+  // Ship designer — design library CRUD + detonator trigger. Listed
+  // before the generic /ships/:shipId PATCH so nothing shadows the
+  // more specific paths.
+  {
+    method: 'GET',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/designs$/,
+    auth: 'required',
+    handle: handleListDesigns,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/designs$/,
+    auth: 'required',
+    handle: handleCreateDesign,
+  },
+  {
+    method: 'PATCH',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/designs\/(?<designId>[^/]+)$/,
+    auth: 'required',
+    handle: handlePatchDesign,
+  },
+  {
+    method: 'DELETE',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/designs\/(?<designId>[^/]+)$/,
+    auth: 'required',
+    handle: handleDeleteDesign,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/ships\/(?<shipId>[^/]+)\/detonate$/,
+    auth: 'required',
+    handle: handleDetonateShip,
+  },
   {
     method: 'PATCH',
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/ships\/(?<shipId>[^/]+)$/,

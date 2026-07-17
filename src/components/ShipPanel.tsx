@@ -4,6 +4,9 @@ import { Ship, Body, Settlement, TradeRoute } from '../types';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { maintenanceRatesForShip } from '../game/maintenance';
 import { rankHpMul } from '../game/techs';
+import {
+  ShipPartId, SHIP_PART_DEFS, countPart, detonatorDamage, detonatorDisclosure,
+} from '../game/shipParts';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { markNodeCancelPending, unmarkNodeCancelPending } from '../multiplayer/pendingNodeCancels';
 import { humanizeMpError } from '../multiplayer/errorMessages';
@@ -302,10 +305,11 @@ export const ShipPanel: React.FC = () => {
 
   // Maintenance — repair/refuel rates at current location
   const maintenance = maintenanceRatesForShip(ship, gameState.bodies, gameState.settlements);
-  // maxHp factors in veterancy (+1% per rank). Combat.ts + maintenance.ts
-  // both apply the same multiplier, so the displayed cap matches the
-  // actual cap the heal loop fills to.
-  const maxHp = Math.round(shipClass.hp * rankHpMul(ship.rank));
+  // maxHp: server-authoritative hp_max when present (MP — includes
+  // designer shield parts + Armor tech stamped at build completion);
+  // otherwise the class def scaled by veterancy (+1% per rank), which
+  // matches what combat.ts + maintenance.ts apply in SP.
+  const maxHp = ship.hpMax ?? Math.round(shipClass.hp * rankHpMul(ship.rank));
   const maxFuel = shipClass.fuelCapacity;
   const currentHp = ship.hp ?? maxHp;
   const hpAtMax = currentHp >= maxHp;
@@ -531,6 +535,40 @@ export const ShipPanel: React.FC = () => {
               <div className="stat-row">
                 <span className="label">STATUS</span>
                 <span className="value">TRANSFER PLANNED</span>
+              </div>
+            )}
+            {ship.parts && ship.parts.length > 0 && (
+              <div className="stat-row">
+                <span className="label">PARTS</span>
+                <span className="value" style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+                  {ship.parts.map((p, i) => {
+                    const def = SHIP_PART_DEFS[p as ShipPartId];
+                    if (!def) return null;
+                    const isDet = p === 'detonator';
+                    return (
+                      <span
+                        key={`${p}:${i}`}
+                        style={{
+                          padding: '1px 6px', fontSize: 9, borderRadius: 3,
+                          border: `1px solid ${isDet ? '#ff5e5e' : '#2a3d50'}`,
+                          color: isDet ? '#ff5e5e' : '#b8c8d6',
+                        }}
+                        title={isDet
+                          // Spec §2.2: detonator tooltips must carry the
+                          // full disclosure (damage + friendly fire +
+                          // ship destroyed) everywhere it appears.
+                          ? detonatorDisclosure(detonatorDamage(
+                              maxHp,
+                              countPart(ship.parts, 'detonator'),
+                              gameState.factionTech['player']?.levels?.weapons ?? 0,
+                            ))
+                          : `${def.name} — ${def.blurb}`}
+                      >
+                        {def.name}
+                      </span>
+                    );
+                  })}
+                </span>
               </div>
             )}
           </div>
@@ -768,12 +806,14 @@ export const ShipPanel: React.FC = () => {
             </div>
           )}
 
-          {shipClass.damagePerTick > 0 && (
+          {(ship.damagePerTick ?? shipClass.damagePerTick) > 0 && (
             <div className="engagement-section">
               <div className="section-title">COMBAT</div>
               <div className="stat-row">
                 <span className="label">DAMAGE</span>
-                <span className="value">{shipClass.damagePerTick}/volley</span>
+                {/* Server-authoritative per-volley damage when present
+                    (weapon parts + Weapons tech, stamped at build). */}
+                <span className="value">{ship.damagePerTick ?? shipClass.damagePerTick}/volley</span>
               </div>
               <div className="stat-row">
                 <span className="label">CADENCE</span>
@@ -785,6 +825,28 @@ export const ShipPanel: React.FC = () => {
                 Auto-fires at any hostile sharing this body.
               </div>
             </div>
+          )}
+
+          {mpActions
+            && ship.ownedBy === 'player'
+            && countPart(ship.parts, 'detonator') > 0 && (
+            <DetonatorSection
+              ship={ship}
+              maxHp={maxHp}
+              weaponsLvl={gameState.factionTech['player']?.levels?.weapons ?? 0}
+              inTransit={!!ship.transit}
+              onDetonate={async () => {
+                const res = await mpActions.detonateShip(ship.id);
+                if (!res.ok) {
+                  setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
+                  return false;
+                }
+                // The ship is gone — close the panel; the next /state
+                // poll removes it from the map.
+                deselectShip();
+                return true;
+              }}
+            />
           )}
 
           {transferError && (
@@ -1248,6 +1310,91 @@ const ShipCombatRecord: React.FC<{
             );
           })}
         </ul>
+      )}
+    </div>
+  );
+};
+
+// ----------------------------------------------------------------
+// DetonatorSection — manual trigger for detonator-fitted hulls
+// (ship designer §2.2, MP only).
+//
+// UX REQUIREMENT (spec, explicit): every surface where the detonator
+// appears must state ALL THREE — the damage number, that it hits
+// friend and foe alike, and that the ship is destroyed. The button
+// tooltip, the confirm step, and the section body all carry the full
+// detonatorDisclosure() copy. Two-step confirm so a mis-click can't
+// vaporize a fleet.
+// ----------------------------------------------------------------
+const DetonatorSection: React.FC<{
+  ship: Ship;
+  maxHp: number;
+  weaponsLvl: number;
+  inTransit: boolean;
+  /** Fires the server detonate call. Resolves true on success. */
+  onDetonate: () => Promise<boolean>;
+}> = ({ ship, maxHp, weaponsLvl, inTransit, onDetonate }) => {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  // Reset the confirm step when the selected ship changes.
+  useEffect(() => { setConfirming(false); }, [ship.id]);
+
+  const nDet = countPart(ship.parts, 'detonator');
+  const damage = detonatorDamage(maxHp, nDet, weaponsLvl);
+  const disclosure = detonatorDisclosure(damage);
+
+  return (
+    <div className="engagement-section" style={{ borderColor: '#ff5e5e' }}>
+      <div className="section-title" style={{ color: '#ff5e5e' }}>
+        ☠ DETONATOR ({nDet}×)
+      </div>
+      <div style={{ fontSize: 10, color: '#ffb0b0', lineHeight: 1.5, margin: '4px 0 8px' }}>
+        {disclosure}
+      </div>
+      {inTransit ? (
+        <div style={{ fontSize: 10, color: '#b8c8d6', fontStyle: 'italic' }}>
+          Cannot detonate mid-transfer — wait for arrival.
+        </div>
+      ) : !confirming ? (
+        <button
+          className="maneuver-btn"
+          style={{ borderColor: '#ff5e5e', color: '#ff5e5e' }}
+          onClick={() => setConfirming(true)}
+          title={disclosure}
+        >
+          ☠ DETONATE
+        </button>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ fontSize: 10, color: '#ff5e5e', fontWeight: 700, lineHeight: 1.5 }}>
+            CONFIRM: {disclosure}
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button
+              className="maneuver-btn"
+              disabled={busy}
+              style={{
+                borderColor: '#ff5e5e', color: '#fff',
+                background: 'rgba(255, 94, 94, 0.25)', fontWeight: 700,
+              }}
+              onClick={async () => {
+                setBusy(true);
+                const ok = await onDetonate();
+                setBusy(false);
+                if (!ok) setConfirming(false);
+              }}
+            >
+              {busy ? 'DETONATING…' : '☠ CONFIRM DETONATION'}
+            </button>
+            <button
+              className="maneuver-btn"
+              disabled={busy}
+              onClick={() => setConfirming(false)}
+            >
+              CANCEL
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

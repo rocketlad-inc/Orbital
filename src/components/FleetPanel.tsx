@@ -9,6 +9,7 @@ import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { ShipIcon } from './ShipIcons';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { humanizeMpError } from '../multiplayer/errorMessages';
+import { openShipDesigner } from './ShipDesigner';
 import './OverviewPanel.css';
 
 interface FleetPanelProps {
@@ -159,20 +160,23 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     return <span className="owner-badge owner-badge--neutral">{ownedBy}</span>;
   };
 
-  const renderHpBar = (ship: { hp?: number; class: string }) => {
+  const renderHpBar = (ship: { hp?: number; hpMax?: number; class: string }) => {
     const def = getShipClass(ship.class as ShipClassName);
-    const hp = ship.hp ?? def.hp;
-    const ratio = hp / def.hp;
+    // Server-authoritative max HP when present (designer shield parts +
+    // tech, migration 0033); class-def fallback for SP/legacy ships.
+    const maxHp = ship.hpMax ?? def.hp;
+    const hp = ship.hp ?? maxHp;
+    const ratio = maxHp > 0 ? hp / maxHp : 0;
     const hpClass = ratio > 0.66 ? 'good' : ratio > 0.33 ? 'mid' : 'low';
     return (
       <div className="status-bar">
         <div className="status-bar__fill">
           <div
             className={`status-bar__inner status-bar__inner--hp-${hpClass}`}
-            style={{ width: `${ratio * 100}%` }}
+            style={{ width: `${Math.min(100, ratio * 100)}%` }}
           />
         </div>
-        <span className="status-bar__text">{Math.round(hp)}/{def.hp}</span>
+        <span className="status-bar__text">{Math.round(hp)}/{Math.round(maxHp)}</span>
       </div>
     );
   };
@@ -285,6 +289,18 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           <div className="overview-panel__title-main">Fleet</div>
           <div className="overview-panel__title-sub">{ships.length} ships · {orbiting.length} orbiting · {inTransit.length} in transit</div>
         </div>
+        {/* Ship designer entry point (MP only — the designer is part of
+            the identity-economy release and the SP sim is frozen). */}
+        {mpActions && (
+          <button
+            className="filter-chip"
+            style={{ marginRight: 8 }}
+            onClick={() => openShipDesigner()}
+            title="Design ship loadouts — weapons, shields, engines, detonators. BUILD uses each class's active design."
+          >
+            ⚙ SHIP DESIGNER
+          </button>
+        )}
         <button className="overview-panel__close" onClick={onClose}>✕</button>
       </div>
 
