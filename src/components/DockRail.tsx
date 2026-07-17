@@ -38,7 +38,16 @@ interface Badge {
 const ICON_KEYS: DockRailKey[] = ['situation', 'eventlog', 'multiplayer'];
 const EXTERNAL_KEYS: ExternalPanel[] = ['settlements', 'fleet', 'research'];
 
-export const DockRail: React.FC<{ isMultiplayer?: boolean }> = ({ isMultiplayer = false }) => {
+export const DockRail: React.FC<{ isMultiplayer?: boolean; lobbyOnly?: boolean }> = ({
+  isMultiplayer = false,
+  // Pre-game lobby: only the Multiplayer icon has a backing panel (the
+  // lobby config dock). Situation / Event Log / Settlements / Fleet /
+  // Research all need a live game, which doesn't exist yet — so in
+  // lobbyOnly mode we render just the one icon. Without this the rail
+  // wasn't mounted at all pre-game (it lived inside GameUI), leaving the
+  // lobby's "use the dock on the right" hint pointing at nothing.
+  lobbyOnly = false,
+}) => {
   const [active, setActive] = useState<DockRailKey | null>(null);
   // Mirror of App.tsx's activePanel so the 3 mobile-only rail buttons
   // (settlements / fleet / research) can show the right active state
@@ -123,22 +132,26 @@ export const DockRail: React.FC<{ isMultiplayer?: boolean }> = ({ isMultiplayer 
 
   return (
     <div className="dock-rail" role="toolbar" aria-label="Side panels">
-      <DockButton
-        which="situation"
-        active={active === 'situation'}
-        badge={badges.situation}
-        icon={<SitIcon />}
-        label="Situation Report"
-        onClick={() => toggle('situation')}
-      />
-      <DockButton
-        which="eventlog"
-        active={active === 'eventlog'}
-        badge={badges.eventlog}
-        icon={<EventLogIcon />}
-        label="Event Log"
-        onClick={() => toggle('eventlog')}
-      />
+      {!lobbyOnly && (
+        <DockButton
+          which="situation"
+          active={active === 'situation'}
+          badge={badges.situation}
+          icon={<SitIcon />}
+          label="Situation Report"
+          onClick={() => toggle('situation')}
+        />
+      )}
+      {!lobbyOnly && (
+        <DockButton
+          which="eventlog"
+          active={active === 'eventlog'}
+          badge={badges.eventlog}
+          icon={<EventLogIcon />}
+          label="Event Log"
+          onClick={() => toggle('eventlog')}
+        />
+      )}
       {/* Multiplayer button only in MP: MultiplayerShell is the sole
           listener that opens a panel for active==='multiplayer', and it
           mounts only in MP. In SP the button would highlight, dispatch
@@ -159,34 +172,39 @@ export const DockRail: React.FC<{ isMultiplayer?: boolean }> = ({ isMultiplayer 
           nav items on desktop. On phones the top bar can't hold both
           the resource pills AND those nav buttons without one of them
           getting clipped, so the three move down here. Hidden on
-          desktop via .dock-rail__btn--mobile-only in DockRail.css. */}
-      <button
-        className={`dock-rail__btn dock-rail__btn--mobile-only${externalActive === 'settlements' ? ' is-active' : ''}`}
-        onClick={() => toggleExternal('settlements')}
-        title="Settlements"
-        aria-label="Settlements"
-        aria-pressed={externalActive === 'settlements'}
-      >
-        <span className="dock-rail__icon"><SettlementsIcon /></span>
-      </button>
-      <button
-        className={`dock-rail__btn dock-rail__btn--mobile-only${externalActive === 'fleet' ? ' is-active' : ''}`}
-        onClick={() => toggleExternal('fleet')}
-        title="Fleet"
-        aria-label="Fleet"
-        aria-pressed={externalActive === 'fleet'}
-      >
-        <span className="dock-rail__icon"><FleetIcon /></span>
-      </button>
-      <button
-        className={`dock-rail__btn dock-rail__btn--mobile-only${externalActive === 'research' ? ' is-active' : ''}`}
-        onClick={() => toggleExternal('research')}
-        title="Research"
-        aria-label="Research"
-        aria-pressed={externalActive === 'research'}
-      >
-        <span className="dock-rail__icon"><ResearchIcon /></span>
-      </button>
+          desktop via .dock-rail__btn--mobile-only in DockRail.css.
+          Skipped entirely pre-game — their panels need a live game. */}
+      {!lobbyOnly && (
+        <>
+          <button
+            className={`dock-rail__btn dock-rail__btn--mobile-only${externalActive === 'settlements' ? ' is-active' : ''}`}
+            onClick={() => toggleExternal('settlements')}
+            title="Settlements"
+            aria-label="Settlements"
+            aria-pressed={externalActive === 'settlements'}
+          >
+            <span className="dock-rail__icon"><SettlementsIcon /></span>
+          </button>
+          <button
+            className={`dock-rail__btn dock-rail__btn--mobile-only${externalActive === 'fleet' ? ' is-active' : ''}`}
+            onClick={() => toggleExternal('fleet')}
+            title="Fleet"
+            aria-label="Fleet"
+            aria-pressed={externalActive === 'fleet'}
+          >
+            <span className="dock-rail__icon"><FleetIcon /></span>
+          </button>
+          <button
+            className={`dock-rail__btn dock-rail__btn--mobile-only${externalActive === 'research' ? ' is-active' : ''}`}
+            onClick={() => toggleExternal('research')}
+            title="Research"
+            aria-label="Research"
+            aria-pressed={externalActive === 'research'}
+          >
+            <span className="dock-rail__icon"><ResearchIcon /></span>
+          </button>
+        </>
+      )}
     </div>
   );
 };
