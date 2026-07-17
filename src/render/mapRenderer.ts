@@ -2180,8 +2180,18 @@ export function drawStation(
 
   const orbit = settlement.orbit;
   const radius = (orbit.rp + orbit.ra) / 2;
-  const M = orbit.M0 + (2 * Math.PI * (ctx.t - orbit.epoch) / orbit.period) * orbit.direction;
-  const theta = M;
+  // THE actual "no station on the orbit" bug: Sol (the system primary)
+  // has mu = 0, so the orbit builder yields period = 0. That made
+  // M = M0 + 2π·(t−epoch)/0 = ±Infinity → cos/sin = NaN → the marker
+  // drew at (NaN, NaN) and vanished, even though the orbit ring (which
+  // uses `radius` only) still rendered — hence "I see an orbit but no
+  // station." With no gravity there's no orbital motion, so pin the
+  // station at its fixed angle M0. (finite guard also covers any other
+  // malformed orbit.)
+  const M = (Number.isFinite(orbit.period) && orbit.period > 0)
+    ? orbit.M0 + (2 * Math.PI * (ctx.t - orbit.epoch) / orbit.period) * orbit.direction
+    : orbit.M0;
+  const theta = Number.isFinite(M) ? M : 0;
   const localX = radius * Math.cos(theta);
   const localY = radius * Math.sin(theta);
   const worldX = bodyPos.x + localX;
