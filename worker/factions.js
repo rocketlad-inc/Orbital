@@ -515,6 +515,28 @@ function normalizeHex(s) {
   return s.startsWith('#') ? s.toLowerCase() : '#' + s.toLowerCase();
 }
 
+/**
+ * Derive a secondary (trim) color from a primary: lighten dark colors,
+ * darken light ones, by ~35%. Two-tone factions (§5): the secondary is
+ * decoration only — meaning must stay in the primary. Mirror of
+ * deriveSecondary in src/game/colorUtils.ts — keep the two in sync so
+ * server-derived and client-derived fallbacks agree.
+ */
+export function deriveSecondary(hex) {
+  const norm = normalizeHex(hex);
+  if (!norm) return '#888888';
+  const r = parseInt(norm.slice(1, 3), 16);
+  const g = parseInt(norm.slice(3, 5), 16);
+  const b = parseInt(norm.slice(5, 7), 16);
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  const f = 0.35;
+  const clamp = (n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0');
+  if (lum > 0.5) {
+    return `#${clamp(r * (1 - f))}${clamp(g * (1 - f))}${clamp(b * (1 - f))}`;
+  }
+  return `#${clamp(r + (255 - r) * f)}${clamp(g + (255 - g) * f)}${clamp(b + (255 - b) * f)}`;
+}
+
 function newEntryId() {
   const bytes = crypto.getRandomValues(new Uint8Array(9));
   let s = '';
@@ -553,7 +575,8 @@ export async function seedGameWorld(env, gameId) {
   // Pull lobby identity (empire_name, bio, chosen capital) alongside roster.
   const members = await env.DB
     .prepare(
-      `SELECT user_id, joined_at, empire_name, bio, chosen_starting_body
+      `SELECT user_id, joined_at, empire_name, bio, chosen_starting_body,
+              color, color2
          FROM room_members
         WHERE room_id = ?
         ORDER BY joined_at ASC, user_id ASC`,
@@ -588,12 +611,18 @@ export async function seedGameWorld(env, gameId) {
   // Factions: empire_name override (from lobby) wins over the default rotation.
   const factionRows = memberRows.map((m, slot) => {
     const empire = (typeof m.empire_name === 'string' ? m.empire_name.trim() : '') || null;
+    // Two-tone (§5): member-chosen primary wins over the default
+    // rotation; secondary = member pick, else derived from primary.
+    // Secondary is decoration only — meaning must stay in primary.
+    const color = normalizeHex(m.color) || FACTION_COLORS[slot % FACTION_COLORS.length];
+    const color2 = normalizeHex(m.color2) || deriveSecondary(color);
     return {
       id: `${gameId}:f${slot}`,
       slot,
       user_id: m.user_id,
       name: empire || FACTION_NAMES[slot % FACTION_NAMES.length],
-      color: FACTION_COLORS[slot % FACTION_COLORS.length],
+      color,
+      color2,
       bio: (typeof m.bio === 'string' && m.bio.trim()) ? m.bio.trim() : null,
     };
   });
@@ -676,16 +705,16 @@ export async function seedGameWorld(env, gameId) {
     stmts.push(
       env.DB.prepare(
         `INSERT INTO game_factions
-          (id, game_id, user_id, slot, name, color, status, bio,
+          (id, game_id, user_id, slot, name, color, color2, status, bio,
            capital_body_id, reputation, senate_weight,
            metal, fuel, gold, science,
            research_tech_id, research_progress, joined_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'active', ?,
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?,
                  ?, 0, 1,
                  ?, ?, ?, ?,
                  NULL, 0, ?)`,
       ).bind(
-        f.id, gameId, f.user_id, f.slot, f.name, f.color, f.bio,
+        f.id, gameId, f.user_id, f.slot, f.name, f.color, f.color2, f.bio,
         f.capital_body_id,
         STARTING_RESOURCES.metal, STARTING_RESOURCES.fuel,
         STARTING_RESOURCES.gold, STARTING_RESOURCES.science,
@@ -933,7 +962,7 @@ async function handleListFactions(_req, env, ctx) {
 
   const rows = await env.DB
     .prepare(
-      `SELECT id, user_id, slot, name, color, status, capital_body_id,
+      `SELECT id, user_id, slot, name, color, color2, status, capital_body_id,
               senate_weight, reputation
          FROM game_factions
         WHERE game_id = ?
@@ -952,7 +981,7 @@ async function handleMyFaction(_req, env, ctx) {
 
   const row = await env.DB
     .prepare(
-      `SELECT id, game_id, user_id, slot, name, color, status,
+      `SELECT id, game_id, user_id, slot, name, color, color2, status,
               capital_body_id, reputation, senate_weight,
               metal, fuel, gold, science,
               research_tech_id, research_progress
@@ -1003,6 +1032,19 @@ async function handlePatchMyFaction(req, env, ctx) {
     binds.push(hex);
   }
 
+  // Two-tone (§5): secondary trim color — decoration only, meaning must
+  // stay in the primary. Nullable (falls back to a derived secondary).
+  if (body.color2 !== undefined) {
+    if (body.color2 === null || body.color2 === '') {
+      updates.push('color2 = NULL');
+    } else {
+      const hex2 = normalizeHex(body.color2);
+      if (!hex2) return errResponse(400, 'bad_request', 'color2 must be a 6-digit hex');
+      updates.push('color2 = ?');
+      binds.push(hex2);
+    }
+  }
+
   if (updates.length === 0) return errResponse(400, 'bad_request', 'nothing to update');
 
   binds.push(gameId, session.user_id);
@@ -1017,7 +1059,7 @@ async function handlePatchMyFaction(req, env, ctx) {
 
   const fresh = await env.DB
     .prepare(
-      `SELECT id, name, color, slot, capital_body_id
+      `SELECT id, name, color, color2, slot, capital_body_id
          FROM game_factions
         WHERE game_id = ? AND user_id = ?`,
     )
@@ -1088,7 +1130,13 @@ export async function seedLateFaction(env, gameId, userId, chosenTemplateId, ide
   const empire = (typeof identity.empireName === 'string' ? identity.empireName.trim() : '') || null;
   const bio = (typeof identity.bio === 'string' && identity.bio.trim()) ? identity.bio.trim() : null;
   const name = empire || FACTION_NAMES[slot % FACTION_NAMES.length];
-  const color = FACTION_COLORS[slot % FACTION_COLORS.length];
+  // Two-tone (§5): honor lobby color prefs when the latecomer set them
+  // (room id == game id); else rotation primary + derived secondary.
+  const prefRow = await env.DB
+    .prepare('SELECT color, color2 FROM room_members WHERE room_id = ? AND user_id = ?')
+    .bind(gameId, userId).first();
+  const color = normalizeHex(prefRow?.color) || FACTION_COLORS[slot % FACTION_COLORS.length];
+  const color2 = normalizeHex(prefRow?.color2) || deriveSecondary(color);
 
   const stmts = [];
 
@@ -1096,16 +1144,16 @@ export async function seedLateFaction(env, gameId, userId, chosenTemplateId, ide
   stmts.push(
     env.DB.prepare(
       `INSERT INTO game_factions
-        (id, game_id, user_id, slot, name, color, status, bio,
+        (id, game_id, user_id, slot, name, color, color2, status, bio,
          capital_body_id, reputation, senate_weight,
          metal, fuel, gold, science,
          research_tech_id, research_progress, joined_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'active', ?,
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?,
                ?, 0, 1,
                ?, ?, ?, ?,
                NULL, 0, ?)`,
     ).bind(
-      factionId, gameId, userId, slot, name, color, bio,
+      factionId, gameId, userId, slot, name, color, color2, bio,
       bodyRowId,
       STARTING_RESOURCES.metal, STARTING_RESOURCES.fuel,
       STARTING_RESOURCES.gold, STARTING_RESOURCES.science,

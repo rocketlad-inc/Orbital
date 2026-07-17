@@ -10,6 +10,7 @@ import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
 import { COLORS, withOpacity, lighten, darken } from './colors';
 import { getShipIconImage } from './shipIconCache';
 import { ShipIconClass } from '../components/ShipIcons';
+import { deriveSecondary } from '../game/colorUtils';
 
 export interface RenderContext {
   ctx: CanvasRenderingContext2D;
@@ -858,6 +859,18 @@ function shipColor(ship: Ship, factions: Faction[] | undefined): string {
 }
 
 /**
+ * Two-tone (§5): resolve the owning faction's secondary trim color for a
+ * ship icon. Decoration only — meaning must stay in the primary, so a
+ * missing factions array simply yields no trim (undefined).
+ */
+function shipTrimColor(ship: Ship, factions: Faction[] | undefined): string | undefined {
+  if (!factions || factions.length === 0) return undefined;
+  const faction = factions.find(f => f.id === ship.ownedBy);
+  if (!faction?.color) return undefined;
+  return faction.color2 || deriveSecondary(faction.color);
+}
+
+/**
  * Draw a ship on its orbit
  */
 export function drawShip(
@@ -903,7 +916,10 @@ export function drawShip(
   const flashStart = ctx.damageFlashStart?.get(ship.id);
   drawDamageFlash(canvasPos, iconSize / 2, flashStart, ctx.t, ctx, 'damage');
 
-  const icon = getShipIconImage(ship.class as ShipIconClass, shipColorValue, ship.iconVariant);
+  const icon = getShipIconImage(
+    ship.class as ShipIconClass, shipColorValue, ship.iconVariant,
+    shipTrimColor(ship, ctx.factions),
+  );
   if (icon) {
     // Draw the icon rotated to face the velocity direction.
     ctx.ctx.save();
@@ -1741,7 +1757,10 @@ function drawTorchTransitShip(
     );
   }
 
-  const icon = getShipIconImage(ship.class as ShipIconClass, shipColorValue, ship.iconVariant);
+  const icon = getShipIconImage(
+    ship.class as ShipIconClass, shipColorValue, ship.iconVariant,
+    shipTrimColor(ship, ctx.factions),
+  );
   if (icon) {
     ctx.ctx.save();
     ctx.ctx.translate(canvasPos.x, canvasPos.y);
@@ -1869,6 +1888,16 @@ function settlementColor(settlement: Settlement, factions: Faction[]): string {
 }
 
 /**
+ * Two-tone (§5): the owning faction's secondary trim for settlements.
+ * Decoration only — meaning must stay in the primary.
+ */
+function settlementColor2(settlement: Settlement, factions: Faction[]): string | undefined {
+  const faction = factions.find(f => f.id === settlement.ownedBy);
+  if (!faction?.color) return undefined;
+  return faction.color2 || deriveSecondary(faction.color);
+}
+
+/**
  * Draw a city: a small filled square mounted on the body's surface at
  * `surfaceAngle`. Population indicated by stacked notches above marker.
  */
@@ -1907,6 +1936,19 @@ export function drawCity(
   ctx.ctx.rect(tipX - size / 2, tipY - size / 2, size, size);
   ctx.ctx.fill();
   ctx.ctx.stroke();
+
+  // Two-tone (§5): landing-pad inner line in the faction's secondary.
+  // decoration only — meaning must stay in primary. Only drawn when the
+  // marker is big enough for the line to resolve.
+  const color2 = settlementColor2(settlement, factions);
+  if (color2 && size >= 4) {
+    ctx.ctx.strokeStyle = color2;
+    ctx.ctx.lineWidth = 1;
+    ctx.ctx.beginPath();
+    ctx.ctx.moveTo(tipX - size / 2 + 1, tipY + size / 2 - 1.5);
+    ctx.ctx.lineTo(tipX + size / 2 - 1, tipY + size / 2 - 1.5);
+    ctx.ctx.stroke();
+  }
 
   // HP bar if damaged
   if (settlement.hp < settlement.maxHp) {
@@ -2003,6 +2045,18 @@ export function drawStation(
   ctx.ctx.closePath();
   ctx.ctx.fill();
   ctx.ctx.stroke();
+
+  // Two-tone (§5): station beacon gets a secondary ring around the
+  // diamond. decoration only — meaning must stay in primary (the
+  // selection ring below stays in its own warning color).
+  const beacon2 = settlementColor2(settlement, factions);
+  if (beacon2) {
+    ctx.ctx.strokeStyle = beacon2;
+    ctx.ctx.lineWidth = 1;
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(canvasPos.x, canvasPos.y, size + 2, 0, Math.PI * 2);
+    ctx.ctx.stroke();
+  }
 
   // HP bar
   if (settlement.hp < settlement.maxHp) {

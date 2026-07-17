@@ -14,6 +14,29 @@ import * as factions from './factions.js';
 
 const ROOM_ID_RE = /^[A-Za-z0-9_-]{6,32}$/;
 
+// ---------- Two-tone faction colors (§5) ----------
+// PRIMARY = ownership (all meaning), SECONDARY = decoration only.
+const HEX6_RE = /^#?[0-9a-fA-F]{6}$/;
+function normalizeHexColor(s) {
+  if (typeof s !== 'string' || !HEX6_RE.test(s)) return null;
+  return s.startsWith('#') ? s.toLowerCase() : '#' + s.toLowerCase();
+}
+/** Euclidean distance between two #rrggbb colors in sRGB space (0..~441). */
+function colorDistance(a, b) {
+  const pa = normalizeHexColor(a);
+  const pb = normalizeHexColor(b);
+  if (!pa || !pb) return Infinity;
+  const dr = parseInt(pa.slice(1, 3), 16) - parseInt(pb.slice(1, 3), 16);
+  const dg = parseInt(pa.slice(3, 5), 16) - parseInt(pb.slice(3, 5), 16);
+  const db = parseInt(pa.slice(5, 7), 16) - parseInt(pb.slice(5, 7), 16);
+  return Math.sqrt(dr * dr + dg * dg + db * db);
+}
+/** Minimum sRGB distance between two members' PRIMARY picks. ~90 of the
+ *  441 max keeps blue-vs-teal style collisions out without making the
+ *  16-swatch grid feel empty. Keep in sync with COLOR_MIN_DISTANCE in
+ *  src/game/colorUtils.ts. */
+const COLOR_MIN_DISTANCE = 90;
+
 // Whitelist of tick intervals (real-world ms between automatic ticks).
 //
 // PACE DESIGN — see DESIGN.md "Time and pacing".
@@ -430,6 +453,7 @@ async function handleLobbySnapshot(_req, env, ctx) {
   const memberRows = await env.DB
     .prepare(
       `SELECT rm.user_id, rm.empire_name, rm.bio, rm.chosen_starting_body,
+              rm.color, rm.color2,
               u.display_name
          FROM room_members rm
          JOIN users u ON u.id = rm.user_id
@@ -449,6 +473,11 @@ async function handleLobbySnapshot(_req, env, ctx) {
     empire_name: r.empire_name ?? null,
     bio: r.bio ?? null,
     chosen_starting_body: r.chosen_starting_body ?? null,
+    // Two-tone (§5): primary + secondary color prefs. Primary carries
+    // meaning; secondary is decoration only. Exposed so the lobby UI
+    // can gray out primaries too close to already-picked ones.
+    color: r.color ?? null,
+    color2: r.color2 ?? null,
   }));
 
   return json({
@@ -524,6 +553,41 @@ async function handlePatchMe(req, env, ctx) {
       args.push(body.chosen_starting_body);
     }
   }
+  // Two-tone (§5): primary faction color. Enforced for perceptual
+  // distance against other members' primaries — PRIMARY carries all
+  // meaning on the map, so two near-identical primaries would make
+  // ownership unreadable. Secondary is free-pick (decoration only).
+  if (body.color !== undefined) {
+    if (body.color === null || body.color === '') {
+      sets.push('color = NULL');
+    } else {
+      const hex = normalizeHexColor(body.color);
+      if (!hex) return err(400, 'bad_request', 'color must be #rrggbb');
+      const otherRows = await env.DB
+        .prepare('SELECT color FROM room_members WHERE room_id = ? AND user_id != ? AND color IS NOT NULL')
+        .bind(roomId, ctx.session.user_id)
+        .all();
+      for (const r of (otherRows.results ?? [])) {
+        if (colorDistance(hex, r.color) < COLOR_MIN_DISTANCE) {
+          return err(409, 'color_taken', 'too close to another player\'s color');
+        }
+      }
+      sets.push('color = ?');
+      args.push(hex);
+    }
+  }
+  // Secondary color — decoration only, meaning must stay in the primary,
+  // so no distance check: players may even share a secondary.
+  if (body.color2 !== undefined) {
+    if (body.color2 === null || body.color2 === '') {
+      sets.push('color2 = NULL');
+    } else {
+      const hex2 = normalizeHexColor(body.color2);
+      if (!hex2) return err(400, 'bad_request', 'color2 must be #rrggbb');
+      sets.push('color2 = ?');
+      args.push(hex2);
+    }
+  }
   if (!sets.length) return err(400, 'bad_request', 'nothing to update');
 
   args.push(roomId, ctx.session.user_id);
@@ -574,7 +638,7 @@ async function handlePatchMe(req, env, ctx) {
   }
 
   const row = await env.DB
-    .prepare('SELECT empire_name, bio, chosen_starting_body FROM room_members WHERE room_id = ? AND user_id = ?')
+    .prepare('SELECT empire_name, bio, chosen_starting_body, color, color2 FROM room_members WHERE room_id = ? AND user_id = ?')
     .bind(roomId, ctx.session.user_id)
     .first();
   return json({ identity: row });

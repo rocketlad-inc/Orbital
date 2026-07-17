@@ -124,6 +124,11 @@ export type RoomMember = {
   empire_name?: string | null;
   bio?: string | null;
   chosen_starting_body?: string | null;
+  /** Two-tone (§5): primary faction color pref (#rrggbb). Primary carries
+   *  meaning; server rejects picks too close to another member's. */
+  color?: string | null;
+  /** Secondary trim color pref — decoration only, free-pick. */
+  color2?: string | null;
 };
 
 export type StartingBodyOption = {
@@ -164,6 +169,9 @@ export type Faction = {
   slot: number;
   name: string;
   color: string;
+  /** Secondary trim color (two-tone, §5) — decoration only. Null on
+   *  legacy rows; derive from `color` client-side when absent. */
+  color2?: string | null;
   status: string;
   capital_body_id: string | null;
   senate_weight: number;

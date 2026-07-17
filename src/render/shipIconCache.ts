@@ -20,8 +20,10 @@ const ready = new Map<CacheKey, HTMLImageElement>();
 const loading = new Set<CacheKey>();
 const failed = new Set<CacheKey>();
 
-function key(shipClass: ShipIconClass, color: string, variant: ShipIconVariant): CacheKey {
-  return `${shipClass}|${variant}|${color}`;
+function key(shipClass: ShipIconClass, color: string, variant: ShipIconVariant, color2?: string): CacheKey {
+  // color2 (two-tone trim, §5) must be part of the key — otherwise a
+  // faction changing trim would keep serving stale rasterizations.
+  return `${shipClass}|${variant}|${color}|${color2 ?? ''}`;
 }
 
 /**
@@ -37,9 +39,12 @@ export function getShipIconImage(
   shipClass: ShipIconClass,
   color: string,
   variant?: ShipIconVariant,
+  // Two-tone (§5): secondary trim stripe. Decoration only — meaning
+  // must stay in the primary color.
+  color2?: string,
 ): HTMLImageElement | null {
   const v = variant ?? DEFAULT_SHIP_ICONS[shipClass];
-  const k = key(shipClass, color, v);
+  const k = key(shipClass, color, v, color2);
   const hit = ready.get(k);
   if (hit) return hit;
   if (loading.has(k) || failed.has(k)) return null;
@@ -47,7 +52,7 @@ export function getShipIconImage(
   loading.add(k);
   try {
     const svgString = renderToStaticMarkup(
-      React.createElement(ShipIcon, { shipClass, variant: v, color, size: ICON_RASTER_SIZE })
+      React.createElement(ShipIcon, { shipClass, variant: v, color, color2, size: ICON_RASTER_SIZE })
     );
     const dataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(svgString)}`;
     const img = new Image();
