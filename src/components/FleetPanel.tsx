@@ -29,6 +29,13 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkTarget, setBulkTarget] = useState<string>('');
   const [bulkError, setBulkError] = useState<string | null>(null);
+  // Bulk standing orders (MP only). '' = leave that field unchanged;
+  // 'off' clears a threshold. Applied to every selected ship in one
+  // PATCH /ships/orders call.
+  const [bulkStance, setBulkStance] = useState<string>('');
+  const [bulkRetreat, setBulkRetreat] = useState<string>('');
+  const [bulkDetonate, setBulkDetonate] = useState<string>('');
+  const [ordersNotice, setOrdersNotice] = useState<string | null>(null);
 
   const ships = useMemo(() => {
     return gameState.ships.filter(s => {
@@ -151,6 +158,39 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const clearSelection = () => {
     setSelectedIds(new Set());
     setBulkError(null);
+    setOrdersNotice(null);
+  };
+
+  // Bulk standing orders — one PATCH covering every selected ship.
+  // Server validates ownership of EVERY ship and rejects the whole
+  // batch if any isn't ours (all-or-nothing), so no partial state.
+  const issueBulkOrders = () => {
+    setOrdersNotice(null);
+    if (!mpActions) return;
+    if (visibleSelected.length === 0) { setOrdersNotice('No eligible ships selected'); return; }
+    if (!bulkStance && !bulkRetreat && !bulkDetonate) {
+      setOrdersNotice('Pick at least one order to apply');
+      return;
+    }
+    mpActions.setShipOrders({
+      shipIds: visibleSelected,
+      ...(bulkStance ? { stance: bulkStance as 'attack' | 'defensive' | 'hold' } : {}),
+      ...(bulkRetreat
+        ? { retreatHpPct: bulkRetreat === 'off' ? null : (Number(bulkRetreat) as 25 | 50 | 75) }
+        : {}),
+      ...(bulkDetonate
+        ? { detonateHpPct: bulkDetonate === 'off' ? null : (Number(bulkDetonate) as 25 | 50) }
+        : {}),
+    }).then(res => {
+      if (res.ok) {
+        setOrdersNotice(`Orders set on ${visibleSelected.length} ship${visibleSelected.length === 1 ? '' : 's'}`);
+        setBulkStance('');
+        setBulkRetreat('');
+        setBulkDetonate('');
+      } else {
+        setOrdersNotice(humanizeMpError(res.code, res.error, 'orders'));
+      }
+    });
   };
 
   const ownerBadge = (ownedBy: string) => {
@@ -332,6 +372,61 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
             </button>
           </div>
           {bulkError && <div className="fleet-bulk-bar__error">{bulkError}</div>}
+
+          {mpActions && (
+            <div className="fleet-bulk-bar__actions" style={{ marginTop: 6 }}>
+              <label className="fleet-bulk-bar__label">Orders</label>
+              <select
+                className="fleet-bulk-bar__select"
+                value={bulkStance}
+                onChange={(e) => setBulkStance(e.target.value)}
+                title="Stance: attack on sight / return fire only / never fire"
+              >
+                <option value="">Stance: keep</option>
+                <option value="attack">Attack on sight</option>
+                <option value="defensive">Defensive (return fire)</option>
+                <option value="hold">Hold fire</option>
+              </select>
+              <select
+                className="fleet-bulk-bar__select"
+                value={bulkRetreat}
+                onChange={(e) => setBulkRetreat(e.target.value)}
+                title="Auto-retreat to the nearest friendly shipyard station below this HP threshold"
+              >
+                <option value="">Retreat: keep</option>
+                <option value="off">Retreat: off</option>
+                <option value="25">Retreat at 25% HP</option>
+                <option value="50">Retreat at 50% HP</option>
+                <option value="75">Retreat at 75% HP</option>
+              </select>
+              <select
+                className="fleet-bulk-bar__select"
+                value={bulkDetonate}
+                onChange={(e) => setBulkDetonate(e.target.value)}
+                title="Auto-detonate below X% HP: deals damage to every ship in this orbit, friend or foe; this ship is destroyed. No effect on hulls without a detonator part."
+              >
+                <option value="">Detonate: keep</option>
+                <option value="off">Detonate: off</option>
+                <option value="25">Detonate below 25% HP</option>
+                <option value="50">Detonate below 50% HP</option>
+              </select>
+              <button
+                className="fleet-bulk-bar__btn fleet-bulk-bar__btn--primary"
+                onClick={issueBulkOrders}
+                disabled={!bulkStance && !bulkRetreat && !bulkDetonate}
+              >
+                SET ORDERS
+              </button>
+            </div>
+          )}
+          {mpActions && bulkDetonate && bulkDetonate !== 'off' && (
+            <div className="fleet-bulk-bar__error" style={{ color: '#ff9e7a' }}>
+              Auto-detonate below {bulkDetonate}% HP: deals damage to every ship
+              in this orbit, friend or foe; this ship is destroyed. No effect on
+              hulls without a detonator part.
+            </div>
+          )}
+          {ordersNotice && <div className="fleet-bulk-bar__error">{ordersNotice}</div>}
         </div>
       )}
 

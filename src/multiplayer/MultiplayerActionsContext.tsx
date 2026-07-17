@@ -43,6 +43,17 @@ export interface ResearchIntent {
   techId: string;
 }
 
+/** Standing-orders update for one or more ships (DESIGN §3). Every field
+ *  is optional; only supplied fields are written. Passing null for a
+ *  threshold clears it ("off"); passing null for stance resets to the
+ *  default attack-on-sight behavior. */
+export interface ShipOrdersIntent {
+  shipIds: string[];
+  stance?: 'attack' | 'defensive' | 'hold' | null;
+  retreatHpPct?: 25 | 50 | 75 | null;
+  detonateHpPct?: 25 | 50 | null;
+}
+
 /** RAM intent — commits an asteroid (with built Trajectory Control
  *  Thrusters) to a torch transit toward `targetBodyId`. The client
  *  computes the entire plan via planTorchTransfer and posts every
@@ -123,6 +134,13 @@ export interface MultiplayerActions {
    *  orbit is replaced by the supplied torch plan. Doomsday clock
    *  starts here — there is no abort endpoint. */
   ram: (intent: RamIntent) => Promise<MpActionResult>;
+
+  /** Set standing orders (stance / retreat / detonate thresholds) on one
+   *  or more owned ships in a single batch. Server validates ownership of
+   *  EVERY ship — rejects the whole batch if any ship isn't the caller's
+   *  (code=not_owner / not_found). Only fields present in the intent are
+   *  written. */
+  setShipOrders: (intent: ShipOrdersIntent) => Promise<MpActionResult>;
 
   /** Rename a ship the caller owns. Server trims + length-caps the
    *  name (1..32 chars). Rejects destroyed ships with code=destroyed
@@ -287,6 +305,35 @@ export function MultiplayerActionsProvider({
         ok: false,
         code: res.error?.code,
         error: res.error?.message ?? 'Server rejected the settlement deploy.',
+      };
+    },
+    async setShipOrders(intent) {
+      // Only forward fields the caller actually set — the server
+      // distinguishes "absent" (leave alone) from "null" (clear).
+      const payload: Record<string, unknown> = {
+        ship_ids: intent.shipIds.map(qualify),
+      };
+      if ('stance' in intent) payload.stance = intent.stance ?? null;
+      if ('retreatHpPct' in intent) payload.retreat_hp_pct = intent.retreatHpPct ?? null;
+      if ('detonateHpPct' in intent) payload.detonate_hp_pct = intent.detonateHpPct ?? null;
+      const res = await apiFetch(`/api/games/${gameId}/ships/orders`, {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        logger.info('ACTION', 'Ship orders set', {
+          ships: intent.shipIds.length,
+          stance: intent.stance,
+          retreat: intent.retreatHpPct,
+          detonate: intent.detonateHpPct,
+        });
+        return { ok: true };
+      }
+      console.warn('setShipOrders failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the orders update.',
       };
     },
     async renameShip(shipId, name) {

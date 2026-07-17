@@ -544,7 +544,8 @@ async function handleGetState(req, env, ctx) {
               fuel, fuel_max, hp, hp_max, damage_per_tick,
               rank, combat_history, trades_completed,
               status, built_at_tick,
-              icon_variant
+              icon_variant,
+              stance, retreat_hp_pct, detonate_hp_pct
          FROM game_ships
         WHERE game_id = ?1
           AND status = 'active'

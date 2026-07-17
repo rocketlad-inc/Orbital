@@ -154,6 +154,10 @@ interface ServerState {
     /** Player's icon-variant pick from the build queue ('A'..'F').
      *  NULL means use the class default. Migration 0022. */
     icon_variant?: string | null;
+    /** Standing orders (migration 0034). NULL stance = 'attack'. */
+    stance?: string | null;
+    retreat_hp_pct?: number | null;
+    detonate_hp_pct?: number | null;
   }>;
   settlements?: Array<{
     id: string;
@@ -376,6 +380,19 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
   if (s.icon_variant && /^[A-F]$/.test(s.icon_variant)) {
     iconVariant = s.icon_variant as Ship['iconVariant'];
   }
+  // Standing orders — defensive narrows so a malformed row degrades to
+  // "defaults" (attack / no retreat / no detonate) instead of poisoning
+  // the client types.
+  let stance: Ship['stance'] = undefined;
+  if (s.stance === 'attack' || s.stance === 'defensive' || s.stance === 'hold') {
+    stance = s.stance;
+  }
+  const retreatHpPct: Ship['retreatHpPct'] =
+    (s.retreat_hp_pct === 25 || s.retreat_hp_pct === 50 || s.retreat_hp_pct === 75)
+      ? s.retreat_hp_pct : null;
+  const detonateHpPct: Ship['detonateHpPct'] =
+    (s.detonate_hp_pct === 25 || s.detonate_hp_pct === 50)
+      ? s.detonate_hp_pct : null;
   return {
     id: s.id,
     name: s.name,
@@ -389,6 +406,9 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     combatHistory,
     tradesCompleted: s.trades_completed ?? 0,
     iconVariant,
+    stance,
+    retreatHpPct,
+    detonateHpPct,
   };
 }
 
