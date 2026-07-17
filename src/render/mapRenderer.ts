@@ -1039,30 +1039,6 @@ function shipTrimColor(ship: Ship, factions: Faction[] | undefined): string | un
 }
 
 /**
- * Two-tone (§5): a thin secondary-colored halo just outside a ship icon,
- * so every hull reads in BOTH the faction's colors on the map — not only
- * the tiny trim baked into the silhouette. Sits inside the selection ring
- * (which is a fixed UI cyan at +4) so the two never merge. Decoration
- * only; the icon fill still carries the ownership meaning.
- */
-function drawShipSecondaryRing(
-  canvasPos: { x: number; y: number },
-  iconSize: number,
-  ship: Ship,
-  ctx: RenderContext,
-) {
-  const trim = shipTrimColor(ship, ctx.factions);
-  if (!trim) return;
-  ctx.ctx.save();
-  ctx.ctx.strokeStyle = withOpacity(trim, 0.85);
-  ctx.ctx.lineWidth = 1.3;
-  ctx.ctx.beginPath();
-  ctx.ctx.arc(canvasPos.x, canvasPos.y, iconSize / 2 + 1.5, 0, Math.PI * 2);
-  ctx.ctx.stroke();
-  ctx.ctx.restore();
-}
-
-/**
  * Draw a ship on its orbit
  */
 export function drawShip(
@@ -1134,9 +1110,6 @@ export function drawShip(
     ctx.ctx.lineTo(canvasPos.x + vel.prograde.x * 10, canvasPos.y + vel.prograde.y * 10);
     ctx.ctx.stroke();
   }
-
-  // Two-tone (§5): secondary halo around the icon.
-  drawShipSecondaryRing(canvasPos, iconSize, ship, ctx);
 
   // Draw selection indicator
   if (isSelected) {
@@ -1997,9 +1970,6 @@ function drawTorchTransitShip(
     ctx.ctx.lineTo(canvasPos.x + noseX * 10, canvasPos.y + noseY * 10);
     ctx.ctx.stroke();
   }
-
-  // Two-tone (§5): secondary halo around the icon.
-  drawShipSecondaryRing(canvasPos, iconSize, ship, ctx);
 
   if (isSelected) {
     ctx.ctx.strokeStyle = COLORS.info;

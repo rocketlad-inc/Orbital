@@ -15,40 +15,61 @@ export type ShipIconClass = 'corvette' | 'frigate' | 'destroyer' | 'freighter' |
 interface IconProps {
   size?: number;
   color?: string;
-  /** Two-tone factions (§5): secondary trim color. Renders a squadron
-   *  stripe under the hull. Decoration only — meaning must stay in the
-   *  primary (colorblind safety). */
+  /** Two-tone factions (§5): secondary livery color. The hull is painted
+   *  in the primary; every DETAIL element (cockpit, wings, engines,
+   *  turrets — i.e. every child after the first) is painted in the
+   *  secondary, so the ship itself reads two-tone with no ring. Decoration
+   *  only — ownership meaning stays in the primary (colorblind safety);
+   *  absent color2 falls back to a single-color ship. */
   color2?: string;
   className?: string;
 }
 
-const SVG = ({ size = 24, color, color2, className, children }: IconProps & { children: React.ReactNode }) => (
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    width={size}
-    height={size}
-    viewBox="0 0 32 32"
-    fill="none"
-    stroke={color ?? 'currentColor'}
-    strokeWidth={1.5}
-    strokeLinejoin="round"
-    strokeLinecap="round"
-    className={className}
-    aria-hidden
-  >
-    {children}
-    {/* Secondary squadron flash — decoration only, meaning stays in the
-        primary. A bold underline plus a shorter accent stripe reads as a
-        two-tone livery even at map scale (icons face +x on a 32×32 box,
-        hulls live within y≈7..25). */}
-    {color2 && (
-      <>
-        <path d="M7 28.5 L25 28.5" stroke={color2} strokeWidth={3} />
-        <path d="M11 25 L21 25" stroke={color2} strokeWidth={2} opacity={0.85} />
-      </>
-    )}
-  </svg>
-);
+const SVG = ({ size = 24, color, color2, className, children }: IconProps & { children: React.ReactNode }) => {
+  // Convention across every icon: the FIRST child is the hull, the rest
+  // are detail accents. Paint the hull in the primary (with a light
+  // primary fill so it reads as a solid body on the map) and recolor the
+  // detail children in the secondary. No per-icon edits, no ring — the
+  // two tones live in the silhouette.
+  const primary = color ?? 'currentColor';
+  const accent = color2 || primary;
+  const kids = React.Children.toArray(children) as React.ReactElement[];
+  const hull = kids[0];
+  const details = kids.slice(1);
+
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={size}
+      height={size}
+      viewBox="0 0 32 32"
+      fill="none"
+      stroke={primary}
+      strokeWidth={1.5}
+      strokeLinejoin="round"
+      strokeLinecap="round"
+      className={className}
+      aria-hidden
+    >
+      {hull && React.cloneElement(hull, {
+        stroke: primary,
+        fill: primary,
+        fillOpacity: 0.5,
+      })}
+      {details.map((d, i) => {
+        // Preserve a detail's own fill intent: solid dots (fill set) get
+        // filled in the accent; open lines (fill 'none'/unset) stay
+        // stroke-only in the accent.
+        const hadFill = d.props?.fill && d.props.fill !== 'none';
+        return React.cloneElement(d, {
+          key: i,
+          stroke: accent,
+          ...(hadFill ? { fill: accent } : {}),
+        });
+      })}
+    </svg>
+  );
+};
 
 // ===== CORVETTE — fast, light attack craft =====
 
