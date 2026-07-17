@@ -813,12 +813,27 @@ export class Room {
       return levels;
     };
 
-    for (const b of builds) {
+    for (const [idx, b] of builds.entries()) {
+     // Per-row guard: a single bad completion (malformed parts, a
+     // constraint failure, a missing body) must NOT abort the whole
+     // pass — doing so would also skip the promotion pass (1b) below and
+     // every later pass, silently FREEZING the room's tick forever
+     // (waiting builds never promote, income/combat never run). Isolate
+     // each row so one poison build can't take the game down.
+     try {
       const body = await this.env.DB
         .prepare('SELECT radius, mu FROM game_bodies WHERE id = ?')
         .bind(b.body_id)
         .first();
-      if (!body) continue;
+      if (!body) {
+        // Body gone (destroyed?) — the order can never complete here.
+        // Drop it so it doesn't wedge the queue, refunding nothing (the
+        // body's loss is the player's problem, not a double charge).
+        await this.env.DB
+          .prepare('DELETE FROM game_body_build_queue WHERE id = ?')
+          .bind(b.id).run();
+        continue;
+      }
 
       const FUEL_MAX = { corvette: 80, frigate: 200, destroyer: 300, freighter: 400, colony: 100 };
       // HP/DMG now come from SHIP_COMBAT_STATS via computeShipStats below
@@ -839,7 +854,13 @@ export class Room {
       const dmg = stats.damage_per_tick;
       const rp = (body.radius || 4) + 4;
       const ra = rp; // circular orbit
-      const shipId = `${gameId}:s${tick}_${b.id.slice(-6)}`;
+      // Collision-proof id: tick + loop index guarantees uniqueness even
+      // when many builds finish on the SAME tick (a fleet spammer with
+      // queues at a dozen bodies). The old `s${tick}_${id.slice(-6)}`
+      // could collide on the last-6 chars of two queue ids finishing
+      // together → PRIMARY KEY failure → the whole batch (and tick)
+      // threw. idx is unique within the tick; tick is unique across them.
+      const shipId = `${gameId}:s${tick}_${idx}_${b.id.slice(-5)}`;
       // Honor the player's custom name from BuildPanel if they queued
       // one; otherwise fall back to the legacy auto-name so older
       // queue rows (pre-0029 migration) still complete cleanly.
@@ -900,6 +921,12 @@ export class Room {
       } catch (e) {
         console.error('ship_built chronicle insert failed', e);
       }
+     } catch (rowErr) {
+       // This one build failed to complete — log and move on. The row
+       // stays 'building' and will be retried next tick; the rest of the
+       // pass (including promotion below) still runs.
+       console.error('build completion failed for row', b?.id, rowErr);
+     }
     }
 
     // 1b. Promote waiting builds into freed slots — FIFO per

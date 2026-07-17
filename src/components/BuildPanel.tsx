@@ -101,6 +101,30 @@ export const BuildPanel: React.FC = () => {
   const totalSlots = shipyardSlotsAtBody(body.id, 'player', gameState.settlements);
   const usedSlots = buildingOrders.length;
   const slotsFull = usedSlots >= totalSlots;
+
+  // Projected START tick for each waiting order, so a queued ship reads
+  // "starts in ~N ticks" instead of a bare "waiting for slot" that looks
+  // frozen — at slow tick cadences a destroyer behind another destroyer
+  // legitimately waits dozens of ticks (hours of wall-clock), which
+  // playtesters read as a bug. Simulate the slots: seed each with its
+  // current build's finish tick (empty slots free now), then hand the
+  // FIFO waiting queue the earliest-free slot in turn.
+  const slotCap = Math.max(1, totalSlots);
+  const slotFreeAt: number[] = buildingOrders
+    .map(bo => bo.completeTick)
+    .sort((a, b) => a - b)
+    .slice(0, slotCap);
+  while (slotFreeAt.length < slotCap) slotFreeAt.push(gameState.currentTick);
+  const waitingStartTicks = waitingOrders.map(bo => {
+    const dur = SHIP_CLASSES[bo.shipClass]?.buildTime ?? 20;
+    let earliest = 0;
+    for (let s = 1; s < slotFreeAt.length; s++) {
+      if (slotFreeAt[s] < slotFreeAt[earliest]) earliest = s;
+    }
+    const start = slotFreeAt[earliest];
+    slotFreeAt[earliest] = start + dur;
+    return start;
+  });
   // MP: the queue is unlimited depth — BUILD stays enabled at capacity
   // and new orders wait for a slot (charged up front, refundable via
   // cancel). SP keeps the hard gate (single-player engine is frozen).
@@ -320,6 +344,18 @@ export const BuildPanel: React.FC = () => {
                     {loadoutSummary(bo.parts)}
                   </span>
                 )}
+                {(() => {
+                  const ticksAway = Math.max(0, waitingStartTicks[i] - gameState.currentTick);
+                  return (
+                    <span
+                      className="build-eta"
+                      title="Estimated start once a build slot frees"
+                      style={{ marginLeft: 'auto', fontSize: 10, opacity: 0.75, whiteSpace: 'nowrap' }}
+                    >
+                      {ticksAway === 0 ? 'starts next tick' : `starts ~${ticksAway}t`}
+                    </span>
+                  );
+                })()}
               </div>
               <button
                 className="build-cancel"
