@@ -134,7 +134,17 @@ export const BuildPanel: React.FC = () => {
     //   3. random pool name
     const fromQueue = dequeueName();
     const name = fromQueue ?? randomShipName(shipClass, existingShipNames);
-    const variant = iconChoice[shipClass];
+    // Icon source of truth: the active design owns the ship's look, so
+    // its icon wins whenever a design is set for this class. The inline
+    // per-row picker (iconChoice) only applies to bare-hull builds where
+    // no design exists. Previously handleBuild always sent iconChoice,
+    // so the server's "use the design's icon when the client sends none"
+    // fallback could never fire — designs built with the class-default
+    // icon no matter what you picked in the designer.
+    const activeDesign = mpActions
+      ? gameState.shipDesigns?.find(d => d.shipClass === shipClass && d.isActive)
+      : undefined;
+    const variant = activeDesign?.iconVariant ?? iconChoice[shipClass];
     if (mpActions) {
       // Multiplayer: server is canonical for resource deduction + queue
       // persistence. Skip the local buildShip() — calling it here used
@@ -376,22 +386,36 @@ export const BuildPanel: React.FC = () => {
                     it's a power-user preference, not a build-time
                     decision. Click the icon itself to cycle through
                     variants in-place. */}
-                <button
-                  className="class-icon"
-                  onClick={() => {
-                    const cur = ALL_VARIANTS.indexOf(iconChoice[cls]);
-                    const next = ALL_VARIANTS[(cur + 1) % ALL_VARIANTS.length];
-                    setIconChoice(prev => ({ ...prev, [cls]: next }));
-                  }}
-                  title={`Icon: ${ICON_VARIANT_NAMES[cls][iconChoice[cls]]} (click to cycle)`}
-                  style={{
-                    background: 'transparent', border: 'none',
-                    padding: 0, cursor: 'pointer',
-                    display: 'inline-flex', alignItems: 'center',
-                  }}
-                >
-                  <ShipIcon shipClass={cls} variant={iconChoice[cls]} size={20} />
-                </button>
+                {(() => {
+                  // Effective icon = the active design's icon when one is
+                  // set (it owns the look), else the local per-row pick.
+                  // With a design active, cycling the local override would
+                  // silently do nothing (the build sends the design icon),
+                  // so the click opens the designer instead — where the
+                  // icon actually lives.
+                  const effectiveVariant = activeDesign?.iconVariant ?? iconChoice[cls];
+                  return (
+                    <button
+                      className="class-icon"
+                      onClick={() => {
+                        if (activeDesign) { openShipDesigner(cls); return; }
+                        const cur = ALL_VARIANTS.indexOf(iconChoice[cls]);
+                        const next = ALL_VARIANTS[(cur + 1) % ALL_VARIANTS.length];
+                        setIconChoice(prev => ({ ...prev, [cls]: next }));
+                      }}
+                      title={activeDesign
+                        ? `Icon from design "${activeDesign.name}" — click to change it in the designer`
+                        : `Icon: ${ICON_VARIANT_NAMES[cls][iconChoice[cls]]} (click to cycle)`}
+                      style={{
+                        background: 'transparent', border: 'none',
+                        padding: 0, cursor: 'pointer',
+                        display: 'inline-flex', alignItems: 'center',
+                      }}
+                    >
+                      <ShipIcon shipClass={cls} variant={effectiveVariant} size={20} />
+                    </button>
+                  );
+                })()}
                 <span className="class-name">{def.displayName}</span>
                 {mpActions && (
                   // Quick-link to the designer, landing on this class's
