@@ -270,6 +270,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       ctx,
       canvas: canvasRef.current,
       camera: { x: camX, y: camY, scale: camera.scale, focusedBodyId: camera.focusedBodyId },
+      // Selection reaches the orbit layer so drawOrbit can fade
+      // rings unrelated to the selected body (falls back to the
+      // camera focus when nothing is explicitly selected).
+      selectedBodyId: uiState.selectedBodyId,
       t: gameState.currentTick,
       bodies: gameState.bodies,
       // Factions enable per-faction ship coloring (matches settlements).
