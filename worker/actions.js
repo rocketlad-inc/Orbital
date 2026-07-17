@@ -733,7 +733,9 @@ const TECH_DEFS = {
   weapons:      { baseCost: 40, costScaling: 1.7 },
   armor:        { baseCost: 40, costScaling: 1.7 },
   propulsion:   { baseCost: 35, costScaling: 1.6 },
-  flight:       { baseCost: 50, costScaling: 1.7 },
+  // Flight Dynamics scrapped — speed now comes from engine parts scaled by
+  // Propulsion. A research request for 'flight' now falls through to the
+  // unknown-tech rejection below.
   construction: { baseCost: 50, costScaling: 1.8 },
   industry:     { baseCost: 45, costScaling: 1.7 },
   sensors:      { baseCost: 30, costScaling: 1.5 },
@@ -813,21 +815,9 @@ async function handleResearch(req, env, ctx) {
     ]);
   }
 
-  // Flight tech: stamp the faction's engine_g so the authoritative
-  // server transit math (trade-route + transfer trip times, room.js)
-  // actually gets faster. engine_g was a fixed 0.05 column that nothing
-  // ever wrote, so flight research only sped up the client's optimistic
-  // prediction — which the next /state poll overwrote. Formula mirrors
-  // src/game/techs.ts engineGModifier: base 0.05 × 1/max(0.25, 1 −
-  // 0.06·level).
-  if (techId === 'flight') {
-    const newLevel = curLevel + 1;
-    const engineG = 0.05 * (1 / Math.max(0.25, 1 - 0.06 * newLevel));
-    await env.DB
-      .prepare('UPDATE game_factions SET engine_g = ? WHERE id = ?')
-      .bind(engineG, me.id)
-      .run();
-  }
+  // (Flight Dynamics used to stamp faction.engine_g here. That tech is
+  // scrapped — base acceleration is now fixed and speed comes from engine
+  // parts scaled by Propulsion, so nothing bumps engine_g anymore.)
 
   return json({
     tech_id: techId,

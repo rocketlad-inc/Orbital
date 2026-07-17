@@ -774,8 +774,10 @@ function generateResearchCandidates(ctx: AIContext): AIActionIntent[] {
     { techId: 'armor', baseScore: 1.5 },
     { techId: 'construction', baseScore: 1.2 },
     { techId: 'sensors', baseScore: 1.0 },
-    { techId: 'flight', baseScore: 0.8 },
-    { techId: 'propulsion', baseScore: FUEL_ENABLED ? 0.8 : 0.2 },
+    // Flight Dynamics scrapped — speed now comes from engine parts scaled
+    // by Propulsion. (SP AI is frozen and doesn't fit parts, so it has
+    // little use for Propulsion, but the track must still be scorable.)
+    { techId: 'propulsion', baseScore: 0.6 },
   ];
 
   for (const p of priorities) {

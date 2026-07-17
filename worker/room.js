@@ -3268,7 +3268,7 @@ export class Room {
           // Pick a random tech track. tech ids match the client's
           // TechId union; we keep the list inline rather than import
           // it cross-runtime to avoid bundling the whole tech catalog.
-          const TECH_TRACKS = ['weapons', 'armor', 'propulsion', 'construction', 'industry', 'sensors', 'flight'];
+          const TECH_TRACKS = ['weapons', 'armor', 'propulsion', 'construction', 'industry', 'sensors'];
           const pick = TECH_TRACKS[Math.floor(Math.random() * TECH_TRACKS.length)];
           // Upsert: try update first, fall back to insert if missing.
           const existing = await this.env.DB
@@ -3647,7 +3647,7 @@ export class Room {
       .prepare(`SELECT faction_id, tech_id, level FROM faction_techs WHERE game_id = ?`)
       .bind(gameId)
       .all()).results ?? [];
-    const TECH_TRACKS = ['weapons', 'armor', 'propulsion', 'flight', 'construction', 'industry', 'sensors'];
+    const TECH_TRACKS = ['weapons', 'armor', 'propulsion', 'construction', 'industry', 'sensors'];
     const TECH_MAX_LEVEL = 10;
     const byFaction = new Map();
     for (const r of techRows) {

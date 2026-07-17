@@ -531,7 +531,7 @@ export interface SettlementBuildOrder {
  * (a settlement with a stockpile, e.g. a city) → (a collector) and back
  * indefinitely until the player cancels it. Auto-drain still flows in
  * the background; an active route layers a multiplier on top of that
- * base rate scaled by Flight Dynamics tech.
+ * base rate.
  *
  * NOTE: data shape only this turn. The execution loop, on-map
  * rendering, and piracy-on-death cargo drop land in the next pass —
