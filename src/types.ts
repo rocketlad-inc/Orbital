@@ -396,6 +396,10 @@ export interface BuildOrder {
   /** Icon variant picked at build time. Copied to Ship.iconVariant
    *  when the build completes. Undefined falls back to the class default. */
   iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
+  /** MP unlimited queue: 'building' = occupying a slot (progress bar),
+   *  'waiting' = queued beyond concurrency, promoted FIFO server-side
+   *  when a slot frees. Undefined (SP / legacy rows) means building. */
+  status?: 'building' | 'waiting';
 }
 
 /**

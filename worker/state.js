@@ -685,10 +685,11 @@ async function handleGetState(req, env, ctx) {
   const buildQueue = (await env.DB
     .prepare(
       `SELECT id, body_id, ship_class, queued_at_tick, completes_at_tick,
-              icon_variant, parts_json
+              icon_variant, parts_json, status, started_at_tick, build_ticks
          FROM game_body_build_queue
         WHERE game_id = ? AND faction_id = ?
-          AND cancelled_at_tick IS NULL`,
+          AND cancelled_at_tick IS NULL
+        ORDER BY queued_at_tick ASC, id ASC`,
     )
     .bind(gameId, me.id)
     .all()).results ?? [];

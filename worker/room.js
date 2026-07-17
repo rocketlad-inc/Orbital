@@ -714,7 +714,11 @@ export class Room {
     }
 
     // 1. Build completions. Each row spawns one ship in a small circular
-    //    orbit around the building body.
+    //    orbit around the building body. Only ACTIVE rows complete —
+    //    status='waiting' rows (queued beyond concurrency, see 0037)
+    //    carry a placeholder completes_at_tick and are promoted in 1b
+    //    below once a slot frees up. Legacy rows read status='building'
+    //    via the column DEFAULT.
     const builds = (await this.env.DB
       .prepare(
         `SELECT id, body_id, faction_id, ship_class, completes_at_tick,
@@ -722,6 +726,7 @@ export class Room {
            FROM game_body_build_queue
           WHERE game_id = ?
             AND cancelled_at_tick IS NULL
+            AND status = 'building'
             AND completes_at_tick <= ?`,
       )
       .bind(gameId, tick)
@@ -826,6 +831,87 @@ export class Room {
       } catch (e) {
         console.error('ship_built chronicle insert failed', e);
       }
+    }
+
+    // 1b. Promote waiting builds into freed slots — FIFO per
+    //     body+faction (queued_at_tick, then id which embeds a
+    //     Date.now() base36 stamp so same-tick orders keep creation
+    //     order). Concurrency = 1 base slot + 1 per Shipyard level on
+    //     the faction's live stations at the body, mirroring the count
+    //     in worker/actions.js handleQueueBuild. Resources were already
+    //     charged at queue time, so promotion only stamps the schedule:
+    //     started_at_tick = now, completes_at_tick = now + build_ticks
+    //     (falling back to the class table for rows queued before the
+    //     column existed).
+    try {
+      const BUILD_TICKS_BY_CLASS = { corvette: 10, frigate: 20, destroyer: 40, freighter: 15 };
+      const waiting = (await this.env.DB
+        .prepare(
+          `SELECT id, body_id, faction_id, ship_class, build_ticks
+             FROM game_body_build_queue
+            WHERE game_id = ? AND cancelled_at_tick IS NULL AND status = 'waiting'
+            ORDER BY queued_at_tick ASC, id ASC`,
+        )
+        .bind(gameId)
+        .all()).results ?? [];
+      if (waiting.length > 0) {
+        // Group FIFO lists per body+faction ('|' can't appear in ids).
+        const groups = new Map();
+        for (const w of waiting) {
+          const key = `${w.body_id}|${w.faction_id}`;
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key).push(w);
+        }
+        const promotions = [];
+        for (const [key, rows] of groups) {
+          const [bodyId, factionId] = key.split('|');
+          const yardRows = (await this.env.DB
+            .prepare(
+              `SELECT buildings_json FROM game_settlements
+                WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+                  AND type = 'station' AND destroyed_at_tick IS NULL`,
+            )
+            .bind(gameId, bodyId, factionId)
+            .all()).results ?? [];
+          let shipyardLevels = 0;
+          for (const row of yardRows) {
+            if (!row.buildings_json) continue;
+            try {
+              const b = JSON.parse(row.buildings_json) || {};
+              shipyardLevels += Number(b.shipyard ?? 0) || 0;
+            } catch { /* ignore malformed */ }
+          }
+          const slots = 1 + shipyardLevels;
+          const active = await this.env.DB
+            .prepare(
+              `SELECT COUNT(*) AS c FROM game_body_build_queue
+                WHERE game_id = ? AND body_id = ? AND faction_id = ?
+                  AND cancelled_at_tick IS NULL AND status = 'building'`,
+            )
+            .bind(gameId, bodyId, factionId)
+            .first();
+          let free = slots - Number(active?.c ?? 0);
+          for (const w of rows) {
+            if (free <= 0) break;
+            const bt = Number(w.build_ticks) > 0
+              ? Number(w.build_ticks)
+              : (BUILD_TICKS_BY_CLASS[w.ship_class] ?? 20);
+            promotions.push(
+              this.env.DB
+                .prepare(
+                  `UPDATE game_body_build_queue
+                      SET status = 'building', started_at_tick = ?, completes_at_tick = ?
+                    WHERE id = ? AND status = 'waiting' AND cancelled_at_tick IS NULL`,
+                )
+                .bind(tick, tick + bt, w.id),
+            );
+            free -= 1;
+          }
+        }
+        if (promotions.length > 0) await this.env.DB.batch(promotions);
+      }
+    } catch (e) {
+      console.error('build promotion pass failed', e);
     }
 
     // 2a. Depart. A committed node whose scheduled_t has come up: stamp
