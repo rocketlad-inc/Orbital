@@ -235,6 +235,17 @@ export class Room {
         // sees the freshly-armed schedule, then fall through to alarm().
         game.next_tick_at = nextAt;
       }
+      // Force must also defeat alarm()'s early/stale-fire guard: with a
+      // future next_tick_at the guard sees "not due yet" and bails, so
+      // the host's Force button silently no-opped (advanced:false) for
+      // any normally-scheduled game. Pull the schedule to `now` first so
+      // alarm() advances exactly one tick and re-arms at now + interval.
+      if (force && game.next_tick_at != null && game.next_tick_at > now) {
+        await this.env.DB
+          .prepare('UPDATE games SET next_tick_at = ? WHERE id = ?')
+          .bind(now, started.gameId).run();
+        game.next_tick_at = now;
+      }
       const due = game.next_tick_at != null && game.next_tick_at <= now;
       if (!force && !due) {
         // Nothing to do — and if the alarm got lost since the last call
