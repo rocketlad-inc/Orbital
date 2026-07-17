@@ -7,6 +7,7 @@ import React, { useMemo, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { loadoutSummary } from '../game/shipParts';
+import { deriveSecondary } from '../game/colorUtils';
 import { AUTO_COMBAT_INTERVAL } from '../game/combat';
 import { Body, Ship } from '../types';
 import { ShipIcon } from './ShipIcons';
@@ -103,19 +104,24 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   // name (e.g. "Lornian Empire") in its faction colour, instead of the
   // raw faction id ("8X7TTVD-L3P_:F1") — the "name bug".
   const factionById = useMemo(() => {
-    const m = new Map<string, { name: string; color: string }>();
-    for (const f of gameState.factions) m.set(f.id, { name: f.name, color: f.color });
+    const m = new Map<string, { name: string; color: string; color2: string }>();
+    for (const f of gameState.factions) {
+      m.set(f.id, { name: f.name, color: f.color, color2: f.color2 || deriveSecondary(f.color) });
+    }
     return m;
   }, [gameState.factions]);
 
-  const factionOf = (ownedBy: string): { name: string; color: string } => {
-    if (ownedBy === 'player') return { name: 'You', color: '#4ecdc4' };
-    if (ownedBy === 'enemy') return { name: 'Enemy', color: '#ff5e5e' };
+  // color2 mirrors the map (§5): the faction's explicit secondary, or a
+  // derived one, so the fleet-menu ship icons carry the same two-tone
+  // livery the map does.
+  const factionOf = (ownedBy: string): { name: string; color: string; color2: string } => {
+    if (ownedBy === 'player') return { name: 'You', color: '#4ecdc4', color2: deriveSecondary('#4ecdc4') };
+    if (ownedBy === 'enemy') return { name: 'Enemy', color: '#ff5e5e', color2: deriveSecondary('#ff5e5e') };
     const f = factionById.get(ownedBy);
     if (f) return f;
     // Last resort (unknown faction id): show the short suffix, not the
     // whole game-namespaced id.
-    return { name: ownedBy.split(':').pop() ?? ownedBy, color: '#8a9fb3' };
+    return { name: ownedBy.split(':').pop() ?? ownedBy, color: '#8a9fb3', color2: deriveSecondary('#8a9fb3') };
   };
 
   // A body roots its own star system when it orbits nothing (Sol), or
@@ -473,8 +479,27 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
         </td>
         <td>
           <div className="body-cell" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ color: factionOf(ship.ownedBy).color, flexShrink: 0 }}>
-              <ShipIcon shipClass={ship.class as ShipClassName} size={20} />
+            <div style={{ flexShrink: 0 }}>
+              {(() => {
+                // Icon uses the ship's REAL faction colours (the same
+                // lookup the map does) so the two-tone livery matches
+                // pixel-for-pixel — including the player's own ships,
+                // which the map paints in the faction colour rather than
+                // the fleet list's teal "You" highlight.
+                const fac = gameState.factions.find(f => f.id === ship.ownedBy);
+                const iconColor = fac?.color ?? factionOf(ship.ownedBy).color;
+                const iconColor2 = (fac?.color && (fac.color2 || deriveSecondary(fac.color)))
+                  || factionOf(ship.ownedBy).color2;
+                return (
+                  <ShipIcon
+                    shipClass={ship.class as ShipClassName}
+                    variant={ship.iconVariant}
+                    color={iconColor}
+                    color2={iconColor2}
+                    size={20}
+                  />
+                );
+              })()}
             </div>
             <div>
               <div className="body-cell__name">{ship.name}</div>
