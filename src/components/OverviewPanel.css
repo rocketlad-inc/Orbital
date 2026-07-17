@@ -323,6 +323,129 @@
   min-width: 30px;
 }
 
+/* ---- Fleet search ---- */
+
+.fleet-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px 10px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid #2a3d50;
+  background: rgba(11, 22, 34, 0.6);
+}
+
+.fleet-search:focus-within {
+  border-color: #4ecdc4;
+}
+
+.fleet-search__icon {
+  color: #6b8195;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.fleet-search__input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: #d8e4ee;
+  /* 16px keeps iOS Safari from zooming the viewport on focus. */
+  font-size: 16px;
+  padding: 9px 0;
+  font-family: inherit;
+}
+
+.fleet-search__input::placeholder {
+  color: #5a7085;
+}
+
+/* Kill the native clear affordance — we render our own. */
+.fleet-search__input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.fleet-search__clear {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: #8a9fb3;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 6px;
+  border-radius: 4px;
+}
+
+.fleet-search__clear:hover {
+  color: #d8e4ee;
+}
+
+/* ---- System grouping ---- */
+
+.fleet-system {
+  margin-bottom: 10px;
+}
+
+.fleet-system__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  border: none;
+  border-left: 3px solid #4ecdc4;
+  background: rgba(78, 205, 196, 0.07);
+  color: #d8e4ee;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+}
+
+.fleet-system__header:hover {
+  background: rgba(78, 205, 196, 0.13);
+}
+
+.fleet-system__caret {
+  color: #4ecdc4;
+  font-size: 11px;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.fleet-system__caret--collapsed {
+  transform: rotate(-90deg);
+}
+
+.fleet-system__name {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #4ecdc4;
+}
+
+.fleet-system__meta {
+  margin-left: auto;
+  font-size: 10px;
+  color: #8a9fb3;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Indent the per-body sections so they read as children of the system. */
+.fleet-system .overview-section {
+  margin-left: 10px;
+}
+
+@media (max-width: 640px) {
+  .fleet-system .overview-section { margin-left: 4px; }
+}
+
 /* ---- Bulk-select checkbox (mobile-optimised, large tap target) ---- */
 
 .fleet-check-cell {

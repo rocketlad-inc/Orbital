@@ -7,6 +7,7 @@ import React, { useMemo, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { loadoutSummary } from '../game/shipParts';
+import { Body } from '../types';
 import { ShipIcon } from './ShipIcons';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { humanizeMpError } from '../multiplayer/errorMessages';
@@ -18,6 +19,12 @@ interface FleetPanelProps {
 }
 
 type Filter = 'all' | 'player' | 'enemy';
+
+// Barycenter anchors orbit Sol on a fake, effectively-infinite period so
+// the "every non-root orbits something" rule holds. Any period at this
+// scale means "not a real orbit" — the real bodies top out near 1.7e4,
+// so there's no ambiguity.
+const PRETEND_ORBIT_PERIOD = 1e9;
 
 // Translucent fill from a hex colour (for faction-tinted badges).
 function hexToRgba(hex: string, alpha: number): string {
@@ -37,6 +44,8 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   } = useGameContext();
   const mpActions = useMultiplayerActions();
   const [filter, setFilter] = useState<Filter>('player');
+  const [query, setQuery] = useState('');
+  const [collapsedSystems, setCollapsedSystems] = useState<Set<string>>(new Set());
   // Bulk-select set: ship ids the player has checked for a bulk
   // maneuver action. Only player-owned ships can join the set.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -50,33 +59,136 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const [bulkDetonate, setBulkDetonate] = useState<string>('');
   const [ordersNotice, setOrdersNotice] = useState<string | null>(null);
 
+  const bodyById = useMemo(
+    () => new Map(gameState.bodies.map(b => [b.id, b])),
+    [gameState.bodies]
+  );
+
+  // Faction id -> { name, color } so the OWNER column shows the empire
+  // name (e.g. "Lornian Empire") in its faction colour, instead of the
+  // raw faction id ("8X7TTVD-L3P_:F1") — the "name bug".
+  const factionById = useMemo(() => {
+    const m = new Map<string, { name: string; color: string }>();
+    for (const f of gameState.factions) m.set(f.id, { name: f.name, color: f.color });
+    return m;
+  }, [gameState.factions]);
+
+  const factionOf = (ownedBy: string): { name: string; color: string } => {
+    if (ownedBy === 'player') return { name: 'You', color: '#4ecdc4' };
+    if (ownedBy === 'enemy') return { name: 'Enemy', color: '#ff5e5e' };
+    const f = factionById.get(ownedBy);
+    if (f) return f;
+    // Last resort (unknown faction id): show the short suffix, not the
+    // whole game-namespaced id.
+    return { name: ownedBy.split(':').pop() ?? ownedBy, color: '#8a9fb3' };
+  };
+
+  // A body roots its own star system when it orbits nothing (Sol), or
+  // when it's one of the barycenter anchors. Those anchors are pinned to
+  // Sol as a *pretend* parent with an effectively-infinite period — the
+  // body model requires every non-root to orbit something — so walking
+  // the parent chain naively would file Centauri and Cygnus under Sol.
+  // The absurd period is the marker that the link isn't a real orbit.
+  const isSystemRoot = (b: Body): boolean =>
+    !b.parent || b.orbitPeriod >= PRETEND_ORBIT_PERIOD;
+
+  // Walk up to the system this body belongs to. Cycle-guarded: a bad
+  // parent chain should degrade to "own system", never hang the panel.
+  const systemRootOf = useMemo(() => {
+    const cache = new Map<string, string>();
+    return (bodyId: string): string => {
+      const hit = cache.get(bodyId);
+      if (hit) return hit;
+      const chain: string[] = [];
+      let cur = bodyById.get(bodyId);
+      const seen = new Set<string>();
+      while (cur && !isSystemRoot(cur) && !seen.has(cur.id)) {
+        seen.add(cur.id);
+        chain.push(cur.id);
+        cur = cur.parent ? bodyById.get(cur.parent) : undefined;
+      }
+      const root = cur?.id ?? bodyId;
+      for (const id of chain) cache.set(id, root);
+      cache.set(bodyId, root);
+      return root;
+    };
+  }, [bodyById]);
+
+  // "Centauri Barycenter" is the anchor's name, but the *system* is just
+  // "Centauri" — drop the bookkeeping noun for the header.
+  const systemLabel = (rootId: string): string => {
+    const root = bodyById.get(rootId);
+    if (!root) return rootId.toUpperCase();
+    return `${root.name.replace(/\s*Barycenter$/i, '')} System`;
+  };
+
   const ships = useMemo(() => {
+    const q = query.trim().toLowerCase();
     return gameState.ships.filter(s => {
-      if (filter === 'player') return s.ownedBy === 'player';
-      if (filter === 'enemy') return s.ownedBy === 'enemy';
-      return true;
+      // 'enemy' means "not mine". The caller's faction is rewritten to
+      // the 'player' token on load and every other faction keeps its raw
+      // id, so nothing is ever literally owned by 'enemy' — matching on
+      // that string left the tab permanently blank.
+      if (filter === 'player' && s.ownedBy !== 'player') return false;
+      if (filter === 'enemy' && s.ownedBy === 'player') return false;
+      if (!q) return true;
+      const def = getShipClass(s.class as ShipClassName);
+      const body = bodyById.get(s.orbit.parentBodyId);
+      const haystack = [
+        s.name,
+        s.class,
+        def.displayName,
+        body?.name ?? s.orbit.parentBodyId,
+        body ? systemLabel(systemRootOf(body.id)) : '',
+        factionOf(s.ownedBy).name,
+      ];
+      return haystack.some(h => h.toLowerCase().includes(q));
     });
-  }, [gameState.ships, filter]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameState.ships, filter, query, bodyById, systemRootOf, factionById]);
 
   // "In transit" = ships with an active torch burn. Bulk-action
   // eligibility excludes them.
   const inTransit = useMemo(() => ships.filter(s => s.transit), [ships]);
   const orbiting = useMemo(() => ships.filter(s => !s.transit), [ships]);
 
-  // Group orbiting ships by parent body id
-  const orbitingByBody = useMemo(() => {
-    const map = new Map<string, typeof orbiting>();
+  // Orbiting ships, grouped by star system and then by body within it.
+  // Systems sort by the root's orbit radius, which reads as "distance
+  // from home": Sol (0), then Centauri, then Cygnus.
+  const systems = useMemo(() => {
+    const bySystem = new Map<string, Map<string, typeof orbiting>>();
     for (const s of orbiting) {
-      const list = map.get(s.orbit.parentBodyId) || [];
+      const root = systemRootOf(s.orbit.parentBodyId);
+      let bodies = bySystem.get(root);
+      if (!bodies) { bodies = new Map(); bySystem.set(root, bodies); }
+      const list = bodies.get(s.orbit.parentBodyId) || [];
       list.push(s);
-      map.set(s.orbit.parentBodyId, list);
+      bodies.set(s.orbit.parentBodyId, list);
     }
-    return Array.from(map.entries()).sort((a, b) => {
-      const aBody = gameState.bodies.find(x => x.id === a[0]);
-      const bBody = gameState.bodies.find(x => x.id === b[0]);
-      return (aBody?.name || '').localeCompare(bBody?.name || '');
+    return Array.from(bySystem.entries())
+      .map(([rootId, bodies]) => ({
+        rootId,
+        label: systemLabel(rootId),
+        shipCount: Array.from(bodies.values()).reduce((n, l) => n + l.length, 0),
+        bodies: Array.from(bodies.entries()).sort((a, b) =>
+          (bodyById.get(a[0])?.name || a[0]).localeCompare(bodyById.get(b[0])?.name || b[0])
+        ),
+      }))
+      .sort((a, b) =>
+        (bodyById.get(a.rootId)?.orbitRadius ?? 0) - (bodyById.get(b.rootId)?.orbitRadius ?? 0)
+        || a.label.localeCompare(b.label)
+      );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orbiting, bodyById, systemRootOf]);
+
+  const toggleSystem = (rootId: string) => {
+    setCollapsedSystems(prev => {
+      const next = new Set(prev);
+      if (next.has(rootId)) next.delete(rootId);
+      else next.add(rootId);
+      return next;
     });
-  }, [orbiting, gameState.bodies]);
+  };
 
   const handleShipClick = (shipId: string) => {
     selectShip(shipId);
@@ -204,25 +316,6 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
         setOrdersNotice(humanizeMpError(res.code, res.error, 'orders'));
       }
     });
-  };
-
-  // Faction id -> { name, color } so the OWNER column shows the empire
-  // name (e.g. "Lornian Empire") in its faction colour, instead of the
-  // raw faction id ("8X7TTVD-L3P_:F1") — the "name bug".
-  const factionById = useMemo(() => {
-    const m = new Map<string, { name: string; color: string }>();
-    for (const f of gameState.factions) m.set(f.id, { name: f.name, color: f.color });
-    return m;
-  }, [gameState.factions]);
-
-  const factionOf = (ownedBy: string): { name: string; color: string } => {
-    if (ownedBy === 'player') return { name: 'You', color: '#4ecdc4' };
-    if (ownedBy === 'enemy') return { name: 'Enemy', color: '#ff5e5e' };
-    const f = factionById.get(ownedBy);
-    if (f) return f;
-    // Last resort (unknown faction id): show the short suffix, not the
-    // whole game-namespaced id.
-    return { name: ownedBy.split(':').pop() ?? ownedBy, color: '#8a9fb3' };
   };
 
   const ownerBadge = (ownedBy: string) => {
@@ -367,7 +460,9 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           {transit && target ? (
             <span>→ <strong style={{ color: '#4ecdc4' }}>{target.name}</strong> · T-{Math.round(eta ?? 0)}</span>
           ) : (
-            <span className="col-muted">{ship.orbit.parentBodyId.toUpperCase()}</span>
+            <span className="col-muted">
+              {bodyById.get(ship.orbit.parentBodyId)?.name ?? ship.orbit.parentBodyId}
+            </span>
           )}
         </td>
         <td>{renderHpBar(ship)}</td>
@@ -413,15 +508,39 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
       </div>
 
       <div className="overview-panel__filters">
-        {(['player', 'enemy', 'all'] as Filter[]).map(f => (
+        {([
+          ['player', 'Mine'],
+          ['enemy', 'Enemies'],
+          ['all', 'All'],
+        ] as [Filter, string][]).map(([f, label]) => (
           <button
             key={f}
             className={`filter-chip ${filter === f ? 'active' : ''}`}
             onClick={() => setFilter(f)}
           >
-            {f}
+            {label}
           </button>
         ))}
+      </div>
+
+      <div className="fleet-search">
+        <span className="fleet-search__icon" aria-hidden>⌕</span>
+        <input
+          className="fleet-search__input"
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search ships, worlds, systems, owners…"
+          aria-label="Search fleet"
+        />
+        {query && (
+          <button
+            className="fleet-search__clear"
+            onClick={() => setQuery('')}
+            aria-label="Clear search"
+            title="Clear search"
+          >✕</button>
+        )}
       </div>
 
       {visibleSelected.length > 0 && (
@@ -516,7 +635,13 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
 
       <div className="overview-panel__body">
         {ships.length === 0 ? (
-          <div className="overview-empty">No ships match the current filter.</div>
+          <div className="overview-empty">
+            {query.trim()
+              ? `No ships match “${query.trim()}”.`
+              : filter === 'enemy'
+                ? 'No rival ships are visible to you right now.'
+                : 'No ships match the current filter.'}
+          </div>
         ) : (
           <>
             {inTransit.length > 0 && (
@@ -534,31 +659,51 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               </div>
             )}
 
-            {orbitingByBody.map(([bodyId, bodyShips]) => {
-              const body = gameState.bodies.find(b => b.id === bodyId);
+            {systems.map(system => {
+              const isCollapsed = collapsedSystems.has(system.rootId);
               return (
-                <div className="overview-section" key={bodyId}>
-                  <div className="overview-section__title">
-                    <span
-                      onClick={() => handleBodyClick(bodyId)}
-                      style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
-                      title="Click to focus map"
-                    >
-                      <span style={{
-                        width: 10, height: 10, borderRadius: '50%',
-                        background: body?.color || '#888',
-                        display: 'inline-block',
-                      }} />
-                      Orbiting {body?.name || bodyId}
+                <div className="fleet-system" key={system.rootId}>
+                  <button
+                    className="fleet-system__header"
+                    onClick={() => toggleSystem(system.rootId)}
+                    aria-expanded={!isCollapsed}
+                    title={isCollapsed ? 'Expand system' : 'Collapse system'}
+                  >
+                    <span className={`fleet-system__caret${isCollapsed ? ' fleet-system__caret--collapsed' : ''}`} aria-hidden>▾</span>
+                    <span className="fleet-system__name">{system.label}</span>
+                    <span className="fleet-system__meta">
+                      {system.bodies.length} world{system.bodies.length === 1 ? '' : 's'} · {system.shipCount} ship{system.shipCount === 1 ? '' : 's'}
                     </span>
-                    <span className="overview-section__count">{bodyShips.length} ships</span>
-                  </div>
-                  <table className="overview-table">
-                    {tableHead('Location')}
-                    <tbody>
-                      {bodyShips.map(renderShipRow)}
-                    </tbody>
-                  </table>
+                  </button>
+
+                  {!isCollapsed && system.bodies.map(([bodyId, bodyShips]) => {
+                    const body = bodyById.get(bodyId);
+                    return (
+                      <div className="overview-section" key={bodyId}>
+                        <div className="overview-section__title">
+                          <span
+                            onClick={() => handleBodyClick(bodyId)}
+                            style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
+                            title="Click to focus map"
+                          >
+                            <span style={{
+                              width: 10, height: 10, borderRadius: '50%',
+                              background: body?.color || '#888',
+                              display: 'inline-block',
+                            }} />
+                            Orbiting {body?.name || bodyId}
+                          </span>
+                          <span className="overview-section__count">{bodyShips.length} ships</span>
+                        </div>
+                        <table className="overview-table">
+                          {tableHead('Location')}
+                          <tbody>
+                            {bodyShips.map(renderShipRow)}
+                          </tbody>
+                        </table>
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })}
