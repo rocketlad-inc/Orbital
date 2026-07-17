@@ -219,13 +219,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 
       {playerResources && (
         <div className="top-bar__resources" data-tutorial-id="topbar-resources">
-          <ResourcePill
-            label="FUEL" modifier="fuel"
-            value={playerResources.fuel}
-            rate={income.delivered.fuel}
-            local={income.local.fuel}
-            hasCollector={income.hasCollector}
-          />
+          {/* FUEL pill removed — fuel is dead (DESIGN-identity-economy.md §1.1) */}
           <ResourcePill
             label="METAL" modifier="ore"
             value={playerResources.ore}

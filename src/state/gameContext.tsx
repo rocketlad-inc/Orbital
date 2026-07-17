@@ -218,7 +218,7 @@ function applyAIIntent(
       const target = snapshot.settlements.find(s => s.id === intent.settlementId);
       if (!target || target.ownedBy !== factionId) return { applied: false };
       const def = BUILDING_DEFS[intent.buildingKind];
-      if (!def || def.hostType !== target.type) return { applied: false };
+      if (!def || (def.hostType !== 'any' && def.hostType !== target.type)) return { applied: false };
       // One in-flight upgrade per settlement — matches the player rule.
       if (target.buildingQueue) return { applied: false };
       const currentLevel = buildingLevel(target, intent.buildingKind);
@@ -2522,7 +2522,7 @@ export function GameContextProvider({
         logger.warn('ACTION', 'queueBuilding: unknown kind', { kind });
         return prev;
       }
-      if (def.hostType !== target.type) {
+      if (def.hostType !== 'any' && def.hostType !== target.type) {
         logger.warn('ACTION', 'queueBuilding: host type mismatch', {
           kind, requires: def.hostType, settlementType: target.type,
         });

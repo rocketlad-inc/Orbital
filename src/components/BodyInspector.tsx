@@ -1092,7 +1092,9 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
 // ============================================================
 
 const CITY_BUILDINGS: BuildingKind[] = ['forge', 'mint', 'lab'];
-const STATION_BUILDINGS: BuildingKind[] = ['weapons', 'shipyard'];
+// Labs host on stations too (economy rework §1.3): stations carry the
+// ×1.4 science type-multiplier, so they're the natural research site.
+const STATION_BUILDINGS: BuildingKind[] = ['weapons', 'shipyard', 'lab'];
 // Asteroid-only city extension: when the parent body's type is
 // 'asteroid', append trajectory_thrusters to the available city
 // buildings. Kept separate from CITY_BUILDINGS so non-asteroid cities

@@ -91,7 +91,9 @@ export const NO_COLLECTOR_STOCK_FRACTION = 0.90;
 
 export interface BuildingDef {
   displayName: string;
-  hostType: SettlementType;
+  /** 'any' = both cities and stations may host (labs — stations are the
+   *  ×1.4-science platforms, so they get the science building). */
+  hostType: SettlementType | 'any';
   baseCost: { fuel: number; ore: number; credits: number };
   costScaling: number;     // cost = baseCost × costScaling^currentLevel
   baseBuildTicks: number;
@@ -104,35 +106,39 @@ export interface BuildingDef {
 }
 
 export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
+  // ECONOMY REWORK (DESIGN-identity-economy.md §1.2): each yield building
+  // costs the resource it PRODUCES, so compounding is self-limiting. The
+  // old cross-feed (forge cost credits, mint cost metal) was a closed
+  // positive-feedback loop that left science 2.5x behind by endgame.
   forge: {
     displayName: 'Forge',
-    hostType: 'city',
-    baseCost: { fuel: 0, ore: 0, credits: 40 },
-    costScaling: 1.6,
-    baseBuildTicks: 20,
-    buildTimeScaling: 1.3,
-    description: '+25% metal output per level. Spends credits to compound this city\'s metal yield.',
-    yieldBoost: { resource: 'ore', perLevel: 0.25 },
-  },
-  mint: {
-    displayName: 'Mint',
     hostType: 'city',
     baseCost: { fuel: 0, ore: 40, credits: 0 },
     costScaling: 1.6,
     baseBuildTicks: 20,
     buildTimeScaling: 1.3,
-    description: '+25% credits output per level. Spends metal to compound this city\'s coinage yield.',
+    description: '+25% metal output per level. Reinvests metal to compound this city\'s metal yield.',
+    yieldBoost: { resource: 'ore', perLevel: 0.25 },
+  },
+  mint: {
+    displayName: 'Mint',
+    hostType: 'city',
+    baseCost: { fuel: 0, ore: 0, credits: 40 },
+    costScaling: 1.6,
+    baseBuildTicks: 20,
+    buildTimeScaling: 1.3,
+    description: '+25% credits output per level. Reinvests credits to compound this city\'s coinage yield.',
     yieldBoost: { resource: 'credits', perLevel: 0.25 },
   },
   lab: {
     displayName: 'Lab',
-    hostType: 'city',
-    baseCost: { fuel: 0, ore: 30, credits: 30 },
+    hostType: 'any',
+    baseCost: { fuel: 0, ore: 0, credits: 40 },
     costScaling: 1.6,
-    baseBuildTicks: 25,
+    baseBuildTicks: 20,
     buildTimeScaling: 1.3,
-    description: '+20% science output per level. Costs both raw stock and capital.',
-    yieldBoost: { resource: 'science', perLevel: 0.20 },
+    description: '+25% science output per level. Stations make the best hosts — orbital platforms already run hotter labs.',
+    yieldBoost: { resource: 'science', perLevel: 0.25 },
   },
   weapons: {
     displayName: 'Weapons',
@@ -245,7 +251,7 @@ export const SETTLEMENT_DEFS: Record<SettlementType, {
 }> = {
   city: {
     maxHp: 200,
-    cost: { fuel: 30, ore: 50, credits: 40 },
+    cost: { fuel: 0, ore: 50, credits: 40 },
     displayName: 'City',
     range: 8,        // ground-based PDC, short range
     damagePerTick: 6,
@@ -253,7 +259,7 @@ export const SETTLEMENT_DEFS: Record<SettlementType, {
   },
   station: {
     maxHp: 100,
-    cost: { fuel: 50, ore: 30, credits: 60 },
+    cost: { fuel: 0, ore: 30, credits: 60 },
     displayName: 'Station',
     range: 12,       // orbital weapons platform, medium range
     damagePerTick: 8,

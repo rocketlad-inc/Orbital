@@ -17,10 +17,10 @@ const SHIP_CLASSES = new Set(['corvette', 'frigate', 'destroyer', 'freighter']);
 // columns (metal/fuel/gold). Note ore->metal and credits->gold renames
 // (server schema vs client naming).
 const SHIP_BUILD_COST = {
-  corvette:  { fuel: 3,  metal: 5,  gold: 4,  build_ticks: 10 },
-  frigate:   { fuel: 7,  metal: 10, gold: 8,  build_ticks: 20 },
-  destroyer: { fuel: 14, metal: 20, gold: 17, build_ticks: 40 },
-  freighter: { fuel: 5,  metal: 7,  gold: 5,  build_ticks: 15 },
+  corvette:  { fuel: 0,  metal: 5,  gold: 4,  build_ticks: 10 },
+  frigate:   { fuel: 0,  metal: 10, gold: 8,  build_ticks: 20 },
+  destroyer: { fuel: 0,  metal: 20, gold: 17, build_ticks: 40 },
+  freighter: { fuel: 0,  metal: 7,  gold: 5,  build_ticks: 15 },
 };
 
 function json(data, init = {}) {
@@ -996,10 +996,16 @@ const COLLECTOR_COST = { metal: 0, gold: 500 };
 //
 // (server columns are metal/gold; client uses ore/credits — same thing,
 // different name.)
+// ECONOMY REWORK (DESIGN-identity-economy.md §1.2): each yield building
+// costs the resource it PRODUCES, so compounding is self-limiting.
+// The old cross-feed (forge cost gold, mint cost metal) formed a closed
+// positive-feedback loop that left science 2.5x behind by endgame.
+// Lab gets parity (+25%, 20 ticks — see room.js LAB_PER_LEVEL) and can
+// host on stations (the ×1.4-science settlement type).
 const BUILDING_DEFS = {
-  forge:    { hostType: 'city',    base: { fuel: 0, metal: 0,  gold: 40 }, costScaling: 1.6, baseTicks: 20, timeScaling: 1.3 },
-  mint:     { hostType: 'city',    base: { fuel: 0, metal: 40, gold: 0  }, costScaling: 1.6, baseTicks: 20, timeScaling: 1.3 },
-  lab:      { hostType: 'city',    base: { fuel: 0, metal: 30, gold: 30 }, costScaling: 1.6, baseTicks: 25, timeScaling: 1.3 },
+  forge:    { hostType: 'city',    base: { fuel: 0, metal: 40, gold: 0  }, costScaling: 1.6, baseTicks: 20, timeScaling: 1.3 },
+  mint:     { hostType: 'city',    base: { fuel: 0, metal: 0,  gold: 40 }, costScaling: 1.6, baseTicks: 20, timeScaling: 1.3 },
+  lab:      { hostType: 'any',     base: { fuel: 0, metal: 0,  gold: 40 }, costScaling: 1.6, baseTicks: 20, timeScaling: 1.3 },
   weapons:  { hostType: 'station', base: { fuel: 0, metal: 30, gold: 20 }, costScaling: 1.6, baseTicks: 30, timeScaling: 1.3 },
   shipyard: { hostType: 'station', base: { fuel: 0, metal: 50, gold: 30 }, costScaling: 1.7, baseTicks: 40, timeScaling: 1.3 },
   // Trajectory Control Thrusters — asteroid-weapon enabler. Mirrors
@@ -1055,7 +1061,7 @@ async function handleQueueBuilding(req, env, ctx) {
   if (settlement.owner_faction_id !== me.id) {
     return err(403, 'not_owner', 'you do not own this settlement');
   }
-  if (settlement.type !== BUILDING_DEFS[kind].hostType) {
+  if (BUILDING_DEFS[kind].hostType !== 'any' && settlement.type !== BUILDING_DEFS[kind].hostType) {
     return err(409, 'wrong_host', `${kind} requires a ${BUILDING_DEFS[kind].hostType}`);
   }
   // Body-type gate (e.g. trajectory_thrusters → asteroid only). Without

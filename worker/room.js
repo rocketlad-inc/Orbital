@@ -1779,7 +1779,7 @@ export class Room {
     const YIELD_MULT_PER_POP = 0.1;
     const FORGE_PER_LEVEL = 0.25;
     const MINT_PER_LEVEL  = 0.25;
-    const LAB_PER_LEVEL   = 0.20;
+    const LAB_PER_LEVEL   = 0.25; // parity with forge/mint (economy rework §1.2)
     const TYPE_MUL_CITY    = { fuel: 1.0, metal: 1.2, gold: 1.0, science: 0.8 };
     const TYPE_MUL_STATION = { fuel: 1.1, metal: 0.8, gold: 1.0, science: 1.4 };
     const NO_COLLECTOR_POOL_FRACTION = 0.10;       // 10% to faction pool

@@ -126,12 +126,16 @@ Once yields specialize, spawn region ≈ your whole early game. Seeder rules:
 - Base stats: hull provides HP/dmg/speed/cost as today (null-design ship
   == today's ship exactly; this is also the live-game migration story).
 
-### 2.2 Detonator spec
+### 2.2 Detonator spec (DECIDED 2026-07-17)
 - Manual trigger (button on ship panel) or automated via order (§3).
-- Deals the ship's **current HP** as damage to EVERY ship in the same
-  orbit — including friendlies. Ship is consumed. Chronicle event.
-- Multiple detonators on one hull stack multiplier (2× = 2×HP damage) —
-  a 6-slot destroyer bomb is legal, hilarious, and costs a fortune.
+- Deals **50% of the ship's MAX HP** as damage to EVERY ship in the same
+  orbit — **including friendlies**. Ship is consumed. Chronicle event.
+- Multiple detonators stack additively (2 parts = 100% of max HP, etc.).
+- UX REQUIREMENT: everywhere a detonator appears (designer part card,
+  ship panel button, order toggle) the copy must state ALL of:
+  damage amount, friendly fire, ship consumed. No surprises — e.g.
+  "Detonate: deal N damage (50% max HP per detonator) to every ship in
+  this orbit, friend or foe. This ship is destroyed."
 - Priced so a fireship swarm is a strategy, not the default.
 
 ### 2.3 Templates
@@ -195,7 +199,7 @@ Once yields specialize, spawn region ≈ your whole early game. Seeder rules:
   mechanics; new systems are MP-only until further notice.
 - Cuts ~35% of implementation surface (the SP sim in gameContext.tsx
   mirrors nearly every server mechanic — none of §1–§4 gets mirrored).
-- Decision pending: hide SP entry point vs leave visible-but-legacy.
+- DECIDED: SP stays **visible but frozen** on legacy mechanics.
 
 ---
 
@@ -219,9 +223,9 @@ Once yields specialize, spawn region ≈ your whole early game. Seeder rules:
 - Branch naming: `feat/real-physics` is now a misnomer — new integration
   branch for this release: `feat/identity-economy`.
 
-## 8. Open decisions (Lorne)
-1. Detonator tech scaling: Weapons at half rate — OK?
-2. Colony ship at ~3× freighter cost — OK?
-3. SP entry point: hide or leave visible-but-legacy?
-4. Yield table above: eyeball the map — any region identities you want
-   swapped before P0 starts?
+## 8. Decisions log
+1. Detonator: 50% max HP per part, half-Weapons tech scaling, full-disclosure
+   UX copy — DECIDED 2026-07-17.
+2. Colony ship ~3× freighter cost — APPROVED.
+3. SP: visible but frozen — DECIDED.
+4. Yield table: approved as drafted; tune after first playtest cycle.
