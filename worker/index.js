@@ -618,8 +618,9 @@ import * as senate  from './senate.js';
 import * as trades  from './trades.js';
 import * as state   from './state.js';
 import * as actions from './actions.js';
+import * as discord from './discord.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, state, actions];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, state, actions, discord];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {

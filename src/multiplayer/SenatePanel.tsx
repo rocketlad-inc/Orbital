@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch, Faction, SenateProposal, SenateSlider } from './api';
+import { DiscordLink } from './DiscordLink';
 
 // Per-proposal duration bounds — mirror worker/senate.js
 // DEBATE_MIN/MAX + VOTE_MIN/MAX so the input gates match server-side
@@ -223,6 +224,7 @@ export function SenatePanel({ gameId }: { gameId: string }) {
 
   return (
     <div>
+      <DiscordLink />
       <div className="mp-section-title">Propose a bill</div>
       <form onSubmit={propose}>
         <label className="mp-label">Kind</label>

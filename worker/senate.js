@@ -283,7 +283,7 @@ export async function hasActiveSanction(env, gameId, currentTick, factionId, eff
 
 // ---------- proposal shaping ----------
 
-async function loadProposalTotals(env, proposalId) {
+export async function loadProposalTotals(env, proposalId) {
   const rows = await env.DB
     .prepare(`SELECT vote, SUM(weight) AS w, COUNT(*) AS n FROM senate_votes WHERE proposal_id = ? GROUP BY vote`)
     .bind(proposalId)
@@ -568,52 +568,72 @@ async function handleGetProposal(_req, env, { params, session }) {
   return json({ current_tick: ctx.game.current_tick, proposal: shaped, votes: votes.results ?? [] });
 }
 
+/**
+ * Cast (or change) a faction's vote on a proposal. Transport-agnostic —
+ * the HTTP handler and the Discord interactions handler both call this
+ * with an already-resolved factionId, so the window rules + planet-count
+ * weight + one-row-per-faction upsert live in exactly one place.
+ *
+ * Returns { ok: true, weight, row } on success, or
+ * { ok: false, status, code, message } describing the rejection, so the
+ * caller can shape it into an HTTP error or a Discord reply as needed.
+ */
+export async function castVoteCore(env, { gameId, proposalId, factionId, currentTick, vote }) {
+  if (!['yea', 'nay', 'abstain'].includes(vote)) {
+    return { ok: false, status: 400, code: 'bad_request', message: 'vote must be yea, nay, or abstain' };
+  }
+  const row = await env.DB
+    .prepare('SELECT * FROM senate_proposals WHERE id = ? AND game_id = ?')
+    .bind(proposalId, gameId)
+    .first();
+  if (!row) return { ok: false, status: 404, code: 'not_found', message: 'proposal not found' };
+
+  // Voting window is [vote_opens_at_tick, vote_closes_at_tick). Status is
+  // flipped debating->voting at a tick boundary by the resolver, but a
+  // vote may arrive in the gap between the window opening and the resolver
+  // running — so accept 'debating' too, as long as the window is open.
+  const inWindow = currentTick >= row.vote_opens_at_tick && currentTick < row.vote_closes_at_tick;
+  if (!inWindow || (row.status !== 'voting' && row.status !== 'debating')) {
+    return { ok: false, status: 409, code: 'not_voting', message: 'this proposal is not in its voting window' };
+  }
+
+  const weight = await planetCount(env, gameId, factionId);
+
+  const existing = await env.DB
+    .prepare('SELECT 1 AS x FROM senate_votes WHERE proposal_id = ? AND faction_id = ?')
+    .bind(proposalId, factionId)
+    .first();
+  if (existing) {
+    await env.DB
+      .prepare('UPDATE senate_votes SET vote = ?, weight = ?, cast_at_tick = ? WHERE proposal_id = ? AND faction_id = ?')
+      .bind(vote, weight, currentTick, proposalId, factionId)
+      .run();
+  } else {
+    await env.DB
+      .prepare('INSERT INTO senate_votes (proposal_id, faction_id, vote, weight, cast_at_tick) VALUES (?, ?, ?, ?, ?)')
+      .bind(proposalId, factionId, vote, weight, currentTick)
+      .run();
+  }
+  return { ok: true, weight, row };
+}
+
 async function handleVote(req, env, { params, session }) {
   const { gameId, proposalId } = params;
   const ctx = await loadGameAndFaction(env, gameId, session);
   if (ctx.error) return ctx.error;
 
   const body = await readJson(req);
-  const vote = body?.vote;
-  if (!['yea', 'nay', 'abstain'].includes(vote)) return err(400, 'bad_request', 'vote must be yea|nay|abstain');
+  const res = await castVoteCore(env, {
+    gameId,
+    proposalId,
+    factionId: ctx.faction.id,
+    currentTick: ctx.game.current_tick,
+    vote: body?.vote,
+  });
+  if (!res.ok) return err(res.status, res.code, res.message);
 
-  const row = await env.DB
-    .prepare('SELECT * FROM senate_proposals WHERE id = ? AND game_id = ?')
-    .bind(proposalId, gameId)
-    .first();
-  if (!row) return err(404, 'not_found', 'proposal not found');
-
-  const tick = ctx.game.current_tick;
-  // Voting window is [vote_opens_at_tick, vote_closes_at_tick). Also require status='voting'
-  // (status is flipped from debating->voting at tick boundary by the resolver).
-  const inWindow = tick >= row.vote_opens_at_tick && tick < row.vote_closes_at_tick;
-  if (!inWindow || (row.status !== 'voting' && row.status !== 'debating')) {
-    return err(409, 'not_voting', 'proposal is not in its voting window');
-  }
-  // Even if status is still 'debating' (resolver hasn't run yet), allow voting
-  // once the window opens — the snapshotted weight will be correct.
-  if (tick < row.vote_opens_at_tick) return err(409, 'not_voting', 'voting has not opened');
-
-  const weight = await planetCount(env, gameId, ctx.faction.id);
-
-  const existing = await env.DB
-    .prepare('SELECT 1 AS x FROM senate_votes WHERE proposal_id = ? AND faction_id = ?')
-    .bind(proposalId, ctx.faction.id)
-    .first();
-  if (existing) {
-    await env.DB
-      .prepare('UPDATE senate_votes SET vote = ?, weight = ?, cast_at_tick = ? WHERE proposal_id = ? AND faction_id = ?')
-      .bind(vote, weight, tick, proposalId, ctx.faction.id)
-      .run();
-  } else {
-    await env.DB
-      .prepare('INSERT INTO senate_votes (proposal_id, faction_id, vote, weight, cast_at_tick) VALUES (?, ?, ?, ?, ?)')
-      .bind(proposalId, ctx.faction.id, vote, weight, tick)
-      .run();
-  }
-
-  const shaped = await shapeOne(env, row, ctx.faction.id);
-  return json({ proposal: shaped, your_weight: weight });
+  const shaped = await shapeOne(env, res.row, ctx.faction.id);
+  return json({ proposal: shaped, your_weight: res.weight });
 }
 
 async function handleWithdraw(_req, env, { params, session }) {
@@ -837,10 +857,36 @@ export async function resolveSenate(env, gameId, tick) {
 
   let opened = 0;
   try {
+    // Capture which proposals are about to open BEFORE the UPDATE, so we
+    // can announce exactly those to Discord (the UPDATE is a set-based
+    // flip with no RETURNING in D1).
+    const openingRows = (await env.DB
+      .prepare("SELECT * FROM senate_proposals WHERE game_id = ? AND status = 'debating' AND vote_opens_at_tick <= ?")
+      .bind(gameId, tick).all()).results ?? [];
+
     const res = await env.DB
       .prepare("UPDATE senate_proposals SET status = 'voting' WHERE game_id = ? AND status = 'debating' AND vote_opens_at_tick <= ?")
       .bind(gameId, tick).run();
     opened = res?.meta?.changes ?? 0;
+
+    // Publish a vote card (embed + Yea/Nay/Abstain buttons) to Discord for
+    // each newly-opened proposal. Best-effort and fully isolated: a Discord
+    // outage or missing secrets must never stall the senate tick, so each
+    // publish is caught individually and the feature no-ops when unwired.
+    if (openingRows.length > 0) {
+      try {
+        const discord = await import('./discord.js');
+        for (const p of openingRows) {
+          try {
+            await discord.publishSenateVoteOpen(env, gameId, p);
+          } catch (e) {
+            console.error('publishSenateVoteOpen failed', e, { proposalId: p.id });
+          }
+        }
+      } catch (e) {
+        console.error('resolveSenate: discord publish batch failed', e);
+      }
+    }
   } catch (e) {
     console.error("resolveSenate: phase 1 failed", e);
   }
