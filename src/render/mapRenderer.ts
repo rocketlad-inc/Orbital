@@ -10,6 +10,7 @@ import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
 import { COLORS, withOpacity, lighten, darken } from './colors';
 import { getShipIconImage } from './shipIconCache';
 import { ShipIconClass } from '../components/ShipIcons';
+import { drawDeathDebris, hashStr, mulberry32 } from './combatFx';
 
 export interface RenderContext {
   ctx: CanvasRenderingContext2D;
@@ -1495,6 +1496,23 @@ export function drawRammingBody(
       Math.max(10, body.radius * ctx.camera.scale * 1.5),
       1,
     );
+
+    // Heat-shimmer (Workstream B §5): while the ram burn is live, draw
+    // the rock a second time at a ±0.5px seeded jitter, 30% alpha —
+    // reads as the rock's silhouette wavering in its own exhaust. The
+    // jitter reseeds every ~45ms so it flickers, but within a frame it
+    // is deterministic per body id.
+    const shimmerRng = mulberry32(hashStr(body.id) ^ Math.floor((ctx.nowMs ?? performance.now()) / 45));
+    const jx = shimmerRng() - 0.5;
+    const jy = shimmerRng() - 0.5;
+    const rockR = Math.max(1.5, body.radius * ctx.camera.scale);
+    ctx.ctx.save();
+    ctx.ctx.globalAlpha = 0.3;
+    ctx.ctx.fillStyle = body.color;
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(canvasHere.x + jx, canvasHere.y + jy, rockR, 0, Math.PI * 2);
+    ctx.ctx.fill();
+    ctx.ctx.restore();
   }
 
   // Impact ghost-marker at the predicted target body position at
@@ -2272,6 +2290,10 @@ export interface DestructionFlash {
   pos: { x: number; y: number };  // world coords
   startTick: number;
   baseRadius?: number;            // visual size; defaults to 10
+  /** Entity id that died — seeds the deterministic death-debris sparks
+   *  (combatFx.drawDeathDebris). Optional for back-compat; no id = no
+   *  sparks, just the classic flash. */
+  id?: string;
 }
 
 export function drawDestructionFlashes(
@@ -2297,6 +2319,11 @@ export function drawDestructionFlashes(
       'destruction',
       durationTicks,
     );
+    // Death debris — 4-6 seeded sparks flying out of the wreck
+    // (Workstream B §3). Additive, 400ms wall-clock fade.
+    if (f.id) {
+      drawDeathDebris(f.id, cp, (f.baseRadius ?? 10) * sizeFactor, ctx);
+    }
   }
 }
 

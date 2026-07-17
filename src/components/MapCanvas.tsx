@@ -30,10 +30,18 @@ import {
   TRAJECTORY_COLORS,
   trajectoryRole,
 } from '../render/mapRenderer';
+import {
+  spawnTracer,
+  drawTracers,
+  drawDetonations,
+  spawnArrivalFlash,
+  drawArrivalFlashes,
+} from '../render/combatFx';
 import { bodyPosition } from '../physics/orbitalMechanics';
 import { torchPositionFromSamples } from '../physics/torchTransfer';
 import { COLORS, withOpacity } from '../render/colors';
 import { shipWorldPosition } from '../game/combat';
+import { getShipClass } from '../game/shipClasses';
 import { computeIncomingThreats, threatenedBodyIds } from '../game/threats';
 import { computeVisibility, factionSensorRings, GHOST_LIFETIME_TICKS } from '../game/visibility';
 import { useCanvasTouchInput } from '../hooks/useCanvasTouchInput';
@@ -97,8 +105,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   const prevDamageTickRef = useRef<Map<string, number>>(new Map());
   const damageFlashStartRef = useRef<Map<string, number>>(new Map());
   const prevShipIdsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  // Ids of ships that were in torch transit last frame. Diffed against
+  // this frame the same way hp deltas are — a ship present both frames
+  // that dropped its .transit just ARRIVED, which triggers the soft
+  // arrival ring (combatFx.spawnArrivalFlash). null = first frame, skip
+  // the diff so a mid-flight page load doesn't fire a phantom flash.
+  const prevTransitIdsRef = useRef<Set<string> | null>(null);
   const prevSettlementIdsRef = useRef<Map<string, { x: number; y: number; bodyId: string }>>(new Map());
-  const destructionFlashesRef = useRef<Map<string, { pos: { x: number; y: number }; startTick: number; baseRadius?: number }>>(new Map());
+  const destructionFlashesRef = useRef<Map<string, { pos: { x: number; y: number }; startTick: number; baseRadius?: number; id?: string }>>(new Map());
   // Last-rendered CANVAS position of every in-transit ship, populated by
   // the render loop and consumed by the click hit-test. The visual ship
   // sits on a polyline lerp (drawTorchTransitShip's lerpedPos) while
@@ -162,7 +176,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // per-frame by the per-ship overlay below. A ship that arrived and
     // dropped out of transit shouldn't keep its old hitbox.
     transitShipCanvasPosRef.current.clear();
+    const curTransitIds = new Set<string>();
     for (const ship of gameState.ships) {
+      if (ship.transit) curTransitIds.add(ship.id);
       // Position now; ships in transit use the torch trajectory so they
       // explode at the spot they were on the burn when killed.
       // shipWorldPosition returns null for ships whose parent body
@@ -177,8 +193,37 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       if (prev !== cur) {
         prevDamageTickRef.current.set(ship.id, cur);
         damageFlashStartRef.current.set(ship.id, nowTick);
+        // Tracer fire (combatFx §1): the hp drop means some hostile
+        // armed ship at the same body fired a volley. Attribute the
+        // shot deterministically — lowest ship id among armed hostiles
+        // at the body — so every client draws the same tracer. Skip
+        // the very first observation of a ship (prev === undefined =
+        // page load, not a fresh hit) and ships in transit (auto-combat
+        // is at-body only, so a transit "hit" has no local shooter).
+        if (prev !== undefined && !ship.transit) {
+          const atBody = ship.orbit.parentBodyId;
+          let attackerId: string | null = null;
+          for (const s of gameState.ships) {
+            if (s.id === ship.id || s.transit) continue;
+            if (s.orbit.parentBodyId !== atBody) continue;
+            if (s.ownedBy === ship.ownedBy) continue;
+            if (getShipClass(s.class).damagePerTick <= 0) continue;
+            if (attackerId === null || s.id < attackerId) attackerId = s.id;
+          }
+          if (attackerId) spawnTracer(attackerId, ship.id, nowMs);
+        }
       }
     }
+    // Arrival flash (combatFx §4): in transit last frame, orbiting this
+    // frame, still alive → the ship just arrived at a body.
+    if (prevTransitIdsRef.current) {
+      for (const id of prevTransitIdsRef.current) {
+        if (!curTransitIds.has(id) && curShipIds.has(id)) {
+          spawnArrivalFlash(id, nowMs);
+        }
+      }
+    }
+    prevTransitIdsRef.current = curTransitIds;
     // Detect ship disappearance → destruction flash at last known pos.
     // Skip the very first frame (prevShipIds empty = initial mount,
     // not a die-off). The class-based base radius scales the boom
@@ -214,7 +259,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       for (const [id, pos] of prevShipIdsRef.current) {
         if (!curShipIds.has(id) && !destructionFlashesRef.current.has(id)) {
           if (!wasInCoverage(pos)) continue; // fog-out, not destruction
-          destructionFlashesRef.current.set(id, { pos, startTick: nowTick, baseRadius: 12 });
+          destructionFlashesRef.current.set(id, { pos, startTick: nowTick, baseRadius: 12, id });
         }
       }
     }
@@ -251,6 +296,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             pos: { x: snap.x, y: snap.y },
             startTick: nowTick,
             baseRadius: 14,
+            id,
           });
         }
       }
@@ -662,6 +708,16 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const arr = Array.from(destructionFlashesRef.current.values());
       drawDestructionFlashes(arr, renderContext);
     }
+
+    // Combat & event FX (combatFx): tracers, detonator blasts and
+    // arrival rings. Drawn above ships/settlements so combat always
+    // reads, but beneath the fog wash (consistent with destruction
+    // flashes — a kill outside coverage still reads as dimmed).
+    // Tracers/detonations are deliberately NOT LOD-gated: combat must
+    // be visible at any zoom.
+    drawTracers(renderContext, gameState.ships, nowMs, transitShipCanvasPosRef.current);
+    drawDetonations(renderContext, nowMs);
+    drawArrivalFlashes(renderContext, gameState.ships, nowMs);
 
     // Fog-of-war: paint the dim wash and punch holes where the
     // player's sensors reach. The dim↔bright transition is its own
