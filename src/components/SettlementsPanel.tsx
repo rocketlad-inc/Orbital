@@ -106,8 +106,6 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
             {playerStats.total > 0 && (
               <>
                 {' · stockpile '}
-                <span style={{ color: '#ffb84d' }}>{Math.floor(playerStats.stockpile.fuel)}F</span>
-                {' '}
                 <span style={{ color: '#a0a0a0' }}>{Math.floor(playerStats.stockpile.ore)}M</span>
                 {' '}
                 <span style={{ color: '#ffd700' }}>{Math.floor(playerStats.stockpile.credits)}C</span>
@@ -159,7 +157,7 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
               {rows.map(({ settlement: s, body, ownerFreighters, yields }) => {
                 const isSelected = selectedSettlementId === s.id;
                 const def = SETTLEMENT_DEFS[s.type];
-                const hasStockpile = s.stockpile.fuel > 0 || s.stockpile.ore > 0 || s.stockpile.credits > 0;
+                const hasStockpile = s.stockpile.ore > 0 || s.stockpile.credits > 0;
                 return (
                   <tr
                     key={s.id}
@@ -197,9 +195,6 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
                     <td className="col-num">{s.population}</td>
                     <td>
                       <div className="prod-rates">
-                        <span className={`prod-rate ${yields.fuel > 0 ? 'prod-rate--fuel' : 'prod-rate--zero'}`}>
-                          {yields.fuel > 0 ? `+${yields.fuel.toFixed(1)}` : '—'} fuel
-                        </span>
                         <span className={`prod-rate ${yields.ore > 0 ? 'prod-rate--ore' : 'prod-rate--zero'}`}>
                           {yields.ore > 0 ? `+${yields.ore.toFixed(1)}` : '—'} metal
                         </span>
@@ -211,9 +206,6 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
                     <td>
                       {hasStockpile ? (
                         <div className="prod-rates">
-                          {s.stockpile.fuel > 0 && (
-                            <span className="prod-rate prod-rate--fuel">{Math.floor(s.stockpile.fuel)}F</span>
-                          )}
                           {s.stockpile.ore > 0 && (
                             <span className="prod-rate prod-rate--ore">{Math.floor(s.stockpile.ore)}M</span>
                           )}

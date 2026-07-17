@@ -1792,9 +1792,15 @@ async function handleRamAsteroid(req, env, ctx) {
   const interceptPosX = num(payload.intercept_pos_x);
   const interceptPosY = num(payload.intercept_pos_y);
   const totalDv = num(payload.total_dv);
-  const fuelCost = num(payload.fuel_cost);
+  // Ram is paid in METAL. It used to cost faction fuel, but P0 removed
+  // fuel from the economy (yields 0, starting pool 0) — which silently
+  // made the ram permanently unaffordable and bricked Trajectory Control
+  // Thrusters, the 800M/1200G building whose whole purpose is this
+  // action. Accepts the legacy `fuel_cost` field name from an older
+  // client bundle so an in-flight tab doesn't 400.
+  const metalCost = num(payload.metal_cost ?? payload.fuel_cost);
   if ([startTick, flipTick, arriveTick, acceleration, startPosX, startPosY,
-       startVelX, startVelY, interceptPosX, interceptPosY, totalDv, fuelCost]
+       startVelX, startVelY, interceptPosX, interceptPosY, totalDv, metalCost]
       .some(v => v == null)) {
     return err(400, 'bad_request', 'plan fields missing or invalid');
   }
@@ -1803,12 +1809,12 @@ async function handleRamAsteroid(req, env, ctx) {
     return err(400, 'bad_request', 'flip_tick must lie between start and arrive');
   }
   if (acceleration <= 0) return err(400, 'bad_request', 'acceleration must be positive');
-  if (fuelCost < 0) return err(400, 'bad_request', 'fuel_cost must be non-negative');
+  if (metalCost < 0) return err(400, 'bad_request', 'metal_cost must be non-negative');
 
-  // Fuel debit. Atomic with the plan write below — if either fails,
-  // the player keeps their fuel.
-  if ((me.fuel ?? 0) < fuelCost) {
-    return err(409, 'insufficient_fuel', `need ${fuelCost} fuel to ram, have ${me.fuel ?? 0}`);
+  // Metal debit. Atomic with the plan write below — if either fails,
+  // the player keeps their metal.
+  if ((me.metal ?? 0) < metalCost) {
+    return err(409, 'insufficient_resources', `need ${metalCost} metal to ram, have ${me.metal ?? 0}`);
   }
 
   const game = await env.DB
@@ -1843,8 +1849,8 @@ async function handleRamAsteroid(req, env, ctx) {
         bodyId, gameId,
       ),
     env.DB
-      .prepare('UPDATE game_factions SET fuel = fuel - ? WHERE id = ?')
-      .bind(fuelCost, me.id),
+      .prepare('UPDATE game_factions SET metal = metal - ? WHERE id = ?')
+      .bind(metalCost, me.id),
     // Reputation hit. Asteroid weapons are atrocities — bypass
     // every diplomatic norm, broadcast their threat to everyone in
     // the system, and the launching faction takes the maximum

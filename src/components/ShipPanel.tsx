@@ -313,10 +313,8 @@ export const ShipPanel: React.FC = () => {
   // otherwise the class def scaled by veterancy (+1% per rank), which
   // matches what combat.ts + maintenance.ts apply in SP.
   const maxHp = ship.hpMax ?? Math.round(shipClass.hp * rankHpMul(ship.rank));
-  const maxFuel = shipClass.fuelCapacity;
   const currentHp = ship.hp ?? maxHp;
   const hpAtMax = currentHp >= maxHp;
-  const fuelAtMax = ship.fuel >= maxFuel;
 
   // Fleet — current fleet (if any) and ships eligible to fleet with at this body
   const currentFleet = ship.fleetId
@@ -527,17 +525,9 @@ export const ShipPanel: React.FC = () => {
                 )}
               </span>
             </div>
-            <div className="stat-row">
-              <span className="label">FUEL</span>
-              <span className="value">
-                {ship.fuel.toFixed(0)}/{maxFuel} kt
-                {maintenance.refuelRate > 0 && !fuelAtMax && (
-                  <span style={{ color: '#ffb84d', marginLeft: 6, fontSize: '9px' }}>
-                    +{maintenance.refuelRate}/t
-                  </span>
-                )}
-              </span>
-            </div>
+            {/* FUEL row removed — fuel left the economy
+                (DESIGN-identity-economy.md §1.1). Transfers are free, so
+                the number never moved and refuelling was decoration. */}
             <div className="stat-row">
               <span className="label">LOCATION</span>
               <span className="value">{locationLabel}</span>

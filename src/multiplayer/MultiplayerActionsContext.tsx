@@ -70,7 +70,9 @@ export interface RamIntent {
   startVel: { x: number; y: number };
   interceptPos: { x: number; y: number };
   totalDv: number;
-  fuelCost: number;
+  /** Metal charged to the faction pool at commit. (Was fuel until fuel
+   *  left the economy — see BodyInspector's RAM_METAL_PER_DV.) */
+  metalCost: number;
 }
 
 /** Result of a turn commit. Either the caller's vote was recorded
@@ -465,14 +467,14 @@ export function MultiplayerActionsProvider({
             intercept_pos_x: intent.interceptPos.x,
             intercept_pos_y: intent.interceptPos.y,
             total_dv: intent.totalDv,
-            fuel_cost: intent.fuelCost,
+            metal_cost: intent.metalCost,
           }),
         },
       );
       if (res.ok) {
         logger.warn('ACTION', 'Asteroid ram launched', {
           asteroid: intent.bodyId, target: intent.targetBodyId,
-          arriveTick: intent.arriveTick, fuel: intent.fuelCost,
+          arriveTick: intent.arriveTick, metal: intent.metalCost,
         });
         return { ok: true };
       }

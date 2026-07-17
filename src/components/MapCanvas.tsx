@@ -123,6 +123,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // ship doesn't keep an undead hitbox. Parked ships hit the regular
   // getShipCanvasPos path; this map only exists for transit ships.
   const transitShipCanvasPosRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  // Ship under the cursor — drives the hover-only name label. A ref, not
+  // state: mousemove fires on every pixel and the render loop already
+  // runs each frame, so re-rendering the component for a label would be
+  // pure churn. The loop reads .current when it builds RenderContext.
+  const hoveredShipIdRef = useRef<string | null>(null);
 
   // Map layers: source of truth lives in MapLayersProvider (state +
   // localStorage). The Set is surfaced as a render dep so toggling
@@ -298,6 +303,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // RenderContext so the lobby preview can skip them.
       settlements: gameState.settlements,
       buildOrders: gameState.buildOrders,
+      // Hover-only ship labels — read fresh each frame from the ref the
+      // mousemove hit-test writes.
+      hoveredShipId: hoveredShipIdRef.current,
     };
 
     clearCanvas(renderContext);
@@ -1020,6 +1028,24 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const rect = canvasRef.current.getBoundingClientRect();
       const canvasX = e.clientX - rect.left;
       const canvasY = e.clientY - rect.top;
+
+      // Ship hover drives the name label. Same geometry the click
+      // hit-test uses (cached transit pos, 20px in-transit / 14px
+      // parked) so a label appears exactly where a click would land —
+      // no touch padding: a mouse is precise, and padding here would
+      // pop labels for ships the cursor isn't really over. Ships take
+      // priority over bodies, matching the click order.
+      let hoveredShipId: string | null = null;
+      for (const ship of gameState.ships) {
+        const cached = ship.transit ? transitShipCanvasPosRef.current.get(ship.id) : undefined;
+        const shipPos = cached ?? getShipCanvasPos(ship, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
+        if (Math.hypot(canvasX - shipPos.x, canvasY - shipPos.y) < (ship.transit ? 20 : 14)) {
+          hoveredShipId = ship.id;
+          break;
+        }
+      }
+      hoveredShipIdRef.current = hoveredShipId;
+
       let hoveredBodyId: string | null = null;
       for (const body of gameState.bodies) {
         const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
@@ -1099,6 +1125,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       width={width}
       height={height}
       onMouseMove={(e) => { handleMouseMove(e); handleMouseHover(e); }}
+      onMouseLeave={() => {
+        // Cursor left the canvas — no mousemove will fire to clear these,
+        // so a hovered label/body would stay lit indefinitely.
+        hoveredShipIdRef.current = null;
+        hoverBody(null);
+      }}
       onMouseDown={handleMouseDown}
       onMouseUp={handleMouseUp}
       onContextMenu={(e) => e.preventDefault()}

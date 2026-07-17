@@ -226,22 +226,9 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     );
   };
 
-  const renderFuelBar = (ship: { fuel: number; class: string }) => {
-    const def = getShipClass(ship.class as ShipClassName);
-    const ratio = ship.fuel / def.fuelCapacity;
-    const fuelClass = ratio > 0.25 ? 'good' : 'low';
-    return (
-      <div className="status-bar">
-        <div className="status-bar__fill">
-          <div
-            className={`status-bar__inner status-bar__inner--fuel-${fuelClass}`}
-            style={{ width: `${Math.min(100, ratio * 100)}%` }}
-          />
-        </div>
-        <span className="status-bar__text">{Math.round(ship.fuel)}</span>
-      </div>
-    );
-  };
+  // renderFuelBar removed — fuel left the economy
+  // (DESIGN-identity-economy.md §1.1).
+
 
   const renderShipRow = (ship: typeof ships[0]) => {
     const def = getShipClass(ship.class as ShipClassName);
@@ -308,7 +295,6 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           )}
         </td>
         <td>{renderHpBar(ship)}</td>
-        <td>{renderFuelBar(ship)}</td>
       </tr>
     );
   };
@@ -322,7 +308,6 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
         <th>Status</th>
         <th>{locationLabel}</th>
         <th>HP</th>
-        <th>Fuel</th>
       </tr>
     </thead>
   );

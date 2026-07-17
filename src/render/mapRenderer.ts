@@ -34,6 +34,13 @@ export interface RenderContext {
   /** Wall-clock ms for the current frame — passed to drawDamageFlash
    *  so all flashes age consistently within one frame. */
   nowMs?: number;
+  /** Ship the cursor is currently over, if any. Ship name labels are
+   *  drawn ONLY for this ship or the selected one — a full fleet's
+   *  worth of always-on labels buried the map in text (playtest:
+   *  thirteen overlapping "Donnager-NN" tags around Saturn). Set from
+   *  the MapCanvas mousemove hit-test; undefined on touch/lobby
+   *  previews, where selection alone drives labels. */
+  hoveredShipId?: string | null;
   /** Settlements in this game — the textured-planet path uses them for
    *  night-side city lights; the focus-zoom structure painters read
    *  building levels from them. Optional: only the main MapCanvas
@@ -1113,12 +1120,14 @@ export function drawShip(
     ctx.ctx.stroke();
   }
 
-  // Draw ship name label
-  ctx.ctx.fillStyle = isSelected ? '#ffb84d' : shipColorValue;
-  ctx.ctx.font = '9px monospace';
-  ctx.ctx.textAlign = 'left';
-  ctx.ctx.textBaseline = 'middle';
-  ctx.ctx.fillText(ship.name.split(' ')[0], canvasPos.x + iconSize / 2 + 4, canvasPos.y - 6);
+  // Ship name label — hover/selection only (see RenderContext.hoveredShipId).
+  if (isSelected || ctx.hoveredShipId === ship.id) {
+    ctx.ctx.fillStyle = isSelected ? '#ffb84d' : shipColorValue;
+    ctx.ctx.font = '9px monospace';
+    ctx.ctx.textAlign = 'left';
+    ctx.ctx.textBaseline = 'middle';
+    ctx.ctx.fillText(ship.name.split(' ')[0], canvasPos.x + iconSize / 2 + 4, canvasPos.y - 6);
+  }
 }
 
 /**
@@ -1970,12 +1979,14 @@ function drawTorchTransitShip(
     ctx.ctx.stroke();
   }
 
-  // Ship name
-  ctx.ctx.fillStyle = isSelected ? '#ffb84d' : shipColorValue;
-  ctx.ctx.font = '9px monospace';
-  ctx.ctx.textAlign = 'left';
-  ctx.ctx.textBaseline = 'middle';
-  ctx.ctx.fillText(ship.name.split(' ')[0], canvasPos.x + iconSize / 2 + 4, canvasPos.y - 6);
+  // Ship name — hover/selection only (see RenderContext.hoveredShipId).
+  if (isSelected || ctx.hoveredShipId === ship.id) {
+    ctx.ctx.fillStyle = isSelected ? '#ffb84d' : shipColorValue;
+    ctx.ctx.font = '9px monospace';
+    ctx.ctx.textAlign = 'left';
+    ctx.ctx.textBaseline = 'middle';
+    ctx.ctx.fillText(ship.name.split(' ')[0], canvasPos.x + iconSize / 2 + 4, canvasPos.y - 6);
+  }
 
   // ETA + phase label when selected
   if (isSelected) {
