@@ -176,6 +176,10 @@ export type Faction = {
   capital_body_id: string | null;
   senate_weight: number;
   reputation: number;
+  /** Scoreboard extras from the factions endpoint (full open scoreboard):
+   *  POOL income/tick and active ship count for every faction. */
+  income?: { metal: number; fuel: number; gold: number; science: number };
+  ship_count?: number;
 };
 
 export type MyFaction = Faction & {

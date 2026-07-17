@@ -989,8 +989,119 @@ async function handleListFactions(_req, env, ctx) {
     )
     .bind(gameId)
     .all();
+  const factions = rows.results ?? [];
 
-  return jsonResponse({ factions: rows.results ?? [] });
+  // Scoreboard extras (full open scoreboard — Lorne's call): per-faction
+  // POOL income/tick + true active ship count, attached to every row so
+  // the FactionPanel can show a rival's economy + fleet at a glance.
+  const [income, shipCounts] = await Promise.all([
+    computePoolIncomePerFaction(env, gameId),
+    countActiveShipsPerFaction(env, gameId),
+  ]);
+  for (const f of factions) {
+    f.income = income.get(f.id) ?? { metal: 0, fuel: 0, gold: 0, science: 0 };
+    f.ship_count = shipCounts.get(f.id) ?? 0;
+  }
+
+  return jsonResponse({ factions });
+}
+
+/** Active (undestroyed) ship count per faction. */
+async function countActiveShipsPerFaction(env, gameId) {
+  const rows = (await env.DB
+    .prepare(
+      `SELECT owner_faction_id AS fid, COUNT(*) AS n
+         FROM game_ships
+        WHERE game_id = ? AND status = 'active'
+        GROUP BY owner_faction_id`,
+    )
+    .bind(gameId)
+    .all()).results ?? [];
+  const m = new Map();
+  for (const r of rows) m.set(r.fid, Number(r.n ?? 0));
+  return m;
+}
+
+/**
+ * Per-faction POOL income per tick — the resources that flow to the
+ * spendable faction pool each harvest, NOT the local-stockpile share.
+ *
+ * Mirrors the pool half of the harvest pass in worker/room.js resolveTick
+ * (§ "Yield distribution"): yieldFull × collector-group pool fraction,
+ * where a collector anywhere in a (body,faction) group flips the whole
+ * group to 100% pool, else the group trickles NO_COLLECTOR_POOL_FRACTION
+ * (10%). KEEP THESE CONSTANTS IN SYNC with that pass.
+ *
+ * Deterministic multipliers (population, city/station type, forge/mint/
+ * lab, Industry tech) are included. Transient senate modifiers
+ * (production_sanction, fuel-yield slider) are intentionally OMITTED —
+ * this is steady-state income, so a scoreboard number doesn't flicker
+ * with a temporary law. Documented so the two never silently diverge.
+ */
+async function computePoolIncomePerFaction(env, gameId) {
+  const YIELD_MULT_PER_POP = 0.1;
+  const FORGE_PER_LEVEL = 0.25;
+  const MINT_PER_LEVEL  = 0.25;
+  const LAB_PER_LEVEL   = 0.25;
+  const TYPE_MUL_CITY    = { fuel: 1.0, metal: 1.2, gold: 1.0, science: 0.8 };
+  const TYPE_MUL_STATION = { fuel: 1.1, metal: 0.8, gold: 1.0, science: 1.4 };
+  const NO_COLLECTOR_POOL_FRACTION = 0.10;
+
+  const settlements = (await env.DB
+    .prepare(
+      `SELECT s.owner_faction_id AS fid, s.body_id, s.type, s.population,
+              s.has_collector, s.buildings_json,
+              b.yield_metal, b.yield_fuel, b.yield_gold, b.yield_science
+         FROM game_settlements s
+         JOIN game_bodies b ON b.id = s.body_id
+        WHERE s.game_id = ? AND s.destroyed_at_tick IS NULL`,
+    )
+    .bind(gameId)
+    .all()).results ?? [];
+
+  // Industry tech (+10%/level to all yields) per faction — one query.
+  const techRows = (await env.DB
+    .prepare("SELECT faction_id, level FROM faction_techs WHERE game_id = ? AND tech_id = 'industry'")
+    .bind(gameId)
+    .all()).results ?? [];
+  const industryMulOf = new Map();
+  for (const r of techRows) industryMulOf.set(r.faction_id, 1 + 0.10 * Number(r.level ?? 0));
+
+  // Collector is per (body,faction) group: a collector on any settlement
+  // in the group flips the whole group to 100% pool.
+  const groupKey = (s) => `${s.body_id}|${s.fid}`;
+  const groupHasCollector = new Map();
+  for (const s of settlements) {
+    if (s.has_collector) groupHasCollector.set(groupKey(s), true);
+  }
+
+  const perFaction = new Map();
+  for (const s of settlements) {
+    const tm = s.type === 'city' ? TYPE_MUL_CITY : TYPE_MUL_STATION;
+    const popMul = 1 + YIELD_MULT_PER_POP * Math.max(0, Number(s.population ?? 1) - 1);
+    let bld = {};
+    if (s.buildings_json) { try { bld = JSON.parse(s.buildings_json) ?? {}; } catch { bld = {}; } }
+    const forgeMul = 1 + Number(bld.forge ?? 0) * FORGE_PER_LEVEL;
+    const mintMul  = 1 + Number(bld.mint  ?? 0) * MINT_PER_LEVEL;
+    const labMul   = 1 + Number(bld.lab   ?? 0) * LAB_PER_LEVEL;
+    const indMul   = industryMulOf.get(s.fid) ?? 1;
+    const poolFraction = groupHasCollector.get(groupKey(s)) === true ? 1.0 : NO_COLLECTOR_POOL_FRACTION;
+
+    const agg = perFaction.get(s.fid) ?? { metal: 0, fuel: 0, gold: 0, science: 0 };
+    agg.metal   += Number(s.yield_metal   ?? 0) * popMul * tm.metal   * forgeMul * indMul * poolFraction;
+    agg.fuel    += Number(s.yield_fuel    ?? 0) * popMul * tm.fuel              * indMul * poolFraction;
+    agg.gold    += Number(s.yield_gold    ?? 0) * popMul * tm.gold    * mintMul  * indMul * poolFraction;
+    agg.science += Number(s.yield_science ?? 0) * popMul * tm.science * labMul   * indMul * poolFraction;
+    perFaction.set(s.fid, agg);
+  }
+  // Round for display (income is shown as +N/t).
+  for (const [, agg] of perFaction) {
+    agg.metal = Math.round(agg.metal * 10) / 10;
+    agg.fuel = Math.round(agg.fuel * 10) / 10;
+    agg.gold = Math.round(agg.gold * 10) / 10;
+    agg.science = Math.round(agg.science * 10) / 10;
+  }
+  return perFaction;
 }
 
 async function handleMyFaction(_req, env, ctx) {

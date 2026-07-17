@@ -43,6 +43,55 @@ const STATUS_COLOR: Record<keyof typeof STATUS_LABEL, string> = {
   self: 'var(--mp-fg-dim)',
 };
 
+// Per-resource tint for the income line — subtle, decoration only.
+const INCOME_TINT: Record<'metal' | 'fuel' | 'gold' | 'science', string> = {
+  metal: '#c9d4de',
+  fuel: '#ffb84d',
+  gold: '#ffd166',
+  science: '#67e8f9',
+};
+
+/** Compact scoreboard line: active ship count + POOL income/tick. Shared
+ *  by the "Your empire" header and every diplomacy row so a rival's
+ *  economy + fleet read at a glance (full open scoreboard). Income chips
+ *  hide any resource at 0 — so once fuel is retired empire-wide the fuel
+ *  chip simply stops appearing. */
+function ScoreboardStats({ f }: { f: Faction }) {
+  const income = f.income;
+  const chips = (['metal', 'fuel', 'gold', 'science'] as const)
+    .map((k) => ({ k, v: income?.[k] ?? 0 }))
+    .filter((c) => c.v > 0);
+  return (
+    <div
+      className="mp-scoreboard"
+      style={{
+        display: 'flex', alignItems: 'center', flexWrap: 'wrap',
+        gap: 8, fontSize: 11, color: 'var(--mp-fg-dim)',
+      }}
+    >
+      <span title="Active ships" style={{ fontVariantNumeric: 'tabular-nums' }}>
+        ⬡ {f.ship_count ?? 0} {(f.ship_count ?? 0) === 1 ? 'ship' : 'ships'}
+      </span>
+      <span style={{ opacity: 0.4 }}>·</span>
+      {chips.length === 0 ? (
+        <span style={{ opacity: 0.6 }}>no income</span>
+      ) : (
+        <span
+          title="Pool income per tick (before senate effects)"
+          style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap', fontVariantNumeric: 'tabular-nums' }}
+        >
+          {chips.map((c) => (
+            <span key={c.k} style={{ color: INCOME_TINT[c.k] }}>
+              +{c.v}{c.k === 'metal' ? 'M' : c.k === 'fuel' ? 'F' : c.k === 'gold' ? 'C' : 'S'}
+            </span>
+          ))}
+          <span style={{ opacity: 0.6 }}>/t</span>
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function FactionPanel({ gameId }: { gameId: string }) {
   const [me, setMe] = useState<MyFaction | null>(null);
   const [roster, setRoster] = useState<Faction[]>([]);
@@ -105,6 +154,10 @@ export function FactionPanel({ gameId }: { gameId: string }) {
   };
 
   const others = roster.filter((f) => f.id !== me.id);
+  // My own scoreboard (income + ship count) lives on the roster entry —
+  // /me doesn't carry it. Fall back to a bare object so the line still
+  // renders before the roster fetch lands.
+  const myScore = roster.find((f) => f.id === me.id) ?? (me as Faction);
 
   return (
     <div>
@@ -118,6 +171,9 @@ export function FactionPanel({ gameId }: { gameId: string }) {
         <div className="mp-resource-tile"><div className="label">Fuel</div><div className="value">{me.fuel}</div></div>
         <div className="mp-resource-tile"><div className="label">Credits</div><div className="value">{me.gold}</div></div>
         <div className="mp-resource-tile"><div className="label">Science</div><div className="value">{me.science}</div></div>
+      </div>
+      <div style={{ marginTop: 6 }}>
+        <ScoreboardStats f={myScore} />
       </div>
 
       <div className="mp-section-title" style={{ marginTop: 12 }}>Diplomacy</div>
@@ -162,6 +218,11 @@ export function FactionPanel({ gameId }: { gameId: string }) {
                   ★ {f.senate_weight}
                 </span>
               </div>
+              {!eliminated && (
+                <div style={{ width: '100%', marginTop: 4, marginLeft: 18 }}>
+                  <ScoreboardStats f={f} />
+                </div>
+              )}
               {factionPacts.length > 0 && (
                 <div style={{
                   width: '100%', marginTop: 4, marginLeft: 18,
