@@ -1,9 +1,11 @@
-import { canHostCity } from '../game/settlements';
+import { canHostCity, buildingLevel } from '../game/settlements';
 // ============================================================
 // Map Canvas Rendering - Draw the orbital system
 // ============================================================
 
-import { Body, Ship, OrbitElements, TrajectoryArc, Settlement, Faction, TorchTransferPlan } from '../types';
+import { Body, Ship, OrbitElements, TrajectoryArc, Settlement, Faction, TorchTransferPlan, BuildOrder, BuildingKind } from '../types';
+import { getPlanetTexture, hashStr, mulberry32 } from './planetTexture';
+import { drawCityCluster, drawStationStructure } from './isoStructures';
 import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt } from '../physics/orbitalMechanics';
 import { sampleTorchTrajectory, torchPositionFromSamples } from '../physics/torchTransfer';
 import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
@@ -32,6 +34,14 @@ export interface RenderContext {
   /** Wall-clock ms for the current frame — passed to drawDamageFlash
    *  so all flashes age consistently within one frame. */
   nowMs?: number;
+  /** Settlements in this game — the textured-planet path uses them for
+   *  night-side city lights; the focus-zoom structure painters read
+   *  building levels from them. Optional: only the main MapCanvas
+   *  passes it, other callers (lobby preview) skip the extras. */
+  settlements?: Settlement[];
+  /** In-flight ship builds — lets the station shipyard scaffold show
+   *  a hull under construction at focus zoom. Optional. */
+  buildOrders?: BuildOrder[];
 }
 
 /**
@@ -453,27 +463,39 @@ function drawStarBody(
   radius: number,
   ctx: RenderContext,
 ) {
-  // Outer halo
-  const outerR = radius * 6.5;
+  // Sol's physical radius (10) is huge vs planets (2-3), and things
+  // orbit it tightly: ships at body.radius + 4 = 14, stations at
+  // body.radius + 3 = 13. At full size the sun's disk + corona swallowed
+  // them. The fix draws the ENTIRE sun (core + all corona) at coreR =
+  // 0.55× its physical radius, so the whole footprint ends at
+  // ~0.55×1.7 = 0.94× the physical radius (≈ 9.4 for Sol) — comfortably
+  // INSIDE the 13-unit station orbit. That gives an orbiting station the
+  // same clear black-space gap it has around a small planet, instead of
+  // sitting embedded in the glow. Zoom-invariant.
+  const coreR = radius * 0.55;
+
+  // Outer halo — faint, ends before the orbits (1.7× coreR ≈ 0.94× radius).
+  const outerR = coreR * 1.7;
   const outer = ctx.ctx.createRadialGradient(
-    canvasPos.x, canvasPos.y, radius * 0.6,
+    canvasPos.x, canvasPos.y, coreR * 0.6,
     canvasPos.x, canvasPos.y, outerR,
   );
-  outer.addColorStop(0, 'rgba(255, 209, 128, 0.28)');
-  outer.addColorStop(0.4, 'rgba(255, 154, 60, 0.08)');
+  outer.addColorStop(0, 'rgba(255, 209, 128, 0.22)');
+  outer.addColorStop(0.45, 'rgba(255, 154, 60, 0.06)');
   outer.addColorStop(1, 'rgba(255, 154, 60, 0)');
   ctx.ctx.fillStyle = outer;
   ctx.ctx.beginPath();
   ctx.ctx.arc(canvasPos.x, canvasPos.y, outerR, 0, Math.PI * 2);
   ctx.ctx.fill();
 
-  // Mid corona
-  const midR = radius * 2.6;
+  // Mid corona — the bright layer, kept tight so it fades out before the
+  // orbits.
+  const midR = coreR * 1.3;
   const mid = ctx.ctx.createRadialGradient(
-    canvasPos.x, canvasPos.y, radius * 0.9,
+    canvasPos.x, canvasPos.y, coreR * 0.9,
     canvasPos.x, canvasPos.y, midR,
   );
-  mid.addColorStop(0, 'rgba(255, 220, 150, 0.55)');
+  mid.addColorStop(0, 'rgba(255, 220, 150, 0.5)');
   mid.addColorStop(0.7, 'rgba(255, 180, 80, 0.1)');
   mid.addColorStop(1, 'rgba(255, 154, 60, 0)');
   ctx.ctx.fillStyle = mid;
@@ -482,13 +504,13 @@ function drawStarBody(
   ctx.ctx.fill();
 
   // Hot core
-  const core = ctx.ctx.createRadialGradient(canvasPos.x, canvasPos.y, 0, canvasPos.x, canvasPos.y, radius);
+  const core = ctx.ctx.createRadialGradient(canvasPos.x, canvasPos.y, 0, canvasPos.x, canvasPos.y, coreR);
   core.addColorStop(0, '#fff8e0');
   core.addColorStop(0.55, '#ffd180');
   core.addColorStop(1, body.color || '#ffa940');
   ctx.ctx.fillStyle = core;
   ctx.ctx.beginPath();
-  ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, coreR, 0, Math.PI * 2);
   ctx.ctx.fill();
 }
 
@@ -578,6 +600,20 @@ function drawPlanetBody(
     ctx.ctx.fill();
   }
 
+  // Textured-sphere path — big enough for surface detail to read.
+  // One cached drawImage + a crisp sun-relative terminator, then warm
+  // city lights on the night side of settled worlds. Falls through to
+  // the legacy flat-disk path when small or texture unavailable.
+  if (radius > 8) {
+    const tex = getPlanetTexture(body);
+    if (tex) {
+      drawTexturedDisk(ctx.ctx, tex, canvasPos.x, canvasPos.y, radius, 0);
+      drawDayNightShading(canvasPos, radius, ctx);
+      drawNightLights(body, canvasPos, radius, ctx);
+      return;
+    }
+  }
+
   // Base disk
   ctx.ctx.fillStyle = color;
   ctx.ctx.beginPath();
@@ -595,6 +631,121 @@ function drawPlanetBody(
   // Sphere shading (only when big enough to see)
   if (radius > 3.5) {
     drawSphereShading(canvasPos, radius, ctx);
+  }
+}
+
+/**
+ * Draw a cached texture into the planet disk, optionally scrolled
+ * horizontally with wraparound (gas-giant band drift). `drift` is in
+ * canvas px; 0 = static.
+ */
+function drawTexturedDisk(
+  c: CanvasRenderingContext2D,
+  tex: HTMLCanvasElement,
+  x: number, y: number, r: number,
+  drift: number,
+) {
+  c.save();
+  c.beginPath();
+  c.arc(x, y, r, 0, Math.PI * 2);
+  c.clip();
+  const d = r * 2;
+  if (drift > 0.5) {
+    const off = drift % d;
+    c.drawImage(tex, x - r + off - d, y - r, d, d);
+    c.drawImage(tex, x - r + off, y - r, d, d);
+  } else {
+    c.drawImage(tex, x - r, y - r, d, d);
+  }
+  c.restore();
+}
+
+/**
+ * Crisp day/night terminator + a soft sun-side highlight. Replaces the
+ * blobby drawSphereShading at textured sizes. The gradient runs along
+ * the light direction, so the night side visibly swings around the
+ * planet as it orbits the sun.
+ */
+function drawDayNightShading(
+  canvasPos: { x: number; y: number },
+  radius: number,
+  ctx: RenderContext,
+) {
+  const ld = lightDirToBody(canvasPos, ctx); // unit vector away from sun
+  const g = ctx.ctx.createLinearGradient(
+    canvasPos.x - ld.x * radius, canvasPos.y - ld.y * radius,
+    canvasPos.x + ld.x * radius, canvasPos.y + ld.y * radius,
+  );
+  g.addColorStop(0, 'rgba(2, 6, 12, 0)');
+  g.addColorStop(0.5, 'rgba(2, 6, 12, 0)');
+  g.addColorStop(0.62, 'rgba(2, 6, 12, 0.55)');
+  g.addColorStop(0.8, 'rgba(2, 6, 12, 0.9)');
+  g.addColorStop(1, 'rgba(2, 6, 12, 0.94)');
+  ctx.ctx.fillStyle = g;
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
+  ctx.ctx.fill();
+
+  // Sun-side specular kiss so the day side still reads spherical.
+  const hx = canvasPos.x - ld.x * radius * 0.45;
+  const hy = canvasPos.y - ld.y * radius * 0.45;
+  const hl = ctx.ctx.createRadialGradient(hx, hy, 0, hx, hy, radius * 0.9);
+  hl.addColorStop(0, 'rgba(255, 255, 255, 0.18)');
+  hl.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  ctx.ctx.fillStyle = hl;
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
+  ctx.ctx.fill();
+}
+
+/**
+ * Warm window-light scatter on the night side of settled worlds.
+ * Drawn AFTER the terminator so the lights punch through the dark.
+ * Seeded per settlement id — the same city always twinkles in the
+ * same spots. Pure flavor; nothing sells "inhabited" harder.
+ */
+function drawNightLights(
+  body: Body,
+  canvasPos: { x: number; y: number },
+  radius: number,
+  ctx: RenderContext,
+) {
+  const settlements = ctx.settlements;
+  if (!settlements || settlements.length === 0) return;
+  const ld = lightDirToBody(canvasPos, ctx);
+  let clipped = false;
+  for (const s of settlements) {
+    if (s.bodyId !== body.id || s.type !== 'city') continue;
+    const a = s.surfaceAngle ?? 0;
+    // Only glow when the city sits on the night side (dir · ld > 0
+    // means the surface point faces away from the sun).
+    if (Math.cos(a) * ld.x + Math.sin(a) * ld.y < 0.15) continue;
+    if (!clipped) {
+      ctx.ctx.save();
+      ctx.ctx.beginPath();
+      ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
+      ctx.ctx.clip();
+      clipped = true;
+    }
+    const rand = mulberry32(hashStr(s.id));
+    const n = 4 + Math.min(6, s.population);
+    for (let i = 0; i < n; i++) {
+      const rr = radius * (0.68 + rand() * 0.26);
+      const ja = a + (rand() - 0.5) * 0.55;
+      ctx.ctx.fillStyle = i % 3 === 0 ? '#ffb84d' : '#ffd27a';
+      ctx.ctx.globalAlpha = 0.5 + rand() * 0.5;
+      ctx.ctx.beginPath();
+      ctx.ctx.arc(
+        canvasPos.x + Math.cos(ja) * rr,
+        canvasPos.y + Math.sin(ja) * rr,
+        0.9 + rand() * 0.8, 0, Math.PI * 2,
+      );
+      ctx.ctx.fill();
+    }
+  }
+  if (clipped) {
+    ctx.ctx.globalAlpha = 1;
+    ctx.ctx.restore();
   }
 }
 
@@ -688,8 +839,22 @@ function drawGasGiantBody(
   ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
   ctx.ctx.fill();
 
-  // Cloud bands (clipped horizontal stripes)
-  if (radius > 4) {
+  // Textured path — seeded bands + storm from the texture cache, with
+  // a slow horizontal drift at focus sizes so the cloud deck visibly
+  // crawls (speed scales with sim tick; ~static at 1×, alive at 100×).
+  let textured = false;
+  if (radius > 8) {
+    const tex = getPlanetTexture(body);
+    if (tex) {
+      const drift = radius > 20 ? ctx.t * radius * 0.002 : 0;
+      drawTexturedDisk(ctx.ctx, tex, canvasPos.x, canvasPos.y, radius, drift);
+      drawDayNightShading(canvasPos, radius, ctx);
+      textured = true;
+    }
+  }
+
+  // Legacy per-frame bands for small disks (or texture failure).
+  if (!textured && radius > 4) {
     ctx.ctx.save();
     ctx.ctx.beginPath();
     ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
@@ -706,10 +871,6 @@ function drawGasGiantBody(
     }
 
     ctx.ctx.restore();
-  }
-
-  // Sphere shading
-  if (radius > 4) {
     drawSphereShading(canvasPos, radius, ctx);
   }
 
@@ -1570,6 +1731,21 @@ export function drawRammingBody(
  * a small per-frame jitter on the tail point so the flame looks
  * alive. Total cost: one beginPath + one fill per thrusting ship.
  */
+// Ship thrust flames only read at closer zooms — at system-wide zoom a
+// dozen simultaneous transfers each drag a flame across the map and it
+// turns to clutter. Fade in across this camera-scale band instead of
+// popping. Calibration: the default inner-system view sits at scale
+// ≈ 1 (Earth orbit r=186 spans ~200px), and body focus-zoom clamps to
+// scale 2–60 — so flames are gone at system view and ~60% in at the
+// widest focus zoom. Asteroid-impact flames are exempt: they're a
+// threat indicator, not decoration.
+const THRUST_FADE_LO = 1.2;
+const THRUST_FADE_HI = 2.5;
+
+function thrustVisibility(scale: number): number {
+  return Math.max(0, Math.min(1, (scale - THRUST_FADE_LO) / (THRUST_FADE_HI - THRUST_FADE_LO)));
+}
+
 function drawThrustExhaust(
   ctx2d: CanvasRenderingContext2D,
   enginePos: { x: number; y: number },
@@ -1745,7 +1921,8 @@ function drawTorchTransitShip(
   // the engine). This is correct in BOTH phases: in BRAKE the ship has
   // flipped, so "behind the engine" in world space is now AHEAD of
   // motion — exactly what you'd see when the torch decelerates.
-  if (thrusting) {
+  const thrustVis = thrustVisibility(ctx.camera.scale);
+  if (thrusting && thrustVis > 0) {
     const cosH = Math.cos(heading);
     const sinH = Math.sin(heading);
     drawThrustExhaust(
@@ -1753,7 +1930,7 @@ function drawTorchTransitShip(
       { x: canvasPos.x - cosH * iconSize / 2, y: canvasPos.y - sinH * iconSize / 2 },
       { x: cosH, y: sinH },
       iconSize,
-      isSelected ? 1.0 : 0.85,
+      (isSelected ? 1.0 : 0.85) * thrustVis,
     );
   }
 
@@ -1919,6 +2096,46 @@ export function drawCity(
   const color = settlementColor(settlement, factions);
   const size = Math.max(3, 4 * Math.min(1.5, Math.sqrt(ctx.camera.scale)));
 
+  // Focus zoom — the flat square grows into a full isometric cluster
+  // standing on the surface: faction-edged pad, habitat blocks scaled
+  // by population, and a distinct silhouette per building (forge /
+  // mint / lab / thrusters) that grows with its level. Canvas is
+  // rotated so the cluster's "up" is the outward surface normal.
+  const bodyScreenR = body.radius * ctx.camera.scale;
+  if (bodyScreenR >= 40) {
+    const flashIso = ctx.damageFlashStart?.get(settlement.id);
+    drawDamageFlash(canvasPos, 12, flashIso, ctx.t, ctx, 'damage');
+    ctx.ctx.save();
+    ctx.ctx.translate(canvasPos.x, canvasPos.y);
+    ctx.ctx.rotate(angle + Math.PI / 2);
+    drawCityCluster(ctx.ctx, settlement, color);
+    ctx.ctx.restore();
+
+    // HP bar + selection ring stay in screen space, floated outward
+    // past the skyline so they never collide with the buildings.
+    const tipIsoX = canvasPos.x + Math.cos(angle) * 40;
+    const tipIsoY = canvasPos.y + Math.sin(angle) * 40;
+    if (settlement.hp < settlement.maxHp) {
+      const barW = 30;
+      const barH = 3;
+      const hpFrac = Math.max(0, settlement.hp / settlement.maxHp);
+      ctx.ctx.fillStyle = '#2a3d50';
+      ctx.ctx.fillRect(tipIsoX - barW / 2, tipIsoY - barH / 2, barW, barH);
+      ctx.ctx.fillStyle = hpFrac > 0.5 ? COLORS.success : hpFrac > 0.25 ? COLORS.warning : COLORS.danger;
+      ctx.ctx.fillRect(tipIsoX - barW / 2, tipIsoY - barH / 2, barW * hpFrac, barH);
+    }
+    if (isSelected) {
+      ctx.ctx.strokeStyle = COLORS.warning;
+      ctx.ctx.lineWidth = 1;
+      ctx.ctx.setLineDash([3, 3]);
+      ctx.ctx.beginPath();
+      ctx.ctx.arc(canvasPos.x, canvasPos.y, 28, 0, Math.PI * 2);
+      ctx.ctx.stroke();
+      ctx.ctx.setLineDash([]);
+    }
+    return;
+  }
+
   // Outward orientation
   const outwardX = Math.cos(angle);
   const outwardY = Math.sin(angle);
@@ -2005,8 +2222,18 @@ export function drawStation(
 
   const orbit = settlement.orbit;
   const radius = (orbit.rp + orbit.ra) / 2;
-  const M = orbit.M0 + (2 * Math.PI * (ctx.t - orbit.epoch) / orbit.period) * orbit.direction;
-  const theta = M;
+  // THE actual "no station on the orbit" bug: Sol (the system primary)
+  // has mu = 0, so the orbit builder yields period = 0. That made
+  // M = M0 + 2π·(t−epoch)/0 = ±Infinity → cos/sin = NaN → the marker
+  // drew at (NaN, NaN) and vanished, even though the orbit ring (which
+  // uses `radius` only) still rendered — hence "I see an orbit but no
+  // station." With no gravity there's no orbital motion, so pin the
+  // station at its fixed angle M0. (finite guard also covers any other
+  // malformed orbit.)
+  const M = (Number.isFinite(orbit.period) && orbit.period > 0)
+    ? orbit.M0 + (2 * Math.PI * (ctx.t - orbit.epoch) / orbit.period) * orbit.direction
+    : orbit.M0 + orbit.epoch;   // static: offset by epoch so multiple stations don't stack
+  const theta = Number.isFinite(M) ? M : 0;
   const localX = radius * Math.cos(theta);
   const localY = radius * Math.sin(theta);
   const worldX = bodyPos.x + localX;
@@ -2032,6 +2259,46 @@ export function drawStation(
   // Damage flash underneath the diamond
   const flashStartS = ctx.damageFlashStart?.get(settlement.id);
   drawDamageFlash(canvasPos, size, flashStartS, ctx.t, ctx, 'damage');
+
+  // Focus zoom — the diamond grows into a station: hub + solar wings,
+  // weapon barrels when a Weapons building exists, and an open
+  // shipyard scaffold that shows a hull inside whenever a ship build
+  // is in flight at this body. Levels widen the modules.
+  const bodyScreenR = body.radius * ctx.camera.scale;
+  if (bodyScreenR >= 40) {
+    const weaponsLevel = buildingLevel(settlement, 'weapons' as BuildingKind);
+    const shipyardLevel = buildingLevel(settlement, 'shipyard' as BuildingKind);
+    const buildInFlight = !!ctx.buildOrders?.some(
+      bo => bo.bodyId === body.id && bo.ownedBy === settlement.ownedBy,
+    );
+    ctx.ctx.save();
+    ctx.ctx.translate(canvasPos.x, canvasPos.y);
+    drawStationStructure(ctx.ctx, {
+      weaponsLevel, shipyardLevel, buildInFlight, factionColor: color,
+    });
+    ctx.ctx.restore();
+
+    if (settlement.hp < settlement.maxHp) {
+      const barW = 34;
+      const barH = 3;
+      const barY = canvasPos.y - 22;
+      const hpFrac = Math.max(0, settlement.hp / settlement.maxHp);
+      ctx.ctx.fillStyle = '#2a3d50';
+      ctx.ctx.fillRect(canvasPos.x - barW / 2, barY, barW, barH);
+      ctx.ctx.fillStyle = hpFrac > 0.5 ? COLORS.success : hpFrac > 0.25 ? COLORS.warning : COLORS.danger;
+      ctx.ctx.fillRect(canvasPos.x - barW / 2, barY, barW * hpFrac, barH);
+    }
+    if (isSelected) {
+      ctx.ctx.strokeStyle = COLORS.warning;
+      ctx.ctx.lineWidth = 1;
+      ctx.ctx.setLineDash([3, 3]);
+      ctx.ctx.beginPath();
+      ctx.ctx.arc(canvasPos.x, canvasPos.y, 30, 0, Math.PI * 2);
+      ctx.ctx.stroke();
+      ctx.ctx.setLineDash([]);
+    }
+    return;
+  }
 
   // Diamond
   ctx.ctx.fillStyle = color;

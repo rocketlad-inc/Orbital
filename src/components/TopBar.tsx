@@ -671,6 +671,53 @@ const MpCommitTurnButton: React.FC<{
 
 // MP-only host control for enabling Turn-Based Mode on the active
 // game. Lives in the SideMenu HOST ADMIN section so non-hosts can't
+// Host-only "publish the Discord digest now" button for the HOST ADMIN
+// section. Fires POST /admin/digest-now which posts today's Orbital
+// Herald edition to the configured Discord webhook immediately (a quiet
+// day gets a short "all quiet" special edition). Result is surfaced
+// inline in the hint slot: posted + event count, or the error.
+const PublishHeraldButton: React.FC<{ gameId: string }> = ({ gameId }) => {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+
+  const fire = async () => {
+    if (busy) return;
+    setBusy(true);
+    setResult(null);
+    try {
+      // Lazy-import apiFetch — same pattern as the diagnostics export
+      // below — so TopBar's module graph stays MP-agnostic.
+      const { apiFetch } = await import('../multiplayer/api');
+      const res = await apiFetch<{ posted: boolean; events: number; reason?: string }>(
+        `/api/games/${gameId}/admin/digest-now`,
+        { method: 'POST' },
+      );
+      if (res.ok) {
+        setResult(res.data.posted
+          ? `Published (${res.data.events} event${res.data.events === 1 ? '' : 's'})`
+          : `Not posted — ${res.data.reason ?? 'unknown'}`);
+      } else {
+        setResult(res.error?.message ?? 'Failed');
+      }
+    } catch {
+      setResult('Request failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <button className="side-menu__item" onClick={fire} disabled={busy}
+      title="Post today's Orbital Herald to the Discord channel right now">
+      <span className="side-menu__item-icon">🗞</span>
+      <span className="side-menu__item-label">{busy ? 'Publishing…' : 'Publish Herald Now'}</span>
+      <span className="side-menu__item-hint" style={result?.startsWith('Published') ? { color: '#6ee7b7' } : undefined}>
+        {result ?? 'Discord daily digest'}
+      </span>
+    </button>
+  );
+};
+
 // see or change it. Reads current state from /turn/status and writes
 // via POST /turn/settings. Editing ticks_per_turn uses the same
 // pill-stepper pattern as the existing tick-interval admin.
@@ -1089,6 +1136,7 @@ const SideMenu: React.FC<SideMenuProps> = ({
                 <span className="side-menu__item-label">Grant Resources</span>
                 <span className="side-menu__item-hint">Bump any faction's pools</span>
               </button>
+              <PublishHeraldButton gameId={adminGameId!} />
             </>
           )}
 

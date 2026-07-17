@@ -14,25 +14,8 @@ import {
 } from './ShipIcons';
 import { openShipDesigner } from './ShipDesigner';
 import { sanitizeParts, partsCost, computeDesignStats } from '../game/shipParts';
+import { randomShipName } from '../game/shipNames';
 import './BuildPanel.css';
-
-// Expanse-themed random ship names
-const SHIP_NAMES: Record<ShipClassName, string[]> = {
-  corvette: ['Tachi', 'Razorback', 'Pella', 'Chetzemoka', 'Screaming Firehawk', 'Kittur Chennamma'],
-  frigate: ['Scirocco', 'Hammurabi', 'Xuesen', 'Amberjack', 'Zenobia'],
-  destroyer: ['Donnager', 'Agatha King', 'Truman', 'Barkeith', 'Sagarmatha', 'Jimenez'],
-  freighter: ['Canterbury', 'Somnambulist', 'Weeping Somnambulist', 'Barbapiccola', 'Cerisier'],
-  colony: ['Nauvoo', 'Mayflower', 'Beagle', 'Endurance', 'Arboghast', 'Edward Israel'],
-};
-
-function getRandomName(shipClass: ShipClassName, existingNames: string[]): string {
-  const pool = SHIP_NAMES[shipClass];
-  const available = pool.filter(n => !existingNames.includes(n));
-  if (available.length > 0) {
-    return available[Math.floor(Math.random() * available.length)];
-  }
-  return `${pool[0]}-${Math.floor(Math.random() * 100)}`;
-}
 
 export const BuildPanel: React.FC = () => {
   const { gameState, uiState, buildShip, cancelBuild } = useGameContext();
@@ -76,10 +59,28 @@ export const BuildPanel: React.FC = () => {
   if (!uiState.selectedBodyId) return null;
 
   const body = gameState.bodies.find(b => b.id === uiState.selectedBodyId);
-  if (!body || body.ownedBy !== 'player') return null;
+  if (!body) return null;
 
-  // Can only build on terrestrial, dwarf, or moon bodies
-  if (body.type === 'star' || body.type === 'gas_giant' || body.type === 'ice_giant') return null;
+  // Build is allowed wherever the player has any active settlement —
+  // surface city OR orbital station. Stations CAN sit at gas / ice
+  // giants (no city possible there, but the station provides the
+  // shipyard slots), so the old "type must be terrestrial/dwarf/moon"
+  // bail locked out the gas-giant playstyle. Playtester report
+  // (clownking, 2026-06-27): "I have a station around Neptune, and
+  // I upgraded to shipyard level 1 for 1 build slot, but I can't
+  // build any ships."
+  //
+  // Star is the only type still blocked outright — no settlements can
+  // be deployed at stars in the first place, so the gate would never
+  // pass anyway, but we exit early to avoid the settlements scan.
+  if (body.type === 'star') return null;
+  // Settlement type has no destroyedAtTick — the server filters destroyed
+  // rows out before /state sends the list, so anything present here is
+  // alive by construction.
+  const hasMySettlement = gameState.settlements.some(
+    s => s.bodyId === body.id && s.ownedBy === 'player',
+  );
+  if (!hasMySettlement) return null;
 
   const playerRes = gameState.resources['player'];
   if (!playerRes) return null;
@@ -132,7 +133,7 @@ export const BuildPanel: React.FC = () => {
     //   2. whatever's typed in the input right now (legacy flow)
     //   3. random pool name
     const fromQueue = dequeueName();
-    const name = fromQueue ?? getRandomName(shipClass, existingShipNames);
+    const name = fromQueue ?? randomShipName(shipClass, existingShipNames);
     const variant = iconChoice[shipClass];
     if (mpActions) {
       // Multiplayer: server is canonical for resource deduction + queue
@@ -448,7 +449,7 @@ export const BuildPanel: React.FC = () => {
                 onClick={() => { setRecentlyQueued(s => new Set(s).add(cls)); handleBuild(cls); }}
                 title={
                   capacityBlocks
-                    ? `All ${totalSlots} build slots busy — finish a build or add a Shipyard`
+                    ? `All ${totalSlots} build slots busy — finish a build, or add a Shipyard to a station here`
                     : canAfford
                       ? slotsFull
                         ? `Queue a ${def.displayName}${activeDesign ? ` [${activeDesign.name}]` : ''} (${rowCostOre}M ${rowCostCredits}C, charged now — starts when a slot frees)`

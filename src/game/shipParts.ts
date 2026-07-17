@@ -189,9 +189,9 @@ export function computeDesignStats(
  *  SHIP_COMBAT_STATS). KEEP IN SYNC. */
 export const SERVER_HULL_BASE: Record<ShipClassName, { hp: number; damagePerTick: number }> = {
   corvette: { hp: 40, damagePerTick: 5 },
-  frigate: { hp: 80, damagePerTick: 10 },
+  frigate: { hp: 100, damagePerTick: 10 },
   destroyer: { hp: 200, damagePerTick: 18 },
-  freighter: { hp: 30, damagePerTick: 0 },
+  freighter: { hp: 60, damagePerTick: 0 },
   colony: { hp: 60, damagePerTick: 0 },
 };
 

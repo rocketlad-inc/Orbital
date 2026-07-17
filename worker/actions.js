@@ -4,6 +4,7 @@ import {
   validateParts, partsCost, parsePartsJson,
   countPart, detonatorDamage,
 } from './shipDesigns.js';
+import { runDigestForGame } from './digest.js';
 
 // Player-action endpoints: things the client wants the server to remember.
 //
@@ -200,14 +201,25 @@ async function handleCancelBuild(req, env, ctx) {
     .first();
   const tick = game?.current_tick ?? 0;
 
-  await env.DB.batch([
-    env.DB
-      .prepare('UPDATE game_body_build_queue SET cancelled_at_tick = ? WHERE id = ?')
-      .bind(tick, orderId),
-    env.DB
-      .prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?')
-      .bind(refundMetal, refundGold, me.id),
-  ]);
+  // Flip the cancel flag FIRST, guarded on it still being NULL, and only
+  // refund if this statement actually changed a row. Two concurrent
+  // cancels would both pass the read-check above; SQLite serializes the
+  // guarded UPDATE, so exactly one flips NULL->tick (changes=1, refunds)
+  // and the rest see changes=0 (no double refund). Was: an unguarded
+  // batch where every racing request refunded.
+  const flip = await env.DB
+    .prepare('UPDATE game_body_build_queue SET cancelled_at_tick = ? WHERE id = ? AND cancelled_at_tick IS NULL')
+    .bind(tick, orderId)
+    .run();
+  if (!flip.meta?.changes) {
+    return err(409, 'already_cancelled', 'this build was already cancelled');
+  }
+  // Refund covers hull + the design's parts snapshot (both were charged
+  // at queue time).
+  await env.DB
+    .prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?')
+    .bind(refundMetal, refundGold, me.id)
+    .run();
 
   return json({
     ok: true,
@@ -321,7 +333,26 @@ async function handleQueueBuild(req, env, ctx) {
     .bind(bodyId, gameId)
     .first();
   if (!bodyRow) return err(404, 'not_found', 'body not found');
-  if (bodyRow.owner_faction_id !== me.id) return err(403, 'not_owner', 'you do not own this body');
+  // Build is allowed at any body where the player owns an active
+  // settlement — surface city OR orbital station. Body ownership
+  // (game_bodies.owner_faction_id) is derived from settlement counts in
+  // recomputeBodyOwnership, so on a contested gas giant where another
+  // faction has more settlements, body owner won't be us even though we
+  // legitimately have a station here with shipyard slots. The
+  // settlement-presence check is the right gate — body ownership stays
+  // as a fast-path skip when it's clearly ours.
+  if (bodyRow.owner_faction_id !== me.id) {
+    const mineHere = await env.DB
+      .prepare(
+        `SELECT 1 AS x FROM game_settlements
+          WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+            AND destroyed_at_tick IS NULL
+          LIMIT 1`,
+      )
+      .bind(gameId, bodyId, me.id)
+      .first();
+    if (!mineHere) return err(403, 'not_owner', 'no settlement of yours at this body');
+  }
 
   // Build concurrency. Every owned body has 1 base slot; each level of
   // a Shipyard (a station building) adds one more concurrent slot. This
@@ -376,9 +407,23 @@ async function handleQueueBuild(req, env, ctx) {
     const v = Number(sliders.ship_build_cost_multiplier);
     if (Number.isFinite(v) && v > 0) buildCostMult = v;
   } catch { /* default */ }
+  // Construction tech: −5%/level to build cost, floored at 0.25× (mirrors
+  // src/game/techs.ts buildCostModifier, which SP applies in buildShip).
+  // Was ignored server-side, so a construction-teched player paid full
+  // price in MP while SP charged the discount. Stacks with the senate
+  // multiplier.
+  try {
+    const ct = await env.DB
+      .prepare("SELECT level FROM faction_techs WHERE game_id = ? AND faction_id = ? AND tech_id = 'construction'")
+      .bind(gameId, me.id)
+      .first();
+    const lvl = ct?.level ?? 0;
+    buildCostMult *= Math.max(0.25, 1 - 0.05 * lvl);
+  } catch { /* default — no discount */ }
+
   // Parts are added to the hull cost at queue time (empty slots are
-  // free — the bare hull is the budget option). The senate multiplier
-  // scales the whole ship, parts included.
+  // free — the bare hull is the budget option). Both multipliers above
+  // scale the whole ship, parts included.
   const scaledCost = {
     metal: Math.ceil((cost.metal + designPartsCost.metal) * buildCostMult),
     fuel:  Math.ceil(cost.fuel  * buildCostMult),
@@ -768,6 +813,22 @@ async function handleResearch(req, env, ctx) {
     ]);
   }
 
+  // Flight tech: stamp the faction's engine_g so the authoritative
+  // server transit math (trade-route + transfer trip times, room.js)
+  // actually gets faster. engine_g was a fixed 0.05 column that nothing
+  // ever wrote, so flight research only sped up the client's optimistic
+  // prediction — which the next /state poll overwrote. Formula mirrors
+  // src/game/techs.ts engineGModifier: base 0.05 × 1/max(0.25, 1 −
+  // 0.06·level).
+  if (techId === 'flight') {
+    const newLevel = curLevel + 1;
+    const engineG = 0.05 * (1 / Math.max(0.25, 1 - 0.06 * newLevel));
+    await env.DB
+      .prepare('UPDATE game_factions SET engine_g = ? WHERE id = ?')
+      .bind(engineG, me.id)
+      .run();
+  }
+
   return json({
     tech_id: techId,
     level: curLevel + 1,
@@ -1013,6 +1074,44 @@ async function handleTurnStatus(req, env, ctx) {
 // room host. Clamps each pool floor to 0 — drains never go negative.
 // ============================================================
 
+// Admin: publish The Orbital Herald now (host-only).
+// POST /api/games/:gameId/admin/digest-now
+// Fires the Discord digest for this game immediately, bypassing the
+// once-per-day gate. A quiet day still posts a short all-quiet special
+// edition so the button visibly works. Returns { posted, events, reason? }.
+// 403 non-host; 409 webhook_not_configured when the secret is absent.
+async function handleDigestNow(req, env, ctx) {
+  const { gameId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const room = await env.DB
+    .prepare('SELECT host_id, name FROM rooms WHERE id = ?')
+    .bind(gameId)
+    .first();
+  if (!room || room.host_id !== ctx.session.user_id) {
+    return err(403, 'not_host', 'only the host can publish the digest');
+  }
+
+  const game = await env.DB
+    .prepare('SELECT id, current_tick FROM games WHERE id = ?')
+    .bind(gameId)
+    .first();
+  if (!game) return err(404, 'not_found', 'game not found');
+
+  const result = await runDigestForGame(
+    env,
+    { id: game.id, current_tick: game.current_tick, name: room.name },
+    { force: true },
+  );
+  if (result.reason === 'webhook_not_configured') {
+    return err(409, 'webhook_not_configured', 'DISCORD_DIGEST_WEBHOOK secret is not set on the worker');
+  }
+  return json({ ok: true, ...result });
+}
+
 async function handleAdminGrant(req, env, ctx) {
   const { gameId } = ctx.params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -1079,7 +1178,7 @@ async function handleAdminGrant(req, env, ctx) {
 
 // POST /api/games/:gameId/settlements/:settlementId/collector
 // Upgrades an existing player-owned settlement to a logistics endpoint.
-// Charges COLLECTOR_COST (500 credits) and flips
+// Charges COLLECTOR_COST (150 credits) and flips
 // has_collector = 1 atomically. Failure modes:
 //   404 not_found          — settlement missing or different game
 //   403 not_owner          — settlement belongs to a different faction
@@ -1088,7 +1187,12 @@ async function handleAdminGrant(req, env, ctx) {
 //
 // Capitals already have has_collector = 1 from seedGameWorld so the
 // "already_collector" guard catches the no-op double-build attempt.
-const COLLECTOR_COST = { metal: 0, gold: 500 };
+//
+// Must match src/game/settlements.ts COLLECTOR_COST — the client cost
+// label reads the constant from there. Drift between the two = client
+// shows N, server charges M, players see "insufficient_resources"
+// errors on what looked like an affordable build.
+const COLLECTOR_COST = { metal: 0, gold: 150 };
 
 // Settlement upgrade buildings — server mirror of BUILDING_DEFS in
 // src/game/settlements.ts. KEEP IN SYNC. Cost compounds geometrically
@@ -1283,16 +1387,19 @@ async function handleCancelBuilding(req, env, ctx) {
     return json({ ok: true, refund: null });
   }
 
-  // Refund cost-at-queue-time.
+  // Refund cost-at-queue-time. Guarded flip (building_order_json still
+  // set) + refund-only-if-changed (see handleCancelBuild) so two
+  // concurrent cancels can't both refund.
   const refund = buildingCostAt(order.kind, Math.max(0, (order.target_level ?? 1) - 1));
-  await env.DB.batch([
-    env.DB
-      .prepare('UPDATE game_settlements SET building_order_json = NULL WHERE id = ?')
-      .bind(settlementId),
-    env.DB
-      .prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?')
-      .bind(refund?.metal ?? 0, refund?.gold ?? 0, me.id),
-  ]);
+  const flip = await env.DB
+    .prepare('UPDATE game_settlements SET building_order_json = NULL WHERE id = ? AND building_order_json IS NOT NULL')
+    .bind(settlementId)
+    .run();
+  if (!flip.meta?.changes) return err(409, 'already_cancelled', 'nothing to cancel');
+  await env.DB
+    .prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?')
+    .bind(refund?.metal ?? 0, refund?.gold ?? 0, me.id)
+    .run();
   return json({ ok: true, refund });
 }
 async function handleBuildCollector(req, env, ctx) {
@@ -1472,14 +1579,17 @@ async function handleCancelTradeRoute(req, env, ctx) {
   const metal   = Number(route.cargo_metal   ?? 0);
   const gold    = Number(route.cargo_gold    ?? 0);
   const science = Number(route.cargo_science ?? 0);
-  await env.DB.batch([
-    env.DB
-      .prepare('UPDATE game_trade_routes SET cancelled_at_tick = ?, cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0 WHERE id = ?')
-      .bind(tick, routeId),
-    env.DB
-      .prepare('UPDATE game_factions SET fuel = fuel + ?, metal = metal + ?, gold = gold + ?, science = science + ? WHERE id = ?')
-      .bind(fuel, metal, gold, science, me.id),
-  ]);
+  // Guarded flip + refund-only-if-changed (see handleCancelBuild) so two
+  // concurrent cancels can't both refund the cargo.
+  const flip = await env.DB
+    .prepare('UPDATE game_trade_routes SET cancelled_at_tick = ?, cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0 WHERE id = ? AND cancelled_at_tick IS NULL')
+    .bind(tick, routeId)
+    .run();
+  if (!flip.meta?.changes) return err(409, 'already_cancelled', 'already cancelled');
+  await env.DB
+    .prepare('UPDATE game_factions SET fuel = fuel + ?, metal = metal + ?, gold = gold + ?, science = science + ? WHERE id = ?')
+    .bind(fuel, metal, gold, science, me.id)
+    .run();
 
   return json({ ok: true, refund: { fuel, metal, gold, science } });
 }
@@ -1529,16 +1639,19 @@ async function handleInitiateDyson(req, env, ctx) {
   // Settlement validity.
   const station = await env.DB
     .prepare(
-      `SELECT id, faction_id, body_id, type, destroyed_at_tick
+      `SELECT id, owner_faction_id, body_id, type, destroyed_at_tick
          FROM game_settlements WHERE id = ? AND game_id = ?`,
     )
     .bind(stationId, gameId)
     .first();
   if (!station) return err(404, 'not_found', 'station not found');
   if (station.destroyed_at_tick != null) return err(409, 'destroyed', 'station is destroyed');
-  if (station.faction_id !== me.id) return err(403, 'not_owner', 'not your station');
+  // Column is owner_faction_id (not faction_id — the phantom column that
+  // 500'd this endpoint on every call), and body ids are game-namespaced
+  // as `${gameId}:sol` (not the bare literal 'sol' that always 409'd).
+  if (station.owner_faction_id !== me.id) return err(403, 'not_owner', 'not your station');
   if (station.type !== 'station') return err(409, 'not_a_station', 'foundation must be a station');
-  if (station.body_id !== 'sol') return err(409, 'not_at_sol', 'foundation must orbit Sol');
+  if (station.body_id !== `${gameId}:sol`) return err(409, 'not_at_sol', 'foundation must orbit Sol');
 
   const gameRow = await env.DB
     .prepare('SELECT current_tick FROM games WHERE id = ?')
@@ -2507,6 +2620,12 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/admin\/grant$/,
     auth: 'required',
     handle: handleAdminGrant,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/admin\/digest-now$/,
+    auth: 'required',
+    handle: handleDigestNow,
   },
   {
     method: 'POST',

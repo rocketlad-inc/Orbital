@@ -77,7 +77,16 @@
     overflow: visible !important;
   }
 
-  /* === TopBar: icon-only nav buttons, drop low-priority bits === */
+  /* === TopBar: drop the Settlements/Fleet/Research nav cluster ===
+       Those three live on the bottom DockRail strip on mobile (see
+       DockRail.css --mobile-only column), freeing the top bar for the
+       resource pills. Without this hide, the science + ships pills
+       were getting overlapped by the nav cluster on a 375px viewport. */
+  .top-bar__nav { display: none; }
+
+  /* Legacy fallbacks: any .nav-button that escapes the .top-bar__nav
+     hide (e.g. one mounted from the side menu) keeps its icon-only
+     compact form rather than the desktop label+badge layout. */
   .nav-button__icon { display: inline; }
   .nav-button__label { display: none; }
   .nav-button {
@@ -90,11 +99,9 @@
   .top-bar__title { padding-right: 8px; }
   .top-bar__title-main { font-size: 12px; letter-spacing: 0.1em; }
 
-  /* Resource bar: keep fuel/ore/credits, drop science + ships count */
-  .resource-pill--science,
-  .resource-pill--ships {
-    display: none;
-  }
+  /* Resource bar: with the nav buttons gone there's room for ALL four
+     pills again. Previously science + ships were hidden to make space;
+     keep them visible now. */
   .top-bar__resources { gap: 8px; padding-right: 8px; }
   .resource-pill__label { font-size: 7px; }
   .resource-pill__value { font-size: 12px; }

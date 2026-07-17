@@ -123,6 +123,22 @@ async function handleSend(req, env, { session, params }) {
       if (!found.has(r)) return err(400, 'bad_request', `unknown faction: ${r}`);
     }
     recipients = cleaned;
+  } else if (scope === 'broadcast') {
+    // Broadcasts used to store NO message_recipients rows — handleList
+    // surfaces them via `m.scope = 'broadcast'` instead. That left the
+    // three read paths disagreeing, because unread-count and mark-read
+    // both key off message_recipients:
+    //   - unread-count never counted a broadcast, so an announcement
+    //     landed in every inbox with no badge — players missed it.
+    //   - mark-read 403'd ('not_recipient') on the one message everyone
+    //     is meant to receive.
+    // Materialising a row per non-sender faction makes broadcast behave
+    // exactly like dm/group everywhere, with no read-path changes.
+    const rows = await env.DB
+      .prepare('SELECT id FROM game_factions WHERE game_id = ? AND id != ?')
+      .bind(gameId, sender.id)
+      .all();
+    recipients = (rows.results ?? []).map(r => r.id);
   }
 
   const id = newId();

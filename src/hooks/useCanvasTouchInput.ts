@@ -126,13 +126,22 @@ export function useCanvasTouchInput({
         pinchStartDist = Math.hypot(a.x - b.x, a.y - b.y);
         pinchStartScale = cameraRef.current.scale;
         // Release any sticky body focus so the renderer's
-        // effectiveCamera() stops overriding cam.x/y. Without this, the
-        // pinch math happens correctly but the visual stays locked on
-        // the focused body and the player only sees zoom, never the
-        // pan-toward-midpoint that pinch is supposed to feel like.
+        // effectiveCamera() stops overriding cam.x/y. CRITICAL: the
+        // stored camera.x/y is stale while a body is focused (usually
+        // the pre-focus origin, i.e. the Sun at world 0,0). If we just
+        // clear focusedBodyId, the renderer falls back to that stale
+        // x/y and the view SNAPS to the Sun the instant the pinch
+        // begins. Seed x/y from the focused body's CURRENT world
+        // position first — same snapshot-before-release the desktop
+        // mousedown pan does — so the pinch starts from where the
+        // camera visually is.
         const cam2 = cameraRef.current as CameraLike & { focusedBodyId?: string };
         if (cam2.focusedBodyId) {
-          updateCameraRef.current({ focusedBodyId: undefined } as Partial<CameraLike> & { focusedBodyId?: string | undefined });
+          const focusPos = getReleaseFocusPosRef.current?.();
+          updateCameraRef.current({
+            ...(focusPos ? { x: focusPos.x, y: focusPos.y } : {}),
+            focusedBodyId: undefined,
+          } as Partial<CameraLike> & { focusedBodyId?: string | undefined });
         }
         clearLongPress();
       } else if (pointers.size === 1 && callbacksRef.current.onLongPress) {

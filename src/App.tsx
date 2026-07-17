@@ -77,6 +77,12 @@ const SituationPanelBridge: React.FC<{
     const onOpenPanel = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       const panel = detail?.panel;
+      // null closes any open panel — the mobile DockRail uses this to
+      // toggle: a second tap on an active button dispatches { panel: null }.
+      if (panel === null) {
+        onTogglePanel(null);
+        return;
+      }
       if (panel === 'research' || panel === 'settlements' || panel === 'fleet') {
         onTogglePanel(panel);
       }
@@ -124,6 +130,16 @@ function GameUI({
     window.addEventListener('orbital:open-ship-designer', onOpenDesigner as EventListener);
     return () => window.removeEventListener('orbital:open-ship-designer', onOpenDesigner as EventListener);
   }, [isMultiplayer]);
+
+  // Broadcast the active panel id whenever it changes so the DockRail
+  // (which hosts mobile-only Settlements/Fleet/Research buttons) can
+  // mirror the active highlight. Source of truth stays here; the rail
+  // is a passive subscriber.
+  useEffect(() => {
+    try {
+      window.dispatchEvent(new CustomEvent('orbital:panel-state', { detail: { panel: activePanel } }));
+    } catch { /* noop */ }
+  }, [activePanel]);
 
   // SP autosave loop. Reads from the GameContext that wraps this GameUI
   // and writes to the rolling AUTOSAVE slot every 100 game-ticks. No-op
@@ -184,7 +200,7 @@ function GameUI({
       {/* DockRail — single source of truth for which side panel is open.
           Owns the icon column + active state; SituationLog and MultiplayerShell
           render their panels in response to its events. */}
-      <DockRail />
+      <DockRail isMultiplayer={isMultiplayer} />
       <SituationLog />
       <EventLog />
 

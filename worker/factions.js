@@ -11,6 +11,8 @@
 // header in migrations/0003_game_state.sql.
 // ============================================================================
 
+import { verifyPassword } from './auth.js';
+
 // ---------- static catalog ----------
 //
 // Mirror of src/state/mockGameState.ts SHARED_BODIES — the actual real
@@ -388,11 +390,17 @@ const STARTER_CITY_HP = 100;
 // Combat stats by ship class. Mirrors src/game/shipClasses.ts on the
 // client side. Used both by seedGameWorld (starter fleet) and by the
 // Room DO tick resolver (build completions + combat resolution).
+// HP must match src/game/shipClasses.ts — the client renders the HP bar
+// against ITS own per-class hp value, so any mismatch shows up as a
+// permanently-half-empty bar from frame one (the "why are my ships
+// damaged with zero combat" bug). Frigate 80 -> 100 and freighter 30 ->
+// 60 to match client. See migrations/0033_align_ship_hp_with_client.sql
+// for the existing-fleet heal + cap bump.
 export const SHIP_COMBAT_STATS = {
   corvette:  { hp: 40,  damage_per_tick: 5 },
-  frigate:   { hp: 80,  damage_per_tick: 10 },
+  frigate:   { hp: 100, damage_per_tick: 10 },
   destroyer: { hp: 200, damage_per_tick: 18 },
-  freighter: { hp: 30,  damage_per_tick: 0 },
+  freighter: { hp: 60,  damage_per_tick: 0 },
   colony:    { hp: 60,  damage_per_tick: 0 },
 };
 
@@ -667,7 +675,18 @@ export async function seedGameWorld(env, gameId) {
       const pick =
         fairPool.find(b => !claimed.has(b.id) && !usedRegions.has(regionOf(b.id))) ||
         fairPool.find(b => !claimed.has(b.id)) ||
-        shuffled.find(b => !claimed.has(b.id)); // last-resort: old behavior
+        // Last resort still never leaves the lobby's terrestrial+moon
+        // pool — falling back to "any body" is what produced the
+        // Vagrant asteroid capital in the first place. Only the
+        // science>=2 floor is relaxed here.
+        shuffled.find(b => !claimed.has(b.id) && STARTING_BODY_IDS.has(b.id));
+      // Defensive: STARTING_BODY_OPTIONS is far larger than max_players
+      // (8), so this can only trip if the catalog is edited down.
+      if (!pick) {
+        throw new Error(
+          `seedGameWorld: ran out of valid starting bodies for ${factionRows.length} players`,
+        );
+      }
       f.capital_template_id = pick.id;
       claimed.add(pick.id);
       usedRegions.add(regionOf(pick.id));
@@ -1323,10 +1342,33 @@ async function handleLateJoin(req, env, ctx) {
     return errResponse(400, 'bad_request', 'chosen_body required');
   }
 
-  // Ensure room membership. An explicit late-join via invite link
-  // bypasses the max_players cap on purpose — the host chose to bring
-  // this person in, and the real constraint is unclaimed worlds.
-  if (!(await isRoomMember(env, gameId, session.user_id))) {
+  // SECURITY: enforce the room password for genuine newcomers, mirroring
+  // handleJoinRoom. Previously late-join gated only on room membership and
+  // then inserted the membership itself, so a brand-new user who knew any
+  // active game's id (trivially enumerable via GET /api/rooms) could claim
+  // a free faction + fleet + starting resources in a password-protected
+  // game they were never invited to. A returning player (already has a
+  // game_factions row — membership just vanished) skips the gate, exactly
+  // as handleJoinRoom does, since they already passed it on first join.
+  const alreadyMember = await isRoomMember(env, gameId, session.user_id);
+  if (!alreadyMember) {
+    const room = await env.DB
+      .prepare('SELECT password_hash FROM rooms WHERE id = ?')
+      .bind(gameId)
+      .first();
+    const returningPlayer = !!(await env.DB
+      .prepare('SELECT 1 AS x FROM game_factions WHERE game_id = ? AND user_id = ?')
+      .bind(gameId, session.user_id)
+      .first());
+    if (!returningPlayer && room?.password_hash) {
+      const supplied = typeof body.password === 'string' ? body.password : '';
+      if (!supplied) return errResponse(401, 'password_required', 'room is password-protected');
+      const ok = await verifyPassword(supplied, room.password_hash);
+      if (!ok) return errResponse(403, 'bad_password', 'incorrect password');
+    }
+    // Explicit late-join intentionally bypasses the max_players cap — the
+    // host chose to bring this person in; the real constraint is unclaimed
+    // worlds (enforced in seedLateFaction).
     await env.DB
       .prepare('INSERT OR IGNORE INTO room_members (room_id, user_id, joined_at) VALUES (?, ?, ?)')
       .bind(gameId, session.user_id, Date.now())

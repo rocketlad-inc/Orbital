@@ -92,8 +92,23 @@ export function trueAnomalyAt(orbit: OrbitElements, t: number): number {
     M0_mean = E0 - e * Math.sin(E0);
   }
 
-  let M = M0_mean + TWO_PI * (t - orbit.epoch) / orbit.period;
+  // Guard the period division. Sol (the system primary) has mu = 0, so
+  // anything "orbiting" it gets period = 0 from the orbit builder. The
+  // old `/ orbit.period` then gave M = ±Infinity → NaN → every parked
+  // ship/station at Sol rendered at (NaN, NaN) and was invisible (the
+  // "24 ships at the sun I can't see" bug). With no gravity there's no
+  // orbital motion: place the object at a STATIC angle. Every ship is
+  // built with orbit_m0 = 0, so offset by `epoch` (its build tick, which
+  // is distinct per ship) to fan them around the ring instead of
+  // stacking them all on one point.
+  let M;
+  if (Number.isFinite(orbit.period) && orbit.period > 0) {
+    M = M0_mean + TWO_PI * (t - orbit.epoch) / orbit.period;
+  } else {
+    M = M0_mean + orbit.epoch;
+  }
   M = ((M % TWO_PI) + TWO_PI) % TWO_PI;
+  if (!Number.isFinite(M)) M = 0;
 
   return solveKepler(M, e);
 }

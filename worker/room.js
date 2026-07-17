@@ -38,6 +38,16 @@ export class Room {
     this.state = state;
     this.env = env;
     this.ready = new Map(); // userId -> boolean (transient)
+    // Re-entrancy guard for the tick loop. A DO is single-threaded but
+    // `await` on a D1 subrequest yields, letting another event in — and
+    // three sources converge on an overdue tick: the scheduled alarm,
+    // the every-minute cron poke (/tick-now), and the fire-and-forget
+    // /state self-heal every polling player issues. Without this flag two
+    // interleaved alarm() runs both read current_tick=N before either
+    // writes it, so tick N+1 resolves twice (double yields / growth /
+    // combat). Set for the duration of a tick pass; a concurrent entry
+    // bails immediately.
+    this.ticking = false;
   }
 
   async fetch(req) {
@@ -258,7 +268,7 @@ export class Room {
       }
 
       try {
-        await this.alarm();
+        await this.alarm(force);
       } catch (e) {
         console.error('manual tick failed', e);
         return new Response(JSON.stringify({ error: String(e?.message || e) }), {
@@ -302,9 +312,22 @@ export class Room {
       const endTick = startTick + ticksParam;
       const turnN = Number(g.current_turn_number ?? 0);
       const now = Date.now();
-      for (let t = startTick + 1; t <= endTick; t++) {
-        try { await this.resolveTick(gameIdParam, t); }
-        catch (e) { console.error('resolveTick in batch failed', t, e); }
+      // Share the alarm's re-entrancy guard: a leftover scheduled alarm
+      // (or a concurrent turn-advance) must not resolve ticks while this
+      // batch is mid-flight, or the same tick double-applies.
+      if (this.ticking) {
+        return new Response(JSON.stringify({ error: 'tick_in_progress' }), {
+          status: 409, headers: { 'content-type': 'application/json' },
+        });
+      }
+      this.ticking = true;
+      try {
+        for (let t = startTick + 1; t <= endTick; t++) {
+          try { await this.resolveTick(gameIdParam, t); }
+          catch (e) { console.error('resolveTick in batch failed', t, e); }
+        }
+      } finally {
+        this.ticking = false;
       }
       // Bookkeeping: bump current_tick + turn number, wipe stale commits,
       // mark a single game_ticks row so /state shows the new tick.
@@ -499,7 +522,26 @@ export class Room {
   //   3. write current_tick = nextTick, log a game_ticks row, broadcast.
   //
   // Combat resolution + body-yield harvesting are still future work.
-  async alarm() {
+  // Public alarm entry — guarded against re-entrancy (see this.ticking
+  // in the constructor). The scheduled alarm, the cron /tick-now poke,
+  // and the /state self-heal can all converge on an overdue tick; the
+  // guard ensures only one tick pass runs at a time so a tick can't
+  // resolve twice. All the real work lives in _runAlarm().
+  //
+  // `force` comes only from the host's /force-tick admin path. Cloudflare
+  // invokes alarm() with no args, so scheduled fires stay force=false and
+  // keep the early/stale-fire guard in _runAlarm().
+  async alarm(force = false) {
+    if (this.ticking) return;
+    this.ticking = true;
+    try {
+      await this._runAlarm(force);
+    } finally {
+      this.ticking = false;
+    }
+  }
+
+  async _runAlarm(force = false) {
     let started = await this.state.storage.get('gameStarted');
     if (!started?.gameId) {
       // The DO got recycled / migrated / freshly-deployed and lost its
@@ -569,7 +611,13 @@ export class Room {
     // tick ~2 intervals past now. On a 1h cadence that's a 2h gap that
     // reads as "one tick then frozen." (next_tick_at NULL → scheduled =
     // now → guard is skipped, so orphan recovery still advances.)
-    if (scheduled - now > 1000) {
+    //
+    // `force` bypasses this. The host's Force Tick button exists precisely
+    // to fire a tick that ISN'T due yet, so applying the guard to it made
+    // the button a silent no-op in the only case it's ever used —
+    // /tick-now honoured force, then handed off to an alarm that didn't
+    // know about it and re-armed instead of advancing.
+    if (!force && scheduled - now > 1000) {
       try { await this.state.storage.setAlarm(scheduled); } catch (e) {
         console.error('setAlarm (early-fire re-arm) failed', e);
       }
@@ -773,6 +821,11 @@ export class Room {
       if (!body) continue;
 
       const FUEL_MAX = { corvette: 80, frigate: 200, destroyer: 300, freighter: 400, colony: 100 };
+      // HP/DMG now come from SHIP_COMBAT_STATS via computeShipStats below
+      // (single source of truth shared with the designer's part math).
+      // Those values already carry origin's client-alignment fix — HP must
+      // match src/game/shipClasses.ts or the client renders a permanently
+      // half-full bar: frigate 80->100, freighter 30->60.
       const fuelMax = FUEL_MAX[b.ship_class] ?? 100;
       // Ship designer: hull base × part multipliers × tech (spec §2).
       // parts_json is the snapshot taken at queue time; NULL = bare
@@ -792,7 +845,12 @@ export class Room {
       // queue rows (pre-0029 migration) still complete cleanly.
       const shipName = (typeof b.ship_name === 'string' && b.ship_name.trim().length > 0)
         ? b.ship_name.trim()
-        : `${b.ship_class.charAt(0).toUpperCase()}${b.ship_class.slice(1)} T${tick}`;
+        // Legacy fallback keyed on tick alone produced the SAME name for
+        // every same-class hull finishing on that tick — across factions
+        // too ("Corvette T14" on three different ships at once). The hull
+        // number keeps the shape but makes each one distinct.
+        : `${b.ship_class.charAt(0).toUpperCase()}${b.ship_class.slice(1)} ` +
+          `T${tick}-${String(Math.floor(Math.random() * 900) + 100)}`;
 
       await this.env.DB.batch([
         this.env.DB
@@ -1034,18 +1092,27 @@ export class Room {
           .bind(n.ship_id, 'active')
           .first();
         if (ship && ship.ship_class === 'freighter') {
-          // Only pickup if this freighter isn't already on a trade
-          // route hauling cargo (avoid double-pickup with the
-          // trade-route block).
-          const onRouteWithCargo = await this.env.DB
+          // Skip ANY freighter on an active trade route — the route
+          // state machine below owns pickup/delivery for routed ships
+          // end-to-end. The old guard only skipped routed ships that
+          // were ALREADY carrying cargo, so a freighter RETURNING to
+          // its origin (cargo=0) got ad-hoc-vacuumed and its haul
+          // stashed into the route's cargo columns; next tick the
+          // route machine saw cargo>0 at origin (PICKUP wants cargo=0,
+          // DELIVERY wants dest) and none of its branches could move
+          // the ship — the route deadlocked on its first return leg
+          // with up to 500/resource frozen in cargo. Gating on route
+          // membership (not cargo) hands routed freighters exclusively
+          // to the state machine; manual freighters (no route) still
+          // get ad-hoc pickup.
+          const onActiveRoute = await this.env.DB
             .prepare(
               `SELECT 1 AS x FROM game_trade_routes
-                 WHERE ship_id = ?
-                   AND (cargo_fuel + cargo_metal + cargo_gold + cargo_science) > 0
+                 WHERE ship_id = ? AND cancelled_at_tick IS NULL
                  LIMIT 1`,
             )
             .bind(n.ship_id).first();
-          if (!onRouteWithCargo) {
+          if (!onActiveRoute) {
             const PICKUP_CAP = 500;  // matches CARGO_CAP further down
             const stocks = (await this.env.DB
               .prepare(
@@ -1079,33 +1146,20 @@ export class Room {
                 .run();
               if (cf >= PICKUP_CAP && cm >= PICKUP_CAP && cg >= PICKUP_CAP && csci >= PICKUP_CAP) break;
             }
-            // If we picked anything up, stash it in the trade_routes
-            // row associated with this ship if one exists; otherwise
-            // hand straight to the faction pool (the freighter is
-            // doing manual logistics, no route to buffer cargo on).
+            // We're only here for freighters with NO active route (the
+            // guard above excluded routed ships), so this is manual
+            // logistics: hand the pickup straight to the faction pool.
+            // Do NOT stash into any trade_routes row — a cancelled
+            // route row would swallow the cargo permanently.
             if (cf + cm + cg + csci > 0) {
-              const route = await this.env.DB
-                .prepare('SELECT id FROM game_trade_routes WHERE ship_id = ? LIMIT 1')
-                .bind(n.ship_id).first();
-              if (route) {
-                await this.env.DB
-                  .prepare(
-                    `UPDATE game_trade_routes
-                        SET cargo_fuel = cargo_fuel + ?, cargo_metal = cargo_metal + ?,
-                            cargo_gold = cargo_gold + ?, cargo_science = cargo_science + ?
-                      WHERE id = ?`,
-                  )
-                  .bind(cf, cm, cg, csci, route.id).run();
-              } else {
-                await this.env.DB
-                  .prepare(
-                    `UPDATE game_factions
-                        SET fuel    = fuel    + ?, metal   = metal   + ?,
-                            gold    = gold    + ?, science = science + ?
-                      WHERE id = ?`,
-                  )
-                  .bind(cf, cm, cg, csci, ship.owner_faction_id).run();
-              }
+              await this.env.DB
+                .prepare(
+                  `UPDATE game_factions
+                      SET fuel    = fuel    + ?, metal   = metal   + ?,
+                          gold    = gold    + ?, science = science + ?
+                    WHERE id = ?`,
+                )
+                .bind(cf, cm, cg, csci, ship.owner_faction_id).run();
             }
           }
         }
@@ -1514,6 +1568,38 @@ export class Room {
     // tree. Keep in sync if SP's interval changes.
     const AUTO_COMBAT_INTERVAL = 3;
 
+    // --- Canonical combat constants, mirrored from the client (the
+    //     authoritative combat spec — src/game/shipClasses.ts +
+    //     src/game/settlements.ts). MP combat now matches SP exactly:
+    //     each attacker deals FULL damage to EVERY hostile (not split),
+    //     reduced by the target's PDC; settlements bombard with their
+    //     class damage (not a flat 4) and FIRE BACK on hostile ships. ---
+    const SHIP_PDC = { corvette: 0.2, frigate: 0.4, destroyer: 0.6, freighter: 0.1 };
+    const SETTLEMENT_PDC = { city: 0.3, station: 0.5 };
+    const SETTLEMENT_DMG = { city: 6, station: 8 };          // return-fire base
+    const WEAPONS_BUILDING_DMG_PER_LEVEL = 4;                 // station Weapons building
+    const pdcOfShipClass = (cls) => SHIP_PDC[cls] ?? 0;
+    const pdcOfSettlement = (type) => SETTLEMENT_PDC[type] ?? 0;
+
+    // Per-faction tech multipliers for this tick (one indexed query,
+    // bucketed). perLevel values mirror src/game/techs.ts TECH_DEFS.
+    // Only weapons (combat) + armor (HP cap) are read in the tick loop;
+    // industry is re-read in the yield pass, construction/flight are
+    // applied in the request handlers (build cost / engine_g).
+    const combatTechRows = (await this.env.DB
+      .prepare('SELECT faction_id, tech_id, level FROM faction_techs WHERE game_id = ?')
+      .bind(gameId)
+      .all()).results ?? [];
+    const techLvl = new Map(); // fid -> { weapons, armor, ... }
+    for (const r of combatTechRows) {
+      let m = techLvl.get(r.faction_id);
+      if (!m) { m = {}; techLvl.set(r.faction_id, m); }
+      m[r.tech_id] = r.level;
+    }
+    const weaponsMulOf  = (fid) => 1 + 0.10 * (techLvl.get(fid)?.weapons  ?? 0);
+    const armorMulOf    = (fid) => 1 + 0.08 * (techLvl.get(fid)?.armor    ?? 0);
+    const industryMulOf = (fid) => 1 + 0.10 * (techLvl.get(fid)?.industry ?? 0);
+
     // Build a fast at-peace lookup: pacts.has(fA + '|' + fB) === true iff
     // they have an active NAP/defense pact (unordered key).
     const peaceRows = (await this.env.DB
@@ -1597,13 +1683,55 @@ export class Room {
       }
       aggressorsAtBody.set(bodyId, set);
     }
+    // Settlements are combatants too — fetched here (before the volley
+    // loop) so ships can target them and they can fire back within the
+    // same simultaneous step, matching the client model. buildings_json
+    // carries the Weapons-building level for station return-fire;
+    // last_combat_tick gates the settlement's own cadence.
+    const livingSettlements = (await this.env.DB
+      .prepare(
+        `SELECT id, name, body_id, owner_faction_id, type, hp, hp_max,
+                buildings_json, last_combat_tick
+           FROM game_settlements
+          WHERE game_id = ? AND destroyed_at_tick IS NULL`,
+      )
+      .bind(gameId)
+      .all()).results ?? [];
+    const combatSettlementsByBody = new Map();
+    for (const st of livingSettlements) {
+      if (!combatSettlementsByBody.has(st.body_id)) combatSettlementsByBody.set(st.body_id, []);
+      combatSettlementsByBody.get(st.body_id).push(st);
+    }
+    const weaponsLevelOf = (st) => {
+      if (!st.buildings_json) return 0;
+      try { return Number(JSON.parse(st.buildings_json)?.weapons ?? 0) || 0; } catch { return 0; }
+    };
+    // settlementId -> { total, byFaction: Map } accrued ship→settlement damage.
+    const settlementDamage = new Map();
+    const addSettlementDamage = (sid, fid, amount) => {
+      let e = settlementDamage.get(sid);
+      if (!e) { e = { total: 0, byFaction: new Map() }; settlementDamage.set(sid, e); }
+      e.total += amount;
+      e.byFaction.set(fid, (e.byFaction.get(fid) || 0) + amount);
+    };
 
     // Ships that fired this tick — their last_combat_tick gets bumped
     // to `tick` in a post-loop UPDATE so the next-N-ticks cooldown
     // applies. Tracked here instead of inline so we can batch the writes.
     const firedShipIds = new Set();
-    for (const [bodyId, ships] of byBody) {
-      const factions = new Set(ships.map(s => s.owner_faction_id));
+    const firedSettlementIds = new Set();
+    // A body sees hostilities if ≥2 factions are present across ships
+    // AND settlements combined (so a ship attacking an undefended
+    // enemy settlement, or a settlement firing on a lone raider, both
+    // count even when only one faction has ships there).
+    const combatBodyIds = new Set([...byBody.keys(), ...combatSettlementsByBody.keys()]);
+    for (const bodyId of combatBodyIds) {
+      const ships = byBody.get(bodyId) ?? [];
+      const localSettlements = combatSettlementsByBody.get(bodyId) ?? [];
+      const factions = new Set([
+        ...ships.map(s => s.owner_faction_id),
+        ...localSettlements.map(s => s.owner_faction_id),
+      ]);
       if (factions.size < 2) continue;
       for (const attacker of ships) {
         if (!attacker.damage_per_tick || attacker.damage_per_tick <= 0) continue;
@@ -1621,28 +1749,80 @@ export class Room {
         // Defensive stance additionally requires the target's faction to be
         // an active aggressor at this body (see aggressorsAtBody above).
         const aggressors = aggressorsAtBody.get(bodyId) ?? new Set();
-        const targets = ships.filter(t =>
+        // Hostile ships and settlements from factions we're at war with.
+        const shipTargets = ships.filter(t =>
           t.owner_faction_id !== attacker.owner_faction_id
           && !peace.has(pairKey(attacker.owner_faction_id, t.owner_faction_id))
           && (stance !== 'defensive' || aggressors.has(t.owner_faction_id)),
         );
-        if (targets.length === 0) continue;
-        // Veterancy: each rank on the attacker = +1% damage (mirrors
-        // src/game/techs.ts RANK_PER_KILL_MUL). Stacks multiplicatively
-        // with the faction-level Weapons tech (which is applied via the
-        // hp_max / damage_per_tick already stamped on the ship row when
-        // they were last upgraded — see lobby/upgrade endpoints).
+        // Stance gates bombardment the same way it gates ship combat:
+        // hold already `continue`d above; defensive only chips the
+        // settlements of a faction actively aggressing at this body.
+        const settlementTargets = localSettlements.filter(t =>
+          t.owner_faction_id !== attacker.owner_faction_id
+          && !peace.has(pairKey(attacker.owner_faction_id, t.owner_faction_id))
+          && (stance !== 'defensive' || aggressors.has(t.owner_faction_id)),
+        );
+        if (shipTargets.length === 0 && settlementTargets.length === 0) continue;
+        // Canonical (client) damage model: FULL damage to EVERY hostile
+        // target, reduced by that target's PDC — NOT split across targets.
+        // Multipliers stack multiplicatively: faction Weapons tech
+        // (+10%/level), attacker veterancy (+1%/rank), and the senate
+        // combat-damage slider. The old server model divided damage by
+        // targets.length and ignored PDC entirely, so a ship shooting N
+        // hostiles dealt 1/N the client's per-target damage and the
+        // client's optimistic prediction constantly showed kills the
+        // server never applied.
         const rankMul = 1 + 0.01 * Math.max(0, attacker.rank ?? 0);
-        const baseSplit = (attacker.damage_per_tick * rankMul * combatDamageMult) / targets.length;
-        for (const t of targets) {
+        const attackPower =
+          attacker.damage_per_tick * weaponsMulOf(attacker.owner_faction_id) * rankMul * combatDamageMult;
+        for (const t of shipTargets) {
           // Senate war authorization: damage TO a faction the senate has
           // formally declared war on is doubled. Per-target (not per-
           // attacker) so a single attacker shooting multiple factions
           // applies the multiplier only to the sanctioned ones.
           const warAuthMul = (await sanctioned(t.owner_faction_id, 'war_authorization')) ? 2 : 1;
-          addDamage(t.id, attacker.owner_faction_id, attacker.id, baseSplit * warAuthMul);
+          const dmg = attackPower * (1 - pdcOfShipClass(t.ship_class)) * warAuthMul;
+          addDamage(t.id, attacker.owner_faction_id, attacker.id, dmg);
+        }
+        // Ships also bombard hostile settlements — class damage reduced
+        // by the settlement's PDC (city 0.3 / station 0.5), NOT the old
+        // flat 4/ship. A destroyer now hits a city far harder than a
+        // corvette does, as it does on the client.
+        for (const t of settlementTargets) {
+          const warAuthMul = (await sanctioned(t.owner_faction_id, 'war_authorization')) ? 2 : 1;
+          const dmg = attackPower * (1 - pdcOfSettlement(t.type)) * warAuthMul;
+          addSettlementDamage(t.id, attacker.owner_faction_id, dmg);
         }
         firedShipIds.add(attacker.id);
+      }
+
+      // Settlements return fire on hostile ships at the same body —
+      // city 6 / station 8 base, plus the station Weapons building
+      // (+4/level), scaled by the owner's Weapons tech, reduced by the
+      // target ship's PDC. Gated by the settlement's own cadence.
+      // Accrues into the SAME hpDeltas the ship volley uses, so it
+      // resolves simultaneously (a settlement and its attacker can kill
+      // each other on the same tick). Settlements never earn veterancy
+      // (no attackerShipId passed), matching the client.
+      for (const st of localSettlements) {
+        const base = (SETTLEMENT_DMG[st.type] ?? 0) + WEAPONS_BUILDING_DMG_PER_LEVEL * weaponsLevelOf(st);
+        if (base <= 0) continue;
+        const lastFired = st.last_combat_tick ?? -Infinity;
+        if (tick - lastFired < AUTO_COMBAT_INTERVAL) continue;
+        const shipTargets = ships.filter(t =>
+          t.owner_faction_id !== st.owner_faction_id
+          && !peace.has(pairKey(st.owner_faction_id, t.owner_faction_id))
+          && (t.damage_per_tick ?? 0) >= 0,
+        );
+        if (shipTargets.length === 0) continue;
+        const power = base * weaponsMulOf(st.owner_faction_id) * combatDamageMult;
+        for (const t of shipTargets) {
+          const warAuthMul = (await sanctioned(t.owner_faction_id, 'war_authorization')) ? 2 : 1;
+          const dmg = power * (1 - pdcOfShipClass(t.ship_class)) * warAuthMul;
+          addDamage(t.id, st.owner_faction_id, null, dmg);
+        }
+        firedSettlementIds.add(st.id);
       }
     }
 
@@ -1674,65 +1854,41 @@ export class Room {
       return best;
     }
 
-    // 3.4 Settlement combat. Hostile ships orbiting the same body as a
-    //     settlement chip away at its hp every tick. Peace pacts still
-    //     suppress (same `peace` set as ship combat). Cities and stations
-    //     can't fight back yet — that's a follow-up.
-    const SETTLEMENT_INCOMING_DAMAGE_PER_HOSTILE_SHIP = 4;
-    // Pull settlement name too so chronicle entries can say "Triton City"
-    // instead of the un-formatted "settlement_destroyed" the log was
-    // showing previously.
-    const livingSettlements = (await this.env.DB
-      .prepare(
-        `SELECT id, name, body_id, owner_faction_id, type, hp, hp_max
-           FROM game_settlements
-          WHERE game_id = ? AND destroyed_at_tick IS NULL`,
-      )
-      .bind(gameId)
-      .all()).results ?? [];
-
+    // 3.4 Settlement damage resolution. Damage was accrued into
+    //     `settlementDamage` during the volley loop above (ships
+    //     bombarding hostile settlements with class damage × (1−PDC),
+    //     not the old flat 4/ship). Peace pacts already suppressed at
+    //     accrual time. Here we just apply it + credit the kill to the
+    //     top-damage faction, and stamp last_combat_tick on settlements
+    //     that fired back so their cadence advances.
     const destroyedSettlements = [];
-    // settlementId -> faction id that landed the killing volley, by largest
-    // ship-count contribution (proxy for damage since per-hostile damage
-    // is flat). Used downstream for the chronicle payload's killer field.
+    // settlementId -> faction id that dealt the most damage (kill credit).
     const settlementKillers = new Map();
     for (const s of livingSettlements) {
-      const shipsHere = byBody.get(s.body_id) ?? [];
-      // Stance gates settlement bombardment the same way it gates ship
-      // combat: hold never fires; defensive only chips settlements of a
-      // faction that is actively aggressing at this body.
-      const settlementAggressors = aggressorsAtBody.get(s.body_id) ?? new Set();
-      const hostiles = shipsHere.filter(sh =>
-        sh.owner_faction_id !== s.owner_faction_id
-        && !peace.has(pairKey(sh.owner_faction_id, s.owner_faction_id))
-        && (sh.damage_per_tick ?? 0) > 0
-        && effectiveStance(sh) !== 'hold'
-        && (effectiveStance(sh) !== 'defensive' || settlementAggressors.has(s.owner_faction_id)),
-      );
-      if (hostiles.length === 0) continue;
-      const incoming = hostiles.length * SETTLEMENT_INCOMING_DAMAGE_PER_HOSTILE_SHIP;
+      // Damage was accrued per-attacker in the ship volley loop above
+      // (which already applies stance gating — see settlementTargets).
+      const entry = settlementDamage.get(s.id);
+      const incoming = entry?.total ?? 0;
+      const fired = firedSettlementIds.has(s.id);
+      if (incoming <= 0 && !fired) continue;   // untouched this tick
       const newHp = Math.max(0, s.hp - incoming);
-      if (newHp <= 0) {
+      if (incoming > 0 && newHp <= 0) {
         await this.env.DB
           .prepare('UPDATE game_settlements SET hp = 0, destroyed_at_tick = ?, last_combat_tick = ? WHERE id = ?')
           .bind(tick, tick, s.id)
           .run();
         destroyedSettlements.push(s);
-        // Largest hostile-faction presence gets the kill credit. Tie:
-        // first encountered wins (Map iteration order = insertion order).
-        const byFaction = new Map();
-        for (const h of hostiles) {
-          byFaction.set(h.owner_faction_id, (byFaction.get(h.owner_faction_id) || 0) + 1);
-        }
-        let topFid = null, topN = -1;
-        for (const [fid, n] of byFaction) {
-          if (n > topN) { topFid = fid; topN = n; }
+        // Top-damage faction gets the kill credit (tie: first inserted).
+        let topFid = null, topDmg = -1;
+        for (const [fid, dmg] of entry.byFaction) {
+          if (dmg > topDmg) { topFid = fid; topDmg = dmg; }
         }
         if (topFid) settlementKillers.set(s.id, topFid);
       } else {
+        // Survived (or only fired back): persist any hp loss + cadence.
         await this.env.DB
           .prepare('UPDATE game_settlements SET hp = ?, last_combat_tick = ? WHERE id = ?')
-          .bind(newHp, tick, s.id)
+          .bind(newHp, fired ? tick : (s.last_combat_tick ?? tick), s.id)
           .run();
       }
     }
@@ -1880,10 +2036,14 @@ export class Room {
         }
       }
       if (repairRate <= 0 && refuelRate <= 0) continue;
-      // Rank-boosted HP cap so veteran hulls can heal into their
-      // extra buffer. The +1% per rank matches client combat.ts +
-      // src/game/techs.ts rankHpMul.
-      const effectiveMaxHp = (ship.hp_max ?? 0) * (1 + 0.01 * Math.max(0, ship.rank ?? 0));
+      // Effective HP cap = base × rank (+1%/kill) × armor tech (+8%/level).
+      // Rank matches client combat.ts rankHpMul; armor mirrors
+      // src/game/techs.ts hpModifier so an armor-teched fleet can repair
+      // into (and, once the client applies the same cap, display) its
+      // larger buffer. Previously armor tech did nothing server-side.
+      const effectiveMaxHp = (ship.hp_max ?? 0)
+        * (1 + 0.01 * Math.max(0, ship.rank ?? 0))
+        * armorMulOf(ship.owner_faction_id);
       const newHp = Math.min(effectiveMaxHp, (ship.hp ?? effectiveMaxHp) + repairRate);
       const newFuel = Math.min(ship.fuel_max ?? 0, (ship.fuel ?? 0) + refuelRate);
       if (newHp === ship.hp && newFuel === ship.fuel) continue;
@@ -1951,11 +2111,41 @@ export class Room {
     const NO_COLLECTOR_POOL_FRACTION = 0.10;       // 10% to faction pool
     const NO_COLLECTOR_STOCK_FRACTION = 0.90;       // 90% to local stockpile
 
-    // Aggregate per-faction pool deltas; apply per-settlement
+    // Aggregate per-faction pool deltas; apply per-(body,faction)
     // stockpile deltas individually. Wrapped: yield distribution must
     // NEVER kill resolveTick (combat, dyson, victory all run after).
     try {
       const perFactionPool = new Map();
+
+      // Per-body local stockpile pre-pass. Lorne's call: ONE local
+      // pool per body, shared between a city and any stations of the
+      // same faction at that body. A collector anywhere in the group
+      // flips the WHOLE group to 100% pool; otherwise the group's
+      // 90% stockpile share gets written to the primary holder
+      // (prefer city → fall back to station). This is what makes a
+      // station's yield reach the city's local pile instead of
+      // stranding in a separate station-only stockpile, and what makes
+      // a collector on a city also collect for the station orbiting it.
+      // Keyed (body, faction) so two factions sharing a body still keep
+      // their stockpiles independent.
+      const groupKey = (s) => `${s.body_id}|${s.fid}`;
+      const groupHasCollector = new Map();
+      const groupPrimary = new Map(); // groupKey -> { id, type }
+      for (const s of settlements) {
+        const k = groupKey(s);
+        if (s.has_collector) groupHasCollector.set(k, true);
+        const cur = groupPrimary.get(k);
+        // Prefer 'city' as the stockpile holder. If there's no city
+        // (gas-giant cases like clownking's Neptune), the station's own
+        // row collects — same row that already shows in the inspector.
+        if (!cur || (cur.type === 'station' && s.type === 'city')) {
+          groupPrimary.set(k, { id: s.id, type: s.type });
+        }
+      }
+      // Per-group stockpile accumulators so a city + station at the
+      // same body write ONE UPDATE to the primary's row instead of two.
+      const perGroupStock = new Map(); // groupKey -> { targetId, f, m, g, sc }
+
       for (const s of settlements) {
         const tm = s.type === 'city' ? TYPE_MUL_CITY : TYPE_MUL_STATION;
         const popMul = 1 + YIELD_MULT_PER_POP * Math.max(0, Number(s.population ?? 1) - 1);
@@ -1973,18 +2163,29 @@ export class Room {
         // Mirrors PROD_SANCTION_MULTIPLIER in worker/senate.js — keep
         // these two values in sync.
         const prodMul = (await sanctioned(s.fid, 'production_sanction')) ? 0.5 : 1;
+        // Industry tech: +10%/level to ALL resource yields for the
+        // owning faction (mirrors src/game/techs.ts yieldModifier, which
+        // SP applies via tickSettlements). Previously the server ignored
+        // tech entirely, so an industry-teched empire's income silently
+        // reverted to base the moment /state reconciled.
+        const indMul = industryMulOf(s.fid);
         const yieldFull = {
           // Senate fuel-yield slider: applied here (only fuel) so a
           // global "Fuel Yield 1.5×" law actually does something. The
           // slider was previously declared in the catalog and never read.
-          fuel:    Number(s.yield_fuel    ?? 0) * popMul * tm.fuel              * prodMul * fuelYieldMult,
-          metal:   Number(s.yield_metal   ?? 0) * popMul * tm.metal   * forgeMul * prodMul,
-          gold:    Number(s.yield_gold    ?? 0) * popMul * tm.gold    * mintMul  * prodMul,
-          science: Number(s.yield_science ?? 0) * popMul * tm.science * labMul   * prodMul,
+          fuel:    Number(s.yield_fuel    ?? 0) * popMul * tm.fuel              * prodMul * indMul * fuelYieldMult,
+          metal:   Number(s.yield_metal   ?? 0) * popMul * tm.metal   * forgeMul * prodMul * indMul,
+          gold:    Number(s.yield_gold    ?? 0) * popMul * tm.gold    * mintMul  * prodMul * indMul,
+          science: Number(s.yield_science ?? 0) * popMul * tm.science * labMul   * prodMul * indMul,
         };
 
-        const toPoolFraction  = s.has_collector ? 1.0 : NO_COLLECTOR_POOL_FRACTION;
-        const toStockFraction = s.has_collector ? 0.0 : NO_COLLECTOR_STOCK_FRACTION;
+        // Collector status is now per (body, faction) group — see
+        // pre-pass above. A city's collector covers any station at the
+        // same body, and vice versa.
+        const gk = groupKey(s);
+        const groupCollector = groupHasCollector.get(gk) === true;
+        const toPoolFraction  = groupCollector ? 1.0 : NO_COLLECTOR_POOL_FRACTION;
+        const toStockFraction = groupCollector ? 0.0 : NO_COLLECTOR_STOCK_FRACTION;
 
         const poolDelta = {
           fuel:    yieldFull.fuel    * toPoolFraction,
@@ -2005,35 +2206,71 @@ export class Room {
           const sg = Math.round(yieldFull.gold    * toStockFraction);
           const ss = Math.round(yieldFull.science * toStockFraction);
           if (sf + sm + sg + ss > 0) {
-            await this.env.DB
-              .prepare(
-                `UPDATE game_settlements
-                    SET stockpile_fuel    = stockpile_fuel    + ?,
-                        stockpile_metal   = stockpile_metal   + ?,
-                        stockpile_gold    = stockpile_gold    + ?,
-                        stockpile_science = stockpile_science + ?
-                  WHERE id = ?`,
-              )
-              .bind(sf, sm, sg, ss, s.id)
-              .run();
+            // Accumulate into the GROUP's primary stockpile holder.
+            // Two settlements at the same body (city + station) feed
+            // ONE UPDATE on the city's row below. If no city is
+            // present (gas-giant body) the station's own row collects.
+            const primary = groupPrimary.get(gk);
+            const targetId = primary?.id ?? s.id;
+            const agg = perGroupStock.get(gk) ?? { targetId, f: 0, m: 0, g: 0, sc: 0 };
+            agg.f  += sf;
+            agg.m  += sm;
+            agg.g  += sg;
+            agg.sc += ss;
+            perGroupStock.set(gk, agg);
           }
         }
       }
 
-      // Apply pool deltas — one UPDATE per faction.
-      for (const [fid, delta] of perFactionPool) {
-        const fuelI    = Math.round(delta.fuel);
-        const metalI   = Math.round(delta.metal);
-        const goldI    = Math.round(delta.gold);
-        const scienceI = Math.round(delta.science);
-        if (fuelI + metalI + goldI + scienceI <= 0) continue;
+      // Flush per-group stockpile UPDATEs — one per (body, faction)
+      // rather than one per settlement, so a city + station combine
+      // into a single write at the city's row.
+      for (const [, agg] of perGroupStock) {
+        if (agg.f + agg.m + agg.g + agg.sc <= 0) continue;
         await this.env.DB
           .prepare(
-            `UPDATE game_factions
-                SET fuel = fuel + ?, metal = metal + ?, gold = gold + ?, science = science + ?
+            `UPDATE game_settlements
+                SET stockpile_fuel    = stockpile_fuel    + ?,
+                    stockpile_metal   = stockpile_metal   + ?,
+                    stockpile_gold    = stockpile_gold    + ?,
+                    stockpile_science = stockpile_science + ?
               WHERE id = ?`,
           )
-          .bind(fuelI, metalI, goldI, scienceI, fid)
+          .bind(agg.f, agg.m, agg.g, agg.sc, agg.targetId)
+          .run();
+      }
+
+      // Apply pool deltas — one UPDATE per faction, carrying sub-integer
+      // fractions in the *_remainder columns (migration 0028) instead of
+      // Math.round-and-dropping them. The old rounding silently destroyed
+      // the entire income of small non-collector colonies: a body giving
+      // e.g. 0.4 science/tick to the pool rounded to 0 EVERY tick,
+      // forever — defeating the documented "even uncollectered worlds
+      // contribute SOMETHING every tick" 10% trickle. `CAST(x AS INTEGER)`
+      // truncates toward zero in SQLite; deltas are non-negative (yields),
+      // so truncate == floor. new_pool += floor(remainder + delta);
+      // new_remainder = (remainder + delta) - floor(remainder + delta).
+      for (const [fid, delta] of perFactionPool) {
+        if (delta.fuel + delta.metal + delta.gold + delta.science <= 0) continue;
+        await this.env.DB
+          .prepare(
+            `UPDATE game_factions SET
+               fuel    = fuel    + CAST(fuel_remainder    + ? AS INTEGER),
+               metal   = metal   + CAST(metal_remainder   + ? AS INTEGER),
+               gold    = gold    + CAST(gold_remainder    + ? AS INTEGER),
+               science = science + CAST(science_remainder + ? AS INTEGER),
+               fuel_remainder    = (fuel_remainder    + ?) - CAST(fuel_remainder    + ? AS INTEGER),
+               metal_remainder   = (metal_remainder   + ?) - CAST(metal_remainder   + ? AS INTEGER),
+               gold_remainder    = (gold_remainder    + ?) - CAST(gold_remainder    + ? AS INTEGER),
+               science_remainder = (science_remainder + ?) - CAST(science_remainder + ? AS INTEGER)
+             WHERE id = ?`,
+          )
+          .bind(
+            delta.fuel, delta.metal, delta.gold, delta.science,
+            delta.fuel, delta.fuel, delta.metal, delta.metal,
+            delta.gold, delta.gold, delta.science, delta.science,
+            fid,
+          )
           .run();
       }
     } catch (e) {
@@ -2104,9 +2341,17 @@ export class Room {
             });
           }
         } else {
+          // Apply damage RELATIVE to the ship's current DB hp, not the
+          // pre-maintenance `allShips` snapshot. Section 3.45 (ship
+          // maintenance) already wrote `hp = old + repairRate` to the
+          // row this tick; an absolute `hp = snapshot.hp - dmg` write
+          // here would overwrite (erase) that station repair. So a
+          // fleet tanking at its own dry-dock under fire got ZERO
+          // effective healing — precisely the case stations exist for.
+          // MAX(0, …) keeps the floor without needing the snapshot.
           await this.env.DB
-            .prepare('UPDATE game_ships SET hp = ? WHERE id = ?')
-            .bind(newHp, shipId)
+            .prepare('UPDATE game_ships SET hp = MAX(0, hp - ?) WHERE id = ?')
+            .bind(entry.total, shipId)
             .run();
         }
       }
@@ -2640,7 +2885,8 @@ export class Room {
   }
 
   /**
-   * Server mirror of src/game/dysonSphere.ts. Each tick:
+   * Server mirror of src/game/dysonSphere.ts (see tickDysonSphere below).
+   * Each tick:
    *   1. Detect foundation-station destruction → collapse sphere.
    *   2. Detect foundation-station damage delta → apply to sphere HP
    *      and proportionally scale accumulated resources.
@@ -3232,9 +3478,9 @@ export class Room {
               AND owner_faction_id = ?
               AND ship_class = 'freighter'
               AND status = 'active'
-              AND parent_body_id = 'sol'`,
+              AND parent_body_id = ?`,
       )
-      .bind(gameId, ctrl)
+      .bind(gameId, ctrl, `${gameId}:sol`)
       .all()).results ?? [];
     const n = freighters.length;
     if (n === 0) {
@@ -3371,13 +3617,13 @@ export class Room {
     if (factions.length >= 2) {
       const settled = (await this.env.DB
         .prepare(
-          `SELECT DISTINCT faction_id
+          `SELECT DISTINCT owner_faction_id
              FROM game_settlements
             WHERE game_id = ? AND destroyed_at_tick IS NULL`,
         )
         .bind(gameId)
         .all()).results ?? [];
-      const factionsWithSettlements = new Set(settled.map(r => r.faction_id));
+      const factionsWithSettlements = new Set(settled.map(r => r.owner_faction_id));
       for (const candidate of factions) {
         let anyRivalAlive = false;
         for (const f of factions) {

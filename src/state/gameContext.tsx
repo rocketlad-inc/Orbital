@@ -133,11 +133,11 @@ function applyAIIntent(
       // conversion the torch acceleration is 530× too weak and ships coast off
       // in roughly their inherited orbital direction instead of arriving.
       const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
-      // Engine parts (ship designer, MP only): −15% travel time per
-      // engine part (×Propulsion tech), realized as an accel boost
-      // under T = 2√(d/a). SP ships never carry parts, so this is the
-      // identity (×1) for the frozen single-player sim.
       const engineAccel = baseAccel * engineGModifier(tech)
+        // Engine parts (ship designer, MP only): -15% travel time per
+        // engine part (x Propulsion tech), realized as an accel boost
+        // under T = 2*sqrt(d/a). SP ships never carry parts, so this is
+        // the identity (x1) for the frozen single-player sim.
         * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
 
       // Ship's launch state: world position + world velocity from the
@@ -224,7 +224,7 @@ function applyAIIntent(
       const target = snapshot.settlements.find(s => s.id === intent.settlementId);
       if (!target || target.ownedBy !== factionId) return { applied: false };
       const def = BUILDING_DEFS[intent.buildingKind];
-      if (!def || (def.hostType !== 'any' && def.hostType !== target.type)) return { applied: false };
+      if (!def || def.hostType !== target.type) return { applied: false };
       // One in-flight upgrade per settlement — matches the player rule.
       if (target.buildingQueue) return { applied: false };
       const currentLevel = buildingLevel(target, intent.buildingKind);
@@ -503,6 +503,13 @@ export function GameContextProvider({
   const [gameState, setGameStateInternal] = useState<GameState>(
     () => externalState ?? initialState ?? emptyGameState()
   );
+
+  // Live mirror of gameState, kept in sync via the effect below. Read by
+  // callbacks that need the LATEST state at call time without relying on
+  // React's eager-state-computation behaviour inside a setState updater
+  // (see launchTorchTransfer for the bulk-fleet bug this fixes).
+  const gameStateRef = useRef<GameState>(gameState);
+  useEffect(() => { gameStateRef.current = gameState; }, [gameState]);
 
   // Replace gameState whenever the external snapshot changes reference.
   //
@@ -1186,8 +1193,16 @@ export function GameContextProvider({
       );
     }
 
-    // Repair and refuel ships at owned bodies (after combat so dead ships are gone)
-    updatedShips = tickMaintenance(updatedShips, updatedSettlements, prev.bodies, tickDelta);
+    // Repair and refuel ships at owned bodies (after combat so dead ships
+    // are gone). Armor tech (+8%/level) raises the per-faction heal cap —
+    // built here from factionTech so SP matches the server's armor-aware
+    // maintenance cap.
+    const hpMul: Record<string, number> = {};
+    for (const [fid, ts] of Object.entries(prev.factionTech ?? {})) {
+      const lvl = ts?.levels?.['armor'] ?? 0;
+      hpMul[fid] = 1 + TECH_DEFS.armor.perLevel * lvl;
+    }
+    updatedShips = tickMaintenance(updatedShips, updatedSettlements, prev.bodies, tickDelta, hpMul);
 
     // Research drain — for each faction with a queued tech, pour available
     // science into the research bar; level up when full. The drain is
@@ -1857,39 +1872,65 @@ export function GameContextProvider({
    *  the player UI. Returns the launched plan on success so the caller
    *  can post the matching arrival tick to the MP server. */
   const launchTorchTransfer = useCallback((shipId: string, targetBodyId: string): TorchTransfer | null => {
-    let launchedPlan: TorchTransfer | null = null;
-    setGameStateInternal(prev => {
-      const ship = prev.ships.find(s => s.id === shipId);
-      if (!ship) return prev;
-      if (ship.transit) return prev;
+    // Compute the plan EAGERLY using the live state from the ref, NOT
+    // inside the setGameStateInternal updater. Why this matters:
+    //
+    // React applies an "eager state computation" optimization where the
+    // FIRST queued updater in a dispatch is run synchronously, so any
+    // side-effect inside it (like `launchedPlan = plan`) is observable
+    // on the same tick. Subsequent updaters in the same synchronous
+    // batch are NOT eager — they run only at next render. The old
+    // version of this function relied on `let launchedPlan; setState(p
+    // => { launchedPlan = ...; return ... }); return launchedPlan;` —
+    // which works for a single call, but in a bulk-fleet loop only the
+    // first call returned a real plan; every later call returned null,
+    // the loop's `if (!plan) continue;` skipped them, and only the
+    // first ship received an MP transfer order. Playtester report
+    // (clownking, 2026-06-26): "when giving orders to multiple ships
+    // through the fleet menu, it only gives the order to the first
+    // ship starting from the top of the list of selected ships."
+    //
+    // The applier-only updater below still uses the functional form so
+    // a queue of bulk calls chains correctly: each prev is the result
+    // of the previous one's update, and the bail-out re-check protects
+    // against a race where the ship somehow became in-transit between
+    // the eager plan and the apply.
+    const live = gameStateRef.current;
+    const ship = live.ships.find(s => s.id === shipId);
+    if (!ship || ship.transit) return null;
 
-      const faction = prev.factions.find(f => f.id === ship.ownedBy);
-      const tech = prev.factionTech?.[ship.ownedBy];
-      // UNIT FIX: faction.engineG is stored in G (e.g. 0.05) per migration 0017's
-      // default; G_ANCHOR is the in-game accel that equals 1g. Without the
-      // conversion the torch acceleration is 530× too weak and ships coast off
-      // in roughly their inherited orbital direction instead of arriving.
-      const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
-      // Engine parts (ship designer, MP only): −15% travel time per
-      // engine part (×Propulsion tech), realized as an accel boost
-      // under T = 2√(d/a). SP ships never carry parts, so this is the
-      // identity (×1) for the frozen single-player sim.
-      const engineAccel = baseAccel * engineGModifier(tech)
+    const faction = live.factions.find(f => f.id === ship.ownedBy);
+    const tech = live.factionTech?.[ship.ownedBy];
+    // UNIT FIX: faction.engineG is stored in G (e.g. 0.05) per migration 0017's
+    // default; G_ANCHOR is the in-game accel that equals 1g. Without the
+    // conversion the torch acceleration is 530× too weak and ships coast off
+    // in roughly their inherited orbital direction instead of arriving.
+    const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
+    const engineAccel = baseAccel * engineGModifier(tech)
+        // Engine parts (ship designer, MP only): -15% travel time per
+        // engine part (x Propulsion tech), realized as an accel boost
+        // under T = 2*sqrt(d/a). SP ships never carry parts, so this is
+        // the identity (x1) for the frozen single-player sim.
         * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
-      const tick = prev.currentTick;
+    const tick = live.currentTick;
 
-      const launchPos = orbitWorldPos(ship.orbit, tick, prev.bodies);
-      const launchVel = orbitWorldVelocity(ship.orbit, tick, prev.bodies);
+    const launchPos = orbitWorldPos(ship.orbit, tick, live.bodies);
+    const launchVel = orbitWorldVelocity(ship.orbit, tick, live.bodies);
 
-      const plan = planTorchTransfer(
-        { pos: launchPos, vel: launchVel },
-        targetBodyId,
-        engineAccel, engineAccel,
-        tick, prev.bodies,
-      );
-      if (!plan) return prev;
+    const plan = planTorchTransfer(
+      { pos: launchPos, vel: launchVel },
+      targetBodyId,
+      engineAccel, engineAccel,
+      tick, live.bodies,
+    );
+    if (!plan) return null;
 
-      launchedPlan = plan;
+    setGameStateInternal(prev => {
+      const cur = prev.ships.find(s => s.id === shipId);
+      // Bail out only if the ship has *legitimately* changed shape
+      // (gone, already in transit by a parallel update). Otherwise
+      // apply the precomputed plan.
+      if (!cur || cur.transit) return prev;
       return {
         ...prev,
         ships: prev.ships.map(s =>
@@ -1911,7 +1952,7 @@ export function GameContextProvider({
         ),
       };
     });
-    return launchedPlan;
+    return plan;
   }, []);
 
   /** Append a chained torch leg. The new leg is planned starting from
@@ -1944,11 +1985,11 @@ export function GameContextProvider({
       // conversion the torch acceleration is 530× too weak and ships coast off
       // in roughly their inherited orbital direction instead of arriving.
       const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
-      // Engine parts (ship designer, MP only): −15% travel time per
-      // engine part (×Propulsion tech), realized as an accel boost
-      // under T = 2√(d/a). SP ships never carry parts, so this is the
-      // identity (×1) for the frozen single-player sim.
       const engineAccel = baseAccel * engineGModifier(tech)
+        // Engine parts (ship designer, MP only): -15% travel time per
+        // engine part (x Propulsion tech), realized as an accel boost
+        // under T = 2*sqrt(d/a). SP ships never carry parts, so this is
+        // the identity (x1) for the frozen single-player sim.
         * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
 
       const arrivalTick = lastLeg.arriveTick;
@@ -1994,11 +2035,11 @@ export function GameContextProvider({
       // conversion the torch acceleration is 530× too weak and ships coast off
       // in roughly their inherited orbital direction instead of arriving.
       const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
-      // Engine parts (ship designer, MP only): −15% travel time per
-      // engine part (×Propulsion tech), realized as an accel boost
-      // under T = 2√(d/a). SP ships never carry parts, so this is the
-      // identity (×1) for the frozen single-player sim.
       const engineAccel = baseAccel * engineGModifier(tech)
+        // Engine parts (ship designer, MP only): -15% travel time per
+        // engine part (x Propulsion tech), realized as an accel boost
+        // under T = 2*sqrt(d/a). SP ships never carry parts, so this is
+        // the identity (x1) for the frozen single-player sim.
         * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
       const tick = prev.currentTick;
 
@@ -2543,7 +2584,7 @@ export function GameContextProvider({
         logger.warn('ACTION', 'queueBuilding: unknown kind', { kind });
         return prev;
       }
-      if (def.hostType !== 'any' && def.hostType !== target.type) {
+      if (def.hostType !== target.type) {
         logger.warn('ACTION', 'queueBuilding: host type mismatch', {
           kind, requires: def.hostType, settlementType: target.type,
         });

@@ -17,6 +17,7 @@ import {
   GameState, Ship, Settlement, FactionResources, BuildingKind,
 } from '../types';
 import { ShipClassName, SHIP_CLASSES, BUILDABLE_CLASSES } from './shipClasses';
+import { randomShipName } from './shipNames';
 import {
   SETTLEMENT_DEFS, canHostCity, canHostStation,
   COLLECTOR_COST,
@@ -976,26 +977,8 @@ function generateDysonCandidates(ctx: AIContext): AIActionIntent[] {
 
 // === Naming helpers ==========================================
 
-const SHIP_NAME_POOLS: Record<ShipClassName, string[]> = {
-  corvette: ['Lance', 'Sting', 'Razor', 'Falcon', 'Spear', 'Knife', 'Hawk', 'Dart', 'Talon'],
-  frigate: ['Resolute', 'Vanguard', 'Hammer', 'Stalwart', 'Sentinel', 'Bulwark', 'Aegis', 'Defiant'],
-  destroyer: ['Tyrant', 'Ironclad', 'Vengeance', 'Wrath', 'Citadel', 'Behemoth', 'Conqueror', 'Dreadnought'],
-  freighter: ['Carryall', 'Caravan', 'Pioneer', 'Voyager', 'Drifter', 'Trader', 'Ferry', 'Skipper'],
-  // Colony ships are MP-only; the SP AI never scores them (see
-  // generateBuildCandidates — no branch awards them points, so the
-  // cost penalty leaves score <= 0 and they're skipped). Entry exists
-  // purely to satisfy Record<ShipClassName, ...> completeness.
-  colony: ['Homestead', 'Landfall', 'Hearth', 'Haven', 'Foundation'],
-};
-
 function generateShipName(cls: ShipClassName, ctx: AIContext): string {
-  const pool = SHIP_NAME_POOLS[cls];
-  const existing = new Set(ctx.state.ships.map(s => s.name));
-  const available = pool.filter(n => !existing.has(n));
-  if (available.length > 0) {
-    return available[Math.floor(Math.random() * available.length)];
-  }
-  return `${pool[0]}-${Math.floor(Math.random() * 100)}`;
+  return randomShipName(cls, new Set(ctx.state.ships.map(s => s.name)));
 }
 
 function generateSettlementName(type: 'city' | 'station', bodyName: string): string {

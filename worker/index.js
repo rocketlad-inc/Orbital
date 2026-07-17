@@ -12,6 +12,7 @@ import {
 import { verifyGoogleIdToken } from './google.js';
 import { MIGRATIONS } from './_migrations_bundle.js';
 import { GIT_SHA, BUILT_AT } from './_version.js';
+import { maybeRunDailyDigest } from './digest.js';
 
 export { Room } from './room.js';
 
@@ -757,23 +758,42 @@ export default {
           .bind(now)
           .all();
         const rows = due.results ?? [];
-        if (rows.length === 0) return;
         // Fan out to each due game's DO. Don't await sequentially —
         // pokes are best-effort; one slow DO shouldn't block the rest.
-        await Promise.all(rows.map(async (r) => {
-          try {
-            const stub = env.ROOM.get(env.ROOM.idFromName(r.id));
-            await stub.fetch('https://room/tick-now', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ force: false, gameId: r.id }),
-            });
-          } catch (e) {
-            console.error(`cron tick poke failed for ${r.id}`, e);
-          }
-        }));
+        // Guarded (not early-return) so an empty due-list — the common
+        // case, since games tick ~hourly so most cron minutes have no
+        // due games — does NOT skip the digest call below. The old
+        // `if (rows.length === 0) return;` returned from this whole
+        // async fn, so the daily digest only had a chance to fire in the
+        // rare minute a game happened to tick during the digest hour —
+        // which is why it almost never auto-published.
+        if (rows.length > 0) {
+          await Promise.all(rows.map(async (r) => {
+            try {
+              const stub = env.ROOM.get(env.ROOM.idFromName(r.id));
+              await stub.fetch('https://room/tick-now', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ force: false, gameId: r.id }),
+              });
+            } catch (e) {
+              console.error(`cron tick poke failed for ${r.id}`, e);
+            }
+          }));
+        }
       } catch (e) {
         console.error('scheduled tick advancer failed', e);
+      }
+
+      // Daily Discord digest — self-gating (fires only at
+      // DIGEST_HOUR_UTC, max once per game per ~day). Runs after the
+      // tick pokes so today's final events make today's paper. A
+      // digest failure must never break the tick advancer, hence the
+      // separate catch.
+      try {
+        await maybeRunDailyDigest(env);
+      } catch (e) {
+        console.error('daily digest failed', e);
       }
     })());
   },

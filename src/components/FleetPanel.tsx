@@ -204,9 +204,14 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     const def = getShipClass(ship.class as ShipClassName);
     // Server-authoritative max HP when present (designer shield parts +
     // tech, migration 0033); class-def fallback for SP/legacy ships.
-    const maxHp = ship.hpMax ?? def.hp;
-    const hp = ship.hp ?? maxHp;
-    const ratio = maxHp > 0 ? hp / maxHp : 0;
+    const hp = ship.hp ?? ship.hpMax ?? def.hp;
+    // Where the server hasn't sent hpMax, armor tech and per-kill rank
+    // still push real max above the base class hp, so a teched/veteran
+    // ship would read "108/100" with the fill bar overrunning its track.
+    // max(base, hp) clamps the denominator; the server value already
+    // accounts for both when present.
+    const maxHp = ship.hpMax ?? Math.max(def.hp, hp);
+    const ratio = maxHp > 0 ? Math.min(1, hp / maxHp) : 0;
     const hpClass = ratio > 0.66 ? 'good' : ratio > 0.33 ? 'mid' : 'low';
     return (
       <div className="status-bar">
