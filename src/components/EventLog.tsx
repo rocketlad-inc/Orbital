@@ -96,7 +96,12 @@ function logEntryIcon(entry: string): { icon: string; color: string; label: stri
   if (s.includes('traded') && s.includes(' → '))   return { icon: '⚖', color: '#ffb84d', label: 'Trade' };
   if (s.includes('captured')) return { icon: '⚑', color: '#ffd700', label: 'Capture' };
   if (s.includes('founded')) return { icon: '⌂', color: '#6ee7b7', label: 'Settlement' };
-  if (s.includes('launched') || s.includes('rolled out') || s.includes('built')) {
+  // 'completed' catches building_completed ("… completed mint L3"), which
+  // otherwise matched nothing here and fell through to the generic 'Event'
+  // bucket — so finishing a Forge read as uncategorised grey while the
+  // corvette it built read as Industry.
+  if (s.includes('launched') || s.includes('rolled out') || s.includes('built')
+      || s.includes('completed')) {
     return { icon: '✦', color: '#4ecdc4', label: 'Industry' };
   }
   if (s.includes('destroyed') || s.includes('collapsed')) return { icon: '✖', color: '#ff5e5e', label: 'Destruction' };

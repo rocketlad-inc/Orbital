@@ -352,7 +352,7 @@ export const BuildPanel: React.FC = () => {
                 onClick={() => { setRecentlyQueued(s => new Set(s).add(cls)); handleBuild(cls); }}
                 title={
                   slotsFull
-                    ? `All ${totalSlots} build slots busy — finish a build or add a Shipyard`
+                    ? `All ${totalSlots} build slots busy — finish a build, or add a Shipyard to a station here`
                     : canAfford
                       ? `Build a ${def.displayName} (${def.cost.fuel}F ${def.cost.ore}M ${def.cost.credits}C, ${def.buildTime} ticks)`
                       : shortLabel}

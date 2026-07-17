@@ -617,12 +617,31 @@ export async function seedGameWorld(env, gameId) {
       claimed.add(choice);
     }
   });
-  // Second pass: anyone without a choice gets the first un-claimed shuffled body.
-  const fallbackPool = shuffled.filter(b => !claimed.has(b.id));
+  // Second pass: anyone without a choice gets the first un-claimed shuffled
+  // body — but only from STARTING_BODY_IDS, the same terrestrial+moon set the
+  // lobby offers as a manual pick.
+  //
+  // This pool used to be every non-star body in the catalog, which quietly
+  // contradicted the rule STARTING_BODY_OPTIONS exists to enforce ("avoids
+  // highly-asymmetric starts on tiny asteroids"). A player who never opened
+  // the capital picker — i.e. most players — could be seeded onto a rogue
+  // asteroid. Observed in a 3-player test: one faction drew Vagrant (radius
+  // 0.5, rp 250 / ra 2650) and ended up with ~7x the credits of a moon start
+  // off its 8/8 metal+gold yield, while sitting too far out to reach another
+  // body or even see another player all match.
+  const fallbackPool = shuffled.filter(b => !claimed.has(b.id) && STARTING_BODY_IDS.has(b.id));
   let fallbackIdx = 0;
   factionRows.forEach(f => {
     if (!f.capital_template_id) {
       const pick = fallbackPool[fallbackIdx++];
+      // Defensive: STARTING_BODY_OPTIONS is far larger than max_players (8),
+      // so this can only trip if the catalog is edited down.
+      if (!pick) {
+        throw new Error(
+          `seedGameWorld: ran out of valid starting bodies for ${factionRows.length} players ` +
+          `(${fallbackPool.length} available after lobby picks)`,
+        );
+      }
       f.capital_template_id = pick.id;
       claimed.add(pick.id);
     }

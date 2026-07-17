@@ -256,7 +256,7 @@ export class Room {
       }
 
       try {
-        await this.alarm();
+        await this.alarm(force);
       } catch (e) {
         console.error('manual tick failed', e);
         return new Response(JSON.stringify({ error: String(e?.message || e) }), {
@@ -515,17 +515,21 @@ export class Room {
   // and the /state self-heal can all converge on an overdue tick; the
   // guard ensures only one tick pass runs at a time so a tick can't
   // resolve twice. All the real work lives in _runAlarm().
-  async alarm() {
+  //
+  // `force` comes only from the host's /force-tick admin path. Cloudflare
+  // invokes alarm() with no args, so scheduled fires stay force=false and
+  // keep the early/stale-fire guard in _runAlarm().
+  async alarm(force = false) {
     if (this.ticking) return;
     this.ticking = true;
     try {
-      await this._runAlarm();
+      await this._runAlarm(force);
     } finally {
       this.ticking = false;
     }
   }
 
-  async _runAlarm() {
+  async _runAlarm(force = false) {
     let started = await this.state.storage.get('gameStarted');
     if (!started?.gameId) {
       // The DO got recycled / migrated / freshly-deployed and lost its
@@ -595,7 +599,13 @@ export class Room {
     // tick ~2 intervals past now. On a 1h cadence that's a 2h gap that
     // reads as "one tick then frozen." (next_tick_at NULL → scheduled =
     // now → guard is skipped, so orphan recovery still advances.)
-    if (scheduled - now > 1000) {
+    //
+    // `force` bypasses this. The host's Force Tick button exists precisely
+    // to fire a tick that ISN'T due yet, so applying the guard to it made
+    // the button a silent no-op in the only case it's ever used —
+    // /tick-now honoured force, then handed off to an alarm that didn't
+    // know about it and re-armed instead of advancing.
+    if (!force && scheduled - now > 1000) {
       try { await this.state.storage.setAlarm(scheduled); } catch (e) {
         console.error('setAlarm (early-fire re-arm) failed', e);
       }
@@ -788,7 +798,12 @@ export class Room {
       // queue rows (pre-0029 migration) still complete cleanly.
       const shipName = (typeof b.ship_name === 'string' && b.ship_name.trim().length > 0)
         ? b.ship_name.trim()
-        : `${b.ship_class.charAt(0).toUpperCase()}${b.ship_class.slice(1)} T${tick}`;
+        // Legacy fallback keyed on tick alone produced the SAME name for
+        // every same-class hull finishing on that tick — across factions
+        // too ("Corvette T14" on three different ships at once). The hull
+        // number keeps the shape but makes each one distinct.
+        : `${b.ship_class.charAt(0).toUpperCase()}${b.ship_class.slice(1)} ` +
+          `T${tick}-${String(Math.floor(Math.random() * 900) + 100)}`;
 
       await this.env.DB.batch([
         this.env.DB

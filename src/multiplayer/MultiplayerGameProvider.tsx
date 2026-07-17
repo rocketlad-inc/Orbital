@@ -772,6 +772,18 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     if (!id) return 'Unknown';
     return factionNameById.get(id) ?? 'Unknown';
   };
+  /**
+   * "<owner>'s <thing>", minus the stutter when <thing> is already named
+   * after its owner. seedGameWorld names every capital "<Faction> Capital",
+   * so the naive possessive rendered "Cerean Union's Cerean Union Capital
+   * on Oberon completed mint L3" — and since capitals are where most early
+   * building happens, that was most of the log. Drops the redundant prefix
+   * and leaves player-renamed settlements untouched.
+   */
+  const possessive = (owner: string, thing: string): string => {
+    if (owner && thing.toLowerCase().startsWith(owner.toLowerCase())) return thing;
+    return `${owner}'s ${thing}`;
+  };
   const formatEvent = (ev: NonNullable<ServerState['events']>[number]): string => {
       let parsed: Record<string, unknown> = {};
       try { parsed = JSON.parse(ev.payload || '{}'); } catch { /* ignore */ }
@@ -797,8 +809,12 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         const owner = nameOfFaction(ev.actor_faction_id, parsed.owner_faction_name as string | undefined);
         const killer = nameOfFaction(parsed.killer_faction_id as string | null, parsed.killer_faction_name as string | undefined);
         const tail = parsed.killer_faction_id ? ` by ${killer}` : '';
-        const label = sName ? `${sType} ${sName}` : sType;
-        return `${t}  ${owner}'s ${label} on ${where} destroyed${tail}`;
+        // Type goes in parens rather than in front of the name, so the
+        // possessive can still strip an owner-prefixed capital name
+        // ("Cerean Union's city Cerean Union Capital" -> "Cerean Union
+        // Capital (city)").
+        const label = sName ? `${possessive(owner, sName)} (${sType})` : `${owner}'s ${sType}`;
+        return `${t}  ${label} on ${where} destroyed${tail}`;
       }
 
       if (ev.kind === 'asteroid_launched') {
@@ -843,7 +859,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         const sName = (parsed.settlement_name as string) ?? 'settlement';
         const where = (parsed.body_name as string) ?? 'a body';
         const owner = nameOfFaction(ev.actor_faction_id, parsed.owner_faction_name as string | undefined);
-        return `${t}  ${owner}'s ${sName} on ${where} completed ${kind} L${lvl}`;
+        return `${t}  ${possessive(owner, sName)} on ${where} completed ${kind} L${lvl}`;
       }
 
       if (ev.kind === 'secret_discovered') {
