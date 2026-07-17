@@ -6,6 +6,7 @@
 import React, { useMemo, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
+import { loadoutSummary } from '../game/shipParts';
 import { ShipIcon } from './ShipIcons';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { humanizeMpError } from '../multiplayer/errorMessages';
@@ -281,7 +282,19 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
             </div>
             <div>
               <div className="body-cell__name">{ship.name}</div>
-              <div className="body-cell__type">{def.displayName} · {ship.class}</div>
+              <div className="body-cell__type">
+                {def.displayName}
+                {(() => {
+                  // Show the designer loadout in place of the redundant
+                  // "· corvette" class echo. Null (SP / colony / no parts
+                  // field) falls back to the plain class name so nothing
+                  // reads as empty.
+                  const loadout = loadoutSummary(ship.parts);
+                  return loadout
+                    ? <span className="body-cell__loadout" title="Fitted parts"> · {loadout}</span>
+                    : <> · {ship.class}</>;
+                })()}
+              </div>
             </div>
           </div>
         </td>

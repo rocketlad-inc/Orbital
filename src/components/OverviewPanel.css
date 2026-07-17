@@ -224,6 +224,14 @@
   letter-spacing: 0.1em;
 }
 
+/* Fitted-parts summary sitting after the class name. Slightly brighter
+   than the class label and with normal spacing so the glyph counts
+   (e.g. "⚔×2") don't get letter-spaced apart. */
+.body-cell__loadout {
+  color: #d8e4ee;
+  letter-spacing: 0;
+}
+
 /* ---- Owner badge ---- */
 
 .owner-badge {

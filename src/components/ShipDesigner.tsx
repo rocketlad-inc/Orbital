@@ -20,7 +20,7 @@ import { ShipClassName, SHIP_CLASSES, BUILDABLE_CLASSES } from '../game/shipClas
 import {
   ShipPartId, ALL_PART_IDS, SHIP_PART_DEFS, SHIP_SLOT_COUNTS,
   sanitizeParts, computeDesignStats, partsCost, countPart,
-  detonatorDamage, detonatorDisclosure, SERVER_HULL_BASE,
+  detonatorDamage, detonatorDisclosure, SERVER_HULL_BASE, PART_GLYPH,
 } from '../game/shipParts';
 import {
   ShipIcon, ShipIconVariant, ALL_VARIANTS, ICON_VARIANT_NAMES, DEFAULT_SHIP_ICONS,
@@ -59,12 +59,8 @@ function serverDesignToClient(d: ServerShipDesign): ShipDesign {
   };
 }
 
-const PART_GLYPH: Record<ShipPartId, string> = {
-  weapon: '⚔',
-  shield: '🛡',
-  engine: '🔥',
-  detonator: '☠',
-};
+// PART_GLYPH now lives in ../game/shipParts (shared with FleetPanel's
+// loadout summary) so the two never drift.
 
 export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClose }) => {
   const { gameState } = useGameContext();

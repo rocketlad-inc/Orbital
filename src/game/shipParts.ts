@@ -85,6 +85,42 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
 
 export const ALL_PART_IDS: ShipPartId[] = ['weapon', 'shield', 'engine', 'detonator'];
 
+/** Single-glyph icon per part, for compact loadout summaries (ShipDesigner
+ *  library rows, FleetPanel ship rows). One source of truth so the two
+ *  surfaces never drift. */
+export const PART_GLYPH: Record<ShipPartId, string> = {
+  weapon: '⚔',
+  shield: '🛡',
+  engine: '🔥',
+  detonator: '☠',
+};
+
+/** Fixed display order for a loadout summary — weapon, shield, engine,
+ *  detonator — so the same parts always read the same way regardless of
+ *  the order they were fitted in. */
+const GLYPH_ORDER: ShipPartId[] = ['weapon', 'shield', 'engine', 'detonator'];
+
+/**
+ * Compact loadout summary for a ship's parts, e.g. "⚔×2 🛡 🔥" or
+ * "bare hull". Groups by part kind in a fixed order; a count suffix is
+ * shown only when >1. Returns null when the ship carries no parts field
+ * at all (SP ship / colony / freighter with an empty slot) so callers can
+ * choose to render nothing rather than "bare hull" where that's noise.
+ */
+export function loadoutSummary(parts: readonly string[] | undefined): string | null {
+  if (!parts) return null;
+  const clean = sanitizeParts(parts);
+  if (clean.length === 0) return 'bare hull';
+  return GLYPH_ORDER
+    .map(id => {
+      const n = clean.filter(p => p === id).length;
+      if (n === 0) return null;
+      return n > 1 ? `${PART_GLYPH[id]}×${n}` : PART_GLYPH[id];
+    })
+    .filter(Boolean)
+    .join(' ');
+}
+
 const WEAPON_DMG_PCT = 0.40;
 const SHIELD_HP_PCT = 0.35;
 const ENGINE_TRAVEL_PCT = 0.15;
