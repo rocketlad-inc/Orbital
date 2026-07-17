@@ -122,6 +122,16 @@ export function humanizeMpError(
     case 'occupied':
       return 'This body already has that settlement type — only one city and one station per body.';
 
+    // Lobby / designer / orders codes
+    case 'color_taken':
+      return 'That color is too close to another player\'s — pick something more distinct.';
+    case 'already_cancelled':
+      return 'This build was already cancelled.';
+    case 'no_detonator':
+      return 'This ship carries no detonator — fit one in the Ship Designer before building it.';
+    case 'in_transit':
+      return 'Cannot detonate mid-transfer — wait for the ship to arrive.';
+
     // RAM-specific codes
     case 'wrong_type':
       return 'Only rogue asteroid bodies can be rammed.';
@@ -132,7 +142,10 @@ export function humanizeMpError(
     case 'no_thrusters':
       return 'Build Trajectory Control Thrusters first.';
     case 'insufficient_fuel':
-      return 'Not enough fuel to launch this ram.';
+      // Legacy code from when rams charged fuel — the server now charges
+      // metal (insufficient_resources). Kept as a fallback for an old
+      // worker bundle mid-deploy.
+      return 'Not enough resources to launch this ram.';
     case 'destroyed':
       return 'This body has been destroyed.';
 

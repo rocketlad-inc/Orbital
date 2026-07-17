@@ -145,8 +145,8 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
             Orbital is a real-time strategy game played across the inner planets,
             the asteroid belt, and the gas giants. Ships ride a continuous-thrust
             torch from origin to target &mdash; every transfer commits you to a
-            flight time and a fuel cost you can&rsquo;t take back, computed
-            from the ship&rsquo;s engine and the distance to the rendezvous.
+            flight time you can&rsquo;t take back, computed from the
+            ship&rsquo;s engine and the distance to the rendezvous.
           </p>
           <p>
             Stake a claim by deploying <strong>cities on planets</strong> and{' '}
@@ -172,7 +172,7 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
           <FeatureCard
             icon="↗"
             title="Torch trajectories"
-            body="Plan transfers between any two bodies. The brachistochrone solver computes the burn schedule and fuel cost; chain legs together to patrol multiple moons. Faster engines come from the tech tree."
+            body="Plan transfers between any two bodies. The brachistochrone solver computes the burn schedule and arrival time; chain legs together to patrol multiple moons. Faster engines come from the tech tree — and from the 🔥 boosters you fit in the ship designer."
           />
           <FeatureCard
             icon="■"

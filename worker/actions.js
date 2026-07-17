@@ -1590,8 +1590,12 @@ async function handleCancelTradeRoute(req, env, ctx) {
 // claims the per-game slot. The per-tick delivery + damage logic
 // runs server-side in worker/room.js resolveTick.
 
+// Fuel left the economy (yields zeroed, income 0) — a fuel component
+// here would make the sphere permanently uncompletable, killing the
+// Engineering Victory in every new game. Field stays for schema shape;
+// MUST be 0. Mirror: src/game/dysonSphere.ts DYSON_TARGET.
 const DYSON_TARGET = {
-  fuel: 10_000,
+  fuel: 0,
   ore: 15_000,
   credits: 15_000,
   science: 10_000,

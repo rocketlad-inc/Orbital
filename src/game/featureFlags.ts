@@ -4,13 +4,15 @@
 
 /**
  * When true, ship orders + builds consume fuel (and AI factions plan
- * around it). When false, fuel costs are ignored — useful for tests
- * and for early playtesting where the fuel economy isn't tuned yet.
+ * around it). When false, fuel costs are ignored.
  *
- * Production default: true. Matches what resource pills, refueling,
- * and the maintenance loop all assume.
+ * FALSE since the Identity & Economy rework (§1.1): fuel left the
+ * economy — yields zeroed, all costs 0, no UI surface shows it. Every
+ * check this flag guards is vacuous anyway (cost.fuel === 0
+ * everywhere); false documents the intent. Do not flip back without
+ * restoring fuel yields + costs + UI.
  */
-export const FUEL_ENABLED = true;
+export const FUEL_ENABLED = false;
 
 
 /**

@@ -30,17 +30,24 @@ export const SOL_BODY_ID = 'sol';
  * at the 7.5-min cadence), which is most of a 3-week match.
  *
  * Roughly:
- *   maxHp = 15_000 + 15_000 + 10_000 + 10_000 = 50_000
- *   Per freighter per tick contribution = 30 (sum of all 4 deltas)
- *   5 freighters → 150/tick → 50000/150 ≈ 333 ticks (~1.7 real days)
- *   10 freighters → 300/tick → 167 ticks (~0.9 real days)
+ *   maxHp = 15_000 + 15_000 + 10_000 = 40_000
+ *   Per freighter per tick contribution = 25 (sum of the live deltas)
+ *   5 freighters → 125/tick → 40000/125 = 320 ticks (~1.7 real days)
+ *   10 freighters → 250/tick → 160 ticks (~0.8 real days)
  *
- * Bumping a freighter into Sol orbit costs fuel and ties it up for
- * the entire build — real opportunity cost, plus you have to fund
- * the constant pool drain from your wider economy.
+ * Parking a freighter at Sol ties it up for the entire build — real
+ * opportunity cost, plus you have to fund the constant pool drain
+ * from your wider economy.
+ *
+ * FUEL IS DEAD (economy rework §1.1): yields are zeroed and income is
+ * 0, so a fuel component here would make the sphere permanently
+ * uncompletable and kill the Engineering Victory. The fields stay for
+ * schema shape; both MUST be 0. Mirror: worker/actions.js DYSON_TARGET
+ * (seeded per game at initiate) + worker/room.js self-heal for games
+ * that initiated while the old 10K-fuel target was live.
  */
 export const DYSON_TARGET: { fuel: number; ore: number; credits: number; science: number } = {
-  fuel: 10_000,
+  fuel: 0,
   ore: 15_000,
   credits: 15_000,
   science: 10_000,
@@ -48,9 +55,9 @@ export const DYSON_TARGET: { fuel: number; ore: number; credits: number; science
 
 /** Per-freighter per-tick contribution toward the sphere. The owner's
  *  pool is debited by these amounts each tick for every freighter
- *  parked at Sol. Sum = 30. */
+ *  parked at Sol. Sum = 25. */
 export const DYSON_PER_FREIGHTER_PER_TICK = {
-  fuel: 5,
+  fuel: 0,
   ore: 10,
   credits: 10,
   science: 5,

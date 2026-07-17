@@ -3395,13 +3395,34 @@ export class Room {
       science: game.dyson_acc_science ?? 0,
     };
     let hp = game.dyson_hp ?? 0;
-    const maxHp = game.dyson_max_hp ?? 0;
+    let maxHp = game.dyson_max_hp ?? 0;
     const target = {
       fuel: game.dyson_target_fuel ?? 0,
       ore: game.dyson_target_ore ?? 0,
       credits: game.dyson_target_credits ?? 0,
       science: game.dyson_target_science ?? 0,
     };
+
+    // Self-heal: fuel left the economy, so a sphere initiated under the
+    // old 10K-fuel target can never earn its remaining fuel component —
+    // hp would cap below max_hp and the Engineering Victory would be
+    // silently unreachable. Retire the outstanding fuel requirement:
+    // shrink the stored target (and max_hp) by whatever fuel was never
+    // delivered. Idempotent — after the first pass target.fuel == acc.fuel
+    // and the branch stops firing. New games seed target.fuel = 0.
+    if (target.fuel > acc.fuel) {
+      const retired = target.fuel - acc.fuel;
+      target.fuel = acc.fuel;
+      maxHp = Math.max(0, maxHp - retired);
+      await this.env.DB
+        .prepare(
+          `UPDATE games
+              SET dyson_target_fuel = ?, dyson_max_hp = ?
+            WHERE id = ?`,
+        )
+        .bind(target.fuel, maxHp, gameId)
+        .run();
+    }
 
     // 1 + 2: foundation state. A NULL settlement row (cascaded by
     // ON DELETE) means it was destroyed; a row with destroyed_at_tick

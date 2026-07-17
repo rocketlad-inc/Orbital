@@ -55,7 +55,7 @@ export const AdminGrantModal: React.FC<Props> = ({ onClose, mpGameId }) => {
 
   const applyPreset = (delta: number) => {
     const n = String(delta);
-    setFuel(n); setOre(n); setCredits(n); setScience(n);
+    setOre(n); setCredits(n); setScience(n); // fuel intentionally untouched — dead resource
   };
 
   const handleApply = async () => {
@@ -187,8 +187,10 @@ export const AdminGrantModal: React.FC<Props> = ({ onClose, mpGameId }) => {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            {/* FUEL input removed — fuel left the economy; granting it
+                would only pad a stat nothing reads. `fuel` state stays
+                (always '0') so the grant payload shape is unchanged. */}
             {([
-              ['FUEL',    fuel,    setFuel,    '#7fffa1'],
               ['METAL',   ore,     setOre,     '#ffb84d'],
               ['CREDITS', credits, setCredits, '#4ecdc4'],
               ['SCIENCE', science, setScience, '#bd93f9'],

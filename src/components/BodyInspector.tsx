@@ -1670,7 +1670,7 @@ const DysonSpherePanel: React.FC = () => {
       }}>
         The Sol megaproject. Lay the foundation at a Sol-orbit station,
         then park freighters here to deliver resources every tick.
-        Target: 10K fuel · 15K metal · 15K credits · 10K science.
+        Target: 15K metal · 15K credits · 10K science.
         Completing it wins the match by Engineering Victory.
       </div>
 

@@ -911,6 +911,17 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         return `${t}  💥 ${owner}'s ${name} detonated at ${where} — ${dmg} damage to every ship in orbit, ${killed} destroyed`;
       }
 
+      if (ev.kind === 'ship_retreated') {
+        const name = (parsed.ship_name as string) ?? 'a ship';
+        const owner = nameOfFaction(ev.actor_faction_id, parsed.owner_faction_name as string | undefined);
+        const from = (parsed.from_body_name as string) ?? 'the line';
+        const to = (parsed.to_body_name as string) ?? 'a friendly shipyard';
+        const hp = parsed.hp as number | undefined;
+        const hpMax = parsed.hp_max as number | undefined;
+        const hpBit = hp != null && hpMax != null ? ` (${Math.round(hp)}/${hpMax} hp)` : '';
+        return `${t}  🏳 ${possessive(owner, name)} broke off from ${from}${hpBit} — retreating to ${to} for repairs`;
+      }
+
       if (ev.kind === 'asteroid_launched') {
         const asteroid = (parsed.asteroid_name as string) ?? 'an asteroid';
         const target = (parsed.target_name as string) ?? 'a planet';
