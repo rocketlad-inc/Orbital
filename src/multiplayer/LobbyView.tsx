@@ -2,6 +2,30 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, RoomSnapshot, RoomSummary } from './api';
 import { useAuth } from './AuthContext';
 import { LobbyMapPreview } from './LobbyMapPreview';
+import { colorDistance, COLOR_MIN_DISTANCE, deriveSecondary } from '../game/colorUtils';
+
+// Two-tone factions (§5): curated swatch grid — a modest 16 colors, not
+// a full wheel. PRIMARY carries all meaning on the map (server enforces
+// perceptual distance between members' primaries); SECONDARY is
+// decoration only and free-pick from the same grid.
+const FACTION_COLOR_CHOICES: string[] = [
+  '#ff7043', // ember
+  '#42a5f5', // azure
+  '#66bb6a', // verdant
+  '#ab47bc', // violet
+  '#ffca28', // amber
+  '#26c6da', // cyan
+  '#ec407a', // rose
+  '#8d6e63', // ferrous
+  '#ef5350', // signal red
+  '#5c6bc0', // indigo
+  '#9ccc65', // lime
+  '#ff8a65', // coral
+  '#78909c', // steel
+  '#d4e157', // chartreuse
+  '#7e57c2', // amethyst
+  '#f5f5f5', // white
+];
 
 // Real-world time between automatic ticks. Must match the worker's
 // ALLOWED_TICK_INTERVALS — keep these two lists in sync.
@@ -506,6 +530,26 @@ function RoomDetail({
     refresh();  // pull the authoritative snapshot; reconcile effect clears the override
   };
 
+  // Two-tone (§5): pick a primary or secondary faction color. Same PATCH
+  // /me endpoint as empire_name / chosen_starting_body. The server 409s
+  // ('color_taken') primaries too close to another member's pick.
+  const pickColor = async (field: 'color' | 'color2', value: string | null) => {
+    setError(null);
+    const res = await apiFetch(`/api/lobby/rooms/${roomId}/me`, {
+      method: 'PATCH',
+      body: JSON.stringify({ [field]: value }),
+    });
+    if (!res.ok) {
+      setError(
+        res.error?.code === 'color_taken'
+          ? "Too close to another player's color — pick something more distinct"
+          : res.error?.message ?? 'Could not save color',
+      );
+      return;
+    }
+    refresh();
+  };
+
   return (
     <div className="lobby-room">
       {/* Pre-game map preview — fills the blank viewport BEHIND the panel
@@ -582,6 +626,12 @@ function RoomDetail({
             </button>
             <span className="mp-saved" style={{ marginLeft: 8 }}>{savedFlash || ''}</span>
           </div>
+
+          <FactionColorPicker
+            snap={snap}
+            myUserId={user?.id}
+            onPick={pickColor}
+          />
 
           <StartingBodyPicker
             snap={snap}
@@ -667,6 +717,101 @@ function RoomDetail({
       </div>{/* .lobby-panel__body */}
       </div>{/* .lobby-panel */}
     </div>
+  );
+}
+
+// ---------- Faction color picker (two-tone, §5) ----------
+
+/** Shared swatch-button style. */
+function swatchStyle(c: string, opts: { selected: boolean; taken: boolean }): React.CSSProperties {
+  return {
+    width: 24,
+    height: 24,
+    padding: 0,
+    background: c,
+    border: opts.selected ? '2px solid #fff' : '1px solid var(--mp-border)',
+    borderRadius: 3,
+    cursor: opts.taken ? 'not-allowed' : 'pointer',
+    opacity: opts.taken ? 0.25 : 1,
+    position: 'relative',
+  };
+}
+
+function FactionColorPicker({
+  snap, myUserId, onPick,
+}: {
+  snap: RoomSnapshot;
+  myUserId?: string;
+  onPick: (field: 'color' | 'color2', value: string | null) => void;
+}) {
+  const me = myUserId ? snap.members.find(m => m.userId === myUserId) : undefined;
+  const myColor = me?.color ?? null;
+  const myColor2 = me?.color2 ?? null;
+
+  // Other members' primaries — used to gray out swatches that are too
+  // close (mirrors the server's 409 'color_taken' check so the player
+  // rarely hits the error path).
+  const otherPrimaries = snap.members
+    .filter(m => m.userId !== myUserId && m.color)
+    .map(m => ({ color: m.color as string, name: m.empire_name || m.displayName }));
+
+  const rowStyle: React.CSSProperties = { display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 };
+
+  return (
+    <>
+      <div className="mp-section-title" style={{ marginTop: 12 }}>Faction colors</div>
+      <div className="mp-empty" style={{ fontSize: 10, marginBottom: 6, padding: '0 2px' }}>
+        Primary marks what you own on the map — it must stay distinct from other
+        players. Secondary is trim only.
+      </div>
+      <label className="mp-label">Primary</label>
+      <div style={rowStyle}>
+        {FACTION_COLOR_CHOICES.map(c => {
+          const clash = otherPrimaries.find(o => colorDistance(c, o.color) < COLOR_MIN_DISTANCE);
+          const selected = myColor === c;
+          // Own pick is never "taken" by yourself.
+          const taken = !!clash && !selected;
+          return (
+            <button
+              key={c}
+              type="button"
+              disabled={taken}
+              style={swatchStyle(c, { selected, taken })}
+              title={taken ? `Too close to ${clash!.name}'s color` : selected ? 'Click to clear' : c}
+              onClick={() => onPick('color', selected ? null : c)}
+            />
+          );
+        })}
+      </div>
+      <label className="mp-label">Secondary (trim)</label>
+      <div style={rowStyle}>
+        {FACTION_COLOR_CHOICES.map(c => {
+          const selected = myColor2 === c;
+          // Secondary is decoration only — meaning must stay in the
+          // primary — so it's a free pick: no taken states here.
+          return (
+            <button
+              key={c}
+              type="button"
+              style={swatchStyle(c, { selected, taken: false })}
+              title={selected ? 'Click to clear (auto trim)' : c}
+              onClick={() => onPick('color2', selected ? null : c)}
+            />
+          );
+        })}
+      </div>
+      {myColor && (
+        <div className="mp-empty" style={{ fontSize: 10, padding: '0 2px', display: 'flex', alignItems: 'center', gap: 6 }}>
+          Preview:
+          <span style={{
+            display: 'inline-block', width: 18, height: 18, borderRadius: 3,
+            border: '1px solid var(--mp-border)',
+            background: `linear-gradient(135deg, ${myColor} 0%, ${myColor} 68%, ${myColor2 || deriveSecondary(myColor)} 68%)`,
+          }} />
+          {!myColor2 && <span>(trim auto-derived)</span>}
+        </div>
+      )}
+    </>
   );
 }
 

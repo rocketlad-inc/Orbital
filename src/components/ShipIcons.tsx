@@ -15,10 +15,14 @@ export type ShipIconClass = 'corvette' | 'frigate' | 'destroyer' | 'freighter';
 interface IconProps {
   size?: number;
   color?: string;
+  /** Two-tone factions (§5): secondary trim color. Renders a squadron
+   *  stripe under the hull. Decoration only — meaning must stay in the
+   *  primary (colorblind safety). */
+  color2?: string;
   className?: string;
 }
 
-const SVG = ({ size = 24, color, className, children }: IconProps & { children: React.ReactNode }) => (
+const SVG = ({ size = 24, color, color2, className, children }: IconProps & { children: React.ReactNode }) => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
     width={size}
@@ -33,6 +37,12 @@ const SVG = ({ size = 24, color, className, children }: IconProps & { children: 
     aria-hidden
   >
     {children}
+    {/* Secondary trim stripe — decoration only, meaning must stay in
+        the primary. Drawn under every silhouette (icons face +x on a
+        32×32 box, hulls live within y≈7..25). */}
+    {color2 && (
+      <path d="M9 28.5 L23 28.5" stroke={color2} strokeWidth={2.5} />
+    )}
   </svg>
 );
 

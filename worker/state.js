@@ -208,7 +208,7 @@ async function handleGetState(req, env, ctx) {
   // Caller must be a member of the game.
   const me = await env.DB
     .prepare(
-      `SELECT id, slot, name, color, status,
+      `SELECT id, slot, name, color, color2, status,
               capital_body_id, metal, fuel, gold, science,
               research_tech_id, research_progress, reputation, senate_weight
          FROM game_factions
@@ -227,7 +227,7 @@ async function handleGetState(req, env, ctx) {
 
   const factions = (await env.DB
     .prepare(
-      `SELECT id, slot, name, color, status, capital_body_id, senate_weight, reputation
+      `SELECT id, slot, name, color, color2, status, capital_body_id, senate_weight, reputation
          FROM game_factions
         WHERE game_id = ?
         ORDER BY slot ASC`,
@@ -751,6 +751,9 @@ async function handleGetState(req, env, ctx) {
       slot: me.slot,
       name: me.name,
       color: me.color,
+      // Two-tone (§5): secondary trim color. Decoration only — meaning
+      // must stay in the primary. Null for legacy games (client derives).
+      color2: me.color2 ?? null,
       status: me.status,
       // Host flag — the game id IS the room id, so a single lookup
       // tells the client whether this player can edit any event's

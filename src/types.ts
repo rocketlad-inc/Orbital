@@ -339,7 +339,11 @@ export interface TorchTransferPlan {
 export interface Faction {
   id: string;
   name: string;
-  color: string;                        // hex color for faction assets
+  color: string;                        // hex color for faction assets (PRIMARY — carries all meaning)
+  /** Secondary trim color (two-tone factions, §5). Decoration only —
+   *  meaning must never be encoded solely in the secondary (colorblind
+   *  safety). Absent → derive via deriveSecondary(color). */
+  color2?: string;
   isPlayer: boolean;
   /** When true, this faction's turn is driven by src/game/factionAI.ts
    *  instead of waiting for player input. Single-player only for v1. */

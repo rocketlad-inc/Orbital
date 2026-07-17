@@ -23,6 +23,7 @@ import {
 } from '../physics/torchTransfer';
 import { orbitWorldPos, orbitWorldVelocity, bodyWorldVelocity } from '../physics/orbitalMechanics';
 import { engineGModifier } from '../game/techs';
+import { deriveSecondary } from '../game/colorUtils';
 import {
   generateFlavor,
   type FlavorContext, type FlavorFaction, type FlavorBody,
@@ -58,6 +59,8 @@ interface ServerState {
     slot: number;
     name: string;
     color: string;
+    /** Two-tone (§5): secondary trim color. Decoration only. */
+    color2?: string | null;
     capital_body_id: string | null;
     resources: { metal: number; fuel: number; gold: number; science: number };
     tech_levels?: Record<string, number>;
@@ -73,7 +76,10 @@ interface ServerState {
     peace_faction_ids?: string[];
   };
   factions: Array<{
-    id: string; slot: number; name: string; color: string; status: string;
+    id: string; slot: number; name: string; color: string;
+    /** Two-tone (§5): secondary trim color. Decoration only. */
+    color2?: string | null;
+    status: string;
     capital_body_id: string | null;
   }>;
   bodies: Array<{
@@ -591,6 +597,10 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     id: f.id === callerFactionId ? PLAYER_TOKEN : f.id,
     name: f.name,
     color: f.color,
+    // Two-tone (§5): decoration only — meaning must stay in primary.
+    // Legacy games have no color2; derive with the shared fallback so
+    // every render surface agrees.
+    color2: f.color2 || deriveSecondary(f.color),
     isPlayer: f.id === callerFactionId,
   }));
 
