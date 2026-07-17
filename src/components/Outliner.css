@@ -251,9 +251,14 @@
   background: rgba(78, 205, 196, 0.12);
 }
 
-.outliner__ship-status--lowfuel {
-  color: #ff5e5e;
-  background: rgba(255, 94, 94, 0.12);
+/* Compact fitted-parts glyph summary in a ship row, sitting between the
+   name and the HP dot. Muted + non-shrinking so the name ellipsizes
+   first if the row is tight. */
+.outliner__ship-loadout {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: #9fb3c4;
+  letter-spacing: 0;
 }
 
 .outliner__empty {

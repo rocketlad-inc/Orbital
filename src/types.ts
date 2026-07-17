@@ -416,6 +416,11 @@ export interface BuildOrder {
    *  'waiting' = queued beyond concurrency, promoted FIFO server-side
    *  when a slot frees. Undefined (SP / legacy rows) means building. */
   status?: 'building' | 'waiting';
+  /** Snapshot of the active design's parts at queue time (MP only).
+   *  Lets the queue row show the loadout the ship will launch with —
+   *  which may differ from the CURRENTLY active design if it changed
+   *  after this order was placed. Undefined = bare hull. */
+  parts?: string[];
 }
 
 /**

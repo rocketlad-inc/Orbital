@@ -6,6 +6,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
+import { loadoutSummary } from '../game/shipParts';
 import { ShipIcon } from './ShipIcons';
 import { useIsMobile } from '../hooks/useIsMobile';
 import './Outliner.css';
@@ -210,7 +211,7 @@ export const Outliner: React.FC = () => {
                   {ships.map(ship => {
                     const def = getShipClass(ship.class as ShipClassName);
                     const r = hpRatio(ship);
-                    const lowFuel = ship.fuel < 20;
+                    const loadout = loadoutSummary(ship.parts);
                     return (
                       <div
                         key={ship.id}
@@ -221,7 +222,9 @@ export const Outliner: React.FC = () => {
                           <ShipIcon shipClass={ship.class as ShipClassName} size={22} />
                         </span>
                         <span className="outliner__ship-name">{ship.name}</span>
-                        {lowFuel && <span className="outliner__ship-status outliner__ship-status--lowfuel">⛽</span>}
+                        {loadout && ship.parts && ship.parts.length > 0 && (
+                          <span className="outliner__ship-loadout" title="Fitted parts">{loadout}</span>
+                        )}
                         <span className={`outliner__hp-dot outliner__hp-dot--${hpClass(r)}`} title={`HP ${Math.round(r * 100)}%`} />
                       </div>
                     );

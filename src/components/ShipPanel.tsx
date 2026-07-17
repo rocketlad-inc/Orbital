@@ -6,6 +6,7 @@ import { maintenanceRatesForShip } from '../game/maintenance';
 import { rankHpMul } from '../game/techs';
 import {
   ShipPartId, SHIP_PART_DEFS, countPart, detonatorDamage, detonatorDisclosure,
+  PART_GLYPH, SHIP_SLOT_COUNTS, ALL_PART_IDS, sanitizeParts,
 } from '../game/shipParts';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { markNodeCancelPending, unmarkNodeCancelPending } from '../multiplayer/pendingNodeCancels';
@@ -557,41 +558,18 @@ export const ShipPanel: React.FC = () => {
                 <span className="value">TRANSFER PLANNED</span>
               </div>
             )}
-            {ship.parts && ship.parts.length > 0 && (
-              <div className="stat-row">
-                <span className="label">PARTS</span>
-                <span className="value" style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
-                  {ship.parts.map((p, i) => {
-                    const def = SHIP_PART_DEFS[p as ShipPartId];
-                    if (!def) return null;
-                    const isDet = p === 'detonator';
-                    return (
-                      <span
-                        key={`${p}:${i}`}
-                        style={{
-                          padding: '1px 6px', fontSize: 9, borderRadius: 3,
-                          border: `1px solid ${isDet ? '#ff5e5e' : '#2a3d50'}`,
-                          color: isDet ? '#ff5e5e' : '#b8c8d6',
-                        }}
-                        title={isDet
-                          // Spec §2.2: detonator tooltips must carry the
-                          // full disclosure (damage + friendly fire +
-                          // ship destroyed) everywhere it appears.
-                          ? detonatorDisclosure(detonatorDamage(
-                              maxHp,
-                              countPart(ship.parts, 'detonator'),
-                              gameState.factionTech['player']?.levels?.weapons ?? 0,
-                            ))
-                          : `${def.name} — ${def.blurb}`}
-                      >
-                        {def.name}
-                      </span>
-                    );
-                  })}
-                </span>
-              </div>
-            )}
           </div>
+
+          {/* Ship configuration — the designer loadout as slot chips +
+              a per-part legend. Shown whenever the hull has slots (MP
+              designed ships); SP / colony hulls with 0 slots render
+              nothing. */}
+          <ShipLoadoutSection
+            parts={ship.parts}
+            shipClass={ship.class as ShipClassName}
+            maxHp={maxHp}
+            weaponsLvl={gameState.factionTech['player']?.levels?.weapons ?? 0}
+          />
 
           {/* Freighters show TRADE LOG (delivery count) instead of
               COMBAT RECORD (confirmed kills) — they're cargo haulers,
@@ -1424,6 +1402,84 @@ const ShipCombatRecord: React.FC<{
 // detonatorDisclosure() copy. Two-step confirm so a mis-click can't
 // vaporize a fleet.
 // ----------------------------------------------------------------
+// ----------------------------------------------------------------
+// ShipLoadoutSection — the designer configuration, shown as a strip of
+// slot chips (fitted parts glyph-coded, empty slots dimmed) plus a
+// per-part legend with effects. Detonator rows carry the full §2.2
+// disclosure in their tooltip. Hulls with 0 slots (colony / SP ships
+// without a parts field) render nothing.
+// ----------------------------------------------------------------
+const ShipLoadoutSection: React.FC<{
+  parts: string[] | undefined;
+  shipClass: ShipClassName;
+  maxHp: number;
+  weaponsLvl: number;
+}> = ({ parts, shipClass, maxHp, weaponsLvl }) => {
+  const totalSlots = SHIP_SLOT_COUNTS[shipClass] ?? 0;
+  if (totalSlots === 0) return null;
+  const fitted = sanitizeParts(parts);
+
+  // Slot chips: fitted parts first (in fit order), then dimmed empties.
+  const slots: (ShipPartId | null)[] = [...fitted];
+  while (slots.length < totalSlots) slots.push(null);
+
+  // Legend: distinct parts in a fixed order with counts + effects.
+  const groups = ALL_PART_IDS
+    .map(id => ({ id, n: fitted.filter(p => p === id).length }))
+    .filter(g => g.n > 0);
+
+  return (
+    <div className="ship-loadout">
+      <div className="ship-loadout__head">
+        <span className="section-title">CONFIGURATION</span>
+        <span className="ship-loadout__count">{fitted.length}/{totalSlots} SLOTS</span>
+      </div>
+
+      <div className="ship-loadout__chips">
+        {slots.map((p, i) => (
+          p === null ? (
+            <span key={i} className="ship-loadout__chip ship-loadout__chip--empty" title="Empty slot">·</span>
+          ) : (
+            <span
+              key={i}
+              className={`ship-loadout__chip${p === 'detonator' ? ' ship-loadout__chip--danger' : ''}`}
+              title={SHIP_PART_DEFS[p].name}
+            >
+              {PART_GLYPH[p]}
+            </span>
+          )
+        ))}
+      </div>
+
+      {groups.length === 0 ? (
+        <div className="ship-loadout__bare">Bare hull — no parts fitted.</div>
+      ) : (
+        <div className="ship-loadout__legend">
+          {groups.map(g => {
+            const def = SHIP_PART_DEFS[g.id];
+            const isDet = g.id === 'detonator';
+            return (
+              <div
+                key={g.id}
+                className={`ship-loadout__row${isDet ? ' ship-loadout__row--danger' : ''}`}
+                title={isDet
+                  ? detonatorDisclosure(detonatorDamage(maxHp, g.n, weaponsLvl))
+                  : `${def.name} — ${def.blurb}`}
+              >
+                <span className="ship-loadout__glyph">{PART_GLYPH[g.id]}</span>
+                <span className="ship-loadout__name">
+                  {def.name}{g.n > 1 ? ` ×${g.n}` : ''}
+                </span>
+                <span className="ship-loadout__effect">{def.blurb}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const DetonatorSection: React.FC<{
   ship: Ship;
   maxHp: number;

@@ -1113,6 +1113,15 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     if (b.icon_variant && /^[A-F]$/.test(b.icon_variant)) {
       iv = b.icon_variant as 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
     }
+    // Defensive-parse the parts snapshot: a malformed blob degrades to
+    // bare hull rather than throwing out the whole build order.
+    let orderParts: string[] | undefined;
+    if (b.parts_json) {
+      try {
+        const sp = sanitizeParts(JSON.parse(b.parts_json));
+        if (sp.length > 0) orderParts = sp;
+      } catch { /* bare hull */ }
+    }
     return {
       id: b.id,
       bodyId: stripGameId(b.body_id) ?? b.body_id,
@@ -1128,6 +1137,9 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       // a ship-class display label so the UI has something to render.
       shipName: b.ship_class.charAt(0).toUpperCase() + b.ship_class.slice(1),
       iconVariant: iv,
+      // Design parts snapshot taken at queue time (may differ from the
+      // now-active design). Lets the queue row show the real loadout.
+      parts: orderParts,
     };
   });
 

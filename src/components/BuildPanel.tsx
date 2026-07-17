@@ -13,7 +13,7 @@ import {
   ALL_VARIANTS, DEFAULT_SHIP_ICONS,
 } from './ShipIcons';
 import { openShipDesigner } from './ShipDesigner';
-import { sanitizeParts, partsCost, computeDesignStats } from '../game/shipParts';
+import { sanitizeParts, partsCost, computeDesignStats, loadoutSummary } from '../game/shipParts';
 import { randomShipName } from '../game/shipNames';
 import './BuildPanel.css';
 
@@ -262,6 +262,11 @@ export const BuildPanel: React.FC = () => {
                 <div className="build-info">
                   <span className="build-name">{bo.shipName}</span>
                   <span className="build-class">{bo.shipClass.toUpperCase()}</span>
+                  {loadoutSummary(bo.parts) && bo.parts && bo.parts.length > 0 && (
+                    <span className="build-loadout" title="Fitted parts (snapshot at queue time)">
+                      {loadoutSummary(bo.parts)}
+                    </span>
+                  )}
                 </div>
                 <div className="build-progress-bar">
                   <div className="build-progress-fill" style={{ width: `${Math.min(100, progress * 100)}%` }} />
@@ -310,6 +315,11 @@ export const BuildPanel: React.FC = () => {
                 >#{i + 1}</span>
                 <span className="build-name">{bo.shipName}</span>
                 <span className="build-class">{bo.shipClass.toUpperCase()}</span>
+                {loadoutSummary(bo.parts) && bo.parts && bo.parts.length > 0 && (
+                  <span className="build-loadout" title="Fitted parts (snapshot at queue time)">
+                    {loadoutSummary(bo.parts)}
+                  </span>
+                )}
               </div>
               <button
                 className="build-cancel"
