@@ -31,12 +31,15 @@ export interface ShipPartDef {
   techNote: string;
 }
 
-/** Part slots per hull. Freighter's single slot is engine/shield only. */
+/** Part slots per hull. Freighter's single slot is engine/shield only.
+ *  Colony ships have no designer at all (0 slots — filtered out of the
+ *  ShipDesigner class tabs). */
 export const SHIP_SLOT_COUNTS: Record<ShipClassName, number> = {
   corvette: 2,
   frigate: 4,
   destroyer: 6,
   freighter: 1,
+  colony: 0,
 };
 
 export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
@@ -189,6 +192,7 @@ export const SERVER_HULL_BASE: Record<ShipClassName, { hp: number; damagePerTick
   frigate: { hp: 80, damagePerTick: 10 },
   destroyer: { hp: 200, damagePerTick: 18 },
   freighter: { hp: 30, damagePerTick: 0 },
+  colony: { hp: 60, damagePerTick: 0 },
 };
 
 /** Blast damage: 50% of max HP per detonator, Weapons tech at half rate. */

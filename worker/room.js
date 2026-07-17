@@ -1,6 +1,6 @@
 import { resolveSenate, getActiveSliders, hasActiveSanction } from './senate.js';
 import { recomputeBodyOwnership } from './factions.js';
-import { parsePartsJson, computeShipStats } from './shipDesigns.js';
+import { parsePartsJson, computeShipStats, countPart, detonatorDamage } from './shipDesigns.js';
 
 // Room Durable Object. One instance per game room, keyed by room id.
 // Uses the WebSocket Hibernation API so idle rooms cost nothing.
@@ -2452,41 +2452,120 @@ export class Room {
 
       // 3.49 Dead-man detonate. Ships with detonate_hp_pct set whose HP
       // is at/below the threshold auto-trigger their detonator (§2.2) —
-      // but ONLY if the hull actually carries a detonator part. The ship
-      // designer (parallel work) owns parts_json; until that column and
-      // the detonation routine land, this check is defensively inert:
-      // the guarded SELECT throws on the missing column and we fall
-      // through without doing anything.
+      // but ONLY if the hull actually carries a detonator part. Mirrors
+      // the manual POST /ships/:id/detonate endpoint in worker/actions.js
+      // (server naming convention: endpoint + tick-pass mirror, like
+      // combat + repair). Damage math is shared via detonatorDamage().
       try {
         const detonators = (await this.env.DB
           .prepare(
-            `SELECT id, name, owner_faction_id, parent_body_id, hp, hp_max,
-                    detonate_hp_pct, parts_json
-               FROM game_ships
-              WHERE game_id = ? AND status = 'active'
-                AND detonate_hp_pct IS NOT NULL
-                AND hp_max > 0
-                AND hp * 100 <= hp_max * detonate_hp_pct`,
+            `SELECT s.id, s.name, s.ship_class, s.owner_faction_id, s.parent_body_id,
+                    s.hp, s.hp_max, s.detonate_hp_pct, s.parts_json
+               FROM game_ships s
+              WHERE s.game_id = ? AND s.status = 'active'
+                AND s.detonate_hp_pct IS NOT NULL
+                AND s.hp_max > 0
+                AND s.hp * 100 <= s.hp_max * s.detonate_hp_pct
+                AND NOT EXISTS (
+                  SELECT 1 FROM game_ship_nodes n
+                   WHERE n.ship_id = s.id AND n.status = 'in_transit'
+                )`,
           )
           .bind(gameId)
           .all()).results ?? [];
         for (const ship of detonators) {
-          // Inert unless the hull carries at least one detonator part.
-          let hasDetonator = false;
-          if (ship.parts_json) {
+          const parts = parsePartsJson(ship.ship_class, ship.parts_json);
+          const nDet = countPart(parts, 'detonator');
+          if (nDet <= 0) continue;
+          try {
+            // Weapons tech at trigger time, half rate — same as manual.
+            const weaponsRow = await this.env.DB
+              .prepare("SELECT level FROM faction_techs WHERE game_id = ? AND faction_id = ? AND tech_id = 'weapons'")
+              .bind(gameId, ship.owner_faction_id)
+              .first();
+            const damage = detonatorDamage(ship.hp_max ?? 0, nDet, weaponsRow?.level ?? 0);
+
+            const victims = (await this.env.DB
+              .prepare(
+                `SELECT s.id, s.name, s.ship_class, s.owner_faction_id, s.hp
+                   FROM game_ships s
+                  WHERE s.game_id = ? AND s.parent_body_id = ? AND s.status = 'active'
+                    AND s.id != ?
+                    AND NOT EXISTS (
+                      SELECT 1 FROM game_ship_nodes n
+                       WHERE n.ship_id = s.id AND n.status = 'in_transit'
+                    )`,
+              )
+              .bind(gameId, ship.parent_body_id, ship.id)
+              .all()).results ?? [];
+
+            const stmts = [
+              this.env.DB
+                .prepare("UPDATE game_ships SET hp = 0, status = 'destroyed', destroyed_at_tick = ? WHERE id = ?")
+                .bind(tick, ship.id),
+            ];
+            const victimSummaries = [];
+            for (const v of victims) {
+              const newHp = Math.max(0, (v.hp ?? 0) - damage);
+              stmts.push(
+                newHp <= 0
+                  ? this.env.DB
+                      .prepare("UPDATE game_ships SET hp = 0, status = 'destroyed', destroyed_at_tick = ? WHERE id = ?")
+                      .bind(tick, v.id)
+                  : this.env.DB.prepare('UPDATE game_ships SET hp = ? WHERE id = ?').bind(newHp, v.id),
+              );
+              victimSummaries.push({
+                ship_id: v.id,
+                ship_name: v.name,
+                ship_class: v.ship_class,
+                owner_faction_id: v.owner_faction_id,
+                destroyed: newHp <= 0,
+              });
+            }
+            await this.env.DB.batch(stmts);
+
             try {
-              const parts = JSON.parse(ship.parts_json);
-              if (Array.isArray(parts)) {
-                hasDetonator = parts.some(p => p === 'detonator' || p?.kind === 'detonator');
-              }
-            } catch { /* malformed — treat as no parts */ }
+              const bodyRow = await this.env.DB
+                .prepare('SELECT name FROM game_bodies WHERE id = ?')
+                .bind(ship.parent_body_id)
+                .first();
+              const facRows = (await this.env.DB
+                .prepare('SELECT id, name FROM game_factions WHERE game_id = ?')
+                .bind(gameId)
+                .all()).results ?? [];
+              const facName = new Map(facRows.map(f => [f.id, f.name]));
+              const payload = JSON.stringify({
+                ship_id: ship.id,
+                ship_name: ship.name,
+                ship_class: ship.ship_class,
+                body_name: bodyRow?.name ?? null,
+                owner_faction_name: facName.get(ship.owner_faction_id) ?? null,
+                damage,
+                detonators: nDet,
+                auto: true,
+                detonate_hp_pct: ship.detonate_hp_pct,
+                victims: victimSummaries.map(v => ({
+                  ...v,
+                  owner_faction_name: facName.get(v.owner_faction_id) ?? null,
+                })),
+                destroyed_count: victimSummaries.filter(v => v.destroyed).length,
+              });
+              await this.env.DB
+                .prepare(
+                  `INSERT INTO chronicle_entries
+                    (id, game_id, tick_number, kind, actor_faction_id, body_id, ship_id, payload, visibility, created_at_ms)
+                   VALUES (?, ?, ?, 'ship_detonated', ?, ?, ?, ?, 'public', ?)`,
+                )
+                .bind(`c_det_${ship.id.slice(-10)}_${tick}`, gameId, tick, ship.owner_faction_id,
+                      ship.parent_body_id, ship.id, payload, Date.now())
+                .run();
+            } catch (e) { console.error('auto ship_detonated chronicle failed', e); }
+          } catch (e) {
+            console.error('dead-man detonate failed for ship', ship.id, e);
           }
-          if (!hasDetonator) continue;
-          // ORDERS->DETONATOR integration point: call detonateShip(ship) here when it exists
         }
-      } catch {
-        // parts_json column doesn't exist yet (ship-designer migration
-        // pending) — dead-man detonate stays inert until it lands.
+      } catch (e) {
+        console.error('dead-man detonate pass failed', e);
       }
     } catch (e) {
       console.error('standing-orders pass failed', e);

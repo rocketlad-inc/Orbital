@@ -122,7 +122,9 @@ export interface ServerShipDesign {
 }
 
 export interface CreateDesignIntent {
-  shipClass: 'corvette' | 'frigate' | 'destroyer' | 'freighter';
+  /** Colony ships have 0 slots and are never offered by the designer UI;
+   *  the server rejects designs for them (unknown slot count). */
+  shipClass: 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
   name: string;
   parts: string[];
   iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F';

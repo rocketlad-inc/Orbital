@@ -877,6 +877,8 @@ export const ShipPanel: React.FC = () => {
                 return true;
               }}
             />
+          )}
+
           {mpActions && ship.ownedBy === 'player' && (
             <div className="orders-config-section">
               <div className="section-title">ORDERS</div>

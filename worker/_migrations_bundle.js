@@ -1312,4 +1312,60 @@ CREATE INDEX idx_ship_designs_faction
 ALTER TABLE game_body_build_queue ADD COLUMN parts_json TEXT;
 ALTER TABLE game_ships ADD COLUMN parts_json TEXT;
 ` },
+  { name: "0034_ship_orders.sql", sql: `-- Ship standing orders (DESIGN-identity-economy.md §3).
+--
+--   stance          : 'attack' | 'defensive' | 'hold'. NULL = 'attack'
+--                     (attack-on-sight, identical to pre-orders behavior).
+--   retreat_hp_pct  : NULL | 25 | 50 | 75. When set, a damaged ship whose
+--                     hp/hp_max drops to or below the threshold auto-
+--                     transfers to the nearest friendly body with a
+--                     shipyard-equipped station. NULL = never retreat.
+--   detonate_hp_pct : NULL | 25 | 50. Dead-man switch for detonator-part
+--                     hulls: auto-trigger the detonator below threshold.
+--                     Inert on ships without a detonator part.
+--
+-- D1 requires one ALTER per statement.
+ALTER TABLE game_ships ADD COLUMN stance TEXT;
+ALTER TABLE game_ships ADD COLUMN retreat_hp_pct INTEGER;
+ALTER TABLE game_ships ADD COLUMN detonate_hp_pct INTEGER;
+` },
+  { name: "0036_faction_color2.sql", sql: `-- Two-tone faction colors (DESIGN-identity-economy.md §5).
+-- PRIMARY (color) = ownership — all meaning stays here.
+-- SECONDARY (color2) = decoration only (colorblind safety); legacy rows
+-- get a derived secondary (lighten/darken of primary) at read time.
+-- One ALTER per statement — D1 requirement.
+ALTER TABLE game_factions ADD COLUMN color2 TEXT;
+-- Lobby-side preference: players pick primary + secondary before start,
+-- same pattern as empire_name / bio / chosen_starting_body (0005 / 0008).
+ALTER TABLE room_members ADD COLUMN color TEXT;
+ALTER TABLE room_members ADD COLUMN color2 TEXT;
+` },
+  { name: "0037_build_queue.sql", sql: `-- Unlimited build queue (DESIGN-identity-economy.md §7 P1c).
+--
+-- Before: handleQueueBuild 409'd ('no_slots') once in-flight builds at
+-- a body reached concurrency = 1 + shipyard levels. Now any number of
+-- orders can be queued (resources still charged at queue time); orders
+-- beyond capacity wait with status='waiting' and are promoted FIFO by
+-- the tick alarm as active builds complete.
+--
+-- Columns (all additive; SQLite constant DEFAULT backfills existing
+-- rows, so every pre-migration row reads status='building' — correct,
+-- they were all active under the old gate):
+--
+--   status          'building' (counts against slots, tick alarm
+--                   completes it at completes_at_tick) or 'waiting'
+--                   (inert until promoted; its completes_at_tick is a
+--                   placeholder and is rewritten at promotion).
+--   build_ticks     construction duration snapshot taken at queue time
+--                   so promotion doesn't have to re-derive it from the
+--                   ship class table. NULL on legacy rows — promotion
+--                   falls back to SHIP_BUILD_COST[ship_class].
+--   started_at_tick tick the build actually became active (insert time
+--                   when a slot was free, promotion time otherwise).
+--                   NULL on legacy + waiting rows; the client falls
+--                   back to queued_at_tick for the progress bar.
+ALTER TABLE game_body_build_queue ADD COLUMN status TEXT NOT NULL DEFAULT 'building';
+ALTER TABLE game_body_build_queue ADD COLUMN build_ticks INTEGER;
+ALTER TABLE game_body_build_queue ADD COLUMN started_at_tick INTEGER;
+` },
 ];

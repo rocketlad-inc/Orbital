@@ -195,7 +195,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
         <div className="ship-designer__body">
           {/* Class tabs */}
           <div className="ship-designer__tabs">
-            {BUILDABLE_CLASSES.map(cls => (
+            {BUILDABLE_CLASSES.filter(cls => (SHIP_SLOT_COUNTS[cls] ?? 0) > 0).map(cls => (
               <button
                 key={cls}
                 className={`ship-designer__tab ${cls === activeClass ? 'active' : ''}`}
