@@ -212,7 +212,7 @@ function ephemeral(content) {
   return json({ type: R_MESSAGE, data: { content, flags: FLAG_EPHEMERAL } });
 }
 
-async function handleInteractions(req, env) {
+export async function handleInteractions(req, env) {
   const raw = await req.text();
   const ok = await verifySignature(env, req, raw);
   if (!ok) return new Response('invalid request signature', { status: 401 });
@@ -350,11 +350,12 @@ async function handleUnlink(_req, env, { session }) {
 
 // ---------- routes ----------
 
+// NOTE: /api/discord/interactions is NOT in this list. index.js applies a
+// blanket "require session" gate to everything that reaches feature-route
+// dispatch, so a cookieless Discord request would 401 before its signature
+// could be checked. It's wired directly in index.js _dispatch alongside the
+// other unauthenticated routes (signup/login/…), calling handleInteractions.
 export const routes = [
-  // Discord calls this with an Ed25519 signature, NOT a session cookie —
-  // so no auth:'required' (that would 401 before we can verify the sig).
-  { method: 'POST', pattern: '/api/discord/interactions', handle: handleInteractions },
-
   { method: 'POST', pattern: '/api/discord/link-code',  auth: 'required', handle: handleMintLinkCode },
   { method: 'GET',  pattern: '/api/discord/link-status', auth: 'required', handle: handleLinkStatus },
   { method: 'POST', pattern: '/api/discord/unlink',      auth: 'required', handle: handleUnlink },

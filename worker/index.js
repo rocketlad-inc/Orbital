@@ -823,6 +823,14 @@ export default {
         return json({ google_client_id: env.GOOGLE_CLIENT_ID ?? null });
       }
 
+      // Discord interactions webhook — authenticated by an Ed25519 request
+      // signature (verified inside handleInteractions), NOT a session cookie.
+      // MUST be handled before the blanket session gate below, or Discord's
+      // cookieless POST 401s before its signature can be checked.
+      if (req.method === 'POST' && url.pathname === '/api/discord/interactions') {
+        return discord.handleInteractions(req, env);
+      }
+
       // everything below requires a session
       const session = await currentSession(req, env);
       if (!session) return err(401, 'unauthenticated', 'sign in required');
