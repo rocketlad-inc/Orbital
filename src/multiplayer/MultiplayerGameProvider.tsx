@@ -233,6 +233,15 @@ interface ServerState {
     completes_at_tick: number;
     /** Player's icon pick at queue time, or null for class default. */
     icon_variant?: string | null;
+    /** 'building' (active, counts against slots) or 'waiting' (queued
+     *  beyond concurrency; promoted FIFO server-side). Absent on rows
+     *  from a pre-0037 worker → treat as building. */
+    status?: 'building' | 'waiting' | null;
+    /** Tick the build actually started (promotion time for rows that
+     *  waited). Null for waiting/legacy rows. */
+    started_at_tick?: number | null;
+    /** Construction duration snapshot taken at queue time. */
+    build_ticks?: number | null;
   }>;
   /** Active trade routes for the caller's faction. Server names use
    *  metal/gold; the deserializer below maps to ore/credits to match
@@ -1015,8 +1024,12 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       bodyId: stripGameId(b.body_id) ?? b.body_id,
       shipClass: b.ship_class as 'corvette' | 'frigate' | 'destroyer' | 'freighter',
       ownedBy: PLAYER_TOKEN,
-      startTick: b.queued_at_tick,
+      // Progress runs from the tick the build actually STARTED — for
+      // orders that waited in the unlimited queue that's the promotion
+      // tick, not the queue tick (legacy rows fall back to queued_at).
+      startTick: b.started_at_tick ?? b.queued_at_tick,
       completeTick: b.completes_at_tick,
+      status: b.status === 'waiting' ? 'waiting' as const : 'building' as const,
       // The server doesn't currently track per-order names — fall back to
       // a ship-class display label so the UI has something to render.
       shipName: b.ship_class.charAt(0).toUpperCase() + b.ship_class.slice(1),

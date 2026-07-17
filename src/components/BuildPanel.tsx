@@ -80,17 +80,26 @@ export const BuildPanel: React.FC = () => {
   const playerRes = gameState.resources['player'];
   if (!playerRes) return null;
 
-  const activeBuildOrders = gameState.buildOrders.filter(bo => bo.bodyId === body.id);
+  const ordersHere = gameState.buildOrders.filter(bo => bo.bodyId === body.id);
+  // MP unlimited queue split: 'building' rows occupy slots and show a
+  // progress bar; 'waiting' rows sit below with a position number until
+  // the server promotes them FIFO. SP orders never carry a status —
+  // they're all active.
+  const buildingOrders = ordersHere.filter(bo => bo.status !== 'waiting');
+  const waitingOrders = ordersHere.filter(bo => bo.status === 'waiting');
   const existingShipNames = gameState.ships.map(s => s.name);
 
   // Build slots: 1 base + 1 per Shipyard level on owned stations here.
-  // Mirrors the server gate in worker/actions.js handleQueueBuild and
-  // src/game/settlements.ts shipyardSlotsAtBody. Pending (committed-but-
-  // not-built) names count too — each will consume a slot when queued —
-  // so the player sees the true remaining capacity.
+  // Mirrors the server concurrency in worker/actions.js handleQueueBuild
+  // and src/game/settlements.ts shipyardSlotsAtBody. Pips count ACTIVE
+  // builds only — waiting orders don't consume a slot.
   const totalSlots = shipyardSlotsAtBody(body.id, 'player', gameState.settlements);
-  const usedSlots = activeBuildOrders.length;
+  const usedSlots = buildingOrders.length;
   const slotsFull = usedSlots >= totalSlots;
+  // MP: the queue is unlimited depth — BUILD stays enabled at capacity
+  // and new orders wait for a slot (charged up front, refundable via
+  // cancel). SP keeps the hard gate (single-player engine is frozen).
+  const capacityBlocks = slotsFull && !mpActions;
 
   const handleCommitName = () => {
     const trimmed = customName.trim();
@@ -171,7 +180,9 @@ export const BuildPanel: React.FC = () => {
       </div>
       {slotsFull && (
         <div className="build-slots__hint">
-          All slots busy — wait for a build to finish, or add/upgrade a Shipyard on a station here for more.
+          {mpActions
+            ? 'All slots busy — new builds are charged now and wait in the queue. Add/upgrade a Shipyard for more concurrent slots.'
+            : 'All slots busy — wait for a build to finish, or add/upgrade a Shipyard on a station here for more.'}
         </div>
       )}
 
@@ -225,10 +236,10 @@ export const BuildPanel: React.FC = () => {
         </div>
       )}
 
-      {activeBuildOrders.length > 0 && (
+      {buildingOrders.length > 0 && (
         <div className="build-queue">
           <div className="queue-label">BUILDING</div>
-          {activeBuildOrders.map(bo => {
+          {buildingOrders.map(bo => {
             const progress = (gameState.currentTick - bo.startTick) / (bo.completeTick - bo.startTick);
             const remaining = Math.max(0, bo.completeTick - gameState.currentTick);
             return (
@@ -265,6 +276,43 @@ export const BuildPanel: React.FC = () => {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Waiting orders — queued beyond concurrency (MP unlimited
+          queue). Already paid for; the server promotes them FIFO as
+          active builds finish. Position number instead of a progress
+          bar; cancel refunds like any other order. */}
+      {waitingOrders.length > 0 && (
+        <div className="build-queue build-queue--waiting">
+          <div className="queue-label">QUEUED (waiting for slot)</div>
+          {waitingOrders.map((bo, i) => (
+            <div key={bo.id} className="build-item build-item--waiting" style={{ opacity: 0.75 }}>
+              <div className="build-info">
+                <span
+                  className="build-queue-pos"
+                  style={{ fontSize: 10, opacity: 0.8, marginRight: 6 }}
+                >#{i + 1}</span>
+                <span className="build-name">{bo.shipName}</span>
+                <span className="build-class">{bo.shipClass.toUpperCase()}</span>
+              </div>
+              <button
+                className="build-cancel"
+                onClick={() => {
+                  cancelBuild(bo.id);
+                  if (mpActions) {
+                    mpActions.cancelBuild(bo.id).then(res => {
+                      if (!res.ok) {
+                        // eslint-disable-next-line no-console
+                        console.warn('cancelBuild rejected by server:', res.error);
+                      }
+                    });
+                  }
+                }}
+                title="Cancel this queued build (refunds the cost)"
+              >✕</button>
+            </div>
+          ))}
         </div>
       )}
 
@@ -346,13 +394,15 @@ export const BuildPanel: React.FC = () => {
               </div>
               <button
                 className={`build-btn${recentlyQueued.has(cls) ? ' build-btn--just-queued' : ''}`}
-                disabled={!canAfford || slotsFull}
+                disabled={!canAfford || capacityBlocks}
                 onClick={() => { setRecentlyQueued(s => new Set(s).add(cls)); handleBuild(cls); }}
                 title={
-                  slotsFull
+                  capacityBlocks
                     ? `All ${totalSlots} build slots busy — finish a build or add a Shipyard`
                     : canAfford
-                      ? `Build a ${def.displayName} (${def.cost.fuel}F ${def.cost.ore}M ${def.cost.credits}C, ${def.buildTime} ticks)`
+                      ? slotsFull
+                        ? `Queue a ${def.displayName} (${def.cost.fuel}F ${def.cost.ore}M ${def.cost.credits}C, charged now — starts when a slot frees)`
+                        : `Build a ${def.displayName} (${def.cost.fuel}F ${def.cost.ore}M ${def.cost.credits}C, ${def.buildTime} ticks)`
                       : shortLabel}
               >
                 BUILD · {def.buildTime}t

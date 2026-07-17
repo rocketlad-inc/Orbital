@@ -286,13 +286,13 @@ async function handleQueueBuild(req, env, ctx) {
   if (!bodyRow) return err(404, 'not_found', 'body not found');
   if (bodyRow.owner_faction_id !== me.id) return err(403, 'not_owner', 'you do not own this body');
 
-  // Build-slot gate. Every owned body has 1 base slot; each level of a
-  // Shipyard (a station building) adds one more concurrent slot. This
-  // mirrors src/game/settlements.ts shipyardSlotsAtBody and was the
-  // missing server-side enforcement that let MP players queue unlimited
-  // ships at once (the old shipyard_level COLUMN gate was dead — this
-  // reads the live buildings_json instead). In-flight builds = rows in
-  // game_body_build_queue not yet completed/cancelled.
+  // Build concurrency. Every owned body has 1 base slot; each level of
+  // a Shipyard (a station building) adds one more concurrent slot. This
+  // mirrors src/game/settlements.ts shipyardSlotsAtBody. Since 0037 the
+  // queue is UNLIMITED depth — orders beyond capacity are accepted with
+  // status='waiting' (still charged up front) and promoted FIFO by the
+  // room.js tick pass as active builds complete. Only status='building'
+  // rows count against the slots.
   const yardRows = (await env.DB
     .prepare(
       `SELECT buildings_json FROM game_settlements
@@ -310,20 +310,22 @@ async function handleQueueBuild(req, env, ctx) {
     } catch { /* ignore malformed */ }
   }
   const slots = 1 + shipyardLevels;
-  // Completed builds are DELETED from this table (room.js), so any row
-  // that still exists and isn't cancelled is an in-flight build.
+  // Completed builds are DELETED from this table (room.js), so any
+  // non-cancelled status='building' row is occupying a slot right now.
+  // (Rows predating migration 0037 read status='building' via the
+  // column DEFAULT, which is correct — they were all active.)
   const inFlight = await env.DB
     .prepare(
       `SELECT COUNT(*) AS c FROM game_body_build_queue
         WHERE game_id = ? AND body_id = ? AND faction_id = ?
-          AND cancelled_at_tick IS NULL`,
+          AND cancelled_at_tick IS NULL AND status = 'building'`,
     )
     .bind(gameId, bodyId, me.id)
     .first();
-  if ((inFlight?.c ?? 0) >= slots) {
-    return err(409, 'no_slots',
-      `all ${slots} build slot${slots === 1 ? '' : 's'} at this body are busy — wait for one to finish or build a Shipyard`);
-  }
+  // No rejection when slots are full — the order is accepted as
+  // status='waiting' and promoted FIFO when a slot frees up. The old
+  // 'no_slots' 409 is gone from the normal flow.
+  const startsNow = (inFlight?.c ?? 0) < slots;
 
   // Senate effect: ship_build_cost_multiplier scales metal + gold at
   // queue time. Default 1.0 (no effect) when no proposal is active.
@@ -388,6 +390,9 @@ async function handleQueueBuild(req, env, ctx) {
     .bind(gameId)
     .first();
   const startTick = game?.current_tick ?? 0;
+  // For a waiting order completes_at_tick is a placeholder (NOT NULL
+  // column) — the completion sweep filters on status='building', and
+  // promotion in room.js rewrites it to promotion_tick + build_ticks.
   const completeTick = startTick + cost.build_ticks;
 
   const orderId = `${bodyId}:b${Date.now().toString(36)}`;
@@ -396,10 +401,12 @@ async function handleQueueBuild(req, env, ctx) {
     env.DB
       .prepare(
         `INSERT INTO game_body_build_queue
-          (id, game_id, body_id, faction_id, ship_class, queued_at_tick, completes_at_tick, icon_variant, ship_name)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, game_id, body_id, faction_id, ship_class, queued_at_tick, completes_at_tick, icon_variant, ship_name,
+           status, build_ticks, started_at_tick)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .bind(orderId, gameId, bodyId, me.id, shipClass, startTick, completeTick, iconVariant, shipName),
+      .bind(orderId, gameId, bodyId, me.id, shipClass, startTick, completeTick, iconVariant, shipName,
+            startsNow ? 'building' : 'waiting', cost.build_ticks, startsNow ? startTick : null),
   ];
   for (const d of settlementDrains) {
     batchStmts.push(
@@ -429,6 +436,7 @@ async function handleQueueBuild(req, env, ctx) {
       ship_class: shipClass,
       queued_at_tick: startTick,
       completes_at_tick: completeTick,
+      status: startsNow ? 'building' : 'waiting',
     },
   }, { status: 201 });
 }
