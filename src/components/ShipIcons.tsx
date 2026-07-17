@@ -37,11 +37,15 @@ const SVG = ({ size = 24, color, color2, className, children }: IconProps & { ch
     aria-hidden
   >
     {children}
-    {/* Secondary trim stripe — decoration only, meaning must stay in
-        the primary. Drawn under every silhouette (icons face +x on a
-        32×32 box, hulls live within y≈7..25). */}
+    {/* Secondary squadron flash — decoration only, meaning stays in the
+        primary. A bold underline plus a shorter accent stripe reads as a
+        two-tone livery even at map scale (icons face +x on a 32×32 box,
+        hulls live within y≈7..25). */}
     {color2 && (
-      <path d="M9 28.5 L23 28.5" stroke={color2} strokeWidth={2.5} />
+      <>
+        <path d="M7 28.5 L25 28.5" stroke={color2} strokeWidth={3} />
+        <path d="M11 25 L21 25" stroke={color2} strokeWidth={2} opacity={0.85} />
+      </>
     )}
   </svg>
 );

@@ -1039,6 +1039,30 @@ function shipTrimColor(ship: Ship, factions: Faction[] | undefined): string | un
 }
 
 /**
+ * Two-tone (§5): a thin secondary-colored halo just outside a ship icon,
+ * so every hull reads in BOTH the faction's colors on the map — not only
+ * the tiny trim baked into the silhouette. Sits inside the selection ring
+ * (which is a fixed UI cyan at +4) so the two never merge. Decoration
+ * only; the icon fill still carries the ownership meaning.
+ */
+function drawShipSecondaryRing(
+  canvasPos: { x: number; y: number },
+  iconSize: number,
+  ship: Ship,
+  ctx: RenderContext,
+) {
+  const trim = shipTrimColor(ship, ctx.factions);
+  if (!trim) return;
+  ctx.ctx.save();
+  ctx.ctx.strokeStyle = withOpacity(trim, 0.85);
+  ctx.ctx.lineWidth = 1.3;
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, iconSize / 2 + 1.5, 0, Math.PI * 2);
+  ctx.ctx.stroke();
+  ctx.ctx.restore();
+}
+
+/**
  * Draw a ship on its orbit
  */
 export function drawShip(
@@ -1110,6 +1134,9 @@ export function drawShip(
     ctx.ctx.lineTo(canvasPos.x + vel.prograde.x * 10, canvasPos.y + vel.prograde.y * 10);
     ctx.ctx.stroke();
   }
+
+  // Two-tone (§5): secondary halo around the icon.
+  drawShipSecondaryRing(canvasPos, iconSize, ship, ctx);
 
   // Draw selection indicator
   if (isSelected) {
@@ -1971,6 +1998,9 @@ function drawTorchTransitShip(
     ctx.ctx.stroke();
   }
 
+  // Two-tone (§5): secondary halo around the icon.
+  drawShipSecondaryRing(canvasPos, iconSize, ship, ctx);
+
   if (isSelected) {
     ctx.ctx.strokeStyle = COLORS.info;
     ctx.ctx.lineWidth = 2;
@@ -2165,16 +2195,15 @@ export function drawCity(
   ctx.ctx.fill();
   ctx.ctx.stroke();
 
-  // Two-tone (§5): landing-pad inner line in the faction's secondary.
-  // decoration only — meaning must stay in primary. Only drawn when the
-  // marker is big enough for the line to resolve.
+  // Two-tone (§5): a secondary outline hugging the primary square, so a
+  // city reads in both faction colors. decoration only — meaning stays in
+  // the primary fill. Only when the marker is big enough to resolve.
   const color2 = settlementColor2(settlement, factions);
-  if (color2 && size >= 4) {
+  if (color2 && size >= 3.5) {
     ctx.ctx.strokeStyle = color2;
-    ctx.ctx.lineWidth = 1;
+    ctx.ctx.lineWidth = 1.2;
     ctx.ctx.beginPath();
-    ctx.ctx.moveTo(tipX - size / 2 + 1, tipY + size / 2 - 1.5);
-    ctx.ctx.lineTo(tipX + size / 2 - 1, tipY + size / 2 - 1.5);
+    ctx.ctx.rect(tipX - size / 2 - 1.2, tipY - size / 2 - 1.2, size + 2.4, size + 2.4);
     ctx.ctx.stroke();
   }
 
@@ -2724,17 +2753,32 @@ export function drawOwnershipLayer(
     if (!body.ownedBy) continue;
     const faction = ctx.factions.find(f => f.id === body.ownedBy);
     const color = faction?.color || COLORS.neutral;
+    // Two-tone (§5): the ownership halo is a barber-pole of the faction's
+    // primary + secondary — primary dashes with the secondary filling the
+    // gaps on the SAME ring, so a body reads as "theirs" in both colors at
+    // a glance. Meaning still lives in the primary; the secondary is the
+    // decorative interleave.
+    const color2 = faction?.color2 || (faction?.color ? deriveSecondary(faction.color) : color);
     const wp = bodyPosition(body, ctx.t, ctx.bodies);
     const cp = worldToCanvas(wp.x, wp.y, ctx);
     const r = Math.max(10, body.radius * ctx.camera.scale + 6);
     ctx.ctx.save();
-    ctx.ctx.strokeStyle = withOpacity(color, 0.75);
     ctx.ctx.lineWidth = 1.5;
-    ctx.ctx.setLineDash([4, 2]);
+    // Primary dashes.
+    ctx.ctx.strokeStyle = withOpacity(color, 0.8);
+    ctx.ctx.setLineDash([4, 4]);
+    ctx.ctx.lineDashOffset = 0;
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(cp.x, cp.y, r, 0, Math.PI * 2);
+    ctx.ctx.stroke();
+    // Secondary dashes, shifted one dash-length so they sit in the gaps.
+    ctx.ctx.strokeStyle = withOpacity(color2, 0.8);
+    ctx.ctx.lineDashOffset = 4;
     ctx.ctx.beginPath();
     ctx.ctx.arc(cp.x, cp.y, r, 0, Math.PI * 2);
     ctx.ctx.stroke();
     ctx.ctx.setLineDash([]);
+    ctx.ctx.lineDashOffset = 0;
     ctx.ctx.restore();
   }
 }
