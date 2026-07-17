@@ -13,6 +13,7 @@ import { COLORS, withOpacity, lighten, darken } from './colors';
 import { getShipIconImage } from './shipIconCache';
 import { ShipIconClass } from '../components/ShipIcons';
 import { deriveSecondary } from '../game/colorUtils';
+import { getShipClass } from '../game/shipClasses';
 
 export interface RenderContext {
   ctx: CanvasRenderingContext2D;
@@ -1038,6 +1039,107 @@ function shipTrimColor(ship: Ship, factions: Faction[] | undefined): string | un
   return faction.color2 || deriveSecondary(faction.color);
 }
 
+// ---- Ship icon size hierarchy (graphics pass, Workstream A §3) ----
+// Rest sizes per class; +4 when selected. Bigger hull = bigger icon so
+// a mixed fleet reads at a glance.
+const SHIP_ICON_REST_SIZE: Record<string, number> = {
+  corvette: 14,
+  frigate: 17,
+  freighter: 16,
+  colony: 16,
+  destroyer: 22,
+};
+
+function shipIconSize(shipClass: string, isSelected: boolean): number {
+  return (SHIP_ICON_REST_SIZE[shipClass] ?? 18) + (isSelected ? 4 : 0);
+}
+
+// ---- Banking on heading change (Workstream A §4) ----
+// Module-level state, reused across frames — no per-frame allocation.
+// Each frame: bank += clamp(Δheading × 3, ±0.14), then bank ×= 0.85
+// (15%/frame decay), rendered rotation = heading + bank. Entries are
+// pruned lazily: past 500 ships the whole map is cleared and rebuilt
+// (a one-frame bank reset nobody will notice).
+const shipBankState = new Map<string, { lastHeading: number; bank: number }>();
+
+function shipBank(shipId: string, heading: number): number {
+  if (shipBankState.size > 500) shipBankState.clear();
+  let s = shipBankState.get(shipId);
+  if (!s) {
+    s = { lastHeading: heading, bank: 0 };
+    shipBankState.set(shipId, s);
+    return 0;
+  }
+  // Wrap Δheading to [-π, π] so crossing the atan2 seam doesn't spike.
+  let dh = heading - s.lastHeading;
+  while (dh > Math.PI) dh -= 2 * Math.PI;
+  while (dh < -Math.PI) dh += 2 * Math.PI;
+  s.lastHeading = heading;
+  s.bank += Math.max(-0.14, Math.min(0.14, dh * 3));
+  s.bank *= 0.85;
+  return s.bank;
+}
+
+// ---- State dressing (Workstream A §5) ----
+// All three (retreat wake, hold alpha, rank chevron) are gated behind
+// this camera scale so far zoom stays clean.
+const SHIP_DRESSING_MIN_SCALE = 1.2;
+const RANK_CHEVRON_COLOR = '#ffd166';
+
+/** True when the ship has an auto-retreat threshold set AND its HP is
+ *  at or below it — i.e. the server is (or is about to be) pulling it
+ *  out of the fight. */
+function shipIsRetreating(ship: Ship): boolean {
+  if (ship.retreatHpPct == null) return false;
+  const maxHp = ship.hpMax ?? getShipClass(ship.class).hp;
+  if (!(maxHp > 0)) return false;
+  const hp = ship.hp ?? maxHp;
+  return hp / maxHp <= ship.retreatHpPct / 100;
+}
+
+/** Thin 12px wake line astern of a retreating ship, in the faction
+ *  secondary at 35% alpha. Drawn before the icon so it sits under it. */
+function drawRetreatWake(
+  c2d: CanvasRenderingContext2D,
+  canvasPos: { x: number; y: number },
+  heading: number,
+  iconSize: number,
+  secondary: string,
+) {
+  const cosH = Math.cos(heading);
+  const sinH = Math.sin(heading);
+  const x0 = canvasPos.x - cosH * iconSize / 2;
+  const y0 = canvasPos.y - sinH * iconSize / 2;
+  c2d.save();
+  c2d.strokeStyle = withOpacity(secondary, 0.35);
+  c2d.lineWidth = 1;
+  c2d.beginPath();
+  c2d.moveTo(x0, y0);
+  c2d.lineTo(x0 - cosH * 12, y0 - sinH * 12);
+  c2d.stroke();
+  c2d.restore();
+}
+
+/** 2px gold chevron floating ~4px above the icon for veteran ships
+ *  (rank ≥ 5). Screen-aligned, not rotated with the hull. */
+function drawRankChevron(
+  c2d: CanvasRenderingContext2D,
+  canvasPos: { x: number; y: number },
+  iconSize: number,
+) {
+  const y = canvasPos.y - iconSize / 2 - 4;
+  c2d.save();
+  c2d.strokeStyle = RANK_CHEVRON_COLOR;
+  c2d.lineWidth = 2;
+  c2d.lineJoin = 'miter';
+  c2d.beginPath();
+  c2d.moveTo(canvasPos.x - 4, y);
+  c2d.lineTo(canvasPos.x, y - 3.5);
+  c2d.lineTo(canvasPos.x + 4, y);
+  c2d.stroke();
+  c2d.restore();
+}
+
 /**
  * Draw a ship on its orbit
  */
@@ -1078,23 +1180,35 @@ export function drawShip(
     };
   }
 
-  const iconSize = isSelected ? 22 : 18;
+  const iconSize = shipIconSize(ship.class, isSelected);
 
   // Damage flash sits beneath the icon so the icon stays at full opacity.
   const flashStart = ctx.damageFlashStart?.get(ship.id);
   drawDamageFlash(canvasPos, iconSize / 2, flashStart, ctx.t, ctx, 'damage');
 
+  const trimColor = shipTrimColor(ship, ctx.factions);
+  const dressed = ctx.camera.scale >= SHIP_DRESSING_MIN_SCALE;
+
   const icon = getShipIconImage(
     ship.class as ShipIconClass, shipColorValue, ship.iconVariant,
-    shipTrimColor(ship, ctx.factions),
+    trimColor,
   );
   if (icon) {
-    // Draw the icon rotated to face the velocity direction.
+    // Retreat wake sits UNDER the icon.
+    if (dressed && shipIsRetreating(ship)) {
+      drawRetreatWake(ctx.ctx, canvasPos, heading, iconSize, trimColor ?? shipColorValue);
+    }
+    // Draw the icon rotated to face the velocity direction, plus a
+    // transient bank lean while the heading is changing.
     ctx.ctx.save();
     ctx.ctx.translate(canvasPos.x, canvasPos.y);
-    ctx.ctx.rotate(heading);
+    ctx.ctx.rotate(heading + shipBank(ship.id, heading));
+    if (dressed && ship.stance === 'hold') ctx.ctx.globalAlpha = 0.8;
     ctx.ctx.drawImage(icon, -iconSize / 2, -iconSize / 2, iconSize, iconSize);
     ctx.ctx.restore();
+    if (dressed && (ship.rank ?? 0) >= 5) {
+      drawRankChevron(ctx.ctx, canvasPos, iconSize);
+    }
   } else {
     // Icon still rasterizing — fall back to the original dot + tick so the
     // map never appears empty.
@@ -1916,7 +2030,7 @@ function drawTorchTransitShip(
   // Canvas y axis inverts.
   const heading = Math.atan2(-facingY, facingX);
 
-  const iconSize = isSelected ? 22 : 18;
+  const iconSize = shipIconSize(ship.class, isSelected);
 
   const flashStartT = ctx.damageFlashStart?.get(ship.id);
   drawDamageFlash(canvasPos, iconSize / 2, flashStartT, ctx.t, ctx, 'damage');
@@ -1943,16 +2057,27 @@ function drawTorchTransitShip(
     );
   }
 
+  const trimColor = shipTrimColor(ship, ctx.factions);
+  const dressed = ctx.camera.scale >= SHIP_DRESSING_MIN_SCALE;
+
   const icon = getShipIconImage(
     ship.class as ShipIconClass, shipColorValue, ship.iconVariant,
-    shipTrimColor(ship, ctx.factions),
+    trimColor,
   );
   if (icon) {
+    // Retreat wake sits UNDER the icon.
+    if (dressed && shipIsRetreating(ship)) {
+      drawRetreatWake(ctx.ctx, canvasPos, heading, iconSize, trimColor ?? shipColorValue);
+    }
     ctx.ctx.save();
     ctx.ctx.translate(canvasPos.x, canvasPos.y);
-    ctx.ctx.rotate(heading);
+    ctx.ctx.rotate(heading + shipBank(ship.id, heading));
+    if (dressed && ship.stance === 'hold') ctx.ctx.globalAlpha = 0.8;
     ctx.ctx.drawImage(icon, -iconSize / 2, -iconSize / 2, iconSize, iconSize);
     ctx.ctx.restore();
+    if (dressed && (ship.rank ?? 0) >= 5) {
+      drawRankChevron(ctx.ctx, canvasPos, iconSize);
+    }
   } else {
     const shipSize = isSelected ? 5 : 4;
     ctx.ctx.fillStyle = shipColorValue;

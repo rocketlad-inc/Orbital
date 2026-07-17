@@ -11,7 +11,11 @@ import {
 } from '../components/ShipIcons';
 
 /** Pixel size of the rasterized icon — large enough to stay crisp when
- *  drawn at any practical on-map size. */
+ *  drawn at any practical on-map size. The shaded-hull treatment
+ *  (keel shade, dorsal highlight, engine-glow radial gradient) bakes
+ *  gradients into this raster: at 64px the icon is a ≥2.4× supersample
+ *  of the largest on-map draw (destroyer selected = 26px), so the
+ *  gradients stay smooth with no banding. Keep this ≥64. */
 const ICON_RASTER_SIZE = 64;
 
 type CacheKey = string;

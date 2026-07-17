@@ -5,6 +5,7 @@
 // ============================================================
 
 import React from 'react';
+import { lighten, darken } from '../render/colors';
 
 // A/B/C — the original three; D/E/F — new candidates added for player
 // selection (gallery at ?icons). The picker dropdown at ship construction
@@ -25,17 +26,33 @@ interface IconProps {
   className?: string;
 }
 
+// Monotonic id counter so every rendered icon gets unique def ids
+// (clipPaths / gradients). SVGs rendered into the DOM share one id
+// namespace per document; a raw fixed id would cross-wire icons.
+let svgUid = 0;
+
 const SVG = ({ size = 24, color, color2, className, children }: IconProps & { children: React.ReactNode }) => {
   // Convention across every icon: the FIRST child is the hull, the rest
-  // are detail accents. Paint the hull in the primary (with a light
-  // primary fill so it reads as a solid body on the map) and recolor the
-  // detail children in the secondary. No per-icon edits, no ring — the
-  // two tones live in the silhouette.
+  // are detail accents. The hull gets the full shaded treatment (solid
+  // primary fill + keel shade + dorsal highlight + baked engine glow);
+  // detail children are recolored in the secondary. No per-icon edits —
+  // the two-tone livery lives in the silhouette.
   const primary = color ?? 'currentColor';
   const accent = color2 || primary;
   const kids = React.Children.toArray(children) as React.ReactElement[];
   const hull = kids[0];
   const details = kids.slice(1);
+
+  // Shading needs to derive tints from the primary, which only works
+  // for hex colors (the map-raster path always passes hex). DOM/UI
+  // contexts using currentColor keep the previous flat treatment.
+  const shaded = typeof primary === 'string' && primary.startsWith('#');
+  const idBase = shaded ? `si${svgUid++}` : '';
+  const hullClipId = `${idBase}h`;
+  const dorsalClipId = `${idBase}d`;
+  const glowId = `${idBase}g`;
+  const keelShade = shaded ? darken(primary, 0.6) : primary;
+  const dorsalLight = shaded ? lighten(primary, 1.3) : primary;
 
   return (
     <svg
@@ -51,11 +68,50 @@ const SVG = ({ size = 24, color, color2, className, children }: IconProps & { ch
       className={className}
       aria-hidden
     >
+      {shaded && hull && (
+        <defs>
+          {/* Hull silhouette as a clip so the keel shade never bleeds
+              outside the ship. */}
+          <clipPath id={hullClipId}>
+            {React.cloneElement(hull, { stroke: 'none', fill: 'none' })}
+          </clipPath>
+          {/* Top-half clip for the dorsal highlight (icons are built on
+              a y=16 midline; stop just above it so the highlight reads
+              as top-lit, not a full outline). */}
+          <clipPath id={dorsalClipId}>
+            <rect x="0" y="0" width="32" height="15.5" />
+          </clipPath>
+          {/* Warm engine glow — baked at ~30% intensity; the live
+              canvas thrust flame still layers on during burns. */}
+          <radialGradient id={glowId} cx="0.5" cy="0.5" r="0.5">
+            <stop offset="0" stopColor="#ffdca8" stopOpacity="0.95" />
+            <stop offset="0.45" stopColor="#ff9e4a" stopOpacity="0.55" />
+            <stop offset="1" stopColor="#ff7a2e" stopOpacity="0" />
+          </radialGradient>
+        </defs>
+      )}
       {hull && React.cloneElement(hull, {
         stroke: primary,
         fill: primary,
-        fillOpacity: 0.5,
+        fillOpacity: shaded ? 1 : 0.5,
       })}
+      {shaded && hull && (
+        <>
+          {/* Keel shade: darkened bottom half, clipped to the hull. */}
+          <rect
+            x="0" y="16" width="32" height="16"
+            fill={keelShade} fillOpacity={0.4} stroke="none"
+            clipPath={`url(#${hullClipId})`}
+          />
+          {/* 1px dorsal highlight along the hull's top edge. */}
+          {React.cloneElement(hull, {
+            stroke: dorsalLight,
+            strokeWidth: 1,
+            fill: 'none',
+            clipPath: `url(#${dorsalClipId})`,
+          })}
+        </>
+      )}
       {details.map((d, i) => {
         // Preserve a detail's own fill intent: solid dots (fill set) get
         // filled in the accent; open lines (fill 'none'/unset) stay
@@ -67,6 +123,15 @@ const SVG = ({ size = 24, color, color2, className, children }: IconProps & { ch
           ...(hadFill ? { fill: accent } : {}),
         });
       })}
+      {/* Always-on engine glow dot at the bell (icons face +x, bell
+          sits at roughly x=4, y=16 across the set). Drawn last so it
+          reads over the aft hull edge. */}
+      {shaded && (
+        <circle
+          cx="4" cy="16" r="4.5"
+          fill={`url(#${glowId})`} stroke="none" opacity={0.32}
+        />
+      )}
     </svg>
   );
 };
