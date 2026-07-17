@@ -606,6 +606,37 @@
   border: 1px solid #6ee7b7;
 }
 
+/* Actively trading fire — pulses so an ongoing fight draws the eye. */
+.status-badge--combat {
+  background: rgba(255, 94, 94, 0.18);
+  color: #ff5e5e;
+  border: 1px solid #ff5e5e;
+  animation: status-combat-pulse 1s ease-in-out infinite;
+}
+
+@keyframes status-combat-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-badge--combat { animation: none; }
+}
+
+/* Fleeing under auto-retreat — amber-red, urgent but distinct from combat. */
+.status-badge--retreating {
+  background: rgba(255, 138, 94, 0.16);
+  color: #ff8a5e;
+  border: 1px solid #ff8a5e;
+}
+
+/* Standing order: hold fire. Muted violet — a chosen posture, not an alarm. */
+.status-badge--holding {
+  background: rgba(160, 150, 220, 0.14);
+  color: #b7aef0;
+  border: 1px solid #b7aef0;
+}
+
 /* ============================================================
    FleetPanel bulk-action bar — sticky strip below the filter row.
    Appears when one or more eligible ships are checked in the

@@ -7,7 +7,8 @@ import React, { useMemo, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { loadoutSummary } from '../game/shipParts';
-import { Body } from '../types';
+import { AUTO_COMBAT_INTERVAL } from '../game/combat';
+import { Body, Ship } from '../types';
 import { ShipIcon } from './ShipIcons';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { humanizeMpError } from '../multiplayer/errorMessages';
@@ -25,6 +26,40 @@ type Filter = 'all' | 'player' | 'enemy';
 // scale means "not a real orbit" — the real bodies top out near 1.7e4,
 // so there's no ambiguity.
 const PRETEND_ORBIT_PERIOD = 1e9;
+
+// A ship counts as "In Combat" if it fired OR took a hit within this many
+// ticks. Auto-combat resolves a volley every AUTO_COMBAT_INTERVAL ticks, so
+// 2× gives one volley of grace — the badge stays lit between salvoes of an
+// ongoing fight and clears a couple ticks after the last shot.
+const COMBAT_RECENT_TICKS = AUTO_COMBAT_INTERVAL * 2;
+
+type ShipStatus = { label: string; cls: string; title: string };
+
+// Single most-relevant status for a ship, in precedence order. A ship in
+// flight can't be in auto-combat (that only happens between hulls sharing a
+// body), so transit/combat are mutually exclusive and the ordering is safe.
+function shipStatus(ship: Ship, currentTick: number, hpRatio: number): ShipStatus {
+  if (ship.transit) {
+    // Auto-retreat fires a server-side transfer to the nearest friendly
+    // shipyard once HP falls to the threshold, so a below-threshold ship in
+    // flight is fleeing, not making a routine trip.
+    if (ship.retreatHpPct != null && hpRatio <= ship.retreatHpPct / 100) {
+      return { label: 'Retreating', cls: 'retreating', title: 'Auto-retreating to a friendly shipyard (HP below threshold)' };
+    }
+    return { label: 'In Transit', cls: 'transit', title: 'Under torch burn between bodies' };
+  }
+  const lastActive = Math.max(ship.lastCombatTick ?? -Infinity, ship.lastDamagedTick ?? -Infinity);
+  if (currentTick - lastActive <= COMBAT_RECENT_TICKS) {
+    return { label: 'In Combat', cls: 'combat', title: 'Fired or took fire in the last few ticks' };
+  }
+  if (ship.plannedTransit) {
+    return { label: 'Planned', cls: 'planned', title: 'A transfer is planned but not yet committed' };
+  }
+  if (ship.stance === 'hold') {
+    return { label: 'Holding Fire', cls: 'holding', title: 'Standing order: never fire' };
+  }
+  return { label: 'Orbiting', cls: 'orbiting', title: 'Parked in a stable orbit' };
+}
 
 // Translucent fill from a hex colour (for faction-tinted badges).
 function hexToRgba(hex: string, alpha: number): string {
@@ -356,18 +391,25 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     );
   };
 
-  const renderHpBar = (ship: { hp?: number; hpMax?: number; class: string }) => {
+  // Current HP and effective max, resolved the same way for the HP bar and
+  // the status badge's retreat check.
+  //   - Server-authoritative hpMax when present (designer shield parts +
+  //     tech, migration 0033); class-def fallback for SP/legacy ships.
+  //   - Where the server hasn't sent hpMax, armor tech and per-kill rank
+  //     still push real max above the base class hp, so a teched/veteran
+  //     ship would read "108/100" with the fill bar overrunning its track.
+  //     max(base, hp) clamps the denominator.
+  const hpOf = (ship: { hp?: number; hpMax?: number; class: string }) => {
     const def = getShipClass(ship.class as ShipClassName);
-    // Server-authoritative max HP when present (designer shield parts +
-    // tech, migration 0033); class-def fallback for SP/legacy ships.
     const hp = ship.hp ?? ship.hpMax ?? def.hp;
-    // Where the server hasn't sent hpMax, armor tech and per-kill rank
-    // still push real max above the base class hp, so a teched/veteran
-    // ship would read "108/100" with the fill bar overrunning its track.
-    // max(base, hp) clamps the denominator; the server value already
-    // accounts for both when present.
     const maxHp = ship.hpMax ?? Math.max(def.hp, hp);
-    const ratio = maxHp > 0 ? Math.min(1, hp / maxHp) : 0;
+    return { hp, maxHp, ratio: maxHp > 0 ? Math.min(1, hp / maxHp) : 0 };
+  };
+
+  const hpRatioOf = (ship: { hp?: number; hpMax?: number; class: string }) => hpOf(ship).ratio;
+
+  const renderHpBar = (ship: { hp?: number; hpMax?: number; class: string }) => {
+    const { hp, maxHp, ratio } = hpOf(ship);
     const hpClass = ratio > 0.66 ? 'good' : ratio > 0.33 ? 'mid' : 'low';
     return (
       <div className="status-bar">
@@ -400,14 +442,12 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     const target = targetBodyId ? gameState.bodies.find(b => b.id === targetBodyId) : null;
     const transit = ship.transit;
 
-    let statusBadge;
-    if (transit) {
-      statusBadge = <span className="status-badge status-badge--transit">In Transit</span>;
-    } else if (ship.plannedTransit) {
-      statusBadge = <span className="status-badge status-badge--planned">Planned</span>;
-    } else {
-      statusBadge = <span className="status-badge status-badge--orbiting">Orbiting</span>;
-    }
+    const status = shipStatus(ship, gameState.currentTick, hpRatioOf(ship));
+    const statusBadge = (
+      <span className={`status-badge status-badge--${status.cls}`} title={status.title}>
+        {status.label}
+      </span>
+    );
 
     const eligible = bulkEligibleIds.has(ship.id);
     const checked = selectedIds.has(ship.id);
