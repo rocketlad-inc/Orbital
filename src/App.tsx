@@ -8,6 +8,8 @@ import { TopBar, PanelId } from './components/TopBar';
 import { Outliner } from './components/Outliner';
 import { SettlementsPanel } from './components/SettlementsPanel';
 import { FleetPanel } from './components/FleetPanel';
+import { ShipDesigner } from './components/ShipDesigner';
+import type { ShipClassName } from './game/shipClasses';
 import { TechPanel } from './components/TechPanel';
 import { ThreatsPanel } from './components/ThreatsPanel';
 import { AIActivityFeed } from './components/AIActivityFeed';
@@ -107,6 +109,21 @@ function GameUI({
     height: typeof window !== 'undefined' ? window.innerHeight : 800,
   });
   const [activePanel, setActivePanel] = useState<PanelId>(null);
+  // Ship designer overlay (multiplayer only — SP has no designer, the
+  // SP sim is frozen). Opened via the 'orbital:open-ship-designer'
+  // event from the FleetPanel button / BuildPanel quick-links.
+  // { open, cls } so a quick-link can land on the right class tab.
+  const [designerState, setDesignerState] = useState<{ open: boolean; cls?: ShipClassName }>({ open: false });
+
+  useEffect(() => {
+    if (!isMultiplayer) return;
+    const onOpenDesigner = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      setDesignerState({ open: true, cls: detail?.shipClass });
+    };
+    window.addEventListener('orbital:open-ship-designer', onOpenDesigner as EventListener);
+    return () => window.removeEventListener('orbital:open-ship-designer', onOpenDesigner as EventListener);
+  }, [isMultiplayer]);
 
   // SP autosave loop. Reads from the GameContext that wraps this GameUI
   // and writes to the rolling AUTOSAVE slot every 100 game-ticks. No-op
@@ -184,6 +201,12 @@ function GameUI({
       )}
       {activePanel === 'research' && (
         <TechPanel onClose={() => setActivePanel(null)} />
+      )}
+      {isMultiplayer && designerState.open && (
+        <ShipDesigner
+          initialClass={designerState.cls}
+          onClose={() => setDesignerState({ open: false })}
+        />
       )}
 
       <BodyInspector />

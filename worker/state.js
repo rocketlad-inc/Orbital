@@ -544,7 +544,7 @@ async function handleGetState(req, env, ctx) {
               fuel, fuel_max, hp, hp_max, damage_per_tick,
               rank, combat_history, trades_completed,
               status, built_at_tick,
-              icon_variant
+              icon_variant, parts_json
          FROM game_ships
         WHERE game_id = ?1
           AND status = 'active'
@@ -685,10 +685,23 @@ async function handleGetState(req, env, ctx) {
   const buildQueue = (await env.DB
     .prepare(
       `SELECT id, body_id, ship_class, queued_at_tick, completes_at_tick,
-              icon_variant
+              icon_variant, parts_json
          FROM game_body_build_queue
         WHERE game_id = ? AND faction_id = ?
           AND cancelled_at_tick IS NULL`,
+    )
+    .bind(gameId, me.id)
+    .all()).results ?? [];
+
+  // Ship designs — the caller's design library (ship designer §2).
+  // Small table (≤12 per class), so shipping it with every /state poll
+  // keeps the designer + BuildPanel in sync without a separate fetch.
+  const shipDesigns = (await env.DB
+    .prepare(
+      `SELECT id, ship_class, name, parts_json, icon_variant, is_active, created_at_ms
+         FROM game_ship_designs
+        WHERE game_id = ? AND faction_id = ?
+        ORDER BY created_at_ms ASC`,
     )
     .bind(gameId, me.id)
     .all()).results ?? [];
@@ -789,6 +802,7 @@ async function handleGetState(req, env, ctx) {
     events,
     build_queue: buildQueue,
     trade_routes: tradeRoutes,
+    ship_designs: shipDesigns,
   });
 }
 

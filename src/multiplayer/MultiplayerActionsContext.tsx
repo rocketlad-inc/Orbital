@@ -99,6 +99,32 @@ export interface TurnStatus {
  *  nothing." See src/multiplayer/errorMessages.ts. */
 export type MpActionResult = { ok: true } | { ok: false; code?: string; error: string };
 
+/** Server row shape for a ship design (ship designer §2). */
+export interface ServerShipDesign {
+  id: string;
+  ship_class: string;
+  name: string;
+  parts_json: string | null;
+  icon_variant: string | null;
+  is_active: boolean;
+  created_at_ms: number;
+}
+
+export interface CreateDesignIntent {
+  shipClass: 'corvette' | 'frigate' | 'destroyer' | 'freighter';
+  name: string;
+  parts: string[];
+  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
+  setActive?: boolean;
+}
+
+export interface UpdateDesignPatch {
+  name?: string;
+  parts?: string[];
+  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | null;
+  isActive?: boolean;
+}
+
 export interface MultiplayerActions {
   gameId: string;
   /** Post a committed maneuver node to the server. Errors carry a code
@@ -135,6 +161,25 @@ export interface MultiplayerActions {
    *  revert to the generated flavor. Server gates on party-to-event or
    *  host; rejections carry code=not_party. */
   editChronicleFlavor: (entryId: string, flavor: string | null) => Promise<MpActionResult>;
+
+  // --- Ship designer (§2) ---
+  /** Fetch the caller's design library. Returns null on failure so the
+   *  designer can fall back to the /state mirror. */
+  getDesigns: () => Promise<ServerShipDesign[] | null>;
+  /** Create a design (optionally activating it in the same call). */
+  createDesign: (intent: CreateDesignIntent) => Promise<MpActionResult>;
+  /** Rename / edit parts / set-active on an existing design. Editing
+   *  never mutates queued or completed ships — parts are snapshot onto
+   *  the build order at queue time. */
+  updateDesign: (designId: string, patch: UpdateDesignPatch) => Promise<MpActionResult>;
+  /** Delete a design. The active pointer simply clears — builds fall
+   *  back to the bare hull until another design is activated. */
+  deleteDesign: (designId: string) => Promise<MpActionResult>;
+  /** Trigger a ship's detonator (spec §2.2). Deals 50% of the ship's
+   *  max HP per detonator part to EVERY in-orbit ship at the body —
+   *  friend or foe alike — and destroys the ship. The confirming UI
+   *  must show the full disclosure copy before calling this. */
+  detonateShip: (shipId: string) => Promise<MpActionResult>;
 
   // --- Turn-Based Mode (MP) ---
   /** Host-only: enable/disable TBM and set ticks_per_turn for this game.
@@ -387,6 +432,86 @@ export function MultiplayerActionsProvider({
         ok: false,
         code: res.error?.code,
         error: res.error?.message ?? 'Server rejected the asteroid ram.',
+      };
+    },
+    async getDesigns() {
+      const res = await apiFetch<{ designs: ServerShipDesign[] }>(`/api/games/${gameId}/designs`);
+      if (!res.ok) return null;
+      return res.data.designs ?? [];
+    },
+    async createDesign(intent) {
+      const res = await apiFetch(`/api/games/${gameId}/designs`, {
+        method: 'POST',
+        body: JSON.stringify({
+          ship_class: intent.shipClass,
+          name: intent.name,
+          parts: intent.parts,
+          icon_variant: intent.iconVariant ?? null,
+          set_active: intent.setActive === true,
+        }),
+      });
+      if (res.ok) {
+        logger.info('ACTION', 'Ship design created', {
+          class: intent.shipClass, name: intent.name, parts: intent.parts.join(','),
+        });
+        return { ok: true };
+      }
+      console.warn('createDesign failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the design.',
+      };
+    },
+    async updateDesign(designId, patch) {
+      const body: Record<string, unknown> = {};
+      if (patch.name !== undefined) body.name = patch.name;
+      if (patch.parts !== undefined) body.parts = patch.parts;
+      if (patch.iconVariant !== undefined) body.icon_variant = patch.iconVariant;
+      if (patch.isActive !== undefined) body.is_active = patch.isActive;
+      const res = await apiFetch(`/api/games/${gameId}/designs/${encodeURIComponent(designId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        logger.info('ACTION', 'Ship design updated', { design: designId });
+        return { ok: true };
+      }
+      console.warn('updateDesign failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the design update.',
+      };
+    },
+    async deleteDesign(designId) {
+      const res = await apiFetch(`/api/games/${gameId}/designs/${encodeURIComponent(designId)}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        logger.info('ACTION', 'Ship design deleted', { design: designId });
+        return { ok: true };
+      }
+      console.warn('deleteDesign failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the delete.',
+      };
+    },
+    async detonateShip(shipId) {
+      const res = await apiFetch(`/api/games/${gameId}/ships/${encodeURIComponent(qualify(shipId))}/detonate`, {
+        method: 'POST',
+      });
+      if (res.ok) {
+        logger.warn('ACTION', 'Ship detonated', { ship: shipId });
+        return { ok: true };
+      }
+      console.warn('detonateShip failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the detonation.',
       };
     },
     async setTurnSettings(enabled, ticksPerTurn) {

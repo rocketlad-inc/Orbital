@@ -12,6 +12,8 @@ import {
   ShipIcon, ShipIconVariant, ICON_VARIANT_NAMES,
   ALL_VARIANTS, DEFAULT_SHIP_ICONS,
 } from './ShipIcons';
+import { openShipDesigner } from './ShipDesigner';
+import { sanitizeParts, partsCost, computeDesignStats } from '../game/shipParts';
 import './BuildPanel.css';
 
 // Expanse-themed random ship names
@@ -274,6 +276,21 @@ export const BuildPanel: React.FC = () => {
       <div className="build-classes">
         {BUILDABLE_CLASSES.map(cls => {
           const def = SHIP_CLASSES[cls];
+          // Ship designer (MP only): BUILD uses the ACTIVE design for
+          // this class. Its parts add to the hull cost and boost the
+          // displayed stats — mirror of the server's handleQueueBuild
+          // snapshot so the row shows what the yard will actually
+          // charge and deliver. No active design = bare hull.
+          const activeDesign = mpActions
+            ? gameState.shipDesigns?.find(d => d.shipClass === cls && d.isActive)
+            : undefined;
+          const designParts = activeDesign ? sanitizeParts(activeDesign.parts) : [];
+          const designCost = partsCost(designParts);
+          const rowCostOre = def.cost.ore + designCost.ore;
+          const rowCostCredits = def.cost.credits + designCost.credits;
+          const designStats = designParts.length > 0
+            ? computeDesignStats(cls, designParts, gameState.factionTech['player']?.levels ?? {})
+            : null;
           // Per-resource shortages so the UI can colour each cost
           // individually + surface the deficit explicitly. Previously the
           // BUILD button just greyed out with no indication of why.
@@ -286,9 +303,9 @@ export const BuildPanel: React.FC = () => {
           const localC = gameState.settlements
             .filter(s => s.ownedBy === 'player' && s.bodyId === body.id)
             .reduce((a, s) => a + s.stockpile.credits, 0);
-          const shortFuel    = Math.max(0, def.cost.fuel    - playerRes.fuel    - localF);
-          const shortOre     = Math.max(0, def.cost.ore     - playerRes.ore     - localO);
-          const shortCredits = Math.max(0, def.cost.credits - playerRes.credits - localC);
+          const shortFuel    = Math.max(0, def.cost.fuel  - playerRes.fuel    - localF);
+          const shortOre     = Math.max(0, rowCostOre     - playerRes.ore     - localO);
+          const shortCredits = Math.max(0, rowCostCredits - playerRes.credits - localC);
           const canAfford = shortFuel === 0 && shortOre === 0 && shortCredits === 0;
           const shortBits: string[] = [];
           if (shortFuel    > 0) shortBits.push(`+${shortFuel} fuel`);
@@ -322,10 +339,38 @@ export const BuildPanel: React.FC = () => {
                   <ShipIcon shipClass={cls} variant={iconChoice[cls]} size={20} />
                 </button>
                 <span className="class-name">{def.displayName}</span>
+                {mpActions && (
+                  // Quick-link to the designer, landing on this class's
+                  // tab. Shows the active design's name when one is set
+                  // so the row tells you what BUILD will produce.
+                  <button
+                    onClick={() => openShipDesigner(cls)}
+                    title={activeDesign
+                      ? `Active design: ${activeDesign.name} — click to edit loadouts`
+                      : 'No active design (bare hull) — click to open the ship designer'}
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid #2a3d50', borderRadius: 3,
+                      color: activeDesign ? '#4ecdc4' : '#8aa0b4',
+                      fontFamily: 'inherit', fontSize: 8,
+                      letterSpacing: '0.08em', padding: '2px 6px',
+                      marginLeft: 6, cursor: 'pointer',
+                      maxWidth: 110, overflow: 'hidden',
+                      textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}
+                  >
+                    ⚙ {activeDesign ? activeDesign.name.toUpperCase() : 'DESIGN'}
+                  </button>
+                )}
               </div>
               <div className="class-stats">
-                <span className="stat">FP:{def.firepower}</span>
-                <span className="stat">HP:{def.hp}</span>
+                <span className="stat">FP:{designStats ? designStats.damagePerTick : def.firepower}</span>
+                <span className="stat">HP:{designStats ? designStats.hp : def.hp}</span>
+                {designStats && designStats.travelTimeMult < 1 && (
+                  <span className="stat" title="Engine parts: travel-time multiplier">
+                    ⏱×{designStats.travelTimeMult.toFixed(2)}
+                  </span>
+                )}
                 {def.cargoCapacity > 0 && <span className="stat">CG:{def.cargoCapacity}</span>}
               </div>
               <div className="class-cost" title={shortLabel || undefined}>
@@ -338,11 +383,11 @@ export const BuildPanel: React.FC = () => {
                 <span
                   className="cost-metal"
                   style={shortOre > 0 ? { color: '#ff5e5e', fontWeight: 700 } : undefined}
-                >{def.cost.ore}M</span>
+                >{rowCostOre}M</span>
                 <span
                   className="cost-money"
                   style={shortCredits > 0 ? { color: '#ff5e5e', fontWeight: 700 } : undefined}
-                >{def.cost.credits}C</span>
+                >{rowCostCredits}C</span>
               </div>
               <button
                 className={`build-btn${recentlyQueued.has(cls) ? ' build-btn--just-queued' : ''}`}
@@ -352,7 +397,7 @@ export const BuildPanel: React.FC = () => {
                   slotsFull
                     ? `All ${totalSlots} build slots busy — finish a build or add a Shipyard`
                     : canAfford
-                      ? `Build a ${def.displayName} (${def.cost.fuel}F ${def.cost.ore}M ${def.cost.credits}C, ${def.buildTime} ticks)`
+                      ? `Build a ${def.displayName}${activeDesign ? ` [${activeDesign.name}]` : ''} (${rowCostOre}M ${rowCostCredits}C, ${def.buildTime} ticks)`
                       : shortLabel}
               >
                 BUILD · {def.buildTime}t

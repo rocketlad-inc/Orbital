@@ -1,5 +1,6 @@
 import { resolveSenate, getActiveSliders, hasActiveSanction } from './senate.js';
 import { recomputeBodyOwnership } from './factions.js';
+import { parsePartsJson, computeShipStats } from './shipDesigns.js';
 
 // Room Durable Object. One instance per game room, keyed by room id.
 // Uses the WebSocket Hibernation API so idle rooms cost nothing.
@@ -717,7 +718,7 @@ export class Room {
     const builds = (await this.env.DB
       .prepare(
         `SELECT id, body_id, faction_id, ship_class, completes_at_tick,
-                icon_variant, ship_name
+                icon_variant, ship_name, parts_json
            FROM game_body_build_queue
           WHERE game_id = ?
             AND cancelled_at_tick IS NULL
@@ -725,6 +726,28 @@ export class Room {
       )
       .bind(gameId, tick)
       .all()).results ?? [];
+
+    // Faction tech levels (weapons/armor) — part effects scale with
+    // tech at COMPLETION time (worker/shipDesigns.js computeShipStats).
+    // Cached per faction across this tick's builds. Bare-hull orders
+    // (parts_json NULL — every pre-designer queue row) never touch
+    // tech and come out exactly as today's stats.
+    const techCache = new Map();
+    const techLevelsFor = async (factionId) => {
+      let levels = techCache.get(factionId);
+      if (!levels) {
+        const rows = (await this.env.DB
+          .prepare(
+            `SELECT tech_id, level FROM faction_techs
+              WHERE game_id = ? AND faction_id = ? AND tech_id IN ('weapons','armor')`,
+          )
+          .bind(gameId, factionId)
+          .all()).results ?? [];
+        levels = Object.fromEntries(rows.map(r => [r.tech_id, r.level ?? 0]));
+        techCache.set(factionId, levels);
+      }
+      return levels;
+    };
 
     for (const b of builds) {
       const body = await this.env.DB
@@ -734,11 +757,17 @@ export class Room {
       if (!body) continue;
 
       const FUEL_MAX = { corvette: 80, frigate: 200, destroyer: 300, freighter: 400 };
-      const HP       = { corvette: 40, frigate: 80,  destroyer: 200, freighter: 30 };
-      const DMG      = { corvette: 5,  frigate: 10,  destroyer: 18,  freighter: 0 };
       const fuelMax = FUEL_MAX[b.ship_class] ?? 100;
-      const hp = HP[b.ship_class] ?? 50;
-      const dmg = DMG[b.ship_class] ?? 0;
+      // Ship designer: hull base × part multipliers × tech (spec §2).
+      // parts_json is the snapshot taken at queue time; NULL = bare
+      // hull = the legacy HP/DMG table values exactly.
+      const parts = parsePartsJson(b.ship_class, b.parts_json);
+      const stats = computeShipStats(
+        b.ship_class, parts,
+        parts.length > 0 ? await techLevelsFor(b.faction_id) : {},
+      );
+      const hp = stats.hp;
+      const dmg = stats.damage_per_tick;
       const rp = (body.radius || 4) + 4;
       const ra = rp; // circular orbit
       const shipId = `${gameId}:s${tick}_${b.id.slice(-6)}`;
@@ -757,12 +786,13 @@ export class Room {
                parent_body_id, orbit_rp, orbit_ra, orbit_omega,
                orbit_m0, orbit_epoch, orbit_direction,
                fuel, fuel_max, status, built_at_tick,
-               hp, hp_max, damage_per_tick, icon_variant)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 1, ?, ?, 'active', ?, ?, ?, ?, ?)`,
+               hp, hp_max, damage_per_tick, icon_variant, parts_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 1, ?, ?, 'active', ?, ?, ?, ?, ?, ?)`,
           )
           .bind(shipId, gameId, b.faction_id, shipName, b.ship_class,
                 b.body_id, rp, ra, tick, fuelMax, fuelMax, tick,
-                hp, hp, dmg, b.icon_variant ?? null),
+                hp, hp, dmg, b.icon_variant ?? null,
+                parts.length > 0 ? JSON.stringify(parts) : null),
         this.env.DB
           .prepare('DELETE FROM game_body_build_queue WHERE id = ?')
           .bind(b.id),

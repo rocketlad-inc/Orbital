@@ -30,6 +30,7 @@ import {
 } from '../game/dysonSphere';
 import { tickMaintenance } from '../game/maintenance';
 import { TechId, TECH_DEFS, TECH_MAX_LEVEL, MAX_SCIENCE_PER_TICK, engineGModifier } from '../game/techs';
+import { engineAccelMultiplier } from '../game/shipParts';
 import { runFactionAI, shouldRunAI } from '../game/factionAI';
 import type { AIActivityEntry } from '../types';
 import { useTurnBasedSettings } from './turnBasedSettings';
@@ -132,7 +133,12 @@ function applyAIIntent(
       // conversion the torch acceleration is 530× too weak and ships coast off
       // in roughly their inherited orbital direction instead of arriving.
       const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
-      const engineAccel = baseAccel * engineGModifier(tech);
+      // Engine parts (ship designer, MP only): −15% travel time per
+      // engine part (×Propulsion tech), realized as an accel boost
+      // under T = 2√(d/a). SP ships never carry parts, so this is the
+      // identity (×1) for the frozen single-player sim.
+      const engineAccel = baseAccel * engineGModifier(tech)
+        * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
 
       // Ship's launch state: world position + world velocity from the
       // ship's current orbit. orbitWorldVelocity sums the parent body's
@@ -1864,7 +1870,12 @@ export function GameContextProvider({
       // conversion the torch acceleration is 530× too weak and ships coast off
       // in roughly their inherited orbital direction instead of arriving.
       const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
-      const engineAccel = baseAccel * engineGModifier(tech);
+      // Engine parts (ship designer, MP only): −15% travel time per
+      // engine part (×Propulsion tech), realized as an accel boost
+      // under T = 2√(d/a). SP ships never carry parts, so this is the
+      // identity (×1) for the frozen single-player sim.
+      const engineAccel = baseAccel * engineGModifier(tech)
+        * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
       const tick = prev.currentTick;
 
       const launchPos = orbitWorldPos(ship.orbit, tick, prev.bodies);
@@ -1933,7 +1944,12 @@ export function GameContextProvider({
       // conversion the torch acceleration is 530× too weak and ships coast off
       // in roughly their inherited orbital direction instead of arriving.
       const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
-      const engineAccel = baseAccel * engineGModifier(tech);
+      // Engine parts (ship designer, MP only): −15% travel time per
+      // engine part (×Propulsion tech), realized as an accel boost
+      // under T = 2√(d/a). SP ships never carry parts, so this is the
+      // identity (×1) for the frozen single-player sim.
+      const engineAccel = baseAccel * engineGModifier(tech)
+        * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
 
       const arrivalTick = lastLeg.arriveTick;
       const priorTargetBody = prev.bodies.find(b => b.id === lastLeg.targetBodyId);
@@ -1978,7 +1994,12 @@ export function GameContextProvider({
       // conversion the torch acceleration is 530× too weak and ships coast off
       // in roughly their inherited orbital direction instead of arriving.
       const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
-      const engineAccel = baseAccel * engineGModifier(tech);
+      // Engine parts (ship designer, MP only): −15% travel time per
+      // engine part (×Propulsion tech), realized as an accel boost
+      // under T = 2√(d/a). SP ships never carry parts, so this is the
+      // identity (×1) for the frozen single-player sim.
+      const engineAccel = baseAccel * engineGModifier(tech)
+        * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
       const tick = prev.currentTick;
 
       const launchPos = orbitWorldPos(ship.orbit, tick, prev.bodies);
