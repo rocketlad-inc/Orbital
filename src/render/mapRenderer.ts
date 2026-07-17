@@ -2190,7 +2190,7 @@ export function drawStation(
   // malformed orbit.)
   const M = (Number.isFinite(orbit.period) && orbit.period > 0)
     ? orbit.M0 + (2 * Math.PI * (ctx.t - orbit.epoch) / orbit.period) * orbit.direction
-    : orbit.M0;
+    : orbit.M0 + orbit.epoch;   // static: offset by epoch so multiple stations don't stack
   const theta = Number.isFinite(M) ? M : 0;
   const localX = radius * Math.cos(theta);
   const localY = radius * Math.sin(theta);
