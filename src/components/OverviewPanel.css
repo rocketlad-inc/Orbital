@@ -242,6 +242,14 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   font-weight: 600;
+  /* border colour comes from an inline faction colour; keep the style/width
+     here so the inline borderColor actually renders. */
+  border: 1px solid transparent;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
 }
 
 .owner-badge--player {
@@ -313,6 +321,96 @@
   font-size: 9px;
   color: #d8e4ee;
   min-width: 30px;
+}
+
+/* ---- Bulk-select checkbox (mobile-optimised, large tap target) ---- */
+
+.fleet-check-cell {
+  width: 40px;
+  text-align: center;
+}
+
+.fleet-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* Generous tap target even though the visible box is smaller. */
+  min-width: 36px;
+  min-height: 36px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.fleet-check input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  margin: 0;
+}
+
+.fleet-check__box {
+  display: block;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 2px solid #4a6178;
+  background: rgba(42, 61, 80, 0.4);
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.fleet-check:hover .fleet-check__box {
+  border-color: #4ecdc4;
+}
+
+.fleet-check input:checked + .fleet-check__box {
+  background: #4ecdc4;
+  border-color: #4ecdc4;
+  /* Checkmark drawn with a rotated border box. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='%230b1622' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round' d='M5 12.5l4.5 4.5L19 7'/%3E%3C/svg%3E");
+  background-size: 100% 100%;
+}
+
+.fleet-check input:focus-visible + .fleet-check__box {
+  outline: 2px solid #4ecdc4;
+  outline-offset: 2px;
+}
+
+/* ---- Experience / kills cell (replaces the fuel bar) ---- */
+
+.fleet-xp {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.fleet-xp__tier {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+}
+
+.fleet-xp__tier--rookie  { color: #8a9fb3; border-color: rgba(138, 159, 179, 0.5); }
+.fleet-xp__tier--regular { color: #6ee7b7; border-color: rgba(110, 231, 183, 0.5); }
+.fleet-xp__tier--veteran { color: #4ecdc4; border-color: rgba(78, 205, 196, 0.6); }
+.fleet-xp__tier--elite   { color: #ffb84d; border-color: rgba(255, 184, 77, 0.6); }
+.fleet-xp__tier--ace     { color: #ffd700; border-color: rgba(255, 215, 0, 0.7); background: rgba(255, 215, 0, 0.08); }
+
+.fleet-xp__kills {
+  font-size: 10px;
+  color: #d8e4ee;
+  min-width: 26px;
+}
+
+/* On narrow screens, drop the tier chip padding a touch so the row fits. */
+@media (max-width: 640px) {
+  .fleet-check__box { width: 24px; height: 24px; }
+  .fleet-check { min-width: 40px; min-height: 40px; }
 }
 
 /* ---- Section title in body ---- */

@@ -19,6 +19,17 @@ interface FleetPanelProps {
 
 type Filter = 'all' | 'player' | 'enemy';
 
+// Translucent fill from a hex colour (for faction-tinted badges).
+function hexToRgba(hex: string, alpha: number): string {
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  const n = parseInt(full, 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const {
     gameState, selectShip, focusBody, uiState,
@@ -195,10 +206,61 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     });
   };
 
+  // Faction id -> { name, color } so the OWNER column shows the empire
+  // name (e.g. "Lornian Empire") in its faction colour, instead of the
+  // raw faction id ("8X7TTVD-L3P_:F1") — the "name bug".
+  const factionById = useMemo(() => {
+    const m = new Map<string, { name: string; color: string }>();
+    for (const f of gameState.factions) m.set(f.id, { name: f.name, color: f.color });
+    return m;
+  }, [gameState.factions]);
+
+  const factionOf = (ownedBy: string): { name: string; color: string } => {
+    if (ownedBy === 'player') return { name: 'You', color: '#4ecdc4' };
+    if (ownedBy === 'enemy') return { name: 'Enemy', color: '#ff5e5e' };
+    const f = factionById.get(ownedBy);
+    if (f) return f;
+    // Last resort (unknown faction id): show the short suffix, not the
+    // whole game-namespaced id.
+    return { name: ownedBy.split(':').pop() ?? ownedBy, color: '#8a9fb3' };
+  };
+
   const ownerBadge = (ownedBy: string) => {
-    if (ownedBy === 'player') return <span className="owner-badge owner-badge--player">Player</span>;
-    if (ownedBy === 'enemy') return <span className="owner-badge owner-badge--enemy">Enemy</span>;
-    return <span className="owner-badge owner-badge--neutral">{ownedBy}</span>;
+    const { name, color } = factionOf(ownedBy);
+    return (
+      <span
+        className="owner-badge"
+        style={{ color, borderColor: color, background: hexToRgba(color, 0.12) }}
+      >
+        {name}
+      </span>
+    );
+  };
+
+  // Experience tier from veterancy rank (each confirmed kill = +1 rank).
+  const rankTier = (rank: number): string => {
+    if (rank >= 10) return 'Ace';
+    if (rank >= 6) return 'Elite';
+    if (rank >= 3) return 'Veteran';
+    if (rank >= 1) return 'Regular';
+    return 'Rookie';
+  };
+
+  // Experience + kills cell (replaces the fuel bar). Rank IS the total
+  // confirmed-kill count, so kills = rank; the tier gives a quick
+  // qualitative read alongside the raw number.
+  const renderExperience = (ship: { rank?: number }) => {
+    const rank = ship.rank ?? 0;
+    return (
+      <div className="fleet-xp">
+        <span className={`fleet-xp__tier fleet-xp__tier--${rankTier(rank).toLowerCase()}`}>
+          {rankTier(rank)}
+        </span>
+        <span className="fleet-xp__kills" title="Confirmed kills">
+          {rank > 0 ? `${rank} ⚔` : '—'}
+        </span>
+      </div>
+    );
   };
 
   const renderHpBar = (ship: { hp?: number; hpMax?: number; class: string }) => {
@@ -228,8 +290,8 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   };
 
   // renderFuelBar removed — fuel left the economy
-  // (DESIGN-identity-economy.md §1.1).
-
+  // (DESIGN-identity-economy.md §1.1). Its column slot now holds the
+  // ship's Experience (veterancy tier + confirmed kills).
 
   const renderShipRow = (ship: typeof ships[0]) => {
     const def = getShipClass(ship.class as ShipClassName);
@@ -262,22 +324,23 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
         className={isSelected ? 'selected' : ''}
         onClick={() => handleShipClick(ship.id)}
       >
-        <td onClick={(e) => e.stopPropagation()} style={{ width: 32, textAlign: 'center' }}>
+        <td onClick={(e) => e.stopPropagation()} className="fleet-check-cell">
           {eligible ? (
-            <input
-              type="checkbox"
-              checked={checked}
-              onChange={() => toggleSelected(ship.id)}
-              title="Add to bulk selection"
-              style={{ cursor: 'pointer' }}
-            />
+            <label className="fleet-check" title="Add to bulk selection">
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => toggleSelected(ship.id)}
+              />
+              <span className="fleet-check__box" aria-hidden />
+            </label>
           ) : (
             <span title="Not eligible (not player-owned, or already in transit/planned)" style={{ opacity: 0.25 }}>—</span>
           )}
         </td>
         <td>
           <div className="body-cell" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ color: '#4ecdc4', flexShrink: 0 }}>
+            <div style={{ color: factionOf(ship.ownedBy).color, flexShrink: 0 }}>
               <ShipIcon shipClass={ship.class as ShipClassName} size={20} />
             </div>
             <div>
@@ -308,6 +371,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           )}
         </td>
         <td>{renderHpBar(ship)}</td>
+        <td>{renderExperience(ship)}</td>
       </tr>
     );
   };
@@ -315,12 +379,13 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const tableHead = (locationLabel: string) => (
     <thead>
       <tr>
-        <th style={{ width: 32 }}></th>
+        <th style={{ width: 40 }}></th>
         <th>Ship</th>
         <th>Owner</th>
         <th>Status</th>
         <th>{locationLabel}</th>
         <th>HP</th>
+        <th>Experience</th>
       </tr>
     </thead>
   );
