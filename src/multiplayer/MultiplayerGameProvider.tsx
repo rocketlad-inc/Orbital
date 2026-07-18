@@ -18,6 +18,7 @@ import {
   Settlement, ManeuverNode, ChronicleFocus, ChronicleEditMeta, ShipDesign,
 } from '../types';
 import { sanitizeParts, engineAccelMultiplier } from '../game/shipParts';
+import { ingestChronicleFx } from '../render/pendingFx';
 import {
   planTorchTransfer, stepTorchShip, DEFAULT_ENGINE_G, fromG,
   TorchTransfer,
@@ -1138,11 +1139,33 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   // ship id (most specific), fall back to the body id. Destroyed-entity
   // events still carry the id; the EventLog re-validates existence at
   // click time so a button never sends the camera to a vanished ship.
+  // Ids MUST be stripped to client id-space: server rows are namespaced
+  // (`<gameId>:mars`) but bodyToClient/shipToClient strip that prefix, so
+  // a raw anchor never matched anything on the client — the focus button
+  // silently did nothing in MP, and pending-FX anchors couldn't resolve.
   const chronicleFocus: (ChronicleFocus | null)[] = orderedEvents.map(ev => {
-    if (ev.ship_id) return { kind: 'ship', shipId: ev.ship_id };
-    if (ev.body_id) return { kind: 'body', bodyId: ev.body_id };
+    if (ev.ship_id) return { kind: 'ship', shipId: stripGameId(ev.ship_id) ?? ev.ship_id };
+    if (ev.body_id) return { kind: 'body', bodyId: stripGameId(ev.body_id) ?? ev.body_id };
     return null;
   });
+
+  // Queue chronicle-driven effects for the pending-FX system. Done here
+  // (not in MapCanvas) because the raw rows carry BOTH the body and ship
+  // ids — a destroyed ship no longer exists client-side, so the body is
+  // the anchor that can still be located. Already-played and
+  // already-queued entries are ignored, so re-feeding the rolling window
+  // every poll is a no-op.
+  try {
+    ingestChronicleFx(
+      srv.game.id,
+      orderedEvents.map(ev => ({
+        id: ev.id,
+        kind: ev.kind,
+        bodyId: stripGameId(ev.body_id) ?? undefined,
+        shipId: stripGameId(ev.ship_id) ?? undefined,
+      })),
+    );
+  } catch { /* cosmetics must never break state deserialization */ }
 
   // Server-side build queue → client BuildOrder[]. Drives the BuildPanel
   // "BUILDING" strip while the alarm grinds toward completes_at_tick.

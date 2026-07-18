@@ -28,6 +28,7 @@ import {
   StarfieldCache,
   GhostIntel,
   worldToCanvas,
+  canvasToWorld,
   RenderContext,
   TRAJECTORY_COLORS,
   trajectoryRole,
@@ -40,7 +41,9 @@ import {
   drawDetonations,
   spawnArrivalFlash,
   drawArrivalFlashes,
+  enqueueDetonation,
 } from '../render/combatFx';
+import { drainVisibleFx } from '../render/pendingFx';
 import { bodyPosition } from '../physics/orbitalMechanics';
 import { torchPositionFromSamples } from '../physics/torchTransfer';
 import { COLORS, withOpacity } from '../render/colors';
@@ -76,6 +79,12 @@ const TOUCH_HIT_PADDING = isCoarsePointer() ? 16 : 0;
  * stationary at-body clusters collapse.
  */
 const CLUSTER_ZOOM_THRESHOLD = 2.5;
+
+/** Camera scale at/above which a queued chronicle effect is considered
+ *  "watchable" and allowed to play. Below this, ships are dots and an
+ *  explosion is a meaningless speck — the effect keeps waiting instead
+ *  of being wasted. Matches roughly where ship icons start to read. */
+const PENDING_FX_MIN_SCALE = 0.8;
 
 interface MapCanvasProps {
   width?: number;
@@ -984,6 +993,52 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // flashes — a kill outside coverage still reads as dimmed).
     // Tracers/detonations are deliberately NOT LOD-gated: combat must
     // be visible at any zoom.
+    // Pending FX: play queued chronicle effects once the player can
+    // actually watch them — on screen AND zoomed in enough to read the
+    // scene. Effects that happened while logged out, off-screen, or at
+    // system zoom wait here instead of firing into the void. One per
+    // stagger window, so a battle replays as a sequence of hits.
+    drainVisibleFx(
+      nowMs,
+      (fx) => {
+        if (renderContext.camera.scale < PENDING_FX_MIN_SCALE) return null;
+        // Prefer the ship (most specific); a destroyed ship is gone, so
+        // fall back to the body it died at — which is why the queue
+        // carries both anchors.
+        let world: { x: number; y: number } | null = null;
+        if (fx.shipId) {
+          const sh = gameState.ships.find(s => s.id === fx.shipId);
+          if (sh) world = shipWorldPosition(sh, nowTick, gameState.bodies);
+        }
+        if (!world && fx.bodyId) {
+          const b = gameState.bodies.find(x => x.id === fx.bodyId);
+          if (b) world = bodyPosition(b, nowTick, gameState.bodies);
+        }
+        if (!world) return null;
+        const cp = worldToCanvas(world.x, world.y, renderContext);
+        // Must be comfortably inside the viewport — a blast half off the
+        // edge isn't "watched", so keep waiting until it's framed.
+        const m = 60;
+        if (cp.x < m || cp.y < m || cp.x > width - m || cp.y > height - m) return null;
+        return cp;
+      },
+      (fx, pos) => {
+        if (fx.kind === 'detonation') {
+          enqueueDetonation(fx.id, fx.bodyId ?? null, fx.shipId ?? null);
+          return;
+        }
+        // destruction / impact both read as an explosion; impacts are
+        // bigger because a whole rock hit the surface.
+        const world = canvasToWorld(pos.x, pos.y, renderContext);
+        destructionFlashesRef.current.set(fx.id, {
+          pos: world,
+          startMs: nowMs,
+          baseRadius: fx.kind === 'impact' ? 22 : 12,
+          id: fx.id,
+        });
+      },
+    );
+
     drawTracers(renderContext, gameState.ships, nowMs, transitShipCanvasPosRef.current);
     // Sustained fire while an engagement is live. One-shot tracers alone
     // are unwatchable on real tick intervals (30s–1h per tick), so this
