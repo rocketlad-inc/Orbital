@@ -42,20 +42,43 @@ const BELT_RATIO = 1.25;
  *  neighbours that happen to sit near each other. */
 const BELT_MIN_MEMBERS = 3;
 
-/** Padding on a planet system's disc, as a factor of its outermost
+/** Padding on a planet system's lane, as a factor of its outermost
  *  moon's orbit — enough that the moon sits inside the shading. */
 const SYSTEM_DISC_PAD = 1.3;
+
+/** Half-lane as a fraction of the distance to the nearest neighbouring
+ *  orbit. Below 0.5 so two adjacent rings leave a visible seam. */
+const LANE_GAP_FRACTION = 0.40;
+/** Floor + ceiling as fractions of the orbit radius: the floor keeps a
+ *  crowded inner planet from getting a hairline ring (and covers the
+ *  zero-gap case of two bodies sharing an orbit), the ceiling stops a
+ *  lone outer body like Sedna from washing half the map. */
+const LANE_MIN_FRACTION = 0.035;
+const LANE_MAX_FRACTION = 0.12;
 
 export type RegionOwnership =
   | { kind: 'unowned' }
   | { kind: 'contested'; factionIds: string[] }
   | { kind: 'exclusive'; factionId: string; color: string; factionName: string };
 
-export type RegionShape =
-  /** Disc centred on a body (follows it as it orbits). */
-  | { kind: 'disc'; anchorBodyId: string; worldRadius: number }
-  /** Annulus centred on the star. */
-  | { kind: 'band'; starBodyId: string; rInner: number; rOuter: number };
+/**
+ * Every region is an annulus centred on its star — the orbital band the
+ * faction holds, not a puddle around wherever its planet happens to be
+ * standing right now. A planet system owns its whole lane around the
+ * sun; that's what "territory" means on this map.
+ *
+ * `labelAnchorBodyId` parks the label at that body's current angle
+ * rather than a fixed point on the ring, which both ties the name to
+ * the thing it describes and stops a dozen concentric rings from
+ * stacking every label in one vertical column.
+ */
+export type RegionShape = {
+  kind: 'band';
+  starBodyId: string;
+  rInner: number;
+  rOuter: number;
+  labelAnchorBodyId?: string;
+};
 
 export interface SystemRegion {
   id: string;
@@ -113,22 +136,48 @@ export function computeSystemRegions(
       .slice()
       .sort((a, b) => a.orbitRadius - b.orbitRadius);
 
+    // How wide a lane each orbiter gets. Driven by the distance to its
+    // nearest neighbour so rings fill their orbital neighbourhood
+    // without swallowing the next one in — a fixed fraction of orbit
+    // radius would make the inner planets invisibly thin and the outer
+    // ones overlap. Duplicated radii (Uranus and Black Sky share one)
+    // would give a zero gap, hence the proportional floor.
+    const radii = orbiters.map(o => o.orbitRadius);
+    const laneHalfWidth = (b: Body): number => {
+      const r = b.orbitRadius;
+      let gap = Infinity;
+      for (const other of radii) {
+        const d = Math.abs(other - r);
+        if (d > 1e-6 && d < gap) gap = d;
+      }
+      if (!Number.isFinite(gap)) gap = r;
+      return Math.min(
+        Math.max(gap * LANE_GAP_FRACTION, r * LANE_MIN_FRACTION),
+        r * LANE_MAX_FRACTION,
+      );
+    };
+
     // --- planet systems: star-orbiters that have moons ---
     const solitaries: Body[] = [];
     const planetSystemRadii: number[] = [];
     for (const b of orbiters) {
       const moons = childrenOf.get(b.id) ?? [];
       if (moons.length === 0) { solitaries.push(b); continue; }
-      const outermost = Math.max(...moons.map(m => m.orbitRadius));
       const members = [b, ...moons];
       planetSystemRadii.push(b.orbitRadius);
+      // At minimum the lane covers the moon system itself, so the band
+      // never reads as narrower than the thing it represents.
+      const outermost = Math.max(...moons.map(m => m.orbitRadius));
+      const half = Math.max(laneHalfWidth(b), outermost * SYSTEM_DISC_PAD);
       regions.push({
         id: `sys:${b.id}`,
         label: `${b.name} System`,
         shape: {
-          kind: 'disc',
-          anchorBodyId: b.id,
-          worldRadius: Math.max(outermost * SYSTEM_DISC_PAD, b.radius * 6),
+          kind: 'band',
+          starBodyId: star.id,
+          rInner: Math.max(0, b.orbitRadius - half),
+          rOuter: b.orbitRadius + half,
+          labelAnchorBodyId: b.id,
         },
         bodyIds: members.map(m => m.id),
         ownership: ownershipOf(members, factions),
@@ -177,6 +226,9 @@ export function computeSystemRegions(
           // shading rather than riding its edge.
           rInner: rInner * 0.92,
           rOuter: rOuter * 1.08,
+          // Anchor on a middle member so the belt's label sits among
+          // its rocks instead of colliding with the planet rings.
+          labelAnchorBodyId: cluster[Math.floor(cluster.length / 2)].id,
         },
         bodyIds: cluster.map(b => b.id),
         ownership: ownershipOf(cluster, factions),
@@ -184,23 +236,41 @@ export function computeSystemRegions(
     }
 
     // --- solitaries: lone rocks + moonless planets ---
+    // Also full lanes. A moonless planet is still a "system" to the
+    // player (Mars has no moons here but reads as Mars System), and a
+    // claim on it is a claim on that orbit. Named only when it's a
+    // planet — a lone rogue rock doesn't need a second label next to
+    // the one the body already draws.
     for (const b of solitaries) {
       if (banded.has(b.id)) continue;
+      const half = laneHalfWidth(b);
+      const isPlanet = b.type === 'terrestrial' || b.type === 'gas_giant' || b.type === 'ice_giant';
       regions.push({
         id: `solo:${b.id}`,
-        label: '',                       // body's own label already reads
-        shape: { kind: 'disc', anchorBodyId: b.id, worldRadius: Math.max(b.radius * 8, 6) },
+        label: isPlanet ? `${b.name} System` : '',
+        shape: {
+          kind: 'band',
+          starBodyId: star.id,
+          rInner: Math.max(0, b.orbitRadius - half),
+          rOuter: b.orbitRadius + half,
+          labelAnchorBodyId: b.id,
+        },
         bodyIds: [b.id],
         ownership: ownershipOf([b], factions),
       });
     }
   }
 
-  // Bands paint first so a planet system's disc sits on top of a belt
-  // it overlaps (Pluto sits inside the Kuiper band's radius range).
-  regions.sort((a, b) => {
-    const rank = (r: SystemRegion) => (r.shape.kind === 'band' ? 0 : 1);
-    return rank(a) - rank(b);
-  });
+  // Paint broad first, specific last. Rings genuinely overlap — Pluto
+  // orbits INSIDE the Kuiper belt, Black Sky shares Uranus's orbit
+  // exactly — and without this the wide grey belt would bury the narrow
+  // faction-coloured ring sitting inside it.
+  //
+  // Tie-break puts owned ground on top of neutral, so a claim is never
+  // hidden under an unowned rock that happens to share its lane.
+  const claimRank = (r: SystemRegion) =>
+    r.ownership.kind === 'exclusive' ? 2 : r.ownership.kind === 'contested' ? 1 : 0;
+  const width = (r: SystemRegion) => r.shape.rOuter - r.shape.rInner;
+  regions.sort((a, b) => (width(b) - width(a)) || (claimRank(a) - claimRank(b)));
   return regions;
 }
