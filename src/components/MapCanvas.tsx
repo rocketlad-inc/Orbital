@@ -529,7 +529,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
     // Political wash for the zoomed-out map — one shaded region per
     // planet system / belt, coloured by owner. Painted straight after
-    // the starfield so it reads as background, under orbits + bodies.
+    // the starfield so it reads as background: orbits, bodies and
+    // labels all sit crisply on top of the coloured ground.
     // Self-gating: no-ops above SYSTEM_REGION_HIDE_SCALE.
     if (layerOn('ownership')) {
       drawSystemRegions(systemRegions, renderContext);
@@ -1061,7 +1062,18 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         gameState.currentTick,
         alliedSet,
       );
-      drawFogOfWarOverlay(rings, renderContext);
+      // Fade the fog out as the political wash fades in. The fog is a
+      // 62%-opaque dark fill over everything outside sensor range, and
+      // at full-system zoom that's nearly the entire map — it was
+      // crushing the wash underneath it to about a third of its
+      // intended colour, which is why the layer read as missing.
+      //
+      // Dropping it at that range costs little: its main subject is
+      // enemy ships, which the LOD already hides out here, and the
+      // wash itself becomes the "what do I know" layer. The wash stays
+      // UNDER bodies (drawn far earlier) so planets and labels keep
+      // sitting crisply on top of coloured ground.
+      drawFogOfWarOverlay(rings, renderContext, 1 - regionFade);
     }
 
     drawHUD(renderContext, uiState.targetSelectionMode);

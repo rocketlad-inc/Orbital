@@ -3465,10 +3465,19 @@ export function drawDestructionFlashes(
 let fogOffscreen: HTMLCanvasElement | null = null;
 let fogOffscreenCtx: CanvasRenderingContext2D | null = null;
 
+/**
+ * @param strength 0..1 multiplier on the whole fog layer. The caller
+ *   fades it out as the political wash fades in — at full-system zoom
+ *   the fog's 62% dark fill covers nearly everything and was crushing
+ *   the wash beneath it, and its main subject (enemy ships) is already
+ *   hidden by the LOD out there.
+ */
 export function drawFogOfWarOverlay(
   rings: Array<{ pos: { x: number; y: number }; range: number }>,
   ctx: RenderContext,
+  strength: number = 1,
 ) {
+  if (strength <= 0) return;
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
   if (!fogOffscreen || fogOffscreen.width !== w || fogOffscreen.height !== h) {
@@ -3507,6 +3516,9 @@ export function drawFogOfWarOverlay(
   }
 
   ctx.ctx.save();
+  // One alpha on the composite scales the wash AND its punched holes
+  // together, so a partially-faded fog stays internally consistent.
+  ctx.ctx.globalAlpha = ctx.ctx.globalAlpha * Math.min(1, strength);
   ctx.ctx.drawImage(fogOffscreen, 0, 0);
   ctx.ctx.restore();
 }
@@ -3662,9 +3674,14 @@ export function systemRegionOpacity(scale: number): number {
  *  rather than a bigger, blurrier glow. */
 export function systemRegionIntensity(scale: number): number {
   if (scale <= SYSTEM_REGION_DARK_SCALE) return 1;
-  if (scale >= SYSTEM_REGION_FULL_SCALE) return 0;
-  return (SYSTEM_REGION_FULL_SCALE - scale)
-    / (SYSTEM_REGION_FULL_SCALE - SYSTEM_REGION_DARK_SCALE);
+  if (scale >= SYSTEM_REGION_HIDE_SCALE) return 0;
+  // Ramps from where the layer first APPEARS (HIDE_SCALE), not from
+  // where it finishes fading in — otherwise the wash sat at its
+  // faintest base alpha across the whole fade band and only started
+  // gaining colour after it was already fully present, which read as
+  // "the layer isn't there".
+  return (SYSTEM_REGION_HIDE_SCALE - scale)
+    / (SYSTEM_REGION_HIDE_SCALE - SYSTEM_REGION_DARK_SCALE);
 }
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
