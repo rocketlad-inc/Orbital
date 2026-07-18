@@ -1,20 +1,33 @@
 // ============================================================
 // SituationLog
 //
-// Panel content for the "Situation Log" rail icon. The rail
+// Panel content for the "Situation Report" rail icon. The rail
 // (DockRail) owns the open/closed state and the icon; this component
 // just renders the panel body when active, and reports its count
 // back to the rail so the icon's badge stays current.
 //
-// Sections are GROUPED HEADERS per Sean's mental model.
+// Renders the hook's THREE URGENCY TIERS (now / needs a decision /
+// opportunities) rather than nine category headers — see
+// useSituationItems for the tier model and cross-item rules.
+//
+// Badge semantics: the rail badge counts only the now+decision tiers,
+// and the warn dot means "the NOW tier is non-empty". Opportunities
+// never inflate the number — the badge answers "do I need to look",
+// not "how long is the list". (Old behaviour counted everything, so
+// the badge read 30 in a healthy game and players tuned it out.)
+//
+// "New since last glance": rows that appeared since the panel was
+// last open get a dot. Seen-ids persist in localStorage (same pattern
+// as EventLog's read tracking); the snapshot freezes when the panel
+// opens so dots don't vanish while you're looking at them.
 // ============================================================
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import {
   useSituationItems,
-  groupByCategory,
-  CATEGORY_LABEL,
+  groupByTier,
+  TIER_LABEL,
   type SituationItem,
   type SituationMpData,
 } from '../hooks/useSituationItems';
@@ -22,6 +35,28 @@ import './SituationLog.css';
 import './DockRail.css';
 
 const PLAYER_TOKEN = 'player';
+
+// Seen-row tracking for the "new" dot. One global key: item ids embed
+// game-scoped entity ids, so cross-game collisions are effectively nil.
+const SEEN_KEY = 'orbital.sitreport.seen.v1';
+const SEEN_CAP = 600;
+
+function loadSeen(): Set<string> {
+  try {
+    const raw = localStorage.getItem(SEEN_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch { return new Set(); }
+}
+
+function saveSeen(ids: Set<string>) {
+  try {
+    // Cap by dropping oldest (Set preserves insertion order).
+    const arr = Array.from(ids);
+    localStorage.setItem(SEEN_KEY, JSON.stringify(arr.slice(-SEEN_CAP)));
+  } catch { /* storage full/blocked — dots just reset next session */ }
+}
 
 interface Props {
   /** Caller's faction id. SP = 'player'. MP also normalises to
@@ -34,9 +69,12 @@ interface Props {
 export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData }) => {
   const { gameState, selectShip, selectBody, focusBody } = useGameContext();
   const items = useSituationItems(gameState, factionId, mpData);
-  const grouped = groupByCategory(items);
-  const totalCount = items.length;
-  const hasWarn = items.some(i => i.severity === 'warn');
+  const grouped = groupByTier(items);
+
+  // Badge: count what needs attention, flag red when something is
+  // being shot RIGHT NOW. Opportunities are excluded on purpose.
+  const urgentCount = items.filter(i => i.tier !== 'opportunity').length;
+  const hasNow = items.some(i => i.tier === 'now');
 
   const [open, setOpen] = useState(false);
   // We keep the panel mounted for one transition cycle after `open`
@@ -44,6 +82,26 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
   // the element unmounts.
   const [mounted, setMounted] = useState(false);
   const unmountTimerRef = useRef<number | null>(null);
+
+  // Seen-snapshot for the "new" dot. Frozen at panel-open; persisted
+  // at panel-close with everything currently visible.
+  const seenSnapshotRef = useRef<Set<string>>(loadSeen());
+  const itemsRef = useRef<SituationItem[]>(items);
+  itemsRef.current = items;
+
+  // First-ever run (no stored key): stamp the current list so the
+  // player's very first open isn't a wall of dots.
+  const initializedRef = useRef(false);
+  useEffect(() => {
+    if (initializedRef.current) return;
+    initializedRef.current = true;
+    if (localStorage.getItem(SEEN_KEY) == null && items.length > 0) {
+      const ids = new Set(items.map(i => i.id));
+      saveSeen(ids);
+      seenSnapshotRef.current = ids;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items.length]);
 
   // Rail tells us which panel is active.
   useEffect(() => {
@@ -55,15 +113,22 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
     return () => window.removeEventListener('dockrail:active', onActive as EventListener);
   }, []);
 
-  // Manage mount/unmount around the open flag so the CSS transition runs.
+  // Manage mount/unmount around the open flag so the CSS transition
+  // runs, and drive the seen-tracking off the same transitions:
+  // open → freeze the snapshot dots render against;
+  // close → everything on screen has now been seen.
   useEffect(() => {
     if (open) {
       if (unmountTimerRef.current != null) {
         window.clearTimeout(unmountTimerRef.current);
         unmountTimerRef.current = null;
       }
+      seenSnapshotRef.current = loadSeen();
       setMounted(true);
     } else if (mounted) {
+      const merged = loadSeen();
+      for (const it of itemsRef.current) merged.add(it.id);
+      saveSeen(merged);
       unmountTimerRef.current = window.setTimeout(() => setMounted(false), 250);
     }
     return () => {
@@ -72,17 +137,18 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
         unmountTimerRef.current = null;
       }
     };
-  }, [open, mounted]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   // Report our count to the rail so the badge stays current. Fires on
-  // every change in items.
+  // every change in the urgent subset.
   useEffect(() => {
     try {
       window.dispatchEvent(new CustomEvent('dockrail:badge', {
-        detail: { which: 'situation', count: totalCount, hasWarn },
+        detail: { which: 'situation', count: urgentCount, hasWarn: hasNow },
       }));
     } catch { /* noop */ }
-  }, [totalCount, hasWarn]);
+  }, [urgentCount, hasNow]);
 
   function close() {
     try {
@@ -110,6 +176,8 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
 
   if (!mounted) return null;
 
+  const totalCount = items.length;
+
   return (
     <div className={`dock-panel sit-panel-shell${open ? ' is-open' : ''}`} role="region" aria-label="Situation Report">
       <div className="sit-panel__head">
@@ -133,24 +201,30 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
       ) : (
         <div className="sit-panel__body">
           {grouped.map(g => (
-            <section key={g.category} className="sit-group">
-              <header className="sit-group__head">
-                <span className="sit-group__label">{CATEGORY_LABEL[g.category]}</span>
-                <span className="sit-group__count">{g.items.length}</span>
+            <section key={g.tier} className={`sit-tier sit-tier--${g.tier}`}>
+              <header className="sit-tier__head">
+                <span className="sit-tier__label">{TIER_LABEL[g.tier]}</span>
+                <span className="sit-tier__count">{g.items.length}</span>
               </header>
-              <ul className="sit-group__list">
-                {g.items.map(it => (
-                  <li key={it.id}>
-                    <button
-                      className={`sit-item sit-item--${it.severity}`}
-                      onClick={() => handleClick(it)}
-                      title="Click to focus"
-                    >
-                      <span className="sit-item__title">{it.title}</span>
-                      {it.subtitle && <span className="sit-item__sub">{it.subtitle}</span>}
-                    </button>
-                  </li>
-                ))}
+              <ul className="sit-tier__list">
+                {g.items.map(it => {
+                  const isNew = !seenSnapshotRef.current.has(it.id);
+                  return (
+                    <li key={it.id}>
+                      <button
+                        className={`sit-item sit-item--${it.severity}`}
+                        onClick={() => handleClick(it)}
+                        title="Click to focus"
+                      >
+                        <span className="sit-item__title">
+                          {isNew && <span className="sit-item__new" aria-label="New" />}
+                          {it.title}
+                        </span>
+                        {it.subtitle && <span className="sit-item__sub">{it.subtitle}</span>}
+                      </button>
+                    </li>
+                  );
+                })}
               </ul>
             </section>
           ))}

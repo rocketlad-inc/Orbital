@@ -1,12 +1,35 @@
 // ============================================================
 // useSituationItems
 //
-// Derives the Situation Log's nine attention categories from the
-// current gameState. Each item has an entity id so a click can focus
-// the relevant ship/body/UI. Until-acted-on expiration: an item
+// Derives the Situation Report's attention items from the current
+// gameState. Each item has an entity id so a click can focus the
+// relevant ship/body/UI. Until-acted-on expiration: an item
 // disappears the moment its underlying condition becomes false, with
 // a 10-tick max-life fallback for the time-bounded categories
 // (arrived/created) so a forgotten ship eventually drops off.
+//
+// TIER MODEL — the readability pass. Categories collapse into three
+// urgency tiers, which is what the panel renders and what the rail
+// badge counts:
+//
+//   now         happening TO you on a clock you don't control:
+//               in combat, hostiles inbound. Red. Never collapsed.
+//   decision    time-bounded, waiting on YOU: vote closing, trade
+//               offer, ship arrived/built with no orders, and an
+//               idle yard at a body with hostiles present/inbound
+//               (promoted from opportunity with defense phrasing).
+//   opportunity no clock at all: idle yards, idle freighters,
+//               stranded stockpiles, affordable research. Dimmer,
+//               collapsed aggressively (research is ONE row, 3+
+//               idle freighters are ONE row).
+//
+// Cross-item rules the tiers enable:
+//   - One row per entity: a NOW row suppresses lower-tier rows for
+//     the same ship/body, so a freighter dying at 10% HP is never
+//     ALSO listed as "idle — assign a trade route" (a real render
+//     we caught live).
+//   - Within a tier, rows sort by their clock: combat by HP%
+//     ascending (most hurt first), threats by ETA, votes by close.
 //
 // MP-only categories (open vote, incoming trade) accept optional
 // data so the same hook works in SP without crashing.
@@ -20,6 +43,7 @@ import type {
 } from '../types';
 import {
   computeIncomingThreats,
+  type IncomingThreat,
 } from '../game/threats';
 import { AUTO_COMBAT_INTERVAL } from '../game/combat';
 import {
@@ -45,9 +69,37 @@ export type SituationCategory =
   | 'threat'         // body of yours under incoming enemy
   | 'tech_available';// research you can afford
 
+export type SituationTier = 'now' | 'decision' | 'opportunity';
+
+export const TIER_LABEL: Record<SituationTier, string> = {
+  now:         'Now',
+  decision:    'Needs a decision',
+  opportunity: 'Opportunities',
+};
+
+const TIER_ORDER: SituationTier[] = ['now', 'decision', 'opportunity'];
+
+/** Default tier per category. Individual items may promote themselves
+ *  (e.g. an idle yard at a body with hostiles inbound is a DECISION —
+ *  "build defenses" — not a someday-opportunity). */
+const TIER_OF: Record<SituationCategory, SituationTier> = {
+  in_combat:      'now',
+  threat:         'now',
+  arrived:        'decision',
+  created:        'decision',
+  incoming_trade: 'decision',
+  vote_open:      'decision',
+  idle_shipyard:  'opportunity',
+  idle_freighter: 'opportunity',
+  stranded:       'opportunity',
+  tech_available: 'opportunity',
+};
+
 export interface SituationItem {
   id: string;                     // unique within the list (category + entity)
   category: SituationCategory;
+  /** Urgency tier — what the panel groups by and the badge counts. */
+  tier: SituationTier;
   title: string;                  // primary line
   subtitle?: string;              // secondary line (one short clause)
   /** Where a click should focus. */
@@ -55,24 +107,18 @@ export interface SituationItem {
     | { kind: 'ship'; shipId: string }
     | { kind: 'body'; bodyId: string }
     | { kind: 'panel'; panel: 'research' | 'senate' | 'trades' };
-  /** Severity colour. v1 only uses 'normal' and 'warn'. */
-  severity: 'normal' | 'warn';
+  /** Severity colour. danger = red (dying hull, settlement at risk),
+   *  warn = amber (engaged / time-bounded), normal = neutral. */
+  severity: 'normal' | 'warn' | 'danger';
+  /** Lower = more urgent within the tier (HP% for combat, ETA for
+   *  threats, close-tick for votes). Undefined sorts last, stable. */
+  sortKey?: number;
+  /** Suppression key ("ship:<id>" / "body:<id>"). A NOW row's entity
+   *  suppresses lower-tier rows with the same key — one row per
+   *  entity, the most urgent wins. Undefined = never suppressed
+   *  (used by contextual rows that ARE the answer to a NOW row). */
+  entity?: string;
 }
-
-const CATEGORY_ORDER: SituationCategory[] = [
-  // Shooting now outranks shooting soon — an engaged hull may be dead
-  // in a few ticks, an inbound burn still leaves time to react.
-  'in_combat',
-  'threat',
-  'arrived',
-  'created',
-  'incoming_trade',
-  'vote_open',
-  'idle_shipyard',
-  'idle_freighter',
-  'stranded',
-  'tech_available',
-];
 
 export const CATEGORY_LABEL: Record<SituationCategory, string> = {
   in_combat:       'In combat now',
@@ -105,10 +151,6 @@ export interface SituationMpData {
     vote_closes_at_tick: number;
   }>;
 }
-
-// ------------------------------------------------------------
-// Helper: "no pending orders" — the v1 idleness gate.
-// ------------------------------------------------------------
 
 // ------------------------------------------------------------
 // Combat recency — MUST match FleetPanel's "In Combat" badge, or the
@@ -147,7 +189,7 @@ function shipHasPendingOrders(s: Ship): boolean {
 // ------------------------------------------------------------
 
 /**
- * Returns a flat, ordered list of situation items grouped by category.
+ * Returns a flat, ordered list of situation items grouped by tier.
  *
  * @param gameState   live GameState
  * @param factionId   caller's faction id (PLAYER_TOKEN in MP, 'player' in SP)
@@ -220,11 +262,33 @@ export function useSituationItems(
   // --- Derive the item list ---
   return useMemo(() => {
     const items: SituationItem[] = [];
+    const push = (it: Omit<SituationItem, 'tier'> & { tier?: SituationTier }) =>
+      items.push({ ...it, tier: it.tier ?? TIER_OF[it.category] });
+
     const mine = gameState.ships.filter(s => s.ownedBy === factionId);
     const byId = new Map<string, Ship>(mine.map(s => [s.id, s]));
     const bodies = gameState.bodies;
     const bodyName = (id: string | undefined) =>
       (id && bodies.find(b => b.id === id)?.name) || '?';
+
+    // --- Shared combat context ---
+    // Both the NOW-tier sections and the contextual promotion of idle
+    // yards need to know where the shooting is (hostile parked at a
+    // body) and where it's about to be (inbound burn targeting one).
+    let threats: IncomingThreat[] = [];
+    try { threats = computeIncomingThreats(gameState, factionId); } catch { /* defensive */ }
+    const threatBodyIds = new Set(threats.map(t => t.targetBodyId));
+
+    // Bodies with a hostile ship parked on them. Peace partners are
+    // not hostile (mirrors the threat filter), and ships in transit
+    // aren't yet present to fight.
+    const hostileBodies = new Set<string>();
+    for (const s of gameState.ships) {
+      if (s.ownedBy === factionId) continue;
+      if (s.transit) continue;
+      if (gameState.peaceFactionIds?.includes(s.ownedBy)) continue;
+      if (s.orbit.parentBodyId) hostileBodies.add(s.orbit.parentBodyId);
+    }
 
     // A ship assigned to an active trade route is "given orders" for our
     // purposes — it has a job, even when between legs and not currently
@@ -250,13 +314,14 @@ export function useSituationItems(
       if (routedShipIds.has(ship.id)) continue;
       if (tick - arrivedAt > 10) continue;
       const where = bodyName(ship.orbit.parentBodyId);
-      items.push({
+      push({
         id: `arrived:${ship.id}`,
         category: 'arrived',
         title: `${ship.name} arrived at ${where}`,
         subtitle: 'Awaiting orders',
         focus: { kind: 'ship', shipId: ship.id },
         severity: 'normal',
+        entity: `ship:${ship.id}`,
       });
     }
 
@@ -271,13 +336,14 @@ export function useSituationItems(
       if (routedShipIds.has(ship.id)) continue;
       if (tick - createdAt > 10) continue;
       const where = bodyName(ship.orbit.parentBodyId);
-      items.push({
+      push({
         id: `created:${ship.id}`,
         category: 'created',
         title: `${ship.name} (${ship.class}) launched at ${where}`,
         subtitle: 'Awaiting orders',
         focus: { kind: 'ship', shipId: ship.id },
         severity: 'normal',
+        entity: `ship:${ship.id}`,
       });
     }
 
@@ -286,6 +352,12 @@ export function useSituationItems(
     // active build queue row points there. "Can host a shipyard" v1
     // rule: any owned terrestrial/moon/asteroid body. Stars and gas
     // giants are excluded since the BuildPanel rejects them too.
+    //
+    // CONTEXTUAL PROMOTION: an idle yard at a body with hostiles
+    // present or inbound isn't a someday-opportunity, it's the action
+    // the NOW row is begging for — "build a defender". Promote to the
+    // decision tier with defense phrasing. No entity key: the NOW row
+    // for the same body must not suppress it, because it IS the answer.
     const buildBusyBodies = new Set(
       (gameState.buildOrders || [])
         .filter(b => b.ownedBy === factionId)
@@ -296,31 +368,66 @@ export function useSituationItems(
       if (body.type === 'star' || body.type === 'gas_giant' || body.type === 'ice_giant') continue;
       if (body.destroyedAtTick != null) continue;
       if (buildBusyBodies.has(body.id)) continue;
-      items.push({
-        id: `idle_shipyard:${body.id}`,
-        category: 'idle_shipyard',
-        title: `${body.name} shipyard idle`,
-        subtitle: 'No ship in production',
-        focus: { kind: 'body', bodyId: body.id },
-        severity: 'normal',
-      });
+      const hostilesHere = hostileBodies.has(body.id);
+      const hostilesComing = threatBodyIds.has(body.id);
+      if (hostilesHere || hostilesComing) {
+        push({
+          id: `idle_shipyard:${body.id}`,
+          category: 'idle_shipyard',
+          tier: 'decision',
+          title: `${body.name} yard idle — hostiles ${hostilesHere ? 'present' : 'inbound'}`,
+          subtitle: 'Build defenses',
+          focus: { kind: 'body', bodyId: body.id },
+          severity: 'warn',
+        });
+      } else {
+        push({
+          id: `idle_shipyard:${body.id}`,
+          category: 'idle_shipyard',
+          title: `${body.name} shipyard idle`,
+          subtitle: 'No ship in production',
+          focus: { kind: 'body', bodyId: body.id },
+          severity: 'normal',
+          entity: `body:${body.id}`,
+        });
+      }
     }
 
     // ---- 4) Idle freighters ----
     // `routedShipIds` is shared with sections 1 + 2 — declared above.
-    for (const ship of mine) {
-      if (ship.class !== 'freighter') continue;
-      if (shipHasPendingOrders(ship)) continue;
-      if (routedShipIds.has(ship.id)) continue;
-      const where = bodyName(ship.orbit.parentBodyId);
-      items.push({
-        id: `idle_freighter:${ship.id}`,
+    // A freighter parked at a body with hostiles on it is busy
+    // surviving, not idle — the in-combat row owns it (and "assign a
+    // trade route" would be absurd advice mid-firefight). 3+ idle
+    // freighters collapse to one row so a big merchant fleet doesn't
+    // wallpaper the panel.
+    const idleFreighters = mine.filter(ship =>
+      ship.class === 'freighter'
+      && !shipHasPendingOrders(ship)
+      && !routedShipIds.has(ship.id)
+      && !(ship.orbit.parentBodyId && hostileBodies.has(ship.orbit.parentBodyId)),
+    );
+    if (idleFreighters.length >= 3) {
+      const names = idleFreighters.slice(0, 2).map(s => s.name).join(', ');
+      push({
+        id: 'idle_freighter:all',
         category: 'idle_freighter',
-        title: `${ship.name} parked at ${where}`,
-        subtitle: 'No trade route assigned',
-        focus: { kind: 'ship', shipId: ship.id },
+        title: `${idleFreighters.length} freighters idle`,
+        subtitle: `${names} +${idleFreighters.length - 2} more · no trade routes`,
+        focus: { kind: 'ship', shipId: idleFreighters[0].id },
         severity: 'normal',
       });
+    } else {
+      for (const ship of idleFreighters) {
+        push({
+          id: `idle_freighter:${ship.id}`,
+          category: 'idle_freighter',
+          title: `${ship.name} parked at ${bodyName(ship.orbit.parentBodyId)}`,
+          subtitle: 'No trade route assigned',
+          focus: { kind: 'ship', shipId: ship.id },
+          severity: 'normal',
+          entity: `ship:${ship.id}`,
+        });
+      }
     }
 
     // ---- 5) Stranded stockpiles (grouped per body) ----
@@ -342,13 +449,14 @@ export function useSituationItems(
     }
     for (const [bodyId, total] of stockByBody) {
       const body = bodies.find(b => b.id === bodyId);
-      items.push({
+      push({
         id: `stranded:body:${bodyId}`,
         category: 'stranded',
         title: `${body?.name ?? '?'} stockpile growing`,
         subtitle: `${Math.round(total)} units banked — no collector or trade route`,
         focus: { kind: 'body', bodyId },
         severity: 'normal',
+        entity: `body:${bodyId}`,
       });
     }
 
@@ -356,13 +464,14 @@ export function useSituationItems(
     if (mpData?.openVotes) {
       for (const v of mpData.openVotes) {
         const closesIn = Math.max(0, v.vote_closes_at_tick - tick);
-        items.push({
+        push({
           id: `vote_open:${v.id}`,
           category: 'vote_open',
           title: v.title,
-          subtitle: `Voting closes in T+${closesIn}`,
+          subtitle: `Voting closes in ${closesIn}t`,
           focus: { kind: 'panel', panel: 'senate' },
           severity: 'warn',
+          sortKey: closesIn,
         });
       }
     }
@@ -370,7 +479,7 @@ export function useSituationItems(
     // ---- 7) Incoming trade offers (MP) ----
     if (mpData?.incomingTrades) {
       for (const t of mpData.incomingTrades) {
-        items.push({
+        push({
           id: `incoming_trade:${t.id}`,
           category: 'incoming_trade',
           title: `Trade offer from ${t.proposer_faction_name ?? 'another faction'}`,
@@ -387,7 +496,6 @@ export function useSituationItems(
     // filters own ships + peace treaties and sorts soonest-first; we
     // just group and phrase.
     try {
-      const threats = computeIncomingThreats(gameState, factionId);
       const byBody = new Map<string, typeof threats>();
       for (const t of threats) {
         const arr = byBody.get(t.targetBodyId) ?? [];
@@ -433,17 +541,20 @@ export function useSituationItems(
         }
         // Owned-but-empty body: nothing stationed, but losing the claim
         // still matters — say so rather than showing a bare ETA.
-        const stakeText = stake.length > 0
-          ? `${stake.join(' + ')} at risk`
-          : 'undefended';
+        const hasStake = stake.length > 0;
+        const stakeText = hasStake ? `${stake.join(' + ')} at risk` : 'undefended';
 
-        items.push({
+        push({
           id: `threat:${bodyId}`,
           category: 'threat',
           title: `${n} hostile${n === 1 ? '' : 's'} inbound → ${body.name}`,
           subtitle: `${who} ${classes.join('/')} · ETA ${eta}t · ${stakeText}`,
           focus: { kind: 'body', bodyId },
-          severity: 'warn',
+          // Settlements/ships in the crosshairs = red; a claim-jumper
+          // heading for an empty rock = amber.
+          severity: hasStake ? 'danger' : 'warn',
+          sortKey: eta,
+          entity: `body:${bodyId}`,
         });
       }
     } catch { /* defensive: threats compute failures shouldn't kill the list */ }
@@ -469,17 +580,6 @@ export function useSituationItems(
     // auto-combat exchange, so a stale stamp on one is a straggler
     // from a fight it already left.
     try {
-      // Bodies with a hostile ship parked on them. Peace partners are
-      // not hostile (mirrors the threat filter), and ships in transit
-      // aren't yet present to fight.
-      const hostileBodies = new Set<string>();
-      for (const s of gameState.ships) {
-        if (s.ownedBy === factionId) continue;
-        if (s.transit) continue;
-        if (gameState.peaceFactionIds?.includes(s.ownedBy)) continue;
-        if (s.orbit.parentBodyId) hostileBodies.add(s.orbit.parentBodyId);
-      }
-
       for (const s of gameState.ships) {
         if (s.ownedBy !== factionId) continue;
         if (s.transit) continue;
@@ -490,20 +590,22 @@ export function useSituationItems(
         const where = bodies.find(b => b.id === s.orbit.parentBodyId)?.name ?? 'deep space';
         const hp = s.hp;
         const hpMax = s.hpMax;
-        const hpText = hp != null && hpMax != null && hpMax > 0
-          ? ` · ${Math.max(0, Math.round((hp / hpMax) * 100))}% HP`
-          : '';
-        // Warn only when the hull is actually losing — a winning
-        // skirmish shouldn't paint the whole list red.
-        const hurt = hp != null && hpMax != null && hpMax > 0 && hp / hpMax <= 0.5;
+        const pct = hp != null && hpMax != null && hpMax > 0
+          ? Math.max(0, Math.round((hp / hpMax) * 100))
+          : null;
+        // Red only when the hull is actually losing — a winning
+        // skirmish reads amber ("engaged"), not red ("dying").
+        const hurt = pct != null && pct <= 50;
 
-        items.push({
+        push({
           id: `in_combat:ship:${s.id}`,
           category: 'in_combat',
           title: `${s.name} engaged at ${where}`,
-          subtitle: `${s.class}${hpText}`,
+          subtitle: `${s.class}${pct != null ? ` · ${pct}% HP` : ''}`,
           focus: { kind: 'ship', shipId: s.id },
-          severity: hurt ? 'warn' : 'normal',
+          severity: hurt ? 'danger' : 'warn',
+          sortKey: pct ?? 100,          // most hurt first
+          entity: `ship:${s.id}`,
         });
       }
 
@@ -520,41 +622,58 @@ export function useSituationItems(
 
         // NB: settlements carry `maxHp`; ships carry `hpMax`. Not a typo.
         const where = bodies.find(b => b.id === st.bodyId)?.name ?? st.bodyId;
-        const hpText = st.maxHp > 0
-          ? ` · ${Math.max(0, Math.round((st.hp / st.maxHp) * 100))}% HP`
-          : '';
-        const hurt = st.maxHp > 0 && st.hp / st.maxHp <= 0.5;
+        const pct = st.maxHp > 0 ? Math.max(0, Math.round((st.hp / st.maxHp) * 100)) : null;
+        const hurt = pct != null && pct <= 50;
 
-        items.push({
+        push({
           id: `in_combat:settlement:${st.id}`,
           category: 'in_combat',
           title: `${st.name} under fire`,
-          subtitle: `${st.type} on ${where}${hpText}`,
+          subtitle: `${st.type} on ${where}${pct != null ? ` · ${pct}% HP` : ''}`,
           focus: { kind: 'body', bodyId: st.bodyId },
-          severity: hurt ? 'warn' : 'normal',
+          severity: hurt ? 'danger' : 'warn',
+          sortKey: pct ?? 100,
+          entity: `body:${st.bodyId}`,
         });
       }
     } catch { /* defensive */ }
 
     // ---- 9) Tech available ----
-    // Any tech where (current_level < MAX) AND (player can afford
-    // nextLevelCost). Capped at one item per tech tree.
+    // Collapsed to ONE row when several lines are affordable. With any
+    // science income this condition is true for most tracks most of
+    // the game — six identical rows were permanent wallpaper drowning
+    // the urgent tiers above. One line carries the same signal.
     try {
       const pool = gameState.resources?.[factionId];
       const science = pool?.science ?? 0;
       const techState = gameState.factionTech?.[factionId];
       if (techState) {
         const levels = techState.levels || {};
+        const affordable: Array<{ id: TechId; cur: number; cost: number }> = [];
         for (const id of Object.keys(TECH_DEFS) as TechId[]) {
           const cur = levels[id] ?? 0;
           if (cur >= TECH_MAX_LEVEL) continue;
           const cost = nextLevelCost(cur, TECH_DEFS[id]);
           if (cost > science) continue;
-          items.push({
-            id: `tech_available:${id}`,
+          affordable.push({ id, cur, cost });
+        }
+        if (affordable.length === 1) {
+          const t = affordable[0];
+          push({
+            id: `tech_available:${t.id}`,
             category: 'tech_available',
-            title: `${TECH_DEFS[id].name} L${cur + 1} affordable`,
-            subtitle: `${cost} science`,
+            title: `${TECH_DEFS[t.id].name} L${t.cur + 1} affordable`,
+            subtitle: `${t.cost} science`,
+            focus: { kind: 'panel', panel: 'research' },
+            severity: 'normal',
+          });
+        } else if (affordable.length > 1) {
+          const minCost = Math.min(...affordable.map(t => t.cost));
+          push({
+            id: 'tech_available:all',
+            category: 'tech_available',
+            title: `${affordable.length} research lines affordable`,
+            subtitle: `from ${minCost} science`,
             focus: { kind: 'panel', panel: 'research' },
             severity: 'normal',
           });
@@ -562,28 +681,44 @@ export function useSituationItems(
       }
     } catch { /* defensive */ }
 
-    // Sort by category order, preserving insertion order within each.
-    const rank = new Map(CATEGORY_ORDER.map((c, i) => [c, i]));
-    items.sort((a, b) => (rank.get(a.category)! - rank.get(b.category)!));
-    return items;
+    // --- One row per entity: NOW suppresses the rest ---
+    // A hull in combat must not also be listed as idle/arrived/new;
+    // a body under fire must not also nag about stranded stockpiles.
+    // Contextual rows (promoted idle yard) carry no entity key and
+    // survive — they're the action the NOW row demands.
+    const nowEntities = new Set(
+      items.filter(i => i.tier === 'now' && i.entity).map(i => i.entity as string),
+    );
+    const visible = items.filter(i =>
+      i.tier === 'now' || !i.entity || !nowEntities.has(i.entity),
+    );
+
+    // --- Sort: tier, then each row's own clock, then insertion ---
+    const tierRank = new Map(TIER_ORDER.map((t, i) => [t, i]));
+    const MAXK = Number.MAX_SAFE_INTEGER;
+    visible.sort((a, b) =>
+      (tierRank.get(a.tier)! - tierRank.get(b.tier)!)
+      || ((a.sortKey ?? MAXK) - (b.sortKey ?? MAXK)),
+    );
+    return visible;
   }, [gameState, factionId, tick, mpData]);
 }
 
-/** Render-friendly grouping. */
-export function groupByCategory(items: SituationItem[]): Array<{
-  category: SituationCategory;
+/** Render-friendly grouping by urgency tier (what the panel shows). */
+export function groupByTier(items: SituationItem[]): Array<{
+  tier: SituationTier;
   items: SituationItem[];
 }> {
-  const map = new Map<SituationCategory, SituationItem[]>();
+  const map = new Map<SituationTier, SituationItem[]>();
   for (const it of items) {
-    const arr = map.get(it.category) ?? [];
+    const arr = map.get(it.tier) ?? [];
     arr.push(it);
-    map.set(it.category, arr);
+    map.set(it.tier, arr);
   }
-  const out: Array<{ category: SituationCategory; items: SituationItem[] }> = [];
-  for (const cat of CATEGORY_ORDER) {
-    const arr = map.get(cat);
-    if (arr && arr.length > 0) out.push({ category: cat, items: arr });
+  const out: Array<{ tier: SituationTier; items: SituationItem[] }> = [];
+  for (const tier of TIER_ORDER) {
+    const arr = map.get(tier);
+    if (arr && arr.length > 0) out.push({ tier, items: arr });
   }
   return out;
 }
