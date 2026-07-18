@@ -119,10 +119,41 @@ Once yields specialize, spawn region ≈ your whole early game. Seeder rules:
 
 | Part | Effect per part (base) | Per-ship cost | Tech track |
 |---|---|---|---|
-| Weapon | +40% of hull base dmg | metal-heavy | **Weapons** (+10%/lvl to part effect) |
-| Shield | +35% of hull base HP | metal+credits | **Armor** (+8%/lvl) |
-| Engine | −15% travel time (mult.) | credits-heavy | **Propulsion** (repurposed: +engine part effect/lvl; its −Δv effect dies with fuel) |
-| Detonator | see §2.2 | expensive: metal+credits | **Weapons** at half rate (PENDING sign-off) |
+| ⚔ Kinetic mount | +40% hull base dmg, **kinetic** | 6M/2C | **Kinetic Weapons** (+10%/lvl) |
+| ⚡ Energy mount | +40% hull base dmg, **energy** | 2M/6C | **Energy Weapons** (+10%/lvl) |
+| 🛡 Shield array | +35% hull base HP; cuts incoming **kinetic** ×0.78 | 4M/4C | **Shields** (+8%/lvl) |
+| 🪨 Armor plate | +35% hull base HP; cuts incoming **energy** ×0.78 | 6M/2C | **Armor** (+8%/lvl) |
+| 🔥 Engine | −15% travel time (mult.) | 2M/6C | **Propulsion** (+engine effect/lvl) |
+| ☠ Detonator | see §2.2 | 10M/10C | **Kinetic Weapons** at half rate |
+
+### 2.1a Damage types — the counter-matrix (kinetic ⚔ vs energy ⚡)
+
+Two weapon types and two defense types, mirrored across
+`src/game/shipParts.ts` and `worker/shipDesigns.js`, resolved in the
+combat loop (`worker/room.js`):
+
+- **Energy melts shields, kinetic chews armor.** A ship's weapon output
+  is split by its mount ratio (bare/weaponless hulls fire 100% kinetic).
+- **Each defensive part cuts its countered type to 0.78, multiplicatively.**
+  Shields counter kinetic; armor counters energy. The untouched type
+  passes at full. So 2 shields → kinetic ×0.61 → **energy does ~1.64×
+  kinetic** against that hull.
+- **Not a strict RPS cycle — a counter-matrix.** A balanced ship
+  (kinetic+energy+shield+armor) is protected against both and hard-countered
+  by neither, but excels at nothing; a specialist is high-risk/high-reward.
+  A corvette's 2 slots *can't* be balanced — it's a committed specialist by
+  construction.
+- **Total mitigation (typed × point-defense) is capped at 85%** (floor
+  `MITIGATION_FLOOR = 0.15`), so a stacked destroyer is brutal but killable.
+- **Settlements are untyped in v1** — they deal kinetic return fire and take
+  full damage from both. Station shield/armor buildings are a follow-up.
+- **Migration: none.** Legacy part id `weapon` aliases to `kinetic` on read;
+  tech ids `weapons`/`armor` are kept (now meaning kinetic-weapons /
+  armor-plate) so existing games, saved designs, and the two victory checks
+  need no data migration. New techs `energy_weapons`/`shields` fall back to
+  the legacy line in old games so an existing fleet isn't silently un-teched.
+- **Science victory now spans 8 tracks** (was 6): +Energy Weapons, +Shields.
+  Goalpost move accepted (2026-07-18).
 
 - Flight Dynamics stays as it is: base −6%/lvl travel time for EVERY hull.
   Propulsion rewards engine-heavy designs; Flight Dynamics rewards everyone.

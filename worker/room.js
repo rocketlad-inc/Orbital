@@ -1,6 +1,17 @@
 import { resolveSenate, getActiveSliders, hasActiveSanction } from './senate.js';
 import { recomputeBodyOwnership } from './factions.js';
-import { parsePartsJson, computeShipStats, countPart, detonatorDamage } from './shipDesigns.js';
+import { parsePartsJson, computeShipStats, countPart, detonatorDamage,
+         damageProfile, defenseMitigation, MITIGATION_FLOOR } from './shipDesigns.js';
+
+// The eight tech tracks. Single source of truth for the science-victory
+// check AND the random-tech grant, so those two can't silently disagree
+// about how many tracks exist (they used to be duplicated literals; the
+// kinetic/energy + shields/armor split would have drifted them). Mirrors
+// ALL_TECH_IDS in src/game/techs.ts — keep in sync.
+const TECH_TRACKS = [
+  'weapons', 'energy_weapons', 'shields', 'armor',
+  'propulsion', 'construction', 'industry', 'sensors',
+];
 
 // Room Durable Object. One instance per game room, keyed by room id.
 // Uses the WebSocket Hibernation API so idle rooms cost nothing.
@@ -1602,12 +1613,20 @@ export class Room {
       .prepare(
         `SELECT id, owner_faction_id, parent_body_id, hp, hp_max, damage_per_tick,
                 rank, combat_history, ship_class, name, last_combat_tick,
-                stance, retreat_hp_pct, detonate_hp_pct
+                stance, retreat_hp_pct, detonate_hp_pct, parts_json
            FROM game_ships
           WHERE game_id = ? AND status = 'active'`,
       )
       .bind(gameId)
       .all()).results ?? [];
+
+    // Parse each ship's loadout ONCE (parts_json -> validated ids,
+    // legacy weapon->kinetic aliased) and cache on the row as `_parts`,
+    // so the per-target damage loops below can read damage type +
+    // shield/armor counts without re-parsing JSON per pairing.
+    for (const s of allShips) {
+      s._parts = parsePartsJson(s.ship_class, s.parts_json);
+    }
 
     // Combat cadence — every N ticks per ship, matching the SP
     // constant AUTO_COMBAT_INTERVAL in src/game/combat.ts. Pulled into
@@ -1644,9 +1663,24 @@ export class Room {
       if (!m) { m = {}; techLvl.set(r.faction_id, m); }
       m[r.tech_id] = r.level;
     }
-    const weaponsMulOf  = (fid) => 1 + 0.10 * (techLvl.get(fid)?.weapons  ?? 0);
-    const armorMulOf    = (fid) => 1 + 0.08 * (techLvl.get(fid)?.armor    ?? 0);
+    // Kinetic + energy weapon tech scale their own mounts; a ship's
+    // effective weapon multiplier is these blended by its damage profile
+    // (see attackerWeaponMul below). Legacy games that only teched the
+    // old 'weapons' line fall back to it for energy so an energy fleet
+    // isn't silently un-teched by the split.
+    const kineticMulOf = (fid) => 1 + 0.10 * (techLvl.get(fid)?.weapons ?? 0);
+    const energyMulOf  = (fid) => 1 + 0.10 * Math.max(
+      techLvl.get(fid)?.energy_weapons ?? 0, techLvl.get(fid)?.weapons ?? 0);
+    // Best defensive line raises the live repair ceiling (baked HP
+    // already includes per-part tech). armor covers shields in legacy
+    // games until shields is researched.
+    const armorMulOf    = (fid) => 1 + 0.08 * Math.max(
+      techLvl.get(fid)?.armor ?? 0, techLvl.get(fid)?.shields ?? 0);
     const industryMulOf = (fid) => 1 + 0.10 * (techLvl.get(fid)?.industry ?? 0);
+    /** A ship/settlement's weapon-tech multiplier, blended by what it
+     *  fires. Settlements + bare hulls fire kinetic. */
+    const attackerWeaponMul = (fid, profile) =>
+      profile.kinetic * kineticMulOf(fid) + profile.energy * energyMulOf(fid);
 
     // Build a fast at-peace lookup: pacts.has(fA + '|' + fB) === true iff
     // they have an active NAP/defense pact (unordered key).
@@ -1822,21 +1856,32 @@ export class Room {
         // client's optimistic prediction constantly showed kills the
         // server never applied.
         const rankMul = 1 + 0.01 * Math.max(0, attacker.rank ?? 0);
+        // Damage type this attacker fires (bare hull => kinetic), used
+        // both to blend its weapon tech and to pick the target's
+        // mitigation. parts parsed once per attacker per volley.
+        const atkProfile = damageProfile(attacker._parts);
         const attackPower =
-          attacker.damage_per_tick * weaponsMulOf(attacker.owner_faction_id) * rankMul * combatDamageMult;
+          attacker.damage_per_tick * attackerWeaponMul(attacker.owner_faction_id, atkProfile)
+          * rankMul * combatDamageMult;
         for (const t of shipTargets) {
           // Senate war authorization: damage TO a faction the senate has
           // formally declared war on is doubled. Per-target (not per-
           // attacker) so a single attacker shooting multiple factions
           // applies the multiplier only to the sanctioned ones.
           const warAuthMul = (await sanctioned(t.owner_faction_id, 'war_authorization')) ? 2 : 1;
-          const dmg = attackPower * (1 - pdcOfShipClass(t.ship_class)) * warAuthMul;
+          // Typed mitigation × point-defense, floored so a stacked hull
+          // is brutal but never immune (85% cap). Shields cut kinetic,
+          // armor cuts energy; a target with no relevant parts takes
+          // full damage exactly as before.
+          const mit = Math.max(MITIGATION_FLOOR,
+            (1 - pdcOfShipClass(t.ship_class)) * defenseMitigation(t._parts, atkProfile));
+          const dmg = attackPower * mit * warAuthMul;
           addDamage(t.id, attacker.owner_faction_id, attacker.id, dmg);
         }
         // Ships also bombard hostile settlements — class damage reduced
         // by the settlement's PDC (city 0.3 / station 0.5), NOT the old
-        // flat 4/ship. A destroyer now hits a city far harder than a
-        // corvette does, as it does on the client.
+        // flat 4/ship. Settlements carry no shield/armor parts yet, so
+        // typed mitigation is a no-op on them (v1: settlements untyped).
         for (const t of settlementTargets) {
           const warAuthMul = (await sanctioned(t.owner_faction_id, 'war_authorization')) ? 2 : 1;
           const dmg = attackPower * (1 - pdcOfSettlement(t.type)) * warAuthMul;
@@ -1864,10 +1909,15 @@ export class Room {
           && (t.damage_per_tick ?? 0) >= 0,
         );
         if (shipTargets.length === 0) continue;
-        const power = base * weaponsMulOf(st.owner_faction_id) * combatDamageMult;
+        // Settlement guns fire kinetic, so a target's shields blunt them
+        // and armor does nothing — same counter-matrix as ship kinetic.
+        const KINETIC = { kinetic: 1, energy: 0 };
+        const power = base * kineticMulOf(st.owner_faction_id) * combatDamageMult;
         for (const t of shipTargets) {
           const warAuthMul = (await sanctioned(t.owner_faction_id, 'war_authorization')) ? 2 : 1;
-          const dmg = power * (1 - pdcOfShipClass(t.ship_class)) * warAuthMul;
+          const mit = Math.max(MITIGATION_FLOOR,
+            (1 - pdcOfShipClass(t.ship_class)) * defenseMitigation(t._parts, KINETIC));
+          const dmg = power * mit * warAuthMul;
           addDamage(t.id, st.owner_faction_id, null, dmg);
         }
         firedSettlementIds.add(st.id);
@@ -3391,10 +3441,7 @@ export class Room {
           break;
         }
         case 'ancient_databank': {
-          // Pick a random tech track. tech ids match the client's
-          // TechId union; we keep the list inline rather than import
-          // it cross-runtime to avoid bundling the whole tech catalog.
-          const TECH_TRACKS = ['weapons', 'armor', 'propulsion', 'construction', 'industry', 'sensors'];
+          // Pick a random tech track (module-level TECH_TRACKS).
           const pick = TECH_TRACKS[Math.floor(Math.random() * TECH_TRACKS.length)];
           // Upsert: try update first, fall back to insert if missing.
           const existing = await this.env.DB
@@ -3794,7 +3841,7 @@ export class Room {
       .prepare(`SELECT faction_id, tech_id, level FROM faction_techs WHERE game_id = ?`)
       .bind(gameId)
       .all()).results ?? [];
-    const TECH_TRACKS = ['weapons', 'armor', 'propulsion', 'construction', 'industry', 'sensors'];
+    // Science victory = every one of the module-level TECH_TRACKS maxed.
     const TECH_MAX_LEVEL = 10;
     const byFaction = new Map();
     for (const r of techRows) {
