@@ -9,6 +9,7 @@ import {
   clearedCookie,
   readSessionCookie,
 } from './auth.js';
+import { validateParts } from './shipDesigns.js';
 import { verifyGoogleIdToken } from './google.js';
 import { MIGRATIONS } from './_migrations_bundle.js';
 import { GIT_SHA, BUILT_AT } from './_version.js';
@@ -351,6 +352,93 @@ async function handleListRooms(_req, env) {
 // status if one has started. Used by the post-auth mode picker to offer a
 // "resume" shortcut and (when there's a single in-progress game) to
 // auto-redirect users back into their active game.
+// ============================================================
+// Cross-game ship templates (migration 0038).
+//
+// game_ship_designs is per-GAME, so every new match started with an
+// empty design library. These are per-USER: save a loadout once, load
+// it into any game's designer. Server-side rather than localStorage so
+// they follow the account across devices.
+// ============================================================
+
+const TEMPLATE_CAP = 40;
+
+async function handleListShipTemplates(_req, env, session) {
+  const rows = await env.DB
+    .prepare(
+      `SELECT id, name, ship_class, parts_json, icon_variant, created_at_ms
+         FROM user_ship_templates
+        WHERE user_id = ?
+        ORDER BY ship_class ASC, created_at_ms DESC`,
+    )
+    .bind(session.user_id)
+    .all();
+  return json({ templates: rows.results ?? [] });
+}
+
+async function handleCreateShipTemplate(req, env, session) {
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+
+  const shipClass = body.ship_class;
+  // validateParts owns the slot-count + per-class legality rules, so a
+  // template can never encode a loadout the designer would reject.
+  const v = validateParts(shipClass, body.parts ?? []);
+  if (!v.ok) return err(400, 'bad_request', v.error);
+
+  const name = typeof body.name === 'string' ? body.name.trim().slice(0, 40) : '';
+  if (!name) return err(400, 'bad_request', 'template name required');
+
+  let iconVariant = null;
+  if (body.icon_variant != null) {
+    if (typeof body.icon_variant !== 'string' || !/^[A-F]$/.test(body.icon_variant)) {
+      return err(400, 'bad_request', 'invalid icon_variant');
+    }
+    iconVariant = body.icon_variant;
+  }
+
+  const count = await env.DB
+    .prepare('SELECT COUNT(*) AS c FROM user_ship_templates WHERE user_id = ?')
+    .bind(session.user_id)
+    .first();
+  if ((count?.c ?? 0) >= TEMPLATE_CAP) {
+    return err(409, 'template_cap', `template library is full (${TEMPLATE_CAP}) — delete one first`);
+  }
+
+  const id = `tpl_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  await env.DB
+    .prepare(
+      `INSERT INTO user_ship_templates
+        (id, user_id, name, ship_class, parts_json, icon_variant, created_at_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      id, session.user_id, name, shipClass,
+      v.parts.length > 0 ? JSON.stringify(v.parts) : null,
+      iconVariant, Date.now(),
+    )
+    .run();
+
+  return json({
+    template: {
+      id, name, ship_class: shipClass,
+      parts_json: v.parts.length > 0 ? JSON.stringify(v.parts) : null,
+      icon_variant: iconVariant,
+    },
+  }, { status: 201 });
+}
+
+async function handleDeleteShipTemplate(_req, env, session, templateId) {
+  // Ownership is enforced in the WHERE clause — a forged id belonging to
+  // someone else changes zero rows rather than deleting their template.
+  const res = await env.DB
+    .prepare('DELETE FROM user_ship_templates WHERE id = ? AND user_id = ?')
+    .bind(templateId, session.user_id)
+    .run();
+  if (!res.meta?.changes) return err(404, 'not_found', 'template not found');
+  return json({ ok: true });
+}
+
 async function handleListMyRooms(_req, env, session) {
   // Defensive self-heal: re-insert missing room_members rows for any
   // active game where the user owns a faction. game_factions is the
@@ -839,6 +927,12 @@ export default {
       if (req.method === 'POST' && url.pathname === '/api/rooms') return handleCreateRoom(req, env, session);
       if (req.method === 'POST' && url.pathname === '/api/rooms/join-by-code') return handleJoinByCode(req, env, session);
       if (req.method === 'GET'  && url.pathname === '/api/users/me/rooms') return handleListMyRooms(req, env, session);
+      if (req.method === 'GET'  && url.pathname === '/api/users/me/ship-templates') return handleListShipTemplates(req, env, session);
+      if (req.method === 'POST' && url.pathname === '/api/users/me/ship-templates') return handleCreateShipTemplate(req, env, session);
+      {
+        const tplMatch = url.pathname.match(/^\/api\/users\/me\/ship-templates\/([^/]+)$/);
+        if (req.method === 'DELETE' && tplMatch) return handleDeleteShipTemplate(req, env, session, tplMatch[1]);
+      }
 
       const joinMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)\/join$/);
       if (joinMatch && req.method === 'POST') return handleJoinRoom(req, env, session, joinMatch[1]);

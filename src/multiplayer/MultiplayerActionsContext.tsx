@@ -123,6 +123,25 @@ export interface ServerShipDesign {
   created_at_ms: number;
 }
 
+/** A cross-game saved loadout (migration 0038). Same shape as a design
+ *  minus the per-game `is_active` pointer — a template is inert until
+ *  loaded into some game's designer. */
+export interface ServerShipTemplate {
+  id: string;
+  ship_class: string;
+  name: string;
+  parts_json: string | null;
+  icon_variant: string | null;
+  created_at_ms: number;
+}
+
+export interface SaveTemplateIntent {
+  shipClass: 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
+  name: string;
+  parts: string[];
+  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
+}
+
 export interface CreateDesignIntent {
   /** Colony ships have 0 slots and are never offered by the designer UI;
    *  the server rejects designs for them (unknown slot count). */
@@ -188,6 +207,13 @@ export interface MultiplayerActions {
   /** Fetch the caller's design library. Returns null on failure so the
    *  designer can fall back to the /state mirror. */
   getDesigns: () => Promise<ServerShipDesign[] | null>;
+  /** Cross-game template library (per USER, not per game). Lets a
+   *  loadout survive into the next match. Null on failure. */
+  getShipTemplates: () => Promise<ServerShipTemplate[] | null>;
+  /** Save the current loadout as a reusable cross-game template. */
+  saveShipTemplate: (intent: SaveTemplateIntent) => Promise<MpActionResult>;
+  /** Remove a saved template. */
+  deleteShipTemplate: (templateId: string) => Promise<MpActionResult>;
   /** Create a design (optionally activating it in the same call). */
   createDesign: (intent: CreateDesignIntent) => Promise<MpActionResult>;
   /** Rename / edit parts / set-active on an existing design. Editing
@@ -489,6 +515,47 @@ export function MultiplayerActionsProvider({
       const res = await apiFetch<{ designs: ServerShipDesign[] }>(`/api/games/${gameId}/designs`);
       if (!res.ok) return null;
       return res.data.designs ?? [];
+    },
+    // --- Cross-game templates (migration 0038) ---
+    // NOT game-scoped: these live on the user account, so a loadout saved
+    // in one match can be loaded into the next one.
+    async getShipTemplates() {
+      const res = await apiFetch<{ templates: ServerShipTemplate[] }>('/api/users/me/ship-templates');
+      if (!res.ok) return null;
+      return res.data.templates ?? [];
+    },
+    async saveShipTemplate(intent) {
+      const res = await apiFetch('/api/users/me/ship-templates', {
+        method: 'POST',
+        body: JSON.stringify({
+          ship_class: intent.shipClass,
+          name: intent.name,
+          parts: intent.parts,
+          icon_variant: intent.iconVariant ?? null,
+        }),
+      });
+      if (res.ok) {
+        logger.info('ACTION', 'Ship template saved', {
+          class: intent.shipClass, name: intent.name, parts: intent.parts.join(','),
+        });
+        return { ok: true };
+      }
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the template.',
+      };
+    },
+    async deleteShipTemplate(templateId) {
+      const res = await apiFetch(`/api/users/me/ship-templates/${encodeURIComponent(templateId)}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) return { ok: true };
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Could not delete the template.',
+      };
     },
     async createDesign(intent) {
       const res = await apiFetch(`/api/games/${gameId}/designs`, {

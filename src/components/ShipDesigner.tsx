@@ -15,7 +15,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
-import { useMultiplayerActions, ServerShipDesign } from '../multiplayer/MultiplayerActionsContext';
+import { useMultiplayerActions, ServerShipDesign, ServerShipTemplate } from '../multiplayer/MultiplayerActionsContext';
 import { ShipClassName, SHIP_CLASSES, BUILDABLE_CLASSES } from '../game/shipClasses';
 import {
   ShipPartId, ALL_PART_IDS, SHIP_PART_DEFS, SHIP_SLOT_COUNTS,
@@ -37,6 +37,38 @@ interface ShipDesignerProps {
 
 /** Map a server design row to the client shape (mirrors the
  *  MultiplayerGameProvider deserializer). */
+/** Client shape for a cross-game template. Mirrors ShipDesign minus the
+ *  per-game `isActive` pointer — a template is inert until loaded. */
+interface ShipTemplate {
+  id: string;
+  shipClass: ShipClassName;
+  name: string;
+  parts: string[];
+  iconVariant?: ShipDesign['iconVariant'];
+  createdAtMs: number;
+}
+
+function serverTemplateToClient(t: ServerShipTemplate): ShipTemplate {
+  let parts: string[] = [];
+  if (t.parts_json) {
+    try { parts = sanitizeParts(JSON.parse(t.parts_json)); } catch { /* bare hull */ }
+  }
+  let iv: ShipDesign['iconVariant'];
+  if (t.icon_variant && /^[A-F]$/.test(t.icon_variant)) {
+    iv = t.icon_variant as ShipDesign['iconVariant'];
+  }
+  return {
+    id: t.id,
+    shipClass: (BUILDABLE_CLASSES.includes(t.ship_class as ShipClassName)
+      ? t.ship_class
+      : 'frigate') as ShipClassName,
+    name: t.name,
+    parts,
+    iconVariant: iv,
+    createdAtMs: t.created_at_ms,
+  };
+}
+
 function serverDesignToClient(d: ServerShipDesign): ShipDesign {
   let parts: string[] = [];
   if (d.parts_json) {
@@ -77,6 +109,9 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   const iconDropdownRef = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Cross-game template library. null = still loading (distinct from
+   *  [] = loaded-and-empty, so the UI can say "loading" vs "none yet"). */
+  const [templates, setTemplates] = useState<ShipTemplate[] | null>(null);
 
   // Close the icon dropdown on any outside click while it's open.
   useEffect(() => {
@@ -89,6 +124,20 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
     window.addEventListener('mousedown', onDown);
     return () => window.removeEventListener('mousedown', onDown);
   }, [iconMenuOpen]);
+
+  // Load the account-level template library once when the designer opens.
+  // Templates aren't part of /state (they're user-scoped, not game-scoped),
+  // so they need their own fetch.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!mpActions) { setTemplates([]); return; }
+      const rows = await mpActions.getShipTemplates();
+      if (!cancelled && rows) setTemplates(rows.map(serverTemplateToClient));
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Esc closes the icon dropdown first if it's open, otherwise the modal.
   useEffect(() => {
@@ -107,6 +156,10 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
     return all.filter(d => d.shipClass === activeClass);
   }, [freshDesigns, stateDesigns, activeClass]);
   const selected = classDesigns.find(d => d.id === selectedId) ?? null;
+  const classTemplates = useMemo(
+    () => (templates ?? []).filter(t => t.shipClass === activeClass),
+    [templates, activeClass],
+  );
 
   const techLevels = gameState.factionTech['player']?.levels ?? {};
   const slots = SHIP_SLOT_COUNTS[activeClass];
@@ -129,6 +182,51 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
     setDraftParts(d ? sanitizeParts(d.parts) : []);
     setDraftIcon(d?.iconVariant);
     setError(null);
+  };
+
+  const refreshTemplates = async () => {
+    if (!mpActions) return;
+    const rows = await mpActions.getShipTemplates();
+    // Keep null on failure so the UI shows "loading" rather than lying
+    // with "no templates yet" when the request simply errored.
+    if (rows) setTemplates(rows.map(serverTemplateToClient));
+  };
+
+  /** Load a template into the EDITOR as a new unsaved design. Clears
+   *  selectedId so saving creates a fresh design rather than silently
+   *  overwriting whichever design happened to be selected. */
+  const loadTemplate = (t: ShipTemplate) => {
+    setSelectedId(null);
+    setDraftName(t.name);
+    setDraftParts(sanitizeParts(t.parts));
+    setDraftIcon(t.iconVariant);
+    setError(null);
+  };
+
+  const saveAsTemplate = async () => {
+    if (!mpActions) return;
+    const name = draftName.trim();
+    if (!name) { setError('Name the loadout before saving it as a template.'); return; }
+    setBusy(true);
+    const res = await mpActions.saveShipTemplate({
+      shipClass: activeClass,
+      name,
+      parts: draftParts,
+      iconVariant: draftIcon,
+    });
+    setBusy(false);
+    if (!res.ok) { setError(res.error); return; }
+    setError(null);
+    await refreshTemplates();
+  };
+
+  const deleteTemplate = async (t: ShipTemplate) => {
+    if (!mpActions) return;
+    setBusy(true);
+    const res = await mpActions.deleteShipTemplate(t.id);
+    setBusy(false);
+    if (!res.ok) { setError(res.error); return; }
+    await refreshTemplates();
   };
 
   const switchClass = (cls: ShipClassName) => {
@@ -272,6 +370,48 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                     disabled={busy}
                     onClick={e => { e.stopPropagation(); deleteDesign(d); }}
                     title="Delete this design (queued and completed ships keep their loadout)"
+                  >✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Cross-game template library. Designs live and die with a
+              game; templates live on the account, so a loadout you like
+              survives into the next match. Loading one drops it into the
+              editor below — it doesn't become a design until you save. */}
+          <div className="ship-designer__section-title">
+            Templates <span style={{ color: '#8aa0b4', fontWeight: 400 }}>· saved across games</span>
+          </div>
+          {templates === null ? (
+            <div className="ship-designer__hint">Loading templates…</div>
+          ) : classTemplates.length === 0 ? (
+            <div className="ship-designer__hint">
+              No saved {SHIP_CLASSES[activeClass].displayName.toLowerCase()} templates. Build a loadout below and
+              hit SAVE AS TEMPLATE to reuse it in future games.
+            </div>
+          ) : (
+            <div className="ship-designer__list">
+              {classTemplates.map(t => (
+                <div key={t.id} className="ship-designer__list-row">
+                  <ShipIcon shipClass={activeClass} variant={t.iconVariant} size={16} />
+                  <span className="ship-designer__list-row-name">
+                    {t.name}
+                    <span style={{ color: '#8aa0b4', marginLeft: 6, fontSize: 9 }}>
+                      {t.parts.length === 0 ? 'bare hull' : t.parts.map(p => PART_GLYPH[p as ShipPartId] ?? '?').join(' ')}
+                    </span>
+                  </span>
+                  <button
+                    className="ship-designer__mini-btn"
+                    disabled={busy}
+                    onClick={() => loadTemplate(t)}
+                    title="Load this loadout into the editor"
+                  >LOAD</button>
+                  <button
+                    className="ship-designer__mini-btn ship-designer__mini-btn--danger"
+                    disabled={busy}
+                    onClick={() => deleteTemplate(t)}
+                    title="Delete this saved template"
                   >✕</button>
                 </div>
               ))}
@@ -477,6 +617,14 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
               title="Save without changing which design is active"
             >
               {selected ? 'SAVE' : 'CREATE'}
+            </button>
+            <button
+              className="ship-designer__btn"
+              disabled={busy || draftName.trim().length === 0}
+              onClick={saveAsTemplate}
+              title="Save this loadout to your account so you can load it in future games"
+            >
+              SAVE AS TEMPLATE
             </button>
             {selected && (
               <button
