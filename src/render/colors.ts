@@ -63,12 +63,28 @@ export const COLORS = {
 /**
  * Apply opacity to a hex color
  */
-export function withOpacity(hexColor: string, opacity: number): string {
-  // Convert hex to rgba
-  const hex = hexColor.replace('#', '');
+export function withOpacity(color: string, opacity: number): string {
+  // IDEMPOTENT: also accepts rgb()/rgba() input and rewrites its alpha.
+  // Callers routinely pass already-derived colors — e.g. MapCanvas hands
+  // drawOrbit `withOpacity(body.color, 0.35)`, and the orbit trail
+  // gradient re-applies withOpacity to that. The old hex-only parse
+  // produced `rgba(NaN, NaN, NaN, a)` for such inputs, and
+  // CanvasGradient.addColorStop THROWS on invalid colors — one bad stop
+  // aborted the frame mid-render and everything after the starfield
+  // vanished ("you blew up the solar system", 2026-07-18).
+  if (color.startsWith('rgb')) {
+    const m = color.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/);
+    if (m) return `rgba(${m[1]}, ${m[2]}, ${m[3]}, ${opacity})`;
+    return color; // unparseable — pass through untouched
+  }
+  const hex = color.replace('#', '');
   const r = parseInt(hex.substring(0, 2), 16);
   const g = parseInt(hex.substring(2, 4), 16);
   const b = parseInt(hex.substring(4, 6), 16);
+  if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) {
+    // Named colors / garbage: never emit NaN — addColorStop throws.
+    return color;
+  }
   return `rgba(${r}, ${g}, ${b}, ${opacity})`;
 }
 
