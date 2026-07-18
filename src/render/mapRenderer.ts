@@ -3758,30 +3758,7 @@ export function drawSystemRegions(
     c.globalAlpha = c.globalAlpha * fade;
 
     const shape = region.shape;
-    if (shape.kind === 'disc') {
-      const anchor = ctx.bodies.find(b => b.id === shape.anchorBodyId);
-      if (!anchor) { c.restore(); continue; }
-      const wp = bodyPosition(anchor, ctx.t, ctx.bodies);
-      const cp = worldToCanvas(wp.x, wp.y, ctx);
-      // Screen-space floor: at full-system zoom a moon system is a
-      // couple of pixels across, which would shade nothing at all.
-      const r = Math.max(shape.worldRadius * scale, owned ? 26 : 16);
-
-      // Falloff tightens toward the rim as intensity rises: at a hint
-      // it's a soft glow, at full strength it holds solid colour almost
-      // to the edge and only feathers at the last moment.
-      const hold = lerp(0.55, 0.86, intensity);
-      const g = c.createRadialGradient(cp.x, cp.y, 0, cp.x, cp.y, r);
-      g.addColorStop(0, withOpacity(color, baseAlpha));
-      g.addColorStop(hold, withOpacity(color, baseAlpha * lerp(0.55, 0.92, intensity)));
-      g.addColorStop(1, withOpacity(color, 0));
-      c.fillStyle = g;
-      c.beginPath();
-      c.arc(cp.x, cp.y, r, 0, Math.PI * 2);
-      c.fill();
-
-      if (region.label) drawRegionLabel(region, cp.x, cp.y - r - 4, color, owned, ctx, fade, intensity);
-    } else {
+    {
       const star = ctx.bodies.find(b => b.id === shape.starBodyId);
       if (!star) { c.restore(); continue; }
       const wp = bodyPosition(star, ctx.t, ctx.bodies);
@@ -3800,9 +3777,25 @@ export function drawSystemRegions(
       c.stroke();
 
       if (region.label) {
-        // Park the label at the top of the band. Fixed angle so it
-        // doesn't crawl around the ring as bodies orbit.
-        drawRegionLabel(region, cp.x, cp.y - mid, color, owned, ctx, fade, intensity);
+        // Put the label beside the body it names, on its own ring. Ties
+        // the name to the thing it describes, and since every body sits
+        // at a different angle it keeps a dozen concentric rings from
+        // stacking their labels in one column.
+        let lx = cp.x;
+        let ly = cp.y - mid;
+        const anchorId = shape.labelAnchorBodyId;
+        const anchor = anchorId ? ctx.bodies.find(b => b.id === anchorId) : null;
+        if (anchor) {
+          const ap = bodyPosition(anchor, ctx.t, ctx.bodies);
+          const dx = ap.x - wp.x;
+          const dy = ap.y - wp.y;
+          const d = Math.hypot(dx, dy);
+          if (d > 1e-6) {
+            lx = cp.x + (dx / d) * mid;
+            ly = cp.y + (dy / d) * mid;
+          }
+        }
+        drawRegionLabel(region, lx, ly, color, owned, ctx, fade, intensity);
       }
     }
     c.restore();
