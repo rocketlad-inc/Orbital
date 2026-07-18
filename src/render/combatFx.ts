@@ -89,6 +89,18 @@ const TRACER_LIFE_MS = 140;
  *  Matches the server's AUTO_COMBAT_INTERVAL so the visual stops when
  *  the shooting does. */
 const ENGAGED_WINDOW_TICKS = 3;
+/** Wall-clock cap on the firing visual after each OBSERVED volley. The
+ *  tick window alone is a trap on slow games: at 1h/tick, "within 3
+ *  ticks" kept survivors strobing bolts for HOURS after the last real
+ *  exchange (player report: "keeps shooting after ship is destroyed").
+ *  Each time we see a ship's lastCombatTick ADVANCE we stamp the
+ *  moment; the firing visual runs this long past that stamp, then goes
+ *  quiet until the next real volley refreshes it. Fast SP games are
+ *  unaffected (volleys re-stamp every few seconds anyway). */
+const ENGAGED_VISUAL_MS = 20_000;
+/** shipId -> { tick, sinceMs } — the last lastCombatTick we observed
+ *  and when we first observed it. Cleared wholesale past 600 entries. */
+const engagementSeen = new Map<string, { tick: number; sinceMs: number }>();
 /** Bolt flight time — one shot crosses the gap in this long. */
 const BOLT_MS = 600;
 /** Silence between one ship's shot landing and the next ship's turn. */
@@ -188,13 +200,24 @@ export function drawEngagementFire(
   currentTick: number,
   transitCanvasPos?: Map<string, { x: number; y: number }>,
 ): void {
-  // Collect engaged shooters into the reusable scratch list.
+  // Collect engaged shooters into the reusable scratch list. Engaged =
+  // the server says it fired recently (tick window) AND we observed
+  // that volley recently on the viewer's clock (ms window) — the
+  // second condition is what stops hour-long strobing on slow-tick
+  // games; see ENGAGED_VISUAL_MS.
+  if (engagementSeen.size > 600) engagementSeen.clear();
   engagedScratch.length = 0;
   for (const s of ships) {
     const fired = s.lastCombatTick;
     if (fired === undefined) continue;
     if (currentTick - fired > ENGAGED_WINDOW_TICKS) continue;
     if (s.transit) continue;
+    let seen = engagementSeen.get(s.id);
+    if (!seen || seen.tick !== fired) {
+      seen = { tick: fired, sinceMs: nowMs };
+      engagementSeen.set(s.id, seen);
+    }
+    if (nowMs - seen.sinceMs > ENGAGED_VISUAL_MS) continue;
     engagedScratch.push(s);
   }
   if (engagedScratch.length === 0) return;

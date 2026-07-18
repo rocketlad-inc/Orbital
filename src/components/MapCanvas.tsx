@@ -112,7 +112,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   //                        (passed to renderer, fades over ~10 ticks)
   //   prevShipIds        — snapshot of last frame's ship ids; entries
   //                        that disappear become destruction flashes
-  //   destructionFlashes — { id → { pos, startTick } } for entities
+  //   destructionFlashes — { id → { pos, startMs } } for entities
   //                        that have died recently. Renderer draws a
   //                        bigger orange "explosion" variant at each
   //                        position, then we prune entries older than
@@ -157,7 +157,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // the diff so a mid-flight page load doesn't fire a phantom flash.
   const prevTransitIdsRef = useRef<Set<string> | null>(null);
   const prevSettlementIdsRef = useRef<Map<string, { x: number; y: number; bodyId: string }>>(new Map());
-  const destructionFlashesRef = useRef<Map<string, { pos: { x: number; y: number }; startTick: number; baseRadius?: number; id?: string }>>(new Map());
+  const destructionFlashesRef = useRef<Map<string, { pos: { x: number; y: number }; startMs: number; baseRadius?: number; id?: string }>>(new Map());
   // Last-rendered CANVAS position of every in-transit ship, populated by
   // the render loop and consumed by the click hit-test. The visual ship
   // sits on a polyline lerp (drawTorchTransitShip's lerpedPos) while
@@ -310,7 +310,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const tickAdvanced = cur !== undefined && prev !== undefined && prev !== cur;
 
       if (tookDamage || tickAdvanced) {
-        damageFlashStartRef.current.set(ship.id, nowTick);
+        damageFlashStartRef.current.set(ship.id, nowMs);
         // Tracer fire (combatFx §1): the hp drop means some hostile
         // armed ship at the same body fired a volley. Attribute the
         // shot deterministically — lowest ship id among armed hostiles
@@ -380,7 +380,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       for (const [id, pos] of prevShipIdsRef.current) {
         if (!curShipIds.has(id) && !destructionFlashesRef.current.has(id)) {
           if (!wasInCoverage(pos)) continue; // fog-out, not destruction
-          destructionFlashesRef.current.set(id, { pos, startTick: nowTick, baseRadius: 12, id });
+          destructionFlashesRef.current.set(id, { pos, startMs: nowMs, baseRadius: 12, id });
         }
       }
     }
@@ -419,7 +419,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const tickAdvanced = cur !== undefined && prev !== undefined && prev !== cur;
 
       if (tookDamage || tickAdvanced) {
-        damageFlashStartRef.current.set(settlement.id, nowTick);
+        damageFlashStartRef.current.set(settlement.id, nowMs);
       }
     }
     if (prevSettlementIdsRef.current.size > 0) {
@@ -432,7 +432,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           if (!wasInCoverage({ x: snap.x, y: snap.y })) continue;
           destructionFlashesRef.current.set(id, {
             pos: { x: snap.x, y: snap.y },
-            startTick: nowTick,
+            startMs: nowMs,
             baseRadius: 14,
             id,
           });
@@ -443,9 +443,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
     // Prune flashes that have fully faded — keeps the map clean and
     // bounds memory in a long campaign with lots of casualties.
-    const DESTRUCTION_FADE_TICKS = 10;
+    const DESTRUCTION_FADE_MS = 2000; // wall-clock — flashes live on the viewer clock now
     for (const [id, f] of destructionFlashesRef.current) {
-      if (nowTick - f.startTick >= DESTRUCTION_FADE_TICKS) {
+      if (nowMs - f.startMs >= DESTRUCTION_FADE_MS) {
         destructionFlashesRef.current.delete(id);
       }
     }

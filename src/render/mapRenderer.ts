@@ -103,19 +103,20 @@ export function clearCanvas(ctx: RenderContext) {
 // Damage flash — shared overlay for ships + settlements.
 // ============================================================
 
-/** Real-world milliseconds the red damage halo remains visible after a
- *  hit. Tied to game ticks so the duration is "10 ticks" regardless
- *  of sim speed — at fast-forward you still see a flash, just faster.
- *  Per-frame interpolation comes from `t` (current tick, fractional). */
-export const DAMAGE_FLASH_DURATION_TICKS = 10;
-export const DESTRUCTION_FLASH_DURATION_TICKS = 10;
+/** Flash lifetimes — WALL-CLOCK ms across the board. These were
+ *  tick-based ("10 ticks"), which reads fine in SP where ticks fly by
+ *  but is catastrophic in MP: live games run 30s–1h per tick, so a
+ *  "brief" destruction glow parked a giant red blob on the map for TEN
+ *  HOURS (player report, 2026-07-18). A flash is pure cosmetics for the
+ *  viewer — it should live on the viewer's clock, stamped the moment
+ *  the client first observes the event. */
+export const DAMAGE_FLASH_DURATION_MS = 900;
+export const DESTRUCTION_FLASH_DURATION_MS = 1600;
 
 /** Where in its lifecycle the flash is. Damage = small red ring,
  *  Destruction = bigger orange-white explosion ring. Both share the
  *  same fade curve. Growth = soft green expanding ring on a settlement
- *  population increase — NOTE: growth is wall-clock-ms based (caller
- *  passes startMs/nowMs, 600ms default) while damage/destruction are
- *  tick-based. */
+ *  population increase. All wall-clock. */
 export type FlashKind = 'damage' | 'destruction' | 'growth';
 
 /** Growth pulse lifetime — wall-clock, pure cosmetic (§E4). */
@@ -138,19 +139,19 @@ export const GROWTH_FLASH_DURATION_MS = 600;
 export function drawDamageFlash(
   canvasPos: { x: number; y: number },
   baseRadius: number,
-  startTick: number | undefined,
-  nowTick: number,
+  startMs: number | undefined,
+  nowMs: number,
   ctx: RenderContext,
   kind: FlashKind = 'damage',
-  durationTicks?: number,
+  durationMs?: number,
 ) {
-  if (startTick === undefined) return;
-  const dur = durationTicks ?? (kind === 'destruction'
-    ? DESTRUCTION_FLASH_DURATION_TICKS
+  if (startMs === undefined) return;
+  const dur = durationMs ?? (kind === 'destruction'
+    ? DESTRUCTION_FLASH_DURATION_MS
     : kind === 'growth'
       ? GROWTH_FLASH_DURATION_MS
-      : DAMAGE_FLASH_DURATION_TICKS);
-  const age = nowTick - startTick;
+      : DAMAGE_FLASH_DURATION_MS);
+  const age = nowMs - startMs;
   if (age < 0 || age >= dur) return;
 
   // freshness: 1.0 at impact, 0.0 at end of fade. Curved so the
@@ -226,10 +227,9 @@ export function drawDamageFlash(
   ctx.ctx.fill();
 }
 
-/** Back-compat alias for callers that still pass wall-clock ms. The
- *  realtime damage flash was wall-clock; the tick-based one is the
- *  new shape. Kept exported so future refactors can find it. */
-export const DAMAGE_FLASH_DURATION_MS = 500;
+// (Former back-compat wall-clock alias removed — the flash system is
+// now wall-clock across the board; the canonical DAMAGE_FLASH_DURATION_MS
+// lives with the other flash lifetimes at the top of the file.)
 
 /**
  * Corner-bracket selection indicator (§E6) — replaces the dashed
@@ -1707,7 +1707,7 @@ export function drawShip(
 
   // Damage flash sits beneath the icon so the icon stays at full opacity.
   const flashStart = ctx.damageFlashStart?.get(ship.id);
-  drawDamageFlash(canvasPos, iconSize / 2, flashStart, ctx.t, ctx, 'damage');
+  drawDamageFlash(canvasPos, iconSize / 2, flashStart, ctx.nowMs ?? performance.now(), ctx, 'damage');
 
   const trimColor = shipTrimColor(ship, ctx.factions);
   const dressed = ctx.camera.scale >= SHIP_DRESSING_MIN_SCALE;
@@ -2712,7 +2712,7 @@ function drawTorchTransitShip(
   const iconSize = shipIconSize(ship.class, isSelected);
 
   const flashStartT = ctx.damageFlashStart?.get(ship.id);
-  drawDamageFlash(canvasPos, iconSize / 2, flashStartT, ctx.t, ctx, 'damage');
+  drawDamageFlash(canvasPos, iconSize / 2, flashStartT, ctx.nowMs ?? performance.now(), ctx, 'damage');
 
   // Thrust exhaust — drawn BEFORE the ship icon so the icon sits on top
   // of the engine. Engine is at the "back" of the local ship icon
@@ -2915,7 +2915,7 @@ export function drawCity(
   const bodyScreenR = body.radius * ctx.camera.scale;
   if (bodyScreenR >= 40) {
     const flashIso = ctx.damageFlashStart?.get(settlement.id);
-    drawDamageFlash(canvasPos, 12, flashIso, ctx.t, ctx, 'damage');
+    drawDamageFlash(canvasPos, 12, flashIso, ctx.nowMs ?? performance.now(), ctx, 'damage');
     const growthIso = ctx.growthFlashStart?.get(settlement.id);
     drawDamageFlash(canvasPos, 12, growthIso, ctx.nowMs ?? performance.now(), ctx, 'growth');
     ctx.ctx.save();
@@ -2951,7 +2951,7 @@ export function drawCity(
 
   // Damage flash underneath the marker
   const flashStartC = ctx.damageFlashStart?.get(settlement.id);
-  drawDamageFlash({ x: tipX, y: tipY }, size, flashStartC, ctx.t, ctx, 'damage');
+  drawDamageFlash({ x: tipX, y: tipY }, size, flashStartC, ctx.nowMs ?? performance.now(), ctx, 'damage');
   const growthStartC = ctx.growthFlashStart?.get(settlement.id);
   drawDamageFlash({ x: tipX, y: tipY }, size, growthStartC, ctx.nowMs ?? performance.now(), ctx, 'growth');
 
@@ -3060,7 +3060,7 @@ export function drawStation(
 
   // Damage flash underneath the diamond
   const flashStartS = ctx.damageFlashStart?.get(settlement.id);
-  drawDamageFlash(canvasPos, size, flashStartS, ctx.t, ctx, 'damage');
+  drawDamageFlash(canvasPos, size, flashStartS, ctx.nowMs ?? performance.now(), ctx, 'damage');
   const growthStartS = ctx.growthFlashStart?.get(settlement.id);
   drawDamageFlash(canvasPos, size, growthStartS, ctx.nowMs ?? performance.now(), ctx, 'growth');
 
@@ -3389,7 +3389,8 @@ export function drawEnemyTrajectoriesLayer(
  */
 export interface DestructionFlash {
   pos: { x: number; y: number };  // world coords
-  startTick: number;
+  /** Wall-clock ms when the client first observed the death. */
+  startMs: number;
   baseRadius?: number;            // visual size; defaults to 10
   /** Entity id that died — seeds the deterministic death-debris sparks
    *  (combatFx.drawDeathDebris). Optional for back-compat; no id = no
@@ -3400,25 +3401,28 @@ export interface DestructionFlash {
 export function drawDestructionFlashes(
   flashes: DestructionFlash[],
   ctx: RenderContext,
-  durationTicks?: number,
+  durationMs?: number,
 ) {
   // baseRadius is authored as a canvas-pixel reference at "normal" zoom
   // (~10-14 px), and drawDamageFlash blooms it 4-8x into the halo. Left
   // unscaled, that halo stays the same screen size regardless of camera
   // zoom — at full zoom-out, an 80-110 px explosion engulfs entire orbits
   // and dominates the map. Scale by sqrt(scale) with clamps so the flash
-  // tracks how big the destroyed entity itself looks.
+  // tracks how big the destroyed entity itself looks — the 0.3 floor
+  // keeps a kill visible-but-proportionate at system zoom, matching the
+  // fixed-size ship icons rather than swallowing them.
   const sizeFactor = Math.min(1.2, Math.max(0.3, Math.sqrt(ctx.camera.scale)));
+  const nowMs = ctx.nowMs ?? performance.now();
   for (const f of flashes) {
     const cp = worldToCanvas(f.pos.x, f.pos.y, ctx);
     drawDamageFlash(
       cp,
       (f.baseRadius ?? 10) * sizeFactor,
-      f.startTick,
-      ctx.t,
+      f.startMs,
+      nowMs,
       ctx,
       'destruction',
-      durationTicks,
+      durationMs,
     );
     // Death debris — 4-6 seeded sparks flying out of the wreck
     // (Workstream B §3). Additive, 400ms wall-clock fade.
