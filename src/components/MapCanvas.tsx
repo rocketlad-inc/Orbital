@@ -21,6 +21,7 @@ import {
   drawOwnershipLayer,
   drawSystemRegions,
   systemRegionOpacity,
+  systemSpans,
   drawFogOfWarOverlay,
   drawDestructionFlashes,
   generateStarfield,
@@ -68,17 +69,21 @@ const TOUCH_HIT_PADDING = isCoarsePointer() ? 16 : 0;
  * of each other (playtester report: solar-system view = unreadable smear
  * of overlapping triangles).
  *
- * Raised 0.6 -> 2.5 so individual hulls only appear once you're actually
- * inside a planet's moon system — the zoom where a fleet is a thing you
- * manoeuvre rather than a dot you count. Below that the map is a
- * strategic view and the cluster badge carries the same information in
- * one glyph.
+ * Measured in SPANS (screen-heights of the whole star system), not raw
+ * camera.scale — SYSTEM_SCALE=2 doubled heliocentric orbits for NEW
+ * games while games in progress kept their original size, so no single
+ * camera.scale number is correct for both. Spans is invariant.
+ *
+ * ~12 spans means you're well inside a planet's moon system — the zoom
+ * where a fleet is something you manoeuvre rather than a dot you count.
+ * Zoomed out past that, the cluster badge carries the same information
+ * in one glyph.
  *
  * The selected ship and any in-transit ship always render in full so the
  * player can still track them across the zoomed-out view; only the
  * stationary at-body clusters collapse.
  */
-const CLUSTER_ZOOM_THRESHOLD = 2.5;
+const SHIP_ICON_MIN_SPANS = 12;
 
 /** Camera scale at/above which a queued chronicle effect is considered
  *  "watchable" and allowed to play. Below this an explosion is a
@@ -473,14 +478,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       if (nowMs - startMs >= 700) growthFlashStartRef.current.delete(id);
     }
 
-    // Political regions for the far-zoom wash. Structure-derived, so it
-    // costs a pass over the body list; skipped entirely once we're
-    // zoomed past the overlay's fade-out.
-    const regionFade = systemRegionOpacity(camera.scale);
-    const systemRegions = regionFade > 0
-      ? computeSystemRegions(gameState.bodies, gameState.factions)
-      : [];
-
     const renderContext: RenderContext = {
       ctx,
       canvas: canvasRef.current,
@@ -514,6 +511,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
     clearCanvas(renderContext);
 
+    // How much of the star system is on screen, in screen-heights. All
+    // the zoomed-out LOD keys off this rather than camera.scale, so it
+    // behaves identically in a 1x game and a SYSTEM_SCALE=2 one.
+    const spans = systemSpans(renderContext);
+    const regionFade = systemRegionOpacity(spans);
+    // Structure-derived, so it costs a pass over the body list — skipped
+    // entirely once we're zoomed past the overlay's fade-out.
+    const systemRegions = regionFade > 0
+      ? computeSystemRegions(gameState.bodies, gameState.factions)
+      : [];
+
     // Starfield backdrop — regenerate if canvas dimensions changed
     const canvasW = canvasRef.current.width;
     const canvasH = canvasRef.current.height;
@@ -533,7 +541,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // planet system / belt, coloured by owner. Painted straight after
     // the starfield so it reads as background: orbits, bodies and
     // labels all sit crisply on top of the coloured ground.
-    // Self-gating: no-ops above SYSTEM_REGION_HIDE_SCALE.
+    // Self-gating: no-ops above SYSTEM_REGION_HIDE_SPANS.
     if (layerOn('ownership')) {
       drawSystemRegions(systemRegions, renderContext);
     }
@@ -728,10 +736,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     }
 
     // Per-body cluster accumulator. Active only at low zoom — see
-    // CLUSTER_ZOOM_THRESHOLD. Counts PARKED (non-transit) ships per
+    // SHIP_ICON_MIN_SPANS. Counts PARKED (non-transit) ships per
     // body so we can render a single "N⌖" badge next to the body
     // instead of N overlapping triangles + labels.
-    const clusterMode = camera.scale < CLUSTER_ZOOM_THRESHOLD;
+    const clusterMode = spans < SHIP_ICON_MIN_SPANS;
     const bodyClusters = new Map<string, { mine: number; other: number }>();
     const bumpCluster = (bodyId: string, mine: boolean) => {
       const cur = bodyClusters.get(bodyId) ?? { mine: 0, other: 0 };

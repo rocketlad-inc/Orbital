@@ -3584,7 +3584,7 @@ export function drawOwnershipLayer(
   // The system-region wash owns territory at far zoom. Once it's fully
   // in, per-body halos would just double-shade the same ground with a
   // second, noisier colour — so fade them out as the wash fades in.
-  const regionFade = systemRegionOpacity(ctx.camera.scale);
+  const regionFade = systemRegionOpacity(systemSpans(ctx));
   if (regionFade >= 1) return;
 
   // Hysteresis: engage halo < 0.72, back to ring > 0.88; hold the
@@ -3646,42 +3646,69 @@ export function drawOwnershipLayer(
 // System regions — the strategic shading layer at far zoom.
 // ============================================================
 
-/** Overlay is fully present at/below this camera scale... */
-export const SYSTEM_REGION_FULL_SCALE = 0.34;
-/** ...and fully faded out at/above this one. Between the two it
- *  cross-fades, so there's no hard pop as you zoom. */
-export const SYSTEM_REGION_HIDE_SCALE = 0.55;
-/** At/below this scale the wash reaches full strength — a solid
- *  political map. Between here and FULL_SCALE the colour deepens
- *  continuously, so pulling further out keeps reading as "more
- *  strategic" instead of plateauing the moment the layer appears. */
-export const SYSTEM_REGION_DARK_SCALE = 0.08;
+// Thresholds are expressed in SPANS — how many screen-heights the whole
+// star system covers — NOT raw camera.scale.
+//
+// camera.scale alone is not a stable measure of "how zoomed out am I":
+// SYSTEM_SCALE doubled every heliocentric orbit, so the same framing now
+// happens at half the scale. Worse, that only applies to NEW games —
+// bodies are copied at seed time, so a game in progress keeps the size it
+// was born at, and one hardcoded scale number cannot be right for both.
+// Spans is invariant: 1.0 means the system exactly fills the viewport,
+// whatever units the world is measured in.
+
+/** Overlay is fully present at/below this many spans... */
+export const SYSTEM_REGION_FULL_SPANS = 1.7;
+/** ...and fully faded out at/above this. Between the two it cross-fades,
+ *  so there's no hard pop as you zoom. */
+export const SYSTEM_REGION_HIDE_SPANS = 2.8;
+/** At/below this the wash reaches full strength — a solid political map.
+ *  Between here and HIDE the colour deepens continuously, so pulling
+ *  further out keeps reading as "more strategic". */
+export const SYSTEM_REGION_DARK_SPANS = 0.7;
+
+/**
+ * How many screen-heights the star system spans at the current camera.
+ * Uses the outermost heliocentric orbit as the system's extent.
+ */
+export function systemSpans(ctx: RenderContext): number {
+  let maxOrbit = 0;
+  for (const b of ctx.bodies) {
+    const parent = b.parent ? ctx.bodies.find(p => p.id === b.parent) : null;
+    if (parent && (parent.type === 'star' || parent.type === 'black_hole')) {
+      if (b.orbitRadius > maxOrbit) maxOrbit = b.orbitRadius;
+    }
+  }
+  if (maxOrbit <= 0) return Infinity;
+  const viewport = Math.min(ctx.canvas.width, ctx.canvas.height);
+  if (viewport <= 0) return Infinity;
+  return (maxOrbit * 2 * ctx.camera.scale) / viewport;
+}
 
 /** 0 = invisible, 1 = present. This is the FADE (does the layer exist
  *  at all), not its strength — see systemRegionIntensity. Also used to
  *  suppress the per-body ownership halos underneath, so territory
  *  never double-shades. */
-export function systemRegionOpacity(scale: number): number {
-  if (scale >= SYSTEM_REGION_HIDE_SCALE) return 0;
-  if (scale <= SYSTEM_REGION_FULL_SCALE) return 1;
-  return (SYSTEM_REGION_HIDE_SCALE - scale)
-    / (SYSTEM_REGION_HIDE_SCALE - SYSTEM_REGION_FULL_SCALE);
+export function systemRegionOpacity(spans: number): number {
+  if (spans >= SYSTEM_REGION_HIDE_SPANS) return 0;
+  if (spans <= SYSTEM_REGION_FULL_SPANS) return 1;
+  return (SYSTEM_REGION_HIDE_SPANS - spans)
+    / (SYSTEM_REGION_HIDE_SPANS - SYSTEM_REGION_FULL_SPANS);
 }
 
 /** 0 = just-appeared (faint tint), 1 = zoomed right out (solid
  *  territory). Drives alpha AND how far the disc holds its colour
  *  before feathering, so a maxed-out region reads as filled ground
  *  rather than a bigger, blurrier glow. */
-export function systemRegionIntensity(scale: number): number {
-  if (scale <= SYSTEM_REGION_DARK_SCALE) return 1;
-  if (scale >= SYSTEM_REGION_HIDE_SCALE) return 0;
-  // Ramps from where the layer first APPEARS (HIDE_SCALE), not from
-  // where it finishes fading in — otherwise the wash sat at its
-  // faintest base alpha across the whole fade band and only started
-  // gaining colour after it was already fully present, which read as
-  // "the layer isn't there".
-  return (SYSTEM_REGION_HIDE_SCALE - scale)
-    / (SYSTEM_REGION_HIDE_SCALE - SYSTEM_REGION_DARK_SCALE);
+export function systemRegionIntensity(spans: number): number {
+  if (spans <= SYSTEM_REGION_DARK_SPANS) return 1;
+  if (spans >= SYSTEM_REGION_HIDE_SPANS) return 0;
+  // Ramps from where the layer first APPEARS, not from where it
+  // finishes fading in — otherwise the wash sat at its faintest base
+  // alpha across the whole fade band and only started gaining colour
+  // after it was already fully present, which read as "not there".
+  return (SYSTEM_REGION_HIDE_SPANS - spans)
+    / (SYSTEM_REGION_HIDE_SPANS - SYSTEM_REGION_DARK_SPANS);
 }
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -3701,7 +3728,8 @@ export function drawSystemRegions(
   regions: SystemRegion[],
   ctx: RenderContext,
 ) {
-  const fade = systemRegionOpacity(ctx.camera.scale);
+  const spans = systemSpans(ctx);
+  const fade = systemRegionOpacity(spans);
   if (fade <= 0) return;
 
   const c = ctx.ctx;
@@ -3709,7 +3737,7 @@ export function drawSystemRegions(
   // How hard the wash pushes. Ramps as you keep zooming out past the
   // point the layer first appears, so the map slides continuously from
   // "a hint of who's where" to a solid political map.
-  const intensity = systemRegionIntensity(scale);
+  const intensity = systemRegionIntensity(spans);
 
   for (const region of regions) {
     const owned = region.ownership.kind === 'exclusive';
