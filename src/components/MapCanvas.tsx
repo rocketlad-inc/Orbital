@@ -1327,12 +1327,24 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     if (tweenRafRef.current != null) cancelAnimationFrame(tweenRafRef.current);
   }, []);
 
+  // Continuous render loop. The map used to redraw only when the render
+  // closure's deps changed — once per sim tick / state poll (~1/sec in
+  // MP), plus tween/key frames. That was fine when nothing animated on
+  // wall-clock time, but the graphics pass added continuously-animated
+  // FX (engagement bolts, beacon pulses, dash crawl, twinkle) which
+  // advanced in 1fps chunks — reported as "bolts are very slow / frame
+  // rate problem." A persistent rAF loop renders every display frame;
+  // rAF self-suspends while the tab is hidden, so background cost is
+  // zero. renderRef always points at the freshest closure.
   useEffect(() => {
-    let cancelled = false;
-    const frame = requestAnimationFrame(() => { if (!cancelled) render(); });
-    const fallback = setTimeout(() => { if (!cancelled) render(); }, 32);
-    return () => { cancelled = true; cancelAnimationFrame(frame); clearTimeout(fallback); };
-  }, [render]);
+    let raf: number | null = null;
+    const loop = () => {
+      renderRef.current();
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => { if (raf != null) cancelAnimationFrame(raf); };
+  }, []);
 
   return (
     <canvas
