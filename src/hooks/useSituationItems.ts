@@ -449,15 +449,43 @@ export function useSituationItems(
     } catch { /* defensive: threats compute failures shouldn't kill the list */ }
 
     // ---- 8b) In combat now ----
-    // Hulls and settlements that fired or took fire in the last few
-    // ticks. Ships in transit are excluded: auto-combat only happens
-    // between entities sharing a body, so a transiting hull carrying a
-    // stale stamp is a straggler from a fight it already left.
+    // "In combat" is the OR of two signals, because neither alone is
+    // complete:
+    //
+    //   1. HOSTILE PRESENT at the body. Auto-combat happens between
+    //      entities sharing a body, so co-location IS the condition.
+    //      This is the only signal that catches a hull being shot
+    //      WITHOUT shooting back — a freighter, or anything on Hold
+    //      Fire. Verified live: a freighter sat at 6/60 HP mid-battle
+    //      with no combat stamp at all, because MP only records
+    //      last_combat_tick (stamped when you FIRE); there is no
+    //      last_damaged_tick server-side. Stamp-only would have hidden
+    //      the single most endangered ship in the fight.
+    //   2. RECENTLY FIRED. Keeps a hull listed for a volley or two
+    //      after the last enemy dies, so a fight doesn't vanish the
+    //      instant it's won.
+    //
+    // Ships in transit are excluded either way — they can't be in an
+    // auto-combat exchange, so a stale stamp on one is a straggler
+    // from a fight it already left.
     try {
+      // Bodies with a hostile ship parked on them. Peace partners are
+      // not hostile (mirrors the threat filter), and ships in transit
+      // aren't yet present to fight.
+      const hostileBodies = new Set<string>();
+      for (const s of gameState.ships) {
+        if (s.ownedBy === factionId) continue;
+        if (s.transit) continue;
+        if (gameState.peaceFactionIds?.includes(s.ownedBy)) continue;
+        if (s.orbit.parentBodyId) hostileBodies.add(s.orbit.parentBodyId);
+      }
+
       for (const s of gameState.ships) {
         if (s.ownedBy !== factionId) continue;
         if (s.transit) continue;
-        if (ticksSinceCombat(s, tick) > COMBAT_RECENT_TICKS) continue;
+        const engaged = (s.orbit.parentBodyId != null && hostileBodies.has(s.orbit.parentBodyId))
+          || ticksSinceCombat(s, tick) <= COMBAT_RECENT_TICKS;
+        if (!engaged) continue;
 
         const where = bodies.find(b => b.id === s.orbit.parentBodyId)?.name ?? 'deep space';
         const hp = s.hp;
@@ -479,11 +507,16 @@ export function useSituationItems(
         });
       }
 
-      // Settlements return fire and can be bombarded to nothing — a
-      // city under guns is the most urgent combat fact on the board.
+      // Settlements can be bombarded to nothing — a city under guns is
+      // the most urgent fact on the board. Same OR as ships, and here
+      // the hostile-present half matters even more: a settlement only
+      // stamps last_combat_tick when it RETURNS fire, so an ungunned
+      // city being shelled has no stamp at all.
       for (const st of gameState.settlements) {
         if (st.ownedBy !== factionId) continue;
-        if (ticksSinceCombat(st, tick) > COMBAT_RECENT_TICKS) continue;
+        const engaged = hostileBodies.has(st.bodyId)
+          || ticksSinceCombat(st, tick) <= COMBAT_RECENT_TICKS;
+        if (!engaged) continue;
 
         // NB: settlements carry `maxHp`; ships carry `hpMax`. Not a typo.
         const where = bodies.find(b => b.id === st.bodyId)?.name ?? st.bodyId;

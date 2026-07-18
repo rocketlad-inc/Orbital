@@ -611,10 +611,12 @@ async function handleGetState(req, env, ctx) {
               stockpile_metal, stockpile_fuel, stockpile_gold, stockpile_science,
               created_at_tick, last_growth_tick, last_harvest_tick,
               -- Stamped when the settlement RETURNS FIRE (it also gates the
-              -- return-fire cadence — see resolveTick). Surfaced so the
-              -- Situation Report can list settlements currently in a
-              -- firefight. NB: a settlement that takes fire but has no guns
-              -- never stamps this, so absence != safe.
+              -- return-fire cadence — see resolveTick, so do NOT also stamp
+              -- it on taking damage or bombarded settlements stop shooting
+              -- back). Surfaced so the Situation Report can keep a
+              -- settlement listed for a beat after the last shot; the
+              -- "is a hostile parked here" half of that check is what
+              -- catches an ungunned city, which never stamps this at all.
               last_combat_tick,
               has_collector, collector_built_tick,
               buildings_json, building_order_json
