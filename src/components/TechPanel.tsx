@@ -184,6 +184,11 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
             const isMaxed = lvl >= TECH_MAX_LEVEL;
             const cost = nextLevelCost(lvl, def);
             const isActive = tech.researching === id;
+            // Fill % of the committed project — the science income poured
+            // in so far vs what this level costs.
+            const progressPct = isActive && cost > 0
+              ? Math.min(100, Math.floor((tech.progress / cost) * 100))
+              : 0;
             const queueIndex = queue.indexOf(id);
             const isQueued = queueIndex >= 0;
             return (
@@ -256,7 +261,9 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                     className={`tech-card__action ${isActive ? 'active' : ''}`}
                     onClick={async () => {
                       if (inFlight.has(id)) return;
-                      if (cost > playerScience) return;
+                      // No affordability gate any more: committing to a
+                      // project is free. Science income fills it over
+                      // the following ticks (server-side drain).
                       setInFlight(prev => new Set(prev).add(id));
                       setResearchError(null);
                       try {
@@ -274,14 +281,16 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                         }, 1800);
                       }
                     }}
-                    disabled={inFlight.has(id) || cost > playerScience}
-                    title={cost > playerScience
-                      ? `Not enough science (need ${cost})`
-                      : inFlight.has(id)
-                        ? 'Researching…'
-                        : `Spend ${cost} science to advance ${def.name}`}
+                    disabled={inFlight.has(id)}
+                    title={isActive
+                      ? `Currently researching ${def.name} — ${progressPct}% of ${cost} science`
+                      : `Commit to ${def.name}. Your science income fills it each tick (${cost} science needed).`}
                   >
-                    {inFlight.has(id) ? '…' : `Research (${cost} sci)`}
+                    {inFlight.has(id)
+                      ? '…'
+                      : isActive
+                        ? `Researching · ${progressPct}%`
+                        : `Set project (${cost} sci)`}
                   </button>
                 ) : isActive ? (
                   <button

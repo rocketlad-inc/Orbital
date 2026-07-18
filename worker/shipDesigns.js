@@ -54,6 +54,25 @@ const DAMAGE_MITIGATION_PER_PART = 0.78;   // per matching defensive part
 const COUNTERED_BY = { kinetic: 'shield', energy: 'armor' };
 export const MITIGATION_FLOOR = 0.15;      // 85% cap on total reduction
 
+/**
+ * Standard-issue fitting per hull — the "Default" template every player
+ * starts with, and what a build falls back to when no design is active.
+ * Weapon slots default to KINETIC (the neutral pick against unshielded
+ * targets); players re-fit for energy when they scout shields.
+ *
+ * COST NOTE: these fill every slot, so a fitted hull runs ~2.3-2.8x the
+ * bare-hull price. Intentional — a default should be a real warship —
+ * but it IS a live economy change. UNSET the active design to fall back
+ * to a bare hull. KEEP IN SYNC with DEFAULT_LOADOUTS in src/game/shipParts.ts.
+ */
+export const DEFAULT_LOADOUTS = {
+  corvette:  ['kinetic', 'engine'],
+  frigate:   ['kinetic', 'kinetic', 'shield', 'engine'],
+  destroyer: ['kinetic', 'kinetic', 'kinetic', 'shield', 'shield', 'engine'],
+  freighter: ['engine'],
+  colony:    [],
+};
+
 const WEAPON_DMG_PCT       = 0.40;  // of hull base dmg, per weapon mount
 const SHIELD_HP_PCT        = 0.35;  // of hull base HP, per defensive part
 const DETONATOR_HP_FRAC    = 0.50;  // of ship MAX HP, per part

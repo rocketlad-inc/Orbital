@@ -2979,6 +2979,117 @@ export class Room {
       console.error('standing-orders pass failed', e);
     }
 
+    // === Research drain ====================================
+    // Commit-to-a-track model (Civ/Stellaris), mirroring what
+    // single-player already did in gameContext's advanceToTick. MP used
+    // to buy levels instantly from a science stockpile; the schema had
+    // carried research_tech_id/research_progress since 0003 but NOTHING
+    // ever advanced them — the columns were vestigial.
+    //
+    // Each tick a faction with an active project pours science from its
+    // pool into progress, capped at MAX_SCIENCE_PER_TICK so a fat
+    // stockpile can't insta-finish the moment a track is picked.
+    // Completing a level clears the project, so the player gets a
+    // "pick your next project" moment (and the Situation Report can nag
+    // with "No research project"). Science with no project simply banks.
+    try {
+      const MAX_SCIENCE_PER_TICK = 3;   // mirrors src/game/techs.ts
+      const TECH_MAX_LEVEL = 10;
+      const TECH_DEFS = {
+        weapons:      { baseCost: 40, costScaling: 1.7 },
+        armor:        { baseCost: 40, costScaling: 1.7 },
+        propulsion:   { baseCost: 35, costScaling: 1.6 },
+        construction: { baseCost: 50, costScaling: 1.8 },
+        industry:     { baseCost: 45, costScaling: 1.7 },
+        sensors:      { baseCost: 30, costScaling: 1.5 },
+      };
+      const researchers = (await this.env.DB
+        .prepare(
+          `SELECT f.id, f.name, f.science, f.research_tech_id, f.research_progress,
+                  COALESCE(t.level, 0) AS level
+             FROM game_factions f
+             LEFT JOIN faction_techs t
+               ON t.game_id = f.game_id AND t.faction_id = f.id
+              AND t.tech_id = f.research_tech_id
+            WHERE f.game_id = ? AND f.research_tech_id IS NOT NULL`,
+        )
+        .bind(gameId)
+        .all()).results ?? [];
+
+      for (const f of researchers) {
+        const def = TECH_DEFS[f.research_tech_id];
+        // Unknown track (e.g. the scrapped 'flight') — clear it rather
+        // than burning science into a project that can never finish.
+        if (!def) {
+          await this.env.DB
+            .prepare('UPDATE game_factions SET research_tech_id = NULL, research_progress = 0 WHERE id = ?')
+            .bind(f.id).run();
+          continue;
+        }
+        const level = Number(f.level ?? 0);
+        if (level >= TECH_MAX_LEVEL) {
+          await this.env.DB
+            .prepare('UPDATE game_factions SET research_tech_id = NULL, research_progress = 0 WHERE id = ?')
+            .bind(f.id).run();
+          continue;
+        }
+        const cost = Math.ceil(def.baseCost * Math.pow(level + 1, def.costScaling));
+        const progress = Number(f.research_progress ?? 0);
+        const pool = Number(f.science ?? 0);
+        const spend = Math.min(pool, MAX_SCIENCE_PER_TICK, cost - progress);
+        if (spend <= 0) continue;
+
+        const newProgress = progress + spend;
+        if (newProgress < cost) {
+          await this.env.DB
+            .prepare('UPDATE game_factions SET science = science - ?, research_progress = ? WHERE id = ?')
+            .bind(spend, newProgress, f.id)
+            .run();
+          continue;
+        }
+
+        // Level complete. Clear the project so the next one is a
+        // deliberate choice; overflow is not carried (the spend was
+        // clamped to exactly what was needed).
+        await this.env.DB.batch([
+          this.env.DB
+            .prepare('UPDATE game_factions SET science = science - ?, research_tech_id = NULL, research_progress = 0 WHERE id = ?')
+            .bind(spend, f.id),
+          this.env.DB
+            .prepare(
+              `INSERT INTO faction_techs
+                (game_id, faction_id, tech_id, status, level, started_at_tick, completed_at_tick)
+               VALUES (?, ?, ?, 'completed', 1, ?, ?)
+               ON CONFLICT(game_id, faction_id, tech_id) DO UPDATE
+                 SET level = level + 1, status = 'completed', completed_at_tick = ?`,
+            )
+            .bind(gameId, f.id, f.research_tech_id, tick, tick, tick),
+        ]);
+
+        try {
+          await this.env.DB
+            .prepare(
+              `INSERT INTO chronicle_entries
+                (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
+               VALUES (?, ?, ?, 'tech_advanced', ?, ?, 'public', ?)`,
+            )
+            .bind(
+              `c${tick}_tech_${f.id.slice(-6)}_${f.research_tech_id}`,
+              gameId, tick, f.id,
+              JSON.stringify({
+                tech_id: f.research_tech_id,
+                level: level + 1,
+                faction_name: f.name ?? null,
+              }),
+              Date.now(),
+            )
+            .run();
+        } catch (e) { console.error('tech_advanced chronicle failed', e); }
+      }
+    } catch (e) {
+      console.error('research drain pass failed', e);
+    }
+
     // === Dyson Sphere — delivery + damage routing ===========
     // Mirrors the client tick in src/state/gameContext.tsx. Runs after
     // combat so destroyed freighters don't contribute and station HP

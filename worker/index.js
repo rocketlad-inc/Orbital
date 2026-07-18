@@ -9,7 +9,7 @@ import {
   clearedCookie,
   readSessionCookie,
 } from './auth.js';
-import { validateParts } from './shipDesigns.js';
+import { validateParts, DEFAULT_LOADOUTS } from './shipDesigns.js';
 import { verifyGoogleIdToken } from './google.js';
 import { MIGRATIONS } from './_migrations_bundle.js';
 import { GIT_SHA, BUILT_AT } from './_version.js';
@@ -167,6 +167,26 @@ async function handleSignup(req, env) {
   } catch (e) {
     if (String(e?.message || e).includes('UNIQUE')) return err(409, 'email_taken', 'email already registered');
     throw e;
+  }
+
+  // Seed the standard-issue "Default" templates. Migration 0039 does the
+  // same for accounts that already existed; this covers new signups.
+  // Best-effort: a template-seeding failure must never block signup.
+  try {
+    const seeds = [];
+    for (const [cls, parts] of Object.entries(DEFAULT_LOADOUTS)) {
+      if (!parts || parts.length === 0) continue; // colony has no slots
+      seeds.push(
+        env.DB.prepare(
+          `INSERT INTO user_ship_templates
+            (id, user_id, name, ship_class, parts_json, icon_variant, created_at_ms)
+           VALUES (?, ?, 'Default', ?, ?, NULL, ?)`,
+        ).bind(`tpl_def_${id}_${cls}`, id, cls, JSON.stringify(parts), now),
+      );
+    }
+    if (seeds.length > 0) await env.DB.batch(seeds);
+  } catch (e) {
+    console.warn('default template seeding failed for new user', id, e);
   }
 
   const { token, expiresAt } = await createSession(env.DB, id, req.headers.get('user-agent'));
