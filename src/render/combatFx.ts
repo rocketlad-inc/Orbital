@@ -89,10 +89,14 @@ const TRACER_LIFE_MS = 140;
  *  Matches the server's AUTO_COMBAT_INTERVAL so the visual stops when
  *  the shooting does. */
 const ENGAGED_WINDOW_TICKS = 3;
-/** One pulse per shooter per this many ms. */
-const BURST_PERIOD_MS = 750;
-/** Fraction of the period the bolt is visible (duty cycle). */
-const BURST_DUTY = 0.28;
+/** Bolt flight time — one shot crosses the gap in this long. */
+const BOLT_MS = 600;
+/** Silence between one ship's shot landing and the next ship's turn. */
+const BEAT_MS = 500;
+/** One shooter's full turn in the round-robin. */
+const SLOT_MS = BOLT_MS + BEAT_MS;
+/** Scratch list reused across frames — no per-frame allocation. */
+const engagedScratch: Ship[] = [];
 
 interface Tracer {
   fromShipId: string;
@@ -184,63 +188,90 @@ export function drawEngagementFire(
   currentTick: number,
   transitCanvasPos?: Map<string, { x: number; y: number }>,
 ): void {
+  // Collect engaged shooters into the reusable scratch list.
+  engagedScratch.length = 0;
+  for (const s of ships) {
+    const fired = s.lastCombatTick;
+    if (fired === undefined) continue;
+    if (currentTick - fired > ENGAGED_WINDOW_TICKS) continue;
+    if (s.transit) continue;
+    engagedScratch.push(s);
+  }
+  if (engagedScratch.length === 0) return;
+
+  // Deterministic round-robin order: group by body, then ship id, so
+  // every client sees the same firing sequence.
+  engagedScratch.sort((a, b) => {
+    const ab = a.orbit.parentBodyId, bb = b.orbit.parentBodyId;
+    if (ab !== bb) return ab < bb ? -1 : 1;
+    return a.id < b.id ? -1 : 1;
+  });
+
   const c = rc.ctx;
   let opened = false;
 
-  for (const shooter of ships) {
-    const fired = shooter.lastCombatTick;
-    if (fired === undefined) continue;
-    // Engaged only while the server's fire stamp is fresh.
-    if (currentTick - fired > ENGAGED_WINDOW_TICKS) continue;
-    if (shooter.transit) continue;
+  // Walk each body's run of engaged shooters. Exactly ONE ship per
+  // battle fires at a time: the cycle is n slots of (bolt + beat), and
+  // the current wall-clock position in the cycle picks whose turn it
+  // is — one ship fires, beat, the next fires, repeat. Cycle phase is
+  // seeded per body so separate battles aren't in lockstep.
+  let i = 0;
+  while (i < engagedScratch.length) {
+    const bodyId = engagedScratch[i].orbit.parentBodyId;
+    let j = i;
+    while (j < engagedScratch.length && engagedScratch[j].orbit.parentBodyId === bodyId) j++;
+    const n = j - i;
 
-    const atBody = shooter.orbit.parentBodyId;
-    let target: Ship | null = null;
-    for (const s of ships) {
-      if (s.id === shooter.id || s.transit) continue;
-      if (s.orbit.parentBodyId !== atBody) continue;
-      if (s.ownedBy === shooter.ownedBy) continue;
-      if (target === null || s.id < target.id) target = s;
+    const cycle = n * SLOT_MS;
+    const phase = (nowMs + (hashStr(bodyId) % 10000)) % cycle;
+    const slot = Math.floor(phase / SLOT_MS);
+    const within = phase - slot * SLOT_MS;
+
+    if (within < BOLT_MS) {
+      const shooter = engagedScratch[i + slot];
+      // Deterministic target: lowest-id co-located hostile.
+      let target: Ship | null = null;
+      for (const s of ships) {
+        if (s.id === shooter.id || s.transit) continue;
+        if (s.orbit.parentBodyId !== bodyId) continue;
+        if (s.ownedBy === shooter.ownedBy) continue;
+        if (target === null || s.id < target.id) target = s;
+      }
+      if (target) {
+        const fp = shipCanvasPos(shooter, rc, transitCanvasPos);
+        const tp = shipCanvasPos(target, rc, transitCanvasPos);
+        if (fp && tp) {
+          if (!opened) {
+            c.save();
+            c.globalCompositeOperation = 'lighter';
+            opened = true;
+          }
+          // Bolt travels shooter -> target over BOLT_MS; the eye reads
+          // direction, then the beat gives it room to land.
+          const k = within / BOLT_MS;
+          const alpha = 1 - k * 0.6;
+          const color = factionPrimary(rc, shooter.ownedBy);
+          const headX = fp.x + (tp.x - fp.x) * k;
+          const headY = fp.y + (tp.y - fp.y) * k;
+          const tailK = Math.max(0, k - 0.3);
+          const tailX = fp.x + (tp.x - fp.x) * tailK;
+          const tailY = fp.y + (tp.y - fp.y) * tailK;
+
+          c.strokeStyle = withOpacity(color, alpha);
+          c.lineWidth = 2;
+          c.beginPath();
+          c.moveTo(tailX, tailY);
+          c.lineTo(headX, headY);
+          c.stroke();
+
+          c.fillStyle = withOpacity(lighten(color, 1.5), alpha);
+          c.beginPath();
+          c.arc(headX, headY, 2, 0, Math.PI * 2);
+          c.fill();
+        }
+      }
     }
-    if (!target) continue;
-
-    // Per-shooter phase offset so bolts stagger across the fight.
-    const phase =
-      ((nowMs / BURST_PERIOD_MS) + (hashStr(shooter.id) % 1000) / 1000) % 1;
-    if (phase > BURST_DUTY) continue;
-
-    const fp = shipCanvasPos(shooter, rc, transitCanvasPos);
-    const tp = shipCanvasPos(target, rc, transitCanvasPos);
-    if (!fp || !tp) continue;
-
-    if (!opened) {
-      c.save();
-      c.globalCompositeOperation = 'lighter';
-      opened = true;
-    }
-    // Bolt travels shooter -> target across the duty window, so the
-    // eye reads direction rather than a static line.
-    const k = phase / BURST_DUTY;
-    const alpha = 1 - k * 0.75;
-    const color = factionPrimary(rc, shooter.ownedBy);
-    const headX = fp.x + (tp.x - fp.x) * k;
-    const headY = fp.y + (tp.y - fp.y) * k;
-    // Short bolt trailing the head, clipped to the muzzle end.
-    const tailK = Math.max(0, k - 0.35);
-    const tailX = fp.x + (tp.x - fp.x) * tailK;
-    const tailY = fp.y + (tp.y - fp.y) * tailK;
-
-    c.strokeStyle = withOpacity(color, alpha);
-    c.lineWidth = 2;
-    c.beginPath();
-    c.moveTo(tailX, tailY);
-    c.lineTo(headX, headY);
-    c.stroke();
-
-    c.fillStyle = withOpacity(lighten(color, 1.5), alpha);
-    c.beginPath();
-    c.arc(headX, headY, 2, 0, Math.PI * 2);
-    c.fill();
+    i = j;
   }
   if (opened) c.restore();
 }
