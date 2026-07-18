@@ -616,6 +616,8 @@ export interface GameState {
    *  whether the local player can edit. Parallel-indexed with combatLog.
    *  Multiplayer only. */
   chronicleMeta?: (ChronicleEditMeta | null)[];
+  /** Machine-readable chronicle kind per entry, parallel-indexed with
+   *  combatLog. Drives the pending-FX queue (src/render/pendingFx.ts). */
   lastHarvestTick: number;             // tick when resources were last collected
   /** Wall-clock epoch (ms) the server expects to fire the next tick, and
    *  the configured tick interval. Multiplayer only — the server drives the
