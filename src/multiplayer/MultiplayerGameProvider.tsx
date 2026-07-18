@@ -912,6 +912,13 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         return `${t}  💥 ${owner}'s ${name} detonated at ${where} — ${dmg} damage to every ship in orbit, ${killed} destroyed`;
       }
 
+      if (ev.kind === 'builds_destroyed') {
+        const owner = nameOfFaction(ev.actor_faction_id, parsed.owner_faction_name as string | undefined);
+        const where = (parsed.body_name as string) ?? 'a body';
+        const n = (parsed.builds_lost as number) ?? 0;
+        return `${t}  🏭 ${owner}'s shipyard at ${where} fell — ${n} ship${n !== 1 ? 's' : ''} under construction destroyed`;
+      }
+
       if (ev.kind === 'ship_retreated') {
         const name = (parsed.ship_name as string) ?? 'a ship';
         const owner = nameOfFaction(ev.actor_faction_id, parsed.owner_faction_name as string | undefined);

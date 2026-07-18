@@ -821,6 +821,27 @@ export class Room {
      // (waiting builds never promote, income/combat never run). Isolate
      // each row so one poison build can't take the game down.
      try {
+      // Defense in depth vs. the settlement-loss cancellation (§3.4): a
+      // ship only rolls out if its faction STILL holds a living
+      // settlement at the body at completion time. Covers destruction
+      // paths that miss the explicit cancel (asteroid impacts, future
+      // mechanics) — no yard, no ship.
+      const yardStill = await this.env.DB
+        .prepare(
+          `SELECT 1 AS x FROM game_settlements
+            WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+              AND destroyed_at_tick IS NULL
+            LIMIT 1`,
+        )
+        .bind(gameId, b.body_id, b.faction_id)
+        .first();
+      if (!yardStill) {
+        await this.env.DB
+          .prepare('UPDATE game_body_build_queue SET cancelled_at_tick = ? WHERE id = ? AND cancelled_at_tick IS NULL')
+          .bind(tick, b.id)
+          .run();
+        continue;
+      }
       const body = await this.env.DB
         .prepare('SELECT radius, mu FROM game_bodies WHERE id = ?')
         .bind(b.body_id)
@@ -1981,6 +2002,60 @@ export class Room {
         try { await recomputeBodyOwnership(this.env.DB, gameId, bodyId); }
         catch (e) { console.error('recomputeBodyOwnership failed', e); }
       }
+
+      // Construction dies with the yards. For each destroyed
+      // settlement's (body, faction): if that faction has NO living
+      // settlement left at the body, every in-flight and waiting build
+      // order it had there is destroyed with the infrastructure — no
+      // refund (the enemy blew it up; that's the cost of losing the
+      // yard). Without this, builds were pure timers and ships kept
+      // spawning at bodies whose shipyards were rubble.
+      for (const s of destroyedSettlements) {
+        try {
+          const still = await this.env.DB
+            .prepare(
+              `SELECT 1 AS x FROM game_settlements
+                WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+                  AND destroyed_at_tick IS NULL
+                LIMIT 1`,
+            )
+            .bind(gameId, s.body_id, s.owner_faction_id)
+            .first();
+          if (still) continue; // they still hold ground here — base slot remains
+          const axed = await this.env.DB
+            .prepare(
+              `UPDATE game_body_build_queue
+                  SET cancelled_at_tick = ?
+                WHERE game_id = ? AND body_id = ? AND faction_id = ?
+                  AND cancelled_at_tick IS NULL`,
+            )
+            .bind(tick, gameId, s.body_id, s.owner_faction_id)
+            .run();
+          const lost = axed.meta?.changes ?? 0;
+          if (lost > 0) {
+            const body = await this.env.DB
+              .prepare('SELECT name FROM game_bodies WHERE id = ?')
+              .bind(s.body_id).first();
+            await this.env.DB
+              .prepare(
+                `INSERT INTO chronicle_entries
+                  (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+                 VALUES (?, ?, ?, 'builds_destroyed', ?, ?, ?, 'public', ?)`,
+              )
+              .bind(
+                `c${tick}_bldx_${s.body_id.slice(-6)}_${Math.random().toString(36).slice(2, 6)}`,
+                gameId, tick, s.owner_faction_id, s.body_id,
+                JSON.stringify({
+                  body_name: body?.name ?? '?',
+                  owner_faction_name: factionNameById.get(s.owner_faction_id) ?? null,
+                  builds_lost: lost,
+                }),
+                now,
+              )
+              .run();
+          }
+        } catch (e) { console.error('build-cancel on settlement loss failed', e); }
+      }
     }
 
     // 3.45 Ship maintenance — heal + refuel at friendly infrastructure.
@@ -2987,6 +3062,18 @@ export class Room {
         )
         .bind(gameId, a.id)
         .all()).results ?? [];
+      // The rock is consumed — every settlement on it dies, so any ship
+      // construction there dies with the yards (no refund; §3.4 rule).
+      if (ownSettlements.length > 0) {
+        stmts.push(
+          this.env.DB
+            .prepare(
+              `UPDATE game_body_build_queue SET cancelled_at_tick = ?
+                WHERE game_id = ? AND body_id = ? AND cancelled_at_tick IS NULL`,
+            )
+            .bind(tick, gameId, a.id),
+        );
+      }
       for (const s of ownSettlements) {
         stmts.push(
           this.env.DB
@@ -3040,6 +3127,18 @@ export class Room {
           .bind(gameId, targetId)
           .all()).results ?? [];
         destroyedCount = victimSettlements.length;
+        // Impact levels every settlement at the target — in-flight ship
+        // builds die with the yards (no refund; §3.4 rule).
+        if (victimSettlements.length > 0) {
+          stmts.push(
+            this.env.DB
+              .prepare(
+                `UPDATE game_body_build_queue SET cancelled_at_tick = ?
+                  WHERE game_id = ? AND body_id = ? AND cancelled_at_tick IS NULL`,
+              )
+              .bind(tick, gameId, targetId),
+          );
+        }
         for (const s of victimSettlements) {
           stmts.push(
             this.env.DB
