@@ -60,6 +60,25 @@ const BODY_CATALOG = [
     orbit_radius: 283, orbit_period: 386, angle0: 6.20,
     color: '#c1440e',
     yield: { metal: 4, fuel: 0, gold: 2, science: 2 } },
+  // Mars's two captured rocks. Orbits keep the real ~2.4:1 spacing and
+  // both sit clear of the ship-orbit envelope (ships park at 1.5-2.0x
+  // body radius = 5 here) and well inside Mars's SOI of 43 — the same
+  // two constraints that pushed Luna out to 20.
+  //
+  // Yields stay deliberately small: they're a few km of rubble, and the
+  // inner region's identity in the yield table is credits-with-a-metal-
+  // deficit, so two new metal sources here would blunt exactly the
+  // scarcity that makes inner players trade for Belt ore.
+  { id: 'phobos', name: 'Phobos', type: 'moon', parent: 'mars',
+    radius: 0.8, soi: 2, mu: 0.5,
+    orbit_radius: 8, orbit_period: TWO_PI * Math.sqrt(512 / 80), angle0: 0.5,
+    color: '#6e6259',
+    yield: { metal: 1, fuel: 0, gold: 2, science: 1 } },
+  { id: 'deimos', name: 'Deimos', type: 'moon', parent: 'mars',
+    radius: 0.7, soi: 2, mu: 0.5,
+    orbit_radius: 19, orbit_period: TWO_PI * Math.sqrt(6859 / 80), angle0: 3.9,
+    color: '#7a6d62',
+    yield: { metal: 1, fuel: 0, gold: 1, science: 2 } },
 
   // ---- asteroid belt ----
   // Five bodies share the 310-radius orbit, 72° apart (Ceres at 1.20 rad,

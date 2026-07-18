@@ -56,6 +56,24 @@ export const SHARED_BODIES: Body[] = [
     orbitRadius: 283, orbitPeriod: 386, angle0: 6.20,
     resources: { fuel: 1, gold: 1, metal: 6, science: 3 },
   },
+  // Mars's two captured rocks — mirrors worker/factions.js BODY_CATALOG
+  // so the SP map isn't missing bodies the MP one has. Orbits keep the
+  // real ~2.4:1 spacing, sit clear of the ship-orbit envelope (2x body
+  // radius = 5) and well inside Mars's SOI of 43. Resource values follow
+  // THIS file's older scale, which is deliberately not the MP yield
+  // table (SP is frozen per DESIGN-identity-economy §6).
+  {
+    id: 'phobos', name: 'Phobos', type: 'moon', parent: 'mars',
+    radius: 0.8, soi: 2, mu: 0.5, color: '#6e6259',
+    orbitRadius: 8, orbitPeriod: TWO_PI * Math.sqrt(512 / 80), angle0: 0.5,
+    resources: { fuel: 0, gold: 1, metal: 2, science: 1 },
+  },
+  {
+    id: 'deimos', name: 'Deimos', type: 'moon', parent: 'mars',
+    radius: 0.7, soi: 2, mu: 0.5, color: '#7a6d62',
+    orbitRadius: 19, orbitPeriod: TWO_PI * Math.sqrt(6859 / 80), angle0: 3.9,
+    resources: { fuel: 0, gold: 1, metal: 1, science: 2 },
+  },
   // Earth's moon — orbit pushed out so Luna doesn't kiss the Earth's
   // ship-orbit envelope at low altitude.
   {
