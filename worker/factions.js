@@ -308,11 +308,35 @@ const ORBIT_PERIOD_SCALE = Math.pow(SYSTEM_SCALE, 1.5);
 
 for (const b of BODY_CATALOG) {
   if (b.parent !== 'sol') continue;
+  // Keep the pre-scale value. backfillMissingBodies inserts catalog
+  // bodies into games that are ALREADY RUNNING, and those games were
+  // seeded at whatever scale was current when they started. Inserting
+  // at today's scale would drop a double-distance intruder into an
+  // old-scale system. The base lets backfill re-derive the target
+  // game's own scale and match it.
+  b.base_orbit_radius = b.orbit_radius;
   b.orbit_radius = Math.round(b.orbit_radius * SYSTEM_SCALE);
   b.orbit_period = Math.round(b.orbit_period * ORBIT_PERIOD_SCALE);
   // Eccentric Kuiper elements travel with the orbit they describe.
   if (b.orbit_rp != null) b.orbit_rp = Math.round(b.orbit_rp * SYSTEM_SCALE);
   if (b.orbit_ra != null) b.orbit_ra = Math.round(b.orbit_ra * SYSTEM_SCALE);
+}
+
+/**
+ * Work out the SYSTEM_SCALE a running game was seeded at, by comparing a
+ * heliocentric body it already has against that body's pre-scale radius.
+ * Returns 1 for games born before scaling, 2 for current ones, and falls
+ * back to today's SYSTEM_SCALE when nothing can be matched.
+ */
+function inferGameSystemScale(existingRows) {
+  for (const row of existingRows) {
+    const tpl = BODY_CATALOG.find(b => b.id === row.template_id);
+    if (!tpl || tpl.parent !== 'sol' || !tpl.base_orbit_radius) continue;
+    const r = Number(row.orbit_radius);
+    if (!Number.isFinite(r) || r <= 0) continue;
+    return r / tpl.base_orbit_radius;
+  }
+  return SYSTEM_SCALE;
 }
 
 // Eligible worlds for ownership = everything that isn't the star (16 worlds).
@@ -957,9 +981,23 @@ export async function seedGameWorld(env, gameId) {
  */
 export async function backfillMissingBodies(env, gameId) {
   const existing = await env.DB
-    .prepare('SELECT template_id FROM game_bodies WHERE game_id = ?')
+    .prepare('SELECT template_id, orbit_radius FROM game_bodies WHERE game_id = ?')
     .bind(gameId).all();
-  const have = new Set((existing.results ?? []).map(r => r.template_id));
+  const existingRows = existing.results ?? [];
+  const have = new Set(existingRows.map(r => r.template_id));
+
+  // Match the scale this game was BORN at, not today's catalog scale —
+  // otherwise adding a body to the catalog would drop a double-distance
+  // intruder into every game seeded before SYSTEM_SCALE changed.
+  const gameScale = inferGameSystemScale(existingRows);
+  const scaleRatio = SYSTEM_SCALE === 0 ? 1 : gameScale / SYSTEM_SCALE;
+  const periodRatio = Math.pow(scaleRatio, 1.5);
+  /** Re-scale a heliocentric catalog value into this game's scale.
+   *  Moons are parent-relative and never scaled. */
+  const fitR = (b, v) =>
+    (v == null || b.parent !== 'sol') ? v : Math.round(v * scaleRatio);
+  const fitPeriod = (b, v) =>
+    (v == null || b.parent !== 'sol') ? v : Math.round(v * periodRatio);
 
   const bodyRowIdFor = (tplId) => `${gameId}:${tplId}`;
   const stmts = [];
@@ -971,8 +1009,8 @@ export async function backfillMissingBodies(env, gameId) {
     // fall through to the legacy `bodyPosition` shortcut. Without
     // these here, a pre-0024 game backfilled later would have its
     // Kuiper asteroids stuck on a wrong-orbit-radius circle.
-    const orbitRp    = b.orbit_rp    ?? null;
-    const orbitRa    = b.orbit_ra    ?? null;
+    const orbitRp    = fitR(b, b.orbit_rp ?? null);
+    const orbitRa    = fitR(b, b.orbit_ra ?? null);
     const orbitOmega = b.orbit_omega ?? null;
     const orbitM0    = b.orbit_m0    ?? null;
     stmts.push(
@@ -993,7 +1031,9 @@ export async function backfillMissingBodies(env, gameId) {
       ).bind(
         bodyRowIdFor(b.id), gameId, b.id, b.name, b.type,
         b.parent ? bodyRowIdFor(b.parent) : null,
-        b.radius, b.soi, b.mu, b.orbit_radius, b.orbit_period, b.angle0, b.color,
+        b.radius, b.soi, b.mu,
+        fitR(b, b.orbit_radius), fitPeriod(b, b.orbit_period),
+        b.angle0, b.color,
         b.yield.metal, b.yield.fuel, b.yield.gold, b.yield.science,
         orbitRp, orbitRa, orbitOmega, orbitM0,
       ),
