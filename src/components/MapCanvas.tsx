@@ -117,6 +117,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   //                        position, then we prune entries older than
   //                        DESTRUCTION_FLASH_DURATION_TICKS.
   const prevDamageTickRef = useRef<Map<string, number>>(new Map());
+  /** Last observed hp per ship id. The authoritative damage signal in
+   *  BOTH engines (MP never populates lastDamagedTick) — an hp drop
+   *  between polls drives damage flashes + combat tracers. */
+  const prevHpRef = useRef<Map<string, number>>(new Map());
   const damageFlashStartRef = useRef<Map<string, number>>(new Map());
   // Population-growth pulse (§E4): prevPop tracks the last observed
   // population per settlement id; an increase stamps growthFlashStart
@@ -285,20 +289,38 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         shipWorldPosition(ship, nowTick, gameState.bodies);
       if (pos) curShipIds.set(ship.id, pos);
 
+      // Damage detection. MUST be hp-based: `lastDamagedTick` is only
+      // ever populated by the single-player engine — the MP /state
+      // payload carries `last_combat_tick` (when a ship FIRED), not when
+      // it was hit, so keying on it meant every MP ship hit the
+      // `undefined` guard and neither damage flashes NOR tracers ever
+      // fired in multiplayer. An hp drop between polls is the one signal
+      // that's authoritative in both engines. The tick path is kept as a
+      // secondary trigger so SP still flashes on a 0-damage graze.
+      const curHp = ship.hp;
+      const prevHp = prevHpRef.current.get(ship.id);
+      if (curHp !== undefined) prevHpRef.current.set(ship.id, curHp);
+      const tookDamage =
+        prevHp !== undefined && curHp !== undefined && curHp < prevHp;
+
       const cur = ship.lastDamagedTick;
-      if (cur === undefined) continue;
       const prev = prevDamageTickRef.current.get(ship.id);
-      if (prev !== cur) {
-        prevDamageTickRef.current.set(ship.id, cur);
+      if (cur !== undefined) prevDamageTickRef.current.set(ship.id, cur);
+      const tickAdvanced = cur !== undefined && prev !== undefined && prev !== cur;
+
+      if (tookDamage || tickAdvanced) {
         damageFlashStartRef.current.set(ship.id, nowTick);
         // Tracer fire (combatFx §1): the hp drop means some hostile
         // armed ship at the same body fired a volley. Attribute the
         // shot deterministically — lowest ship id among armed hostiles
         // at the body — so every client draws the same tracer. Skip
-        // the very first observation of a ship (prev === undefined =
-        // page load, not a fresh hit) and ships in transit (auto-combat
-        // is at-body only, so a transit "hit" has no local shooter).
-        if (prev !== undefined && !ship.transit) {
+        // ships in transit (auto-combat is at-body only, so a transit
+        // "hit" has no local shooter). First-observation is already
+        // excluded: both triggers above require a prior sample, so a
+        // page load can't manufacture a volley. (This guard used to test
+        // `prev !== undefined`, the SP-only tick — which is always
+        // undefined in MP and silently suppressed every tracer.)
+        if (!ship.transit) {
           const atBody = ship.orbit.parentBodyId;
           let attackerId: string | null = null;
           for (const s of gameState.ships) {
@@ -382,11 +404,20 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
       prevPopRef.current.set(settlement.id, settlement.population);
 
+      // Same hp-based rule as ships — settlement.lastDamagedTick is
+      // likewise SP-only, so bombardment never flashed in MP.
+      const curHp = settlement.hp;
+      const prevHp = prevHpRef.current.get(settlement.id);
+      if (curHp !== undefined) prevHpRef.current.set(settlement.id, curHp);
+      const tookDamage =
+        prevHp !== undefined && curHp !== undefined && curHp < prevHp;
+
       const cur = settlement.lastDamagedTick;
-      if (cur === undefined) continue;
       const prev = prevDamageTickRef.current.get(settlement.id);
-      if (prev !== cur) {
-        prevDamageTickRef.current.set(settlement.id, cur);
+      if (cur !== undefined) prevDamageTickRef.current.set(settlement.id, cur);
+      const tickAdvanced = cur !== undefined && prev !== undefined && prev !== cur;
+
+      if (tookDamage || tickAdvanced) {
         damageFlashStartRef.current.set(settlement.id, nowTick);
       }
     }
