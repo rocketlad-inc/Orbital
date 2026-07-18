@@ -521,10 +521,20 @@ function orbitTrailGradient(
   if (typeof c2d.createConicGradient !== 'function') return null;
   const bp = bodyPosition(body, ctx.t, ctx.bodies);
   const theta = Math.atan2(bp.y - parentWorldPos.y, bp.x - parentWorldPos.x);
-  const g = c2d.createConicGradient(theta, canvasParentPos.x, canvasParentPos.y);
-  g.addColorStop(0, withOpacity(color, ORBIT_TRAIL_MIN_ALPHA));
-  g.addColorStop(1, withOpacity(color, ORBIT_TRAIL_MAX_ALPHA));
-  return g;
+  // Defense in depth: addColorStop THROWS on any invalid color string,
+  // and an exception here aborts the whole render frame (this is what
+  // blanked the map on 2026-07-18 — MapCanvas passes rgba() orbit
+  // colors, and the pre-idempotent withOpacity NaN'd them). withOpacity
+  // is fixed, but a cosmetic gradient must NEVER be able to kill the
+  // scene, whatever a future caller feeds it.
+  try {
+    const g = c2d.createConicGradient(theta, canvasParentPos.x, canvasParentPos.y);
+    g.addColorStop(0, withOpacity(color, ORBIT_TRAIL_MIN_ALPHA));
+    g.addColorStop(1, withOpacity(color, ORBIT_TRAIL_MAX_ALPHA));
+    return g;
+  } catch {
+    return null; // fall back to the flat stroke
+  }
 }
 
 export function drawOrbit(
