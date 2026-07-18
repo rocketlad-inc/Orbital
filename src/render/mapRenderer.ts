@@ -19,6 +19,10 @@ export interface RenderContext {
   ctx: CanvasRenderingContext2D;
   canvas: HTMLCanvasElement;
   camera: { x: number; y: number; scale: number; focusedBodyId?: string };
+  /** Currently-selected body (uiState.selectedBodyId), threaded so the
+   *  orbit-ring layer can fade rings unrelated to the selection.
+   *  Falls back to camera.focusedBodyId when absent. */
+  selectedBodyId?: string;
   t: number;
   bodies: Body[];
   /** Factions in this game, used by per-asset color lookups (drawShip,
@@ -497,6 +501,30 @@ export function drawOrbit(
   const parentPos = bodyPosition(parentBody, ctx.t, ctx.bodies);
   const canvasParentPos = worldToCanvas(parentPos.x, parentPos.y, ctx);
 
+  // === Orbit relevance fading =================================
+  // Moon orbits (parent is itself an orbiting body, not the star)
+  // vanish entirely once the parent planet is too small on screen
+  // to read as a system of its own — a sub-12px planet with moon
+  // rings around it is just scribble.
+  if (parentBody.type !== 'star' && parentBody.radius * ctx.camera.scale < 12) {
+    return;
+  }
+  // The selected (or camera-focused) body's orbit and its siblings
+  // (same parent) stay at full strength; every other ring drops to
+  // 30% so the player's attention neighborhood pops. No selection →
+  // no fading. Multiplies into the caller's globalAlpha so this
+  // works whatever color/alpha convention the callsite uses.
+  let relevanceAlpha = 1;
+  const refId = ctx.selectedBodyId ?? ctx.camera.focusedBodyId;
+  if (refId && refId !== body.id) {
+    const refBody = ctx.bodies.find(b => b.id === refId);
+    if (refBody && refBody.parent !== body.parent) {
+      relevanceAlpha = 0.3;
+    }
+  }
+  const prevOrbitAlpha = ctx.ctx.globalAlpha;
+  ctx.ctx.globalAlpha = prevOrbitAlpha * relevanceAlpha;
+
   ctx.ctx.strokeStyle = color;
   ctx.ctx.lineWidth = width;
 
@@ -533,6 +561,7 @@ export function drawOrbit(
       Math.PI * 2,
     );
     ctx.ctx.stroke();
+    ctx.ctx.globalAlpha = prevOrbitAlpha;
     return;
   }
 
@@ -547,6 +576,7 @@ export function drawOrbit(
     Math.PI * 2,
   );
   ctx.ctx.stroke();
+  ctx.ctx.globalAlpha = prevOrbitAlpha;
 }
 
 /**
@@ -2057,8 +2087,37 @@ export function drawTorchTrajectory(
     }
   }
 
-  if (isDashed) ctx.ctx.setLineDash([5, 5]);
+  // === Own-trajectory dash crawl ==============================
+  // The player's own transfer lines (mine role — the color is the
+  // contract, computed by trajectoryRole at every callsite) carry a
+  // long-dash pattern whose lineDashOffset marches toward the
+  // destination at ~24 px/s wall-clock, so "my ship is going THERE"
+  // reads as motion. Enemy/neutral lines stay static. One offset
+  // assignment per stroke — no allocation, no extra passes.
+  const crawl = color === TRAJECTORY_COLORS.mine && !splitPhaseColors;
+  let crawlOffset = 0;
+  if (crawl) {
+    const nowMs = ctx.nowMs ?? performance.now();
+    const dashPeriod = isDashed ? 10 : 16;   // [5,5] vs [10,6]
+    // Negative, growing more negative → dashes advance along the
+    // stroke direction (start → destination).
+    crawlOffset = -((nowMs * 0.024) % dashPeriod);
+    ctx.ctx.setLineDash(isDashed ? [5, 5] : [10, 6]);
+    ctx.ctx.lineDashOffset = crawlOffset;
+  } else if (isDashed) {
+    ctx.ctx.setLineDash([5, 5]);
+  }
   ctx.ctx.lineWidth = 1.5;
+
+  // === Gradient trajectories ==================================
+  // Transfer lines fade 85% alpha at the ship → 15% at the
+  // destination. Gradient allocation is per-line (lines are few) but
+  // only at readable zoom; below scale 0.5 we use flat 40% alpha so
+  // far zoom never allocates gradients. Hue (mine/neutral/hostile/
+  // preview) is preserved — only alpha ramps.
+  const useGradient = ctx.camera.scale >= 0.5 && color.startsWith('#');
+  const destCP = worldToCanvas(
+    samples[samples.length - 1].x, samples[samples.length - 1].y, ctx);
 
   if (splitPhaseColors) {
     // Two passes: boost (samples.t < flipTick) in green, brake in pink.
@@ -2084,38 +2143,79 @@ export function drawTorchTrajectory(
     }
     ctx.ctx.stroke();
   } else if (fadeActive) {
-    // Per-segment alpha gradient. The caller's globalAlpha is the
-    // "ceiling"; segments multiply against it so a 0.55 caller stays a
-    // 0.55 ceiling at the ship and walks down to ~0 at launch.
+    // Two parts, split at the ship's current position:
+    //   BEHIND the ship — per-segment trail fade, ~0 at the launch
+    //     point rising to the at-ship alpha (matches the gradient's
+    //     0.85 head so there's no seam at the ship).
+    //   AHEAD of the ship — one stroke with the 0.85 → 0.15 linear
+    //     gradient toward the destination (or flat 0.4 at far zoom).
     //
-    // Drawing each segment as its own stroke() means N+1 canvas calls
-    // (~24-80) — fine for a per-frame UI overlay. The endpoint of one
-    // stroke and the start of the next share a coordinate so the line
-    // stays visually continuous.
+    // The caller's globalAlpha is the "ceiling"; everything here
+    // multiplies against it. Behind-segments are ~24-80 stroke()
+    // calls — fine for a per-frame UI overlay.
     const baseAlpha = ctx.ctx.globalAlpha;
-    ctx.ctx.strokeStyle = color;
     const cur = currentTick as number;
-    for (let i = 0; i < samples.length - 1; i++) {
+    let shipIdx = samples.length - 1;
+    for (let i = 0; i < samples.length; i++) {
+      if (samples[i].t >= cur) { shipIdx = i; break; }
+    }
+    const shipCP = worldToCanvas(samples[shipIdx].x, samples[shipIdx].y, ctx);
+    const headAlpha = useGradient ? 0.85 : 0.4;
+
+    ctx.ctx.strokeStyle = color;
+    let cumLen = 0;   // canvas-px along the polyline, for dash phase continuity
+    for (let i = 0; i < shipIdx; i++) {
       const segT = (samples[i].t + samples[i + 1].t) / 2;
-      let alphaMul = 1;
-      if (segT < cur) {
-        const denom = Math.max(1e-6, cur - plan.startTick);
-        const k = Math.max(0, Math.min(1, (segT - plan.startTick) / denom));
-        // Eased curve: nothing visible at the launch point, lifts toward
-        // the ship — Math.pow(k, 1.6) hides the tail faster than linear.
-        alphaMul = Math.pow(k, 1.6);
-      }
-      ctx.ctx.globalAlpha = baseAlpha * alphaMul;
+      const denom = Math.max(1e-6, cur - plan.startTick);
+      const k = Math.max(0, Math.min(1, (segT - plan.startTick) / denom));
+      // Eased curve: nothing visible at the launch point, lifts toward
+      // the ship — Math.pow(k, 1.6) hides the tail faster than linear.
+      ctx.ctx.globalAlpha = baseAlpha * Math.pow(k, 1.6) * headAlpha;
       const A = worldToCanvas(samples[i].x, samples[i].y, ctx);
       const B = worldToCanvas(samples[i + 1].x, samples[i + 1].y, ctx);
+      // Keep the marching-dash phase continuous across the per-segment
+      // strokes: a segment starting at path-length L renders as if the
+      // whole line were one stroke offset by L.
+      if (crawl) ctx.ctx.lineDashOffset = crawlOffset + cumLen;
       ctx.ctx.beginPath();
       ctx.ctx.moveTo(A.x, A.y);
       ctx.ctx.lineTo(B.x, B.y);
       ctx.ctx.stroke();
+      cumLen += Math.hypot(B.x - A.x, B.y - A.y);
     }
+
+    // Ahead-of-ship stroke: ship → destination.
+    ctx.ctx.globalAlpha = baseAlpha;
+    if (useGradient) {
+      const grad = ctx.ctx.createLinearGradient(shipCP.x, shipCP.y, destCP.x, destCP.y);
+      grad.addColorStop(0, withOpacity(color, 0.85));
+      grad.addColorStop(1, withOpacity(color, 0.15));
+      ctx.ctx.strokeStyle = grad;
+    } else {
+      ctx.ctx.strokeStyle = color.startsWith('#') ? withOpacity(color, 0.4) : color;
+    }
+    if (crawl) ctx.ctx.lineDashOffset = crawlOffset + cumLen;
+    ctx.ctx.beginPath();
+    ctx.ctx.moveTo(shipCP.x, shipCP.y);
+    for (let i = shipIdx + 1; i < samples.length; i++) {
+      const cp = worldToCanvas(samples[i].x, samples[i].y, ctx);
+      ctx.ctx.lineTo(cp.x, cp.y);
+    }
+    ctx.ctx.stroke();
     ctx.ctx.globalAlpha = baseAlpha;
   } else {
-    ctx.ctx.strokeStyle = color;
+    // Static line (planned previews, queued legs, out-of-window):
+    // same gradient treatment, anchored at the line start since the
+    // ship hasn't departed yet.
+    if (useGradient) {
+      const startCP = worldToCanvas(samples[0].x, samples[0].y, ctx);
+      const grad = ctx.ctx.createLinearGradient(startCP.x, startCP.y, destCP.x, destCP.y);
+      grad.addColorStop(0, withOpacity(color, 0.85));
+      grad.addColorStop(1, withOpacity(color, 0.15));
+      ctx.ctx.strokeStyle = grad;
+    } else {
+      ctx.ctx.strokeStyle = color.startsWith('#') ? withOpacity(color, 0.4) : color;
+    }
     ctx.ctx.beginPath();
     for (let i = 0; i < samples.length; i++) {
       const cp = worldToCanvas(samples[i].x, samples[i].y, ctx);
@@ -2125,7 +2225,80 @@ export function drawTorchTrajectory(
     ctx.ctx.stroke();
   }
   ctx.ctx.setLineDash([]);
+  ctx.ctx.lineDashOffset = 0;
+
+  // === Arrival tick-marks (selected ship only) ================
+  // splitPhaseColors is only ever passed for the player's selected,
+  // non-trade ship, so it doubles as the "selected" signal without
+  // widening the signature. Small perpendicular notches every 10
+  // flight-ticks give the trajectory a ruler the player can read
+  // ETA against; the flip point gets a bigger, brighter notch.
+  if (splitPhaseColors && samples.length >= 2) {
+    drawTrajectoryTickMarks(plan, samples, ctx);
+  }
   return samples;
+}
+
+/** Perpendicular notch across the trajectory polyline at sim tick
+ *  `tick`. Interpolates position + direction from the sample array in
+ *  canvas space. Returns false when the tick is outside the polyline. */
+function strokeTrajectoryNotch(
+  samples: Array<{ t: number; x: number; y: number }>,
+  tick: number,
+  halfLen: number,
+  ctx: RenderContext,
+): boolean {
+  if (tick < samples[0].t || tick > samples[samples.length - 1].t) return false;
+  let i = 0;
+  while (i < samples.length - 2 && samples[i + 1].t < tick) i++;
+  const A = worldToCanvas(samples[i].x, samples[i].y, ctx);
+  const B = worldToCanvas(samples[i + 1].x, samples[i + 1].y, ctx);
+  const span = samples[i + 1].t - samples[i].t;
+  const k = span > 0 ? Math.max(0, Math.min(1, (tick - samples[i].t) / span)) : 0;
+  const px = A.x + (B.x - A.x) * k;
+  const py = A.y + (B.y - A.y) * k;
+  const dx = B.x - A.x;
+  const dy = B.y - A.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-3) return false;
+  const nx = -dy / len;
+  const ny = dx / len;
+  ctx.ctx.moveTo(px - nx * halfLen, py - ny * halfLen);
+  ctx.ctx.lineTo(px + nx * halfLen, py + ny * halfLen);
+  return true;
+}
+
+/** Flight-time ruler on the selected ship's trajectory: a notch every
+ *  10 ticks (step widened on very long flights so we never draw more
+ *  than ~40), plus a larger notch at the flip (boost→brake) tick. */
+function drawTrajectoryTickMarks(
+  plan: TorchTransferPlan,
+  samples: Array<{ t: number; x: number; y: number }>,
+  ctx: RenderContext,
+) {
+  const flight = plan.arriveTick - plan.startTick;
+  if (flight <= 0) return;
+  let step = 10;
+  const MAX_NOTCHES = 40;
+  if (flight / step > MAX_NOTCHES) {
+    step = Math.ceil(flight / MAX_NOTCHES / 10) * 10;
+  }
+  ctx.ctx.save();
+  ctx.ctx.strokeStyle = 'rgba(216, 228, 238, 0.55)';
+  ctx.ctx.lineWidth = 1;
+  ctx.ctx.beginPath();
+  for (let tick = plan.startTick + step; tick < plan.arriveTick; tick += step) {
+    strokeTrajectoryNotch(samples, tick, 2.5, ctx);
+  }
+  ctx.ctx.stroke();
+  // Flip point — the boost/brake handover — gets a longer, brighter
+  // notch so the maneuver midpoint reads at a glance.
+  ctx.ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+  ctx.ctx.lineWidth = 1.5;
+  ctx.ctx.beginPath();
+  strokeTrajectoryNotch(samples, plan.flipTick, 5, ctx);
+  ctx.ctx.stroke();
+  ctx.ctx.restore();
 }
 
 export function drawTransitShip(
@@ -3247,16 +3420,73 @@ export function drawFogOfWarOverlay(
   ctx.ctx.restore();
 }
 
+// === Territory halos (far-zoom ownership treatment) ============
+// At far zoom the dashed "barber-pole" ownership rings shrink into
+// noisy circles; a soft faction-colored radial halo under the body
+// reads much better as "this region is theirs". The halo gradient is
+// rasterized ONCE per faction color into a small offscreen sprite
+// (Map capped at 16 — more colors than any game has factions) and
+// scaled with drawImage, so far zoom never allocates gradients
+// per-frame.
+//
+// Mode switching uses hysteresis: halo engages below scale 0.72 and
+// disengages above 0.88 (nominal boundary 0.8 ±10%), tracked in a
+// module flag so pinch-zooming across the boundary doesn't flicker
+// between treatments frame-to-frame.
+let territoryHaloMode = false;
+const HALO_SPRITE_SIZE = 64;
+const HALO_SPRITE_CAP = 16;
+const territoryHaloSprites = new Map<string, HTMLCanvasElement>();
+
+function territoryHaloSprite(color: string): HTMLCanvasElement {
+  let sprite = territoryHaloSprites.get(color);
+  if (sprite) return sprite;
+  if (territoryHaloSprites.size >= HALO_SPRITE_CAP) {
+    // Evict the oldest entry — insertion order is stable on Map.
+    const oldest = territoryHaloSprites.keys().next().value;
+    if (oldest !== undefined) territoryHaloSprites.delete(oldest);
+  }
+  sprite = document.createElement('canvas');
+  sprite.width = HALO_SPRITE_SIZE;
+  sprite.height = HALO_SPRITE_SIZE;
+  const sctx = sprite.getContext('2d');
+  if (sctx) {
+    const half = HALO_SPRITE_SIZE / 2;
+    const hex = color.startsWith('#') ? color : COLORS.neutral;
+    const grad = sctx.createRadialGradient(half, half, 0, half, half, half);
+    grad.addColorStop(0, withOpacity(hex, 0.9));
+    grad.addColorStop(0.55, withOpacity(hex, 0.4));
+    grad.addColorStop(1, withOpacity(hex, 0));
+    sctx.fillStyle = grad;
+    sctx.fillRect(0, 0, HALO_SPRITE_SIZE, HALO_SPRITE_SIZE);
+  }
+  territoryHaloSprites.set(color, sprite);
+  return sprite;
+}
+
 /**
- * Colored ring around each body indicating the owning faction.
- * Unowned bodies get nothing. Sits just outside the body's render
- * radius so it reads as a halo without obscuring the planet itself.
+ * Ownership indicator for each body. Close zoom: the classic dashed
+ * "barber-pole" ring just outside the body's render radius. Far zoom
+ * (hysteresis around scale 0.8): a soft faction-primary radial halo
+ * under the body instead — territory reads as a colored glow region
+ * rather than a mess of tiny dashed circles. Unowned bodies get
+ * nothing.
  */
 export function drawOwnershipLayer(
   bodies: Body[],
   ctx: RenderContext,
 ) {
   if (!ctx.factions || ctx.factions.length === 0) return;
+
+  // Hysteresis: engage halo < 0.72, back to ring > 0.88; hold the
+  // previous mode in between so the boundary never flickers.
+  const scale = ctx.camera.scale;
+  if (territoryHaloMode) {
+    if (scale > 0.88) territoryHaloMode = false;
+  } else if (scale < 0.72) {
+    territoryHaloMode = true;
+  }
+
   for (const body of bodies) {
     if (!body.ownedBy) continue;
     const faction = ctx.factions.find(f => f.id === body.ownedBy);
@@ -3269,7 +3499,18 @@ export function drawOwnershipLayer(
     const color2 = faction?.color2 || (faction?.color ? deriveSecondary(faction.color) : color);
     const wp = bodyPosition(body, ctx.t, ctx.bodies);
     const cp = worldToCanvas(wp.x, wp.y, ctx);
-    const r = Math.max(10, body.radius * ctx.camera.scale + 6);
+
+    if (territoryHaloMode) {
+      const r = body.radius * scale + 10;
+      const sprite = territoryHaloSprite(color);
+      ctx.ctx.save();
+      ctx.ctx.globalAlpha = ctx.ctx.globalAlpha * 0.18;
+      ctx.ctx.drawImage(sprite, cp.x - r, cp.y - r, r * 2, r * 2);
+      ctx.ctx.restore();
+      continue;
+    }
+
+    const r = Math.max(10, body.radius * scale + 6);
     ctx.ctx.save();
     ctx.ctx.lineWidth = 1.5;
     // Primary dashes.

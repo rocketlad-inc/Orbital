@@ -379,7 +379,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     const renderContext: RenderContext = {
       ctx,
       canvas: canvasRef.current,
+      // camScale (not camera.scale) — the eased-camera tween renders the
+      // interpolated scale; reading the raw target here would snap zoom
+      // while position eased.
       camera: { x: camX, y: camY, scale: camScale, focusedBodyId: camera.focusedBodyId },
+      // Selection reaches the orbit layer so drawOrbit can fade
+      // rings unrelated to the selected body (falls back to the
+      // camera focus when nothing is explicitly selected).
+      selectedBodyId: uiState.selectedBodyId,
       t: gameState.currentTick,
       bodies: gameState.bodies,
       // Factions enable per-faction ship coloring (matches settlements).
