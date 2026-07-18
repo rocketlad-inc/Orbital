@@ -78,9 +78,82 @@ export function getPlanetTexture(body: Body): HTMLCanvasElement | null {
   return tex;
 }
 
+// ------------------------------------------------------------
+// Cloud layer — a SECOND cached 256² canvas per terrestrial body,
+// scrolled slowly across the surface texture by the renderer for
+// live cloud drift. Separate Map so evicting a surface texture
+// doesn't drop its clouds (and vice versa); same cap discipline.
+// ------------------------------------------------------------
+
+const cloudCache = new Map<string, HTMLCanvasElement | null>();
+
+export function getCloudTexture(body: Body): HTMLCanvasElement | null {
+  const hit = cloudCache.get(body.id);
+  if (hit !== undefined) {
+    cloudCache.delete(body.id);
+    cloudCache.set(body.id, hit);
+    return hit;
+  }
+  const tex = paintClouds(body);
+  cloudCache.set(body.id, tex);
+  if (cloudCache.size > CACHE_CAP) {
+    const oldest = cloudCache.keys().next().value;
+    if (oldest !== undefined) cloudCache.delete(oldest);
+  }
+  return tex;
+}
+
+function paintClouds(body: Body): HTMLCanvasElement | null {
+  if (typeof document === 'undefined') return null;
+  const off = document.createElement('canvas');
+  off.width = TEX_SIZE;
+  off.height = TEX_SIZE;
+  const c = off.getContext('2d');
+  if (!c) return null;
+
+  // Distinct seed stream from the surface art so clouds don't echo
+  // the continent layout.
+  const rand = mulberry32(hashStr(body.id + ':clouds'));
+
+  /** One soft puff. Painted at x, x−TEX_SIZE and x+TEX_SIZE so the
+   *  horizontal wrap seam (the drift scroll) stays continuous. */
+  const puff = (px: number, py: number, pr: number, alpha: number) => {
+    for (const wx of [px - TEX_SIZE, px, px + TEX_SIZE]) {
+      const g = c.createRadialGradient(wx, py, 0, wx, py, pr);
+      g.addColorStop(0, `rgba(255, 255, 255, ${alpha})`);
+      g.addColorStop(0.6, `rgba(255, 255, 255, ${alpha * 0.55})`);
+      g.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      c.fillStyle = g;
+      c.fillRect(wx - pr, py - pr, pr * 2, pr * 2);
+    }
+  };
+
+  // Sparse cloud banks: a few clusters of overlapping puffs, biased
+  // toward horizontal streaks (weather bands), plus lone wisps.
+  const clusters = 4 + Math.floor(rand() * 3);
+  for (let i = 0; i < clusters; i++) {
+    const cx = rand() * TEX_SIZE;
+    const cy = TEX_SIZE * (0.15 + rand() * 0.7);
+    const puffs = 3 + Math.floor(rand() * 4);
+    for (let j = 0; j < puffs; j++) {
+      puff(
+        cx + (rand() - 0.5) * TEX_R * 0.9,       // wide horizontal spread
+        cy + (rand() - 0.5) * TEX_R * 0.28,      // tight vertical spread
+        TEX_R * (0.07 + rand() * 0.1),
+        0.4 + rand() * 0.25,
+      );
+    }
+  }
+  for (let i = 0; i < 3; i++) {
+    puff(rand() * TEX_SIZE, rand() * TEX_SIZE, TEX_R * (0.05 + rand() * 0.05), 0.3);
+  }
+  return off;
+}
+
 /** Test hook / hot-reload safety. */
 export function clearPlanetTextureCache() {
   cache.clear();
+  cloudCache.clear();
 }
 
 // ------------------------------------------------------------

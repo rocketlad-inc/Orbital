@@ -4,7 +4,7 @@ import { canHostCity, buildingLevel } from '../game/settlements';
 // ============================================================
 
 import { Body, Ship, OrbitElements, TrajectoryArc, Settlement, Faction, TorchTransferPlan, BuildOrder, BuildingKind } from '../types';
-import { getPlanetTexture, hashStr, mulberry32 } from './planetTexture';
+import { getPlanetTexture, getCloudTexture, hashStr, mulberry32 } from './planetTexture';
 import { drawCityCluster, drawStationStructure } from './isoStructures';
 import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt } from '../physics/orbitalMechanics';
 import { sampleTorchTrajectory, torchPositionFromSamples } from '../physics/torchTransfer';
@@ -190,26 +190,33 @@ export const DAMAGE_FLASH_DURATION_MS = 500;
 // ============================================================
 
 export interface StarfieldCache {
-  canvas: HTMLCanvasElement;
+  /** Distant layer — dim stars + nebula blobs, slowest parallax. */
+  far: HTMLCanvasElement;
+  /** Close layer — slightly larger/brighter stars, faster parallax. */
+  near: HTMLCanvasElement;
   width: number;
   height: number;
 }
 
 /**
- * Generate a starfield onto an offscreen canvas. Includes:
- *  - Distant dim stars
- *  - Mid-brightness stars
- *  - Rare bright stars with subtle halos
- *  - A few faint nebula blobs for color
+ * Generate a two-layer parallax starfield onto offscreen canvases.
+ * FAR gets ~60% of the stars (plus the faint nebula tint blobs) and
+ * translates at 0.2× camera; NEAR gets ~40%, drawn slightly larger
+ * and brighter, at 0.5× camera. Both are painted exactly once.
  */
 export function generateStarfield(width: number, height: number): StarfieldCache {
-  const off = document.createElement('canvas');
-  off.width = width;
-  off.height = height;
-  const ctx = off.getContext('2d');
-  if (!ctx) return { canvas: off, width, height };
+  const far = document.createElement('canvas');
+  far.width = width;
+  far.height = height;
+  const near = document.createElement('canvas');
+  near.width = width;
+  near.height = height;
+  const fc = far.getContext('2d');
+  const nc = near.getContext('2d');
+  if (!fc || !nc) return { far, near, width, height };
 
-  // Nebula tinting (3 large faint blobs)
+  // Nebula tinting (3 large faint blobs) — far layer only, they read
+  // as the most distant thing in the scene.
   const nebulaHues = [
     'rgba(80, 60, 130, 0.05)',  // purple
     'rgba(60, 90, 150, 0.05)',  // blue
@@ -219,73 +226,180 @@ export function generateStarfield(width: number, height: number): StarfieldCache
     const cx = Math.random() * width;
     const cy = Math.random() * height;
     const r = 180 + Math.random() * 280;
-    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    const g = fc.createRadialGradient(cx, cy, 0, cx, cy, r);
     g.addColorStop(0, nebulaHues[i]);
     g.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+    fc.fillStyle = g;
+    fc.fillRect(cx - r, cy - r, r * 2, r * 2);
   }
 
-  // Stars — density tuned to feel "deep space" without obscuring orbits
+  // Stars — same overall density as the old single layer, split 60/40.
   const starCount = Math.floor((width * height) / 700);
-  for (let i = 0; i < starCount; i++) {
-    const x = Math.random() * width;
-    const y = Math.random() * height;
-    const r = Math.random();
+  const farCount = Math.floor(starCount * 0.6);
 
-    if (r > 0.985) {
-      // Rare bright star with halo
-      const haloR = 4.5;
-      const halo = ctx.createRadialGradient(x, y, 0, x, y, haloR);
-      halo.addColorStop(0, 'rgba(255, 240, 200, 0.45)');
-      halo.addColorStop(1, 'rgba(255, 240, 200, 0)');
-      ctx.fillStyle = halo;
-      ctx.fillRect(x - haloR, y - haloR, haloR * 2, haloR * 2);
+  /** boost > 1 = near layer: bigger dots, higher floor alpha. */
+  const paintStars = (ctx: CanvasRenderingContext2D, count: number, boost: number) => {
+    for (let i = 0; i < count; i++) {
+      const x = Math.random() * width;
+      const y = Math.random() * height;
+      const r = Math.random();
 
-      ctx.fillStyle = 'rgba(255, 248, 220, 0.95)';
-      ctx.beginPath();
-      ctx.arc(x, y, 1.4, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (r > 0.93) {
-      ctx.fillStyle = `rgba(220, 230, 255, ${0.7 + Math.random() * 0.3})`;
-      ctx.beginPath();
-      ctx.arc(x, y, 1, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (r > 0.70) {
-      ctx.fillStyle = `rgba(200, 210, 225, ${0.4 + Math.random() * 0.3})`;
-      ctx.fillRect(x, y, 0.8, 0.8);
-    } else {
-      ctx.fillStyle = `rgba(170, 180, 200, ${0.18 + Math.random() * 0.22})`;
-      ctx.fillRect(x, y, 0.6, 0.6);
+      if (r > 0.985) {
+        // Rare bright star with halo
+        const haloR = 4.5 * boost;
+        const halo = ctx.createRadialGradient(x, y, 0, x, y, haloR);
+        halo.addColorStop(0, 'rgba(255, 240, 200, 0.45)');
+        halo.addColorStop(1, 'rgba(255, 240, 200, 0)');
+        ctx.fillStyle = halo;
+        ctx.fillRect(x - haloR, y - haloR, haloR * 2, haloR * 2);
+
+        ctx.fillStyle = 'rgba(255, 248, 220, 0.95)';
+        ctx.beginPath();
+        ctx.arc(x, y, 1.4 * boost, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (r > 0.93) {
+        ctx.fillStyle = `rgba(220, 230, 255, ${Math.min(1, (0.7 + Math.random() * 0.3) * boost)})`;
+        ctx.beginPath();
+        ctx.arc(x, y, boost, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (r > 0.70) {
+        ctx.fillStyle = `rgba(200, 210, 225, ${Math.min(1, (0.4 + Math.random() * 0.3) * boost)})`;
+        ctx.fillRect(x, y, 0.8 * boost, 0.8 * boost);
+      } else {
+        ctx.fillStyle = `rgba(170, 180, 200, ${Math.min(1, (0.18 + Math.random() * 0.22) * boost)})`;
+        ctx.fillRect(x, y, 0.6 * boost, 0.6 * boost);
+      }
     }
-  }
+  };
 
-  return { canvas: off, width, height };
+  paintStars(fc, farCount, 1);
+  paintStars(nc, starCount - farCount, 1.35);
+
+  return { far, near, width, height };
+}
+
+// ------------------------------------------------------------
+// System nebulae — one big soft radial wash anchored on each far
+// system so Centauri reads warm-amber and Cygnus X reads violet
+// from across the map (Sol gets none). The GRADIENT is painted
+// once into a small cached canvas; each frame only re-projects
+// its world-space rect through worldToCanvas.
+// ------------------------------------------------------------
+
+const NEBULA_TEX_SIZE = 256;
+/** World-space radius of the wash. */
+const NEBULA_WORLD_R = 30000;
+const NEBULA_ALPHA = 0.08;
+
+interface NebulaSpec {
+  /** Template id of the system's anchor body (barycenter). */
+  anchorId: string;
+  color: string;
+}
+
+const NEBULA_SPECS: NebulaSpec[] = [
+  { anchorId: 'binary_barycenter', color: '#ffb36b' }, // Centauri — warm amber
+  { anchorId: 'bh_barycenter', color: '#b287ff' },     // Cygnus X — violet
+];
+
+const nebulaTexCache = new Map<string, HTMLCanvasElement | null>();
+
+function getNebulaTexture(color: string): HTMLCanvasElement | null {
+  const hit = nebulaTexCache.get(color);
+  if (hit !== undefined) return hit;
+  if (typeof document === 'undefined') {
+    nebulaTexCache.set(color, null);
+    return null;
+  }
+  const off = document.createElement('canvas');
+  off.width = NEBULA_TEX_SIZE;
+  off.height = NEBULA_TEX_SIZE;
+  const c = off.getContext('2d');
+  if (!c) {
+    nebulaTexCache.set(color, null);
+    return null;
+  }
+  const half = NEBULA_TEX_SIZE / 2;
+  const g = c.createRadialGradient(half, half, 0, half, half, half);
+  g.addColorStop(0, withOpacity(color, 1));
+  g.addColorStop(0.45, withOpacity(color, 0.45));
+  g.addColorStop(1, withOpacity(color, 0));
+  c.fillStyle = g;
+  c.fillRect(0, 0, NEBULA_TEX_SIZE, NEBULA_TEX_SIZE);
+  nebulaTexCache.set(color, off);
+  return off;
+}
+
+/** Does this body id match a template id, tolerating MP gameId prefixes
+ *  (`<gameId>:saturn` style)? */
+function idMatchesTemplate(id: string, template: string): boolean {
+  return id === template || id.endsWith(':' + template);
+}
+
+function drawSystemNebulae(ctx: RenderContext) {
+  const cw = ctx.canvas.width;
+  const ch = ctx.canvas.height;
+  for (const spec of NEBULA_SPECS) {
+    const anchor = ctx.bodies.find(b => idMatchesTemplate(b.id, spec.anchorId));
+    if (!anchor) continue;
+    const tex = getNebulaTexture(spec.color);
+    if (!tex) continue;
+    const wp = bodyPosition(anchor, ctx.t, ctx.bodies);
+    const cp = worldToCanvas(wp.x, wp.y, ctx);
+    const R = NEBULA_WORLD_R * ctx.camera.scale;
+    // Clip the destination rect to the viewport and map the visible
+    // slice back into texture space (9-arg drawImage) — avoids asking
+    // the canvas to rasterize a multi-hundred-thousand-px dest rect
+    // when zoomed all the way in near a far system.
+    const dx0 = Math.max(0, cp.x - R);
+    const dy0 = Math.max(0, cp.y - R);
+    const dx1 = Math.min(cw, cp.x + R);
+    const dy1 = Math.min(ch, cp.y + R);
+    if (dx1 <= dx0 || dy1 <= dy0) continue; // fully off-screen
+    const scale = NEBULA_TEX_SIZE / (R * 2);
+    const sx = (dx0 - (cp.x - R)) * scale;
+    const sy = (dy0 - (cp.y - R)) * scale;
+    ctx.ctx.save();
+    ctx.ctx.globalAlpha = NEBULA_ALPHA;
+    ctx.ctx.drawImage(
+      tex,
+      sx, sy, (dx1 - dx0) * scale, (dy1 - dy0) * scale,
+      dx0, dy0, dx1 - dx0, dy1 - dy0,
+    );
+    ctx.ctx.restore();
+  }
 }
 
 /**
- * Draw cached starfield with a tiny camera parallax — distant stars shift
- * slowly when panning, giving a hint of depth without expensive recomputation.
+ * Draw the cached starfield in two parallax layers — far stars shift
+ * at 0.2× camera translation, near stars at 0.5×, giving real depth
+ * when panning without recomputation. System nebula washes go first
+ * (they're "behind" everything).
  */
 export function drawStarfield(cache: StarfieldCache | null, ctx: RenderContext) {
   if (!cache) return;
+
+  drawSystemNebulae(ctx);
+
   const cw = ctx.canvas.width;
   const ch = ctx.canvas.height;
 
-  // Parallax offset — small fraction of camera position
-  // Wrap so the field tiles seamlessly
-  const PARALLAX = 0.04;
-  let ox = (-ctx.camera.x * PARALLAX) % cache.width;
-  let oy = (-ctx.camera.y * PARALLAX) % cache.height;
-  if (ox > 0) ox -= cache.width;
-  if (oy > 0) oy -= cache.height;
-
-  // Tile to cover viewport
-  for (let x = ox; x < cw; x += cache.width) {
-    for (let y = oy; y < ch; y += cache.height) {
-      ctx.ctx.drawImage(cache.canvas, x, y);
+  const tile = (layer: HTMLCanvasElement, parallax: number) => {
+    // Parallax offset — fraction of camera position, wrapped so the
+    // field tiles seamlessly.
+    let ox = (-ctx.camera.x * parallax) % cache.width;
+    let oy = (-ctx.camera.y * parallax) % cache.height;
+    if (ox > 0) ox -= cache.width;
+    if (oy > 0) oy -= cache.height;
+    for (let x = ox; x < cw; x += cache.width) {
+      for (let y = oy; y < ch; y += cache.height) {
+        ctx.ctx.drawImage(layer, x, y);
+      }
     }
-  }
+  };
+
+  tile(cache.far, 0.2);
+  tile(cache.near, 0.5);
 }
 
 /**
@@ -464,7 +578,81 @@ function drawSphereShading(
   ctx.ctx.fill();
 }
 
-/** Sun: multi-layer corona, hot core, gentle pulse from simSpeed. */
+// ------------------------------------------------------------
+// Corona shimmer — two cached gradient layers with slight angular
+// lobing, counter-rotated at different slow rates and composited
+// additively so the sun's glow visibly breathes. Painted once per
+// radius bucket (power-of-two canvas size), then every frame is
+// two rotated drawImages.
+// ------------------------------------------------------------
+
+const coronaCache = new Map<number, [HTMLCanvasElement, HTMLCanvasElement] | null>();
+const CORONA_CACHE_CAP = 6;
+
+function paintCoronaLayer(
+  size: number,
+  lobes: number,
+  baseAlpha: number,
+  lobeColor: string,
+): HTMLCanvasElement {
+  const off = document.createElement('canvas');
+  off.width = size;
+  off.height = size;
+  const c = off.getContext('2d');
+  if (!c) return off;
+  const half = size / 2;
+  // Radial base — replaces the old static outer/mid glow (each layer
+  // carries ~half the old alpha; the two sum additively).
+  const base = c.createRadialGradient(half, half, half * 0.28, half, half, half * 0.85);
+  base.addColorStop(0, `rgba(255, 209, 128, ${baseAlpha})`);
+  base.addColorStop(0.45, `rgba(255, 170, 70, ${baseAlpha * 0.3})`);
+  base.addColorStop(1, 'rgba(255, 154, 60, 0)');
+  c.fillStyle = base;
+  c.beginPath();
+  c.arc(half, half, half * 0.85, 0, Math.PI * 2);
+  c.fill();
+  // Angular lobes — soft blobs ringing the core so rotation is
+  // actually visible (a pure radial gradient is rotation-invariant).
+  c.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < lobes; i++) {
+    const a = (i / lobes) * Math.PI * 2;
+    const lx = half + Math.cos(a) * half * 0.42;
+    const ly = half + Math.sin(a) * half * 0.42;
+    const lr = half * 0.3;
+    const g = c.createRadialGradient(lx, ly, 0, lx, ly, lr);
+    g.addColorStop(0, lobeColor);
+    g.addColorStop(1, 'rgba(255, 180, 90, 0)');
+    c.fillStyle = g;
+    c.fillRect(lx - lr, ly - lr, lr * 2, lr * 2);
+  }
+  return off;
+}
+
+function getCoronaLayers(coreR: number): [HTMLCanvasElement, HTMLCanvasElement] | null {
+  // Bucket to power-of-two canvas sizes (~4× core radius) so zoom
+  // changes only repaint on bucket crossings, not every frame.
+  let size = 64;
+  while (size < coreR * 4 && size < 2048) size *= 2;
+  const hit = coronaCache.get(size);
+  if (hit !== undefined) {
+    coronaCache.delete(size);
+    coronaCache.set(size, hit);
+    return hit;
+  }
+  if (typeof document === 'undefined') return null;
+  const layers: [HTMLCanvasElement, HTMLCanvasElement] = [
+    paintCoronaLayer(size, 6, 0.13, 'rgba(255, 200, 110, 0.10)'),
+    paintCoronaLayer(size, 5, 0.11, 'rgba(255, 165, 75, 0.09)'),
+  ];
+  coronaCache.set(size, layers);
+  if (coronaCache.size > CORONA_CACHE_CAP) {
+    const oldest = coronaCache.keys().next().value;
+    if (oldest !== undefined) coronaCache.delete(oldest);
+  }
+  return layers;
+}
+
+/** Sun: shimmering two-layer corona, hot core. */
 function drawStarBody(
   body: Body,
   canvasPos: { x: number; y: number },
@@ -482,34 +670,24 @@ function drawStarBody(
   // sitting embedded in the glow. Zoom-invariant.
   const coreR = radius * 0.55;
 
-  // Outer halo — faint, ends before the orbits (1.7× coreR ≈ 0.94× radius).
-  const outerR = coreR * 1.7;
-  const outer = ctx.ctx.createRadialGradient(
-    canvasPos.x, canvasPos.y, coreR * 0.6,
-    canvasPos.x, canvasPos.y, outerR,
-  );
-  outer.addColorStop(0, 'rgba(255, 209, 128, 0.22)');
-  outer.addColorStop(0.45, 'rgba(255, 154, 60, 0.06)');
-  outer.addColorStop(1, 'rgba(255, 154, 60, 0)');
-  ctx.ctx.fillStyle = outer;
-  ctx.ctx.beginPath();
-  ctx.ctx.arc(canvasPos.x, canvasPos.y, outerR, 0, Math.PI * 2);
-  ctx.ctx.fill();
-
-  // Mid corona — the bright layer, kept tight so it fades out before the
-  // orbits.
-  const midR = coreR * 1.3;
-  const mid = ctx.ctx.createRadialGradient(
-    canvasPos.x, canvasPos.y, coreR * 0.9,
-    canvasPos.x, canvasPos.y, midR,
-  );
-  mid.addColorStop(0, 'rgba(255, 220, 150, 0.5)');
-  mid.addColorStop(0.7, 'rgba(255, 180, 80, 0.1)');
-  mid.addColorStop(1, 'rgba(255, 154, 60, 0)');
-  ctx.ctx.fillStyle = mid;
-  ctx.ctx.beginPath();
-  ctx.ctx.arc(canvasPos.x, canvasPos.y, midR, 0, Math.PI * 2);
-  ctx.ctx.fill();
+  // Shimmering corona — two cached gradient layers counter-rotating
+  // at slightly different slow rates, composited additively. The
+  // layers' painted extent (0.85 × half-size ≈ 1.7 × coreR) matches
+  // the old static glow's outer edge, so stations orbiting at
+  // body.radius + 3 keep their clear black-space gap.
+  const layers = getCoronaLayers(coreR);
+  if (layers) {
+    const s = coreR * 4;
+    const c = ctx.ctx;
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.translate(canvasPos.x, canvasPos.y);
+    c.rotate(ctx.t * 0.001);
+    c.drawImage(layers[0], -s / 2, -s / 2, s, s);
+    c.rotate(-ctx.t * 0.001 + ctx.t * -0.0016);
+    c.drawImage(layers[1], -s / 2, -s / 2, s, s);
+    c.restore();
+  }
 
   // Hot core
   const core = ctx.ctx.createRadialGradient(canvasPos.x, canvasPos.y, 0, canvasPos.x, canvasPos.y, coreR);
@@ -584,6 +762,122 @@ function drawBlackHoleBody(
   ctx.ctx.fill();
 }
 
+// ------------------------------------------------------------
+// Atmosphere rim-light — thin additive arc hugging the sun-facing
+// limb of textured bodies. Sign note: lightDirToBody returns the
+// unit vector pointing AWAY from the sun (drawDayNightShading puts
+// its dark stops at +ld), so the LIT limb sits at −ld.
+// ------------------------------------------------------------
+
+function rimLightFor(body: Body): { color: string; alpha: number } {
+  if (idMatchesTemplate(body.id, 'mars')) return { color: '#ffb08a', alpha: 0.8 };
+  if (body.type === 'terrestrial') return { color: '#9fd4ff', alpha: 0.8 };
+  if (body.type === 'gas_giant') return { color: '#ffe9c4', alpha: 0.8 };
+  if (body.type === 'ice_giant') return { color: '#bfe6ff', alpha: 0.8 };
+  // dwarf / moon / asteroid — airless grey glint, dimmer
+  return { color: '#cfd8e0', alpha: 0.45 };
+}
+
+function drawAtmosphereRimLight(
+  body: Body,
+  canvasPos: { x: number; y: number },
+  radius: number,
+  ctx: RenderContext,
+) {
+  const ld = lightDirToBody(canvasPos, ctx);
+  const litAngle = Math.atan2(-ld.y, -ld.x); // opposite ld = sun-facing limb
+  const a0 = litAngle - Math.PI / 4;         // 90° sweep centered on lit limb
+  const a1 = litAngle + Math.PI / 4;
+  const { color, alpha } = rimLightFor(body);
+  // Linear gradient along the chord between the arc endpoints —
+  // bright at the sweep center, fading to nothing at both ends.
+  const g = ctx.ctx.createLinearGradient(
+    canvasPos.x + Math.cos(a0) * radius, canvasPos.y + Math.sin(a0) * radius,
+    canvasPos.x + Math.cos(a1) * radius, canvasPos.y + Math.sin(a1) * radius,
+  );
+  g.addColorStop(0, withOpacity(color, 0));
+  g.addColorStop(0.5, withOpacity(color, alpha));
+  g.addColorStop(1, withOpacity(color, 0));
+  ctx.ctx.save();
+  ctx.ctx.globalCompositeOperation = 'lighter';
+  ctx.ctx.strokeStyle = g;
+  ctx.ctx.lineWidth = 2;
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, a0, a1);
+  ctx.ctx.stroke();
+  ctx.ctx.restore();
+}
+
+// ------------------------------------------------------------
+// Occluded planetary rings (Saturn / Uranus templates). The ring
+// ellipse is split at the planet's horizon: the top half (ellipse
+// param π..2π, screen-up) draws BEHIND the disk, then the planet,
+// then the bottom half in FRONT. A soft dark segment marks where
+// the ring crosses the night side.
+// ------------------------------------------------------------
+
+const RING_TILT = 0.35;      // ~20°
+const RING_RX = 1.9;         // × body radius
+const RING_RY = 0.55;
+
+function bodyHasRings(body: Body): boolean {
+  return idMatchesTemplate(body.id, 'saturn') || idMatchesTemplate(body.id, 'uranus');
+}
+
+function drawRingArcs(
+  body: Body,
+  canvasPos: { x: number; y: number },
+  radius: number,
+  ctx: RenderContext,
+  half: 'back' | 'front',
+) {
+  const c = ctx.ctx;
+  const color = body.color || COLORS.gasGiant;
+  const start = half === 'back' ? Math.PI : 0;
+  const end = half === 'back' ? Math.PI * 2 : Math.PI;
+
+  c.save();
+  // Main band
+  c.strokeStyle = withOpacity(lighten(color, 1.15), half === 'back' ? 0.45 : 0.6);
+  c.lineWidth = Math.max(1.5, radius * 0.1);
+  c.beginPath();
+  c.ellipse(canvasPos.x, canvasPos.y, radius * RING_RX, radius * RING_RY, RING_TILT, start, end);
+  c.stroke();
+  // Inner detail line
+  c.strokeStyle = withOpacity(color, 0.32);
+  c.lineWidth = Math.max(0.5, radius * 0.04);
+  c.beginPath();
+  c.ellipse(canvasPos.x, canvasPos.y, radius * 1.55, radius * 0.45, RING_TILT, start, end);
+  c.stroke();
+
+  if (half === 'front') {
+    // Night-side shadow — darken the ring segment nearest the night
+    // limb. Find the ellipse parameter that points along the away-
+    // from-sun direction, then stroke a soft dark arc around it. The
+    // planet disk is clipped OUT so the shadow never dirties the
+    // planet face (the front ring crossing the disk sits over the
+    // near-black night side anyway).
+    const ld = lightDirToBody(canvasPos, ctx);
+    const thetaN = Math.atan2(ld.y, ld.x) - RING_TILT; // night dir, ring frame
+    const phi = Math.atan2(RING_RX * Math.sin(thetaN), RING_RY * Math.cos(thetaN));
+    c.beginPath();
+    c.rect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    c.arc(canvasPos.x, canvasPos.y, radius * 1.02, 0, Math.PI * 2);
+    c.clip('evenodd');
+    c.strokeStyle = 'rgba(2, 6, 12, 0.28)';
+    c.lineWidth = Math.max(3, radius * 0.16);
+    c.beginPath();
+    c.ellipse(canvasPos.x, canvasPos.y, radius * RING_RX, radius * RING_RY, RING_TILT, phi - 0.8, phi + 0.8);
+    c.stroke();
+    c.strokeStyle = 'rgba(2, 6, 12, 0.4)';
+    c.lineWidth = Math.max(1.5, radius * 0.1);
+    c.beginPath();
+    c.ellipse(canvasPos.x, canvasPos.y, radius * RING_RX, radius * RING_RY, RING_TILT, phi - 0.5, phi + 0.5);
+    c.stroke();
+  }
+  c.restore();
+}
+
 /** Terrestrial / moon / dwarf / asteroid: atmosphere glow + sphere shading. */
 function drawPlanetBody(
   body: Body,
@@ -615,9 +909,26 @@ function drawPlanetBody(
   if (radius > 8) {
     const tex = getPlanetTexture(body);
     if (tex) {
+      const ringed = bodyHasRings(body); // uranus routes through here (ice giant)
+      if (ringed) drawRingArcs(body, canvasPos, radius, ctx, 'back');
       drawTexturedDisk(ctx.ctx, tex, canvasPos.x, canvasPos.y, radius, 0);
+      // Drifting cloud deck on terrestrials — separate cached layer,
+      // scrolled slowly (0.3× the gas-giant band rate), drawn BEFORE
+      // the terminator so the night side darkens clouds too.
+      if (body.type === 'terrestrial') {
+        const clouds = getCloudTexture(body);
+        if (clouds) {
+          const drift = ctx.t * radius * 0.0006;
+          ctx.ctx.save();
+          ctx.ctx.globalAlpha = 0.45;
+          drawTexturedDisk(ctx.ctx, clouds, canvasPos.x, canvasPos.y, radius, drift);
+          ctx.ctx.restore();
+        }
+      }
       drawDayNightShading(canvasPos, radius, ctx);
       drawNightLights(body, canvasPos, radius, ctx);
+      drawAtmosphereRimLight(body, canvasPos, radius, ctx);
+      if (ringed) drawRingArcs(body, canvasPos, radius, ctx, 'front');
       return;
     }
   }
@@ -841,6 +1152,11 @@ function drawGasGiantBody(
   ctx.ctx.arc(canvasPos.x, canvasPos.y, hazeR, 0, Math.PI * 2);
   ctx.ctx.fill();
 
+  // Occluded-ring worlds (Saturn template): the BACK half of the ring
+  // goes down before the disk so the planet occludes it at the horizon.
+  const ringed = bodyHasRings(body) && radius > 8;
+  if (ringed) drawRingArcs(body, canvasPos, radius, ctx, 'back');
+
   // Base disk
   ctx.ctx.fillStyle = color;
   ctx.ctx.beginPath();
@@ -857,6 +1173,7 @@ function drawGasGiantBody(
       const drift = radius > 20 ? ctx.t * radius * 0.002 : 0;
       drawTexturedDisk(ctx.ctx, tex, canvasPos.x, canvasPos.y, radius, drift);
       drawDayNightShading(canvasPos, radius, ctx);
+      drawAtmosphereRimLight(body, canvasPos, radius, ctx);
       textured = true;
     }
   }
@@ -882,19 +1199,25 @@ function drawGasGiantBody(
     drawSphereShading(canvasPos, radius, ctx);
   }
 
-  // Ring (existing ellipse, refined)
-  ctx.ctx.strokeStyle = withOpacity(lighten(color, 1.1), 0.55);
-  ctx.ctx.lineWidth = 1.5;
-  ctx.ctx.beginPath();
-  ctx.ctx.ellipse(canvasPos.x, canvasPos.y, radius * 1.95, radius * 0.42, 0, 0, Math.PI * 2);
-  ctx.ctx.stroke();
+  if (ringed) {
+    // FRONT half of the occluded ring goes over the disk.
+    drawRingArcs(body, canvasPos, radius, ctx, 'front');
+  } else {
+    // Legacy flat ring ellipse for non-ring giants / small disks —
+    // unchanged look below the textured threshold.
+    ctx.ctx.strokeStyle = withOpacity(lighten(color, 1.1), 0.55);
+    ctx.ctx.lineWidth = 1.5;
+    ctx.ctx.beginPath();
+    ctx.ctx.ellipse(canvasPos.x, canvasPos.y, radius * 1.95, radius * 0.42, 0, 0, Math.PI * 2);
+    ctx.ctx.stroke();
 
-  // Inner ring detail line
-  ctx.ctx.strokeStyle = withOpacity(color, 0.3);
-  ctx.ctx.lineWidth = 0.5;
-  ctx.ctx.beginPath();
-  ctx.ctx.ellipse(canvasPos.x, canvasPos.y, radius * 1.6, radius * 0.34, 0, 0, Math.PI * 2);
-  ctx.ctx.stroke();
+    // Inner ring detail line
+    ctx.ctx.strokeStyle = withOpacity(color, 0.3);
+    ctx.ctx.lineWidth = 0.5;
+    ctx.ctx.beginPath();
+    ctx.ctx.ellipse(canvasPos.x, canvasPos.y, radius * 1.6, radius * 0.34, 0, 0, Math.PI * 2);
+    ctx.ctx.stroke();
+  }
 }
 
 /**
@@ -2896,6 +3219,7 @@ interface BeltDustParticle {
   shade: number;   // 0-1 brightness modulation
   size: number;    // canvas-px floor for the dust dot
   driftMul: number; // angular drift speed multiplier
+  seed: number;    // twinkle phase offset (radians)
 }
 
 const BELT_DUST_COUNT = 220;
@@ -2920,6 +3244,7 @@ function generateBeltDust(): BeltDustParticle[] {
       shade: 0.35 + rand() * 0.5,
       size: 0.8 + rand() * 0.9,
       driftMul: 0.85 + rand() * 0.3,
+      seed: rand() * Math.PI * 2,
     });
   }
   return out;
@@ -2943,6 +3268,9 @@ export function drawAsteroidBeltDust(ctx: RenderContext) {
   // wide overview.
   if (ctx.camera.scale < 0.0015) return;
   const driftAngle = (ctx.t / 443) * Math.PI * 2;
+  // Twinkle time base — pure-cosmetic flicker uses wall clock (same
+  // convention as the damage-flash machinery).
+  const nowMs = ctx.nowMs ?? performance.now();
   for (const p of BELT_DUST) {
     const a = p.angle + driftAngle * p.driftMul;
     const wx = Math.cos(a) * p.r;
@@ -2951,7 +3279,8 @@ export function drawAsteroidBeltDust(ctx: RenderContext) {
     // Clip cheaply: skip if off-canvas.
     if (cp.x < -4 || cp.y < -4 || cp.x > ctx.canvas.width + 4 || cp.y > ctx.canvas.height + 4) continue;
     const size = Math.max(0.6, p.size * Math.min(1.2, Math.sqrt(ctx.camera.scale) * 1.4));
-    ctx.ctx.fillStyle = `rgba(168, 152, 136, ${0.18 * p.shade})`;
+    const twinkle = 0.75 + 0.25 * Math.sin(nowMs / 900 + p.seed);
+    ctx.ctx.fillStyle = `rgba(168, 152, 136, ${0.18 * p.shade * twinkle})`;
     ctx.ctx.beginPath();
     ctx.ctx.arc(cp.x, cp.y, size, 0, Math.PI * 2);
     ctx.ctx.fill();
