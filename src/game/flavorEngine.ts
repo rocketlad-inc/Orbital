@@ -134,9 +134,12 @@ function distanceBucket(body: FlavorBody | undefined): string {
   // inner planets, belt, gas giants, Kuiper. Tuned against the body
   // catalog's orbit radii; exact values don't matter, only the
   // ordering of the bands.
-  if (r < 400)  return 'a short hop';
-  if (r < 900)  return 'across the inner system';
-  if (r < 1800) return 'the long haul to the Belt';
+  // SCALED with SYSTEM_SCALE in worker/factions.js: the system was
+  // spread 2x, so unscaled bands would have described every haul one
+  // category too short — the Belt reading as "across the inner system".
+  if (r < 800)  return 'a short hop';
+  if (r < 1800) return 'across the inner system';
+  if (r < 3600) return 'the long haul to the Belt';
   return 'out past the gas giants';
 }
 

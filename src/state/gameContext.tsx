@@ -35,6 +35,12 @@ import { runFactionAI, shouldRunAI } from '../game/factionAI';
 import type { AIActivityEntry } from '../types';
 import { useTurnBasedSettings } from './turnBasedSettings';
 
+/** Opening / reset zoom. Halved when the Sol system was spread 2x
+ *  (SYSTEM_SCALE in worker/factions.js) so the default view still frames
+ *  the same FRACTION of the system, instead of opening zoomed into the
+ *  inner planets. */
+const DEFAULT_CAMERA_SCALE = 0.5;
+
 // === AI intent application helpers ===========================
 // These translate the AI brain's pure intents into concrete game-state
 // mutations during a tick. Lives at module scope so the per-tick reducer
@@ -663,7 +669,7 @@ export function GameContextProvider({
     }));
   }, [initialFocusBodyId, gameState.bodies]);
   const [camera, setCameraInternal] = useState<CameraState>({
-    x: 0, y: 0, scale: 1, zoomLevel: 1,
+    x: 0, y: 0, scale: DEFAULT_CAMERA_SCALE, zoomLevel: 1,
   });
   const [uiState, setUIStateInternal] = useState<MapUIState>({
     selectedShipId: undefined,
@@ -1682,7 +1688,7 @@ export function GameContextProvider({
       }
     } else {
       setCameraInternal(prev => ({
-        ...prev, focusedBodyId: undefined, x: 0, y: 0, scale: 1, zoomLevel: 1,
+        ...prev, focusedBodyId: undefined, x: 0, y: 0, scale: DEFAULT_CAMERA_SCALE, zoomLevel: 1,
       }));
     }
   }, [gameState.bodies]);

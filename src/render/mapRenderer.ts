@@ -3844,8 +3844,11 @@ interface BeltDustParticle {
 }
 
 const BELT_DUST_COUNT = 220;
-const BELT_CENTER_R = 310;
-const BELT_HALF_WIDTH = 55;
+// Follows SYSTEM_SCALE in worker/factions.js — the belt bodies moved out
+// with the rest of the system, so the cosmetic dust annulus has to move
+// with them or it would ring empty space where the belt used to be.
+const BELT_CENTER_R = 620;
+const BELT_HALF_WIDTH = 110;
 
 function generateBeltDust(): BeltDustParticle[] {
   // Deterministic LCG so the belt pattern is consistent run-to-run.

@@ -81,10 +81,12 @@ const TOUCH_HIT_PADDING = isCoarsePointer() ? 16 : 0;
 const CLUSTER_ZOOM_THRESHOLD = 2.5;
 
 /** Camera scale at/above which a queued chronicle effect is considered
- *  "watchable" and allowed to play. Below this, ships are dots and an
- *  explosion is a meaningless speck — the effect keeps waiting instead
- *  of being wasted. Matches roughly where ship icons start to read. */
-const PENDING_FX_MIN_SCALE = 0.8;
+ *  "watchable" and allowed to play. Below this an explosion is a
+ *  meaningless speck, so the effect keeps waiting instead of being
+ *  wasted. Sits just under DEFAULT_CAMERA_SCALE (0.5) so effects DO
+ *  play at the default framing — gating above it would have made the
+ *  whole system look dead until the player manually zoomed in. */
+const PENDING_FX_MIN_SCALE = 0.45;
 
 interface MapCanvasProps {
   width?: number;
