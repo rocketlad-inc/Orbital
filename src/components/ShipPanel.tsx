@@ -943,27 +943,37 @@ export const ShipPanel: React.FC = () => {
                 drops below the threshold. Fires once per damage episode.
               </div>
 
-              <div className="orders-config-row">
-                <span className="orders-config-label">AUTO-DETONATE</span>
-                <select
-                  className="orders-config-select"
-                  value={ship.detonateHpPct ?? ''}
-                  onChange={e => applyOrders({
-                    detonateHpPct: e.target.value
-                      ? (Number(e.target.value) as 25 | 50)
-                      : null,
-                  })}
-                >
-                  <option value="">OFF</option>
-                  <option value="25">25% HP</option>
-                  <option value="50">50% HP</option>
-                </select>
-              </div>
-              <div className="orders-config-hint orders-config-hint--danger">
-                Auto-detonate below {ship.detonateHpPct ?? 'X'}% HP: deals damage
-                to every ship in this orbit, friend or foe; this ship is
-                destroyed. No effect on hulls without a detonator part.
-              </div>
+              {/* Detonator-only. The row used to render on every hull with
+                  a "no effect without a detonator part" disclaimer — a live
+                  control that does nothing, on most of the fleet, explaining
+                  its own uselessness. Gate it the same way the manual
+                  DetonatorSection above already does, so the setting only
+                  appears where it can actually fire. */}
+              {countPart(ship.parts, 'detonator') > 0 && (
+                <>
+                  <div className="orders-config-row">
+                    <span className="orders-config-label">AUTO-DETONATE</span>
+                    <select
+                      className="orders-config-select"
+                      value={ship.detonateHpPct ?? ''}
+                      onChange={e => applyOrders({
+                        detonateHpPct: e.target.value
+                          ? (Number(e.target.value) as 25 | 50)
+                          : null,
+                      })}
+                    >
+                      <option value="">OFF</option>
+                      <option value="25">25% HP</option>
+                      <option value="50">50% HP</option>
+                    </select>
+                  </div>
+                  <div className="orders-config-hint orders-config-hint--danger">
+                    Auto-detonate below {ship.detonateHpPct ?? 'X'}% HP: deals
+                    damage to every ship in this orbit, friend or foe; this
+                    ship is destroyed.
+                  </div>
+                </>
+              )}
 
               {ordersError && (
                 <button

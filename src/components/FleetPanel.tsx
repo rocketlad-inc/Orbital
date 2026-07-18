@@ -6,7 +6,7 @@
 import React, { useMemo, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
-import { loadoutSummary } from '../game/shipParts';
+import { loadoutSummary, countPart } from '../game/shipParts';
 import { deriveSecondary } from '../game/colorUtils';
 import { AUTO_COMBAT_INTERVAL } from '../game/combat';
 import { Body, Ship } from '../types';
@@ -263,6 +263,17 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     [selectedIds, bulkEligibleIds]
   );
 
+  // How many of the selection can actually detonate. The bulk control
+  // is hidden at zero (setting it would be a no-op on every ship), and
+  // when it's a subset the hint says so instead of the old blanket
+  // "no effect on hulls without a detonator part" disclaimer.
+  const detonatorSelectedCount = useMemo(() => {
+    const sel = new Set(visibleSelected);
+    return gameState.ships.filter(
+      s => sel.has(s.id) && countPart(s.parts, 'detonator') > 0,
+    ).length;
+  }, [visibleSelected, gameState.ships]);
+
   // Bodies the player can route to. Sol is included — the Dyson
   // sphere ferry mechanic already routes freighters there, and the
   // fleet picker previously excluded it for no good reason.
@@ -334,7 +345,11 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     setOrdersNotice(null);
     if (!mpActions) return;
     if (visibleSelected.length === 0) { setOrdersNotice('No eligible ships selected'); return; }
-    if (!bulkStance && !bulkRetreat && !bulkDetonate) {
+    // The detonate dropdown hides when the selection has no detonator
+    // hulls, but its state survives the selection change — drop it here
+    // so a stale value can't ride along on a later SET ORDERS.
+    const detonate = detonatorSelectedCount > 0 ? bulkDetonate : '';
+    if (!bulkStance && !bulkRetreat && !detonate) {
       setOrdersNotice('Pick at least one order to apply');
       return;
     }
@@ -344,8 +359,8 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
       ...(bulkRetreat
         ? { retreatHpPct: bulkRetreat === 'off' ? null : (Number(bulkRetreat) as 25 | 50 | 75) }
         : {}),
-      ...(bulkDetonate
-        ? { detonateHpPct: bulkDetonate === 'off' ? null : (Number(bulkDetonate) as 25 | 50) }
+      ...(detonate
+        ? { detonateHpPct: detonate === 'off' ? null : (Number(detonate) as 25 | 50) }
         : {}),
     }).then(res => {
       if (res.ok) {
@@ -667,31 +682,38 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                 <option value="50">Retreat at 50% HP</option>
                 <option value="75">Retreat at 75% HP</option>
               </select>
-              <select
-                className="fleet-bulk-bar__select"
-                value={bulkDetonate}
-                onChange={(e) => setBulkDetonate(e.target.value)}
-                title="Auto-detonate below X% HP: deals damage to every ship in this orbit, friend or foe; this ship is destroyed. No effect on hulls without a detonator part."
-              >
-                <option value="">Detonate: keep</option>
-                <option value="off">Detonate: off</option>
-                <option value="25">Detonate below 25% HP</option>
-                <option value="50">Detonate below 50% HP</option>
-              </select>
+              {/* Only when something in the selection can actually blow
+                  up — otherwise this is a live control that no-ops on
+                  every ship it would touch. */}
+              {detonatorSelectedCount > 0 && (
+                <select
+                  className="fleet-bulk-bar__select"
+                  value={bulkDetonate}
+                  onChange={(e) => setBulkDetonate(e.target.value)}
+                  title="Auto-detonate below X% HP: deals damage to every ship in this orbit, friend or foe; this ship is destroyed."
+                >
+                  <option value="">Detonate: keep</option>
+                  <option value="off">Detonate: off</option>
+                  <option value="25">Detonate below 25% HP</option>
+                  <option value="50">Detonate below 50% HP</option>
+                </select>
+              )}
               <button
                 className="fleet-bulk-bar__btn fleet-bulk-bar__btn--primary"
                 onClick={issueBulkOrders}
-                disabled={!bulkStance && !bulkRetreat && !bulkDetonate}
+                disabled={!bulkStance && !bulkRetreat
+                  && !(bulkDetonate && detonatorSelectedCount > 0)}
               >
                 SET ORDERS
               </button>
             </div>
           )}
-          {mpActions && bulkDetonate && bulkDetonate !== 'off' && (
+          {mpActions && bulkDetonate && bulkDetonate !== 'off' && detonatorSelectedCount > 0 && (
             <div className="fleet-bulk-bar__error" style={{ color: '#ff9e7a' }}>
               Auto-detonate below {bulkDetonate}% HP: deals damage to every ship
-              in this orbit, friend or foe; this ship is destroyed. No effect on
-              hulls without a detonator part.
+              in this orbit, friend or foe; the detonating ship is destroyed.
+              {detonatorSelectedCount < visibleSelected.length
+                && ` Applies to ${detonatorSelectedCount} of ${visibleSelected.length} selected — the rest carry no detonator.`}
             </div>
           )}
           {ordersNotice && <div className="fleet-bulk-bar__error">{ordersNotice}</div>}
