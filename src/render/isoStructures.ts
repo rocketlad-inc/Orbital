@@ -43,6 +43,14 @@ const PANEL_EDGE = '#1a3a5c';
 const FRAME = '#8fa3b5';
 const HULL = '#6b7f8e';
 
+// Weld-spark tables (module-level so the per-frame draw allocates
+// nothing). u/v are fractional positions inside the scaffold hull,
+// freq (Hz) + phase give each spark an independent flash cadence.
+const SPARK_U = [0.32, 0.62, 0.47];
+const SPARK_V = [-0.15, 1.1, 0.5];
+const SPARK_FREQ = [3.1, 2.4, 3.7];
+const SPARK_PHASE = [0, 2.1, 4.4];
+
 /**
  * The core primitive: an isometric prism standing on ground point
  * (gx, gy) with half-width w and height h. 2:1 iso proportions.
@@ -236,12 +244,18 @@ export function drawStationStructure(
   c.moveTo(8, 0); c.lineTo(24, -3); c.lineTo(24, 3); c.lineTo(8, 6);
   c.closePath(); c.fill(); c.stroke();
 
-  // Hub — small prism with a faction-tinted beacon.
+  // Hub — small prism with a faction-tinted beacon. The beacon pulses
+  // alpha 0.4→1.0 at 0.5Hz (§E1) — pure cosmetic, so wall-clock is the
+  // right time base (matches the damage-flash pattern).
+  const nowM = typeof performance !== 'undefined' ? performance.now() : 0;
   drawIsoPrism(c, 0, 6, 6, 9);
   c.fillStyle = opts.factionColor;
+  const prevAlpha = c.globalAlpha;
+  c.globalAlpha = prevAlpha * (0.7 + 0.3 * Math.sin(Math.PI * nowM / 1000));
   c.beginPath();
   c.arc(0, -8, 1.6, 0, Math.PI * 2);
   c.fill();
+  c.globalAlpha = prevAlpha;
 
   // Weapons — barrels angled off the hub's upper-left; count/length
   // scale with level.
@@ -284,11 +298,21 @@ export function drawStationStructure(
       c.lineTo(x0 + 3 + hw, hy + 6);
       c.closePath();
       c.fill();
-      // Weld sparks — two glow dots (static, cheap)
+      // Weld sparks (§E2) — 2–3 flickering 1px additive glints at
+      // seeded spots on the hull. Each spark gates on its own sine so
+      // it flashes on/off a few times per second, independently.
+      c.save();
+      c.globalCompositeOperation = 'lighter';
       c.fillStyle = GLOW;
-      c.beginPath();
-      c.arc(x0 + 3 + hw * 0.4, hy - 1, 1, 0, Math.PI * 2);
-      c.fill();
+      for (let i = 0; i < 3; i++) {
+        const gate = Math.sin((nowM / 1000) * SPARK_FREQ[i] * Math.PI * 2 + SPARK_PHASE[i]);
+        if (gate <= 0.45) continue; // off most of the time — a flash, not a lamp
+        c.globalAlpha = Math.min(1, (gate - 0.45) / 0.35);
+        c.beginPath();
+        c.arc(x0 + 3 + hw * SPARK_U[i], hy + 6 * SPARK_V[i], 1, 0, Math.PI * 2);
+        c.fill();
+      }
+      c.restore();
     }
   }
 }
