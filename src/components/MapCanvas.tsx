@@ -19,6 +19,8 @@ import {
   drawAllTransfersLayer,
   drawEnemyTrajectoriesLayer,
   drawOwnershipLayer,
+  drawSystemRegions,
+  systemRegionOpacity,
   drawFogOfWarOverlay,
   drawDestructionFlashes,
   generateStarfield,
@@ -31,6 +33,7 @@ import {
   TRAJECTORY_COLORS,
   trajectoryRole,
 } from '../render/mapRenderer';
+import { computeSystemRegions } from '../render/systemRegions';
 import {
   spawnTracer,
   drawTracers,
@@ -63,14 +66,19 @@ const TOUCH_HIT_PADDING = isCoarsePointer() ? 16 : 0;
  * "N ships" cluster badge rendered next to the body. Reduces the visual
  * noise when zoomed out far enough that ship sprites + labels pile on top
  * of each other (playtester report: solar-system view = unreadable smear
- * of overlapping triangles). 0.6 chosen empirically — above 0.6 individual
- * ships are still legible; below, they overlap.
+ * of overlapping triangles).
+ *
+ * Raised 0.6 -> 2.5 so individual hulls only appear once you're actually
+ * inside a planet's moon system — the zoom where a fleet is a thing you
+ * manoeuvre rather than a dot you count. Below that the map is a
+ * strategic view and the cluster badge carries the same information in
+ * one glyph.
  *
  * The selected ship and any in-transit ship always render in full so the
  * player can still track them across the zoomed-out view; only the
  * stationary at-body clusters collapse.
  */
-const CLUSTER_ZOOM_THRESHOLD = 0.6;
+const CLUSTER_ZOOM_THRESHOLD = 2.5;
 
 /** Camera scale at/above which a queued chronicle effect is considered
  *  "watchable" and allowed to play. Below this an explosion is a
@@ -465,6 +473,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       if (nowMs - startMs >= 700) growthFlashStartRef.current.delete(id);
     }
 
+    // Political regions for the far-zoom wash. Structure-derived, so it
+    // costs a pass over the body list; skipped entirely once we're
+    // zoomed past the overlay's fade-out.
+    const regionFade = systemRegionOpacity(camera.scale);
+    const systemRegions = regionFade > 0
+      ? computeSystemRegions(gameState.bodies, gameState.factions)
+      : [];
+
     const renderContext: RenderContext = {
       ctx,
       canvas: canvasRef.current,
@@ -512,6 +528,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       starfieldRef.current = generateStarfield(desiredW, desiredH);
     }
     drawStarfield(starfieldRef.current, renderContext);
+
+    // Political wash for the zoomed-out map — one shaded region per
+    // planet system / belt, coloured by owner. Painted straight after
+    // the starfield so it reads as background, under orbits + bodies.
+    // Self-gating: no-ops above SYSTEM_REGION_HIDE_SCALE.
+    if (layerOn('ownership')) {
+      drawSystemRegions(systemRegions, renderContext);
+    }
 
     // Belt dust — purely cosmetic specks between Mars and Jupiter so
     // the belt doesn't read as five lonely rocks at the same radius.
@@ -850,9 +874,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // Colour: cyan for player-only, red for enemy-only, amber for mixed.
     // Format: just the total count + a tiny ship glyph. Players see the
     // density at a glance and click-to-zoom for detail.
-    if (clusterMode && bodyClusters.size > 0) {
+    // ...but not once the region wash is fully in. At full-system zoom
+    // the badges become the clutter (a scatter of "•2" pips over the
+    // inner planets); the political shading is the read at that range.
+    // They fade back in as the wash fades out.
+    if (clusterMode && bodyClusters.size > 0 && regionFade < 1) {
       const c2d = ctx;
       c2d.save();
+      c2d.globalAlpha = c2d.globalAlpha * (1 - regionFade);
       c2d.font = "700 11px var(--font-mono, ui-monospace, Menlo, Consolas, monospace)";
       c2d.textAlign = 'left';
       c2d.textBaseline = 'middle';
