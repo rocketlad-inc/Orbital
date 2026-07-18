@@ -6,6 +6,7 @@ import { canHostCity, buildingLevel } from '../game/settlements';
 import { Body, Ship, OrbitElements, TrajectoryArc, Settlement, Faction, TorchTransferPlan, BuildOrder, BuildingKind } from '../types';
 import { getPlanetTexture, getCloudTexture, hashStr, mulberry32 } from './planetTexture';
 import { drawCityCluster, drawStationStructure } from './isoStructures';
+import type { SystemRegion } from './systemRegions';
 import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt } from '../physics/orbitalMechanics';
 import { sampleTorchTrajectory, torchPositionFromSamples } from '../physics/torchTransfer';
 import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
@@ -3568,6 +3569,12 @@ export function drawOwnershipLayer(
 ) {
   if (!ctx.factions || ctx.factions.length === 0) return;
 
+  // The system-region wash owns territory at far zoom. Once it's fully
+  // in, per-body halos would just double-shade the same ground with a
+  // second, noisier colour — so fade them out as the wash fades in.
+  const regionFade = systemRegionOpacity(ctx.camera.scale);
+  if (regionFade >= 1) return;
+
   // Hysteresis: engage halo < 0.72, back to ring > 0.88; hold the
   // previous mode in between so the boundary never flickers.
   const scale = ctx.camera.scale;
@@ -3594,7 +3601,8 @@ export function drawOwnershipLayer(
       const r = body.radius * scale + 10;
       const sprite = territoryHaloSprite(color);
       ctx.ctx.save();
-      ctx.ctx.globalAlpha = ctx.ctx.globalAlpha * 0.18;
+      // Cross-fade against the region wash (see the early-out above).
+      ctx.ctx.globalAlpha = ctx.ctx.globalAlpha * 0.18 * (1 - regionFade);
       ctx.ctx.drawImage(sprite, cp.x - r, cp.y - r, r * 2, r * 2);
       ctx.ctx.restore();
       continue;
@@ -3622,7 +3630,137 @@ export function drawOwnershipLayer(
   }
 }
 
+// ============================================================
+// System regions — the strategic shading layer at far zoom.
+// ============================================================
 
+/** Overlay is fully opaque at/below this camera scale... */
+export const SYSTEM_REGION_FULL_SCALE = 0.34;
+/** ...and fully faded out at/above this one. Between the two it
+ *  cross-fades, so there's no hard pop as you zoom. */
+export const SYSTEM_REGION_HIDE_SCALE = 0.55;
+
+/** 0 = invisible, 1 = full. Also used to suppress the per-body
+ *  ownership halos underneath, so territory never double-shades. */
+export function systemRegionOpacity(scale: number): number {
+  if (scale >= SYSTEM_REGION_HIDE_SCALE) return 0;
+  if (scale <= SYSTEM_REGION_FULL_SCALE) return 1;
+  return (SYSTEM_REGION_HIDE_SCALE - scale)
+    / (SYSTEM_REGION_HIDE_SCALE - SYSTEM_REGION_FULL_SCALE);
+}
+
+/** Grey for unowned AND contested — see systemRegions.ts for why
+ *  contested deliberately isn't a second faction colour. */
+const REGION_NEUTRAL = '#7c8f9e';
+
+/**
+ * Political shading for the zoomed-out map: one soft region per
+ * planet system / belt, coloured by its owner.
+ *
+ * Drawn UNDER bodies and orbits (called early in the frame) so it
+ * reads as a background wash rather than a veil over the map.
+ */
+export function drawSystemRegions(
+  regions: SystemRegion[],
+  ctx: RenderContext,
+) {
+  const fade = systemRegionOpacity(ctx.camera.scale);
+  if (fade <= 0) return;
+
+  const c = ctx.ctx;
+  const scale = ctx.camera.scale;
+
+  for (const region of regions) {
+    const owned = region.ownership.kind === 'exclusive';
+    const color = owned
+      ? (region.ownership as { color: string }).color
+      : REGION_NEUTRAL;
+    // Owned territory earns more presence than empty space; unowned
+    // rubble is barely a stain, just enough to group it.
+    const baseAlpha = owned ? 0.22 : region.ownership.kind === 'contested' ? 0.16 : 0.09;
+
+    c.save();
+    c.globalAlpha = c.globalAlpha * fade;
+
+    const shape = region.shape;
+    if (shape.kind === 'disc') {
+      const anchor = ctx.bodies.find(b => b.id === shape.anchorBodyId);
+      if (!anchor) { c.restore(); continue; }
+      const wp = bodyPosition(anchor, ctx.t, ctx.bodies);
+      const cp = worldToCanvas(wp.x, wp.y, ctx);
+      // Screen-space floor: at full-system zoom a moon system is a
+      // couple of pixels across, which would shade nothing at all.
+      const r = Math.max(shape.worldRadius * scale, owned ? 26 : 16);
+
+      const g = c.createRadialGradient(cp.x, cp.y, 0, cp.x, cp.y, r);
+      g.addColorStop(0, withOpacity(color, baseAlpha));
+      g.addColorStop(0.65, withOpacity(color, baseAlpha * 0.55));
+      g.addColorStop(1, withOpacity(color, 0));
+      c.fillStyle = g;
+      c.beginPath();
+      c.arc(cp.x, cp.y, r, 0, Math.PI * 2);
+      c.fill();
+
+      if (region.label) drawRegionLabel(region, cp.x, cp.y - r - 4, color, owned, ctx, fade);
+    } else {
+      const star = ctx.bodies.find(b => b.id === shape.starBodyId);
+      if (!star) { c.restore(); continue; }
+      const wp = bodyPosition(star, ctx.t, ctx.bodies);
+      const cp = worldToCanvas(wp.x, wp.y, ctx);
+      const rIn = shape.rInner * scale;
+      const rOut = shape.rOuter * scale;
+      const mid = (rIn + rOut) / 2;
+      const width = Math.max(rOut - rIn, 6);
+
+      // An annulus as a fat stroked circle — cheaper than a two-arc
+      // path fill and it anti-aliases better at thin widths.
+      c.strokeStyle = withOpacity(color, baseAlpha);
+      c.lineWidth = width;
+      c.beginPath();
+      c.arc(cp.x, cp.y, mid, 0, Math.PI * 2);
+      c.stroke();
+
+      if (region.label) {
+        // Park the label at the top of the band. Fixed angle so it
+        // doesn't crawl around the ring as bodies orbit.
+        drawRegionLabel(region, cp.x, cp.y - mid, color, owned, ctx, fade);
+      }
+    }
+    c.restore();
+  }
+}
+
+/** Region name, plus the owner when a single faction holds it all. */
+function drawRegionLabel(
+  region: SystemRegion,
+  x: number,
+  y: number,
+  color: string,
+  owned: boolean,
+  ctx: RenderContext,
+  fade: number,
+) {
+  const c = ctx.ctx;
+  const contested = region.ownership.kind === 'contested';
+  const text = region.label.toUpperCase();
+  const sub = owned
+    ? (region.ownership as { factionName: string }).factionName.toUpperCase()
+    : contested ? 'CONTESTED' : '';
+
+  c.save();
+  c.globalAlpha = c.globalAlpha * fade;
+  c.textAlign = 'center';
+  c.textBaseline = 'bottom';
+  c.font = '600 10px var(--font-display, sans-serif)';
+  c.fillStyle = withOpacity(owned ? color : REGION_NEUTRAL, owned ? 0.85 : 0.5);
+  c.fillText(text, x, y);
+  if (sub) {
+    c.font = '9px var(--font-display, sans-serif)';
+    c.fillStyle = withOpacity(owned ? color : REGION_NEUTRAL, owned ? 0.6 : 0.45);
+    c.fillText(sub, x, y + 10);
+  }
+  c.restore();
+}
 
 // ============================================================
 // Asteroid belt cosmetic dust — small grey specks scattered in
