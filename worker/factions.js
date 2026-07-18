@@ -279,6 +279,42 @@ const BODY_CATALOG = [
     yield: { metal: 1, fuel: 0, gold: 4, science: 4 } },
 ];
 
+// ============================================================
+// SYSTEM SCALE — how spread out the Sol system is.
+//
+// Applied as a transform over the catalog above rather than baked into
+// 25 hand-edited numbers, so the whole map can be re-tuned (or reverted)
+// by changing one constant.
+//
+// Scope: HELIOCENTRIC orbits only (parent === 'sol'). Moon orbits are
+// measured from their own planet, so scaling them would fling moons off
+// their parents instead of spreading the system.
+//
+// Periods scale by SCALE^1.5 (Kepler's third law): a genuinely bigger
+// system, not the same system with planets whipping around at double
+// linear speed. Consequence to know: orbital geometry now evolves ~2.8×
+// slower, so launch windows are more forgiving and long hauls feel
+// deliberate. Set ORBIT_PERIOD_SCALE = 1 instead if you want the old
+// orbital rhythm on the bigger board.
+//
+// Travel time is NOT doubled — the brachistochrone solver is
+// T = 2·sqrt(d/a), so 2× distance is ~1.41× flight time.
+//
+// ONLY AFFECTS NEW GAMES. Bodies are copied into game_bodies at seed
+// time, so games already in progress keep the scale they were born with.
+// ============================================================
+const SYSTEM_SCALE = 2;
+const ORBIT_PERIOD_SCALE = Math.pow(SYSTEM_SCALE, 1.5);
+
+for (const b of BODY_CATALOG) {
+  if (b.parent !== 'sol') continue;
+  b.orbit_radius = Math.round(b.orbit_radius * SYSTEM_SCALE);
+  b.orbit_period = Math.round(b.orbit_period * ORBIT_PERIOD_SCALE);
+  // Eccentric Kuiper elements travel with the orbit they describe.
+  if (b.orbit_rp != null) b.orbit_rp = Math.round(b.orbit_rp * SYSTEM_SCALE);
+  if (b.orbit_ra != null) b.orbit_ra = Math.round(b.orbit_ra * SYSTEM_SCALE);
+}
+
 // Eligible worlds for ownership = everything that isn't the star (16 worlds).
 // 2 worlds/player × 8 players = 16. Caps at 8 players × 2 worlds for v1.
 

@@ -16,19 +16,27 @@ import { settlementWorldPosition } from './settlements';
 
 // === Sensor ranges (world units) ============================
 
-/** Sensor range per ship class. Solar system spans ~460 units. */
+// Ranges are scaled alongside SYSTEM_SCALE in worker/factions.js. The
+// Sol system was spread 2x; leaving sensors at their old absolute values
+// would have silently doubled the fog — a stealth nerf to every scout
+// and station that nobody asked for. Scaling them keeps visibility the
+// same FRACTION of the board it always was.
+// KEEP IN SYNC with worker/state.js (server mirror of this table).
+const SENSOR_SCALE = 2;
+
+/** Sensor range per ship class. Solar system spans ~920 units (post-scale). */
 export const SHIP_SENSOR_RANGE: Record<string, number> = {
-  corvette: 150,   // light scout
-  frigate: 200,    // balanced warship
-  destroyer: 175,  // heavy weapons, less sensor budget
-  freighter: 100,  // civilian
-  colony: 75,      // settler transport — minimal nav sensors
+  corvette: 150 * SENSOR_SCALE,   // light scout
+  frigate: 200 * SENSOR_SCALE,    // balanced warship
+  destroyer: 175 * SENSOR_SCALE,  // heavy weapons, less sensor budget
+  freighter: 100 * SENSOR_SCALE,  // civilian
+  colony: 75 * SENSOR_SCALE,      // settler transport — minimal nav sensors
 };
 
 /** Sensor range per settlement type. */
 export const SETTLEMENT_SENSOR_RANGE: Record<string, number> = {
-  city: 250,       // ground-based array — surveys its whole local neighborhood
-  station: 400,    // dedicated orbital platform — sees most of the inner system
+  city: 250 * SENSOR_SCALE,       // ground-based array — surveys its whole local neighborhood
+  station: 400 * SENSOR_SCALE,    // dedicated orbital platform — sees most of the inner system
 };
 
 /** Multiplier on body radius for occlusion (accounts for atmosphere/grazing). */

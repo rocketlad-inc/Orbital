@@ -44,8 +44,16 @@ function err(status, code, message) {
 // shortcut (bodyPosition's common path); eccentric Kuiper orbits and ram
 // trajectories are approximated as circular, which is fine for a generous
 // coverage radius.
-const SHIP_SENSOR_RANGE = { corvette: 150, frigate: 200, destroyer: 175, freighter: 100, colony: 75 };
-const SETTLEMENT_SENSOR_RANGE = { city: 250, station: 400 };
+// Scaled alongside SYSTEM_SCALE in worker/factions.js — the system was
+// spread 2x, so absolute sensor ranges had to grow with it or the fog
+// would have silently doubled. KEEP IN SYNC with src/game/visibility.ts.
+const SENSOR_SCALE = 2;
+const SHIP_SENSOR_RANGE = {
+  corvette: 150 * SENSOR_SCALE, frigate: 200 * SENSOR_SCALE,
+  destroyer: 175 * SENSOR_SCALE, freighter: 100 * SENSOR_SCALE,
+  colony: 75 * SENSOR_SCALE,
+};
+const SETTLEMENT_SENSOR_RANGE = { city: 250 * SENSOR_SCALE, station: 400 * SENSOR_SCALE };
 const DEFAULT_SHIP_SENSOR_RANGE = 25;
 const DEFAULT_SETTLEMENT_SENSOR_RANGE = 40;
 const ORBITAL_SPEED_SCALE = 0.5;
