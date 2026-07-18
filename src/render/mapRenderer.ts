@@ -3634,20 +3634,40 @@ export function drawOwnershipLayer(
 // System regions — the strategic shading layer at far zoom.
 // ============================================================
 
-/** Overlay is fully opaque at/below this camera scale... */
+/** Overlay is fully present at/below this camera scale... */
 export const SYSTEM_REGION_FULL_SCALE = 0.34;
 /** ...and fully faded out at/above this one. Between the two it
  *  cross-fades, so there's no hard pop as you zoom. */
 export const SYSTEM_REGION_HIDE_SCALE = 0.55;
+/** At/below this scale the wash reaches full strength — a solid
+ *  political map. Between here and FULL_SCALE the colour deepens
+ *  continuously, so pulling further out keeps reading as "more
+ *  strategic" instead of plateauing the moment the layer appears. */
+export const SYSTEM_REGION_DARK_SCALE = 0.08;
 
-/** 0 = invisible, 1 = full. Also used to suppress the per-body
- *  ownership halos underneath, so territory never double-shades. */
+/** 0 = invisible, 1 = present. This is the FADE (does the layer exist
+ *  at all), not its strength — see systemRegionIntensity. Also used to
+ *  suppress the per-body ownership halos underneath, so territory
+ *  never double-shades. */
 export function systemRegionOpacity(scale: number): number {
   if (scale >= SYSTEM_REGION_HIDE_SCALE) return 0;
   if (scale <= SYSTEM_REGION_FULL_SCALE) return 1;
   return (SYSTEM_REGION_HIDE_SCALE - scale)
     / (SYSTEM_REGION_HIDE_SCALE - SYSTEM_REGION_FULL_SCALE);
 }
+
+/** 0 = just-appeared (faint tint), 1 = zoomed right out (solid
+ *  territory). Drives alpha AND how far the disc holds its colour
+ *  before feathering, so a maxed-out region reads as filled ground
+ *  rather than a bigger, blurrier glow. */
+export function systemRegionIntensity(scale: number): number {
+  if (scale <= SYSTEM_REGION_DARK_SCALE) return 1;
+  if (scale >= SYSTEM_REGION_FULL_SCALE) return 0;
+  return (SYSTEM_REGION_FULL_SCALE - scale)
+    / (SYSTEM_REGION_FULL_SCALE - SYSTEM_REGION_DARK_SCALE);
+}
+
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
 /** Grey for unowned AND contested — see systemRegions.ts for why
  *  contested deliberately isn't a second faction colour. */
@@ -3669,6 +3689,10 @@ export function drawSystemRegions(
 
   const c = ctx.ctx;
   const scale = ctx.camera.scale;
+  // How hard the wash pushes. Ramps as you keep zooming out past the
+  // point the layer first appears, so the map slides continuously from
+  // "a hint of who's where" to a solid political map.
+  const intensity = systemRegionIntensity(scale);
 
   for (const region of regions) {
     const owned = region.ownership.kind === 'exclusive';
@@ -3676,8 +3700,14 @@ export function drawSystemRegions(
       ? (region.ownership as { color: string }).color
       : REGION_NEUTRAL;
     // Owned territory earns more presence than empty space; unowned
-    // rubble is barely a stain, just enough to group it.
-    const baseAlpha = owned ? 0.22 : region.ownership.kind === 'contested' ? 0.16 : 0.09;
+    // rubble is barely a stain, just enough to group it. Each tier
+    // scales up with intensity, keeping their relative weighting so
+    // owned ground still dominates at full strength.
+    const baseAlpha = owned
+      ? lerp(0.22, 0.70, intensity)
+      : region.ownership.kind === 'contested'
+        ? lerp(0.16, 0.52, intensity)
+        : lerp(0.09, 0.32, intensity);
 
     c.save();
     c.globalAlpha = c.globalAlpha * fade;
@@ -3692,16 +3722,20 @@ export function drawSystemRegions(
       // couple of pixels across, which would shade nothing at all.
       const r = Math.max(shape.worldRadius * scale, owned ? 26 : 16);
 
+      // Falloff tightens toward the rim as intensity rises: at a hint
+      // it's a soft glow, at full strength it holds solid colour almost
+      // to the edge and only feathers at the last moment.
+      const hold = lerp(0.55, 0.86, intensity);
       const g = c.createRadialGradient(cp.x, cp.y, 0, cp.x, cp.y, r);
       g.addColorStop(0, withOpacity(color, baseAlpha));
-      g.addColorStop(0.65, withOpacity(color, baseAlpha * 0.55));
+      g.addColorStop(hold, withOpacity(color, baseAlpha * lerp(0.55, 0.92, intensity)));
       g.addColorStop(1, withOpacity(color, 0));
       c.fillStyle = g;
       c.beginPath();
       c.arc(cp.x, cp.y, r, 0, Math.PI * 2);
       c.fill();
 
-      if (region.label) drawRegionLabel(region, cp.x, cp.y - r - 4, color, owned, ctx, fade);
+      if (region.label) drawRegionLabel(region, cp.x, cp.y - r - 4, color, owned, ctx, fade, intensity);
     } else {
       const star = ctx.bodies.find(b => b.id === shape.starBodyId);
       if (!star) { c.restore(); continue; }
@@ -3723,7 +3757,7 @@ export function drawSystemRegions(
       if (region.label) {
         // Park the label at the top of the band. Fixed angle so it
         // doesn't crawl around the ring as bodies orbit.
-        drawRegionLabel(region, cp.x, cp.y - mid, color, owned, ctx, fade);
+        drawRegionLabel(region, cp.x, cp.y - mid, color, owned, ctx, fade, intensity);
       }
     }
     c.restore();
@@ -3739,6 +3773,7 @@ function drawRegionLabel(
   owned: boolean,
   ctx: RenderContext,
   fade: number,
+  intensity: number,
 ) {
   const c = ctx.ctx;
   const contested = region.ownership.kind === 'contested';
@@ -3747,16 +3782,26 @@ function drawRegionLabel(
     ? (region.ownership as { factionName: string }).factionName.toUpperCase()
     : contested ? 'CONTESTED' : '';
 
+  // Labels brighten alongside the fill — at full strength they sit on
+  // near-solid colour, where the faint treatment would disappear. Text
+  // is lightened rather than left at the fill hue so it separates from
+  // the ground it's printed on.
+  // NB: lighten() takes a channel MULTIPLIER, not a 0..1 blend — so this
+  // ramps 1.0 (untouched) -> 1.5 (brighter), never below 1.
+  const ink = owned ? lighten(color, lerp(1, 1.5, intensity)) : REGION_NEUTRAL;
+  const titleAlpha = owned ? lerp(0.85, 1, intensity) : lerp(0.5, 0.8, intensity);
+  const subAlpha = owned ? lerp(0.6, 0.9, intensity) : lerp(0.45, 0.75, intensity);
+
   c.save();
   c.globalAlpha = c.globalAlpha * fade;
   c.textAlign = 'center';
   c.textBaseline = 'bottom';
   c.font = '600 10px var(--font-display, sans-serif)';
-  c.fillStyle = withOpacity(owned ? color : REGION_NEUTRAL, owned ? 0.85 : 0.5);
+  c.fillStyle = withOpacity(ink, titleAlpha);
   c.fillText(text, x, y);
   if (sub) {
     c.font = '9px var(--font-display, sans-serif)';
-    c.fillStyle = withOpacity(owned ? color : REGION_NEUTRAL, owned ? 0.6 : 0.45);
+    c.fillStyle = withOpacity(ink, subAlpha);
     c.fillText(sub, x, y + 10);
   }
   c.restore();
