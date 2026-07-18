@@ -491,6 +491,42 @@ export function drawStarfield(cache: StarfieldCache | null, ctx: RenderContext) 
 /**
  * Draw orbital path for a body
  */
+// ------------------------------------------------------------
+// Orbit trail gradient (reference: Terra-Invicta-style comet tail).
+// The ring is brightest AT the body and fades around the circumference
+// behind it — a conic gradient anchored on the parent, rotated to the
+// body's current orbital angle. Bodies advance in +θ (angle0 + t·2π/T),
+// so conic-parameter u ∈ [0,1] sits u ahead of the body ≡ (1−u) behind;
+// alpha therefore ramps min→max across the sweep, wrapping to a crisp
+// leading edge exactly at the planet.
+// Gated to rings ≥ 30px screen radius: below that the tail is unreadable
+// and the per-frame gradient object is pure waste. Feature-detected —
+// browsers without createConicGradient keep the flat stroke.
+// ------------------------------------------------------------
+
+const ORBIT_TRAIL_MIN_ALPHA = 0.05;
+const ORBIT_TRAIL_MAX_ALPHA = 0.95;
+const ORBIT_TRAIL_MIN_PX = 30;
+
+function orbitTrailGradient(
+  ctx: RenderContext,
+  body: Body,
+  parentWorldPos: { x: number; y: number },
+  canvasParentPos: { x: number; y: number },
+  color: string,
+): CanvasGradient | null {
+  const c2d = ctx.ctx as CanvasRenderingContext2D & {
+    createConicGradient?: (startAngle: number, x: number, y: number) => CanvasGradient;
+  };
+  if (typeof c2d.createConicGradient !== 'function') return null;
+  const bp = bodyPosition(body, ctx.t, ctx.bodies);
+  const theta = Math.atan2(bp.y - parentWorldPos.y, bp.x - parentWorldPos.x);
+  const g = c2d.createConicGradient(theta, canvasParentPos.x, canvasParentPos.y);
+  g.addColorStop(0, withOpacity(color, ORBIT_TRAIL_MIN_ALPHA));
+  g.addColorStop(1, withOpacity(color, ORBIT_TRAIL_MAX_ALPHA));
+  return g;
+}
+
 export function drawOrbit(
   body: Body,
   ctx: RenderContext,
@@ -555,6 +591,12 @@ export function drawOrbit(
     const cx = parentPos.x - Math.cos(omega) * c;
     const cy = parentPos.y - Math.sin(omega) * c;
     const cp = worldToCanvas(cx, cy, ctx);
+    // Comet-tail gradient — anchored on the FOCUS (parent), not the
+    // ellipse center; the angular fade tracks the body correctly there.
+    if (a * ctx.camera.scale >= ORBIT_TRAIL_MIN_PX) {
+      const g = orbitTrailGradient(ctx, body, parentPos, canvasParentPos, color);
+      if (g) ctx.ctx.strokeStyle = g;
+    }
     ctx.ctx.beginPath();
     ctx.ctx.ellipse(
       cp.x, cp.y,
@@ -571,6 +613,10 @@ export function drawOrbit(
 
   // Circular shortcut for normal bodies.
   const radius = body.orbitRadius * ctx.camera.scale;
+  if (radius >= ORBIT_TRAIL_MIN_PX) {
+    const g = orbitTrailGradient(ctx, body, parentPos, canvasParentPos, color);
+    if (g) ctx.ctx.strokeStyle = g;
+  }
   ctx.ctx.beginPath();
   ctx.ctx.arc(
     canvasParentPos.x,
