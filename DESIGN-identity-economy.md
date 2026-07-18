@@ -67,7 +67,9 @@ Per-body (METAL / CREDITS / SCIENCE — fuel column deleted):
 | Earth | 2 | 6 | 3 | | Ariel | 3 | 0 | 5 |
 | Luna | 2 | 2 | 2 | | Umbriel | 3 | 1 | 4 |
 | Mars | 4 | 2 | 2 | | Titania | 4 | 0 | 4 |
-| **BELT** | | | | | Oberon | 4 | 1 | 4 |
+| Phobos | 1 | 2 | 1 | | Oberon | 4 | 1 | 4 |
+| Deimos | 1 | 1 | 2 | | | | | |
+| **BELT** | | | | | | | | |
 | Ceres | 6 | 3 | 0 | | **NEPTUNE** | | | |
 | Vesta | 7 | 1 | 0 | | Neptune ⚓ | 0 | 2 | 9 |
 | Pallas | 6 | 2 | 0 | | Proteus | 1 | 1 | 5 |
@@ -89,8 +91,11 @@ Per-body (METAL / CREDITS / SCIENCE — fuel column deleted):
 | Titan | 7 | 1 | 2 | | | | | |
 
 ⚓ = station-only (colony ship required; no city surface).
-Totals: metal ≈138, credits ≈123, science ≈112 (vs today's 174/102/100 with
-metal on literally every body).
+Totals: metal ≈140, credits ≈126, science ≈115 (vs today's 174/102/100 with
+metal on literally every body). Phobos + Deimos were added after the
+original pass; they're deliberately tiny (2/3/3 between them) so they
+don't dent the ±15% balance or soften the inner region's metal deficit,
+which is what pushes inner players to trade for Belt ore.
 
 ### 1.5 Spawn fairness (prereq, promoted from bug list)
 Once yields specialize, spawn region ≈ your whole early game. Seeder rules:
