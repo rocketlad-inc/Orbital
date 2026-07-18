@@ -29,6 +29,7 @@ import {
   generateFlavor,
   type FlavorContext, type FlavorFaction, type FlavorBody,
 } from '../game/flavorEngine';
+import { enqueueDetonation } from '../render/combatFx';
 
 // Shape of /api/games/:gid/state.
 interface ServerState {
@@ -1039,6 +1040,16 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   // Server returns newest-first; we want chronological for both the UI log
   // and the audit mirror.
   const orderedEvents = (srv.events ?? []).slice().reverse();
+  // Detonator blast FX (render/combatFx §2): any ship_detonated
+  // chronicle entry we haven't seen yet gets pushed onto a module-level
+  // FX queue that the map renderer drains. Pure cosmetics — the queue
+  // dedupes by entry id internally, so re-feeding the rolling /state
+  // window every poll is harmless, and no server work is added.
+  for (const ev of orderedEvents) {
+    if (ev.kind === 'ship_detonated') {
+      enqueueDetonation(ev.id, ev.body_id, ev.ship_id);
+    }
+  }
   if (loggedEventIds.size > 4000) loggedEventIds.clear();
   const combatLog: string[] = orderedEvents.map(ev => {
     const msg = formatEvent(ev);
