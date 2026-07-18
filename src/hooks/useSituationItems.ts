@@ -47,7 +47,6 @@ import {
 } from '../game/threats';
 import { AUTO_COMBAT_INTERVAL } from '../game/combat';
 import {
-  nextLevelCost,
   TECH_DEFS,
   TECH_MAX_LEVEL,
   type TechId,
@@ -67,7 +66,7 @@ export type SituationCategory =
   | 'incoming_trade' // MP — open trade where caller is responder
   | 'in_combat'      // shooting RIGHT NOW — your hulls/settlements engaged
   | 'threat'         // body of yours under incoming enemy
-  | 'tech_available';// research you can afford
+  | 'tech_available';// research idle — no project committed
 
 export type SituationTier = 'now' | 'decision' | 'opportunity';
 
@@ -130,7 +129,7 @@ export const CATEGORY_LABEL: Record<SituationCategory, string> = {
   idle_shipyard:   'Planets awaiting construction',
   idle_freighter:  'Idle freighters',
   stranded:        'Stranded stockpiles',
-  tech_available:  'Research available',
+  tech_available:  'Research idle',
 };
 
 // ------------------------------------------------------------
@@ -638,42 +637,33 @@ export function useSituationItems(
       }
     } catch { /* defensive */ }
 
-    // ---- 9) Tech available ----
-    // Collapsed to ONE row when several lines are affordable. With any
-    // science income this condition is true for most tracks most of
-    // the game — six identical rows were permanent wallpaper drowning
-    // the urgent tiers above. One line carries the same signal.
+    // ---- 9) No research project ----
+    // Research is a committed project that fills from science income
+    // each tick, so there is exactly ONE actionable research state: the
+    // lab is idle. This used to list everything you could afford, which
+    // with any science income was true for most tracks most of the game
+    // — permanent wallpaper drowning the urgent tiers above.
+    //
+    // Idle science isn't lost (it banks in the pool), but it's earning
+    // nothing, so this is a real nudge rather than noise.
     try {
-      const pool = gameState.resources?.[factionId];
-      const science = pool?.science ?? 0;
       const techState = gameState.factionTech?.[factionId];
-      if (techState) {
+      if (techState && !techState.researching) {
         const levels = techState.levels || {};
-        const affordable: Array<{ id: TechId; cur: number; cost: number }> = [];
-        for (const id of Object.keys(TECH_DEFS) as TechId[]) {
-          const cur = levels[id] ?? 0;
-          if (cur >= TECH_MAX_LEVEL) continue;
-          const cost = nextLevelCost(cur, TECH_DEFS[id]);
-          if (cost > science) continue;
-          affordable.push({ id, cur, cost });
-        }
-        if (affordable.length === 1) {
-          const t = affordable[0];
+        const anyLeft = (Object.keys(TECH_DEFS) as TechId[])
+          .some(id => (levels[id] ?? 0) < TECH_MAX_LEVEL);
+        // Everything maxed = Science Victory territory; nagging then
+        // would be telling the player to do something impossible.
+        if (anyLeft) {
+          const pool = gameState.resources?.[factionId];
+          const science = Math.floor(pool?.science ?? 0);
           push({
-            id: `tech_available:${t.id}`,
+            id: 'tech_available:idle',
             category: 'tech_available',
-            title: `${TECH_DEFS[t.id].name} L${t.cur + 1} affordable`,
-            subtitle: `${t.cost} science`,
-            focus: { kind: 'panel', panel: 'research' },
-            severity: 'normal',
-          });
-        } else if (affordable.length > 1) {
-          const minCost = Math.min(...affordable.map(t => t.cost));
-          push({
-            id: 'tech_available:all',
-            category: 'tech_available',
-            title: `${affordable.length} research lines affordable`,
-            subtitle: `from ${minCost} science`,
+            title: 'No research project',
+            subtitle: science > 0
+              ? `${science} science banked and idle`
+              : 'pick a track to start accumulating',
             focus: { kind: 'panel', panel: 'research' },
             severity: 'normal',
           });

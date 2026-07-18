@@ -67,6 +67,9 @@ interface ServerState {
     capital_body_id: string | null;
     resources: { metal: number; fuel: number; gold: number; science: number };
     tech_levels?: Record<string, number>;
+    /** Active research project + accumulated progress (server drains
+     *  science into this each tick). null tech_id = idle. */
+    research?: { tech_id: string | null; progress: number } | null;
     /** Faction ids the caller is allied with (active defense-pact /
      *  intel-share). Drives shared sensor vision. */
     ally_faction_ids?: string[];
@@ -689,10 +692,14 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   // Carry the server's authoritative tech levels into the existing
   // client GameState shape so TechPanel keeps reading from the same
   // place in single-player and multiplayer.
+  // Research is a committed PROJECT that fills from science income each
+  // tick (worker/room.js research drain), not an instant purchase — so
+  // the active track + its accumulated progress come from the server and
+  // feed the same TechPanel fields single-player already used.
   const playerTech: FactionTechStateBase = {
     levels: srv.me.tech_levels ?? {},
-    researching: null,
-    progress: 0,
+    researching: (srv.me.research?.tech_id ?? null) as FactionTechStateBase['researching'],
+    progress: srv.me.research?.progress ?? 0,
   };
 
   const settlements: Settlement[] = (srv.settlements ?? []).map(s => {

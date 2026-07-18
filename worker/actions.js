@@ -763,6 +763,16 @@ async function handleResearch(req, env, ctx) {
   const body = await readJson(req);
   if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
   const techId = body.tech_id;
+
+  // tech_id: null clears the project (research goes idle; science banks).
+  if (techId === null) {
+    await env.DB
+      .prepare('UPDATE game_factions SET research_tech_id = NULL, research_progress = 0 WHERE id = ?')
+      .bind(me.id)
+      .run();
+    return json({ tech_id: null, progress: 0 });
+  }
+
   if (typeof techId !== 'string' || !TECH_DEFS[techId]) {
     return err(400, 'bad_request', 'invalid tech_id');
   }
@@ -773,57 +783,31 @@ async function handleResearch(req, env, ctx) {
     .first();
   const curLevel = cur?.level ?? 0;
 
-  // Cap at TECH_MAX_LEVEL — required for the Science Victory condition
-  // to be reachable. Mirrors the client-side cap in techs.ts.
   if (curLevel >= TECH_MAX_LEVEL) {
     return err(409, 'tech_maxed', `${techId} is already at max level ${TECH_MAX_LEVEL}`);
   }
 
-  const cost = techCostForNext(curLevel, TECH_DEFS[techId]);
-
-  if ((me.science ?? 0) < cost) {
-    return err(409, 'insufficient_resources', `need ${cost} science for ${techId} level ${curLevel + 1}`);
-  }
-
-  const game = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
-  const tick = game?.current_tick ?? 0;
-
-  if (cur) {
-    await env.DB.batch([
-      env.DB
-        .prepare(
-          `UPDATE faction_techs SET level = level + 1, status = 'completed', completed_at_tick = ?
-            WHERE game_id = ? AND faction_id = ? AND tech_id = ?`,
-        )
-        .bind(tick, gameId, me.id, techId),
-      env.DB
-        .prepare('UPDATE game_factions SET science = science - ? WHERE id = ?')
-        .bind(cost, me.id),
-    ]);
-  } else {
-    await env.DB.batch([
-      env.DB
-        .prepare(
-          `INSERT INTO faction_techs
-            (game_id, faction_id, tech_id, status, level, started_at_tick, completed_at_tick)
-           VALUES (?, ?, ?, 'completed', 1, ?, ?)`,
-        )
-        .bind(gameId, me.id, techId, tick, tick),
-      env.DB
-        .prepare('UPDATE game_factions SET science = science - ? WHERE id = ?')
-        .bind(cost, me.id),
-    ]);
-  }
-
-  // (Flight Dynamics used to stamp faction.engine_g here. That tech is
-  // scrapped — base acceleration is now fixed and speed comes from engine
-  // parts scaled by Propulsion, so nothing bumps engine_g anymore.)
+  // Committing to a project no longer costs anything up front — the
+  // per-tick drain in worker/room.js pours the faction's science income
+  // into research_progress until it covers the cost (Civ/Stellaris
+  // model, and what single-player already did). Switching to a DIFFERENT
+  // track abandons progress on the old one; re-picking the current track
+  // is a no-op that preserves it.
+  const switching = me.research_tech_id !== techId;
+  await env.DB
+    .prepare(
+      `UPDATE game_factions
+          SET research_tech_id = ?, research_progress = ?
+        WHERE id = ?`,
+    )
+    .bind(techId, switching ? 0 : (me.research_progress ?? 0), me.id)
+    .run();
 
   return json({
     tech_id: techId,
-    level: curLevel + 1,
-    cost_paid: cost,
-    next_cost: techCostForNext(curLevel + 1, TECH_DEFS[techId]),
+    level: curLevel,
+    progress: switching ? 0 : (me.research_progress ?? 0),
+    cost: techCostForNext(curLevel, TECH_DEFS[techId]),
   }, { status: 201 });
 }
 
