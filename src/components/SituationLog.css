@@ -63,31 +63,50 @@
   line-height: 1.5;
 }
 
-/* Grouped category sections */
-.sit-group { margin-bottom: 12px; }
-.sit-group__head {
+/* Urgency-tier sections. Each tier carries its own color identity:
+   NOW = red (shooting, right now), DECISION = amber (waiting on you),
+   OPPORTUNITY = dim neutral (no clock — deliberately quiet). */
+.sit-tier { margin-bottom: 14px; }
+.sit-tier__head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   padding: 4px 4px 4px 2px;
   border-bottom: 1px solid #1a2530;
 }
-.sit-group__label {
+.sit-tier__label {
   font-family: var(--font-display, sans-serif);
   font-size: 10px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: #8a9fb3;
 }
-.sit-group__count {
+.sit-tier__count {
   font-size: 11px;
-  color: #ffb84d;
+  color: #8a9fb3;
   padding: 1px 7px;
-  background: rgba(255, 184, 77, 0.12);
+  background: rgba(138, 159, 179, 0.12);
   border-radius: 8px;
 }
 
-.sit-group__list { list-style: none; margin: 4px 0 0; padding: 0; }
+.sit-tier--now .sit-tier__head { border-bottom-color: rgba(255, 94, 94, 0.4); }
+.sit-tier--now .sit-tier__label { color: #ff5e5e; }
+.sit-tier--now .sit-tier__count {
+  color: #ff5e5e;
+  background: rgba(255, 94, 94, 0.14);
+}
+
+.sit-tier--decision .sit-tier__head { border-bottom-color: rgba(255, 184, 77, 0.35); }
+.sit-tier--decision .sit-tier__label { color: #ffb84d; }
+.sit-tier--decision .sit-tier__count {
+  color: #ffb84d;
+  background: rgba(255, 184, 77, 0.12);
+}
+
+.sit-tier--opportunity .sit-tier__label { color: #5a6e80; }
+.sit-tier--opportunity .sit-item__title { color: #a8b8c6; }
+
+.sit-tier__list { list-style: none; margin: 4px 0 0; padding: 0; }
 
 /* Item buttons */
 .sit-item {
@@ -112,6 +131,14 @@
 .sit-item--warn       { border-left-color: #ffb84d; }
 .sit-item--warn:hover { background: rgba(255, 184, 77, 0.08); border-left-color: #ff8c40; }
 
+/* Red = losing: a hull under 50% mid-fight, a settlement in the
+   crosshairs. Distinct from amber "engaged / decide soon". */
+.sit-item--danger {
+  border-left-color: #ff5e5e;
+  background: rgba(255, 94, 94, 0.05);
+}
+.sit-item--danger:hover { background: rgba(255, 94, 94, 0.1); border-left-color: #ff8080; }
+
 .sit-item__title {
   font-size: 12px;
   color: #d8e4ee;
@@ -123,4 +150,16 @@
   color: #8a9fb3;
   margin-top: 2px;
   letter-spacing: 0.02em;
+}
+
+/* "New since last glance" dot — appeared while the panel was closed. */
+.sit-item__new {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4ecdc4;
+  margin-right: 6px;
+  vertical-align: 1px;
+  box-shadow: 0 0 4px rgba(78, 205, 196, 0.7);
 }
