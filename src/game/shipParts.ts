@@ -42,6 +42,17 @@ export const SHIP_SLOT_COUNTS: Record<ShipClassName, number> = {
   colony: 0,
 };
 
+/** Standard-issue fitting per hull — the "Default" template every player
+ *  starts with, and the fallback when no design is active.
+ *  KEEP IN SYNC with DEFAULT_LOADOUTS in worker/shipDesigns.js. */
+export const DEFAULT_LOADOUTS: Record<ShipClassName, ShipPartId[]> = {
+  corvette:  ['weapon', 'engine'],
+  frigate:   ['weapon', 'weapon', 'shield', 'engine'],
+  destroyer: ['weapon', 'weapon', 'weapon', 'shield', 'shield', 'engine'],
+  freighter: ['engine'],
+  colony:    [],
+};
+
 export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   weapon: {
     id: 'weapon',

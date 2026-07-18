@@ -1,3 +1,4 @@
+import { DEFAULT_LOADOUTS } from './shipDesigns.js';
 // ============================================================================
 // Faction agent module.
 //
@@ -800,6 +801,28 @@ export async function seedGameWorld(env, gameId) {
         now,
       ),
     );
+  }
+
+  // 1b) Standard-issue "Default" design per faction per class, marked
+  //      ACTIVE so builds come fitted out of the box instead of as bare
+  //      hulls. Seeded as a real design (rather than an invisible
+  //      build-time fallback) so it shows in the designer library and a
+  //      player who wants the cheap hull can simply UNSET it — the
+  //      choice stays with the player.
+  for (const f of factionRows) {
+    for (const [cls, parts] of Object.entries(DEFAULT_LOADOUTS)) {
+      if (!parts || parts.length === 0) continue; // colony has no slots
+      stmts.push(
+        env.DB.prepare(
+          `INSERT INTO game_ship_designs
+            (id, game_id, faction_id, ship_class, name, parts_json, icon_variant, is_active, created_at_ms)
+           VALUES (?, ?, ?, ?, 'Default', ?, NULL, 1, ?)`,
+        ).bind(
+          `${gameId}:dsg_${f.slot}_${cls}`, gameId, f.id, cls,
+          JSON.stringify(parts), now,
+        ),
+      );
+    }
   }
 
   // Pre-compute secret placements. Deterministic from rand (which is

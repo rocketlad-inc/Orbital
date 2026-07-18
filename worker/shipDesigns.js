@@ -42,6 +42,27 @@ export const SHIP_PART_DEFS = {
   detonator: { metal: 10, gold: 10, allowed: ['corvette', 'frigate', 'destroyer'] },
 };
 
+/**
+ * Standard-issue fitting per hull — the "Default" template every player
+ * starts with, and what a build falls back to when no design is active.
+ *
+ * COST NOTE: these fill every slot, so a fitted hull runs ~2.3-2.8x the
+ * bare-hull price (frigate 10M/8G -> 28M/22G, destroyer 20M/17G ->
+ * 48M/37G). That's intentional — a default should be a real warship —
+ * but it IS a live economy change. Players who want the cheap hull can
+ * UNSET the active design; builds then fall back to bare.
+ * Trim any entry here to soften it; nothing else needs to change.
+ *
+ * KEEP IN SYNC with DEFAULT_LOADOUTS in src/game/shipParts.ts.
+ */
+export const DEFAULT_LOADOUTS = {
+  corvette:  ['weapon', 'engine'],
+  frigate:   ['weapon', 'weapon', 'shield', 'engine'],
+  destroyer: ['weapon', 'weapon', 'weapon', 'shield', 'shield', 'engine'],
+  freighter: ['engine'],
+  colony:    [],
+};
+
 const WEAPON_DMG_PCT       = 0.40;  // of hull base dmg, per part
 const SHIELD_HP_PCT        = 0.35;  // of hull base HP, per part
 const DETONATOR_HP_FRAC    = 0.50;  // of ship MAX HP, per part
