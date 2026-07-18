@@ -67,6 +67,33 @@ function shipCanvasPos(
 const TRACER_CAP = 64;
 const TRACER_LIFE_MS = 140;
 
+// ------------------------------------------------------------
+// SUSTAINED ENGAGEMENT FIRE
+//
+// One-shot tracers on a damage event are effectively invisible in a
+// real match: MP tick intervals run 30s–1h, ships only volley every
+// AUTO_COMBAT_INTERVAL (3) ticks, and a tracer lives 140ms. On an
+// hour-per-tick game that's a seventh of a second of muzzle flash
+// every three hours — nobody will ever catch it.
+//
+// So combat is rendered as a CONTINUOUS STATE, not an event. The
+// server stamps `last_combat_tick` on any ship that actually fired
+// (worker/room.js firedShipIds), which already accounts for peace
+// pacts, stance, cadence and armament — we don't have to re-derive
+// hostility client-side. While that stamp is fresh, the shooter
+// pulses tracers at its target on a wall-clock duty cycle, so an
+// engagement reads as a firefight for as long as it lasts.
+// ------------------------------------------------------------
+
+/** Ticks after last_combat_tick that a ship still counts as engaged.
+ *  Matches the server's AUTO_COMBAT_INTERVAL so the visual stops when
+ *  the shooting does. */
+const ENGAGED_WINDOW_TICKS = 3;
+/** One pulse per shooter per this many ms. */
+const BURST_PERIOD_MS = 750;
+/** Fraction of the period the bolt is visible (duty cycle). */
+const BURST_DUTY = 0.28;
+
 interface Tracer {
   fromShipId: string;
   toId: string;
@@ -132,6 +159,87 @@ export function drawTracers(
     c.fillStyle = withOpacity(lighten(color, 1.5), alpha);
     c.beginPath();
     c.arc(tp.x, tp.y, 2.5, 0, Math.PI * 2);
+    c.fill();
+  }
+  if (opened) c.restore();
+}
+
+/**
+ * Sustained engagement fire — the visual that actually reads in a live
+ * match (see the SUSTAINED ENGAGEMENT FIRE note above).
+ *
+ * For every ship the server says fired recently, pulse a bolt at a
+ * hostile it shares an orbit with. Target choice is deterministic
+ * (lowest id among co-located ships of a different owner) so all
+ * clients draw the same exchange. Phase is seeded per shooter so a
+ * six-ship brawl looks like crossfire instead of a metronome.
+ *
+ * Stateless: no arrays, no allocation, nothing to prune — it's derived
+ * purely from ship state each frame.
+ */
+export function drawEngagementFire(
+  rc: RenderContext,
+  ships: Ship[],
+  nowMs: number,
+  currentTick: number,
+  transitCanvasPos?: Map<string, { x: number; y: number }>,
+): void {
+  const c = rc.ctx;
+  let opened = false;
+
+  for (const shooter of ships) {
+    const fired = shooter.lastCombatTick;
+    if (fired === undefined) continue;
+    // Engaged only while the server's fire stamp is fresh.
+    if (currentTick - fired > ENGAGED_WINDOW_TICKS) continue;
+    if (shooter.transit) continue;
+
+    const atBody = shooter.orbit.parentBodyId;
+    let target: Ship | null = null;
+    for (const s of ships) {
+      if (s.id === shooter.id || s.transit) continue;
+      if (s.orbit.parentBodyId !== atBody) continue;
+      if (s.ownedBy === shooter.ownedBy) continue;
+      if (target === null || s.id < target.id) target = s;
+    }
+    if (!target) continue;
+
+    // Per-shooter phase offset so bolts stagger across the fight.
+    const phase =
+      ((nowMs / BURST_PERIOD_MS) + (hashStr(shooter.id) % 1000) / 1000) % 1;
+    if (phase > BURST_DUTY) continue;
+
+    const fp = shipCanvasPos(shooter, rc, transitCanvasPos);
+    const tp = shipCanvasPos(target, rc, transitCanvasPos);
+    if (!fp || !tp) continue;
+
+    if (!opened) {
+      c.save();
+      c.globalCompositeOperation = 'lighter';
+      opened = true;
+    }
+    // Bolt travels shooter -> target across the duty window, so the
+    // eye reads direction rather than a static line.
+    const k = phase / BURST_DUTY;
+    const alpha = 1 - k * 0.75;
+    const color = factionPrimary(rc, shooter.ownedBy);
+    const headX = fp.x + (tp.x - fp.x) * k;
+    const headY = fp.y + (tp.y - fp.y) * k;
+    // Short bolt trailing the head, clipped to the muzzle end.
+    const tailK = Math.max(0, k - 0.35);
+    const tailX = fp.x + (tp.x - fp.x) * tailK;
+    const tailY = fp.y + (tp.y - fp.y) * tailK;
+
+    c.strokeStyle = withOpacity(color, alpha);
+    c.lineWidth = 2;
+    c.beginPath();
+    c.moveTo(tailX, tailY);
+    c.lineTo(headX, headY);
+    c.stroke();
+
+    c.fillStyle = withOpacity(lighten(color, 1.5), alpha);
+    c.beginPath();
+    c.arc(headX, headY, 2, 0, Math.PI * 2);
     c.fill();
   }
   if (opened) c.restore();

@@ -33,6 +33,7 @@ import {
 import {
   spawnTracer,
   drawTracers,
+  drawEngagementFire,
   drawDetonations,
   spawnArrivalFlash,
   drawArrivalFlashes,
@@ -955,6 +956,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // Tracers/detonations are deliberately NOT LOD-gated: combat must
     // be visible at any zoom.
     drawTracers(renderContext, gameState.ships, nowMs, transitShipCanvasPosRef.current);
+    // Sustained fire while an engagement is live. One-shot tracers alone
+    // are unwatchable on real tick intervals (30s–1h per tick), so this
+    // carries the firefight between volleys.
+    drawEngagementFire(
+      renderContext, gameState.ships, nowMs, nowTick, transitShipCanvasPosRef.current,
+    );
     drawDetonations(renderContext, nowMs);
     drawArrivalFlashes(renderContext, gameState.ships, nowMs);
 
