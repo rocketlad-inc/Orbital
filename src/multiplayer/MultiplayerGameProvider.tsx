@@ -195,6 +195,10 @@ interface ServerState {
     created_at_tick: number;
     last_growth_tick: number | null;
     last_harvest_tick: number | null;
+    /** Tick this settlement last RETURNED FIRE. Drives the Situation
+     *  Report's "in combat" rows. Absent for a settlement with no guns,
+     *  so absence does not mean "not under attack". */
+    last_combat_tick?: number | null;
     /** Collector flag (0/1) — when 1 this settlement is a logistics
      *  endpoint and the empire's stockpile drain network can use it. */
     has_collector?: number;
@@ -520,6 +524,9 @@ function settlementToClient(
     hp: s.hp,
     maxHp: s.hp_max,
     population: s.population,
+    // Stamped when the settlement returns fire; drives the Situation
+    // Report's "in combat" rows. SP sets this in client combat.ts.
+    lastCombatTick: s.last_combat_tick ?? undefined,
     lastGrowthTick: s.last_growth_tick ?? s.created_at_tick,
     surfaceAngle: s.surface_angle ?? undefined,
     orbit,

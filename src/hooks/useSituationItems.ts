@@ -20,8 +20,8 @@ import type {
 } from '../types';
 import {
   computeIncomingThreats,
-  threatenedBodyIds,
 } from '../game/threats';
+import { AUTO_COMBAT_INTERVAL } from '../game/combat';
 import {
   nextLevelCost,
   TECH_DEFS,
@@ -41,6 +41,7 @@ export type SituationCategory =
   | 'stranded'       // settlement stockpile piling up, no collector
   | 'vote_open'      // MP — senate proposal in voting, not voted on
   | 'incoming_trade' // MP — open trade where caller is responder
+  | 'in_combat'      // shooting RIGHT NOW — your hulls/settlements engaged
   | 'threat'         // body of yours under incoming enemy
   | 'tech_available';// research you can afford
 
@@ -59,6 +60,9 @@ export interface SituationItem {
 }
 
 const CATEGORY_ORDER: SituationCategory[] = [
+  // Shooting now outranks shooting soon — an engaged hull may be dead
+  // in a few ticks, an inbound burn still leaves time to react.
+  'in_combat',
   'threat',
   'arrived',
   'created',
@@ -71,6 +75,7 @@ const CATEGORY_ORDER: SituationCategory[] = [
 ];
 
 export const CATEGORY_LABEL: Record<SituationCategory, string> = {
+  in_combat:       'In combat now',
   threat:          'Incoming threats',
   arrived:         'Recently arrived',
   created:         'Newly created',
@@ -104,6 +109,30 @@ export interface SituationMpData {
 // ------------------------------------------------------------
 // Helper: "no pending orders" — the v1 idleness gate.
 // ------------------------------------------------------------
+
+// ------------------------------------------------------------
+// Combat recency — MUST match FleetPanel's "In Combat" badge, or the
+// Situation Report and the fleet list disagree about the same hull.
+// Auto-combat resolves a volley every AUTO_COMBAT_INTERVAL ticks, so
+// 2x gives one volley of grace: the entry stays lit between salvoes
+// and clears a couple of ticks after the last shot.
+// ------------------------------------------------------------
+const COMBAT_RECENT_TICKS = AUTO_COMBAT_INTERVAL * 2;
+
+/** Display name for a faction id, falling back to the id so an
+ *  unrecognised owner still reads as something in the UI. */
+function factionName(gameState: GameState, id: string): string {
+  return gameState.factions?.find(f => f.id === id)?.name ?? id;
+}
+
+/** Ticks since this entity last fired OR took a hit. Infinity = never. */
+function ticksSinceCombat(
+  e: { lastCombatTick?: number; lastDamagedTick?: number },
+  tick: number,
+): number {
+  const last = Math.max(e.lastCombatTick ?? -Infinity, e.lastDamagedTick ?? -Infinity);
+  return last === -Infinity ? Infinity : tick - last;
+}
 
 function shipHasPendingOrders(s: Ship): boolean {
   if (s.transit) return true;
@@ -353,22 +382,126 @@ export function useSituationItems(
     }
 
     // ---- 8) Incoming threats ----
+    // One row per TARGET BODY (not per attacker) so a six-ship strike
+    // reads as one decision, not six. computeIncomingThreats already
+    // filters own ships + peace treaties and sorts soonest-first; we
+    // just group and phrase.
     try {
       const threats = computeIncomingThreats(gameState, factionId);
-      const threatBodySet = threatenedBodyIds(threats);
-      for (const bodyId of threatBodySet) {
+      const byBody = new Map<string, typeof threats>();
+      for (const t of threats) {
+        const arr = byBody.get(t.targetBodyId) ?? [];
+        arr.push(t);
+        byBody.set(t.targetBodyId, arr);
+      }
+
+      for (const [bodyId, group] of byBody) {
         const body = bodies.find(b => b.id === bodyId);
         if (!body) continue;
+
+        // Soonest arrival drives the ETA — that's the clock the player
+        // is actually racing.
+        const eta = Math.min(...group.map(t => t.ticksUntilArrival));
+        const n = group.length;
+
+        // Who's coming. Resolve display names; fall back to the raw id
+        // so an unknown faction still reads as *something*.
+        const attackers = Array.from(new Set(group.map(t => t.attackerFaction)))
+          .map(id => factionName(gameState, id));
+        const who = attackers.length === 1
+          ? attackers[0]
+          : `${attackers[0]} +${attackers.length - 1}`;
+
+        // Composition, most-dangerous first, so "destroyer" is the word
+        // the player sees when a destroyer is in the wave.
+        const classRank: Record<string, number> = {
+          destroyer: 0, frigate: 1, corvette: 2, colony: 3, freighter: 4,
+        };
+        const classes = Array.from(new Set(group.map(t => t.attackerClass)))
+          .sort((a, b) => (classRank[a] ?? 9) - (classRank[b] ?? 9));
+
+        // What's at stake at the destination.
+        const g0 = group[0];
+        const stake: string[] = [];
+        if (g0.threatenedSettlementCount > 0) {
+          stake.push(g0.threatenedSettlementCount === 1 && g0.threatenedSettlementNames[0]
+            ? g0.threatenedSettlementNames[0]
+            : `${g0.threatenedSettlementCount} settlements`);
+        }
+        if (g0.threatenedShipCount > 0) {
+          stake.push(`${g0.threatenedShipCount} ship${g0.threatenedShipCount === 1 ? '' : 's'}`);
+        }
+        // Owned-but-empty body: nothing stationed, but losing the claim
+        // still matters — say so rather than showing a bare ETA.
+        const stakeText = stake.length > 0
+          ? `${stake.join(' + ')} at risk`
+          : 'undefended';
+
         items.push({
           id: `threat:${bodyId}`,
           category: 'threat',
-          title: `${body.name} under threat`,
-          subtitle: 'Enemy ship inbound',
+          title: `${n} hostile${n === 1 ? '' : 's'} inbound → ${body.name}`,
+          subtitle: `${who} ${classes.join('/')} · ETA ${eta}t · ${stakeText}`,
           focus: { kind: 'body', bodyId },
           severity: 'warn',
         });
       }
     } catch { /* defensive: threats compute failures shouldn't kill the list */ }
+
+    // ---- 8b) In combat now ----
+    // Hulls and settlements that fired or took fire in the last few
+    // ticks. Ships in transit are excluded: auto-combat only happens
+    // between entities sharing a body, so a transiting hull carrying a
+    // stale stamp is a straggler from a fight it already left.
+    try {
+      for (const s of gameState.ships) {
+        if (s.ownedBy !== factionId) continue;
+        if (s.transit) continue;
+        if (ticksSinceCombat(s, tick) > COMBAT_RECENT_TICKS) continue;
+
+        const where = bodies.find(b => b.id === s.orbit.parentBodyId)?.name ?? 'deep space';
+        const hp = s.hp;
+        const hpMax = s.hpMax;
+        const hpText = hp != null && hpMax != null && hpMax > 0
+          ? ` · ${Math.max(0, Math.round((hp / hpMax) * 100))}% HP`
+          : '';
+        // Warn only when the hull is actually losing — a winning
+        // skirmish shouldn't paint the whole list red.
+        const hurt = hp != null && hpMax != null && hpMax > 0 && hp / hpMax <= 0.5;
+
+        items.push({
+          id: `in_combat:ship:${s.id}`,
+          category: 'in_combat',
+          title: `${s.name} engaged at ${where}`,
+          subtitle: `${s.class}${hpText}`,
+          focus: { kind: 'ship', shipId: s.id },
+          severity: hurt ? 'warn' : 'normal',
+        });
+      }
+
+      // Settlements return fire and can be bombarded to nothing — a
+      // city under guns is the most urgent combat fact on the board.
+      for (const st of gameState.settlements) {
+        if (st.ownedBy !== factionId) continue;
+        if (ticksSinceCombat(st, tick) > COMBAT_RECENT_TICKS) continue;
+
+        // NB: settlements carry `maxHp`; ships carry `hpMax`. Not a typo.
+        const where = bodies.find(b => b.id === st.bodyId)?.name ?? st.bodyId;
+        const hpText = st.maxHp > 0
+          ? ` · ${Math.max(0, Math.round((st.hp / st.maxHp) * 100))}% HP`
+          : '';
+        const hurt = st.maxHp > 0 && st.hp / st.maxHp <= 0.5;
+
+        items.push({
+          id: `in_combat:settlement:${st.id}`,
+          category: 'in_combat',
+          title: `${st.name} under fire`,
+          subtitle: `${st.type} on ${where}${hpText}`,
+          focus: { kind: 'body', bodyId: st.bodyId },
+          severity: hurt ? 'warn' : 'normal',
+        });
+      }
+    } catch { /* defensive */ }
 
     // ---- 9) Tech available ----
     // Any tech where (current_level < MAX) AND (player can afford
