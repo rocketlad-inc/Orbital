@@ -23,6 +23,18 @@ import { AUTO_COMBAT_INTERVAL } from './combat';
  *  (and ~4.7e4 after the 2x system scale), so there's no ambiguity. */
 const PRETEND_ORBIT_PERIOD = 1e9;
 
+/**
+ * The inner system reads as one place, not three. Sol, Mercury and Venus
+ * are close enough that splitting them into three headers — two of which
+ * are a single scorched rock apiece — is noise. They group as "The Core".
+ *
+ * Earth and Mars stay their own systems: both hold satellites, both are
+ * somewhere you actually campaign, and folding them in would bury them.
+ */
+export const CORE_SYSTEM_ID = 'core';
+const CORE_MEMBER_IDS = new Set(['sol', 'mercury', 'venus']);
+const CORE_LABEL = 'The Core';
+
 /** A star, black hole, or barycenter anchor — the thing planets orbit.
  *  These do NOT head a planetary system; they're the level above it. */
 export function isStellarAnchor(b: Body): boolean {
@@ -62,7 +74,11 @@ export function makeSystemRootOf(bodies: Body[]): (bodyId: string) => string {
       chain.push(cur.id);
       cur = parent;
     }
-    const root = cur?.id ?? bodyId;
+    const rawRoot = cur?.id ?? bodyId;
+    // Sol/Mercury/Venus collapse into one synthetic root. Applied to the
+    // ROOT, not the body, so a hypothetical moon of Venus follows its
+    // planet into the Core instead of heading a system of its own.
+    const root = CORE_MEMBER_IDS.has(rawRoot) ? CORE_SYSTEM_ID : rawRoot;
     for (const id of chain) cache.set(id, root);
     cache.set(bodyId, root);
     return root;
@@ -82,6 +98,9 @@ export function makeSystemRootOf(bodies: Body[]): (bodyId: string) => string {
  * would promise the whole solar system and deliver one star.
  */
 export function systemLabel(bodies: Body[], rootId: string): string {
+  // Synthetic root — no body carries this id, so name it before the
+  // lookup below falls through to shouting the raw id.
+  if (rootId === CORE_SYSTEM_ID) return CORE_LABEL;
   const root = bodies.find(b => b.id === rootId);
   if (!root) return rootId.toUpperCase();
   const name = root.name.replace(/\s*Barycenter$/i, '');

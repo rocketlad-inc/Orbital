@@ -3665,15 +3665,27 @@ export function drawOwnershipLayer(
 // Spans is invariant: 1.0 means the system exactly fills the viewport,
 // whatever units the world is measured in.
 
+// The band below used to be 0.7 / 1.7 / 2.8. That put the whole overlay
+// out of reach of the inner system: framing Sol through Jupiter — the
+// most common strategic view — measures ~6.8 spans, because `spans` is
+// scaled by the OUTERMOST heliocentric orbit and Sedna sits 18.8x
+// further out than Earth. So the political map only appeared once you
+// had pulled back past the Kuiper belt, by which point Mercury, Venus
+// and Earth are a few pixels of overlapping colour and the wash tells
+// you nothing about them. Everything is scaled ~2.43x to start the
+// fade-in at that inner-system framing, keeping the original ramp
+// proportions (FULL at 0.61x HIDE, DARK at 0.25x) so the feel is
+// unchanged — it just reaches the planets people actually fight over.
+
 /** Overlay is fully present at/below this many spans... */
-export const SYSTEM_REGION_FULL_SPANS = 1.7;
+export const SYSTEM_REGION_FULL_SPANS = 4.1;
 /** ...and fully faded out at/above this. Between the two it cross-fades,
  *  so there's no hard pop as you zoom. */
-export const SYSTEM_REGION_HIDE_SPANS = 2.8;
+export const SYSTEM_REGION_HIDE_SPANS = 6.8;
 /** At/below this the wash reaches full strength — a solid political map.
  *  Between here and HIDE the colour deepens continuously, so pulling
  *  further out keeps reading as "more strategic". */
-export const SYSTEM_REGION_DARK_SPANS = 0.7;
+export const SYSTEM_REGION_DARK_SPANS = 1.7;
 
 /**
  * How many screen-heights the star system spans at the current camera.
