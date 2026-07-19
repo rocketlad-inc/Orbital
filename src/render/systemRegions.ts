@@ -141,6 +141,17 @@ function ownershipOf(
       set.add(cl.ownedBy);
     }
   }
+  // Per-body fallback to the body's own ownership column, ONLY where no
+  // settlement claim exists. The claims feed (fog-free, game-wide)
+  // covers every settlement, so this catches just the exotic case of a
+  // body the server credits to a faction without a settlement behind it
+  // — the upstream motivating example was a held star. A live claim
+  // always outvotes the column, so the stale-owner bug this function
+  // was originally written to dodge stays non-representable.
+  for (const b of members) {
+    if (perBody.has(b.id)) continue;
+    if (b.ownedBy) perBody.set(b.id, new Set([b.ownedBy]));
+  }
   if (perBody.size === 0) return { kind: 'unowned' };
 
   // Worlds per sole claimant. Shared bodies count toward nobody but DO

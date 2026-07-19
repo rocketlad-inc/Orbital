@@ -1076,9 +1076,11 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                         ? 'Your Colony Ship is en route — wait for it to arrive'
                         : 'Requires a Colony Ship in orbit — founding the city consumes it')
                   : (
+                    // Fuel term dropped — cost.fuel is 0 and fuel is dead
+                    // (DESIGN §1.1), so it only ever rendered a stray "0F".
                     !canBuildHere ? noFreighterHint
-                    : !canAffordCity ? `Need ${SETTLEMENT_DEFS.city.cost.fuel}F/${SETTLEMENT_DEFS.city.cost.ore}M/${SETTLEMENT_DEFS.city.cost.credits}C`
-                    : `Deploy a city (${SETTLEMENT_DEFS.city.cost.fuel}F/${SETTLEMENT_DEFS.city.cost.ore}M/${SETTLEMENT_DEFS.city.cost.credits}C)`
+                    : !canAffordCity ? `Need ${SETTLEMENT_DEFS.city.cost.ore}M/${SETTLEMENT_DEFS.city.cost.credits}C`
+                    : `Deploy a city (${SETTLEMENT_DEFS.city.cost.ore}M/${SETTLEMENT_DEFS.city.cost.credits}C)`
                   )
                 }
               >
@@ -1106,8 +1108,8 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                           : `Requires a Colony Ship in orbit (consumed) — or own a settlement here first to build from orbit for ${MP_STATION_COST.ore}M ${MP_STATION_COST.credits}C`)
                   : (
                     !canBuildHere ? noFreighterHint
-                    : !canAffordStation ? `Need ${SETTLEMENT_DEFS.station.cost.fuel}F/${SETTLEMENT_DEFS.station.cost.ore}M/${SETTLEMENT_DEFS.station.cost.credits}C`
-                    : `Deploy a station (${SETTLEMENT_DEFS.station.cost.fuel}F/${SETTLEMENT_DEFS.station.cost.ore}M/${SETTLEMENT_DEFS.station.cost.credits}C)`
+                    : !canAffordStation ? `Need ${SETTLEMENT_DEFS.station.cost.ore}M/${SETTLEMENT_DEFS.station.cost.credits}C`
+                    : `Deploy a station (${SETTLEMENT_DEFS.station.cost.ore}M/${SETTLEMENT_DEFS.station.cost.credits}C)`
                   )
                 }
               >

@@ -20,6 +20,7 @@ import { TECH_DEFS, nextLevelCost, TECH_MAX_LEVEL, type TechId } from '../game/t
 import { useTutorial } from '../state/tutorial';
 import { TUTORIAL_STEP_COUNT } from '../game/tutorialSteps';
 import type { GameState } from '../types';
+import { displayResource } from '../game/formatResources';
 import './TopBar.css';
 import { GIT_SHA } from '../_version';
 
@@ -416,18 +417,18 @@ const ResourcePill: React.FC<{
   const hasLocal = local > 0.01;
   let tooltip: string;
   if (hasLocal && !hasCollector) {
-    tooltip = `${label}: ${Math.round(value)} (pool). ${fmtRate(local)}/t banking LOCAL at settlements — spendable on body builds, or send a freighter to vacuum it up. Build a collector for the 10× pump.`;
+    tooltip = `${label}: ${displayResource(value)} (pool). ${fmtRate(local)}/t banking LOCAL at settlements — spendable on body builds, or send a freighter to vacuum it up. Build a collector for the 10× pump.`;
   } else if (hasLocal && hasCollector) {
-    tooltip = `${label}: ${Math.round(value)} (pool) — +${fmtRate(rate)}/t delivered, +${fmtRate(local)}/t banking LOCAL at uncollectered settlements.`;
+    tooltip = `${label}: ${displayResource(value)} (pool) — +${fmtRate(rate)}/t delivered, +${fmtRate(local)}/t banking LOCAL at uncollectered settlements.`;
   } else if (hasRate) {
-    tooltip = `${label}: ${Math.round(value)} (pool) — gaining +${fmtRate(rate)} per tick.`;
+    tooltip = `${label}: ${displayResource(value)} (pool) — gaining +${fmtRate(rate)} per tick.`;
   } else {
-    tooltip = `${label}: ${Math.round(value)} (pool)`;
+    tooltip = `${label}: ${displayResource(value)} (pool)`;
   }
   return (
     <div className={`resource-pill resource-pill--${modifier}`} title={tooltip}>
       <div className="resource-pill__label">{label}</div>
-      <div className="resource-pill__value">{Math.round(value)}</div>
+      <div className="resource-pill__value">{displayResource(value)}</div>
       {hasRate && (
         <div
           className="resource-pill__rate"
