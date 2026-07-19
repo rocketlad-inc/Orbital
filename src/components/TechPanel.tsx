@@ -13,6 +13,7 @@ import {
   effectAtLevel, nextLevelCost,
   TECH_MAX_LEVEL,
 } from '../game/techs';
+import { computeIncomePerTick } from '../game/settlements';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import './OverviewPanel.css';
@@ -53,6 +54,31 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
   const activeCost = activeDef ? nextLevelCost(activeLevel, activeDef) : 0;
   const activePct = activeCost > 0 ? Math.min(100, (tech.progress / activeCost) * 100) : 0;
 
+  // Science actually REACHING the pool each tick. Research advances at
+  // exactly this rate (worker/room.js research drain), so it's what the
+  // ETA must be computed from — not the banked pool, which can't be
+  // spent to rush a project.
+  const scienceRate = useMemo(() => {
+    const lvl = tech.levels?.industry ?? 0;
+    const yieldMul = 1 + TECH_DEFS.industry.perLevel * lvl;
+    try {
+      return computeIncomePerTick(
+        'player', gameState.settlements, gameState.bodies, gameState.ships, yieldMul,
+      ).delivered.science;
+    } catch { return 0; }
+  }, [gameState.settlements, gameState.bodies, gameState.ships, tech.levels]);
+
+  /** Ticks until the active level completes at the current income rate.
+   *  null when there's no project or no income (the caller renders a
+   *  "stalled" note instead of a misleading Infinity). */
+  const etaTicks = useMemo(() => {
+    if (!activeDef || activeCost <= 0) return null;
+    const remaining = activeCost - tech.progress;
+    if (remaining <= 0) return 0;
+    if (scienceRate <= 0) return null;
+    return Math.ceil(remaining / scienceRate);
+  }, [activeDef, activeCost, tech.progress, scienceRate]);
+
   return (
     <div className="overview-panel">
       <div className="overview-panel__header">
@@ -84,6 +110,16 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
               </div>
               <div className="tech-active__bar-text">
                 {Math.floor(tech.progress)} / {activeCost} science · {Math.floor(activePct)}%
+                {etaTicks != null && (
+                  <span style={{ color: '#6ee7b7', marginLeft: 6 }}>
+                    · done in {etaTicks} tick{etaTicks === 1 ? '' : 's'}
+                  </span>
+                )}
+                {etaTicks == null && scienceRate <= 0 && (
+                  <span style={{ color: '#ff5e5e', marginLeft: 6 }}>
+                    · stalled — no science income
+                  </span>
+                )}
               </div>
             </div>
             <button
@@ -290,7 +326,9 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                       ? '…'
                       : isActive
                         ? `Researching · ${progressPct}%`
-                        : `Set project (${cost} sci)`}
+                        : scienceRate > 0
+                          ? `Set project · ${Math.ceil(cost / scienceRate)}t`
+                          : `Set project (${cost} sci)`}
                   </button>
                 ) : isActive ? (
                   <button
