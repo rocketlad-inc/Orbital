@@ -240,6 +240,15 @@ export const Outliner: React.FC = () => {
               const isOwned = body.ownedBy === 'player';
               const totalUnder = ships.length + settlements.length;
               const builds = shipBuildsAt(body.id);
+              // Ship builds are queued per BODY, but they physically happen
+              // at the yard. Showing them on the planet row too just says
+              // the same thing twice, so they render on the station and the
+              // planet row stays clean. Cities never host them.
+              const yard = settlements.find(s => s.type !== 'city');
+              // No station (yard destroyed mid-build, and the hull still
+              // finishes) — fall back to the body row so an in-flight build
+              // never silently disappears from the outliner.
+              const bodyBuilds = yard ? [] : builds;
               return (
                 <div className="outliner__group" key={body.id}>
                   <div
@@ -251,19 +260,16 @@ export const Outliner: React.FC = () => {
                     <PlanetIcon body={body} size={16} className="outliner__body-icon" />
                     <span className="outliner__body-name">
                       {body.name}{isOwned ? ' ★' : ''}
-                      {/* Ship builds belong to the BODY (that's where the
-                          yard queue lives), so they render once here
-                          rather than duplicated under every settlement. */}
-                      {builds.length > 0 && (
+                      {bodyBuilds.length > 0 && (
                         <span className="outliner__build">
                           <span className="outliner__build-label">
-                            {builds[0].shipName || builds[0].shipClass} · {Math.max(0, builds[0].completeTick - currentTick)}t
-                            {builds.length > 1 ? ` (+${builds.length - 1})` : ''}
+                            {bodyBuilds[0].shipName || bodyBuilds[0].shipClass} · {Math.max(0, bodyBuilds[0].completeTick - currentTick)}t
+                            {bodyBuilds.length > 1 ? ` (+${bodyBuilds.length - 1})` : ''}
                           </span>
                           <span className="outliner__build-bar">
                             <span
                               className="outliner__build-fill"
-                              style={{ width: `${Math.round(tickProgress(builds[0].startTick, builds[0].completeTick) * 100)}%` }}
+                              style={{ width: `${Math.round(tickProgress(bodyBuilds[0].startTick, bodyBuilds[0].completeTick) * 100)}%` }}
                             />
                           </span>
                         </span>
@@ -274,12 +280,12 @@ export const Outliner: React.FC = () => {
                     )}
                   </div>
                   {settlements.map(s => {
-                    // ONLY this settlement's own building upgrade. Ship
-                    // builds are queued per BODY, not per settlement, so
-                    // rendering them here printed the same hull under
-                    // both the city and the station — one ship, listed
-                    // twice. Those live on the body row instead.
                     const upgrade = s.buildingQueue;
+                    // Hulls show on the yard that's building them, and only
+                    // there. They're queued per BODY, so rendering them on
+                    // every settlement printed one ship twice — once under
+                    // the city, once under the station.
+                    const hulls = s.id === yard?.id ? builds : [];
                     const bar = upgrade
                       ? {
                           label: `${upgrade.kind} L${upgrade.targetLevel}`,
@@ -306,6 +312,20 @@ export const Outliner: React.FC = () => {
                                 <span
                                   className="outliner__build-fill"
                                   style={{ width: `${Math.round(bar.pct * 100)}%` }}
+                                />
+                              </span>
+                            </span>
+                          )}
+                          {hulls.length > 0 && (
+                            <span className="outliner__build">
+                              <span className="outliner__build-label">
+                                {hulls[0].shipName || hulls[0].shipClass} · {Math.max(0, hulls[0].completeTick - currentTick)}t
+                                {hulls.length > 1 ? ` (+${hulls.length - 1})` : ''}
+                              </span>
+                              <span className="outliner__build-bar">
+                                <span
+                                  className="outliner__build-fill"
+                                  style={{ width: `${Math.round(tickProgress(hulls[0].startTick, hulls[0].completeTick) * 100)}%` }}
                                 />
                               </span>
                             </span>
