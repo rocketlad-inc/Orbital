@@ -30,7 +30,7 @@
 // colour, because "someone is fighting here" is the signal, not who.
 // ============================================================
 
-import { Body, Faction } from '../types';
+import { Body, Faction, Settlement } from '../types';
 
 /** Consecutive rubble bodies join one belt while each is within this
  *  factor of the previous orbit radius. 1.25 keeps Sol's real belts
@@ -90,9 +90,35 @@ export interface SystemRegion {
   ownership: RegionOwnership;
 }
 
-function ownershipOf(members: Body[], factions: Faction[] | undefined): RegionOwnership {
+/**
+ * Ownership is derived from LIVE SETTLEMENTS in the region — who has
+ * boots on the ground — rather than the server's `owner_faction_id`
+ * on the body. Two reasons:
+ *
+ *   1. Matches the mental model. A player who has ships parked at a
+ *      body but no settlement doesn't own it; a player whose
+ *      settlement was just destroyed doesn't own it either. Settlement
+ *      presence is the concrete, verifiable claim.
+ *
+ *   2. Immune to stale `owner_faction_id`. That column is
+ *      server-derived from settlement counts, but any missed
+ *      recompute (a code path that destroys settlements without
+ *      calling recomputeBodyOwnership) would leave the wrong owner
+ *      showing forever. Playtester report (2026-07-19): a system was
+ *      showing attributed to another faction even though only Sean's
+ *      faction had settlements in it. Reading settlements directly
+ *      makes that class of bug non-representable.
+ */
+function ownershipOf(
+  members: Body[],
+  settlements: Settlement[] | undefined,
+  factions: Faction[] | undefined,
+): RegionOwnership {
   const owners = new Set<string>();
-  for (const b of members) if (b.ownedBy) owners.add(b.ownedBy);
+  const bodyIds = new Set(members.map(b => b.id));
+  if (settlements) {
+    for (const s of settlements) if (bodyIds.has(s.bodyId) && s.ownedBy) owners.add(s.ownedBy);
+  }
   if (owners.size === 0) return { kind: 'unowned' };
   if (owners.size > 1) return { kind: 'contested', factionIds: Array.from(owners) };
   const id = Array.from(owners)[0];
@@ -118,6 +144,7 @@ function isBeltable(b: Body): boolean {
 export function computeSystemRegions(
   bodies: Body[],
   factions?: Faction[],
+  settlements?: Settlement[],
 ): SystemRegion[] {
   const alive = bodies.filter(b => b.destroyedAtTick == null);
   const childrenOf = new Map<string, Body[]>();
@@ -180,7 +207,7 @@ export function computeSystemRegions(
           labelAnchorBodyId: b.id,
         },
         bodyIds: members.map(m => m.id),
-        ownership: ownershipOf(members, factions),
+        ownership: ownershipOf(members, settlements, factions),
       });
     }
 
@@ -231,7 +258,7 @@ export function computeSystemRegions(
           labelAnchorBodyId: cluster[Math.floor(cluster.length / 2)].id,
         },
         bodyIds: cluster.map(b => b.id),
-        ownership: ownershipOf(cluster, factions),
+        ownership: ownershipOf(cluster, settlements, factions),
       });
     }
 
@@ -256,9 +283,33 @@ export function computeSystemRegions(
           labelAnchorBodyId: b.id,
         },
         bodyIds: [b.id],
-        ownership: ownershipOf([b], factions),
+        ownership: ownershipOf([b], settlements, factions),
       });
     }
+  }
+
+  // --- Border-touching pass ---
+  //
+  // Compute each region's orbital CENTER, sort by it, and for each pair
+  // of orbit-adjacent regions with a gap between them, extend both edges
+  // to meet at the mid-radius of their centers. Playtester feedback:
+  // between the concentric coloured rings there was a visible ~20% neutral
+  // strip (each lane's half-width covered 0.40 of the gap; two of them
+  // covered 0.80, leaving 20%). Adjacent rings now share a border.
+  //
+  // Overlaps are left alone — Pluto genuinely orbits inside the Kuiper
+  // belt and Black Sky shares Uranus's orbit; the paint order below
+  // handles those. "Gap" here strictly means later.rInner > earlier.rOuter.
+  const centerOf = (r: SystemRegion): number =>
+    r.shape.kind === 'band' ? (r.shape.rInner + r.shape.rOuter) / 2 : 0;
+  const byOrbit = regions.slice().sort((a, b) => centerOf(a) - centerOf(b));
+  for (let i = 0; i + 1 < byOrbit.length; i++) {
+    const earlier = byOrbit[i], later = byOrbit[i + 1];
+    if (later.shape.rInner <= earlier.shape.rOuter) continue;   // overlap OR touching → skip
+    const mid = (centerOf(earlier) + centerOf(later)) / 2;
+    // Only ever GROW a lane toward its neighbour — never shrink one.
+    earlier.shape.rOuter = Math.max(earlier.shape.rOuter, mid);
+    later.shape.rInner  = Math.min(later.shape.rInner,  mid);
   }
 
   // Paint broad first, specific last. Rings genuinely overlap — Pluto
