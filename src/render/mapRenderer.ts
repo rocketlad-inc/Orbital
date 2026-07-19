@@ -1526,6 +1526,124 @@ export function planBodyLabels(
   return result;
 }
 
+// ============================================================
+// World Overlay — the map IS the menu (UX Lab study 05, shipped).
+//
+// When the player zooms into a world they hold, its structures wear
+// callout chips drawn directly on the map: the city's Forge/Mint/Lab on
+// one rail, the station's Weapons/Lab/Shipyard on the other, each with a
+// leader line to the structure it names. Tapping a chip routes to that
+// settlement's detail. No new panel exists — these are map citizens.
+// ============================================================
+
+export interface WorldOverlayChipSpec {
+  /** Stable id for hit bookkeeping ("<settlementId>:forge"). */
+  id: string;
+  settlementId: string;
+  label: string;
+  sub: string;
+  tone: 'teal' | 'amber';
+}
+
+export interface WorldOverlayGroup {
+  /** Canvas-px anchor — the structure the chips point at. */
+  anchor: { x: number; y: number };
+  /** Which rail the chips sit on. City left, station right, per the
+   *  approved mockup — fixed sides keep the layout stable as things
+   *  orbit. */
+  side: 'left' | 'right';
+  chips: WorldOverlayChipSpec[];
+}
+
+export interface WorldOverlayHit {
+  rect: LabelRect;
+  settlementId: string;
+  chipId: string;
+}
+
+/**
+ * Draw the overlay chips and return their hit rects for the tap layer.
+ *
+ * Rail distance scales with the canvas: on a phone the clamp pins chips
+ * to the screen edges (the mockup's rails); on desktop the wider canvas
+ * pushes them out to ~a third of the width so the composition breathes.
+ * Vertical placement centers each group's stack on its anchor, clamped
+ * clear of the top bar and bottom dock.
+ */
+export function drawWorldOverlayChips(
+  groups: WorldOverlayGroup[],
+  ctx: RenderContext,
+  alpha: number,
+): WorldOverlayHit[] {
+  const c = ctx.ctx;
+  const w = ctx.canvas.width;
+  const h = ctx.canvas.height;
+  const CHIP_W = 122;
+  const CHIP_H = 32;
+  const GAP = 9;
+  // Desktop spread: inner chip edge sits up to 360px off the anchor on a
+  // wide canvas, floor of 150 on phones (then the screen-margin clamp
+  // takes over and pins the rail to the edge).
+  const lateral = Math.min(Math.max(150, w * 0.24), 360);
+  const hits: WorldOverlayHit[] = [];
+
+  c.save();
+  for (const g of groups) {
+    if (g.chips.length === 0) continue;
+    const stackH = g.chips.length * CHIP_H + (g.chips.length - 1) * GAP;
+    let y = g.anchor.y - stackH / 2;
+    y = Math.min(Math.max(y, 64), Math.max(64, h - 100 - stackH));
+    let x = g.side === 'left' ? g.anchor.x - lateral - CHIP_W : g.anchor.x + lateral;
+    x = Math.min(Math.max(8, x), w - 8 - CHIP_W);
+
+    for (const chip of g.chips) {
+      const tone = chip.tone === 'amber' ? '#ffb84d' : '#4ecdc4';
+      const innerX = g.side === 'left' ? x + CHIP_W : x;
+      // Leader line first, under the chip body.
+      c.globalAlpha = alpha * 0.45;
+      c.strokeStyle = tone;
+      c.lineWidth = 1;
+      c.beginPath();
+      c.moveTo(innerX, y + CHIP_H / 2);
+      c.lineTo(g.anchor.x, g.anchor.y);
+      c.stroke();
+
+      c.globalAlpha = alpha;
+      c.fillStyle = 'rgba(10, 17, 27, 0.9)';
+      c.strokeStyle = tone;
+      c.lineWidth = 1;
+      c.beginPath();
+      if (c.roundRect) c.roundRect(x, y, CHIP_W, CHIP_H, 6);
+      else c.rect(x, y, CHIP_W, CHIP_H);
+      c.fill();
+      c.stroke();
+
+      c.fillStyle = tone;
+      c.font = 'bold 10px monospace';
+      c.textAlign = 'left';
+      c.textBaseline = 'alphabetic';
+      c.fillText(chip.label, x + 8, y + 13);
+      c.fillStyle = '#8aa0b4';
+      c.font = '8px monospace';
+      c.fillText(chip.sub, x + 8, y + 25);
+      c.fillStyle = tone;
+      c.font = 'bold 13px monospace';
+      c.textAlign = 'right';
+      c.fillText('+', x + CHIP_W - 7, y + 21);
+      c.textAlign = 'left';
+
+      hits.push({
+        rect: { x, y, w: CHIP_W, h: CHIP_H },
+        settlementId: chip.settlementId,
+        chipId: chip.id,
+      });
+      y += CHIP_H + GAP;
+    }
+  }
+  c.restore();
+  return hits;
+}
+
 /**
  * Draw a celestial body (circle with label) — enhanced with shading, glow,
  * gas giant bands, and a multi-layer sun corona.
@@ -3167,6 +3285,11 @@ export function drawCity(
 /**
  * Draw a station: a diamond marker on a thin orbital ring around the body.
  */
+/** How much the zoomed-in station structure is enlarged over its native
+ *  drawing units. 1.6 makes the ring-hub silhouette read as a place the
+ *  overlay chips can plausibly hang off, without dwarfing small moons. */
+const STATION_STRUCTURE_SCALE = 1.6;
+
 export function drawStation(
   settlement: Settlement,
   body: Body,
@@ -3234,6 +3357,11 @@ export function drawStation(
       }));
     ctx.ctx.save();
     ctx.ctx.translate(canvasPos.x, canvasPos.y);
+    // World-overlay pass made the station the co-star of the zoomed-in
+    // view (callout chips hang off it), and at 1x it read as a trinket
+    // next to the planet. Scale the whole structure up so the ring/hub
+    // silhouette and its modules are legible as a place, not a marker.
+    ctx.ctx.scale(STATION_STRUCTURE_SCALE, STATION_STRUCTURE_SCALE);
     drawStationStructure(ctx.ctx, {
       weaponsLevel, shipyardLevel, labLevel, builds,
       factionColor: color,
@@ -3247,9 +3375,10 @@ export function drawStation(
     ctx.ctx.restore();
 
     if (settlement.hp < settlement.maxHp) {
-      const barW = 34;
+      // Bar rides above the scaled-up structure.
+      const barW = 34 * STATION_STRUCTURE_SCALE;
       const barH = 3;
-      const barY = canvasPos.y - 22;
+      const barY = canvasPos.y - 22 * STATION_STRUCTURE_SCALE;
       const hpFrac = Math.max(0, settlement.hp / settlement.maxHp);
       ctx.ctx.fillStyle = '#2a3d50';
       ctx.ctx.fillRect(canvasPos.x - barW / 2, barY, barW, barH);
@@ -3257,7 +3386,7 @@ export function drawStation(
       ctx.ctx.fillRect(canvasPos.x - barW / 2, barY, barW * hpFrac, barH);
     }
     if (isSelected) {
-      drawSelectionBrackets(ctx.ctx, canvasPos.x, canvasPos.y, 30, COLORS.warning, ctx.nowMs);
+      drawSelectionBrackets(ctx.ctx, canvasPos.x, canvasPos.y, 30 * STATION_STRUCTURE_SCALE, COLORS.warning, ctx.nowMs);
     }
     return;
   }
