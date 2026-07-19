@@ -972,3 +972,91 @@
   .ux-device-frame--mobile { width: 200px; }
   .ux-gallery__outro { padding: 24px 16px; }
 }
+
+/* ============================================================
+   World Menu study (05) — annotated-schematic body view
+   ============================================================ */
+
+.ux-gallery__featured {
+  max-width: 860px;
+  margin: 0 auto 48px;
+  padding: 0 24px;
+}
+.ux-gallery__featured-title {
+  font-family: 'Audiowide', 'Orbitron', sans-serif;
+  font-size: 22px;
+  color: #e8f0f6;
+  margin: 6px 0 10px;
+}
+.ux-gallery__featured .ux-card { margin-top: 18px; }
+
+.ux-wm-mob {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 8px;
+  height: 100%;
+  overflow: hidden;
+  font-size: 9px;
+}
+.ux-wm-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ux-wm-top__name {
+  color: #4ecdc4;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  font-size: 10px;
+  margin-right: auto;
+}
+.ux-wm-owner {
+  font-size: 7px;
+  color: #42a5f5;
+  border: 1px solid #42a5f5;
+  border-radius: 8px;
+  padding: 1px 6px;
+  letter-spacing: 0.06em;
+}
+.ux-wm-yields { font-size: 8px; color: #ffd700; }
+.ux-wm-chiprow { display: flex; gap: 4px; }
+.ux-wm-income {
+  font-size: 7.5px;
+  color: #6ee7b7;
+  letter-spacing: 0.04em;
+}
+.ux-wm-scene {
+  background: rgba(10, 17, 27, 0.7);
+  border: 1px solid #1c2a3a;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.ux-wm-svg { display: block; width: 100%; height: auto; }
+.ux-wm-yard { display: flex; flex-direction: column; gap: 4px; }
+.ux-wm-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: auto;
+}
+.ux-wm-actions .mock-btn { flex: 1; text-align: center; }
+
+.ux-wm-desk {
+  display: grid;
+  grid-template-columns: 1.15fr 1fr;
+  gap: 12px;
+  padding: 12px;
+  height: 100%;
+  overflow: hidden;
+  font-size: 9px;
+}
+.ux-wm-desk__scenes { display: flex; flex-direction: column; gap: 8px; }
+.ux-wm-desk__panel { display: flex; flex-direction: column; gap: 4px; }
+
+.ux-wm-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px;
+  font-size: 9px;
+}
