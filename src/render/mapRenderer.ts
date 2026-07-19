@@ -3742,6 +3742,20 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
  *  "nobody's" never reads as a faction colour — least of all blue. */
 const REGION_NEUTRAL = '#8c8f92';
 
+// Canvas2D's font parser does NOT resolve CSS var() — an invalid
+// declaration is silently DROPPED and the context keeps whatever font
+// the previous draw left set. These must stay literal font stacks.
+//
+// No font-weight: Audiowide ships a single 400 weight, so `bold` yields
+// a synthesized faux-bold that smears an already-wide face (App.css
+// .title documents the same rule). The heavier read comes from the face
+// and the size step over the 8-10px monospace body labels.
+const REGION_TITLE_FONT = '13px Audiowide, Orbitron, Eurostile, system-ui, sans-serif';
+const REGION_SUB_FONT = '10px Audiowide, Orbitron, Eurostile, system-ui, sans-serif';
+/** Gap held between a region label's edge and the body it's anchored to
+ *  — enough to clear the body's dot AND the body's own name under it. */
+const REGION_LABEL_BODY_CLEARANCE = 38;
+
 /**
  * Political shading for the zoomed-out map: one soft region per
  * planet system / belt, coloured by its owner.
@@ -3802,10 +3816,13 @@ export function drawSystemRegions(
       c.stroke();
 
       if (region.label) {
-        // Put the label beside the body it names, on its own ring. Ties
-        // the name to the thing it describes, and since every body sits
-        // at a different angle it keeps a dozen concentric rings from
-        // stacking their labels in one column.
+        // Put the label on its own ring, NEXT TO the body it names —
+        // never on top of it. Anchoring straight at the body's angle put
+        // the region name and its owner line directly over the planet
+        // and the planet's own label, which is what they collided with.
+        // Sliding ALONG the ring keeps the name tied to its band (and
+        // keeps a dozen concentric rings from stacking their labels in
+        // one column) while leaving the body clear.
         let lx = cp.x;
         let ly = cp.y - mid;
         const anchorId = shape.labelAnchorBodyId;
@@ -3816,8 +3833,19 @@ export function drawSystemRegions(
           const dy = ap.y - wp.y;
           const d = Math.hypot(dx, dy);
           if (d > 1e-6) {
-            lx = cp.x + (dx / d) * mid;
-            ly = cp.y + (dy / d) * mid;
+            // Clear the body by half this label plus room for the body's
+            // own name. Measured, not guessed — "URANUS SYSTEM" needs a
+            // lot more room than "THE CORE".
+            c.font = REGION_TITLE_FONT;
+            const halfLabel = c.measureText(region.label.toUpperCase()).width / 2;
+            const clearPx = halfLabel + REGION_LABEL_BODY_CLEARANCE;
+            // Arc length -> angle. On a tight inner ring that angle gets
+            // large, so cap it: past a quarter turn the label has stopped
+            // reading as "beside this planet" and is just adrift.
+            const swing = Math.min(clearPx / Math.max(mid, 1), Math.PI / 2);
+            const ang = Math.atan2(dy, dx) + swing;
+            lx = cp.x + Math.cos(ang) * mid;
+            ly = cp.y + Math.sin(ang) * mid;
           }
         }
         drawRegionLabel(region, lx, ly, color, owned, ctx, fade, intensity);
@@ -3863,23 +3891,11 @@ function drawRegionLabel(
   c.globalAlpha = c.globalAlpha * fade;
   c.textAlign = 'center';
   c.textBaseline = 'bottom';
-  // Canvas2D's font parser does NOT resolve CSS var() — the whole
-  // declaration is invalid, so the assignment was silently DROPPED and
-  // these labels kept whatever font the previous draw call happened to
-  // leave set (10px monospace, same as every body label). The display
-  // face and the 600 weight never applied at all. Spelled out literally
-  // so system names actually read as a different, heavier tier than the
-  // monospace body labels around them.
-  // No font-weight: Audiowide ships a single 400 weight, so asking for
-  // bold gets a SYNTHESIZED faux-bold that smears an already-wide face
-  // (App.css .title documents the same rule). The heavier read comes
-  // from the face itself plus the size step over the 8-10px monospace
-  // body labels — Audiowide also renders visually larger per px.
-  c.font = '13px Audiowide, Orbitron, Eurostile, system-ui, sans-serif';
+  c.font = REGION_TITLE_FONT;
   c.fillStyle = withOpacity(ink, titleAlpha);
   c.fillText(text, x, y);
   if (sub) {
-    c.font = '10px Audiowide, Orbitron, Eurostile, system-ui, sans-serif';
+    c.font = REGION_SUB_FONT;
     c.fillStyle = withOpacity(ink, subAlpha);
     // Clears the now-13px title above it.
     c.fillText(sub, x, y + 14);
