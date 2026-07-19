@@ -235,40 +235,141 @@ const HUB_X = 0;
 const HUB_Y = -2;
 const BUILD_POP_DURATION_MS = 900;
 
+// The base station's habitation ring. Tilted (not axis-aligned) so it
+// reads as a disc in perspective rather than a flat circle, matching
+// the reference silhouette: a big paneled torus with a hub threaded
+// through its middle and spokes tying the two together.
+const RING_ROT = -0.42;
+const RING_RX = 20;
+const RING_RY = 11;
+const RING_CELLS = 16;
+
+/** Mount points for the building modules, pushed OUTSIDE the ring so
+ *  turrets and dishes never tangle with the ring's panel ticks. Each
+ *  building keeps a fixed direction off the hub (weapons upper-left,
+ *  lab up, shipyard right) so the layout stays learnable. */
+const MOUNT_WEAPONS = { x: HUB_X - 17, y: HUB_Y - 15 };
+const MOUNT_LAB = { x: HUB_X + 3, y: HUB_Y - 20 };
+const MOUNT_YARD_X = HUB_X + 18;
+
 /**
- * A rectangular panel between two points, subdivided into `cells` grid
- * lines along its length — the generic "solar array" primitive. Reused
- * for both wings; could serve city power arrays later too.
+ * Point on an ellipse (center cx,cy · radii rx,ry) at parameter `theta`,
+ * with the whole ellipse rotated `rot` radians. The shared primitive
+ * behind the station's ring — everything below (the fill, the rim
+ * stroke, the panel-cell ticks, the half-plane clip) walks this same
+ * parametric curve.
  */
-function drawPanel(
+function ellipsePoint(cx: number, cy: number, rx: number, ry: number, rot: number, theta: number) {
+  const ex = Math.cos(theta) * rx, ey = Math.sin(theta) * ry;
+  const cr = Math.cos(rot), sr = Math.sin(rot);
+  return { x: cx + ex * cr - ey * sr, y: cy + ex * sr + ey * cr };
+}
+
+/**
+ * Clip to one half of the plane split by the ring's tilt axis, draw the
+ * caller's ring, restore. Used twice — once for the half that passes
+ * BEHIND the hub, once for the half in FRONT — so the hub visibly
+ * pierces the ring instead of the ring just floating flat behind it.
+ */
+function withRingHalfClip(
   c: CanvasRenderingContext2D,
-  x0: number, y0: number, x1: number, y1: number,
-  width: number, cells: number,
+  cx: number, cy: number, rot: number, side: 1 | -1,
+  draw: () => void,
 ) {
-  const dx = x1 - x0, dy = y1 - y0;
-  const len = Math.hypot(dx, dy) || 1;
-  const ux = dx / len, uy = dy / len;
-  const px = -uy * width / 2, py = ux * width / 2;
-  c.fillStyle = PANEL;
-  c.strokeStyle = PANEL_EDGE;
-  c.lineWidth = 0.8;
+  c.save();
+  const big = 400;
+  const corners: [number, number][] = [[-big, 0], [big, 0], [big, side * big], [-big, side * big]];
   c.beginPath();
-  c.moveTo(x0 + px, y0 + py);
-  c.lineTo(x1 + px, y1 + py);
-  c.lineTo(x1 - px, y1 - py);
-  c.lineTo(x0 - px, y0 - py);
+  corners.forEach(([lx, ly], i) => {
+    const wx = cx + lx * Math.cos(rot) - ly * Math.sin(rot);
+    const wy = cy + lx * Math.sin(rot) + ly * Math.cos(rot);
+    if (i === 0) c.moveTo(wx, wy); else c.lineTo(wx, wy);
+  });
   c.closePath();
-  c.fill();
-  c.stroke();
+  c.clip();
+  draw();
+  c.restore();
+}
+
+/**
+ * The ring as a filled band (two concentric ellipse contours, even-odd
+ * fill) with a bright rim on each edge and radial ticks marking it off
+ * into cells — the same "paneled" read the old flat wings had, now
+ * wrapped around the hub as an actual encircling ring instead of two
+ * separate flaps.
+ */
+function drawRingBand(
+  c: CanvasRenderingContext2D,
+  cx: number, cy: number, rx: number, ry: number, rot: number, cells: number,
+) {
+  const STEPS = 48;
+  const innerRx = rx * 0.74, innerRy = ry * 0.74;
+  const path = (orx: number, ory: number, reverse: boolean) => {
+    c.beginPath();
+    for (let i = 0; i <= STEPS; i++) {
+      const j = reverse ? STEPS - i : i;
+      const p = ellipsePoint(cx, cy, orx, ory, rot, (j / STEPS) * Math.PI * 2);
+      if (i === 0) c.moveTo(p.x, p.y); else c.lineTo(p.x, p.y);
+    }
+    c.closePath();
+  };
+
+  // Filled band: outer contour forward + inner contour reversed in ONE
+  // path, even-odd rule punches the inner ellipse out of the outer.
   c.beginPath();
-  for (let i = 1; i < cells; i++) {
-    const t = i / cells;
-    const cx = x0 + dx * t, cy = y0 + dy * t;
-    c.moveTo(cx + px, cy + py);
-    c.lineTo(cx - px, cy - py);
+  for (let i = 0; i <= STEPS; i++) {
+    const p = ellipsePoint(cx, cy, rx, ry, rot, (i / STEPS) * Math.PI * 2);
+    if (i === 0) c.moveTo(p.x, p.y); else c.lineTo(p.x, p.y);
   }
-  c.moveTo(x0, y0);
-  c.lineTo(x1, y1);
+  c.closePath();
+  for (let i = STEPS; i >= 0; i--) {
+    const p = ellipsePoint(cx, cy, innerRx, innerRy, rot, (i / STEPS) * Math.PI * 2);
+    if (i === STEPS) c.moveTo(p.x, p.y); else c.lineTo(p.x, p.y);
+  }
+  c.closePath();
+  c.fillStyle = PANEL;
+  c.fill('evenodd');
+
+  // Rim strokes, outer and inner.
+  c.strokeStyle = PANEL_EDGE;
+  c.lineWidth = 0.9;
+  path(rx, ry, false);
+  c.stroke();
+  path(innerRx, innerRy, false);
+  c.stroke();
+
+  // Panel-cell ticks across the band.
+  c.beginPath();
+  for (let i = 0; i < cells; i++) {
+    const theta = (i / cells) * Math.PI * 2;
+    const po = ellipsePoint(cx, cy, rx, ry, rot, theta);
+    const pi = ellipsePoint(cx, cy, innerRx, innerRy, rot, theta);
+    c.moveTo(po.x, po.y);
+    c.lineTo(pi.x, pi.y);
+  }
+  c.stroke();
+}
+
+/**
+ * Four spokes from the hub out to the ring's inner edge. Drawn under
+ * each ring half (so the half-plane clip hides the far pair behind the
+ * hub) — that's what sells the ring as a structure the hub is actually
+ * mounted inside, rather than a hoop drawn around it.
+ */
+function drawRingSpokes(
+  c: CanvasRenderingContext2D,
+  cx: number, cy: number, rx: number, ry: number, rot: number,
+) {
+  c.strokeStyle = FRAME;
+  c.lineWidth = 2;
+  c.beginPath();
+  for (let i = 0; i < 4; i++) {
+    const theta = (i / 4) * Math.PI * 2 + Math.PI / 4;
+    const outer = ellipsePoint(cx, cy, rx * 0.78, ry * 0.78, rot, theta);
+    const inner = ellipsePoint(cx, cy, rx * 0.14, ry * 0.14, rot, theta);
+    c.moveTo(inner.x, inner.y);
+    c.lineTo(outer.x, outer.y);
+  }
   c.stroke();
 }
 
@@ -343,7 +444,7 @@ function drawDish(c: CanvasRenderingContext2D, x: number, y: number, mastLen: nu
 // ---- Weapons module (boom: upper-left) ----------------------
 
 function drawWeaponsModule(c: CanvasRenderingContext2D, level: number, popStart: number | undefined, nowMs: number) {
-  const tip = { x: HUB_X - 8, y: HUB_Y - 7 };
+  const tip = MOUNT_WEAPONS;
   drawBoom(c, tip.x, tip.y);
 
   // L1: turret dome + first barrel.
@@ -401,7 +502,7 @@ function drawWeaponsModule(c: CanvasRenderingContext2D, level: number, popStart:
 // ---- Lab module (boom: straight up) --------------------------
 
 function drawStationLabModule(c: CanvasRenderingContext2D, level: number, popStart: number | undefined, nowMs: number) {
-  const tip = { x: HUB_X, y: HUB_Y - 10 };
+  const tip = MOUNT_LAB;
   drawBoom(c, tip.x, tip.y);
 
   // L1: one dish.
@@ -588,9 +689,13 @@ function drawShipyardModule(
   popStart: number | undefined,
   nowMs: number,
 ) {
-  const fw = 18 + level * 3;
-  const fh = 12 + level * 1.5;
-  const x0 = HUB_X + 5, y0 = HUB_Y - fh / 2;
+  // Kept deliberately smaller than the ring's span (RING_RX * 2) so the
+  // ring stays the station's visual anchor — an earlier pass had a
+  // maxed shipyard drawing twice the ring's width, which made the
+  // station read as "a shipyard with a hoop attached".
+  const fw = 13 + level * 1.8;
+  const fh = 9 + level * 1.1;
+  const x0 = MOUNT_YARD_X, y0 = HUB_Y - fh / 2;
   drawBoom(c, x0, y0 + fh / 2);
 
   const drawBay = (bx0: number, by0: number, bw: number, bh: number, build?: { shipClass: string; progress: number }, seed = 0) => {
@@ -686,23 +791,72 @@ export function drawStationStructure(
 ) {
   const nowM = opts.nowMs;
 
-  // Solar wings — the station's power source, drawn first (behind
-  // everything) and unconditionally, so even a bare station with zero
-  // buildings still reads as a station and not a stray dot.
-  drawPanel(c, HUB_X - 3, HUB_Y + 4, HUB_X - 17, HUB_Y + 14, 6, 4);
-  drawPanel(c, HUB_X + 3, HUB_Y + 4, HUB_X + 17, HUB_Y + 14, 6, 4);
+  // ---- Base station: a tilted ring with a hub through the middle ----
+  //
+  // Drawn in three passes so the hub genuinely PIERCES the ring rather
+  // than sitting flat in front of it: back half of the ring (+ its
+  // spokes), then the hub capsule, then the front half on top. That
+  // occlusion is the whole reason the silhouette reads as a 3D torus
+  // and not a circle with a dot on it.
+  const cx = HUB_X, cy = HUB_Y + 1;
 
-  // Hub — small prism with a faction-tinted beacon on top. The beacon
-  // pulses alpha 0.4→1.0 at 0.5Hz (§E1) — pure cosmetic, so wall-clock
-  // is the right time base (matches the damage-flash pattern).
-  drawIsoPrism(c, HUB_X, HUB_Y + 6, 5, 8);
-  c.fillStyle = opts.factionColor;
+  withRingHalfClip(c, cx, cy, RING_ROT, -1, () => {
+    drawRingSpokes(c, cx, cy, RING_RX, RING_RY, RING_ROT);
+    drawRingBand(c, cx, cy, RING_RX, RING_RY, RING_ROT, RING_CELLS);
+  });
+
+  // Hub — a capsule lying along the ring's tilt axis, so it reads as a
+  // module threaded through the ring's hole. Faction-tinted beacon on
+  // its upper end pulses alpha 0.4→1.0 at 0.5Hz (§E1) — pure cosmetic,
+  // so wall-clock is the right time base (matches the damage-flash
+  // pattern).
   const prevAlpha = c.globalAlpha;
-  c.globalAlpha = prevAlpha * (0.7 + 0.3 * Math.sin(Math.PI * nowM / 1000));
+  c.save();
+  c.translate(cx, cy);
+  // RING_ROT, not RING_ROT + PI/2: the capsule is drawn along its LOCAL
+  // +y, and the ring's projected MINOR axis (RING_ROT + PI/2 in world
+  // terms) is the direction through the ring's hole. Rotating by
+  // RING_ROT is what maps local +y onto that axis. Adding the extra
+  // quarter turn instead laid the capsule flat along the ring's long
+  // axis — it read as a bar across the disc, not a hub through it.
+  c.rotate(RING_ROT);
+  c.fillStyle = LEFT;
+  c.strokeStyle = PANEL_EDGE;
+  c.lineWidth = 0.9;
   c.beginPath();
-  c.arc(HUB_X, HUB_Y - 3, 1.5, 0, Math.PI * 2);
+  if (c.roundRect) c.roundRect(-4.5, -13, 9, 26, 4.5);
+  else c.rect(-4.5, -13, 9, 26);
+  c.fill();
+  c.stroke();
+  // Lit face down one side of the capsule so it isn't a flat pill.
+  c.fillStyle = TOP;
+  c.beginPath();
+  if (c.roundRect) c.roundRect(-4.5, -13, 3.4, 26, 3);
+  else c.rect(-4.5, -13, 3.4, 26);
+  c.fill();
+  // Docking collars where the capsule crosses the ring plane.
+  c.strokeStyle = FRAME;
+  c.lineWidth = 1.2;
+  for (const cyy of [-6.5, 6.5]) {
+    c.beginPath();
+    c.moveTo(-5.4, cyy);
+    c.lineTo(5.4, cyy);
+    c.stroke();
+  }
+  c.restore();
+
+  c.fillStyle = opts.factionColor;
+  c.globalAlpha = prevAlpha * (0.7 + 0.3 * Math.sin(Math.PI * nowM / 1000));
+  const beacon = ellipsePoint(cx, cy, 0, 15, RING_ROT, -Math.PI / 2);
+  c.beginPath();
+  c.arc(beacon.x, beacon.y, 1.7, 0, Math.PI * 2);
   c.fill();
   c.globalAlpha = prevAlpha;
+
+  withRingHalfClip(c, cx, cy, RING_ROT, 1, () => {
+    drawRingSpokes(c, cx, cy, RING_RX, RING_RY, RING_ROT);
+    drawRingBand(c, cx, cy, RING_RX, RING_RY, RING_ROT, RING_CELLS);
+  });
 
   if (opts.weaponsLevel > 0) {
     drawWeaponsModule(c, opts.weaponsLevel, opts.buildFlash?.weapons, nowM);
