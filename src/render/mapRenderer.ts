@@ -2928,8 +2928,16 @@ export function drawCity(
   // by population, and a distinct silhouette per building (forge /
   // mint / lab / thrusters) that grows with its level. Canvas is
   // rotated so the cluster's "up" is the outward surface normal.
+  //
+  // Gated on bodyScreenR OR the body being the selected/inspected one.
+  // BodyInspector frames the ORBIT ENVELOPE, not the body itself (a
+  // dwarf planet's disc can stay under 40px even after the inspector's
+  // zoom-on-open finishes, since the envelope is sized to the widest
+  // orbiting ship/station, not the body's own radius). Without the
+  // selectedBodyId check, the panel showed full building detail while
+  // the map still drew a bare dot for the exact same settlement.
   const bodyScreenR = body.radius * ctx.camera.scale;
-  if (bodyScreenR >= 40) {
+  if (bodyScreenR >= 40 || ctx.selectedBodyId === body.id) {
     const flashIso = ctx.damageFlashStart?.get(settlement.id);
     drawDamageFlash(canvasPos, 12, flashIso, ctx.nowMs ?? performance.now(), ctx, 'damage');
     const growthIso = ctx.growthFlashStart?.get(settlement.id);
@@ -3071,8 +3079,13 @@ export function drawStation(
   // weapon barrels when a Weapons building exists, and an open
   // shipyard scaffold that shows a hull inside whenever a ship build
   // is in flight at this body. Levels widen the modules.
+  //
+  // Same selectedBodyId escape hatch as drawCity: the inspector zooms
+  // to fit the ORBIT ENVELOPE (widest ship/station radius), which can
+  // leave a small body's own screen radius under 40px even once the
+  // panel is fully open — so gate on either.
   const bodyScreenR = body.radius * ctx.camera.scale;
-  if (bodyScreenR >= 40) {
+  if (bodyScreenR >= 40 || ctx.selectedBodyId === body.id) {
     const weaponsLevel = buildingLevel(settlement, 'weapons' as BuildingKind);
     const shipyardLevel = buildingLevel(settlement, 'shipyard' as BuildingKind);
     const buildInFlight = !!ctx.buildOrders?.some(
