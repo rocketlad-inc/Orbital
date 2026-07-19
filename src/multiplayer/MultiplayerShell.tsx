@@ -39,6 +39,19 @@ interface MultiplayerShellProps {
   children: React.ReactNode;
   onExit?: () => void;
   initialRoomId?: string | null;
+  /** Pre-game: open the lobby dock immediately instead of waiting for a
+   *  click. The lobby is the player's first sight of the game and the
+   *  panel is the whole screen's content, so starting collapsed showed
+   *  them an empty backdrop and made them go looking for it.
+   *
+   *  This is a PROP rather than something derived from DockRail's
+   *  broadcast because React runs child effects before parent effects:
+   *  DockRail (a descendant, via children) fires its initial
+   *  'dockrail:active' before this component's listener is registered,
+   *  so the opening event is missed. The rail defaults to the same
+   *  value on its side (see lobbyOnly in DockRail) — after mount the
+   *  two stay in sync through the event channel as usual. */
+  preGame?: boolean;
 }
 
 // In-GAME, exiting the match is owned by the TopBar title-button
@@ -46,7 +59,7 @@ interface MultiplayerShellProps {
 // But PRE-game (in the lobby, no TopBar yet) the only way out is the
 // room's Back button, so we pass `onExit` down to LobbyView for that —
 // it leaves the room and returns to the multiplayer room browser.
-export function MultiplayerShell({ children, initialRoomId, onExit }: MultiplayerShellProps) {
+export function MultiplayerShell({ children, initialRoomId, onExit, preGame = false }: MultiplayerShellProps) {
   // `signOut` used to live behind the mp-user-pill (top-right pill with
   // "← Menu", display name, and Sign out). That pill duplicated the
   // TopBar title-button drawer's GAME section ("Back to Menu") and
@@ -57,8 +70,8 @@ export function MultiplayerShell({ children, initialRoomId, onExit }: Multiplaye
   // (kept for any descendant code paths that read it); setCollapsed
   // proxies to the rail so all open/close decisions funnel through one
   // event channel.
-  const [railOpen, setRailOpen] = useState(false);
-  const [railMounted, setRailMounted] = useState(false);
+  const [railOpen, setRailOpen] = useState(preGame);
+  const [railMounted, setRailMounted] = useState(preGame);
   const collapsed = !railOpen;
   void collapsed;  /* preserved for any descendant code paths still referencing it */
   const setCollapsed = (next: boolean) => {
