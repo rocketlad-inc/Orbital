@@ -484,15 +484,23 @@ export const SHIP_COMBAT_STATS = {
   colony:    { hp: 60,  damage_per_tick: 0 },
 };
 
+// Starting kit for research-gated games: ONE corvette and ONE colony
+// ship. Everything else — frigates, destroyers, freighters, stations,
+// every building, trade, diplomacy — is behind a research level (see
+// src/game/researchUnlocks.ts). The tree is the tutorial, so the opening
+// has to be small enough that the first unlock actually feels like an
+// event.
+//
+// This is a deliberate, large tempo change from the old 2-frigates +
+// 1-freighter opening: the first several ticks are one armed scout and
+// one settler, and your first research (~15 science, ~turn 5) is the
+// first real decision of the game.
+//
+// The freighter is NOT here — it is Propulsion 1, which is what makes
+// "do I open economy or military?" a genuine choice.
 const STARTER_FLEET = [
-  { class: 'frigate',   baseName: 'Vanguard', fuelMax: 800 },
-  { class: 'frigate',   baseName: 'Sentinel', fuelMax: 800 },
-  // Hauler used to be inserted as ship_class='cargo' but every server
-  // gate checks for 'freighter' literally — meaning starter Haulers
-  // could never deploy cities, never pick up trade-route cargo, and
-  // never appear in harvest yields. Now stored consistently as
-  // 'freighter'. Migration 0023 backfills existing rows.
-  { class: 'freighter', baseName: 'Hauler',   fuelMax: 1500 },
+  { class: 'corvette', baseName: 'Vanguard', fuelMax: 600 },
+  { class: 'colony',   baseName: 'Pioneer',  fuelMax: 1200 },
 ];
 
 // Deterministic PRNG so map_seed actually produces a reproducible world.
@@ -965,11 +973,18 @@ export async function seedGameWorld(env, gameId) {
     );
   }
 
-  // 4) flip game status to active.
+  // 4) flip game status to active, and turn research gating ON.
+  //
+  // gating_enabled is set EXPLICITLY here rather than via the column
+  // default (migration 0040 defaults it to 0). That inversion is the
+  // point: games that already existed when the migration ran keep every
+  // feature unlocked forever, and only worlds seeded by this function —
+  // i.e. genuinely new games — gate on research.
   stmts.push(
     env.DB.prepare(
       `UPDATE games
          SET status = 'active',
+             gating_enabled = 1,
              started_at = COALESCE(started_at, ?),
              next_tick_at = ?
        WHERE id = ? AND status = 'setup'`,

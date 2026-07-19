@@ -20,20 +20,26 @@
  */
 export const TECH_MAX_LEVEL = 10;
 
+// SIX tracks. Each is a 10-rung ladder that UNLOCKS a mechanic on its
+// early levels and pays a passive % on every level (see RESEARCH_UNLOCKS
+// in researchUnlocks.ts). A game starts with almost nothing — the tree
+// is the tutorial.
+//
+// IDs are deliberately unchanged from the original six so no live game
+// needs a data migration. Two consequences of the consolidation:
+//   - 'armor' is now the DEFENSE track (both 🛡 shields and 🪨 armor).
+//   - 'industry' is now displayed as SOCIETY (economy + diplomacy).
+// The short-lived 'energy_weapons' / 'shields' ids are folded back in;
+// any levels a live game banked in them are honoured via the max()
+// fallbacks in combatModifier / hpModifier below, so nobody loses
+// research they paid for.
 export type TechId =
-  // Combat tech is split by damage type so a faction can specialize
-  // doctrine, not just per-ship. IDs 'weapons'/'armor' are KEPT (not
-  // renamed) so existing games, saved designs and the two victory
-  // checks need no data migration — 'weapons' simply now means kinetic,
-  // and 'armor' means the armor-plate part specifically.
-  | 'weapons'          // KINETIC weapons — scales ⚔ kinetic mounts
-  | 'energy_weapons'   // ENERGY weapons — scales ⚡ energy mounts
-  | 'shields'          // scales 🛡 shield arrays (kinetic mitigation)
-  | 'armor'            // scales 🪨 armor plates (energy mitigation)
-  | 'propulsion'       // booster-engine part speed (the only speed tech)
-  | 'construction'     // ship build cost reduction
-  | 'industry'         // settlement yield
-  | 'sensors';         // SOI visibility radius
+  | 'weapons'          // ⚔ Weapons — kinetic + energy mounts, detonator
+  | 'armor'            // 🛡 Defense — shields + armor plate, PDC, repair
+  | 'propulsion'       // 🚀 Propulsion — freighters, engines, logistics
+  | 'construction'     // 🔧 Construction — stations, hulls, Dyson
+  | 'industry'         // ⛏ Society — buildings, pacts, senate
+  | 'sensors';         // 📡 Sensors — the intel ladder
 
 export interface TechDef {
   id: TechId;
@@ -50,92 +56,78 @@ export interface TechDef {
   costScaling: number;
 }
 
+// Unified cost curve: 15 × level^1.72. Deliberately steeper than the old
+// per-track curves AND much cheaper at level 1 — the first unlock should
+// land around turn 5 (tutorial pace) while level 10 stays a real late-game
+// project. L1 15 · L3 100 · L5 267 · L10 ~1130.
+const RESEARCH_BASE_COST = 15;
+const RESEARCH_COST_SCALING = 1.72;
+
 export const TECH_DEFS: Record<TechId, TechDef> = {
   weapons: {
     id: 'weapons',
-    name: 'Kinetic Weapons',
-    description: 'Railguns, autocannon, and slug throwers — the punch of every ⚔ kinetic mount you fit. Kinetic shreds armor but bleeds off against shields.',
+    name: 'Weapons',
+    description: 'Guns, and what you bolt them to. Unlocks ⚔ kinetic mounts, then the ☠ detonator, then ⚡ energy mounts — and scales every mount you fit. Kinetic shreds armor; energy melts shields.',
     icon: '⚔',
     perLevel: 0.10,
-    effectText: '+10% · stronger ⚔ kinetic mounts',
-    baseCost: 40,
-    costScaling: 1.7,
-  },
-  energy_weapons: {
-    id: 'energy_weapons',
-    name: 'Energy Weapons',
-    description: 'Lasers, plasma, and particle beams — the punch of every ⚡ energy mount you fit. Energy melts shields but scatters off heavy armor.',
-    icon: '⚡',
-    perLevel: 0.10,
-    effectText: '+10% · stronger ⚡ energy mounts',
-    baseCost: 40,
-    costScaling: 1.7,
-  },
-  shields: {
-    id: 'shields',
-    name: 'Shields',
-    description: 'Deflector fields that soak incoming fire — the strength of every 🛡 shield array you fit. Shields blunt KINETIC rounds; energy passes through them.',
-    icon: '🛡',
-    perLevel: 0.08,
-    effectText: '+8% HP · stronger 🛡 arrays (vs kinetic)',
-    baseCost: 40,
-    costScaling: 1.7,
+    effectText: '+10% ship damage',
+    baseCost: RESEARCH_BASE_COST,
+    costScaling: RESEARCH_COST_SCALING,
   },
   armor: {
     id: 'armor',
-    name: 'Armor',
-    description: 'Ablative plating and damage control — the strength of every 🪨 armor plate you fit. Armor shrugs off ENERGY beams; kinetic slugs chew through it.',
-    icon: '🪨',
+    name: 'Defense',
+    description: 'Staying alive. Unlocks 🛡 shield arrays, then 🪨 armor plate, then hardened settlements and damage control — and scales every point of hull you fit.',
+    icon: '🛡',
     perLevel: 0.08,
-    effectText: '+8% HP · stronger 🪨 plates (vs energy)',
-    baseCost: 40,
-    costScaling: 1.7,
+    effectText: '+8% ship HP',
+    baseCost: RESEARCH_BASE_COST,
+    costScaling: RESEARCH_COST_SCALING,
   },
   propulsion: {
     id: 'propulsion',
     name: 'Propulsion',
-    description: 'Drive tuning for the 🔥 booster engines you fit in the designer. Faster transits — but only for ships carrying an engine mount.',
+    description: 'Moving things. Unlocks the freighter and everything it does, then 🔥 booster engines, transfer lanes, and automated collectors.',
     icon: '🚀',
     perLevel: 0.06,
     effectText: '+6% per 🔥 booster engine',
-    baseCost: 35,
-    costScaling: 1.6,
+    baseCost: RESEARCH_BASE_COST,
+    costScaling: RESEARCH_COST_SCALING,
   },
   construction: {
     id: 'construction',
     name: 'Construction',
-    description: 'Automated yards. Cheaper hulls.',
+    description: 'Building big. Unlocks orbital stations, shipyards, the frigate and destroyer hulls, asteroid thrusters, and the Dyson foundation.',
     icon: '🔧',
     perLevel: 0.05,
     effectText: '-5% ship build cost',
-    baseCost: 50,
-    costScaling: 1.8,
+    baseCost: RESEARCH_BASE_COST,
+    costScaling: RESEARCH_COST_SCALING,
   },
   industry: {
     id: 'industry',
-    name: 'Industry',
-    description: 'Refinery upgrades. Settlements extract more per harvest.',
+    name: 'Society',
+    description: 'Everything civilian. Unlocks the lab, forge and mint, then diplomatic pacts, senate proposals, and the Chancellor election.',
     icon: '⛏',
     perLevel: 0.10,
     effectText: '+10% settlement yield',
-    baseCost: 45,
-    costScaling: 1.7,
+    baseCost: RESEARCH_BASE_COST,
+    costScaling: RESEARCH_COST_SCALING,
   },
   sensors: {
     id: 'sensors',
     name: 'Sensors',
-    description: 'Deep-space arrays. Extended visibility radius.',
+    description: 'Knowing things. Every level widens your scan radius AND peels back another layer of what your rivals are doing.',
     icon: '📡',
     perLevel: 0.12,
     effectText: '+12% sensor range',
-    baseCost: 30,
-    costScaling: 1.5,
+    baseCost: RESEARCH_BASE_COST,
+    costScaling: RESEARCH_COST_SCALING,
   },
 };
 
 export const ALL_TECH_IDS: TechId[] = [
-  'weapons', 'energy_weapons', 'shields', 'armor',
-  'propulsion', 'construction', 'industry', 'sensors',
+  'weapons', 'armor', 'propulsion', 'construction', 'industry', 'sensors',
 ];
 
 /**
@@ -208,27 +200,30 @@ export function effectAtLevel(def: TechDef, level: number): number {
 // applied to base game values.
 // ============================================================
 
-/** KINETIC weapon damage multiplier for a faction. 1.0 at level 0. */
+/** Effective WEAPONS level. The short-lived 'energy_weapons' track was
+ *  folded back into 'weapons'; max() honours any levels a live game
+ *  banked there so nobody loses research they paid for. */
+export function weaponsLevel(state: FactionTechState | undefined): number {
+  return Math.max(techLevel(state, 'weapons'), techLevel(state, 'energy_weapons' as TechId));
+}
+
+/** Effective DEFENSE level ('armor' track). Same fold-back for the
+ *  short-lived 'shields' track. */
+export function defenseLevel(state: FactionTechState | undefined): number {
+  return Math.max(techLevel(state, 'armor'), techLevel(state, 'shields' as TechId));
+}
+
+/** Weapon damage multiplier — scales BOTH ⚔ kinetic and ⚡ energy mounts.
+ *  1.0 at level 0. */
 export function combatModifier(state: FactionTechState | undefined): number {
-  return 1 + effectAtLevel(TECH_DEFS.weapons, techLevel(state, 'weapons'));
+  return 1 + effectAtLevel(TECH_DEFS.weapons, weaponsLevel(state));
 }
 
-/** ENERGY weapon damage multiplier. Legacy games that only teched the
- *  old (kinetic) 'weapons' line fall back to it, so an existing
- *  energy-armed fleet isn't silently un-teched by the split. */
-export function energyCombatModifier(state: FactionTechState | undefined): number {
-  const lvl = Math.max(techLevel(state, 'energy_weapons'), techLevel(state, 'weapons'));
-  return 1 + effectAtLevel(TECH_DEFS.energy_weapons, lvl);
-}
-
-/** Max-HP multiplier for ships of a given faction — the strongest of the
- *  two defensive lines (shields / armor). Baked HP already reflects the
- *  per-part tech at build time; this is the live repair-ceiling bump, so
- *  a faction that teched EITHER defense repairs into a bigger buffer.
- *  Legacy 'armor' covers both until 'shields' is researched. */
+/** Max-HP multiplier — scales BOTH 🛡 shields and 🪨 armor. Baked HP
+ *  already reflects tech at build time; this is the live repair-ceiling
+ *  bump, so a Defense-teched fleet repairs into a bigger buffer. */
 export function hpModifier(state: FactionTechState | undefined): number {
-  const lvl = Math.max(techLevel(state, 'armor'), techLevel(state, 'shields'));
-  return 1 + effectAtLevel(TECH_DEFS.armor, lvl);
+  return 1 + effectAtLevel(TECH_DEFS.armor, defenseLevel(state));
 }
 
 /** Per-rank multiplier applied to a ship's BOTH damage and max HP.

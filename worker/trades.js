@@ -16,6 +16,9 @@
 // Resource payload uses server faction columns: metal, fuel, gold, science.
 
 import { getActiveSliders } from './senate.js';
+import {
+  factionTechLevels, gatingEnabled, hasFeature, lockedError,
+} from './researchUnlocks.js';
 
 const GAME_ID_RE    = /^[A-Za-z0-9_-]{6,32}$/;
 const TRADE_ID_RE   = /^[A-Za-z0-9_-]{6,64}$/;
@@ -193,6 +196,20 @@ async function handlePropose(req, env, { session, params }) {
   if (!res.ok) return err(400, 'bad_request', res.error);
   const pactCheck = normalizePacts(body);
   if (!pactCheck.ok) return err(400, 'bad_request', pactCheck.error);
+
+  // Resource trading is ungated — swapping metal for fuel is basic
+  // diplomacy and needs to work from tick one. TREATIES are Society 4,
+  // so only an offer that actually carries a pact is checked, and only
+  // the PROPOSER pays the research cost (the responder is agreeing to
+  // something the proposer authored, not authoring it themselves).
+  if ((pactCheck.offerPacts.length + pactCheck.requestPacts.length) > 0
+      && await gatingEnabled(env, gameId)) {
+    const levels = await factionTechLevels(env, gameId, proposer.id);
+    if (!hasFeature('pacts', levels, true)) {
+      const e = lockedError('pacts');
+      return err(403, e.code, e.message);
+    }
+  }
 
   // Reject empty offers (nothing on either side).
   const offerSum = RESOURCE_KEYS.reduce((s, k) => s + res.offer[k], 0) + pactCheck.offerPacts.length;
