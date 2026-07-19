@@ -3061,19 +3061,6 @@ export function drawStation(
   const color = settlementColor(settlement, factions);
   const size = Math.max(3, 4 * Math.min(1.5, Math.sqrt(ctx.camera.scale)));
 
-  // Orbit ring at station altitude
-  const canvasBodyPos = worldToCanvas(bodyPos.x, bodyPos.y, ctx);
-  const orbitRpx = radius * ctx.camera.scale;
-  if (orbitRpx > 4) {
-    ctx.ctx.strokeStyle = withOpacity(color, 0.25);
-    ctx.ctx.lineWidth = 0.5;
-    ctx.ctx.setLineDash([2, 3]);
-    ctx.ctx.beginPath();
-    ctx.ctx.arc(canvasBodyPos.x, canvasBodyPos.y, orbitRpx, 0, Math.PI * 2);
-    ctx.ctx.stroke();
-    ctx.ctx.setLineDash([]);
-  }
-
   // Damage flash underneath the diamond
   const flashStartS = ctx.damageFlashStart?.get(settlement.id);
   drawDamageFlash(canvasPos, size, flashStartS, ctx.nowMs ?? performance.now(), ctx, 'damage');
