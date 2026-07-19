@@ -94,131 +94,197 @@ const WMChip: React.FC<{
   );
 };
 
-/** Surface scene: planet horizon with the city's structures, callouts left. */
-const WMSurfaceScene: React.FC = () => (
-  <svg viewBox="0 0 220 104" className="ux-wm-svg" preserveAspectRatio="xMidYMid meet">
-    {/* planet horizon — big and confident, like the sketch */}
-    <circle cx={118} cy={262} r={210} fill="#123640" stroke="#2b5e58" strokeWidth={1.2} />
-    <circle cx={118} cy={262} r={210} fill="none" stroke="#4ecdc4" strokeWidth={3} opacity={0.15} />
-    {/* background skyline dots */}
-    <rect x={92} y={49} width={2.5} height={7} fill="#2b4a5c" />
-    <rect x={188} y={64} width={2.5} height={8} fill="#2b4a5c" />
-    {/* LAB — twin towers + antenna */}
-    <rect x={100} y={30} width={5} height={26} fill="#3d5a6b" />
-    <rect x={108} y={22} width={6} height={34} fill="#46687c" />
-    <line x1={111} y1={22} x2={111} y2={13} stroke="#8aa0b4" strokeWidth={1} />
-    <circle cx={111} cy={11.5} r={1.6} fill="#67e8f9" />
-    <rect x={109.5} y={28} width={2} height={2.4} fill="#ffb84d" />
-    <rect x={101.5} y={36} width={2} height={2.4} fill="#ffb84d" />
-    {/* MINT — columned block with pediment */}
-    <path d="M 128 46 L 143 39 L 158 46 Z" fill="#3d5a6b" />
-    <rect x={129} y={46} width={28} height={16} fill="#46687c" />
-    <line x1={136} y1={48} x2={136} y2={62} stroke="#1c2a3a" strokeWidth={1.8} />
-    <line x1={143} y1={48} x2={143} y2={62} stroke="#1c2a3a" strokeWidth={1.8} />
-    <line x1={150} y1={48} x2={150} y2={62} stroke="#1c2a3a" strokeWidth={1.8} />
-    {/* FORGE — block + chimney + smoke */}
-    <rect x={168} y={56} width={24} height={14} fill="#46687c" />
-    <rect x={171} y={61} width={2.6} height={2.6} fill="#ffb84d" />
-    <rect x={186} y={44} width={4.5} height={12} fill="#3d5a6b" />
-    <circle cx={188.5} cy={40} r={2} fill="#8aa0b4" opacity={0.6} />
-    <circle cx={191} cy={35} r={1.4} fill="#8aa0b4" opacity={0.4} />
-    {/* callout lines */}
-    <line x1={62} y1={13} x2={104} y2={30} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.55} />
-    <line x1={62} y1={43} x2={132} y2={50} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.55} />
-    <line x1={62} y1={73} x2={170} y2={62} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.55} />
-    {/* callout chips */}
-    <WMChip x={4} y={2} label="LAB" lv="LV 2 · +50% sci" />
-    <WMChip x={4} y={32} label="MINT" lv="LV 1 · +25% cred" />
-    <WMChip x={4} y={62} label="FORGE" lv="LV 3 · +75% metal" />
-    <text x={216} y={99} fontSize={6} fontFamily="monospace" fill="#6b8195" textAnchor="end">SURFACE · NEW GENEVA · POP 3</text>
+/** Mobile map scene: the live map zoomed into Earth, with the world's
+ *  controls overlaid in place — chips pinned to real structures, the
+ *  shipyard popover open over the planet. No inspector panel exists. */
+const WMMapMobile: React.FC = () => (
+  <svg viewBox="0 0 240 434" className="ux-wm-svg" preserveAspectRatio="xMidYMid meet">
+    <defs>
+      <radialGradient id="wm-planet-m" cx="38%" cy="32%" r="85%">
+        <stop offset="0%" stopColor="#2a6b74" />
+        <stop offset="55%" stopColor="#1a4a56" />
+        <stop offset="100%" stopColor="#0d2e3a" />
+      </radialGradient>
+    </defs>
+    {/* starfield */}
+    {[[18,30,.5],[66,52,.35],[150,24,.55],[222,84,.3],[30,150,.4],[210,150,.5],
+      [16,330,.35],[228,340,.4],[40,392,.3],[196,398,.5],[120,66,.3],[88,140,.25]]
+      .map(([x,y,o],i) => <circle key={i} cx={x} cy={y} r={0.9} fill="#d8e4ee" opacity={o} />)}
+    {/* heliocentric orbit passing through */}
+    <path d="M -20 44 Q 120 14 260 52" stroke="#2d4255" strokeWidth={1} fill="none" />
+    {/* Luna, further out */}
+    <circle cx={26} cy={70} r={3.5} fill="#9fb3c8" />
+    <text x={26} y={80} fontSize={5.5} fontFamily="monospace" fill="#5a7085" textAnchor="middle">LUNA</text>
+    {/* station orbit */}
+    <circle cx={120} cy={300} r={118} fill="none" stroke="#3d5568" strokeWidth={0.8} strokeDasharray="3 4" />
+    {/* the planet — this IS the menu */}
+    <circle cx={120} cy={300} r={92} fill="url(#wm-planet-m)" stroke="#2b5e58" strokeWidth={1} />
+    {/* selection brackets (same treatment the map uses today) */}
+    <g stroke="#ffb84d" strokeWidth={1.5} fill="none" opacity={0.9}>
+      <path d="M 20 214 L 20 200 L 34 200" />
+      <path d="M 206 200 L 220 200 L 220 214" />
+      <path d="M 220 386 L 220 400 L 206 400" />
+      <path d="M 34 400 L 20 400 L 20 386" />
+    </g>
+    {/* city structures on the rim */}
+    <ellipse cx={80} cy={220} rx={36} ry={13} fill="#ffb84d" opacity={0.05} />
+    <path d="M 54 233 L 62 229 L 70 233 Z" fill="#3d5a6b" />
+    <rect x={55} y={233} width={14} height={8} fill="#46687c" />
+    <line x1={59} y1={234.5} x2={59} y2={240.5} stroke="#1c2a3a" strokeWidth={1.2} />
+    <line x1={65} y1={234.5} x2={65} y2={240.5} stroke="#1c2a3a" strokeWidth={1.2} />
+    <rect x={82} y={200} width={3.5} height={16} fill="#3d5a6b" />
+    <rect x={88} y={194} width={4} height={22} fill="#46687c" />
+    <line x1={90} y1={194} x2={90} y2={188} stroke="#8aa0b4" strokeWidth={0.8} />
+    <circle cx={90} cy={187} r={1.2} fill="#67e8f9" />
+    <rect x={94} y={203} width={14} height={8} fill="#46687c" />
+    <rect x={105} y={197} width={3} height={6} fill="#3d5a6b" />
+    <circle cx={106.5} cy={194} r={1.2} fill="#8aa0b4" opacity={0.55} />
+    {/* surface callouts — pinned to the structures */}
+    <line x1={62} y1={127} x2={86} y2={202} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.55} />
+    <line x1={62} y1={175} x2={60} y2={230} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.55} />
+    <line x1={62} y1={223} x2={98} y2={206} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.55} />
+    <WMChip x={4} y={116} label="LAB" lv="LV 2 · +50% sci" />
+    <WMChip x={4} y={164} label="MINT" lv="LV 1 · +25% cred" />
+    <WMChip x={4} y={212} label="FORGE" lv="LV 3 · +75% metal" />
+    {/* the station, on its actual orbit */}
+    <rect x={202} y={205} width={2.5} height={24} fill="#9fb3c8" />
+    <rect x={196.5} y={207} width={4.5} height={2.5} fill="#23445c" stroke="#46687c" strokeWidth={0.4} />
+    <rect x={205} y={207} width={4.5} height={2.5} fill="#23445c" stroke="#46687c" strokeWidth={0.4} />
+    <ellipse cx={203.2} cy={217} rx={7} ry={2.5} fill="none" stroke="#8aa0b4" strokeWidth={1.2} />
+    <rect x={200.2} y={214} width={6} height={6} rx={1} fill="#46687c" />
+    <circle cx={203.2} cy={204} r={1} fill="#ffb84d" />
+    {/* station callouts */}
+    <line x1={176} y1={67} x2={206} y2={206} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.55} />
+    <line x1={176} y1={113} x2={202} y2={212} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.55} />
+    <WMChip x={176} y={56} w={60} label="WEAPONS" lv="LV 1" />
+    <WMChip x={176} y={102} w={60} label="ORB. LAB" lv="LV 1" />
+    {/* shipyard chip — tapped, so its popover is open ON the map */}
+    <line x1={210} y1={170} x2={204} y2={206} stroke="#ffb84d" strokeWidth={0.7} opacity={0.6} />
+    <WMChip x={140} y={148} w={94} label="SHIPYARD" lv="LV 2 · 2 SLOTS" tone="amber" />
+    <line x1={184} y1={170} x2={184} y2={178} stroke="#ffb84d" strokeWidth={0.8} />
+    <g>
+      <rect x={126} y={178} width={108} height={100} rx={6} fill="rgba(10,17,27,0.94)" stroke="#ffb84d" strokeWidth={0.9} />
+      <text x={133} y={191} fontSize={7} fontFamily="monospace" fontWeight="bold" fill="#ffb84d">SHIPYARD — LV 2</text>
+      <line x1={133} y1={196} x2={227} y2={196} stroke="#2a3d50" strokeWidth={0.8} />
+      <text x={133} y={208} fontSize={6} fontFamily="monospace" fill="#d8e4ee">▰▰▱ Frigate "Aegis"</text>
+      <text x={227} y={208} fontSize={6} fontFamily="monospace" fill="#ffb84d" textAnchor="end">T+8</text>
+      <text x={133} y={220} fontSize={6} fontFamily="monospace" fill="#8aa0b4">▱▱▱ Corvette "Dart"</text>
+      <text x={227} y={220} fontSize={6} fontFamily="monospace" fill="#8aa0b4" textAnchor="end">queued</text>
+      <rect x={132} y={228} width={96} height={16} rx={3} fill="rgba(255,184,77,0.16)" stroke="#ffb84d" strokeWidth={0.8} />
+      <text x={180} y={239} fontSize={7} fontFamily="monospace" fontWeight="bold" fill="#ffb84d" textAnchor="middle">+ BUILD SHIP</text>
+      <rect x={132} y={250} width={96} height={14} rx={3} fill="rgba(42,61,80,0.4)" stroke="#4a6178" strokeWidth={0.8} />
+      <text x={180} y={260} fontSize={6} fontFamily="monospace" fill="#b8c8d6" textAnchor="middle">⬆ UPGRADE · 60M 80C</text>
+    </g>
+    {/* map chrome */}
+    <rect x={6} y={8} width={56} height={16} rx={8} fill="rgba(13,21,32,0.85)" stroke="#4a6178" strokeWidth={0.8} />
+    <text x={34} y={19} fontSize={7} fontFamily="monospace" fill="#b8c8d6" textAnchor="middle">← SYSTEM</text>
+    {/* selected-body label, exactly where the map draws it */}
+    <text x={120} y={414} fontSize={11} fontFamily="monospace" fontWeight="bold" fill="#ffb84d" textAnchor="middle">EARTH</text>
+    <text x={120} y={425} fontSize={7} fontFamily="monospace" fill="#ffd700" textAnchor="middle">2M · 6C · 3S</text>
+    <text x={120} y={433} fontSize={6} fontFamily="monospace" fill="#8aa0b4" textAnchor="middle">HP 100 · POP 3/5 · COLLECTOR ✓ · +2.4M +7.2C +3.6S /t</text>
   </svg>
 );
 
-/** Orbit scene: ring-hub station with callouts right; shipyard chip feeds the panel below. */
-const WMOrbitScene: React.FC = () => (
-  <svg viewBox="0 0 220 110" className="ux-wm-svg" preserveAspectRatio="xMidYMid meet">
-    {/* spine */}
-    <rect x={76.5} y={14} width={3} height={72} fill="#9fb3c8" />
-    <circle cx={78} cy={12} r={1.5} fill="#ffb84d" />
-    {/* solar panels */}
-    <rect x={57} y={17} width={15} height={5} fill="#23445c" stroke="#46687c" strokeWidth={0.6} />
-    <rect x={84} y={17} width={15} height={5} fill="#23445c" stroke="#46687c" strokeWidth={0.6} />
-    {/* ring threaded through the hub */}
-    <ellipse cx={78} cy={54} rx={22} ry={7} fill="none" stroke="#6b8195" strokeWidth={2} />
-    <rect x={71} y={47} width={14} height={14} rx={2} fill="#46687c" stroke="#8aa0b4" strokeWidth={0.6} />
-    <path d="M 56 54 A 22 7 0 0 0 100 54" fill="none" stroke="#b8c8d6" strokeWidth={2} />
-    {/* comms dish */}
-    <path d="M 73 86 L 83 86 L 78 94 Z" fill="#6b8195" />
-    {/* hull under construction alongside the yard */}
-    <path d="M 104 52 L 116 56 L 104 60 Z" fill="none" stroke="#ffb84d" strokeWidth={0.8} strokeDasharray="2 1.5" />
-    {/* callout lines */}
-    <line x1={132} y1={17} x2={92} y2={20} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.5} />
-    <line x1={132} y1={51} x2={86} y2={53} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.5} />
-    <line x1={132} y1={85} x2={110} y2={57} stroke="#ffb84d" strokeWidth={0.7} opacity={0.6} />
-    <line x1={173} y1={96} x2={173} y2={110} stroke="#ffb84d" strokeWidth={0.7} opacity={0.6} strokeDasharray="2 2" />
-    {/* callout chips */}
-    <WMChip x={132} y={6} w={82} label="WEAPONS" lv="LV 1 · PDC +30%" />
-    <WMChip x={132} y={40} w={82} label="ORBITAL LAB" lv="LV 1 · +40% sci" />
-    <WMChip x={132} y={74} w={82} label="SHIPYARD" lv="LV 2 · 2 SLOTS" tone="amber" />
-    <text x={4} y={104} fontSize={6} fontFamily="monospace" fill="#5a7085">ORBIT · KIRKWALL STATION · HP 160</text>
+/** Desktop take on the same idea — wider frame, same diegetic overlay. */
+const WMMapDesktop: React.FC = () => (
+  <svg viewBox="0 0 560 340" className="ux-wm-svg" preserveAspectRatio="xMidYMid meet">
+    <defs>
+      <radialGradient id="wm-planet-d" cx="38%" cy="32%" r="85%">
+        <stop offset="0%" stopColor="#2a6b74" />
+        <stop offset="55%" stopColor="#1a4a56" />
+        <stop offset="100%" stopColor="#0d2e3a" />
+      </radialGradient>
+    </defs>
+    {[[30,40,.5],[120,26,.35],[260,60,.5],[380,30,.4],[470,70,.35],[540,150,.5],
+      [40,240,.3],[80,320,.4],[300,326,.35],[430,300,.3],[520,250,.45],[350,140,.25]]
+      .map(([x,y,o],i) => <circle key={i} cx={x} cy={y} r={1} fill="#d8e4ee" opacity={o} />)}
+    <path d="M -20 36 Q 260 8 580 44" stroke="#2d4255" strokeWidth={1} fill="none" />
+    <circle cx={195} cy={205} r={130} fill="none" stroke="#3d5568" strokeWidth={0.8} strokeDasharray="3 4" />
+    <circle cx={195} cy={205} r={100} fill="url(#wm-planet-d)" stroke="#2b5e58" strokeWidth={1} />
+    <g stroke="#ffb84d" strokeWidth={1.5} fill="none" opacity={0.9}>
+      <path d="M 88 112 L 88 98 L 102 98" />
+      <path d="M 288 98 L 302 98 L 302 112" />
+      <path d="M 302 298 L 302 312 L 288 312" />
+      <path d="M 102 312 L 88 312 L 88 298" />
+    </g>
+    <ellipse cx={148} cy={126} rx={38} ry={13} fill="#ffb84d" opacity={0.05} />
+    <path d="M 126 131 L 134 127 L 142 131 Z" fill="#3d5a6b" />
+    <rect x={127} y={131} width={14} height={9} fill="#46687c" />
+    <rect x={150} y={106} width={3.5} height={16} fill="#3d5a6b" />
+    <rect x={156} y={100} width={4} height={22} fill="#46687c" />
+    <line x1={158} y1={100} x2={158} y2={94} stroke="#8aa0b4" strokeWidth={0.8} />
+    <circle cx={158} cy={93} r={1.2} fill="#67e8f9" />
+    <rect x={162} y={108} width={14} height={8} fill="#46687c" />
+    <rect x={173} y={102} width={3} height={6} fill="#3d5a6b" />
+    <line x1={66} y1={75} x2={154} y2={112} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.55} />
+    <line x1={66} y1={129} x2={130} y2={133} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.55} />
+    <line x1={66} y1={183} x2={166} y2={114} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.55} />
+    <WMChip x={8} y={64} label="LAB" lv="LV 2 · +50% sci" />
+    <WMChip x={8} y={118} label="MINT" lv="LV 1 · +25% cred" />
+    <WMChip x={8} y={172} label="FORGE" lv="LV 3 · +75% metal" />
+    <rect x={300} y={119} width={2.5} height={24} fill="#9fb3c8" />
+    <rect x={294.5} y={121} width={4.5} height={2.5} fill="#23445c" stroke="#46687c" strokeWidth={0.4} />
+    <rect x={303} y={121} width={4.5} height={2.5} fill="#23445c" stroke="#46687c" strokeWidth={0.4} />
+    <ellipse cx={301.2} cy={131} rx={7} ry={2.5} fill="none" stroke="#8aa0b4" strokeWidth={1.2} />
+    <rect x={298.2} y={128} width={6} height={6} rx={1} fill="#46687c" />
+    <circle cx={301.2} cy={118} r={1} fill="#ffb84d" />
+    <line x1={368} y1={55} x2={304} y2={120} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.55} />
+    <line x1={368} y1={103} x2={300} y2={126} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.55} />
+    <WMChip x={368} y={44} w={62} label="WEAPONS" lv="LV 1" />
+    <WMChip x={368} y={92} w={62} label="ORB. LAB" lv="LV 1" />
+    <line x1={360} y1={157} x2={308} y2={135} stroke="#ffb84d" strokeWidth={0.7} opacity={0.6} />
+    <WMChip x={360} y={146} w={94} label="SHIPYARD" lv="LV 2 · 2 SLOTS" tone="amber" />
+    <line x1={400} y1={168} x2={400} y2={178} stroke="#ffb84d" strokeWidth={0.8} />
+    <g>
+      <rect x={360} y={178} width={150} height={100} rx={6} fill="rgba(10,17,27,0.94)" stroke="#ffb84d" strokeWidth={0.9} />
+      <text x={368} y={192} fontSize={7.5} fontFamily="monospace" fontWeight="bold" fill="#ffb84d">SHIPYARD — LV 2 · 2 SLOTS</text>
+      <line x1={368} y1={198} x2={502} y2={198} stroke="#2a3d50" strokeWidth={0.8} />
+      <text x={368} y={210} fontSize={6.5} fontFamily="monospace" fill="#d8e4ee">▰▰▱ Frigate "Aegis"</text>
+      <text x={502} y={210} fontSize={6.5} fontFamily="monospace" fill="#ffb84d" textAnchor="end">T+8</text>
+      <text x={368} y={222} fontSize={6.5} fontFamily="monospace" fill="#8aa0b4">▱▱▱ Corvette "Dart"</text>
+      <text x={502} y={222} fontSize={6.5} fontFamily="monospace" fill="#8aa0b4" textAnchor="end">queued</text>
+      <rect x={366} y={230} width={138} height={16} rx={3} fill="rgba(255,184,77,0.16)" stroke="#ffb84d" strokeWidth={0.8} />
+      <text x={435} y={241} fontSize={7} fontFamily="monospace" fontWeight="bold" fill="#ffb84d" textAnchor="middle">+ BUILD SHIP</text>
+      <rect x={366} y={252} width={138} height={14} rx={3} fill="rgba(42,61,80,0.4)" stroke="#4a6178" strokeWidth={0.8} />
+      <text x={435} y={262} fontSize={6} fontFamily="monospace" fill="#b8c8d6" textAnchor="middle">⬆ UPGRADE YARD · 60M 80C</text>
+    </g>
+    <circle cx={478} cy={296} r={6} fill="#9fb3c8" />
+    <text x={478} y={310} fontSize={6} fontFamily="monospace" fill="#5a7085" textAnchor="middle">LUNA</text>
+    <rect x={8} y={8} width={60} height={16} rx={8} fill="rgba(13,21,32,0.85)" stroke="#4a6178" strokeWidth={0.8} />
+    <text x={38} y={19} fontSize={7} fontFamily="monospace" fill="#b8c8d6" textAnchor="middle">← SYSTEM</text>
+    <text x={552} y={18} fontSize={6} fontFamily="monospace" fill="#5a7085" textAnchor="end">HOVER A CHIP · CLICK TO ACT</text>
+    <text x={195} y={326} fontSize={12} fontFamily="monospace" fontWeight="bold" fill="#ffb84d" textAnchor="middle">EARTH</text>
+    <text x={195} y={337} fontSize={7} fontFamily="monospace" fill="#ffd700" textAnchor="middle">2M · 6C · 3S · HP 100 · POP 3/5 · COLLECTOR ✓</text>
   </svg>
 );
 
 const WorldMenu_Mobile: React.FC = () => (
-  <div className="ux-wm-mob">
-    <div className="ux-wm-top">
-      <span className="ux-wm-top__name">← EARTH</span>
-      <span className="ux-wm-owner">◉ CIS</span>
-      <span className="ux-wm-yields">2M · 6C · 3S</span>
+  <div className="ux-wm2-frame">
+    <div className="ux-wm2-bar">
+      <span className="ux-wm2-res"><b style={{ color: '#a0a0a0' }}>M</b> 27,983</span>
+      <span className="ux-wm2-res"><b style={{ color: '#ffd700' }}>C</b> 10,967</span>
+      <span className="ux-wm2-res"><b style={{ color: '#67e8f9' }}>S</b> 182</span>
+      <span className="ux-wm2-tick">T 4,812 ▶</span>
     </div>
-    <div className="ux-wm-chiprow">
-      <StatChip label="HP" value="100" tone="good" />
-      <StatChip label="POP" value="3/5" />
-      <StatChip label="COLL" value="✓" tone="good" />
-    </div>
-    <div className="ux-wm-income">+2.4M · +7.2C · +3.6S / tick</div>
-    <div className="ux-wm-scene"><WMSurfaceScene /></div>
-    <div className="ux-wm-scene"><WMOrbitScene /></div>
-    <div className="ux-wm-yard">
-      <div className="mock-section-head">⚒ SHIPYARD — LV 2 · 2 SLOTS</div>
-      <FakeRow cols={['Frigate "Aegis"', '▰▰▱ T+8']} />
-      <FakeRow cols={['Corvette "Dart"', 'queued']} />
-      <div className="mock-btn mock-btn--primary">+ BUILD SHIP</div>
-    </div>
-    <div className="ux-wm-actions">
-      <div className="mock-btn">◎ FOCUS MAP</div>
-      <div className="mock-btn">✈ SEND SHIP</div>
+    <div className="ux-wm2-map"><WMMapMobile /></div>
+    <div className="ux-wm2-dock">
+      <span className="ux-wm2-dock__btn is-on">◉ MAP</span>
+      <span className="ux-wm2-dock__btn">⚑ FLEET</span>
+      <span className="ux-wm2-dock__btn">⚒ BUILD</span>
+      <span className="ux-wm2-dock__btn">⚛ TECH</span>
     </div>
   </div>
 );
 
 const WorldMenu_Desktop: React.FC = () => (
-  <div className="ux-wm-desk">
-    <div className="ux-wm-desk__scenes">
-      <div className="ux-wm-top">
-        <span className="ux-wm-top__name">EARTH</span>
-        <span className="ux-wm-owner">◉ CIS</span>
-        <span className="ux-wm-yields">2M · 6C · 3S</span>
-      </div>
-      <div className="ux-wm-scene"><WMOrbitScene /></div>
-      <div className="ux-wm-scene"><WMSurfaceScene /></div>
+  <div className="ux-wm2-frame">
+    <div className="ux-wm2-bar">
+      <span className="ux-wm2-res"><b style={{ color: '#a0a0a0' }}>METAL</b> 27,983</span>
+      <span className="ux-wm2-res"><b style={{ color: '#ffd700' }}>CREDITS</b> 10,967</span>
+      <span className="ux-wm2-res"><b style={{ color: '#67e8f9' }}>SCIENCE</b> 182</span>
+      <span className="ux-wm2-tick">TICK 4,812 · RUNNING ▶</span>
     </div>
-    <div className="ux-wm-desk__panel">
-      <div className="ux-wm-chiprow">
-        <StatChip label="HP" value="100" tone="good" />
-        <StatChip label="POP" value="3/5" />
-        <StatChip label="COLL" value="✓" tone="good" />
-      </div>
-      <div className="mock-section-head">STRUCTURES</div>
-      <FakeRow cols={['Forge LV3', '+75% metal', '⬆ 40M']} />
-      <FakeRow cols={['Mint LV1', '+25% cred', '⬆ 25M']} />
-      <FakeRow cols={['Lab LV2', '+50% sci', '⬆ 30M']} />
-      <FakeRow cols={['Weapons LV1', 'PDC +30%', '⬆ 35M']} />
-      <div className="mock-section-head">⚒ SHIPYARD — LV 2</div>
-      <FakeRow cols={['Frigate "Aegis"', 'T+8']} />
-      <FakeRow cols={['Corvette "Dart"', 'queued']} />
-      <div className="mock-btn mock-btn--primary">+ BUILD SHIP</div>
-    </div>
+    <div className="ux-wm2-map"><WMMapDesktop /></div>
   </div>
 );
 
@@ -241,24 +307,25 @@ const WorldMenu_Sheet: React.FC = () => (
 const WORLD_MENU_STUDY: Direction = {
   id: 'world-menu',
   number: '05',
-  name: 'WORLD MENU — THE WORLD IS THE MENU',
-  inspiredBy: "Lorne's whiteboard · exploded-view schematics",
-  tagline: 'The body view is an annotated diagram, not a stat sheet.',
+  name: 'WORLD OVERLAY — THE MAP IS THE MENU',
+  inspiredBy: "Lorne's whiteboard · diegetic map UI",
+  tagline: 'Zoom into a world and its controls fade in on the map itself.',
   pitch:
-    'Straight from the whiteboard: instead of a list of rows, the world view draws the ' +
-    'planet with the structures you actually built — each one wears a callout chip you ' +
-    'tap to inspect or upgrade. The orbital station hangs above with its own callouts, ' +
-    'and the Shipyard — the verb you use most — gets the one big panel. The numbers stay ' +
-    'one tap away; the picture IS the menu.',
+    'Round two from the whiteboard: no inspector panel at all. Zoom close to a world ' +
+    'you own and its callout chips fade in ON the map, pinned to the actual ' +
+    "structures — the city's Forge, Mint and Lab on the surface, the station's " +
+    'Weapons and Lab on its real orbit. Tap a chip and its detail opens as a popover ' +
+    'right there over the planet (shown: the Shipyard queue, mid-build). Back out and ' +
+    'the chips dissolve into the normal map. One continuous space, zero context switches.',
   pros: [
-    'Tap the thing itself — zero abstraction',
-    'Buildings are visible progress, not list rows',
-    'Callout chips are huge mobile tap targets',
+    'Zero context switch — you never leave the map',
+    'Callouts pin to the real structures, not a list',
+    'LOD-gated: chips only exist at close zoom',
   ],
   cons: [
-    'Needs structure art per building type',
-    'Crowded worlds will fight for callout space',
-    'Slower than a table for veteran bulk management',
+    'Chips must dodge orbits, ships and each other',
+    'Popovers get tight on small phones',
+    'Harder to bulk-manage than a table',
   ],
   Desktop: WorldMenu_Desktop,
   Mobile: WorldMenu_Mobile,
@@ -859,10 +926,10 @@ export const UXGallery: React.FC<UXGalleryProps> = ({ onBack }) => {
         <div className="ux-gallery__eyebrow">NEW · FOCUSED STUDY</div>
         <h2 className="ux-gallery__featured-title">The World Menu, from the whiteboard</h2>
         <p className="ux-gallery__lede">
-          A reimagined body view: the planet and its station drawn as an{' '}
-          <strong>annotated schematic</strong> — every structure wears a tappable
-          callout chip, and the Shipyard gets the one big panel. Mobile-first;
-          flip the toggle for desktop and spreadsheet takes.
+          The world menu overlaid <strong>on the live map</strong>: zoom into a world
+          and callout chips fade in, pinned to the structures themselves — tap one
+          and its panel opens right over the planet. Mobile-first; flip the toggle
+          for desktop and spreadsheet takes.
         </p>
         <DirectionCard direction={WORLD_MENU_STUDY} />
       </section>

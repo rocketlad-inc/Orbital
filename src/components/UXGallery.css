@@ -1066,3 +1066,53 @@
 .ux-wm-mob > * { flex-shrink: 0; }
 .ux-wm-actions { margin-top: auto; }
 .ux-wm-chiprow .mock-stat-chip { flex: 1; min-width: 0; }
+
+/* World Overlay (map-is-the-menu) frame chrome */
+.ux-wm2-frame {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #070d16;
+}
+.ux-wm2-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 8px;
+  font-size: 7.5px;
+  color: #b8c8d6;
+  border-bottom: 1px solid #16202e;
+  flex-shrink: 0;
+  font-family: monospace;
+}
+.ux-wm2-tick { margin-left: auto; color: #4ecdc4; }
+.ux-wm2-map {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ux-wm2-map svg { width: 100%; height: 100%; }
+.ux-wm2-dock {
+  display: flex;
+  gap: 4px;
+  padding: 4px 6px;
+  border-top: 1px solid #16202e;
+  flex-shrink: 0;
+}
+.ux-wm2-dock__btn {
+  flex: 1;
+  text-align: center;
+  font-size: 7px;
+  color: #7c8fa0;
+  border: 1px solid #223247;
+  border-radius: 4px;
+  padding: 3px 0;
+  font-family: monospace;
+}
+.ux-wm2-dock__btn.is-on {
+  color: #4ecdc4;
+  border-color: #4ecdc4;
+  background: rgba(78, 205, 196, 0.1);
+}
