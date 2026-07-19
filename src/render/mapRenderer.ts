@@ -1494,13 +1494,18 @@ export function drawBody(
     ctx.ctx.fillText(body.name.toUpperCase(), canvasPos.x, canvasPos.y + radius + 14);
 
     // Neptune's-Pride-style yield readout under the name. Each token
-    // is color-coded to the resource pill (fuel amber, ore silver,
-    // credits gold, science sky-cyan). Zero yields are skipped so
-    // a barren rock doesn't pad three "0" tokens. Stars / black
-    // holes / gas giants without body.resources fall through here.
+    // is color-coded to the resource pill (ore silver, credits gold,
+    // science sky-cyan). Zero yields are skipped so a barren rock
+    // doesn't pad three "0" tokens. Stars / black holes / gas giants
+    // without body.resources fall through here.
+    //
+    // Fuel is deliberately NOT shown: the game is METAL / CREDITS /
+    // SCIENCE (DESIGN-identity-economy.md §1.1 removed fuel from body
+    // yields). The live MP catalog seeds fuel: 0 everywhere, but the
+    // frozen single-player seed still carries nonzero fuel on 18 bodies,
+    // so a token here would advertise a resource nothing can spend.
     if (body.resources && showYields) {
       const tokens: Array<{ text: string; color: string }> = [];
-      if (body.resources.fuel > 0)    tokens.push({ text: `${body.resources.fuel}F`,    color: '#ffb84d' });
       if (body.resources.metal > 0)   tokens.push({ text: `${body.resources.metal}M`,   color: '#a0a0a0' });
       if (body.resources.gold > 0)    tokens.push({ text: `${body.resources.gold}C`,    color: '#ffd700' });
       if (body.resources.science > 0) tokens.push({ text: `${body.resources.science}S`, color: '#67e8f9' });
@@ -1803,9 +1808,11 @@ export function drawResourcePanel(
   ctx.ctx.textAlign = 'left';
   ctx.ctx.textBaseline = 'top';
 
-  const labels = ['Fuel', 'Credits', 'Metal', 'Sci'];
+  // Three resources — fuel is dead (DESIGN-identity-economy.md §1.1).
+  // Dropping it also makes the row count match panelHeight, which is
+  // sized for 3 lines; the old 4th row overflowed the panel background.
+  const labels = ['Credits', 'Metal', 'Sci'];
   const values = [
-    body.resources.fuel,
     body.resources.gold,
     body.resources.metal,
     body.resources.science,
