@@ -1415,6 +1415,82 @@ function drawGasGiantBody(
 const labelAppearMs = new Map<string, number>();
 
 /**
+ * Whether a body's name label ignores the zoom gate and shows at any
+ * scale. Stars, black holes, and anything orbiting directly under a
+ * star (the "always visible" tier of the system) never disappear when
+ * zoomed out; everything else only shows once `scale > 0.4`. Shared
+ * between drawBody's own gate and the label-collision planner in
+ * MapCanvas so the two can't drift apart.
+ */
+export function bodyLabelAlwaysOn(body: Body): boolean {
+  return body.type === 'star' || body.type === 'black_hole' || body.parent === 'sol';
+}
+
+/** Vertical step between staggered body-label rows (see planBodyLabels). */
+export const BODY_LABEL_ROW_HEIGHT = 26;
+
+/**
+ * Assign each candidate body label a vertical "row" (0, 1, 2…) below its
+ * body so that dense clusters — Mercury/Venus at low zoom, five co-orbital
+ * Belt rocks, a knot of moons — stagger downward instead of printing on
+ * top of each other. A label never moves horizontally or hides; it only
+ * drops to the next row down until it clears every higher-priority label
+ * already placed. Rows are a fixed height regardless of whether a body's
+ * own content (name only vs. name + yield tokens) fills it, so two labels
+ * on different rows can never collide no matter their content.
+ *
+ * Priority decides who gets row 0 when several bodies contend for the
+ * same spot: selected > hovered > owned-by-player > owned-by-anyone >
+ * always-on (star/black hole/direct sol child) > everything else. Ties
+ * break on id so placement is stable frame to frame.
+ *
+ * If a body still collides with something at every row up to MAX_ROWS
+ * (a pathological cluster), it takes the row with the LEAST overlap
+ * rather than piling everything onto row 0 — same "least-bad" fallback
+ * chooseRegionLabelPos uses.
+ *
+ * Pure and exported so placement can be tested without a canvas.
+ */
+export function planBodyLabels(
+  candidates: Array<{ id: string; x: number; y: number; width: number; priority: number }>,
+): Map<string, number> {
+  const MAX_ROWS = 10;
+  const placed: LabelRect[] = [];
+  const order = candidates
+    .slice()
+    .sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
+  const result = new Map<string, number>();
+  for (const c of order) {
+    let bestRow = 0;
+    let bestCost = Infinity;
+    for (let row = 0; row <= MAX_ROWS; row++) {
+      const rect: LabelRect = {
+        x: c.x - c.width / 2,
+        y: c.y + row * BODY_LABEL_ROW_HEIGHT,
+        w: c.width,
+        h: BODY_LABEL_ROW_HEIGHT,
+      };
+      let cost = 0;
+      for (const o of placed) {
+        const ox = Math.min(rect.x + rect.w, o.x + o.w) - Math.max(rect.x, o.x);
+        const oy = Math.min(rect.y + rect.h, o.y + o.h) - Math.max(rect.y, o.y);
+        if (ox > 0 && oy > 0) cost += ox * oy;
+      }
+      if (cost < bestCost) { bestRow = row; bestCost = cost; }
+      if (cost === 0) break;
+    }
+    placed.push({
+      x: c.x - c.width / 2,
+      y: c.y + bestRow * BODY_LABEL_ROW_HEIGHT,
+      w: c.width,
+      h: BODY_LABEL_ROW_HEIGHT,
+    });
+    result.set(c.id, bestRow);
+  }
+  return result;
+}
+
+/**
  * Draw a celestial body (circle with label) — enhanced with shading, glow,
  * gas giant bands, and a multi-layer sun corona.
  */
@@ -1428,6 +1504,11 @@ export function drawBody(
    *  it's actually in range. Defaults true so non-fog callers (e.g. the
    *  lobby preview) keep showing it. */
   showYields: boolean = true,
+  /** Vertical stagger row from planBodyLabels — 0 (default) draws at the
+   *  body's normal fixed offset, matching every caller that doesn't plan
+   *  labels (LobbyMapPreview, tests). MapCanvas computes this once per
+   *  frame over all visible bodies and passes it in. */
+  labelRow: number = 0,
 ) {
   const pos = bodyPosition(body, ctx.t, ctx.bodies);
   const canvasPos = worldToCanvas(pos.x, pos.y, ctx);
@@ -1476,7 +1557,11 @@ export function drawBody(
   // Sol; otherwise only at zoomed-in scales. Black holes ride the same
   // always-on rule as stars so "CYGNUS X" stays readable when the
   // player is pulled all the way out hunting for the far systems.
-  const alwaysShowLabel = body.type === 'star' || body.type === 'black_hole' || body.parent === 'sol';
+  const alwaysShowLabel = bodyLabelAlwaysOn(body);
+  // Rows stagger straight down from the body's normal anchor, so a
+  // collision only ever pushes a label further from ITS OWN body —
+  // never sideways onto a neighbour's territory.
+  const rowOffset = labelRow * BODY_LABEL_ROW_HEIGHT;
   if (alwaysShowLabel || ctx.camera.scale > 0.4) {
     // Zoom-gated labels fade in over 150ms (§E7) instead of popping at
     // the 0.4-scale threshold. Always-on labels skip the bookkeeping.
@@ -1497,7 +1582,7 @@ export function drawBody(
     ctx.ctx.font = '10px monospace';
     ctx.ctx.textAlign = 'center';
     ctx.ctx.textBaseline = 'top';
-    ctx.ctx.fillText(body.name.toUpperCase(), canvasPos.x, canvasPos.y + radius + 14);
+    ctx.ctx.fillText(body.name.toUpperCase(), canvasPos.x, canvasPos.y + radius + 14 + rowOffset);
 
     // Neptune's-Pride-style yield readout under the name. Each token
     // is color-coded to the resource pill (ore silver, credits gold,
@@ -1518,7 +1603,7 @@ export function drawBody(
       if (tokens.length > 0) {
         ctx.ctx.font = '9px monospace';
         ctx.ctx.textBaseline = 'top';
-        const baseY = canvasPos.y + radius + 26; // name sits at +14 in a 10px font; this lines up just below
+        const baseY = canvasPos.y + radius + 26 + rowOffset; // name sits at +14 in a 10px font; this lines up just below
         const gap = 4;
         // Measure total width to center the row.
         let totalW = 0;
