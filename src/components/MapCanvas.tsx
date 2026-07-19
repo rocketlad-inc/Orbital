@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
-import { smoothedTick } from '../render/tickPhase';
+import { smoothedTick, shipDisplayTick } from '../render/tickPhase';
 import { useGameContext } from '../state/gameContext';
 import { useMapLayers } from '../state/mapLayers';
 import {
@@ -1548,7 +1548,10 @@ function getShipCanvasPos(
     pos = { x: ship.transit.pos.x, y: ship.transit.pos.y };
   } else {
     const { orbitWorldPos } = require('../physics/orbitalMechanics');
-    pos = orbitWorldPos(ship.orbit, t, bodies);
+    // Must use the SAME spun time drawShip does, or the hitbox drifts
+    // away from the hull you can see — up to the full diameter of the
+    // orbit, which is the entire target.
+    pos = orbitWorldPos(ship.orbit, shipDisplayTick(t, ship.orbit?.period, Date.now()), bodies);
   }
   const cam = effectiveCamera(camera, bodies, t);
   return {

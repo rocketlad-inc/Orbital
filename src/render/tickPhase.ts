@@ -68,3 +68,49 @@ export function smoothedTick(
   if (tickIntervalMs == null) return currentTick;
   return currentTick + tickPhase(nextTickAt, tickIntervalMs, nowMs);
 }
+
+/** Real-time duration of one visual lap for a parked ship. */
+export const SHIP_VISUAL_ORBIT_MS = 30_000;
+
+/**
+ * The `t` to draw a PARKED ship's orbital angle at — true time plus a
+ * cosmetic spin.
+ *
+ * Why this exists: at true rate a ship sweeps a healthy ~39 degrees per
+ * tick, but an hour-long tick spreads that over an hour — about one
+ * pixel a minute. It is genuinely animating and completely invisible.
+ * This makes parked hulls circle their planet once every
+ * SHIP_VISUAL_ORBIT_MS so the map reads as alive.
+ *
+ * What it does NOT touch: which body a ship orbits, its radius, or
+ * anything the sim resolves. A parked ship's ANGLE around its planet
+ * carries no gameplay meaning — auto-combat engages everything sharing a
+ * body, and sensor ranges dwarf these few-unit orbits — so spinning it
+ * costs nothing real. Planets keep their true positions, because a
+ * planet's place along its orbit absolutely does matter.
+ *
+ * The spin is ADDITIVE on top of true time, which keeps each hull's
+ * distinct phase: ships fan out around a body by differing `epoch`
+ * (build tick) and `M0`, and adding the same offset to every ship's `t`
+ * preserves those differences instead of stacking the whole fleet on one
+ * point. Scaling by `period` converts "fraction of a lap" into this
+ * particular orbit's time units, so every ship completes its lap in the
+ * same wall-clock time regardless of radius, and none of them lap each
+ * other.
+ *
+ * `nowMs` is taken modulo the lap so the number stays small; the angle
+ * is mod 2*pi anyway, so the wrap is invisible.
+ *
+ * Ships under burn are excluded by the caller — a transit follows its
+ * torch trajectory, and spinning that would be a lie about a position
+ * the player is actively steering.
+ */
+export function shipDisplayTick(
+  t: number,
+  orbitPeriod: number | null | undefined,
+  nowMs: number,
+): number {
+  if (!orbitPeriod || orbitPeriod <= 0 || !Number.isFinite(orbitPeriod)) return t;
+  const lapFraction = (nowMs % SHIP_VISUAL_ORBIT_MS) / SHIP_VISUAL_ORBIT_MS;
+  return t + orbitPeriod * lapFraction;
+}
