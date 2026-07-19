@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch, Faction, MyFaction, Pact, PACT_LABELS, PactKind, tradesApi } from './api';
 import { deriveSecondary } from '../game/colorUtils';
+import { displayResource } from '../game/formatResources';
 
 /** Two-tone (§5) chip: primary square with a secondary corner.
  *  decoration only — meaning must stay in primary. */
@@ -167,12 +168,17 @@ export function FactionPanel({ gameId }: { gameId: string }) {
         <strong style={{ fontSize: 13 }}>{me.name}</strong>
       </div>
       <div className="mp-resource-grid">
-        <div className="mp-resource-tile"><div className="label">Metal</div><div className="value">{me.metal}</div></div>
+        {/* All three go through displayResource: the pools drift
+            fractional (research drain + treaty payouts subtract floats),
+            and science was rendering as 181.9399999999999. Same helper the
+            top-bar pills use, so the two can't show different numbers for
+            the same resource. */}
+        <div className="mp-resource-tile"><div className="label">Metal</div><div className="value">{displayResource(me.metal)}</div></div>
         {/* Fuel tile removed — fuel left the economy (§1.1). Legacy
             stockpiles still exist on old factions but earn nothing and
             buy nothing, so showing them was pure confusion. */}
-        <div className="mp-resource-tile"><div className="label">Credits</div><div className="value">{me.gold}</div></div>
-        <div className="mp-resource-tile"><div className="label">Science</div><div className="value">{me.science}</div></div>
+        <div className="mp-resource-tile"><div className="label">Credits</div><div className="value">{displayResource(me.gold)}</div></div>
+        <div className="mp-resource-tile"><div className="label">Science</div><div className="value">{displayResource(me.science)}</div></div>
       </div>
       <div style={{ marginTop: 6 }}>
         <ScoreboardStats f={myScore} />
