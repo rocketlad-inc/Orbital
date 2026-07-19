@@ -1,4 +1,5 @@
 import { canHostCity, buildingLevel } from '../game/settlements';
+import { shipDisplayTick } from './tickPhase';
 // ============================================================
 // Map Canvas Rendering - Draw the orbital system
 // ============================================================
@@ -1676,8 +1677,13 @@ export function drawShip(
   const parentBody = ctx.bodies.find(b => b.id === ship.orbit.parentBodyId);
   if (!parentBody) return;
 
+  // The PLANET keeps true time — its position along its own orbit is
+  // load-bearing. Only the ship's angle AROUND the planet gets the
+  // cosmetic spin, so hulls visibly circle instead of creeping a pixel a
+  // minute. See render/tickPhase.
+  const shipT = shipDisplayTick(ctx.t, ship.orbit.period, Date.now());
   const parentPos = bodyPosition(parentBody, ctx.t, ctx.bodies);
-  const localPos = localPositionAt(ship.orbit, ctx.t);
+  const localPos = localPositionAt(ship.orbit, shipT);
   const worldX = parentPos.x + localPos.x;
   const worldY = parentPos.y + localPos.y;
   let canvasPos = worldToCanvas(worldX, worldY, ctx);
@@ -1686,7 +1692,9 @@ export function drawShip(
   const shipColorValue = shipColor(ship, ctx.factions);
 
   // Velocity vector — used both to rotate the icon and as a fallback tick.
-  const vel = velocityVectorsAt(ship.orbit, ctx.t);
+  // Same spun time as the position, or the hull would point one way and
+  // travel another.
+  const vel = velocityVectorsAt(ship.orbit, shipT);
   const heading = Math.atan2(vel.prograde.y, vel.prograde.x);
 
   // When several ships share the same orbit they stack at exactly the
