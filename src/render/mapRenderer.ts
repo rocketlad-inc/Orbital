@@ -3796,23 +3796,30 @@ export function rectsOverlap(a: LabelRect, b: LabelRect): boolean {
 }
 
 /**
- * Pick a spot on a region's ring that lands on neither a body nor
- * another region's label.
+ * Pick a spot for a region's label: ON ITS OWN BAND, at an angle that
+ * lands on neither a body nor another region's label.
  *
- * Sliding a fixed arc off the anchor body (the previous rule) only
- * solved "don't sit on YOUR planet". It knew nothing about everything
- * else it might land on, so THE CORE still came down on Sol — its ring
- * is so tight that every point on it is near the star — and labels of
- * neighbouring rings collided with each other and with unrelated moons.
+ * THE RULE THAT MATTERS: a label never leaves the annulus it names. The
+ * previous search was allowed to retry at `mid + arc` and `rOuter + arc`
+ * and floored the radius at `arc`, which let a crowded label step off its
+ * own orbit onto a NEIGHBOUR'S ring. With honest two-line widths that
+ * escape hatch became ~140px, and the map ended up with MARS SYSTEM
+ * printed next to the sun and THE CORE printed out past Earth — every
+ * label naming a ring it wasn't on. A label on the wrong ring is worse
+ * than a crowded one: it's actively false.
  *
- * So: propose candidates and take the first clear one. Candidates walk
- * outward in both directions along the ring, then retry on the band's
- * edges, which lets a crowded label step off its own orbit rather than
- * give up. Offsets are arc LENGTHS converted per-radius, so the visual
- * gap stays constant whether the ring is Mercury's or Neptune's.
+ * So radius is constrained to the band and the search runs ANGULARLY —
+ * a full sweep, alternating either side of the anchor body's bearing, so
+ * the label stays near what it names when there's room and walks around
+ * the ring when there isn't. Concentric rings resolve crowding by sitting
+ * at different clock positions rather than by drifting radially.
  *
- * `minRadius` is what saves the Core: a ring hugging the star gets its
- * label pushed out far enough that it can't cover the star.
+ * A disc (rInner ≈ 0, i.e. The Core) has no ring to sit on, so it takes a
+ * radius out near its rim — inside its own territory, clear of the star.
+ *
+ * Nothing clear anywhere: return the candidate with the SMALLEST total
+ * overlap rather than the first one tried. A crowded name still beats a
+ * missing one, but least-crowded beats arbitrary.
  *
  * Pure and exported so the placement can be tested without a canvas.
  */
@@ -3824,36 +3831,52 @@ export function chooseRegionLabelPos(opts: {
   clearance: number;
   obstacles: LabelRect[];
 }): { x: number; y: number; rect: LabelRect; clear: boolean } {
-  const { cx, cy, mid, rInner, rOuter, baseAngle, labelWidth, clearance, obstacles } = opts;
+  const { cx, cy, mid, rInner, rOuter, baseAngle, labelWidth, obstacles } = opts;
   const rectAt = (x: number, y: number): LabelRect => ({
     x: x - labelWidth / 2,
     y: y - 15,
     w: labelWidth,
     h: REGION_LABEL_HEIGHT,
   });
-  const arc = labelWidth / 2 + clearance;
-  // Far enough from the centre that the label can never cover the star.
-  const minRadius = arc;
+
+  // Candidate radii, all inside the band. Inset by half the label so the
+  // text sits within its own colour rather than straddling the seam.
+  const half = REGION_LABEL_HEIGHT / 2;
   const radii: number[] = [];
-  for (const r of [Math.max(mid, minRadius), rOuter, rInner, mid + arc, rOuter + arc]) {
-    if (r > 4 && !radii.some(x => Math.abs(x - r) < 1)) radii.push(r);
+  if (rInner <= 4) {
+    // Disc (The Core): out near the rim so it never covers the star.
+    radii.push(Math.max(rOuter * 0.62, 8));
+  } else {
+    const lo = rInner + half;
+    const hi = rOuter - half;
+    radii.push(mid);
+    if (hi - lo > 6) { radii.push(hi, lo); }
   }
-  const steps = [1, -1, 1.7, -1.7, 2.5, -2.5, 3.4, -3.4, 4.5, -4.5, 6, -6];
-  let first: { x: number; y: number; rect: LabelRect } | null = null;
+
+  // Full angular sweep, alternating out from the anchor bearing:
+  // 0, -1, +1, -2, +2 … so the nearest clear slot to the anchor wins.
+  const STEPS = 72;
+  let best: { x: number; y: number; rect: LabelRect; cost: number } | null = null;
   for (const r of radii) {
-    for (const k of steps) {
-      const swing = Math.sign(k) * Math.min((arc * Math.abs(k)) / Math.max(r, 1), Math.PI * 0.9);
-      const a = baseAngle + swing;
+    if (!(r > 4)) continue;
+    for (let i = 0; i < STEPS; i++) {
+      const k = (i % 2 === 0 ? 1 : -1) * Math.ceil(i / 2);
+      const a = baseAngle + (k * 2 * Math.PI) / STEPS;
       const x = cx + Math.cos(a) * r;
       const y = cy + Math.sin(a) * r;
       const rect = rectAt(x, y);
-      if (!first) first = { x, y, rect };
-      if (!obstacles.some(o => rectsOverlap(rect, o))) return { x, y, rect, clear: true };
+      let cost = 0;
+      for (const o of obstacles) {
+        const ox = Math.min(rect.x + rect.w, o.x + o.w) - Math.max(rect.x, o.x);
+        const oy = Math.min(rect.y + rect.h, o.y + o.h) - Math.max(rect.y, o.y);
+        if (ox > 0 && oy > 0) cost += ox * oy;
+      }
+      if (cost === 0) return { x, y, rect, clear: true };
+      if (!best || cost < best.cost) best = { x, y, rect, cost };
     }
   }
-  // Everything collided — draw at the first candidate rather than
-  // dropping the label. A crowded name still beats a missing one.
-  return { ...(first as { x: number; y: number; rect: LabelRect }), clear: false };
+  const b = best as { x: number; y: number; rect: LabelRect };
+  return { x: b.x, y: b.y, rect: b.rect, clear: false };
 }
 
 /**

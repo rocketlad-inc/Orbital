@@ -47,6 +47,32 @@ const BELT_MIN_MEMBERS = 3;
  *  moon's orbit — enough that the moon sits inside the shading. */
 const SYSTEM_DISC_PAD = 1.3;
 
+/** Apoapsis:periapsis beyond which an orbit is a crossing trajectory
+ *  rather than a lane. Circular bodies carry no rp/ra at all, so this
+ *  only ever judges the seeded rogues. */
+const ROGUE_ECCENTRICITY_RATIO = 1.5;
+
+/**
+ * A rogue on a long elliptical orbit doesn't OCCUPY an annulus — it
+ * crosses a dozen of them. Black Sky runs 200 -> 2000, Vagrant 250 ->
+ * 2650, Augustin 300 -> 3500, yet each carries a single nominal
+ * orbitRadius (1100 / 1450 / 1900) that the lane maths treats as its
+ * home ring. Shading that ring claims territory the rock doesn't hold,
+ * and — because the nominal values collide with real planets — paints a
+ * second coat over Uranus and Pluto, which is where the map's invented
+ * colours and "overlapping borders" came from. Every overlap in the
+ * live outer system traced to exactly these three.
+ *
+ * So they get no band. They still render, stay selectable, and keep
+ * their owner; they just stop claiming a lane they only visit.
+ */
+function isEccentricRogue(b: Body): boolean {
+  const rp = b.orbit_rp;
+  const ra = b.orbit_ra;
+  if (rp == null || ra == null || rp <= 0) return false;
+  return ra > rp * ROGUE_ECCENTRICITY_RATIO;
+}
+
 /** Half-lane as a fraction of the distance to the nearest neighbouring
  *  orbit. Below 0.5 so two adjacent rings leave a visible seam. */
 const LANE_GAP_FRACTION = 0.40;
@@ -227,6 +253,7 @@ export function computeSystemRegions(
 
   for (const star of stars) {
     const orbiters = (childrenOf.get(star.id) ?? [])
+      .filter(b => !isEccentricRogue(b))
       .slice()
       .sort((a, b) => a.orbitRadius - b.orbitRadius);
 
@@ -397,6 +424,46 @@ export function computeSystemRegions(
     }
   }
 
+  const centerOf = (r: SystemRegion): number =>
+    r.shape.kind === 'band' ? (r.shape.rInner + r.shape.rOuter) / 2 : 0;
+
+  // --- Overlap-splitting pass ---
+  //
+  // Two lanes covering the same radius get painted twice, and translucent
+  // fills MIX. That invents colours belonging to no faction: Black Sky and
+  // Uranus are both CIS at r=1100, and two coats of the same blue read as
+  // a darker third shade; Augustín (CIS) over Pluto (unowned) muddies blue
+  // into grey. Playtesters read the invented shades as extra empires.
+  //
+  // Relying on paint order can't fix it — whoever draws second still
+  // blends with what's underneath. The overlap has to stop existing, so
+  // co-orbital lanes split the contested span and each keeps a solid,
+  // honest slice of it. This is what "separate them" means: a rock sharing
+  // a planet's orbit gets its own thinner ring, not a wash over the
+  // planet's.
+  //
+  // Runs BEFORE the border-touching pass below, which then closes any
+  // residual seam — so the end state is adjacent, disjoint, touching.
+  {
+    const MIN_BAND = 4;
+    const bands = regions
+      .filter(r => r.shape.kind === 'band')
+      .slice()
+      .sort((a, b) => (centerOf(a) - centerOf(b)) || a.id.localeCompare(b.id));
+    for (let i = 0; i + 1 < bands.length; i++) {
+      const a = bands[i].shape, b = bands[i + 1].shape;
+      if (b.rInner >= a.rOuter) continue;               // already disjoint
+      const ca = centerOf(bands[i]), cb = centerOf(bands[i + 1]);
+      // Co-orbital (identical centres) can't be split by midpoint, so
+      // halve the span they contest instead.
+      const boundary = Math.abs(cb - ca) > 1e-6
+        ? (ca + cb) / 2
+        : (Math.max(a.rInner, b.rInner) + Math.min(a.rOuter, b.rOuter)) / 2;
+      a.rOuter = Math.max(a.rInner + MIN_BAND, Math.min(a.rOuter, boundary));
+      b.rInner = Math.min(b.rOuter - MIN_BAND, Math.max(b.rInner, boundary));
+    }
+  }
+
   // --- Border-touching pass ---
   //
   // Compute each region's orbital CENTER, sort by it, and for each pair
@@ -406,11 +473,7 @@ export function computeSystemRegions(
   // strip (each lane's half-width covered 0.40 of the gap; two of them
   // covered 0.80, leaving 20%). Adjacent rings now share a border.
   //
-  // Overlaps are left alone — Pluto genuinely orbits inside the Kuiper
-  // belt and Black Sky shares Uranus's orbit; the paint order below
-  // handles those. "Gap" here strictly means later.rInner > earlier.rOuter.
-  const centerOf = (r: SystemRegion): number =>
-    r.shape.kind === 'band' ? (r.shape.rInner + r.shape.rOuter) / 2 : 0;
+  // "Gap" here strictly means later.rInner > earlier.rOuter.
   const byOrbit = regions.slice().sort((a, b) => centerOf(a) - centerOf(b));
   for (let i = 0; i + 1 < byOrbit.length; i++) {
     const earlier = byOrbit[i], later = byOrbit[i + 1];
@@ -421,10 +484,12 @@ export function computeSystemRegions(
     later.shape.rInner  = Math.min(later.shape.rInner,  mid);
   }
 
-  // Paint broad first, specific last. Rings genuinely overlap — Pluto
-  // orbits INSIDE the Kuiper belt, Black Sky shares Uranus's orbit
-  // exactly — and without this the wide grey belt would bury the narrow
-  // faction-coloured ring sitting inside it.
+  // Paint broad first, specific last. The splitting pass above makes the
+  // lanes disjoint, so this no longer decides who survives a collision —
+  // it's belt-and-braces for any residual sliver (rounding at a shared
+  // boundary, or a future shape kind that isn't a plain annulus), keeping
+  // the narrow faction-coloured ring on top of the wide neutral one
+  // rather than under it.
   //
   // Tie-break puts owned ground on top of neutral, so a claim is never
   // hidden under an unowned rock that happens to share its lane.
