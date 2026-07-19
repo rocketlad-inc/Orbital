@@ -47,6 +47,32 @@ const BELT_MIN_MEMBERS = 3;
  *  moon's orbit — enough that the moon sits inside the shading. */
 const SYSTEM_DISC_PAD = 1.3;
 
+/** Apoapsis:periapsis beyond which an orbit is a crossing trajectory
+ *  rather than a lane. Circular bodies carry no rp/ra at all, so this
+ *  only ever judges the seeded rogues. */
+const ROGUE_ECCENTRICITY_RATIO = 1.5;
+
+/**
+ * A rogue on a long elliptical orbit doesn't OCCUPY an annulus — it
+ * crosses a dozen of them. Black Sky runs 200 -> 2000, Vagrant 250 ->
+ * 2650, Augustin 300 -> 3500, yet each carries a single nominal
+ * orbitRadius (1100 / 1450 / 1900) that the lane maths treats as its
+ * home ring. Shading that ring claims territory the rock doesn't hold,
+ * and — because the nominal values collide with real planets — paints a
+ * second coat over Uranus and Pluto, which is where the map's invented
+ * colours and "overlapping borders" came from. Every overlap in the
+ * live outer system traced to exactly these three.
+ *
+ * So they get no band. They still render, stay selectable, and keep
+ * their owner; they just stop claiming a lane they only visit.
+ */
+function isEccentricRogue(b: Body): boolean {
+  const rp = b.orbit_rp;
+  const ra = b.orbit_ra;
+  if (rp == null || ra == null || rp <= 0) return false;
+  return ra > rp * ROGUE_ECCENTRICITY_RATIO;
+}
+
 /** Half-lane as a fraction of the distance to the nearest neighbouring
  *  orbit. Below 0.5 so two adjacent rings leave a visible seam. */
 const LANE_GAP_FRACTION = 0.40;
@@ -227,6 +253,7 @@ export function computeSystemRegions(
 
   for (const star of stars) {
     const orbiters = (childrenOf.get(star.id) ?? [])
+      .filter(b => !isEccentricRogue(b))
       .slice()
       .sort((a, b) => a.orbitRadius - b.orbitRadius);
 
