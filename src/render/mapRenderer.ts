@@ -3665,15 +3665,27 @@ export function drawOwnershipLayer(
 // Spans is invariant: 1.0 means the system exactly fills the viewport,
 // whatever units the world is measured in.
 
+// The band below used to be 0.7 / 1.7 / 2.8. That put the whole overlay
+// out of reach of the inner system: framing Sol through Jupiter — the
+// most common strategic view — measures ~6.8 spans, because `spans` is
+// scaled by the OUTERMOST heliocentric orbit and Sedna sits 18.8x
+// further out than Earth. So the political map only appeared once you
+// had pulled back past the Kuiper belt, by which point Mercury, Venus
+// and Earth are a few pixels of overlapping colour and the wash tells
+// you nothing about them. Everything is scaled ~2.43x to start the
+// fade-in at that inner-system framing, keeping the original ramp
+// proportions (FULL at 0.61x HIDE, DARK at 0.25x) so the feel is
+// unchanged — it just reaches the planets people actually fight over.
+
 /** Overlay is fully present at/below this many spans... */
-export const SYSTEM_REGION_FULL_SPANS = 1.7;
+export const SYSTEM_REGION_FULL_SPANS = 4.1;
 /** ...and fully faded out at/above this. Between the two it cross-fades,
  *  so there's no hard pop as you zoom. */
-export const SYSTEM_REGION_HIDE_SPANS = 2.8;
+export const SYSTEM_REGION_HIDE_SPANS = 6.8;
 /** At/below this the wash reaches full strength — a solid political map.
  *  Between here and HIDE the colour deepens continuously, so pulling
  *  further out keeps reading as "more strategic". */
-export const SYSTEM_REGION_DARK_SPANS = 0.7;
+export const SYSTEM_REGION_DARK_SPANS = 1.7;
 
 /**
  * How many screen-heights the star system spans at the current camera.
@@ -3722,8 +3734,27 @@ export function systemRegionIntensity(spans: number): number {
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
 /** Grey for unowned AND contested — see systemRegions.ts for why
- *  contested deliberately isn't a second faction colour. */
-const REGION_NEUTRAL = '#7c8f9e';
+ *  contested deliberately isn't a second faction colour.
+ *
+ *  Was #7c8f9e, which is a BLUE-grey: against a blue faction it was a
+ *  coin flip whether a region was held or empty, which defeats the
+ *  entire point of a political map. Pulled to a near-neutral grey so
+ *  "nobody's" never reads as a faction colour — least of all blue. */
+const REGION_NEUTRAL = '#8c8f92';
+
+// Canvas2D's font parser does NOT resolve CSS var() — an invalid
+// declaration is silently DROPPED and the context keeps whatever font
+// the previous draw left set. These must stay literal font stacks.
+//
+// No font-weight: Audiowide ships a single 400 weight, so `bold` yields
+// a synthesized faux-bold that smears an already-wide face (App.css
+// .title documents the same rule). The heavier read comes from the face
+// and the size step over the 8-10px monospace body labels.
+const REGION_TITLE_FONT = '13px Audiowide, Orbitron, Eurostile, system-ui, sans-serif';
+const REGION_SUB_FONT = '10px Audiowide, Orbitron, Eurostile, system-ui, sans-serif';
+/** Gap held between a region label's edge and the body it's anchored to
+ *  — enough to clear the body's dot AND the body's own name under it. */
+const REGION_LABEL_BODY_CLEARANCE = 38;
 
 /**
  * Political shading for the zoomed-out map: one soft region per
@@ -3785,10 +3816,13 @@ export function drawSystemRegions(
       c.stroke();
 
       if (region.label) {
-        // Put the label beside the body it names, on its own ring. Ties
-        // the name to the thing it describes, and since every body sits
-        // at a different angle it keeps a dozen concentric rings from
-        // stacking their labels in one column.
+        // Put the label on its own ring, NEXT TO the body it names —
+        // never on top of it. Anchoring straight at the body's angle put
+        // the region name and its owner line directly over the planet
+        // and the planet's own label, which is what they collided with.
+        // Sliding ALONG the ring keeps the name tied to its band (and
+        // keeps a dozen concentric rings from stacking their labels in
+        // one column) while leaving the body clear.
         let lx = cp.x;
         let ly = cp.y - mid;
         const anchorId = shape.labelAnchorBodyId;
@@ -3799,8 +3833,19 @@ export function drawSystemRegions(
           const dy = ap.y - wp.y;
           const d = Math.hypot(dx, dy);
           if (d > 1e-6) {
-            lx = cp.x + (dx / d) * mid;
-            ly = cp.y + (dy / d) * mid;
+            // Clear the body by half this label plus room for the body's
+            // own name. Measured, not guessed — "URANUS SYSTEM" needs a
+            // lot more room than "THE CORE".
+            c.font = REGION_TITLE_FONT;
+            const halfLabel = c.measureText(region.label.toUpperCase()).width / 2;
+            const clearPx = halfLabel + REGION_LABEL_BODY_CLEARANCE;
+            // Arc length -> angle. On a tight inner ring that angle gets
+            // large, so cap it: past a quarter turn the label has stopped
+            // reading as "beside this planet" and is just adrift.
+            const swing = Math.min(clearPx / Math.max(mid, 1), Math.PI / 2);
+            const ang = Math.atan2(dy, dx) + swing;
+            lx = cp.x + Math.cos(ang) * mid;
+            ly = cp.y + Math.sin(ang) * mid;
           }
         }
         drawRegionLabel(region, lx, ly, color, owned, ctx, fade, intensity);
@@ -3824,9 +3869,13 @@ function drawRegionLabel(
   const c = ctx.ctx;
   const contested = region.ownership.kind === 'contested';
   const text = region.label.toUpperCase();
+  // Unowned used to print NOTHING, so an empty region and a held one
+  // differed only by a hue you had to already know to read. Saying
+  // UNCLAIMED outright means the absence of a faction is information
+  // rather than something you squint at.
   const sub = owned
     ? (region.ownership as { factionName: string }).factionName.toUpperCase()
-    : contested ? 'CONTESTED' : '';
+    : contested ? 'CONTESTED' : 'UNCLAIMED';
 
   // Labels brighten alongside the fill — at full strength they sit on
   // near-solid colour, where the faint treatment would disappear. Text
@@ -3842,13 +3891,14 @@ function drawRegionLabel(
   c.globalAlpha = c.globalAlpha * fade;
   c.textAlign = 'center';
   c.textBaseline = 'bottom';
-  c.font = '600 10px var(--font-display, sans-serif)';
+  c.font = REGION_TITLE_FONT;
   c.fillStyle = withOpacity(ink, titleAlpha);
   c.fillText(text, x, y);
   if (sub) {
-    c.font = '9px var(--font-display, sans-serif)';
+    c.font = REGION_SUB_FONT;
     c.fillStyle = withOpacity(ink, subAlpha);
-    c.fillText(sub, x, y + 10);
+    // Clears the now-13px title above it.
+    c.fillText(sub, x, y + 14);
   }
   c.restore();
 }
