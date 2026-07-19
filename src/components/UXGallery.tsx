@@ -26,6 +26,8 @@ interface Direction {
   Desktop: React.FC;
   Mobile: React.FC;
   Spreadsheet: React.FC;
+  /** Which view the card opens on. Mobile-first studies open on 📱. */
+  defaultView?: ViewMode;
 }
 
 // ============================================================
@@ -71,6 +73,194 @@ const FakeRow: React.FC<{ cols: (string | number)[]; tone?: string }> = ({ cols,
     {cols.map((c, i) => <span key={i} className="mock-row__cell">{c}</span>)}
   </div>
 );
+
+// ============================================================
+// WORLD MENU STUDY — annotated-schematic body view
+// (from Lorne's whiteboard sketch, 2026-07-19)
+// ============================================================
+
+/** Callout chip drawn inside an SVG scene: label + level + upgrade "+". */
+const WMChip: React.FC<{
+  x: number; y: number; w?: number; label: string; lv?: string; tone?: 'teal' | 'amber';
+}> = ({ x, y, w = 58, label, lv, tone = 'teal' }) => {
+  const c = tone === 'amber' ? '#ffb84d' : '#4ecdc4';
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <rect width={w} height={22} rx={4} fill="rgba(13,21,32,0.88)" stroke={c} strokeWidth={0.8} />
+      <text x={6} y={10} fontSize={7} fontFamily="monospace" fontWeight="bold" fill={c}>{label}</text>
+      {lv && <text x={6} y={18.5} fontSize={6} fontFamily="monospace" fill="#8aa0b4">{lv}</text>}
+      <text x={w - 11} y={15} fontSize={9} fontFamily="monospace" fill={c}>+</text>
+    </g>
+  );
+};
+
+/** Surface scene: planet horizon with the city's structures, callouts left. */
+const WMSurfaceScene: React.FC = () => (
+  <svg viewBox="0 0 220 100" className="ux-wm-svg" preserveAspectRatio="xMidYMid meet">
+    {/* planet horizon */}
+    <circle cx={110} cy={310} r={230} fill="#0f2b33" stroke="#2b5e58" strokeWidth={1} />
+    <circle cx={110} cy={310} r={230} fill="none" stroke="#4ecdc4" strokeWidth={2.5} opacity={0.12} />
+    {/* LAB — twin towers + antenna */}
+    <rect x={106} y={62} width={3.5} height={18} fill="#3d5a6b" />
+    <rect x={112} y={56} width={4} height={24} fill="#46687c" />
+    <line x1={114} y1={56} x2={114} y2={50} stroke="#8aa0b4" strokeWidth={0.8} />
+    <circle cx={114} cy={49} r={1.3} fill="#67e8f9" />
+    <rect x={112.8} y={60} width={1.4} height={1.6} fill="#ffb84d" />
+    {/* MINT — columned block */}
+    <path d="M 131 70 L 142 65 L 153 70 Z" fill="#3d5a6b" />
+    <rect x={132} y={70} width={20} height={12} fill="#46687c" />
+    <line x1={137} y1={72} x2={137} y2={82} stroke="#1c2a3a" strokeWidth={1.2} />
+    <line x1={142} y1={72} x2={142} y2={82} stroke="#1c2a3a" strokeWidth={1.2} />
+    <line x1={147} y1={72} x2={147} y2={82} stroke="#1c2a3a" strokeWidth={1.2} />
+    {/* FORGE — block + chimney + smoke */}
+    <rect x={162} y={78} width={18} height={10} fill="#46687c" />
+    <rect x={164} y={82} width={2} height={2} fill="#ffb84d" />
+    <rect x={176} y={70} width={3.5} height={8} fill="#3d5a6b" />
+    <circle cx={178} cy={66} r={1.5} fill="#8aa0b4" opacity={0.6} />
+    <circle cx={180} cy={62} r={1} fill="#8aa0b4" opacity={0.4} />
+    {/* callout lines */}
+    <line x1={62} y1={15} x2={110} y2={60} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.5} />
+    <line x1={62} y1={45} x2={140} y2={68} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.5} />
+    <line x1={62} y1={75} x2={170} y2={76} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.5} />
+    {/* callout chips */}
+    <WMChip x={4} y={4} label="LAB" lv="LV 2 · +50% sci" />
+    <WMChip x={4} y={34} label="MINT" lv="LV 1 · +25% cred" />
+    <WMChip x={4} y={64} label="FORGE" lv="LV 3 · +75% metal" />
+    <text x={216} y={96} fontSize={6} fontFamily="monospace" fill="#5a7085" textAnchor="end">SURFACE · NEW GENEVA · POP 3</text>
+  </svg>
+);
+
+/** Orbit scene: ring-hub station with callouts right; shipyard chip feeds the panel below. */
+const WMOrbitScene: React.FC = () => (
+  <svg viewBox="0 0 220 110" className="ux-wm-svg" preserveAspectRatio="xMidYMid meet">
+    {/* spine */}
+    <rect x={76.5} y={14} width={3} height={72} fill="#9fb3c8" />
+    <circle cx={78} cy={12} r={1.5} fill="#ffb84d" />
+    {/* solar panels */}
+    <rect x={57} y={17} width={15} height={5} fill="#23445c" stroke="#46687c" strokeWidth={0.6} />
+    <rect x={84} y={17} width={15} height={5} fill="#23445c" stroke="#46687c" strokeWidth={0.6} />
+    {/* ring threaded through the hub */}
+    <ellipse cx={78} cy={54} rx={22} ry={7} fill="none" stroke="#6b8195" strokeWidth={2} />
+    <rect x={71} y={47} width={14} height={14} rx={2} fill="#46687c" stroke="#8aa0b4" strokeWidth={0.6} />
+    <path d="M 56 54 A 22 7 0 0 0 100 54" fill="none" stroke="#b8c8d6" strokeWidth={2} />
+    {/* comms dish */}
+    <path d="M 73 86 L 83 86 L 78 94 Z" fill="#6b8195" />
+    {/* hull under construction alongside the yard */}
+    <path d="M 104 52 L 116 56 L 104 60 Z" fill="none" stroke="#ffb84d" strokeWidth={0.8} strokeDasharray="2 1.5" />
+    {/* callout lines */}
+    <line x1={132} y1={17} x2={92} y2={20} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.5} />
+    <line x1={132} y1={51} x2={86} y2={53} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.5} />
+    <line x1={132} y1={85} x2={110} y2={57} stroke="#ffb84d" strokeWidth={0.7} opacity={0.6} />
+    <line x1={173} y1={96} x2={173} y2={110} stroke="#ffb84d" strokeWidth={0.7} opacity={0.6} strokeDasharray="2 2" />
+    {/* callout chips */}
+    <WMChip x={132} y={6} w={82} label="WEAPONS" lv="LV 1 · PDC +30%" />
+    <WMChip x={132} y={40} w={82} label="ORBITAL LAB" lv="LV 1 · +40% sci" />
+    <WMChip x={132} y={74} w={82} label="SHIPYARD" lv="LV 2 · 2 SLOTS" tone="amber" />
+    <text x={4} y={104} fontSize={6} fontFamily="monospace" fill="#5a7085">ORBIT · KIRKWALL STATION · HP 160</text>
+  </svg>
+);
+
+const WorldMenu_Mobile: React.FC = () => (
+  <div className="ux-wm-mob">
+    <div className="ux-wm-top">
+      <span className="ux-wm-top__name">← EARTH</span>
+      <span className="ux-wm-owner">◉ CIS</span>
+      <span className="ux-wm-yields">2M · 6C · 3S</span>
+    </div>
+    <div className="ux-wm-chiprow">
+      <StatChip label="HP" value="100" tone="good" />
+      <StatChip label="POP" value="3/5" />
+      <StatChip label="COLLECTOR" value="✓" tone="good" />
+    </div>
+    <div className="ux-wm-income">+2.4M · +7.2C · +3.6S / tick</div>
+    <div className="ux-wm-scene"><WMSurfaceScene /></div>
+    <div className="ux-wm-scene"><WMOrbitScene /></div>
+    <div className="ux-wm-yard">
+      <div className="mock-section-head">⚒ SHIPYARD — LV 2 · 2 SLOTS</div>
+      <FakeRow cols={['Frigate "Aegis"', '▰▰▱ T+8']} />
+      <FakeRow cols={['Corvette "Dart"', 'queued']} />
+      <div className="mock-btn mock-btn--primary">+ BUILD SHIP</div>
+    </div>
+    <div className="ux-wm-actions">
+      <div className="mock-btn">◎ FOCUS MAP</div>
+      <div className="mock-btn">✈ SEND SHIP</div>
+    </div>
+  </div>
+);
+
+const WorldMenu_Desktop: React.FC = () => (
+  <div className="ux-wm-desk">
+    <div className="ux-wm-desk__scenes">
+      <div className="ux-wm-top">
+        <span className="ux-wm-top__name">EARTH</span>
+        <span className="ux-wm-owner">◉ CIS</span>
+        <span className="ux-wm-yields">2M · 6C · 3S</span>
+      </div>
+      <div className="ux-wm-scene"><WMOrbitScene /></div>
+      <div className="ux-wm-scene"><WMSurfaceScene /></div>
+    </div>
+    <div className="ux-wm-desk__panel">
+      <div className="ux-wm-chiprow">
+        <StatChip label="HP" value="100" tone="good" />
+        <StatChip label="POP" value="3/5" />
+        <StatChip label="COLL" value="✓" tone="good" />
+      </div>
+      <div className="mock-section-head">STRUCTURES</div>
+      <FakeRow cols={['Forge LV3', '+75% metal', '⬆ 40M']} />
+      <FakeRow cols={['Mint LV1', '+25% cred', '⬆ 25M']} />
+      <FakeRow cols={['Lab LV2', '+50% sci', '⬆ 30M']} />
+      <FakeRow cols={['Weapons LV1', 'PDC +30%', '⬆ 35M']} />
+      <div className="mock-section-head">⚒ SHIPYARD — LV 2</div>
+      <FakeRow cols={['Frigate "Aegis"', 'T+8']} />
+      <FakeRow cols={['Corvette "Dart"', 'queued']} />
+      <div className="mock-btn mock-btn--primary">+ BUILD SHIP</div>
+    </div>
+  </div>
+);
+
+const WorldMenu_Sheet: React.FC = () => (
+  <div className="ux-wm-sheet">
+    <div className="mock-section-head">EARTH — STRUCTURES</div>
+    <FakeRow cols={['STRUCTURE', 'SITE', 'LV', 'EFFECT', '⬆ COST']} tone="head" />
+    <FakeRow cols={['Forge', 'surface', '3', '+75% metal', '40M 20C']} />
+    <FakeRow cols={['Mint', 'surface', '1', '+25% cred', '25M 30C']} />
+    <FakeRow cols={['Lab', 'surface', '2', '+50% sci', '30M 25C']} />
+    <FakeRow cols={['Weapons', 'station', '1', 'PDC +30%', '35M 40C']} />
+    <FakeRow cols={['Orbital Lab', 'station', '1', '+40% sci', '30M 45C']} />
+    <FakeRow cols={['Shipyard', 'station', '2', '2 slots', '60M 80C']} />
+    <div className="mock-section-head">BUILD QUEUE</div>
+    <FakeRow cols={['Frigate "Aegis"', 'slot 1', 'T+8']} />
+    <FakeRow cols={['Corvette "Dart"', 'slot 2', 'queued']} />
+  </div>
+);
+
+const WORLD_MENU_STUDY: Direction = {
+  id: 'world-menu',
+  number: '05',
+  name: 'WORLD MENU — THE WORLD IS THE MENU',
+  inspiredBy: "Lorne's whiteboard · exploded-view schematics",
+  tagline: 'The body view is an annotated diagram, not a stat sheet.',
+  pitch:
+    'Straight from the whiteboard: instead of a list of rows, the world view draws the ' +
+    'planet with the structures you actually built — each one wears a callout chip you ' +
+    'tap to inspect or upgrade. The orbital station hangs above with its own callouts, ' +
+    'and the Shipyard — the verb you use most — gets the one big panel. The numbers stay ' +
+    'one tap away; the picture IS the menu.',
+  pros: [
+    'Tap the thing itself — zero abstraction',
+    'Buildings are visible progress, not list rows',
+    'Callout chips are huge mobile tap targets',
+  ],
+  cons: [
+    'Needs structure art per building type',
+    'Crowded worlds will fight for callout space',
+    'Slower than a table for veteran bulk management',
+  ],
+  Desktop: WorldMenu_Desktop,
+  Mobile: WorldMenu_Mobile,
+  Spreadsheet: WorldMenu_Sheet,
+  defaultView: 'mobile',
+};
 
 // ============================================================
 // 1. COMMAND BRIDGE — Stellaris-inspired multi-panel
@@ -597,7 +787,7 @@ const ViewToggle: React.FC<{
 );
 
 const DirectionCard: React.FC<{ direction: Direction }> = ({ direction }) => {
-  const [view, setView] = useState<ViewMode>('desktop');
+  const [view, setView] = useState<ViewMode>(direction.defaultView ?? 'desktop');
   const Mockup = view === 'desktop' ? direction.Desktop
     : view === 'mobile' ? direction.Mobile
     : direction.Spreadsheet;
@@ -659,6 +849,18 @@ export const UXGallery: React.FC<UXGalleryProps> = ({ onBack }) => {
           <span className="ux-gallery__legend-item">📱 Mobile · 414×896</span>
           <span className="ux-gallery__legend-item">▤ Spreadsheet · any size, data-first</span>
         </div>
+      </section>
+
+      <section className="ux-gallery__featured">
+        <div className="ux-gallery__eyebrow">NEW · FOCUSED STUDY</div>
+        <h2 className="ux-gallery__featured-title">The World Menu, from the whiteboard</h2>
+        <p className="ux-gallery__lede">
+          A reimagined body view: the planet and its station drawn as an{' '}
+          <strong>annotated schematic</strong> — every structure wears a tappable
+          callout chip, and the Shipyard gets the one big panel. Mobile-first;
+          flip the toggle for desktop and spreadsheet takes.
+        </p>
+        <DirectionCard direction={WORLD_MENU_STUDY} />
       </section>
 
       <div className="ux-gallery__grid">
