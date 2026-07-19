@@ -159,6 +159,38 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
     label: 'Total Awareness', blurb: 'Every enemy ship, fog or no fog.' },
 ];
 
+// ── id -> feature maps ──────────────────────────────────────
+// Mirrors of the same three maps in worker/researchUnlocks.js. A missing
+// key means "ungated": the corvette and colony hulls, and the city
+// settlement, are the starting kit and never appear here.
+
+/** Ship class -> feature id. */
+export const HULL_FEATURE: Partial<Record<string, FeatureId>> = {
+  frigate: 'hull.frigate',
+  destroyer: 'hull.destroyer',
+  freighter: 'hull.freighter',
+};
+
+/** Settlement building kind -> feature id. */
+export const BUILDING_FEATURE: Partial<Record<string, FeatureId>> = {
+  forge: 'building.forge',
+  mint: 'building.mint',
+  lab: 'building.lab',
+  shipyard: 'building.shipyard',
+  weapons: 'building.weapons',
+  trajectory_thrusters: 'building.thrusters',
+};
+
+/** Ship part id -> feature id. */
+export const PART_FEATURE: Partial<Record<string, FeatureId>> = {
+  kinetic: 'part.kinetic',
+  energy: 'part.energy',
+  shield: 'part.shield',
+  armor: 'part.armor',
+  engine: 'part.engine',
+  detonator: 'part.detonator',
+};
+
 /** feature -> requirement, built once. */
 const REQUIREMENT = new Map<FeatureId, { track: TechId; level: number; label: string }>(
   RESEARCH_UNLOCKS.map(u => [u.feature, { track: u.track, level: u.level, label: u.label }]),

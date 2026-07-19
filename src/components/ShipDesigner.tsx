@@ -27,6 +27,8 @@ import {
   ShipIcon, ShipIconVariant, ALL_VARIANTS, ICON_VARIANT_NAMES, DEFAULT_SHIP_ICONS,
 } from './ShipIcons';
 import type { ShipDesign } from '../types';
+import { PART_FEATURE } from '../game/researchUnlocks';
+import { useFeatureGate } from '../hooks/useFeatureGate';
 import './ShipDesigner.css';
 
 interface ShipDesignerProps {
@@ -98,6 +100,7 @@ function serverDesignToClient(d: ServerShipDesign): ShipDesign {
 export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClose }) => {
   const { gameState } = useGameContext();
   const mpActions = useMultiplayerActions();
+  const gate = useFeatureGate();
 
   const [activeClass, setActiveClass] = useState<ShipClassName>(initialClass ?? 'corvette');
   // Fresh server copy after a mutation; null = use the /state mirror.
@@ -530,13 +533,26 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
             const def = SHIP_PART_DEFS[pid];
             const n = countPart(draftParts, pid);
             const isDet = pid === 'detonator';
+            // Research gate. Locked parts stay listed so the designer
+            // doubles as a preview of the counter-matrix — you can read
+            // what energy mounts do before you can fit one.
+            const lock = gate.lockReason(PART_FEATURE[pid]);
             return (
-              <div key={pid} className={`ship-designer__part ${isDet ? 'ship-designer__part--detonator' : ''}`}>
+              <div
+                key={pid}
+                className={`ship-designer__part ${isDet ? 'ship-designer__part--detonator' : ''}`}
+                style={lock ? { opacity: 0.55 } : undefined}
+              >
                 <div className="ship-designer__part-info">
                   <div className="ship-designer__part-name">{PART_GLYPH[pid]} {def.name}</div>
                   <div className="ship-designer__part-blurb">{def.blurb}</div>
                   <div className="ship-designer__part-tech">{def.techNote}</div>
                   <div className="ship-designer__part-cost">{def.cost.ore}M {def.cost.credits}C per part</div>
+                  {lock && (
+                    <div className="ship-designer__part-tech" style={{ color: '#8aa0b4' }}>
+                      🔒 {lock.text}
+                    </div>
+                  )}
                   {isDet && n > 0 && (
                     // REQUIRED disclosure (spec §2.2): damage number +
                     // friendly fire + ship consumed — all three, always.
@@ -555,8 +571,9 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                   <span className="ship-designer__count-num">{n}</span>
                   <button
                     className="ship-designer__count-btn"
-                    disabled={draftParts.length >= slots}
+                    disabled={!!lock || draftParts.length >= slots}
                     onClick={() => addPart(pid)}
+                    title={lock ? `${lock.label} — ${lock.text}` : undefined}
                     aria-label={`Add a ${def.name}`}
                   >+</button>
                 </div>

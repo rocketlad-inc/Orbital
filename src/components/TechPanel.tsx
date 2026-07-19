@@ -13,6 +13,7 @@ import {
   effectAtLevel, nextLevelCost,
   TECH_MAX_LEVEL,
 } from '../game/techs';
+import { unlocksAt } from '../game/researchUnlocks';
 import { computeIncomePerTick } from '../game/settlements';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { humanizeMpError } from '../multiplayer/errorMessages';
@@ -245,6 +246,30 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                   <div className="tech-card__effect-label">Per level</div>
                   <div className="tech-card__effect-value">{def.effectText}</div>
                 </div>
+
+                {/* What the NEXT level actually gives you. This is the
+                    whole point of the gated rollout: a track has to
+                    advertise its reward before you commit science to it,
+                    or picking research is a blind guess. Levels past the
+                    unlock rungs are pure scaling and say so. */}
+                {!isMaxed && (
+                  <div className="tech-card__effect">
+                    <div className="tech-card__effect-label">Lv {lvl + 1} unlocks</div>
+                    <div className="tech-card__effect-value">
+                      {(() => {
+                        const next = unlocksAt(id, lvl + 1);
+                        if (next.length === 0) {
+                          return <span style={{ color: '#b8c8d6' }}>scaling only</span>;
+                        }
+                        return (
+                          <span style={{ color: '#ffb84d' }} title={next.map(u => u.blurb).join(' · ')}>
+                            {next.map(u => u.label).join(', ')}
+                          </span>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                )}
 
                 <div className="tech-card__effect">
                   <div className="tech-card__effect-label">Current</div>
