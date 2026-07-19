@@ -113,8 +113,8 @@ const WMMapMobile: React.FC = () => (
     {/* heliocentric orbit passing through */}
     <path d="M -20 44 Q 120 14 260 52" stroke="#2d4255" strokeWidth={1} fill="none" />
     {/* Luna, further out */}
-    <circle cx={26} cy={70} r={3.5} fill="#9fb3c8" />
-    <text x={26} y={80} fontSize={5.5} fontFamily="monospace" fill="#5a7085" textAnchor="middle">LUNA</text>
+    <circle cx={214} cy={44} r={3.5} fill="#9fb3c8" />
+    <text x={214} y={54} fontSize={5.5} fontFamily="monospace" fill="#5a7085" textAnchor="middle">LUNA</text>
     {/* station orbit */}
     <circle cx={120} cy={300} r={118} fill="none" stroke="#3d5568" strokeWidth={0.8} strokeDasharray="3 4" />
     {/* the planet — this IS the menu */}
@@ -146,34 +146,35 @@ const WMMapMobile: React.FC = () => (
     <WMChip x={4} y={116} label="LAB" lv="LV 2 · +50% sci" />
     <WMChip x={4} y={164} label="MINT" lv="LV 1 · +25% cred" />
     <WMChip x={4} y={212} label="FORGE" lv="LV 3 · +75% metal" />
-    {/* the station, on its actual orbit */}
-    <rect x={202} y={205} width={2.5} height={24} fill="#9fb3c8" />
-    <rect x={196.5} y={207} width={4.5} height={2.5} fill="#23445c" stroke="#46687c" strokeWidth={0.4} />
-    <rect x={205} y={207} width={4.5} height={2.5} fill="#23445c" stroke="#46687c" strokeWidth={0.4} />
-    <ellipse cx={203.2} cy={217} rx={7} ry={2.5} fill="none" stroke="#8aa0b4" strokeWidth={1.2} />
-    <rect x={200.2} y={214} width={6} height={6} rx={1} fill="#46687c" />
-    <circle cx={203.2} cy={204} r={1} fill="#ffb84d" />
-    {/* station callouts */}
-    <line x1={176} y1={67} x2={206} y2={206} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.55} />
-    <line x1={176} y1={113} x2={202} y2={212} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.55} />
-    <WMChip x={176} y={56} w={60} label="WEAPONS" lv="LV 1" />
-    <WMChip x={176} y={102} w={60} label="ORB. LAB" lv="LV 1" />
+    {/* the station — at the TOP of its orbit, directly above the planet,
+        so the whole stack (station, popover, planet) fits a narrow screen */}
+    <rect x={118.75} y={170} width={2.5} height={24} fill="#9fb3c8" />
+    <rect x={113} y={172} width={4.5} height={2.5} fill="#23445c" stroke="#46687c" strokeWidth={0.4} />
+    <rect x={121.5} y={172} width={4.5} height={2.5} fill="#23445c" stroke="#46687c" strokeWidth={0.4} />
+    <ellipse cx={120} cy={182} rx={7} ry={2.5} fill="none" stroke="#8aa0b4" strokeWidth={1.2} />
+    <rect x={117} y={179} width={6} height={6} rx={1} fill="#46687c" />
+    <circle cx={120} cy={169} r={1} fill="#ffb84d" />
+    {/* station callouts flank it left and right */}
+    <line x1={64} y1={79} x2={114} y2={173} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.55} />
+    <line x1={176} y1={79} x2={127} y2={180} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.55} />
+    <WMChip x={4} y={68} w={60} label="WEAPONS" lv="LV 1" />
+    <WMChip x={176} y={68} w={60} label="ORB. LAB" lv="LV 1" />
     {/* shipyard chip — tapped, so its popover is open ON the map */}
-    <line x1={210} y1={170} x2={204} y2={206} stroke="#ffb84d" strokeWidth={0.7} opacity={0.6} />
-    <WMChip x={140} y={148} w={94} label="SHIPYARD" lv="LV 2 · 2 SLOTS" tone="amber" />
-    <line x1={184} y1={170} x2={184} y2={178} stroke="#ffb84d" strokeWidth={0.8} />
+    <line x1={140} y1={121} x2={128} y2={183} stroke="#ffb84d" strokeWidth={0.7} opacity={0.6} />
+    <WMChip x={140} y={110} w={94} label="SHIPYARD" lv="LV 2 · 2 SLOTS" tone="amber" />
+    <line x1={186} y1={132} x2={186} y2={140} stroke="#ffb84d" strokeWidth={0.8} />
     <g>
-      <rect x={126} y={178} width={108} height={100} rx={6} fill="rgba(10,17,27,0.94)" stroke="#ffb84d" strokeWidth={0.9} />
-      <text x={133} y={191} fontSize={7} fontFamily="monospace" fontWeight="bold" fill="#ffb84d">SHIPYARD — LV 2</text>
-      <line x1={133} y1={196} x2={227} y2={196} stroke="#2a3d50" strokeWidth={0.8} />
-      <text x={133} y={208} fontSize={6} fontFamily="monospace" fill="#d8e4ee">▰▰▱ Frigate "Aegis"</text>
-      <text x={227} y={208} fontSize={6} fontFamily="monospace" fill="#ffb84d" textAnchor="end">T+8</text>
-      <text x={133} y={220} fontSize={6} fontFamily="monospace" fill="#8aa0b4">▱▱▱ Corvette "Dart"</text>
-      <text x={227} y={220} fontSize={6} fontFamily="monospace" fill="#8aa0b4" textAnchor="end">queued</text>
-      <rect x={132} y={228} width={96} height={16} rx={3} fill="rgba(255,184,77,0.16)" stroke="#ffb84d" strokeWidth={0.8} />
-      <text x={180} y={239} fontSize={7} fontFamily="monospace" fontWeight="bold" fill="#ffb84d" textAnchor="middle">+ BUILD SHIP</text>
-      <rect x={132} y={250} width={96} height={14} rx={3} fill="rgba(42,61,80,0.4)" stroke="#4a6178" strokeWidth={0.8} />
-      <text x={180} y={260} fontSize={6} fontFamily="monospace" fill="#b8c8d6" textAnchor="middle">⬆ UPGRADE · 60M 80C</text>
+      <rect x={130} y={140} width={104} height={100} rx={6} fill="rgba(10,17,27,0.94)" stroke="#ffb84d" strokeWidth={0.9} />
+      <text x={137} y={153} fontSize={7} fontFamily="monospace" fontWeight="bold" fill="#ffb84d">SHIPYARD — LV 2</text>
+      <line x1={137} y1={158} x2={227} y2={158} stroke="#2a3d50" strokeWidth={0.8} />
+      <text x={137} y={170} fontSize={6} fontFamily="monospace" fill="#d8e4ee">▰▰▱ Frigate "Aegis"</text>
+      <text x={227} y={170} fontSize={6} fontFamily="monospace" fill="#ffb84d" textAnchor="end">T+8</text>
+      <text x={137} y={182} fontSize={6} fontFamily="monospace" fill="#8aa0b4">▱▱▱ Corvette "Dart"</text>
+      <text x={227} y={182} fontSize={6} fontFamily="monospace" fill="#8aa0b4" textAnchor="end">queued</text>
+      <rect x={136} y={190} width={92} height={16} rx={3} fill="rgba(255,184,77,0.16)" stroke="#ffb84d" strokeWidth={0.8} />
+      <text x={182} y={201} fontSize={7} fontFamily="monospace" fontWeight="bold" fill="#ffb84d" textAnchor="middle">+ BUILD SHIP</text>
+      <rect x={136} y={212} width={92} height={14} rx={3} fill="rgba(42,61,80,0.4)" stroke="#4a6178" strokeWidth={0.8} />
+      <text x={182} y={222} fontSize={6} fontFamily="monospace" fill="#b8c8d6" textAnchor="middle">⬆ UPGRADE · 60M 80C</text>
     </g>
     {/* map chrome */}
     <rect x={6} y={8} width={56} height={16} rx={8} fill="rgba(13,21,32,0.85)" stroke="#4a6178" strokeWidth={0.8} />
