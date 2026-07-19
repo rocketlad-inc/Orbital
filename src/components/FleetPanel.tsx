@@ -8,7 +8,7 @@ import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { loadoutSummary, countPart } from '../game/shipParts';
 import { deriveSecondary } from '../game/colorUtils';
-import { makeSystemRootOf, systemLabel as systemLabelOf, shipStatus } from '../game/systemGrouping';
+import { makeSystemRootOf, systemLabel as systemLabelOf, shipStatus, makeHostilesAtBody } from '../game/systemGrouping';
 import { ShipIcon } from './ShipIcons';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { humanizeMpError } from '../multiplayer/errorMessages';
@@ -96,6 +96,14 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
 
   const systemLabel = (rootId: string): string =>
     systemLabelOf(gameState.bodies, rootId);
+
+  /** "In Combat" means a hostile shares the orbit right now. Built over
+   *  ALL ships and settlements — the filter tabs hide the enemy from the
+   *  list, but they must not hide it from the status calculation. */
+  const hostilesAtBody = useMemo(
+    () => makeHostilesAtBody(gameState.ships, gameState.settlements),
+    [gameState.ships, gameState.settlements],
+  );
 
   const ships = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -397,7 +405,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     const target = targetBodyId ? gameState.bodies.find(b => b.id === targetBodyId) : null;
     const transit = ship.transit;
 
-    const status = shipStatus(ship, gameState.currentTick, hpRatioOf(ship));
+    const status = shipStatus(ship, gameState.currentTick, hpRatioOf(ship), hostilesAtBody(ship.orbit.parentBodyId, ship.ownedBy));
     const statusBadge = (
       <span className={`status-badge status-badge--${status.cls}`} title={status.title}>
         {status.label}

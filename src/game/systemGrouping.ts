@@ -90,21 +90,59 @@ export function systemLabel(bodies: Body[], rootId: string): string {
   return hasSatellites ? `${name} System` : name;
 }
 
-/** A ship counts as "In Combat" if it fired OR took a hit within this
- *  many ticks. Auto-combat resolves a volley every AUTO_COMBAT_INTERVAL
- *  ticks, so 2x gives one volley of grace — the badge stays lit between
- *  salvoes and clears a couple of ticks after the last shot. */
+/** Legacy fallback window, used only when a caller can't supply presence
+ *  info. See shipStatus for why a timestamp alone is a poor combat test. */
 export const COMBAT_RECENT_TICKS = AUTO_COMBAT_INTERVAL * 2;
 
 export type ShipStatus = { label: string; cls: string; title: string };
+
+/**
+ * Is anyone hostile sharing this body right now?
+ *
+ * Mirrors combat.ts: hostilities need two factions co-located, and both
+ * ships and settlements count as combatants. Ships under burn are excluded
+ * — they haven't arrived, so they aren't fighting anyone yet.
+ */
+export function makeHostilesAtBody(
+  ships: Ship[],
+  settlements: { bodyId: string; ownedBy: string }[],
+): (bodyId: string, ownedBy: string) => boolean {
+  const owners = new Map<string, Set<string>>();
+  const add = (bodyId: string, owner: string) => {
+    let set = owners.get(bodyId);
+    if (!set) { set = new Set(); owners.set(bodyId, set); }
+    set.add(owner);
+  };
+  for (const s of ships) if (!s.transit) add(s.orbit.parentBodyId, s.ownedBy);
+  for (const st of settlements) add(st.bodyId, st.ownedBy);
+  return (bodyId, ownedBy) => {
+    const set = owners.get(bodyId);
+    if (!set) return false;
+    for (const o of set) if (o !== ownedBy) return true;
+    return false;
+  };
+}
 
 /**
  * Single most-relevant status for a ship, in precedence order. A ship in
  * flight can't be in auto-combat (that only happens between hulls sharing
  * a body), so transit/combat are mutually exclusive and the ordering is
  * safe.
+ *
+ * `hostilesPresent` is what actually decides "In Combat". The old test —
+ * "fired or was hit within COMBAT_RECENT_TICKS" — latched the badge onto
+ * ships sitting alone in a quiet orbit for six ticks after the shooting
+ * stopped, which at an hour per tick is most of a day claiming a battle
+ * that already ended. Combat is a property of the CURRENT situation: if a
+ * hostile shares the body, a volley is coming; if not, the fight is over
+ * no matter what the timestamps say.
  */
-export function shipStatus(ship: Ship, currentTick: number, hpRatio: number): ShipStatus {
+export function shipStatus(
+  ship: Ship,
+  currentTick: number,
+  hpRatio: number,
+  hostilesPresent?: boolean,
+): ShipStatus {
   if (ship.transit) {
     // Auto-retreat fires a server-side transfer to the nearest friendly
     // shipyard once HP falls to the threshold, so a below-threshold ship
@@ -114,15 +152,22 @@ export function shipStatus(ship: Ship, currentTick: number, hpRatio: number): Sh
     }
     return { label: 'In Transit', cls: 'transit', title: 'Under torch burn between bodies' };
   }
-  const lastActive = Math.max(ship.lastCombatTick ?? -Infinity, ship.lastDamagedTick ?? -Infinity);
-  if (currentTick - lastActive <= COMBAT_RECENT_TICKS) {
-    return { label: 'In Combat', cls: 'combat', title: 'Fired or took fire in the last few ticks' };
+  // Holding fire outranks combat: a ship under a never-fire standing order
+  // isn't fighting, and saying "In Combat" would hide the very order that
+  // explains why it's sitting there taking hits.
+  if (ship.stance === 'hold') {
+    return { label: 'Holding Fire', cls: 'holding', title: 'Standing order: never fire' };
+  }
+  const contested = hostilesPresent ?? (
+    // No presence info — fall back to the old timestamp window.
+    currentTick - Math.max(ship.lastCombatTick ?? -Infinity, ship.lastDamagedTick ?? -Infinity)
+      <= COMBAT_RECENT_TICKS
+  );
+  if (contested) {
+    return { label: 'In Combat', cls: 'combat', title: 'A hostile force shares this orbit' };
   }
   if (ship.plannedTransit) {
     return { label: 'Planned', cls: 'planned', title: 'A transfer is planned but not yet committed' };
-  }
-  if (ship.stance === 'hold') {
-    return { label: 'Holding Fire', cls: 'holding', title: 'Standing order: never fire' };
   }
   return { label: 'Orbiting', cls: 'orbiting', title: 'Parked in a stable orbit' };
 }
