@@ -1,0 +1,48 @@
+[
+  {
+    "results": [
+      {
+        "id": "8X7TtvD-l3P_:s110_vbonkl:tr636:n13",
+        "ship_id": "8X7TtvD-l3P_:s110_vbonkl",
+        "scheduled_t": 636,
+        "arrival_at_tick": 654
+      },
+      {
+        "id": "8X7TtvD-l3P_:s110_vbr6rl:tr637:n14",
+        "ship_id": "8X7TtvD-l3P_:s110_vbr6rl",
+        "scheduled_t": 637,
+        "arrival_at_tick": 653
+      },
+      {
+        "id": "8X7TtvD-l3P_:s3_charon_2:tr640:n14",
+        "ship_id": "8X7TtvD-l3P_:s3_charon_2",
+        "scheduled_t": 640,
+        "arrival_at_tick": 658
+      },
+      {
+        "id": "8X7TtvD-l3P_:s73_sxc2xh:nmrs065vld99y",
+        "ship_id": "8X7TtvD-l3P_:s73_sxc2xh",
+        "scheduled_t": 646,
+        "arrival_at_tick": 659
+      }
+    ],
+    "success": true,
+    "meta": {
+      "served_by": "v3-prod",
+      "served_by_region": "ENAM",
+      "served_by_colo": "ATL",
+      "served_by_primary": true,
+      "timings": {
+        "sql_duration_ms": 1.5283
+      },
+      "duration": 1.5283,
+      "changes": 0,
+      "last_row_id": 8770,
+      "changed_db": false,
+      "size_after": 2621440,
+      "rows_read": 3460,
+      "rows_written": 0,
+      "total_attempts": 1
+    }
+  }
+]
