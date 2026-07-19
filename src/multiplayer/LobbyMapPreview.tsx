@@ -22,6 +22,7 @@
 // ============================================================
 
 import React, { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { SHARED_BODIES, BINARY_SYSTEM_BODY_IDS, BLACK_HOLE_SYSTEM_BODY_IDS } from '../state/mockGameState';
 import { bodyPosition } from '../physics/orbitalMechanics';
 import {
@@ -275,7 +276,22 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [claimsKey, optionsKey, myUserId, focusBodyId]);
 
-  return (
+  // PORTAL TO BODY — required, not a nicety.
+  //
+  // This component is rendered from LobbyView, which lives inside the
+  // dock panel (.mp-dock). That panel carries BOTH a `transform` (the
+  // slide-in animation, identity matrix once open) and a
+  // `backdrop-filter: blur()`. Either one alone makes the panel the
+  // containing block for position:fixed descendants — so `inset: 0` was
+  // resolving against the 440px dock instead of the viewport, and the
+  // "full-screen backdrop" was quietly squeezed into a ~358px column
+  // inside the panel it was supposed to sit behind.
+  //
+  // Portaling out to <body> puts it back under the real viewport. Keep
+  // it here rather than moving the component up to App: `snap` and the
+  // player's current pick both live in LobbyView, and lifting them just
+  // to reach the DOM root would be a lot of plumbing for a layout fix.
+  return createPortal(
     <div className="lobby-map-preview" aria-hidden="true">
       <canvas ref={canvasRef} className="lobby-map-preview__canvas" />
       <div className="lobby-map-preview__legend">
@@ -284,6 +300,7 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
         <span><i className="dot dot--other" /> taken</span>
         <span className="lobby-map-preview__hint">scroll to zoom</span>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };

@@ -48,7 +48,17 @@ export const DockRail: React.FC<{ isMultiplayer?: boolean; lobbyOnly?: boolean }
   // lobby's "use the dock on the right" hint pointing at nothing.
   lobbyOnly = false,
 }) => {
-  const [active, setActive] = useState<DockRailKey | null>(null);
+  // Pre-game opens the lobby panel immediately. The lobby is the first
+  // thing a player ever sees, and there is exactly one panel worth
+  // opening — making them hunt for the rail icon to find the whole
+  // screen's content was a bad first impression. In-game still starts
+  // closed: there the map IS the content, and six panels compete, so
+  // auto-opening one would be a guess.
+  //
+  // This has to live here rather than in MultiplayerShell's railOpen:
+  // the rail is the single source of truth and broadcasts 'dockrail:active'
+  // on mount, so a default set downstream gets immediately overwritten.
+  const [active, setActive] = useState<DockRailKey | null>(lobbyOnly ? 'multiplayer' : null);
   // Mirror of App.tsx's activePanel so the 3 mobile-only rail buttons
   // (settlements / fleet / research) can show the right active state
   // even though the underlying panel state lives in App.

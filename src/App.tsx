@@ -633,7 +633,7 @@ function AppShell() {
   // game provider which feeds the canvas.
   const gameStarted = typeof roomGameId === 'string' && roomGameId.length > 0;
   return (
-    <MultiplayerShell onExit={handleExitRoom} initialRoomId={selectedRoomId}>
+    <MultiplayerShell onExit={handleExitRoom} initialRoomId={selectedRoomId} preGame={!gameStarted}>
       {gameStarted ? (
         <MultiplayerGameProvider gameId={roomGameId as string} onGameMissing={handleExitRoom}>
           {/* MultiplayerGameProvider already mounts its own GameContextProvider
@@ -655,35 +655,28 @@ function AppShell() {
         // (the other panels need a live game).
         <>
         <DockRail isMultiplayer lobbyOnly />
-        {/* Pre-game backdrop. NOT using .mp-overlay because that class
-            applies a backdrop-filter blur to everything beneath it,
-            including the dock the user needs to reach. Just a flat
-            dark canvas with a small banner that doesn't intercept clicks. */}
+        {/* Pre-game backdrop — a plain dark fill, nothing else.
+            LobbyMapPreview (rendered by LobbyView, also position:fixed
+            inset:0) paints the solar system straight over this, so the
+            player's first sight of the game is the map they're about to
+            pick a homeworld on. This layer only matters for the moment
+            before the room snapshot arrives, and as a floor if the
+            preview can't mount.
+
+            It must stay BEHIND the preview: both sit at z-index 0, and
+            this renders first as MultiplayerShell's children, so the
+            preview wins on DOM order. Don't raise this above 0.
+
+            The old "use the dock on the right" hint is gone with the
+            black screen it explained — the panel now opens on arrival
+            (see lobbyOnly in DockRail), so there's nothing to point at. */}
         <div style={{
           position: 'fixed',
           inset: 0,
-          background: '#050810',
+          background: '#05080e',
           zIndex: 0,
           pointerEvents: 'none',
-        }}>
-          <div style={{
-            position: 'absolute',
-            top: 60,
-            left: '50%',
-            transform: 'translateX(-50%)',
-            color: 'var(--mp-fg-dim)',
-            fontFamily: 'var(--mp-mono)',
-            fontSize: 11,
-            letterSpacing: '0.18em',
-            textAlign: 'center',
-            opacity: 0.75,
-          }}>
-            <div style={{ color: 'var(--mp-accent)', fontSize: 13, marginBottom: 4 }}>
-              ◉ PRE-GAME LOBBY
-            </div>
-            Use the dock on the right to configure the match.
-          </div>
-        </div>
+        }} />
         </>
       )}
     </MultiplayerShell>
