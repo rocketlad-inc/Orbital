@@ -117,8 +117,34 @@ function ownershipOf(
 ): RegionOwnership {
   const owners = new Set<string>();
   const bodyIds = new Set(members.map(b => b.id));
+  // Settlement owners, bucketed PER BODY so the fallback below can ask
+  // "does anyone have boots on this particular rock?"
+  const settledBy = new Map<string, Set<string>>();
   if (settlements) {
-    for (const s of settlements) if (bodyIds.has(s.bodyId) && s.ownedBy) owners.add(s.ownedBy);
+    for (const s of settlements) {
+      if (!bodyIds.has(s.bodyId) || !s.ownedBy) continue;
+      let set = settledBy.get(s.bodyId);
+      if (!set) { set = new Set(); settledBy.set(s.bodyId, set); }
+      set.add(s.ownedBy);
+      owners.add(s.ownedBy);
+    }
+  }
+  // Per-body fallback to the server's own ownership column, used ONLY
+  // for bodies where nobody has a visible settlement.
+  //
+  // Settlement presence stays authoritative wherever it exists, so the
+  // stale-owner bug this function was written to dodge (a system
+  // credited to a faction that no longer had anything there) still
+  // can't happen — a live settlement always outvotes the column.
+  //
+  // But it left holdings invisible when the claim ISN'T a settlement the
+  // client can see. The star is the case in hand: you hold Sol, and The
+  // Core read UNCLAIMED because the check only ever looked at
+  // settlements. Reading the body's own owner where no settlement is
+  // known closes that without weakening the rule.
+  for (const b of members) {
+    if (settledBy.has(b.id)) continue;
+    if (b.ownedBy) owners.add(b.ownedBy);
   }
   if (owners.size === 0) return { kind: 'unowned' };
   if (owners.size > 1) return { kind: 'contested', factionIds: Array.from(owners) };

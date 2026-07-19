@@ -3762,6 +3762,76 @@ const REGION_SUB_FONT = '10px Audiowide, Orbitron, Eurostile, system-ui, sans-se
 /** Gap held between a region label's edge and the body it's anchored to
  *  — enough to clear the body's dot AND the body's own name under it. */
 const REGION_LABEL_BODY_CLEARANCE = 38;
+/** Title (13px) + owner line (10px) + the gap between them. */
+const REGION_LABEL_HEIGHT = 32;
+
+export interface LabelRect { x: number; y: number; w: number; h: number }
+
+export function rectsOverlap(a: LabelRect, b: LabelRect): boolean {
+  return a.x < b.x + b.w && b.x < a.x + a.w
+      && a.y < b.y + b.h && b.y < a.y + a.h;
+}
+
+/**
+ * Pick a spot on a region's ring that lands on neither a body nor
+ * another region's label.
+ *
+ * Sliding a fixed arc off the anchor body (the previous rule) only
+ * solved "don't sit on YOUR planet". It knew nothing about everything
+ * else it might land on, so THE CORE still came down on Sol — its ring
+ * is so tight that every point on it is near the star — and labels of
+ * neighbouring rings collided with each other and with unrelated moons.
+ *
+ * So: propose candidates and take the first clear one. Candidates walk
+ * outward in both directions along the ring, then retry on the band's
+ * edges, which lets a crowded label step off its own orbit rather than
+ * give up. Offsets are arc LENGTHS converted per-radius, so the visual
+ * gap stays constant whether the ring is Mercury's or Neptune's.
+ *
+ * `minRadius` is what saves the Core: a ring hugging the star gets its
+ * label pushed out far enough that it can't cover the star.
+ *
+ * Pure and exported so the placement can be tested without a canvas.
+ */
+export function chooseRegionLabelPos(opts: {
+  cx: number; cy: number;
+  mid: number; rInner: number; rOuter: number;
+  baseAngle: number;
+  labelWidth: number;
+  clearance: number;
+  obstacles: LabelRect[];
+}): { x: number; y: number; rect: LabelRect; clear: boolean } {
+  const { cx, cy, mid, rInner, rOuter, baseAngle, labelWidth, clearance, obstacles } = opts;
+  const rectAt = (x: number, y: number): LabelRect => ({
+    x: x - labelWidth / 2,
+    y: y - 15,
+    w: labelWidth,
+    h: REGION_LABEL_HEIGHT,
+  });
+  const arc = labelWidth / 2 + clearance;
+  // Far enough from the centre that the label can never cover the star.
+  const minRadius = arc;
+  const radii: number[] = [];
+  for (const r of [Math.max(mid, minRadius), rOuter, rInner, mid + arc, rOuter + arc]) {
+    if (r > 4 && !radii.some(x => Math.abs(x - r) < 1)) radii.push(r);
+  }
+  const steps = [1, -1, 1.7, -1.7, 2.5, -2.5, 3.4, -3.4, 4.5, -4.5, 6, -6];
+  let first: { x: number; y: number; rect: LabelRect } | null = null;
+  for (const r of radii) {
+    for (const k of steps) {
+      const swing = Math.sign(k) * Math.min((arc * Math.abs(k)) / Math.max(r, 1), Math.PI * 0.9);
+      const a = baseAngle + swing;
+      const x = cx + Math.cos(a) * r;
+      const y = cy + Math.sin(a) * r;
+      const rect = rectAt(x, y);
+      if (!first) first = { x, y, rect };
+      if (!obstacles.some(o => rectsOverlap(rect, o))) return { x, y, rect, clear: true };
+    }
+  }
+  // Everything collided — draw at the first candidate rather than
+  // dropping the label. A crowded name still beats a missing one.
+  return { ...(first as { x: number; y: number; rect: LabelRect }), clear: false };
+}
 
 /**
  * Political shading for the zoomed-out map: one soft region per
@@ -3784,6 +3854,23 @@ export function drawSystemRegions(
   // point the layer first appears, so the map slides continuously from
   // "a hint of who's where" to a solid political map.
   const intensity = systemRegionIntensity(spans);
+
+  // Everything a region label must not land on: each body's dot plus the
+  // name drawn under it. Region labels are appended as they're placed,
+  // so later rings also dodge earlier rings' labels.
+  const obstacles: LabelRect[] = [];
+  for (const b of ctx.bodies) {
+    if (b.destroyedAtTick != null) continue;
+    const wp = bodyPosition(b, ctx.t, ctx.bodies);
+    const p = worldToCanvas(wp.x, wp.y, ctx);
+    if (p.x < -200 || p.y < -200 || p.x > ctx.canvas.width + 200 || p.y > ctx.canvas.height + 200) continue;
+    // Body labels are 9px monospace drawn under the dot; ~5.6px/char is
+    // that face's advance width. Approximate on purpose — measuring 58
+    // bodies every frame to place a dozen labels isn't worth it, and
+    // over-wide boxes only make the search more cautious.
+    const w = Math.max(26, b.name.length * 5.6);
+    obstacles.push({ x: p.x - w / 2, y: p.y - 12, w, h: 32 });
+  }
 
   for (const region of regions) {
     const owned = region.ownership.kind === 'exclusive';
@@ -3830,32 +3917,29 @@ export function drawSystemRegions(
         // Sliding ALONG the ring keeps the name tied to its band (and
         // keeps a dozen concentric rings from stacking their labels in
         // one column) while leaving the body clear.
-        let lx = cp.x;
-        let ly = cp.y - mid;
         const anchorId = shape.labelAnchorBodyId;
         const anchor = anchorId ? ctx.bodies.find(b => b.id === anchorId) : null;
+        let baseAngle = -Math.PI / 2;
         if (anchor) {
           const ap = bodyPosition(anchor, ctx.t, ctx.bodies);
           const dx = ap.x - wp.x;
           const dy = ap.y - wp.y;
-          const d = Math.hypot(dx, dy);
-          if (d > 1e-6) {
-            // Clear the body by half this label plus room for the body's
-            // own name. Measured, not guessed — "URANUS SYSTEM" needs a
-            // lot more room than "THE CORE".
-            c.font = REGION_TITLE_FONT;
-            const halfLabel = c.measureText(region.label.toUpperCase()).width / 2;
-            const clearPx = halfLabel + REGION_LABEL_BODY_CLEARANCE;
-            // Arc length -> angle. On a tight inner ring that angle gets
-            // large, so cap it: past a quarter turn the label has stopped
-            // reading as "beside this planet" and is just adrift.
-            const swing = Math.min(clearPx / Math.max(mid, 1), Math.PI / 2);
-            const ang = Math.atan2(dy, dx) + swing;
-            lx = cp.x + Math.cos(ang) * mid;
-            ly = cp.y + Math.sin(ang) * mid;
-          }
+          if (Math.hypot(dx, dy) > 1e-6) baseAngle = Math.atan2(dy, dx);
         }
-        drawRegionLabel(region, lx, ly, color, owned, ctx, fade, intensity);
+        // Measured, not guessed — "URANUS SYSTEM" needs far more room
+        // than "THE CORE", and the search has to know the real box.
+        c.font = REGION_TITLE_FONT;
+        const labelWidth = c.measureText(region.label.toUpperCase()).width;
+        const spot = chooseRegionLabelPos({
+          cx: cp.x, cy: cp.y,
+          mid, rInner: rIn, rOuter: rOut,
+          baseAngle,
+          labelWidth,
+          clearance: REGION_LABEL_BODY_CLEARANCE,
+          obstacles,
+        });
+        obstacles.push(spot.rect);
+        drawRegionLabel(region, spot.x, spot.y, color, owned, ctx, fade, intensity);
       }
     }
     c.restore();
