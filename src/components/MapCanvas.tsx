@@ -56,6 +56,7 @@ import { computeVisibility, factionSensorRings, GHOST_LIFETIME_TICKS } from '../
 import { useCanvasTouchInput } from '../hooks/useCanvasTouchInput';
 import { isCoarsePointer } from '../hooks/useIsMobile';
 import { GIT_SHA } from '../_version';
+import { exploredStorageKey, loadExplored, saveExplored } from '../game/exploredBodies';
 import './MapCanvas.css';
 
 /** Extra hit-radius padding when the primary input is touch. Apple/Material
@@ -223,6 +224,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // runs each frame, so re-rendering the component for a label would be
   // pure churn. The loop reads .current when it builds RenderContext.
   const hoveredShipIdRef = useRef<string | null>(null);
+
+  // Bodies we've ever had sensor coverage on. Yields are stable facts
+  // about a rock, so once surveyed the readout sticks instead of blinking
+  // out when the fleet moves on. Loaded lazily on first frame (needs the
+  // faction list for the per-game key) and flushed on a timer, since the
+  // set grows inside the rAF loop where setState/localStorage-per-frame
+  // would be pure churn. See game/exploredBodies.
+  const exploredRef = useRef<Set<string> | null>(null);
+  const exploredKeyRef = useRef<string>('');
+  const exploredDirtyRef = useRef(false);
+  const exploredFlushAtRef = useRef(0);
 
   // Map layers: source of truth lives in MapLayersProvider (state +
   // localStorage). The Set is surfaced as a render dep so toggling
@@ -425,6 +437,32 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
       return false;
     };
+
+    // Explored-body memory. Loaded here rather than in an effect because
+    // the per-game key comes from the faction list, which isn't populated
+    // on the first mount. Re-keys if the player switches games without a
+    // reload. Bodies hosting one of our settlements seed in immediately —
+    // you're standing on them, so their yields are known even if a sensor
+    // ring happens not to cover the exact orbital position this frame.
+    const exploredKey = exploredStorageKey(gameState.factions.map(f => f.id));
+    if (exploredRef.current === null || exploredKeyRef.current !== exploredKey) {
+      exploredKeyRef.current = exploredKey;
+      exploredRef.current = loadExplored(exploredKey);
+      exploredDirtyRef.current = false;
+    }
+    for (const s of gameState.settlements) {
+      if (s.ownedBy === 'player' && !exploredRef.current.has(s.bodyId)) {
+        exploredRef.current.add(s.bodyId);
+        exploredDirtyRef.current = true;
+      }
+    }
+    // Flush at most every 2s — the set grows inside the rAF loop and a
+    // localStorage write per frame would be pure churn.
+    if (exploredDirtyRef.current && nowMs - exploredFlushAtRef.current > 2000) {
+      saveExplored(exploredKeyRef.current, exploredRef.current);
+      exploredDirtyRef.current = false;
+      exploredFlushAtRef.current = nowMs;
+    }
 
     if (prevShipIdsRef.current.size > 0) {
       for (const [id, pos] of prevShipIdsRef.current) {
@@ -695,11 +733,20 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       if (body.destroyedAtTick != null) continue;
       const isSelected = uiState.selectedBodyId === body.id;
       const isHovered = uiState.hoveredBodyId === body.id;
-      // A body's resource yields are intel — only reveal the readout
-      // when the body is inside the player's (or an ally's) live sensor
-      // coverage. Geometry/label still always render.
+      // A body's resource yields are intel, but they're a stable fact
+      // about the rock rather than a live reading: once you've had eyes
+      // on a world you keep the number. Gating on LIVE coverage made the
+      // readout blink out the moment a fleet moved on, so a surveyed
+      // world you'd been reading all game silently went blank.
+      // Anything you own counts as surveyed regardless of sensors.
       const bodyPos = bodyPosition(body, renderTick(), gameState.bodies);
-      const yieldsVisible = wasInCoverage(bodyPos);
+      const explored = exploredRef.current;
+      if (explored && !explored.has(body.id)
+          && (wasInCoverage(bodyPos) || body.ownedBy === 'player')) {
+        explored.add(body.id);
+        exploredDirtyRef.current = true;
+      }
+      const yieldsVisible = explored ? explored.has(body.id) : wasInCoverage(bodyPos);
       drawBody(body, renderContext, isSelected, isHovered, yieldsVisible);
       // Asteroid-weapon overlay: flame trail + projected impact path
       // + pulsing crosshair on the target. drawBody already places
