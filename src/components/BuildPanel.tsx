@@ -15,11 +15,14 @@ import {
 import { openShipDesigner } from './ShipDesigner';
 import { sanitizeParts, partsCost, computeDesignStats, loadoutSummary } from '../game/shipParts';
 import { randomShipName } from '../game/shipNames';
+import { HULL_FEATURE } from '../game/researchUnlocks';
+import { useFeatureGate } from '../hooks/useFeatureGate';
 import './BuildPanel.css';
 
 export const BuildPanel: React.FC = () => {
   const { gameState, uiState, buildShip, cancelBuild } = useGameContext();
   const mpActions = useMultiplayerActions();
+  const gate = useFeatureGate();
   const [, setSelectedClass] = useState<ShipClassName | null>(null);
   const [customName, setCustomName] = useState<string>('');
   // FIFO queue of names committed via the COMMIT button. Each BUILD
@@ -422,8 +425,14 @@ export const BuildPanel: React.FC = () => {
           if (shortOre     > 0) shortBits.push(`+${shortOre} metal`);
           if (shortCredits > 0) shortBits.push(`+${shortCredits} cr`);
           const shortLabel = shortBits.length > 0 ? `Need ${shortBits.join(', ')}` : '';
+          // Research gate. Locked hulls stay VISIBLE rather than being
+          // filtered out — seeing the destroyer sitting there with
+          // "Unlocks at Construction 4" is what makes the tech tree
+          // legible as a set of goals. Hiding them would just make the
+          // early game look empty.
+          const lock = gate.lockReason(HULL_FEATURE[cls]);
           return (
-            <div key={cls} className={`build-class-row ${!canAfford ? 'disabled' : ''}`}>
+            <div key={cls} className={`build-class-row ${lock || !canAfford ? 'disabled' : ''}`}>
               <div className="class-info">
                 {/* Icon-variant picker dropped from the inline row to
                     keep the build row narrow enough to stay one-line
@@ -515,10 +524,12 @@ export const BuildPanel: React.FC = () => {
               </div>
               <button
                 className={`build-btn${recentlyQueued.has(cls) ? ' build-btn--just-queued' : ''}`}
-                disabled={!canAfford || capacityBlocks}
+                disabled={!!lock || !canAfford || capacityBlocks}
                 onClick={() => { setRecentlyQueued(s => new Set(s).add(cls)); handleBuild(cls); }}
                 title={
-                  capacityBlocks
+                  lock
+                    ? `${lock.label} — ${lock.text}`
+                  : capacityBlocks
                     ? `All ${totalSlots} build slots busy — finish a build, or add a Shipyard to a station here`
                     : canAfford
                       ? slotsFull
@@ -526,9 +537,24 @@ export const BuildPanel: React.FC = () => {
                         : `Build a ${def.displayName}${activeDesign ? ` [${activeDesign.name}]` : ''} (${rowCostOre}M ${rowCostCredits}C, ${def.buildTime} ticks)`
                       : shortLabel}
               >
-                BUILD · {def.buildTime}t
+                {lock ? '🔒 LOCKED' : `BUILD · ${def.buildTime}t`}
               </button>
-              {!canAfford && shortLabel && (
+              {lock && (
+                // The unlock condition, stated inline. A player should
+                // never have to hover to find out what to research next.
+                <div
+                  className="build-shortage"
+                  role="status"
+                  style={{
+                    flexBasis: '100%',
+                    margin: '2px 0 0',
+                    fontSize: 10,
+                    color: '#8aa0b4',
+                    letterSpacing: '0.04em',
+                  }}
+                >🔒 {lock.text}</div>
+              )}
+              {!lock && !canAfford && shortLabel && (
                 // Inline shortage callout. Hugs the row so the player
                 // doesn't have to hover to learn what's missing.
                 <div

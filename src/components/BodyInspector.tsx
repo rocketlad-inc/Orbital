@@ -13,6 +13,8 @@ import {
   BUILDING_DEFS, buildingLevel, buildingCostForNextLevel, buildingTimeForNextLevel,
 } from '../game/settlements';
 import { SettlementType, BuildingKind, Settlement, Body } from '../types';
+import { BUILDING_FEATURE } from '../game/researchUnlocks';
+import { useFeatureGate } from '../hooks/useFeatureGate';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import { BottomSheet } from './BottomSheet';
@@ -631,6 +633,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
   } = useGameContext();
   // Non-null only in multiplayer: mirror the local deploy to the server.
   const mpActions = useMultiplayerActions();
+  const deployGate = useFeatureGate();
 
   // Inline name prompt state — when set, shows naming form for that type
   const [namingType, setNamingType] = useState<SettlementType | null>(null);
@@ -804,6 +807,9 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
   // section and a STATION section, so each only offers its own deploy.
   const showCityDeploy = cityAllowed && (!typeFilter || typeFilter === 'city');
   const showStationDeploy = stationAllowed && (!typeFilter || typeFilter === 'station');
+  // Orbital stations are Construction 1. Cities stay ungated — your
+  // starting colony ship has to have something to do on turn one.
+  const stationLock = deployGate.lockReason('settlement.station');
 
   const playerRes = gameState.resources['player'];
   const canAffordCity = playerRes
@@ -1082,11 +1088,13 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
             {showStationDeploy && (
               <button
                 className="deploy-btn"
-                disabled={isMp
+                disabled={!!stationLock || (isMp
                   ? !(playerColonyShipHere || (ownSettlementHere && canAffordMpStation))
-                  : (!canBuildHere || !canAffordStation)}
+                  : (!canBuildHere || !canAffordStation))}
                 onClick={() => handleStartDeploy('station')}
-                title={isMp
+                title={stationLock
+                  ? `${stationLock.label} — ${stationLock.text}`
+                  : isMp
                   ? (playerColonyShipHere
                       ? `Launch a station — consumes ${playerColonyShipHere.name} (the Colony Ship in orbit)`
                       : ownSettlementHere
@@ -1103,7 +1111,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                   )
                 }
               >
-                ◆ DEPLOY STATION
+                {stationLock ? `🔒 ${stationLock.text}` : '◆ DEPLOY STATION'}
               </button>
             )}
           </div>
@@ -1202,6 +1210,7 @@ interface BuildingsStripProps {
 const BuildingsStrip: React.FC<BuildingsStripProps> = ({
   settlement, body, playerRes, currentTick, queueBuilding, cancelBuilding,
 }) => {
+  const gate = useFeatureGate();
   const baseKinds = settlement.type === 'city' ? CITY_BUILDINGS : STATION_BUILDINGS;
   const kinds: BuildingKind[] = (settlement.type === 'city' && body.type === 'asteroid')
     ? [...baseKinds, ...ASTEROID_CITY_EXTRA]
@@ -1240,7 +1249,12 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
         const canAfford = !!playerRes
           && localO + playerRes.ore     >= cost.ore
           && localC + playerRes.credits >= cost.credits;
-        const canQueue = !queueBusy && !inFlight && canAfford;
+        // Research gate — only blocks the FIRST level. Once a building
+        // exists you can keep upgrading it even if a later rebalance
+        // moves the unlock: pulling the rug on something already built
+        // would be worse than letting it ride.
+        const lock = level > 0 ? null : gate.lockReason(BUILDING_FEATURE[kind]);
+        const canQueue = !lock && !queueBusy && !inFlight && canAfford;
 
         const costParts: string[] = [];
         if (cost.fuel    > 0) costParts.push(`${cost.fuel}F`);
@@ -1333,13 +1347,14 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
                   style={{ flex: 1, color: '#b8c8d6', fontStyle: 'italic' }}
                   title={def.description}
                 >
-                  {effectStr} · {ticks}t · {costStr}
+                  {lock ? `🔒 ${lock.text}` : `${effectStr} · ${ticks}t · ${costStr}`}
                 </span>
                 <button
                   onClick={(e) => { e.stopPropagation(); queueBuilding(settlement.id, kind); }}
                   disabled={!canQueue}
                   title={
-                    queueBusy ? `Another upgrade is in flight (${BUILDING_DEFS[q!.kind].displayName})`
+                    lock ? `${lock.label} — ${lock.text}`
+                    : queueBusy ? `Another upgrade is in flight (${BUILDING_DEFS[q!.kind].displayName})`
                     : !canAfford ? `Need ${costStr}`
                     : `Upgrade ${def.displayName} → L${level + 1} (${ticks} ticks)`
                   }
@@ -1352,7 +1367,7 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
                     fontFamily: 'inherit', fontSize: 9, fontWeight: 600,
                     cursor: canQueue ? 'pointer' : 'default',
                   }}
-                >+ L{level + 1}</button>
+                >{lock ? '🔒' : `+ L${level + 1}`}</button>
               </>
             )}
           </div>

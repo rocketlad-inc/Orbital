@@ -14,6 +14,10 @@
 // `senate_effects`; downstream systems (tick processor, build cost, fuel,
 // combat, trade) call `getActiveSliders` to read the effective values.
 
+import {
+  factionTechLevels, gatingEnabled, hasFeature, lockedError,
+} from './researchUnlocks.js';
+
 const SLIDER_CATALOG = [
   {
     id: 'tick_interval_multiplier',
@@ -369,6 +373,20 @@ async function handleCreateProposal(req, env, { params, session }) {
   // candidate_faction_id) are required for the new kinds.
   const kind = typeof body.kind === 'string' ? body.kind : 'slider_law';
   if (!BILL_KINDS.has(kind)) return err(400, 'bad_request', `unknown bill kind '${kind}'`);
+
+  // Research gate. VOTING is deliberately never gated — a new player is
+  // part of the senate from tick one and can always weigh in on someone
+  // else's bill. What research buys is the right to SET the agenda:
+  // Society 5 to put any bill on the floor, Society 6 for the Chancellor
+  // election specifically, since that bill can end the game.
+  if (await gatingEnabled(env, gameId)) {
+    const levels = await factionTechLevels(env, gameId, ctx.faction.id);
+    const needed = kind === 'chancellor_vote' ? 'senate.chancellor' : 'senate.propose';
+    if (!hasFeature(needed, levels, true)) {
+      const e = lockedError(needed);
+      return err(403, e.code, e.message);
+    }
+  }
 
   const { title, summary } = body;
   if (typeof title !== 'string' || title.trim().length < 1 || title.length > 80) {

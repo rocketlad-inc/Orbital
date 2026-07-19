@@ -176,7 +176,7 @@ async function handleGetState(req, env, ctx) {
     .prepare(
       `SELECT id, status, current_tick, tick_interval_ms,
               next_tick_at, started_at, completed_at, map_seed,
-              winner_faction_id, victory_type,
+              winner_faction_id, victory_type, gating_enabled,
               dyson_controller_faction_id, dyson_foundation_settlement_id,
               dyson_started_at_tick,
               dyson_acc_fuel, dyson_acc_ore, dyson_acc_credits, dyson_acc_science,
@@ -775,6 +775,11 @@ async function handleGetState(req, env, ctx) {
       map_seed: game.map_seed,
       winner_faction_id: game.winner_faction_id,
       victory_type: game.victory_type,
+      // Research gating. 0 for games that predate migration 0040 — they
+      // grandfather every feature unlocked, so the client must not grey
+      // anything out for them. The client mirrors the same flag through
+      // hasFeature() that the server gates on.
+      gating_enabled: game.gating_enabled ?? 0,
       dyson_sphere: dysonSphere,
     },
     me: {

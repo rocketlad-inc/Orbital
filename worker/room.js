@@ -3,14 +3,20 @@ import { recomputeBodyOwnership } from './factions.js';
 import { parsePartsJson, computeShipStats, countPart, detonatorDamage,
          damageProfile, defenseMitigation, MITIGATION_FLOOR } from './shipDesigns.js';
 
-// The eight tech tracks. Single source of truth for the science-victory
+// The six tech tracks. Single source of truth for the science-victory
 // check AND the random-tech grant, so those two can't silently disagree
-// about how many tracks exist (they used to be duplicated literals; the
-// kinetic/energy + shields/armor split would have drifted them). Mirrors
-// ALL_TECH_IDS in src/game/techs.ts — keep in sync.
+// about how many tracks exist. Mirrors ALL_TECH_IDS in src/game/techs.ts
+// — keep in sync.
+//
+// The short-lived 'energy_weapons' and 'shields' ids are gone: energy
+// mounts fold back into 'weapons' and shields into 'armor' (the Defense
+// track). Dropping them from this list is what makes science victory
+// reachable again — with eight entries, a faction had to max two tracks
+// that the research UI no longer offers, so the check could never pass.
+// Levels a live game banked in the retired ids still count toward combat
+// via the max() folds in src/game/techs.ts.
 const TECH_TRACKS = [
-  'weapons', 'energy_weapons', 'shields', 'armor',
-  'propulsion', 'construction', 'industry', 'sensors',
+  'weapons', 'armor', 'propulsion', 'construction', 'industry', 'sensors',
 ];
 
 // Room Durable Object. One instance per game room, keyed by room id.

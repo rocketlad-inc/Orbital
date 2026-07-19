@@ -69,6 +69,14 @@ export function humanizeMpError(
         default:         return `You do not own this resource (${fallback}).`;
       }
 
+    case 'not_researched':
+      // Research gating. The server's message already names the exact
+      // feature, track and level ("Frigate unlocks at Construction level
+      // 3"), which is strictly more useful than anything generic we
+      // could write here — so pass it straight through. Reaching this at
+      // all means a stale bundle let a locked control stay clickable.
+      return fallback;
+
     case 'not_host':
       // Currently only TBM toggle returns this — non-hosts trying to
       // change game-wide settings.

@@ -45,6 +45,9 @@ interface ServerState {
     map_seed: string;
     winner_faction_id?: string | null;
     victory_type?: string | null;
+    /** Research gating: 1 for games seeded after migration 0040, 0 for
+     *  matches that predate it (everything stays unlocked for those). */
+    gating_enabled?: number;
     /** Dyson Sphere snapshot. Null until a foundation has been laid.
      *  Server-side authoritative — populated/cleared in tickDysonSphere. */
     dyson_sphere?: {
@@ -1291,6 +1294,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     buildOrders,
     resources: { [PLAYER_TOKEN]: playerRes },
     factionTech: { [PLAYER_TOKEN]: playerTech },
+    gatingEnabled: (srv.game.gating_enabled ?? 0) === 1,
     combatLog,
     chronicleFlavor,
     chronicleFocus,

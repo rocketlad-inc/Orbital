@@ -596,6 +596,11 @@ export interface GameState {
   buildOrders: BuildOrder[];           // ships under construction
   resources: Record<string, FactionResources>; // factionId → resources
   factionTech: Record<string, FactionTechStateBase>; // factionId → tech progress
+  /** Research gating is ON for this match (see src/game/researchUnlocks.ts).
+   *  False for single-player and for multiplayer games seeded before
+   *  migration 0040 — both grandfather every feature unlocked, so no UI
+   *  should grey anything out. Mirrors games.gating_enabled. */
+  gatingEnabled?: boolean;
   combatLog: string[];                 // recent combat events (machine-truth headlines)
   /** Prose flavor for each combatLog entry, parallel-indexed. Resolved
    *  from the structured chronicle event via src/game/flavorEngine.ts.

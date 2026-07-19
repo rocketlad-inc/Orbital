@@ -5,6 +5,10 @@ import {
   countPart, detonatorDamage,
 } from './shipDesigns.js';
 import { runDigestForGame } from './digest.js';
+import {
+  factionTechLevels, gatingEnabled, hasFeature, lockedError,
+  HULL_FEATURE, BUILDING_FEATURE, PART_FEATURE,
+} from './researchUnlocks.js';
 
 // Player-action endpoints: things the client wants the server to remember.
 //
@@ -49,6 +53,58 @@ async function requireMyFaction(env, gameId, userId) {
     .prepare('SELECT id, slot, metal, fuel, gold, science FROM game_factions WHERE game_id = ? AND user_id = ?')
     .bind(gameId, userId)
     .first();
+}
+
+/**
+ * Research gate for a single feature.
+ *
+ * Returns null when the faction may proceed, or a ready-to-return 403
+ * Response when the feature is still locked. Call sites read as:
+ *
+ *   const gate = await requireFeature(env, gameId, me.id, 'hull.frigate');
+ *   if (gate) return gate;
+ *
+ * These checks are the AUTHORITY — the client greys locked options out,
+ * but a stale bundle or a hand-rolled POST must not be able to build a
+ * destroyer on turn one. Runs after ownership/validation and before any
+ * resource spend, so a locked request costs the player nothing.
+ *
+ * Two reads per gated action (levels + the game's gating flag) is
+ * deliberate: gating_enabled is per-game and immutable after seeding, so
+ * this is cheap and always correct, and it keeps the grandfather path
+ * (pre-existing games short-circuit to allowed) impossible to forget.
+ */
+async function requireFeature(env, gameId, factionId, feature) {
+  if (!feature) return null;                        // ungated thing
+  const isGated = await gatingEnabled(env, gameId);
+  if (!isGated) return null;                        // pre-existing game
+  const levels = await factionTechLevels(env, gameId, factionId);
+  if (hasFeature(feature, levels, true)) return null;
+  const e = lockedError(feature);
+  return err(403, e.code, e.message);
+}
+
+/**
+ * Research gate for a whole parts list, in ONE pair of reads.
+ *
+ * A design can name six part types; running requireFeature per part
+ * would issue a dozen queries for one save. Rejects on the first locked
+ * part so the message names something specific ("Energy Mount unlocks
+ * at Weapons level 3") rather than a generic refusal.
+ */
+async function requireParts(env, gameId, factionId, parts) {
+  if (!parts || parts.length === 0) return null;    // bare hull is free
+  const isGated = await gatingEnabled(env, gameId);
+  if (!isGated) return null;
+  const levels = await factionTechLevels(env, gameId, factionId);
+  for (const p of parts) {
+    const feature = PART_FEATURE[typeof p === 'string' ? p : p?.type];
+    if (feature && !hasFeature(feature, levels, true)) {
+      const e = lockedError(feature);
+      return err(403, e.code, e.message);
+    }
+  }
+  return null;
 }
 
 // POST /api/games/:gameId/ships/:shipId/transfer
@@ -278,6 +334,11 @@ async function handleQueueBuild(req, env, ctx) {
   if (typeof shipClass !== 'string' || !SHIP_CLASSES.has(shipClass)) {
     return err(400, 'bad_request', 'invalid ship_class');
   }
+  // Hull gate. Corvette and colony are the starting kit and ungated
+  // (HULL_FEATURE has no entry for them); freighter is Propulsion 1,
+  // frigate Construction 3, destroyer Construction 4.
+  const hullGate = await requireFeature(env, gameId, me.id, HULL_FEATURE[shipClass]);
+  if (hullGate) return hullGate;
   // Player-picked icon variant from the BuildPanel dropdown. Validated
   // here so a malicious / outdated client can't write garbage to the
   // column. NULL is allowed and means "use the class default" — older
@@ -545,6 +606,13 @@ async function handleDeploySettlement(req, env, ctx) {
   if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
   const type = body.type;
   if (type !== 'city' && type !== 'station') return err(400, 'bad_request', "type must be 'city' or 'station'");
+  // Cities are the starting move and stay ungated — your colony ship has
+  // to be able to do something on turn one. Orbital stations are
+  // Construction 1, the first thing most players will research.
+  if (type === 'station') {
+    const gate = await requireFeature(env, gameId, me.id, 'settlement.station');
+    if (gate) return gate;
+  }
 
   const bodyRow = await env.DB
     .prepare('SELECT id, name, type, radius, owner_faction_id FROM game_bodies WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL')
@@ -1229,6 +1297,11 @@ async function handleQueueBuilding(req, env, ctx) {
   if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
   const kind = body.kind;
   if (!BUILDING_DEFS[kind]) return err(400, 'bad_request', `invalid kind: ${kind}`);
+  // Every building is behind a level — lab/forge/mint on Society, the
+  // shipyard and thrusters on Construction, station weapons and armor on
+  // their combat tracks. BUILDING_FEATURE maps kind -> feature id.
+  const buildingGate = await requireFeature(env, gameId, me.id, BUILDING_FEATURE[kind]);
+  if (buildingGate) return buildingGate;
 
   const settlement = await env.DB
     .prepare(
@@ -1394,6 +1467,10 @@ async function handleBuildCollector(req, env, ctx) {
   if (settlement.has_collector === 1) {
     return err(409, 'already_collector', 'this settlement already has a collector');
   }
+  // Propulsion 4. Until then, moving harvest to the pool is manual
+  // freighter work — which is the point: automation is earned.
+  const collectorGate = await requireFeature(env, gameId, me.id, 'collectors');
+  if (collectorGate) return collectorGate;
 
   // Local-first spend: a stockpile-rich settlement can self-fund its
   // own promotion to collector status. Once the collector flips on,
@@ -1604,6 +1681,11 @@ async function handleInitiateDyson(req, env, ctx) {
   if (typeof stationId !== 'string') {
     return err(400, 'bad_request', 'foundation_settlement_id required');
   }
+
+  // Construction 6 — the engineering victory path is deep in the tree
+  // on purpose, so nobody opens with it.
+  const dysonGate = await requireFeature(env, gameId, me.id, 'dyson');
+  if (dysonGate) return dysonGate;
 
   // Slot check — only one sphere per match.
   const game = await env.DB
@@ -2200,6 +2282,8 @@ async function handleCreateDesign(req, env, ctx) {
   }
   const v = validateParts(shipClass, body.parts ?? []);
   if (!v.ok) return err(400, 'bad_parts', v.error);
+  const partsGate = await requireParts(env, gameId, me.id, v.parts);
+  if (partsGate) return partsGate;
   let iconVariant = null;
   if (body.icon_variant != null) {
     if (typeof body.icon_variant !== 'string' || !/^[A-F]$/.test(body.icon_variant)) {
@@ -2283,6 +2367,8 @@ async function handlePatchDesign(req, env, ctx) {
   if (body.parts !== undefined) {
     const v = validateParts(row.ship_class, body.parts ?? []);
     if (!v.ok) return err(400, 'bad_parts', v.error);
+    const partsGate = await requireParts(env, gameId, me.id, v.parts);
+    if (partsGate) return partsGate;
     partsJson = v.parts.length > 0 ? JSON.stringify(v.parts) : null;
   }
   let iconVariant = row.icon_variant ?? null;

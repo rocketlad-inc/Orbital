@@ -187,7 +187,7 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
           <FeatureCard
             icon="✦"
             title="Research & exploration"
-            body="Seven tech tracks — weapons, armor, propulsion, flight dynamics, construction, industry, sensors — each capped at level 10. Hidden caches, derelict warships, and ancient databanks wait on random moons; every match seeds them differently. Send ships out to find them."
+            body="Six tech tracks — weapons, defense, propulsion, construction, society, sensors — each capped at level 10. You start with a corvette and a colony ship; everything else is behind research, arriving one piece at a time. Hidden caches, derelict warships, and ancient databanks wait on random moons; every match seeds them differently. Send ships out to find them."
           />
         </div>
       </section>
