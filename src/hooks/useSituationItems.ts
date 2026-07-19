@@ -660,12 +660,18 @@ export function useSituationItems(
           push({
             id: 'tech_available:idle',
             category: 'tech_available',
+            // DECISION, not opportunity: research advances at your
+            // science income, so an idle lab wastes your ENTIRE science
+            // economy every tick. Opportunities are excluded from the
+            // rail badge, which meant this never actually surfaced —
+            // the whole point of replacing the affordable-tech list.
+            tier: 'decision',
             title: 'No research project',
             subtitle: science > 0
-              ? `${science} science banked and idle`
+              ? `${science} science banked · pick a track`
               : 'pick a track to start accumulating',
             focus: { kind: 'panel', panel: 'research' },
-            severity: 'normal',
+            severity: 'warn',
           });
         }
       }
