@@ -1597,6 +1597,166 @@ export class Room {
          console.error('trade route failed for ship', r.ship_id, routeErr);
        }
       }
+
+      // 2d. Trade DELIVERY auto-pilot — physical inter-player trades.
+      //
+      // Lives inside the same try as 2c so it shares bodyPosAt /
+      // computeLegTicks and their caches. Each accepted trade leg
+      // (trade_deliveries, migration 0041) with an assigned freighter
+      // is driven through: burn to the sender's collector → load
+      // (debit the sender's pool — the FIRST moment the goods exist
+      // anywhere) → burn to the recipient's collector → credit their
+      // pool, minus the tariff snapshotted at accept.
+      //
+      // Movement authority mirrors 2c exactly: skip anything with an
+      // in-flight node, plan at most one leg per tick. A freighter
+      // that ends up somewhere unexpected (retreat, manual detour
+      // before the block in handleCommitTransfer, arrival body lost)
+      // self-heals — every tick it's idle and off-script, we just plan
+      // the leg it should be flying.
+      try {
+        const deliveries = (await this.env.DB
+          .prepare(
+            `SELECT * FROM trade_deliveries
+              WHERE game_id = ? AND resolved_at_tick IS NULL
+                AND ship_id IS NOT NULL
+                AND status IN ('to_pickup', 'outbound')`,
+          )
+          .bind(gameId)
+          .all()).results ?? [];
+
+        for (const d of deliveries) {
+         try {
+          // Embargoed senders can't run shipments — same senate lever
+          // that freezes their trade routes.
+          if (await sanctioned(d.sender_faction_id, 'trade_embargo')) continue;
+
+          const ship = await this.env.DB
+            .prepare("SELECT id, parent_body_id, status FROM game_ships WHERE id = ?")
+            .bind(d.ship_id).first();
+          if (!ship || ship.status !== 'active') {
+            // Freighter died and the piracy block didn't resolve this
+            // row (e.g. destroyed by something with no kill credit).
+            // Loaded cargo goes down with the ship; an unloaded leg
+            // returns to the pool of assignable obligations.
+            if (d.loaded === 1) {
+              await this.env.DB
+                .prepare(`UPDATE trade_deliveries SET status = 'lost', resolved_at_tick = ? WHERE id = ?`)
+                .bind(tick, d.id).run();
+            } else {
+              await this.env.DB
+                .prepare(`UPDATE trade_deliveries SET ship_id = NULL, pickup_body_id = NULL, status = 'unassigned' WHERE id = ?`)
+                .bind(d.id).run();
+            }
+            continue;
+          }
+
+          const inFlight = await this.env.DB
+            .prepare("SELECT 1 AS x FROM game_ship_nodes WHERE ship_id = ? AND status IN ('committed','in_transit') LIMIT 1")
+            .bind(d.ship_id).first();
+          if (inFlight) continue;
+
+          const here = ship.parent_body_id;
+          const planDeliveryLeg = async (targetBodyId) => {
+            const legTicks = await computeLegTicks(
+              d.sender_faction_id, here, targetBodyId, tick,
+            );
+            const seqRow = await this.env.DB
+              .prepare('SELECT MAX(sequence) AS m FROM game_ship_nodes WHERE ship_id = ?')
+              .bind(d.ship_id).first();
+            const seq = (seqRow?.m ?? -1) + 1;
+            const nodeId = `${d.ship_id}:td${tick}:n${seq}`;
+            await this.env.DB
+              .prepare(
+                `INSERT INTO game_ship_nodes
+                   (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
+                    scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
+                    status, committed_at_tick)
+                 VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, 0, 0, 0, 0, 'committed', ?)`,
+              )
+              .bind(nodeId, gameId, d.ship_id, seq, targetBodyId, tick, tick + legTicks, tick)
+              .run();
+          };
+
+          if (d.status === 'to_pickup') {
+            if (here !== d.pickup_body_id) { await planDeliveryLeg(d.pickup_body_id); continue; }
+            // At the collector: load. The debit is guarded — if the
+            // sender's pool can't cover the manifest right now, the
+            // freighter just WAITS here and we retry every tick. The
+            // deal was allowed to out-promise the treasury at accept;
+            // this is where that promise has to be made good.
+            const upd = await this.env.DB
+              .prepare(
+                `UPDATE game_factions
+                    SET metal = metal - ?, fuel = fuel - ?, gold = gold - ?, science = science - ?
+                  WHERE id = ? AND game_id = ?
+                    AND metal >= ? AND fuel >= ? AND gold >= ? AND science >= ?`,
+              )
+              .bind(
+                d.metal, d.fuel, d.gold, d.science,
+                d.sender_faction_id, gameId,
+                d.metal, d.fuel, d.gold, d.science,
+              )
+              .run();
+            if ((upd.meta?.changes ?? 0) === 0) continue;   // awaiting funds
+            await this.env.DB
+              .prepare(`UPDATE trade_deliveries SET loaded = 1, status = 'outbound' WHERE id = ?`)
+              .bind(d.id).run();
+            await planDeliveryLeg(d.dest_body_id);
+          } else if (d.status === 'outbound') {
+            if (here !== d.dest_body_id) { await planDeliveryLeg(d.dest_body_id); continue; }
+            // Arrived. Credit the recipient minus the accept-time
+            // tariff snapshot; floors so the skim can't mint units.
+            const mul = 1 - Math.max(0, Math.min(100, d.tariff_pct ?? 0)) / 100;
+            await this.env.DB
+              .prepare(
+                `UPDATE game_factions
+                    SET metal = metal + ?, fuel = fuel + ?, gold = gold + ?, science = science + ?
+                  WHERE id = ? AND game_id = ?`,
+              )
+              .bind(
+                Math.floor(d.metal * mul), Math.floor(d.fuel * mul),
+                Math.floor(d.gold * mul), Math.floor(d.science * mul),
+                d.recipient_faction_id, gameId,
+              )
+              .run();
+            await this.env.DB
+              .prepare(`UPDATE trade_deliveries SET status = 'delivered', resolved_at_tick = ? WHERE id = ?`)
+              .bind(tick, d.id).run();
+            try {
+              await this.env.DB
+                .prepare(
+                  `INSERT INTO chronicle_entries
+                     (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+                   VALUES (?, ?, ?, 'trade_delivered', ?, ?, ?, 'public', ?)`,
+                )
+                .bind(
+                  `c_td_${d.id}_${tick}`, gameId, tick,
+                  d.sender_faction_id, d.dest_body_id,
+                  JSON.stringify({
+                    trade_id: d.trade_id,
+                    sender_faction_id: d.sender_faction_id,
+                    recipient_faction_id: d.recipient_faction_id,
+                    ship_id: d.ship_id,
+                    metal: d.metal, fuel: d.fuel, gold: d.gold, science: d.science,
+                    tariff_pct: d.tariff_pct ?? 0,
+                  }),
+                  Date.now(),
+                )
+                .run();
+            } catch (e) {
+              console.error('trade_delivered chronicle insert failed', e);
+            }
+          }
+         } catch (deliveryErr) {
+           // Same isolation contract as routes: one broken shipment
+           // must not strand every other convoy in the game.
+           console.error('trade delivery failed for ship', d.ship_id, deliveryErr);
+         }
+        }
+      } catch (e) {
+        console.error('trade-delivery auto-pilot failed', e);
+      }
     } catch (e) {
       console.error('trade-route auto-pilot failed', e);
     }
@@ -2598,6 +2758,69 @@ export class Room {
             )
             .bind(tick, r.id)
             .run();
+        }
+
+        // Same piracy rule for TRADE DELIVERIES (inter-player trade
+        // legs, migration 0041). A loaded hull hands its manifest to
+        // the killer and the leg is lost — the recipient never sees
+        // the goods, the sender's debit stays spent. An UNLOADED leg
+        // just lost its ride: nothing was aboard, so the obligation
+        // survives and returns to 'unassigned' for a new freighter.
+        // This is what makes trade convoys worth escorting.
+        const deadDeliveries = (await this.env.DB
+          .prepare(
+            `SELECT id, ship_id, trade_id, sender_faction_id, recipient_faction_id,
+                    metal, fuel, gold, science, loaded
+               FROM trade_deliveries
+              WHERE game_id = ?
+                AND resolved_at_tick IS NULL
+                AND ship_id IN (${placeholders})`,
+          )
+          .bind(gameId, ...losses)
+          .all()).results ?? [];
+        for (const d of deadDeliveries) {
+          if (d.loaded === 1) {
+            const killer = killerByShip.get(d.ship_id);
+            if (killer) {
+              await this.env.DB
+                .prepare(
+                  `UPDATE game_factions
+                      SET metal = metal + ?, fuel = fuel + ?, gold = gold + ?, science = science + ?
+                    WHERE id = ?`,
+                )
+                .bind(d.metal, d.fuel, d.gold, d.science, killer)
+                .run();
+            }
+            await this.env.DB
+              .prepare(`UPDATE trade_deliveries SET status = 'lost', resolved_at_tick = ? WHERE id = ?`)
+              .bind(tick, d.id).run();
+            try {
+              await this.env.DB
+                .prepare(
+                  `INSERT INTO chronicle_entries
+                     (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
+                   VALUES (?, ?, ?, 'trade_shipment_lost', ?, ?, 'public', ?)`,
+                )
+                .bind(
+                  `c_tl_${d.id}_${tick}`, gameId, tick, d.sender_faction_id,
+                  JSON.stringify({
+                    trade_id: d.trade_id,
+                    sender_faction_id: d.sender_faction_id,
+                    recipient_faction_id: d.recipient_faction_id,
+                    killer_faction_id: killerByShip.get(d.ship_id) ?? null,
+                    metal: d.metal, fuel: d.fuel, gold: d.gold, science: d.science,
+                  }),
+                  Date.now(),
+                )
+                .run();
+            } catch (e) {
+              console.error('trade_shipment_lost chronicle insert failed', e);
+            }
+          } else {
+            await this.env.DB
+              .prepare(`UPDATE trade_deliveries SET ship_id = NULL, pickup_body_id = NULL, status = 'unassigned' WHERE id = ?`)
+              .bind(d.id).run();
+          }
         }
       }
 

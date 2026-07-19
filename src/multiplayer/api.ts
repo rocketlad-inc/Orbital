@@ -279,6 +279,34 @@ export type TradeOffer = {
   created_at_ms: number;
   resolved_at_ms: number | null;
   resolved_by_faction_id: string | null;
+  /** Physical delivery legs (accepted trades only). Resources no longer
+   *  teleport on accept — each giving side ships its goods by freighter,
+   *  collector to collector. See TradeDelivery for the lifecycle. */
+  deliveries?: TradeDelivery[];
+};
+
+/** One shipping leg of an accepted trade.
+ *  unassigned → to_pickup → outbound → delivered | lost.
+ *  `loaded` flips when the sender's pool is debited at their collector;
+ *  from then on the cargo rides the hull (and a killer can loot it). */
+export type TradeDelivery = {
+  id: string;
+  trade_id: string;
+  sender_faction_id: string;
+  recipient_faction_id: string;
+  ship_id: string | null;
+  status: 'unassigned' | 'to_pickup' | 'outbound' | 'delivered' | 'lost';
+  pickup_body_id: string | null;
+  dest_body_id: string | null;
+  metal: number; fuel: number; gold: number; science: number;
+  loaded: number;
+  tariff_pct?: number;
+};
+
+export type DeliveryOptions = {
+  delivery: { id: string; status: string; metal: number; fuel: number; gold: number; science: number };
+  targets: { body_id: string; body_name: string }[];
+  freighters: { id: string; name: string; body_id: string; at_collector: boolean }[];
 };
 
 export type Pact = {
@@ -331,6 +359,17 @@ export function tradesApi(gameId: string) {
     },
     cancel(tradeId: string) {
       return apiFetch<null>(`/api/games/${gameId}/trades/${tradeId}/cancel`, { method: 'POST' });
+    },
+    deliveryOptions(tradeId: string, deliveryId: string) {
+      return apiFetch<DeliveryOptions>(
+        `/api/games/${gameId}/trades/${tradeId}/delivery-options?delivery=${encodeURIComponent(deliveryId)}`,
+      );
+    },
+    assignDelivery(tradeId: string, deliveryId: string, shipId: string, destBodyId: string) {
+      return apiFetch<{ ok: boolean; pickup_body_id: string; dest_body_id: string }>(
+        `/api/games/${gameId}/trades/${tradeId}/deliveries/${deliveryId}/assign`,
+        { method: 'POST', body: JSON.stringify({ ship_id: shipId, dest_body_id: destBodyId }) },
+      );
     },
     counter(tradeId: string, body: Omit<ProposeTradeBody, 'responder_faction_id'>) {
       return apiFetch<{ trade: TradeOffer }>(`/api/games/${gameId}/trades/${tradeId}/counter`, {

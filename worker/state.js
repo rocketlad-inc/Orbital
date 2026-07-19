@@ -233,6 +233,21 @@ async function handleGetState(req, env, ctx) {
     .all()).results ?? [];
   const tech_levels = Object.fromEntries(techRows.map(r => [r.tech_id, r.level]));
 
+  // Active trade-delivery legs involving the caller (either direction).
+  // ShipPanel badges hauling freighters with this; the Trades panel
+  // reads richer per-trade legs from the trades list endpoint instead.
+  const trade_deliveries = (await env.DB
+    .prepare(
+      `SELECT id, trade_id, sender_faction_id, recipient_faction_id,
+              ship_id, status, pickup_body_id, dest_body_id,
+              metal, fuel, gold, science, loaded
+         FROM trade_deliveries
+        WHERE game_id = ? AND resolved_at_tick IS NULL
+          AND (sender_faction_id = ? OR recipient_faction_id = ?)`,
+    )
+    .bind(gameId, me.id, me.id)
+    .all()).results ?? [];
+
   const factions = (await env.DB
     .prepare(
       `SELECT id, slot, name, color, color2, status, capital_body_id, senate_weight, reputation
@@ -808,6 +823,7 @@ async function handleGetState(req, env, ctx) {
         progress: me.research_progress,
       },
       tech_levels,
+      trade_deliveries,
       reputation: me.reputation,
       senate_weight: me.senate_weight,
       // Allies (active defense-pact / intel-share). The client treats

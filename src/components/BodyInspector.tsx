@@ -985,7 +985,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                   }}
                   disabled={!canAffordCollector}
                   title={canAffordCollector
-                    ? `Upgrade to collector: pumps 100% of this settlement's yield straight to your pool every tick (10× the non-collector trickle). Stops the LOCAL stockpile from growing here. Cost: ${COLLECTOR_COST.credits}C.`
+                    ? `Upgrade to collector: pumps 100% of this settlement's yield straight to your pool every tick (10× the non-collector trickle). Stops the LOCAL stockpile from growing here. Collectors are also your TRADE ports — freighters load outgoing trade shipments here, and other players' deliveries can only land at your collectors. Cost: ${COLLECTOR_COST.credits}C.`
                     : `Need ${COLLECTOR_COST.credits} credits.`}
                   style={{
                     marginTop: 6,

@@ -877,6 +877,41 @@ export const ShipPanel: React.FC = () => {
             />
           )}
 
+          {/* Active trade-delivery banner. When this freighter is
+              hauling an inter-player shipment the autopilot owns it —
+              manual transfers are refused server-side, so say WHY here
+              rather than letting the player discover it via a 409. */}
+          {ship.class === 'freighter' && ship.ownedBy === 'player' && (() => {
+            const haul = (gameState.tradeDeliveries ?? []).find(
+              d => d.shipId === ship.id && d.status !== 'delivered' && d.status !== 'lost',
+            );
+            if (!haul) return null;
+            const manifest = [
+              haul.metal ? `${haul.metal}M` : null,
+              haul.fuel ? `${haul.fuel}F` : null,
+              haul.gold ? `${haul.gold}C` : null,
+              haul.science ? `${haul.science}S` : null,
+            ].filter(Boolean).join(' ');
+            const destName = gameState.bodies.find(b => b.id === haul.destBodyId)?.name ?? 'their collector';
+            const pickupName = gameState.bodies.find(b => b.id === haul.pickupBodyId)?.name ?? 'your collector';
+            return (
+              <div style={{
+                margin: '8px 0', padding: '6px 8px',
+                border: '1px solid #4ecdc4', borderRadius: 3,
+                background: 'rgba(78, 205, 196, 0.08)',
+                fontSize: 10, color: '#d8e4ee', lineHeight: 1.5,
+              }}>
+                <div style={{ color: '#4ecdc4', fontWeight: 700, letterSpacing: '0.08em' }}>
+                  ⇢ TRADE SHIPMENT
+                </div>
+                {haul.loaded
+                  ? <>Hauling <b>{manifest}</b> to <b>{destName}</b>. Cargo is aboard — if this ship dies, the killer takes it.</>
+                  : <>En route to <b>{pickupName}</b> to load <b>{manifest}</b>.</>}
+                {' '}Flies itself until delivery; manual transfers are locked.
+              </div>
+            );
+          })()}
+
           {ship.class === 'freighter' && ship.ownedBy === 'player' && (
             <TradeRouteSection
               ship={ship}

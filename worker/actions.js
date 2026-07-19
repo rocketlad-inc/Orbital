@@ -125,6 +125,17 @@ async function handleCommitTransfer(req, env, ctx) {
   if (!ship) return err(404, 'not_found', 'ship not found');
   if (ship.owner_faction_id !== me.id) return err(403, 'not_owner', 'you do not own this ship');
 
+  // A freighter on an active trade delivery is autopilot property —
+  // the room tick owns its movement (worker/room.js pass 2d). Allowing
+  // a manual transfer here would fight the autopilot: it re-plans the
+  // proper leg every idle tick, so a detour just burns fuel forever.
+  const onDelivery = await env.DB
+    .prepare(`SELECT 1 AS x FROM trade_deliveries WHERE ship_id = ? AND resolved_at_tick IS NULL LIMIT 1`)
+    .bind(shipId).first();
+  if (onDelivery) {
+    return err(409, 'on_delivery', 'this freighter is hauling a trade shipment — it flies itself until delivery');
+  }
+
   const body = await readJson(req);
   if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
   const targetBodyId = body.target_body_id;
@@ -1561,6 +1572,13 @@ async function handleCreateTradeRoute(req, env, ctx) {
   if (ship.owner_faction_id !== me.id) return err(403, 'not_owner', 'not your ship');
   if (ship.ship_class !== 'freighter') {
     return err(409, 'wrong_class', 'only freighters can run trade routes');
+  }
+  // Can't put a delivery freighter on a standing route — one job per hull.
+  const shipOnDelivery = await env.DB
+    .prepare(`SELECT 1 AS x FROM trade_deliveries WHERE ship_id = ? AND resolved_at_tick IS NULL LIMIT 1`)
+    .bind(shipId).first();
+  if (shipOnDelivery) {
+    return err(409, 'on_delivery', 'this freighter is hauling a trade shipment — wait for delivery');
   }
 
   // Origin must have a player-owned settlement.

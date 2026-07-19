@@ -253,6 +253,12 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
           <div style={{
             display: 'flex', gap: 8, marginTop: 14, justifyContent: 'flex-end',
           }}>
+            <div style={{ flex: 1, fontSize: 9, color: '#8aa0b4', lineHeight: 1.5, alignSelf: 'center' }}>
+              Pacts take effect the moment the deal is accepted. Resources are
+              DELIVERED: each side loads its goods onto a freighter at one of
+              its collectors and flies them to the other's — assign ships in
+              the Trades panel's Shipments tab after acceptance.
+            </div>
             <button
               type="button"
               className="mp-btn"

@@ -70,6 +70,16 @@ interface ServerState {
     capital_body_id: string | null;
     resources: { metal: number; fuel: number; gold: number; science: number };
     tech_levels?: Record<string, number>;
+    /** Active physical trade-delivery legs involving me (either side).
+     *  Drives the ShipPanel "hauling" badge + Trades panel status. */
+    trade_deliveries?: {
+      id: string; trade_id: string;
+      sender_faction_id: string; recipient_faction_id: string;
+      ship_id: string | null; status: string;
+      pickup_body_id: string | null; dest_body_id: string | null;
+      metal: number; fuel: number; gold: number; science: number;
+      loaded: number;
+    }[];
     /** Active research project + accumulated progress (server drains
      *  science into this each tick). null tech_id = idle. */
     research?: { tech_id: string | null; progress: number } | null;
@@ -1295,6 +1305,14 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     resources: { [PLAYER_TOKEN]: playerRes },
     factionTech: { [PLAYER_TOKEN]: playerTech },
     gatingEnabled: (srv.game.gating_enabled ?? 0) === 1,
+    tradeDeliveries: (srv.me.trade_deliveries ?? []).map(d => ({
+      id: d.id, tradeId: d.trade_id,
+      senderFactionId: d.sender_faction_id, recipientFactionId: d.recipient_faction_id,
+      shipId: d.ship_id, status: d.status,
+      pickupBodyId: d.pickup_body_id, destBodyId: d.dest_body_id,
+      metal: d.metal, fuel: d.fuel, gold: d.gold, science: d.science,
+      loaded: d.loaded === 1,
+    })),
     combatLog,
     chronicleFlavor,
     chronicleFocus,

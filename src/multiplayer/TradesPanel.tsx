@@ -13,6 +13,8 @@ import {
   apiFetch,
   tradesApi,
   TradeOffer,
+  TradeDelivery,
+  DeliveryOptions,
   Pact,
   PactKind,
   PACT_LABELS,
@@ -22,7 +24,12 @@ import {
 } from './api';
 import { TradeComposer } from './TradeComposer';
 
-type Tab = 'incoming' | 'outgoing' | 'pacts' | 'history';
+type Tab = 'incoming' | 'outgoing' | 'shipments' | 'pacts' | 'history';
+
+/** A delivery leg still doing something (or waiting for someone). */
+function legActive(d: TradeDelivery): boolean {
+  return d.status !== 'delivered' && d.status !== 'lost';
+}
 
 const RESOURCE_COLORS: Record<keyof ResourceBundle, string> = {
   metal: '#a0a0a0',
@@ -85,8 +92,29 @@ export function TradesPanel({ gameId }: { gameId: string }) {
     () => trades.filter((t) => t.status === 'open' && t.proposer_faction_id === me?.id),
     [trades, me],
   );
+  // Accepted deals whose freighters haven't all landed yet. A deal is
+  // no longer "done" at accept — it's done when the goods arrive.
+  const shipments = useMemo(
+    () => trades.filter(
+      (t) => t.status === 'accepted' && (t.deliveries ?? []).some(legActive),
+    ),
+    [trades],
+  );
+  // Legs *I* owe that have no freighter yet — the action-needed badge.
+  const myUnassigned = useMemo(
+    () => shipments.reduce(
+      (n, t) => n + (t.deliveries ?? []).filter(
+        (d) => d.sender_faction_id === me?.id && d.status === 'unassigned',
+      ).length,
+      0,
+    ),
+    [shipments, me],
+  );
   const history = useMemo(
-    () => trades.filter((t) => t.status !== 'open'),
+    () => trades.filter(
+      (t) => t.status !== 'open'
+        && !(t.status === 'accepted' && (t.deliveries ?? []).some(legActive)),
+    ),
     [trades],
   );
 
@@ -112,6 +140,9 @@ export function TradesPanel({ gameId }: { gameId: string }) {
         </TabButton>
         <TabButton active={tab === 'outgoing'} onClick={() => setTab('outgoing')} count={outgoing.length}>
           Outgoing
+        </TabButton>
+        <TabButton active={tab === 'shipments'} onClick={() => setTab('shipments')} count={myUnassigned || shipments.length}>
+          Shipments
         </TabButton>
         <TabButton active={tab === 'pacts'} onClick={() => setTab('pacts')} count={pacts.length}>
           Pacts
@@ -187,6 +218,25 @@ export function TradesPanel({ gameId }: { gameId: string }) {
             )}
           />
         )}
+        {tab === 'shipments' && (
+          <>
+            <div style={{ fontSize: 10, color: '#8aa0b4', marginBottom: 8, lineHeight: 1.5 }}>
+              Accepted deals ship physically: each side loads its goods onto a
+              freighter at one of its <b>collectors</b>, and the cargo lands in
+              the other side's collector pool on arrival. Freighters can be
+              raided — escort what you can't afford to lose.
+            </div>
+            <TradeList
+              trades={shipments}
+              me={me}
+              factionsById={factionsById}
+              emptyText="No shipments in motion. Accepted deals appear here until every freighter lands."
+              gameId={gameId}
+              api={api}
+              onChanged={refresh}
+            />
+          </>
+        )}
         {tab === 'pacts' && (
           <PactsList pacts={pacts} factionsById={factionsById} />
         )}
@@ -197,6 +247,8 @@ export function TradesPanel({ gameId }: { gameId: string }) {
             factionsById={factionsById}
             emptyText="No resolved trades yet."
             showStatus
+            api={api}
+            onChanged={refresh}
           />
         )}
       </div>
@@ -252,7 +304,7 @@ function TabButton({
 }
 
 function TradeList({
-  trades, me, factionsById, actions, emptyText, showStatus,
+  trades, me, factionsById, actions, emptyText, showStatus, gameId, api, onChanged,
 }: {
   trades: TradeOffer[];
   me: MyFaction | null;
@@ -260,6 +312,9 @@ function TradeList({
   actions?: (trade: TradeOffer) => React.ReactNode;
   emptyText: string;
   showStatus?: boolean;
+  gameId?: string;
+  api?: ReturnType<typeof tradesApi>;
+  onChanged?: () => void;
 }) {
   if (!trades.length) {
     return <div className="mp-empty" style={{ textAlign: 'center', padding: 16, color: '#b8c8d6' }}>{emptyText}</div>;
@@ -274,6 +329,8 @@ function TradeList({
           factionsById={factionsById}
           actions={actions}
           showStatus={showStatus}
+          api={api}
+          onChanged={onChanged}
         />
       ))}
     </div>
@@ -281,13 +338,15 @@ function TradeList({
 }
 
 function TradeCard({
-  trade, me, factionsById, actions, showStatus,
+  trade, me, factionsById, actions, showStatus, api, onChanged,
 }: {
   trade: TradeOffer;
   me: MyFaction | null;
   factionsById: Map<string, Faction>;
   actions?: (trade: TradeOffer) => React.ReactNode;
   showStatus?: boolean;
+  api?: ReturnType<typeof tradesApi>;
+  onChanged?: () => void;
 }) {
   const proposer = factionsById.get(trade.proposer_faction_id);
   const responder = factionsById.get(trade.responder_faction_id);
@@ -345,10 +404,193 @@ function TradeCard({
         </div>
       )}
 
+      {/* Delivery legs — accepted trades only. Each giving side ships
+          its goods physically; this is where the caller assigns a
+          freighter to the legs THEY owe and watches both convoys. */}
+      {trade.status === 'accepted' && (trade.deliveries ?? []).length > 0 && api && (
+        <div style={{ marginTop: 8, borderTop: '1px solid #2a3d50', paddingTop: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {(trade.deliveries ?? []).map((d) => (
+            <DeliveryLegRow
+              key={d.id}
+              trade={trade}
+              delivery={d}
+              me={me}
+              factionsById={factionsById}
+              api={api}
+              onChanged={onChanged}
+            />
+          ))}
+        </div>
+      )}
+
       {actions && (
         <div style={{ display: 'flex', gap: 4, marginTop: 8, justifyContent: 'flex-end' }}>
           {actions(trade)}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------
+// Delivery legs
+
+const LEG_STATUS_TEXT: Record<string, string> = {
+  to_pickup: 'freighter heading to your collector to load',
+  outbound: 'cargo aboard — en route to their collector',
+  delivered: 'delivered',
+  lost: 'freighter destroyed — cargo lost',
+};
+
+function legManifest(d: TradeDelivery): string {
+  const bits: string[] = [];
+  if (d.metal) bits.push(`${d.metal}M`);
+  if (d.fuel) bits.push(`${d.fuel}F`);
+  if (d.gold) bits.push(`${d.gold}C`);
+  if (d.science) bits.push(`${d.science}S`);
+  return bits.join(' ') || 'nothing';
+}
+
+function DeliveryLegRow({
+  trade, delivery, me, factionsById, api, onChanged,
+}: {
+  trade: TradeOffer;
+  delivery: TradeDelivery;
+  me: MyFaction | null;
+  factionsById: Map<string, Faction>;
+  api: ReturnType<typeof tradesApi>;
+  onChanged?: () => void;
+}) {
+  const [assigning, setAssigning] = useState(false);
+  const mine = delivery.sender_faction_id === me?.id;
+  const sender = factionsById.get(delivery.sender_faction_id);
+  const icon =
+    delivery.status === 'delivered' ? '✓'
+    : delivery.status === 'lost' ? '✸'
+    : delivery.status === 'unassigned' ? '⚠'
+    : '⇢';
+  const color =
+    delivery.status === 'delivered' ? '#6ee7b7'
+    : delivery.status === 'lost' ? '#ff5e5e'
+    : delivery.status === 'unassigned' ? (mine ? '#ffb84d' : '#8aa0b4')
+    : '#4ecdc4';
+
+  const statusText = delivery.status === 'unassigned'
+    ? (mine
+        ? 'needs a freighter — nothing ships until you assign one'
+        : `waiting for ${sender?.name ?? 'them'} to assign a freighter`)
+    : (mine
+        ? LEG_STATUS_TEXT[delivery.status] ?? delivery.status
+        : delivery.status === 'outbound'
+          ? 'their cargo is aboard — inbound to your collector'
+          : delivery.status === 'to_pickup'
+            ? 'their freighter is heading out to load'
+            : LEG_STATUS_TEXT[delivery.status] ?? delivery.status);
+
+  return (
+    <div style={{ fontSize: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ color }}>{icon}</span>
+        <span style={{ color: '#d8e4ee' }}>
+          {mine ? 'You send' : `${sender?.name ?? 'They'} sends`}{' '}
+          <b>{legManifest(delivery)}</b>
+        </span>
+        <span style={{ color, flex: 1 }}>— {statusText}</span>
+        {mine && delivery.status === 'unassigned' && (
+          <button className="mp-btn mp-btn--primary" style={{ fontSize: 9, padding: '2px 8px' }}
+            onClick={() => setAssigning(a => !a)}>
+            {assigning ? 'Close' : 'Assign freighter'}
+          </button>
+        )}
+      </div>
+      {assigning && (
+        <AssignShipmentForm
+          trade={trade}
+          delivery={delivery}
+          api={api}
+          onDone={() => { setAssigning(false); onChanged?.(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function AssignShipmentForm({
+  trade, delivery, api, onDone,
+}: {
+  trade: TradeOffer;
+  delivery: TradeDelivery;
+  api: ReturnType<typeof tradesApi>;
+  onDone: () => void;
+}) {
+  const [opts, setOpts] = useState<DeliveryOptions | null>(null);
+  const [shipId, setShipId] = useState('');
+  const [destId, setDestId] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let dead = false;
+    api.deliveryOptions(trade.id, delivery.id).then((res) => {
+      if (dead) return;
+      if (!res.ok) { setErr(res.error?.message ?? 'Could not load options'); return; }
+      setOpts(res.data);
+      // Preselect the obvious choices: a freighter already sitting at
+      // one of your collectors (instant load), and the only target if
+      // there is only one.
+      const atDock = res.data.freighters.find(f => f.at_collector);
+      setShipId((atDock ?? res.data.freighters[0])?.id ?? '');
+      setDestId(res.data.targets[0]?.body_id ?? '');
+    });
+    return () => { dead = true; };
+  }, [api, trade.id, delivery.id]);
+
+  const submit = async () => {
+    if (!shipId || !destId) return;
+    setBusy(true); setErr(null);
+    const res = await api.assignDelivery(trade.id, delivery.id, shipId, destId);
+    setBusy(false);
+    if (!res.ok) { setErr(res.error?.message ?? 'Assign failed'); return; }
+    onDone();
+  };
+
+  if (err && !opts) return <div className="mp-error" style={{ marginTop: 4 }}>{err}</div>;
+  if (!opts) return <div style={{ color: '#8aa0b4', marginTop: 4 }}>Loading options…</div>;
+
+  return (
+    <div style={{ marginTop: 6, padding: 6, border: '1px solid #2a3d50', borderRadius: 3, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {opts.freighters.length === 0 ? (
+        <div style={{ color: '#ffb84d' }}>
+          No idle freighter. Build one, or free one from its trade route —
+          this shipment waits until a hull is available.
+        </div>
+      ) : (
+        <>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 2, color: '#8aa0b4' }}>
+            FREIGHTER
+            <select value={shipId} onChange={(e) => setShipId(e.target.value)}
+              style={{ background: '#0a0e14', color: '#d8e4ee', border: '1px solid #2a3d50', fontFamily: 'inherit', fontSize: 10, padding: 3 }}>
+              {opts.freighters.map(f => (
+                <option key={f.id} value={f.id}>
+                  {f.name}{f.at_collector ? ' · at collector (loads instantly)' : ' · will burn to your collector first'}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 2, color: '#8aa0b4' }}>
+            DELIVER TO (their collector)
+            <select value={destId} onChange={(e) => setDestId(e.target.value)}
+              style={{ background: '#0a0e14', color: '#d8e4ee', border: '1px solid #2a3d50', fontFamily: 'inherit', fontSize: 10, padding: 3 }}>
+              {opts.targets.map(t => (
+                <option key={t.body_id} value={t.body_id}>{t.body_name}</option>
+              ))}
+            </select>
+          </label>
+          {err && <div className="mp-error">{err}</div>}
+          <button className="mp-btn mp-btn--primary" disabled={busy || !shipId || !destId} onClick={submit}>
+            {busy ? 'Assigning…' : 'Launch shipment'}
+          </button>
+        </>
       )}
     </div>
   );

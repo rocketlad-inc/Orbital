@@ -596,6 +596,17 @@ export interface GameState {
   buildOrders: BuildOrder[];           // ships under construction
   resources: Record<string, FactionResources>; // factionId → resources
   factionTech: Record<string, FactionTechStateBase>; // factionId → tech progress
+  /** Active physical trade-delivery legs involving the player (either
+   *  direction). MP only; SP has no inter-player trade. Sourced from the
+   *  server state payload each poll — never mutated locally. */
+  tradeDeliveries?: {
+    id: string; tradeId: string;
+    senderFactionId: string; recipientFactionId: string;
+    shipId: string | null; status: string;
+    pickupBodyId: string | null; destBodyId: string | null;
+    metal: number; fuel: number; gold: number; science: number;
+    loaded: boolean;
+  }[];
   /** Research gating is ON for this match (see src/game/researchUnlocks.ts).
    *  False for single-player and for multiplayer games seeded before
    *  migration 0040 — both grandfather every feature unlocked, so no UI

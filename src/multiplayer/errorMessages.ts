@@ -69,6 +69,11 @@ export function humanizeMpError(
         default:         return `You do not own this resource (${fallback}).`;
       }
 
+    case 'on_delivery':
+      // Freighter is hauling an inter-player trade shipment — the
+      // delivery autopilot owns its movement until the cargo lands.
+      return 'This freighter is hauling a trade shipment — it flies itself until delivery.';
+
     case 'not_researched':
       // Research gating. The server's message already names the exact
       // feature, track and level ("Frigate unlocks at Construction level

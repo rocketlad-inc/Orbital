@@ -51,7 +51,7 @@ function newId() {
 
 async function callerFaction(env, gameId, userId) {
   return env.DB
-    .prepare('SELECT id, game_id, user_id, name, color, metal, fuel, gold, science FROM game_factions WHERE game_id = ? AND user_id = ?')
+    .prepare('SELECT id, game_id, user_id, name, color, capital_body_id, metal, fuel, gold, science FROM game_factions WHERE game_id = ? AND user_id = ?')
     .bind(gameId, userId)
     .first();
 }
@@ -307,8 +307,36 @@ async function handleList(req, env, { url, session, params }) {
   bind.push(limit);
 
   const rows = (await env.DB.prepare(sql).bind(...bind).all()).results ?? [];
+
+  // Attach delivery legs to every accepted trade in the page, in one
+  // query. An accepted trade is no longer "done" — it's done when its
+  // freighters have landed, and the panel needs to show which stage
+  // each leg is at (and prompt the caller to assign a ship to theirs).
+  const deliveriesByTrade = new Map();
+  const acceptedIds = rows.filter(r => r.status === 'accepted').map(r => r.id);
+  if (acceptedIds.length > 0) {
+    const ph = acceptedIds.map(() => '?').join(',');
+    const dRows = (await env.DB
+      .prepare(
+        `SELECT id, trade_id, sender_faction_id, recipient_faction_id,
+                ship_id, status, pickup_body_id, dest_body_id,
+                metal, fuel, gold, science, loaded, tariff_pct
+           FROM trade_deliveries
+          WHERE game_id = ? AND trade_id IN (${ph})`,
+      )
+      .bind(gameId, ...acceptedIds)
+      .all()).results ?? [];
+    for (const d of dRows) {
+      if (!deliveriesByTrade.has(d.trade_id)) deliveriesByTrade.set(d.trade_id, []);
+      deliveriesByTrade.get(d.trade_id).push(d);
+    }
+  }
+
   return json({
-    trades: rows.map(tradeRowToJson),
+    trades: rows.map(r => ({
+      ...tradeRowToJson(r),
+      deliveries: deliveriesByTrade.get(r.id) ?? [],
+    })),
     caller_faction_id: caller.id,
   });
 }
@@ -339,21 +367,17 @@ async function handleAccept(req, env, { session, params }) {
     return err(409, 'not_open', `trade is ${trade.status}`);
   }
 
-  // Re-verify both sides still hold the resources at accept time.
   const proposer = await loadFaction(env, gameId, trade.proposer_faction_id);
   const responder = caller;
   if (!proposer) return err(409, 'proposer_missing', 'proposer faction is gone');
 
-  for (const k of RESOURCE_KEYS) {
-    const offerCol = `offer_${k}`;
-    const requestCol = `request_${k}`;
-    if (proposer[k] < trade[offerCol]) {
-      return err(409, 'proposer_insufficient', `proposer no longer has ${trade[offerCol]} ${k}`);
-    }
-    if (responder[k] < trade[requestCol]) {
-      return err(409, 'responder_insufficient', `you do not have ${trade[requestCol]} ${k} to fulfill this`);
-    }
-  }
+  // NOTE: no balance re-verification here anymore. Resources are no
+  // longer moved at accept — they're debited when a freighter physically
+  // LOADS them at the sender's collector (room.js delivery pass). A
+  // faction can accept a deal it can't currently cover; the shipment
+  // simply waits at the collector until the pool can fund it. The
+  // Trades panel shows that state, so an under-funded promise is
+  // visible to both sides rather than silently impossible.
 
   let offerPacts = [];
   let requestPacts = [];
@@ -374,48 +398,49 @@ async function handleAccept(req, env, { session, params }) {
     const sliders = await getActiveSliders(env, gameId, tick);
     tariffPct = Math.max(0, Math.min(100, Number(sliders.trade_tariff_pct ?? 0)));
   } catch { /* leave at 0 */ }
-  const receiveMul = 1 - (tariffPct / 100);
+  // (Applied as a receive-side skim at delivery time, from the snapshot
+  // stored on each leg — see the delivery credit in room.js.)
 
   // Build atomic batch.
   const stmts = [];
 
-  // 1. Transfer resources from proposer to responder (proposer's offer).
-  // 2. Transfer resources from responder to proposer (proposer's request).
-  // Combined update so each row is touched only once: proposer pays offer_X
-  // and receives request_X * receiveMul; responder is the inverse. The
-  // floors round down so a 13% tariff on 100 reads as the recipient losing
-  // 13 — never gaining a phantom unit from rounding the other way.
-  const proposerDelta = {};
-  const responderDelta = {};
-  for (const k of RESOURCE_KEYS) {
-    proposerDelta[k] = -trade[`offer_${k}`] + Math.floor(trade[`request_${k}`] * receiveMul);
-    responderDelta[k] = -trade[`request_${k}`] + Math.floor(trade[`offer_${k}`] * receiveMul);
+  // 1+2. Resources are DELIVERED, not teleported. One trade_deliveries
+  // row per giving side; the goods move only when a freighter hauls
+  // them collector-to-collector (room.js pass 2d drives the lifecycle;
+  // see migration 0041 for the state machine). Pacts, by contrast,
+  // remain instant below — a treaty is a signature, not a shipment.
+  //
+  // tariff_pct is snapshotted NOW so a slider passed mid-flight can't
+  // re-price a deal both sides already agreed to. The skim is applied
+  // at the delivery credit.
+  const legs = [
+    { sender: proposer.id, recipient: responder.id, prefix: 'offer' },
+    { sender: responder.id, recipient: proposer.id, prefix: 'request' },
+  ];
+  for (const leg of legs) {
+    const amounts = {};
+    let total = 0;
+    for (const k of RESOURCE_KEYS) {
+      amounts[k] = Math.max(0, Math.floor(Number(trade[`${leg.prefix}_${k}`] ?? 0)));
+      total += amounts[k];
+    }
+    if (total === 0) continue;   // pact-only or one-sided: no empty legs
+    stmts.push(
+      env.DB
+        .prepare(
+          `INSERT INTO trade_deliveries
+             (id, game_id, trade_id, sender_faction_id, recipient_faction_id,
+              ship_id, status, pickup_body_id, dest_body_id,
+              metal, fuel, gold, science, loaded, tariff_pct, created_at_tick)
+           VALUES (?, ?, ?, ?, ?, NULL, 'unassigned', NULL, NULL, ?, ?, ?, ?, 0, ?, ?)`,
+        )
+        .bind(
+          newId(), gameId, tradeId, leg.sender, leg.recipient,
+          amounts.metal, amounts.fuel, amounts.gold, amounts.science,
+          Math.round(tariffPct), tick,
+        ),
+    );
   }
-
-  stmts.push(
-    env.DB
-      .prepare(`UPDATE game_factions SET
-        metal = metal + ?, fuel = fuel + ?, gold = gold + ?, science = science + ?
-        WHERE id = ? AND game_id = ?
-          AND metal + ? >= 0 AND fuel + ? >= 0 AND gold + ? >= 0 AND science + ? >= 0`)
-      .bind(
-        proposerDelta.metal, proposerDelta.fuel, proposerDelta.gold, proposerDelta.science,
-        proposer.id, gameId,
-        proposerDelta.metal, proposerDelta.fuel, proposerDelta.gold, proposerDelta.science,
-      ),
-  );
-  stmts.push(
-    env.DB
-      .prepare(`UPDATE game_factions SET
-        metal = metal + ?, fuel = fuel + ?, gold = gold + ?, science = science + ?
-        WHERE id = ? AND game_id = ?
-          AND metal + ? >= 0 AND fuel + ? >= 0 AND gold + ? >= 0 AND science + ? >= 0`)
-      .bind(
-        responderDelta.metal, responderDelta.fuel, responderDelta.gold, responderDelta.science,
-        responder.id, gameId,
-        responderDelta.metal, responderDelta.fuel, responderDelta.gold, responderDelta.science,
-      ),
-  );
 
   // 3. Insert treaties for each pact, with both factions as signatories.
   const treatyIds = [];
@@ -828,7 +853,234 @@ async function handleListPacts(req, env, { session, params }) {
 
 // ---------- routes ----------
 
+// ---------- GET /api/games/:gameId/trades/:tradeId/delivery-options ----------
+//
+// Everything the "assign a freighter" UI needs, in one call: which of
+// MY freighters are free to haul, and which of the counterparty's
+// collector bodies can receive. Computed server-side so the client
+// never has to guess at collector locations (capitals always qualify —
+// every capital city seeds with a collector).
+
+async function handleDeliveryOptions(req, env, { url, session, params }) {
+  const { gameId, tradeId } = params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  if (!TRADE_ID_RE.test(tradeId)) return err(400, 'bad_request', 'invalid trade id');
+
+  const caller = await callerFaction(env, gameId, session.user_id);
+  if (!caller) return err(403, 'not_a_faction', 'you do not own a faction in this game');
+
+  const deliveryId = url.searchParams.get('delivery') || '';
+  const delivery = await env.DB
+    .prepare(
+      `SELECT * FROM trade_deliveries
+        WHERE id = ? AND game_id = ? AND trade_id = ?`,
+    )
+    .bind(deliveryId, gameId, tradeId)
+    .first();
+  if (!delivery) return err(404, 'not_found', 'delivery not found');
+  if (delivery.sender_faction_id !== caller.id) {
+    return err(403, 'not_sender', 'only the sending faction assigns this shipment');
+  }
+
+  // Recipient collector bodies — where this shipment may land.
+  const targets = (await env.DB
+    .prepare(
+      `SELECT DISTINCT s.body_id, b.name AS body_name
+         FROM game_settlements s
+         JOIN game_bodies b ON b.id = s.body_id AND b.game_id = s.game_id
+        WHERE s.game_id = ? AND s.owner_faction_id = ?
+          AND s.has_collector = 1 AND s.destroyed_at_tick IS NULL
+          AND b.destroyed_at_tick IS NULL`,
+    )
+    .bind(gameId, delivery.recipient_faction_id)
+    .all()).results ?? [];
+
+  // My idle freighters: active hull, not on a trade route, not already
+  // hauling another shipment, nothing in flight. "Inactive" is the
+  // requirement — a busy freighter can't be double-booked.
+  const freighters = (await env.DB
+    .prepare(
+      `SELECT sh.id, sh.name, sh.parent_body_id
+         FROM game_ships sh
+        WHERE sh.game_id = ? AND sh.owner_faction_id = ?
+          AND sh.ship_class = 'freighter' AND sh.status = 'active'
+          AND NOT EXISTS (
+            SELECT 1 FROM game_trade_routes r
+             WHERE r.ship_id = sh.id AND r.cancelled_at_tick IS NULL)
+          AND NOT EXISTS (
+            SELECT 1 FROM trade_deliveries d
+             WHERE d.ship_id = sh.id AND d.resolved_at_tick IS NULL)
+          AND NOT EXISTS (
+            SELECT 1 FROM game_ship_nodes n
+             WHERE n.ship_id = sh.id AND n.status IN ('committed','in_transit'))`,
+    )
+    .bind(gameId, caller.id)
+    .all()).results ?? [];
+
+  // Which of my bodies have collectors — so the picker can badge
+  // freighters that can load instantly (already parked at one).
+  const myCollectors = new Set(
+    ((await env.DB
+      .prepare(
+        `SELECT DISTINCT body_id FROM game_settlements
+          WHERE game_id = ? AND owner_faction_id = ?
+            AND has_collector = 1 AND destroyed_at_tick IS NULL`,
+      )
+      .bind(gameId, caller.id)
+      .all()).results ?? []).map(r => r.body_id),
+  );
+
+  return json({
+    delivery: {
+      id: delivery.id,
+      status: delivery.status,
+      metal: delivery.metal, fuel: delivery.fuel,
+      gold: delivery.gold, science: delivery.science,
+    },
+    targets,
+    freighters: freighters.map(f => ({
+      id: f.id, name: f.name, body_id: f.parent_body_id,
+      at_collector: myCollectors.has(f.parent_body_id),
+    })),
+  });
+}
+
+// ---------- POST /api/games/:gameId/trades/:tradeId/deliveries/:deliveryId/assign ----------
+//
+// body: { ship_id, dest_body_id }
+//
+// Connects an idle freighter to a shipment and picks the receiving
+// collector. No nodes are planned here — the room tick's delivery pass
+// owns all movement: next tick it either loads on the spot (freighter
+// already parked at one of the sender's collectors) or burns for the
+// pickup collector first. Splitting authority that way means there is
+// exactly one place that plans delivery legs.
+
+async function handleAssignDelivery(req, env, { session, params }) {
+  const { gameId, tradeId, deliveryId } = params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  if (!TRADE_ID_RE.test(tradeId)) return err(400, 'bad_request', 'invalid trade id');
+
+  const caller = await callerFaction(env, gameId, session.user_id);
+  if (!caller) return err(403, 'not_a_faction', 'you do not own a faction in this game');
+
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+  const shipId = String(body.ship_id ?? '');
+  const destBodyId = String(body.dest_body_id ?? '');
+  if (!shipId) return err(400, 'bad_request', 'ship_id required');
+  if (!destBodyId) return err(400, 'bad_request', 'dest_body_id required');
+
+  const delivery = await env.DB
+    .prepare(
+      `SELECT * FROM trade_deliveries
+        WHERE id = ? AND game_id = ? AND trade_id = ?`,
+    )
+    .bind(deliveryId, gameId, tradeId)
+    .first();
+  if (!delivery) return err(404, 'not_found', 'delivery not found');
+  if (delivery.sender_faction_id !== caller.id) {
+    return err(403, 'not_sender', 'only the sending faction assigns this shipment');
+  }
+  // Reassignment is allowed any time before the cargo is aboard —
+  // including after a pre-load freighter loss resets the row to
+  // 'unassigned'. Once loaded, the goods ride THAT hull; no swapping.
+  if (delivery.loaded === 1 || !['unassigned', 'to_pickup'].includes(delivery.status)) {
+    return err(409, 'not_assignable', `shipment is ${delivery.status}`);
+  }
+
+  const ship = await env.DB
+    .prepare(
+      `SELECT id, owner_faction_id, ship_class, status, parent_body_id
+         FROM game_ships WHERE id = ? AND game_id = ?`,
+    )
+    .bind(shipId, gameId)
+    .first();
+  if (!ship) return err(404, 'not_found', 'ship not found');
+  if (ship.owner_faction_id !== caller.id) return err(403, 'not_owner', 'not your ship');
+  if (ship.ship_class !== 'freighter') return err(409, 'wrong_class', 'only freighters can haul trade shipments');
+  if (ship.status !== 'active') return err(409, 'ship_dead', 'that freighter is gone');
+
+  const busyRoute = await env.DB
+    .prepare('SELECT 1 AS x FROM game_trade_routes WHERE ship_id = ? AND cancelled_at_tick IS NULL LIMIT 1')
+    .bind(shipId).first();
+  if (busyRoute) return err(409, 'on_route', 'that freighter is running a trade route — cancel the route first');
+  const busyDelivery = await env.DB
+    .prepare('SELECT 1 AS x FROM trade_deliveries WHERE ship_id = ? AND resolved_at_tick IS NULL AND id != ? LIMIT 1')
+    .bind(shipId, deliveryId).first();
+  if (busyDelivery) return err(409, 'on_delivery', 'that freighter is already hauling another shipment');
+  const inFlight = await env.DB
+    .prepare("SELECT 1 AS x FROM game_ship_nodes WHERE ship_id = ? AND status IN ('committed','in_transit') LIMIT 1")
+    .bind(shipId).first();
+  if (inFlight) return err(409, 'in_transit', 'that freighter is mid-burn — wait for it to arrive');
+
+  // Destination must be a live collector of the RECIPIENT.
+  const destOk = await env.DB
+    .prepare(
+      `SELECT 1 AS x FROM game_settlements
+        WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+          AND has_collector = 1 AND destroyed_at_tick IS NULL LIMIT 1`,
+    )
+    .bind(gameId, destBodyId, delivery.recipient_faction_id)
+    .first();
+  if (!destOk) return err(409, 'no_dest_collector', 'the recipient has no collector there');
+
+  // Pickup: the freighter's current body if the sender has a collector
+  // on it (instant load next tick), else the sender's capital — which
+  // always has one (seeded + migration 0041 backfill). A faction that
+  // somehow lost every collector including its capital can't ship.
+  let pickupBodyId = null;
+  const hereOk = await env.DB
+    .prepare(
+      `SELECT 1 AS x FROM game_settlements
+        WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+          AND has_collector = 1 AND destroyed_at_tick IS NULL LIMIT 1`,
+    )
+    .bind(gameId, ship.parent_body_id, caller.id)
+    .first();
+  if (hereOk) {
+    pickupBodyId = ship.parent_body_id;
+  } else {
+    const anyCollector = await env.DB
+      .prepare(
+        `SELECT s.body_id,
+                CASE WHEN s.body_id = ? THEN 0 ELSE 1 END AS pref
+           FROM game_settlements s
+          WHERE s.game_id = ? AND s.owner_faction_id = ?
+            AND s.has_collector = 1 AND s.destroyed_at_tick IS NULL
+          ORDER BY pref LIMIT 1`,
+      )
+      .bind(caller.capital_body_id, gameId, caller.id)
+      .first();
+    if (!anyCollector) return err(409, 'no_pickup_collector', 'you have no collector to load from');
+    pickupBodyId = anyCollector.body_id;
+  }
+
+  await env.DB
+    .prepare(
+      `UPDATE trade_deliveries
+          SET ship_id = ?, pickup_body_id = ?, dest_body_id = ?, status = 'to_pickup'
+        WHERE id = ? AND loaded = 0`,
+    )
+    .bind(shipId, pickupBodyId, destBodyId, deliveryId)
+    .run();
+
+  return json({ ok: true, pickup_body_id: pickupBodyId, dest_body_id: destBodyId });
+}
+
 export const routes = [
+  {
+    method: 'GET',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/trades\/(?<tradeId>[^/]+)\/delivery-options$/,
+    auth: 'required',
+    handle: handleDeliveryOptions,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/trades\/(?<tradeId>[^/]+)\/deliveries\/(?<deliveryId>[^/]+)\/assign$/,
+    auth: 'required',
+    handle: handleAssignDelivery,
+  },
   {
     method: 'POST',
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/trades$/,
