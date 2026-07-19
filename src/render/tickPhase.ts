@@ -69,8 +69,9 @@ export function smoothedTick(
   return currentTick + tickPhase(nextTickAt, tickIntervalMs, nowMs);
 }
 
-/** Real-time duration of one visual lap for a parked ship. */
-export const SHIP_VISUAL_ORBIT_MS = 30_000;
+/** Real-time duration of one visual lap for a parked ship. 30s read as
+ *  frantic next to the planets, which move at true (very slow) rate. */
+export const SHIP_VISUAL_ORBIT_MS = 90_000;
 
 /**
  * The `t` to draw a PARKED ship's orbital angle at — true time plus a
