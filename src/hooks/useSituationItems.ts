@@ -51,6 +51,8 @@ import {
   TECH_MAX_LEVEL,
   type TechId,
 } from '../game/techs';
+import { unlocksAt } from '../game/researchUnlocks';
+import { computeIncomePerTick } from '../game/settlements';
 
 // ------------------------------------------------------------
 // Item types
@@ -66,7 +68,18 @@ export type SituationCategory =
   | 'incoming_trade' // MP — open trade where caller is responder
   | 'in_combat'      // shooting RIGHT NOW — your hulls/settlements engaged
   | 'threat'         // body of yours under incoming enemy
-  | 'tech_available';// research idle — no project committed
+  | 'tech_available' // research idle — no project committed
+  // --- construction: buildings were unwatched while ships were not ---
+  | 'building_idle'  // settlement with an empty building queue
+  | 'building_done'  // a building just finished — the slot is free again
+  // --- research beyond "no project" ---
+  | 'research_done'  // a level completed (and what it unlocked)
+  | 'research_stall' // committed to a track with zero science income
+  // --- the quiet-but-bleeding cases ---
+  | 'damaged'        // hurt and NOT currently fighting, so in_combat is silent
+  | 'idle_colony'    // colony hull parked — expansion stalled
+  | 'broken_route'   // trade route whose ship or endpoint is gone
+  | 'vote_closed';   // MP — a vote you were watching has resolved
 
 export type SituationTier = 'now' | 'decision' | 'opportunity';
 
@@ -92,6 +105,18 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
   idle_freighter: 'opportunity',
   stranded:       'opportunity',
   tech_available: 'opportunity',
+  // A building slot standing empty wastes the same tick an idle yard
+  // does, so it sits in the same tier as one.
+  building_idle:  'opportunity',
+  building_done:  'decision',
+  research_done:  'decision',
+  // Stalled research burns the whole science economy every tick, same
+  // argument as "no research project" — a decision, not a someday.
+  research_stall: 'decision',
+  damaged:        'decision',
+  idle_colony:    'decision',
+  broken_route:   'decision',
+  vote_closed:    'decision',
 };
 
 export interface SituationItem {
@@ -130,6 +155,14 @@ export const CATEGORY_LABEL: Record<SituationCategory, string> = {
   idle_freighter:  'Idle freighters',
   stranded:        'Stranded stockpiles',
   tech_available:  'Research idle',
+  building_idle:   'Building slots empty',
+  building_done:   'Construction complete',
+  research_done:   'Research complete',
+  research_stall:  'Research stalled',
+  damaged:         'Damaged and quiet',
+  idle_colony:     'Idle colony ships',
+  broken_route:    'Broken trade routes',
+  vote_closed:     'Votes resolved',
 };
 
 // ------------------------------------------------------------
@@ -159,6 +192,18 @@ export interface SituationMpData {
 // and clears a couple of ticks after the last shot.
 // ------------------------------------------------------------
 const COMBAT_RECENT_TICKS = AUTO_COMBAT_INTERVAL * 2;
+
+/** How long a completion (building, research level, closed vote) stays
+ *  in the report. Matches the 10-tick window arrivals already use. */
+const COMPLETION_TTL_TICKS = 10;
+
+/** At/below this HP fraction a quiet entity is worth reporting. Above
+ *  it, scratches would drown the list. */
+const DAMAGED_HP_RATIO = 0.5;
+
+/** Inside this many ticks of closing, a vote is a NOW — after it closes
+ *  there is nothing the player can do about it. */
+const VOTE_URGENT_TICKS = 3;
 
 /** Display name for a faction id, falling back to the id so an
  *  unrecognised owner still reads as something in the UI. */
@@ -213,6 +258,32 @@ export function useSituationItems(
   const prevTransitingRef = useRef<Set<string>>(new Set());
   const prevShipIdsRef = useRef<Set<string>>(new Set());
 
+  // Completions can only be seen as TRANSITIONS — the server just stops
+  // sending the queue/project once it's done, so "finished" exists
+  // nowhere in a single snapshot. Same ref-diff idiom as arrivals.
+  //
+  // `buildingDoneRef`  — settlementId -> { tick, label } when its queue emptied.
+  // `researchDoneRef`  — track -> { tick, level } when its level ticked up.
+  // `voteClosedRef`    — voteId -> { tick, title } when it left the open list.
+  const prevBuildingRef = useRef<Map<string, string>>(new Map());
+  const buildingDoneRef = useRef<Map<string, { tick: number; label: string }>>(new Map());
+  const prevTechLevelsRef = useRef<Map<string, number>>(new Map());
+  const researchDoneRef = useRef<Map<string, { tick: number; level: number }>>(new Map());
+  const prevVotesRef = useRef<Map<string, string>>(new Map());
+  const voteClosedRef = useRef<Map<string, { tick: number; title: string }>>(new Map());
+  /**
+   * "Have we seen one frame yet?" — the guard against reporting the
+   * whole world as freshly-completed on first load.
+   *
+   * An explicit flag, NOT `prevMap.size > 0`. Size is wrong whenever the
+   * map legitimately starts empty: `factionTech.levels` is `{}` until
+   * the first level lands, so the first completion of the game grew the
+   * map from empty, the size check said "no history", and the very
+   * milestone worth reporting was the one silently swallowed. Caught by
+   * researching Weapons 1 in a live game and seeing no row.
+   */
+  const seenFirstFrameRef = useRef(false);
+
   // Update trackers on every render. This is cheap (gameState updates
   // at most once per /state poll); the heavy lifting is the derive
   // below, which runs once per gameState change via useMemo.
@@ -257,6 +328,71 @@ export function useSituationItems(
     prevTransitingRef.current = nowTransiting;
     prevShipIdsRef.current = nowIds;
   }, [gameState.ships, factionId, tick]);
+
+  // --- Completion tracking: buildings, research levels, votes ---
+  useEffect(() => {
+    // Buildings: a queue that existed last frame and is gone now finished.
+    const nowQueue = new Map<string, string>();
+    for (const s of gameState.settlements) {
+      if (s.ownedBy !== factionId || !s.buildingQueue) continue;
+      nowQueue.set(s.id, `${s.buildingQueue.kind} L${s.buildingQueue.targetLevel}`);
+    }
+    if (seenFirstFrameRef.current) {
+      for (const [id, label] of prevBuildingRef.current) {
+        if (!nowQueue.has(id) && !buildingDoneRef.current.has(id)) {
+          buildingDoneRef.current.set(id, { tick, label });
+        }
+      }
+    }
+    prevBuildingRef.current = nowQueue;
+
+    // Research: watch the LEVEL, not `researching`. Committing to a new
+    // track clears the old project too, and reporting that as "complete"
+    // would congratulate the player for cancelling.
+    const levels = gameState.factionTech?.[factionId]?.levels ?? {};
+    const nowLevels = new Map<string, number>(Object.entries(levels) as [string, number][]);
+    if (seenFirstFrameRef.current) {
+      for (const [track, lvl] of nowLevels) {
+        // Absent means level 0, NOT "unknown". `levels` only carries
+        // tracks you've researched, so the FIRST level of any track
+        // appears as a key that didn't exist before — and a `!= null`
+        // check treats that as "no prior reading" and skips it. That
+        // silently swallowed every track's level 1, which is the most
+        // interesting completion in the game (it's the one that unlocks
+        // the hull/part). Verified live: Weapons 0 -> 1 reported nothing.
+        const before = prevTechLevelsRef.current.get(track) ?? 0;
+        if (lvl > before) {
+          researchDoneRef.current.set(track, { tick, level: lvl });
+        }
+      }
+    }
+    prevTechLevelsRef.current = nowLevels;
+
+    // Votes: one that was open and no longer is has resolved.
+    const nowVotes = new Map<string, string>();
+    for (const v of mpData?.openVotes ?? []) nowVotes.set(v.id, v.title);
+    if (seenFirstFrameRef.current) {
+      for (const [id, title] of prevVotesRef.current) {
+        if (!nowVotes.has(id) && !voteClosedRef.current.has(id)) {
+          voteClosedRef.current.set(id, { tick, title });
+        }
+      }
+    }
+    prevVotesRef.current = nowVotes;
+    seenFirstFrameRef.current = true;
+
+    // Expire stamps so a completion doesn't sit in the report forever.
+    const expired = (t: number) => tick - t > COMPLETION_TTL_TICKS;
+    for (const [k, v] of Array.from(buildingDoneRef.current)) {
+      if (expired(v.tick)) buildingDoneRef.current.delete(k);
+    }
+    for (const [k, v] of Array.from(voteClosedRef.current)) {
+      if (expired(v.tick)) voteClosedRef.current.delete(k);
+    }
+    for (const [k, v] of Array.from(researchDoneRef.current)) {
+      if (expired(v.tick)) researchDoneRef.current.delete(k);
+    }
+  }, [gameState.settlements, gameState.factionTech, mpData, factionId, tick]);
 
   // --- Derive the item list ---
   return useMemo(() => {
@@ -463,13 +599,21 @@ export function useSituationItems(
     if (mpData?.openVotes) {
       for (const v of mpData.openVotes) {
         const closesIn = Math.max(0, v.vote_closes_at_tick - tick);
+        // A vote about to close and one with twenty ticks left read
+        // identically before this — same tier, same colour — so the
+        // deadline that actually matters was invisible. Inside the
+        // window it's a NOW: after it closes there is nothing to do.
+        const closing = closesIn <= VOTE_URGENT_TICKS;
         push({
           id: `vote_open:${v.id}`,
           category: 'vote_open',
+          tier: closing ? 'now' : undefined,
           title: v.title,
-          subtitle: `Voting closes in ${closesIn}t`,
+          subtitle: closing
+            ? `Closes in ${closesIn}t — vote now`
+            : `Voting closes in ${closesIn}t`,
           focus: { kind: 'panel', panel: 'senate' },
-          severity: 'warn',
+          severity: closing ? 'danger' : 'warn',
           sortKey: closesIn,
         });
       }
@@ -674,6 +818,192 @@ export function useSituationItems(
             severity: 'warn',
           });
         }
+      }
+    } catch { /* defensive */ }
+
+    // ---- Construction: buildings ----
+    // Ship yards were watched and building slots were not, though an
+    // empty building queue wastes exactly the same tick.
+    try {
+      for (const s of gameState.settlements) {
+        if (s.ownedBy !== factionId) continue;
+        const done = buildingDoneRef.current.get(s.id);
+        if (done) {
+          push({
+            id: `building_done:${s.id}`,
+            category: 'building_done',
+            entity: `settlement:${s.id}`,
+            title: `${done.label} complete at ${s.name}`,
+            subtitle: 'Building slot free',
+            focus: { kind: 'body', bodyId: s.bodyId },
+            severity: 'normal',
+            sortKey: done.tick,
+          });
+          continue;                      // done implies idle; don't say both
+        }
+        if (!s.buildingQueue) {
+          push({
+            id: `building_idle:${s.id}`,
+            category: 'building_idle',
+            entity: `settlement:${s.id}`,
+            title: `${s.name} building nothing`,
+            subtitle: 'No upgrade under construction',
+            focus: { kind: 'body', bodyId: s.bodyId },
+            severity: 'normal',
+          });
+        }
+      }
+    } catch { /* defensive */ }
+
+    // ---- Research: completions, unlocks, and stalls ----
+    try {
+      for (const [track, done] of researchDoneRef.current) {
+        const def = (TECH_DEFS as Record<string, { name?: string }>)[track];
+        const name = def?.name ?? track;
+        // Name what the level actually opened up — with gating on, that
+        // is the whole reason the level mattered.
+        const opened = unlocksAt(track as Parameters<typeof unlocksAt>[0], done.level)
+          .map(u => u.label);
+        push({
+          id: `research_done:${track}:${done.level}`,
+          category: 'research_done',
+          title: `${name} ${done.level} complete`,
+          subtitle: opened.length
+            ? `Unlocked: ${opened.slice(0, 3).join(', ')}${opened.length > 3 ? ` +${opened.length - 3}` : ''}`
+            : 'Pick the next project',
+          focus: { kind: 'panel', panel: 'research' },
+          severity: 'normal',
+          sortKey: done.tick,
+        });
+      }
+
+      // Committed to a track with no science coming in. The project is
+      // not slow — it is stopped, and nothing else says so.
+      const tech = gameState.factionTech?.[factionId];
+      if (tech?.researching) {
+        const lvl = tech.levels?.industry ?? 0;
+        const inc = computeIncomePerTick(
+          factionId, gameState.settlements, gameState.bodies, gameState.ships,
+          1 + (TECH_DEFS.industry?.perLevel ?? 0) * lvl,
+        );
+        const sci = (inc.delivered?.science ?? 0) + (inc.local?.science ?? 0);
+        if (sci <= 0) {
+          push({
+            id: 'research_stall',
+            category: 'research_stall',
+            title: 'Research stalled — no science income',
+            subtitle: 'Build a Lab, or route science to your pool',
+            focus: { kind: 'panel', panel: 'research' },
+            severity: 'warn',
+          });
+        }
+      }
+    } catch { /* defensive */ }
+
+    // ---- Hurt, and no longer shooting ----
+    // in_combat clears a few ticks after the last shot, so a settlement
+    // left at 15% HP went silent exactly when it most needed help.
+    try {
+      for (const s of gameState.settlements) {
+        if (s.ownedBy !== factionId || !s.maxHp) continue;
+        if (ticksSinceCombat(s, tick) <= COMBAT_RECENT_TICKS) continue;
+        const r = s.hp / s.maxHp;
+        if (r > DAMAGED_HP_RATIO) continue;
+        push({
+          id: `damaged:settlement:${s.id}`,
+          category: 'damaged',
+          entity: `settlement:${s.id}`,
+          title: `${s.name} at ${Math.round(r * 100)}% HP`,
+          subtitle: 'Damaged and undefended',
+          focus: { kind: 'body', bodyId: s.bodyId },
+          severity: r <= 0.25 ? 'danger' : 'warn',
+          sortKey: r,
+        });
+      }
+      for (const ship of gameState.ships) {
+        if (ship.ownedBy !== factionId) continue;
+        // Settlements carry `maxHp`; ships carry `hpMax`. Not a typo —
+        // the same trap is flagged in the in_combat block above.
+        const max = ship.hpMax ?? 0;
+        if (!max || ship.hp == null) continue;
+        if (ticksSinceCombat(ship, tick) <= COMBAT_RECENT_TICKS) continue;
+        const r = ship.hp / max;
+        if (r > DAMAGED_HP_RATIO) continue;
+        push({
+          id: `damaged:ship:${ship.id}`,
+          category: 'damaged',
+          entity: `ship:${ship.id}`,
+          title: `${ship.name} at ${Math.round(r * 100)}% HP`,
+          subtitle: ship.transit ? 'Damaged — in transit' : 'Damaged — pull it back or repair',
+          focus: { kind: 'ship', shipId: ship.id },
+          severity: r <= 0.25 ? 'danger' : 'warn',
+          sortKey: r,
+        });
+      }
+    } catch { /* defensive */ }
+
+    // ---- Idle colony hulls ----
+    // The idle check only ever matched class === 'freighter', so after
+    // the freighter/colony split the most expensive hull in the game
+    // could sit parked forever without a word.
+    try {
+      for (const ship of gameState.ships) {
+        if (ship.ownedBy !== factionId || ship.class !== 'colony') continue;
+        if (ship.transit || shipHasPendingOrders(ship)) continue;
+        if (routedShipIds.has(ship.id)) continue;
+        push({
+          id: `idle_colony:${ship.id}`,
+          category: 'idle_colony',
+          entity: `ship:${ship.id}`,
+          title: `${ship.name} idle at ${bodyName(ship.orbit.parentBodyId)}`,
+          subtitle: 'Colony ship — expansion stalled',
+          focus: { kind: 'ship', shipId: ship.id },
+          severity: 'normal',
+        });
+      }
+    } catch { /* defensive */ }
+
+    // ---- Trade routes that can no longer run ----
+    try {
+      for (const r of (gameState.tradeRoutes ?? []) as TradeRoute[]) {
+        if (r.ownedBy !== factionId) continue;
+        const ship = r.shipId ? byId.get(r.shipId) : undefined;
+        // A route needs its hauler, a settlement to load from, and a
+        // collector to unload into. Losing any of the three leaves the
+        // route on the books doing nothing.
+        const hasEnd = (bodyId: string) =>
+          gameState.settlements.some(s => s.ownedBy === factionId && s.bodyId === bodyId);
+        const reason = !ship
+          ? 'Hauler lost'
+          : !hasEnd(r.originBodyId)
+            ? `No holding at ${bodyName(r.originBodyId)}`
+            : !hasEnd(r.destBodyId)
+              ? `No holding at ${bodyName(r.destBodyId)}`
+              : null;
+        if (!reason) continue;
+        push({
+          id: `broken_route:${r.id}`,
+          category: 'broken_route',
+          title: `Trade route broken — ${reason}`,
+          subtitle: 'Reassign or clear the route',
+          focus: { kind: 'panel', panel: 'trades' },
+          severity: 'warn',
+        });
+      }
+    } catch { /* defensive */ }
+
+    // ---- Votes that resolved ----
+    try {
+      for (const [id, v] of voteClosedRef.current) {
+        push({
+          id: `vote_closed:${id}`,
+          category: 'vote_closed',
+          title: `Vote closed — ${v.title}`,
+          subtitle: 'Result in Senate',
+          focus: { kind: 'panel', panel: 'senate' },
+          severity: 'normal',
+          sortKey: v.tick,
+        });
       }
     } catch { /* defensive */ }
 
