@@ -3903,47 +3903,60 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 // not a hardcoded radius, so it survives the 1x/2x scale split and the
 // far Centauri / Cygnus systems (which have no giants and so never fade).
 
-/** Full strength out to the outermost giant; fully faded by this multiple
- *  of that radius. Neptune's orbit ×this lands past the Kuiper belt. */
-const OUTER_FADE_END_MULT = 3.2;
-/** Alpha floor for the deep outer system. Zero: the deep outer system
- *  gets no political wash at all, so a lone Kuiper holding can't oversell
- *  itself — it simply isn't painted out there. The body, its label and
- *  its owner line still draw; only the region band fades away. */
-const OUTER_FADE_FLOOR = 0;
+/** Steepen the ramp so the wash drops off FAST once past the giants,
+ *  rather than a lazy linear taper that leaves the near-Kuiper half-lit.
+ *  >1 = fades harder early. */
+const OUTER_FADE_EXP = 1.6;
 
-/**
- * 1.0 inside the giants, ramping to OUTER_FADE_FLOOR across the Kuiper
- * zone. `refRadius` is the outermost giant's orbit radius around this
- * region's own star; when a star has no giants it should be passed the
- * star's outermost child, so nothing in that system ever fades. Pure and
- * exported for testing.
- */
-export function regionRadialFalloff(midRadius: number, refRadius: number): number {
-  if (!(refRadius > 0)) return 1;
-  const end = refRadius * OUTER_FADE_END_MULT;
-  if (midRadius <= refRadius) return 1;
-  if (midRadius >= end) return OUTER_FADE_FLOOR;
-  const t = (midRadius - refRadius) / (end - refRadius);
-  return 1 + (OUTER_FADE_FLOOR - 1) * t;
+export interface FadeBand {
+  /** At/inside this radius: full strength (the outermost giant). */
+  start: number;
+  /** At/outside this radius: gone (the star's outermost body). */
+  end: number;
 }
 
-/** Per-star fade reference: the orbit radius of that star's outermost
- *  gas/ice giant. A star with no giants maps to its outermost child, so
- *  regionRadialFalloff never fades anything in it. */
-function buildFadeReference(bodies: Body[]): Map<string, number> {
+/**
+ * 1.0 inside the giants, ramping to 0 by the star's OUTERMOST BODY.
+ *
+ * Anchoring the zero point to a real body — not a blind multiple of the
+ * giant's radius — is the whole fix: the previous 3.2x multiple put zero
+ * at 9600 while the farthest body (Sedna) sat at 7000, so the fade never
+ * finished and Sedna's band stayed at ~0.42. Ending exactly at the edge
+ * guarantees the deep outer system reaches zero regardless of how the
+ * system is scaled or spread.
+ *
+ * Pure and exported for testing.
+ */
+export function regionRadialFalloff(midRadius: number, band: FadeBand | undefined): number {
+  if (!band || !(band.end > band.start)) return 1;
+  if (midRadius <= band.start) return 1;
+  if (midRadius >= band.end) return 0;
+  const t = (midRadius - band.start) / (band.end - band.start);
+  return Math.pow(1 - t, OUTER_FADE_EXP);
+}
+
+/**
+ * Per-star fade band: start at that star's outermost gas/ice giant, end
+ * at its outermost body of any kind. A star with no giants gets an empty
+ * band (start === end), which regionRadialFalloff treats as "never fade"
+ * — so a giant-less far system is never touched.
+ */
+function buildFadeReference(bodies: Body[]): Map<string, FadeBand> {
   const giant = new Map<string, number>();
-  const anyChild = new Map<string, number>();
+  const outermost = new Map<string, number>();
   for (const b of bodies) {
     if (!b.parent) continue;
     const r = b.orbitRadius ?? 0;
-    if (r > (anyChild.get(b.parent) ?? 0)) anyChild.set(b.parent, r);
+    if (r > (outermost.get(b.parent) ?? 0)) outermost.set(b.parent, r);
     if ((b.type === 'gas_giant' || b.type === 'ice_giant') && r > (giant.get(b.parent) ?? 0)) {
       giant.set(b.parent, r);
     }
   }
-  const ref = new Map<string, number>();
-  for (const [star, r] of anyChild) ref.set(star, giant.get(star) ?? r);
+  const ref = new Map<string, FadeBand>();
+  for (const [star, edge] of outermost) {
+    const g = giant.get(star);
+    ref.set(star, g != null ? { start: g, end: edge } : { start: edge, end: edge });
+  }
   return ref;
 }
 
@@ -4163,7 +4176,7 @@ export function drawSystemRegions(
     // Fade the deep outer system so a lone Kuiper holding stops shouting.
     baseAlpha *= regionRadialFalloff(
       (region.shape.rInner + region.shape.rOuter) / 2,
-      fadeRef.get(region.shape.starBodyId) ?? 0,
+      fadeRef.get(region.shape.starBodyId),
     );
 
     c.save();
