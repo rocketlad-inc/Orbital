@@ -8,8 +8,7 @@ import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { loadoutSummary, countPart } from '../game/shipParts';
 import { deriveSecondary } from '../game/colorUtils';
-import { AUTO_COMBAT_INTERVAL } from '../game/combat';
-import { Body, Ship } from '../types';
+import { makeSystemRootOf, systemLabel as systemLabelOf, shipStatus } from '../game/systemGrouping';
 import { ShipIcon } from './ShipIcons';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { humanizeMpError } from '../multiplayer/errorMessages';
@@ -22,45 +21,9 @@ interface FleetPanelProps {
 
 type Filter = 'all' | 'player' | 'enemy';
 
-// Barycenter anchors orbit Sol on a fake, effectively-infinite period so
-// the "every non-root orbits something" rule holds. Any period at this
-// scale means "not a real orbit" — the real bodies top out near 1.7e4,
-// so there's no ambiguity.
-const PRETEND_ORBIT_PERIOD = 1e9;
-
-// A ship counts as "In Combat" if it fired OR took a hit within this many
-// ticks. Auto-combat resolves a volley every AUTO_COMBAT_INTERVAL ticks, so
-// 2× gives one volley of grace — the badge stays lit between salvoes of an
-// ongoing fight and clears a couple ticks after the last shot.
-const COMBAT_RECENT_TICKS = AUTO_COMBAT_INTERVAL * 2;
-
-type ShipStatus = { label: string; cls: string; title: string };
-
-// Single most-relevant status for a ship, in precedence order. A ship in
-// flight can't be in auto-combat (that only happens between hulls sharing a
-// body), so transit/combat are mutually exclusive and the ordering is safe.
-function shipStatus(ship: Ship, currentTick: number, hpRatio: number): ShipStatus {
-  if (ship.transit) {
-    // Auto-retreat fires a server-side transfer to the nearest friendly
-    // shipyard once HP falls to the threshold, so a below-threshold ship in
-    // flight is fleeing, not making a routine trip.
-    if (ship.retreatHpPct != null && hpRatio <= ship.retreatHpPct / 100) {
-      return { label: 'Retreating', cls: 'retreating', title: 'Auto-retreating to a friendly shipyard (HP below threshold)' };
-    }
-    return { label: 'In Transit', cls: 'transit', title: 'Under torch burn between bodies' };
-  }
-  const lastActive = Math.max(ship.lastCombatTick ?? -Infinity, ship.lastDamagedTick ?? -Infinity);
-  if (currentTick - lastActive <= COMBAT_RECENT_TICKS) {
-    return { label: 'In Combat', cls: 'combat', title: 'Fired or took fire in the last few ticks' };
-  }
-  if (ship.plannedTransit) {
-    return { label: 'Planned', cls: 'planned', title: 'A transfer is planned but not yet committed' };
-  }
-  if (ship.stance === 'hold') {
-    return { label: 'Holding Fire', cls: 'holding', title: 'Standing order: never fire' };
-  }
-  return { label: 'Orbiting', cls: 'orbiting', title: 'Parked in a stable orbit' };
-}
+// System grouping and ship status now live in game/systemGrouping so the
+// Outliner renders identical headers and identical status chips. They were
+// duplicated here, and the copies had already diverged.
 
 // Translucent fill from a hex colour (for faction-tinted badges).
 function hexToRgba(hex: string, alpha: number): string {
@@ -124,44 +87,15 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     return { name: ownedBy.split(':').pop() ?? ownedBy, color: '#8a9fb3', color2: deriveSecondary('#8a9fb3') };
   };
 
-  // A body roots its own star system when it orbits nothing (Sol), or
-  // when it's one of the barycenter anchors. Those anchors are pinned to
-  // Sol as a *pretend* parent with an effectively-infinite period — the
-  // body model requires every non-root to orbit something — so walking
-  // the parent chain naively would file Centauri and Cygnus under Sol.
-  // The absurd period is the marker that the link isn't a real orbit.
-  const isSystemRoot = (b: Body): boolean =>
-    !b.parent || b.orbitPeriod >= PRETEND_ORBIT_PERIOD;
+  // Planetary grouping: Titan and Enceladus file under "Saturn System",
+  // Saturn under itself. See game/systemGrouping.
+  const systemRootOf = useMemo(
+    () => makeSystemRootOf(gameState.bodies),
+    [gameState.bodies]
+  );
 
-  // Walk up to the system this body belongs to. Cycle-guarded: a bad
-  // parent chain should degrade to "own system", never hang the panel.
-  const systemRootOf = useMemo(() => {
-    const cache = new Map<string, string>();
-    return (bodyId: string): string => {
-      const hit = cache.get(bodyId);
-      if (hit) return hit;
-      const chain: string[] = [];
-      let cur = bodyById.get(bodyId);
-      const seen = new Set<string>();
-      while (cur && !isSystemRoot(cur) && !seen.has(cur.id)) {
-        seen.add(cur.id);
-        chain.push(cur.id);
-        cur = cur.parent ? bodyById.get(cur.parent) : undefined;
-      }
-      const root = cur?.id ?? bodyId;
-      for (const id of chain) cache.set(id, root);
-      cache.set(bodyId, root);
-      return root;
-    };
-  }, [bodyById]);
-
-  // "Centauri Barycenter" is the anchor's name, but the *system* is just
-  // "Centauri" — drop the bookkeeping noun for the header.
-  const systemLabel = (rootId: string): string => {
-    const root = bodyById.get(rootId);
-    if (!root) return rootId.toUpperCase();
-    return `${root.name.replace(/\s*Barycenter$/i, '')} System`;
-  };
+  const systemLabel = (rootId: string): string =>
+    systemLabelOf(gameState.bodies, rootId);
 
   const ships = useMemo(() => {
     const q = query.trim().toLowerCase();

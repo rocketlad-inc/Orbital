@@ -135,10 +135,11 @@ export const Outliner: React.FC = () => {
     [gameState.bodies],
   );
 
-  /** Tracked bodies bucketed by their star system, each bucket keeping
-   *  the existing owned-first-then-alphabetical order. Systems sort by
-   *  their most important content so the player's home system leads. */
+  /** Tracked bodies bucketed by their PLANETARY system (Jupiter + the
+   *  Galileans, Saturn + Titan), each bucket keeping the existing
+   *  owned-first-then-alphabetical order. */
   const systems = useMemo(() => {
+    const radiusOf = new Map(gameState.bodies.map(b => [b.id, b.orbitRadius ?? 0]));
     const buckets = new Map<string, typeof tracked>();
     for (const b of tracked) {
       const root = systemRootOf(b.id);
@@ -153,11 +154,12 @@ export const Outliner: React.FC = () => {
         bodies,
         owned: bodies.filter(b => b.ownedBy === 'player').length,
       }))
-      // Systems where you hold ground first, then by size, then name —
-      // so your home system heads the list instead of alphabetical luck.
+      // Systems you hold first, then outward from the sun. Ordering the
+      // rest by orbit radius keeps the list in the same mental order as
+      // the map — Earth, Mars, Jupiter — instead of alphabetical jumble.
       .sort((a, b) =>
         (b.owned - a.owned) ||
-        (b.bodies.length - a.bodies.length) ||
+        ((radiusOf.get(a.rootId) ?? 0) - (radiusOf.get(b.rootId) ?? 0)) ||
         a.label.localeCompare(b.label));
   }, [tracked, systemRootOf, gameState.bodies]);
 

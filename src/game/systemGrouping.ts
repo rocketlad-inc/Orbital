@@ -1,12 +1,17 @@
 // ============================================================
-// systemGrouping — "which star system does this body belong to", and
-// the single-most-relevant status label for a ship.
+// systemGrouping — "which PLANETARY system does this body belong to",
+// and the single-most-relevant status label for a ship.
 //
 // Extracted from FleetPanel so the Outliner shows the SAME system
 // headers and the SAME ship statuses. Two copies of this logic would
 // drift, and a hull reading "In Combat" in one panel and "Orbiting" in
 // the other is exactly the kind of contradiction that makes players
 // stop trusting the UI.
+//
+// Grouping is PLANETARY, not stellar: "Jupiter System" (Jupiter + the
+// Galileans), "Saturn System", "Earth System" (Earth + Luna). Grouping
+// by star instead puts every body in the game under one "Sol System"
+// header, which sorts nothing and tells the player nothing.
 // ============================================================
 
 import type { Body, Ship } from '../types';
@@ -18,16 +23,23 @@ import { AUTO_COMBAT_INTERVAL } from './combat';
  *  (and ~4.7e4 after the 2x system scale), so there's no ambiguity. */
 const PRETEND_ORBIT_PERIOD = 1e9;
 
-/** A body roots its own star system when it orbits nothing (Sol) or is
- *  a barycenter anchor pinned to Sol by a pretend orbit. Without the
- *  period check, walking the parent chain files Centauri and Cygnus
- *  under Sol. */
-export function isSystemRoot(b: Body): boolean {
-  return !b.parent || b.orbitPeriod >= PRETEND_ORBIT_PERIOD;
+/** A star, black hole, or barycenter anchor — the thing planets orbit.
+ *  These do NOT head a planetary system; they're the level above it. */
+export function isStellarAnchor(b: Body): boolean {
+  return !b.parent
+    || b.type === 'star'
+    || b.type === 'black_hole'
+    || b.orbitPeriod >= PRETEND_ORBIT_PERIOD;
 }
 
 /**
- * Build a memoized `bodyId -> system root id` resolver over a body list.
+ * Build a memoized `bodyId -> planetary-system root id` resolver.
+ *
+ * The root is the body one level BELOW the stellar anchor: walk up until
+ * the next step would land on a star/barycenter, and stop there. So Titan
+ * and Enceladus both root to Saturn, while Saturn roots to itself. Bodies
+ * that orbit the star directly (Ceres, lone asteroids) root to themselves.
+ *
  * Cycle-guarded: a malformed parent chain degrades to "own system"
  * rather than hanging the panel.
  */
@@ -40,10 +52,15 @@ export function makeSystemRootOf(bodies: Body[]): (bodyId: string) => string {
     const chain: string[] = [];
     let cur = byId.get(bodyId);
     const seen = new Set<string>();
-    while (cur && !isSystemRoot(cur) && !seen.has(cur.id)) {
+    // Climb while the CURRENT body still has a non-stellar parent — i.e.
+    // stop on the body whose parent is the star. Stars themselves fall
+    // straight through and root to themselves.
+    while (cur && !isStellarAnchor(cur) && !seen.has(cur.id)) {
+      const parent = cur.parent ? byId.get(cur.parent) : undefined;
+      if (!parent || isStellarAnchor(parent)) break;
       seen.add(cur.id);
       chain.push(cur.id);
-      cur = cur.parent ? byId.get(cur.parent) : undefined;
+      cur = parent;
     }
     const root = cur?.id ?? bodyId;
     for (const id of chain) cache.set(id, root);
@@ -52,12 +69,25 @@ export function makeSystemRootOf(bodies: Body[]): (bodyId: string) => string {
   };
 }
 
-/** "Centauri Barycenter" is the anchor's name, but the SYSTEM is just
- *  "Centauri" — drop the bookkeeping noun for the header. */
+/**
+ * Header for a planetary system.
+ *
+ * Only bodies that actually hold satellites get the "System" suffix —
+ * "Jupiter System" reads right because there are four moons under it,
+ * but "Midas System" for a bare asteroid is pretend grandeur for a
+ * single rock. Those show as just "Midas".
+ *
+ * A star is never a "System" either: its planets each root to themselves,
+ * so Sol's bucket contains nothing but Sol. Labelling that "Sol System"
+ * would promise the whole solar system and deliver one star.
+ */
 export function systemLabel(bodies: Body[], rootId: string): string {
   const root = bodies.find(b => b.id === rootId);
   if (!root) return rootId.toUpperCase();
-  return `${root.name.replace(/\s*Barycenter$/i, '')} System`;
+  const name = root.name.replace(/\s*Barycenter$/i, '');
+  if (isStellarAnchor(root)) return name;
+  const hasSatellites = bodies.some(b => b.parent === rootId);
+  return hasSatellites ? `${name} System` : name;
 }
 
 /** A ship counts as "In Combat" if it fired OR took a hit within this
