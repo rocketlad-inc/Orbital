@@ -9,7 +9,7 @@ import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { loadoutSummary } from '../game/shipParts';
 import { ShipIcon } from './ShipIcons';
 import { PlanetIcon } from './PlanetIcon';
-import { makeSystemRootOf, systemLabel, shipStatus } from '../game/systemGrouping';
+import { makeSystemRootOf, systemLabel, shipStatus, makeHostilesAtBody } from '../game/systemGrouping';
 import { useIsMobile } from '../hooks/useIsMobile';
 import './Outliner.css';
 
@@ -164,6 +164,13 @@ export const Outliner: React.FC = () => {
   }, [tracked, systemRootOf, gameState.bodies]);
 
   const currentTick = gameState.currentTick;
+
+  /** "In Combat" means a hostile is here NOW — computed over ALL ships and
+   *  settlements, not just the player's, since the enemy is the point. */
+  const hostilesAtBody = useMemo(
+    () => makeHostilesAtBody(gameState.ships, gameState.settlements),
+    [gameState.ships, gameState.settlements],
+  );
 
   /** Ship builds under way at a body, for the settlement rows. */
   const shipBuildsAt = (bodyId: string) =>
@@ -339,7 +346,7 @@ export const Outliner: React.FC = () => {
                     const def = getShipClass(ship.class as ShipClassName);
                     const r = hpRatio(ship);
                     const loadout = loadoutSummary(ship.parts);
-                    const status = shipStatus(ship, currentTick, r);
+                    const status = shipStatus(ship, currentTick, r, hostilesAtBody(ship.orbit.parentBodyId, ship.ownedBy));
                     return (
                       <div
                         key={ship.id}
