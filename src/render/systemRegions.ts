@@ -31,6 +31,7 @@
 // ============================================================
 
 import { Body, Faction, Settlement } from '../types';
+import { CORE_MEMBER_IDS, CORE_LABEL } from '../game/systemGrouping';
 
 /** Consecutive rubble bodies join one belt while each is within this
  *  factor of the previous orbit radius. 1.25 keeps Sol's real belts
@@ -270,6 +271,8 @@ export function computeSystemRegions(
     // the one the body already draws.
     for (const b of solitaries) {
       if (banded.has(b.id)) continue;
+      // Core members get one merged lane below, not a lane each.
+      if (CORE_MEMBER_IDS.has(b.id)) continue;
       const half = laneHalfWidth(b);
       const isPlanet = b.type === 'terrestrial' || b.type === 'gas_giant' || b.type === 'ice_giant';
       regions.push({
@@ -284,6 +287,46 @@ export function computeSystemRegions(
         },
         bodyIds: [b.id],
         ownership: ownershipOf([b], settlements, factions),
+      });
+    }
+
+    // --- The Core: Sol + Mercury + Venus as one lane ---
+    //
+    // A disc rather than an annulus (rInner 0), so the star sits INSIDE
+    // its own territory instead of in a hole at the middle of the map.
+    // Two scorched rocks and the sun aren't three separate theatres;
+    // they're the place everything else orbits.
+    //
+    // Membership is shared with the panels via CORE_MEMBER_IDS — the map
+    // and the outliner must agree on what The Core contains.
+    // The star is not among its own `orbiters`, so pull it in explicitly
+    // — "include the sun in the Core" is the whole point.
+    const planets = orbiters.filter(b => CORE_MEMBER_IDS.has(b.id));
+    const coreBodies = CORE_MEMBER_IDS.has(star.id) ? [star, ...planets] : planets;
+    if (coreBodies.length) {
+      // Outer edge follows the outermost core planet's own lane, so the
+      // Core meets its neighbour (Earth) on the same shared border the
+      // rest of the lanes use.
+      const rOuter = planets.length
+        ? Math.max(...planets.map(b => b.orbitRadius + laneHalfWidth(b)))
+        : laneHalfWidth(star);
+      // Anchor on the outermost planet: a label pinned to the star would
+      // land dead centre, on top of the sun.
+      const anchor = planets.length
+        ? planets.reduce((a, b) => (b.orbitRadius > a.orbitRadius ? b : a))
+        : star;
+      regions.push({
+        id: `core:${star.id}`,
+        label: CORE_LABEL,
+        shape: {
+          kind: 'band',
+          starBodyId: star.id,
+          rInner: 0,
+          rOuter,
+          labelAnchorBodyId: anchor.id,
+        },
+        bodyIds: coreBodies.map(b => b.id),
+        ownership: ownershipOf(coreBodies, settlements, factions),
       });
     }
   }

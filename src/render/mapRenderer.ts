@@ -3734,8 +3734,13 @@ export function systemRegionIntensity(spans: number): number {
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
 /** Grey for unowned AND contested — see systemRegions.ts for why
- *  contested deliberately isn't a second faction colour. */
-const REGION_NEUTRAL = '#7c8f9e';
+ *  contested deliberately isn't a second faction colour.
+ *
+ *  Was #7c8f9e, which is a BLUE-grey: against a blue faction it was a
+ *  coin flip whether a region was held or empty, which defeats the
+ *  entire point of a political map. Pulled to a near-neutral grey so
+ *  "nobody's" never reads as a faction colour — least of all blue. */
+const REGION_NEUTRAL = '#8c8f92';
 
 /**
  * Political shading for the zoomed-out map: one soft region per
@@ -3836,9 +3841,13 @@ function drawRegionLabel(
   const c = ctx.ctx;
   const contested = region.ownership.kind === 'contested';
   const text = region.label.toUpperCase();
+  // Unowned used to print NOTHING, so an empty region and a held one
+  // differed only by a hue you had to already know to read. Saying
+  // UNCLAIMED outright means the absence of a faction is information
+  // rather than something you squint at.
   const sub = owned
     ? (region.ownership as { factionName: string }).factionName.toUpperCase()
-    : contested ? 'CONTESTED' : '';
+    : contested ? 'CONTESTED' : 'UNCLAIMED';
 
   // Labels brighten alongside the fill — at full strength they sit on
   // near-solid colour, where the faint treatment would disappear. Text
@@ -3854,13 +3863,26 @@ function drawRegionLabel(
   c.globalAlpha = c.globalAlpha * fade;
   c.textAlign = 'center';
   c.textBaseline = 'bottom';
-  c.font = '600 10px var(--font-display, sans-serif)';
+  // Canvas2D's font parser does NOT resolve CSS var() — the whole
+  // declaration is invalid, so the assignment was silently DROPPED and
+  // these labels kept whatever font the previous draw call happened to
+  // leave set (10px monospace, same as every body label). The display
+  // face and the 600 weight never applied at all. Spelled out literally
+  // so system names actually read as a different, heavier tier than the
+  // monospace body labels around them.
+  // No font-weight: Audiowide ships a single 400 weight, so asking for
+  // bold gets a SYNTHESIZED faux-bold that smears an already-wide face
+  // (App.css .title documents the same rule). The heavier read comes
+  // from the face itself plus the size step over the 8-10px monospace
+  // body labels — Audiowide also renders visually larger per px.
+  c.font = '13px Audiowide, Orbitron, Eurostile, system-ui, sans-serif';
   c.fillStyle = withOpacity(ink, titleAlpha);
   c.fillText(text, x, y);
   if (sub) {
-    c.font = '9px var(--font-display, sans-serif)';
+    c.font = '10px Audiowide, Orbitron, Eurostile, system-ui, sans-serif';
     c.fillStyle = withOpacity(ink, subAlpha);
-    c.fillText(sub, x, y + 10);
+    // Clears the now-13px title above it.
+    c.fillText(sub, x, y + 14);
   }
   c.restore();
 }

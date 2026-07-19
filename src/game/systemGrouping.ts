@@ -32,8 +32,12 @@ const PRETEND_ORBIT_PERIOD = 1e9;
  * somewhere you actually campaign, and folding them in would bury them.
  */
 export const CORE_SYSTEM_ID = 'core';
-const CORE_MEMBER_IDS = new Set(['sol', 'mercury', 'venus']);
-const CORE_LABEL = 'The Core';
+/** Exported so the MAP's region shading (render/systemRegions) collapses
+ *  the same three bodies the panels do. Two lists would drift, and the
+ *  map disagreeing with the outliner about what "The Core" contains is
+ *  worse than not grouping at all. */
+export const CORE_MEMBER_IDS = new Set(['sol', 'mercury', 'venus']);
+export const CORE_LABEL = 'The Core';
 
 /** A star, black hole, or barycenter anchor — the thing planets orbit.
  *  These do NOT head a planetary system; they're the level above it. */
