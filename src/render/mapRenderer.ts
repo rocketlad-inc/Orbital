@@ -3906,9 +3906,11 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 /** Full strength out to the outermost giant; fully faded by this multiple
  *  of that radius. Neptune's orbit ×this lands past the Kuiper belt. */
 const OUTER_FADE_END_MULT = 3.2;
-/** Alpha floor for the deep outer system — faint, not gone, so a held
- *  outer body still reads as SOMEONE'S rather than vanishing. */
-const OUTER_FADE_FLOOR = 0.18;
+/** Alpha floor for the deep outer system. Zero: the deep outer system
+ *  gets no political wash at all, so a lone Kuiper holding can't oversell
+ *  itself — it simply isn't painted out there. The body, its label and
+ *  its owner line still draw; only the region band fades away. */
+const OUTER_FADE_FLOOR = 0;
 
 /**
  * 1.0 inside the giants, ramping to OUTER_FADE_FLOOR across the Kuiper
