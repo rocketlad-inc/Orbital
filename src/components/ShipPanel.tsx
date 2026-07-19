@@ -490,6 +490,126 @@ export const ShipPanel: React.FC = () => {
         </div>
 
         <div className="panel-body">
+          {/* Actions and standing orders lead the panel. They used to sit
+              below MANEUVER NODES / FLEET / COMBAT / DETONATOR, which meant
+              scrolling a tall panel to reach the two controls you reach for
+              most: move this ship, and tell it how to fight. */}
+          {transferError && (
+            // Server rejected this transfer. Surface inline above the
+            // maneuver buttons so the next-action UI is right next to
+            // the explanation. Click to dismiss.
+            <button
+              onClick={() => setTransferError(null)}
+              style={{
+                margin: '0 0 6px', padding: '6px 10px',
+                background: 'rgba(255, 94, 94, 0.1)',
+                border: '1px solid #ff5e5e', borderRadius: 4,
+                color: '#ff5e5e', fontSize: 10, lineHeight: 1.4,
+                fontFamily: 'inherit', textAlign: 'left',
+                cursor: 'pointer', width: '100%',
+              }}
+              title="Click to dismiss"
+            >⚠ {transferError}</button>
+          )}
+          <div className="maneuver-buttons">
+            <button
+              className="maneuver-btn"
+              onClick={() => setTargetSelectionMode(true)}
+              data-tutorial-id="ship-transfer-button"
+            >
+              {hasExistingTransfer ? '+ CHAIN MOVE' : 'MOVE TO TARGET'}
+            </button>
+            <button className="maneuver-btn" onClick={() => setTransferModalOpen(true)}>
+              CHOOSE FROM LIST
+            </button>
+          </div>
+          {mpActions && ship.ownedBy === 'player' && (
+            <div className="orders-config-section">
+              <div className="section-title">ORDERS</div>
+
+              <div className="orders-config-row">
+                <span className="orders-config-label">STANCE</span>
+                <div className="orders-stance-toggle">
+                  {(['attack', 'defensive', 'hold'] as const).map(st => (
+                    <button
+                      key={st}
+                      className={`orders-stance-btn ${currentStance === st ? 'active' : ''}`}
+                      onClick={() => applyOrders({ stance: st })}
+                      title={
+                        st === 'attack' ? 'Attack on sight: engage hostiles in range.'
+                        : st === 'defensive' ? 'Defensive: return fire only.'
+                        : 'Hold fire: never fires. Still takes damage.'
+                      }
+                    >
+                      {st === 'attack' ? 'ATTACK' : st === 'defensive' ? 'DEFEND' : 'HOLD'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="orders-config-row">
+                <span className="orders-config-label">RETREAT AT</span>
+                <select
+                  className="orders-config-select"
+                  value={ship.retreatHpPct ?? ''}
+                  onChange={e => applyOrders({
+                    retreatHpPct: e.target.value
+                      ? (Number(e.target.value) as 25 | 50 | 75)
+                      : null,
+                  })}
+                >
+                  <option value="">OFF</option>
+                  <option value="25">25% HP</option>
+                  <option value="50">50% HP</option>
+                  <option value="75">75% HP</option>
+                </select>
+              </div>
+              <div className="orders-config-hint">
+                Auto-transfer to the nearest friendly shipyard station when HP
+                drops below the threshold. Fires once per damage episode.
+              </div>
+
+              {/* Detonator-only. The row used to render on every hull with
+                  a "no effect without a detonator part" disclaimer — a live
+                  control that does nothing, on most of the fleet, explaining
+                  its own uselessness. Gate it the same way the manual
+                  DetonatorSection above already does, so the setting only
+                  appears where it can actually fire. */}
+              {countPart(ship.parts, 'detonator') > 0 && (
+                <>
+                  <div className="orders-config-row">
+                    <span className="orders-config-label">AUTO-DETONATE</span>
+                    <select
+                      className="orders-config-select"
+                      value={ship.detonateHpPct ?? ''}
+                      onChange={e => applyOrders({
+                        detonateHpPct: e.target.value
+                          ? (Number(e.target.value) as 25 | 50)
+                          : null,
+                      })}
+                    >
+                      <option value="">OFF</option>
+                      <option value="25">25% HP</option>
+                      <option value="50">50% HP</option>
+                    </select>
+                  </div>
+                  <div className="orders-config-hint orders-config-hint--danger">
+                    Auto-detonate below {ship.detonateHpPct ?? 'X'}% HP: deals
+                    damage to every ship in this orbit, friend or foe; this
+                    ship is destroyed.
+                  </div>
+                </>
+              )}
+
+              {ordersError && (
+                <button
+                  onClick={() => setOrdersError(null)}
+                  className="orders-config-error"
+                  title="Click to dismiss"
+                >⚠ {ordersError}</button>
+              )}
+            </div>
+          )}
           <div className="ship-stats" data-tutorial-id="ship-stats">
             <div className="stat-row">
               <span className="label">CLASS</span>
@@ -897,123 +1017,7 @@ export const ShipPanel: React.FC = () => {
             />
           )}
 
-          {mpActions && ship.ownedBy === 'player' && (
-            <div className="orders-config-section">
-              <div className="section-title">ORDERS</div>
 
-              <div className="orders-config-row">
-                <span className="orders-config-label">STANCE</span>
-                <div className="orders-stance-toggle">
-                  {(['attack', 'defensive', 'hold'] as const).map(st => (
-                    <button
-                      key={st}
-                      className={`orders-stance-btn ${currentStance === st ? 'active' : ''}`}
-                      onClick={() => applyOrders({ stance: st })}
-                      title={
-                        st === 'attack' ? 'Attack on sight: engage hostiles in range.'
-                        : st === 'defensive' ? 'Defensive: return fire only.'
-                        : 'Hold fire: never fires. Still takes damage.'
-                      }
-                    >
-                      {st === 'attack' ? 'ATTACK' : st === 'defensive' ? 'DEFEND' : 'HOLD'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="orders-config-row">
-                <span className="orders-config-label">RETREAT AT</span>
-                <select
-                  className="orders-config-select"
-                  value={ship.retreatHpPct ?? ''}
-                  onChange={e => applyOrders({
-                    retreatHpPct: e.target.value
-                      ? (Number(e.target.value) as 25 | 50 | 75)
-                      : null,
-                  })}
-                >
-                  <option value="">OFF</option>
-                  <option value="25">25% HP</option>
-                  <option value="50">50% HP</option>
-                  <option value="75">75% HP</option>
-                </select>
-              </div>
-              <div className="orders-config-hint">
-                Auto-transfer to the nearest friendly shipyard station when HP
-                drops below the threshold. Fires once per damage episode.
-              </div>
-
-              {/* Detonator-only. The row used to render on every hull with
-                  a "no effect without a detonator part" disclaimer — a live
-                  control that does nothing, on most of the fleet, explaining
-                  its own uselessness. Gate it the same way the manual
-                  DetonatorSection above already does, so the setting only
-                  appears where it can actually fire. */}
-              {countPart(ship.parts, 'detonator') > 0 && (
-                <>
-                  <div className="orders-config-row">
-                    <span className="orders-config-label">AUTO-DETONATE</span>
-                    <select
-                      className="orders-config-select"
-                      value={ship.detonateHpPct ?? ''}
-                      onChange={e => applyOrders({
-                        detonateHpPct: e.target.value
-                          ? (Number(e.target.value) as 25 | 50)
-                          : null,
-                      })}
-                    >
-                      <option value="">OFF</option>
-                      <option value="25">25% HP</option>
-                      <option value="50">50% HP</option>
-                    </select>
-                  </div>
-                  <div className="orders-config-hint orders-config-hint--danger">
-                    Auto-detonate below {ship.detonateHpPct ?? 'X'}% HP: deals
-                    damage to every ship in this orbit, friend or foe; this
-                    ship is destroyed.
-                  </div>
-                </>
-              )}
-
-              {ordersError && (
-                <button
-                  onClick={() => setOrdersError(null)}
-                  className="orders-config-error"
-                  title="Click to dismiss"
-                >⚠ {ordersError}</button>
-              )}
-            </div>
-          )}
-
-          {transferError && (
-            // Server rejected this transfer. Surface inline above the
-            // maneuver buttons so the next-action UI is right next to
-            // the explanation. Click to dismiss.
-            <button
-              onClick={() => setTransferError(null)}
-              style={{
-                margin: '0 0 6px', padding: '6px 10px',
-                background: 'rgba(255, 94, 94, 0.1)',
-                border: '1px solid #ff5e5e', borderRadius: 4,
-                color: '#ff5e5e', fontSize: 10, lineHeight: 1.4,
-                fontFamily: 'inherit', textAlign: 'left',
-                cursor: 'pointer', width: '100%',
-              }}
-              title="Click to dismiss"
-            >⚠ {transferError}</button>
-          )}
-          <div className="maneuver-buttons">
-            <button
-              className="maneuver-btn"
-              onClick={() => setTargetSelectionMode(true)}
-              data-tutorial-id="ship-transfer-button"
-            >
-              {hasExistingTransfer ? '+ CHAIN' : 'TRANSFER'}
-            </button>
-            <button className="maneuver-btn" onClick={() => setTransferModalOpen(true)}>
-              SHOW LIST
-            </button>
-          </div>
         </div>
       </div>
       </BottomSheet>
@@ -1022,7 +1026,7 @@ export const ShipPanel: React.FC = () => {
         <TransferTargetPicker
           bodies={gameState.bodies}
           excludeBodyId={ship.orbit.parentBodyId}
-          title={hasExistingTransfer ? 'Chain Transfer To' : 'Select Transfer Target'}
+          title={hasExistingTransfer ? 'Chain Move To' : 'Move To Target'}
           onPick={(id) => handleTransferManeuver(id)}
           onClose={() => setTransferModalOpen(false)}
         />
