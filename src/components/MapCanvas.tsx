@@ -36,6 +36,7 @@ import {
   trajectoryRole,
   bodyLabelAlwaysOn,
   planBodyLabels,
+  BODY_LABEL_ROW_HEIGHT,
 } from '../render/mapRenderer';
 import { computeSystemRegions } from '../render/systemRegions';
 import { BUILDING_DEFS, buildingLevel } from '../game/settlements';
@@ -759,16 +760,23 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     }
 
     // Body-label collision plan. A body's name draws at a fixed offset
-    // below its dot with no horizontal awareness of its neighbours, so
-    // close pairs (Mercury/Venus at low zoom, five co-orbital Belt
-    // rocks) printed on top of each other. Pre-pass over every body that
-    // WILL show a label this frame (same gate drawBody itself uses),
-    // measure its box, and let planBodyLabels stagger contenders onto
-    // rows below their own body — never sideways, never hidden. Read-only
-    // against the explored/coverage state (the loop below still owns the
-    // one mutation that marks a body explored) so this can run first
-    // without disturbing that bookkeeping.
-    const bodyLabelCandidates: Array<{ id: string; x: number; y: number; width: number; priority: number }> = [];
+    // below its dot with no awareness of its neighbours, so close pairs
+    // (Mercury/Venus at low zoom, five co-orbital Belt rocks) printed on
+    // top of each other. Pre-pass over every body that WILL show a label
+    // this frame (same gate drawBody itself uses), measure its box, and
+    // let planBodyLabels stagger contenders onto rows above OR below
+    // their own body — whichever direction is actually clear, never
+    // sideways, never hidden, never far. (An earlier below-only version
+    // let a crowded label walk downward across the whole system — Phobos
+    // ended up over near Earth — even when the space directly above its
+    // own body was empty the whole time.) Read-only against the
+    // explored/coverage state (the loop below still owns the one
+    // mutation that marks a body explored) so this can run first without
+    // disturbing that bookkeeping.
+    const bodyLabelCandidates: Array<{
+      id: string; x: number; belowAnchor: number; aboveAnchor: number;
+      width: number; priority: number;
+    }> = [];
     for (const body of gameState.bodies) {
       if (body.destroyedAtTick != null) continue;
       if (!(bodyLabelAlwaysOn(body) || renderContext.camera.scale > 0.4)) continue;
@@ -794,10 +802,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const hasYieldRow = !!body.resources && yieldsVisible
         && (body.resources.metal > 0 || body.resources.gold > 0 || body.resources.science > 0);
       const width = Math.max(nameWidth, hasYieldRow ? 64 : 0);
+      // Must exactly match the anchors drawBody derives internally
+      // (same radius, same +/-14 gap, same row height) — see
+      // bodyLabelRowTop — or the reserved box and the painted text
+      // disagree.
       bodyLabelCandidates.push({
         id: body.id,
         x: cp.x,
-        y: cp.y + radius + 14,
+        belowAnchor: cp.y + radius + 14,
+        aboveAnchor: cp.y - radius - 14 - BODY_LABEL_ROW_HEIGHT,
         width,
         priority,
       });

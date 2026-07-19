@@ -1430,43 +1430,79 @@ export function bodyLabelAlwaysOn(body: Body): boolean {
 export const BODY_LABEL_ROW_HEIGHT = 26;
 
 /**
- * Assign each candidate body label a vertical "row" (0, 1, 2…) below its
- * body so that dense clusters — Mercury/Venus at low zoom, five co-orbital
- * Belt rocks, a knot of moons — stagger downward instead of printing on
- * top of each other. A label never moves horizontally or hides; it only
- * drops to the next row down until it clears every higher-priority label
- * already placed. Rows are a fixed height regardless of whether a body's
- * own content (name only vs. name + yield tokens) fills it, so two labels
- * on different rows can never collide no matter their content.
+ * How far a label may stagger from its own body, in rows either
+ * direction. Bounded deliberately: an earlier, downward-only version let
+ * a crowded label (Phobos, boxed in by Mars/Deimos/a ship's transit
+ * label) walk all the way down to row 7+ — 180+ screen px away, past
+ * Earth into a different part of the system — while the SAME body had
+ * open space directly above it the whole time. A label that far from its
+ * dot doesn't read as belonging to it. ±4 rows (~100px either way) keeps
+ * a label legible and near its target even when it has to move at all.
+ */
+const BODY_LABEL_MAX_ROWS = 4;
+
+/**
+ * Y (canvas, top-of-box) for a signed row. Row 0 and positive rows stack
+ * DOWN from `belowAnchor` (a body's normal position, just under its dot);
+ * negative rows stack UP from `aboveAnchor` (the mirror-image gap just
+ * above the dot). Letting a crowded label go either way — rather than
+ * only ever retreating downward — is what keeps it near its body instead
+ * of marching off toward whatever's below it.
+ */
+function bodyLabelRowTop(belowAnchor: number, aboveAnchor: number, row: number): number {
+  return row >= 0
+    ? belowAnchor + row * BODY_LABEL_ROW_HEIGHT
+    : aboveAnchor + (row + 1) * BODY_LABEL_ROW_HEIGHT;
+}
+
+/**
+ * Assign each candidate body label a signed row (0 = default position
+ * just below the body; negative = above; positive = further below) so
+ * that dense clusters — Mercury/Venus at low zoom, five co-orbital Belt
+ * rocks, a knot of moons — stagger apart instead of printing on top of
+ * each other. Tries the body's own default spot first, then alternates
+ * out from it (-1, +1, -2, +2, …) up to BODY_LABEL_MAX_ROWS in EITHER
+ * direction, so a label only ever moves as far as it has to and takes
+ * whichever side actually has room. A label never moves horizontally
+ * and never hides. Rows are a fixed height regardless of whether a
+ * body's own content (name only vs. name + yield tokens) fills it, so
+ * two labels on different rows can never collide no matter their content.
  *
- * Priority decides who gets row 0 when several bodies contend for the
- * same spot: selected > hovered > owned-by-player > owned-by-anyone >
- * always-on (star/black hole/direct sol child) > everything else. Ties
+ * Priority decides who gets the default spot when several bodies
+ * contend for it: selected > hovered > owned-by-player > owned-by-anyone
+ * > always-on (star/black hole/direct sol child) > everything else. Ties
  * break on id so placement is stable frame to frame.
  *
- * If a body still collides with something at every row up to MAX_ROWS
- * (a pathological cluster), it takes the row with the LEAST overlap
- * rather than piling everything onto row 0 — same "least-bad" fallback
- * chooseRegionLabelPos uses.
+ * If a body still collides with something at every row within the
+ * bound (a pathological cluster), it takes the row with the LEAST
+ * overlap rather than piling everything onto row 0 — same "least-bad"
+ * fallback chooseRegionLabelPos uses. That fallback is itself bounded to
+ * the same ±BODY_LABEL_MAX_ROWS window, so even a crowded label never
+ * drifts further than a screenful of the body it names.
  *
  * Pure and exported so placement can be tested without a canvas.
  */
 export function planBodyLabels(
-  candidates: Array<{ id: string; x: number; y: number; width: number; priority: number }>,
+  candidates: Array<{
+    id: string; x: number; belowAnchor: number; aboveAnchor: number;
+    width: number; priority: number;
+  }>,
 ): Map<string, number> {
-  const MAX_ROWS = 10;
   const placed: LabelRect[] = [];
   const order = candidates
     .slice()
     .sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
   const result = new Map<string, number>();
+  // 0, -1, +1, -2, +2, … — nearest-to-the-body first, both directions.
+  const rowSequence: number[] = [0];
+  for (let k = 1; k <= BODY_LABEL_MAX_ROWS; k++) rowSequence.push(-k, k);
   for (const c of order) {
     let bestRow = 0;
     let bestCost = Infinity;
-    for (let row = 0; row <= MAX_ROWS; row++) {
+    for (const row of rowSequence) {
       const rect: LabelRect = {
         x: c.x - c.width / 2,
-        y: c.y + row * BODY_LABEL_ROW_HEIGHT,
+        y: bodyLabelRowTop(c.belowAnchor, c.aboveAnchor, row),
         w: c.width,
         h: BODY_LABEL_ROW_HEIGHT,
       };
@@ -1481,7 +1517,7 @@ export function planBodyLabels(
     }
     placed.push({
       x: c.x - c.width / 2,
-      y: c.y + bestRow * BODY_LABEL_ROW_HEIGHT,
+      y: bodyLabelRowTop(c.belowAnchor, c.aboveAnchor, bestRow),
       w: c.width,
       h: BODY_LABEL_ROW_HEIGHT,
     });
@@ -1558,10 +1594,14 @@ export function drawBody(
   // always-on rule as stars so "CYGNUS X" stays readable when the
   // player is pulled all the way out hunting for the far systems.
   const alwaysShowLabel = bodyLabelAlwaysOn(body);
-  // Rows stagger straight down from the body's normal anchor, so a
-  // collision only ever pushes a label further from ITS OWN body —
-  // never sideways onto a neighbour's territory.
-  const rowOffset = labelRow * BODY_LABEL_ROW_HEIGHT;
+  // Rows stagger up OR down from the body's own two anchors (never
+  // sideways, never onto a neighbour's territory) — see
+  // bodyLabelRowTop. Mirrors exactly what MapCanvas's planBodyLabels
+  // pre-pass computed these same two anchors as, so the reserved
+  // collision box and the actually-painted text always agree.
+  const belowAnchor = canvasPos.y + radius + 14;
+  const aboveAnchor = canvasPos.y - radius - 14 - BODY_LABEL_ROW_HEIGHT;
+  const rowTop = bodyLabelRowTop(belowAnchor, aboveAnchor, labelRow);
   if (alwaysShowLabel || ctx.camera.scale > 0.4) {
     // Zoom-gated labels fade in over 150ms (§E7) instead of popping at
     // the 0.4-scale threshold. Always-on labels skip the bookkeeping.
@@ -1582,7 +1622,7 @@ export function drawBody(
     ctx.ctx.font = '10px monospace';
     ctx.ctx.textAlign = 'center';
     ctx.ctx.textBaseline = 'top';
-    ctx.ctx.fillText(body.name.toUpperCase(), canvasPos.x, canvasPos.y + radius + 14 + rowOffset);
+    ctx.ctx.fillText(body.name.toUpperCase(), canvasPos.x, rowTop);
 
     // Neptune's-Pride-style yield readout under the name. Each token
     // is color-coded to the resource pill (ore silver, credits gold,
@@ -1603,7 +1643,7 @@ export function drawBody(
       if (tokens.length > 0) {
         ctx.ctx.font = '9px monospace';
         ctx.ctx.textBaseline = 'top';
-        const baseY = canvasPos.y + radius + 26 + rowOffset; // name sits at +14 in a 10px font; this lines up just below
+        const baseY = rowTop + 12; // name sits at rowTop in a 10px font; this lines up just below it
         const gap = 4;
         // Measure total width to center the row.
         let totalW = 0;
