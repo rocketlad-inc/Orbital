@@ -3915,8 +3915,17 @@ export function drawSystemRegions(
         }
         // Measured, not guessed — "URANUS SYSTEM" needs far more room
         // than "THE CORE", and the search has to know the real box.
+        //
+        // BOTH lines, not just the title: the owner line ("CONFEDERACY
+        // OF INDEPENDENT SYSTEMS") is routinely twice the title's width,
+        // so reserving only the title left the wider line overhanging on
+        // both sides — which is exactly what was colliding with the
+        // neighbouring regions' labels and with body names.
         c.font = REGION_TITLE_FONT;
-        const labelWidth = c.measureText(region.label.toUpperCase()).width;
+        const titleWidth = c.measureText(region.label.toUpperCase()).width;
+        c.font = REGION_SUB_FONT;
+        const subWidth = c.measureText(regionSubText(region, owned)).width;
+        const labelWidth = Math.max(titleWidth, subWidth);
         const spot = chooseRegionLabelPos({
           cx: cp.x, cy: cp.y,
           mid, rInner: rIn, rOuter: rOut,
@@ -3933,6 +3942,18 @@ export function drawSystemRegions(
   }
 }
 
+/**
+ * Second line under a region's name. Shared by the collision measurement
+ * and the draw so the reserved box and the painted text can never
+ * disagree — measuring only the title was why "CONFEDERACY OF
+ * INDEPENDENT SYSTEMS" (34 chars) overhung a box sized for "JUPITER
+ * SYSTEM" (14) and collided with everything around it.
+ */
+function regionSubText(region: SystemRegion, owned: boolean): string {
+  if (owned) return (region.ownership as { factionName: string }).factionName.toUpperCase();
+  return region.ownership.kind === 'contested' ? 'CONTESTED' : 'UNCLAIMED';
+}
+
 /** Region name, plus the owner when a single faction holds it all. */
 function drawRegionLabel(
   region: SystemRegion,
@@ -3945,15 +3966,12 @@ function drawRegionLabel(
   intensity: number,
 ) {
   const c = ctx.ctx;
-  const contested = region.ownership.kind === 'contested';
   const text = region.label.toUpperCase();
   // Unowned used to print NOTHING, so an empty region and a held one
   // differed only by a hue you had to already know to read. Saying
   // UNCLAIMED outright means the absence of a faction is information
   // rather than something you squint at.
-  const sub = owned
-    ? (region.ownership as { factionName: string }).factionName.toUpperCase()
-    : contested ? 'CONTESTED' : 'UNCLAIMED';
+  const sub = regionSubText(region, owned);
 
   // Labels brighten alongside the fill — at full strength they sit on
   // near-solid colour, where the faint treatment would disappear. Text
