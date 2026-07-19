@@ -91,71 +91,107 @@ export interface SystemRegion {
   ownership: RegionOwnership;
 }
 
+/** A political claim: some faction has a live settlement on this body.
+ *  MP feeds these from the server's fog-FREE settlement_claims summary;
+ *  SP derives them from its (never-fogged) settlements array. */
+export interface SettlementClaim {
+  bodyId: string;
+  ownedBy: string;
+}
+
 /**
- * Ownership is derived from LIVE SETTLEMENTS in the region — who has
- * boots on the ground — rather than the server's `owner_faction_id`
- * on the body. Two reasons:
+ * Ownership rule: WHOEVER HOLDS THE MAJORITY OF CLAIMED WORLDS IN THE
+ * REGION OWNS IT.
  *
- *   1. Matches the mental model. A player who has ships parked at a
- *      body but no settlement doesn't own it; a player whose
- *      settlement was just destroyed doesn't own it either. Settlement
- *      presence is the concrete, verifiable claim.
+ * Per body, the claimant is the sole faction with settlements there; a
+ * body shared by two factions (city captured, rival station overhead)
+ * is politically torn and counts toward nobody. Then, across the
+ * region's claimed bodies: a strict majority (> half) names the owner,
+ * a tie reads CONTESTED, zero claims reads UNCLAIMED. So four colonies
+ * against a rival's one still paint the belt your color — minority
+ * presence doesn't veto the map, it just dilutes it toward CONTESTED
+ * as it approaches parity.
  *
- *   2. Immune to stale `owner_faction_id`. That column is
- *      server-derived from settlement counts, but any missed
- *      recompute (a code path that destroys settlements without
- *      calling recomputeBodyOwnership) would leave the wrong owner
- *      showing forever. Playtester report (2026-07-19): a system was
- *      showing attributed to another faction even though only Sean's
- *      faction had settlements in it. Reading settlements directly
- *      makes that class of bug non-representable.
+ * Claims — not the server's `owner_faction_id` column, and not the
+ * fogged settlements list:
+ *
+ *   1. Settlement presence is the concrete, verifiable claim, immune
+ *      to stale server-side ownership recomputes.
+ *
+ *   2. The claims feed is fog-FREE by design. Region ownership is the
+ *      political map, and borders are common knowledge — without this,
+ *      any system outside sensor range read UNCLAIMED even when a
+ *      rival visibly runs seven colonies there (playtest report
+ *      2026-07-19, Asteroid Belt). What fog still hides is everything
+ *      else about those settlements: hp, buildings, stockpiles.
  */
 function ownershipOf(
   members: Body[],
-  settlements: Settlement[] | undefined,
+  claims: SettlementClaim[] | undefined,
   factions: Faction[] | undefined,
 ): RegionOwnership {
-  const owners = new Set<string>();
   const bodyIds = new Set(members.map(b => b.id));
-  // Settlement owners, bucketed PER BODY so the fallback below can ask
-  // "does anyone have boots on this particular rock?"
-  const settledBy = new Map<string, Set<string>>();
-  if (settlements) {
-    for (const s of settlements) {
-      if (!bodyIds.has(s.bodyId) || !s.ownedBy) continue;
-      let set = settledBy.get(s.bodyId);
-      if (!set) { set = new Set(); settledBy.set(s.bodyId, set); }
-      set.add(s.ownedBy);
-      owners.add(s.ownedBy);
+  // body -> set of factions with a live settlement on it
+  const perBody = new Map<string, Set<string>>();
+  if (claims) {
+    for (const cl of claims) {
+      if (!bodyIds.has(cl.bodyId) || !cl.ownedBy) continue;
+      let set = perBody.get(cl.bodyId);
+      if (!set) perBody.set(cl.bodyId, (set = new Set()));
+      set.add(cl.ownedBy);
     }
   }
-  // Per-body fallback to the server's own ownership column, used ONLY
-  // for bodies where nobody has a visible settlement.
-  //
-  // Settlement presence stays authoritative wherever it exists, so the
-  // stale-owner bug this function was written to dodge (a system
-  // credited to a faction that no longer had anything there) still
-  // can't happen — a live settlement always outvotes the column.
-  //
-  // But it left holdings invisible when the claim ISN'T a settlement the
-  // client can see. The star is the case in hand: you hold Sol, and The
-  // Core read UNCLAIMED because the check only ever looked at
-  // settlements. Reading the body's own owner where no settlement is
-  // known closes that without weakening the rule.
+  // Per-body fallback to the body's own ownership column, ONLY where no
+  // settlement claim exists. The claims feed (fog-free, game-wide)
+  // covers every settlement, so this catches just the exotic case of a
+  // body the server credits to a faction without a settlement behind it
+  // — the upstream motivating example was a held star. A live claim
+  // always outvotes the column, so the stale-owner bug this function
+  // was originally written to dodge stays non-representable.
   for (const b of members) {
-    if (settledBy.has(b.id)) continue;
-    if (b.ownedBy) owners.add(b.ownedBy);
+    if (perBody.has(b.id)) continue;
+    if (b.ownedBy) perBody.set(b.id, new Set([b.ownedBy]));
   }
-  if (owners.size === 0) return { kind: 'unowned' };
-  if (owners.size > 1) return { kind: 'contested', factionIds: Array.from(owners) };
-  const id = Array.from(owners)[0];
-  const f = factions?.find(x => x.id === id);
-  return {
-    kind: 'exclusive',
-    factionId: id,
-    color: f?.color ?? '#8a9fb3',
-    factionName: f?.name ?? 'Unknown',
-  };
+  if (perBody.size === 0) return { kind: 'unowned' };
+
+  // Worlds per sole claimant. Shared bodies count toward nobody but DO
+  // count toward the claimed total, so planting a station on a rival's
+  // world erodes their majority rather than being invisible.
+  const worldsByFaction = new Map<string, number>();
+  let claimedWorlds = 0;
+  const everyone = new Set<string>();
+  for (const owners of perBody.values()) {
+    claimedWorlds++;
+    for (const f of owners) everyone.add(f);
+    if (owners.size === 1) {
+      const f = owners.values().next().value as string;
+      worldsByFaction.set(f, (worldsByFaction.get(f) ?? 0) + 1);
+    }
+  }
+
+  let leader: string | null = null;
+  let leaderWorlds = 0;
+  for (const [f, n] of worldsByFaction) {
+    if (n > leaderWorlds) { leader = f; leaderWorlds = n; }
+  }
+  if (leader && leaderWorlds * 2 > claimedWorlds) {
+    const f = factions?.find(x => x.id === leader);
+    return {
+      kind: 'exclusive',
+      factionId: leader,
+      color: f?.color ?? '#8a9fb3',
+      factionName: f?.name ?? 'Unknown',
+    };
+  }
+  return { kind: 'contested', factionIds: Array.from(everyone) };
+}
+
+/** Bridge for callers that only have settlements (SP): every live
+ *  settlement is a claim. */
+export function claimsFromSettlements(settlements: Settlement[] | undefined): SettlementClaim[] {
+  return (settlements ?? [])
+    .filter(s => !!s.ownedBy)
+    .map(s => ({ bodyId: s.bodyId, ownedBy: s.ownedBy as string }));
 }
 
 /** Rubble — the only things that form belts. */
@@ -172,7 +208,11 @@ export function computeSystemRegions(
   bodies: Body[],
   factions?: Faction[],
   settlements?: Settlement[],
+  /** Fog-free claims (MP). Omitted → derived from `settlements` (SP,
+   *  where nothing is fogged anyway). */
+  claims?: SettlementClaim[],
 ): SystemRegion[] {
+  const claimList = claims && claims.length > 0 ? claims : claimsFromSettlements(settlements);
   const alive = bodies.filter(b => b.destroyedAtTick == null);
   const childrenOf = new Map<string, Body[]>();
   for (const b of alive) {
@@ -234,7 +274,7 @@ export function computeSystemRegions(
           labelAnchorBodyId: b.id,
         },
         bodyIds: members.map(m => m.id),
-        ownership: ownershipOf(members, settlements, factions),
+        ownership: ownershipOf(members, claimList, factions),
       });
     }
 
@@ -285,7 +325,7 @@ export function computeSystemRegions(
           labelAnchorBodyId: cluster[Math.floor(cluster.length / 2)].id,
         },
         bodyIds: cluster.map(b => b.id),
-        ownership: ownershipOf(cluster, settlements, factions),
+        ownership: ownershipOf(cluster, claimList, factions),
       });
     }
 
@@ -312,7 +352,7 @@ export function computeSystemRegions(
           labelAnchorBodyId: b.id,
         },
         bodyIds: [b.id],
-        ownership: ownershipOf([b], settlements, factions),
+        ownership: ownershipOf([b], claimList, factions),
       });
     }
 
@@ -352,7 +392,7 @@ export function computeSystemRegions(
           labelAnchorBodyId: anchor.id,
         },
         bodyIds: coreBodies.map(b => b.id),
-        ownership: ownershipOf(coreBodies, settlements, factions),
+        ownership: ownershipOf(coreBodies, claimList, factions),
       });
     }
   }

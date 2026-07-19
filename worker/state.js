@@ -652,6 +652,23 @@ async function handleGetState(req, env, ctx) {
     .bind(gameId, presenceFactionIds, sensorVisibleBodyIds)
     .all()).results ?? [];
 
+  // Fog-FREE political summary: which bodies carry whose settlements.
+  // Deliberately unfiltered, unlike the settlements list above — the
+  // political map is common knowledge, the way national borders are.
+  // Without this, any system outside your sensor range read UNCLAIMED
+  // on the map even when a rival visibly runs seven colonies there
+  // (playtest report 2026-07-19). Ownership is the ONLY thing leaked:
+  // no hp, population, buildings, stockpiles, or orbits ride along —
+  // scouting those still requires actual sensor coverage.
+  const settlement_claims = (await env.DB
+    .prepare(
+      `SELECT DISTINCT body_id, owner_faction_id
+         FROM game_settlements
+        WHERE game_id = ? AND destroyed_at_tick IS NULL`,
+    )
+    .bind(gameId)
+    .all()).results ?? [];
+
   // Host flag for the EventLog flavor-edit gate. game.id === room.id.
   const hostRow = await env.DB
     .prepare('SELECT host_id FROM rooms WHERE id = ?')
@@ -840,6 +857,7 @@ async function handleGetState(req, env, ctx) {
     bodies,
     ships,
     settlements,
+    settlement_claims,
     nodes,
     events,
     build_queue: buildQueue,

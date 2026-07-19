@@ -545,7 +545,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // Structure-derived, so it costs a pass over the body list — skipped
     // entirely once we're zoomed past the overlay's fade-out.
     const systemRegions = regionFade > 0
-      ? computeSystemRegions(gameState.bodies, gameState.factions, gameState.settlements)
+      ? computeSystemRegions(
+          gameState.bodies, gameState.factions, gameState.settlements,
+          // MP: fog-free claims so political borders show even where
+          // sensors don't reach. SP leaves this undefined and the
+          // (unfogged) settlements list serves the same role.
+          gameState.settlementClaims,
+        )
       : [];
 
     // Starfield backdrop — regenerate if canvas dimensions changed

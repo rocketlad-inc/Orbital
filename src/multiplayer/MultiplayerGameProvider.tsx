@@ -190,6 +190,9 @@ interface ServerState {
     retreat_hp_pct?: number | null;
     detonate_hp_pct?: number | null;
   }>;
+  /** Fog-free political summary: every live settlement's body + owner,
+   *  game-wide. Ownership only — no stats ride along. */
+  settlement_claims?: Array<{ body_id: string; owner_faction_id: string }>;
   settlements?: Array<{
     id: string;
     body_id: string;
@@ -1305,6 +1308,10 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     resources: { [PLAYER_TOKEN]: playerRes },
     factionTech: { [PLAYER_TOKEN]: playerTech },
     gatingEnabled: (srv.game.gating_enabled ?? 0) === 1,
+    settlementClaims: (srv.settlement_claims ?? []).map(c => ({
+      bodyId: stripGameId(c.body_id) ?? c.body_id,
+      ownedBy: c.owner_faction_id === callerFactionId ? PLAYER_TOKEN : c.owner_faction_id,
+    })),
     tradeDeliveries: (srv.me.trade_deliveries ?? []).map(d => ({
       id: d.id, tradeId: d.trade_id,
       senderFactionId: d.sender_faction_id, recipientFactionId: d.recipient_faction_id,
