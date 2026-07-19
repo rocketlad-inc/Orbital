@@ -21,6 +21,7 @@ import {
   ShipPartId, ALL_PART_IDS, SHIP_PART_DEFS, SHIP_SLOT_COUNTS,
   sanitizeParts, computeDesignStats, partsCost, countPart,
   detonatorDamage, detonatorDisclosure, SERVER_HULL_BASE, PART_GLYPH,
+  damageProfile,
 } from '../game/shipParts';
 import {
   ShipIcon, ShipIconVariant, ALL_VARIANTS, ICON_VARIANT_NAMES, DEFAULT_SHIP_ICONS,
@@ -168,6 +169,34 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   const bare = computeDesignStats(activeClass, [], {});
   const draftCost = partsCost(draftParts);
   const nDetonators = countPart(draftParts, 'detonator');
+
+  // Combat-profile readout: what this hull deals and what it shrugs off,
+  // so the counter-matrix is legible at design time. Bare/weaponless
+  // hulls fire kinetic by default (matches the combat resolver).
+  const nKinetic = countPart(draftParts, 'kinetic');
+  const nEnergy = countPart(draftParts, 'energy');
+  const nShields = countPart(draftParts, 'shield');
+  const nArmor = countPart(draftParts, 'armor');
+  const prof = damageProfile(draftParts);
+  const dmgTypeLabel = nKinetic + nEnergy === 0
+    ? '⚔ Kinetic (bare)'
+    : nEnergy === 0 ? '⚔ Kinetic'
+    : nKinetic === 0 ? '⚡ Energy'
+    : `⚔ ${Math.round(prof.kinetic * 100)}% / ⚡ ${Math.round(prof.energy * 100)}%`;
+  const defLabel = nShields === 0 && nArmor === 0
+    ? 'Unshielded'
+    : [nShields > 0 ? `🛡×${nShields} vs kinetic` : '', nArmor > 0 ? `🪨×${nArmor} vs energy` : '']
+        .filter(Boolean).join(' · ');
+  // One-line tactical read of the matchup this build wins/loses.
+  const matchupHint = (() => {
+    const parts: string[] = [];
+    if (nEnergy > 0 && nKinetic === 0) parts.push('Strong vs shielded targets; weak vs armored.');
+    else if (nKinetic > 0 && nEnergy === 0) parts.push('Strong vs armored targets; weak vs shielded.');
+    else if (nKinetic > 0 && nEnergy > 0) parts.push('Mixed guns — no hard counter, no hard weakness.');
+    if (nShields > 0 && nArmor === 0) parts.push('Vulnerable to energy.');
+    else if (nArmor > 0 && nShields === 0) parts.push('Vulnerable to kinetic.');
+    return parts.join(' ');
+  })();
   const detDamage = detonatorDamage(stats.hp, nDetonators, techLevels.weapons ?? 0);
 
   const refresh = async () => {
@@ -559,6 +588,14 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
               </div>
             </div>
             <div className="ship-designer__stat">
+              <div className="ship-designer__stat-label">Damage type</div>
+              <div className="ship-designer__stat-value">{dmgTypeLabel}</div>
+            </div>
+            <div className="ship-designer__stat">
+              <div className="ship-designer__stat-label">Defense</div>
+              <div className="ship-designer__stat-value">{defLabel}</div>
+            </div>
+            <div className="ship-designer__stat">
               <div className="ship-designer__stat-label">Travel time</div>
               <div className="ship-designer__stat-value">
                 ×{stats.travelTimeMult.toFixed(2)}
@@ -589,9 +626,15 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
               </div>
             )}
           </div>
+          {matchupHint && (
+            <div className="ship-designer__hint ship-designer__hint--matchup">
+              ⚔ vs 🛡 · {matchupHint}
+            </div>
+          )}
           <div className="ship-designer__hint">
-            Hull base: {SERVER_HULL_BASE[activeClass].hp} HP · {SERVER_HULL_BASE[activeClass].damagePerTick} dmg.
-            Parts scale off the hull base; Weapons/Armor/Propulsion research boosts part effects.
+            <strong>Kinetic ⚔</strong> chews armor, shields blunt it. <strong>Energy ⚡</strong> melts shields, armor scatters it.
+            Each 🛡/🪨 cuts its countered damage type to 78% (stacking). Hull base:{' '}
+            {SERVER_HULL_BASE[activeClass].hp} HP · {SERVER_HULL_BASE[activeClass].damagePerTick} dmg.
             The ACTIVE design is snapshot onto each build at queue time — editing a design never changes ships already queued or flying.
           </div>
 

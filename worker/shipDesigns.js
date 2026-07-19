@@ -36,38 +36,48 @@ export const SHIP_SLOT_COUNTS = {
  * fully-loaded hull meaningfully exceeds the bare hull price.
  */
 export const SHIP_PART_DEFS = {
-  weapon:    { metal: 6,  gold: 2,  allowed: ['corvette', 'frigate', 'destroyer'] },
+  kinetic:   { metal: 6,  gold: 2,  allowed: ['corvette', 'frigate', 'destroyer'], damageType: 'kinetic' },
+  energy:    { metal: 2,  gold: 6,  allowed: ['corvette', 'frigate', 'destroyer'], damageType: 'energy' },
   shield:    { metal: 4,  gold: 4,  allowed: ['corvette', 'frigate', 'destroyer', 'freighter'] },
+  armor:     { metal: 6,  gold: 2,  allowed: ['corvette', 'frigate', 'destroyer', 'freighter'] },
   engine:    { metal: 2,  gold: 6,  allowed: ['corvette', 'frigate', 'destroyer', 'freighter'] },
   detonator: { metal: 10, gold: 10, allowed: ['corvette', 'frigate', 'destroyer'] },
 };
 
+// Legacy ids from before the kinetic/energy split. `weapon` becomes
+// kinetic (also the bare-hull default), so existing parts_json + saved
+// designs keep working with no data migration. Applied in validateParts.
+const PART_ALIAS = { weapon: 'kinetic' };
+
+// Damage-type counter-matrix. KEEP IN SYNC with src/game/shipParts.ts.
+const DAMAGE_MITIGATION_PER_PART = 0.78;   // per matching defensive part
+const COUNTERED_BY = { kinetic: 'shield', energy: 'armor' };
+export const MITIGATION_FLOOR = 0.15;      // 85% cap on total reduction
+
 /**
  * Standard-issue fitting per hull — the "Default" template every player
  * starts with, and what a build falls back to when no design is active.
+ * Weapon slots default to KINETIC (the neutral pick against unshielded
+ * targets); players re-fit for energy when they scout shields.
  *
  * COST NOTE: these fill every slot, so a fitted hull runs ~2.3-2.8x the
- * bare-hull price (frigate 10M/8G -> 28M/22G, destroyer 20M/17G ->
- * 48M/37G). That's intentional — a default should be a real warship —
- * but it IS a live economy change. Players who want the cheap hull can
- * UNSET the active design; builds then fall back to bare.
- * Trim any entry here to soften it; nothing else needs to change.
- *
- * KEEP IN SYNC with DEFAULT_LOADOUTS in src/game/shipParts.ts.
+ * bare-hull price. Intentional — a default should be a real warship —
+ * but it IS a live economy change. UNSET the active design to fall back
+ * to a bare hull. KEEP IN SYNC with DEFAULT_LOADOUTS in src/game/shipParts.ts.
  */
 export const DEFAULT_LOADOUTS = {
-  corvette:  ['weapon', 'engine'],
-  frigate:   ['weapon', 'weapon', 'shield', 'engine'],
-  destroyer: ['weapon', 'weapon', 'weapon', 'shield', 'shield', 'engine'],
+  corvette:  ['kinetic', 'engine'],
+  frigate:   ['kinetic', 'kinetic', 'shield', 'engine'],
+  destroyer: ['kinetic', 'kinetic', 'kinetic', 'shield', 'shield', 'engine'],
   freighter: ['engine'],
   colony:    [],
 };
 
-const WEAPON_DMG_PCT       = 0.40;  // of hull base dmg, per part
-const SHIELD_HP_PCT        = 0.35;  // of hull base HP, per part
+const WEAPON_DMG_PCT       = 0.40;  // of hull base dmg, per weapon mount
+const SHIELD_HP_PCT        = 0.35;  // of hull base HP, per defensive part
 const DETONATOR_HP_FRAC    = 0.50;  // of ship MAX HP, per part
-const WEAPONS_TECH_PER_LVL = 0.10;  // boosts weapon part effect
-const ARMOR_TECH_PER_LVL   = 0.08;  // boosts shield part effect
+const WEAPONS_TECH_PER_LVL = 0.10;  // boosts a weapon mount's effect
+const ARMOR_TECH_PER_LVL   = 0.08;  // boosts a defensive part's effect
 const DETONATOR_TECH_PER_LVL = WEAPONS_TECH_PER_LVL / 2;  // Weapons at half rate
 
 /**
@@ -84,9 +94,10 @@ export function validateParts(shipClass, parts) {
     return { ok: false, error: `${shipClass} has ${slots} slot${slots === 1 ? '' : 's'} — got ${parts.length} parts` };
   }
   const clean = [];
-  for (const p of parts) {
+  for (const raw of parts) {
+    const p = PART_ALIAS[raw] ?? raw;   // normalize legacy ids (weapon -> kinetic)
     const def = SHIP_PART_DEFS[p];
-    if (!def) return { ok: false, error: `unknown part: ${p}` };
+    if (!def) return { ok: false, error: `unknown part: ${raw}` };
     if (!def.allowed.includes(shipClass)) {
       return { ok: false, error: `${p} cannot be fitted on a ${shipClass}` };
     }
@@ -138,16 +149,51 @@ export function parsePartsJson(shipClass, partsJson) {
  */
 export function computeShipStats(shipClass, parts, techLevels = {}) {
   const base = SHIP_COMBAT_STATS[shipClass] ?? { hp: 50, damage_per_tick: 0 };
-  const nWeapons = countPart(parts, 'weapon');
+  const nKinetic = countPart(parts, 'kinetic');
+  const nEnergy = countPart(parts, 'energy');
   const nShields = countPart(parts, 'shield');
-  const weaponsLvl = Math.max(0, Number(techLevels.weapons ?? 0));
+  const nArmor = countPart(parts, 'armor');
+  const kineticLvl = Math.max(0, Number(techLevels.weapons ?? 0));
+  const energyLvl = Math.max(0, Number(techLevels.energy_weapons ?? 0));
+  const shieldsLvl = Math.max(0, Number(techLevels.shields ?? 0));
   const armorLvl = Math.max(0, Number(techLevels.armor ?? 0));
-  const dmgBonus = WEAPON_DMG_PCT * (1 + WEAPONS_TECH_PER_LVL * weaponsLvl) * nWeapons;
-  const hpBonus = SHIELD_HP_PCT * (1 + ARMOR_TECH_PER_LVL * armorLvl) * nShields;
+  const dmgBonus = WEAPON_DMG_PCT * (
+    (1 + WEAPONS_TECH_PER_LVL * kineticLvl) * nKinetic
+    + (1 + WEAPONS_TECH_PER_LVL * energyLvl) * nEnergy
+  );
+  const hpBonus = SHIELD_HP_PCT * (
+    (1 + ARMOR_TECH_PER_LVL * shieldsLvl) * nShields
+    + (1 + ARMOR_TECH_PER_LVL * armorLvl) * nArmor
+  );
   return {
     hp: Math.round(base.hp * (1 + hpBonus)),
     damage_per_tick: Math.round(base.damage_per_tick * (1 + dmgBonus) * 10) / 10,
   };
+}
+
+/**
+ * Fraction of a loadout's weapon output per damage type. No weapon
+ * mounts (bare hull / freighter / defensive-only) => 100% kinetic, the
+ * neutral default so undesigned ships behave exactly as before.
+ * @returns { kinetic, energy } summing to 1.
+ */
+export function damageProfile(parts) {
+  const k = countPart(parts, 'kinetic');
+  const e = countPart(parts, 'energy');
+  const total = k + e;
+  if (total === 0) return { kinetic: 1, energy: 0 };
+  return { kinetic: k / total, energy: e / total };
+}
+
+/**
+ * Incoming-damage multiplier a TARGET's defensive parts apply, blended
+ * by the ATTACKER's damage profile. Shields cut kinetic, armor cuts
+ * energy — 0.78^count each, the other type passing at full. In (0, 1].
+ */
+export function defenseMitigation(targetParts, profile) {
+  const kMit = Math.pow(DAMAGE_MITIGATION_PER_PART, countPart(targetParts, COUNTERED_BY.kinetic));
+  const eMit = Math.pow(DAMAGE_MITIGATION_PER_PART, countPart(targetParts, COUNTERED_BY.energy));
+  return profile.kinetic * kMit + profile.energy * eMit;
 }
 
 /**

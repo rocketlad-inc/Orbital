@@ -772,6 +772,14 @@ function generateResearchCandidates(ctx: AIContext): AIActionIntent[] {
     { techId: 'weapons', baseScore: 2.0 },
     { techId: 'industry', baseScore: 1.8 },
     { techId: 'armor', baseScore: 1.5 },
+    // The kinetic/energy + shield/armor split added two combat tracks.
+    // The AI fits only bare hulls (kinetic), so energy_weapons/shields
+    // give it no direct combat edge — but every track must be scorable
+    // or an AI faction could never complete a Science Victory (all
+    // eight tracks maxed). Low base so it still prefers the tracks that
+    // help it fight; it rounds these out once ahead.
+    { techId: 'energy_weapons', baseScore: 0.9 },
+    { techId: 'shields', baseScore: 0.9 },
     { techId: 'construction', baseScore: 1.2 },
     { techId: 'sensors', baseScore: 1.0 },
     // Flight Dynamics scrapped — speed now comes from engine parts scaled

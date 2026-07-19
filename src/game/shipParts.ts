@@ -13,7 +13,30 @@
 
 import { ShipClassName, SHIP_CLASSES } from './shipClasses';
 
-export type ShipPartId = 'weapon' | 'shield' | 'engine' | 'detonator';
+export type ShipPartId = 'kinetic' | 'energy' | 'shield' | 'armor' | 'engine' | 'detonator';
+
+/** Damage type a weapon mount deals / a defensive part resists.
+ *  Kinetic is shredded by armor and blunted by shields; energy melts
+ *  shields and scatters off armor — the counter-matrix. */
+export type DamageType = 'kinetic' | 'energy';
+
+/** Legacy part ids from before the kinetic/energy split. `weapon` was
+ *  an undifferentiated mount; it becomes kinetic (also the bare-hull
+ *  default damage type), so old parts_json + saved designs keep working
+ *  with no data migration. Applied on every read via sanitizeParts. */
+const PART_ALIAS: Record<string, ShipPartId> = { weapon: 'kinetic' };
+
+// --- Damage-type counter-matrix. Mirrors worker/shipDesigns.js. ---
+// A defensive part cuts incoming damage of the type it counters to this
+// factor, per part, multiplicatively. Non-countered damage passes at
+// full. So 2 shields => kinetic ×0.61, meaning energy does ~1.65× kinetic
+// against that hull — the "soft, roughly double" bite.
+export const DAMAGE_MITIGATION_PER_PART = 0.78;
+/** Shields counter kinetic; armor counters energy. */
+const COUNTERED_BY: Record<DamageType, ShipPartId> = { kinetic: 'shield', energy: 'armor' };
+/** Total incoming-damage reduction (mitigation × point-defense) is
+ *  floored here — an 85% cap — so a stacked hull is brutal but killable. */
+export const MITIGATION_FLOOR = 0.15;
 
 export interface ShipPartDef {
   id: ShipPartId;
@@ -27,8 +50,10 @@ export interface ShipPartDef {
   cost: { ore: number; credits: number };
   allowedOn: ShipClassName[];
   /** Tech track that scales this part's effect, for the designer UI. */
-  techTrack: 'weapons' | 'armor' | 'propulsion';
+  techTrack: 'weapons' | 'energy_weapons' | 'shields' | 'armor' | 'propulsion';
   techNote: string;
+  /** Weapons only: the damage type this mount deals. */
+  damageType?: DamageType;
 }
 
 /** Part slots per hull. Freighter's single slot is engine/shield only.
@@ -46,31 +71,51 @@ export const SHIP_SLOT_COUNTS: Record<ShipClassName, number> = {
  *  starts with, and the fallback when no design is active.
  *  KEEP IN SYNC with DEFAULT_LOADOUTS in worker/shipDesigns.js. */
 export const DEFAULT_LOADOUTS: Record<ShipClassName, ShipPartId[]> = {
-  corvette:  ['weapon', 'engine'],
-  frigate:   ['weapon', 'weapon', 'shield', 'engine'],
-  destroyer: ['weapon', 'weapon', 'weapon', 'shield', 'shield', 'engine'],
+  corvette:  ['kinetic', 'engine'],
+  frigate:   ['kinetic', 'kinetic', 'shield', 'engine'],
+  destroyer: ['kinetic', 'kinetic', 'kinetic', 'shield', 'shield', 'engine'],
   freighter: ['engine'],
   colony:    [],
 };
 
 export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
-  weapon: {
-    id: 'weapon',
-    name: 'Weapon Mount',
-    blurb: '+40% of hull base damage per mount.',
+  kinetic: {
+    id: 'kinetic',
+    name: 'Kinetic Mount',
+    blurb: '+40% hull base damage, kinetic. Chews armor; shields blunt it.',
     cost: { ore: 6, credits: 2 },
     allowedOn: ['corvette', 'frigate', 'destroyer'],
     techTrack: 'weapons',
-    techNote: 'Weapons tech: +10%/lvl to this part',
+    techNote: 'Kinetic Weapons tech: +10%/lvl to this mount',
+    damageType: 'kinetic',
+  },
+  energy: {
+    id: 'energy',
+    name: 'Energy Mount',
+    blurb: '+40% hull base damage, energy. Melts shields; armor scatters it.',
+    cost: { ore: 2, credits: 6 },
+    allowedOn: ['corvette', 'frigate', 'destroyer'],
+    techTrack: 'energy_weapons',
+    techNote: 'Energy Weapons tech: +10%/lvl to this mount',
+    damageType: 'energy',
   },
   shield: {
     id: 'shield',
     name: 'Shield Array',
-    blurb: '+35% of hull base HP per array.',
+    blurb: '+35% hull base HP. Cuts incoming KINETIC to 78% per array.',
     cost: { ore: 4, credits: 4 },
     allowedOn: ['corvette', 'frigate', 'destroyer', 'freighter'],
+    techTrack: 'shields',
+    techNote: 'Shields tech: +8%/lvl to this array',
+  },
+  armor: {
+    id: 'armor',
+    name: 'Armor Plate',
+    blurb: '+35% hull base HP. Cuts incoming ENERGY to 78% per plate.',
+    cost: { ore: 6, credits: 2 },
+    allowedOn: ['corvette', 'frigate', 'destroyer', 'freighter'],
     techTrack: 'armor',
-    techNote: 'Armor tech: +8%/lvl to this part',
+    techNote: 'Armor tech: +8%/lvl to this plate',
   },
   engine: {
     id: 'engine',
@@ -94,14 +139,16 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   },
 };
 
-export const ALL_PART_IDS: ShipPartId[] = ['weapon', 'shield', 'engine', 'detonator'];
+export const ALL_PART_IDS: ShipPartId[] = ['kinetic', 'energy', 'shield', 'armor', 'engine', 'detonator'];
 
 /** Single-glyph icon per part, for compact loadout summaries (ShipDesigner
  *  library rows, FleetPanel ship rows). One source of truth so the two
  *  surfaces never drift. */
 export const PART_GLYPH: Record<ShipPartId, string> = {
-  weapon: '⚔',
+  kinetic: '⚔',
+  energy: '⚡',
   shield: '🛡',
+  armor: '🪨',
   engine: '🔥',
   detonator: '☠',
 };
@@ -109,7 +156,7 @@ export const PART_GLYPH: Record<ShipPartId, string> = {
 /** Fixed display order for a loadout summary — weapon, shield, engine,
  *  detonator — so the same parts always read the same way regardless of
  *  the order they were fitted in. */
-const GLYPH_ORDER: ShipPartId[] = ['weapon', 'shield', 'engine', 'detonator'];
+const GLYPH_ORDER: ShipPartId[] = ['kinetic', 'energy', 'shield', 'armor', 'engine', 'detonator'];
 
 /**
  * Compact loadout summary for a ship's parts, e.g. "⚔×2 🛡 🔥" or
@@ -141,10 +188,50 @@ const ARMOR_TECH_PER_LVL = 0.08;
 const PROPULSION_TECH_PER_LVL = 0.06;
 const DETONATOR_TECH_PER_LVL = WEAPONS_TECH_PER_LVL / 2;
 
-/** Narrow an untyped string[] (e.g. server parts_json) to known part ids. */
+/** Narrow an untyped string[] (e.g. server parts_json) to known part ids,
+ *  mapping legacy ids (weapon -> kinetic) through PART_ALIAS first. */
 export function sanitizeParts(raw: unknown): ShipPartId[] {
   if (!Array.isArray(raw)) return [];
-  return raw.filter((p): p is ShipPartId => typeof p === 'string' && p in SHIP_PART_DEFS);
+  const out: ShipPartId[] = [];
+  for (const p of raw) {
+    if (typeof p !== 'string') continue;
+    const id = (PART_ALIAS[p] ?? p) as ShipPartId;
+    if (id in SHIP_PART_DEFS) out.push(id);
+  }
+  return out;
+}
+
+// ------------------------------------------------------------
+// Damage-type model — mirrored in worker/shipDesigns.js.
+// ------------------------------------------------------------
+
+/**
+ * Fraction of a loadout's weapon output that is each damage type.
+ * A hull with no weapon mounts (bare hull, freighter, or a target with
+ * only defensive parts) deals 100% kinetic — the neutral default, so
+ * every legacy/undesigned ship behaves exactly as before.
+ */
+export function damageProfile(parts: readonly string[] | undefined): Record<DamageType, number> {
+  const k = countPart(parts, 'kinetic');
+  const e = countPart(parts, 'energy');
+  const total = k + e;
+  if (total === 0) return { kinetic: 1, energy: 0 };
+  return { kinetic: k / total, energy: e / total };
+}
+
+/**
+ * Incoming-damage multiplier a TARGET's defensive parts apply, blended
+ * by the ATTACKER's damage profile. Shields cut kinetic, armor cuts
+ * energy, each 0.78^count; the untouched type passes at full. Returns a
+ * value in (0, 1]; 1.0 means no mitigation (no relevant parts).
+ */
+export function defenseMitigation(
+  targetParts: readonly string[] | undefined,
+  profile: Record<DamageType, number>,
+): number {
+  const kMit = Math.pow(DAMAGE_MITIGATION_PER_PART, countPart(targetParts, COUNTERED_BY.kinetic));
+  const eMit = Math.pow(DAMAGE_MITIGATION_PER_PART, countPart(targetParts, COUNTERED_BY.energy));
+  return profile.kinetic * kMit + profile.energy * eMit;
 }
 
 export function countPart(parts: readonly string[] | undefined, id: ShipPartId): number {
@@ -211,18 +298,31 @@ export function computeDesignStats(
   totalCost: { ore: number; credits: number };
 } {
   const def = SHIP_CLASSES[shipClass];
-  const weaponsLvl = Math.max(0, techLevels.weapons ?? 0);
+  const kineticLvl = Math.max(0, techLevels.weapons ?? 0);
+  const energyLvl = Math.max(0, techLevels.energy_weapons ?? 0);
+  const shieldsLvl = Math.max(0, techLevels.shields ?? 0);
   const armorLvl = Math.max(0, techLevels.armor ?? 0);
   const propulsionLvl = Math.max(0, techLevels.propulsion ?? 0);
-  const nWeapons = countPart(parts, 'weapon');
+  const nKinetic = countPart(parts, 'kinetic');
+  const nEnergy = countPart(parts, 'energy');
   const nShields = countPart(parts, 'shield');
+  const nArmor = countPart(parts, 'armor');
   // Server hull base is worker SHIP_COMBAT_STATS which matches the
   // class def hp/damagePerTick for every class except freighter hp
   // (server 30 vs client def 60) — use the server-authoritative bases
   // so the designer preview matches what the yard actually delivers.
   const base = SERVER_HULL_BASE[shipClass];
-  const dmgBonus = WEAPON_DMG_PCT * (1 + WEAPONS_TECH_PER_LVL * weaponsLvl) * nWeapons;
-  const hpBonus = SHIELD_HP_PCT * (1 + ARMOR_TECH_PER_LVL * armorLvl) * nShields;
+  // Each mount type scales with its own weapon tech; each defensive part
+  // with its own defensive tech. Same per-part % and per-level rate as
+  // before the split.
+  const dmgBonus = WEAPON_DMG_PCT * (
+    (1 + WEAPONS_TECH_PER_LVL * kineticLvl) * nKinetic
+    + (1 + WEAPONS_TECH_PER_LVL * energyLvl) * nEnergy
+  );
+  const hpBonus = SHIELD_HP_PCT * (
+    (1 + ARMOR_TECH_PER_LVL * shieldsLvl) * nShields
+    + (1 + ARMOR_TECH_PER_LVL * armorLvl) * nArmor
+  );
   const pc = partsCost(parts);
   return {
     hp: Math.round(base.hp * (1 + hpBonus)),

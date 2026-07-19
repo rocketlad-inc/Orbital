@@ -21,12 +21,19 @@
 export const TECH_MAX_LEVEL = 10;
 
 export type TechId =
-  | 'weapons'        // ship firepower + weapon-part effect
-  | 'armor'          // ship HP + shield-part effect
-  | 'propulsion'     // booster-engine part speed (the only speed tech)
-  | 'construction'   // ship build cost reduction
-  | 'industry'       // settlement yield
-  | 'sensors';       // SOI visibility radius
+  // Combat tech is split by damage type so a faction can specialize
+  // doctrine, not just per-ship. IDs 'weapons'/'armor' are KEPT (not
+  // renamed) so existing games, saved designs and the two victory
+  // checks need no data migration — 'weapons' simply now means kinetic,
+  // and 'armor' means the armor-plate part specifically.
+  | 'weapons'          // KINETIC weapons — scales ⚔ kinetic mounts
+  | 'energy_weapons'   // ENERGY weapons — scales ⚡ energy mounts
+  | 'shields'          // scales 🛡 shield arrays (kinetic mitigation)
+  | 'armor'            // scales 🪨 armor plates (energy mitigation)
+  | 'propulsion'       // booster-engine part speed (the only speed tech)
+  | 'construction'     // ship build cost reduction
+  | 'industry'         // settlement yield
+  | 'sensors';         // SOI visibility radius
 
 export interface TechDef {
   id: TechId;
@@ -46,21 +53,41 @@ export interface TechDef {
 export const TECH_DEFS: Record<TechId, TechDef> = {
   weapons: {
     id: 'weapons',
-    name: 'Weapons',
-    description: 'Firepower, targeting, and sustained-fire rate — and the punch of every ⚔ weapon mount you fit in the designer.',
+    name: 'Kinetic Weapons',
+    description: 'Railguns, autocannon, and slug throwers — the punch of every ⚔ kinetic mount you fit. Kinetic shreds armor but bleeds off against shields.',
     icon: '⚔',
     perLevel: 0.10,
-    effectText: '+10% firepower · stronger ⚔ mounts',
+    effectText: '+10% · stronger ⚔ kinetic mounts',
+    baseCost: 40,
+    costScaling: 1.7,
+  },
+  energy_weapons: {
+    id: 'energy_weapons',
+    name: 'Energy Weapons',
+    description: 'Lasers, plasma, and particle beams — the punch of every ⚡ energy mount you fit. Energy melts shields but scatters off heavy armor.',
+    icon: '⚡',
+    perLevel: 0.10,
+    effectText: '+10% · stronger ⚡ energy mounts',
+    baseCost: 40,
+    costScaling: 1.7,
+  },
+  shields: {
+    id: 'shields',
+    name: 'Shields',
+    description: 'Deflector fields that soak incoming fire — the strength of every 🛡 shield array you fit. Shields blunt KINETIC rounds; energy passes through them.',
+    icon: '🛡',
+    perLevel: 0.08,
+    effectText: '+8% HP · stronger 🛡 arrays (vs kinetic)',
     baseCost: 40,
     costScaling: 1.7,
   },
   armor: {
     id: 'armor',
     name: 'Armor',
-    description: 'Hull plating and damage control — and the strength of every 🛡 shield array you fit in the designer.',
-    icon: '🛡',
+    description: 'Ablative plating and damage control — the strength of every 🪨 armor plate you fit. Armor shrugs off ENERGY beams; kinetic slugs chew through it.',
+    icon: '🪨',
     perLevel: 0.08,
-    effectText: '+8% max HP · stronger 🛡 arrays',
+    effectText: '+8% HP · stronger 🪨 plates (vs energy)',
     baseCost: 40,
     costScaling: 1.7,
   },
@@ -107,7 +134,8 @@ export const TECH_DEFS: Record<TechId, TechDef> = {
 };
 
 export const ALL_TECH_IDS: TechId[] = [
-  'weapons', 'armor', 'propulsion', 'construction', 'industry', 'sensors',
+  'weapons', 'energy_weapons', 'shields', 'armor',
+  'propulsion', 'construction', 'industry', 'sensors',
 ];
 
 /**
@@ -180,14 +208,27 @@ export function effectAtLevel(def: TechDef, level: number): number {
 // applied to base game values.
 // ============================================================
 
-/** Damage multiplier for ships of a given faction. 1.0 at level 0. */
+/** KINETIC weapon damage multiplier for a faction. 1.0 at level 0. */
 export function combatModifier(state: FactionTechState | undefined): number {
   return 1 + effectAtLevel(TECH_DEFS.weapons, techLevel(state, 'weapons'));
 }
 
-/** Max-HP multiplier for ships of a given faction. */
+/** ENERGY weapon damage multiplier. Legacy games that only teched the
+ *  old (kinetic) 'weapons' line fall back to it, so an existing
+ *  energy-armed fleet isn't silently un-teched by the split. */
+export function energyCombatModifier(state: FactionTechState | undefined): number {
+  const lvl = Math.max(techLevel(state, 'energy_weapons'), techLevel(state, 'weapons'));
+  return 1 + effectAtLevel(TECH_DEFS.energy_weapons, lvl);
+}
+
+/** Max-HP multiplier for ships of a given faction — the strongest of the
+ *  two defensive lines (shields / armor). Baked HP already reflects the
+ *  per-part tech at build time; this is the live repair-ceiling bump, so
+ *  a faction that teched EITHER defense repairs into a bigger buffer.
+ *  Legacy 'armor' covers both until 'shields' is researched. */
 export function hpModifier(state: FactionTechState | undefined): number {
-  return 1 + effectAtLevel(TECH_DEFS.armor, techLevel(state, 'armor'));
+  const lvl = Math.max(techLevel(state, 'armor'), techLevel(state, 'shields'));
+  return 1 + effectAtLevel(TECH_DEFS.armor, lvl);
 }
 
 /** Per-rank multiplier applied to a ship's BOTH damage and max HP.
