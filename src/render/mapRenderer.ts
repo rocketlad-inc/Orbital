@@ -3888,6 +3888,63 @@ export function systemRegionIntensity(spans: number): number {
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
+// --- Outer-system falloff --------------------------------------------
+//
+// A region's painted band scales with its orbit radius twice over: the
+// lane is a fraction of the radius (wider) AND the ring's circumference
+// grows with it (longer). So a single settlement on a lone Kuiper rock —
+// Sedna at the very edge — paints the biggest, most saturated annulus on
+// the map, dwarfing a whole held inner system. One rock reads as an
+// empire. (Reported live: a faction's lone Sedna holding washing the
+// outer map in vivid cyan.)
+//
+// Fade region alpha with distance from the star so the deep outer system
+// is a hint, not a billboard. Keyed PER STAR to its own outermost giant,
+// not a hardcoded radius, so it survives the 1x/2x scale split and the
+// far Centauri / Cygnus systems (which have no giants and so never fade).
+
+/** Full strength out to the outermost giant; fully faded by this multiple
+ *  of that radius. Neptune's orbit ×this lands past the Kuiper belt. */
+const OUTER_FADE_END_MULT = 3.2;
+/** Alpha floor for the deep outer system — faint, not gone, so a held
+ *  outer body still reads as SOMEONE'S rather than vanishing. */
+const OUTER_FADE_FLOOR = 0.18;
+
+/**
+ * 1.0 inside the giants, ramping to OUTER_FADE_FLOOR across the Kuiper
+ * zone. `refRadius` is the outermost giant's orbit radius around this
+ * region's own star; when a star has no giants it should be passed the
+ * star's outermost child, so nothing in that system ever fades. Pure and
+ * exported for testing.
+ */
+export function regionRadialFalloff(midRadius: number, refRadius: number): number {
+  if (!(refRadius > 0)) return 1;
+  const end = refRadius * OUTER_FADE_END_MULT;
+  if (midRadius <= refRadius) return 1;
+  if (midRadius >= end) return OUTER_FADE_FLOOR;
+  const t = (midRadius - refRadius) / (end - refRadius);
+  return 1 + (OUTER_FADE_FLOOR - 1) * t;
+}
+
+/** Per-star fade reference: the orbit radius of that star's outermost
+ *  gas/ice giant. A star with no giants maps to its outermost child, so
+ *  regionRadialFalloff never fades anything in it. */
+function buildFadeReference(bodies: Body[]): Map<string, number> {
+  const giant = new Map<string, number>();
+  const anyChild = new Map<string, number>();
+  for (const b of bodies) {
+    if (!b.parent) continue;
+    const r = b.orbitRadius ?? 0;
+    if (r > (anyChild.get(b.parent) ?? 0)) anyChild.set(b.parent, r);
+    if ((b.type === 'gas_giant' || b.type === 'ice_giant') && r > (giant.get(b.parent) ?? 0)) {
+      giant.set(b.parent, r);
+    }
+  }
+  const ref = new Map<string, number>();
+  for (const [star, r] of anyChild) ref.set(star, giant.get(star) ?? r);
+  return ref;
+}
+
 /** Grey for unowned AND contested — see systemRegions.ts for why
  *  contested deliberately isn't a second faction colour.
  *
@@ -4067,6 +4124,9 @@ export function drawSystemRegions(
   // "a hint of who's where" to a solid political map.
   const intensity = systemRegionIntensity(spans);
 
+  // Per-star outermost-giant radius, for the outer-system alpha falloff.
+  const fadeRef = buildFadeReference(ctx.bodies);
+
   // Everything a region label must not land on: each body's dot plus the
   // name drawn under it. Region labels are appended as they're placed,
   // so later rings also dodge earlier rings' labels.
@@ -4093,11 +4153,16 @@ export function drawSystemRegions(
     // rubble is barely a stain, just enough to group it. Each tier
     // scales up with intensity, keeping their relative weighting so
     // owned ground still dominates at full strength.
-    const baseAlpha = owned
+    let baseAlpha = owned
       ? lerp(0.22, 0.70, intensity)
       : region.ownership.kind === 'contested'
         ? lerp(0.16, 0.52, intensity)
         : lerp(0.09, 0.32, intensity);
+    // Fade the deep outer system so a lone Kuiper holding stops shouting.
+    baseAlpha *= regionRadialFalloff(
+      (region.shape.rInner + region.shape.rOuter) / 2,
+      fadeRef.get(region.shape.starBodyId) ?? 0,
+    );
 
     c.save();
     c.globalAlpha = c.globalAlpha * fade;
