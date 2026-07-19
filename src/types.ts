@@ -596,6 +596,12 @@ export interface GameState {
   buildOrders: BuildOrder[];           // ships under construction
   resources: Record<string, FactionResources>; // factionId → resources
   factionTech: Record<string, FactionTechStateBase>; // factionId → tech progress
+  /** Fog-FREE political claims: bodyId -> owning faction for every live
+   *  settlement in the game. This is what region ownership shading reads
+   *  — political borders are common knowledge even when the settlements
+   *  themselves are outside sensor range. MP only; SP derives the same
+   *  facts from its (unfogged) settlements array. */
+  settlementClaims?: { bodyId: string; ownedBy: string }[];
   /** Active physical trade-delivery legs involving the player (either
    *  direction). MP only; SP has no inter-player trade. Sourced from the
    *  server state payload each poll — never mutated locally. */
