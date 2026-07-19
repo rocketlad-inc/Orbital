@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
+import { smoothedTick } from '../render/tickPhase';
 import { useGameContext } from '../state/gameContext';
 import { useMapLayers } from '../state/mapLayers';
 import {
@@ -111,6 +112,31 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     setTargetSelectionMode,
     selectedSettlementId,
   } = useGameContext();
+
+  /**
+   * The tick to DRAW at: the last resolved tick plus however far into the
+   * current tick we are (see render/tickPhase). Called fresh per frame by
+   * the rAF loop, so bodies and ships glide instead of teleporting once
+   * per tick — and land exactly on their next-tick position at the
+   * instant the server tick fires.
+   *
+   * Hit-testing calls this too. If clicks used the raw tick while the
+   * canvas drew a smoothed one, every planet's hitbox would sit up to a
+   * full tick of travel away from the planet you can see.
+   *
+   * Deliberately NOT memoized on a value: it must re-read the clock on
+   * every call, mid-tick, or it would just be the old quantized tick
+   * wearing a different name.
+   */
+  const renderTick = useCallback(
+    () => smoothedTick(
+      gameState.currentTick,
+      gameState.nextTickAt,
+      gameState.tickIntervalMs,
+      Date.now(),
+    ),
+    [gameState.currentTick, gameState.nextTickAt, gameState.tickIntervalMs],
+  );
 
   const [panState, setPanState] = useState<{
     startX: number;
@@ -239,7 +265,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     if (camera.focusedBodyId) {
       const focusedBody = gameState.bodies.find(b => b.id === camera.focusedBodyId);
       if (focusedBody) {
-        const pos = bodyPosition(focusedBody, gameState.currentTick, gameState.bodies);
+        const pos = bodyPosition(focusedBody, renderTick(), gameState.bodies);
         camX = pos.x;
         camY = pos.y;
       }
@@ -293,7 +319,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // speeds. Damage = entity present with a new lastDamagedTick;
     // destruction = entity present last frame but missing this frame.
     const nowMs = performance.now();
-    const nowTick = gameState.currentTick;
+    const nowTick = renderTick();
 
     // Build the current frame's ship-pos snapshot so we can both
     // (a) record damage flashes on hit and (b) remember positions
@@ -489,7 +515,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // rings unrelated to the selected body (falls back to the
       // camera focus when nothing is explicitly selected).
       selectedBodyId: uiState.selectedBodyId,
-      t: gameState.currentTick,
+      t: renderTick(),
       bodies: gameState.bodies,
       // Factions enable per-faction ship coloring (matches settlements).
       // Without this, drawShip falls back to cyan-for-player / red-otherwise,
@@ -587,9 +613,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // Same priority chain shipWorldPosition uses: torch transit
         // first, parked orbit second. Returns null only if parent
         // body has gone missing — skip the hover line in that edge case.
-        const shipWorldPos = ship ? shipWorldPosition(ship, gameState.currentTick, gameState.bodies) : null;
+        const shipWorldPos = ship ? shipWorldPosition(ship, renderTick(), gameState.bodies) : null;
         if (ship && hovBody && shipWorldPos) {
-          const bodyWorldPos = bodyPosition(hovBody, gameState.currentTick, gameState.bodies);
+          const bodyWorldPos = bodyPosition(hovBody, renderTick(), gameState.bodies);
           const shipCanvas = worldToCanvas(shipWorldPos.x, shipWorldPos.y, renderContext);
           const bodyCanvas = worldToCanvas(bodyWorldPos.x, bodyWorldPos.y, renderContext);
 
@@ -615,7 +641,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       gameState.ships,
       gameState.settlements,
       gameState.bodies,
-      gameState.currentTick,
+      renderTick(),
       lastSeenRef.current,
       alliedSet,
     );
@@ -666,7 +692,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // A body's resource yields are intel — only reveal the readout
       // when the body is inside the player's (or an ally's) live sensor
       // coverage. Geometry/label still always render.
-      const bodyPos = bodyPosition(body, gameState.currentTick, gameState.bodies);
+      const bodyPos = bodyPosition(body, renderTick(), gameState.bodies);
       const yieldsVisible = wasInCoverage(bodyPos);
       drawBody(body, renderContext, isSelected, isHovered, yieldsVisible);
       // Asteroid-weapon overlay: flame trail + projected impact path
@@ -678,7 +704,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
       // Pulsing red threat ring around threatened bodies.
       if (threatBodies.has(body.id)) {
-        const wp = bodyPosition(body, gameState.currentTick, gameState.bodies);
+        const wp = bodyPosition(body, renderTick(), gameState.bodies);
         const cp = worldToCanvas(wp.x, wp.y, renderContext);
         const baseR = Math.max(8, body.radius * camera.scale + 10);
         // Use real time, not tick, so the pulse is steady at any sim speed.
@@ -817,7 +843,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // the relationship colour). Useful for colourblind viewers
           // who can't lean on hue alone.
           !!tradeLeg,
-          isSelected && !tradeLeg, gameState.currentTick,
+          isSelected && !tradeLeg, renderTick(),
         );
         ctx.restore();
         drawTransitShip(ship, renderContext, isSelected, samples);
@@ -826,14 +852,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // diverging ship.transit.pos integration). Matches the lerp
         // drawTorchTransitShip does internally. See transitShipCanvasPosRef.
         if (samples && samples.length > 0) {
-          const lerped = torchPositionFromSamples(samples, gameState.currentTick);
+          const lerped = torchPositionFromSamples(samples, renderTick());
           const cp = worldToCanvas(lerped.x, lerped.y, renderContext);
           transitShipCanvasPosRef.current.set(ship.id, cp);
         }
 
         const arrivalBody = gameState.bodies.find(b => b.id === plan.targetBodyId);
         if (arrivalBody) {
-          drawGhostPlanet(arrivalBody, plan.arriveTick, gameState.currentTick, renderContext);
+          drawGhostPlanet(arrivalBody, plan.arriveTick, renderTick(), renderContext);
         }
 
         // Queued chained legs — draw each as a faint dashed amber
@@ -844,7 +870,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           for (const queuedPlan of ship.queuedTransits) {
             drawTorchTrajectory(queuedPlan, gameState.bodies, renderContext, COLORS.fgDim, true);
             const qBody = gameState.bodies.find(b => b.id === queuedPlan.targetBodyId);
-            if (qBody) drawGhostPlanet(qBody, queuedPlan.arriveTick, gameState.currentTick, renderContext);
+            if (qBody) drawGhostPlanet(qBody, queuedPlan.arriveTick, renderTick(), renderContext);
           }
         }
       } else if (ship.plannedTransit) {
@@ -864,7 +890,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
         const arrivalBody = gameState.bodies.find(b => b.id === ship.plannedTransit!.targetBodyId);
         if (arrivalBody) {
-          drawGhostPlanet(arrivalBody, ship.plannedTransit.arriveTick, gameState.currentTick, renderContext);
+          drawGhostPlanet(arrivalBody, ship.plannedTransit.arriveTick, renderTick(), renderContext);
         }
       } else {
         drawOrbitEllipse(
@@ -897,7 +923,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       for (const [bodyId, counts] of bodyClusters) {
         const body = gameState.bodies.find(b => b.id === bodyId);
         if (!body) continue;
-        const bp = bodyPosition(body, gameState.currentTick, gameState.bodies);
+        const bp = bodyPosition(body, renderTick(), gameState.bodies);
         const cp = worldToCanvas(bp.x, bp.y, renderContext);
         const total = counts.mine + counts.other;
         if (total <= 0) continue;
@@ -942,7 +968,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // recently seen. Their lastSeen position fades over GHOST_LIFETIME_TICKS.
     for (const [shipId, intel] of visibility.lastSeen) {
       if (visibleShipIds.has(shipId)) continue;
-      drawShipGhost(intel, gameState.currentTick, GHOST_LIFETIME_TICKS, gameState.factions, renderContext);
+      drawShipGhost(intel, renderTick(), GHOST_LIFETIME_TICKS, gameState.factions, renderContext);
     }
 
     // Draw fleet bonds — faint lines connecting members of each fleet.
@@ -954,7 +980,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const s = gameState.ships.find(sh => sh.id === sid);
         if (!s) continue;
         if (s.ownedBy !== 'player' && !visibleShipIds.has(s.id)) continue;
-        const wp = shipWorldPosition(s, gameState.currentTick, gameState.bodies);
+        const wp = shipWorldPosition(s, renderTick(), gameState.bodies);
         if (wp) positions.push(wp);
       }
       if (positions.length < 2) continue;
@@ -1069,7 +1095,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         gameState.ships,
         gameState.settlements,
         gameState.bodies,
-        gameState.currentTick,
+        renderTick(),
         alliedSet,
       );
       // Fade the fog out as the political wash fades in. The fog is a
@@ -1136,7 +1162,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const focused = gameState.bodies.find(b => b.id === camera.focusedBodyId);
         if (focused) {
           const { bodyPosition } = require('../physics/orbitalMechanics');
-          const pos = bodyPosition(focused, gameState.currentTick, gameState.bodies);
+          const pos = bodyPosition(focused, renderTick(), gameState.bodies);
           startCamX = pos.x;
           startCamY = pos.y;
         }
@@ -1144,7 +1170,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
       setPanState({ startX: e.clientX, startY: e.clientY, camX: startCamX, camY: startCamY });
     }
-  }, [camera, gameState.bodies, gameState.currentTick, uiState.targetSelectionMode, setTargetSelectionMode, directUpdateCamera]);
+  }, [camera, gameState.bodies, renderTick, uiState.targetSelectionMode, setTargetSelectionMode, directUpdateCamera]);
 
   const handleMouseUp = useCallback(() => {
     setPanState(null);
@@ -1275,7 +1301,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // target-highlight render loop above. Removing both gates
           // unblocks pick-via-map for Sol (the panel-driven Dyson
           // transfer already worked via a different code path).
-          const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
+          const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, renderTick());
           const clickRadius = Math.max(12, body.radius! * camera.scale + 8) + TOUCH_HIT_PADDING;
           if (Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < clickRadius) {
             window.dispatchEvent(new CustomEvent('orbital-transfer-confirm', {
@@ -1296,7 +1322,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // ship is in transit but the render-loop pass for it hasn't run
         // yet (first frame after mount, fog-hidden, etc.).
         const cached = ship.transit ? transitShipCanvasPosRef.current.get(ship.id) : undefined;
-        const shipPos = cached ?? getShipCanvasPos(ship, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
+        const shipPos = cached ?? getShipCanvasPos(ship, canvasRef.current, gameState.bodies, camera, renderTick());
         // Wider hit radius for in-transit ships — they're moving, so the
         // player aims slightly behind where they end up by the time the
         // click event fires. 14px for parked, 20px for transit. Touch
@@ -1309,7 +1335,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
 
       for (const body of gameState.bodies) {
-        const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
+        const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, renderTick());
         const clickRadius = Math.max(8, body.radius! * camera.scale + 5) + TOUCH_HIT_PADDING;
         if (Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < clickRadius) {
           selectBody(body.id);
@@ -1320,7 +1346,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       deselectShip();
       deselectBody();
     },
-    [gameState, camera, uiState.targetSelectionMode, selectShip, selectBody, deselectShip, deselectBody]
+    [gameState, camera, uiState.targetSelectionMode, selectShip, selectBody, deselectShip, deselectBody, renderTick]
   );
 
   const handleClick = useCallback(
@@ -1348,7 +1374,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       let hoveredShipId: string | null = null;
       for (const ship of gameState.ships) {
         const cached = ship.transit ? transitShipCanvasPosRef.current.get(ship.id) : undefined;
-        const shipPos = cached ?? getShipCanvasPos(ship, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
+        const shipPos = cached ?? getShipCanvasPos(ship, canvasRef.current, gameState.bodies, camera, renderTick());
         if (Math.hypot(canvasX - shipPos.x, canvasY - shipPos.y) < (ship.transit ? 20 : 14)) {
           hoveredShipId = ship.id;
           break;
@@ -1358,7 +1384,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
       let hoveredBodyId: string | null = null;
       for (const body of gameState.bodies) {
-        const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
+        const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, renderTick());
         const hoverRadius = Math.max(8, body.radius! * camera.scale + 5);
         if (Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < hoverRadius) {
           hoveredBodyId = body.id;
@@ -1367,7 +1393,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
       hoverBody(hoveredBodyId);
     },
-    [gameState, camera, hoverBody]
+    [gameState, camera, hoverBody, renderTick]
   );
 
   // Shared focus-on-tap logic — called by both onDoubleClick and the
@@ -1377,7 +1403,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       if (uiState.targetSelectionMode) return;
       if (!canvasRef.current) return;
       for (const body of gameState.bodies) {
-        const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, gameState.currentTick);
+        const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, renderTick());
         const clickRadius = Math.max(8, body.radius! * camera.scale + 5) + TOUCH_HIT_PADDING;
         if (Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < clickRadius) {
           focusBody(body.id);
@@ -1386,7 +1412,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
       focusBody(undefined);
     },
-    [gameState, camera, focusBody, uiState.targetSelectionMode]
+    [gameState, camera, focusBody, uiState.targetSelectionMode, renderTick]
   );
 
   const handleDoubleClick = useCallback(
@@ -1420,7 +1446,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       if (!camera.focusedBodyId) return null;
       const focused = gameState.bodies.find(b => b.id === camera.focusedBodyId);
       if (!focused) return null;
-      return bodyPosition(focused, gameState.currentTick, gameState.bodies);
+      return bodyPosition(focused, renderTick(), gameState.bodies);
     },
   });
 
