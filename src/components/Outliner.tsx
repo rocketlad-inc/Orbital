@@ -8,6 +8,8 @@ import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { loadoutSummary } from '../game/shipParts';
 import { ShipIcon } from './ShipIcons';
+import { PlanetIcon } from './PlanetIcon';
+import { makeSystemRootOf, systemLabel, shipStatus } from '../game/systemGrouping';
 import { useIsMobile } from '../hooks/useIsMobile';
 import './Outliner.css';
 
@@ -125,6 +127,56 @@ export const Outliner: React.FC = () => {
   const hpClass = (r: number) =>
     r > 0.66 ? 'good' : r > 0.33 ? 'mid' : 'low';
 
+  // --- System grouping -------------------------------------
+  // Shared with FleetPanel (src/game/systemGrouping.ts) so both panels
+  // show identical headers and statuses.
+  const systemRootOf = useMemo(
+    () => makeSystemRootOf(gameState.bodies),
+    [gameState.bodies],
+  );
+
+  /** Tracked bodies bucketed by their star system, each bucket keeping
+   *  the existing owned-first-then-alphabetical order. Systems sort by
+   *  their most important content so the player's home system leads. */
+  const systems = useMemo(() => {
+    const buckets = new Map<string, typeof tracked>();
+    for (const b of tracked) {
+      const root = systemRootOf(b.id);
+      const arr = buckets.get(root);
+      if (arr) arr.push(b);
+      else buckets.set(root, [b]);
+    }
+    return [...buckets.entries()]
+      .map(([rootId, bodies]) => ({
+        rootId,
+        label: systemLabel(gameState.bodies, rootId),
+        bodies,
+        owned: bodies.filter(b => b.ownedBy === 'player').length,
+      }))
+      // Systems where you hold ground first, then by size, then name —
+      // so your home system heads the list instead of alphabetical luck.
+      .sort((a, b) =>
+        (b.owned - a.owned) ||
+        (b.bodies.length - a.bodies.length) ||
+        a.label.localeCompare(b.label));
+  }, [tracked, systemRootOf, gameState.bodies]);
+
+  const currentTick = gameState.currentTick;
+
+  /** Ship builds under way at a body, for the settlement rows. */
+  const shipBuildsAt = (bodyId: string) =>
+    (gameState.buildOrders ?? []).filter(
+      bo => bo.bodyId === bodyId && bo.ownedBy === 'player' && bo.status !== 'waiting',
+    );
+
+  /** 0..1 completion for a start/complete tick pair. Guards a zero-length
+   *  window so a same-tick build can't divide by zero. */
+  const tickProgress = (startTick: number, completeTick: number) => {
+    const span = completeTick - startTick;
+    if (span <= 0) return 1;
+    return Math.max(0, Math.min(1, (currentTick - startTick) / span));
+  };
+
   if (collapsed) {
     const trackedCount = tracked.length + inTransit.length;
     return (
@@ -174,44 +226,98 @@ export const Outliner: React.FC = () => {
           {tracked.length === 0 ? (
             <div className="outliner__empty">No tracked bodies</div>
           ) : (
-            tracked.map(body => {
+            systems.map(sys => (
+              <div className="outliner__system" key={sys.rootId}>
+                <div className="outliner__system-title">
+                  {sys.label}
+                  <span className="outliner__system-count">{sys.bodies.length}</span>
+                </div>
+                {sys.bodies.map(body => {
               const ships = shipsAt(body.id);
               const settlements = settlementsAt(body.id);
               const isOwned = body.ownedBy === 'player';
               const totalUnder = ships.length + settlements.length;
+              const builds = shipBuildsAt(body.id);
               return (
                 <div className="outliner__group" key={body.id}>
                   <div
                     className={`outliner__body-row ${uiState.selectedBodyId === body.id ? 'selected' : ''}`}
                     onClick={() => handleBodyClick(body.id)}
                   >
-                    <span
-                      className="outliner__body-icon"
-                      style={{ background: body.color }}
-                    />
+                    {/* Same procedural art the map draws, so a body is
+                        recognisable here instead of a generic colour dot. */}
+                    <PlanetIcon body={body} size={16} className="outliner__body-icon" />
                     <span className="outliner__body-name">
                       {body.name}{isOwned ? ' ★' : ''}
+                      {/* Ship builds belong to the BODY (that's where the
+                          yard queue lives), so they render once here
+                          rather than duplicated under every settlement. */}
+                      {builds.length > 0 && (
+                        <span className="outliner__build">
+                          <span className="outliner__build-label">
+                            {builds[0].shipName || builds[0].shipClass} · {Math.max(0, builds[0].completeTick - currentTick)}t
+                            {builds.length > 1 ? ` (+${builds.length - 1})` : ''}
+                          </span>
+                          <span className="outliner__build-bar">
+                            <span
+                              className="outliner__build-fill"
+                              style={{ width: `${Math.round(tickProgress(builds[0].startTick, builds[0].completeTick) * 100)}%` }}
+                            />
+                          </span>
+                        </span>
+                      )}
                     </span>
                     {totalUnder > 0 && (
                       <span className="outliner__body-count">{totalUnder}</span>
                     )}
                   </div>
-                  {settlements.map(s => (
-                    <div
-                      key={s.id}
-                      className={`outliner__ship-row ${selectedSettlementId === s.id ? 'selected' : ''}`}
-                      onClick={(e) => { e.stopPropagation(); handleSettlementClick(s.id, body.id); }}
-                      title={`${s.type} · pop ${s.population} · HP ${s.hp}/${s.maxHp}`}
-                    >
-                      <span className="outliner__ship-class">{s.type === 'city' ? '⌂' : '◇'}</span>
-                      <span className="outliner__ship-name">{s.name}</span>
-                      <span className={`outliner__hp-dot outliner__hp-dot--${settlementHpClass(s)}`} />
-                    </div>
-                  ))}
+                  {settlements.map(s => {
+                    // ONLY this settlement's own building upgrade. Ship
+                    // builds are queued per BODY, not per settlement, so
+                    // rendering them here printed the same hull under
+                    // both the city and the station — one ship, listed
+                    // twice. Those live on the body row instead.
+                    const upgrade = s.buildingQueue;
+                    const bar = upgrade
+                      ? {
+                          label: `${upgrade.kind} L${upgrade.targetLevel}`,
+                          pct: tickProgress(upgrade.startTick, upgrade.completeTick),
+                          eta: Math.max(0, upgrade.completeTick - currentTick),
+                        }
+                      : null;
+                    return (
+                      <div
+                        key={s.id}
+                        className={`outliner__ship-row ${selectedSettlementId === s.id ? 'selected' : ''}`}
+                        onClick={(e) => { e.stopPropagation(); handleSettlementClick(s.id, body.id); }}
+                        title={`${s.type} · pop ${s.population} · HP ${s.hp}/${s.maxHp}`}
+                      >
+                        <span className="outliner__ship-class">{s.type === 'city' ? '⌂' : '◇'}</span>
+                        <span className="outliner__ship-name">
+                          {s.name}
+                          {bar && (
+                            <span className="outliner__build">
+                              <span className="outliner__build-label">
+                                {bar.label} · {bar.eta}t
+                              </span>
+                              <span className="outliner__build-bar">
+                                <span
+                                  className="outliner__build-fill"
+                                  style={{ width: `${Math.round(bar.pct * 100)}%` }}
+                                />
+                              </span>
+                            </span>
+                          )}
+                        </span>
+                        <span className={`outliner__hp-dot outliner__hp-dot--${settlementHpClass(s)}`} />
+                      </div>
+                    );
+                  })}
                   {ships.map(ship => {
                     const def = getShipClass(ship.class as ShipClassName);
                     const r = hpRatio(ship);
                     const loadout = loadoutSummary(ship.parts);
+                    const status = shipStatus(ship, currentTick, r);
                     return (
                       <div
                         key={ship.id}
@@ -221,7 +327,13 @@ export const Outliner: React.FC = () => {
                         <span className="outliner__ship-class" title={def.displayName}>
                           <ShipIcon shipClass={ship.class as ShipClassName} size={22} />
                         </span>
-                        <span className="outliner__ship-name">{ship.name}</span>
+                        <span className="outliner__ship-name">
+                          {ship.name}
+                          <span
+                            className={`outliner__status outliner__status--${status.cls}`}
+                            title={status.title}
+                          >{status.label}</span>
+                        </span>
                         {loadout && ship.parts && ship.parts.length > 0 && (
                           <span className="outliner__ship-loadout" title="Fitted parts">{loadout}</span>
                         )}
@@ -231,7 +343,9 @@ export const Outliner: React.FC = () => {
                   })}
                 </div>
               );
-            })
+                })}
+              </div>
+            ))
           )}
         </div>
 

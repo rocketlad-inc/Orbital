@@ -402,3 +402,89 @@
   from { opacity: 0; }
   to   { opacity: 1; }
 }
+
+/* ============================================================
+   System grouping + richer rows (Outliner upgrade)
+   ============================================================ */
+
+/* System header — sits above the bodies belonging to one star system
+   ("Saturn System"). Dimmer and smaller than the section title so the
+   hierarchy reads section > system > body > ship. */
+.outliner__system {
+  margin-bottom: 6px;
+}
+
+.outliner__system-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  font-weight: 700;
+  color: #6ee7b7;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 4px 8px 2px;
+  border-bottom: 1px solid rgba(110, 231, 183, 0.18);
+  margin-bottom: 3px;
+}
+
+.outliner__system-count {
+  margin-left: auto;
+  font-size: 9px;
+  color: #8aa0b4;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+/* Ship status chip. Colours mirror the FleetPanel badges so the same
+   hull reads the same in both panels. */
+.outliner__status {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 4px;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-radius: 2px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.outliner__status--combat    { color: #ff5e5e; background: rgba(255, 94, 94, 0.14); }
+.outliner__status--retreating{ color: #ffb84d; background: rgba(255, 184, 77, 0.14); }
+.outliner__status--transit   { color: #4ecdc4; background: rgba(78, 205, 196, 0.12); }
+.outliner__status--planned   { color: #a4b5c4; background: rgba(164, 181, 196, 0.12); }
+.outliner__status--holding   { color: #ffb84d; background: rgba(255, 184, 77, 0.10); }
+.outliner__status--orbiting  { color: #8aa0b4; background: rgba(138, 160, 180, 0.10); }
+
+/* Build progress under a settlement row — what it's making and when
+   it lands. */
+.outliner__build {
+  display: block;
+  margin-top: 2px;
+}
+
+.outliner__build-label {
+  display: block;
+  font-size: 8px;
+  color: #b8c8d6;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 1px;
+}
+
+.outliner__build-bar {
+  display: block;
+  height: 2px;
+  background: #2a3d50;
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.outliner__build-fill {
+  display: block;
+  height: 100%;
+  background: #6ee7b7;
+  transition: width 240ms ease-out;
+}
