@@ -759,3 +759,25 @@
   font-size: 10px;
   font-style: italic;
 }
+
+/* Idle COMMIT — nothing staged to launch.
+   The button now holds its place instead of appearing only once a plan
+   exists, so the panel doesn't reflow under the cursor the moment you
+   pick a destination. Grey and inert makes "there is nothing to commit"
+   read at a glance, while keeping the control where the eye already
+   learned to find it. Overrides the lit gradient/glow above. */
+.commit-all-btn:disabled {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: #2a3d50;
+  color: #5a6b7c;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+.commit-all-btn:disabled:hover {
+  background: rgba(255, 255, 255, 0.03);
+  box-shadow: none;
+  color: #5a6b7c;
+}
+.commit-all-btn:disabled:active {
+  transform: none;
+}

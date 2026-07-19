@@ -523,6 +523,143 @@ export const ShipPanel: React.FC = () => {
               CHOOSE FROM LIST
             </button>
           </div>
+          {/* Maneuver nodes + COMMIT ride with the move buttons: you pick a
+              destination, then confirm the burn. Splitting those across a
+              scroll meant staging a move and losing sight of the button
+              that actually launches it. */}
+          <div className="maneuver-section" data-tutorial-id="ship-maneuver-section">
+            <div className="section-title">MANEUVER NODES</div>
+            {ship.orders.length === 0 && !ship.transit && !ship.plannedTransit && queuedTransits.length === 0 ? (
+              <div className="no-orders">No planned maneuvers</div>
+            ) : (
+              <>
+                <div className="orders-list">
+                  {ship.transit && (() => {
+                    const plan = ship.transit.currentTransfer;
+                    const targetBody = gameState.bodies.find(b => b.id === plan.targetBodyId);
+                    return (
+                      <div className="order-item status-committed">
+                        <div className="order-info">
+                          <div className="order-type">→ {targetBody?.name ?? plan.targetBodyId}</div>
+                          <div className="order-details">
+                            ETA T-{Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0)} · Δv {plan.totalDv.toFixed(2)}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                  {ship.plannedTransit && !ship.transit && (() => {
+                    const plan = ship.plannedTransit;
+                    const targetBody = gameState.bodies.find(b => b.id === plan.targetBodyId);
+                    const tripTime = plan.arriveTick - plan.startTick;
+                    return (
+                      <div className="order-item status-planned">
+                        <div className="order-info">
+                          <div className="order-type">→ {targetBody?.name ?? plan.targetBodyId} (PLANNED)</div>
+                          <div className="order-details">
+                            Δv: {plan.totalDv.toFixed(2)} | Trip: {tripTime.toFixed(0)} ticks
+                          </div>
+                        </div>
+                        <div className="order-actions">
+                          <button
+                            className="delete-btn"
+                            onClick={() => cancelTorchPreview(ship.id)}
+                            title="Cancel this transfer"
+                          >✕</button>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                  {ship.orders.filter(o => o.type !== 'transfer').map((order) => (
+                    <div key={order.id} className={`order-item status-${order.status}`}>
+                      <div className="order-info">
+                        <div className="order-type">{order.label || order.type.toUpperCase()}</div>
+                        <div className="order-details">
+                          Δv: {Math.abs(order.deltav).toFixed(2)} km/s | T+{order.burnTime.toFixed(0)}
+                        </div>
+                      </div>
+                      <div className="order-actions">
+                        <button
+                          className="delete-btn"
+                          onClick={() => {
+                            // Optimistic local remove + MP server-side
+                            // status='cancelled' POST. Without the DELETE
+                            // the next /state poll re-derived this node
+                            // from the server-side game_ship_nodes row,
+                            // so the X button looked broken to the user.
+                            deleteManeuverNode(order.id);
+                            if (mpActions) {
+                              mpActions.cancelNode(order.id).then(res => {
+                                if (!res.ok) {
+                                  // eslint-disable-next-line no-console
+                                  console.warn('cancelNode rejected by server:', res.error);
+                                }
+                              });
+                            }
+                          }}
+                          title="Cancel this maneuver"
+                        >✕</button>
+                      </div>
+                    </div>
+                  ))}
+                  {queuedTransits.map((qt, i) => {
+                    const targetBody = gameState.bodies.find(b => b.id === qt.targetBodyId);
+                    return (
+                      <div key={`${qt.targetBodyId}-${qt.startTick}-${i}`} className="order-item status-queued">
+                        <div className="order-info">
+                          <div className="order-type">→ {targetBody?.name ?? qt.targetBodyId}</div>
+                          <div className="order-details">
+                            QUEUED | Δv: {qt.totalDv.toFixed(2)} | Arr. T+{qt.arriveTick.toFixed(0)}
+                          </div>
+                        </div>
+                        <div className="order-actions">
+                          <button className="delete-btn" onClick={() => handleRemoveQueuedTransfer(i)}>✕</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+            {/* COMMIT sits outside the empty-state branch so it always
+                holds its place under the node list. It used to render
+                only once a plan existed, which meant the panel reflowed
+                under the cursor the moment you picked a destination. */}
+            {(() => {
+              // Torch model: commit is per-ship, not per-node.
+              // Each ship's plannedTransit preview is promoted to a
+              // live burn via commitTransferLocal. The button label
+              // honors fleet propagation — when the player staged
+              // transfers for an entire fleet from this ship, we
+              // commit ALL of them; otherwise it's just this ship.
+              const fleetPreviewShips = ship.fleetId
+                ? gameState.ships.filter(s =>
+                    s.fleetId === ship.fleetId && s.plannedTransit && !s.transit,
+                  )
+                : (ship.plannedTransit ? [ship] : []);
+              const canCommit = fleetPreviewShips.length > 0;
+              const label = fleetPreviewShips.length > 1
+                ? `▶ COMMIT ALL (${fleetPreviewShips.length})`
+                : '▶ COMMIT';
+              return (
+                <button
+                  className="commit-all-btn"
+                  data-tutorial-id="ship-commit-button"
+                  disabled={!canCommit}
+                  title={canCommit
+                    ? 'Launch the planned burn'
+                    : 'Nothing staged — plan a move first'}
+                  onClick={() => {
+                    for (const s of fleetPreviewShips) {
+                      commitTransferLocal(s);
+                    }
+                  }}
+                >
+                  {label}
+                </button>
+              );
+            })()}
+          </div>
           {mpActions && ship.ownedBy === 'player' && (
             <div className="orders-config-section">
               <div className="section-title">ORDERS</div>
@@ -777,131 +914,6 @@ export const ShipPanel: React.FC = () => {
             />
           )}
 
-          <div className="maneuver-section" data-tutorial-id="ship-maneuver-section">
-            <div className="section-title">MANEUVER NODES</div>
-            {ship.orders.length === 0 && !ship.transit && !ship.plannedTransit && queuedTransits.length === 0 ? (
-              <div className="no-orders">No planned maneuvers</div>
-            ) : (
-              <>
-                <div className="orders-list">
-                  {ship.transit && (() => {
-                    const plan = ship.transit.currentTransfer;
-                    const targetBody = gameState.bodies.find(b => b.id === plan.targetBodyId);
-                    return (
-                      <div className="order-item status-committed">
-                        <div className="order-info">
-                          <div className="order-type">→ {targetBody?.name ?? plan.targetBodyId}</div>
-                          <div className="order-details">
-                            ETA T-{Math.max(0, plan.arriveTick - gameState.currentTick).toFixed(0)} · Δv {plan.totalDv.toFixed(2)}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                  {ship.plannedTransit && !ship.transit && (() => {
-                    const plan = ship.plannedTransit;
-                    const targetBody = gameState.bodies.find(b => b.id === plan.targetBodyId);
-                    const tripTime = plan.arriveTick - plan.startTick;
-                    return (
-                      <div className="order-item status-planned">
-                        <div className="order-info">
-                          <div className="order-type">→ {targetBody?.name ?? plan.targetBodyId} (PLANNED)</div>
-                          <div className="order-details">
-                            Δv: {plan.totalDv.toFixed(2)} | Trip: {tripTime.toFixed(0)} ticks
-                          </div>
-                        </div>
-                        <div className="order-actions">
-                          <button
-                            className="delete-btn"
-                            onClick={() => cancelTorchPreview(ship.id)}
-                            title="Cancel this transfer"
-                          >✕</button>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                  {ship.orders.filter(o => o.type !== 'transfer').map((order) => (
-                    <div key={order.id} className={`order-item status-${order.status}`}>
-                      <div className="order-info">
-                        <div className="order-type">{order.label || order.type.toUpperCase()}</div>
-                        <div className="order-details">
-                          Δv: {Math.abs(order.deltav).toFixed(2)} km/s | T+{order.burnTime.toFixed(0)}
-                        </div>
-                      </div>
-                      <div className="order-actions">
-                        <button
-                          className="delete-btn"
-                          onClick={() => {
-                            // Optimistic local remove + MP server-side
-                            // status='cancelled' POST. Without the DELETE
-                            // the next /state poll re-derived this node
-                            // from the server-side game_ship_nodes row,
-                            // so the X button looked broken to the user.
-                            deleteManeuverNode(order.id);
-                            if (mpActions) {
-                              mpActions.cancelNode(order.id).then(res => {
-                                if (!res.ok) {
-                                  // eslint-disable-next-line no-console
-                                  console.warn('cancelNode rejected by server:', res.error);
-                                }
-                              });
-                            }
-                          }}
-                          title="Cancel this maneuver"
-                        >✕</button>
-                      </div>
-                    </div>
-                  ))}
-                  {queuedTransits.map((qt, i) => {
-                    const targetBody = gameState.bodies.find(b => b.id === qt.targetBodyId);
-                    return (
-                      <div key={`${qt.targetBodyId}-${qt.startTick}-${i}`} className="order-item status-queued">
-                        <div className="order-info">
-                          <div className="order-type">→ {targetBody?.name ?? qt.targetBodyId}</div>
-                          <div className="order-details">
-                            QUEUED | Δv: {qt.totalDv.toFixed(2)} | Arr. T+{qt.arriveTick.toFixed(0)}
-                          </div>
-                        </div>
-                        <div className="order-actions">
-                          <button className="delete-btn" onClick={() => handleRemoveQueuedTransfer(i)}>✕</button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                {(() => {
-                  // Torch model: commit is per-ship, not per-node.
-                  // Each ship's plannedTransit preview is promoted to a
-                  // live burn via commitTransferLocal. The button label
-                  // honors fleet propagation — when the player staged
-                  // transfers for an entire fleet from this ship, we
-                  // commit ALL of them; otherwise it's just this ship.
-                  const fleetPreviewShips = ship.fleetId
-                    ? gameState.ships.filter(s =>
-                        s.fleetId === ship.fleetId && s.plannedTransit && !s.transit,
-                      )
-                    : (ship.plannedTransit ? [ship] : []);
-                  if (fleetPreviewShips.length === 0) return null;
-                  const label = fleetPreviewShips.length > 1
-                    ? `▶ COMMIT ALL (${fleetPreviewShips.length})`
-                    : '▶ COMMIT';
-                  return (
-                    <button
-                      className="commit-all-btn"
-                      data-tutorial-id="ship-commit-button"
-                      onClick={() => {
-                        for (const s of fleetPreviewShips) {
-                          commitTransferLocal(s);
-                        }
-                      }}
-                    >
-                      {label}
-                    </button>
-                  );
-                })()}
-              </>
-            )}
-          </div>
 
           {(currentFleet || eligiblePeers.length > 0) && (
             <div className="fleet-section" data-tutorial-id="ship-fleet-section">
