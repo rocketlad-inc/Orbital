@@ -2213,6 +2213,14 @@ export class Room {
     const NO_COLLECTOR_POOL_FRACTION = 0.10;       // 10% to faction pool
     const NO_COLLECTOR_STOCK_FRACTION = 0.90;       // 90% to local stockpile
 
+    // Science reaching each faction's POOL this tick. Captured here so
+    // the research drain below can advance a project at the faction's
+    // ACTUAL income rate — a big science economy researches faster,
+    // which is the whole point of specialising worlds for science.
+    // Declared outside the try so a harvest failure leaves it empty
+    // (research simply doesn't advance) rather than undefined.
+    const scienceIncomeByFaction = new Map();
+
     // Aggregate per-faction pool deltas; apply per-(body,faction)
     // stockpile deltas individually. Wrapped: yield distribution must
     // NEVER kill resolveTick (combat, dyson, victory all run after).
@@ -2353,6 +2361,9 @@ export class Room {
       // so truncate == floor. new_pool += floor(remainder + delta);
       // new_remainder = (remainder + delta) - floor(remainder + delta).
       for (const [fid, delta] of perFactionPool) {
+        // Record science income BEFORE the zero-delta skip, so a faction
+        // whose only income is science still registers a rate.
+        if (delta.science > 0) scienceIncomeByFaction.set(fid, delta.science);
         if (delta.fuel + delta.metal + delta.gold + delta.science <= 0) continue;
         await this.env.DB
           .prepare(
@@ -2936,14 +2947,17 @@ export class Room {
     // carried research_tech_id/research_progress since 0003 but NOTHING
     // ever advanced them — the columns were vestigial.
     //
-    // Each tick a faction with an active project pours science from its
-    // pool into progress, capped at MAX_SCIENCE_PER_TICK so a fat
-    // stockpile can't insta-finish the moment a track is picked.
+    // Each tick a faction with an active project advances it by its
+    // ACTUAL science income for that tick (captured from the harvest
+    // pass above) — no artificial cap. Research speed IS your science
+    // economy, so specialising worlds for science genuinely pays off.
+    // Banked science is a buffer, not an accelerant: it can't be dumped
+    // into a project to skip ahead, which is what made the old model a
+    // purchase.
     // Completing a level clears the project, so the player gets a
     // "pick your next project" moment (and the Situation Report can nag
     // with "No research project"). Science with no project simply banks.
     try {
-      const MAX_SCIENCE_PER_TICK = 3;   // mirrors src/game/techs.ts
       const TECH_MAX_LEVEL = 10;
       const TECH_DEFS = {
         weapons:      { baseCost: 40, costScaling: 1.7 },
@@ -2986,10 +3000,24 @@ export class Room {
         const cost = Math.ceil(def.baseCost * Math.pow(level + 1, def.costScaling));
         const progress = Number(f.research_progress ?? 0);
         const pool = Number(f.science ?? 0);
-        const spend = Math.min(pool, MAX_SCIENCE_PER_TICK, cost - progress);
+        // Research advances at the faction's ACTUAL science income rate
+        // — no artificial ceiling. A science-specialised empire genuinely
+        // outresearches a poor one, which the old flat 3/tick cap
+        // flattened away (income was irrelevant; everyone tied).
+        //
+        // Clamped to the pool so we can never spend science that isn't
+        // there, and to what the level still needs so a big income
+        // doesn't overshoot and waste the remainder.
+        const income = Number(scienceIncomeByFaction.get(f.id) ?? 0);
+        // Income is fractional (yields × multipliers), so round the
+        // bookkeeping to 3dp. Without this, float noise accumulates in
+        // research_progress and the science pool across hundreds of
+        // ticks and the numbers drift into long ugly decimals.
+        const round3 = (n) => Math.round(n * 1000) / 1000;
+        const spend = round3(Math.min(pool, income, cost - progress));
         if (spend <= 0) continue;
 
-        const newProgress = progress + spend;
+        const newProgress = round3(progress + spend);
         if (newProgress < cost) {
           await this.env.DB
             .prepare('UPDATE game_factions SET science = science - ?, research_progress = ? WHERE id = ?')
