@@ -96,37 +96,41 @@ const WMChip: React.FC<{
 
 /** Surface scene: planet horizon with the city's structures, callouts left. */
 const WMSurfaceScene: React.FC = () => (
-  <svg viewBox="0 0 220 100" className="ux-wm-svg" preserveAspectRatio="xMidYMid meet">
-    {/* planet horizon */}
-    <circle cx={110} cy={310} r={230} fill="#0f2b33" stroke="#2b5e58" strokeWidth={1} />
-    <circle cx={110} cy={310} r={230} fill="none" stroke="#4ecdc4" strokeWidth={2.5} opacity={0.12} />
+  <svg viewBox="0 0 220 104" className="ux-wm-svg" preserveAspectRatio="xMidYMid meet">
+    {/* planet horizon — big and confident, like the sketch */}
+    <circle cx={118} cy={262} r={210} fill="#123640" stroke="#2b5e58" strokeWidth={1.2} />
+    <circle cx={118} cy={262} r={210} fill="none" stroke="#4ecdc4" strokeWidth={3} opacity={0.15} />
+    {/* background skyline dots */}
+    <rect x={92} y={49} width={2.5} height={7} fill="#2b4a5c" />
+    <rect x={188} y={64} width={2.5} height={8} fill="#2b4a5c" />
     {/* LAB — twin towers + antenna */}
-    <rect x={106} y={62} width={3.5} height={18} fill="#3d5a6b" />
-    <rect x={112} y={56} width={4} height={24} fill="#46687c" />
-    <line x1={114} y1={56} x2={114} y2={50} stroke="#8aa0b4" strokeWidth={0.8} />
-    <circle cx={114} cy={49} r={1.3} fill="#67e8f9" />
-    <rect x={112.8} y={60} width={1.4} height={1.6} fill="#ffb84d" />
-    {/* MINT — columned block */}
-    <path d="M 131 70 L 142 65 L 153 70 Z" fill="#3d5a6b" />
-    <rect x={132} y={70} width={20} height={12} fill="#46687c" />
-    <line x1={137} y1={72} x2={137} y2={82} stroke="#1c2a3a" strokeWidth={1.2} />
-    <line x1={142} y1={72} x2={142} y2={82} stroke="#1c2a3a" strokeWidth={1.2} />
-    <line x1={147} y1={72} x2={147} y2={82} stroke="#1c2a3a" strokeWidth={1.2} />
+    <rect x={100} y={30} width={5} height={26} fill="#3d5a6b" />
+    <rect x={108} y={22} width={6} height={34} fill="#46687c" />
+    <line x1={111} y1={22} x2={111} y2={13} stroke="#8aa0b4" strokeWidth={1} />
+    <circle cx={111} cy={11.5} r={1.6} fill="#67e8f9" />
+    <rect x={109.5} y={28} width={2} height={2.4} fill="#ffb84d" />
+    <rect x={101.5} y={36} width={2} height={2.4} fill="#ffb84d" />
+    {/* MINT — columned block with pediment */}
+    <path d="M 128 46 L 143 39 L 158 46 Z" fill="#3d5a6b" />
+    <rect x={129} y={46} width={28} height={16} fill="#46687c" />
+    <line x1={136} y1={48} x2={136} y2={62} stroke="#1c2a3a" strokeWidth={1.8} />
+    <line x1={143} y1={48} x2={143} y2={62} stroke="#1c2a3a" strokeWidth={1.8} />
+    <line x1={150} y1={48} x2={150} y2={62} stroke="#1c2a3a" strokeWidth={1.8} />
     {/* FORGE — block + chimney + smoke */}
-    <rect x={162} y={78} width={18} height={10} fill="#46687c" />
-    <rect x={164} y={82} width={2} height={2} fill="#ffb84d" />
-    <rect x={176} y={70} width={3.5} height={8} fill="#3d5a6b" />
-    <circle cx={178} cy={66} r={1.5} fill="#8aa0b4" opacity={0.6} />
-    <circle cx={180} cy={62} r={1} fill="#8aa0b4" opacity={0.4} />
+    <rect x={168} y={56} width={24} height={14} fill="#46687c" />
+    <rect x={171} y={61} width={2.6} height={2.6} fill="#ffb84d" />
+    <rect x={186} y={44} width={4.5} height={12} fill="#3d5a6b" />
+    <circle cx={188.5} cy={40} r={2} fill="#8aa0b4" opacity={0.6} />
+    <circle cx={191} cy={35} r={1.4} fill="#8aa0b4" opacity={0.4} />
     {/* callout lines */}
-    <line x1={62} y1={15} x2={110} y2={60} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.5} />
-    <line x1={62} y1={45} x2={140} y2={68} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.5} />
-    <line x1={62} y1={75} x2={170} y2={76} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.5} />
+    <line x1={62} y1={13} x2={104} y2={30} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.55} />
+    <line x1={62} y1={43} x2={132} y2={50} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.55} />
+    <line x1={62} y1={73} x2={170} y2={62} stroke="#4ecdc4" strokeWidth={0.7} opacity={0.55} />
     {/* callout chips */}
-    <WMChip x={4} y={4} label="LAB" lv="LV 2 · +50% sci" />
-    <WMChip x={4} y={34} label="MINT" lv="LV 1 · +25% cred" />
-    <WMChip x={4} y={64} label="FORGE" lv="LV 3 · +75% metal" />
-    <text x={216} y={96} fontSize={6} fontFamily="monospace" fill="#5a7085" textAnchor="end">SURFACE · NEW GENEVA · POP 3</text>
+    <WMChip x={4} y={2} label="LAB" lv="LV 2 · +50% sci" />
+    <WMChip x={4} y={32} label="MINT" lv="LV 1 · +25% cred" />
+    <WMChip x={4} y={62} label="FORGE" lv="LV 3 · +75% metal" />
+    <text x={216} y={99} fontSize={6} fontFamily="monospace" fill="#6b8195" textAnchor="end">SURFACE · NEW GENEVA · POP 3</text>
   </svg>
 );
 
@@ -170,7 +174,7 @@ const WorldMenu_Mobile: React.FC = () => (
     <div className="ux-wm-chiprow">
       <StatChip label="HP" value="100" tone="good" />
       <StatChip label="POP" value="3/5" />
-      <StatChip label="COLLECTOR" value="✓" tone="good" />
+      <StatChip label="COLL" value="✓" tone="good" />
     </div>
     <div className="ux-wm-income">+2.4M · +7.2C · +3.6S / tick</div>
     <div className="ux-wm-scene"><WMSurfaceScene /></div>

@@ -1060,3 +1060,9 @@
   padding: 12px;
   font-size: 9px;
 }
+
+/* Scenes and panels must never be flex-squeezed — a shrunken box crops
+   the SVG's callout chips against the scene border. */
+.ux-wm-mob > * { flex-shrink: 0; }
+.ux-wm-actions { margin-top: auto; }
+.ux-wm-chiprow .mock-stat-chip { flex: 1; min-width: 0; }
