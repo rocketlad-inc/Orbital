@@ -65,6 +65,12 @@ export interface RenderContext {
   /** In-flight ship builds — lets the station shipyard scaffold show
    *  a hull under construction at focus zoom. Optional. */
   buildOrders?: BuildOrder[];
+  /** Wall-clock ms when a settlement's building last leveled up,
+   *  keyed `${settlementId}:${buildingKind}`. Drives the "just built"
+   *  pop on that specific station module (isoStructures.drawBuildPop)
+   *  — distinct from growthFlashStart, which is population-only and
+   *  fires at the whole-settlement marker, not a specific module. */
+  buildFlashStart?: Map<string, number>;
 }
 
 /**
@@ -3088,13 +3094,30 @@ export function drawStation(
   if (bodyScreenR >= 40 || ctx.selectedBodyId === body.id) {
     const weaponsLevel = buildingLevel(settlement, 'weapons' as BuildingKind);
     const shipyardLevel = buildingLevel(settlement, 'shipyard' as BuildingKind);
-    const buildInFlight = !!ctx.buildOrders?.some(
-      bo => bo.bodyId === body.id && bo.ownedBy === settlement.ownedBy,
-    );
+    const labLevel = buildingLevel(settlement, 'lab' as BuildingKind);
+    const nowMForStation = ctx.nowMs ?? performance.now();
+    // Earliest-queued first, so a station with two bays (shipyard L5+)
+    // shows the ship closest to launch in the primary slot.
+    const builds = (ctx.buildOrders ?? [])
+      .filter(bo => bo.bodyId === body.id && bo.ownedBy === settlement.ownedBy)
+      .sort((a, b) => a.startTick - b.startTick)
+      .map(bo => ({
+        shipClass: bo.shipClass,
+        progress: bo.completeTick > bo.startTick
+          ? (ctx.t - bo.startTick) / (bo.completeTick - bo.startTick)
+          : 1,
+      }));
     ctx.ctx.save();
     ctx.ctx.translate(canvasPos.x, canvasPos.y);
     drawStationStructure(ctx.ctx, {
-      weaponsLevel, shipyardLevel, buildInFlight, factionColor: color,
+      weaponsLevel, shipyardLevel, labLevel, builds,
+      factionColor: color,
+      nowMs: nowMForStation,
+      buildFlash: {
+        weapons: ctx.buildFlashStart?.get(`${settlement.id}:weapons`),
+        shipyard: ctx.buildFlashStart?.get(`${settlement.id}:shipyard`),
+        lab: ctx.buildFlashStart?.get(`${settlement.id}:lab`),
+      },
     });
     ctx.ctx.restore();
 

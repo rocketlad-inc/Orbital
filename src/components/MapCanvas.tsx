@@ -36,6 +36,8 @@ import {
   trajectoryRole,
 } from '../render/mapRenderer';
 import { computeSystemRegions } from '../render/systemRegions';
+import { BUILDING_DEFS, buildingLevel } from '../game/settlements';
+import { BuildingKind } from '../types';
 import {
   spawnTracer,
   drawTracers,
@@ -180,6 +182,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // not ticks — is the right base). Pruned each frame after expiry.
   const prevPopRef = useRef<Map<string, number>>(new Map());
   const growthFlashStartRef = useRef<Map<string, number>>(new Map());
+  // Per-module "just built" pop (§ station art), same shape as the
+  // growth pulse above but keyed `${settlementId}:${buildingKind}` and
+  // fired on a LEVEL increase (0→1 counts — first construction is a
+  // level-up too) rather than population. Tracks every BuildingKind
+  // generically via BUILDING_DEFS rather than hardcoding the
+  // station-only subset the renderer currently draws, so city art
+  // picking this up later needs no changes here.
+  const prevBuildingLevelsRef = useRef<Map<string, number>>(new Map());
+  const buildFlashStartRef = useRef<Map<string, number>>(new Map());
   // Camera easing (§E5). Programmatic camera changes (focusBody,
   // selectBody-driven moves, initialFocus) tween position+scale over
   // ~250ms ease-out-cubic; direct user input (wheel/pinch/pan/WASD)
@@ -493,6 +504,22 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
       prevPopRef.current.set(settlement.id, settlement.population);
 
+      // "Just built" module pop — same edge-detection shape as the
+      // population pulse above, but per building kind so the flash
+      // lands on the exact module that grew (a new weapons barrel, not
+      // a generic glow over the whole station). 0→1 counts as an
+      // increase (first construction), matching "a new visual item
+      // appears every time you build" literally, not just on upgrades.
+      for (const kind of Object.keys(BUILDING_DEFS) as BuildingKind[]) {
+        const key = `${settlement.id}:${kind}`;
+        const level = buildingLevel(settlement, kind);
+        const prevLevel = prevBuildingLevelsRef.current.get(key);
+        if (prevLevel !== undefined && level > prevLevel) {
+          buildFlashStartRef.current.set(key, nowMs);
+        }
+        prevBuildingLevelsRef.current.set(key, level);
+      }
+
       // Same hp-based rule as ships — settlement.lastDamagedTick is
       // likewise SP-only, so bombardment never flashed in MP.
       const curHp = settlement.hp;
@@ -541,6 +568,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     for (const [id, startMs] of growthFlashStartRef.current) {
       if (nowMs - startMs >= 700) growthFlashStartRef.current.delete(id);
     }
+    // Build pops live 900ms (isoStructures.BUILD_POP_DURATION_MS) — a
+    // slightly looser prune window here is harmless, drawBuildPop
+    // itself no-ops once an entry ages past its own duration.
+    for (const [key, startMs] of buildFlashStartRef.current) {
+      if (nowMs - startMs >= 1000) buildFlashStartRef.current.delete(key);
+    }
 
     const renderContext: RenderContext = {
       ctx,
@@ -562,6 +595,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       simSpeed,
       damageFlashStart: damageFlashStartRef.current,
       growthFlashStart: growthFlashStartRef.current,
+      buildFlashStart: buildFlashStartRef.current,
       nowMs,
       // Planet-visual extras: night-side city lights on settled worlds
       // + focus-zoom building structures read these. Optional in the
