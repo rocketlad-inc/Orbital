@@ -779,6 +779,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       if (ship.ownedBy !== 'player' && !visibleShipIds.has(ship.id)) continue;
 
       const isSelected = uiState.selectedShipId === ship.id;
+      // Parked-orbit rings are drawn ONLY for the ship the player is
+      // pointing at (or has selected). Drawing one per ship turned a busy
+      // body into a plate of spaghetti. Same predicate the hover-only name
+      // label uses in drawShip, so the ring and the name appear together.
+      const isShipHovered = hoveredShipIdRef.current === ship.id;
+      const showOrbitRing = isSelected || isShipHovered;
       const formation = formationMap.get(ship.id);
 
       // Cluster collapse: at low zoom, skip the individual draw for
@@ -877,11 +883,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // Ship parked but has a torch preview staged. Draw the parked
         // orbit + ship at its current location, plus a dashed amber
         // torch arc to the picked destination.
-        drawOrbitEllipse(
-          ship.orbit, renderContext,
-          isSelected ? COLORS.orbitCurrent : COLORS.orbitTrajectory,
-          isSelected ? 2 : 1
-        );
+        if (showOrbitRing) {
+          drawOrbitEllipse(
+            ship.orbit, renderContext,
+            isSelected ? COLORS.orbitCurrent : COLORS.orbitTrajectory,
+            isSelected ? 2 : 1
+          );
+        }
         drawShip(ship, renderContext, isSelected, formation);
         if (isSelected) drawApsisMarkers(ship, renderContext);
 
@@ -893,11 +901,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           drawGhostPlanet(arrivalBody, ship.plannedTransit.arriveTick, renderTick(), renderContext);
         }
       } else {
-        drawOrbitEllipse(
-          ship.orbit, renderContext,
-          isSelected ? COLORS.orbitCurrent : COLORS.orbitTrajectory,
-          isSelected ? 2 : 1
-        );
+        if (showOrbitRing) {
+          drawOrbitEllipse(
+            ship.orbit, renderContext,
+            isSelected ? COLORS.orbitCurrent : COLORS.orbitTrajectory,
+            isSelected ? 2 : 1
+          );
+        }
         drawShip(ship, renderContext, isSelected, formation);
         if (isSelected) drawApsisMarkers(ship, renderContext);
       }
