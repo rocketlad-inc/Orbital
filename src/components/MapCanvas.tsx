@@ -34,6 +34,8 @@ import {
   RenderContext,
   TRAJECTORY_COLORS,
   trajectoryRole,
+  bodyLabelAlwaysOn,
+  planBodyLabels,
 } from '../render/mapRenderer';
 import { computeSystemRegions } from '../render/systemRegions';
 import { BUILDING_DEFS, buildingLevel } from '../game/settlements';
@@ -756,6 +758,52 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       );
     }
 
+    // Body-label collision plan. A body's name draws at a fixed offset
+    // below its dot with no horizontal awareness of its neighbours, so
+    // close pairs (Mercury/Venus at low zoom, five co-orbital Belt
+    // rocks) printed on top of each other. Pre-pass over every body that
+    // WILL show a label this frame (same gate drawBody itself uses),
+    // measure its box, and let planBodyLabels stagger contenders onto
+    // rows below their own body — never sideways, never hidden. Read-only
+    // against the explored/coverage state (the loop below still owns the
+    // one mutation that marks a body explored) so this can run first
+    // without disturbing that bookkeeping.
+    const bodyLabelCandidates: Array<{ id: string; x: number; y: number; width: number; priority: number }> = [];
+    for (const body of gameState.bodies) {
+      if (body.destroyedAtTick != null) continue;
+      if (!(bodyLabelAlwaysOn(body) || renderContext.camera.scale > 0.4)) continue;
+      const wp = bodyPosition(body, renderTick(), gameState.bodies);
+      const cp = worldToCanvas(wp.x, wp.y, renderContext);
+      const radius = Math.max(3, body.radius * renderContext.camera.scale);
+      const isSelected = uiState.selectedBodyId === body.id;
+      const isHovered = uiState.hoveredBodyId === body.id;
+      const priority =
+        isSelected ? 0
+        : isHovered ? 1
+        : body.ownedBy === 'player' ? 2
+        : body.ownedBy ? 3
+        : bodyLabelAlwaysOn(body) ? 4
+        : 5;
+      renderContext.ctx.font = '10px monospace';
+      const nameWidth = renderContext.ctx.measureText(body.name.toUpperCase()).width;
+      // Yield row (see drawBody) can be wider than the name for a
+      // well-stocked world; 64px comfortably covers three "NNM"-style
+      // tokens at 9px monospace without measuring the exact string here.
+      const explored = exploredRef.current;
+      const yieldsVisible = explored ? explored.has(body.id) : wasInCoverage(wp);
+      const hasYieldRow = !!body.resources && yieldsVisible
+        && (body.resources.metal > 0 || body.resources.gold > 0 || body.resources.science > 0);
+      const width = Math.max(nameWidth, hasYieldRow ? 64 : 0);
+      bodyLabelCandidates.push({
+        id: body.id,
+        x: cp.x,
+        y: cp.y + radius + 14,
+        width,
+        priority,
+      });
+    }
+    const bodyLabelRows = planBodyLabels(bodyLabelCandidates);
+
     // Draw bodies. Destroyed asteroids (post-RAM impact) keep their
     // row in gameState.bodies for one tick to give consumers a chance
     // to observe destroyedAtTick, but they must not render — without
@@ -781,7 +829,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         exploredDirtyRef.current = true;
       }
       const yieldsVisible = explored ? explored.has(body.id) : wasInCoverage(bodyPos);
-      drawBody(body, renderContext, isSelected, isHovered, yieldsVisible);
+      drawBody(body, renderContext, isSelected, isHovered, yieldsVisible, bodyLabelRows.get(body.id) ?? 0);
       // Asteroid-weapon overlay: flame trail + projected impact path
       // + pulsing crosshair on the target. drawBody already places
       // the body's icon at its ram-mode position via bodyPosition.

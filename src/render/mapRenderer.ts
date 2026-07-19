@@ -1415,6 +1415,82 @@ function drawGasGiantBody(
 const labelAppearMs = new Map<string, number>();
 
 /**
+ * Whether a body's name label ignores the zoom gate and shows at any
+ * scale. Stars, black holes, and anything orbiting directly under a
+ * star (the "always visible" tier of the system) never disappear when
+ * zoomed out; everything else only shows once `scale > 0.4`. Shared
+ * between drawBody's own gate and the label-collision planner in
+ * MapCanvas so the two can't drift apart.
+ */
+export function bodyLabelAlwaysOn(body: Body): boolean {
+  return body.type === 'star' || body.type === 'black_hole' || body.parent === 'sol';
+}
+
+/** Vertical step between staggered body-label rows (see planBodyLabels). */
+export const BODY_LABEL_ROW_HEIGHT = 26;
+
+/**
+ * Assign each candidate body label a vertical "row" (0, 1, 2…) below its
+ * body so that dense clusters — Mercury/Venus at low zoom, five co-orbital
+ * Belt rocks, a knot of moons — stagger downward instead of printing on
+ * top of each other. A label never moves horizontally or hides; it only
+ * drops to the next row down until it clears every higher-priority label
+ * already placed. Rows are a fixed height regardless of whether a body's
+ * own content (name only vs. name + yield tokens) fills it, so two labels
+ * on different rows can never collide no matter their content.
+ *
+ * Priority decides who gets row 0 when several bodies contend for the
+ * same spot: selected > hovered > owned-by-player > owned-by-anyone >
+ * always-on (star/black hole/direct sol child) > everything else. Ties
+ * break on id so placement is stable frame to frame.
+ *
+ * If a body still collides with something at every row up to MAX_ROWS
+ * (a pathological cluster), it takes the row with the LEAST overlap
+ * rather than piling everything onto row 0 — same "least-bad" fallback
+ * chooseRegionLabelPos uses.
+ *
+ * Pure and exported so placement can be tested without a canvas.
+ */
+export function planBodyLabels(
+  candidates: Array<{ id: string; x: number; y: number; width: number; priority: number }>,
+): Map<string, number> {
+  const MAX_ROWS = 10;
+  const placed: LabelRect[] = [];
+  const order = candidates
+    .slice()
+    .sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
+  const result = new Map<string, number>();
+  for (const c of order) {
+    let bestRow = 0;
+    let bestCost = Infinity;
+    for (let row = 0; row <= MAX_ROWS; row++) {
+      const rect: LabelRect = {
+        x: c.x - c.width / 2,
+        y: c.y + row * BODY_LABEL_ROW_HEIGHT,
+        w: c.width,
+        h: BODY_LABEL_ROW_HEIGHT,
+      };
+      let cost = 0;
+      for (const o of placed) {
+        const ox = Math.min(rect.x + rect.w, o.x + o.w) - Math.max(rect.x, o.x);
+        const oy = Math.min(rect.y + rect.h, o.y + o.h) - Math.max(rect.y, o.y);
+        if (ox > 0 && oy > 0) cost += ox * oy;
+      }
+      if (cost < bestCost) { bestRow = row; bestCost = cost; }
+      if (cost === 0) break;
+    }
+    placed.push({
+      x: c.x - c.width / 2,
+      y: c.y + bestRow * BODY_LABEL_ROW_HEIGHT,
+      w: c.width,
+      h: BODY_LABEL_ROW_HEIGHT,
+    });
+    result.set(c.id, bestRow);
+  }
+  return result;
+}
+
+/**
  * Draw a celestial body (circle with label) — enhanced with shading, glow,
  * gas giant bands, and a multi-layer sun corona.
  */
@@ -1428,6 +1504,11 @@ export function drawBody(
    *  it's actually in range. Defaults true so non-fog callers (e.g. the
    *  lobby preview) keep showing it. */
   showYields: boolean = true,
+  /** Vertical stagger row from planBodyLabels — 0 (default) draws at the
+   *  body's normal fixed offset, matching every caller that doesn't plan
+   *  labels (LobbyMapPreview, tests). MapCanvas computes this once per
+   *  frame over all visible bodies and passes it in. */
+  labelRow: number = 0,
 ) {
   const pos = bodyPosition(body, ctx.t, ctx.bodies);
   const canvasPos = worldToCanvas(pos.x, pos.y, ctx);
@@ -1476,7 +1557,11 @@ export function drawBody(
   // Sol; otherwise only at zoomed-in scales. Black holes ride the same
   // always-on rule as stars so "CYGNUS X" stays readable when the
   // player is pulled all the way out hunting for the far systems.
-  const alwaysShowLabel = body.type === 'star' || body.type === 'black_hole' || body.parent === 'sol';
+  const alwaysShowLabel = bodyLabelAlwaysOn(body);
+  // Rows stagger straight down from the body's normal anchor, so a
+  // collision only ever pushes a label further from ITS OWN body —
+  // never sideways onto a neighbour's territory.
+  const rowOffset = labelRow * BODY_LABEL_ROW_HEIGHT;
   if (alwaysShowLabel || ctx.camera.scale > 0.4) {
     // Zoom-gated labels fade in over 150ms (§E7) instead of popping at
     // the 0.4-scale threshold. Always-on labels skip the bookkeeping.
@@ -1497,7 +1582,7 @@ export function drawBody(
     ctx.ctx.font = '10px monospace';
     ctx.ctx.textAlign = 'center';
     ctx.ctx.textBaseline = 'top';
-    ctx.ctx.fillText(body.name.toUpperCase(), canvasPos.x, canvasPos.y + radius + 14);
+    ctx.ctx.fillText(body.name.toUpperCase(), canvasPos.x, canvasPos.y + radius + 14 + rowOffset);
 
     // Neptune's-Pride-style yield readout under the name. Each token
     // is color-coded to the resource pill (ore silver, credits gold,
@@ -1518,7 +1603,7 @@ export function drawBody(
       if (tokens.length > 0) {
         ctx.ctx.font = '9px monospace';
         ctx.ctx.textBaseline = 'top';
-        const baseY = canvasPos.y + radius + 26; // name sits at +14 in a 10px font; this lines up just below
+        const baseY = canvasPos.y + radius + 26 + rowOffset; // name sits at +14 in a 10px font; this lines up just below
         const gap = 4;
         // Measure total width to center the row.
         let totalW = 0;
@@ -3780,13 +3865,49 @@ const REGION_NEUTRAL = '#8c8f92';
 // a synthesized faux-bold that smears an already-wide face (App.css
 // .title documents the same rule). The heavier read comes from the face
 // and the size step over the 8-10px monospace body labels.
-const REGION_TITLE_FONT = '13px Audiowide, Orbitron, Eurostile, system-ui, sans-serif';
-const REGION_SUB_FONT = '10px Audiowide, Orbitron, Eurostile, system-ui, sans-serif';
+const REGION_FONT_STACK = 'Audiowide, Orbitron, Eurostile, system-ui, sans-serif';
+const REGION_TITLE_PX = 13;
+const REGION_SUB_PX = 10;
 /** Gap held between a region label's edge and the body it's anchored to
  *  — enough to clear the body's dot AND the body's own name under it. */
 const REGION_LABEL_BODY_CLEARANCE = 38;
 /** Title (13px) + owner line (10px) + the gap between them. */
 const REGION_LABEL_HEIGHT = 32;
+
+// --- Label sizing vs. available room -------------------------------
+//
+// Labels were a fixed 13px/10px no matter how much room their band had.
+// Zoomed out, the inner system compresses into a couple hundred pixels
+// while still hosting four regions (Core, Earth, Mars, Belt) plus a
+// dozen body names — so full-size text there is guaranteed to collide,
+// and no placement search can fix a label that simply doesn't fit.
+//
+// So a label is sized to the band it names: thickness on screen is what
+// decides whether neighbouring rings' labels can clear each other
+// vertically. Thin ring -> small text; zoom in, the ring fattens and the
+// text grows back to full size. Driving it off measured thickness rather
+// than a hardcoded "inner planets" list means it holds for any layout.
+/** Band thickness (screen px) at or above which labels draw full size. */
+const REGION_LABEL_FULL_AT = 88;
+/** Thickness at or below which they're clamped to the floor scale. */
+const REGION_LABEL_MIN_AT = 24;
+/** Floor, as a fraction of full size. Below ~0.55 Audiowide stops being
+ *  legible against the wash, at which point hiding beats shrinking. */
+const REGION_LABEL_MIN_SCALE = 0.55;
+/** Thickness below which the owner line is dropped and only the region
+ *  name draws. The owner line is the widest thing on the map (~2x the
+ *  title), so shedding it is the single biggest de-clutter available;
+ *  ownership is still readable from the band's colour. */
+const REGION_SUB_HIDE_BELOW = 44;
+
+/** How much to shrink a region's label given its band's screen thickness. */
+export function regionLabelScale(bandThicknessPx: number): number {
+  if (bandThicknessPx >= REGION_LABEL_FULL_AT) return 1;
+  if (bandThicknessPx <= REGION_LABEL_MIN_AT) return REGION_LABEL_MIN_SCALE;
+  const t = (bandThicknessPx - REGION_LABEL_MIN_AT)
+    / (REGION_LABEL_FULL_AT - REGION_LABEL_MIN_AT);
+  return REGION_LABEL_MIN_SCALE + (1 - REGION_LABEL_MIN_SCALE) * t;
+}
 
 export interface LabelRect { x: number; y: number; w: number; h: number }
 
@@ -3828,20 +3949,25 @@ export function chooseRegionLabelPos(opts: {
   mid: number; rInner: number; rOuter: number;
   baseAngle: number;
   labelWidth: number;
+  /** Box height to reserve. Defaults to the full two-line height. */
+  labelHeight?: number;
   clearance: number;
   obstacles: LabelRect[];
 }): { x: number; y: number; rect: LabelRect; clear: boolean } {
   const { cx, cy, mid, rInner, rOuter, baseAngle, labelWidth, obstacles } = opts;
+  // Shrunk labels reserve a shorter box too, so a small inner-ring name
+  // isn't held apart from its neighbours as if it were full height.
+  const labelHeight = opts.labelHeight ?? REGION_LABEL_HEIGHT;
   const rectAt = (x: number, y: number): LabelRect => ({
     x: x - labelWidth / 2,
-    y: y - 15,
+    y: y - labelHeight * 0.47,
     w: labelWidth,
-    h: REGION_LABEL_HEIGHT,
+    h: labelHeight,
   });
 
   // Candidate radii, all inside the band. Inset by half the label so the
   // text sits within its own colour rather than straddling the seam.
-  const half = REGION_LABEL_HEIGHT / 2;
+  const half = labelHeight / 2;
   const radii: number[] = [];
   if (rInner <= 4) {
     // Disc (The Core): out near the rim so it never covers the star.
@@ -3980,21 +4106,39 @@ export function drawSystemRegions(
         // so reserving only the title left the wider line overhanging on
         // both sides — which is exactly what was colliding with the
         // neighbouring regions' labels and with body names.
-        c.font = REGION_TITLE_FONT;
+        //
+        // Sized to the room this band actually has: a thin inner ring
+        // gets small text and drops its owner line, and both come back
+        // as you zoom in and the ring fattens. `width` is already the
+        // band's screen thickness.
+        const labelScale = regionLabelScale(width);
+        const showSub = width >= REGION_SUB_HIDE_BELOW;
+        const titlePx = REGION_TITLE_PX * labelScale;
+        const subPx = REGION_SUB_PX * labelScale;
+        c.font = `${titlePx.toFixed(1)}px ${REGION_FONT_STACK}`;
         const titleWidth = c.measureText(region.label.toUpperCase()).width;
-        c.font = REGION_SUB_FONT;
-        const subWidth = c.measureText(regionSubText(region, owned)).width;
-        const labelWidth = Math.max(titleWidth, subWidth);
+        let labelWidth = titleWidth;
+        if (showSub) {
+          c.font = `${subPx.toFixed(1)}px ${REGION_FONT_STACK}`;
+          labelWidth = Math.max(labelWidth, c.measureText(regionSubText(region, owned)).width);
+        }
+        const labelHeight = showSub
+          ? REGION_LABEL_HEIGHT * labelScale
+          : titlePx * 1.5;
         const spot = chooseRegionLabelPos({
           cx: cp.x, cy: cp.y,
           mid, rInner: rIn, rOuter: rOut,
           baseAngle,
           labelWidth,
-          clearance: REGION_LABEL_BODY_CLEARANCE,
+          labelHeight,
+          clearance: REGION_LABEL_BODY_CLEARANCE * labelScale,
           obstacles,
         });
         obstacles.push(spot.rect);
-        drawRegionLabel(region, spot.x, spot.y, color, owned, ctx, fade, intensity);
+        drawRegionLabel(
+          region, spot.x, spot.y, color, owned, ctx, fade, intensity,
+          labelScale, showSub,
+        );
       }
     }
     c.restore();
@@ -4023,6 +4167,10 @@ function drawRegionLabel(
   ctx: RenderContext,
   fade: number,
   intensity: number,
+  /** Shrink factor from the band's screen thickness (regionLabelScale). */
+  labelScale: number = 1,
+  /** Whether there's room for the owner line under the name. */
+  showSub: boolean = true,
 ) {
   const c = ctx.ctx;
   const text = region.label.toUpperCase();
@@ -4046,14 +4194,16 @@ function drawRegionLabel(
   c.globalAlpha = c.globalAlpha * fade;
   c.textAlign = 'center';
   c.textBaseline = 'bottom';
-  c.font = REGION_TITLE_FONT;
+  const titlePx = REGION_TITLE_PX * labelScale;
+  const subPx = REGION_SUB_PX * labelScale;
+  c.font = `${titlePx.toFixed(1)}px ${REGION_FONT_STACK}`;
   c.fillStyle = withOpacity(ink, titleAlpha);
   c.fillText(text, x, y);
-  if (sub) {
-    c.font = REGION_SUB_FONT;
+  if (sub && showSub) {
+    c.font = `${subPx.toFixed(1)}px ${REGION_FONT_STACK}`;
     c.fillStyle = withOpacity(ink, subAlpha);
-    // Clears the now-13px title above it.
-    c.fillText(sub, x, y + 14);
+    // Rides just under the title, scaling with it.
+    c.fillText(sub, x, y + titlePx * 1.08);
   }
   c.restore();
 }
