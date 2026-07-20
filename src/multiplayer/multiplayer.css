@@ -655,6 +655,42 @@
   color: var(--mp-friendly);
 }
 
+/* Phone header: the brand + user block was one non-wrapping flex row, so
+   on a narrow screen the whole user block — name AND both buttons —
+   slid off the right edge and Sign out couldn't be tapped at all. Wrap
+   the user block onto its own full-width row under the brand, and let
+   the (often long) display name ellipsis instead of shoving the buttons
+   away, so ← Menu / Sign out are always on-screen and tappable. */
+@media (max-width: 640px) {
+  .mp-lobby__top {
+    flex-wrap: wrap;
+    gap: 10px 12px;
+    padding: 12px 16px;
+  }
+  .mp-lobby__brand {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .mp-lobby__brand-name { font-size: 18px; letter-spacing: 0.2em; }
+  .mp-lobby__brand-mode { letter-spacing: 0.28em; }
+  .mp-lobby__user {
+    flex: 1 1 100%;            /* own row, full width, below the brand */
+    justify-content: flex-end;
+    min-width: 0;
+  }
+  .mp-lobby__user-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;  /* long names shrink; buttons keep their room */
+  }
+  .mp-lobby__user-btn {
+    flex: 0 0 auto;
+    padding: 9px 14px;        /* taller tap target for touch */
+  }
+}
+
 .mp-lobby__tabs {
   display: flex;
   padding: 0 32px;
