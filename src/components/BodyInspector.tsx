@@ -318,26 +318,33 @@ export const BodyInspector: React.FC = () => {
     );
   }
 
-  // Developed world: bare focused map + chips until the player taps a
-  // structure chip, which selects that settlement and opens its popover.
-  if (!selectedSettlementId) return null;
-  const selStl = gameState.settlements.find(s => s.id === selectedSettlementId);
-  if (!selStl || selStl.bodyId !== body.id) return null;
-  const isStation = selStl.type === 'station';
+  // Developed world: selecting the body opens its menu directly. (The old
+  // build required tapping an on-map structure chip first, but the chip
+  // layer was retired — with no chips, requiring a chip tap meant nothing
+  // ever opened.) Render the whole world menu: a stats header, the city
+  // rail and the station rail (both always present so you can build or
+  // deploy either), RAM controls on asteroids, and the shipyard build
+  // queue when a station exists. All the same reused sections as before.
+  const hasStation = myStructures.some(s => s.type === 'station');
+  const yieldStr = body.resources
+    ? [
+        body.resources.metal > 0 ? `${body.resources.metal}M` : '',
+        body.resources.gold > 0 ? `${body.resources.gold}C` : '',
+        body.resources.science > 0 ? `${body.resources.science}S` : '',
+      ].filter(Boolean).join(' · ')
+    : '';
   return (
     <div className="world-popover" data-tutorial-id="body-inspector" role="dialog">
       <div className="world-popover__head">
-        <span className="world-popover__title">{selStl.name.toUpperCase()}</span>
-        <button className="panel-close" onClick={() => selectSettlement(undefined)} title="Close">✕</button>
+        <span className="world-popover__title">{body.name.toUpperCase()}</span>
+        {yieldStr && <span className="world-popover__yields">{yieldStr}</span>}
+        <button className="panel-close" onClick={closeAndRestore} title="Close">✕</button>
       </div>
       <div className="world-popover__body body-focus">
-        {/* Buildings + upgrades + collector + deploy for the tapped
-            structure's type. Highlights the selected settlement. */}
-        <SettlementsSection bodyId={body.id} typeFilter={selStl.type} />
-        {/* Doomsday RAM controls stay reachable via an asteroid's city. */}
+        <SettlementsSection bodyId={body.id} typeFilter="city" />
+        <SettlementsSection bodyId={body.id} typeFilter="station" />
         {body.type === 'asteroid' && <RamControlsSection body={body} />}
-        {/* Build queue + ship tiles live in the station popover. */}
-        {isStation && <BuildPanel />}
+        {hasStation && <BuildPanel />}
       </div>
     </div>
   );
