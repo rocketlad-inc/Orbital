@@ -37,15 +37,9 @@ import {
   bodyLabelAlwaysOn,
   planBodyLabels,
   BODY_LABEL_ROW_HEIGHT,
-  drawWorldOverlayChips,
-  WorldOverlayGroup,
-  WorldOverlayHit,
-  WorldOverlayChipSpec,
 } from '../render/mapRenderer';
 import { computeSystemRegions } from '../render/systemRegions';
-import { BUILDING_DEFS, buildingLevel, settlementWorldPosition } from '../game/settlements';
-import { BUILDING_FEATURE } from '../game/researchUnlocks';
-import { useFeatureGate } from '../hooks/useFeatureGate';
+import { BUILDING_DEFS, buildingLevel } from '../game/settlements';
 import { BuildingKind } from '../types';
 import {
   spawnTracer,
@@ -122,12 +116,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     updateCamera, selectShip, selectBody, deselectShip, deselectBody,
     hoverBody, focusBody,
     setTargetSelectionMode,
-    selectedSettlementId, selectSettlement,
+    selectedSettlementId,
   } = useGameContext();
-  // Research gate for the world-overlay build chips (which unbuilt
-  // slots to surface). Same gate the inspector uses.
-  const buildGate = useFeatureGate();
-
   /**
    * The tick to DRAW at: the last resolved tick plus however far into the
    * current tick we are (see render/tickPhase). Called fresh per frame by
@@ -248,11 +238,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // pure churn. The loop reads .current when it builds RenderContext.
   const hoveredShipIdRef = useRef<string | null>(null);
 
-  // World-overlay chip hit rects, refreshed every frame by the render
-  // loop and consumed by handleTapAt. A ref, not state: the rects move
-  // with the camera every frame and re-rendering React for them would
-  // be churn (same pattern as transitShipCanvasPosRef).
-  const worldOverlayHitsRef = useRef<WorldOverlayHit[]>([]);
 
   // Bodies we've ever had sensor coverage on. Yields are stable facts
   // about a rock, so once surveyed the readout sticks instead of blinking
@@ -1285,104 +1270,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       drawFogOfWarOverlay(rings, renderContext, 1 - regionFade);
     }
 
-    // === World Overlay: the map IS the menu ======================
-    // On the selected world, IF the player holds a settlement there and
-    // the zoom is close enough that structures render, every built
-    // structure wears a callout chip pinned to it. Fades in across a
-    // ~20px band of screen radius so chips don't pop. Hit rects go to
-    // handleTapAt via ref; tapping a chip focuses that settlement.
-    worldOverlayHitsRef.current = [];
-    const overlayBody = uiState.selectedBodyId
-      ? gameState.bodies.find(b => b.id === uiState.selectedBodyId && b.destroyedAtTick == null)
-      : undefined;
-    if (overlayBody && !uiState.targetSelectionMode) {
-      // Gate matches the structure renderers (drawCity/drawStation),
-      // which draw whenever the body is selected: the inspector zooms to
-      // fit the orbit ENVELOPE, not the body's disc, so a dwarf's own
-      // disc can sit at ~26px screen radius even fully zoomed in — the
-      // original 26px floor kept chips invisible on exactly the worlds
-      // the overlay was built for (playtest: Haumea, radius 2.4). Keep a
-      // small floor only so a body selected from true system zoom
-      // doesn't sprout chips over the whole map before the camera's
-      // focus tween lands.
-      const screenR = overlayBody.radius * renderContext.camera.scale;
-      const overlayAlpha = Math.min(1, Math.max(0, (screenR - 4) / 10));
-      if (overlayAlpha > 0) {
-        const mine = gameState.settlements.filter(
-          st => st.bodyId === overlayBody.id && st.ownedBy === 'player',
-        );
-        // Effect line for a building at a given level. Level 0 → the
-        // "what you'd get" pitch so an unbuilt slot still reads as worth
-        // building; >0 → its current bonus.
-        const effectSub = (kind: BuildingKind, lv: number): string => {
-          const n = lv > 0 ? lv : 1;
-          switch (kind) {
-            case 'forge': return lv > 0 ? `LV ${lv} · +${25 * lv}% METAL` : `BUILD · +${25 * n}% METAL`;
-            case 'mint': return lv > 0 ? `LV ${lv} · +${25 * lv}% CRED` : `BUILD · +${25 * n}% CRED`;
-            case 'lab': return lv > 0 ? `LV ${lv} · +${25 * lv}% SCI` : `BUILD · +${25 * n}% SCI`;
-            case 'weapons': return lv > 0 ? `LV ${lv} · +${4 * lv} DMG/T` : `BUILD · +${4 * n} DMG/T`;
-            case 'shipyard': return lv > 0 ? `LV ${lv} · ${lv} SLOT${lv > 1 ? 'S' : ''}` : 'BUILD · +1 SLOT';
-            default: return lv > 0 ? `LV ${lv}` : 'BUILD';
-          }
-        };
-        const labelFor = (kind: BuildingKind): string =>
-          kind === 'lab' ? 'LAB'
-          : kind === 'weapons' ? 'WEAPONS'
-          : BUILDING_DEFS[kind].displayName.toUpperCase();
-
-        const groups: WorldOverlayGroup[] = [];
-        for (const st of mine) {
-          const wp = settlementWorldPosition(st, renderTick(), gameState.bodies);
-          if (!wp) continue;
-          const anchor = worldToCanvas(wp.x, wp.y, renderContext);
-          const chips: WorldOverlayChipSpec[] = [];
-          // Every slot the settlement type can host gets a chip — built
-          // ones show their level, UNBUILT-but-unlocked ones show BUILD.
-          // (Buildings still locked behind research are hidden, matching
-          // the old inspector's gate.) Tapping any chip opens the
-          // settlement popover, where the actual build/upgrade happens.
-          const kinds: BuildingKind[] = st.type === 'city'
-            ? ['forge', 'mint', 'lab']
-            : ['weapons', 'lab', 'shipyard'];
-          for (const kind of kinds) {
-            const lv = buildingLevel(st, kind);
-            if (lv === 0 && !buildGate.has(BUILDING_FEATURE[kind])) continue;
-            chips.push({
-              id: `${st.id}:${kind}`, settlementId: st.id,
-              label: labelFor(kind),
-              sub: effectSub(kind, lv),
-              tone: kind === 'shipyard' ? 'amber' : 'teal',
-              unbuilt: lv === 0,
-            });
-          }
-          if (st.type === 'city' && overlayBody.type === 'asteroid') {
-            const thr = buildingLevel(st, 'trajectory_thrusters' as BuildingKind);
-            if (thr > 0 || buildGate.has(BUILDING_FEATURE['trajectory_thrusters'])) {
-              chips.push({
-                id: `${st.id}:thrusters`, settlementId: st.id,
-                label: 'THRUSTERS', sub: thr > 0 ? 'RAM READY' : 'BUILD · RAM',
-                tone: 'amber', unbuilt: thr === 0,
-              });
-            }
-          }
-          // Always at least one chip so the settlement is tappable even
-          // with nothing built/unlocked yet.
-          if (chips.length === 0) {
-            chips.push({
-              id: `${st.id}:base`, settlementId: st.id,
-              label: st.type === 'city' ? 'CITY' : 'STATION',
-              sub: `POP ${st.population}`, tone: 'teal',
-            });
-          }
-          groups.push({ anchor, side: st.type === 'city' ? 'left' : 'right', chips });
-        }
-        if (groups.length > 0) {
-          worldOverlayHitsRef.current =
-            drawWorldOverlayChips(groups, renderContext, overlayAlpha);
-        }
-      }
-    }
-
     drawHUD(renderContext, uiState.targetSelectionMode);
 
     // Camera tween in flight → self-drive one more frame. The normal
@@ -1584,19 +1471,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         return;
       }
 
-      // World-overlay chips sit on top of everything — test them first.
-      // Tapping one focuses its settlement (and keeps the body selected),
-      // which routes to that structure's detail in the inspector.
-      for (const hit of worldOverlayHitsRef.current) {
-        if (
-          canvasX >= hit.rect.x && canvasX <= hit.rect.x + hit.rect.w &&
-          canvasY >= hit.rect.y && canvasY <= hit.rect.y + hit.rect.h
-        ) {
-          selectSettlement(hit.settlementId);
-          return;
-        }
-      }
-
       for (const ship of gameState.ships) {
         // Prefer the cached canvas position the renderer just used for
         // in-transit ships (matches the lerp drawTorchTransitShip does,
@@ -1630,7 +1504,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       deselectShip();
       deselectBody();
     },
-    [gameState, camera, uiState.targetSelectionMode, selectShip, selectBody, selectSettlement, deselectShip, deselectBody, renderTick]
+    [gameState, camera, uiState.targetSelectionMode, selectShip, selectBody, deselectShip, deselectBody, renderTick]
   );
 
   const handleClick = useCallback(

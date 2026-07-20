@@ -960,8 +960,8 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
     >
       <div
         style={{
-          fontSize: 10, letterSpacing: '0.14em', fontWeight: 700,
-          color: '#b8c8d6', textTransform: 'uppercase',
+          fontSize: 11, letterSpacing: '0.14em', fontWeight: 800,
+          color: '#dce7f0', textTransform: 'uppercase',
         }}
       >Buildings</div>
 
@@ -1012,19 +1012,19 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
               display: 'flex',
               alignItems: 'center',
               gap: 6,
-              padding: '3px 0',
-              fontSize: 10,
+              padding: '4px 0',
+              fontSize: 12,
             }}
           >
             <span
               style={{
-                minWidth: 64,
-                fontWeight: 600,
-                color: level > 0 ? '#d8e4ee' : '#a8b8c8',
-                letterSpacing: '0.05em',
+                minWidth: 72,
+                fontWeight: 800,
+                color: level > 0 ? '#eaf2f8' : '#c4d2de',
+                letterSpacing: '0.03em',
               }}
             >
-              {def.displayName} <span style={{ color: '#4ecdc4' }}>L{level}</span>
+              {def.displayName} <span style={{ color: '#5fe4da', fontWeight: 800 }}>L{level}</span>
             </span>
 
             {inFlight && q ? (
@@ -1074,7 +1074,7 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
             ) : (
               <>
                 <span
-                  style={{ flex: 1, color: '#b8c8d6', fontStyle: 'italic' }}
+                  style={{ flex: 1, color: lock ? '#c4d2de' : '#d3e0ec', fontWeight: 600 }}
                   title={def.description}
                 >
                   {lock ? `🔒 ${lock.text}` : `${effectStr} · ${ticks}t · ${costStr}`}
@@ -1089,13 +1089,14 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
                     : `Upgrade ${def.displayName} → L${level + 1} (${ticks} ticks)`
                   }
                   style={{
-                    padding: '2px 8px',
-                    background: 'transparent',
-                    color: canQueue ? '#4ecdc4' : '#5a7080',
+                    padding: '4px 10px',
+                    background: canQueue ? 'rgba(78, 205, 196, 0.16)' : 'transparent',
+                    color: canQueue ? '#7ff0e6' : '#5a7080',
                     border: `1px solid ${canQueue ? '#4ecdc4' : '#2a3d50'}`,
-                    borderRadius: 3,
-                    fontFamily: 'inherit', fontSize: 9, fontWeight: 600,
+                    borderRadius: 4,
+                    fontFamily: 'inherit', fontSize: 11, fontWeight: 800,
                     cursor: canQueue ? 'pointer' : 'default',
+                    whiteSpace: 'nowrap',
                   }}
                 >{lock ? '🔒' : `+ L${level + 1}`}</button>
               </>
