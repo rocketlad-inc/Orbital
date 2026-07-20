@@ -663,12 +663,15 @@
    the whole menu is legible at once. */
 @media (max-width: 768px) {
   .world-popover {
-    top: calc(78px + env(safe-area-inset-top, 0px));
+    top: env(safe-area-inset-top, 0px);
     right: 8px;
     left: 8px;
     bottom: calc(var(--mobile-rail-height, 8px) + 8px);
     width: auto;
     max-height: none;
+    /* Anchored to the very top now (past the logo/resource bar), so the
+       rounded top corners would clip against the screen edge — square them. */
+    border-radius: 0 0 8px 8px;
   }
 }
 
