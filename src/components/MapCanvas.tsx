@@ -232,6 +232,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // ship doesn't keep an undead hitbox. Parked ships hit the regular
   // getShipCanvasPos path; this map only exists for transit ships.
   const transitShipCanvasPosRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  // Parked-ship hit boxes recorded by the renderer (drawShip) each frame:
+  // the exact drawn centre + a radius covering the sprite. The click/hover
+  // hit-test reads these so the box is always ON the visible hull, spin,
+  // interpolation and formation spread included.
+  const shipHitboxesRef = useRef<Map<string, { x: number; y: number; r: number }>>(new Map());
   // Ship under the cursor — drives the hover-only name label. A ref, not
   // state: mousemove fires on every pixel and the render loop already
   // runs each frame, so re-rendering the component for a label would be
@@ -355,6 +360,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // per-frame by the per-ship overlay below. A ship that arrived and
     // dropped out of transit shouldn't keep its old hitbox.
     transitShipCanvasPosRef.current.clear();
+    // Parked-ship hit boxes are rebuilt every frame by drawShip. Clear
+    // here so a ship that left orbit doesn't keep a stale box.
+    shipHitboxesRef.current.clear();
     const curTransitIds = new Set<string>();
     for (const ship of gameState.ships) {
       if (ship.transit) curTransitIds.add(ship.id);
@@ -599,6 +607,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       damageFlashStart: damageFlashStartRef.current,
       growthFlashStart: growthFlashStartRef.current,
       buildFlashStart: buildFlashStartRef.current,
+      shipHitboxes: shipHitboxesRef.current,
       nowMs,
       // Planet-visual extras: night-side city lights on settled worlds
       // + focus-zoom building structures read these. Optional in the
@@ -1446,6 +1455,40 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     };
   }, [camera.x, camera.y, camera.scale, directUpdateCamera]);
 
+  // Ship under a canvas point, or null. The CLOSEST hit wins, so a
+  // fanned-out formation selects the hull nearest the cursor rather than
+  // whichever happened to be first in the array. Reads the renderer's
+  // recorded hit boxes (drawShip) — the exact drawn position + a
+  // sprite-covering radius — so the box is always over the visible hull.
+  // Ships not drawn this frame (in transit, fog-hidden, first frame)
+  // fall back to the transit cache / recomputed position.
+  //
+  // padTouch: coarse-pointer devices pad the radius so fingers land;
+  // a mouse hover passes false for precision.
+  const pickShipAt = useCallback(
+    (canvasX: number, canvasY: number, padTouch: boolean): string | null => {
+      const pad = padTouch ? TOUCH_HIT_PADDING : 0;
+      let best: string | null = null;
+      let bestD = Infinity;
+      for (const ship of gameState.ships) {
+        let x: number, y: number, r: number;
+        const hb = shipHitboxesRef.current.get(ship.id);
+        if (hb) {
+          x = hb.x; y = hb.y; r = hb.r + pad;
+        } else {
+          const cached = ship.transit ? transitShipCanvasPosRef.current.get(ship.id) : undefined;
+          const p = cached ?? getShipCanvasPos(ship, canvasRef.current!, gameState.bodies, camera, renderTick());
+          if (!p) continue;
+          x = p.x; y = p.y; r = (ship.transit ? 20 : 14) + pad;
+        }
+        const d = Math.hypot(canvasX - x, canvasY - y);
+        if (d <= r && d < bestD) { best = ship.id; bestD = d; }
+      }
+      return best;
+    },
+    [gameState.ships, gameState.bodies, camera, renderTick],
+  );
+
   // Shared tap/click logic — called by both the mouse onClick handler and
   // the touch-input layer. Hit radii are padded on coarse-pointer devices
   // (mobile/tablet) so fingers can reliably grab ships and bodies.
@@ -1471,26 +1514,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         return;
       }
 
-      for (const ship of gameState.ships) {
-        // Prefer the cached canvas position the renderer just used for
-        // in-transit ships (matches the lerp drawTorchTransitShip does,
-        // which can disagree with ship.transit.pos mid-segment by enough
-        // pixels to make clicks miss the visible icon). Falls back to
-        // getShipCanvasPos for parked ships and the rare case where the
-        // ship is in transit but the render-loop pass for it hasn't run
-        // yet (first frame after mount, fog-hidden, etc.).
-        const cached = ship.transit ? transitShipCanvasPosRef.current.get(ship.id) : undefined;
-        const shipPos = cached ?? getShipCanvasPos(ship, canvasRef.current, gameState.bodies, camera, renderTick());
-        // Wider hit radius for in-transit ships — they're moving, so the
-        // player aims slightly behind where they end up by the time the
-        // click event fires. 14px for parked, 20px for transit. Touch
-        // padding stacks on top for coarse-pointer devices.
-        const hitRadius = (ship.transit ? 20 : 14) + TOUCH_HIT_PADDING;
-        if (Math.hypot(canvasX - shipPos.x, canvasY - shipPos.y) < hitRadius) {
-          selectShip(ship.id);
-          return;
-        }
-      }
+      const hitShip = pickShipAt(canvasX, canvasY, true);
+      if (hitShip) { selectShip(hitShip); return; }
 
       for (const body of gameState.bodies) {
         const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, renderTick());
@@ -1504,7 +1529,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       deselectShip();
       deselectBody();
     },
-    [gameState, camera, uiState.targetSelectionMode, selectShip, selectBody, deselectShip, deselectBody, renderTick]
+    [gameState, camera, uiState.targetSelectionMode, selectShip, selectBody, deselectShip, deselectBody, renderTick, pickShipAt]
   );
 
   const handleClick = useCallback(
@@ -1523,22 +1548,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const canvasX = e.clientX - rect.left;
       const canvasY = e.clientY - rect.top;
 
-      // Ship hover drives the name label. Same geometry the click
-      // hit-test uses (cached transit pos, 20px in-transit / 14px
-      // parked) so a label appears exactly where a click would land —
-      // no touch padding: a mouse is precise, and padding here would
-      // pop labels for ships the cursor isn't really over. Ships take
+      // Ship hover drives the name label. Same boxes the click hit-test
+      // uses, so a label appears exactly where a click would land — no
+      // touch padding: a mouse is precise, and padding here would pop
+      // labels for ships the cursor isn't really over. Ships take
       // priority over bodies, matching the click order.
-      let hoveredShipId: string | null = null;
-      for (const ship of gameState.ships) {
-        const cached = ship.transit ? transitShipCanvasPosRef.current.get(ship.id) : undefined;
-        const shipPos = cached ?? getShipCanvasPos(ship, canvasRef.current, gameState.bodies, camera, renderTick());
-        if (Math.hypot(canvasX - shipPos.x, canvasY - shipPos.y) < (ship.transit ? 20 : 14)) {
-          hoveredShipId = ship.id;
-          break;
-        }
-      }
-      hoveredShipIdRef.current = hoveredShipId;
+      hoveredShipIdRef.current = pickShipAt(canvasX, canvasY, false);
 
       let hoveredBodyId: string | null = null;
       for (const body of gameState.bodies) {
@@ -1551,7 +1566,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
       hoverBody(hoveredBodyId);
     },
-    [gameState, camera, hoverBody, renderTick]
+    [gameState, camera, hoverBody, renderTick, pickShipAt]
   );
 
   // Shared focus-on-tap logic — called by both onDoubleClick and the
@@ -1705,11 +1720,18 @@ function getShipCanvasPos(
   if (ship.transit) {
     pos = { x: ship.transit.pos.x, y: ship.transit.pos.y };
   } else {
-    const { orbitWorldPos } = require('../physics/orbitalMechanics');
-    // Must use the SAME spun time drawShip does, or the hitbox drifts
-    // away from the hull you can see — up to the full diameter of the
-    // orbit, which is the entire target.
-    pos = orbitWorldPos(ship.orbit, shipDisplayTick(t, ship.orbit?.period, Date.now()), bodies);
+    // Mirror drawShip EXACTLY: the parent body is placed at the render
+    // tick `t`, but the ship's angle around it uses the cosmetic spin
+    // (shipDisplayTick). Positioning the parent at the spun time too —
+    // which orbitWorldPos(ship.orbit, spunTime) would do — drifts the
+    // box by however far the parent moved over the spin offset. This is
+    // only the fallback for ships the renderer didn't record this frame;
+    // the primary path reads drawShip's exact recorded box.
+    const { bodyPosition, localPositionAt } = require('../physics/orbitalMechanics');
+    const parent = bodies.find(b => b.id === ship.orbit?.parentBodyId);
+    const parentPos = parent ? bodyPosition(parent, t, bodies) : { x: 0, y: 0 };
+    const local = localPositionAt(ship.orbit, shipDisplayTick(t, ship.orbit?.period, Date.now()));
+    pos = { x: parentPos.x + local.x, y: parentPos.y + local.y };
   }
   const cam = effectiveCamera(camera, bodies, t);
   return {

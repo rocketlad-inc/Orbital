@@ -71,6 +71,13 @@ export interface RenderContext {
    *  — distinct from growthFlashStart, which is population-only and
    *  fires at the whole-settlement marker, not a specific module. */
   buildFlashStart?: Map<string, number>;
+  /** WHERE each parked ship's sprite actually landed this frame, keyed
+   *  by ship id — canvas centre + a hit radius that covers the sprite.
+   *  drawShip writes it AFTER every offset (cosmetic orbit spin, tick
+   *  interpolation, formation spread) so the click/hover hit-test can
+   *  read the true drawn box instead of re-deriving it and drifting off
+   *  the visible hull. Cleared each frame by MapCanvas. */
+  shipHitboxes?: Map<string, { x: number; y: number; r: number }>;
 }
 
 /**
@@ -1715,6 +1722,11 @@ function shipIconSize(shipClass: string, isSelected: boolean): number {
   return (SHIP_ICON_REST_SIZE[shipClass] ?? 18) + (isSelected ? 4 : 0);
 }
 
+/** Floor for a parked ship's click/hover radius. At far zoom the sprite
+ *  shrinks toward a dot; this keeps it an easy target without needing a
+ *  pixel-perfect tap. Touch padding stacks on top at the call site. */
+export const SHIP_MIN_HIT_RADIUS = 12;
+
 // ---- Banking on heading change (Workstream A §4) ----
 // Module-level state, reused across frames — no per-frame allocation.
 // Each frame: bank += clamp(Δheading × 3, ±0.14), then bank ×= 0.85
@@ -1849,6 +1861,17 @@ export function drawShip(
   }
 
   const iconSize = shipIconSize(ship.class, isSelected);
+
+  // Record the true drawn box for hit-testing: canvasPos already carries
+  // the orbit spin, tick interpolation AND the formation spread, so a
+  // click reads exactly where the hull is — including stacked ships that
+  // were fanned apart. Radius covers the sprite (half its size) with a
+  // small floor so a tiny far-zoom icon is still an easy target.
+  ctx.shipHitboxes?.set(ship.id, {
+    x: canvasPos.x,
+    y: canvasPos.y,
+    r: Math.max(iconSize / 2 + 3, SHIP_MIN_HIT_RADIUS),
+  });
 
   // Damage flash sits beneath the icon so the icon stays at full opacity.
   const flashStart = ctx.damageFlashStart?.get(ship.id);
