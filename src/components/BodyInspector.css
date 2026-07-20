@@ -603,3 +603,81 @@
   border-color: #b8c8d6;
   color: #d8e4ee;
 }
+
+/* ============================================================
+   World popover — the map IS the menu. A single floating card
+   for the tapped structure, replacing the old cardinal 4-panel
+   inspector. Reuses the same SettlementsSection / BuildPanel
+   controls, so all styling for their innards still applies.
+   ============================================================ */
+.world-popover {
+  position: fixed;
+  z-index: 95;
+  top: 92px;
+  right: 16px;
+  width: min(380px, calc(100vw - 32px));
+  max-height: calc(100vh - 180px);
+  display: flex;
+  flex-direction: column;
+  background: rgba(10, 14, 20, 0.96);
+  border: 1px solid #2a3d50;
+  border-radius: 8px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(10px);
+  animation: world-popover-in 0.16s ease-out;
+  pointer-events: auto;
+}
+@keyframes world-popover-in {
+  from { opacity: 0; transform: translateY(-8px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.world-popover__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid #2a3d50;
+  background: rgba(78, 205, 196, 0.05);
+  flex-shrink: 0;
+}
+.world-popover__title {
+  font-family: var(--font-display, monospace);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #4ecdc4;
+}
+.world-popover__body {
+  overflow-y: auto;
+  padding: 12px 14px;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Mobile: dock the popover to the bottom edge like a sheet, full width,
+   so a thumb can reach it and the map above stays clear. */
+@media (max-width: 768px) {
+  .world-popover {
+    top: auto;
+    right: 8px;
+    left: 8px;
+    bottom: calc(var(--mobile-rail-height, 8px) + 8px);
+    width: auto;
+    max-height: 62vh;
+  }
+}
+
+/* The reused SettlementsSection / BuildPanel innards are styled via
+   ".body-focus X" descendant rules, so the popover body carries the
+   body-focus class to inherit them. But body-focus's own base rule is a
+   full-screen fixed overlay — neutralise it inside the popover (higher
+   specificity wins) so it lays out as normal flow content. */
+.world-popover .body-focus,
+.world-popover.body-focus {
+  position: static;
+  inset: auto;
+  z-index: auto;
+  pointer-events: auto;
+}
