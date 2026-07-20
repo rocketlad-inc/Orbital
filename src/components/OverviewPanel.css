@@ -33,7 +33,10 @@
   .overview-panel {
     left: 8px;
     right: 8px;
-    top: 86px;
+    /* Extend to just under the top bar (78px) — was 86px, an 8px gap that
+       read as wasted space above every mobile menu. Matches the world
+       popover so all pop-up menus start at the same height. */
+    top: calc(78px + env(safe-area-inset-top, 0px));
     /* On the narrow tier (≤768) the DockRail is a 72px bottom strip
        (see DockRail.css --mobile-rail-height). Clear it so the overlay
        doesn't paint underneath the rail buttons. */

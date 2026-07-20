@@ -656,16 +656,19 @@
   gap: 12px;
 }
 
-/* Mobile: dock the popover to the bottom edge like a sheet, full width,
-   so a thumb can reach it and the map above stays clear. */
+/* Mobile: a near-full-height sheet rather than a short bottom card — the
+   62vh version cramped a world's whole menu into the lower two-thirds and
+   made it a chore to read. Fill from just under the top bar down to the
+   dock rail (same envelope the Fleet/Settlements/Research panels use), so
+   the whole menu is legible at once. */
 @media (max-width: 768px) {
   .world-popover {
-    top: auto;
+    top: calc(78px + env(safe-area-inset-top, 0px));
     right: 8px;
     left: 8px;
     bottom: calc(var(--mobile-rail-height, 8px) + 8px);
     width: auto;
-    max-height: 62vh;
+    max-height: none;
   }
 }
 
