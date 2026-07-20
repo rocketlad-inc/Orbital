@@ -4,6 +4,16 @@ import { useAuth } from './AuthContext';
 import { LobbyMapPreview } from './LobbyMapPreview';
 import { colorDistance, COLOR_MIN_DISTANCE, deriveSecondary } from '../game/colorUtils';
 
+/** Two-tone (§5) chip: primary square with a secondary corner. Mirrors
+ *  FactionPanel's twoToneChip exactly so a member's color reads the same
+ *  in the lobby as it will in the match. */
+function twoToneChip(color: string, color2?: string | null): React.CSSProperties {
+  const c2 = color2 || deriveSecondary(color);
+  return {
+    background: `linear-gradient(135deg, ${color} 0%, ${color} 68%, ${c2} 68%, ${c2} 100%)`,
+  };
+}
+
 // Two-tone factions (§5): curated swatch grid — a modest 16 colors, not
 // a full wheel. PRIMARY carries all meaning on the map (server enforces
 // perceptual distance between members' primaries); SECONDARY is
@@ -702,6 +712,13 @@ function RoomDetail({
         return (
           <div key={m.userId} className="mp-presence-row" style={{ flexWrap: 'wrap' }}>
             <span className={`mp-presence-dot ${online ? 'online' : ''}`} />
+            {/* Two-tone (§5) swatch — same primary/secondary split chip
+                the in-game FactionPanel uses, so a player's picked
+                color reads identically in the lobby and in the match.
+                No swatch at all until they've picked (color is null
+                pre-pick) rather than a placeholder grey, since "hasn't
+                chosen yet" is itself useful information here. */}
+            {m.color && <span className="mp-swatch" style={twoToneChip(m.color, m.color2)} />}
             <span>{m.displayName}{ready && !started ? ' ✓' : ''}</span>
             {isThisHost && <span className="mp-host-tag">host</span>}
             {isHost && !isThisHost && !started && (
