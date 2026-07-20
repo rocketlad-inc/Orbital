@@ -221,6 +221,19 @@ export const BodyInspector: React.FC = () => {
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedBodyId, closeAndRestore]);
 
+  // Close the on-map world menu when another surface opens (the dock rail
+  // broadcasts this so opening Fleet/Build/etc. doesn't leave the world
+  // popover stacked underneath). Deselect only — no camera restore, since
+  // the player is navigating away, not backing out to their prior frame.
+  useEffect(() => {
+    const onClose = () => {
+      if (uiState.selectedBodyId) deselectBody();
+      if (selectedSettlementId) selectSettlement(undefined);
+    };
+    window.addEventListener('orbital:close-world-menu', onClose);
+    return () => window.removeEventListener('orbital:close-world-menu', onClose);
+  }, [uiState.selectedBodyId, selectedSettlementId, deselectBody, selectSettlement]);
+
   if (!selectedBodyId) {
     return null;
   }

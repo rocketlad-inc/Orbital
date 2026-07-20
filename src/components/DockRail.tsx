@@ -18,6 +18,7 @@
 // ============================================================
 
 import React, { useEffect, useState } from 'react';
+import { isCoarsePointer } from '../hooks/useIsMobile';
 import './DockRail.css';
 
 export type DockRailKey = 'situation' | 'eventlog' | 'multiplayer';
@@ -125,8 +126,29 @@ export const DockRail: React.FC<{ isMultiplayer?: boolean; lobbyOnly?: boolean }
     };
   }, []);
 
+  /** On phones every surface is a full-screen overlay, so opening a new
+   *  one on top of an old one is just clutter. When a rail button OPENS
+   *  a panel, first close every other menu: the on-map world popover
+   *  (body/settlement selection) and the opposite panel family (internal
+   *  dock panels vs. App-owned settlements/fleet/research). Desktop keeps
+   *  its independent panels — the ask was mobile-only. */
+  function closeOtherMenus(closing: 'internal' | 'external') {
+    if (!isCoarsePointer()) return;
+    try { window.dispatchEvent(new CustomEvent('orbital:close-world-menu')); } catch { /* noop */ }
+    if (closing === 'internal') {
+      // Opening a situation/eventlog/multiplayer panel → close any
+      // settlements/fleet/research panel.
+      try { window.dispatchEvent(new CustomEvent('orbital:open-panel', { detail: { panel: null } })); } catch { /* noop */ }
+    } else {
+      // Opening settlements/fleet/research → close internal dock panels.
+      setActive(null);
+    }
+  }
+
   function toggle(which: DockRailKey) {
-    setActive(prev => (prev === which ? null : which));
+    const willOpen = active !== which;
+    if (willOpen) closeOtherMenus('internal');
+    setActive(willOpen ? which : null);
   }
 
   /** Toggle one of the App-owned panels. Same dispatch path that
@@ -135,6 +157,7 @@ export const DockRail: React.FC<{ isMultiplayer?: boolean; lobbyOnly?: boolean }
    *  — and the bridge now treats a same-key dispatch as a toggle. */
   function toggleExternal(panel: ExternalPanel) {
     const next: ExternalPanel | null = externalActive === panel ? null : panel;
+    if (next !== null) closeOtherMenus('external');
     try {
       window.dispatchEvent(new CustomEvent('orbital:open-panel', { detail: { panel: next } }));
     } catch { /* noop */ }
