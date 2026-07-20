@@ -2449,67 +2449,75 @@ export function drawTorchTrajectory(
     // The flip sample stitches them so there's no gap. Adds visual
     // weight to the maneuver — players can see at a glance which half
     // of the trip the ship is currently in.
+    //
+    // Behind the ship is consumed here too: once under way the strokes
+    // begin at the hull, not the launch point, so the travelled boost
+    // leg vanishes and only the remaining path shows. When the ship has
+    // already flipped, the whole boost leg is behind it and drops out,
+    // leaving just the pink brake run from the hull to the target.
     const flipIdx = samples.findIndex(s => s.t >= plan.flipTick);
     const splitAt = flipIdx < 0 ? samples.length - 1 : flipIdx;
-    ctx.ctx.strokeStyle = '#6ee7b7';  // green = boost / prograde
-    ctx.ctx.beginPath();
-    for (let i = 0; i <= splitAt; i++) {
-      const cp = worldToCanvas(samples[i].x, samples[i].y, ctx);
-      if (i === 0) ctx.ctx.moveTo(cp.x, cp.y);
-      else ctx.ctx.lineTo(cp.x, cp.y);
+    const flying = currentTick != null
+      && currentTick > plan.startTick && currentTick < plan.arriveTick;
+    const cur = flying ? (currentTick as number) : -Infinity;
+    const shipWorld = flying ? torchPositionFromSamples(samples, cur) : samples[0];
+    const shipCP = worldToCanvas(shipWorld.x, shipWorld.y, ctx);
+    let nextIdx = 0;
+    for (let i = 0; i < samples.length; i++) {
+      if (samples[i].t > cur) { nextIdx = i; break; }
     }
-    ctx.ctx.stroke();
-    ctx.ctx.strokeStyle = '#fda4af';  // pink = brake / retrograde
+
+    // Boost leg (green), only the part still ahead of the ship.
+    if (nextIdx <= splitAt) {
+      ctx.ctx.strokeStyle = '#6ee7b7';
+      ctx.ctx.beginPath();
+      ctx.ctx.moveTo(shipCP.x, shipCP.y);
+      for (let i = nextIdx; i <= splitAt; i++) {
+        const cp = worldToCanvas(samples[i].x, samples[i].y, ctx);
+        ctx.ctx.lineTo(cp.x, cp.y);
+      }
+      ctx.ctx.stroke();
+    }
+    // Brake leg (pink).
+    ctx.ctx.strokeStyle = '#fda4af';
     ctx.ctx.beginPath();
-    for (let i = splitAt; i < samples.length; i++) {
-      const cp = worldToCanvas(samples[i].x, samples[i].y, ctx);
-      if (i === splitAt) ctx.ctx.moveTo(cp.x, cp.y);
-      else ctx.ctx.lineTo(cp.x, cp.y);
+    if (nextIdx > splitAt) {
+      // Ship already flipped — brake run starts at the hull.
+      ctx.ctx.moveTo(shipCP.x, shipCP.y);
+      for (let i = nextIdx; i < samples.length; i++) {
+        const cp = worldToCanvas(samples[i].x, samples[i].y, ctx);
+        ctx.ctx.lineTo(cp.x, cp.y);
+      }
+    } else {
+      // Ship still boosting — brake leg stitches to the green at the flip.
+      for (let i = splitAt; i < samples.length; i++) {
+        const cp = worldToCanvas(samples[i].x, samples[i].y, ctx);
+        if (i === splitAt) ctx.ctx.moveTo(cp.x, cp.y);
+        else ctx.ctx.lineTo(cp.x, cp.y);
+      }
     }
     ctx.ctx.stroke();
   } else if (fadeActive) {
-    // Two parts, split at the ship's current position:
-    //   BEHIND the ship — per-segment trail fade, ~0 at the launch
-    //     point rising to the at-ship alpha (matches the gradient's
-    //     0.85 head so there's no seam at the ship).
-    //   AHEAD of the ship — one stroke with the 0.85 → 0.15 linear
-    //     gradient toward the destination (or flat 0.4 at far zoom).
+    // The line is CONSUMED as the ship flies it: nothing is drawn behind
+    // the ship's current position. Only the path ahead — ship →
+    // destination — renders, so the trajectory reads as "where I'm still
+    // going", not a growing contrail of where I've been. (Previously the
+    // travelled segment was drawn with a rising trail fade; the request
+    // was to have it disappear entirely.)
     //
-    // The caller's globalAlpha is the "ceiling"; everything here
-    // multiplies against it. Behind-segments are ~24-80 stroke()
-    // calls — fine for a per-frame UI overlay.
+    // The interpolated ship position sits BETWEEN two samples, so the
+    // ahead-stroke starts at that exact point (not the next whole sample)
+    // — otherwise a stub of already-flown line would poke out behind the
+    // hull between sample steps.
     const baseAlpha = ctx.ctx.globalAlpha;
     const cur = currentTick as number;
-    let shipIdx = samples.length - 1;
+    const shipWorld = torchPositionFromSamples(samples, cur);
+    const shipCP = worldToCanvas(shipWorld.x, shipWorld.y, ctx);
+    let nextIdx = samples.length - 1;
     for (let i = 0; i < samples.length; i++) {
-      if (samples[i].t >= cur) { shipIdx = i; break; }
-    }
-    const shipCP = worldToCanvas(samples[shipIdx].x, samples[shipIdx].y, ctx);
-    const headAlpha = useGradient ? 0.85 : 0.4;
-
-    ctx.ctx.strokeStyle = color;
-    let cumLen = 0;   // canvas-px along the polyline, for dash phase continuity
-    for (let i = 0; i < shipIdx; i++) {
-      const segT = (samples[i].t + samples[i + 1].t) / 2;
-      const denom = Math.max(1e-6, cur - plan.startTick);
-      const k = Math.max(0, Math.min(1, (segT - plan.startTick) / denom));
-      // Eased curve: nothing visible at the launch point, lifts toward
-      // the ship — Math.pow(k, 1.6) hides the tail faster than linear.
-      ctx.ctx.globalAlpha = baseAlpha * Math.pow(k, 1.6) * headAlpha;
-      const A = worldToCanvas(samples[i].x, samples[i].y, ctx);
-      const B = worldToCanvas(samples[i + 1].x, samples[i + 1].y, ctx);
-      // Keep the marching-dash phase continuous across the per-segment
-      // strokes: a segment starting at path-length L renders as if the
-      // whole line were one stroke offset by L.
-      if (crawl) ctx.ctx.lineDashOffset = crawlOffset + cumLen;
-      ctx.ctx.beginPath();
-      ctx.ctx.moveTo(A.x, A.y);
-      ctx.ctx.lineTo(B.x, B.y);
-      ctx.ctx.stroke();
-      cumLen += Math.hypot(B.x - A.x, B.y - A.y);
+      if (samples[i].t > cur) { nextIdx = i; break; }
     }
 
-    // Ahead-of-ship stroke: ship → destination.
     ctx.ctx.globalAlpha = baseAlpha;
     if (useGradient) {
       const grad = ctx.ctx.createLinearGradient(shipCP.x, shipCP.y, destCP.x, destCP.y);
@@ -2519,10 +2527,10 @@ export function drawTorchTrajectory(
     } else {
       ctx.ctx.strokeStyle = color.startsWith('#') ? withOpacity(color, 0.4) : color;
     }
-    if (crawl) ctx.ctx.lineDashOffset = crawlOffset + cumLen;
+    if (crawl) ctx.ctx.lineDashOffset = crawlOffset;
     ctx.ctx.beginPath();
     ctx.ctx.moveTo(shipCP.x, shipCP.y);
-    for (let i = shipIdx + 1; i < samples.length; i++) {
+    for (let i = nextIdx; i < samples.length; i++) {
       const cp = worldToCanvas(samples[i].x, samples[i].y, ctx);
       ctx.ctx.lineTo(cp.x, cp.y);
     }
@@ -2559,7 +2567,10 @@ export function drawTorchTrajectory(
   // flight-ticks give the trajectory a ruler the player can read
   // ETA against; the flip point gets a bigger, brighter notch.
   if (splitPhaseColors && samples.length >= 2) {
-    drawTrajectoryTickMarks(plan, samples, ctx);
+    // Only mark the road AHEAD: notches behind the hull would hang in
+    // space now that the travelled line is gone. The flip notch shows
+    // only if the ship hasn't reached it yet.
+    drawTrajectoryTickMarks(plan, samples, ctx, currentTick);
   }
   return samples;
 }
@@ -2600,9 +2611,13 @@ function drawTrajectoryTickMarks(
   plan: TorchTransferPlan,
   samples: Array<{ t: number; x: number; y: number }>,
   ctx: RenderContext,
+  /** Ship's current tick; notches at or before it are skipped so the
+   *  ruler only marks the path still ahead. Undefined = mark all. */
+  currentTick?: number,
 ) {
   const flight = plan.arriveTick - plan.startTick;
   if (flight <= 0) return;
+  const minTick = currentTick ?? -Infinity;
   let step = 10;
   const MAX_NOTCHES = 40;
   if (flight / step > MAX_NOTCHES) {
@@ -2613,16 +2628,19 @@ function drawTrajectoryTickMarks(
   ctx.ctx.lineWidth = 1;
   ctx.ctx.beginPath();
   for (let tick = plan.startTick + step; tick < plan.arriveTick; tick += step) {
+    if (tick <= minTick) continue;
     strokeTrajectoryNotch(samples, tick, 2.5, ctx);
   }
   ctx.ctx.stroke();
   // Flip point — the boost/brake handover — gets a longer, brighter
-  // notch so the maneuver midpoint reads at a glance.
-  ctx.ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
-  ctx.ctx.lineWidth = 1.5;
-  ctx.ctx.beginPath();
-  strokeTrajectoryNotch(samples, plan.flipTick, 5, ctx);
-  ctx.ctx.stroke();
+  // notch so the maneuver midpoint reads at a glance. Gone once passed.
+  if (plan.flipTick > minTick) {
+    ctx.ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.ctx.lineWidth = 1.5;
+    ctx.ctx.beginPath();
+    strokeTrajectoryNotch(samples, plan.flipTick, 5, ctx);
+    ctx.ctx.stroke();
+  }
   ctx.ctx.restore();
 }
 
