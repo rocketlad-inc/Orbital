@@ -103,6 +103,14 @@ function TabButton({
 
 // ---------- My Games ----------
 
+// Priority game: which room App.tsx auto-enters on launch, bypassing the
+// lobby entirely. WRITTEN here (the ★ toggle below); READ once at mount
+// in App.tsx, which owns the literal string this must stay in sync with.
+// Plain localStorage rather than plumbing a prop through App because the
+// pin only needs to take effect on the NEXT launch — nothing in the
+// current session has to react to it changing.
+const PRIORITY_ROOM_KEY = 'orbital.priority_room';
+
 function MyGamesPanel({
   rooms, onEnter, onChanged, myUserId,
 }: {
@@ -118,6 +126,16 @@ function MyGamesPanel({
   // `rooms` prop, but we can locally hide any id in this Set until the
   // next refetch arrives with the actual list.
   const [locallyDeleted, setLocallyDeleted] = useState<Set<string>>(new Set());
+  const [priorityId, setPriorityId] = useState<string | null>(
+    () => localStorage.getItem(PRIORITY_ROOM_KEY),
+  );
+
+  function togglePriority(r: RoomSummary) {
+    const next = priorityId === r.id ? null : r.id;
+    setPriorityId(next);
+    if (next) localStorage.setItem(PRIORITY_ROOM_KEY, next);
+    else localStorage.removeItem(PRIORITY_ROOM_KEY);
+  }
 
   if (rooms === null) {
     return <div className="mp-lobby__loading">Loading…</div>;
@@ -165,6 +183,14 @@ function MyGamesPanel({
       next.add(r.id);
       return next;
     });
+    // Don't leave the pin pointing at a room that no longer exists —
+    // App.tsx's mount check would also catch this, but only clears it
+    // client-side after a failed membership lookup, i.e. one wasted
+    // reload before it self-heals. Clearing here is instant.
+    if (priorityId === r.id) {
+      setPriorityId(null);
+      localStorage.removeItem(PRIORITY_ROOM_KEY);
+    }
     onChanged();
   }
 
@@ -174,14 +200,27 @@ function MyGamesPanel({
       <div className="mp-room-grid">
         {sorted.map(r => {
           const iAmHost = !!myUserId && r.host_id === myUserId;
+          const isPriority = priorityId === r.id;
           return (
-            <div key={r.id} className="mp-room-card-wrap">
+            <div key={r.id} className={`mp-room-card-wrap ${isPriority ? 'is-priority' : ''}`}>
               <RoomCard
                 room={r}
                 onClick={() => onEnter(r.id)}
                 variant="my"
                 loading={busyId === r.id}
               />
+              <button
+                className={`mp-room-card__pin ${isPriority ? 'is-pinned' : ''}`}
+                onClick={(e) => { e.stopPropagation(); togglePriority(r); }}
+                disabled={busyId === r.id}
+                title={
+                  isPriority
+                    ? 'Priority game — loads automatically on launch. Click to unpin.'
+                    : 'Set as priority game — loads automatically on launch, skipping this list'
+                }
+              >
+                {isPriority ? '★' : '☆'}
+              </button>
               {iAmHost && (
                 <button
                   className="mp-room-card__delete"

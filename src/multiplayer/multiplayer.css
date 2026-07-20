@@ -1363,6 +1363,49 @@
   cursor: wait;
 }
 
+/* Priority-game pin — top-left, mirrors the delete button's top-right
+   placement so the two never collide. Any member can pin (not just the
+   host); pinning is a per-player launch preference, not a room setting. */
+.mp-room-card__pin {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 11px;
+  border: 1px solid var(--mp-border);
+  background: rgba(10, 14, 20, 0.7);
+  color: var(--mp-fg-dim);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mp-room-card__pin:hover:not(:disabled) {
+  border-color: var(--mp-accent);
+  color: var(--mp-accent);
+}
+.mp-room-card__pin.is-pinned {
+  background: rgba(255, 184, 77, 0.16);
+  border-color: var(--mp-accent);
+  color: var(--mp-accent);
+}
+.mp-room-card__pin:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+/* Pinned card gets a standing amber ring so which game auto-loads is
+   visible at a glance, not just on hover of the star itself. */
+.mp-room-card-wrap.is-priority .mp-room-card {
+  border-color: var(--mp-accent);
+  box-shadow: 0 0 0 1px rgba(255, 184, 77, 0.35);
+}
+
 /* ---- Pre-game READY button. Sits in the room-detail status row;
    needs to read as the primary action, since it's what gates the
    match starting. Loud + animated when not ready, calm green tick

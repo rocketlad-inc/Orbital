@@ -308,6 +308,10 @@ function SinglePlayerView({ onExit }: { onExit: () => void }) {
 }
 
 const ROOM_STORAGE_KEY = 'orbital.last_room';
+// Written by the ★ toggle in MultiplayerLobby's My Games list (that file
+// owns the write path; this effect owns the one read, at mount). Keep the
+// literal in sync between the two files if it ever changes.
+const PRIORITY_ROOM_KEY = 'orbital.priority_room';
 
 function AppShell() {
   const { user, loading } = useAuth();
@@ -362,6 +366,28 @@ function AppShell() {
             logger.warn('SYSTEM', 'Stale room id in localStorage — clearing', { roomId: remembered });
             localStorage.removeItem(ROOM_STORAGE_KEY);
             setSelectedRoomId(null);
+          }
+        }
+
+        // Priority game: an explicit pin (the ★ in My Games) beats both
+        // "resume whatever was last visited" and the lone-active-game
+        // auto-jump below — the whole point of pinning is a deliberate
+        // choice that survives visiting OTHER games in between launches,
+        // which last-visited-wins can't express once you have more than
+        // one active campaign. Cleared if the pinned room is no longer a
+        // valid membership (deleted, kicked, host swapped it) so the app
+        // never gets stuck pointing at a dead room id.
+        const priorityId = localStorage.getItem(PRIORITY_ROOM_KEY);
+        if (priorityId && mode === null) {
+          const stillMember = res.data.rooms.some(r => r.id === priorityId);
+          if (!stillMember) {
+            logger.warn('SYSTEM', 'Priority room no longer a membership — clearing', { roomId: priorityId });
+            localStorage.removeItem(PRIORITY_ROOM_KEY);
+          } else {
+            setSelectedRoomId(priorityId);
+            localStorage.setItem(ROOM_STORAGE_KEY, priorityId);
+            setMode('multiplayer');
+            return;
           }
         }
 
