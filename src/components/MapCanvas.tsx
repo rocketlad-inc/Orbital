@@ -44,6 +44,8 @@ import {
 } from '../render/mapRenderer';
 import { computeSystemRegions } from '../render/systemRegions';
 import { BUILDING_DEFS, buildingLevel, settlementWorldPosition } from '../game/settlements';
+import { BUILDING_FEATURE } from '../game/researchUnlocks';
+import { useFeatureGate } from '../hooks/useFeatureGate';
 import { BuildingKind } from '../types';
 import {
   spawnTracer,
@@ -122,6 +124,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     setTargetSelectionMode,
     selectedSettlementId, selectSettlement,
   } = useGameContext();
+  // Research gate for the world-overlay build chips (which unbuilt
+  // slots to surface). Same gate the inspector uses.
+  const buildGate = useFeatureGate();
 
   /**
    * The tick to DRAW at: the last resolved tick plus however far into the
@@ -1306,68 +1311,68 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const mine = gameState.settlements.filter(
           st => st.bodyId === overlayBody.id && st.ownedBy === 'player',
         );
+        // Effect line for a building at a given level. Level 0 → the
+        // "what you'd get" pitch so an unbuilt slot still reads as worth
+        // building; >0 → its current bonus.
+        const effectSub = (kind: BuildingKind, lv: number): string => {
+          const n = lv > 0 ? lv : 1;
+          switch (kind) {
+            case 'forge': return lv > 0 ? `LV ${lv} · +${25 * lv}% METAL` : `BUILD · +${25 * n}% METAL`;
+            case 'mint': return lv > 0 ? `LV ${lv} · +${25 * lv}% CRED` : `BUILD · +${25 * n}% CRED`;
+            case 'lab': return lv > 0 ? `LV ${lv} · +${25 * lv}% SCI` : `BUILD · +${25 * n}% SCI`;
+            case 'weapons': return lv > 0 ? `LV ${lv} · +${4 * lv} DMG/T` : `BUILD · +${4 * n} DMG/T`;
+            case 'shipyard': return lv > 0 ? `LV ${lv} · ${lv} SLOT${lv > 1 ? 'S' : ''}` : 'BUILD · +1 SLOT';
+            default: return lv > 0 ? `LV ${lv}` : 'BUILD';
+          }
+        };
+        const labelFor = (kind: BuildingKind): string =>
+          kind === 'lab' ? 'LAB'
+          : kind === 'weapons' ? 'WEAPONS'
+          : BUILDING_DEFS[kind].displayName.toUpperCase();
+
         const groups: WorldOverlayGroup[] = [];
         for (const st of mine) {
           const wp = settlementWorldPosition(st, renderTick(), gameState.bodies);
           if (!wp) continue;
           const anchor = worldToCanvas(wp.x, wp.y, renderContext);
           const chips: WorldOverlayChipSpec[] = [];
-          if (st.type === 'city') {
-            for (const kind of ['forge', 'mint', 'lab'] as BuildingKind[]) {
-              const lv = buildingLevel(st, kind);
-              if (lv > 0) {
-                const sub =
-                  kind === 'forge' ? `LV ${lv} · +${25 * lv}% METAL`
-                  : kind === 'mint' ? `LV ${lv} · +${25 * lv}% CRED`
-                  : `LV ${lv} · +${25 * lv}% SCI`;
-                chips.push({
-                  id: `${st.id}:${kind}`, settlementId: st.id,
-                  label: BUILDING_DEFS[kind].displayName.toUpperCase(),
-                  sub, tone: 'teal',
-                });
-              }
-            }
-            if (buildingLevel(st, 'trajectory_thrusters' as BuildingKind) > 0) {
+          // Every slot the settlement type can host gets a chip — built
+          // ones show their level, UNBUILT-but-unlocked ones show BUILD.
+          // (Buildings still locked behind research are hidden, matching
+          // the old inspector's gate.) Tapping any chip opens the
+          // settlement popover, where the actual build/upgrade happens.
+          const kinds: BuildingKind[] = st.type === 'city'
+            ? ['forge', 'mint', 'lab']
+            : ['weapons', 'lab', 'shipyard'];
+          for (const kind of kinds) {
+            const lv = buildingLevel(st, kind);
+            if (lv === 0 && !buildGate.has(BUILDING_FEATURE[kind])) continue;
+            chips.push({
+              id: `${st.id}:${kind}`, settlementId: st.id,
+              label: labelFor(kind),
+              sub: effectSub(kind, lv),
+              tone: kind === 'shipyard' ? 'amber' : 'teal',
+              unbuilt: lv === 0,
+            });
+          }
+          if (st.type === 'city' && overlayBody.type === 'asteroid') {
+            const thr = buildingLevel(st, 'trajectory_thrusters' as BuildingKind);
+            if (thr > 0 || buildGate.has(BUILDING_FEATURE['trajectory_thrusters'])) {
               chips.push({
                 id: `${st.id}:thrusters`, settlementId: st.id,
-                label: 'THRUSTERS', sub: 'RAM READY', tone: 'amber',
+                label: 'THRUSTERS', sub: thr > 0 ? 'RAM READY' : 'BUILD · RAM',
+                tone: 'amber', unbuilt: thr === 0,
               });
             }
-            if (chips.length === 0) {
-              chips.push({
-                id: `${st.id}:city`, settlementId: st.id,
-                label: 'CITY', sub: `POP ${st.population}`, tone: 'teal',
-              });
-            }
-          } else {
-            for (const kind of ['weapons', 'lab'] as BuildingKind[]) {
-              const lv = buildingLevel(st, kind);
-              if (lv > 0) {
-                chips.push({
-                  id: `${st.id}:${kind}`, settlementId: st.id,
-                  label: kind === 'weapons' ? 'WEAPONS' : 'ORB. LAB',
-                  sub: kind === 'weapons'
-                    ? `LV ${lv} · +${4 * lv} DMG/T`
-                    : `LV ${lv} · +${25 * lv}% SCI`,
-                  tone: 'teal',
-                });
-              }
-            }
-            const yardLv = buildingLevel(st, 'shipyard' as BuildingKind);
-            if (yardLv > 0) {
-              chips.push({
-                id: `${st.id}:shipyard`, settlementId: st.id,
-                label: 'SHIPYARD',
-                sub: `LV ${yardLv} · ${yardLv} SLOT${yardLv > 1 ? 'S' : ''}`,
-                tone: 'amber',
-              });
-            }
-            if (chips.length === 0) {
-              chips.push({
-                id: `${st.id}:station`, settlementId: st.id,
-                label: 'STATION', sub: `POP ${st.population}`, tone: 'teal',
-              });
-            }
+          }
+          // Always at least one chip so the settlement is tappable even
+          // with nothing built/unlocked yet.
+          if (chips.length === 0) {
+            chips.push({
+              id: `${st.id}:base`, settlementId: st.id,
+              label: st.type === 'city' ? 'CITY' : 'STATION',
+              sub: `POP ${st.population}`, tone: 'teal',
+            });
           }
           groups.push({ anchor, side: st.type === 'city' ? 'left' : 'right', chips });
         }

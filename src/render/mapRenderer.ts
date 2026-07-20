@@ -1543,6 +1543,9 @@ export interface WorldOverlayChipSpec {
   label: string;
   sub: string;
   tone: 'teal' | 'amber';
+  /** Not-yet-built slot: rendered dimmer with a dashed border so it
+   *  reads as "you could build this here" rather than an active one. */
+  unbuilt?: boolean;
 }
 
 export interface WorldOverlayGroup {
@@ -1578,13 +1581,14 @@ export function drawWorldOverlayChips(
   const c = ctx.ctx;
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
-  const CHIP_W = 122;
-  const CHIP_H = 32;
-  const GAP = 9;
-  // Desktop spread: inner chip edge sits up to 360px off the anchor on a
-  // wide canvas, floor of 150 on phones (then the screen-margin clamp
-  // takes over and pins the rail to the edge).
-  const lateral = Math.min(Math.max(150, w * 0.24), 360);
+  const CHIP_W = 128;
+  const CHIP_H = 30;
+  const GAP = 7;
+  // Keep chips CLOSE to the structure they name — the old formula
+  // (w*0.24, up to 360px) flung them to the screen edges on desktop and
+  // snapped the leader lines across the whole map. A small fixed offset
+  // scaled gently with the canvas keeps the rail beside the planet.
+  const lateral = Math.min(Math.max(56, w * 0.06), 130);
   const hits: WorldOverlayHit[] = [];
 
   c.save();
@@ -1592,7 +1596,7 @@ export function drawWorldOverlayChips(
     if (g.chips.length === 0) continue;
     const stackH = g.chips.length * CHIP_H + (g.chips.length - 1) * GAP;
     let y = g.anchor.y - stackH / 2;
-    y = Math.min(Math.max(y, 64), Math.max(64, h - 100 - stackH));
+    y = Math.min(Math.max(y, 56), Math.max(56, h - 92 - stackH));
     let x = g.side === 'left' ? g.anchor.x - lateral - CHIP_W : g.anchor.x + lateral;
     x = Math.min(Math.max(8, x), w - 8 - CHIP_W);
 
@@ -1600,36 +1604,43 @@ export function drawWorldOverlayChips(
       const tone = chip.tone === 'amber' ? '#ffb84d' : '#4ecdc4';
       const innerX = g.side === 'left' ? x + CHIP_W : x;
       // Leader line first, under the chip body.
-      c.globalAlpha = alpha * 0.45;
+      c.globalAlpha = alpha * (chip.unbuilt ? 0.3 : 0.45);
       c.strokeStyle = tone;
       c.lineWidth = 1;
+      c.setLineDash(chip.unbuilt ? [3, 3] : []);
       c.beginPath();
       c.moveTo(innerX, y + CHIP_H / 2);
       c.lineTo(g.anchor.x, g.anchor.y);
       c.stroke();
+      c.setLineDash([]);
 
-      c.globalAlpha = alpha;
-      c.fillStyle = 'rgba(10, 17, 27, 0.9)';
+      // Unbuilt slots read dimmer, with a dashed border — "you could
+      // build this here", not an active building.
+      c.globalAlpha = alpha * (chip.unbuilt ? 0.7 : 1);
+      c.fillStyle = chip.unbuilt ? 'rgba(10, 17, 27, 0.72)' : 'rgba(10, 17, 27, 0.9)';
       c.strokeStyle = tone;
       c.lineWidth = 1;
+      c.setLineDash(chip.unbuilt ? [4, 3] : []);
       c.beginPath();
       if (c.roundRect) c.roundRect(x, y, CHIP_W, CHIP_H, 6);
       else c.rect(x, y, CHIP_W, CHIP_H);
       c.fill();
       c.stroke();
+      c.setLineDash([]);
 
       c.fillStyle = tone;
       c.font = 'bold 10px monospace';
       c.textAlign = 'left';
       c.textBaseline = 'alphabetic';
-      c.fillText(chip.label, x + 8, y + 13);
-      c.fillStyle = '#8aa0b4';
+      c.fillText(chip.label, x + 8, y + 12);
+      c.fillStyle = chip.unbuilt ? '#6b8195' : '#8aa0b4';
       c.font = '8px monospace';
-      c.fillText(chip.sub, x + 8, y + 25);
+      c.fillText(chip.sub, x + 8, y + 24);
+      // Build/upgrade affordance glyph: '+' to build, '⬆' to upgrade.
       c.fillStyle = tone;
-      c.font = 'bold 13px monospace';
+      c.font = 'bold 12px monospace';
       c.textAlign = 'right';
-      c.fillText('+', x + CHIP_W - 7, y + 21);
+      c.fillText(chip.unbuilt ? '+' : '⬆', x + CHIP_W - 7, y + 20);
       c.textAlign = 'left';
 
       hits.push({
