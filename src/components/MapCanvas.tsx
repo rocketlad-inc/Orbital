@@ -1291,8 +1291,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       ? gameState.bodies.find(b => b.id === uiState.selectedBodyId && b.destroyedAtTick == null)
       : undefined;
     if (overlayBody && !uiState.targetSelectionMode) {
+      // Gate matches the structure renderers (drawCity/drawStation),
+      // which draw whenever the body is selected: the inspector zooms to
+      // fit the orbit ENVELOPE, not the body's disc, so a dwarf's own
+      // disc can sit at ~26px screen radius even fully zoomed in — the
+      // original 26px floor kept chips invisible on exactly the worlds
+      // the overlay was built for (playtest: Haumea, radius 2.4). Keep a
+      // small floor only so a body selected from true system zoom
+      // doesn't sprout chips over the whole map before the camera's
+      // focus tween lands.
       const screenR = overlayBody.radius * renderContext.camera.scale;
-      const overlayAlpha = Math.min(1, Math.max(0, (screenR - 26) / 20));
+      const overlayAlpha = Math.min(1, Math.max(0, (screenR - 4) / 10));
       if (overlayAlpha > 0) {
         const mine = gameState.settlements.filter(
           st => st.bodyId === overlayBody.id && st.ownedBy === 'player',
