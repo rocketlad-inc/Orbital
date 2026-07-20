@@ -5,6 +5,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { BuildPanel } from './BuildPanel';
+import { bodyProductionRates } from '../game/economy';
+import { getBodyFlavor } from '../game/bodyFlavor';
 import {
   canHostCity, canHostStation, SETTLEMENT_DEFS, settlementYield, suggestSettlementName,
   COLLECTOR_COST,
@@ -15,6 +17,7 @@ import { BUILDING_FEATURE } from '../game/researchUnlocks';
 import { useFeatureGate } from '../hooks/useFeatureGate';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { humanizeMpError } from '../multiplayer/errorMessages';
+import { BottomSheet } from './BottomSheet';
 import {
   planTorchTransfer, fromG,
 } from '../physics/torchTransfer';
@@ -41,11 +44,11 @@ const RAM_METAL_PER_DV = 50;
 const RAM_ASTEROID_G = 0.005;
 
 export const BodyInspector: React.FC = () => {
-  const {
-    gameState, camera, uiState, deselectBody, focusBody, updateCamera,
-    selectedSettlementId, selectSettlement,
-  } = useGameContext();
+  const { gameState, camera, uiState, deselectBody, focusBody, updateCamera } = useGameContext();
   // Non-null only in multiplayer — used to switch the deploy setup
+  // pitch between the legacy SP freighter copy and the MP colony-ship
+  // rules (colony/freighter split).
+  const mpActionsTopCard = useMultiplayerActions();
   const selectedBodyId = uiState.selectedBodyId;
 
   // === Body-focus camera state ===
@@ -221,19 +224,6 @@ export const BodyInspector: React.FC = () => {
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedBodyId, closeAndRestore]);
 
-  // Close the on-map world menu when another surface opens (the dock rail
-  // broadcasts this so opening Fleet/Build/etc. doesn't leave the world
-  // popover stacked underneath). Deselect only — no camera restore, since
-  // the player is navigating away, not backing out to their prior frame.
-  useEffect(() => {
-    const onClose = () => {
-      if (uiState.selectedBodyId) deselectBody();
-      if (selectedSettlementId) selectSettlement(undefined);
-    };
-    window.addEventListener('orbital:close-world-menu', onClose);
-    return () => window.removeEventListener('orbital:close-world-menu', onClose);
-  }, [uiState.selectedBodyId, selectedSettlementId, deselectBody, selectSettlement]);
-
   if (!selectedBodyId) {
     return null;
   }
@@ -243,6 +233,17 @@ export const BodyInspector: React.FC = () => {
     return null;
   }
 
+  const ownerFaction = body.ownedBy
+    ? gameState.factions.find(f => f.id === body.ownedBy)
+    : null;
+
+  // Count ships at this body
+  const shipsHere = gameState.ships.filter(
+    s => !s.transit && s.orbit.parentBodyId === body.id
+  );
+
+  const isFocused = camera.focusedBodyId === body.id;
+  const toggleFocus = () => focusBody(isFocused ? undefined : body.id);
 
   // === Cardinal panel layout ===
   // After the UI overhaul, BodyInspector renders 4 cards around the
@@ -262,94 +263,358 @@ export const BodyInspector: React.FC = () => {
   // exit are deliberately NOT here yet — first iteration just lays
   // out the cardinal panels around whatever the camera is already
   // showing. Those behaviors land in a follow-up.
-  // === The map IS the menu ===
-  // The old 4-panel cardinal inspector is retired. Selecting a body
-  // focuses the camera (effects above) and MapCanvas paints callout
-  // chips onto its structures; tapping a chip selects that settlement.
-  // The ONLY panel that remains is a compact popover for the tapped
-  // structure, reusing the very same SettlementsSection / BuildPanel /
-  // RamControls the cardinal cards used — so every build, upgrade,
-  // collector and deploy action is unchanged, just relocated from a
-  // wall of boxes to a single floating card over the map.
-  //
-  const myStructures = gameState.settlements.filter(
-    s => s.bodyId === body.id && s.ownedBy === 'player',
-  );
-
-  // Sol is special: no city can host it, and its Dyson Sphere is built
-  // through a bespoke panel, not a normal settlement — so it can't be
-  // reached by a structure chip. Selecting Sol opens that panel directly.
-  if (body.id === 'sol') {
-    return (
-      <div className="world-popover" data-tutorial-id="body-inspector" role="dialog">
-        <div className="world-popover__head">
-          <span className="world-popover__title">SOL</span>
-          <button className="panel-close" onClick={closeAndRestore} title="Close">✕</button>
-        </div>
-        <div className="world-popover__body body-focus">
-          <DysonSpherePanel />
-          {myStructures.length > 0 && <SettlementsSection bodyId={body.id} typeFilter="station" />}
-          {myStructures.some(s => s.type === 'station') && <BuildPanel />}
-        </div>
-      </div>
-    );
-  }
-
-  // Undeveloped world you could still settle: there are no structures to
-  // chip, so open the deploy popover directly — otherwise colonization
-  // would be unreachable. Only when the world is unclaimed or already
-  // yours (you can't build on an enemy's world); an enemy world with no
-  // presence of yours renders nothing — you're just looking at it.
-  const canSettleHere = body.ownedBy == null || body.ownedBy === 'player';
-  if (myStructures.length === 0) {
-    if (!canSettleHere) return null;
-    return (
-      <div className="world-popover" data-tutorial-id="body-inspector" role="dialog">
-        <div className="world-popover__head">
-          <span className="world-popover__title">{body.name.toUpperCase()}</span>
-          <button className="panel-close" onClick={closeAndRestore} title="Close">✕</button>
-        </div>
-        <div className="world-popover__body body-focus">
-          {/* No typeFilter → both city and station deploy CTAs. */}
-          <SettlementsSection bodyId={body.id} />
-          {body.type === 'asteroid' && <RamControlsSection body={body} />}
-        </div>
-      </div>
-    );
-  }
-
-  // Developed world: selecting the body opens its menu directly. (The old
-  // build required tapping an on-map structure chip first, but the chip
-  // layer was retired — with no chips, requiring a chip tap meant nothing
-  // ever opened.) Render the whole world menu: a stats header, the city
-  // rail and the station rail (both always present so you can build or
-  // deploy either), RAM controls on asteroids, and the shipyard build
-  // queue when a station exists. All the same reused sections as before.
-  const hasStation = myStructures.some(s => s.type === 'station');
-  const yieldStr = body.resources
-    ? [
-        body.resources.metal > 0 ? `${body.resources.metal}M` : '',
-        body.resources.gold > 0 ? `${body.resources.gold}C` : '',
-        body.resources.science > 0 ? `${body.resources.science}S` : '',
-      ].filter(Boolean).join(' · ')
-    : '';
   return (
-    <div className="world-popover" data-tutorial-id="body-inspector" role="dialog">
-      <div className="world-popover__head">
-        <span className="world-popover__title">{body.name.toUpperCase()}</span>
-        {yieldStr && <span className="world-popover__yields">{yieldStr}</span>}
-        <button className="panel-close" onClick={closeAndRestore} title="Close">✕</button>
-      </div>
-      <div className="world-popover__body body-focus">
-        <SettlementsSection bodyId={body.id} typeFilter="city" />
-        <SettlementsSection bodyId={body.id} typeFilter="station" />
+    <BottomSheet open={true} onClose={closeAndRestore} title={body.name.toUpperCase()}>
+    <div className="body-focus" data-tutorial-id="body-inspector">
+
+      {/* === TOP CARD === */}
+      <div className="body-focus__top">
+        <div className="panel-header">
+          <span>{body.name.toUpperCase()}</span>
+          <div className="panel-header-actions">
+            <button
+              className={`panel-focus ${isFocused ? 'active' : ''}`}
+              onClick={toggleFocus}
+              title={isFocused ? 'Stop following' : 'Camera follows this body'}
+            >
+              {isFocused ? '◉ FOLLOWING' : '○ FOLLOW'}
+            </button>
+            <button className="panel-close" onClick={closeAndRestore}>
+              ✕
+            </button>
+          </div>
+        </div>
+
+        <div className="panel-body body-focus__top-body">
+        {/* Compact body-info chip row — TYPE / OWNER / SHIPS as inline
+            pills instead of a full info table. PARENT + SOI dropped;
+            the player already knows the body's parent from clicking
+            it, and SOI is a tooltip-on-hover value, not a glance one. */}
+        <div className="body-focus__chips">
+          <span className="body-focus__chip">{body.type.toUpperCase()}</span>
+          {ownerFaction && (
+            <span
+              className="body-focus__chip"
+              style={{ color: ownerFaction.color, borderColor: ownerFaction.color }}
+            >
+              {ownerFaction.name.toUpperCase()}
+            </span>
+          )}
+          {shipsHere.length > 0 && (
+            <span className="body-focus__chip">{shipsHere.length} SHIP{shipsHere.length === 1 ? '' : 'S'}</span>
+          )}
+        </div>
+
+        {/* Flavor text — authored prose from src/game/bodyFlavor.ts.
+            Compact styling so it doesn't dominate the card. */}
+        {(() => {
+          const flavor = getBodyFlavor(body.id);
+          if (!flavor) return null;
+          return (
+            <div data-tutorial-id="body-flavor" className="body-focus__flavor">
+              {flavor}
+            </div>
+          );
+        })()}
+
+        {/* Per-tick yield + body-level LOCAL stockpile + trade-route
+            warning. The body is the unit of resource accounting now
+            (city + station on the same body share one logical bucket)
+            so we sum stockpiles across owned settlements and surface
+            one combined readout in the top card. */}
+        {body.resources && (() => {
+          const settlementsHere = gameState.settlements.filter(s => s.bodyId === body.id);
+          const playerSettlements = settlementsHere.filter(s => s.ownedBy === 'player');
+          const freightersHere = gameState.ships.filter(
+            s => s.class === 'freighter' && !s.transit && s.orbit.parentBodyId === body.id && s.ownedBy === 'player'
+          );
+
+          // Per-tick contribution to the faction POOL from this body.
+          // Collector settlements pump 100% of settlementYield per tick;
+          // non-collector settlements trickle 10% to pool + 90% to local.
+          // Mirrors src/game/settlements.ts tickSettlements + matches
+          // worker/room.js. Use settlementYield since it bakes in
+          // population, type, and building modifiers.
+          let poolO = 0, poolC = 0, poolS = 0;
+          let localPerTickO = 0, localPerTickC = 0, localPerTickS = 0;
+          for (const s of playerSettlements) {
+            const y = settlementYield(s, body);
+            if (s.hasCollector) {
+              poolO += y.ore; poolC += y.credits; poolS += y.science;
+            } else {
+              poolO += y.ore * 0.1; poolC += y.credits * 0.1; poolS += y.science * 0.1;
+              localPerTickO += y.ore * 0.9;
+              localPerTickC += y.credits * 0.9; localPerTickS += y.science * 0.9;
+            }
+          }
+          const hasPoolFlow = poolO + poolC + poolS > 0.01;
+          const hasLocalFlow = localPerTickO + localPerTickC + localPerTickS > 0.01;
+
+          // Body-level LOCAL stockpile = sum across owned settlements.
+          const localStockO = playerSettlements.reduce((a, s) => a + s.stockpile.ore,     0);
+          const localStockC = playerSettlements.reduce((a, s) => a + s.stockpile.credits, 0);
+          const localStockS = playerSettlements.reduce((a, s) => a + s.stockpile.science, 0);
+          const hasStockpile = localStockO + localStockC + localStockS > 0;
+
+          // Is there an active trade route picking up FROM this body?
+          const routeFromHere = (gameState.tradeRoutes ?? []).some(
+            r => r.ownedBy === 'player' && r.originBodyId === body.id,
+          );
+          const allCollectered = playerSettlements.length > 0
+            && playerSettlements.every(s => s.hasCollector);
+
+          // Setup pitch when there's no settlement yet — keep the old
+          // copy here so the player still knows what to do.
+          if (playerSettlements.length === 0) {
+            const production = bodyProductionRates(body);
+            const hasProduction = production.ore > 0 || production.credits > 0 || production.science > 0;
+            if (!hasProduction) return null;
+            return (
+              <div className="body-focus__yields" data-tutorial-id="body-production">
+                <div className="body-focus__yield-row">
+                  {production.ore > 0 && <span>+{Math.round(production.ore)}M</span>}
+                  {production.credits > 0 && <span>+{Math.round(production.credits)}C</span>}
+                  <span style={{ color: '#7a8a9a' }}>/ tick if settled</span>
+                </div>
+                <div className="body-focus__yield-note">
+                  {mpActionsTopCard
+                    // MP: colony/freighter split — freighters can't
+                    // settle any more; expansion runs on Colony Ships.
+                    ? (gameState.ships.some(s =>
+                        s.ownedBy === 'player' && !s.transit
+                        && s.orbit.parentBodyId === body.id && s.class === 'colony')
+                        ? 'Colony Ship in orbit; deploy below to start harvesting.'
+                        : 'No settlement yet — send a Colony Ship, then deploy.')
+                    : (freightersHere.length === 0
+                        ? 'No settlement yet — park a freighter, then deploy.'
+                        : 'Freighter in orbit; deploy below to start harvesting.')}
+                </div>
+              </div>
+            );
+          }
+
+          const fmt = (n: number) => n >= 10 ? Math.round(n).toString() : n.toFixed(1);
+
+          return (
+            <div className="body-focus__yields" data-tutorial-id="body-production">
+              {/* BIG per-tick yield to the pool */}
+              {hasPoolFlow && (
+                <div
+                  className="body-focus__yield-row"
+                  style={{ fontSize: 18, fontWeight: 700, gap: 10, marginBottom: 4 }}
+                >
+                  {poolO > 0.01 && <span style={{ color: '#a0a0a0' }}>+{fmt(poolO)}M</span>}
+                  {poolC > 0.01 && <span style={{ color: '#ffd700' }}>+{fmt(poolC)}C</span>}
+                  {poolS > 0.01 && <span style={{ color: '#6ee7b7' }}>+{fmt(poolS)}S</span>}
+                  <span style={{ color: '#7a8a9a', fontSize: 12, fontWeight: 400 }}>
+                    /tick → pool
+                  </span>
+                </div>
+              )}
+
+              {/* Body-level LOCAL stockpile + the per-tick build rate. */}
+              {(hasStockpile || hasLocalFlow) && (
+                <div style={{ fontSize: 13, color: '#a8b8c8', marginBottom: 2 }}>
+                  <span style={{ color: '#7a8a9a', letterSpacing: '0.08em' }}>LOCAL: </span>
+                  {Math.round(localStockO)}M {Math.round(localStockC)}C {Math.round(localStockS)}S
+                  {localStockS > 0 ? ` ${Math.round(localStockS)}S` : ''}
+                  {hasLocalFlow && (
+                    <span style={{ color: '#7a8a9a', marginLeft: 8 }}>
+                      ({/* per-tick LOCAL fill rate */}
+                      {localPerTickO > 0.01 && `+${fmt(localPerTickO)}M `}
+                      {localPerTickC > 0.01 && `+${fmt(localPerTickC)}C`}
+                      <span style={{ color: '#7a8a9a' }}>/tick</span>)
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* Trade-route call-to-action. Red when there's stockpile
+                  flowing AND no route AND not every settlement has a
+                  collector. Silent when the player is already moving
+                  this body's output via collector or trade route. */}
+              {hasLocalFlow && !allCollectered && !routeFromHere && freightersHere.length === 0 && (
+                <div style={{
+                  fontSize: 12,
+                  color: '#ff5e5e',
+                  marginTop: 4,
+                  padding: '4px 8px',
+                  background: 'rgba(255, 94, 94, 0.08)',
+                  border: '1px solid rgba(255, 94, 94, 0.4)',
+                  borderRadius: 3,
+                }}>
+                  ⚠ Establish trade route to a collector — or spend it locally.
+                </div>
+              )}
+              {hasLocalFlow && !allCollectered && routeFromHere && (
+                <div className="body-focus__yield-note" style={{ color: '#6ee7b7' }}>
+                  Trade route active — freighter en route.
+                </div>
+              )}
+              {hasLocalFlow && !allCollectered && !routeFromHere && freightersHere.length > 0 && (
+                <div className="body-focus__yield-note" style={{ color: '#6ee7b7' }}>
+                  Freighter in orbit — pickup on arrival.
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* Asteroid-only ram controls stay in the top card alongside
+            the body info — they're contextual, not part of the
+            city/station/shipyard split. */}
         {body.type === 'asteroid' && <RamControlsSection body={body} />}
-        {hasStation && <BuildPanel />}
+        </div>
       </div>
+
+      {/* === LEFT CARD === Cities (or Dyson Sphere at Sol) */}
+      <div className="body-focus__left">
+        {body.id === 'sol' ? (
+          <DysonSpherePanel />
+        ) : (
+          <SettlementsSection bodyId={body.id} typeFilter="city" />
+        )}
+      </div>
+
+      {/* === RIGHT CARD === Stations */}
+      <div className="body-focus__right">
+        <SettlementsSection bodyId={body.id} typeFilter="station" />
+      </div>
+
+      {/* === BOTTOM CARD === Shipyard */}
+      <div className="body-focus__bottom">
+        <BuildPanel />
+      </div>
+
+      {/* === Connector lines === SVG overlay that draws a curve from
+          each settlement row in the LEFT/RIGHT cards out to that
+          settlement's actual position on the map (surface for cities,
+          orbit for stations). Implementation: see ConnectorLines
+          below — DOM-driven (rows tagged with data-settlement-id) +
+          per-frame world→screen math mirroring the renderer's
+          worldToCanvas. Player-owned only — enemy settlements don't
+          get lines (they're intel hidden in the fog wash anyway). */}
+      <ConnectorLines bodyId={body.id} />
+
     </div>
+    </BottomSheet>
   );
 };
 
+// ============================================================
+// ConnectorLines — SVG overlay drawing a curve from each settlement
+// row in the LEFT/RIGHT cards to its on-map marker.
+// Updates on every frame (the body and stations move). Settlements
+// without a matching DOM row are silently skipped — e.g. enemy
+// settlements that don't render in the player's panel.
+// ============================================================
+const ConnectorLines: React.FC<{ bodyId: string }> = ({ bodyId }) => {
+  const { gameState, camera } = useGameContext();
+  const svgRef = useRef<SVGSVGElement>(null);
+
+  // Animation-frame loop while mounted. Per-frame: compute each
+  // player-owned settlement's world position, convert to screen
+  // coords, look up its DOM row by data-settlement-id, and emit a
+  // cubic-bezier path from the row's inward edge to the marker.
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const svg = svgRef.current;
+      if (!svg) {
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+      const body = gameState.bodies.find(b => b.id === bodyId);
+      if (!body) {
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+      const bodyWorldPos = bodyPosition(body, gameState.currentTick, gameState.bodies);
+      const viewportW = window.innerWidth;
+      const viewportH = window.innerHeight;
+
+      // worldToCanvas mirror — same math the renderer uses. Camera
+      // tracks the focused body so screen-center is body-center.
+      const camX = camera.focusedBodyId === bodyId ? bodyWorldPos.x : camera.x;
+      const camY = camera.focusedBodyId === bodyId ? bodyWorldPos.y : camera.y;
+      const worldToScreen = (wx: number, wy: number) => ({
+        x: viewportW / 2 + (wx - camX) * camera.scale,
+        y: viewportH / 2 + (wy - camY) * camera.scale,
+      });
+
+      const settlements = gameState.settlements.filter(
+        s => s.bodyId === bodyId && s.ownedBy === 'player',
+      );
+
+      const paths: string[] = [];
+      for (const s of settlements) {
+        const row = svg.parentElement?.querySelector(
+          `[data-settlement-id="${s.id}"]`,
+        ) as HTMLElement | null;
+        if (!row) continue;
+        const rect = row.getBoundingClientRect();
+
+        // Settlement world position: cities sit on the surface at
+        // surfaceAngle, stations sit in orbit at the current orbital
+        // angle. Same math as drawCity / drawStation in mapRenderer.
+        let sx: number, sy: number;
+        if (s.type === 'city') {
+          const angle = s.surfaceAngle ?? 0;
+          sx = bodyWorldPos.x + body.radius * Math.cos(angle);
+          sy = bodyWorldPos.y + body.radius * Math.sin(angle);
+        } else if (s.orbit) {
+          const orbit = s.orbit;
+          const radius = (orbit.rp + orbit.ra) / 2;
+          const M = orbit.M0 + (2 * Math.PI * (gameState.currentTick - orbit.epoch) / orbit.period) * orbit.direction;
+          const theta = M;
+          sx = bodyWorldPos.x + radius * Math.cos(theta);
+          sy = bodyWorldPos.y + radius * Math.sin(theta);
+        } else {
+          continue;
+        }
+        const target = worldToScreen(sx, sy);
+
+        // Source = the row's inward-facing edge midpoint. Cities live
+        // in the left card → source is the row's right edge. Stations
+        // live in the right card → source is the row's left edge.
+        const sourceX = s.type === 'city' ? rect.right : rect.left;
+        const sourceY = rect.top + rect.height / 2;
+
+        // Cubic bezier — pull both control points horizontally toward
+        // the target so the line sweeps cleanly across the gap instead
+        // of looping. Magnitude proportional to horizontal distance so
+        // small distances don't get exaggerated curves.
+        const dx = target.x - sourceX;
+        const cp1x = sourceX + dx * 0.45;
+        const cp2x = target.x - dx * 0.45;
+        paths.push(
+          `M ${sourceX} ${sourceY} C ${cp1x} ${sourceY}, ${cp2x} ${target.y}, ${target.x} ${target.y}`,
+        );
+      }
+
+      // Replace innerHTML once per frame rather than React-rendering
+      // each path — keeps the connector animation off React's reconciler.
+      svg.innerHTML = paths
+        .map(d => `<path d="${d}" stroke="rgba(78,205,196,0.5)" stroke-width="1" fill="none" stroke-dasharray="3 3"/>`)
+        .join('');
+
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [bodyId, gameState, camera]);
+
+  return (
+    <svg
+      ref={svgRef}
+      style={{
+        position: 'fixed', inset: 0,
+        pointerEvents: 'none',
+        zIndex: 90,  // below cards (91), above canvas
+      }}
+    />
+  );
+};
 
 interface SettlementsSectionProps {
   bodyId: string;
@@ -953,12 +1218,6 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
     ? [...baseKinds, ...ASTEROID_CITY_EXTRA]
     : baseKinds;
   const q = settlement.buildingQueue;
-  // Accordion: each building is a button that expands into its own menu
-  // (effect / cost / upgrade) on tap — "the button IS the menu". A build
-  // already in flight forces itself open so its progress + cancel stay
-  // visible without a tap.
-  const [openKind, setOpenKind] = useState<BuildingKind | null>(null);
-  const effectiveOpen = q ? q.kind : openKind;
 
   return (
     <div
@@ -973,8 +1232,8 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
     >
       <div
         style={{
-          fontSize: 11, letterSpacing: '0.14em', fontWeight: 800,
-          color: '#dce7f0', textTransform: 'uppercase',
+          fontSize: 10, letterSpacing: '0.14em', fontWeight: 700,
+          color: '#b8c8d6', textTransform: 'uppercase',
         }}
       >Buildings</div>
 
@@ -1018,42 +1277,28 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
           effectStr = '';
         }
 
-        const isOpen = effectiveOpen === kind;
         return (
           <div
             key={kind}
             style={{
-              border: `1px solid ${isOpen ? 'rgba(78,205,196,0.35)' : 'rgba(78,205,196,0.14)'}`,
-              borderRadius: 6,
-              background: isOpen ? 'rgba(78,205,196,0.06)' : 'transparent',
-              overflow: 'hidden',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '3px 0',
+              fontSize: 10,
             }}
           >
-            {/* Collapsed header — always visible, tap to expand this one. */}
-            <button
-              onClick={() => setOpenKind(prev => (prev === kind ? null : kind))}
+            <span
               style={{
-                display: 'flex', alignItems: 'center', gap: 8, width: '100%',
-                padding: '8px 10px', background: 'transparent', border: 'none',
-                cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
+                minWidth: 64,
+                fontWeight: 600,
+                color: level > 0 ? '#d8e4ee' : '#a8b8c8',
+                letterSpacing: '0.05em',
               }}
             >
-              <span style={{ fontSize: 13, fontWeight: 800, color: level > 0 ? '#eaf2f8' : '#c4d2de', letterSpacing: '0.03em' }}>
-                {def.displayName} <span style={{ color: '#5fe4da' }}>L{level}</span>
-              </span>
-              {inFlight
-                ? <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: '#5fe4da' }}>BUILDING · T+{Math.max(0, Math.round((q!.completeTick) - currentTick))}</span>
-                : <>
-                    <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: canQueue ? '#7ff0e6' : '#7f93a4' }}>
-                      {lock ? '🔒' : level > 0 ? `→ L${level + 1}` : 'BUILD'}
-                    </span>
-                    <span style={{ color: '#7f93a4', fontSize: 11, transform: isOpen ? 'rotate(180deg)' : 'none' }}>▾</span>
-                  </>}
-            </button>
+              {def.displayName} <span style={{ color: '#4ecdc4' }}>L{level}</span>
+            </span>
 
-            {/* Expanded menu for this building. */}
-            {isOpen && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 10px 9px', fontSize: 12 }}>
             {inFlight && q ? (
               <>
                 <div
@@ -1101,7 +1346,7 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
             ) : (
               <>
                 <span
-                  style={{ flex: 1, color: lock ? '#c4d2de' : '#d3e0ec', fontWeight: 600 }}
+                  style={{ flex: 1, color: '#b8c8d6', fontStyle: 'italic' }}
                   title={def.description}
                 >
                   {lock ? `🔒 ${lock.text}` : `${effectStr} · ${ticks}t · ${costStr}`}
@@ -1116,19 +1361,16 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
                     : `Upgrade ${def.displayName} → L${level + 1} (${ticks} ticks)`
                   }
                   style={{
-                    padding: '4px 10px',
-                    background: canQueue ? 'rgba(78, 205, 196, 0.16)' : 'transparent',
-                    color: canQueue ? '#7ff0e6' : '#5a7080',
+                    padding: '2px 8px',
+                    background: 'transparent',
+                    color: canQueue ? '#4ecdc4' : '#5a7080',
                     border: `1px solid ${canQueue ? '#4ecdc4' : '#2a3d50'}`,
-                    borderRadius: 4,
-                    fontFamily: 'inherit', fontSize: 11, fontWeight: 800,
+                    borderRadius: 3,
+                    fontFamily: 'inherit', fontSize: 9, fontWeight: 600,
                     cursor: canQueue ? 'pointer' : 'default',
-                    whiteSpace: 'nowrap',
                   }}
                 >{lock ? '🔒' : `+ L${level + 1}`}</button>
               </>
-            )}
-            </div>
             )}
           </div>
         );
