@@ -946,6 +946,12 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
     ? [...baseKinds, ...ASTEROID_CITY_EXTRA]
     : baseKinds;
   const q = settlement.buildingQueue;
+  // Accordion: each building is a button that expands into its own menu
+  // (effect / cost / upgrade) on tap — "the button IS the menu". A build
+  // already in flight forces itself open so its progress + cancel stay
+  // visible without a tap.
+  const [openKind, setOpenKind] = useState<BuildingKind | null>(null);
+  const effectiveOpen = q ? q.kind : openKind;
 
   return (
     <div
@@ -1005,28 +1011,42 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
           effectStr = '';
         }
 
+        const isOpen = effectiveOpen === kind;
         return (
           <div
             key={kind}
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '4px 0',
-              fontSize: 12,
+              border: `1px solid ${isOpen ? 'rgba(78,205,196,0.35)' : 'rgba(78,205,196,0.14)'}`,
+              borderRadius: 6,
+              background: isOpen ? 'rgba(78,205,196,0.06)' : 'transparent',
+              overflow: 'hidden',
             }}
           >
-            <span
+            {/* Collapsed header — always visible, tap to expand this one. */}
+            <button
+              onClick={() => setOpenKind(prev => (prev === kind ? null : kind))}
               style={{
-                minWidth: 72,
-                fontWeight: 800,
-                color: level > 0 ? '#eaf2f8' : '#c4d2de',
-                letterSpacing: '0.03em',
+                display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                padding: '8px 10px', background: 'transparent', border: 'none',
+                cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
               }}
             >
-              {def.displayName} <span style={{ color: '#5fe4da', fontWeight: 800 }}>L{level}</span>
-            </span>
+              <span style={{ fontSize: 13, fontWeight: 800, color: level > 0 ? '#eaf2f8' : '#c4d2de', letterSpacing: '0.03em' }}>
+                {def.displayName} <span style={{ color: '#5fe4da' }}>L{level}</span>
+              </span>
+              {inFlight
+                ? <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: '#5fe4da' }}>BUILDING · T+{Math.max(0, Math.round((q!.completeTick) - currentTick))}</span>
+                : <>
+                    <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: canQueue ? '#7ff0e6' : '#7f93a4' }}>
+                      {lock ? '🔒' : level > 0 ? `→ L${level + 1}` : 'BUILD'}
+                    </span>
+                    <span style={{ color: '#7f93a4', fontSize: 11, transform: isOpen ? 'rotate(180deg)' : 'none' }}>▾</span>
+                  </>}
+            </button>
 
+            {/* Expanded menu for this building. */}
+            {isOpen && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 10px 9px', fontSize: 12 }}>
             {inFlight && q ? (
               <>
                 <div
@@ -1100,6 +1120,8 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
                   }}
                 >{lock ? '🔒' : `+ L${level + 1}`}</button>
               </>
+            )}
+            </div>
             )}
           </div>
         );
