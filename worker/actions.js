@@ -33,7 +33,7 @@ const SHIP_BUILD_COST = {
   // Colony ship — consumable expansion hull (DESIGN-identity-economy §4).
   // ~3x freighter cost: it IS the price of founding a city (deploy
   // consumes the ship instead of charging SETTLEMENT_COST).
-  colony:    { fuel: 0,  metal: 20, gold: 15, build_ticks: 30 },
+  colony:    { fuel: 0,  metal: 20, gold: 15, build_ticks: 15 },
 };
 
 function json(data, init = {}) {

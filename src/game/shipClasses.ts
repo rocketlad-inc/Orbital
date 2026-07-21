@@ -145,7 +145,7 @@ const COLONY: ShipClassDef = {
   speedModifier: 1.6,
   cargoCapacity: 0,
   cost: { fuel: 0, ore: 20, credits: 15 },
-  buildTime: 30,
+  buildTime: 15,
   canHarvest: false,
   size: 4,
   icon: '◉',
