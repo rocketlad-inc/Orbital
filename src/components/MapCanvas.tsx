@@ -58,6 +58,12 @@ import { shipWorldPosition } from '../game/combat';
 import { getShipClass } from '../game/shipClasses';
 import { computeIncomingThreats, threatenedBodyIds } from '../game/threats';
 import { computeVisibility, factionSensorRings, GHOST_LIFETIME_TICKS } from '../game/visibility';
+// World menu (MULTIPLAYER ONLY): every use below is gated on
+// isWorldMenuActive(), which only the MP-mounted overlay ever sets —
+// these imports add zero reachable code paths to single-player.
+import { isWorldMenuActive, setWorldMenuMaxScale, getWorldMenuMaxScale } from '../game/worldMenu/store';
+import { menuScaleFor, zOf, furnitureOpacity } from '../game/worldMenu/camera';
+import { drawWorldMenuCloseup } from '../render/worldMenuCloseup';
 import { useCanvasTouchInput } from '../hooks/useCanvasTouchInput';
 import { isCoarsePointer } from '../hooks/useIsMobile';
 import { GIT_SHA } from '../_version';
@@ -670,9 +676,32 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // Centauri-system barycenter) are skipped — they live way outside
     // the normal scale band and their orbit ring would just be a giant
     // distracting circle through the Kuiper belt at max zoom-out.
-    for (const body of gameState.bodies) {
-      if (body.parent && body.type !== 'lagrange') {
-        drawOrbit(body, renderContext, withOpacity(body.color, 0.35));
+    //
+    // World menu (MP only — isWorldMenuActive() is false everywhere in
+    // SP): orbit rings are "map furniture" and fade out as the camera
+    // dives into a body's diegetic menu, so the focused planet's own
+    // ring never slashes across the menu sky (spec G9). orbitAlpha
+    // stays 1 in SP and at map zoom, making this hunk a no-op there.
+    let orbitAlpha = 1;
+    if (isWorldMenuActive() && camera.focusedBodyId) {
+      const focusedBody = gameState.bodies.find(b => b.id === camera.focusedBodyId);
+      if (focusedBody && focusedBody.type !== 'star') {
+        orbitAlpha = furnitureOpacity(zOf(camera.scale, focusedBody, renderContext.canvas.height));
+        // Publish the raised interactive-zoom cap for this focused body;
+        // wheel + touch handlers read it from the store. (SP: store
+        // always reports 50 because the overlay never activates it.)
+        setWorldMenuMaxScale(Math.max(50, menuScaleFor(focusedBody, renderContext.canvas.height)));
+      } else {
+        setWorldMenuMaxScale(null);
+      }
+    } else {
+      setWorldMenuMaxScale(null);
+    }
+    if (orbitAlpha > 0.01) {
+      for (const body of gameState.bodies) {
+        if (body.parent && body.type !== 'lagrange') {
+          drawOrbit(body, renderContext, withOpacity(body.color, 0.35 * orbitAlpha));
+        }
       }
     }
 
@@ -880,6 +909,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         ctx.textBaseline = 'bottom';
         ctx.fillText('⚠ THREAT', cp.x, cp.y - baseR - 6);
       }
+    }
+
+    // World-menu diegetic close-up (MP only — inert in SP because
+    // isWorldMenuActive() is only ever set by the MP-mounted overlay).
+    // Paints surface detail/buildings/HP/fire ONTO the focused body's
+    // already-drawn disc once the camera dives past map LOD. Drawn
+    // before ships so hulls in orbit pass in front of the surface.
+    if (isWorldMenuActive() && camera.focusedBodyId) {
+      drawWorldMenuCloseup(renderContext, gameState.settlements, 'player');
     }
 
     // Build a co-orbit formation map: ships sharing the same parent body
@@ -1369,7 +1407,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       //            visible band at the default zoom (good — players
       //            should discover it by pulling out).
       // Touch hook (useCanvasTouchInput) needs to match this clamp.
-      const newScale = Math.max(0.0012, Math.min(50, camera.scale * factor));
+      //
+      // World menu (MP only): the cap comes from the store, which reports
+      // the historical 50 unless the MP overlay is active over a focused
+      // body (diving into a menu needs ~130 for small worlds). SP:
+      // permanently 50, byte-identical behavior.
+      const newScale = Math.max(0.0012, Math.min(getWorldMenuMaxScale(), camera.scale * factor));
       const newCamX = worldBeforeX - (mouseX - canvas.width / 2) / newScale;
       const newCamY = worldBeforeY - (mouseY - canvas.height / 2) / newScale;
       directUpdateCamera({ x: newCamX, y: newCamY, scale: newScale });

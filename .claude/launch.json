@@ -16,6 +16,13 @@
       "autoPort": true
     },
     {
+      "name": "mockup-preview",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "-l", "5051", "C:/Users/lcfee/AppData/Local/Temp/claude/C--Users-lcfee-OneDrive-Documents-Claude-Projects-Orbital/77d368ea-51ff-4ca8-830a-5f1cfa2bdf55/scratchpad"],
+      "port": 5051,
+      "autoPort": true
+    },
+    {
       "name": "event-hub",
       "runtimeExecutable": "npx",
       "runtimeArgs": [

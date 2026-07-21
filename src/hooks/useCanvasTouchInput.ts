@@ -10,6 +10,7 @@
 // ============================================================
 
 import { useEffect, useRef } from 'react';
+import { getWorldMenuMaxScale } from '../game/worldMenu/store';
 
 interface CameraLike {
   x: number;
@@ -179,7 +180,9 @@ export function useCanvasTouchInput({
           // Cygnus X (-340K west) at full zoom-out on a typical
           // viewport. Stay in sync with MapCanvas.tsx wheel-zoom
           // clamp; see the longer comment there for the history.
-          const targetScale = Math.max(0.0012, Math.min(50, pinchStartScale * (dist / pinchStartDist)));
+          // Max comes from the world-menu store: permanently 50 in SP
+          // (overlay never activates), raised in MP menu dives.
+          const targetScale = Math.max(0.0012, Math.min(getWorldMenuMaxScale(), pinchStartScale * (dist / pinchStartDist)));
           // Zoom around the midpoint so the part of the world under the
           // gesture stays under the gesture.
           const midClientX = (a.x + b.x) / 2;

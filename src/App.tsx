@@ -36,6 +36,7 @@ import { PhysicsSandbox } from './physicsSandbox/PhysicsSandbox';
 import { TorchSandbox } from './torchSandbox/TorchSandbox';
 import { ModePicker, GameMode } from './ModePicker';
 import { MultiplayerShell } from './multiplayer/MultiplayerShell';
+import { WorldMenuOverlay, WorldMenuToggle, worldMenuPref } from './multiplayer/WorldMenuOverlay';
 import { VersionBanner } from './components/VersionBanner';
 import { SituationLog } from './components/SituationLog';
 import { EventLog } from './components/EventLog';
@@ -148,6 +149,16 @@ function GameUI({
   const { gameState } = useGameContext();
   useAutosave(gameState, !isMultiplayer);
 
+  // World-menu preference (MP only — SP never reads this). Synced to
+  // the toggle pill via the pref event so flipping it re-renders here.
+  const [worldMenuOn, setWorldMenuOn] = useState(() => worldMenuPref());
+  useEffect(() => {
+    if (!isMultiplayer) return;
+    const onPref = () => setWorldMenuOn(worldMenuPref());
+    window.addEventListener('orbital:world-menu-pref', onPref);
+    return () => window.removeEventListener('orbital:world-menu-pref', onPref);
+  }, [isMultiplayer]);
+
   useEffect(() => {
     const handleResize = () => {
       setWindowSize({ width: window.innerWidth, height: window.innerHeight });
@@ -225,7 +236,14 @@ function GameUI({
         />
       )}
 
-      <BodyInspector />
+      {/* World menu (MULTIPLAYER ONLY, default ON with a kill-switch
+          pill). SP is DEAD code-wise here: isMultiplayer=false always
+          renders <BodyInspector /> exactly as before — the world menu
+          and its toggle are unreachable outside MP. */}
+      {isMultiplayer && worldMenuOn
+        ? <WorldMenuOverlay />
+        : <BodyInspector />}
+      {isMultiplayer && <WorldMenuToggle on={worldMenuOn} />}
       <ThreatsPanel />
       {!isMultiplayer && <AIActivityFeed />}
       <MobileSimControls hideSimControls={isMultiplayer} />

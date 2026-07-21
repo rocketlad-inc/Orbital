@@ -1,0 +1,1548 @@
+<title>Orbital — Diegetic World Menu · Final</title>
+<style>
+  :root{
+    --bg:#070b11; --stage:#05080e; --panel:rgba(10,15,22,0.94); --line:#2a3d50;
+    --fg:#d6e2ec; --dim:#6b8195; --accent:#4ecdc4; --amber:#ffb84d; --steel:#2c455f; --good:#66bb6a;
+    --mono:'JetBrains Mono','Cascadia Mono',Consolas,'Roboto Mono',monospace;
+  }
+  *{box-sizing:border-box;} html,body{margin:0;}
+  body{background:var(--bg);color:var(--fg);font-family:var(--mono);font-size:12px;line-height:1.5;padding:16px 14px 50px;}
+
+  /* ---------- pitch chrome ---------- */
+  .pitch{max-width:1280px;margin:0 auto 12px;display:flex;flex-wrap:wrap;align-items:center;gap:10px 18px;}
+  .pitch h1{font-size:12px;font-weight:700;letter-spacing:.22em;text-transform:uppercase;color:var(--accent);margin:0;}
+  .pitch h1 small{color:var(--dim);font-weight:400;letter-spacing:.16em;}
+  .pgrp{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+  .plabel{font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim);}
+  .seg{display:flex;border:1px solid var(--line);border-radius:4px;overflow:hidden;}
+  .seg button{background:transparent;border:0;color:var(--dim);font-family:var(--mono);font-size:10px;letter-spacing:.12em;padding:5px 11px;cursor:pointer;}
+  .seg button.active{background:rgba(78,205,196,.14);color:var(--accent);}
+  .swatch{width:20px;height:20px;border:1px solid var(--line);border-radius:3px;padding:0;cursor:pointer;}
+  .swatch.active{border-color:#fff;box-shadow:0 0 0 1px #fff;}
+  .runbtn{background:rgba(78,205,196,.1);border:1px solid var(--accent);border-radius:4px;color:var(--accent);font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.12em;padding:6px 12px;cursor:pointer;}
+  .hint{max-width:1280px;margin:0 auto 12px;color:var(--dim);font-size:10.5px;font-style:italic;}
+  .hint b{color:var(--fg);font-style:normal;}
+
+  /* ---------- device frame (no max-width transition: it froze the container query) ---------- */
+  .frame{margin:0 auto;}
+  .frame.desktop{max-width:1280px;} .frame.mobile{max-width:400px;}
+  .appc{container-type:inline-size;container-name:app;width:100%;}
+  .frame.mobile .app{border-radius:26px;}
+
+  .app{position:relative;height:780px;border:1px solid var(--line);border-radius:12px;overflow:hidden;
+    background:var(--stage);display:grid;grid-template-columns:300px 1fr;grid-template-rows:auto 1fr;
+    grid-template-areas:"header header" "outliner stage";
+    --p1:#ff7043; --p2:#ffca28;}
+
+  /* ===== desktop header ===== */
+  .header{grid-area:header;display:flex;align-items:center;gap:22px;padding:10px 18px;border-bottom:1px solid var(--line);background:var(--panel);z-index:6;}
+  .brand{display:flex;flex-direction:column;}
+  .brand b{font-size:16px;font-weight:800;letter-spacing:.14em;color:var(--amber);}
+  .brand span{font-size:8px;letter-spacing:.14em;color:var(--dim);}
+  .res-row{display:flex;gap:16px;padding-left:18px;border-left:1px solid var(--line);}
+  .res{display:flex;flex-direction:column;gap:1px;}
+  .res .k{font-size:8.5px;letter-spacing:.16em;color:var(--dim);}
+  .res .v{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;}
+  .res .r{font-size:9px;color:var(--good);}
+  .nav-btns{display:flex;gap:8px;}
+  .nav-btn{display:flex;align-items:center;gap:7px;background:rgba(10,15,22,.6);border:1px solid var(--line);border-radius:6px;color:var(--fg);font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.1em;padding:9px 14px;cursor:pointer;}
+  .nav-btn:hover{border-color:var(--accent);}
+  .nav-btn .badge{background:var(--accent);color:#05080e;border-radius:999px;font-size:9px;font-weight:800;min-width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;padding:0 4px;}
+  .tick{margin-left:auto;padding-left:16px;border-left:1px solid var(--line);display:flex;flex-direction:column;}
+  .tick .k{font-size:8.5px;letter-spacing:.16em;color:var(--dim);}
+  .tick .v{font-size:15px;font-weight:700;color:var(--accent);}
+  .tick .s{font-size:9px;color:var(--dim);}
+
+  /* ===== outliner ===== */
+  .outliner{grid-area:outliner;border-right:1px solid var(--line);background:rgba(8,12,18,.85);overflow-y:auto;z-index:5;}
+  .ol-head{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--line);}
+  .ol-head b{font-size:11px;letter-spacing:.2em;color:var(--accent);}
+  .ol-sec{font-size:9px;letter-spacing:.22em;color:var(--dim);text-transform:uppercase;padding:12px 16px 4px;}
+  .ol-sys{padding:4px 16px 2px;color:var(--good);font-size:10.5px;letter-spacing:.1em;}
+  .ol-body{display:flex;align-items:center;gap:9px;padding:7px 16px;cursor:pointer;border-left:2px solid transparent;}
+  .ol-body:hover{background:rgba(78,205,196,.05);}
+  .ol-body.active{background:rgba(78,205,196,.08);border-left-color:var(--accent);}
+  .ol-dot{width:16px;height:16px;border-radius:50%;flex:0 0 auto;box-shadow:inset -3px -2px 4px rgba(0,0,0,.5);}
+  .ol-body .nm{font-size:12px;font-weight:700;letter-spacing:.06em;}
+  .ol-body .sub{font-size:9px;color:var(--dim);}
+  .ol-child{display:flex;align-items:center;gap:8px;padding:5px 16px 5px 38px;font-size:11px;color:var(--fg);cursor:pointer;border-left:2px solid transparent;}
+  .ol-child:hover{color:var(--accent);}
+  .ol-child.active{color:var(--accent);border-left-color:var(--accent);background:rgba(78,205,196,.06);}
+  .ol-transit{display:flex;align-items:center;gap:8px;padding:6px 16px;font-size:10.5px;}
+  .ol-transit .i{color:var(--accent);}
+
+  /* ===== stage layers ===== */
+  .stage{grid-area:stage;position:relative;overflow:hidden;touch-action:none;background:radial-gradient(120% 90% at 60% 12%,rgba(20,32,48,.4),transparent 60%);}
+  #stars,#world,#mapLabels,#menu{position:absolute;inset:0;}
+  #stars{z-index:0;} #world{z-index:1;} #mapLabels{z-index:2;} #menu{z-index:3;}
+  #world svg,#stars svg,#mapLabels svg{width:100%;height:100%;display:block;}
+  .mlabel .nm{font:700 11px var(--mono);letter-spacing:.14em;fill:#c6d3df;}
+  .mlabel .mnm{font:600 9px var(--mono);letter-spacing:.12em;fill:#8fa3b5;}
+  .mlabel .halo{fill:none;stroke:#3a5068;stroke-width:1;stroke-dasharray:3 4;}
+  .mlabel .halo.sel{stroke:var(--accent);stroke-opacity:.95;stroke-width:1.5;}
+  .mhit{cursor:pointer;}
+
+  /* menu overlay */
+  #menu{opacity:0;pointer-events:none;}
+  .m-top{position:absolute;top:0;left:0;right:0;z-index:4;display:flex;flex-wrap:wrap;align-items:center;gap:6px 20px;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--panel);backdrop-filter:blur(8px);}
+  .m-id{min-width:150px;}
+  .m-crumb{background:none;border:0;padding:0;color:var(--dim);font-family:var(--mono);font-size:9px;letter-spacing:.2em;text-transform:uppercase;cursor:pointer;display:block;}
+  .m-crumb:hover{color:var(--accent);}
+  .m-crumb[hidden]{display:none;}
+  .m-name{font-size:18px;font-weight:800;letter-spacing:.16em;}
+  .m-type{font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--accent);}
+  .owner-chip{display:inline-block;margin-top:5px;font-size:9px;font-weight:700;letter-spacing:.14em;padding:2px 8px;border-radius:3px;border:1px solid var(--p1);color:var(--p1);background:color-mix(in srgb,var(--p1) 14%,transparent);}
+  .owner-chip.neutral{border-color:var(--dim);color:var(--dim);background:transparent;}
+  .m-desc{flex:1 1 180px;color:var(--dim);font-size:10.5px;max-width:36ch;}
+  .metrics{display:grid;grid-auto-flow:column;gap:14px;}
+  .metric{display:flex;flex-direction:column;gap:2px;}
+  .metric .k{font-size:8.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);}
+  .metric .v{font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap;}
+  .m-out{display:flex;flex-direction:column;gap:3px;}
+  .out-label{font-size:9px;letter-spacing:.2em;color:var(--dim);}
+  .yields{display:flex;gap:5px;font-variant-numeric:tabular-nums;}
+  .yield{border:1px solid var(--line);border-radius:3px;padding:1px 6px;font-size:10.5px;}
+  .yield i{font-style:normal;color:var(--dim);margin-right:3px;}
+  .stockpile{font-size:10px;margin-top:2px;}
+  .collector-btn{display:flex;align-items:center;gap:7px;background:rgba(78,205,196,.08);border:1px solid var(--accent);border-radius:5px;color:var(--accent);font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;padding:8px 12px;cursor:pointer;}
+  .collector-btn.built{background:transparent;border-color:var(--line);color:var(--p2);cursor:default;}
+  .m-toggle{display:none;position:absolute;top:10px;right:12px;z-index:5;background:rgba(78,205,196,.08);border:1px solid var(--line);border-radius:4px;color:var(--accent);font-family:var(--mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase;padding:4px 8px;cursor:pointer;}
+
+  .to-map{position:absolute;top:12px;left:12px;z-index:5;background:var(--panel);border:1px solid var(--line);border-radius:4px;color:var(--dim);font-family:var(--mono);font-size:9px;letter-spacing:.16em;padding:5px 9px;cursor:pointer;}
+  .to-map:hover{color:var(--accent);border-color:var(--accent);}
+  .zoom-ctl{position:absolute;bottom:12px;right:12px;z-index:6;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--panel);}
+  .zoom-ctl button{width:30px;height:30px;background:transparent;border:0;color:var(--fg);font-family:var(--mono);font-size:17px;cursor:pointer;}
+  .zoom-ctl button:first-child{border-bottom:1px solid var(--line);}
+  .zoom-ctl button:hover{background:rgba(78,205,196,.12);color:var(--accent);}
+
+  /* build columns over the scene */
+  .col{position:absolute;top:96px;bottom:70px;z-index:4;width:170px;display:flex;flex-direction:column;justify-content:center;gap:9px;padding:10px;pointer-events:none;}
+  .col .bbtn,.col .col-label{pointer-events:auto;}
+  .col--left{left:8px;} .col--right{right:8px;}
+  .col-label{font-size:9px;letter-spacing:.22em;text-transform:uppercase;color:var(--dim);text-align:center;margin-bottom:2px;}
+  .col-label b{color:var(--accent);font-weight:400;}
+  .bbtn{display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:7px 9px;color:var(--fg);font-family:var(--mono);cursor:pointer;transition:border-color .15s,background .15s;}
+  .bbtn:hover:not(:disabled){border-color:var(--p2);background:rgba(14,21,30,.96);}
+  .bbtn:disabled{opacity:.45;cursor:not-allowed;}
+  .bbtn .ic{flex:0 0 auto;width:22px;height:22px;}
+  .bbtn .nm{font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;}
+  .bbtn .st{display:block;font-size:9px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .bbtn.built .st{color:var(--p2);}
+
+  /* fleet bar */
+  .fleet{position:absolute;left:0;right:0;bottom:0;z-index:4;display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:9px 14px;border-top:1px solid var(--line);background:var(--panel);backdrop-filter:blur(8px);}
+  .fleet-id{display:flex;flex-direction:column;gap:2px;}
+  .fleet-label{font-size:9px;letter-spacing:.22em;text-transform:uppercase;color:var(--dim);}
+  .fleet-slots{font-size:10px;} .fleet-slots .pip{color:var(--p2);} .fleet-slots .pip.empty{color:var(--steel);}
+  .ships{display:flex;gap:8px;}
+  .sbtn{display:flex;flex-direction:column;align-items:center;gap:2px;background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:5px 10px 4px;color:var(--fg);font-family:var(--mono);cursor:pointer;}
+  .sbtn:hover:not(:disabled){border-color:var(--p2);}
+  .sbtn:disabled{opacity:.4;cursor:not-allowed;}
+  .sbtn .ic{width:38px;height:16px;} .sbtn .nm{font-size:8.5px;letter-spacing:.1em;text-transform:uppercase;} .sbtn .cost{font-size:8px;color:var(--dim);}
+  .designer{background:transparent;border:1px solid var(--accent);border-radius:4px;color:var(--accent);font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;padding:7px 12px;cursor:pointer;}
+  .queue{display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
+  .qchip{display:flex;align-items:center;gap:6px;border:1px dashed var(--p2);border-radius:4px;padding:3px 7px;font-size:9px;color:var(--p2);letter-spacing:.1em;background:transparent;font-family:var(--mono);cursor:pointer;}
+  .qchip:hover{border-style:solid;}
+
+  /* neighbor orbs + station overlays */
+  .orbs{position:absolute;inset:0;z-index:3;pointer-events:none;width:100%;height:100%;}
+  .orbs [data-goto]{pointer-events:auto;cursor:pointer;}
+  .orbs text{pointer-events:none;font:700 10px var(--mono);letter-spacing:.16em;fill:var(--fg);}
+  .orb-ring{fill:none;stroke:#3a5068;stroke-width:1;stroke-dasharray:3 4;}
+  [data-goto]:hover .orb-ring{stroke:var(--accent);stroke-opacity:.9;}
+  .orb-halo{fill:none;stroke:var(--accent);stroke-width:1.5;stroke-dasharray:4 5;stroke-opacity:.9;}
+  .station-ov{position:absolute;top:15%;right:196px;width:170px;height:320px;z-index:3;pointer-events:none;}
+  .st-part{opacity:0;transition:opacity .3s;} .st-part.on{opacity:1;}
+  .st-tag text.snm{font:700 11px var(--mono);letter-spacing:.1em;fill:var(--fg);}
+  .st-tag text.shp{font:9px var(--mono);fill:var(--dim);}
+  .st-tag .hp-bg{fill:#0c1219;stroke:#2a3d50;stroke-width:1;}
+  #st-hull{display:none;} #st-hull.active{display:block;}
+
+  /* leader lines */
+  .lines{position:absolute;inset:0;z-index:3;pointer-events:none;width:100%;height:100%;}
+  .lines path{fill:none;stroke:#3a5068;stroke-width:1;opacity:.6;}
+  .lines circle,.lines rect{fill:#3a5068;}
+
+  /* world-space part state (inside #cam) */
+  [data-part][data-lvl="0"]{display:none;}
+  [data-part][data-lvl="0"].ghost{display:block;opacity:.32;}
+  /* level variants switch instantly — a transition here freezes in
+     non-rendering (backgrounded/embedded) tabs and reads as "not built" */
+  [data-part] .lvl2,[data-part] .lvl3{opacity:0;}
+  [data-part][data-lvl="2"] .lvl2,[data-part][data-lvl="3"] .lvl2{opacity:1;}
+  [data-part][data-lvl="3"] .lvl3{opacity:1;}
+  .tag .tag-name{font-weight:700;letter-spacing:.12em;fill:var(--fg);font-family:var(--mono);}
+  .tag .hp-num{fill:var(--dim);font-family:var(--mono);}
+  .tag .hp-bg{fill:#0c1219;stroke:#2a3d50;stroke-width:1;vector-effect:non-scaling-stroke;}
+  .flame{transform-box:fill-box;transform-origin:50% 100%;animation:flk var(--fd,.5s) ease-in-out infinite;}
+  @keyframes flk{0%,100%{transform:scaleY(1) scaleX(1);opacity:.92;}40%{transform:scaleY(.7) scaleX(1.12);opacity:.55;}70%{transform:scaleY(1.08) scaleX(.9);opacity:1;}}
+  @media (prefers-reduced-motion:reduce){.flame{animation:none !important;}}
+
+  /* mobile chrome */
+  .topbar,.bottomnav,.fab{display:none;}
+  .topbar{grid-area:header;align-items:center;gap:14px;padding:8px 14px;border-bottom:1px solid var(--line);background:var(--panel);z-index:6;}
+  .topbar .brand b{font-size:15px;} .topbar .res-row{padding-left:12px;gap:12px;} .topbar .res .v{font-size:13px;}
+  .fab{position:absolute;top:64px;left:12px;z-index:12;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--accent);border-radius:999px;padding:7px 13px 7px 11px;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.5);}
+  .fab .bars{font-size:15px;color:var(--accent);} .fab .badge{background:var(--accent);color:#05080e;border-radius:999px;font-size:10px;font-weight:800;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;}
+  .bottomnav{position:absolute;left:0;right:0;bottom:0;height:60px;z-index:11;justify-content:space-around;align-items:center;padding:8px;border-top:1px solid var(--line);background:var(--panel);}
+  .navbtn{width:44px;height:44px;border-radius:10px;border:1px solid var(--line);background:rgba(10,15,22,.6);color:var(--fg);display:flex;align-items:center;justify-content:center;cursor:pointer;}
+  .navbtn svg{width:22px;height:22px;} .navbtn.active{border-color:var(--accent);color:var(--accent);background:rgba(78,205,196,.1);}
+  .scrim{display:none;}
+
+  @container app (max-width:720px){
+    .app{grid-template-columns:1fr;grid-template-rows:auto 1fr;grid-template-areas:"header" "stage";}
+    .header{display:none;} .topbar{display:flex;} .bottomnav{display:flex;} .fab{display:inline-flex;}
+    .outliner{position:absolute;top:52px;bottom:0;left:0;width:290px;max-width:84%;transform:translateX(-102%);transition:transform .25s;z-index:13;box-shadow:12px 0 40px rgba(0,0,0,.6);}
+    .app.drawer .outliner{transform:translateX(0);}
+    .scrim{display:block;position:absolute;inset:52px 0 0 0;background:rgba(0,0,0,.5);z-index:12;opacity:0;pointer-events:none;transition:opacity .25s;}
+    .app.drawer .scrim{opacity:1;pointer-events:auto;}
+    .col-label{display:none;}
+    .col--left{top:auto;bottom:calc(60px + var(--fleet-h,90px) + 6px);left:6px;right:6px;width:auto;flex-direction:row;justify-content:center;gap:6px;padding:0;}
+    .col--left .bbtn{flex:1 1 0;min-width:0;flex-direction:column;text-align:center;gap:3px;padding:6px 4px;}
+    .col--left .bbtn .ic{margin:0 auto;} .col--left .bbtn .nm{font-size:9px;}
+    .col--right{top:calc(var(--panel-h,92px) + 6px);right:6px;bottom:auto;left:auto;width:128px;justify-content:flex-start;gap:6px;padding:0;}
+    .col--right .bbtn{padding:5px 7px;}
+    .station-ov{top:calc(var(--panel-h,92px) + 8px);left:50%;right:auto;transform:translateX(-58%);width:130px;height:190px;}
+    .fleet{bottom:60px;}
+    .m-toggle{display:inline-flex;}
+    .m-top{padding-right:74px;}
+    .m-top.collapsed .m-desc,.m-top.collapsed .metrics,.m-top.collapsed .stockpile,.m-top.collapsed .collector-btn{display:none;}
+    .to-map{top:64px;left:auto;right:12px;}
+    .zoom-ctl{bottom:calc(60px + var(--fleet-h,90px) + 8px);}
+    .lines{display:none;}
+    .designer{padding:6px 9px;font-size:8.5px;}
+  }
+
+  /* test board */
+  .tboard{max-width:1280px;margin:16px auto 0;border-top:1px solid var(--line);padding-top:12px;display:none;}
+  .tboard.show{display:block;}
+  .tboard h2{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--accent);margin:0 0 8px;}
+  .tsum{font-size:12px;margin-bottom:8px;}
+  .tsum b.pass{color:var(--good);} .tsum b.fail{color:#ef5350;}
+  .trow{display:flex;gap:10px;font-size:10.5px;padding:2px 0;border-bottom:1px dotted #16233a;}
+  .trow .tid{width:52px;color:var(--dim);flex:0 0 auto;}
+  .trow .tst{width:44px;flex:0 0 auto;font-weight:700;}
+  .trow.ok .tst{color:var(--good);} .trow.bad .tst{color:#ef5350;}
+  .trow .tmsg{color:#ef5350;}
+  .caption{max-width:1280px;margin:12px auto 0;color:var(--dim);font-size:10.5px;}
+  .caption b{color:var(--fg);font-weight:400;}
+</style>
+
+<header class="pitch">
+  <h1>Orbital <small>· diegetic world menu — final</small></h1>
+  <div class="pgrp" id="fac"><span class="plabel">Faction</span></div>
+  <div class="pgrp"><span class="plabel">View</span>
+    <div class="seg"><button id="vd" class="active">DESKTOP</button><button id="vm">MOBILE</button></div>
+  </div>
+  <div class="pgrp"><span class="plabel">Demo</span>
+    <div class="seg"><button id="atk">⚔ ATTACK</button><button id="rep">🛠 REPAIR</button></div>
+  </div>
+  <button class="runbtn" id="run-tests">🧪 RUN TESTS</button>
+</header>
+<p class="hint"><b>One world, one camera.</b> Scroll / pinch / <b>+−</b> to fly from the system map straight into a world — it grows from its dot and settles on its upper limb where the menu lives. <b>Click any body in the outliner</b> (or a map label, or a sky orb) to open it; <b>zoom out / ✕ MAP / Esc</b> dismisses. ⚔ shows damage fire on city and station.</p>
+
+<div class="frame desktop" id="frame">
+ <div class="appc">
+  <div class="app" id="app">
+
+    <header class="header">
+      <div class="brand"><b>ORBITAL</b><span>v0.5 · final proof</span></div>
+      <div class="res-row">
+        <div class="res"><span class="k">METAL</span><span class="v">90</span><span class="r">+3.6</span></div>
+        <div class="res"><span class="k">FUEL</span><span class="v">24</span><span class="r">+1.2</span></div>
+        <div class="res"><span class="k">GOLD</span><span class="v">39</span><span class="r">+1.0</span></div>
+        <div class="res"><span class="k">SCI</span><span class="v">12</span><span class="r">+3.2</span></div>
+        <div class="res"><span class="k">SHIPS</span><span class="v">5</span><span class="r">&nbsp;</span></div>
+      </div>
+      <div class="nav-btns">
+        <button class="nav-btn">SETTLEMENTS <span class="badge">3</span></button>
+        <button class="nav-btn">FLEET <span class="badge">5</span></button>
+        <button class="nav-btn">RESEARCH</button>
+      </div>
+      <div class="tick"><span class="k">TICK</span><span class="v">T+1</span><span class="s">next in 28m 49s</span></div>
+    </header>
+
+    <header class="topbar">
+      <div class="brand"><b>ORBITAL</b></div>
+      <div class="res-row">
+        <div class="res"><span class="k">METAL</span><span class="v">90</span></div>
+        <div class="res"><span class="k">FUEL</span><span class="v">24</span></div>
+        <div class="res"><span class="k">GOLD</span><span class="v">39</span></div>
+        <div class="res"><span class="k">SCI</span><span class="v">12</span></div>
+      </div>
+    </header>
+
+    <aside class="outliner" id="outliner">
+      <div class="ol-head"><b>OUTLINER</b><span>›</span></div>
+      <div class="ol-sec">Holdings</div>
+      <div id="ol-list"></div>
+      <div class="ol-sec">In transit</div>
+      <div class="ol-transit"><span class="i">➤</span><span>Vanguard → Titan · T-2</span></div>
+      <div class="ol-transit"><span class="i">🛰</span><span>Pioneer → Pluto · T-4</span></div>
+    </aside>
+
+    <div class="stage" id="stage">
+      <div id="stars"></div>
+      <div id="world"><svg id="worldSvg" xmlns="http://www.w3.org/2000/svg"><g id="cam"></g></svg></div>
+      <div id="mapLabels"><svg id="mapLabelsSvg" xmlns="http://www.w3.org/2000/svg"></svg></div>
+
+      <div id="menu">
+        <button class="m-toggle" id="mtoggle">▾ More</button>
+        <section class="m-top" id="mtop">
+          <div class="m-id">
+            <button class="m-crumb" id="crumb" hidden>◂ BACK</button>
+            <div class="m-name" id="m-name">—</div>
+            <div class="m-type" id="m-type">—</div>
+            <span class="owner-chip" id="m-owner">YOU</span>
+          </div>
+          <div class="m-desc" id="m-desc">—</div>
+          <div class="metrics">
+            <div class="metric"><span class="k">Pop</span><span class="v" id="m-pop">—</span></div>
+            <div class="metric"><span class="k">Defense</span><span class="v" id="m-def">—</span></div>
+            <div class="metric"><span class="k">Ships</span><span class="v" id="m-ships">—</span></div>
+            <div class="metric"><span class="k">Integrity</span><span class="v" id="m-hp">—</span></div>
+          </div>
+          <div class="m-out">
+            <span class="out-label">Output /t</span>
+            <div class="yields" id="m-yields"></div>
+            <div class="stockpile"><span class="out-label">Stockpile</span> <span id="m-stock">—</span></div>
+          </div>
+          <button class="collector-btn" id="collector">▲ Deploy collector</button>
+        </section>
+
+        <svg class="orbs" id="orbsSvg" xmlns="http://www.w3.org/2000/svg"></svg>
+
+        <aside class="col col--left">
+          <div class="col-label">Surface — <b>city</b></div>
+          <button class="bbtn" id="b-forge"><svg class="ic" viewBox="-32 -60 64 64"><use href="#g-forge" x="-32" y="-60" width="64" height="64"/></svg><span><span class="nm">Forge</span><span class="st" id="s-forge"></span></span></button>
+          <button class="bbtn" id="b-mint"><svg class="ic" viewBox="-32 -60 64 64"><use href="#g-mint" x="-32" y="-60" width="64" height="64"/></svg><span><span class="nm">Mint</span><span class="st" id="s-mint"></span></span></button>
+          <button class="bbtn" id="b-lab"><svg class="ic" viewBox="-32 -60 64 64"><use href="#g-lab" x="-32" y="-60" width="64" height="64"/></svg><span><span class="nm">Lab</span><span class="st" id="s-lab"></span></span></button>
+        </aside>
+        <aside class="col col--right">
+          <div class="col-label">Orbit — <b>station</b></div>
+          <button class="bbtn" id="b-weapons"><svg class="ic" viewBox="-34 -26 68 40"><use href="#g-weapons" x="-34" y="-26" width="68" height="40"/></svg><span><span class="nm">Weapons</span><span class="st" id="s-weapons"></span></span></button>
+          <button class="bbtn" id="b-shipyard"><svg class="ic" viewBox="-34 -30 68 44"><use href="#g-shipyard" x="-34" y="-30" width="68" height="44"/></svg><span><span class="nm">Shipyard</span><span class="st" id="s-shipyard"></span></span></button>
+        </aside>
+
+        <svg class="station-ov" id="stationOv" viewBox="0 0 170 320" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+          <g id="st-tag" class="st-tag"></g>
+          <g id="st-core">
+            <rect x="82" y="78" width="6" height="196" fill="var(--steel)"/>
+            <rect x="75" y="72" width="20" height="8" fill="var(--steel)"/>
+            <line x1="85" y1="72" x2="85" y2="60" stroke="var(--steel)" stroke-width="2"/>
+            <circle cx="85" cy="58" r="2.5" fill="var(--steel)"/>
+            <rect x="48" y="162" width="30" height="10" fill="var(--steel)"/>
+            <rect x="92" y="162" width="30" height="10" fill="var(--steel)"/>
+            <line x1="53" y1="167" x2="73" y2="167" stroke="#05080e" stroke-width="1.5"/>
+            <line x1="97" y1="167" x2="117" y2="167" stroke="#05080e" stroke-width="1.5"/>
+            <ellipse cx="85" cy="216" rx="56" ry="15" fill="none" stroke="var(--steel)" stroke-width="5" transform="rotate(-14 85 216)"/>
+          </g>
+          <g class="st-part" id="st-weapons">
+            <rect x="39" y="118" width="92" height="5" fill="var(--p1)"/>
+            <rect x="35" y="111" width="8" height="13" fill="var(--p1)"/>
+            <rect x="127" y="111" width="8" height="13" fill="var(--p1)"/>
+            <rect x="27" y="115" width="9" height="2.5" fill="var(--p2)"/>
+            <rect x="134" y="115" width="9" height="2.5" fill="var(--p2)"/>
+          </g>
+          <g class="st-part" id="st-shipyard">
+            <path d="M65,250 L45,250 L45,292 L65,292" fill="none" stroke="var(--p1)" stroke-width="4"/>
+            <path d="M105,250 L125,250 L125,292 L105,292" fill="none" stroke="var(--p1)" stroke-width="4"/>
+            <g id="st-hull">
+              <path d="M57,266 L101,266 L109,271 L101,276 L57,276 Z" fill="none" stroke="var(--p2)" stroke-width="1.5" stroke-dasharray="4 3"/>
+              <line x1="70" y1="266" x2="70" y2="276" stroke="var(--p2)" stroke-width="1" stroke-dasharray="2 2"/>
+              <line x1="86" y1="266" x2="86" y2="276" stroke="var(--p2)" stroke-width="1" stroke-dasharray="2 2"/>
+            </g>
+          </g>
+          <g id="st-fire"></g>
+        </svg>
+
+        <section class="fleet">
+          <div class="fleet-id"><span class="fleet-label">Fleet · Shipyard</span><span class="fleet-slots" id="slots">—</span></div>
+          <div class="ships">
+            <button class="sbtn" id="ship-corvette"><svg class="ic" viewBox="-2 -8 36 16"><use href="#g-corv" x="-2" y="-8" width="36" height="16"/></svg><span class="nm">Corvette</span><span class="cost">M8·F2</span></button>
+            <button class="sbtn" id="ship-frigate"><svg class="ic" viewBox="-2 -9 36 18"><use href="#g-frig" x="-2" y="-9" width="36" height="18"/></svg><span class="nm">Frigate</span><span class="cost">M14·F4</span></button>
+            <button class="sbtn" id="ship-destroyer"><svg class="ic" viewBox="-2 -9 40 18"><use href="#g-dest" x="-2" y="-9" width="40" height="18"/></svg><span class="nm">Destroyer</span><span class="cost">M26·F9</span></button>
+            <button class="sbtn" id="ship-freighter"><svg class="ic" viewBox="-2 -8 36 16"><use href="#g-freight" x="-2" y="-8" width="36" height="16"/></svg><span class="nm">Freighter</span><span class="cost">M12·F3</span></button>
+          </div>
+          <div class="queue" id="queue"></div>
+          <button class="designer" id="designer">◈ Ship Designer →</button>
+        </section>
+
+        <svg class="lines" id="lines" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+
+      <button class="to-map" id="tomap">✕ MAP</button>
+      <div class="zoom-ctl"><button id="zin">+</button><button id="zout">−</button></div>
+
+      <div class="scrim" id="scrim"></div>
+      <button class="fab" id="fab"><span class="bars">☰</span><span class="badge">3</span></button>
+      <nav class="bottomnav">
+        <button class="navbtn" id="navol" title="Outliner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6h10M4 12h16M4 18h7"/></svg></button>
+        <button class="navbtn" title="List"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg></button>
+        <button class="navbtn" title="Diplomacy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="10" r="2.4"/><path d="M3 19c0-3 3-5 6-5s6 2 6 5"/></svg></button>
+        <button class="navbtn active" title="Map"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><ellipse cx="12" cy="12" rx="10" ry="4"/></svg></button>
+        <button class="navbtn" title="Fleet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 14h18l-3 5H6z"/><path d="M12 3v11M7 8h10"/></svg></button>
+        <button class="navbtn" title="Research"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="2"/><ellipse cx="12" cy="12" rx="10" ry="4"/><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(60 12 12)"/></svg></button>
+      </nav>
+    </div>
+  </div>
+ </div>
+</div>
+
+<p class="caption"><b>Why this deploys clean:</b> one solar system in world-space, one camera. Opening a menu is the camera flying to a body — the same disc grows from map dot to upper-limb horizon (no crossfade, no second planet). Menu chrome resolves in only at arrival; map furniture fades on the exact inverse. All world-space UI is sized as fractions of the body radius. The suite below is the v2 spec, runnable in place.</p>
+
+<section class="tboard" id="tboard">
+  <h2>Unit tests · v2 spec</h2>
+  <div class="tsum" id="tsum">running…</div>
+  <div id="trows"></div>
+</section>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="g-forge" viewBox="-32 -60 64 64"><path d="M-26,-26 L-26,-31 L-6,-41 L14,-31 L14,-26 Z" fill="var(--p1)"/><rect x="-26" y="-26" width="40" height="26" fill="var(--p1)"/><rect x="2" y="-54" width="7" height="28" fill="var(--p1)"/><rect x="2" y="-58" width="7" height="4" fill="var(--p2)"/><rect x="-12" y="-9" width="6" height="9" fill="#05080e"/></symbol>
+  <symbol id="g-mint" viewBox="-32 -60 64 64"><rect x="-20" y="-20" width="40" height="20" fill="var(--p1)"/><rect x="-14" y="-34" width="28" height="14" fill="var(--p1)"/><path d="M-14,-34 L0,-43 L14,-34 Z" fill="var(--p1)"/><circle cx="0" cy="-27" r="4.5" fill="var(--p2)"/></symbol>
+  <symbol id="g-lab" viewBox="-32 -60 64 64"><path d="M-16,0 A16 16 0 0 1 16,0 Z" fill="var(--p1)"/><path d="M-9,-1 A9 9 0 0 1 9,-1" fill="none" stroke="var(--p2)" stroke-width="2"/><rect x="-1.5" y="-42" width="3" height="28" fill="var(--p1)"/><circle cx="0" cy="-45" r="3" fill="var(--p2)"/></symbol>
+  <symbol id="g-collector" viewBox="-26 -50 52 52"><rect x="-2" y="-24" width="4" height="24" fill="var(--p1)"/><path d="M-20,-24 Q0,-44 20,-24 Q0,-32 -20,-24 Z" fill="var(--p1)"/><circle cx="0" cy="-42" r="3" fill="var(--p2)"/></symbol>
+  <symbol id="g-weapons" viewBox="-34 -26 68 40"><rect x="-26" y="-3" width="52" height="6" fill="var(--p1)"/><rect x="-30" y="-10" width="9" height="12" fill="var(--p1)"/><rect x="21" y="-10" width="9" height="12" fill="var(--p1)"/><rect x="-34" y="-6.5" width="10" height="2.5" fill="var(--p2)"/><rect x="24" y="-6.5" width="10" height="2.5" fill="var(--p2)"/></symbol>
+  <symbol id="g-shipyard" viewBox="-34 -30 68 44"><path d="M-18,-24 L-30,-24 L-30,10 L-18,10" fill="none" stroke="var(--p1)" stroke-width="4"/><path d="M18,-24 L30,-24 L30,10 L18,10" fill="none" stroke="var(--p1)" stroke-width="4"/><path d="M-12,-7 L10,-7 L14,-3 L10,1 L-12,1 Z" fill="none" stroke="var(--p2)" stroke-width="1.5" stroke-dasharray="3 2"/></symbol>
+  <symbol id="g-corv" viewBox="-2 -8 36 16"><path d="M0,-3 L22,0 L0,3 L4,0 Z" fill="var(--p1)"/><circle cx="14" cy="0" r="1.5" fill="var(--p2)"/></symbol>
+  <symbol id="g-frig" viewBox="-2 -9 36 18"><path d="M0,-3.5 L24,0 L0,3.5 L4,0 Z" fill="var(--p1)"/><path d="M6,-3 L11,-7.5 L16,-3 Z" fill="var(--p1)"/><path d="M6,3 L11,7.5 L16,3 Z" fill="var(--p1)"/></symbol>
+  <symbol id="g-dest" viewBox="-2 -9 40 18"><path d="M0,-4 L28,0 L0,4 L5,0 Z" fill="var(--p1)"/><rect x="24" y="-5.5" width="10" height="2" fill="var(--p1)"/><rect x="24" y="3.5" width="10" height="2" fill="var(--p1)"/></symbol>
+  <symbol id="g-freight" viewBox="-2 -8 36 16"><rect x="2" y="-3.5" width="18" height="7" rx="1" fill="var(--p1)"/><path d="M20,-3.5 L27,-1.5 L27,1.5 L20,3.5 Z" fill="var(--p1)"/><rect x="4" y="-5.5" width="4" height="2" fill="var(--p2)"/><rect x="9" y="-5.5" width="4" height="2" fill="var(--p2)"/><rect x="14" y="-5.5" width="4" height="2" fill="var(--p2)"/></symbol>
+</defs></svg>
+
+<script>
+/* ==== ORBITAL FINAL SCRIPT (logic → render → input → chrome → boot → tests) ==== */
+const $=id=>document.getElementById(id);
+const NS='http://www.w3.org/2000/svg';
+const app=$('app'), stage=$('stage'), cam=$('cam'), menu=$('menu');
+const D2R=Math.PI/180;
+const clamp01=v=>Math.max(0,Math.min(1,v));
+const ease=t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
+
+/* ---------- constants (tests assert against these, never literals) ---------- */
+const Z1_FRAC=0.50;          // focused body's screen radius at z=1, as a fraction of H
+const S1X_FRAC=0.5, S1Y_FRAC=1.02;   // where the body's centre lands at z=1
+const MAPFIT=0.46;           // map framing: outer system fits in 46% of min(W,H)
+const LBL_FADE=[0.06,0.28];  // labels/furniture fade band (z start, length)
+const MENU_FADE=[0.72,0.28]; // menu overlay fade band
+const GLYPH_H_FRAC=0.19;     // building glyph height ∝ rw
+const HPBAR_W_FRAC=0.5;      // health-bar width ∝ rw
+const CITY_DMG=0.22, STA_DMG=0.17, FIRE_THRESH=0.85, DEF_PER_WEAP=8;
+const MAX={forge:3,mint:3,lab:3,weapons:3,shipyard:3};
+const YT={forge:'+2 M/t',mint:'+2 G/t',lab:'+2 S/t',weapons:'DEF +15%',shipyard:'+1 slot'};
+const CITY_KEYS=['forge','mint','lab'], STA_KEYS=['weapons','shipyard'];
+const SHIP_DEFS=[['corvette','Corvette'],['frigate','Frigate'],['destroyer','Destroyer'],['freighter','Freighter']];
+const YC={M:'#d6e2ec',F:'#ff8a65',G:'#ffca28',S:'#64b5f6'};
+
+/* ---------- body catalog ---------- */
+function mkBody(o){return Object.assign({surface:true,hasStation:true,owner:'YOU',moons:[],parent:null},o);}
+const BODIES={
+  earth:mkBody({id:'earth',name:'EARTH',type:'terrestrial · sol iii',orbit:300,ang:205,rw:34,art:'terra',col:'#3f6f9c',
+    yields:{M:2,F:1,G:3,S:2},pop:8.4,def:20,ships:2,cityMax:180,staMax:120,stock:{M:14,F:2,G:6,S:9},moons:['luna'],
+    desc:'Cradle of humanity. Deep gravity well, dense industry — every yield in one place, and everyone knows it.'}),
+  luna:mkBody({id:'luna',name:'LUNA',type:'moon · earth',parent:'earth',moonR:90,moonAng:-40,rw:12,art:'moon',col:'#9aa4ad',
+    yields:{M:3,F:0,G:1,S:1},pop:1.9,def:6,ships:1,cityMax:90,staMax:70,stock:{M:6,F:0,G:1,S:2},
+    desc:'Grey plains, shallow gravity — the first door out of the well.'}),
+  mars:mkBody({id:'mars',name:'MARS',type:'terrestrial · sol iv',orbit:460,ang:330,rw:26,art:'rock',col:'#b06a3d',
+    yields:{M:3,F:1,G:0,S:0},pop:2.4,def:8,ships:1,cityMax:120,staMax:90,stock:{M:8,F:1,G:0,S:0},
+    desc:'Rust-red foundry world. All metal, little else — the arsenal of the realm.'}),
+  saturn:mkBody({id:'saturn',name:'SATURN',type:'gas giant · sol vi',orbit:700,ang:120,rw:60,art:'gas',col:'#c9a45a',surface:false,
+    yields:{M:0,F:4,G:1,S:2},pop:2.6,def:12,ships:4,cityMax:0,staMax:160,stock:{M:2,F:5,G:3,S:5},moons:['titan','rhea','enceladus'],
+    desc:'No ground to stand on. The prize is the sky itself — fuel skimmed off the cloud tops.'}),
+  titan:mkBody({id:'titan',name:'TITAN',type:'moon · saturn',parent:'saturn',moonR:150,moonAng:-30,rw:16,art:'moon',col:'#c98a4b',
+    yields:{M:1,F:3,G:0,S:1},pop:3.1,def:8,ships:2,cityMax:110,staMax:90,stock:{M:3,F:4,G:0,S:2},
+    desc:'Orange haze over methane seas. The richest fuel shore off the giant.'}),
+  rhea:mkBody({id:'rhea',name:'RHEA',type:'moon · saturn',parent:'saturn',moonR:210,moonAng:160,rw:10,art:'moon',col:'#8d99a5',owner:'DOMINION',
+    yields:{M:2,F:0,G:0,S:1},pop:1.2,def:4,ships:0,cityMax:70,staMax:60,stock:{M:2,F:0,G:0,S:1},
+    desc:'Quiet ice under a rival flag. The Dominion mines here.'}),
+  enceladus:mkBody({id:'enceladus',name:'ENCELADUS',type:'moon · saturn',parent:'saturn',moonR:110,moonAng:75,rw:9,art:'ice',col:'#cfd9e2',
+    yields:{M:1,F:1,G:0,S:2},pop:1.0,def:4,ships:1,cityMax:90,staMax:80,stock:{M:1,F:0,G:1,S:3},
+    desc:'Geyser moon — cracked ice over a warm hidden sea.'}),
+  pluto:mkBody({id:'pluto',name:'PLUTO',type:'dwarf binary · kuiper',orbit:950,ang:65,rw:18,art:'ice',col:'#8d99a5',
+    yields:{M:1,F:0,G:1,S:2},pop:1.1,def:5,ships:0,cityMax:80,staMax:70,stock:{M:1,F:0,G:1,S:2},moons:['charon'],
+    desc:'Half of a double world — Charon hangs huge and unmoving overhead.'}),
+  charon:mkBody({id:'charon',name:'CHARON',type:'binary partner · pluto',parent:'pluto',moonR:60,moonAng:20,rw:9,art:'moon',col:'#8d99a5',hasStation:false,
+    yields:{M:2,F:0,G:0,S:1},pop:0.9,def:4,ships:0,cityMax:70,staMax:0,stock:{M:2,F:0,G:0,S:1},
+    desc:'Pluto fills the sky here and never sets. Too sparse for orbital works.'}),
+};
+const PLANET_IDS=['earth','mars','saturn','pluto'];
+for(const id of PLANET_IDS){const b=BODIES[id];b.wx=b.orbit*Math.cos(b.ang*D2R);b.wy=b.orbit*Math.sin(b.ang*D2R);}
+for(const id in BODIES){const b=BODIES[id];if(b.parent){const p=BODIES[b.parent];b.wx=p.wx+b.moonR*Math.cos(b.moonAng*D2R);b.wy=p.wy+b.moonR*Math.sin(b.moonAng*D2R);}}
+const OUTER=1010;
+
+const CITY_NAMES={earth:'NEW GENEVA',luna:'MARE CITY',mars:'FORGEHOLD',titan:'KRAKEN PORT',rhea:'DOMINION CAMP',enceladus:'GEYSER BASE',pluto:'COLDHARBOR',charon:'FARSIDE POST'};
+const STA_NAMES={earth:'HIGH GUARD',luna:'GATEWAY',mars:'ANVIL DOCK',saturn:'RING WARDEN',titan:'SHORE WATCH',rhea:'DOMINION SPUR',enceladus:'GEYSER SPUR',pluto:'KUIPER POST'};
+const cityName=id=>CITY_NAMES[id]||BODIES[id].name+' CITY';
+const staName=id=>STA_NAMES[id]||BODIES[id].name+' STATION';
+
+/* ---------- pure logic (exported for [pure] tests) ---------- */
+function rootOf(id){if(!id||!BODIES[id])return id||null;return BODIES[id].parent||id;}
+function neighborsOf(id){if(!id||!BODIES[id])return[];const b=BODIES[id];return b.parent?[b.parent,...BODIES[b.parent].moons.filter(m=>m!==id)]:b.moons.slice();}
+function mapCam(W,H){return {cx:0,cy:0,scale:MAPFIT*Math.min(W,H)/(OUTER*1.15)};}
+function worldToScreen(wx,wy,c,W,H){return {x:W/2+(wx-c.cx)*c.scale,y:H/2+(wy-c.cy)*c.scale};}
+/* camAt: pure. Scale is geometric in z (pow); position eases S0→S1. */
+function camAt(z,focusId,W,H){
+  const mc=mapCam(W,H);
+  if(!focusId||!BODIES[focusId])return mc;
+  const b=BODIES[focusId];
+  const z1=(Z1_FRAC*H)/b.rw;
+  const scale=mc.scale*Math.pow(z1/mc.scale,z);
+  const e=ease(z);
+  const S0=worldToScreen(b.wx,b.wy,mc,W,H);
+  const S1={x:S1X_FRAC*W,y:S1Y_FRAC*H};
+  const Px=S0.x+(S1.x-S0.x)*e, Py=S0.y+(S1.y-S0.y)*e;
+  return {cx:b.wx-(Px-W/2)/scale, cy:b.wy-(Py-H/2)/scale, scale};
+}
+function bpos(b,frac){const ang=(-90+frac*46)*D2R;return {x:b.wx+b.rw*Math.cos(ang),y:b.wy+b.rw*Math.sin(ang),deg:frac*46};}
+function hpColor(ratio){return ratio>0.6?'#66bb6a':ratio>0.3?'#ffb84d':'#ef5350';}
+function flameCount(ratio,pts){return ratio>=FIRE_THRESH?0:Math.max(1,Math.min(pts,Math.round((1-ratio)*pts*1.25)));}
+function attackPure(b,s){
+  if(b.surface)s.cityHp=Math.max(0,s.cityHp-Math.round(b.cityMax*CITY_DMG));
+  if(b.hasStation&&b.staMax)s.staHp=Math.max(0,s.staHp-Math.round(b.staMax*STA_DMG));
+  return s;
+}
+function repairPure(b,s){s.cityHp=b.cityMax;s.staHp=b.staMax;return s;}
+function buildAllowed(b,key){return CITY_KEYS.includes(key)?!!b.surface:!!b.hasStation;}
+function lockText(key){return CITY_KEYS.includes(key)?'no surface':'no station';}
+function statusText(lvl,key){return lvl===0?`not built · ${YT[key]}`:(lvl>=MAX[key]?`LV ${lvl} · MAX`:`LV ${lvl} ↑ · ${YT[key]}`);}
+function defenseShown(base,weapons){return base+weapons*DEF_PER_WEAP;}
+function yieldShown(b,s,k){
+  let v=b.yields[k];
+  if(b.surface){if(k==='M')v+=s.forge*2;if(k==='G')v+=s.mint*2;if(k==='S')v+=s.lab*2;}
+  return v;
+}
+
+/* ---------- per-body build/combat state ---------- */
+let states={};
+function seedStates(){states={};st('enceladus').shipyard=1;}
+function st(id){if(!states[id]){const b=BODIES[id];states[id]={forge:0,mint:0,lab:0,weapons:0,shipyard:0,collector:0,cityHp:b.cityMax,staHp:b.staMax,queue:[]};}return states[id];}
+/* ---------- starfield ---------- */
+(function(){const s=document.createElementNS(NS,'svg');s.setAttribute('width','100%');s.setAttribute('height','100%');
+  let h='';for(let i=0;i<120;i++){h+=`<circle cx="${(Math.random()*100).toFixed(2)}%" cy="${(Math.random()*100).toFixed(2)}%" r="${(Math.random()*1.1+0.3).toFixed(2)}" fill="#b8c8d6" opacity="${(Math.random()*0.5+0.12).toFixed(2)}"/>`;}
+  s.innerHTML=h;$('stars').appendChild(s);})();
+
+/* ---------- static world: furniture (fades for the menu) + permanent bodies ---------- */
+function buildWorld(){
+  let furn='', bodies='';
+  furn+=`<circle cx="0" cy="0" r="140" fill="url(#sunGlow)"/>`;
+  for(const id of PLANET_IDS){const b=BODIES[id];
+    furn+=`<circle cx="0" cy="0" r="${b.orbit}" fill="none" stroke="#16233a" stroke-width="1.4"/>`;
+    for(const mid of b.moons){const m=BODIES[mid];furn+=`<circle cx="${b.wx}" cy="${b.wy}" r="${m.moonR}" fill="none" stroke="#141f30" stroke-width="1"/>`;}
+  }
+  furn+=`<line x1="${BODIES.earth.wx}" y1="${BODIES.earth.wy}" x2="${BODIES.saturn.wx}" y2="${BODIES.saturn.wy}" stroke="#2c455f" stroke-width="1.2" stroke-dasharray="6 8" opacity="0.5"/>`;
+  bodies+=`<circle cx="0" cy="0" r="26" fill="#ffe08a"/>`;
+  for(const id in BODIES){const b=BODIES[id];
+    bodies+=`<g class="pl" data-id="${id}">`;
+    if(b.art==='gas')bodies+=`<ellipse cx="${b.wx}" cy="${b.wy}" rx="${b.rw*1.7}" ry="${b.rw*0.42}" fill="none" stroke="#a08a5f" stroke-opacity="0.55" stroke-width="${b.rw*0.14}" transform="rotate(-14 ${b.wx} ${b.wy})" data-feature="rings"/>`;
+    bodies+=`<circle data-planet-disc="${id}" cx="${b.wx}" cy="${b.wy}" r="${b.rw}" fill="${b.col}"/>`;
+    bodies+=`<circle cx="${(b.wx+b.rw*0.34).toFixed(1)}" cy="${(b.wy+b.rw*0.2).toFixed(1)}" r="${b.rw}" fill="#05080e" opacity="0.28" style="pointer-events:none" clip-path="url(#wclip-${id})"/>`;
+    bodies+=`<clipPath id="wclip-${id}"><circle cx="${b.wx}" cy="${b.wy}" r="${b.rw}"/></clipPath></g>`;
+  }
+  cam.innerHTML=`<defs><radialGradient id="sunGlow" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#ffca28" stop-opacity="0.5"/><stop offset="100%" stop-color="#ffca28" stop-opacity="0"/></radialGradient></defs>
+    <g id="furn">${furn}</g><g id="wbodies">${bodies}</g><g id="surfaceRoot"></g>`;
+}
+
+/* ---------- focused body surface: art detail + skyline + parts + tags (all ∝ rw) ---------- */
+let surfaceParts={};
+function artDetail(b){
+  const r=b.rw,x=b.wx,y=b.wy;let h='';
+  if(b.art==='terra'){
+    h+=`<g data-feature="continents"><circle cx="${x-r*0.3}" cy="${y-r*0.4}" r="${r*0.5}" fill="#2c6b58" opacity="0.75"/><circle cx="${x+r*0.42}" cy="${y-r*0.15}" r="${r*0.34}" fill="#2c6b58" opacity="0.65"/><circle cx="${x-r*0.05}" cy="${y+r*0.45}" r="${r*0.55}" fill="#173a50" opacity="0.5"/></g>`;
+  }else if(b.art==='rock'){
+    h+=`<g data-feature="bands"><path d="M${x-r},${y-r*0.25} Q${x},${y-r*0.45} ${x+r},${y-r*0.25}" stroke="#7a4322" stroke-width="${r*0.22}" fill="none" opacity="0.55"/><path d="M${x-r},${y+r*0.25} Q${x},${y+r*0.05} ${x+r},${y+r*0.25}" stroke="#8a5230" stroke-width="${r*0.3}" fill="none" opacity="0.45"/></g>`;
+  }else if(b.art==='gas'){
+    h+=`<g data-feature="bands"><path d="M${x-r},${y-r*0.3} Q${x},${y-r*0.5} ${x+r},${y-r*0.3}" stroke="#6e5837" stroke-width="${r*0.18}" fill="none" opacity="0.55"/><path d="M${x-r},${y+r*0.1} Q${x},${y-r*0.1} ${x+r},${y+r*0.1}" stroke="#44351f" stroke-width="${r*0.14}" fill="none" opacity="0.5"/></g>`;
+  }else{ /* moon / ice */
+    h+=`<g data-feature="craters"><circle cx="${x-r*0.32}" cy="${y-r*0.3}" r="${r*0.16}" fill="#000" opacity="0.16"/><circle cx="${x+r*0.3}" cy="${y+r*0.12}" r="${r*0.12}" fill="#000" opacity="0.14"/><circle cx="${x-r*0.02}" cy="${y+r*0.42}" r="${r*0.18}" fill="#000" opacity="0.13"/><circle cx="${x+r*0.45}" cy="${y-r*0.35}" r="${r*0.08}" fill="#000" opacity="0.15"/></g>`;
+  }
+  h+=`<circle data-feature="terminator" cx="${x+r*0.32}" cy="${y+r*0.16}" r="${r}" fill="#05080e" opacity="0.3"/>`;
+  return h;
+}
+const PART_ART={
+  forge:`<path d="M-26,-26 L-26,-31 L-6,-41 L14,-31 L14,-26 Z" fill="var(--p1)"/><rect x="-26" y="-26" width="40" height="26" fill="var(--p1)"/><rect x="2" y="-54" width="7" height="28" fill="var(--p1)"/><rect x="2" y="-58" width="7" height="4" fill="var(--p2)"/><rect x="-12" y="-9" width="6" height="9" fill="#05080e"/><g class="lvl2"><rect x="-16" y="-48" width="6" height="22" fill="var(--p1)"/><rect x="-16" y="-52" width="6" height="4" fill="var(--p2)"/></g><g class="lvl3"><rect x="14" y="-18" width="15" height="18" fill="var(--p1)"/><rect x="18" y="-24" width="4" height="6" fill="var(--p2)"/></g>`,
+  mint:`<rect x="-20" y="-20" width="40" height="20" fill="var(--p1)"/><rect x="-14" y="-34" width="28" height="14" fill="var(--p1)"/><path d="M-14,-34 L0,-43 L14,-34 Z" fill="var(--p1)"/><circle cx="0" cy="-27" r="4.5" fill="var(--p2)"/><rect x="-13" y="-15" width="4" height="15" fill="#05080e"/><rect x="-2" y="-15" width="4" height="15" fill="#05080e"/><rect x="9" y="-15" width="4" height="15" fill="#05080e"/><g class="lvl2"><rect x="20" y="-14" width="13" height="14" fill="var(--p1)"/></g><g class="lvl3"><rect x="-33" y="-14" width="13" height="14" fill="var(--p1)"/></g>`,
+  lab:`<path d="M-16,0 A16 16 0 0 1 16,0 Z" fill="var(--p1)"/><path d="M-9,-1 A9 9 0 0 1 9,-1" fill="none" stroke="var(--p2)" stroke-width="2"/><rect x="-1.5" y="-42" width="3" height="28" fill="var(--p1)"/><circle cx="0" cy="-45" r="3" fill="var(--p2)"/><g class="lvl2"><path d="M16,0 A9 9 0 0 1 34,0 Z" fill="var(--p1)"/></g><g class="lvl3"><path d="M-14,-40 Q-8,-46 -2,-40" fill="none" stroke="var(--p1)" stroke-width="2.5"/></g>`,
+  collector:`<rect x="-2.5" y="-26" width="5" height="26" fill="var(--p1)"/><path d="M-22,-26 Q0,-48 22,-26 Q0,-35 -22,-26 Z" fill="var(--p1)"/><circle cx="0" cy="-46" r="3.5" fill="var(--p2)"/><path d="M-11,0 L-5,-9 M11,0 L5,-9" stroke="var(--p1)" stroke-width="3"/>`,
+};
+const PART_FRACS={forge:-0.62,mint:-0.15,lab:0.35,collector:0.72};
+const SKYLINE_FRACS=[-0.82,-0.5,-0.32,0.05,0.2,0.52,0.62,0.88];
+function buildSurface(id){
+  const root=$('surfaceRoot');root.innerHTML='';surfaceParts={};
+  if(!id)return;
+  const b=BODIES[id],s=st(id);
+  const g=document.createElementNS(NS,'g');g.id='surfaceG';
+  let h=`<g clip-path="url(#wclip-${id})">${artDetail(b)}</g>`;
+  if(b.art==='terra')h+=`<circle data-feature="atmosphere" cx="${b.wx}" cy="${b.wy}" r="${b.rw}" fill="none" stroke="#7fd4ff" stroke-opacity="0.4" stroke-width="${b.rw*0.05}"/>`;
+  if(b.surface){
+    for(const fr of SKYLINE_FRACS){const p=bpos(b,fr);const hh=b.rw*(0.06+((fr*97)%1+1)%1*0.07);
+      h+=`<g class="ambient" transform="translate(${p.x.toFixed(2)},${p.y.toFixed(2)}) rotate(${p.deg.toFixed(2)})"><rect x="${(-b.rw*0.012).toFixed(3)}" y="${(-hh).toFixed(3)}" width="${(b.rw*0.024).toFixed(3)}" height="${hh.toFixed(3)}" fill="var(--steel)"/></g>`;}
+  }
+  g.innerHTML=h;root.appendChild(g);
+  const gsc=GLYPH_H_FRAC*b.rw/64;
+  const partKeys=b.surface?['forge','mint','lab','collector']:['collector'];
+  for(const k of partKeys){
+    const p=bpos(b,PART_FRACS[k]);
+    const pg=document.createElementNS(NS,'g');
+    pg.setAttribute('data-part',k);
+    pg.setAttribute('data-lvl',String(k==='collector'?s.collector:s[k]));
+    const dy=(!b.surface&&k==='collector')?-b.rw*0.5:0; // gas giant: skimmer floats
+    pg.setAttribute('transform',`translate(${p.x.toFixed(2)},${(p.y+dy).toFixed(2)}) rotate(${p.deg.toFixed(2)}) scale(${gsc.toFixed(4)})`);
+    pg.innerHTML=PART_ART[k];
+    g.appendChild(pg);surfaceParts[k]=pg;
+  }
+  const tg=document.createElementNS(NS,'g');tg.setAttribute('class','tag');tg.id='cityTag';g.appendChild(tg);
+  const fg=document.createElementNS(NS,'g');fg.id='cityFire';g.appendChild(fg);
+  renderCityTag(id);
+}
+function renderCityTag(id){
+  const b=BODIES[id],s=st(id),tg=$('cityTag'),fg=$('cityFire');
+  if(!tg)return;
+  if(!b.surface){tg.innerHTML='';fg.innerHTML='';return;}
+  const R=b.rw,cx=b.wx,cy=b.wy-R*1.2;
+  const w=HPBAR_W_FRAC*R,bh=R*0.032,ratio=clamp01(s.cityHp/b.cityMax),col=hpColor(ratio),x0=cx-w/2,y0=cy+R*0.03;
+  tg.innerHTML=`<text class="tag-name" x="${cx}" y="${cy}" text-anchor="middle" style="font-size:${(R*0.055).toFixed(2)}px">${cityName(id)}</text>
+    <rect class="hp-bg" x="${x0.toFixed(2)}" y="${y0.toFixed(2)}" width="${w.toFixed(2)}" height="${bh.toFixed(2)}" rx="${(bh*0.3).toFixed(2)}"/>
+    <rect class="hp-fill" x="${x0.toFixed(2)}" y="${y0.toFixed(2)}" width="${(w*ratio).toFixed(2)}" height="${bh.toFixed(2)}" rx="${(bh*0.3).toFixed(2)}" fill="${col}"/>
+    <text class="hp-num" x="${cx}" y="${(cy+R*0.14).toFixed(2)}" text-anchor="middle" style="font-size:${(R*0.038).toFixed(2)}px">${Math.round(s.cityHp)} / ${b.cityMax}</text>`;
+  const n=flameCount(ratio,5);let h='';
+  const fracs=[-0.62,-0.15,0.35,0.55,-0.4];
+  for(let i=0;i<n;i++){const p=bpos(b,fracs[i]),sz=R*0.085,dl=(i*0.11).toFixed(2);
+    h+=`<path class="flame" style="animation-delay:${dl}s;--fd:.5s" d="M${p.x},${p.y} C${p.x-sz*0.55},${p.y-sz*0.6} ${p.x-sz*0.28},${p.y-sz*1.15} ${p.x},${p.y-sz*1.7} C${p.x+sz*0.28},${p.y-sz*1.15} ${p.x+sz*0.55},${p.y-sz*0.6} ${p.x},${p.y} Z" fill="#ff5a1f"/>
+        <path class="flame" style="animation-delay:${dl}s;--fd:.5s" d="M${p.x},${p.y} C${p.x-sz*0.3},${p.y-sz*0.45} ${p.x-sz*0.15},${p.y-sz*0.8} ${p.x},${p.y-sz*1.12} C${p.x+sz*0.15},${p.y-sz*0.8} ${p.x+sz*0.3},${p.y-sz*0.45} ${p.x},${p.y} Z" fill="#ffca28"/>`;}
+  fg.innerHTML=h;
+}
+
+/* ---------- neighbor orbs (menu-layer sky) ---------- */
+function orbArt(b,r){
+  let h='';
+  if(b.art==='gas')h+=`<ellipse rx="${r*1.65}" ry="${r*0.4}" fill="none" stroke="#a08a5f" stroke-opacity="0.6" stroke-width="${Math.max(2,r*0.12)}" transform="rotate(-14)" data-feature="rings"/>`;
+  h+=`<circle r="${r}" fill="${b.col}"/>`;
+  if(b.art==='terra')h+=`<circle cx="${-r*0.25}" cy="${-r*0.2}" r="${r*0.4}" fill="#2c6b58" opacity="0.7"/>`;
+  if(b.art==='moon'||b.art==='ice')h+=`<circle cx="${-r*0.3}" cy="${-r*0.25}" r="${r*0.2}" fill="#000" opacity="0.2"/><circle cx="${r*0.2}" cy="${r*0.25}" r="${r*0.14}" fill="#000" opacity="0.2"/>`;
+  h+=`<circle cx="${r*0.34}" cy="${r*0.2}" r="${r}" fill="#05080e" opacity="0.3" clip-path="none"/>`;
+  return h;
+}
+function renderNeighbors(id){
+  const svg=$('orbsSvg');const W=stage.clientWidth,H=stage.clientHeight;
+  svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+  if(!id){svg.innerHTML='';return;}
+  const b=BODIES[id];
+  const ids=neighborsOf(id);
+  const slots=[{x:0.34,y:0.40,r:0.072},{x:0.48,y:0.30,r:0.034},{x:0.60,y:0.42,r:0.026},{x:0.70,y:0.32,r:0.022}];
+  let h='';
+  ids.forEach((nid,i)=>{
+    const nb=BODIES[nid];const isParent=nid===b.parent;
+    const sl=isParent?slots[0]:slots[Math.min(3,(b.parent?1:0)+i)];
+    const x=sl.x*W,y=sl.y*H,r=Math.max(9,sl.r*H);
+    h+=`<g data-goto="${nid}" transform="translate(${x.toFixed(1)},${y.toFixed(1)})">
+      <circle r="${r+16}" fill="transparent"/>${orbArt(nb,r)}
+      <circle class="orb-ring${isParent?' orb-halo sel':''}" r="${r+7}"/>
+      <text y="${r+16}" text-anchor="middle">${nb.name} ▸</text></g>`;
+  });
+  if(!b.parent){
+    // planet focus: the selection halo arcs over the limb itself
+    h+=`<circle class="orb-halo sel" cx="${(S1X_FRAC*W).toFixed(1)}" cy="${(S1Y_FRAC*H).toFixed(1)}" r="${(Z1_FRAC*H+12).toFixed(1)}" style="pointer-events:none"/>`;
+  }
+  svg.innerHTML=h;
+}
+
+/* ---------- station overlay ---------- */
+function renderStation(){
+  const id=focusId;if(!id){$('stationOv').style.display='none';return;}
+  const b=BODIES[id],s=st(id),show=!!b.hasStation&&b.staMax>0;
+  $('stationOv').style.display=show?'':'none';
+  if(!show)return;
+  $('st-weapons').classList.toggle('on',s.weapons>0);
+  $('st-shipyard').classList.toggle('on',s.shipyard>0);
+  $('st-hull').classList.toggle('active',s.queue.length>0);
+  const ratio=clamp01(s.staHp/b.staMax),col=hpColor(ratio),w=112,x0=85-w/2;
+  $('st-tag').innerHTML=`<text class="snm" x="85" y="16" text-anchor="middle">${staName(id)}</text>
+    <rect class="hp-bg" x="${x0}" y="22" width="${w}" height="7" rx="2"/>
+    <rect class="hp-fill" x="${x0}" y="22" width="${(w*ratio).toFixed(1)}" height="7" rx="2" fill="${col}"/>
+    <text class="shp" x="85" y="39" text-anchor="middle">${Math.round(s.staHp)} / ${b.staMax}</text>`;
+  const fgr=$('st-fire');const n=flameCount(ratio,4);
+  if(n===0){fgr.innerHTML='';}
+  else{const pts=[{x:62,y:122},{x:108,y:122},{x:85,y:170},{x:70,y:216}];let hh='';
+    for(let i=0;i<n;i++){const p=pts[i],sz=8,dl=(i*0.12).toFixed(2);
+      hh+=`<path class="flame" style="animation-delay:${dl}s;--fd:.5s" d="M${p.x},${p.y} C${p.x-sz*0.5},${p.y-sz*0.6} ${p.x-sz*0.25},${p.y-sz*1.15} ${p.x},${p.y-sz*1.7} C${p.x+sz*0.25},${p.y-sz*1.15} ${p.x+sz*0.5},${p.y-sz*0.6} ${p.x},${p.y} Z" fill="#ff5a1f"/><path class="flame" style="animation-delay:${dl}s;--fd:.5s" d="M${p.x},${p.y} C${p.x-sz*0.25},${p.y-sz*0.4} ${p.x-sz*0.12},${p.y-sz*0.75} ${p.x},${p.y-sz*1.05} C${p.x+sz*0.12},${p.y-sz*0.75} ${p.x+sz*0.25},${p.y-sz*0.4} ${p.x},${p.y} Z" fill="#ffca28"/>`;}
+    fgr.innerHTML=hh;}
+}
+
+/* ---------- map labels (screen-space furniture) ---------- */
+function yieldSpans(y){return ['M','F','G','S'].filter(k=>y[k]>0).map(k=>`<tspan fill="${YC[k]}">${y[k]}${k}</tspan>`).join('<tspan> </tspan>')||'<tspan>—</tspan>';}
+function positionMapLabels(){
+  const svg=$('mapLabelsSvg');const W=stage.clientWidth,H=stage.clientHeight;
+  if(!W||!H)return;
+  svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+  const c=camAt(zCur,focusId,W,H);
+  const w2s=(wx,wy)=>worldToScreen(wx,wy,c,W,H);
+  let html=`<text x="${(W/2).toFixed(0)}" y="24" text-anchor="middle" font-size="10" fill="#6b8195" style="letter-spacing:.2em">SYSTEM MAP · TAP A WORLD OR SCROLL IN</text>`;
+  for(const id of PLANET_IDS){const b=BODIES[id];const s=w2s(b.wx,b.wy);const rr=b.rw*c.scale;
+    const sel=focusId===id; // exactly one .sel: the focused body itself
+    html+=`<g class="mlabel mhit" data-open="${id}">
+      <circle class="halo${sel?' sel':''}" cx="${s.x.toFixed(1)}" cy="${s.y.toFixed(1)}" r="${(rr+7).toFixed(1)}"/>
+      <circle cx="${s.x.toFixed(1)}" cy="${s.y.toFixed(1)}" r="${Math.max(15,rr+10).toFixed(1)}" fill="transparent"/>
+      <text class="nm" x="${s.x.toFixed(1)}" y="${(s.y+rr+18).toFixed(1)}" text-anchor="middle">${b.name}</text>
+      <text x="${s.x.toFixed(1)}" y="${(s.y+rr+31).toFixed(1)}" text-anchor="middle" font-size="9.5">${yieldSpans(b.yields)}</text>
+    </g>`;
+    for(const mid of b.moons){const m=BODIES[mid];const ms=w2s(m.wx,m.wy);const mr=Math.max(3,m.rw*c.scale);
+      const msel=focusId===mid;
+      html+=`<g class="mlabel mhit" data-open="${mid}">
+        <circle class="halo${msel?' sel':''}" cx="${ms.x.toFixed(1)}" cy="${ms.y.toFixed(1)}" r="${(mr+5).toFixed(1)}"/>
+        <circle cx="${ms.x.toFixed(1)}" cy="${ms.y.toFixed(1)}" r="${Math.max(12,mr+8).toFixed(1)}" fill="transparent"/>
+        <text class="mnm" x="${ms.x.toFixed(1)}" y="${(ms.y+mr+13).toFixed(1)}" text-anchor="middle">${m.name}</text></g>`;
+    }
+  }
+  svg.innerHTML=html;
+}
+
+/* ---------- menu panel readout ---------- */
+function updateMenu(){
+  const id=focusId;if(!id)return;
+  const b=BODIES[id],s=st(id);
+  $('m-name').textContent=b.name;$('m-type').textContent=b.type;
+  $('crumb').hidden=!b.parent;if(b.parent)$('crumb').textContent='◂ '+BODIES[b.parent].name;
+  const oc=$('m-owner');oc.textContent=b.owner;oc.classList.toggle('neutral',b.owner!=='YOU');
+  $('m-desc').textContent=b.desc;
+  $('m-pop').textContent=b.pop.toFixed(1)+'M'+(b.surface?'':' crew');
+  $('m-def').textContent=String(defenseShown(b.def,s.weapons));
+  $('m-ships').textContent='◆ '+b.ships;
+  const curHp=b.surface?s.cityHp:s.staHp,maxHp=b.surface?b.cityMax:b.staMax;
+  $('m-hp').textContent=`${Math.round(curHp)}/${maxHp||'—'}`;
+  $('m-yields').innerHTML=['M','F','G','S'].map(k=>`<span class="yield" data-yield="${k}"><i>${k}</i>${yieldShown(b,s,k)}</span>`).join('');
+  $('m-stock').textContent=`M${b.stock.M} · F${b.stock.F} · G${b.stock.G} · S${b.stock.S}`;
+  const cb=$('collector');cb.classList.toggle('built',s.collector>0);
+  cb.textContent=s.collector>0?'◉ Collector online':(b.surface?'▲ Deploy collector':'▲ Deploy skimmer');
+  for(const k of [...CITY_KEYS,...STA_KEYS]){
+    const allowed=buildAllowed(b,k),btn=$('b-'+k);
+    btn.disabled=!allowed;
+    btn.classList.toggle('built',allowed&&s[k]>0);
+    $('s-'+k).textContent=allowed?statusText(s[k],k):lockText(k);
+  }
+  const slots=s.shipyard;
+  $('slots').innerHTML=slots?('slots '+Array.from({length:slots},(_,i)=>`<span class="pip${i<s.queue.length?'':' empty'}">${i<s.queue.length?'◆':'◇'}</span>`).join('')):'no shipyard';
+  for(const [sid] of SHIP_DEFS){const sb=$('ship-'+sid);sb.disabled=slots===0||s.queue.length>=slots;}
+  const q=$('queue');q.innerHTML='';
+  s.queue.forEach((sid,i)=>{
+    const chip=document.createElement('button');chip.className='qchip';
+    chip.textContent=`${SHIP_DEFS.find(d=>d[0]===sid)[1]} · T-${4+i*3} ✕`;
+    chip.addEventListener('click',()=>{s.queue.splice(i,1);updateMenu();renderStation();});
+    q.appendChild(chip);
+  });
+  renderStation();syncSizes();
+}
+
+/* ---------- leader lines ---------- */
+/* Mobile is defined by the CONTAINER width (matches the CSS container
+   query on .appc exactly) — not the stage width, which shrinks under the
+   desktop outliner long before the layout actually flips. */
+const isMobile=()=>app.clientWidth<=720;
+function drawLines(){
+  const svg=$('lines');const W=stage.clientWidth,H=stage.clientHeight;
+  svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.innerHTML='';
+  if(!focusId||isMobile())return;
+  if((+getComputedStyle(menu).opacity)<0.9)return;
+  const sr=stage.getBoundingClientRect();
+  const links=[];
+  for(const k of CITY_KEYS){const part=surfaceParts[k];if(part&&part.getAttribute('data-lvl')!=='0')links.push(['b-'+k,part]);}
+  if(surfaceParts.collector&&st(focusId).collector>0)links.push(['collector',surfaceParts.collector]);
+  if(BODIES[focusId].hasStation&&BODIES[focusId].staMax>0){links.push(['b-weapons',$('st-weapons')]);links.push(['b-shipyard',$('st-shipyard')]);}
+  let out='';
+  for(const [bid,part] of links){
+    const btn=$(bid);if(!btn||btn.disabled)continue;
+    const pr=part.getBoundingClientRect(),br=btn.getBoundingClientRect();
+    if(pr.width===0)continue;
+    const tx=pr.left+pr.width/2-sr.left,ty=pr.top+pr.height/2-sr.top;
+    const bcx=br.left+br.width/2-sr.left;
+    const fromLeftEdge=tx<bcx;
+    const bx=(fromLeftEdge?br.left:br.right)-sr.left,by=br.top+br.height/2-sr.top;
+    const k=fromLeftEdge?-50:50;
+    out+=`<g data-line="${bid}"><path d="M${bx},${by} C${bx+k},${by} ${tx-k},${ty} ${tx},${ty}"/><rect x="${bx-2}" y="${by-2}" width="4" height="4"/><circle cx="${tx}" cy="${ty}" r="2.5"/></g>`;
+  }
+  svg.innerHTML=out;
+}
+/* ---------- camera state + apply ---------- */
+let focusId=null, zCur=0, zTarget=0, zTimer=0, snapT=0;
+function applyZ(){
+  const W=stage.clientWidth,H=stage.clientHeight;if(!W||!H)return;
+  const c=camAt(zCur,focusId,W,H);
+  cam.setAttribute('transform',`translate(${W/2},${H/2}) scale(${c.scale}) translate(${-c.cx},${-c.cy})`);
+  const lo=1-clamp01((zCur-LBL_FADE[0])/LBL_FADE[1]);
+  $('mapLabels').style.opacity=lo.toFixed(3);
+  $('mapLabels').style.pointerEvents=lo>0.5?'auto':'none';
+  const furn=$('furn');if(furn)furn.style.opacity=lo.toFixed(3);
+  const p=clamp01((zCur-MENU_FADE[0])/MENU_FADE[1]);
+  menu.style.opacity=p.toFixed(3);
+  menu.style.pointerEvents=p>0.9?'auto':'none';
+  if(lo>0)positionMapLabels();
+  if(p>0.98)drawLines();else if($('lines').innerHTML)$('lines').innerHTML='';
+}
+/* setTimeout ticker on purpose: requestAnimationFrame pauses in background /
+   embedded contexts, which killed the zoom before. No rAF in this loop.
+   The easing step is WALL-CLOCK based, so even if the browser clamps timers
+   to 1s (hidden tab), the dive still completes in real time instead of
+   crawling one lerp-step per second. */
+let zLast=0;
+function zTick(){
+  const now=Date.now();
+  const dt=zLast?Math.min(now-zLast,1200):16;
+  zLast=now;
+  const k=1-Math.pow(0.8,dt/16); // ≡ 0.2/16ms lerp, time-corrected
+  zCur+=(zTarget-zCur)*k;
+  if(Math.abs(zTarget-zCur)<0.004){zCur=zTarget;applyZ();zTimer=0;zLast=0;onSettle();return;}
+  applyZ();zTimer=setTimeout(zTick,16);
+}
+function zGo(t){zTarget=clamp01(t);if(!zTimer){zLast=0;zTimer=setTimeout(zTick,0);}}
+function zoomBy(d){
+  if(!focusId&&d>0)pickNearestFocus();
+  if(zTimer){clearTimeout(zTimer);zTimer=0;}
+  zCur=clamp01(zCur+d);zTarget=zCur;applyZ();
+  clearTimeout(snapT);snapT=setTimeout(()=>zGo(zCur>=0.5?1:0),300);
+}
+function onSettle(){if(zCur<0.02&&focusId)clearFocus();}
+function zoomLoopSource(){return zTick.toString()+zGo.toString()+zoomBy.toString();}
+
+/* ---------- focus machine ---------- */
+function prepFocus(id){
+  focusId=id;
+  buildSurface(id);renderNeighbors(id);updateMenu();markSel();positionMapLabels();
+}
+function clearFocus(){
+  focusId=null;
+  buildSurface(null);renderNeighbors(null);$('stationOv').style.display='none';
+  $('lines').innerHTML='';markSel();positionMapLabels();
+}
+function openBody(id){if(!BODIES[id])return;prepFocus(id);zGo(1);}
+function pickNearestFocus(){
+  const W=stage.clientWidth,H=stage.clientHeight;const c=camAt(zCur,null,W,H);
+  let best=null,bd=1e12;
+  for(const id of PLANET_IDS){const b=BODIES[id];const s=worldToScreen(b.wx,b.wy,c,W,H);
+    const d=(s.x-W/2)**2+(s.y-H/2)**2;if(d<bd){bd=d;best=id;}}
+  prepFocus(best||'earth');
+}
+function markSel(){
+  document.querySelectorAll('#ol-list [data-open]').forEach(el=>el.classList.toggle('active',el.getAttribute('data-open')===focusId));
+}
+
+/* ---------- input: wheel, pinch, buttons, esc, clicks ---------- */
+function onWheel(e){
+  if(e.target.closest('.m-top,.fleet,.col,.header,.outliner,.topbar,.bottomnav,button'))return;
+  if(!e.target.closest('#stage'))return;
+  e.preventDefault();
+  zoomBy(e.deltaY<0?0.16:-0.16);
+}
+stage.addEventListener('wheel',onWheel,{passive:false});
+let pinchPrev=0;
+const tdist=t=>Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY);
+stage.addEventListener('touchstart',e=>{if(e.touches.length===2)pinchPrev=tdist(e.touches);},{passive:false});
+stage.addEventListener('touchmove',e=>{
+  if(e.touches.length!==2||!pinchPrev)return;
+  e.preventDefault();
+  const d=tdist(e.touches);
+  if(zTimer){clearTimeout(zTimer);zTimer=0;}
+  if(!focusId&&d>pinchPrev)pickNearestFocus();
+  zCur=clamp01(zCur+(d-pinchPrev)/220);zTarget=zCur;applyZ();
+  pinchPrev=d;
+},{passive:false});
+stage.addEventListener('touchend',e=>{
+  if(pinchPrev&&e.touches.length<2){pinchPrev=0;clearTimeout(snapT);snapT=setTimeout(()=>zGo(zCur>=0.5?1:0),300);}
+});
+$('zin').addEventListener('click',()=>{if(!focusId)pickNearestFocus();zGo(1);});
+$('zout').addEventListener('click',()=>zGo(0));
+$('tomap').addEventListener('click',()=>zGo(0));
+window.addEventListener('keydown',e=>{if(e.key==='Escape')zGo(0);});
+$('mapLabelsSvg').addEventListener('click',e=>{const g=e.target.closest('[data-open]');if(g)openBody(g.getAttribute('data-open'));});
+$('orbsSvg').addEventListener('click',e=>{const g=e.target.closest('[data-goto]');if(g)openBody(g.getAttribute('data-goto'));});
+$('crumb').addEventListener('click',()=>{const p=focusId&&BODIES[focusId].parent;if(p)openBody(p);});
+
+/* ---------- build + combat + fleet interactions ---------- */
+for(const k of [...CITY_KEYS,...STA_KEYS]){
+  const btn=$('b-'+k);
+  btn.addEventListener('click',()=>{
+    if(!focusId)return;const b=BODIES[focusId],s=st(focusId);
+    if(!buildAllowed(b,k)||s[k]>=MAX[k])return;
+    s[k]++;
+    // Update the existing part IN PLACE — the scene node persists and its
+    // data-lvl drives the visible level variant (no teardown/rebuild).
+    const part=surfaceParts[k];
+    if(part)part.setAttribute('data-lvl',String(s[k]));
+    updateMenu();drawLines();
+  });
+  btn.addEventListener('mouseenter',()=>{
+    const part=surfaceParts[k];if(part&&part.getAttribute('data-lvl')==='0')part.classList.add('ghost');
+  });
+  btn.addEventListener('mouseleave',()=>{const part=surfaceParts[k];if(part)part.classList.remove('ghost');});
+}
+$('collector').addEventListener('click',()=>{
+  if(!focusId)return;const s=st(focusId);
+  if(s.collector)return;s.collector=1;
+  const part=surfaceParts.collector;
+  if(part)part.setAttribute('data-lvl','1');
+  updateMenu();drawLines();
+});
+for(const [sid] of SHIP_DEFS){
+  $('ship-'+sid).addEventListener('click',()=>{
+    if(!focusId)return;const s=st(focusId);
+    if(s.shipyard>0&&s.queue.length<s.shipyard){s.queue.push(sid);updateMenu();}
+  });
+}
+$('designer').addEventListener('click',()=>{$('designer').textContent='◈ Ship Designer ✓';setTimeout(()=>$('designer').textContent='◈ Ship Designer →',1200);});
+function doAttack(){if(!focusId)return;attackPure(BODIES[focusId],st(focusId));updateMenu();renderCityTag(focusId);}
+function doRepair(){if(!focusId)return;repairPure(BODIES[focusId],st(focusId));updateMenu();renderCityTag(focusId);}
+$('atk').addEventListener('click',doAttack);
+$('rep').addEventListener('click',doRepair);
+
+/* ---------- outliner ---------- */
+function buildOutliner(){
+  let html='';
+  for(const id of PLANET_IDS){const b=BODIES[id];
+    html+=`<div class="ol-sys">${b.name} SYSTEM</div>
+      <div class="ol-body" data-open="${id}"><span class="ol-dot" style="background:${b.col}"></span>
+        <span><span class="nm">${b.name}${id==='earth'?' ★':''}</span><br><span class="sub">${b.type.split('·')[0].trim().toUpperCase()}</span></span></div>`;
+    for(const mid of b.moons){const m=BODIES[mid];
+      html+=`<div class="ol-child" data-open="${mid}"><svg width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="5" fill="${m.col}"/></svg><span>${m.name} — ${cityName(mid)}</span></div>`;}
+  }
+  $('ol-list').innerHTML=html;
+}
+$('ol-list').addEventListener('click',e=>{
+  const g=e.target.closest('[data-open]');if(!g)return;
+  openBody(g.getAttribute('data-open'));
+  app.classList.remove('drawer');
+});
+
+/* ---------- faction retint ---------- */
+const FACS=[{p1:'#ff7043',p2:'#ffca28'},{p1:'#42a5f5',p2:'#f5f5f5'},{p1:'#66bb6a',p2:'#d4e157'},{p1:'#8b6fd0',p2:'#4ecdc4'}];
+function setFaction(i){
+  app.style.setProperty('--p1',FACS[i].p1);app.style.setProperty('--p2',FACS[i].p2);
+  document.querySelectorAll('#fac .swatch').forEach((s,j)=>s.classList.toggle('active',j===i));
+}
+FACS.forEach((f,i)=>{const b=document.createElement('button');b.className='swatch';
+  b.style.background=`linear-gradient(135deg,${f.p1} 0%,${f.p1} 68%,${f.p2} 68%,${f.p2} 100%)`;
+  b.addEventListener('click',()=>setFaction(i));$('fac').appendChild(b);});
+
+/* ---------- view toggle + mobile chrome ---------- */
+const frame=$('frame');
+function setView(m){
+  frame.classList.toggle('mobile',m);frame.classList.toggle('desktop',!m);
+  $('vd').classList.toggle('active',!m);$('vm').classList.toggle('active',m);
+  app.classList.remove('drawer');
+  refresh();
+}
+$('vd').addEventListener('click',()=>setView(false));
+$('vm').addEventListener('click',()=>setView(true));
+const toggleDrawer=()=>app.classList.toggle('drawer');
+$('fab').addEventListener('click',toggleDrawer);
+$('navol').addEventListener('click',toggleDrawer);
+$('scrim').addEventListener('click',()=>app.classList.remove('drawer'));
+$('mtoggle').addEventListener('click',()=>{
+  const c=$('mtop').classList.toggle('collapsed');
+  $('mtoggle').textContent=c?'▾ More':'▴ Less';
+  syncSizes();drawLines();
+});
+
+/* ---------- sizing ---------- */
+function syncSizes(){
+  if(isMobile()){
+    app.style.setProperty('--panel-h',$('mtop').offsetHeight+'px');
+    app.style.setProperty('--fleet-h',document.querySelector('.fleet').offsetHeight+'px');
+  }
+}
+function refresh(){
+  const W=stage.clientWidth,H=stage.clientHeight;
+  $('worldSvg').setAttribute('width',W);$('worldSvg').setAttribute('height',H);
+  if(isMobile()&&!$('mtop').dataset.autoCollapsed){
+    $('mtop').classList.add('collapsed');$('mtoggle').textContent='▾ More';$('mtop').dataset.autoCollapsed='1';
+  }
+  syncSizes();
+  if(focusId)renderNeighbors(focusId);
+  applyZ();
+}
+new ResizeObserver(refresh).observe(stage);
+window.addEventListener('resize',refresh);
+
+/* ---------- reset + boot + export ---------- */
+function reset(){
+  clearTimeout(zTimer);clearTimeout(snapT);zTimer=0;snapT=0;
+  seedStates();
+  zCur=0;zTarget=0;
+  clearFocus();
+  setFaction(0);
+  frame.style.maxWidth='';
+  setView(false);
+  $('mtop').dataset.autoCollapsed='';
+  $('mtop').classList.remove('collapsed');
+  app.classList.remove('drawer');
+  refresh();
+}
+function boot(){buildWorld();buildOutliner();seedStates();setFaction(0);refresh();positionMapLabels();}
+boot();
+
+window.Orbital={
+  logic:{clamp01,ease,mapCam,camAt,worldToScreen,rootOf,neighborsOf,bpos,hpColor,flameCount,
+    attack:attackPure,repair:repairPure,buildAllowed,lockText,statusText,defenseShown,yieldShown,
+    zoomLoopSource,Z1_FRAC,S1X_FRAC,S1Y_FRAC,GLYPH_H_FRAC,HPBAR_W_FRAC,CITY_DMG,STA_DMG,FIRE_THRESH,DEF_PER_WEAP,MAX,OUTER},
+  api:{
+    reset,getZ:()=>zCur,getFocus:()=>focusId,st,BODIES,PLANET_IDS,
+    setZ(z){zCur=zTarget=clamp01(z);applyZ();},
+    openBody,openBodyInstant(id){prepFocus(id);zCur=zTarget=1;applyZ();drawLines();},
+    clearFocus,zGo,zoomBy,attack:doAttack,repair:doRepair,refresh,positionMapLabels,
+    setFrameWidth(px){frame.style.maxWidth=px?px+'px':'';refresh();},
+    setView,
+  },
+};
+/* ================= UNIT TESTS · v2 spec ================= */
+const api=window.Orbital.api, L=window.Orbital.logic;
+const TESTS=[];
+const test=(id,name,fn)=>TESTS.push({id,name,fn});
+const AErr=msg=>new Error(msg);
+const ok=(v,m)=>{if(!v)throw AErr(m||'expected truthy');};
+const eq=(a,b,m)=>{if(a!==b)throw AErr((m||'eq')+`: ${JSON.stringify(a)} !== ${JSON.stringify(b)}`);};
+const near=(a,b,tol,m)=>{if(Math.abs(a-b)>tol)throw AErr((m||'near')+`: ${a} ≉ ${b} ±${tol}`);};
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+async function until(f,ms,m){const t0=Date.now();while(Date.now()-t0<(ms||3500)){if(f())return;await wait(25);}throw AErr(m||'timeout waiting');}
+const q=s=>document.querySelector(s),qa=s=>[...document.querySelectorAll(s)];
+const disp=el=>getComputedStyle(el).display;
+const openI=id=>api.openBodyInstant(id);
+const stW=()=>stage.clientWidth,stH=()=>stage.clientHeight;
+const rgb=hex=>{const n=parseInt(hex.slice(1),16);return `rgb(${n>>16}, ${(n>>8)&255}, ${n&255})`;};
+const inter=(a,b)=>!(a.right<=b.left+2||b.right<=a.left+2||a.bottom<=b.top+2||b.bottom<=a.top+2);
+
+/* ---- A · camera math [pure] ---- */
+test('A1','map & close framing exact',async()=>{
+  const W=900,H=700,mc=L.mapCam(W,H),c0=L.camAt(0,'earth',W,H),c1=L.camAt(1,'earth',W,H);
+  near(c0.scale,mc.scale,1e-9);near(c0.cx,0,1e-6);near(c0.cy,0,1e-6);
+  near(c1.scale,(L.Z1_FRAC*H)/api.BODIES.earth.rw,1e-9);
+});
+test('A2','[P0] planet screen position continuous S0→S1',async()=>{
+  const W=900,H=700,b=api.BODIES.earth,S1={x:L.S1X_FRAC*W,y:L.S1Y_FRAC*H};
+  let prev=null,prevD=null,total=Math.hypot(L.worldToScreen(b.wx,b.wy,L.camAt(0,'earth',W,H),W,H).x-S1.x,L.worldToScreen(b.wx,b.wy,L.camAt(0,'earth',W,H),W,H).y-S1.y);
+  for(let i=0;i<=10;i++){const z=i/10,s=L.worldToScreen(b.wx,b.wy,L.camAt(z,'earth',W,H),W,H);
+    const d=Math.hypot(s.x-S1.x,s.y-S1.y);
+    if(prevD!=null){ok(d<=prevD+1e-6,`dist not decreasing at z=${z}`);ok(Math.hypot(s.x-prev.x,s.y-prev.y)<=0.5*total+1,`jump at z=${z}`);}
+    prev=s;prevD=d;}
+  ok(prevD<1,'did not arrive at S1');
+});
+test('A3','[P0] radius strictly increasing',async()=>{
+  const W=900,H=700,b=api.BODIES.earth;let prev=0;
+  for(let i=0;i<=10;i++){const r=b.rw*L.camAt(i/10,'earth',W,H).scale;ok(r>prev,`radius not increasing at z=${i/10}`);prev=r;}
+});
+test('A4','scale geometric (pow, not linear)',async()=>{
+  const W=900,H=700;const rats=[];
+  for(let i=0;i<10;i++){rats.push(L.camAt((i+1)/10,'earth',W,H).scale/L.camAt(i/10,'earth',W,H).scale);}
+  const mx=Math.max(...rats),mn=Math.min(...rats);ok(mx/mn<1.0001,`ratio spread ${mx/mn}`);
+});
+test('A5','[P0] upper-limb framing bounded both ways',async()=>{
+  const W=900,H=700,b=api.BODIES.earth,c1=L.camAt(1,'earth',W,H);
+  const rPx=b.rw*c1.scale,s=L.worldToScreen(b.wx,b.wy,c1,W,H);
+  ok(rPx>=0.42*H&&rPx<=0.55*H,`radiusPx ${rPx} out of [0.42H,0.55H]`);
+  ok(s.y>H,`center y ${s.y} not below frame`);
+  const top=s.y-rPx;ok(top>=0.40*H&&top<=0.60*H,`disc top ${top} out of [0.40H,0.60H]`);
+});
+test('A6','size independence: radiusPx = Z1_FRAC·H for any rw',async()=>{
+  const W=900,H=700;
+  for(const id of ['earth','saturn','enceladus']){const b=api.BODIES[id];
+    near(b.rw*L.camAt(1,id,W,H).scale,L.Z1_FRAC*H,0.5,`rw-dependence for ${id}`);}
+});
+test('A7','focus=null ⇒ camAt === mapCam ∀z',async()=>{
+  const W=900,H=700,mc=L.mapCam(W,H);
+  for(const z of [0,0.3,0.7,1]){const c=L.camAt(z,null,W,H);
+    eq(c.cx,mc.cx);eq(c.cy,mc.cy);eq(c.scale,mc.scale);}
+});
+test('A8','A1/A5 hold at other viewport sizes',async()=>{
+  for(const [W,H] of [[1200,800],[500,600]]){
+    const mc=L.mapCam(W,H);near(L.camAt(0,'earth',W,H).scale,mc.scale,1e-9);
+    const c1=L.camAt(1,'earth',W,H),b=api.BODIES.earth,rPx=b.rw*c1.scale,s=L.worldToScreen(b.wx,b.wy,c1,W,H);
+    ok(rPx>=0.42*H&&rPx<=0.55*H,`rPx @${W}x${H}`);ok(s.y>H,`cy @${W}x${H}`);
+    const top=s.y-rPx;ok(top>=0.40*H&&top<=0.60*H,`top @${W}x${H}`);}
+});
+
+/* ---- B · zoom driver & input ---- */
+test('B1','z never leaves [0,1] under any input',async()=>{
+  for(const d of [5,-9,0.01,-0.01,3,-3,0.7,-2]){api.zoomBy(d);const z=api.getZ();ok(z>=0&&z<=1,`z=${z}`);}
+});
+test('B2','[P0] one wheel event mutates camera synchronously',async()=>{
+  const before=cam.getAttribute('transform');
+  const ev=new WheelEvent('wheel',{deltaY:-100,bubbles:true,cancelable:true});
+  $('worldSvg').dispatchEvent(ev);
+  ok(cam.getAttribute('transform')!==before,'camera unchanged in same task');
+  ok(ev.defaultPrevented,'wheel not consumed');
+});
+test('B3','[P0] ticker is setTimeout, no rAF in zoom loop',async()=>{
+  ok(!L.zoomLoopSource().includes('requestAnimationFrame'),'rAF found in zoom loop');
+  ok(L.zoomLoopSource().includes('setTimeout'),'setTimeout not found');
+});
+test('B4','snap settles to exactly 0 or 1',async()=>{
+  api.zoomBy(0.3);await until(()=>api.getZ()===0,2500,'no snap to 0');
+  api.zoomBy(0.3);api.zoomBy(0.3);await until(()=>api.getZ()===1,2500,'no snap to 1');
+});
+test('B5','pinch: spread in, pinch out, 1-pointer inert',async()=>{
+  const t=(id,x,y)=>new Touch({identifier:id,target:stage,clientX:x,clientY:y});
+  const te=(type,ts)=>new TouchEvent(type,{touches:ts,bubbles:true,cancelable:true});
+  stage.dispatchEvent(te('touchstart',[t(0,300,300),t(1,340,300)]));
+  stage.dispatchEvent(te('touchmove',[t(0,240,300),t(1,420,300)]));
+  const z1=api.getZ();ok(z1>0,'spread did not zoom in');
+  stage.dispatchEvent(te('touchmove',[t(0,300,300),t(1,330,300)]));
+  ok(api.getZ()<z1,'pinch did not zoom out');
+  stage.dispatchEvent(te('touchend',[]));
+  await until(()=>api.getZ()===0||api.getZ()===1,2000,'no snap after pinch');
+  const zs=api.getZ();
+  stage.dispatchEvent(te('touchstart',[t(0,300,300)]));
+  stage.dispatchEvent(te('touchmove',[t(0,380,300)]));
+  eq(api.getZ(),zs,'single pointer moved zoom');
+});
+test('B6','Esc, ✕ MAP, − all dismiss to map',async()=>{
+  openI('earth');window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));
+  await until(()=>api.getZ()===0,2500,'Esc failed');
+  openI('earth');$('tomap').click();await until(()=>api.getZ()===0,2500,'✕ MAP failed');
+  openI('earth');$('zout').click();await until(()=>api.getZ()===0,2500,'− failed');
+});
+test('B7','zoom-in with no focus picks a body first',async()=>{
+  eq(api.getFocus(),null);$('zin').click();
+  ok(api.getFocus()!==null,'no focus picked');
+  await until(()=>api.getZ()===1,2500,'did not zoom in');
+});
+test('B8','[P0] never fully black: map visible during/after zoom-out',async()=>{
+  openI('earth');api.setZ(0.3);
+  ok(+getComputedStyle($('mapLabels')).opacity>0,'labels invisible mid-out');
+  ok(+$('furn').style.opacity>0,'furniture invisible mid-out');
+  api.setZ(0);
+  near(+getComputedStyle($('mapLabels')).opacity,1,0.01,'labels not restored');
+  ok(qa('#mapLabelsSvg .halo').length>=1,'no halo');
+  ok(qa('#mapLabelsSvg text').length>=1,'no label');
+  ok(qa('[data-planet-disc]').length>=4,'planet dots missing');
+});
+test('B9','wheel over chrome does not hijack zoom',async()=>{
+  openI('earth');const before=cam.getAttribute('transform');
+  for(const sel of ['#mtop','.fleet','.col--left','.outliner']){
+    const ev=new WheelEvent('wheel',{deltaY:-100,bubbles:true,cancelable:true});
+    q(sel).dispatchEvent(ev);
+    ok(!ev.defaultPrevented,`wheel consumed over ${sel}`);
+  }
+  eq(cam.getAttribute('transform'),before,'camera moved from chrome wheel');
+});
+test('B10','+/− buttons drive zoom (guaranteed fallback)',async()=>{
+  $('zin').click();await until(()=>api.getZ()===1,2500,'+ failed');
+  $('zout').click();await until(()=>api.getZ()===0,2500,'− failed');
+});
+
+/* ---- C · focus & navigation ---- */
+test('C1','outliner click → focus + zoom + menu data',async()=>{
+  q('#ol-list [data-open="luna"]').click();
+  eq(api.getFocus(),'luna');
+  await until(()=>api.getZ()===1,3000,'no zoom');
+  eq($('m-name').textContent,'LUNA');
+});
+test('C2','map label click → same path',async()=>{
+  q('#mapLabelsSvg [data-open="mars"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));
+  eq(api.getFocus(),'mars');
+  await until(()=>api.getZ()===1,3000,'no zoom');
+  eq($('m-name').textContent,'MARS');
+});
+test('C3','[P0] zoom-out clears focus + tears down scene',async()=>{
+  openI('earth');$('b-forge').click();
+  api.zGo(0);await until(()=>api.getZ()===0&&api.getFocus()===null,3000,'did not settle/clear');
+  eq(qa('#cam [data-part]').length,0,'orphaned parts');
+  eq(qa('#orbsSvg [data-goto]').length,0,'orphaned orbs');
+  eq(disp($('stationOv')),'none','station still shown');
+});
+test('C4','breadcrumb: moon → parent; planet → none',async()=>{
+  openI('luna');
+  ok(!$('crumb').hidden,'crumb hidden on moon');
+  eq($('crumb').textContent,'◂ EARTH');
+  $('crumb').click();
+  eq(api.getFocus(),'earth');
+  await until(()=>api.getZ()===1,3000);
+  openI('mars');ok($('crumb').hidden,'crumb shown on planet');
+});
+test('C5','exactly one active/sel selection',async()=>{
+  openI('titan');
+  eq(qa('#ol-list .active').length,1,'outliner active count');
+  eq(q('#ol-list .active').getAttribute('data-open'),'titan');
+  eq(qa('#mapLabelsSvg .halo.sel').length,1,'map halo sel count');
+});
+test('C6','[P0] rootOf/neighbors/labels never throw on focus=null',async()=>{
+  eq(L.rootOf(null),null);eq(L.neighborsOf(null).length,0);
+  api.positionMapLabels();
+  ok(qa('#mapLabelsSvg [data-open]').length>0,'labels empty at map view');
+});
+test('C7','[P0] ONE planet element across the whole zoom (no crossfade pair)',async()=>{
+  const el0=q('[data-planet-disc="earth"]');
+  eq(qa('[data-planet-disc="earth"]').length,1,'duplicate planet elements');
+  api.openBody('earth');await until(()=>api.getZ()===1,3000);
+  ok(el0.isConnected,'planet node replaced');
+  eq(qa('[data-planet-disc="earth"]').length,1,'second planet appeared');
+  ok(el0===q('[data-planet-disc="earth"]'),'different node');
+});
+
+/* ---- D · neighbor orbs ---- */
+test('D1','neighborsOf: moon → parent+siblings; planet → moons',async()=>{
+  eq(JSON.stringify(L.neighborsOf('titan')),JSON.stringify(['saturn','rhea','enceladus']));
+  eq(JSON.stringify(L.neighborsOf('earth')),JSON.stringify(['luna']));
+});
+test('D2','orbs render with art, label, ▸',async()=>{
+  openI('enceladus');
+  for(const nid of ['saturn','titan','rhea']){
+    const g=q(`#orbsSvg [data-goto="${nid}"]`);ok(g,`no orb for ${nid}`);
+    ok(g.querySelector('circle'),'no art');
+    ok(g.querySelector('text').textContent.includes('▸'),'no ▸ affordance');
+  }
+  ok(q('#orbsSvg [data-goto="saturn"] [data-feature="rings"]'),'saturn orb missing rings');
+});
+test('D3','tapping a sky orb opens that body',async()=>{
+  openI('enceladus');
+  q('#orbsSvg [data-goto="titan"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));
+  eq(api.getFocus(),'titan');
+  await until(()=>api.getZ()===1,3000);
+  eq($('m-name').textContent,'TITAN');
+});
+test('D4','exactly one selection halo among orbs',async()=>{
+  openI('enceladus');eq(qa('.orb-halo.sel').length,1,'moon case');
+  openI('earth');eq(qa('.orb-halo.sel').length,1,'planet case');
+});
+test('D5','orbs are menu chrome: absent z=0, present z=1',async()=>{
+  eq(qa('#orbsSvg [data-goto]').length,0,'orbs at map view');
+  openI('saturn');
+  ok(qa('#orbsSvg [data-goto]').length===3,'orbs missing at menu');
+});
+
+/* ---- E · body stats & readout ---- */
+test('E1','[P0] full readout renders, none missing',async()=>{
+  openI('enceladus');
+  for(const [id,label] of [['m-name','name'],['m-type','type'],['m-owner','owner'],['m-desc','description'],['m-pop','pop'],['m-def','defense'],['m-ships','ships'],['m-hp','integrity'],['m-stock','stockpile']]){
+    ok($(id).textContent.trim().length>0&&$(id).textContent!=='—',`missing ${label}`);}
+  eq(qa('#m-yields .yield').length,4,'yield chips');
+});
+test('E2','defense = base + weapons·8',async()=>{
+  eq(L.defenseShown(4,2),4+2*L.DEF_PER_WEAP);
+  openI('enceladus');$('b-weapons').click();$('b-weapons').click();
+  eq($('m-def').textContent,String(4+2*L.DEF_PER_WEAP));
+});
+test('E3','yields scale with buildings only on surface worlds',async()=>{
+  const s={forge:2,mint:1,lab:3,weapons:0,shipyard:0};
+  eq(L.yieldShown(api.BODIES.earth,s,'M'),2+4);eq(L.yieldShown(api.BODIES.earth,s,'G'),3+2);
+  eq(L.yieldShown(api.BODIES.earth,s,'S'),2+6);eq(L.yieldShown(api.BODIES.earth,s,'F'),1);
+  eq(L.yieldShown(api.BODIES.saturn,s,'M'),0,'gas giant must not scale');
+});
+test('E4','zero-valued yields still display',async()=>{
+  openI('enceladus');
+  const g=q('#m-yields [data-yield="G"]');ok(g,'G chip missing');
+  ok(g.textContent.includes('0'),'zero not displayed');
+});
+test('E5','integrity source: city on surface, station otherwise',async()=>{
+  openI('enceladus');eq($('m-hp').textContent,'90/90');
+  openI('saturn');eq($('m-hp').textContent,'160/160');
+});
+test('E6','owner chip: YOU in --p1, rival neutral',async()=>{
+  openI('enceladus');
+  eq($('m-owner').textContent,'YOU');ok(!$('m-owner').classList.contains('neutral'));
+  eq(getComputedStyle($('m-owner')).color,rgb('#ff7043'),'YOU not tinted p1');
+  openI('rhea');eq($('m-owner').textContent,'DOMINION');ok($('m-owner').classList.contains('neutral'));
+});
+test('E7','per-body state isolation across hops',async()=>{
+  openI('earth');$('b-mint').click();
+  openI('luna');openI('earth');
+  eq(api.st('earth').mint,1);ok($('s-mint').textContent.startsWith('LV 1'));
+  eq(api.st('luna').mint,0);
+});
+
+/* ---- F · build & gating ---- */
+test('F1','[P0] city keys need surface; gas giant locked',async()=>{
+  ok(L.buildAllowed(api.BODIES.enceladus,'forge'));
+  ok(!L.buildAllowed(api.BODIES.saturn,'forge'));
+  openI('saturn');
+  ok($('b-forge').disabled,'forge enabled on gas giant');
+  eq($('s-forge').textContent,'no surface');
+});
+test('F2','[P0] station keys data-driven via hasStation',async()=>{
+  ok(L.buildAllowed(api.BODIES.enceladus,'weapons'),'moon station denied');
+  ok(L.buildAllowed(api.BODIES.luna,'shipyard'),'moon station denied');
+  ok(!L.buildAllowed(api.BODIES.charon,'weapons'),'hasStation:false allowed');
+  openI('charon');ok($('b-weapons').disabled);eq($('s-weapons').textContent,'no station');
+  openI('luna');ok(!$('b-weapons').disabled);
+});
+test('F3','levels clamp at MAX=3; MAX is a no-op',async()=>{
+  openI('earth');api.st('earth').forge=2;
+  $('b-forge').click();eq(api.st('earth').forge,3);
+  eq($('s-forge').textContent,'LV 3 · MAX');
+  $('b-forge').click();eq(api.st('earth').forge,3,'built past MAX');
+});
+test('F4','status text exact formats',async()=>{
+  eq(L.statusText(0,'forge'),'not built · +2 M/t');
+  eq(L.statusText(1,'forge'),'LV 1 ↑ · +2 M/t');
+  eq(L.statusText(3,'forge'),'LV 3 · MAX');
+});
+test('F5','building adds/enlarges the scene part by level',async()=>{
+  openI('earth');
+  $('b-forge').click();
+  const part=q('#cam [data-part="forge"]');ok(part,'part missing');
+  eq(part.getAttribute('data-lvl'),'1');
+  ok(disp(part)!=='none','part hidden at lvl1');
+  $('b-forge').click();
+  eq(part.getAttribute('data-lvl'),'2');
+  eq(getComputedStyle(part.querySelector('.lvl2')).opacity,'1','lvl2 variant not shown');
+});
+
+/* ---- G · scene render & art ---- */
+test('G1','[P0] planet art matches type + terminator',async()=>{
+  openI('earth');ok(q('#cam [data-feature="continents"]'),'terra continents');ok(q('#cam [data-feature="atmosphere"]'),'terra atmosphere');ok(q('#cam [data-feature="terminator"]'),'terminator');
+  openI('luna');ok(q('#cam [data-feature="craters"]'),'moon craters');
+  openI('mars');ok(q('#cam [data-feature="bands"]'),'rock bands');
+  openI('saturn');ok(q('#cam [data-feature="rings"]'),'gas rings');
+});
+test('G2','buildings on the upper arc, radially oriented',async()=>{
+  openI('earth');$('b-forge').click();
+  const part=q('#cam [data-part="forge"]');
+  const m=/rotate\((-?[\d.]+)\)/.exec(part.getAttribute('transform'));
+  ok(m,'no rotate');
+  near(parseFloat(m[1]),L.bpos(api.BODIES.earth,-0.62).deg,0.5,'wrong orientation');
+});
+test('G3','ambient skyline is neutral steel',async()=>{
+  openI('earth');
+  const r=q('#cam .ambient rect');ok(r,'no skyline');
+  eq(getComputedStyle(r).fill,rgb('#2c455f'),'skyline not steel');
+});
+test('G4','leader lines leave the button edge facing the target',async()=>{
+  openI('earth');$('b-forge').click();
+  const sr=stage.getBoundingClientRect();
+  const lf=q('#lines [data-line="b-forge"] rect');ok(lf,'forge line missing');
+  const fb=$('b-forge').getBoundingClientRect();
+  near(parseFloat(lf.getAttribute('x'))+2,fb.right-sr.left,3,'left-col line not from right edge');
+  const lw=q('#lines [data-line="b-weapons"] rect');ok(lw,'weapons line missing');
+  const wb=$('b-weapons').getBoundingClientRect();
+  near(parseFloat(lw.getAttribute('x'))+2,wb.left-sr.left,3,'right-col line not from left edge');
+  api.setZ(0.5);eq(qa('#lines g').length,0,'lines shown mid-zoom');
+});
+test('G6','[P0] world UI sized by radius (0.19·rw glyph, 0.5·rw bar)',async()=>{
+  openI('earth');$('b-forge').click();
+  const b=api.BODIES.earth,scale=L.camAt(1,'earth',stW(),stH()).scale;
+  // glyph scale is authored so 64 glyph-units == GLYPH_H_FRAC·rw world units
+  // (asserted on the transform itself — a rotated AABB would lie about height)
+  const m=/scale\(([\d.]+)\)/.exec(q('#cam [data-part="forge"]').getAttribute('transform'));
+  ok(m,'no scale in part transform');
+  near(parseFloat(m[1])*64,L.GLYPH_H_FRAC*b.rw,0.01,'glyph not ∝ rw');
+  const bw=q('#cam .hp-fill').getBoundingClientRect().width;
+  near(bw,L.HPBAR_W_FRAC*b.rw*scale,L.HPBAR_W_FRAC*b.rw*scale*0.1,'hp bar width');
+  // and the on-screen part stays in the same ballpark (catches raw-px leaks)
+  const ph=q('#cam [data-part="forge"]').getBoundingClientRect().height;
+  ok(ph>0.5*L.GLYPH_H_FRAC*b.rw*scale&&ph<2*L.GLYPH_H_FRAC*b.rw*scale,'rendered size off-scale');
+});
+test('G7','[P0] nothing exceeds the planet diameter',async()=>{
+  openI('earth');$('b-forge').click();$('b-mint').click();api.attack();
+  const b=api.BODIES.earth,dia=2*b.rw*L.camAt(1,'earth',stW(),stH()).scale;
+  for(const el of qa('#surfaceG [data-part], #surfaceG .ambient, #cityTag, #cityFire')){
+    const r=el.getBoundingClientRect();
+    ok(r.width<dia&&r.height<dia,`${el.id||el.getAttribute('data-part')||'el'} exceeds planet (${Math.round(r.width)}x${Math.round(r.height)})`);}
+});
+test('G8','[P0] every svg use element is explicitly bounded',async()=>{
+  openI('earth');
+  const uses=qa('#app use');
+  ok(uses.length>0,'no use elements found to check');
+  for(const u of uses){
+    for(const a of ['x','y','width','height'])ok(u.hasAttribute(a),`use ${u.getAttribute('href')} missing ${a}`);}
+});
+test('G9','[P0] clean menu sky; furniture restored at map',async()=>{
+  openI('earth');
+  eq(+getComputedStyle($('mapLabels')).opacity,0,'labels visible in menu sky');
+  eq(+$('furn').style.opacity,0,'furniture visible in menu sky');
+  api.setZ(0);
+  near(+getComputedStyle($('mapLabels')).opacity,1,0.01);
+  near(+$('furn').style.opacity,1,0.01);
+});
+
+/* ---- H · station ---- */
+test('H1','[P0] station iff hasStation (moons included)',async()=>{
+  openI('enceladus');ok(disp($('stationOv'))!=='none','moon station hidden');
+  openI('charon');eq(disp($('stationOv')),'none','no-station body shows station');
+});
+test('H2','core neutral; parts appear in faction color when built',async()=>{
+  openI('enceladus');
+  eq(getComputedStyle(q('#st-core rect')).fill,rgb('#2c455f'),'core not steel');
+  ok(!$('st-weapons').classList.contains('on'),'weapons on at lvl0');
+  $('b-weapons').click();
+  ok($('st-weapons').classList.contains('on'),'weapons not shown after build');
+  eq(getComputedStyle(q('#st-weapons rect')).fill,rgb('#ff7043'),'weapons not p1');
+});
+test('H3','station name + HP bar with ratio color',async()=>{
+  openI('enceladus');
+  ok($('st-tag').textContent.includes('GEYSER SPUR'),'name missing');
+  ok($('st-tag').textContent.includes('80 / 80'),'hp missing');
+  eq(q('#st-tag .hp-fill').getAttribute('fill'),'#66bb6a','full hp not green');
+});
+test('H4','orbit buttons link to station parts',async()=>{
+  openI('enceladus');
+  const line=q('#lines [data-line="b-shipyard"] circle');ok(line,'no shipyard line');
+  const sr=stage.getBoundingClientRect(),so=$('stationOv').getBoundingClientRect();
+  const ex=parseFloat(line.getAttribute('cx'))+sr.left,ey=parseFloat(line.getAttribute('cy'))+sr.top;
+  ok(ex>so.left-24&&ex<so.right+24&&ey>so.top-24&&ey<so.bottom+24,'line does not end at station');
+});
+
+/* ---- I · combat ---- */
+test('I1','attack lowers city+station HP, clamped ≥0',async()=>{
+  const b=api.BODIES.earth,s={cityHp:180,staHp:120};
+  L.attack(b,s);eq(s.cityHp,180-Math.round(180*L.CITY_DMG));eq(s.staHp,120-Math.round(120*L.STA_DMG));
+  for(let i=0;i<20;i++)L.attack(b,s);
+  ok(s.cityHp>=0&&s.staHp>=0,'clamp failed');
+  const g={cityHp:0,staHp:160};L.attack(api.BODIES.saturn,g);eq(g.cityHp,0,'gas city damaged');
+});
+test('I2','HP color thresholds at exact boundaries',async()=>{
+  eq(L.hpColor(0.61),'#66bb6a');eq(L.hpColor(0.6),'#ffb84d');
+  eq(L.hpColor(0.31),'#ffb84d');eq(L.hpColor(0.3),'#ef5350');
+});
+test('I3','fire threshold + monotone intensity, city + station',async()=>{
+  eq(L.flameCount(0.9,5),0);eq(L.flameCount(0.85,5),0);
+  ok(L.flameCount(0.84,5)>=1);
+  let prev=0;for(const r of [0.8,0.6,0.4,0.2,0]){const n=L.flameCount(r,5);ok(n>=prev,'not monotone');prev=n;}
+  openI('enceladus');
+  api.attack();const c1=qa('#cityFire .flame').length;ok(c1>0,'no city fire');
+  ok(qa('#st-fire .flame').length>0,'no station fire');
+  api.attack();ok(qa('#cityFire .flame').length>=c1,'city fire shrank');
+});
+test('I4','repair restores HP and clears all flames',async()=>{
+  openI('enceladus');api.attack();api.attack();
+  api.repair();
+  eq($('m-hp').textContent,'90/90');
+  eq(qa('#cityFire .flame').length+qa('#st-fire .flame').length,0,'flames remain');
+});
+test('I5','prefers-reduced-motion disables flame animation',async()=>{
+  let found=false;
+  for(const sh of document.styleSheets){let rules;try{rules=sh.cssRules;}catch(e){continue;}
+    for(const r of rules){if(r.media&&r.conditionText&&r.conditionText.includes('prefers-reduced-motion')){
+      for(const rr of r.cssRules)if(rr.selectorText&&rr.selectorText.includes('.flame')&&rr.style.animation.includes('none'))found=true;}}}
+  ok(found,'no reduced-motion rule for .flame');
+});
+
+/* ---- J · fleet & shipyard ---- */
+test('J1','shipyard gates fleet; pips == level',async()=>{
+  openI('titan');
+  for(const [sid] of SHIP_DEFS)ok($('ship-'+sid).disabled,'ship enabled with no yard');
+  eq($('slots').textContent,'no shipyard');
+  $('b-shipyard').click();$('b-shipyard').click();
+  eq(qa('#slots .pip').length,2,'pip count');
+  for(const [sid] of SHIP_DEFS)ok(!$('ship-'+sid).disabled,'ship disabled with yard');
+});
+test('J2','full roster with M/F costs',async()=>{
+  openI('enceladus');
+  for(const [sid,label] of SHIP_DEFS){
+    const b=$('ship-'+sid);ok(b,'missing '+sid);
+    ok(b.querySelector('.nm').textContent.toLowerCase()===label.toLowerCase(),'name');
+    ok(/M\d+·F\d+/.test(b.querySelector('.cost').textContent),'cost format '+sid);}
+});
+test('J3','hull reticle tracks the build queue',async()=>{
+  openI('enceladus');
+  ok(!$('st-hull').classList.contains('active'),'reticle on with empty queue');
+  $('ship-corvette').click();
+  ok($('st-hull').classList.contains('active'),'reticle missing with queue');
+  q('#queue .qchip').click();
+  ok(!$('st-hull').classList.contains('active'),'reticle not cleared');
+});
+test('J4','queue chips render and cancel on click',async()=>{
+  openI('enceladus');$('ship-corvette').click();
+  eq(qa('#queue .qchip').length,1);
+  ok(q('#queue .qchip').textContent.includes('Corvette'));
+  q('#queue .qchip').click();
+  eq(qa('#queue .qchip').length,0);
+  eq(api.st('enceladus').queue.length,0);
+});
+
+/* ---- K · theming ---- */
+test('K1','faction hardware via --p1/--p2; neutrals stay steel',async()=>{
+  openI('earth');$('b-forge').click();
+  eq(getComputedStyle(q('#cam [data-part="forge"] rect')).fill,rgb('#ff7043'),'part not p1');
+  eq(getComputedStyle(q('#cam .ambient rect')).fill,rgb('#2c455f'),'ambient not steel');
+  eq(getComputedStyle(q('#st-core rect')).fill,rgb('#2c455f'),'core not steel');
+});
+test('K2','live retint, no rebuild',async()=>{
+  openI('earth');$('b-forge').click();
+  const part=q('#cam [data-part="forge"] rect');
+  qa('#fac .swatch')[1].click();
+  eq(getComputedStyle(part).fill,rgb('#42a5f5'),'retint did not apply');
+  eq(getComputedStyle(app).getPropertyValue('--p1').trim(),'#42a5f5');
+});
+
+/* ---- L · responsive & chrome ---- */
+test('L1','breakpoint swap at ≤720 container width',async()=>{
+  api.setFrameWidth(360);await until(()=>stW()<=360,2000,'no shrink');
+  ok(disp(q('.topbar'))!=='none','topbar hidden');ok(disp(q('.header'))==='none','header shown');
+  ok(disp(q('.bottomnav'))!=='none','nav hidden');ok(disp($('fab'))!=='none','fab hidden');
+  api.setFrameWidth(1100);await until(()=>app.clientWidth>720,2000,'no grow');
+  ok(disp(q('.header'))!=='none','header hidden desktop');ok(disp(q('.topbar'))==='none','topbar shown desktop');
+});
+test('L2','[P0] no overlapping controls at 360 and 720',async()=>{
+  for(const w of [360,720]){
+    api.setFrameWidth(w);await until(()=>stW()<=w,2000);
+    openI('enceladus');api.refresh();await wait(80);
+    const panel=$('mtop').getBoundingClientRect(),fleet=q('.fleet').getBoundingClientRect();
+    const cl=q('.col--left').getBoundingClientRect(),cr=q('.col--right').getBoundingClientRect();
+    ok(!inter(cl,panel),`left chips ∩ panel @${w}`);ok(!inter(cl,fleet),`left chips ∩ fleet @${w}`);
+    ok(!inter(cr,panel),`right chips ∩ panel @${w}`);ok(!inter(cr,fleet),`right chips ∩ fleet @${w}`);
+    ok(!inter(cl,cr),`chip rows intersect @${w}`);
+  }
+});
+test('L3','mobile top box collapsed by default; expandable',async()=>{
+  api.setFrameWidth(360);await until(()=>stW()<=360,2000);
+  openI('earth');api.refresh();await wait(50);
+  ok($('mtop').classList.contains('collapsed'),'not collapsed by default');
+  ok(disp($('m-name'))!=='none','name hidden');
+  ok(disp($('m-owner'))!=='none','owner hidden');
+  ok(disp(q('#m-yields'))!=='none','resources hidden');
+  eq(disp($('m-desc')),'none','desc shown collapsed');
+  eq(disp(q('.metrics')),'none','metrics shown collapsed');
+  eq(disp(q('.stockpile')),'none','stockpile shown collapsed');
+  eq(disp($('collector')),'none','collector shown collapsed');
+  $('mtoggle').click();
+  ok(disp(q('.metrics'))!=='none','metrics still hidden after expand');
+});
+test('L4','drawer: FAB/nav toggle, scrim closes, open-body closes',async()=>{
+  api.setFrameWidth(360);await until(()=>stW()<=360,2000);
+  $('fab').click();ok(app.classList.contains('drawer'),'fab did not open');
+  $('scrim').click();ok(!app.classList.contains('drawer'),'scrim did not close');
+  $('navol').click();ok(app.classList.contains('drawer'),'nav did not open');
+  q('#ol-list [data-open="luna"]').click();
+  ok(!app.classList.contains('drawer'),'open body did not close drawer');
+  eq(api.getFocus(),'luna');
+});
+test('L5','no horizontal page scroll at any width',async()=>{
+  for(const w of [360,720,1280]){
+    api.setFrameWidth(w);await wait(80);
+    const se=document.scrollingElement;
+    ok(se.scrollWidth<=se.clientWidth+1,`h-scroll at ${w}: ${se.scrollWidth}>${se.clientWidth}`);}
+});
+
+/* ---- M · collector ---- */
+test('M1','collector deploys: label, art, skimmer wording',async()=>{
+  openI('earth');
+  $('collector').click();
+  ok($('collector').textContent.includes('online'),'label not online');
+  const part=q('#cam [data-part="collector"]');
+  eq(part.getAttribute('data-lvl'),'1');ok(disp(part)!=='none','art not visible');
+  openI('saturn');
+  ok($('collector').textContent.toLowerCase().includes('skimmer'),'no skimmer wording');
+});
+
+/* ---------- runner ---------- */
+async function runTests(){
+  $('tboard').classList.add('show');
+  const rowsEl=$('trows');rowsEl.innerHTML='';
+  let pass=0,fail=0;const rows=[];
+  for(const t of TESTS){
+    let good=true,msg='';
+    try{api.reset();await wait(30);await t.fn();}
+    catch(e){good=false;msg=(e&&e.message)||String(e);}
+    good?pass++:fail++;
+    rows.push({id:t.id,ok:good,msg});
+    const d=document.createElement('div');
+    d.className='trow '+(good?'ok':'bad');
+    // textContent only — test names/messages must never inject markup
+    const mk=(cls,txt)=>{const s=document.createElement('span');if(cls)s.className=cls;s.textContent=txt;return s;};
+    d.appendChild(mk('tid',t.id));d.appendChild(mk('tst',good?'PASS':'FAIL'));d.appendChild(mk('',t.name));
+    if(!good)d.appendChild(mk('tmsg',' — '+msg));
+    rowsEl.appendChild(d);
+    $('tsum').innerHTML=`<b class="pass">${pass} pass</b> · <b class="${fail?'fail':'pass'}">${fail} fail</b> · ${TESTS.length} total`;
+  }
+  api.reset();
+  window.__RESULTS={done:true,pass,fail,total:TESTS.length,rows:rows.filter(r=>!r.ok)};
+  return window.__RESULTS;
+}
+$('run-tests').addEventListener('click',runTests);
+window.runTests=runTests;
+</script>
