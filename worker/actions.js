@@ -808,16 +808,25 @@ async function handleDeploySettlement(req, env, ctx) {
 
 // Mirror of src/game/techs.ts TECH_DEFS. Server-authoritative so a client
 // can't lie about cost. costForNext(level) = ceil(baseCost * (level+1)^scaling).
+//
+// UNIFIED curve (15 × (level+1)^1.72) — must match src/game/techs.ts
+// RESEARCH_BASE_COST / RESEARCH_COST_SCALING exactly. The old per-track
+// curves (40/1.7 etc.) were retired client-side but left stale here, so the
+// client bar filled at ~15 sci while the server ground on to ~40 — research
+// looked "finished" then hung until the higher server cost was met. Keep
+// these two tables in lockstep. L1 15 · L3 100 · L5 267 · L10 ~787.
+const RESEARCH_BASE_COST = 15;
+const RESEARCH_COST_SCALING = 1.72;
 const TECH_DEFS = {
-  weapons:      { baseCost: 40, costScaling: 1.7 },
-  armor:        { baseCost: 40, costScaling: 1.7 },
-  propulsion:   { baseCost: 35, costScaling: 1.6 },
+  weapons:      { baseCost: RESEARCH_BASE_COST, costScaling: RESEARCH_COST_SCALING },
+  armor:        { baseCost: RESEARCH_BASE_COST, costScaling: RESEARCH_COST_SCALING },
   // Flight Dynamics scrapped — speed now comes from engine parts scaled by
   // Propulsion. A research request for 'flight' now falls through to the
   // unknown-tech rejection below.
-  construction: { baseCost: 50, costScaling: 1.8 },
-  industry:     { baseCost: 45, costScaling: 1.7 },
-  sensors:      { baseCost: 30, costScaling: 1.5 },
+  propulsion:   { baseCost: RESEARCH_BASE_COST, costScaling: RESEARCH_COST_SCALING },
+  construction: { baseCost: RESEARCH_BASE_COST, costScaling: RESEARCH_COST_SCALING },
+  industry:     { baseCost: RESEARCH_BASE_COST, costScaling: RESEARCH_COST_SCALING },
+  sensors:      { baseCost: RESEARCH_BASE_COST, costScaling: RESEARCH_COST_SCALING },
 };
 
 /** Mirror of src/game/techs.ts TECH_MAX_LEVEL. Hard cap per track —

@@ -3238,13 +3238,19 @@ export class Room {
     // with "No research project"). Science with no project simply banks.
     try {
       const TECH_MAX_LEVEL = 10;
+      // UNIFIED curve — must match src/game/techs.ts and worker/actions.js
+      // exactly (15 × (level+1)^1.72). The old per-track curves left stale
+      // here made the drain complete at a HIGHER cost than the client bar
+      // showed, so research looked done then hung. Keep all three in sync.
+      const RESEARCH_BASE_COST = 15;
+      const RESEARCH_COST_SCALING = 1.72;
       const TECH_DEFS = {
-        weapons:      { baseCost: 40, costScaling: 1.7 },
-        armor:        { baseCost: 40, costScaling: 1.7 },
-        propulsion:   { baseCost: 35, costScaling: 1.6 },
-        construction: { baseCost: 50, costScaling: 1.8 },
-        industry:     { baseCost: 45, costScaling: 1.7 },
-        sensors:      { baseCost: 30, costScaling: 1.5 },
+        weapons:      { baseCost: RESEARCH_BASE_COST, costScaling: RESEARCH_COST_SCALING },
+        armor:        { baseCost: RESEARCH_BASE_COST, costScaling: RESEARCH_COST_SCALING },
+        propulsion:   { baseCost: RESEARCH_BASE_COST, costScaling: RESEARCH_COST_SCALING },
+        construction: { baseCost: RESEARCH_BASE_COST, costScaling: RESEARCH_COST_SCALING },
+        industry:     { baseCost: RESEARCH_BASE_COST, costScaling: RESEARCH_COST_SCALING },
+        sensors:      { baseCost: RESEARCH_BASE_COST, costScaling: RESEARCH_COST_SCALING },
       };
       const researchers = (await this.env.DB
         .prepare(
@@ -3293,16 +3299,26 @@ export class Room {
         // research_progress and the science pool across hundreds of
         // ticks and the numbers drift into long ugly decimals.
         const round3 = (n) => Math.round(n * 1000) / 1000;
-        const spend = round3(Math.min(pool, income, cost - progress));
-        if (spend <= 0) continue;
+        const remaining = round3(cost - progress);
+        // Already fully funded → grant NOW, spending nothing more. This
+        // covers a project whose stored progress meets/exceeds the current
+        // cost — e.g. the cost curve was lowered under existing progress
+        // (the unified-curve alignment), or float drift left it a hair over.
+        // Without this branch the spend<=0 guard below would `continue` and
+        // a finished tech would hang forever, never granted.
+        let spend = 0;
+        if (remaining > 0) {
+          spend = round3(Math.min(pool, income, remaining));
+          if (spend <= 0) continue;  // no science income this tick — retry next tick
 
-        const newProgress = round3(progress + spend);
-        if (newProgress < cost) {
-          await this.env.DB
-            .prepare('UPDATE game_factions SET science = science - ?, research_progress = ? WHERE id = ?')
-            .bind(spend, newProgress, f.id)
-            .run();
-          continue;
+          const newProgress = round3(progress + spend);
+          if (newProgress < cost) {
+            await this.env.DB
+              .prepare('UPDATE game_factions SET science = science - ?, research_progress = ? WHERE id = ?')
+              .bind(spend, newProgress, f.id)
+              .run();
+            continue;
+          }
         }
 
         // Level complete. Clear the project so the next one is a
