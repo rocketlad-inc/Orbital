@@ -92,7 +92,18 @@ export const WorldMenuOverlay: React.FC = () => {
     return () => setWorldMenuActive(false);
   }, []);
 
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [openId, setOpenIdRaw] = useState<string | null>(null);
+  // While a menu is open: tag <body> so the left rail steps aside
+  // (CSS in WorldMenuOverlay.css — MP-only by construction), and
+  // measure the real TopBar so the panel tucks exactly under it.
+  useEffect(() => {
+    document.body.classList.toggle('wm-open', !!openId);
+    const bar = document.querySelector('.top-bar') as HTMLElement | null;
+    document.body.style.setProperty('--wm-topbar-h', `${bar?.offsetHeight ?? 52}px`);
+    return () => { document.body.classList.remove('wm-open'); };
+  }, [openId]);
+
+  const setOpenId = setOpenIdRaw;
   const [collapsed, setCollapsed] = useState(true);
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const camSnapshotRef = useRef<{ x: number; y: number; scale: number; focusedBodyId?: string } | null>(null);
@@ -136,7 +147,7 @@ export const WorldMenuOverlay: React.FC = () => {
         focusBody(undefined);
       }
     }
-  }, [deselectBody, focusBody, updateCamera]);
+  }, [deselectBody, focusBody, updateCamera, setOpenId]);
 
   // z from the real camera; eased display copy for chrome fades.
   const zTarget = body ? zOf(camera.scale, body, vh) : 0;
@@ -319,7 +330,9 @@ export const WorldMenuOverlay: React.FC = () => {
       <svg className="wm-orbs" width={vw} height={vh} aria-hidden="true">
         {neighbors.map((nb, i) => {
           const isParent = nb.id === body.parent;
-          const slot = ORB_SLOTS[isParent ? 0 : Math.min(3, (parentBody ? 1 : 0) + i)];
+          // parent occupies index 0 of the neighbors array, so sibling
+          // indexes 1..3 map straight onto slots 1..3 (no double-count).
+          const slot = ORB_SLOTS[isParent ? 0 : Math.min(3, Math.max(1, i))];
           const ox = slot.x * vw, oy = slot.y * vh, or = Math.max(9, slot.r * vh);
           return (
             <g

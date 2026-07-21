@@ -2,10 +2,17 @@
    menu. Matches the game's panel system (dark glass, #2a3d50 lines,
    JetBrains Mono, uppercase letterspaced labels). */
 
+/* While the MP menu is open, the left rail (Outliner/ShipPanel) gets
+   out of the way — the menu IS the body context. Class only ever set
+   by the MP overlay, so this rule is dead in single-player. */
+body.wm-open .left-rail { display: none; }
+
 .wm-root {
   position: fixed;
   inset: 0;
-  z-index: 60; /* above canvas + left rail, below modals */
+  /* Above the left rail (z 80), below the TopBar (z 1000) so resources
+     + tick stay visible, and far below modals (5000+). */
+  z-index: 900;
   pointer-events: none;
   font-family: 'JetBrains Mono', monospace;
   color: #d6e2ec;
@@ -18,7 +25,7 @@
 /* ---- top readout panel ---- */
 .wm-top {
   position: absolute;
-  top: 52px; /* below the TopBar */
+  top: var(--wm-topbar-h, 52px); /* measured below the real TopBar */
   left: 0; right: 0;
   display: flex;
   flex-wrap: wrap;
@@ -180,7 +187,16 @@
   letter-spacing: 0.12em; padding: 5px 11px; cursor: pointer;
 }
 .wm-designer:hover { background: rgba(78, 205, 196, 0.12); }
-.wm-fleet-body { overflow-y: auto; padding: 0 8px 8px; }
+.wm-fleet-body {
+  overflow-y: auto;
+  padding: 0 8px 8px;
+  /* BuildPanel was authored for a side panel — keep it panel-width
+     and centered instead of smearing across the whole viewport. */
+  max-width: 860px;
+  width: 100%;
+  margin: 0 auto;
+}
+.wm-tomap { top: calc(var(--wm-topbar-h, 52px) + 66px); }
 
 /* ---- toggle pill (rendered in both modes by GameUI's MP branch) ---- */
 .wm-toggle-pill {

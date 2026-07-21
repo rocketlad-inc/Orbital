@@ -303,8 +303,18 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const focusedBody = gameState.bodies.find(b => b.id === camera.focusedBodyId);
       if (focusedBody) {
         const pos = bodyPosition(focusedBody, renderTick(), gameState.bodies);
-        camX = pos.x;
-        camY = pos.y;
+        // World menu (MP only): while the overlay is active, camera.x/y
+        // act as an OFFSET from the tracked body so the menu can park
+        // the body below the frame (upper-limb framing). SP: camera.x/y
+        // are always 0 while focused (focusBody zeroes them; pan/pinch
+        // release focus first), so pos + 0 ≡ pos — byte-identical.
+        if (isWorldMenuActive()) {
+          camX = pos.x + camera.x;
+          camY = pos.y + camera.y;
+        } else {
+          camX = pos.x;
+          camY = pos.y;
+        }
       }
     }
 
@@ -880,7 +890,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         exploredDirtyRef.current = true;
       }
       const yieldsVisible = explored ? explored.has(body.id) : wasInCoverage(bodyPos);
-      drawBody(body, renderContext, isSelected, isHovered, yieldsVisible, bodyLabelRows.get(body.id) ?? 0);
+      // World menu (MP only): selection brackets/hover rings are map
+      // furniture — at menu zoom they'd render as giant chevrons across
+      // the sky. orbitAlpha is 1 in SP and at map zoom (no-op there).
+      const menuHidesChrome = orbitAlpha < 0.5;
+      drawBody(body, renderContext, isSelected && !menuHidesChrome, isHovered && !menuHidesChrome, yieldsVisible, bodyLabelRows.get(body.id) ?? 0);
       // Asteroid-weapon overlay: flame trail + projected impact path
       // + pulsing crosshair on the target. drawBody already places
       // the body's icon at its ram-mode position via bodyPosition.
