@@ -4,6 +4,16 @@ import { useAuth } from './AuthContext';
 import { LobbyMapPreview } from './LobbyMapPreview';
 import { colorDistance, COLOR_MIN_DISTANCE, deriveSecondary } from '../game/colorUtils';
 
+/** A pre-game lobby chat line, as broadcast by the room WebSocket
+ *  (`{ type: 'chat', from, text, at }`). `key` is assigned client-side
+ *  for a stable React key on the append-only log. */
+interface ChatMsg {
+  key: number;
+  from: { userId: string; displayName: string };
+  text: string;
+  at: number;
+}
+
 /** Two-tone (§5) chip: primary square with a secondary corner. Mirrors
  *  FactionPanel's twoToneChip exactly so a member's color reads the same
  *  in the lobby as it will in the match. */
@@ -173,6 +183,14 @@ function RoomDetail({
   const wsRef = useRef<WebSocket | null>(null);
   // Bumped to force-reconnect the room WS (e.g. after a stale-socket send).
   const [wsTick, setWsTick] = useState(0);
+  // Pre-game chat: the running log (capped) + the composer draft. Lines
+  // arrive over the same room WS that carries presence/ready; the server
+  // broadcasts each `chat` message back to everyone including the sender,
+  // so a sent line simply shows up when its broadcast returns.
+  const [chatLog, setChatLog] = useState<ChatMsg[]>([]);
+  const [chatDraft, setChatDraft] = useState('');
+  const chatKeyRef = useRef(0);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
   // Optimistic local ready flag — the WS roundtrip can take 100-300ms
   // and the playtester read that delay as "Ready Up does nothing".
   // We flip this immediately on click; useEffect below clears it once
@@ -235,7 +253,28 @@ function RoomDetail({
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping', t: Date.now() }));
       }, 25_000);
     });
-    ws.addEventListener('message', () => refresh()); // any server message triggers re-poll
+    ws.addEventListener('message', (ev) => {
+      // Chat lines carry their own payload and don't change the room
+      // snapshot, so append them and skip the re-poll. Everything else
+      // (presence, ready, settings, game-started…) just triggers a
+      // refresh — the snapshot is the source of truth for those.
+      let m: any;
+      try { m = JSON.parse(typeof ev.data === 'string' ? ev.data : ''); } catch { m = null; }
+      if (m && m.type === 'chat' && m.from && typeof m.text === 'string') {
+        setChatLog((prev) => {
+          const next = [...prev, {
+            key: chatKeyRef.current++,
+            from: m.from,
+            text: m.text,
+            at: typeof m.at === 'number' ? m.at : Date.now(),
+          }];
+          // Cap the in-memory log so a marathon lobby can't grow unbounded.
+          return next.length > 200 ? next.slice(next.length - 200) : next;
+        });
+        return;
+      }
+      refresh();
+    });
     ws.addEventListener('close', () => {
       if (cancelled) return;
       // Backoff via setTimeout to avoid hot-looping on server-side rejections.
@@ -348,6 +387,12 @@ function RoomDetail({
     setHostInterval(snap.settings.tick_interval_ms);
     settingsInitedRef.current = true;
   }, [snap]);
+
+  // Keep the chat pinned to the newest line as messages arrive.
+  useEffect(() => {
+    const el = chatScrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [chatLog]);
 
   if (!snap) return <div className="mp-empty">Loading room…</div>;
 
@@ -492,6 +537,27 @@ function RoomDetail({
     // Dead socket. Bump the reconnect counter so the WS effect tears
     // down + recreates. The user can click Ready Up again once the new
     // socket opens — typically <500ms.
+    setWsTick((n) => n + 1);
+  }
+
+  function sendChat(e: React.FormEvent) {
+    e.preventDefault();
+    const text = chatDraft.trim();
+    if (!text) return;
+    const ws = wsRef.current;
+    // Same dead-socket guard as toggleReady: the cached ref can point at
+    // a socket the server hibernated or a network blip closed. Send only
+    // on an OPEN socket; otherwise kick the reconnect and let the user
+    // resend once the fresh socket opens (typically <500ms).
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify({ type: 'chat', text: text.slice(0, 500) }));
+        setChatDraft('');
+        return;
+      } catch (err) {
+        console.warn('chat send failed, will reconnect', err);
+      }
+    }
     setWsTick((n) => n + 1);
   }
 
@@ -729,6 +795,46 @@ function RoomDetail({
           </div>
         );
       })}
+
+      <div className="mp-section-title" style={{ marginTop: 12 }}>Lobby chat</div>
+      <div className="lobby-chat">
+        <div className="lobby-chat__log" ref={chatScrollRef}>
+          {chatLog.length === 0 ? (
+            <div className="mp-empty" style={{ fontSize: 10, padding: '4px 2px' }}>
+              No messages yet — say hi to the other commanders.
+            </div>
+          ) : (
+            chatLog.map((m) => {
+              const mine = !!user && m.from.userId === user.id;
+              return (
+                <div key={m.key} className={`lobby-chat__line ${mine ? 'is-mine' : ''}`}>
+                  <span className="lobby-chat__who">{mine ? 'you' : m.from.displayName}</span>
+                  <span className="lobby-chat__text">{m.text}</span>
+                </div>
+              );
+            })
+          )}
+        </div>
+        <form className="lobby-chat__composer" onSubmit={sendChat}>
+          <input
+            className="mp-input"
+            type="text"
+            maxLength={500}
+            placeholder="Message the lobby…"
+            value={chatDraft}
+            onChange={(e) => setChatDraft(e.target.value)}
+            style={{ flex: 1 }}
+          />
+          <button
+            className="mp-submit"
+            type="submit"
+            disabled={!chatDraft.trim()}
+            style={{ width: 'auto', margin: 0, padding: '8px 12px' }}
+          >
+            Send
+          </button>
+        </form>
+      </div>
 
       <div className="mp-error">{error || ''}</div>
       </div>{/* .lobby-panel__body */}

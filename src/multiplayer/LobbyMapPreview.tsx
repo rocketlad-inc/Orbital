@@ -65,13 +65,25 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
   const rafRef = useRef<number>(0);
   // Manual zoom multiplier on top of the auto-framing. Scroll the map
   // to zoom out/in for context; the camera CENTRE stays on the focused
-  // planet (or system centre), so your world never leaves the middle.
+  // planet (or system centre) UNLESS the player has dragged.
   const userZoomRef = useRef<number>(1);
+  // Manual pan offset (world units) added on top of the framed centre.
+  // Dragging the exposed map shifts this; it's clamped so the startable
+  // system can never be dragged fully off-screen.
+  const panRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  // Framing basis published by computeTarget each frame, so the drag
+  // handlers can clamp the pan against the current focus + fit without
+  // recomputing them.
+  const baseCenterRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const maxPanRef = useRef<number>(0);
 
-  // Re-frame (reset manual zoom) whenever the focused planet changes —
-  // picking a new capital snaps back to its default framed view, from
-  // which you can scroll out again.
-  useEffect(() => { userZoomRef.current = 1; }, [focusBodyId]);
+  // Re-frame (reset manual zoom + pan) whenever the focused planet
+  // changes — picking a new capital snaps back to its default framed
+  // view, from which you can scroll and drag again.
+  useEffect(() => {
+    userZoomRef.current = 1;
+    panRef.current = { x: 0, y: 0 };
+  }, [focusBodyId]);
 
   const claimsKey = snap.members
     .map(m => `${m.userId}:${m.chosen_starting_body ?? ''}`)
@@ -125,7 +137,21 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
       const maxZoom = 6;
       userZoomRef.current = Math.max(minZoom, Math.min(maxZoom, userZoomRef.current));
 
-      return { x: center.x, y: center.y, scale: frameScale * userZoomRef.current };
+      // Publish the framing basis + a pan bound, then clamp the current
+      // pan so the framed centre + pan stays within `fit` of Sol — you
+      // can drag around the startable system but never lose it entirely.
+      baseCenterRef.current = { x: center.x, y: center.y };
+      maxPanRef.current = fit;
+      const clampAbs = (base: number, off: number) =>
+        Math.max(-fit, Math.min(fit, base + off)) - base;
+      panRef.current.x = clampAbs(center.x, panRef.current.x);
+      panRef.current.y = clampAbs(center.y, panRef.current.y);
+
+      return {
+        x: center.x + panRef.current.x,
+        y: center.y + panRef.current.y,
+        scale: frameScale * userZoomRef.current,
+      };
     };
 
     const draw = (cam: Camera, w: number, h: number) => {
@@ -262,6 +288,55 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
     };
     canvas.addEventListener('wheel', onWheel, { passive: false });
 
+    // Drag-to-pan. Pointer events cover mouse + touch (canvas has
+    // touch-action:none so the browser doesn't steal the gesture). We
+    // move both the pan offset and the *current* camera by the same
+    // world delta, so the map tracks the cursor 1:1 with no lerp lag and
+    // no snap-back when the drag ends (target == current camera).
+    let dragging = false;
+    let lastX = 0;
+    let lastY = 0;
+    const onPointerDown = (e: PointerEvent) => {
+      dragging = true;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      canvas.style.cursor = 'grabbing';
+      try { canvas.setPointerCapture(e.pointerId); } catch { /* noop */ }
+    };
+    const onPointerMove = (e: PointerEvent) => {
+      if (!dragging) return;
+      const cam = camRef.current;
+      if (!cam) return;
+      e.preventDefault();
+      const dx = (e.clientX - lastX) / cam.scale;
+      const dy = (e.clientY - lastY) / cam.scale;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      // Drag right → content follows the cursor right → centre moves left.
+      let px = panRef.current.x - dx;
+      let py = panRef.current.y - dy;
+      // Clamp against the framing basis published by computeTarget.
+      const b = baseCenterRef.current;
+      const m = maxPanRef.current;
+      px = Math.max(-m, Math.min(m, b.x + px)) - b.x;
+      py = Math.max(-m, Math.min(m, b.y + py)) - b.y;
+      panRef.current.x = px;
+      panRef.current.y = py;
+      cam.x = b.x + px;
+      cam.y = b.y + py;
+      draw(cam, canvas.clientWidth, canvas.clientHeight);
+    };
+    const onPointerUp = (e: PointerEvent) => {
+      dragging = false;
+      canvas.style.cursor = 'grab';
+      try { canvas.releasePointerCapture(e.pointerId); } catch { /* noop */ }
+    };
+    canvas.style.cursor = 'grab';
+    canvas.addEventListener('pointerdown', onPointerDown);
+    canvas.addEventListener('pointermove', onPointerMove);
+    canvas.addEventListener('pointerup', onPointerUp);
+    canvas.addEventListener('pointercancel', onPointerUp);
+
     kick();
     const ro = new ResizeObserver(kick);
     ro.observe(canvas);
@@ -271,6 +346,10 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
       rafRef.current = 0;
       ro.disconnect();
       canvas.removeEventListener('wheel', onWheel);
+      canvas.removeEventListener('pointerdown', onPointerDown);
+      canvas.removeEventListener('pointermove', onPointerMove);
+      canvas.removeEventListener('pointerup', onPointerUp);
+      canvas.removeEventListener('pointercancel', onPointerUp);
       window.removeEventListener('resize', kick);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -298,7 +377,7 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
         <span><i className="dot dot--claimable" /> claimable</span>
         <span><i className="dot dot--mine" /> your pick</span>
         <span><i className="dot dot--other" /> taken</span>
-        <span className="lobby-map-preview__hint">scroll to zoom</span>
+        <span className="lobby-map-preview__hint">drag to pan · scroll to zoom</span>
       </div>
     </div>,
     document.body,

@@ -1266,6 +1266,10 @@
      in the exposed map area. The panel (z:2) still sits on top, so
      clicks/scrolls over it go to the panel, not the map. */
   pointer-events: auto;
+  /* Own touch gestures (drag-to-pan) instead of letting the browser
+     scroll/zoom the page out from under the drag. */
+  touch-action: none;
+  cursor: grab;
 }
 .lobby-map-preview__legend {
   position: absolute;
@@ -1298,6 +1302,49 @@
 .lobby-map-preview__legend .dot--claimable { background: #4ecdc4; opacity: 0.55; }
 .lobby-map-preview__legend .dot--mine { background: #4ecdc4; }
 .lobby-map-preview__legend .dot--other { background: #ffb84d; }
+
+/* ---------- Pre-game lobby chat ---------- */
+.lobby-chat {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #2a3d50;
+  border-radius: 6px;
+  background: rgba(6, 10, 16, 0.55);
+  overflow: hidden;
+}
+.lobby-chat__log {
+  /* Fixed viewport with its own scroll so a busy chat doesn't push the
+     composer (or the rest of the panel) around. */
+  height: 180px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.lobby-chat__line {
+  word-break: break-word;
+}
+.lobby-chat__who {
+  color: var(--mp-accent);
+  font-weight: 700;
+  margin-right: 6px;
+}
+.lobby-chat__line.is-mine .lobby-chat__who {
+  color: #ffb84d;
+}
+.lobby-chat__text {
+  color: #d6e2ec;
+}
+.lobby-chat__composer {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-top: 1px solid #2a3d50;
+  background: rgba(78, 205, 196, 0.04);
+}
 
 /* ---- Starting-body picker (in-room lobby) ---- */
 .lobby-body-grid {

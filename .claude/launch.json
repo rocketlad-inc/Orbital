@@ -9,6 +9,13 @@
       "autoPort": true
     },
     {
+      "name": "orbital-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["start"],
+      "port": 3000,
+      "autoPort": true
+    },
+    {
       "name": "event-hub",
       "runtimeExecutable": "npx",
       "runtimeArgs": [
