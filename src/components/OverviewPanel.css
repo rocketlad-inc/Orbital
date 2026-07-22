@@ -30,22 +30,25 @@
   animation: panel-slide-in 0.18s ease-out;
 }
 
-/* Mobile: the Outliner collapses to a top-bar pill on small screens, so
-   the panel doesn't need to leave 264px on the right. Use the full
-   viewport minus the safe 8px gutters. Without this override the panel
-   rendered at ~95px wide on a 375px viewport — completely unusable. */
+/* Mobile: full-screen. Fleet / Settlements / Research take the whole
+   width and all the height between the resource bar and the bottom rail.
+   Must override the desktop `width: min(640px, 60vw)` — otherwise that
+   width leaks in and the panel renders as a narrow left column. */
 @media (max-width: 1023px) {
   .overview-panel {
-    left: 8px;
-    right: 8px;
-    /* Anchor to the very top of the screen — past the logo/resource bar —
-       so the full menu height is usable. Matches every other mobile
-       pop-up (world popover, dock panels). */
-    top: env(safe-area-inset-top, 0px);
-    /* On the narrow tier (≤768) the DockRail is a 72px bottom strip
-       (see DockRail.css --mobile-rail-height). Clear it so the overlay
-       doesn't paint underneath the rail buttons. */
+    left: 0;
+    right: 0;
+    width: auto;              /* cancel the desktop narrow width */
+    /* Sit BELOW the fixed resource bar (--topbar-h, which already grows
+       by the safe-area inset) so the panel's own header is fully visible
+       and never hides under the bar. */
+    top: calc(var(--topbar-h) + env(safe-area-inset-top, 0px));
+    /* Clear the bottom DockRail strip so the panel doesn't paint under
+       the nav buttons. */
     bottom: calc(var(--mobile-rail-height, 8px) + 8px);
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;         /* edge-to-edge full-screen sheet */
   }
 }
 
