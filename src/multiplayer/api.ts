@@ -189,6 +189,10 @@ export type MyFaction = Faction & {
   science: number;
   research_tech_id: string | null;
   research_progress: number;
+  /** Research context for panels that live outside GameContextProvider
+   *  (TradesPanel). Absent on older server responses. */
+  tech_levels?: Record<string, number>;
+  gating_enabled?: number;
 };
 
 export type Message = {

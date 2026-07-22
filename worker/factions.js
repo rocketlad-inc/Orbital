@@ -1255,7 +1255,19 @@ async function handleMyFaction(_req, env, ctx) {
     .first();
 
   if (!row) return errResponse(404, 'not_found', 'no faction for this user in this game');
-  return jsonResponse({ faction: row });
+
+  // Research context for standalone panels (TradesPanel lives OUTSIDE
+  // GameContextProvider, so it can't read tech levels from game state —
+  // it asks /me instead). Additive fields; older clients ignore them.
+  const [techRows, game] = await Promise.all([
+    env.DB
+      .prepare('SELECT tech_id, level FROM faction_techs WHERE game_id = ? AND faction_id = ?')
+      .bind(gameId, row.id)
+      .all(),
+    env.DB.prepare('SELECT gating_enabled FROM games WHERE id = ?').bind(gameId).first(),
+  ]);
+  const tech_levels = Object.fromEntries((techRows.results ?? []).map(r => [r.tech_id, r.level]));
+  return jsonResponse({ faction: { ...row, tech_levels, gating_enabled: game?.gating_enabled ?? 0 } });
 }
 
 async function handlePatchMyFaction(req, env, ctx) {

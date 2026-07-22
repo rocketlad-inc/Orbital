@@ -23,7 +23,8 @@ import {
   ResourceBundle,
 } from './api';
 import { TradeComposer } from './TradeComposer';
-import { useFeatureGate } from '../hooks/useFeatureGate';
+import { hasFeature, requirementFor } from '../game/researchUnlocks';
+import { TECH_DEFS } from '../game/techs';
 
 type Tab = 'incoming' | 'outgoing' | 'shipments' | 'pacts' | 'history';
 
@@ -48,12 +49,6 @@ const RESOURCE_LABELS: Record<keyof ResourceBundle, string> = {
 
 export function TradesPanel({ gameId }: { gameId: string }) {
   const api = useMemo(() => tradesApi(gameId), [gameId]);
-  const gate = useFeatureGate();
-  // Trade uses freighters — freighters (and the whole trade-route/pickup
-  // bundle) unlock at Propulsion 1 (RESEARCH_UNLOCKS: hull.freighter).
-  // Without this gate the "+ New Offer" button looks freely available
-  // and the click bounces on the server.
-  const tradeLock = gate.lockReason('hull.freighter');
   const [me, setMe] = useState<MyFaction | null>(null);
   const [factions, setFactions] = useState<Faction[]>([]);
   const [trades, setTrades] = useState<TradeOffer[]>([]);
@@ -65,6 +60,21 @@ export function TradesPanel({ gameId }: { gameId: string }) {
     | { kind: 'counter'; original: TradeOffer }
     | null
   >(null);
+
+  // Trade rides on freighters (hull.freighter, Propulsion 1). This panel
+  // mounts OUTSIDE GameContextProvider, so it can't call useFeatureGate
+  // (that crashed the trade tab: "useGameContext must be used within
+  // GameContextProvider"). Instead /me now returns tech_levels +
+  // gating_enabled, and we run the same pure predicate the hook uses.
+  const tradeLock = useMemo(() => {
+    if (!me) return null; // still loading — don't flash a lock
+    const enabled = (me.gating_enabled ?? 0) === 1; // absent (old server) → ungated
+    if (hasFeature('hull.freighter', me.tech_levels, enabled)) return null;
+    const req = requirementFor('hull.freighter');
+    if (!req) return null;
+    const track = TECH_DEFS[req.track]?.name ?? req.track;
+    return { label: req.label, text: `Unlocks at ${track} ${req.level}` };
+  }, [me]);
 
   const refresh = useCallback(async () => {
     const [meRes, fRes, tRes, pRes] = await Promise.all([
