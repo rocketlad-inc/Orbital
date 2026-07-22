@@ -42,7 +42,11 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     launchTorchTransfer,
   } = useGameContext();
   const mpActions = useMultiplayerActions();
-  const [filter, setFilter] = useState<Filter>('player');
+  // Default to the "All" tab in multiplayer (per request); single-player
+  // keeps its historical "Mine" default. mpActions is non-null ONLY in
+  // MP (null in SP, where every mpActions branch below is already dead),
+  // so gating on it changes nothing about the SP code path.
+  const [filter, setFilter] = useState<Filter>(mpActions ? 'all' : 'player');
   const [query, setQuery] = useState('');
   const [collapsedSystems, setCollapsedSystems] = useState<Set<string>>(new Set());
   // Bulk-select set: ship ids the player has checked for a bulk
