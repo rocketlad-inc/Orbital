@@ -112,9 +112,17 @@ export const WorldMenuOverlay: React.FC = () => {
   const [chromeH, setChromeH] = useState({ fleet: 200, panel: 92 });
   useEffect(() => {
     document.body.classList.toggle('wm-open', !!openId);
-    const measure = () => {
-      const bar = document.querySelector('.top-bar') as HTMLElement | null;
-      document.body.style.setProperty('--wm-topbar-h', `${bar?.offsetHeight ?? 52}px`);
+    if (!openId) return;
+    const bar = document.querySelector('.top-bar') as HTMLElement | null;
+    document.body.style.setProperty('--wm-topbar-h', `${bar?.offsetHeight ?? 52}px`);
+
+    // Live-observe the panel + fleet boxes instead of one-shot timeouts.
+    // The fleet's real height depends on its build queue (which can
+    // already have rows the instant the menu opens, or grow/shrink as
+    // ships queue) — a single measure()+80ms retry raced that content
+    // and left the mobile surface-build row's `bottom` calc stale,
+    // overlapping the (now taller) fleet box underneath it.
+    const ro = new ResizeObserver(() => {
       const panel = document.querySelector('.wm-top') as HTMLElement | null;
       const panelH = panel?.offsetHeight ?? 92;
       document.body.style.setProperty('--wm-panel-h', `${panelH}px`);
@@ -122,14 +130,13 @@ export const WorldMenuOverlay: React.FC = () => {
       const fleetH = fleet?.offsetHeight ?? 200;
       document.body.style.setProperty('--wm-fleet-h', `${fleetH}px`);
       setChromeH(prev => (prev.fleet === fleetH && prev.panel === panelH ? prev : { fleet: fleetH, panel: panelH }));
-    };
-    measure();
-    // re-measure after the panel/fleet paint + on any content reflow
-    const t = setTimeout(measure, 80);
-    window.addEventListener('resize', measure);
+    });
+    const panelEl = document.querySelector('.wm-top');
+    const fleetEl = document.querySelector('.wm-fleet');
+    if (panelEl) ro.observe(panelEl);
+    if (fleetEl) ro.observe(fleetEl);
     return () => {
-      clearTimeout(t);
-      window.removeEventListener('resize', measure);
+      ro.disconnect();
       document.body.classList.remove('wm-open');
     };
   }, [openId, collapsed]);
@@ -625,14 +632,14 @@ export const WorldMenuOverlay: React.FC = () => {
               {orbitEls}
             </div>
           )}
-          {/* SURFACE — city build options docked just ABOVE the ship-
-              build box, which itself now clears the dock nav. The whole
-              stack (surface row + fleet) rides up from the bottom, so
-              the diegetic planet fills the vertical middle. */}
+          {/* SURFACE — city build options docked snug against the TOP
+              of the ship-build box (which itself clears the dock nav).
+              A live ResizeObserver keeps chromeH.fleet accurate as the
+              build queue grows/shrinks, so this never sits behind it. */}
           {surfaceEls.length > 0 && (
             <div
               className="wm-mrow wm-mrow-surface" data-testid="wm-col-surface"
-              style={{ bottom: `calc(${chromeH.fleet}px + var(--mobile-rail-height, 72px) + 16px)` }}
+              style={{ bottom: `calc(${chromeH.fleet}px + var(--mobile-rail-height, 72px) + 8px)` }}
             >
               {surfaceEls}
             </div>
