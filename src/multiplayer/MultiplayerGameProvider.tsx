@@ -1558,7 +1558,7 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
             }}
           >
             <div style={{
-              fontFamily: 'Orbitron, system-ui, sans-serif',
+              fontFamily: 'var(--font-body)',
               fontSize: 28,
               letterSpacing: '0.32em',
               color: iWon ? 'var(--mp-friendly)' : 'var(--mp-accent)',

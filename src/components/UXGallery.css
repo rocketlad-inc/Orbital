@@ -983,7 +983,7 @@
   padding: 0 24px;
 }
 .ux-gallery__featured-title {
-  font-family: 'Audiowide', 'Orbitron', sans-serif;
+  font-family: var(--font-body);
   font-size: 22px;
   color: #e8f0f6;
   margin: 6px 0 10px;
@@ -1083,7 +1083,7 @@
   color: #b8c8d6;
   border-bottom: 1px solid #16202e;
   flex-shrink: 0;
-  font-family: monospace;
+  font-family: var(--font-body);
 }
 .ux-wm2-tick { margin-left: auto; color: #4ecdc4; }
 .ux-wm2-map {
@@ -1109,7 +1109,7 @@
   border: 1px solid #223247;
   border-radius: 4px;
   padding: 3px 0;
-  font-family: monospace;
+  font-family: var(--font-body);
 }
 .ux-wm2-dock__btn.is-on {
   color: #4ecdc4;

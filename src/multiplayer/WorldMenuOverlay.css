@@ -22,7 +22,7 @@
      (z 3100+) so both stay usable, and far below modals. */
   z-index: 900;
   pointer-events: none;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: var(--font-body);
   font-size: 12px;
   color: #d6e2ec;
 }
@@ -111,7 +111,7 @@
 /* ---- neighbor orbs ---- */
 .wm-orbs { position: absolute; inset: 0; }
 .wm-orbs text {
-  font: 700 9px 'JetBrains Mono', monospace;
+  font: 700 9px var(--font-body);
   letter-spacing: 0.14em; fill: #d6e2ec;
   pointer-events: none;
 }
@@ -240,13 +240,16 @@
 .wm-go { color: #6b8195; font-weight: 700; letter-spacing: 0.1em; }
 
 /* ================= mobile ================= */
+/* Top strip: leave 60px on the right for the ✕ MAP button so nothing
+   overlaps. Kept narrow so it doesn't crowd the station and its build
+   row below. */
 .wm-mobile .wm-top {
-  left: 8px; right: 8px; max-width: none;
+  left: 8px; right: 68px; max-width: none;
 }
 .wm-mobile .wm-name { font-size: 16px; }
 /* collapsed: a slim header — name + owner + resources only */
 .wm-mobile .wm-top.collapsed {
-  padding: 7px 10px; gap: 3px;
+  padding: 6px 10px; gap: 2px;
 }
 .wm-mobile .wm-top.collapsed .wm-desc,
 .wm-mobile .wm-top.collapsed .wm-metrics,
@@ -254,19 +257,24 @@
 .wm-mobile .wm-top.collapsed .wm-collector,
 .wm-mobile .wm-top.collapsed .wm-crumb,
 .wm-mobile .wm-top.collapsed .wm-out .wm-label { display: none; }
-.wm-mobile .wm-top.collapsed .wm-name { font-size: 15px; }
-.wm-mobile .wm-top.collapsed .wm-out { flex-direction: row; align-items: center; }
-.wm-mobile .wm-tomap { top: calc(var(--wm-topbar-h, 52px) + 10px); right: 8px; }
-.wm-mobile .wm-more { position: absolute; top: 6px; right: 8px; margin: 0; }
+.wm-mobile .wm-top.collapsed .wm-name { font-size: 14px; }
+.wm-mobile .wm-top.collapsed .wm-idrow { display: none; }
+.wm-mobile .wm-top.collapsed .wm-out { flex-direction: row; align-items: center; gap: 8px; }
+.wm-mobile .wm-tomap { top: calc(var(--wm-topbar-h, 52px) + 6px); right: 8px; padding: 4px 8px; font-size: 9px; }
+.wm-mobile .wm-more { position: absolute; top: 4px; right: 8px; margin: 0; font-size: 8px; padding: 2px 6px; }
+/* station graphic on mobile centers itself via inline style */
+.wm-mobile .wm-station { filter: drop-shadow(0 0 6px rgba(78, 205, 196, 0.16)); }
 
-/* two docked build rows: station just above the horizon, city at the
-   bottom (above the roomy shipyard box). */
+/* mobile-only stacked build rows:
+   .wm-mrow-orbit   — station build options at the top of the sky,
+                      ABOVE the station graphic.
+   .wm-mrow-surface — city build options just BELOW the horizon
+                      (which is at 50% of vh on mobile). */
 .wm-mrow {
   position: absolute; left: 8px; right: 8px;
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
 }
-.wm-mrow-surface { bottom: calc(var(--wm-fleet-h, 168px) + 14px); }
-.wm-mrow .wm-bbtn { height: 44px; align-items: center; text-align: center; padding: 5px 4px; }
+.wm-mrow .wm-bbtn { height: 40px; align-items: center; text-align: center; padding: 4px 4px; }
 .wm-mrow .wm-bbtn-nm { font-size: 9px; }
 .wm-mrow .wm-bbtn-st { font-size: 8px; }
 

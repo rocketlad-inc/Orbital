@@ -106,9 +106,12 @@ export function menuCameraOffset(
    *  content area between the outliner and the dock rail. Defaults to 0
    *  so map/test math (spec A5) stays exact. */
   screenShiftX: number = 0,
+  /** Same idea for the Y axis — mobile lifts the planet so its horizon
+   *  sits at 50% of the viewport (station above, surface below). */
+  screenShiftY: number = 0,
 ): { x: number; y: number } {
   const dx = (S1X_FRAC - 0.5) * viewportW + screenShiftX;
-  const dy = (S1Y_FRAC - 0.5) * viewportH;
+  const dy = (S1Y_FRAC - 0.5) * viewportH + screenShiftY;
   return { x: -dx / scale, y: -dy / scale };
 }
 

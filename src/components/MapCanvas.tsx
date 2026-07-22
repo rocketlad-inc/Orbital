@@ -840,11 +840,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         : body.ownedBy ? 3
         : bodyLabelAlwaysOn(body) ? 4
         : 5;
-      renderContext.ctx.font = '10px monospace';
+      renderContext.ctx.font = '10px "Chakra Petch", monospace';
       const nameWidth = renderContext.ctx.measureText(body.name.toUpperCase()).width;
       // Yield row (see drawBody) can be wider than the name for a
       // well-stocked world; 64px comfortably covers three "NNM"-style
-      // tokens at 9px monospace without measuring the exact string here.
+      // tokens at 9px "Chakra Petch", monospace without measuring the exact string here.
       const explored = exploredRef.current;
       const yieldsVisible = explored ? explored.has(body.id) : wasInCoverage(wp);
       const hasYieldRow = !!body.resources && yieldsVisible
@@ -918,7 +918,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         ctx.setLineDash([]);
         // "THREAT" label
         ctx.fillStyle = '#ff5e5e';
-        ctx.font = 'bold 9px monospace';
+        ctx.font = 'bold 9px "Chakra Petch", monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
         ctx.fillText('⚠ THREAT', cp.x, cp.y - baseR - 6);
@@ -1800,14 +1800,14 @@ function getShipCanvasPos(
 function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
   const speedLabel = ctx.simSpeed && ctx.simSpeed > 0 ? `${ctx.simSpeed}×` : 'PAUSED';
   ctx.ctx.fillStyle = COLORS.fgDim;
-  ctx.ctx.font = '12px monospace';
+  ctx.ctx.font = '12px "Chakra Petch", monospace';
   ctx.ctx.textAlign = 'left';
   ctx.ctx.textBaseline = 'top';
   ctx.ctx.fillText(`Tick: ${ctx.t.toFixed(1)} | ${speedLabel}`, 16, 16);
   ctx.ctx.fillText(`Scale: ${ctx.camera.scale.toFixed(2)}x`, 16, 32);
 
   ctx.ctx.fillStyle = COLORS.fgFaint;
-  ctx.ctx.font = '10px monospace';
+  ctx.ctx.font = '10px "Chakra Petch", monospace';
   // Hint changes by input modality — desktop hotkeys are wrong on a
   // touch device, so don't tell a phone player to "right-drag."
   const hint = isCoarsePointer()
@@ -1817,11 +1817,11 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
 
   if (targetSelectionMode) {
     ctx.ctx.fillStyle = COLORS.warning;
-    ctx.ctx.font = 'bold 12px monospace';
+    ctx.ctx.font = 'bold 12px "Chakra Petch", monospace';
     ctx.ctx.textAlign = 'center';
     ctx.ctx.fillText('SELECT TARGET BODY', ctx.canvas.width / 2, 16);
     ctx.ctx.fillStyle = COLORS.fgDim;
-    ctx.ctx.font = '10px monospace';
+    ctx.ctx.font = '10px "Chakra Petch", monospace';
     ctx.ctx.fillText('Click a body to transfer | ESC to cancel | Right-click to cancel', ctx.canvas.width / 2, 32);
   }
 
@@ -1829,11 +1829,11 @@ function drawHUD(ctx: RenderContext, targetSelectionMode?: boolean) {
     const focusedBody = ctx.bodies.find(b => b.id === ctx.camera.focusedBodyId);
     if (focusedBody) {
       ctx.ctx.fillStyle = COLORS.info;
-      ctx.ctx.font = 'bold 12px monospace';
+      ctx.ctx.font = 'bold 12px "Chakra Petch", monospace';
       ctx.ctx.textAlign = 'center';
       ctx.ctx.fillText(`FOCUSED: ${focusedBody.name.toUpperCase()}`, ctx.canvas.width / 2, targetSelectionMode ? 52 : 32);
       ctx.ctx.fillStyle = COLORS.fgDim;
-      ctx.ctx.font = '10px monospace';
+      ctx.ctx.font = '10px "Chakra Petch", monospace';
       ctx.ctx.fillText(`SOI: ${focusedBody.soi.toFixed(0)} km`, ctx.canvas.width / 2, targetSelectionMode ? 68 : 48);
     }
   }

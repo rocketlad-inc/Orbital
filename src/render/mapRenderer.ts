@@ -1626,7 +1626,7 @@ export function drawBody(
     ctx.ctx.save();
     ctx.ctx.globalAlpha *= labelAlpha;
     ctx.ctx.fillStyle = isSelected ? '#ffb84d' : '#8aa0b4';
-    ctx.ctx.font = '10px monospace';
+    ctx.ctx.font = '10px "Chakra Petch", monospace';
     ctx.ctx.textAlign = 'center';
     ctx.ctx.textBaseline = 'top';
     ctx.ctx.fillText(body.name.toUpperCase(), canvasPos.x, rowTop);
@@ -1648,7 +1648,7 @@ export function drawBody(
       if (body.resources.gold > 0)    tokens.push({ text: `${body.resources.gold}C`,    color: '#ffd700' });
       if (body.resources.science > 0) tokens.push({ text: `${body.resources.science}S`, color: '#67e8f9' });
       if (tokens.length > 0) {
-        ctx.ctx.font = '9px monospace';
+        ctx.ctx.font = '9px "Chakra Petch", monospace';
         ctx.ctx.textBaseline = 'top';
         const baseY = rowTop + 12; // name sits at rowTop in a 10px font; this lines up just below it
         const gap = 4;
@@ -1924,7 +1924,7 @@ export function drawShip(
   // Ship name label — hover/selection only (see RenderContext.hoveredShipId).
   if (isSelected || ctx.hoveredShipId === ship.id) {
     ctx.ctx.fillStyle = isSelected ? '#ffb84d' : shipColorValue;
-    ctx.ctx.font = '9px monospace';
+    ctx.ctx.font = '9px "Chakra Petch", monospace';
     ctx.ctx.textAlign = 'left';
     ctx.ctx.textBaseline = 'middle';
     ctx.ctx.fillText(ship.name.split(' ')[0], canvasPos.x + iconSize / 2 + 4, canvasPos.y - 6);
@@ -1958,7 +1958,7 @@ export function drawResourcePanel(
 
   // Draw resources
   ctx.ctx.fillStyle = COLORS.fgDim;
-  ctx.ctx.font = `${textSize}px monospace`;
+  ctx.ctx.font = `${textSize}px "Chakra Petch", monospace`;
   ctx.ctx.textAlign = 'left';
   ctx.ctx.textBaseline = 'top';
 
@@ -1993,7 +1993,7 @@ export function drawText(
   align: CanvasTextAlign = 'left'
 ) {
   ctx.ctx.fillStyle = color;
-  ctx.ctx.font = `${fontSize}px monospace`;
+  ctx.ctx.font = `${fontSize}px "Chakra Petch", monospace`;
   ctx.ctx.textAlign = align;
   ctx.ctx.textBaseline = 'top';
   ctx.ctx.fillText(text, canvasX, canvasY);
@@ -2128,7 +2128,7 @@ export function drawEncounterMarker(
 
   // Draw label
   ctx.ctx.fillStyle = color;
-  ctx.ctx.font = '10px monospace';
+  ctx.ctx.font = '10px "Chakra Petch", monospace';
   ctx.ctx.textAlign = 'left';
   ctx.ctx.textBaseline = 'middle';
   ctx.ctx.fillText(`${label}${countdown}`, canvasPos.x + 8, canvasPos.y);
@@ -2158,7 +2158,7 @@ export function drawManeuverNodeLabel(
   const countdown = ticksUntil > 0 ? `T-${ticksUntil.toFixed(0)}` : 'NOW';
 
   ctx.ctx.fillStyle = color;
-  ctx.ctx.font = '10px monospace';
+  ctx.ctx.font = '10px "Chakra Petch", monospace';
   ctx.ctx.textAlign = 'left';
   ctx.ctx.textBaseline = 'bottom';
   ctx.ctx.fillText(`Δv ${Math.abs(deltav).toFixed(2)} km/s`, canvasPos.x + 10, canvasPos.y - 4);
@@ -2198,7 +2198,7 @@ export function drawApsisMarkers(
   ctx.ctx.beginPath();
   ctx.ctx.arc(periCanvas.x, periCanvas.y, 2.5, 0, Math.PI * 2);
   ctx.ctx.fill();
-  ctx.ctx.font = '8px monospace';
+  ctx.ctx.font = '8px "Chakra Petch", monospace';
   ctx.ctx.textAlign = 'center';
   ctx.ctx.textBaseline = 'bottom';
   ctx.ctx.fillText(`Pe ${orbit.rp.toFixed(0)}`, periCanvas.x, periCanvas.y - 6);
@@ -2208,7 +2208,7 @@ export function drawApsisMarkers(
   ctx.ctx.beginPath();
   ctx.ctx.arc(apoCanvas.x, apoCanvas.y, 2.5, 0, Math.PI * 2);
   ctx.ctx.fill();
-  ctx.ctx.font = '8px monospace';
+  ctx.ctx.font = '8px "Chakra Petch", monospace';
   ctx.ctx.textAlign = 'center';
   ctx.ctx.textBaseline = 'bottom';
   ctx.ctx.fillText(`Ap ${orbit.ra.toFixed(0)}`, apoCanvas.x, apoCanvas.y - 6);
@@ -2699,7 +2699,7 @@ export function drawRammingBody(
     ctx.ctx.stroke();
     // Countdown label
     ctx.ctx.fillStyle = `rgba(255, 100, 80, ${0.7 + 0.3 * pulse})`;
-    ctx.ctx.font = 'bold 10px monospace';
+    ctx.ctx.font = 'bold 10px "Chakra Petch", monospace';
     ctx.ctx.textAlign = 'center';
     ctx.ctx.textBaseline = 'bottom';
     ctx.ctx.fillText(`⚠ IMPACT T-${eta.toFixed(0)}`, impactCanvas.x, impactCanvas.y - r - 6);
@@ -2970,7 +2970,7 @@ function drawTorchTransitShip(
   // Ship name — hover/selection only (see RenderContext.hoveredShipId).
   if (isSelected || ctx.hoveredShipId === ship.id) {
     ctx.ctx.fillStyle = isSelected ? '#ffb84d' : shipColorValue;
-    ctx.ctx.font = '9px monospace';
+    ctx.ctx.font = '9px "Chakra Petch", monospace';
     ctx.ctx.textAlign = 'left';
     ctx.ctx.textBaseline = 'middle';
     ctx.ctx.fillText(ship.name.split(' ')[0], canvasPos.x + iconSize / 2 + 4, canvasPos.y - 6);
@@ -2982,7 +2982,7 @@ function drawTorchTransitShip(
     const phase = ctx.t < currentTransfer.flipTick ? 'BOOST' : 'BRAKE';
     if (eta > 0) {
       ctx.ctx.fillStyle = COLORS.fgDim;
-      ctx.ctx.font = '8px monospace';
+      ctx.ctx.font = '8px "Chakra Petch", monospace';
       ctx.ctx.textAlign = 'left';
       ctx.ctx.fillText(`${phase} · ETA T-${eta.toFixed(0)}`, canvasPos.x + 8, canvasPos.y + 6);
     }
@@ -3046,7 +3046,7 @@ export function drawGhostPlanet(
 
   // Label
   ctx.ctx.fillStyle = withOpacity('#8aa0b4', opacity);
-  ctx.ctx.font = '9px monospace';
+  ctx.ctx.font = '9px "Chakra Petch", monospace';
   ctx.ctx.textAlign = 'center';
   ctx.ctx.textBaseline = 'top';
   const eta = futureTime - currentTick;
@@ -3456,7 +3456,7 @@ export function drawShipGhost(
   // T-N timestamp label (only when fresh-ish to reduce clutter)
   if (freshness > 0.4) {
     ctx.ctx.fillStyle = withOpacity(color, opacity * 0.9);
-    ctx.ctx.font = '8px monospace';
+    ctx.ctx.font = '8px "Chakra Petch", monospace';
     ctx.ctx.textAlign = 'center';
     ctx.ctx.textBaseline = 'top';
     ctx.ctx.fillText(`T-${age.toFixed(0)}`, canvasPos.x, canvasPos.y + size + 4);
@@ -4028,8 +4028,8 @@ const REGION_NEUTRAL = '#8c8f92';
 // No font-weight: Audiowide ships a single 400 weight, so `bold` yields
 // a synthesized faux-bold that smears an already-wide face (App.css
 // .title documents the same rule). The heavier read comes from the face
-// and the size step over the 8-10px monospace body labels.
-const REGION_FONT_STACK = 'Audiowide, Orbitron, Eurostile, system-ui, sans-serif';
+// and the size step over the 8-10px "Chakra Petch", monospace body labels.
+const REGION_FONT_STACK = "'Chakra Petch', monospace";
 const REGION_TITLE_PX = 13;
 const REGION_SUB_PX = 10;
 /** Gap held between a region label's edge and the body it's anchored to
@@ -4203,7 +4203,7 @@ export function drawSystemRegions(
     const wp = bodyPosition(b, ctx.t, ctx.bodies);
     const p = worldToCanvas(wp.x, wp.y, ctx);
     if (p.x < -200 || p.y < -200 || p.x > ctx.canvas.width + 200 || p.y > ctx.canvas.height + 200) continue;
-    // Body labels are 9px monospace drawn under the dot; ~5.6px/char is
+    // Body labels are 9px "Chakra Petch", monospace drawn under the dot; ~5.6px/char is
     // that face's advance width. Approximate on purpose — measuring 58
     // bodies every frame to place a dozen labels isn't worth it, and
     // over-wide boxes only make the search more cautious.

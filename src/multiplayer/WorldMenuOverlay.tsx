@@ -160,7 +160,11 @@ export const WorldMenuOverlay: React.FC = () => {
       // half the outliner width so it centers in the remaining space
       // (outliner ~296px on the left, dock ~60px on the right).
       const rShift = vw > 720 ? (296 - 60) / 2 : 0;
-      const off = menuCameraOffset(vw, vh, s1, rShift);
+      // Mobile: lift the planet so its horizon sits at 50% of the
+      // viewport (S1Y_FRAC=1.02, Z1_FRAC=0.42 → default horizon at 60%).
+      // Shift up by (0.60 - 0.50) · vh = 0.10 · vh.
+      const uShift = vw > 720 ? 0 : -0.10 * vh;
+      const off = menuCameraOffset(vw, vh, s1, rShift, uShift);
       focusBody(sel); // sets focusedBodyId (body-relative camera)
       updateCamera({ scale: s1, x: off.x, y: off.y });
       setOpenId(sel);
@@ -190,8 +194,16 @@ export const WorldMenuOverlay: React.FC = () => {
 
   // Wheel/pinch-out past the threshold dismisses (leave the camera
   // wherever the player pulled it — that WAS the dismissal gesture).
+  // Hysteresis: only arm the dismiss AFTER we've observed the menu
+  // fully arrive (zTarget ≥ 0.85). Otherwise the initial fly-in from
+  // map view (which climbs through 0→1) would fire this and immediately
+  // close the just-opened menu. Bug repro'd from outliner + map-click
+  // opens where the camera has to tween from map scale.
+  const dismissArmed = useRef(false);
   useEffect(() => {
-    if (openId && zTarget < 0.3) close(false);
+    if (!openId) { dismissArmed.current = false; return; }
+    if (zTarget >= 0.85) dismissArmed.current = true;
+    if (dismissArmed.current && zTarget < 0.3) close(false);
   }, [zTarget, openId, close]);
 
   // Another menu opening (DockRail panels, settlements/fleet/research —
@@ -293,7 +305,8 @@ export const WorldMenuOverlay: React.FC = () => {
   // anchor below hangs off `cx` so it stays coincident with the canvas
   // planet after the shift.
   const rShift = !mobile ? (296 - 60) / 2 : 0;
-  const cx = S1X_FRAC * vw + rShift, cy = S1Y_FRAC * vh, cr = Z1_FRAC * vh;
+  const uShift = mobile ? -0.10 * vh : 0; // mobile: horizon at 50% of vh
+  const cx = S1X_FRAC * vw + rShift, cy = S1Y_FRAC * vh + uShift, cr = Z1_FRAC * vh;
   const partPos = (frac: number) => {
     const a = (-90 + frac * 46) * Math.PI / 180;
     return { x: cx + Math.cos(a) * cr, y: cy + Math.sin(a) * cr };
@@ -542,11 +555,16 @@ export const WorldMenuOverlay: React.FC = () => {
            Not the tall-mast cartoon; a compact icon above the orbit
            column that reads as "the station" at a glance. Modules
            appear in faction color when built. ===== */}
-      {!mobile && readout.station && (
+      {readout.station && (
         <svg
           className="wm-station" data-testid="wm-station"
           viewBox="0 0 130 130"
-          style={{ left: staX, top: staY, width: staW, height: staH }}
+          style={mobile
+            // Mobile: sit in the sky between the station-build row and
+            // the horizon (which is now at 50% of vh). Centered.
+            ? { left: '50%', top: 'calc(var(--wm-topbar-h, 52px) + 108px)',
+                width: 116, height: 116, transform: 'translateX(-50%)' }
+            : { left: staX, top: staY, width: staW, height: staH }}
         >
           {/* tilted torus ring (back band, then front band) */}
           <ellipse cx="65" cy="66" rx="46" ry="14" fill="none"
@@ -594,16 +612,23 @@ export const WorldMenuOverlay: React.FC = () => {
            just above the horizon, city row down at the bottom. */}
       {mobile ? (
         <>
+          {/* ORBIT — station build options at the top of the sky, ABOVE
+              the station graphic. Sits just under the slim name strip. */}
           {orbitEls.length > 0 && (
             <div
               className="wm-mrow wm-mrow-orbit" data-testid="wm-col-orbit"
-              style={{ bottom: Math.max(vh * 0.42, vh - (cy - cr) + 6) }}
+              style={{ top: 'calc(var(--wm-topbar-h, 52px) + var(--wm-panel-h, 42px) + 6px)' }}
             >
               {orbitEls}
             </div>
           )}
+          {/* SURFACE — city build options just BELOW the horizon (50%
+              of vh in mobile-shifted framing). */}
           {surfaceEls.length > 0 && (
-            <div className="wm-mrow wm-mrow-surface" data-testid="wm-col-surface">
+            <div
+              className="wm-mrow wm-mrow-surface" data-testid="wm-col-surface"
+              style={{ top: `calc(50% + 12px)` }}
+            >
               {surfaceEls}
             </div>
           )}
