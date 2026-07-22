@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch, Faction, SenateProposal, SenateSlider } from './api';
 import { DiscordLink } from './DiscordLink';
+import { hasFeature, requirementFor } from '../game/researchUnlocks';
+import { TECH_DEFS } from '../game/techs';
 
 // Per-proposal duration bounds — mirror worker/senate.js
 // DEBATE_MIN/MAX + VOTE_MIN/MAX so the input gates match server-side
@@ -64,6 +66,9 @@ export function SenatePanel({ gameId }: { gameId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [myFactionId, setMyFactionId] = useState<string | null>(null);
+  const [myTech, setMyTech] = useState<{ levels: Record<string, number>; gating: boolean }>(
+    { levels: {}, gating: false },
+  );
 
   // Composer state
   const [kind, setKind] = useState<BillKind>('slider_law');
@@ -74,6 +79,19 @@ export function SenatePanel({ gameId }: { gameId: string }) {
   const [summary, setSummary] = useState('');
   const [debateTicks, setDebateTicks] = useState<number>(DEBATE_DEFAULT);
   const [voteTicks, setVoteTicks] = useState<number>(VOTE_DEFAULT);
+
+  // Proposing a bill is research-gated (worker/senate.js): any bill needs
+  // 'senate.propose' (Industry 5); the Chancellor-election kind needs
+  // 'senate.chancellor' (Industry 6). VOTING is never gated. The required
+  // feature depends on the selected kind, so this recomputes with it.
+  const proposeLock = useMemo(() => {
+    const feat = kind === 'chancellor_vote' ? 'senate.chancellor' : 'senate.propose';
+    if (hasFeature(feat, myTech.levels, myTech.gating)) return null;
+    const req = requirementFor(feat);
+    if (!req) return null;
+    const track = TECH_DEFS[req.track]?.name ?? req.track;
+    return { label: req.label, text: `Unlocks at ${track} ${req.level}` };
+  }, [kind, myTech]);
 
   const refresh = useCallback(async () => {
     const [sRes, pRes, fRes] = await Promise.all([
@@ -105,8 +123,14 @@ export function SenatePanel({ gameId }: { gameId: string }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const res = await apiFetch<{ faction: { id: string } }>(`/api/games/${gameId}/me`);
-      if (!cancelled && res.ok && res.data?.faction?.id) setMyFactionId(res.data.faction.id);
+      const res = await apiFetch<{ faction: { id: string; tech_levels?: Record<string, number>; gating_enabled?: number } }>(`/api/games/${gameId}/me`);
+      if (!cancelled && res.ok && res.data?.faction?.id) {
+        setMyFactionId(res.data.faction.id);
+        setMyTech({
+          levels: res.data.faction.tech_levels ?? {},
+          gating: (res.data.faction.gating_enabled ?? 0) === 1,
+        });
+      }
     })();
     return () => { cancelled = true; };
   }, [gameId]);
@@ -357,8 +381,26 @@ export function SenatePanel({ gameId }: { gameId: string }) {
           Voting opens at tick {currentTick + debateTicks} · closes at tick {currentTick + debateTicks + voteTicks}
         </div>
 
-        <button className="mp-submit" type="submit" style={{ marginTop: 10 }} disabled={busy}>
-          {busy ? 'Submitting…' : 'Submit proposal'}
+        {proposeLock && (
+          <div style={{
+            marginTop: 10, fontSize: 11, lineHeight: 1.45, color: '#ffb84d',
+            border: '1px solid rgba(255, 184, 77, 0.4)', borderRadius: 4,
+            background: 'rgba(255, 184, 77, 0.06)', padding: '8px 10px',
+          }}>
+            🔒 Setting the Senate agenda unlocks at <b>{proposeLock.text.replace(/^Unlocks at\s*/i, '')}</b>.
+            {kind === 'chancellor_vote'
+              ? ' The Chancellor election needs the higher tier.'
+              : ' You can still vote on other factions’ bills now.'}
+          </div>
+        )}
+        <button
+          className="mp-submit"
+          type="submit"
+          style={{ marginTop: 10 }}
+          disabled={busy || !!proposeLock}
+          title={proposeLock ? `${proposeLock.label} — ${proposeLock.text}` : undefined}
+        >
+          {busy ? 'Submitting…' : proposeLock ? '🔒 Proposal locked' : 'Submit proposal'}
         </button>
         {error && <div className="mp-error" style={{ marginTop: 6 }}>{error}</div>}
       </form>
