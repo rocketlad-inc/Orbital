@@ -1,11 +1,10 @@
 :root {
   /* Display = Audiowide (no bold weights, runs wide — see typography
-     guidance in CSS rules below). Body = Chakra Petch (400/600/700). */
-  /* Single project font: Chakra Petch (the lobby font). Both roles point
-     at it so headings/logo, body, --mono, --mp-mono, and --display all
-     resolve to one face. Revert --font-display to the Audiowide stack to
-     bring back the display accent. */
-  --font-body: 'Chakra Petch', 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+     guidance in CSS rules below). Body = Audiowide (400/600/700). */
+  /* Single project font: Audiowide. Both roles point at it so the logo,
+     headings, body, --mono, --mp-mono, and --display all resolve to one
+     face across the entire project. */
+  --font-body: 'Audiowide', 'Orbitron', 'Eurostile', system-ui, sans-serif;
   --font-display: var(--font-body);
   /* Top-bar height. Single source of truth: the bar uses it, and every
      panel that anchors below the bar offsets from it (calc(var + gap)).

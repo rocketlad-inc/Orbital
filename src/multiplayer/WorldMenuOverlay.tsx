@@ -598,7 +598,7 @@ export const WorldMenuOverlay: React.FC = () => {
           )}
           {/* Name + HP header — always readable */}
           <text x="65" y="14" textAnchor="middle"
-            style={{ font: '700 10px "JetBrains Mono", monospace', letterSpacing: '0.08em', fill: '#d6e2ec' }}>
+            style={{ font: '700 10px "Audiowide", monospace', letterSpacing: '0.08em', fill: '#d6e2ec' }}>
             {readout.station.name.toUpperCase()}
           </text>
           <rect x="18" y="20" width="94" height="5" rx="2" fill="#0c1219" stroke="#2a3d50" strokeWidth="1" />

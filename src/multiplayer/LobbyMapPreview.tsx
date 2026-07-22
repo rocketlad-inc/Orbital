@@ -228,7 +228,7 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
           ctx2d.arc(cp.x, cp.y, 11, 0, Math.PI * 2);
           ctx2d.stroke();
           ctx2d.fillStyle = col;
-          ctx2d.font = '600 11px "Chakra Petch", monospace';
+          ctx2d.font = '600 11px "Audiowide", monospace';
           ctx2d.textAlign = 'center';
           ctx2d.textBaseline = 'top';
           ctx2d.fillText(isMine ? '✓ YOU' : nameOf(owner), cp.x, cp.y + 14);

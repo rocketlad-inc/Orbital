@@ -382,7 +382,7 @@ export function PhysicsSandbox({ onExit }: { onExit?: () => void }) {
         cam.scale > 0.4;
       if (showLabel) {
         ctx.fillStyle = body.id === selectedBodyId ? '#ffb84d' : '#8aa0b4';
-        ctx.font = '10px "Chakra Petch", monospace';
+        ctx.font = '10px "Audiowide", monospace';
         ctx.textAlign = 'center';
         ctx.fillText(body.name.toUpperCase(), sp.x, sp.y + r + 14);
       }
@@ -420,7 +420,7 @@ export function PhysicsSandbox({ onExit }: { onExit?: () => void }) {
     ctx.lineTo(ss.x + prograde.x * 12, ss.y + prograde.y * 12);
     ctx.stroke();
     ctx.fillStyle = '#4ecdc4';
-    ctx.font = '9px "Chakra Petch", monospace';
+    ctx.font = '9px "Audiowide", monospace';
     ctx.textAlign = 'left';
     ctx.fillText(s.name.split(' ')[0], ss.x + 8, ss.y - 6);
   }, [size, trajectory, nodeChain, selectedBodyId, selectedNodeId, worldToScreen]);
@@ -674,7 +674,7 @@ export function PhysicsSandbox({ onExit }: { onExit?: () => void }) {
     <div style={{
       position: 'fixed', inset: 0,
       background: '#0a0e14', color: '#d8e4ee',
-      fontFamily: '"Chakra Petch", "Fira Code", monospace',
+      fontFamily: '"Audiowide", "Fira Code", monospace',
       overflow: 'hidden', userSelect: 'none',
     }}>
       <canvas
@@ -1063,7 +1063,7 @@ function drawTrajectory(
       ctx.setLineDash([]);
       ctx.restore();
       ctx.fillStyle = 'rgba(255, 184, 77, 0.85)';
-      ctx.font = '8px "Chakra Petch", monospace';
+      ctx.font = '8px "Audiowide", monospace';
       ctx.textAlign = 'center';
       ctx.fillText(`ENC ${body.name.toUpperCase()} T+${(arc.tEnd - currentTick).toFixed(0)}`, sp.x, sp.y - r - 6);
     }
@@ -1075,7 +1075,7 @@ function drawTrajectory(
       ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.arc(sp.x, sp.y, 5, 0, TWO_PI); ctx.stroke();
       ctx.fillStyle = 'rgba(255, 184, 77, 0.85)';
-      ctx.font = '8px "Chakra Petch", monospace';
+      ctx.font = '8px "Audiowide", monospace';
       ctx.textAlign = 'center';
       ctx.fillText(`EXIT ${BY_ID[arc.orbit.parentBodyId].name.toUpperCase()}`, sp.x, sp.y - 10);
       ctx.restore();
@@ -1189,7 +1189,7 @@ function drawNodes(
     ctx.restore();
 
     ctx.fillStyle = node.committed ? '#ffb84d' : 'rgba(255, 184, 77, 0.7)';
-    ctx.font = '9px "Chakra Petch", monospace';
+    ctx.font = '9px "Audiowide", monospace';
     ctx.textAlign = 'center';
     const label = `${node.committed ? '● ' : '◇ '}${anchorLabel(node.anchor)} T+${(node.t - currentTick).toFixed(1)}`;
     ctx.fillText(label, sp.x, sp.y - 12);
@@ -1231,7 +1231,7 @@ function drawHandles(ctx: CanvasRenderingContext2D, link: NodeLink, screenPos: {
     ctx.fillStyle = dir.color;
     ctx.beginPath(); ctx.arc(ex, ey, 6, 0, TWO_PI); ctx.fill();
     ctx.fillStyle = '#0a0e14';
-    ctx.font = 'bold 8px "Chakra Petch", monospace';
+    ctx.font = 'bold 8px "Audiowide", monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(dir.label, ex, ey);
@@ -1239,7 +1239,7 @@ function drawHandles(ctx: CanvasRenderingContext2D, link: NodeLink, screenPos: {
 
     if (dv > 0) {
       ctx.fillStyle = dir.color;
-      ctx.font = '9px "Chakra Petch", monospace';
+      ctx.font = '9px "Audiowide", monospace';
       ctx.fillText(dv.toFixed(1), ex + dir.x * 14, ey + dir.y * 14 + 3);
     }
   }

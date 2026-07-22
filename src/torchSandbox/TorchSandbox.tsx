@@ -221,7 +221,7 @@ export function TorchSandbox({ onExit }: { onExit?: () => void }) {
       ctx.fill();
       // Label
       ctx.fillStyle = body.id === targetId ? '#ffb84d' : '#8aa0b4';
-      ctx.font = '10px "Chakra Petch", monospace';
+      ctx.font = '10px "Audiowide", monospace';
       ctx.textAlign = 'center';
       ctx.fillText(body.name.toUpperCase(), sp.x, sp.y + r + 14);
       // Highlight target
@@ -294,7 +294,7 @@ export function TorchSandbox({ onExit }: { onExit?: () => void }) {
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.fillStyle = 'rgba(255, 184, 77, 0.85)';
-      ctx.font = '9px "Chakra Petch", monospace';
+      ctx.font = '9px "Audiowide", monospace';
       ctx.textAlign = 'center';
       ctx.fillText('INTERCEPT', ip.x, ip.y - targetR - 6);
     }
@@ -346,7 +346,7 @@ export function TorchSandbox({ onExit }: { onExit?: () => void }) {
       ctx.strokeRect(-6, -6, 12, 12);
       ctx.restore();
       ctx.fillStyle = '#ffb84d';
-      ctx.font = '9px "Chakra Petch", monospace';
+      ctx.font = '9px "Audiowide", monospace';
       ctx.textAlign = 'center';
       ctx.fillText('FLIP', fp.x, fp.y - 14);
     }
@@ -382,7 +382,7 @@ export function TorchSandbox({ onExit }: { onExit?: () => void }) {
       ctx.stroke();
     }
     ctx.fillStyle = '#4ecdc4';
-    ctx.font = '9px "Chakra Petch", monospace';
+    ctx.font = '9px "Audiowide", monospace';
     ctx.textAlign = 'left';
     ctx.fillText('TS-01', ssp.x + 8, ssp.y - 6);
   }, [size, plannedTransfer, targetId, worldToScreen]);
@@ -416,7 +416,7 @@ export function TorchSandbox({ onExit }: { onExit?: () => void }) {
     <div style={{
       position: 'fixed', inset: 0,
       background: '#0a0e14', color: '#d8e4ee',
-      fontFamily: '"Chakra Petch", monospace',
+      fontFamily: '"Audiowide", monospace',
       overflow: 'hidden', userSelect: 'none',
     }}>
       <canvas

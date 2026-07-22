@@ -200,7 +200,7 @@ function drawHpTag(
   const w = Math.min(120, 0.24 * c.r), bh = Math.min(6, c.r * 0.014);
   const ratio = clamp01(hp / Math.max(1, maxHp));
   g.save(); g.globalAlpha = alpha;
-  g.font = `700 ${fpx.toFixed(1)}px "Chakra Petch", monospace`;
+  g.font = `700 ${fpx.toFixed(1)}px "Audiowide", monospace`;
   g.textAlign = 'center'; g.textBaseline = 'alphabetic';
   g.fillStyle = '#d6e2ec';
   g.fillText(name.toUpperCase(), cx, cy);
@@ -210,7 +210,7 @@ function drawHpTag(
   g.fillStyle = hpColor(ratio);
   g.fillRect(cx - w / 2, cy + 4, w * ratio, bh);
   g.fillStyle = '#6b8195';
-  g.font = `${Math.max(8, fpx * 0.8).toFixed(1)}px "Chakra Petch", monospace`;
+  g.font = `${Math.max(8, fpx * 0.8).toFixed(1)}px "Audiowide", monospace`;
   g.fillText(`${Math.round(hp)} / ${maxHp}`, cx, cy + 4 + bh + fpx * 0.95);
   g.restore();
 }

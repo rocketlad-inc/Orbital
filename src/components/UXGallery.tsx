@@ -87,9 +87,9 @@ const WMChip: React.FC<{
   return (
     <g transform={`translate(${x},${y})`}>
       <rect width={w} height={22} rx={4} fill="rgba(13,21,32,0.88)" stroke={c} strokeWidth={0.8} />
-      <text x={6} y={10} fontSize={7} fontFamily="Chakra Petch, monospace" fontWeight="bold" fill={c}>{label}</text>
-      {lv && <text x={6} y={18.5} fontSize={6} fontFamily="Chakra Petch, monospace" fill="#8aa0b4">{lv}</text>}
-      <text x={w - 11} y={15} fontSize={9} fontFamily="Chakra Petch, monospace" fill={c}>+</text>
+      <text x={6} y={10} fontSize={7} fontFamily="Audiowide, monospace" fontWeight="bold" fill={c}>{label}</text>
+      {lv && <text x={6} y={18.5} fontSize={6} fontFamily="Audiowide, monospace" fill="#8aa0b4">{lv}</text>}
+      <text x={w - 11} y={15} fontSize={9} fontFamily="Audiowide, monospace" fill={c}>+</text>
     </g>
   );
 };
@@ -114,7 +114,7 @@ const WMMapMobile: React.FC = () => (
     <path d="M -20 44 Q 120 14 260 52" stroke="#2d4255" strokeWidth={1} fill="none" />
     {/* Luna, further out */}
     <circle cx={214} cy={44} r={3.5} fill="#9fb3c8" />
-    <text x={214} y={54} fontSize={5.5} fontFamily="Chakra Petch, monospace" fill="#5a7085" textAnchor="middle">LUNA</text>
+    <text x={214} y={54} fontSize={5.5} fontFamily="Audiowide, monospace" fill="#5a7085" textAnchor="middle">LUNA</text>
     {/* station orbit */}
     <circle cx={120} cy={300} r={118} fill="none" stroke="#3d5568" strokeWidth={0.8} strokeDasharray="3 4" />
     {/* the planet — this IS the menu */}
@@ -165,24 +165,24 @@ const WMMapMobile: React.FC = () => (
     <line x1={186} y1={132} x2={186} y2={140} stroke="#ffb84d" strokeWidth={0.8} />
     <g>
       <rect x={130} y={140} width={104} height={100} rx={6} fill="rgba(10,17,27,0.94)" stroke="#ffb84d" strokeWidth={0.9} />
-      <text x={137} y={153} fontSize={7} fontFamily="Chakra Petch, monospace" fontWeight="bold" fill="#ffb84d">SHIPYARD — LV 2</text>
+      <text x={137} y={153} fontSize={7} fontFamily="Audiowide, monospace" fontWeight="bold" fill="#ffb84d">SHIPYARD — LV 2</text>
       <line x1={137} y1={158} x2={227} y2={158} stroke="#2a3d50" strokeWidth={0.8} />
-      <text x={137} y={170} fontSize={6} fontFamily="Chakra Petch, monospace" fill="#d8e4ee">▰▰▱ Frigate "Aegis"</text>
-      <text x={227} y={170} fontSize={6} fontFamily="Chakra Petch, monospace" fill="#ffb84d" textAnchor="end">T+8</text>
-      <text x={137} y={182} fontSize={6} fontFamily="Chakra Petch, monospace" fill="#8aa0b4">▱▱▱ Corvette "Dart"</text>
-      <text x={227} y={182} fontSize={6} fontFamily="Chakra Petch, monospace" fill="#8aa0b4" textAnchor="end">queued</text>
+      <text x={137} y={170} fontSize={6} fontFamily="Audiowide, monospace" fill="#d8e4ee">▰▰▱ Frigate "Aegis"</text>
+      <text x={227} y={170} fontSize={6} fontFamily="Audiowide, monospace" fill="#ffb84d" textAnchor="end">T+8</text>
+      <text x={137} y={182} fontSize={6} fontFamily="Audiowide, monospace" fill="#8aa0b4">▱▱▱ Corvette "Dart"</text>
+      <text x={227} y={182} fontSize={6} fontFamily="Audiowide, monospace" fill="#8aa0b4" textAnchor="end">queued</text>
       <rect x={136} y={190} width={92} height={16} rx={3} fill="rgba(255,184,77,0.16)" stroke="#ffb84d" strokeWidth={0.8} />
-      <text x={182} y={201} fontSize={7} fontFamily="Chakra Petch, monospace" fontWeight="bold" fill="#ffb84d" textAnchor="middle">+ BUILD SHIP</text>
+      <text x={182} y={201} fontSize={7} fontFamily="Audiowide, monospace" fontWeight="bold" fill="#ffb84d" textAnchor="middle">+ BUILD SHIP</text>
       <rect x={136} y={212} width={92} height={14} rx={3} fill="rgba(42,61,80,0.4)" stroke="#4a6178" strokeWidth={0.8} />
-      <text x={182} y={222} fontSize={6} fontFamily="Chakra Petch, monospace" fill="#b8c8d6" textAnchor="middle">⬆ UPGRADE · 60M 80C</text>
+      <text x={182} y={222} fontSize={6} fontFamily="Audiowide, monospace" fill="#b8c8d6" textAnchor="middle">⬆ UPGRADE · 60M 80C</text>
     </g>
     {/* map chrome */}
     <rect x={6} y={8} width={56} height={16} rx={8} fill="rgba(13,21,32,0.85)" stroke="#4a6178" strokeWidth={0.8} />
-    <text x={34} y={19} fontSize={7} fontFamily="Chakra Petch, monospace" fill="#b8c8d6" textAnchor="middle">← SYSTEM</text>
+    <text x={34} y={19} fontSize={7} fontFamily="Audiowide, monospace" fill="#b8c8d6" textAnchor="middle">← SYSTEM</text>
     {/* selected-body label, exactly where the map draws it */}
-    <text x={120} y={414} fontSize={11} fontFamily="Chakra Petch, monospace" fontWeight="bold" fill="#ffb84d" textAnchor="middle">EARTH</text>
-    <text x={120} y={425} fontSize={7} fontFamily="Chakra Petch, monospace" fill="#ffd700" textAnchor="middle">2M · 6C · 3S</text>
-    <text x={120} y={433} fontSize={6} fontFamily="Chakra Petch, monospace" fill="#8aa0b4" textAnchor="middle">HP 100 · POP 3/5 · COLLECTOR ✓ · +2.4M +7.2C +3.6S /t</text>
+    <text x={120} y={414} fontSize={11} fontFamily="Audiowide, monospace" fontWeight="bold" fill="#ffb84d" textAnchor="middle">EARTH</text>
+    <text x={120} y={425} fontSize={7} fontFamily="Audiowide, monospace" fill="#ffd700" textAnchor="middle">2M · 6C · 3S</text>
+    <text x={120} y={433} fontSize={6} fontFamily="Audiowide, monospace" fill="#8aa0b4" textAnchor="middle">HP 100 · POP 3/5 · COLLECTOR ✓ · +2.4M +7.2C +3.6S /t</text>
   </svg>
 );
 
@@ -238,24 +238,24 @@ const WMMapDesktop: React.FC = () => (
     <line x1={400} y1={168} x2={400} y2={178} stroke="#ffb84d" strokeWidth={0.8} />
     <g>
       <rect x={360} y={178} width={150} height={100} rx={6} fill="rgba(10,17,27,0.94)" stroke="#ffb84d" strokeWidth={0.9} />
-      <text x={368} y={192} fontSize={7.5} fontFamily="Chakra Petch, monospace" fontWeight="bold" fill="#ffb84d">SHIPYARD — LV 2 · 2 SLOTS</text>
+      <text x={368} y={192} fontSize={7.5} fontFamily="Audiowide, monospace" fontWeight="bold" fill="#ffb84d">SHIPYARD — LV 2 · 2 SLOTS</text>
       <line x1={368} y1={198} x2={502} y2={198} stroke="#2a3d50" strokeWidth={0.8} />
-      <text x={368} y={210} fontSize={6.5} fontFamily="Chakra Petch, monospace" fill="#d8e4ee">▰▰▱ Frigate "Aegis"</text>
-      <text x={502} y={210} fontSize={6.5} fontFamily="Chakra Petch, monospace" fill="#ffb84d" textAnchor="end">T+8</text>
-      <text x={368} y={222} fontSize={6.5} fontFamily="Chakra Petch, monospace" fill="#8aa0b4">▱▱▱ Corvette "Dart"</text>
-      <text x={502} y={222} fontSize={6.5} fontFamily="Chakra Petch, monospace" fill="#8aa0b4" textAnchor="end">queued</text>
+      <text x={368} y={210} fontSize={6.5} fontFamily="Audiowide, monospace" fill="#d8e4ee">▰▰▱ Frigate "Aegis"</text>
+      <text x={502} y={210} fontSize={6.5} fontFamily="Audiowide, monospace" fill="#ffb84d" textAnchor="end">T+8</text>
+      <text x={368} y={222} fontSize={6.5} fontFamily="Audiowide, monospace" fill="#8aa0b4">▱▱▱ Corvette "Dart"</text>
+      <text x={502} y={222} fontSize={6.5} fontFamily="Audiowide, monospace" fill="#8aa0b4" textAnchor="end">queued</text>
       <rect x={366} y={230} width={138} height={16} rx={3} fill="rgba(255,184,77,0.16)" stroke="#ffb84d" strokeWidth={0.8} />
-      <text x={435} y={241} fontSize={7} fontFamily="Chakra Petch, monospace" fontWeight="bold" fill="#ffb84d" textAnchor="middle">+ BUILD SHIP</text>
+      <text x={435} y={241} fontSize={7} fontFamily="Audiowide, monospace" fontWeight="bold" fill="#ffb84d" textAnchor="middle">+ BUILD SHIP</text>
       <rect x={366} y={252} width={138} height={14} rx={3} fill="rgba(42,61,80,0.4)" stroke="#4a6178" strokeWidth={0.8} />
-      <text x={435} y={262} fontSize={6} fontFamily="Chakra Petch, monospace" fill="#b8c8d6" textAnchor="middle">⬆ UPGRADE YARD · 60M 80C</text>
+      <text x={435} y={262} fontSize={6} fontFamily="Audiowide, monospace" fill="#b8c8d6" textAnchor="middle">⬆ UPGRADE YARD · 60M 80C</text>
     </g>
     <circle cx={478} cy={296} r={6} fill="#9fb3c8" />
-    <text x={478} y={310} fontSize={6} fontFamily="Chakra Petch, monospace" fill="#5a7085" textAnchor="middle">LUNA</text>
+    <text x={478} y={310} fontSize={6} fontFamily="Audiowide, monospace" fill="#5a7085" textAnchor="middle">LUNA</text>
     <rect x={8} y={8} width={60} height={16} rx={8} fill="rgba(13,21,32,0.85)" stroke="#4a6178" strokeWidth={0.8} />
-    <text x={38} y={19} fontSize={7} fontFamily="Chakra Petch, monospace" fill="#b8c8d6" textAnchor="middle">← SYSTEM</text>
-    <text x={552} y={18} fontSize={6} fontFamily="Chakra Petch, monospace" fill="#5a7085" textAnchor="end">HOVER A CHIP · CLICK TO ACT</text>
-    <text x={195} y={326} fontSize={12} fontFamily="Chakra Petch, monospace" fontWeight="bold" fill="#ffb84d" textAnchor="middle">EARTH</text>
-    <text x={195} y={337} fontSize={7} fontFamily="Chakra Petch, monospace" fill="#ffd700" textAnchor="middle">2M · 6C · 3S · HP 100 · POP 3/5 · COLLECTOR ✓</text>
+    <text x={38} y={19} fontSize={7} fontFamily="Audiowide, monospace" fill="#b8c8d6" textAnchor="middle">← SYSTEM</text>
+    <text x={552} y={18} fontSize={6} fontFamily="Audiowide, monospace" fill="#5a7085" textAnchor="end">HOVER A CHIP · CLICK TO ACT</text>
+    <text x={195} y={326} fontSize={12} fontFamily="Audiowide, monospace" fontWeight="bold" fill="#ffb84d" textAnchor="middle">EARTH</text>
+    <text x={195} y={337} fontSize={7} fontFamily="Audiowide, monospace" fill="#ffd700" textAnchor="middle">2M · 6C · 3S · HP 100 · POP 3/5 · COLLECTOR ✓</text>
   </svg>
 );
 
