@@ -652,7 +652,7 @@ const WmFleet: React.FC<{
           <div className="wm-qrow empty">{hasStation ? (slots > 0 ? 'slots idle' : 'build a shipyard for slots') : 'no station yet'}</div>
         )}
       </div>
-      <div className="wm-fleet-ships">
+      <div className="wm-fleet-grid">
         {BUILDABLE_CLASSES.map(cls => {
           const def = getShipClass(cls);
           const feat = HULL_FEATURE[cls];
@@ -661,31 +661,33 @@ const WmFleet: React.FC<{
           const noYard = slots <= 0;
           const disabled = !isMine || !!lock || noYard;
           return (
-            <div className="wm-shiprow" key={cls} data-testid={`wm-ship-${cls}`}>
-              <div className="wm-shipinfo">
-                <span className="wm-shipnm">{lock ? '🔒 ' : ''}{def.displayName.toUpperCase()}</span>
-                <span className="wm-shipmeta">
-                  <span className="wm-cost"><i>M</i>{def.cost.ore} <i>C</i>{def.cost.credits}</span>
-                  <span className="wm-time">⏱ {def.buildTime}t</span>
-                  <span className="wm-stat">◈ {def.firepower} ✚ {def.hp}</span>
-                </span>
-              </div>
-              <button
-                className="wm-shipbuild"
-                disabled={disabled}
-                title={lock ?? (noYard ? 'Build a shipyard first' : `Build ${def.displayName} — ${def.buildTime} ticks`)}
-                onClick={() => buildShip(cls)}
-              >
-                BUILD
-              </button>
-            </div>
+            <button
+              key={cls}
+              className="wm-shipcell"
+              disabled={disabled}
+              title={lock ?? (noYard ? 'Build a shipyard first' : `Build ${def.displayName} — ${def.buildTime} ticks`)}
+              onClick={() => buildShip(cls)}
+              data-testid={`wm-ship-${cls}`}
+            >
+              <span className="wm-shipnm">{lock ? '🔒 ' : ''}{def.displayName.toUpperCase()}</span>
+              <span className="wm-shipmeta">
+                <span className="wm-cost"><i>M</i>{def.cost.ore} <i>C</i>{def.cost.credits}</span>
+                <span className="wm-time">⏱{def.buildTime}t</span>
+              </span>
+              <span className="wm-shipmeta">
+                <span className="wm-stat">◈{def.firepower} ✚{def.hp}</span>
+                <span className="wm-go">BUILD ▸</span>
+              </span>
+            </button>
           );
         })}
         <button
-          className="wm-designrow"
+          className="wm-shipcell design"
           onClick={() => window.dispatchEvent(new CustomEvent('orbital:open-ship-designer'))}
         >
-          ◈ SHIP DESIGNER →
+          <span className="wm-shipnm">◈ DESIGN</span>
+          <span className="wm-shipmeta"><span>custom hull</span></span>
+          <span className="wm-shipmeta"><span className="wm-go">OPEN ▸</span></span>
         </button>
       </div>
     </section>
