@@ -243,49 +243,6 @@ export function drawWorldMenuCloseup(
   const p2 = (faction as { color2?: string } | undefined)?.color2 || deriveSecondary(p1);
 
   if (city) {
-    // Ambient skyline — a dense sci-fi silhouette that GROWS with the
-    // city's population: more towers, taller spires, more variety as pop
-    // climbs. Neutral steel so faction builds pop (spec G3).
-    const g = rc.ctx;
-    const pop = Math.max(1, city.population ?? 1);
-    const count = Math.min(30, 6 + Math.floor(pop * 3));
-    const growth = clamp01(pop / 8); // height multiplier saturates at pop 8
-    for (let i = 0; i < count; i++) {
-      // spread across the arc with hash jitter; skip slots too close to
-      // the faction-building fracs so buildings keep their clearing
-      const fr = -0.88 + (i / Math.max(1, count - 1)) * 1.78 + (hash01(body.id, i + 61) - 0.5) * 0.05;
-      if (Object.values(PART_FRACS).some(pf => Math.abs(pf - fr) < 0.07)) continue;
-      const a = arcAngle(fr);
-      const px = c.x + Math.cos(a) * c.r, py = c.y + Math.sin(a) * c.r;
-      const kind = Math.floor(hash01(body.id, i + 97) * 5);
-      const h = c.r * (0.035 + hash01(body.id, i + 31) * (0.05 + 0.09 * growth));
-      const w = c.r * (0.008 + hash01(body.id, i + 43) * 0.02);
-      g.save(); g.globalAlpha = alpha; g.translate(px, py); g.rotate(a + Math.PI / 2);
-      g.fillStyle = '#24384e';
-      if (kind === 0) {           // setback tower
-        g.fillRect(-w, -h, w * 2, h);
-        g.fillRect(-w * 0.55, -h * 1.28, w * 1.1, h * 0.3);
-      } else if (kind === 1) {    // needle spire
-        g.fillRect(-w * 0.5, -h * 1.15, w, h * 1.15);
-        g.fillRect(-w * 0.16, -h * 1.5, w * 0.32, h * 0.4);
-      } else if (kind === 2) {    // antenna mast + crossbar
-        g.fillRect(-w * 0.4, -h, w * 0.8, h);
-        g.fillRect(-w * 1.6, -h * 0.82, w * 3.2, h * 0.06);
-        g.beginPath(); g.arc(0, -h * 1.06, w * 0.6, 0, Math.PI * 2); g.fill();
-      } else if (kind === 3) {    // dome
-        g.beginPath(); g.arc(0, 0, h * 0.42, Math.PI, 0); g.closePath(); g.fill();
-      } else {                    // twin slab block
-        g.fillRect(-w * 1.4, -h * 0.7, w, h * 0.7);
-        g.fillRect(w * 0.3, -h, w, h);
-        g.fillRect(-w * 1.4, -h * 0.74, w * 2.7, h * 0.05);
-      }
-      // lit windows on the taller structures once the city is sizable
-      if (growth > 0.4 && kind <= 1 && hash01(body.id, i + 151) > 0.55) {
-        g.fillStyle = p2; g.globalAlpha = alpha * 0.55;
-        g.fillRect(-w * 0.3, -h * 0.8, w * 0.6, h * 0.05);
-      }
-      g.restore();
-    }
     for (const kind of ['forge', 'mint', 'lab'] as BuildingKind[]) {
       drawBuilding(rc.ctx, kind, buildingLevel(city, kind), c, PART_FRACS[kind], p1, p2, alpha);
     }

@@ -469,6 +469,7 @@ export const WorldMenuOverlay: React.FC = () => {
           // indexes 1..3 map straight onto slots 1..3 (no double-count).
           const slot = ORB_SLOTS[isParent ? 0 : Math.min(3, Math.max(1, i))];
           const ox = slot.x * vw, oy = slot.y * vh, or = Math.max(9, slot.r * vh);
+          const ownColor = bodyOwnerColor(nb.id);
           return (
             <g
               key={nb.id}
@@ -484,6 +485,18 @@ export const WorldMenuOverlay: React.FC = () => {
               )}
               <circle r={or} fill={nb.color} />
               <circle r={or} cx={or * 0.32} cy={or * 0.18} fill="#05080e" opacity="0.3" />
+              {/* settlement indicator: an owner-coloured ring + star badge
+                  when this body is claimed (spec: "indicate who with the
+                  colors"). Absent when unsettled. */}
+              {ownColor && (
+                <>
+                  <circle className="wm-orb-owned" r={or + 3} fill="none" stroke={ownColor} strokeWidth={2} />
+                  <g transform={`translate(${or * 0.72},${-or - 5}) scale(${Math.max(0.7, or / 16)})`}>
+                    <path className="wm-orb-star" fill={ownColor}
+                      d="M0,-6 L1.6,-1.9 L6,-1.9 L2.4,0.7 L3.7,5 L0,2.4 L-3.7,5 L-2.4,0.7 L-6,-1.9 L-1.6,-1.9 Z" />
+                  </g>
+                </>
+              )}
               <circle className={`wm-orb-ring ${isParent ? 'sel' : ''}`} r={or + 6} />
               <text y={or + 15} textAnchor="middle">{nb.name.toUpperCase()} ▸</text>
             </g>
@@ -491,58 +504,69 @@ export const WorldMenuOverlay: React.FC = () => {
         })}
       </svg>
 
-      {/* ===== station rig — floats off the upper-right limb ===== */}
+      {/* ===== station: a STAR that resolves into the rig as you zoom in.
+           Compact square hub (150×150) up-right, above the orbit column;
+           never overlaps the centered ship-build box. ===== */}
       {readout.station && (
         <svg
-          className="wm-station" viewBox="0 0 170 320" data-testid="wm-station"
+          className="wm-station" viewBox="0 0 150 150" data-testid="wm-station"
           style={mobile
-            ? { top: 'calc(var(--wm-topbar-h, 52px) + var(--wm-panel-h, 92px) + 8px)', right: 8, width: 92, height: 172 }
+            ? { top: 'calc(var(--wm-topbar-h, 52px) + var(--wm-panel-h, 92px) + 8px)', right: 8, width: 96, height: 96 }
             : { left: staX, top: staY, width: staW, height: staH }}
         >
-          <g className="wm-sta-core">
-            <rect x="82" y="78" width="6" height="196" />
-            <rect x="75" y="72" width="20" height="8" />
-            <rect x="48" y="162" width="30" height="10" />
-            <rect x="92" y="162" width="30" height="10" />
-            <ellipse cx="85" cy="216" rx="56" ry="15" fill="none" strokeWidth="5" />
+          {/* STAR phase — a point of light with a soft glow */}
+          <g style={{ opacity: starK }}>
+            <circle cx="75" cy="80" r="26" fill={p1} opacity="0.14" />
+            <path className="wm-sta-star" fill={p2}
+              d="M75,58 L79,74 L95,74 L82,84 L87,100 L75,90 L63,100 L68,84 L55,74 L71,74 Z" />
+            <circle cx="75" cy="80" r="3" fill="#fff" />
           </g>
-          {myStation && (myStation.buildings?.weapons ?? 0) > 0 && (
-            <g className="wm-sta-part" style={{ fill: p1 }}>
-              <rect x="39" y="118" width="92" height="5" />
-              <rect x="35" y="111" width="8" height="13" />
-              <rect x="127" y="111" width="8" height="13" />
-              <rect x="27" y="115" width="9" height="2.5" style={{ fill: p2 }} />
-              <rect x="134" y="115" width="9" height="2.5" style={{ fill: p2 }} />
+          {/* RIG phase — hub + solar arms + ring, faction parts on build */}
+          <g style={{ opacity: rigK }}>
+            <g className="wm-sta-core">
+              <ellipse cx="75" cy="86" rx="46" ry="14" fill="none" strokeWidth="4" transform="rotate(-12 75 86)" />
+              <rect x="20" y="82" width="26" height="6" />
+              <rect x="104" y="82" width="26" height="6" />
+              <rect x="66" y="72" width="18" height="26" rx="2" />
             </g>
-          )}
-          {myStation && (myStation.buildings?.shipyard ?? 0) > 0 && (
-            <g className="wm-sta-part">
-              <path d="M65,250 L45,250 L45,292 L65,292" fill="none" stroke={p1} strokeWidth="4" />
-              <path d="M105,250 L125,250 L125,292 L105,292" fill="none" stroke={p1} strokeWidth="4" />
-              {buildingShipHere && (
-                <path d="M57,266 L101,266 L109,271 L101,276 L57,276 Z" fill="none"
-                  stroke={p2} strokeWidth="1.5" strokeDasharray="4 3" data-testid="wm-hull" />
-              )}
-            </g>
-          )}
-          <text className="wm-sta-name" x="85" y="16" textAnchor="middle">
+            {myStation && (myStation.buildings?.weapons ?? 0) > 0 && (
+              <g className="wm-sta-part" style={{ fill: p1 }}>
+                <rect x="12" y="80" width="10" height="10" />
+                <rect x="128" y="80" width="10" height="10" />
+                <rect x="8" y="83" width="6" height="3" style={{ fill: p2 }} />
+                <rect x="136" y="83" width="6" height="3" style={{ fill: p2 }} />
+              </g>
+            )}
+            {myStation && (myStation.buildings?.shipyard ?? 0) > 0 && (
+              <g className="wm-sta-part">
+                <path d="M60,102 L52,102 L52,120 L60,120" fill="none" stroke={p1} strokeWidth="3" />
+                <path d="M90,102 L98,102 L98,120 L90,120" fill="none" stroke={p1} strokeWidth="3" />
+                {buildingShipHere && (
+                  <path d="M58,110 L86,110 L92,113 L86,116 L58,116 Z" fill="none"
+                    stroke={p2} strokeWidth="1.5" strokeDasharray="4 3" data-testid="wm-hull" />
+                )}
+              </g>
+            )}
+            {Array.from({ length: staFlames }, (_, i) => {
+              const pts = [{ x: 60, y: 84 }, { x: 90, y: 84 }, { x: 75, y: 96 }, { x: 68, y: 90 }];
+              const p = pts[i];
+              return (
+                <g key={i} className="wm-flame" style={{ animationDelay: `${i * 0.12}s` }}>
+                  <path d={`M${p.x},${p.y} c-4.4,-4.8 -2.2,-9.2 0,-13.6 c2.2,4.4 4.4,8.8 0,13.6`} fill="#ff5a1f" />
+                  <path d={`M${p.x},${p.y} c-2.4,-3.6 -1.2,-6 0,-9 c1.2,3 2.4,5.4 0,9`} fill="#ffca28" />
+                </g>
+              );
+            })}
+          </g>
+          {/* name + HP always readable */}
+          <text className="wm-sta-name" x="75" y="18" textAnchor="middle">
             {readout.station.name.toUpperCase()}
           </text>
-          <rect x="29" y="22" width="112" height="7" rx="2" className="wm-hp-bg" />
-          <rect x="29" y="22" width={112 * staHpRatio} height="7" rx="2" fill={hpColor(staHpRatio)} />
-          <text className="wm-sta-hp" x="85" y="39" textAnchor="middle">
+          <rect x="24" y="24" width="102" height="6" rx="2" className="wm-hp-bg" />
+          <rect x="24" y="24" width={102 * staHpRatio} height="6" rx="2" fill={hpColor(staHpRatio)} />
+          <text className="wm-sta-hp" x="75" y="40" textAnchor="middle">
             {Math.round(readout.station.hp)} / {readout.station.maxHp}
           </text>
-          {Array.from({ length: staFlames }, (_, i) => {
-            const pts = [{ x: 62, y: 122 }, { x: 108, y: 122 }, { x: 85, y: 170 }, { x: 70, y: 216 }];
-            const p = pts[i];
-            return (
-              <g key={i} className="wm-flame" style={{ animationDelay: `${i * 0.12}s` }}>
-                <path d={`M${p.x},${p.y} c-4.4,-4.8 -2.2,-9.2 0,-13.6 c2.2,4.4 4.4,8.8 0,13.6`} fill="#ff5a1f" />
-                <path d={`M${p.x},${p.y} c-2.4,-3.6 -1.2,-6 0,-9 c1.2,3 2.4,5.4 0,9`} fill="#ffca28" />
-              </g>
-            );
-          })}
         </svg>
       )}
 
@@ -590,11 +614,13 @@ export const WorldMenuOverlay: React.FC = () => {
                   d={`M${from.x},${from.y} C${mx},${from.y} ${mx},${to.y} ${to.x - 8},${to.y}`} />;
               })}
               {myStation && readout.station && cols.orbit.map((k, i) => {
+                // station sits ABOVE the orbit column: leave the button's
+                // left edge, curve up to the rig's lower edge.
                 const from = btnAnchor(rightColX, i + 1, 'left');
-                const to = staAnchor(k === 'weapons' ? 0.38 : k === 'shipyard' ? 0.84 : 0.55);
-                const mx = (from.x + to.x) / 2;
+                const to = staAnchor(k === 'weapons' ? 0.6 : k === 'shipyard' ? 0.8 : 0.68);
+                const my = (from.y + to.y) / 2;
                 return <path key={k} data-wm-line={k} className="wm-line" fill="none"
-                  d={`M${from.x},${from.y} C${mx},${from.y} ${mx},${to.y} ${to.x + staW * 0.28},${to.y}`} />;
+                  d={`M${from.x},${from.y} C${from.x - 30},${my} ${to.x},${my} ${to.x},${to.y + 6}`} />;
               })}
             </svg>
           )}

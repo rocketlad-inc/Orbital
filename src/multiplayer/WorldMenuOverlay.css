@@ -115,6 +115,11 @@ body.wm-open .left-rail { display: none; }
 .wm-orb-ring { fill: none; stroke: #3a5068; stroke-width: 1; stroke-dasharray: 3 4; }
 .wm-orb:hover .wm-orb-ring { stroke: #4ecdc4; }
 .wm-orb-ring.sel { stroke: #4ecdc4; stroke-opacity: 0.9; stroke-width: 1.5; }
+/* settlement indicator: owner-coloured ring + star badge */
+.wm-orb-owned { opacity: 0.85; }
+.wm-orb-star { filter: drop-shadow(0 0 2px rgba(0,0,0,0.6)); }
+/* station star phase */
+.wm-sta-star { filter: drop-shadow(0 0 5px currentColor); }
 
 /* ---- station rig (position inline) ---- */
 .wm-station { position: absolute; }
