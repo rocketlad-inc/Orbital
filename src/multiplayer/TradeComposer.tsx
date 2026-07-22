@@ -259,18 +259,16 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
             <div className="mp-error" style={{ marginTop: 8 }}>{error}</div>
           )}
 
+          {/* Buttons on their own row, sized to content (were stretching
+              to fill a tall flex row the helper text was inflating).
+              Helper text sits BELOW them. */}
           <div style={{
             display: 'flex', gap: 8, marginTop: 14, justifyContent: 'flex-end',
           }}>
-            <div style={{ flex: 1, fontSize: 9, color: '#8aa0b4', lineHeight: 1.5, alignSelf: 'center' }}>
-              Pacts take effect the moment the deal is accepted. Resources are
-              DELIVERED: each side loads its goods onto a freighter at one of
-              its collectors and flies them to the other's — assign ships in
-              the Trades panel's Shipments tab after acceptance.
-            </div>
             <button
               type="button"
               className="mp-btn"
+              style={{ padding: '7px 16px', fontSize: 12 }}
               onClick={onClose}
             >
               Cancel
@@ -278,10 +276,17 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
             <button
               type="submit"
               className="mp-btn mp-btn--primary"
+              style={{ padding: '7px 16px', fontSize: 12 }}
               disabled={!canSubmit || hasOverspend}
             >
               {isCounter ? 'Send Counter' : 'Send Offer'}
             </button>
+          </div>
+          <div style={{ marginTop: 10, fontSize: 9, color: '#8aa0b4', lineHeight: 1.5 }}>
+            Pacts take effect the moment the deal is accepted. Resources are
+            DELIVERED: each side loads its goods onto a freighter at one of
+            its collectors and flies them to the other's — assign ships in
+            the Trades panel's Shipments tab after acceptance.
           </div>
         </form>
       </div>
