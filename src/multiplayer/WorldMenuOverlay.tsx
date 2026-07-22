@@ -160,10 +160,10 @@ export const WorldMenuOverlay: React.FC = () => {
       // half the outliner width so it centers in the remaining space
       // (outliner ~296px on the left, dock ~60px on the right).
       const rShift = vw > 720 ? (296 - 60) / 2 : 0;
-      // Mobile: lift the planet so its horizon sits at 50% of the
-      // viewport (S1Y_FRAC=1.02, Z1_FRAC=0.42 → default horizon at 60%).
-      // Shift up by (0.60 - 0.50) · vh = 0.10 · vh.
-      const uShift = vw > 720 ? 0 : -0.10 * vh;
+      // Mobile: lift the planet so it sits close to the station, well
+      // above the surface build row. Default horizon is 60% (S1Y=1.02 -
+      // Z1=0.42); shifting up by 0.25·vh moves it to 35% of the viewport.
+      const uShift = vw > 720 ? 0 : -0.25 * vh;
       const off = menuCameraOffset(vw, vh, s1, rShift, uShift);
       focusBody(sel); // sets focusedBodyId (body-relative camera)
       updateCamera({ scale: s1, x: off.x, y: off.y });
@@ -305,7 +305,7 @@ export const WorldMenuOverlay: React.FC = () => {
   // anchor below hangs off `cx` so it stays coincident with the canvas
   // planet after the shift.
   const rShift = !mobile ? (296 - 60) / 2 : 0;
-  const uShift = mobile ? -0.10 * vh : 0; // mobile: horizon at 50% of vh
+  const uShift = mobile ? -0.25 * vh : 0; // mobile: horizon at 35% of vh (close to station)
   const cx = S1X_FRAC * vw + rShift, cy = S1Y_FRAC * vh + uShift, cr = Z1_FRAC * vh;
   const partPos = (frac: number) => {
     const a = (-90 + frac * 46) * Math.PI / 180;
@@ -560,10 +560,12 @@ export const WorldMenuOverlay: React.FC = () => {
           className="wm-station" data-testid="wm-station"
           viewBox="0 0 130 130"
           style={mobile
-            // Mobile: sit in the sky between the station-build row and
-            // the horizon (which is now at 50% of vh). Centered.
-            ? { left: '50%', top: 'calc(var(--wm-topbar-h, 52px) + 108px)',
-                width: 116, height: 116, transform: 'translateX(-50%)' }
+            // Mobile: park just below the station-build row, RIGHT
+            // ABOVE the horizon so the planet reads as one contiguous
+            // scene with the station. Centered.
+            ? { left: '50%',
+                top: 'calc(var(--wm-topbar-h, 52px) + var(--wm-panel-h, 44px) + var(--wm-orbit-h, 40px) + 20px)',
+                width: 100, height: 100, transform: 'translateX(-50%)' }
             : { left: staX, top: staY, width: staW, height: staH }}
         >
           {/* tilted torus ring (back band, then front band) */}
@@ -613,21 +615,24 @@ export const WorldMenuOverlay: React.FC = () => {
       {mobile ? (
         <>
           {/* ORBIT — station build options at the top of the sky, ABOVE
-              the station graphic. Sits just under the slim name strip. */}
+              the station graphic. Nudged down for clearance from the
+              collapsed title strip. */}
           {orbitEls.length > 0 && (
             <div
               className="wm-mrow wm-mrow-orbit" data-testid="wm-col-orbit"
-              style={{ top: 'calc(var(--wm-topbar-h, 52px) + var(--wm-panel-h, 42px) + 6px)' }}
+              style={{ top: 'calc(var(--wm-topbar-h, 52px) + var(--wm-panel-h, 44px) + 14px)' }}
             >
               {orbitEls}
             </div>
           )}
-          {/* SURFACE — city build options just BELOW the horizon (50%
-              of vh in mobile-shifted framing). */}
+          {/* SURFACE — city build options docked just ABOVE the ship-
+              build box, which itself now clears the dock nav. The whole
+              stack (surface row + fleet) rides up from the bottom, so
+              the diegetic planet fills the vertical middle. */}
           {surfaceEls.length > 0 && (
             <div
               className="wm-mrow wm-mrow-surface" data-testid="wm-col-surface"
-              style={{ top: `calc(50% + 12px)` }}
+              style={{ bottom: `calc(${chromeH.fleet}px + var(--mobile-rail-height, 72px) + 16px)` }}
             >
               {surfaceEls}
             </div>

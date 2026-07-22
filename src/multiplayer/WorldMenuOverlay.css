@@ -258,7 +258,12 @@
 .wm-mobile .wm-top.collapsed .wm-crumb,
 .wm-mobile .wm-top.collapsed .wm-out .wm-label { display: none; }
 .wm-mobile .wm-top.collapsed .wm-name { font-size: 14px; }
-.wm-mobile .wm-top.collapsed .wm-idrow { display: none; }
+/* Collapsed strip: keep the owner chip visible next to the name (hide
+   only the .wm-type text). Owner conveys who controls the world at a
+   glance — the ask. */
+.wm-mobile .wm-top.collapsed .wm-idrow { display: flex; margin-top: 2px; gap: 6px; }
+.wm-mobile .wm-top.collapsed .wm-idrow .wm-type { display: none; }
+.wm-mobile .wm-top.collapsed .wm-owner { font-size: 8.5px; padding: 1px 6px; }
 .wm-mobile .wm-top.collapsed .wm-out { flex-direction: row; align-items: center; gap: 8px; }
 .wm-mobile .wm-tomap { top: calc(var(--wm-topbar-h, 52px) + 6px); right: 8px; padding: 4px 8px; font-size: 9px; }
 .wm-mobile .wm-more { position: absolute; top: 4px; right: 8px; margin: 0; font-size: 8px; padding: 2px 6px; }
@@ -278,12 +283,15 @@
 .wm-mrow .wm-bbtn-nm { font-size: 9px; }
 .wm-mrow .wm-bbtn-st { font-size: 8px; }
 
-/* shipyard box gets the whole bottom + more height */
+/* shipyard box gets the whole bottom + more height. Sits ABOVE the
+   dock rail (--mobile-rail-height already includes the iOS safe area),
+   with a small breathing gap — the fleet no longer overlaps the nav. */
 .wm-mobile .wm-fleet {
-  left: 8px; right: 8px; bottom: 8px;
+  left: 8px; right: 8px;
+  bottom: calc(var(--mobile-rail-height, 72px) + 8px);
   width: auto; transform: none !important;
   flex-direction: column; gap: 6px;
-  max-height: 260px; overflow-y: auto;
+  max-height: 240px; overflow-y: auto;
 }
 .wm-mobile .wm-fleet-queue { flex: 0 0 auto; }
 .wm-mobile .wm-fleet-grid { grid-template-columns: 1fr 1fr; }
