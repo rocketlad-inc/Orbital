@@ -26,15 +26,14 @@ import { BUILDING_FEATURE } from '../game/researchUnlocks';
 import { BUILDABLE_CLASSES, getShipClass } from '../game/shipClasses';
 import { shipyardSlotsAtBody, canHostCity, canHostStation } from '../game/settlements';
 import { getBodyFlavor } from '../game/bodyFlavor';
-import { deriveSecondary } from '../game/colorUtils';
 import { Body, BuildingKind, Settlement, SettlementType } from '../types';
 import {
-  menuScaleFor, menuCameraOffset, menuOpacity, zOf, clamp01,
+  menuScaleFor, menuCameraOffset, menuOpacity, zOf,
   S1X_FRAC, S1Y_FRAC, Z1_FRAC,
 } from '../game/worldMenu/camera';
 import { setWorldMenuActive } from '../game/worldMenu/store';
 import { columnsFor, buildStatus, noHostText } from '../game/worldMenu/buildRules';
-import { hpColor, flameCount } from '../game/worldMenu/combatDisplay';
+import { hpColor } from '../game/worldMenu/combatDisplay';
 import { readoutFor, neighborsOf } from '../game/worldMenu/bodyStats';
 import { PART_FRACS } from '../render/worldMenuCloseup';
 import './WorldMenuOverlay.css';
@@ -224,7 +223,6 @@ export const WorldMenuOverlay: React.FC = () => {
     ? gameState.factions.find(f => f.id === readout.ownerFactionId)
     : undefined;
   const p1 = ownerFaction?.color ?? '#8b6fd0';
-  const p2 = ownerFaction?.color2 || deriveSecondary(p1);
   const neighbors = useMemo(
     () => neighborsOf(openId, gameState.bodies).slice(0, 4),
     [openId, gameState.bodies],
@@ -232,7 +230,6 @@ export const WorldMenuOverlay: React.FC = () => {
   const parentBody = body?.parent && body.parent !== 'sol'
     ? gameState.bodies.find(b => b.id === body.parent)
     : undefined;
-  const buildingShipHere = gameState.buildOrders.some(o => o.bodyId === openId && o.ownedBy === 'player');
 
   const queueBuild = async (kind: BuildingKind, settlement: Settlement | null) => {
     if (!settlement) return;
@@ -289,21 +286,15 @@ export const WorldMenuOverlay: React.FC = () => {
   const COL_W = 168, BTN_H = 40;
   const leftColX = Math.max(railW + 10, cx - cr - COL_W - 26);
   const colTopY = cy - cr + 4;
-  // Orbit column pinned far right; the station rig floats in the sky
-  // directly above it — well clear of the centered ship-build box.
+  // Orbit column pinned far right. The station itself is drawn on the
+  // CANVAS (mapRenderer.drawStation) — a diamond that grows into the
+  // real hub/wings/module structure as you zoom, with damage flash. We
+  // no longer draw a DOM station graphic; only the build controls +
+  // a small HP readout live in DOM.
   const rightColX = vw - dockW - COL_W - 10;
-  const staW = 150, staH = 150; // compact square rig (viewBox 0 0 150 150)
-  const staX = rightColX + (COL_W - staW) / 2;
-  const staY = Math.max(66, colTopY - staH - 14);
   // Leader-line anchor for the i-th button in a column.
   const btnAnchor = (colX: number, i: number, edge: 'right' | 'left') =>
     ({ x: edge === 'right' ? colX + COL_W : colX, y: colTopY + i * (BTN_H + 9) + BTN_H / 2 });
-  // Station part anchors (fractions of the 150×150 rig box).
-  const staAnchor = (fy: number) => ({ x: staX + staW * 0.5, y: staY + staH * fy });
-  // Star→rig crossfade for the station: a point of light that resolves
-  // into the structure as the dive completes.
-  const rigK = clamp01((z - 0.8) / 0.16);
-  const starK = 1 - rigK;
   // Owner faction colour for a body's settlement (null = unsettled).
   const bodyOwnerColor = (bid: string): string | null => {
     const s = gameState.settlements.find(x => x.bodyId === bid);
@@ -385,7 +376,6 @@ export const WorldMenuOverlay: React.FC = () => {
   ];
 
   const staHpRatio = readout.station ? readout.station.hp / Math.max(1, readout.station.maxHp) : 1;
-  const staFlames = readout.station ? flameCount(staHpRatio, 4) : 0;
 
   return (
     <div
@@ -509,81 +499,26 @@ export const WorldMenuOverlay: React.FC = () => {
       </svg>
       )}
 
-      {/* ===== station: a STAR that resolves into the rig as you zoom in.
-           Compact square hub (150×150) up-right, above the orbit column;
-           never overlaps the centered ship-build box. ===== */}
-      {readout.station && (
-        <svg
-          className="wm-station" viewBox="0 0 150 150" data-testid="wm-station"
-          style={mobile
-            ? { top: 'calc(var(--wm-topbar-h, 52px) + var(--wm-panel-h, 92px) + 8px)', right: 8, width: 96, height: 96 }
-            : { left: staX, top: staY, width: staW, height: staH }}
-        >
-          {/* STAR phase — a point of light with a soft glow */}
-          <g style={{ opacity: starK }}>
-            <circle cx="75" cy="80" r="26" fill={p1} opacity="0.14" />
-            <path className="wm-sta-star" fill={p2}
-              d="M75,58 L79,74 L95,74 L82,84 L87,100 L75,90 L63,100 L68,84 L55,74 L71,74 Z" />
-            <circle cx="75" cy="80" r="3" fill="#fff" />
-          </g>
-          {/* RIG phase — hub + solar arms + ring, faction parts on build */}
-          <g style={{ opacity: rigK }}>
-            <g className="wm-sta-core">
-              <ellipse cx="75" cy="86" rx="46" ry="14" fill="none" strokeWidth="4" transform="rotate(-12 75 86)" />
-              <rect x="20" y="82" width="26" height="6" />
-              <rect x="104" y="82" width="26" height="6" />
-              <rect x="66" y="72" width="18" height="26" rx="2" />
-            </g>
-            {myStation && (myStation.buildings?.weapons ?? 0) > 0 && (
-              <g className="wm-sta-part" style={{ fill: p1 }}>
-                <rect x="12" y="80" width="10" height="10" />
-                <rect x="128" y="80" width="10" height="10" />
-                <rect x="8" y="83" width="6" height="3" style={{ fill: p2 }} />
-                <rect x="136" y="83" width="6" height="3" style={{ fill: p2 }} />
-              </g>
-            )}
-            {myStation && (myStation.buildings?.shipyard ?? 0) > 0 && (
-              <g className="wm-sta-part">
-                <path d="M60,102 L52,102 L52,120 L60,120" fill="none" stroke={p1} strokeWidth="3" />
-                <path d="M90,102 L98,102 L98,120 L90,120" fill="none" stroke={p1} strokeWidth="3" />
-                {buildingShipHere && (
-                  <path d="M58,110 L86,110 L92,113 L86,116 L58,116 Z" fill="none"
-                    stroke={p2} strokeWidth="1.5" strokeDasharray="4 3" data-testid="wm-hull" />
-                )}
-              </g>
-            )}
-            {Array.from({ length: staFlames }, (_, i) => {
-              const pts = [{ x: 60, y: 84 }, { x: 90, y: 84 }, { x: 75, y: 96 }, { x: 68, y: 90 }];
-              const p = pts[i];
-              return (
-                <g key={i} className="wm-flame" style={{ animationDelay: `${i * 0.12}s` }}>
-                  <path d={`M${p.x},${p.y} c-4.4,-4.8 -2.2,-9.2 0,-13.6 c2.2,4.4 4.4,8.8 0,13.6`} fill="#ff5a1f" />
-                  <path d={`M${p.x},${p.y} c-2.4,-3.6 -1.2,-6 0,-9 c1.2,3 2.4,5.4 0,9`} fill="#ffca28" />
-                </g>
-              );
-            })}
-          </g>
-          {/* name + HP always readable */}
-          <text className="wm-sta-name" x="75" y="18" textAnchor="middle">
-            {readout.station.name.toUpperCase()}
-          </text>
-          <rect x="24" y="24" width="102" height="6" rx="2" className="wm-hp-bg" />
-          <rect x="24" y="24" width={102 * staHpRatio} height="6" rx="2" fill={hpColor(staHpRatio)} />
-          <text className="wm-sta-hp" x="75" y="40" textAnchor="middle">
-            {Math.round(readout.station.hp)} / {readout.station.maxHp}
-          </text>
-        </svg>
-      )}
-
       {/* ===== build controls =====
-           Desktop: two columns hovering just off the limb, leader lines
-           from the button edge to the hardware. Mobile: ONE compact grid
-           of all six over the planet (no columns, no lines). */}
+           Desktop: two columns hovering off the limb, leader lines from
+           each surface button to its limb building. Mobile: station row
+           just above the horizon, city row down at the bottom. */}
       {mobile ? (
-        <div className="wm-mgrid" data-testid="wm-col-surface">
-          {surfaceEls}
-          {orbitEls}
-        </div>
+        <>
+          {orbitEls.length > 0 && (
+            <div
+              className="wm-mrow wm-mrow-orbit" data-testid="wm-col-orbit"
+              style={{ bottom: Math.max(vh * 0.42, vh - (cy - cr) + 6) }}
+            >
+              {orbitEls}
+            </div>
+          )}
+          {surfaceEls.length > 0 && (
+            <div className="wm-mrow wm-mrow-surface" data-testid="wm-col-surface">
+              {surfaceEls}
+            </div>
+          )}
+        </>
       ) : (
         <>
           {surfaceEls.length > 0 && (
@@ -601,31 +536,30 @@ export const WorldMenuOverlay: React.FC = () => {
               style={{ left: rightColX, top: colTopY, width: COL_W }}
             >
               <div className="wm-col-label">ORBIT — <b>STATION</b></div>
+              {readout.station && (
+                <div className="wm-col-hp" title={`Station integrity ${Math.round(readout.station.hp)}/${readout.station.maxHp}`}>
+                  <span>{readout.station.name.toUpperCase()}</span>
+                  <span className="wm-col-hpbar">
+                    <i style={{ width: `${staHpRatio * 100}%`, background: hpColor(staHpRatio) }} />
+                  </span>
+                </div>
+              )}
               {orbitEls}
             </aside>
           )}
 
-          {/* leader lines: button edge → limb part (surface) / station
-              rig part (orbit). Only when the settlement (and thus the
-              part) actually exists — no lines to a FOUND button. */}
-          {settled && (
+          {/* leader lines: surface button edge → its limb building. The
+              station is the canvas graphic (drawStation) on the orbital
+              ring, so orbit buttons don't draw lines. */}
+          {settled && myCity && (
             <svg className="wm-lines" width={vw} height={vh} aria-hidden="true">
-              {myCity && cols.surface.map((k, i) => {
+              {cols.surface.map((k, i) => {
                 const from = btnAnchor(leftColX, i + 1, 'right'); // +1: label row
                 const to = partPos(PART_FRACS[k] ?? 0);
                 if (to.y > vh - 40) return null;
                 const mx = (from.x + to.x) / 2;
                 return <path key={k} data-wm-line={k} className="wm-line" fill="none"
                   d={`M${from.x},${from.y} C${mx},${from.y} ${mx},${to.y} ${to.x - 8},${to.y}`} />;
-              })}
-              {myStation && readout.station && cols.orbit.map((k, i) => {
-                // station sits ABOVE the orbit column: leave the button's
-                // left edge, curve up to the rig's lower edge.
-                const from = btnAnchor(rightColX, i + 1, 'left');
-                const to = staAnchor(k === 'weapons' ? 0.6 : k === 'shipyard' ? 0.8 : 0.68);
-                const my = (from.y + to.y) / 2;
-                return <path key={k} data-wm-line={k} className="wm-line" fill="none"
-                  d={`M${from.x},${from.y} C${from.x - 30},${my} ${to.x},${my} ${to.x},${to.y + 6}`} />;
               })}
             </svg>
           )}

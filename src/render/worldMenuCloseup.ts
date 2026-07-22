@@ -243,6 +243,34 @@ export function drawWorldMenuCloseup(
   const p2 = (faction as { color2?: string } | undefined)?.color2 || deriveSecondary(p1);
 
   if (city) {
+    // Sci-fi skyline that GROWS with population: more towers, taller
+    // spires, lit windows as pop climbs. Neutral steel so faction
+    // builds pop (spec G3). Slots near the faction-building fracs are
+    // skipped so those keep their clearing.
+    const g = rc.ctx;
+    const pop = Math.max(1, city.population ?? 1);
+    const count = Math.min(28, 7 + Math.floor(pop * 2.5));
+    const growth = clamp01(pop / 8);
+    for (let i = 0; i < count; i++) {
+      const fr = -0.9 + (i / Math.max(1, count - 1)) * 1.8 + (hash01(body.id, i + 61) - 0.5) * 0.045;
+      if (Object.values(PART_FRACS).some(pf => Math.abs(pf - fr) < 0.07)) continue;
+      const a = arcAngle(fr);
+      const px = c.x + Math.cos(a) * c.r, py = c.y + Math.sin(a) * c.r;
+      const kind = Math.floor(hash01(body.id, i + 97) * 5);
+      const h = c.r * (0.03 + hash01(body.id, i + 31) * (0.045 + 0.085 * growth));
+      const w = c.r * (0.007 + hash01(body.id, i + 43) * 0.018);
+      g.save(); g.globalAlpha = alpha; g.translate(px, py); g.rotate(a + Math.PI / 2);
+      g.fillStyle = '#24384e';
+      if (kind === 0) { g.fillRect(-w, -h, w * 2, h); g.fillRect(-w * 0.55, -h * 1.28, w * 1.1, h * 0.3); }
+      else if (kind === 1) { g.fillRect(-w * 0.5, -h * 1.15, w, h * 1.15); g.fillRect(-w * 0.16, -h * 1.5, w * 0.32, h * 0.4); }
+      else if (kind === 2) { g.fillRect(-w * 0.4, -h, w * 0.8, h); g.fillRect(-w * 1.6, -h * 0.82, w * 3.2, h * 0.06); g.beginPath(); g.arc(0, -h * 1.06, w * 0.6, 0, Math.PI * 2); g.fill(); }
+      else if (kind === 3) { g.beginPath(); g.arc(0, 0, h * 0.42, Math.PI, 0); g.closePath(); g.fill(); }
+      else { g.fillRect(-w * 1.4, -h * 0.7, w, h * 0.7); g.fillRect(w * 0.3, -h, w, h); g.fillRect(-w * 1.4, -h * 0.74, w * 2.7, h * 0.05); }
+      if (growth > 0.4 && kind <= 1 && hash01(body.id, i + 151) > 0.55) {
+        g.fillStyle = p2; g.globalAlpha = alpha * 0.55; g.fillRect(-w * 0.3, -h * 0.8, w * 0.6, h * 0.05);
+      }
+      g.restore();
+    }
     for (const kind of ['forge', 'mint', 'lab'] as BuildingKind[]) {
       drawBuilding(rc.ctx, kind, buildingLevel(city, kind), c, PART_FRACS[kind], p1, p2, alpha);
     }

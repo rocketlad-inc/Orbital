@@ -118,26 +118,16 @@ body.wm-open .left-rail { display: none; }
 /* settlement indicator: owner-coloured ring + star badge */
 .wm-orb-owned { opacity: 0.85; }
 .wm-orb-star { filter: drop-shadow(0 0 2px rgba(0,0,0,0.6)); }
-/* station star phase */
-.wm-sta-star { filter: drop-shadow(0 0 5px currentColor); }
 
-/* ---- station rig (position inline) ---- */
-.wm-station { position: absolute; }
-.wm-sta-core rect, .wm-sta-core ellipse { fill: #2c455f; stroke: #2c455f; }
-.wm-sta-core ellipse { fill: none; }
-.wm-sta-name { font: 700 10px 'JetBrains Mono', monospace; letter-spacing: 0.08em; fill: #d6e2ec; }
-.wm-sta-hp { font: 8.5px 'JetBrains Mono', monospace; fill: #6b8195; }
-.wm-hp-bg { fill: #0c1219; stroke: #2a3d50; stroke-width: 1; }
-.wm-flame {
-  transform-box: fill-box; transform-origin: 50% 100%;
-  animation: wm-flicker 0.5s ease-in-out infinite;
+/* The station itself is the CANVAS graphic (mapRenderer.drawStation) —
+   a diamond that grows into the real hub/wings structure as you zoom.
+   No DOM station graphic; its name+HP live in the orbit column header. */
+.wm-col-hp {
+  display: flex; flex-direction: column; gap: 3px;
+  font-size: 8.5px; letter-spacing: 0.1em; color: #6b8195; margin-bottom: 2px;
 }
-@keyframes wm-flicker {
-  0%, 100% { transform: scaleY(1); opacity: 0.92; }
-  40% { transform: scaleY(0.72) scaleX(1.1); opacity: 0.6; }
-  70% { transform: scaleY(1.08) scaleX(0.9); opacity: 1; }
-}
-@media (prefers-reduced-motion: reduce) { .wm-flame { animation: none !important; } }
+.wm-col-hpbar { height: 4px; background: #0c1219; border: 1px solid #2a3d50; border-radius: 2px; overflow: hidden; }
+.wm-col-hpbar i { display: block; height: 100%; }
 
 /* ---- build columns (position inline; hover just off the limb) ---- */
 .wm-col {
@@ -233,29 +223,40 @@ body.wm-open .left-rail { display: none; }
 /* ================= mobile ================= */
 .wm-mobile .wm-top {
   left: 8px; right: 8px; max-width: none;
-  padding: 10px 12px;
 }
-.wm-mobile .wm-name { font-size: 18px; }
+.wm-mobile .wm-name { font-size: 16px; }
+/* collapsed: a slim header — name + owner + resources only */
+.wm-mobile .wm-top.collapsed {
+  padding: 7px 10px; gap: 3px;
+}
+.wm-mobile .wm-top.collapsed .wm-desc,
 .wm-mobile .wm-top.collapsed .wm-metrics,
 .wm-mobile .wm-top.collapsed .wm-stock,
-.wm-mobile .wm-top.collapsed .wm-collector { display: none; }
+.wm-mobile .wm-top.collapsed .wm-collector,
+.wm-mobile .wm-top.collapsed .wm-crumb,
+.wm-mobile .wm-top.collapsed .wm-out .wm-label { display: none; }
+.wm-mobile .wm-top.collapsed .wm-name { font-size: 15px; }
+.wm-mobile .wm-top.collapsed .wm-out { flex-direction: row; align-items: center; }
 .wm-mobile .wm-tomap { top: calc(var(--wm-topbar-h, 52px) + 10px); right: 8px; }
+.wm-mobile .wm-more { position: absolute; top: 6px; right: 8px; margin: 0; }
 
-/* six build buttons in one array over the planet */
-.wm-mgrid {
-  position: absolute;
-  left: 8px; right: 8px;
-  bottom: calc(var(--wm-fleet-h, 150px) + 20px);
+/* two docked build rows: station just above the horizon, city at the
+   bottom (above the roomy shipyard box). */
+.wm-mrow {
+  position: absolute; left: 8px; right: 8px;
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
 }
-.wm-mgrid .wm-bbtn { height: 48px; align-items: center; text-align: center; padding: 5px 4px; }
-.wm-mgrid .wm-bbtn-nm { font-size: 9px; }
-.wm-mgrid .wm-bbtn-st { font-size: 8px; }
+.wm-mrow-surface { bottom: calc(var(--wm-fleet-h, 168px) + 14px); }
+.wm-mrow .wm-bbtn { height: 44px; align-items: center; text-align: center; padding: 5px 4px; }
+.wm-mrow .wm-bbtn-nm { font-size: 9px; }
+.wm-mrow .wm-bbtn-st { font-size: 8px; }
 
+/* shipyard box gets the whole bottom + more height */
 .wm-mobile .wm-fleet {
   left: 8px; right: 8px; bottom: 8px;
   width: auto; transform: none !important;
-  flex-direction: column; gap: 8px;
-  max-height: 210px; overflow-y: auto;
+  flex-direction: column; gap: 6px;
+  max-height: 260px; overflow-y: auto;
 }
 .wm-mobile .wm-fleet-queue { flex: 0 0 auto; }
+.wm-mobile .wm-fleet-grid { grid-template-columns: 1fr 1fr; }
