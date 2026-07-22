@@ -418,7 +418,13 @@ export const WorldMenuOverlay: React.FC = () => {
   const foundBtn = (type: SettlementType) => {
     const isCity = type === 'city';
     const own = !!(myCity || myStation);
-    const enabled = isMine && !(isCity ? false : !!stationLock) && (isCity
+    // NOT gated by isMine: founding is the WAY you take ownership of an
+    // unclaimed body. The old check kept the button disabled on every
+    // unowned body (ownerFactionId === null → isMine === false), which
+    // was the "have a colony ship in orbit but Build Station is dead"
+    // bug. The colony ship / stationLock / cost checks below are the
+    // real gates — mirrors BodyInspector's showCityDeploy/showStationDeploy.
+    const enabled = !(isCity ? false : !!stationLock) && (isCity
       ? !!colonyShipHere
       : (!!colonyShipHere || (own && canAffordStation)));
     const sub = isCity
