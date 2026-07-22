@@ -875,27 +875,110 @@ async function handleResearch(req, env, ctx) {
     return err(409, 'tech_maxed', `${techId} is already at max level ${TECH_MAX_LEVEL}`);
   }
 
-  // Committing to a project no longer costs anything up front — the
-  // per-tick drain in worker/room.js pours the faction's science income
-  // into research_progress until it covers the cost (Civ/Stellaris
-  // model, and what single-player already did). Switching to a DIFFERENT
-  // track abandons progress on the old one; re-picking the current track
-  // is a no-op that preserves it.
-  const switching = me.research_tech_id !== techId;
+  // Committing to a project costs nothing up front, but BANKED science
+  // is applied toward it the moment you commit — and if the bank covers
+  // the whole remaining cost, the level completes instantly (an
+  // insta-buy). After that, the per-tick drain in worker/room.js keeps
+  // pouring science income into research_progress as before. Switching
+  // to a DIFFERENT track abandons progress on the old one; re-picking
+  // the current track preserves it (and re-applies any newly banked
+  // science, so clicking your active project can also finish it).
+  //
+  // The project columns are fetched explicitly: requireMyFaction doesn't
+  // select them, and the old code read them off `me` anyway — always
+  // undefined, so `switching` was ALWAYS true and re-picking the current
+  // track silently reset its progress, contrary to the comment on it.
+  const projRow = await env.DB
+    .prepare('SELECT research_tech_id, research_progress, name FROM game_factions WHERE id = ?')
+    .bind(me.id)
+    .first();
+  const switching = (projRow?.research_tech_id ?? null) !== techId;
+  const progress0 = switching ? 0 : Number(projRow?.research_progress ?? 0);
+
+  // Same 3dp rounding discipline as the tick drain — income is
+  // fractional and float noise otherwise drifts the pool/progress.
+  const round3 = (n) => Math.round(n * 1000) / 1000;
+  const cost = techCostForNext(curLevel, TECH_DEFS[techId]);
+  const pool = Number(me.science ?? 0);
+  const remaining = round3(cost - progress0);
+  // Clamped to the pool and to what's still needed, exactly like the
+  // drain: never spend science that isn't there, never overshoot.
+  const spend = remaining > 0 ? Math.max(0, round3(Math.min(pool, remaining))) : 0;
+  const newProgress = round3(progress0 + spend);
+
+  if (newProgress >= cost) {
+    // Bank covers it — grant the level NOW. Mirrors the tick drain's
+    // completion branch (worker/room.js research pass): clear the
+    // project so the next one is a deliberate choice, upsert the tech
+    // level, and chronicle it.
+    const game = await env.DB
+      .prepare('SELECT current_tick FROM games WHERE id = ?')
+      .bind(gameId)
+      .first();
+    const tick = game?.current_tick ?? 0;
+    await env.DB.batch([
+      env.DB
+        .prepare('UPDATE game_factions SET science = science - ?, research_tech_id = NULL, research_progress = 0 WHERE id = ?')
+        .bind(spend, me.id),
+      env.DB
+        .prepare(
+          `INSERT INTO faction_techs
+            (game_id, faction_id, tech_id, status, level, started_at_tick, completed_at_tick)
+           VALUES (?, ?, ?, 'completed', 1, ?, ?)
+           ON CONFLICT(game_id, faction_id, tech_id) DO UPDATE
+             SET level = level + 1, status = 'completed', completed_at_tick = ?`,
+        )
+        .bind(gameId, me.id, techId, tick, tick, tick),
+    ]);
+    try {
+      // Level in the id: two insta-buys of successive levels of the SAME
+      // tech can land on the same tick — the drain's id scheme (tick +
+      // faction + tech) would collide and drop the second entry.
+      await env.DB
+        .prepare(
+          `INSERT INTO chronicle_entries
+            (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
+           VALUES (?, ?, ?, 'tech_advanced', ?, ?, 'public', ?)`,
+        )
+        .bind(
+          `c${tick}_tech_${me.id.slice(-6)}_${techId}_l${curLevel + 1}`,
+          gameId, tick, me.id,
+          JSON.stringify({
+            tech_id: techId,
+            level: curLevel + 1,
+            faction_name: projRow?.name ?? null,
+          }),
+          Date.now(),
+        )
+        .run();
+    } catch (e) { console.error('tech_advanced chronicle failed (insta-buy)', e); }
+
+    return json({
+      tech_id: techId,
+      level: curLevel + 1,
+      progress: 0,
+      cost,
+      science_spent: spend,
+      completed: true,
+    }, { status: 201 });
+  }
+
   await env.DB
     .prepare(
       `UPDATE game_factions
-          SET research_tech_id = ?, research_progress = ?
+          SET science = science - ?, research_tech_id = ?, research_progress = ?
         WHERE id = ?`,
     )
-    .bind(techId, switching ? 0 : (me.research_progress ?? 0), me.id)
+    .bind(spend, techId, newProgress, me.id)
     .run();
 
   return json({
     tech_id: techId,
     level: curLevel,
-    progress: switching ? 0 : (me.research_progress ?? 0),
-    cost: techCostForNext(curLevel, TECH_DEFS[techId]),
+    progress: newProgress,
+    cost,
+    science_spent: spend,
+    completed: false,
   }, { status: 201 });
 }
 

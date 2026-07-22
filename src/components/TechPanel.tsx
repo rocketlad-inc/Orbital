@@ -55,10 +55,11 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
   const activeCost = activeDef ? nextLevelCost(activeLevel, activeDef) : 0;
   const activePct = activeCost > 0 ? Math.min(100, (tech.progress / activeCost) * 100) : 0;
 
-  // Science actually REACHING the pool each tick. Research advances at
-  // exactly this rate (worker/room.js research drain), so it's what the
-  // ETA must be computed from — not the banked pool, which can't be
-  // spent to rush a project.
+  // Science actually REACHING the pool each tick. A running project
+  // advances at exactly this rate (worker/room.js research drain), so
+  // the active-project ETA is computed from it. The banked pool is
+  // separate: it gets applied as a lump sum at COMMIT time (worker/
+  // actions.js handleResearch) — the MP button's label handles that.
   const scienceRate = useMemo(() => {
     const lvl = tech.levels?.industry ?? 0;
     const yieldMul = 1 + TECH_DEFS.industry.perLevel * lvl;
@@ -318,13 +319,23 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                     title="This tech has reached the global cap."
                   >★ MAXED</div>
                 ) : mpActions ? (
+                  (() => {
+                    // Banked science is applied the moment you commit
+                    // (server: worker/actions.js handleResearch) — so the
+                    // label and ETA account for the bank. If it covers the
+                    // whole remaining cost, committing = instant unlock.
+                    const progress0 = isActive ? tech.progress : 0;
+                    const afterBank = Math.max(0, cost - progress0 - playerScience);
+                    const instant = afterBank <= 0;
+                    return (
                   <button
-                    className={`tech-card__action ${isActive ? 'active' : ''}`}
+                    className={`tech-card__action ${isActive ? 'active' : ''} ${instant ? 'instant' : ''}`}
                     onClick={async () => {
                       if (inFlight.has(id)) return;
-                      // No affordability gate any more: committing to a
-                      // project is free. Science income fills it over
-                      // the following ticks (server-side drain).
+                      // No affordability gate: committing is always
+                      // allowed. The server applies banked science
+                      // immediately (possibly completing the level), and
+                      // income fills whatever remains per tick.
                       setInFlight(prev => new Set(prev).add(id));
                       setResearchError(null);
                       try {
@@ -343,18 +354,26 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                       }
                     }}
                     disabled={inFlight.has(id)}
-                    title={isActive
-                      ? `Currently researching ${def.name} — ${progressPct}% of ${cost} science`
-                      : `Commit to ${def.name}. Your science income fills it each tick (${cost} science needed).`}
+                    title={instant
+                      ? (isActive
+                          ? `Complete ${def.name} now — your banked science covers the remaining cost.`
+                          : `Unlock ${def.name} instantly — your banked science (${Math.floor(playerScience)}) covers the ${cost} cost.`)
+                      : isActive
+                        ? `Currently researching ${def.name} — ${progressPct}% of ${cost} science. Click to apply banked science (${Math.floor(playerScience)}).`
+                        : `Commit to ${def.name}. Banked science is applied immediately; income fills the rest (${Math.ceil(afterBank)} of ${cost} science still needed).`}
                   >
                     {inFlight.has(id)
                       ? '…'
-                      : isActive
-                        ? `Researching · ${progressPct}%`
-                        : scienceRate > 0
-                          ? `Set project · ${Math.ceil(cost / scienceRate)}t`
-                          : `Set project (${cost} sci)`}
+                      : instant
+                        ? (isActive ? '⚡ Complete now' : '⚡ Unlock now')
+                        : isActive
+                          ? `Researching · ${progressPct}%`
+                          : scienceRate > 0
+                            ? `Set project · ${Math.ceil(afterBank / scienceRate)}t`
+                            : `Set project (${Math.ceil(afterBank)} sci)`}
                   </button>
+                    );
+                  })()
                 ) : isActive ? (
                   <button
                     className="tech-card__action active"

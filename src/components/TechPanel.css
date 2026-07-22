@@ -251,3 +251,16 @@
   border-color: #2a3d50;
   color: #b8c8d6;
 }
+
+/* Banked science covers the whole cost — committing = instant unlock.
+   Amber to read as "spend now", distinct from the teal commit and the
+   green in-progress states. (MP-only: the class is only set in the
+   mpActions branch of TechPanel.) */
+.tech-card__action.instant {
+  border-color: #ffb84d;
+  color: #ffb84d;
+  background: rgba(255, 184, 77, 0.1);
+}
+.tech-card__action.instant:hover:not(:disabled) {
+  background: rgba(255, 184, 77, 0.22);
+}
