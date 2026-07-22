@@ -916,10 +916,25 @@ async function handleResearch(req, env, ctx) {
       .bind(gameId)
       .first();
     const tick = game?.current_tick ?? 0;
+    // An insta-buy of a tech that is NOT your active project is a pure
+    // instant purchase: deduct the science, grant the level, and LEAVE the
+    // active project + its progress untouched. Only clear the track when the
+    // tech you just finished IS the one you were actively researching.
+    //
+    // Bug (StealthyMoose, iOS): this branch used to always NULL
+    // research_tech_id + zero research_progress, so unlocking a side tech
+    // (sensors, fully bank-covered) wiped an unrelated in-progress project
+    // (propulsion at 14/15). Resuming re-applied banked science, which is
+    // why the progress "came back" — it was never really preserved.
+    const completionUpdate = switching
+      ? env.DB
+          .prepare('UPDATE game_factions SET science = science - ? WHERE id = ?')
+          .bind(spend, me.id)
+      : env.DB
+          .prepare('UPDATE game_factions SET science = science - ?, research_tech_id = NULL, research_progress = 0 WHERE id = ?')
+          .bind(spend, me.id);
     await env.DB.batch([
-      env.DB
-        .prepare('UPDATE game_factions SET science = science - ?, research_tech_id = NULL, research_progress = 0 WHERE id = ?')
-        .bind(spend, me.id),
+      completionUpdate,
       env.DB
         .prepare(
           `INSERT INTO faction_techs
