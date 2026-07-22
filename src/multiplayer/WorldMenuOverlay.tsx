@@ -67,15 +67,16 @@ function useEasedZ(target: number): number {
 
 // Sky orbs: small (just big enough to tap — the transparent hit circle
 // adds +14px) and kept HIGH so they stay clear of the city name tag.
-// Sky orbs — smaller and clustered near the shifted planet centre so
-// they don't crowd the outliner. Slot x is measured relative to `cx`
-// (in vw fractions), not screen 0, so the whole group shifts together
-// with the planet.
+// Sky orbs — placed as absolute-px offsets from `cx`, all to the RIGHT
+// of the info panel (which centres over the planet and has a max width
+// of 560px, so its right edge lives at cx + 280). This puts every orb
+// clear of the panel and clear of the outliner on the left.
+// Ordered biggest-first (parent), then siblings.
 const ORB_SLOTS = [
-  { dx: -0.13, y: 0.28, r: 0.030 },   // parent (biggest)
-  { dx: -0.02, y: 0.19, r: 0.017 },
-  { dx: 0.09,  y: 0.28, r: 0.014 },
-  { dx: 0.19,  y: 0.19, r: 0.012 },
+  { dx: 310, y: 90,  r: 40 },   // parent (biggest)
+  { dx: 440, y: 130, r: 22 },
+  { dx: 550, y: 100, r: 18 },
+  { dx: 380, y: 210, r: 16 },
 ];
 
 export const WorldMenuOverlay: React.FC = () => {
@@ -106,15 +107,21 @@ export const WorldMenuOverlay: React.FC = () => {
   // While a menu is open: tag <body> so the left rail steps aside
   // (CSS in WorldMenuOverlay.css — MP-only by construction), and
   // measure the real TopBar so the panel tucks exactly under it.
+  // fleet/panel heights bump this so JS-computed positions (column
+  // clamp) re-render after the DOM measures in.
+  const [chromeH, setChromeH] = useState({ fleet: 200, panel: 92 });
   useEffect(() => {
     document.body.classList.toggle('wm-open', !!openId);
     const measure = () => {
       const bar = document.querySelector('.top-bar') as HTMLElement | null;
       document.body.style.setProperty('--wm-topbar-h', `${bar?.offsetHeight ?? 52}px`);
       const panel = document.querySelector('.wm-top') as HTMLElement | null;
-      document.body.style.setProperty('--wm-panel-h', `${panel?.offsetHeight ?? 92}px`);
+      const panelH = panel?.offsetHeight ?? 92;
+      document.body.style.setProperty('--wm-panel-h', `${panelH}px`);
       const fleet = document.querySelector('.wm-fleet') as HTMLElement | null;
-      document.body.style.setProperty('--wm-fleet-h', `${fleet?.offsetHeight ?? 150}px`);
+      const fleetH = fleet?.offsetHeight ?? 200;
+      document.body.style.setProperty('--wm-fleet-h', `${fleetH}px`);
+      setChromeH(prev => (prev.fleet === fleetH && prev.panel === panelH ? prev : { fleet: fleetH, panel: panelH }));
     };
     measure();
     // re-measure after the panel/fleet paint + on any content reflow
@@ -296,7 +303,12 @@ export const WorldMenuOverlay: React.FC = () => {
   const railW = mobile ? 0 : 296, dockW = mobile ? 0 : 60;
   const COL_W = 168, BTN_H = 40;
   const leftColX = Math.max(railW + 10, cx - cr - COL_W - 26);
-  const colTopY = cy - cr + 4;
+  // Column stack height: label (18) + up to 4 buttons (40 + 9 gap).
+  const COL_MAX_H = 18 + 4 * (BTN_H + 9);
+  // Fleet panel lives with `bottom: 12px`; its measured height (state
+  // above) bounds where the surface column can end.
+  const colBottomLimit = vh - chromeH.fleet - 20;   // last y a col button can occupy
+  const colTopY = Math.max(80, Math.min(cy - cr + 4, colBottomLimit - COL_MAX_H));
   // Orbit column pinned far right.
   const rightColX = vw - dockW - COL_W - 10;
   // Station indicator: a small DOM silhouette that echoes the canvas
@@ -483,9 +495,12 @@ export const WorldMenuOverlay: React.FC = () => {
           // parent occupies index 0 of the neighbors array, so sibling
           // indexes 1..3 map straight onto slots 1..3 (no double-count).
           const slot = ORB_SLOTS[isParent ? 0 : Math.min(3, Math.max(1, i))];
-          // dx is fraction-of-vw offset from `cx`, so the whole cluster
-          // rides with the planet's outliner-aware shift.
-          const ox = cx + slot.dx * vw, oy = slot.y * vh, or = Math.max(9, slot.r * vh);
+          // dx is absolute px offset from `cx` (post-shift), so the
+          // cluster rides with the planet and is safely right of the
+          // centred info panel. y is absolute px from the top.
+          // Also clamp inside the dock rail's right gutter.
+          const ox = Math.min(vw - dockW - slot.r - 12, cx + slot.dx);
+          const oy = slot.y, or = slot.r;
           const ownColor = bodyOwnerColor(nb.id);
           return (
             <g
