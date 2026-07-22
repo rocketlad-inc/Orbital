@@ -216,11 +216,25 @@ export const WorldMenuOverlay: React.FC = () => {
   // close the just-opened menu. Bug repro'd from outliner + map-click
   // opens where the camera has to tween from map scale.
   const dismissArmed = useRef(false);
+  const dismissSelRef = useRef(uiState.selectedBodyId);
   useEffect(() => {
-    if (!openId) { dismissArmed.current = false; return; }
+    const sel = uiState.selectedBodyId;
+    if (!openId) { dismissArmed.current = false; dismissSelRef.current = sel; return; }
+    // A body SWITCH (outliner row / sky orb / map click changed the
+    // selection) is not a dismissal — focusBody() drops the scale to 2
+    // for the new target, which momentarily craters z. Without this
+    // guard the armed dismiss fired close() (and deselectBody) before
+    // the open effect could re-frame the new body: "you go there but
+    // the menu doesn't open." On a switch, re-arm from scratch and skip
+    // this cycle; the open effect below re-opens the new body.
+    if (sel !== dismissSelRef.current) {
+      dismissSelRef.current = sel;
+      dismissArmed.current = false;
+      return;
+    }
     if (zTarget >= 0.85) dismissArmed.current = true;
     if (dismissArmed.current && zTarget < 0.3) close(false);
-  }, [zTarget, openId, close]);
+  }, [zTarget, openId, close, uiState.selectedBodyId]);
 
   // Another menu opening (DockRail panels, settlements/fleet/research —
   // anything that dispatches 'orbital:close-world-menu') dismisses us.
