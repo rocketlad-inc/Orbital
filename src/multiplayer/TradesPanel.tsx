@@ -23,6 +23,7 @@ import {
   ResourceBundle,
 } from './api';
 import { TradeComposer } from './TradeComposer';
+import { useFeatureGate } from '../hooks/useFeatureGate';
 
 type Tab = 'incoming' | 'outgoing' | 'shipments' | 'pacts' | 'history';
 
@@ -47,6 +48,12 @@ const RESOURCE_LABELS: Record<keyof ResourceBundle, string> = {
 
 export function TradesPanel({ gameId }: { gameId: string }) {
   const api = useMemo(() => tradesApi(gameId), [gameId]);
+  const gate = useFeatureGate();
+  // Trade uses freighters — freighters (and the whole trade-route/pickup
+  // bundle) unlock at Propulsion 1 (RESEARCH_UNLOCKS: hull.freighter).
+  // Without this gate the "+ New Offer" button looks freely available
+  // and the click bounces on the server.
+  const tradeLock = gate.lockReason('hull.freighter');
   const [me, setMe] = useState<MyFaction | null>(null);
   const [factions, setFactions] = useState<Faction[]>([]);
   const [trades, setTrades] = useState<TradeOffer[]>([]);
@@ -156,9 +163,10 @@ export function TradesPanel({ gameId }: { gameId: string }) {
         className="mp-btn mp-btn--primary"
         style={{ marginBottom: 8, width: '100%' }}
         onClick={() => setComposerMode({ kind: 'new' })}
-        disabled={!me || factions.length < 2}
+        disabled={!me || factions.length < 2 || !!tradeLock}
+        title={tradeLock ? `${tradeLock.label} — ${tradeLock.text}` : undefined}
       >
-        + New Offer
+        {tradeLock ? `🔒 New Offer · ${tradeLock.text}` : '+ New Offer'}
       </button>
 
       {error && (

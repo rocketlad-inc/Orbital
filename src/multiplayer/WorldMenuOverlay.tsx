@@ -509,16 +509,28 @@ export const WorldMenuOverlay: React.FC = () => {
             C{Math.floor(readout.stockpile.credits)} · S{Math.floor(readout.stockpile.science)}
           </div>
         </div>
-        {isMine && (myCity || myStation) && (
-          <button
-            className={`wm-collector ${readout.hasCollector ? 'built' : ''}`}
-            onClick={deployCollector}
-            disabled={readout.hasCollector}
-            data-testid="wm-collector"
-          >
-            {readout.hasCollector ? '◉ Collector online' : '▲ Deploy collector'}
-          </button>
-        )}
+        {isMine && (myCity || myStation) && (() => {
+          // Collectors are research-gated (Propulsion 4). The button used
+          // to look freely available even before research — surface the
+          // requirement instead of letting the click bounce with a 403.
+          const collectorLock = gate.lockReason('collectors');
+          const built = readout.hasCollector;
+          return (
+            <button
+              className={`wm-collector ${built ? 'built' : ''} ${collectorLock ? 'locked' : ''}`}
+              onClick={deployCollector}
+              disabled={built || !!collectorLock}
+              title={collectorLock ? `${collectorLock.label} — ${collectorLock.text}` : undefined}
+              data-testid="wm-collector"
+            >
+              {built
+                ? '◉ Collector online'
+                : collectorLock
+                  ? `🔒 Collector · ${collectorLock.text}`
+                  : '▲ Deploy collector'}
+            </button>
+          );
+        })()}
         {mobile && (
           <button className="wm-more" onClick={() => setCollapsed(c => !c)}>
             {collapsed ? '▾ More' : '▴ Less'}

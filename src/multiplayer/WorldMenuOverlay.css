@@ -81,6 +81,10 @@
   padding: 6px 12px; cursor: pointer;
 }
 .wm-collector.built { background: transparent; border-color: #2a3d50; color: #ffb84d; cursor: default; }
+/* Locked until research: muted, greyed, with the lock icon in the label. */
+.wm-collector.locked {
+  background: transparent; border-color: #2a3d50; color: #6b8195; cursor: not-allowed;
+}
 .wm-more {
   align-self: flex-end;
   background: rgba(78, 205, 196, 0.08); border: 1px solid #2a3d50; border-radius: 4px;
