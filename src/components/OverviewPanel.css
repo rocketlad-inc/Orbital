@@ -9,7 +9,13 @@
      8px gap, so these overlays never slide under the resource bar. */
   top: calc(var(--topbar-h) + 8px);
   left: 16px;
-  right: 264px;  /* desktop: leave room for the right-side Outliner */
+  /* Narrow, left-anchored: just wide enough for the ~570px data table
+     (seven 70-110px columns) + padding, so the whole right side of the
+     screen stays clear — you can see the map body you click while the
+     panel is open. Was `right: 264px` (near full-width). The body's
+     overflow-x handles any tighter case. */
+  right: auto;
+  width: min(640px, 60vw);
   bottom: 16px;
   z-index: 110;
   background: rgba(10, 14, 20, 0.97);
