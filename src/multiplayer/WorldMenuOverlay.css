@@ -150,19 +150,19 @@ body.wm-open .left-rail { display: none; }
 }
 .wm-col-label b { color: #4ecdc4; font-weight: 400; }
 .wm-bbtn {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
-  height: 56px; width: 100%; text-align: left;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  height: 40px; width: 100%; text-align: left;
   background: rgba(10, 15, 22, 0.92);
   border: 1px solid #2a3d50; border-radius: 5px;
-  padding: 7px 9px;
+  padding: 4px 8px;
   color: #d6e2ec; font-family: inherit; cursor: pointer;
   transition: border-color 0.15s;
 }
 .wm-bbtn:hover:not(:disabled) { border-color: #ffb84d; }
-.wm-bbtn:disabled { opacity: 0.45; cursor: not-allowed; }
-.wm-bbtn-nm { font-size: 10.5px; font-weight: 700; letter-spacing: 0.1em; }
+.wm-bbtn:disabled { opacity: 0.5; cursor: not-allowed; }
+.wm-bbtn-nm { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; }
 .wm-bbtn-st {
-  font-size: 9px; color: #6b8195;
+  font-size: 8.5px; color: #6b8195;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
 }
 .wm-bbtn.built .wm-bbtn-st { color: #ffb84d; }

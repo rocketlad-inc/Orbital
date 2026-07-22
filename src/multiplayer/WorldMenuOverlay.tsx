@@ -286,7 +286,7 @@ export const WorldMenuOverlay: React.FC = () => {
   // Rail hides while the menu is open (body.wm-open) — only a small
   // gutter remains. Dock rail (right icons) stays.
   const railW = mobile ? 0 : 12, dockW = mobile ? 0 : 60;
-  const COL_W = 176, BTN_H = 56;
+  const COL_W = 168, BTN_H = 40;
   const leftColX = Math.max(railW + 10, cx - cr - COL_W - 26);
   const colTopY = cy - cr + 4;
   // Orbit column pinned far right; the station rig floats in the sky
@@ -318,19 +318,21 @@ export const WorldMenuOverlay: React.FC = () => {
     });
     const lockObj = st.state === 'ready' && st.level === 0 && BUILDING_FEATURE[kind]
       ? gate.lockReason(BUILDING_FEATURE[kind]) : null;
-    const lock = lockObj ? `${lockObj.label} — ${lockObj.text}` : null;
-    const disabled = !isMine || st.state !== 'ready' || !!lock;
+    // Compact lock chip: just the lock + tier (strip "Unlocks at" and the
+    // building name — the button already says which building it is).
+    const lockShort = lockObj ? `🔒 ${lockObj.text.replace(/^unlocks at\s*/i, '')}` : null;
+    const disabled = !isMine || st.state !== 'ready' || !!lockObj;
     return (
       <button
         key={kind}
         className={`wm-bbtn ${st.state === 'ready' && st.level > 0 ? 'built' : ''}`}
         data-testid={`wm-build-${kind}`}
         disabled={disabled}
-        title={lock ?? undefined}
+        title={lockObj ? `${lockObj.label} — ${lockObj.text}` : undefined}
         onClick={() => queueBuild(kind, host)}
       >
         <span className="wm-bbtn-nm">{kind.toUpperCase()}</span>
-        <span className="wm-bbtn-st">{lock ? `🔒 ${lock}` : st.text}</span>
+        <span className="wm-bbtn-st">{lockShort ?? st.text}</span>
       </button>
     );
   };
@@ -461,7 +463,9 @@ export const WorldMenuOverlay: React.FC = () => {
       <button className="wm-tomap" onClick={() => close(true)} data-testid="wm-tomap">✕ MAP</button>
       {errMsg && <div className="wm-err">{errMsg}</div>}
 
-      {/* ===== neighbor orbs ===== */}
+      {/* ===== neighbor orbs (desktop only — they don't fit alongside
+           the dense mobile panels; mobile navigates via the outliner) ===== */}
+      {!mobile && (
       <svg className="wm-orbs" width={vw} height={vh} aria-hidden="true">
         {neighbors.map((nb, i) => {
           const isParent = nb.id === body.parent;
@@ -503,6 +507,7 @@ export const WorldMenuOverlay: React.FC = () => {
           );
         })}
       </svg>
+      )}
 
       {/* ===== station: a STAR that resolves into the rig as you zoom in.
            Compact square hub (150×150) up-right, above the orbit column;
