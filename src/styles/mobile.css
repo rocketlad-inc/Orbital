@@ -106,10 +106,14 @@
   .resource-pill__label { font-size: 7px; }
   .resource-pill__value { font-size: 12px; }
 
-  /* Time display: hide on small screens; tick visible elsewhere if needed */
-  .top-bar__time .time-display {
-    display: none;
-  }
+  /* Time display: KEEP the tick + countdown on mobile. It was hidden
+     entirely before — the single most-missed piece of info. Compact it
+     instead: drop the "TICK" caption (T+N is self-evident) and tighten. */
+  .top-bar__time { padding-right: 8px; gap: 6px; }
+  .top-bar__time .time-display__label { display: none; }
+  .top-bar__time .time-display--ticking { min-width: 0; }
+  .top-bar__time .time-display__value { font-size: 12px; }
+  .top-bar__time .time-display__countdown { font-size: 8px; margin-top: 1px; }
 
   /* Sim controls: keep only essentials — pause, 1×, 100×, 10000× */
   .sim-controls .sim-btn { padding: 6px 8px; min-width: 36px; }
@@ -195,7 +199,10 @@
 /* Even tighter for narrow phones */
 @media (max-width: 480px) {
   .top-bar { padding: 0 8px; gap: 8px; }
-  .resource-pill--credits { display: none; }
+  /* Don't drop CR — with the compact single-line pills all three
+     resources fit. Tighten spacing instead. */
+  .top-bar__resources { gap: 6px; }
+  .resource-pill__value { font-size: 11px; }
   .nav-button { padding: 6px 8px; min-width: 36px; }
 }
 

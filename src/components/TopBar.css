@@ -73,11 +73,44 @@
   border-right: 1px solid #2a3d50;
 }
 
+/* Wrapper anchors the on-demand breakdown popover so revealing it never
+   reflows the bar. */
+.resource-pill-wrap {
+  position: relative;
+  outline: none;
+}
 .resource-pill {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   line-height: 1;
+}
+
+/* Full "+X/t pool · ~Y/t local" breakdown — hidden until hover (desktop)
+   or focus (mobile tap on the wrapper). */
+.resource-pill__pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  white-space: nowrap;
+  background: #0c141d;
+  border: 1px solid #2a3d50;
+  border-radius: 5px;
+  padding: 5px 9px;
+  font-size: 10px;
+  color: #d8e4ee;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transform: translateY(-3px);
+  pointer-events: none;
+  transition: opacity 0.13s ease, transform 0.13s ease;
+}
+.resource-pill-wrap:hover .resource-pill__pop,
+.resource-pill-wrap:focus-within .resource-pill__pop,
+.resource-pill-wrap:focus .resource-pill__pop {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .resource-pill__label {

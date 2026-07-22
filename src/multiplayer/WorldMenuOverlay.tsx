@@ -24,10 +24,10 @@ import { useMultiplayerActions } from './MultiplayerActionsContext';
 import { useFeatureGate } from '../hooks/useFeatureGate';
 import { BUILDING_FEATURE } from '../game/researchUnlocks';
 import { BUILDABLE_CLASSES, getShipClass } from '../game/shipClasses';
-import { shipyardSlotsAtBody } from '../game/settlements';
+import { shipyardSlotsAtBody, canHostCity, canHostStation } from '../game/settlements';
 import { getBodyFlavor } from '../game/bodyFlavor';
 import { deriveSecondary } from '../game/colorUtils';
-import { Body, BuildingKind, Settlement } from '../types';
+import { Body, BuildingKind, Settlement, SettlementType } from '../types';
 import {
   menuScaleFor, menuCameraOffset, menuOpacity, zOf,
   S1X_FRAC, S1Y_FRAC, Z1_FRAC,
@@ -247,6 +247,23 @@ export const WorldMenuOverlay: React.FC = () => {
     const res = await mpActions?.buildCollector(target.id);
     if (res && !res.ok) setErrMsg(res.error ?? 'Collector rejected by server');
   };
+  const foundSettlement = async (type: SettlementType) => {
+    if (!openId) return;
+    setErrMsg(null);
+    const res = await mpActions?.deploySettlement({ bodyId: openId, type });
+    if (res && !res.ok) setErrMsg(res.error ?? `Could not found ${type}`);
+  };
+
+  // ---- founding a city / station (MP rules, mirrors BodyInspector) ----
+  // city    : consumes a Colony Ship of yours in orbit.
+  // station : research-gated (settlement.station); then a Colony Ship
+  //           here OR an owned settlement here + 30M/20C.
+  const colonyShipHere = useMemo(() => gameState.ships.find(s =>
+    s.ownedBy === 'player' && !s.transit && s.orbit.parentBodyId === openId && s.class === 'colony',
+  ), [gameState.ships, openId]);
+  const stationLock = gate.lockReason('settlement.station');
+  const mpRes = gameState.resources['player'];
+  const canAffordStation = !!mpRes && mpRes.ore >= 30 && mpRes.credits >= 20;
 
   if (!body || !readout || op <= 0.01) return null;
 
@@ -305,6 +322,48 @@ export const WorldMenuOverlay: React.FC = () => {
       </button>
     );
   };
+
+  const foundBtn = (type: SettlementType) => {
+    const isCity = type === 'city';
+    const own = !!(myCity || myStation);
+    const enabled = isMine && !(isCity ? false : !!stationLock) && (isCity
+      ? !!colonyShipHere
+      : (!!colonyShipHere || (own && canAffordStation)));
+    const sub = isCity
+      ? (colonyShipHere ? 'consumes colony ship' : 'needs colony ship in orbit')
+      : (stationLock ? stationLock.text
+        : colonyShipHere ? 'consumes colony ship'
+        : own ? '30M · 20C' : 'needs colony ship in orbit');
+    const title = isCity
+      ? (colonyShipHere ? `Found a city — consumes ${colonyShipHere.name}` : 'Requires a Colony Ship in orbit (consumed)')
+      : (stationLock ? `${stationLock.label} — ${stationLock.text}`
+        : colonyShipHere ? `Launch a station — consumes ${colonyShipHere.name}`
+        : own ? (canAffordStation ? 'Built from orbit: 30M 20C' : 'Need 30M 20C to build from orbit')
+        : 'Requires a Colony Ship in orbit, or own a settlement here first');
+    return (
+      <button
+        key={type}
+        className="wm-bbtn wm-found"
+        disabled={!enabled}
+        title={title}
+        onClick={() => foundSettlement(type)}
+        data-testid={`wm-found-${type}`}
+      >
+        <span className="wm-bbtn-nm">{isCity ? '▲ FOUND CITY' : '▲ BUILD STATION'}</span>
+        <span className="wm-bbtn-st">{stationLock && !isCity ? `🔒 ${sub}` : sub}</span>
+      </button>
+    );
+  };
+
+  // Column element lists — reused by desktop columns AND the mobile grid.
+  // No city/station → offer the FOUND button (if the body can host one);
+  // otherwise the upgrade buttons for that settlement.
+  const surfaceEls = myCity
+    ? cols.surface.map(k => buildBtn(k, myCity, 'surface'))
+    : (body && canHostCity(body) ? [foundBtn('city')] : []);
+  const orbitEls = myStation
+    ? cols.orbit.map(k => buildBtn(k, myStation, 'orbit'))
+    : (body && canHostStation(body) ? [foundBtn('station')] : []);
 
   const yieldChips: Array<[string, number]> = [
     ['F', readout.yields.fuel], ['M', readout.yields.ore],
@@ -481,32 +540,36 @@ export const WorldMenuOverlay: React.FC = () => {
            of all six over the planet (no columns, no lines). */}
       {mobile ? (
         <div className="wm-mgrid" data-testid="wm-col-surface">
-          {(cols.surface.length ? cols.surface : []).map(k => buildBtn(k, myCity, 'surface'))}
-          {cols.orbit.map(k => buildBtn(k, myStation, 'orbit'))}
+          {surfaceEls}
+          {orbitEls}
         </div>
       ) : (
         <>
-          <aside
-            className="wm-col" data-testid="wm-col-surface"
-            style={{ left: leftColX, top: colTopY, width: COL_W }}
-          >
-            <div className="wm-col-label">SURFACE — <b>CITY</b></div>
-            {(cols.surface.length ? cols.surface : (['forge', 'mint', 'lab'] as BuildingKind[]))
-              .map(k => buildBtn(k, cols.surface.length ? myCity : null, 'surface'))}
-          </aside>
-          <aside
-            className="wm-col" data-testid="wm-col-orbit"
-            style={{ left: rightColX, top: colTopY, width: COL_W }}
-          >
-            <div className="wm-col-label">ORBIT — <b>STATION</b></div>
-            {cols.orbit.map(k => buildBtn(k, myStation, 'orbit'))}
-          </aside>
+          {surfaceEls.length > 0 && (
+            <aside
+              className="wm-col" data-testid="wm-col-surface"
+              style={{ left: leftColX, top: colTopY, width: COL_W }}
+            >
+              <div className="wm-col-label">SURFACE — <b>CITY</b></div>
+              {surfaceEls}
+            </aside>
+          )}
+          {orbitEls.length > 0 && (
+            <aside
+              className="wm-col" data-testid="wm-col-orbit"
+              style={{ left: rightColX, top: colTopY, width: COL_W }}
+            >
+              <div className="wm-col-label">ORBIT — <b>STATION</b></div>
+              {orbitEls}
+            </aside>
+          )}
 
-          {/* leader lines: FROM the button edge facing the hardware TO
-              the limb part (surface) / station rig part (orbit). */}
+          {/* leader lines: button edge → limb part (surface) / station
+              rig part (orbit). Only when the settlement (and thus the
+              part) actually exists — no lines to a FOUND button. */}
           {settled && (
             <svg className="wm-lines" width={vw} height={vh} aria-hidden="true">
-              {(cols.surface.length ? cols.surface : []).map((k, i) => {
+              {myCity && cols.surface.map((k, i) => {
                 const from = btnAnchor(leftColX, i + 1, 'right'); // +1: label row
                 const to = partPos(PART_FRACS[k] ?? 0);
                 if (to.y > vh - 40) return null;
@@ -514,7 +577,7 @@ export const WorldMenuOverlay: React.FC = () => {
                 return <path key={k} data-wm-line={k} className="wm-line" fill="none"
                   d={`M${from.x},${from.y} C${mx},${from.y} ${mx},${to.y} ${to.x - 8},${to.y}`} />;
               })}
-              {readout.station && cols.orbit.map((k, i) => {
+              {myStation && readout.station && cols.orbit.map((k, i) => {
                 const from = btnAnchor(rightColX, i + 1, 'left');
                 const to = staAnchor(k === 'weapons' ? 0.38 : k === 'shipyard' ? 0.84 : 0.55);
                 const mx = (from.x + to.x) / 2;
@@ -566,7 +629,7 @@ const WmFleet: React.FC<{
   return (
     <section
       className="wm-fleet"
-      style={mobile ? undefined : { left: railW + 12 }}
+      style={mobile ? undefined : { left: '50%', transform: 'translateX(-50%)' }}
       data-testid="wm-fleet"
     >
       <div className="wm-fleet-queue">
@@ -589,32 +652,40 @@ const WmFleet: React.FC<{
           <div className="wm-qrow empty">{hasStation ? (slots > 0 ? 'slots idle' : 'build a shipyard for slots') : 'no station yet'}</div>
         )}
       </div>
-      <div className="wm-fleet-grid">
+      <div className="wm-fleet-ships">
         {BUILDABLE_CLASSES.map(cls => {
           const def = getShipClass(cls);
           const feat = HULL_FEATURE[cls];
           const lockObj = feat ? gate.lockReason(feat as Parameters<typeof gate.lockReason>[0]) : null;
           const lock = lockObj ? `${lockObj.label} — ${lockObj.text}` : null;
+          const noYard = slots <= 0;
+          const disabled = !isMine || !!lock || noYard;
           return (
-            <button
-              key={cls}
-              className="wm-shipbtn"
-              disabled={!isMine || !!lock}
-              title={lock ?? `${def.displayName} — M${def.cost.ore} · C${def.cost.credits}`}
-              onClick={() => buildShip(cls)}
-              data-testid={`wm-ship-${cls}`}
-            >
-              <span className="wm-shipnm">{lock ? '🔒 ' : ''}{def.displayName.toUpperCase()}</span>
-              <span className="wm-shipcost">M{def.cost.ore}·C{def.cost.credits}</span>
-            </button>
+            <div className="wm-shiprow" key={cls} data-testid={`wm-ship-${cls}`}>
+              <div className="wm-shipinfo">
+                <span className="wm-shipnm">{lock ? '🔒 ' : ''}{def.displayName.toUpperCase()}</span>
+                <span className="wm-shipmeta">
+                  <span className="wm-cost"><i>M</i>{def.cost.ore} <i>C</i>{def.cost.credits}</span>
+                  <span className="wm-time">⏱ {def.buildTime}t</span>
+                  <span className="wm-stat">◈ {def.firepower} ✚ {def.hp}</span>
+                </span>
+              </div>
+              <button
+                className="wm-shipbuild"
+                disabled={disabled}
+                title={lock ?? (noYard ? 'Build a shipyard first' : `Build ${def.displayName} — ${def.buildTime} ticks`)}
+                onClick={() => buildShip(cls)}
+              >
+                BUILD
+              </button>
+            </div>
           );
         })}
         <button
-          className="wm-shipbtn design"
+          className="wm-designrow"
           onClick={() => window.dispatchEvent(new CustomEvent('orbital:open-ship-designer'))}
         >
-          <span className="wm-shipnm">◈ DESIGN</span>
-          <span className="wm-shipcost">ship designer</span>
+          ◈ SHIP DESIGNER →
         </button>
       </div>
     </section>

@@ -29,7 +29,6 @@ import { deriveSecondary } from '../game/colorUtils';
 export const PART_FRACS: Record<string, number> = {
   forge: -0.62, mint: -0.15, lab: 0.35, collector: 0.72,
 };
-const SKYLINE_FRACS = [-0.82, -0.5, -0.32, 0.05, 0.2, 0.52, 0.62, 0.88];
 const FIRE_FRACS = [-0.62, -0.15, 0.35, 0.55, -0.4];
 
 /** Angle (radians) of an arc fraction on the framed upper limb. */

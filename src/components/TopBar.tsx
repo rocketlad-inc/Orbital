@@ -425,29 +425,41 @@ const ResourcePill: React.FC<{
   } else {
     tooltip = `${label}: ${displayResource(value)} (pool)`;
   }
+  // ONE rate line, not two stacked (+ a third for the label). The old
+  // 4-line stack (label / value / +net / ~LOCAL) is what made the bar
+  // tall + wide. We show the number that matters at a glance — delivered
+  // rate when a collector is pumping, else the local trickle (your only
+  // income without one) — and move the full breakdown into a popover
+  // that reveals on hover (desktop) / focus-tap (mobile). Nothing lost.
+  const primary = hasRate
+    ? { txt: `+${fmtRate(rate)}/t`, color: '#7fffa1' }
+    : hasLocal
+      ? { txt: `~${fmtRate(local)}/t`, color: '#ffb84d' }
+      : null;
   return (
-    <div className={`resource-pill resource-pill--${modifier}`} title={tooltip}>
-      <div className="resource-pill__label">{label}</div>
-      <div className="resource-pill__value">{displayResource(value)}</div>
-      {hasRate && (
-        <div
-          className="resource-pill__rate"
-          style={{
-            fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', marginTop: 2, color: '#7fffa1',
-          }}
-        >+{fmtRate(rate)}/t</div>
-      )}
-      {hasLocal && (
-        // Amber trickle: yield banking at non-collector settlements.
-        // Not "stranded" anymore — it's spendable locally + freighter-
-        // vacuumable. ~X/t (tilde) reads differently from +X/t (pool).
-        <div
-          className="resource-pill__rate"
-          style={{
-            fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', marginTop: 2, color: '#ffb84d',
-          }}
-          aria-label={`local — ${fmtRate(local)} per tick banking at settlements`}
-        >~{fmtRate(local)}/t LOCAL</div>
+    <div
+      className="resource-pill-wrap"
+      tabIndex={hasLocal || hasRate ? 0 : undefined}
+    >
+      <div className={`resource-pill resource-pill--${modifier}`} title={tooltip}>
+        <div className="resource-pill__label">{label}</div>
+        <div className="resource-pill__value">{displayResource(value)}</div>
+        {primary && (
+          <div
+            className="resource-pill__rate"
+            style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', marginTop: 2, color: primary.color }}
+          >{primary.txt}</div>
+        )}
+      </div>
+      {(hasRate || hasLocal) && (
+        // Full breakdown — hover (desktop) / focus (mobile tap). Absolute,
+        // so revealing it never reflows the bar.
+        <div className="resource-pill__pop" role="note">
+          <span style={{ color: '#7fffa1' }}>+{fmtRate(rate)}/t</span> pool
+          {hasLocal && (
+            <> &nbsp;·&nbsp; <span style={{ color: '#ffb84d' }}>~{fmtRate(local)}/t</span> local</>
+          )}
+        </div>
       )}
     </div>
   );

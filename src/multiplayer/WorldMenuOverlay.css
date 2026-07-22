@@ -161,23 +161,28 @@ body.wm-open .left-rail { display: none; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
 }
 .wm-bbtn.built .wm-bbtn-st { color: #ffb84d; }
+/* found city/station — a distinct "establish" action */
+.wm-bbtn.wm-found { border-color: #4ecdc4; }
+.wm-bbtn.wm-found .wm-bbtn-nm { color: #4ecdc4; }
+.wm-bbtn.wm-found:hover:not(:disabled) { background: rgba(78, 205, 196, 0.1); }
 
 /* ---- leader lines ---- */
 .wm-lines { position: absolute; inset: 0; }
 .wm-line { stroke: #3a5068; stroke-width: 1; opacity: 0.65; }
 
-/* ---- fleet box (compact, sketch layout: queue left, grid right) ---- */
+/* ---- fleet box (centered; queue left, ship rows right) ---- */
 .wm-fleet {
   position: absolute;
   bottom: 12px;
-  display: flex; gap: 14px;
-  width: min(640px, calc(100vw - var(--wm-rail) - var(--wm-dock) - 24px));
-  padding: 12px 14px;
+  display: flex; gap: 16px;
+  width: min(720px, calc(100vw - 24px));
+  max-height: 300px;
+  padding: 12px 16px;
   background: rgba(10, 15, 22, 0.94);
   border: 1px solid #2a3d50; border-radius: 8px;
   backdrop-filter: blur(8px);
 }
-.wm-fleet-queue { flex: 1 1 46%; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.wm-fleet-queue { flex: 0 0 200px; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .wm-fleet-title { font-size: 9.5px; letter-spacing: 0.2em; color: #6b8195; }
 .wm-fleet-title b { color: #ffb84d; }
 .wm-qrow {
@@ -190,23 +195,34 @@ body.wm-open .left-rail { display: none; }
 .wm-qrow.waiting .wm-qeta { color: #6b8195; }
 .wm-qrow.empty { color: #6b8195; border-style: dashed; justify-content: center; }
 .wm-qnm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wm-fleet-grid {
-  flex: 1 1 54%;
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px;
-}
-.wm-shipbtn {
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
-  background: rgba(14, 21, 30, 0.9);
+
+.wm-fleet-ships { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 5px; overflow-y: auto; }
+.wm-shiprow {
+  display: flex; align-items: center; gap: 10px;
   border: 1px solid #2a3d50; border-radius: 5px;
-  color: #d6e2ec; font-family: inherit; cursor: pointer;
-  padding: 8px 4px;
+  padding: 5px 6px 5px 10px;
+  background: rgba(14, 21, 30, 0.7);
 }
-.wm-shipbtn:hover:not(:disabled) { border-color: #ffb84d; }
-.wm-shipbtn:disabled { opacity: 0.45; cursor: not-allowed; }
-.wm-shipbtn.design { border-color: #4ecdc4; color: #4ecdc4; }
-.wm-shipbtn.design:hover { background: rgba(78, 205, 196, 0.12); }
-.wm-shipnm { font-size: 9px; font-weight: 700; letter-spacing: 0.1em; }
-.wm-shipcost { font-size: 8px; color: #6b8195; }
+.wm-shipinfo { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.wm-shipnm { font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; }
+.wm-shipmeta { display: flex; gap: 12px; font-size: 9px; color: #6b8195; font-variant-numeric: tabular-nums; }
+.wm-shipmeta i { font-style: normal; color: #4a5a6a; margin-right: 1px; }
+.wm-cost { color: #b9c6d2; }
+.wm-shipbuild {
+  flex: 0 0 auto;
+  background: rgba(78, 205, 196, 0.1); border: 1px solid #4ecdc4; border-radius: 4px;
+  color: #4ecdc4; font-family: inherit; font-size: 9.5px; font-weight: 700;
+  letter-spacing: 0.14em; padding: 6px 14px; cursor: pointer;
+}
+.wm-shipbuild:hover:not(:disabled) { background: rgba(78, 205, 196, 0.2); }
+.wm-shipbuild:disabled { opacity: 0.4; cursor: not-allowed; border-color: #2a3d50; color: #6b8195; background: transparent; }
+.wm-designrow {
+  margin-top: 2px;
+  background: transparent; border: 1px dashed #4ecdc4; border-radius: 4px;
+  color: #4ecdc4; font-family: inherit; font-size: 9.5px; font-weight: 700;
+  letter-spacing: 0.12em; padding: 6px; cursor: pointer;
+}
+.wm-designrow:hover { background: rgba(78, 205, 196, 0.1); }
 
 /* ================= mobile ================= */
 .wm-mobile .wm-top {
@@ -232,7 +248,8 @@ body.wm-open .left-rail { display: none; }
 
 .wm-mobile .wm-fleet {
   left: 8px; right: 8px; bottom: 8px;
-  width: auto;
+  width: auto; transform: none !important;
   flex-direction: column; gap: 8px;
-  max-height: 200px; overflow-y: auto;
+  max-height: 210px; overflow-y: auto;
 }
+.wm-mobile .wm-fleet-queue { flex: 0 0 auto; }
