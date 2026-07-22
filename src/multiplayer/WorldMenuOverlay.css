@@ -162,6 +162,20 @@
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
 }
 .wm-bbtn.built .wm-bbtn-st { color: #ffb84d; }
+/* Build progress: amber underline that runs left→right along the bottom
+   edge of the button while an upgrade is in flight. `.queued` also tints
+   the status text amber so it visually clusters with the bar. */
+.wm-bbtn.queued { position: relative; }
+.wm-bbtn.queued .wm-bbtn-st { color: #ffb84d; }
+.wm-bbtn-bar {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  height: 3px; background: rgba(255, 184, 77, 0.14);
+  border-radius: 0 0 4px 4px; overflow: hidden;
+}
+.wm-bbtn-bar i {
+  display: block; height: 100%; background: #ffb84d;
+  transition: width 0.4s linear;
+}
 /* found city/station — a distinct "establish" action */
 .wm-bbtn.wm-found { border-color: #4ecdc4; }
 .wm-bbtn.wm-found .wm-bbtn-nm { color: #4ecdc4; }

@@ -383,10 +383,22 @@ export const WorldMenuOverlay: React.FC = () => {
     // building name — the button already says which building it is).
     const lockShort = lockObj ? `🔒 ${lockObj.text.replace(/^unlocks at\s*/i, '')}` : null;
     const disabled = !isMine || st.state !== 'ready' || !!lockObj;
+    // Progress bar: fraction of the queued upgrade complete. buildStatus
+    // gives us ticksLeft + targetLevel; span is (targetLevel - level)
+    // multiplied by that building's base build ticks, but we don't need
+    // the def here — the queue row on `settlement.buildingQueue` carries
+    // startTick / completeTick, so fraction = 1 - ticksLeft / totalSpan
+    // where totalSpan is completeTick - startTick.
+    let progress: number | null = null;
+    if (st.state === 'queued' && host?.buildingQueue) {
+      const q = host.buildingQueue;
+      const span = Math.max(1, q.completeTick - q.startTick);
+      progress = Math.max(0, Math.min(1, 1 - st.ticksLeft / span));
+    }
     return (
       <button
         key={kind}
-        className={`wm-bbtn ${st.state === 'ready' && st.level > 0 ? 'built' : ''}`}
+        className={`wm-bbtn ${st.state === 'ready' && st.level > 0 ? 'built' : ''} ${st.state === 'queued' ? 'queued' : ''}`}
         data-testid={`wm-build-${kind}`}
         disabled={disabled}
         title={lockObj ? `${lockObj.label} — ${lockObj.text}` : undefined}
@@ -394,6 +406,11 @@ export const WorldMenuOverlay: React.FC = () => {
       >
         <span className="wm-bbtn-nm">{kind.toUpperCase()}</span>
         <span className="wm-bbtn-st">{lockShort ?? st.text}</span>
+        {progress !== null && (
+          <span className="wm-bbtn-bar">
+            <i style={{ width: `${(progress * 100).toFixed(1)}%` }} />
+          </span>
+        )}
       </button>
     );
   };

@@ -13,6 +13,7 @@ import { sampleTorchTrajectory, torchPositionFromSamples } from '../physics/torc
 import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
 import { COLORS, withOpacity, lighten, darken } from './colors';
 import { getShipIconImage } from './shipIconCache';
+import { isWorldMenuActive } from '../game/worldMenu/store';
 import { ShipIconClass } from '../components/ShipIcons';
 import { deriveSecondary } from '../game/colorUtils';
 import { getShipClass } from '../game/shipClasses';
@@ -3089,6 +3090,11 @@ export function drawCity(
   isSelected: boolean = false,
 ) {
   if (settlement.bodyId !== body.id) return;
+  // World menu is open on a specific world → suppress every OTHER
+  // body's flat-view city marker (the little diamond/square) so it
+  // stops cluttering the menu sky. The focused body still draws
+  // (isometric cluster branch below fires via selectedBodyId).
+  if (isWorldMenuActive() && ctx.selectedBodyId && ctx.selectedBodyId !== body.id) return;
   const bodyPos = bodyPosition(body, ctx.t, ctx.bodies);
   const angle = settlement.surfaceAngle ?? 0;
   const surfaceR = body.radius;
@@ -3225,6 +3231,10 @@ export function drawStation(
   isSelected: boolean = false,
 ) {
   if (settlement.bodyId !== body.id || !settlement.orbit) return;
+  // World menu open on a specific world → skip every OTHER body's
+  // station diamond so it doesn't float in the menu sky. The focused
+  // body still draws (structure branch below fires via selectedBodyId).
+  if (isWorldMenuActive() && ctx.selectedBodyId && ctx.selectedBodyId !== body.id) return;
   const bodyPos = bodyPosition(body, ctx.t, ctx.bodies);
 
   const orbit = settlement.orbit;
