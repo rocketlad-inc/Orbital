@@ -25,6 +25,9 @@ import { useFeatureGate } from '../hooks/useFeatureGate';
 import { BUILDING_FEATURE } from '../game/researchUnlocks';
 import { BUILDABLE_CLASSES, getShipClass } from '../game/shipClasses';
 import { shipyardSlotsAtBody, canHostCity, canHostStation } from '../game/settlements';
+import { ShipIcon } from '../components/ShipIcons';
+import { randomShipName } from '../game/shipNames';
+import { deriveSecondary } from '../game/colorUtils';
 import { getBodyFlavor } from '../game/bodyFlavor';
 import { Body, BuildingKind, Settlement, SettlementType } from '../types';
 import {
@@ -591,6 +594,7 @@ const WmFleet: React.FC<{
   const { gameState } = useGameContext();
   const mpActions = useMultiplayerActions();
   const gate = useFeatureGate();
+  const [nameDraft, setNameDraft] = useState('');
   const slots = shipyardSlotsAtBody(bodyId, 'player', gameState.settlements);
   const orders = gameState.buildOrders
     .filter(o => o.bodyId === bodyId && o.ownedBy === 'player')
@@ -598,11 +602,43 @@ const WmFleet: React.FC<{
   // MP tags queue state server-side; undefined status = building (legacy).
   const building = orders.filter(o => o.status !== 'waiting');
   const waiting = orders.filter(o => o.status === 'waiting');
+  // Player faction livery for the ship icons (two-tone §5).
+  const pf = gameState.factions.find(f => f.id === 'player');
+  const p1 = pf?.color ?? '#8b6fd0';
+  const p2 = pf?.color2 || deriveSecondary(p1);
+  const activeVariant = (cls: (typeof BUILDABLE_CLASSES)[number]) =>
+    gameState.shipDesigns?.find(d => d.shipClass === cls && d.isActive)?.iconVariant;
+
   const buildShip = async (cls: (typeof BUILDABLE_CLASSES)[number]) => {
     onErr(null);
-    const res = await mpActions?.build({ bodyId, shipClass: cls });
+    const existing = new Set<string>([
+      ...gameState.ships.map(s => s.name),
+      ...gameState.buildOrders.map(o => o.shipName).filter(Boolean) as string[],
+    ]);
+    const shipName = nameDraft.trim() || randomShipName(cls, existing);
+    setNameDraft('');
+    const res = await mpActions?.build({ bodyId, shipClass: cls, shipName, iconVariant: activeVariant(cls) });
     if (res && !res.ok) onErr(res.error ?? 'Build rejected by server');
   };
+
+  const qRow = (o: typeof orders[number], isBuilding: boolean) => {
+    const span = Math.max(1, o.completeTick - o.startTick);
+    const done = Math.max(0, Math.min(1, (gameState.currentTick - o.startTick) / span));
+    const eta = Math.max(0, o.completeTick - gameState.currentTick);
+    return (
+      <div className={`wm-qrow ${isBuilding ? 'building' : 'waiting'}`} key={o.id}>
+        <div className="wm-qhead">
+          <ShipIcon shipClass={o.shipClass} variant={o.iconVariant} size={15} color={p1} color2={p2} />
+          <span className="wm-qnm">{o.shipName ?? o.shipClass}</span>
+          <span className="wm-qeta">{isBuilding ? `T-${eta}` : 'queued'}</span>
+        </div>
+        <div className="wm-qbar">
+          <i style={{ width: `${(isBuilding ? done : 0) * 100}%` }} />
+        </div>
+      </div>
+    );
+  };
+
   return (
     <section
       className="wm-fleet"
@@ -613,18 +649,17 @@ const WmFleet: React.FC<{
         <div className="wm-fleet-title">
           BUILD SLOTS <b>{building.length}/{Math.max(slots, building.length)}</b>
         </div>
-        {building.map(o => (
-          <div className="wm-qrow building" key={o.id}>
-            <span className="wm-qnm">{o.shipName ?? o.shipClass}</span>
-            <span className="wm-qeta">T-{Math.max(0, o.completeTick - gameState.currentTick)} ↓</span>
-          </div>
-        ))}
-        {waiting.map(o => (
-          <div className="wm-qrow waiting" key={o.id}>
-            <span className="wm-qnm">{o.shipName ?? o.shipClass}</span>
-            <span className="wm-qeta">waiting</span>
-          </div>
-        ))}
+        <input
+          className="wm-name-input"
+          type="text"
+          maxLength={28}
+          value={nameDraft}
+          onChange={e => setNameDraft(e.target.value)}
+          placeholder="Name next ship (optional)"
+          data-testid="wm-ship-name"
+        />
+        {building.map(o => qRow(o, true))}
+        {waiting.map(o => qRow(o, false))}
         {orders.length === 0 && (
           <div className="wm-qrow empty">{hasStation ? (slots > 0 ? 'slots idle' : 'build a shipyard for slots') : 'no station yet'}</div>
         )}
@@ -646,7 +681,10 @@ const WmFleet: React.FC<{
               onClick={() => buildShip(cls)}
               data-testid={`wm-ship-${cls}`}
             >
-              <span className="wm-shipnm">{lock ? '🔒 ' : ''}{def.displayName.toUpperCase()}</span>
+              <span className="wm-shiptop">
+                <ShipIcon shipClass={cls} variant={activeVariant(cls)} size={20} color={p1} color2={p2} />
+                <span className="wm-shipnm">{lock ? '🔒 ' : ''}{def.displayName.toUpperCase()}</span>
+              </span>
               <span className="wm-shipmeta">
                 <span className="wm-cost"><i>M</i>{def.cost.ore} <i>C</i>{def.cost.credits}</span>
                 <span className="wm-time">⏱{def.buildTime}t</span>

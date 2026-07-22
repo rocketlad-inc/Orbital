@@ -177,19 +177,34 @@ body.wm-open .left-rail { display: none; }
   border: 1px solid #2a3d50; border-radius: 8px;
   backdrop-filter: blur(8px);
 }
-.wm-fleet-queue { flex: 0 0 200px; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.wm-fleet-queue { flex: 0 0 210px; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .wm-fleet-title { font-size: 9.5px; letter-spacing: 0.2em; color: #6b8195; }
 .wm-fleet-title b { color: #ffb84d; }
-.wm-qrow {
-  display: flex; justify-content: space-between; gap: 8px;
-  border: 1px solid #2a3d50; border-radius: 4px;
-  padding: 4px 8px; font-size: 10px;
+.wm-name-input {
+  width: 100%; box-sizing: border-box;
+  background: rgba(5, 8, 14, 0.8); border: 1px solid #2a3d50; border-radius: 4px;
+  color: #d6e2ec; font-family: inherit; font-size: 10px; letter-spacing: 0.04em;
+  padding: 5px 8px; margin-bottom: 1px;
 }
+.wm-name-input:focus { outline: none; border-color: #4ecdc4; }
+.wm-name-input::placeholder { color: #4a5a6a; }
+.wm-qrow {
+  display: flex; flex-direction: column; gap: 4px;
+  border: 1px solid #2a3d50; border-radius: 4px;
+  padding: 4px 7px; font-size: 10px;
+}
+.wm-qhead { display: flex; align-items: center; gap: 6px; }
+.wm-qhead .wm-qnm { flex: 1 1 auto; }
+.wm-qbar { height: 4px; background: #0c1219; border-radius: 2px; overflow: hidden; }
+.wm-qbar i { display: block; height: 100%; background: #ffb84d; transition: width 0.4s linear; }
 .wm-qrow.building { border-color: #ffb84d; }
 .wm-qrow.building .wm-qeta { color: #ffb84d; }
+.wm-qrow.waiting { border-style: dashed; }
 .wm-qrow.waiting .wm-qeta { color: #6b8195; }
-.wm-qrow.empty { color: #6b8195; border-style: dashed; justify-content: center; }
+.wm-qrow.waiting .wm-qbar { display: none; }
+.wm-qrow.empty { color: #6b8195; border-style: dashed; align-items: center; }
 .wm-qnm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wm-qeta { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
 
 /* 2×3 grid of info-dense ship cells (whole cell = build action) */
 .wm-fleet-grid {
@@ -211,6 +226,8 @@ body.wm-open .left-rail { display: none; }
 .wm-shipcell:disabled { opacity: 0.45; cursor: not-allowed; }
 .wm-shipcell.design { border-style: dashed; border-color: #4ecdc4; justify-content: center; }
 .wm-shipcell.design .wm-shipnm { color: #4ecdc4; }
+.wm-shiptop { display: flex; align-items: center; gap: 7px; }
+.wm-shiptop svg { flex: 0 0 auto; }
 .wm-shipnm { font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; }
 .wm-shipmeta {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
