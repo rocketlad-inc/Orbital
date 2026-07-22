@@ -20,6 +20,7 @@
 // ============================================================
 
 import { FLAVOR_BANK } from './flavorBank';
+import { TECH_DEFS } from './techs';
 
 // ------------------------------------------------------------
 // Inputs the engine needs from the caller (resolved client-side
@@ -75,9 +76,10 @@ const KIND_MAP: Record<string, string> = {
   treaty_broken:        'pact_broken',
   asteroid_impact:      'asteroid_impact',
   senate_vote:          'vote_resolved',
+  tech_advanced:        'tech_advanced',
   // No banks wired for these server kinds yet (or the server doesn't
-  // emit them under these names): vote_opened, tech_advanced,
-  // trade_declined, asteroid_launched.
+  // emit them under these names): vote_opened, trade_declined,
+  // asteroid_launched.
 };
 
 // Secret-kind -> readable {secretName}. Matches the secrets the
