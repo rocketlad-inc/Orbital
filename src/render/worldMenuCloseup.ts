@@ -54,30 +54,43 @@ export function focusedScreenCircle(
   return { x: cp.x, y: cp.y, r: body.radius * rc.camera.scale };
 }
 
+/** Shade a #rrggbb color toward black (k<0) or white (k>0) — keeps the
+ *  close-up detail in the SAME hue family as the overworld disc, which
+ *  is drawn in body.color, so the dive never shifts palette. */
+function shade(hex: string, k: number): string {
+  const n = parseInt(hex.replace('#', ''), 16);
+  if (Number.isNaN(n)) return hex;
+  const ch = (v: number) => Math.max(0, Math.min(255, Math.round(k < 0 ? v * (1 + k) : v + (255 - v) * k)));
+  return `rgb(${ch(n >> 16)},${ch((n >> 8) & 255)},${ch(n & 255)})`;
+}
+
 function surfaceDetail(rc: RenderContext, body: Body, c: { x: number; y: number; r: number }, alpha: number) {
   const g = rc.ctx;
+  const base = body.color ?? '#8d99a5';
   g.save();
   g.globalAlpha = alpha;
   g.beginPath(); g.arc(c.x, c.y, c.r, 0, Math.PI * 2); g.clip();
   const { x, y, r } = c;
   if (body.type === 'terrestrial') {
-    g.fillStyle = 'rgba(44,107,88,0.7)';
+    g.fillStyle = shade(base, 0.22);
     blob(g, x - r * 0.3, y - r * 0.4, r * 0.5);
     blob(g, x + r * 0.42, y - r * 0.15, r * 0.34);
-    g.fillStyle = 'rgba(23,58,80,0.5)';
+    g.fillStyle = shade(base, -0.35);
     blob(g, x - r * 0.05, y + r * 0.45, r * 0.55);
   } else if (body.type === 'gas_giant') {
-    g.strokeStyle = 'rgba(110,88,55,0.5)'; g.lineWidth = r * 0.16;
+    g.strokeStyle = shade(base, -0.25); g.lineWidth = r * 0.16;
     band(g, x, y, r, -0.35); band(g, x, y, r, 0.05);
-    g.strokeStyle = 'rgba(68,53,31,0.45)'; g.lineWidth = r * 0.12;
+    g.strokeStyle = shade(base, -0.45); g.lineWidth = r * 0.12;
     band(g, x, y, r, -0.15); band(g, x, y, r, 0.3);
   } else { // moon / dwarf / asteroid — craters
-    g.fillStyle = 'rgba(0,0,0,0.15)';
+    g.fillStyle = 'rgba(0,0,0,0.18)';
     for (let i = 0; i < 5; i++) {
       const a = hash01(body.id, i) * Math.PI * 2;
       const d = (0.15 + hash01(body.id, i + 7) * 0.55) * r;
       blob(g, x + Math.cos(a) * d, y + Math.sin(a) * d, r * (0.07 + hash01(body.id, i + 13) * 0.12));
     }
+    g.fillStyle = shade(base, 0.12);
+    blob(g, x - r * 0.45, y - r * 0.2, r * 0.22);
   }
   // terminator — day/night shading, offset toward lower-right
   g.fillStyle = 'rgba(5,8,14,0.3)';
@@ -180,21 +193,26 @@ function drawHpTag(
   g: CanvasRenderingContext2D, c: { x: number; y: number; r: number },
   name: string, hp: number, maxHp: number, alpha: number,
 ) {
-  const cx = c.x, cy = c.y - c.r * 1.2;
-  const w = 0.5 * c.r, bh = c.r * 0.032, ratio = clamp01(hp / Math.max(1, maxHp));
+  // Small + shifted LEFT of the limb apex: the station rig owns the
+  // right side of the sky, so the two never collide. Font/bar sizes
+  // are capped in px so a big planet doesn't blow the label up.
+  const fpx = Math.min(13, Math.max(9, c.r * 0.026));
+  const cx = c.x - c.r * 0.42, cy = c.y - c.r * 1.1;
+  const w = Math.min(120, 0.24 * c.r), bh = Math.min(6, c.r * 0.014);
+  const ratio = clamp01(hp / Math.max(1, maxHp));
   g.save(); g.globalAlpha = alpha;
-  g.font = `700 ${(c.r * 0.055).toFixed(1)}px "JetBrains Mono", monospace`;
+  g.font = `700 ${fpx.toFixed(1)}px "JetBrains Mono", monospace`;
   g.textAlign = 'center'; g.textBaseline = 'alphabetic';
   g.fillStyle = '#d6e2ec';
   g.fillText(name.toUpperCase(), cx, cy);
   g.fillStyle = '#0c1219'; g.strokeStyle = '#2a3d50'; g.lineWidth = 1;
-  g.fillRect(cx - w / 2, cy + c.r * 0.03, w, bh);
-  g.strokeRect(cx - w / 2, cy + c.r * 0.03, w, bh);
+  g.fillRect(cx - w / 2, cy + 4, w, bh);
+  g.strokeRect(cx - w / 2, cy + 4, w, bh);
   g.fillStyle = hpColor(ratio);
-  g.fillRect(cx - w / 2, cy + c.r * 0.03, w * ratio, bh);
+  g.fillRect(cx - w / 2, cy + 4, w * ratio, bh);
   g.fillStyle = '#6b8195';
-  g.font = `${(c.r * 0.038).toFixed(1)}px "JetBrains Mono", monospace`;
-  g.fillText(`${Math.round(hp)} / ${maxHp}`, cx, cy + c.r * 0.14);
+  g.font = `${Math.max(8, fpx * 0.8).toFixed(1)}px "JetBrains Mono", monospace`;
+  g.fillText(`${Math.round(hp)} / ${maxHp}`, cx, cy + 4 + bh + fpx * 0.95);
   g.restore();
 }
 
@@ -226,15 +244,47 @@ export function drawWorldMenuCloseup(
   const p2 = (faction as { color2?: string } | undefined)?.color2 || deriveSecondary(p1);
 
   if (city) {
-    // ambient skyline — neutral steel, so faction builds pop (spec G3)
+    // Ambient skyline — a dense sci-fi silhouette that GROWS with the
+    // city's population: more towers, taller spires, more variety as pop
+    // climbs. Neutral steel so faction builds pop (spec G3).
     const g = rc.ctx;
-    for (let i = 0; i < SKYLINE_FRACS.length; i++) {
-      const fr = SKYLINE_FRACS[i];
+    const pop = Math.max(1, city.population ?? 1);
+    const count = Math.min(30, 6 + Math.floor(pop * 3));
+    const growth = clamp01(pop / 8); // height multiplier saturates at pop 8
+    for (let i = 0; i < count; i++) {
+      // spread across the arc with hash jitter; skip slots too close to
+      // the faction-building fracs so buildings keep their clearing
+      const fr = -0.88 + (i / Math.max(1, count - 1)) * 1.78 + (hash01(body.id, i + 61) - 0.5) * 0.05;
+      if (Object.values(PART_FRACS).some(pf => Math.abs(pf - fr) < 0.07)) continue;
       const a = arcAngle(fr);
       const px = c.x + Math.cos(a) * c.r, py = c.y + Math.sin(a) * c.r;
-      const h = c.r * (0.06 + hash01(body.id, i + 31) * 0.07);
+      const kind = Math.floor(hash01(body.id, i + 97) * 5);
+      const h = c.r * (0.035 + hash01(body.id, i + 31) * (0.05 + 0.09 * growth));
+      const w = c.r * (0.008 + hash01(body.id, i + 43) * 0.02);
       g.save(); g.globalAlpha = alpha; g.translate(px, py); g.rotate(a + Math.PI / 2);
-      g.fillStyle = '#2c455f'; g.fillRect(-c.r * 0.012, -h, c.r * 0.024, h);
+      g.fillStyle = '#24384e';
+      if (kind === 0) {           // setback tower
+        g.fillRect(-w, -h, w * 2, h);
+        g.fillRect(-w * 0.55, -h * 1.28, w * 1.1, h * 0.3);
+      } else if (kind === 1) {    // needle spire
+        g.fillRect(-w * 0.5, -h * 1.15, w, h * 1.15);
+        g.fillRect(-w * 0.16, -h * 1.5, w * 0.32, h * 0.4);
+      } else if (kind === 2) {    // antenna mast + crossbar
+        g.fillRect(-w * 0.4, -h, w * 0.8, h);
+        g.fillRect(-w * 1.6, -h * 0.82, w * 3.2, h * 0.06);
+        g.beginPath(); g.arc(0, -h * 1.06, w * 0.6, 0, Math.PI * 2); g.fill();
+      } else if (kind === 3) {    // dome
+        g.beginPath(); g.arc(0, 0, h * 0.42, Math.PI, 0); g.closePath(); g.fill();
+      } else {                    // twin slab block
+        g.fillRect(-w * 1.4, -h * 0.7, w, h * 0.7);
+        g.fillRect(w * 0.3, -h, w, h);
+        g.fillRect(-w * 1.4, -h * 0.74, w * 2.7, h * 0.05);
+      }
+      // lit windows on the taller structures once the city is sizable
+      if (growth > 0.4 && kind <= 1 && hash01(body.id, i + 151) > 0.55) {
+        g.fillStyle = p2; g.globalAlpha = alpha * 0.55;
+        g.fillRect(-w * 0.3, -h * 0.8, w * 0.6, h * 0.05);
+      }
       g.restore();
     }
     for (const kind of ['forge', 'mint', 'lab'] as BuildingKind[]) {

@@ -125,9 +125,11 @@ describe('F · build rules', () => {
     expect(columnsFor(SATURN).surface).toEqual([]);
   });
 
-  test('F2 [P0]: lab (hostType any) migrates to orbit on no-surface worlds', () => {
+  test('F2 [P0]: lab (hostType any) is buildable on EVERY station', () => {
+    // 2026-07-22: labs belong to stations everywhere, not just where
+    // there's no surface — matches worker BUILDING_DEFS hostType 'any'.
     expect(columnsFor(SATURN).orbit).toContain('lab');
-    expect(columnsFor(EARTH).orbit).toEqual(['weapons', 'shipyard']);
+    expect(columnsFor(EARTH).orbit).toEqual(['weapons', 'shipyard', 'lab']);
   });
 
   test('F4: status text formats', () => {

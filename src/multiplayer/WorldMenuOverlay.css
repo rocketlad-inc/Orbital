@@ -1,83 +1,85 @@
-/* WorldMenuOverlay — MULTIPLAYER ONLY chrome for the diegetic world
-   menu. Matches the game's panel system (dark glass, #2a3d50 lines,
-   JetBrains Mono, uppercase letterspaced labels). */
+/* ============================================================
+   WorldMenuOverlay — MP-only diegetic world menu chrome.
+   Positions for columns/station/fleet come INLINE from the overlay
+   (anchored to the planet's settled framing); this file is visuals.
+   Nothing here is reachable from single-player.
+   ============================================================ */
 
-/* While the MP menu is open, the left rail (Outliner/ShipPanel) gets
-   out of the way — the menu IS the body context. Class only ever set
-   by the MP overlay, so this rule is dead in single-player. */
+/* The outliner and the world menu never share the screen: while the
+   menu is open the left rail steps aside (Esc / ✕ MAP brings it back).
+   Class only ever set by the MP overlay — dead rule in single-player. */
 body.wm-open .left-rail { display: none; }
+
+:root { --wm-rail: 12px; --wm-dock: 60px; }
 
 .wm-root {
   position: fixed;
   inset: 0;
-  /* Above the left rail (z 80), below the TopBar (z 1000) so resources
-     + tick stay visible, and far below modals (5000+). */
+  /* Above the left rail (z 80), below the TopBar (z 1000) and DockRail
+     (z 3100+) so both stay usable, and far below modals. */
   z-index: 900;
   pointer-events: none;
   font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
   color: #d6e2ec;
-  transition: opacity 0.12s linear;
 }
 .wm-root > * { pointer-events: auto; }
 .wm-orbs, .wm-lines { pointer-events: none; }
-.wm-orbs .wm-orb { pointer-events: auto; cursor: pointer; }
+.wm-orbs [data-testid^="wm-orb"] { pointer-events: auto; cursor: pointer; }
 
-/* ---- top readout panel ---- */
+/* ---- top readout: a BOX above the planet, name leads ---- */
 .wm-top {
   position: absolute;
-  top: var(--wm-topbar-h, 52px); /* measured below the real TopBar */
-  left: 0; right: 0;
+  top: calc(var(--wm-topbar-h, 52px) + 10px);
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 20px;
-  padding: 10px 16px;
-  background: rgba(10, 15, 22, 0.92);
-  border-bottom: 1px solid #2a3d50;
+  flex-direction: column;
+  gap: 7px;
+  padding: 12px 16px 13px;
+  background: rgba(10, 15, 22, 0.94);
+  border: 1px solid #2a3d50;
+  border-radius: 8px;
   backdrop-filter: blur(8px);
 }
-.wm-id { min-width: 150px; }
 .wm-crumb {
-  display: block;
   background: none; border: 0; padding: 0;
   color: #6b8195; font-family: inherit; font-size: 9px;
-  letter-spacing: 0.2em; cursor: pointer;
+  letter-spacing: 0.2em; cursor: pointer; text-align: left;
 }
 .wm-crumb:hover { color: #4ecdc4; }
-.wm-name { font-size: 17px; font-weight: 800; letter-spacing: 0.16em; }
+.wm-name {
+  font-size: 22px; font-weight: 800; letter-spacing: 0.16em;
+  line-height: 1.1;
+}
+.wm-idrow { display: flex; align-items: center; gap: 10px; }
 .wm-type { font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase; color: #4ecdc4; }
 .wm-owner {
-  display: inline-block; margin-top: 4px;
   font-size: 9px; font-weight: 700; letter-spacing: 0.14em;
-  padding: 1px 8px; border-radius: 3px;
-  border: 1px solid #6b8195; color: #6b8195;
+  padding: 1px 8px; border-radius: 3px; border: 1px solid #8b6fd0; color: #8b6fd0;
 }
-.wm-desc { flex: 1 1 180px; color: #6b8195; font-size: 10.5px; max-width: 38ch; line-height: 1.45; }
-.wm-metrics { display: flex; gap: 16px; }
+.wm-owner.neutral { border-color: #6b8195; color: #6b8195; }
+.wm-desc { color: #6b8195; font-size: 10.5px; max-width: 52ch; line-height: 1.45; }
+.wm-metrics { display: flex; gap: 18px; }
 .wm-metric { display: flex; flex-direction: column; gap: 1px; }
 .wm-metric span { font-size: 8.5px; letter-spacing: 0.16em; color: #6b8195; }
-.wm-metric b { font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.wm-metric b { font-size: 13px; font-variant-numeric: tabular-nums; }
+.wm-out { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; }
 .wm-label { font-size: 9px; letter-spacing: 0.2em; color: #6b8195; text-transform: uppercase; }
-.wm-out { display: flex; flex-direction: column; gap: 2px; }
 .wm-yields { display: flex; gap: 5px; }
-.wm-yield {
-  border: 1px solid #2a3d50; border-radius: 3px;
-  padding: 0 6px; font-size: 10.5px; font-variant-numeric: tabular-nums;
-}
+.wm-yield { border: 1px solid #2a3d50; border-radius: 3px; padding: 0 6px; font-size: 10.5px; }
 .wm-yield i { font-style: normal; color: #6b8195; margin-right: 3px; }
 .wm-stock { font-size: 10px; font-variant-numeric: tabular-nums; }
 .wm-collector {
-  display: flex; align-items: center; gap: 7px;
+  align-self: flex-start;
+  display: inline-flex; align-items: center; gap: 7px;
   background: rgba(78, 205, 196, 0.08);
   border: 1px solid #4ecdc4; border-radius: 5px;
   color: #4ecdc4; font-family: inherit; font-size: 10px; font-weight: 700;
   letter-spacing: 0.12em; text-transform: uppercase;
-  padding: 7px 12px; cursor: pointer;
+  padding: 6px 12px; cursor: pointer;
 }
 .wm-collector.built { background: transparent; border-color: #2a3d50; color: #ffb84d; cursor: default; }
 .wm-more {
-  display: none;
-  position: absolute; top: 8px; right: 10px;
+  align-self: flex-end;
   background: rgba(78, 205, 196, 0.08); border: 1px solid #2a3d50; border-radius: 4px;
   color: #4ecdc4; font-family: inherit; font-size: 9px; letter-spacing: 0.14em;
   text-transform: uppercase; padding: 3px 8px; cursor: pointer;
@@ -85,22 +87,28 @@ body.wm-open .left-rail { display: none; }
 
 /* ---- dismissal + error ---- */
 .wm-tomap {
-  position: absolute; top: 118px; left: 12px;
-  background: rgba(10, 15, 22, 0.92); border: 1px solid #2a3d50; border-radius: 4px;
-  color: #6b8195; font-family: inherit; font-size: 9px; letter-spacing: 0.16em;
-  padding: 5px 9px; cursor: pointer;
+  position: absolute;
+  top: calc(var(--wm-topbar-h, 52px) + 10px);
+  right: calc(var(--wm-dock) + 12px);
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(10, 15, 22, 0.94);
+  border: 1px solid #4ecdc4; border-radius: 5px;
+  color: #4ecdc4; font-family: inherit; font-size: 10px; font-weight: 700;
+  letter-spacing: 0.14em; text-transform: uppercase;
+  padding: 7px 13px; cursor: pointer;
 }
-.wm-tomap:hover { color: #4ecdc4; border-color: #4ecdc4; }
+.wm-tomap:hover { background: rgba(78, 205, 196, 0.14); }
 .wm-err {
-  position: absolute; bottom: 200px; left: 50%; transform: translateX(-50%);
+  position: absolute; bottom: 220px; left: 50%; transform: translateX(-50%);
   background: rgba(30, 10, 12, 0.95); border: 1px solid #ef5350; border-radius: 5px;
   color: #ef9a9a; font-size: 11px; padding: 7px 14px; max-width: 60ch;
+  z-index: 5;
 }
 
 /* ---- neighbor orbs ---- */
 .wm-orbs { position: absolute; inset: 0; }
 .wm-orbs text {
-  font: 700 10px 'JetBrains Mono', monospace;
+  font: 700 9px 'JetBrains Mono', monospace;
   letter-spacing: 0.14em; fill: #d6e2ec;
   pointer-events: none;
 }
@@ -108,16 +116,12 @@ body.wm-open .left-rail { display: none; }
 .wm-orb:hover .wm-orb-ring { stroke: #4ecdc4; }
 .wm-orb-ring.sel { stroke: #4ecdc4; stroke-opacity: 0.9; stroke-width: 1.5; }
 
-/* ---- station rig ---- */
-.wm-station {
-  position: absolute;
-  top: 16%; right: 200px;
-  width: 170px; height: 320px;
-}
+/* ---- station rig (position inline) ---- */
+.wm-station { position: absolute; }
 .wm-sta-core rect, .wm-sta-core ellipse { fill: #2c455f; stroke: #2c455f; }
 .wm-sta-core ellipse { fill: none; }
-.wm-sta-name { font: 700 11px 'JetBrains Mono', monospace; letter-spacing: 0.1em; fill: #d6e2ec; }
-.wm-sta-hp { font: 9px 'JetBrains Mono', monospace; fill: #6b8195; }
+.wm-sta-name { font: 700 10px 'JetBrains Mono', monospace; letter-spacing: 0.08em; fill: #d6e2ec; }
+.wm-sta-hp { font: 8.5px 'JetBrains Mono', monospace; fill: #6b8195; }
 .wm-hp-bg { fill: #0c1219; stroke: #2a3d50; stroke-width: 1; }
 .wm-flame {
   transform-box: fill-box; transform-origin: 50% 100%;
@@ -130,24 +134,19 @@ body.wm-open .left-rail { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .wm-flame { animation: none !important; } }
 
-/* ---- build columns ---- */
+/* ---- build columns (position inline; hover just off the limb) ---- */
 .wm-col {
   position: absolute;
-  top: 160px; bottom: 190px;
-  width: 172px;
-  display: flex; flex-direction: column; justify-content: center; gap: 9px;
-  pointer-events: none;
+  display: flex; flex-direction: column; gap: 9px;
 }
-.wm-col > * { pointer-events: auto; }
-.wm-col-left { left: 10px; }
-.wm-col-right { right: 10px; }
 .wm-col-label {
   font-size: 9px; letter-spacing: 0.22em; color: #6b8195; text-align: center;
+  height: 14px;
 }
 .wm-col-label b { color: #4ecdc4; font-weight: 400; }
 .wm-bbtn {
   display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
-  width: 100%; text-align: left;
+  height: 56px; width: 100%; text-align: left;
   background: rgba(10, 15, 22, 0.92);
   border: 1px solid #2a3d50; border-radius: 5px;
   padding: 7px 9px;
@@ -165,68 +164,75 @@ body.wm-open .left-rail { display: none; }
 
 /* ---- leader lines ---- */
 .wm-lines { position: absolute; inset: 0; }
-.wm-line { stroke: #3a5068; stroke-width: 1; opacity: 0.6; }
+.wm-line { stroke: #3a5068; stroke-width: 1; opacity: 0.65; }
 
-/* ---- fleet bar ---- */
+/* ---- fleet box (compact, sketch layout: queue left, grid right) ---- */
 .wm-fleet {
   position: absolute;
-  left: 0; right: 0; bottom: 0;
-  max-height: 185px;
-  display: flex; flex-direction: column;
+  bottom: 12px;
+  display: flex; gap: 14px;
+  width: min(640px, calc(100vw - var(--wm-rail) - var(--wm-dock) - 24px));
+  padding: 12px 14px;
   background: rgba(10, 15, 22, 0.94);
-  border-top: 1px solid #2a3d50;
+  border: 1px solid #2a3d50; border-radius: 8px;
   backdrop-filter: blur(8px);
 }
-.wm-fleet-head {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 7px 14px 0;
+.wm-fleet-queue { flex: 1 1 46%; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.wm-fleet-title { font-size: 9.5px; letter-spacing: 0.2em; color: #6b8195; }
+.wm-fleet-title b { color: #ffb84d; }
+.wm-qrow {
+  display: flex; justify-content: space-between; gap: 8px;
+  border: 1px solid #2a3d50; border-radius: 4px;
+  padding: 4px 8px; font-size: 10px;
 }
-.wm-designer {
-  background: transparent; border: 1px solid #4ecdc4; border-radius: 4px;
-  color: #4ecdc4; font-family: inherit; font-size: 9.5px; font-weight: 700;
-  letter-spacing: 0.12em; padding: 5px 11px; cursor: pointer;
+.wm-qrow.building { border-color: #ffb84d; }
+.wm-qrow.building .wm-qeta { color: #ffb84d; }
+.wm-qrow.waiting .wm-qeta { color: #6b8195; }
+.wm-qrow.empty { color: #6b8195; border-style: dashed; justify-content: center; }
+.wm-qnm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wm-fleet-grid {
+  flex: 1 1 54%;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px;
 }
-.wm-designer:hover { background: rgba(78, 205, 196, 0.12); }
-.wm-fleet-body {
-  overflow-y: auto;
-  padding: 0 8px 8px;
-  /* BuildPanel was authored for a side panel — keep it panel-width
-     and centered instead of smearing across the whole viewport. */
-  max-width: 860px;
-  width: 100%;
-  margin: 0 auto;
+.wm-shipbtn {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  background: rgba(14, 21, 30, 0.9);
+  border: 1px solid #2a3d50; border-radius: 5px;
+  color: #d6e2ec; font-family: inherit; cursor: pointer;
+  padding: 8px 4px;
 }
-.wm-tomap { top: calc(var(--wm-topbar-h, 52px) + 66px); }
+.wm-shipbtn:hover:not(:disabled) { border-color: #ffb84d; }
+.wm-shipbtn:disabled { opacity: 0.45; cursor: not-allowed; }
+.wm-shipbtn.design { border-color: #4ecdc4; color: #4ecdc4; }
+.wm-shipbtn.design:hover { background: rgba(78, 205, 196, 0.12); }
+.wm-shipnm { font-size: 9px; font-weight: 700; letter-spacing: 0.1em; }
+.wm-shipcost { font-size: 8px; color: #6b8195; }
 
-/* ---- toggle pill (rendered in both modes by GameUI's MP branch) ---- */
-.wm-toggle-pill {
-  position: fixed;
-  bottom: 10px; left: 50%; transform: translateX(-50%);
-  z-index: 59;
-  background: rgba(10, 15, 22, 0.85); border: 1px solid #2a3d50; border-radius: 999px;
-  color: #6b8195; font-family: 'JetBrains Mono', monospace; font-size: 8.5px;
-  letter-spacing: 0.16em; padding: 4px 12px; cursor: pointer;
+/* ================= mobile ================= */
+.wm-mobile .wm-top {
+  left: 8px; right: 8px; max-width: none;
+  padding: 10px 12px;
 }
-.wm-toggle-pill:hover { color: #4ecdc4; border-color: #4ecdc4; }
+.wm-mobile .wm-name { font-size: 18px; }
+.wm-mobile .wm-top.collapsed .wm-metrics,
+.wm-mobile .wm-top.collapsed .wm-stock,
+.wm-mobile .wm-top.collapsed .wm-collector { display: none; }
+.wm-mobile .wm-tomap { top: calc(var(--wm-topbar-h, 52px) + 10px); right: 8px; }
 
-/* ---- mobile (≤720px) ---- */
-@media (max-width: 720px) {
-  .wm-top { top: 44px; padding-right: 70px; }
-  .wm-top.collapsed .wm-desc,
-  .wm-top.collapsed .wm-metrics,
-  .wm-top.collapsed .wm-stock,
-  .wm-top.collapsed .wm-collector { display: none; }
-  .wm-more { display: inline-flex; }
-  .wm-tomap { top: 100px; left: auto; right: 10px; }
-  .wm-col-left {
-    top: auto; bottom: 196px; left: 6px; right: 6px; width: auto;
-    flex-direction: row; justify-content: center; gap: 6px;
-  }
-  .wm-col-left .wm-bbtn { flex: 1 1 0; min-width: 0; align-items: center; text-align: center; padding: 6px 4px; }
-  .wm-col-left .wm-bbtn-nm { font-size: 9px; }
-  .wm-col-right { top: 150px; right: 6px; bottom: auto; width: 130px; }
-  .wm-station { top: 140px; right: auto; left: 50%; transform: translateX(-58%); width: 120px; height: 200px; }
-  .wm-lines { display: none; }
-  .wm-fleet { max-height: 150px; }
-  .wm-orbs text { font-size: 8.5px; }
+/* six build buttons in one array over the planet */
+.wm-mgrid {
+  position: absolute;
+  left: 8px; right: 8px;
+  bottom: calc(var(--wm-fleet-h, 150px) + 20px);
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+}
+.wm-mgrid .wm-bbtn { height: 48px; align-items: center; text-align: center; padding: 5px 4px; }
+.wm-mgrid .wm-bbtn-nm { font-size: 9px; }
+.wm-mgrid .wm-bbtn-st { font-size: 8px; }
+
+.wm-mobile .wm-fleet {
+  left: 8px; right: 8px; bottom: 8px;
+  width: auto;
+  flex-direction: column; gap: 8px;
+  max-height: 200px; overflow-y: auto;
 }

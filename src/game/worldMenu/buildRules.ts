@@ -24,7 +24,8 @@ export function columnsFor(body: Pick<Body, 'type'>): {
   orbit: BuildingKind[];
 } {
   if (canHostCity(body as Body)) {
-    return { surface: ['forge', 'mint', 'lab'], orbit: ['weapons', 'shipyard'] };
+    // lab is hostType 'any' server-side — stations research too.
+    return { surface: ['forge', 'mint', 'lab'], orbit: ['weapons', 'shipyard', 'lab'] };
   }
   return { surface: [], orbit: ['weapons', 'shipyard', 'lab'] };
 }

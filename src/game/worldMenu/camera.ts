@@ -24,7 +24,7 @@ import { Body } from '../../types';
 
 /** Focused body's screen radius at z=1, as a fraction of viewport height.
  *  Spec A5 bounds the acceptable band to [0.42, 0.55]·H. */
-export const Z1_FRAC = 0.50;
+export const Z1_FRAC = 0.42; // "a bit smaller" — low edge of the A5 band
 
 /** Where the body's centre sits on screen at z=1 (fractions of W/H).
  *  y > 1 parks the centre below the frame → only the upper limb shows. */

@@ -23,7 +23,8 @@ import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions } from './MultiplayerActionsContext';
 import { useFeatureGate } from '../hooks/useFeatureGate';
 import { BUILDING_FEATURE } from '../game/researchUnlocks';
-import { BuildPanel } from '../components/BuildPanel';
+import { BUILDABLE_CLASSES, getShipClass } from '../game/shipClasses';
+import { shipyardSlotsAtBody } from '../game/settlements';
 import { getBodyFlavor } from '../game/bodyFlavor';
 import { deriveSecondary } from '../game/colorUtils';
 import { Body, BuildingKind, Settlement } from '../types';
@@ -62,11 +63,13 @@ function useEasedZ(target: number): number {
   return z;
 }
 
+// Sky orbs: small (just big enough to tap — the transparent hit circle
+// adds +14px) and kept HIGH so they stay clear of the city name tag.
 const ORB_SLOTS = [
-  { x: 0.34, y: 0.36, r: 0.062 },   // parent (biggest)
-  { x: 0.47, y: 0.26, r: 0.030 },
-  { x: 0.58, y: 0.38, r: 0.024 },
-  { x: 0.67, y: 0.28, r: 0.020 },
+  { x: 0.33, y: 0.26, r: 0.040 },   // parent (biggest)
+  { x: 0.45, y: 0.18, r: 0.020 },
+  { x: 0.56, y: 0.26, r: 0.016 },
+  { x: 0.66, y: 0.18, r: 0.014 },
 ];
 
 export const WorldMenuOverlay: React.FC = () => {
@@ -93,18 +96,32 @@ export const WorldMenuOverlay: React.FC = () => {
   }, []);
 
   const [openId, setOpenIdRaw] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState(true);
   // While a menu is open: tag <body> so the left rail steps aside
   // (CSS in WorldMenuOverlay.css — MP-only by construction), and
   // measure the real TopBar so the panel tucks exactly under it.
   useEffect(() => {
     document.body.classList.toggle('wm-open', !!openId);
-    const bar = document.querySelector('.top-bar') as HTMLElement | null;
-    document.body.style.setProperty('--wm-topbar-h', `${bar?.offsetHeight ?? 52}px`);
-    return () => { document.body.classList.remove('wm-open'); };
-  }, [openId]);
+    const measure = () => {
+      const bar = document.querySelector('.top-bar') as HTMLElement | null;
+      document.body.style.setProperty('--wm-topbar-h', `${bar?.offsetHeight ?? 52}px`);
+      const panel = document.querySelector('.wm-top') as HTMLElement | null;
+      document.body.style.setProperty('--wm-panel-h', `${panel?.offsetHeight ?? 92}px`);
+      const fleet = document.querySelector('.wm-fleet') as HTMLElement | null;
+      document.body.style.setProperty('--wm-fleet-h', `${fleet?.offsetHeight ?? 150}px`);
+    };
+    measure();
+    // re-measure after the panel/fleet paint + on any content reflow
+    const t = setTimeout(measure, 80);
+    window.addEventListener('resize', measure);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener('resize', measure);
+      document.body.classList.remove('wm-open');
+    };
+  }, [openId, collapsed]);
 
   const setOpenId = setOpenIdRaw;
-  const [collapsed, setCollapsed] = useState(true);
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const camSnapshotRef = useRef<{ x: number; y: number; scale: number; focusedBodyId?: string } | null>(null);
 
@@ -159,6 +176,27 @@ export const WorldMenuOverlay: React.FC = () => {
   useEffect(() => {
     if (openId && zTarget < 0.3) close(false);
   }, [zTarget, openId, close]);
+
+  // Another menu opening (DockRail panels, settlements/fleet/research —
+  // anything that dispatches 'orbital:close-world-menu') dismisses us.
+  // That event existed as an inert no-op since the cardinal revert;
+  // this is its listener again.
+  useEffect(() => {
+    const onCloseEvt = () => { if (openId) close(true); };
+    // Desktop: App broadcasts panel-state on every settlements/fleet/
+    // research open — a non-null panel means another menu now owns the
+    // screen. (SP dispatches this too, but SP never mounts us.)
+    const onPanelState = (e: Event) => {
+      const panel = (e as CustomEvent).detail?.panel;
+      if (panel && openId) close(true);
+    };
+    window.addEventListener('orbital:close-world-menu', onCloseEvt);
+    window.addEventListener('orbital:panel-state', onPanelState);
+    return () => {
+      window.removeEventListener('orbital:close-world-menu', onCloseEvt);
+      window.removeEventListener('orbital:panel-state', onPanelState);
+    };
+  }, [openId, close]);
 
   // Escape closes and flies home.
   useEffect(() => {
@@ -218,13 +256,31 @@ export const WorldMenuOverlay: React.FC = () => {
   const flavor = getBodyFlavor(body.id);
   const integrity = myCity ?? myStation ?? here[0] ?? null;
 
-  // Surface part screen positions (settled framing is deterministic:
-  // centre at S1, radius Z1_FRAC·H — same math the canvas pass uses).
+  // Settled framing is deterministic: centre at S1, radius Z1_FRAC·H —
+  // same math the canvas pass uses. Everything below anchors to it.
   const cx = S1X_FRAC * vw, cy = S1Y_FRAC * vh, cr = Z1_FRAC * vh;
   const partPos = (frac: number) => {
     const a = (-90 + frac * 46) * Math.PI / 180;
     return { x: cx + Math.cos(a) * cr, y: cy + Math.sin(a) * cr };
   };
+  // Chrome geometry — build columns hover just off the limb; the
+  // station rig floats off the upper-right limb; everything clamps
+  // inside the rail/dock gutters.
+  // Rail hides while the menu is open (body.wm-open) — only a small
+  // gutter remains. Dock rail (right icons) stays.
+  const railW = mobile ? 0 : 12, dockW = mobile ? 0 : 60;
+  const COL_W = 176, BTN_H = 56;
+  const leftColX = Math.max(railW + 10, cx - cr - COL_W - 26);
+  const colTopY = cy - cr + 4;
+  const staW = 150, staH = 280;
+  const staX = Math.min(vw - dockW - staW - COL_W - 34, cx + cr * 0.72);
+  const staY = Math.max(60, cy - cr - staH * 0.45);
+  const rightColX = Math.min(vw - dockW - COL_W - 10, staX + staW + 24);
+  // Leader-line anchor for the i-th button in a column.
+  const btnAnchor = (colX: number, i: number, edge: 'right' | 'left') =>
+    ({ x: edge === 'right' ? colX + COL_W : colX, y: colTopY + i * (BTN_H + 9) + BTN_H / 2 });
+  // Station part anchors (viewBox 170x320 scaled to staW/staH).
+  const staAnchor = (fy: number) => ({ x: staX + (staW * 0.5), y: staY + staH * fy });
 
   const buildBtn = (kind: BuildingKind, host: Settlement | null, column: 'surface' | 'orbit') => {
     const st = buildStatus(kind, host, {
@@ -264,8 +320,14 @@ export const WorldMenuOverlay: React.FC = () => {
       style={{ opacity: op, pointerEvents: op > 0.9 ? undefined : 'none' }}
       data-testid="world-menu"
     >
-      {/* ===== top readout panel ===== */}
-      <section className={`wm-top ${mobile && collapsed ? 'collapsed' : ''}`} data-testid="wm-top">
+      {/* ===== top readout panel — a BOX above the planet, not a strip.
+           The world's NAME leads the hierarchy: biggest thing in the box,
+           never covered. Mobile spans full width (collapsed default). ===== */}
+      <section
+        className={`wm-top ${mobile && collapsed ? 'collapsed' : ''}`}
+        style={mobile ? undefined : { left: railW + 12, maxWidth: Math.min(620, vw - railW - dockW - 24) }}
+        data-testid="wm-top"
+      >
         <div className="wm-id">
           {parentBody && (
             <button className="wm-crumb" onClick={() => selectBody(parentBody.id)}>
@@ -273,17 +335,19 @@ export const WorldMenuOverlay: React.FC = () => {
             </button>
           )}
           <div className="wm-name">{body.name.toUpperCase()}</div>
-          <div className="wm-type">{body.type.replace('_', ' ')}</div>
-          {readout.ownerFactionId && (
-            <span
-              className={`wm-owner ${isMine ? '' : 'neutral'}`}
-              style={isMine ? { borderColor: p1, color: p1 } : undefined}
-            >
-              {isMine ? 'YOU' : (ownerFaction?.name ?? readout.ownerFactionId).toUpperCase()}
-            </span>
-          )}
+          <div className="wm-idrow">
+            <span className="wm-type">{body.type.replace('_', ' ')}</span>
+            {readout.ownerFactionId && (
+              <span
+                className={`wm-owner ${isMine ? '' : 'neutral'}`}
+                style={isMine ? { borderColor: p1, color: p1 } : undefined}
+              >
+                {isMine ? 'YOU' : (ownerFaction?.name ?? readout.ownerFactionId).toUpperCase()}
+              </span>
+            )}
+          </div>
         </div>
-        {flavor && <div className="wm-desc">{flavor}</div>}
+        {flavor && !mobile && <div className="wm-desc">{flavor}</div>}
         <div className="wm-metrics">
           <div className="wm-metric"><span>POP</span><b>{readout.pop}</b></div>
           <div className="wm-metric"><span>DEFENSE</span><b>{readout.defense}</b></div>
@@ -356,9 +420,14 @@ export const WorldMenuOverlay: React.FC = () => {
         })}
       </svg>
 
-      {/* ===== station rig ===== */}
+      {/* ===== station rig — floats off the upper-right limb ===== */}
       {readout.station && (
-        <svg className="wm-station" viewBox="0 0 170 320" data-testid="wm-station">
+        <svg
+          className="wm-station" viewBox="0 0 170 320" data-testid="wm-station"
+          style={mobile
+            ? { top: 'calc(var(--wm-topbar-h, 52px) + var(--wm-panel-h, 92px) + 8px)', right: 8, width: 92, height: 172 }
+            : { left: staX, top: staY, width: staW, height: staH }}
+        >
           <g className="wm-sta-core">
             <rect x="82" y="78" width="6" height="196" />
             <rect x="75" y="72" width="20" height="8" />
@@ -406,43 +475,149 @@ export const WorldMenuOverlay: React.FC = () => {
         </svg>
       )}
 
-      {/* ===== build columns ===== */}
-      <aside className="wm-col wm-col-left" data-testid="wm-col-surface">
-        {!mobile && <div className="wm-col-label">SURFACE — <b>CITY</b></div>}
-        {(cols.surface.length ? cols.surface : (['forge', 'mint', 'lab'] as BuildingKind[]))
-          .map(k => buildBtn(k, cols.surface.length ? myCity : null, 'surface'))}
-      </aside>
-      <aside className="wm-col wm-col-right" data-testid="wm-col-orbit">
-        {!mobile && <div className="wm-col-label">ORBIT — <b>STATION</b></div>}
-        {cols.orbit.map(k => buildBtn(k, myStation, 'orbit'))}
-      </aside>
+      {/* ===== build controls =====
+           Desktop: two columns hovering just off the limb, leader lines
+           from the button edge to the hardware. Mobile: ONE compact grid
+           of all six over the planet (no columns, no lines). */}
+      {mobile ? (
+        <div className="wm-mgrid" data-testid="wm-col-surface">
+          {(cols.surface.length ? cols.surface : []).map(k => buildBtn(k, myCity, 'surface'))}
+          {cols.orbit.map(k => buildBtn(k, myStation, 'orbit'))}
+        </div>
+      ) : (
+        <>
+          <aside
+            className="wm-col" data-testid="wm-col-surface"
+            style={{ left: leftColX, top: colTopY, width: COL_W }}
+          >
+            <div className="wm-col-label">SURFACE — <b>CITY</b></div>
+            {(cols.surface.length ? cols.surface : (['forge', 'mint', 'lab'] as BuildingKind[]))
+              .map(k => buildBtn(k, cols.surface.length ? myCity : null, 'surface'))}
+          </aside>
+          <aside
+            className="wm-col" data-testid="wm-col-orbit"
+            style={{ left: rightColX, top: colTopY, width: COL_W }}
+          >
+            <div className="wm-col-label">ORBIT — <b>STATION</b></div>
+            {cols.orbit.map(k => buildBtn(k, myStation, 'orbit'))}
+          </aside>
 
-      {/* ===== leader lines (desktop, settled only) ===== */}
-      {settled && !mobile && (
-        <svg className="wm-lines" width={vw} height={vh} aria-hidden="true">
-          {cols.surface.map(k => {
-            const p = partPos(PART_FRACS[k] ?? 0);
-            if (p.y > vh - 60) return null;
-            return <line key={k} x1={196} y1={0} x2={p.x} y2={p.y}
-              data-wm-line={k} className="wm-line" />;
-          })}
-        </svg>
+          {/* leader lines: FROM the button edge facing the hardware TO
+              the limb part (surface) / station rig part (orbit). */}
+          {settled && (
+            <svg className="wm-lines" width={vw} height={vh} aria-hidden="true">
+              {(cols.surface.length ? cols.surface : []).map((k, i) => {
+                const from = btnAnchor(leftColX, i + 1, 'right'); // +1: label row
+                const to = partPos(PART_FRACS[k] ?? 0);
+                if (to.y > vh - 40) return null;
+                const mx = (from.x + to.x) / 2;
+                return <path key={k} data-wm-line={k} className="wm-line" fill="none"
+                  d={`M${from.x},${from.y} C${mx},${from.y} ${mx},${to.y} ${to.x - 8},${to.y}`} />;
+              })}
+              {readout.station && cols.orbit.map((k, i) => {
+                const from = btnAnchor(rightColX, i + 1, 'left');
+                const to = staAnchor(k === 'weapons' ? 0.38 : k === 'shipyard' ? 0.84 : 0.55);
+                const mx = (from.x + to.x) / 2;
+                return <path key={k} data-wm-line={k} className="wm-line" fill="none"
+                  d={`M${from.x},${from.y} C${mx},${from.y} ${mx},${to.y} ${to.x + staW * 0.28},${to.y}`} />;
+              })}
+            </svg>
+          )}
+        </>
       )}
 
-      {/* ===== fleet bar: the real BuildPanel, wholesale ===== */}
-      <section className="wm-fleet" data-testid="wm-fleet">
-        <div className="wm-fleet-head">
-          <span className="wm-label">FLEET · SHIPYARD</span>
-          <button
-            className="wm-designer"
-            onClick={() => window.dispatchEvent(new CustomEvent('orbital:open-ship-designer'))}
-          >
-            ◈ SHIP DESIGNER →
-          </button>
-        </div>
-        <div className="wm-fleet-body"><BuildPanel /></div>
-      </section>
+      {/* ===== fleet box — compact, per the sketch: slots + queue on the
+           left, ship grid + DESIGN on the right. Not full-width. ===== */}
+      <WmFleet
+        bodyId={body.id}
+        mobile={mobile}
+        isMine={isMine}
+        hasStation={!!myStation}
+        railW={railW}
+        onErr={setErrMsg}
+      />
     </div>
+  );
+};
+
+/* ================= compact fleet box ================= */
+const HULL_FEATURE: Partial<Record<string, string>> = {
+  frigate: 'hull.frigate', destroyer: 'hull.destroyer', freighter: 'hull.freighter',
+};
+const WmFleet: React.FC<{
+  bodyId: string; mobile: boolean; isMine: boolean; hasStation: boolean;
+  railW: number; onErr: (m: string | null) => void;
+}> = ({ bodyId, mobile, isMine, hasStation, railW, onErr }) => {
+  const { gameState } = useGameContext();
+  const mpActions = useMultiplayerActions();
+  const gate = useFeatureGate();
+  const slots = shipyardSlotsAtBody(bodyId, 'player', gameState.settlements);
+  const orders = gameState.buildOrders
+    .filter(o => o.bodyId === bodyId && o.ownedBy === 'player')
+    .slice(0, 6);
+  // MP tags queue state server-side; undefined status = building (legacy).
+  const building = orders.filter(o => o.status !== 'waiting');
+  const waiting = orders.filter(o => o.status === 'waiting');
+  const buildShip = async (cls: (typeof BUILDABLE_CLASSES)[number]) => {
+    onErr(null);
+    const res = await mpActions?.build({ bodyId, shipClass: cls });
+    if (res && !res.ok) onErr(res.error ?? 'Build rejected by server');
+  };
+  return (
+    <section
+      className="wm-fleet"
+      style={mobile ? undefined : { left: railW + 12 }}
+      data-testid="wm-fleet"
+    >
+      <div className="wm-fleet-queue">
+        <div className="wm-fleet-title">
+          BUILD SLOTS <b>{building.length}/{Math.max(slots, building.length)}</b>
+        </div>
+        {building.map(o => (
+          <div className="wm-qrow building" key={o.id}>
+            <span className="wm-qnm">{o.shipName ?? o.shipClass}</span>
+            <span className="wm-qeta">T-{Math.max(0, o.completeTick - gameState.currentTick)} ↓</span>
+          </div>
+        ))}
+        {waiting.map(o => (
+          <div className="wm-qrow waiting" key={o.id}>
+            <span className="wm-qnm">{o.shipName ?? o.shipClass}</span>
+            <span className="wm-qeta">waiting</span>
+          </div>
+        ))}
+        {orders.length === 0 && (
+          <div className="wm-qrow empty">{hasStation ? (slots > 0 ? 'slots idle' : 'build a shipyard for slots') : 'no station yet'}</div>
+        )}
+      </div>
+      <div className="wm-fleet-grid">
+        {BUILDABLE_CLASSES.map(cls => {
+          const def = getShipClass(cls);
+          const feat = HULL_FEATURE[cls];
+          const lockObj = feat ? gate.lockReason(feat as Parameters<typeof gate.lockReason>[0]) : null;
+          const lock = lockObj ? `${lockObj.label} — ${lockObj.text}` : null;
+          return (
+            <button
+              key={cls}
+              className="wm-shipbtn"
+              disabled={!isMine || !!lock}
+              title={lock ?? `${def.displayName} — M${def.cost.ore} · C${def.cost.credits}`}
+              onClick={() => buildShip(cls)}
+              data-testid={`wm-ship-${cls}`}
+            >
+              <span className="wm-shipnm">{lock ? '🔒 ' : ''}{def.displayName.toUpperCase()}</span>
+              <span className="wm-shipcost">M{def.cost.ore}·C{def.cost.credits}</span>
+            </button>
+          );
+        })}
+        <button
+          className="wm-shipbtn design"
+          onClick={() => window.dispatchEvent(new CustomEvent('orbital:open-ship-designer'))}
+        >
+          <span className="wm-shipnm">◈ DESIGN</span>
+          <span className="wm-shipcost">ship designer</span>
+        </button>
+      </div>
+    </section>
   );
 };
 
