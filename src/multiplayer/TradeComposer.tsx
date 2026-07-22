@@ -16,6 +16,8 @@ import {
   emptyBundle,
   tradesApi,
 } from './api';
+import { hasFeature, requirementFor } from '../game/researchUnlocks';
+import { TECH_DEFS } from '../game/techs';
 
 type Mode =
   | { kind: 'new' }
@@ -45,6 +47,20 @@ interface TradeComposerProps {
 
 export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }: TradeComposerProps) {
   const api = useMemo(() => tradesApi(gameId), [gameId]);
+
+  // Pacts (non-aggression / defense / research-sharing) are research-
+  // gated: worker/trades.js rejects an offer carrying a pact unless the
+  // PROPOSER has the 'pacts' feature. The proposer is always the local
+  // player (`me`), so gate the pact toggles here with the same pure
+  // predicate. Resource-only trades stay ungated (server allows them).
+  const pactLock = useMemo(() => {
+    const enabled = (me.gating_enabled ?? 0) === 1;
+    if (hasFeature('pacts', me.tech_levels, enabled)) return null;
+    const req = requirementFor('pacts');
+    if (!req) return null;
+    const track = TECH_DEFS[req.track]?.name ?? req.track;
+    return { label: req.label, text: `Unlocks at ${track} ${req.level}` };
+  }, [me.tech_levels, me.gating_enabled]);
 
   // For counters, role flips: "I" become the proposer of the counter. So
   // "what I give" = the original's "request" (what was being asked of me),
@@ -218,6 +234,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
               pacts={offerPacts}
               onResource={(k, v) => updateBundle('offer', k, v)}
               onTogglePact={(p) => togglePact('offer', p)}
+              pactLock={pactLock}
               hint={me
                 // Round for display: server-side per-tick drains leave
                 // fp residue (a player saw "4.440892098500626e-16
@@ -237,6 +254,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
               pacts={requestPacts}
               onResource={(k, v) => updateBundle('request', k, v)}
               onTogglePact={(p) => togglePact('request', p)}
+              pactLock={pactLock}
             />
           </div>
 
@@ -297,7 +315,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
 // ----------------------------------------------------------------
 
 function ColumnEditor({
-  title, titleColor, bundle, pacts, onResource, onTogglePact, hint, overspend,
+  title, titleColor, bundle, pacts, onResource, onTogglePact, hint, overspend, pactLock,
 }: {
   title: string;
   titleColor: string;
@@ -307,6 +325,8 @@ function ColumnEditor({
   onTogglePact: (p: PactKind) => void;
   hint?: string;
   overspend?: Partial<Record<keyof ResourceBundle, number>>;
+  /** Non-null → pacts are research-locked; carries the unlock label. */
+  pactLock?: { label: string; text: string } | null;
 }) {
   return (
     <div style={{
@@ -358,22 +378,37 @@ function ColumnEditor({
         fontSize: 9, color: '#b8c8d6', letterSpacing: '0.1em',
         textTransform: 'uppercase', marginTop: 8, marginBottom: 4,
       }}>
-        Pacts
+        Pacts {pactLock && <span style={{ color: '#ffb84d' }}>🔒</span>}
       </div>
+      {/* Research-locked: show WHEN pacts unlock and disable the toggles
+          (the server would 403 an offer carrying a pact otherwise). */}
+      {pactLock && (
+        <div style={{
+          fontSize: 8.5, lineHeight: 1.4, color: '#ffb84d',
+          border: '1px solid rgba(255, 184, 77, 0.4)', borderRadius: 3,
+          background: 'rgba(255, 184, 77, 0.06)', padding: '5px 7px', marginBottom: 5,
+        }}>
+          🔒 Pacts unlock at <b>{pactLock.text.replace(/^Unlocks at\s*/i, '')}</b>. Resource trades work now.
+        </div>
+      )}
       {PACT_KINDS_ORDER.map((p) => {
         const selected = pacts.includes(p);
+        const locked = !!pactLock;
         return (
           <label
             key={p}
             style={{
               display: 'flex', alignItems: 'center', gap: 6,
-              fontSize: 10, padding: '2px 0', cursor: 'pointer',
-              color: selected ? '#4ecdc4' : '#a8b8c8',
+              fontSize: 10, padding: '2px 0',
+              cursor: locked ? 'not-allowed' : 'pointer',
+              color: locked ? '#5a6a78' : selected ? '#4ecdc4' : '#a8b8c8',
             }}
+            title={locked ? `${pactLock!.label} — ${pactLock!.text}` : undefined}
           >
             <input
               type="checkbox"
               checked={selected}
+              disabled={locked}
               onChange={() => onTogglePact(p)}
             />
             {PACT_LABELS[p]}
