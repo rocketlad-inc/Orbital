@@ -29,7 +29,7 @@ import { getBodyFlavor } from '../game/bodyFlavor';
 import { deriveSecondary } from '../game/colorUtils';
 import { Body, BuildingKind, Settlement, SettlementType } from '../types';
 import {
-  menuScaleFor, menuCameraOffset, menuOpacity, zOf,
+  menuScaleFor, menuCameraOffset, menuOpacity, zOf, clamp01,
   S1X_FRAC, S1Y_FRAC, Z1_FRAC,
 } from '../game/worldMenu/camera';
 import { setWorldMenuActive } from '../game/worldMenu/store';
@@ -289,15 +289,27 @@ export const WorldMenuOverlay: React.FC = () => {
   const COL_W = 176, BTN_H = 56;
   const leftColX = Math.max(railW + 10, cx - cr - COL_W - 26);
   const colTopY = cy - cr + 4;
-  const staW = 150, staH = 280;
-  const staX = Math.min(vw - dockW - staW - COL_W - 34, cx + cr * 0.72);
-  const staY = Math.max(60, cy - cr - staH * 0.45);
-  const rightColX = Math.min(vw - dockW - COL_W - 10, staX + staW + 24);
+  // Orbit column pinned far right; the station rig floats in the sky
+  // directly above it — well clear of the centered ship-build box.
+  const rightColX = vw - dockW - COL_W - 10;
+  const staW = 150, staH = 150; // compact square rig (viewBox 0 0 150 150)
+  const staX = rightColX + (COL_W - staW) / 2;
+  const staY = Math.max(66, colTopY - staH - 14);
   // Leader-line anchor for the i-th button in a column.
   const btnAnchor = (colX: number, i: number, edge: 'right' | 'left') =>
     ({ x: edge === 'right' ? colX + COL_W : colX, y: colTopY + i * (BTN_H + 9) + BTN_H / 2 });
-  // Station part anchors (viewBox 170x320 scaled to staW/staH).
-  const staAnchor = (fy: number) => ({ x: staX + (staW * 0.5), y: staY + staH * fy });
+  // Station part anchors (fractions of the 150×150 rig box).
+  const staAnchor = (fy: number) => ({ x: staX + staW * 0.5, y: staY + staH * fy });
+  // Star→rig crossfade for the station: a point of light that resolves
+  // into the structure as the dive completes.
+  const rigK = clamp01((z - 0.8) / 0.16);
+  const starK = 1 - rigK;
+  // Owner faction colour for a body's settlement (null = unsettled).
+  const bodyOwnerColor = (bid: string): string | null => {
+    const s = gameState.settlements.find(x => x.bodyId === bid);
+    if (!s) return null;
+    return gameState.factions.find(f => f.id === s.ownedBy)?.color ?? '#8d99a5';
+  };
 
   const buildBtn = (kind: BuildingKind, host: Settlement | null, column: 'surface' | 'orbit') => {
     const st = buildStatus(kind, host, {
