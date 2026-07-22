@@ -3090,11 +3090,12 @@ export function drawCity(
   isSelected: boolean = false,
 ) {
   if (settlement.bodyId !== body.id) return;
-  // World menu is open on a specific world → suppress every OTHER
-  // body's flat-view city marker (the little diamond/square) so it
-  // stops cluttering the menu sky. The focused body still draws
-  // (isometric cluster branch below fires via selectedBodyId).
-  if (isWorldMenuActive() && ctx.selectedBodyId && ctx.selectedBodyId !== body.id) return;
+  // World menu is open → suppress this canvas city rendering entirely
+  // for BOTH: OFF-focus bodies (their flat diamonds cluttered the menu
+  // sky) AND the focused body itself (worldMenuCloseup.ts draws the new
+  // buildings on the limb — the isometric cluster here was the OLD art
+  // still showing through, the "redundant old city graphic").
+  if (isWorldMenuActive()) return;
   const bodyPos = bodyPosition(body, ctx.t, ctx.bodies);
   const angle = settlement.surfaceAngle ?? 0;
   const surfaceR = body.radius;
@@ -3231,10 +3232,12 @@ export function drawStation(
   isSelected: boolean = false,
 ) {
   if (settlement.bodyId !== body.id || !settlement.orbit) return;
-  // World menu open on a specific world → skip every OTHER body's
-  // station diamond so it doesn't float in the menu sky. The focused
-  // body still draws (structure branch below fires via selectedBodyId).
-  if (isWorldMenuActive() && ctx.selectedBodyId && ctx.selectedBodyId !== body.id) return;
+  // World menu open → suppress this canvas station rendering entirely.
+  // Off-focus bodies: their diamonds cluttered the menu sky. Focused
+  // body: the DOM .wm-station SVG (WorldMenuOverlay) IS the new station
+  // graphic — the canvas ring+hub structure here was the old graphic
+  // still showing through underneath it.
+  if (isWorldMenuActive()) return;
   const bodyPos = bodyPosition(body, ctx.t, ctx.bodies);
 
   const orbit = settlement.orbit;
