@@ -14,7 +14,8 @@
 
 import { Ship } from '../types';
 import { shipWorldPosition } from '../game/combat';
-import { bodyPosition } from '../physics/orbitalMechanics';
+import { bodyPosition, localPositionAt } from '../physics/orbitalMechanics';
+import { shipDisplayTick } from './tickPhase';
 import { withOpacity, lighten, COLORS } from './colors';
 import { RenderContext, worldToCanvas } from './mapRenderer';
 import { hashStr, mulberry32 } from './planetTexture';
@@ -34,23 +35,56 @@ function factionPrimary(rc: RenderContext, ownerId: string): string {
   return ownerId === 'player' ? COLORS.neutral : COLORS.danger;
 }
 
-/** Canvas position of a ship for FX endpoints. Transit ships prefer the
- *  exact polyline-lerped canvas position the renderer drew this frame
- *  (transitCanvasPos, populated by MapCanvas); everything else goes
- *  through the same orbit math the ship layer uses (shipWorldPosition
- *  = parent bodyPosition + localPositionAt). */
+/** Canvas position of a ship for FX endpoints — the point the hull is
+ *  ACTUALLY drawn at this frame, so tracers start/land on the moving
+ *  sprite rather than a stale orbital point.
+ *
+ *  Transit ships use the polyline-lerped position the renderer cached
+ *  (transitCanvasPos). Parked ships prefer the exact box drawShip
+ *  recorded in rc.shipHitboxes — it already carries the cosmetic orbit
+ *  spin, tick interpolation AND formation spread. Only when the ship
+ *  wasn't individually drawn this frame (LOD-culled) do we recompute,
+ *  and then with the SAME display-tick spin the ship layer uses — not
+ *  plain rc.t, which lagged behind the spinning hull (the old bug). */
 function shipCanvasPos(
   ship: Ship,
   rc: RenderContext,
   transitCanvasPos?: Map<string, { x: number; y: number }>,
 ): { x: number; y: number } | null {
-  if (ship.transit && transitCanvasPos) {
-    const cached = transitCanvasPos.get(ship.id);
+  if (ship.transit) {
+    const cached = transitCanvasPos?.get(ship.id);
     if (cached) return cached;
+    const wp = shipWorldPosition(ship, rc.t, rc.bodies);
+    return wp ? worldToCanvas(wp.x, wp.y, rc) : null;
   }
-  const wp = shipWorldPosition(ship, rc.t, rc.bodies);
-  if (!wp) return null;
-  return worldToCanvas(wp.x, wp.y, rc);
+  const hb = rc.shipHitboxes?.get(ship.id);
+  if (hb) return { x: hb.x, y: hb.y };
+  const parent = rc.bodies.find(b => b.id === ship.orbit.parentBodyId);
+  if (!parent) return null;
+  const pp = bodyPosition(parent, rc.t, rc.bodies);
+  const lp = localPositionAt(
+    ship.orbit,
+    shipDisplayTick(rc.t, ship.orbit.period, rc.nowMs ?? performance.now()),
+  );
+  return worldToCanvas(pp.x + lp.x, pp.y + lp.y, rc);
+}
+
+/** Canvas-space displacement of a parked ship's orbital point over the
+ *  next `leadMs` of cosmetic-spin time. Used to LEAD the aim so a bolt
+ *  is fired at where the target WILL be when it lands, not where it was.
+ *  Parent drift over a few ms is negligible, so only the ship's angle
+ *  around its parent matters here. Transit / degenerate → no lead. */
+function shipLeadCanvas(
+  ship: Ship,
+  rc: RenderContext,
+  leadMs: number,
+): { dx: number; dy: number } {
+  if (ship.transit || leadMs <= 0 || !ship.orbit.period) return { dx: 0, dy: 0 };
+  const now = rc.nowMs ?? performance.now();
+  const p0 = localPositionAt(ship.orbit, shipDisplayTick(rc.t, ship.orbit.period, now));
+  const p1 = localPositionAt(ship.orbit, shipDisplayTick(rc.t, ship.orbit.period, now + leadMs));
+  // world delta → canvas delta is a pure scale (worldToCanvas translation cancels)
+  return { dx: (p1.x - p0.x) * rc.camera.scale, dy: (p1.y - p0.y) * rc.camera.scale };
 }
 
 // ============================================================
@@ -155,8 +189,12 @@ export function drawTracers(
     const to = ships.find(s => s.id === tr.toId);
     if (!from || !to) continue;
     const fp = shipCanvasPos(from, rc, transitCanvasPos);
-    const tp = shipCanvasPos(to, rc, transitCanvasPos);
-    if (!fp || !tp) continue;
+    const tpNow = shipCanvasPos(to, rc, transitCanvasPos);
+    if (!fp || !tpNow) continue;
+    // Lead the aim by the target's motion over the shot's remaining life,
+    // so the impact dot lands ON the moving hull instead of trailing it.
+    const lead = shipLeadCanvas(to, rc, TRACER_LIFE_MS - age);
+    const tp = { x: tpNow.x + lead.dx, y: tpNow.y + lead.dy };
 
     if (!opened) {
       c.save();
@@ -262,8 +300,8 @@ export function drawEngagementFire(
       }
       if (target) {
         const fp = shipCanvasPos(shooter, rc, transitCanvasPos);
-        const tp = shipCanvasPos(target, rc, transitCanvasPos);
-        if (fp && tp) {
+        const tpNow = shipCanvasPos(target, rc, transitCanvasPos);
+        if (fp && tpNow) {
           if (!opened) {
             c.save();
             c.globalCompositeOperation = 'lighter';
@@ -272,6 +310,10 @@ export function drawEngagementFire(
           // Bolt travels shooter -> target over BOLT_MS; the eye reads
           // direction, then the beat gives it room to land.
           const k = within / BOLT_MS;
+          // Lead the aim by the target's motion over the bolt's REMAINING
+          // flight — as k→1 the lead fades to 0 so the head lands on the hull.
+          const lead = shipLeadCanvas(target, rc, BOLT_MS * (1 - k));
+          const tp = { x: tpNow.x + lead.dx, y: tpNow.y + lead.dy };
           const alpha = 1 - k * 0.6;
           const color = factionPrimary(rc, shooter.ownedBy);
           const headX = fp.x + (tp.x - fp.x) * k;
