@@ -25,6 +25,8 @@ import { useFeatureGate } from '../hooks/useFeatureGate';
 import { BUILDING_FEATURE } from '../game/researchUnlocks';
 import { BUILDABLE_CLASSES, getShipClass } from '../game/shipClasses';
 import { shipyardSlotsAtBody, canHostCity, canHostStation } from '../game/settlements';
+import { EditableName } from '../components/EditableName';
+import { humanizeMpError } from './errorMessages';
 import { ShipIcon } from '../components/ShipIcons';
 import { randomShipName } from '../game/shipNames';
 import { deriveSecondary } from '../game/colorUtils';
@@ -82,7 +84,7 @@ const ORB_SLOTS = [
 export const WorldMenuOverlay: React.FC = () => {
   const {
     gameState, camera, uiState,
-    updateCamera, focusBody, selectBody, deselectBody,
+    updateCamera, focusBody, selectBody, deselectBody, renameSettlement,
   } = useGameContext();
   const mpActions = useMultiplayerActions();
   const gate = useFeatureGate();
@@ -313,6 +315,14 @@ export const WorldMenuOverlay: React.FC = () => {
     const res = await mpActions?.buildCollector(target.id);
     if (res && !res.ok) setErrMsg(res.error ?? 'Collector rejected by server');
   };
+  // Rename a settlement (city OR station). Mirrors BodyInspector: apply
+  // the optimistic local change, then PATCH the server; re-throw on
+  // failure so EditableName drops back into edit mode.
+  const renameOwned = async (settlementId: string, next: string) => {
+    renameSettlement(settlementId, next);
+    const res = await mpActions?.renameSettlement(settlementId, next);
+    if (res && !res.ok) throw new Error(humanizeMpError(res.code, res.error, 'rename'));
+  };
   const foundSettlement = async (type: SettlementType) => {
     if (!openId) return;
     setErrMsg(null);
@@ -527,6 +537,24 @@ export const WorldMenuOverlay: React.FC = () => {
             <b>{integrity ? `${Math.round(integrity.hp)}/${integrity.maxHp}` : '—'}</b>
           </div>
         </div>
+        {(myCity || myStation) && (
+          <div className="wm-settlements">
+            {myCity && (
+              <span className="wm-settlement" title="Rename this city">
+                <span className="wm-settlement-glyph">■</span>
+                <EditableName value={myCity.name} maxLength={32} ariaLabel="Rename this city"
+                  onSave={(next) => renameOwned(myCity.id, next)} />
+              </span>
+            )}
+            {myStation && (
+              <span className="wm-settlement" title="Rename this station">
+                <span className="wm-settlement-glyph">◆</span>
+                <EditableName value={myStation.name} maxLength={32} ariaLabel="Rename this station"
+                  onSave={(next) => renameOwned(myStation.id, next)} />
+              </span>
+            )}
+          </div>
+        )}
         <div className="wm-out">
           <span className="wm-label">Output /t</span>
           <div className="wm-yields">

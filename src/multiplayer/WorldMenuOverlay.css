@@ -65,6 +65,10 @@
 .wm-metric { display: flex; flex-direction: column; gap: 1px; }
 .wm-metric span { font-size: 8.5px; letter-spacing: 0.16em; color: #6b8195; }
 .wm-metric b { font-size: 13px; font-variant-numeric: tabular-nums; }
+/* Editable city / station names (click-to-rename, like the old inspector). */
+.wm-settlements { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.wm-settlement { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; letter-spacing: 0.06em; }
+.wm-settlement-glyph { color: #6b8195; }
 .wm-out { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; }
 .wm-label { font-size: 9px; letter-spacing: 0.2em; color: #6b8195; text-transform: uppercase; }
 .wm-yields { display: flex; gap: 5px; }
@@ -279,6 +283,7 @@
 }
 .wm-mobile .wm-top.collapsed .wm-desc,
 .wm-mobile .wm-top.collapsed .wm-metrics,
+.wm-mobile .wm-top.collapsed .wm-settlements,
 .wm-mobile .wm-top.collapsed .wm-stock,
 .wm-mobile .wm-top.collapsed .wm-collector,
 .wm-mobile .wm-top.collapsed .wm-crumb,
