@@ -175,6 +175,14 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
 
   const handleShipClick = (shipId: string) => {
     selectShip(shipId);
+    // Zoom the map to where the ship is: the body it orbits, or — if it's
+    // in transit — the world it's heading to. With the panel now narrow +
+    // left-anchored, the focused body lands in the open map area on the right.
+    const ship = gameState.ships.find(s => s.id === shipId);
+    const bodyId = ship?.transit
+      ? ship.transit.currentTransfer?.targetBodyId
+      : ship?.orbit?.parentBodyId;
+    if (bodyId) focusBody(bodyId);
   };
 
   const handleBodyClick = (bodyId: string) => {
