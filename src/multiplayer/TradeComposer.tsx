@@ -218,7 +218,12 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
               pacts={offerPacts}
               onResource={(k, v) => updateBundle('offer', k, v)}
               onTogglePact={(p) => togglePact('offer', p)}
-              hint={me ? `Your stockpile: ${RESOURCE_KEYS.map(k => `${me[k]} ${k}`).join(' · ')}` : undefined}
+              hint={me
+                // Round for display: server-side per-tick drains leave
+                // fp residue (a player saw "4.440892098500626e-16
+                // science" here). Stocks always read as whole numbers.
+                ? `Your stockpile: ${RESOURCE_KEYS.map(k => `${Math.round(Number(me[k]) || 0)} ${k}`).join(' · ')}`
+                : undefined}
               overspend={overspend}
             />
             <ColumnEditor

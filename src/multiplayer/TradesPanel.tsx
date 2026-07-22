@@ -462,10 +462,11 @@ const LEG_STATUS_TEXT: Record<string, string> = {
 
 function legManifest(d: TradeDelivery): string {
   const bits: string[] = [];
-  if (d.metal) bits.push(`${d.metal}M`);
-  if (d.fuel) bits.push(`${d.fuel}F`);
-  if (d.gold) bits.push(`${d.gold}C`);
-  if (d.science) bits.push(`${d.science}S`);
+  // Round for display — bundle amounts can carry server-side fp residue.
+  if (d.metal) bits.push(`${Math.round(d.metal)}M`);
+  if (d.fuel) bits.push(`${Math.round(d.fuel)}F`);
+  if (d.gold) bits.push(`${Math.round(d.gold)}C`);
+  if (d.science) bits.push(`${Math.round(d.science)}S`);
   return bits.join(' ') || 'nothing';
 }
 

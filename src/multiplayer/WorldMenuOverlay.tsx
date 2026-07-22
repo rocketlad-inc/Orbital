@@ -564,8 +564,10 @@ export const WorldMenuOverlay: React.FC = () => {
           </div>
           <div className="wm-stock">
             <span className="wm-label">Stockpile</span>{' '}
-            F{Math.floor(readout.stockpile.fuel)} · M{Math.floor(readout.stockpile.ore)} ·
-            C{Math.floor(readout.stockpile.credits)} · S{Math.floor(readout.stockpile.science)}
+            {/* Round, not floor: floor turns fp residue like 0.9999 into
+                0 when the true stock is 1. Whole numbers everywhere. */}
+            F{Math.round(readout.stockpile.fuel)} · M{Math.round(readout.stockpile.ore)} ·
+            C{Math.round(readout.stockpile.credits)} · S{Math.round(readout.stockpile.science)}
           </div>
         </div>
         {isMine && (myCity || myStation) && (() => {
