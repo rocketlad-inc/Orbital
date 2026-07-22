@@ -214,11 +214,15 @@
   display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
   align-content: start; overflow-y: auto;
 }
+/* One compact row per cell: icon+name on the left, the full meta block
+   (cost · time / stats · BUILD) right-aligned in the blank space. No
+   wrapping, no spill, ~38px tall. */
 .wm-shipcell {
-  display: flex; flex-direction: column; gap: 3px;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  min-width: 0;
   text-align: left;
   border: 1px solid #2a3d50; border-radius: 5px;
-  padding: 7px 9px;
+  padding: 4px 8px;
   background: rgba(14, 21, 30, 0.7);
   color: #d6e2ec; font-family: inherit; cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
@@ -226,17 +230,21 @@
 .wm-shipcell:hover:not(:disabled) { border-color: #4ecdc4; background: rgba(78, 205, 196, 0.08); }
 .wm-shipcell:hover:not(:disabled) .wm-go { color: #4ecdc4; }
 .wm-shipcell:disabled { opacity: 0.45; cursor: not-allowed; }
-.wm-shipcell.design { border-style: dashed; border-color: #4ecdc4; justify-content: center; }
+.wm-shipcell.design { border-style: dashed; border-color: #4ecdc4; }
 .wm-shipcell.design .wm-shipnm { color: #4ecdc4; }
-.wm-shiptop { display: flex; align-items: center; gap: 7px; }
-.wm-shiptop svg { flex: 0 0 auto; }
-.wm-shipnm { font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; }
-.wm-shipmeta {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  font-size: 9px; color: #6b8195; font-variant-numeric: tabular-nums;
+.wm-shipmain { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.wm-shipmain svg { flex: 0 0 auto; }
+.wm-shipnm {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.wm-shipmeta i { font-style: normal; color: #4a5a6a; margin-right: 1px; }
-.wm-cost { color: #b9c6d2; }
+.wm-shipside {
+  flex: 0 0 auto;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 1px;
+  font-size: 8.5px; color: #6b8195; font-variant-numeric: tabular-nums;
+  white-space: nowrap; text-align: right;
+}
+.wm-shipside i { font-style: normal; color: #4a5a6a; margin-right: 1px; }
 .wm-go { color: #6b8195; font-weight: 700; letter-spacing: 0.1em; }
 
 /* ================= mobile ================= */
@@ -283,15 +291,16 @@
 .wm-mrow .wm-bbtn-nm { font-size: 9px; }
 .wm-mrow .wm-bbtn-st { font-size: 8px; }
 
-/* shipyard box gets the whole bottom + more height. Sits ABOVE the
-   dock rail (--mobile-rail-height already includes the iOS safe area),
-   with a small breathing gap — the fleet no longer overlaps the nav. */
+/* shipyard box gets the whole bottom + more height. Bottom edge sits
+   FLUSH on the dock rail (--mobile-rail-height already includes the
+   iOS safe area) — no dead strip of map between them. */
 .wm-mobile .wm-fleet {
   left: 8px; right: 8px;
-  bottom: calc(var(--mobile-rail-height, 72px) + 8px);
+  bottom: var(--mobile-rail-height, 72px);
   width: auto; transform: none !important;
   flex-direction: column; gap: 6px;
-  max-height: 240px; overflow-y: auto;
+  max-height: 250px; overflow-y: auto;
+  border-bottom-left-radius: 0; border-bottom-right-radius: 0;
 }
 .wm-mobile .wm-fleet-queue { flex: 0 0 auto; }
 .wm-mobile .wm-fleet-grid { grid-template-columns: 1fr 1fr; }

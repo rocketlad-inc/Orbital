@@ -115,31 +115,15 @@ export const WorldMenuOverlay: React.FC = () => {
     if (!openId) return;
     const bar = document.querySelector('.top-bar') as HTMLElement | null;
     document.body.style.setProperty('--wm-topbar-h', `${bar?.offsetHeight ?? 52}px`);
-
-    // Live-observe the panel + fleet boxes instead of one-shot timeouts.
-    // The fleet's real height depends on its build queue (which can
-    // already have rows the instant the menu opens, or grow/shrink as
-    // ships queue) — a single measure()+80ms retry raced that content
-    // and left the mobile surface-build row's `bottom` calc stale,
-    // overlapping the (now taller) fleet box underneath it.
-    const ro = new ResizeObserver(() => {
-      const panel = document.querySelector('.wm-top') as HTMLElement | null;
-      const panelH = panel?.offsetHeight ?? 92;
-      document.body.style.setProperty('--wm-panel-h', `${panelH}px`);
-      const fleet = document.querySelector('.wm-fleet') as HTMLElement | null;
-      const fleetH = fleet?.offsetHeight ?? 200;
-      document.body.style.setProperty('--wm-fleet-h', `${fleetH}px`);
-      setChromeH(prev => (prev.fleet === fleetH && prev.panel === panelH ? prev : { fleet: fleetH, panel: panelH }));
-    });
-    const panelEl = document.querySelector('.wm-top');
-    const fleetEl = document.querySelector('.wm-fleet');
-    if (panelEl) ro.observe(panelEl);
-    if (fleetEl) ro.observe(fleetEl);
-    return () => {
-      ro.disconnect();
-      document.body.classList.remove('wm-open');
-    };
-  }, [openId, collapsed]);
+    return () => { document.body.classList.remove('wm-open'); };
+  }, [openId]);
+  // The chrome-measuring observer lives in a SEPARATE effect defined
+  // further down, gated on the chrome actually being in the DOM — see
+  // `chromeMounted`. Attaching it here (on openId) observed nothing:
+  // at open time the overlay still returns null (opacity gate), so
+  // .wm-top/.wm-fleet didn't exist yet and every mobile row positioned
+  // itself off the stale fallback heights — the surface row vanished
+  // behind the fleet box and the orbit row overlapped the top panel.
 
   const setOpenId = setOpenIdRaw;
   const [errMsg, setErrMsg] = useState<string | null>(null);
@@ -198,6 +182,31 @@ export const WorldMenuOverlay: React.FC = () => {
   const zTarget = body ? zOf(camera.scale, body, vh) : 0;
   const z = useEasedZ(zTarget);
   const op = menuOpacity(z);
+
+  // ---- chrome measurement (panel + fleet heights) ----
+  // Gated on the chrome actually being MOUNTED: the overlay returns null
+  // until op > 0.01, so an effect keyed only on openId ran while
+  // .wm-top/.wm-fleet didn't exist and observed nothing — every mobile
+  // row then positioned itself off the stale fallback heights.
+  const chromeMounted = !!openId && op > 0.01;
+  useEffect(() => {
+    if (!chromeMounted) return;
+    const panelEl = document.querySelector('.wm-top') as HTMLElement | null;
+    const fleetEl = document.querySelector('.wm-fleet') as HTMLElement | null;
+    const measure = () => {
+      const panelH = panelEl?.offsetHeight ?? 92;
+      const fleetH = fleetEl?.offsetHeight ?? 200;
+      document.body.style.setProperty('--wm-panel-h', `${panelH}px`);
+      document.body.style.setProperty('--wm-fleet-h', `${fleetH}px`);
+      setChromeH(prev => (prev.fleet === fleetH && prev.panel === panelH ? prev : { fleet: fleetH, panel: panelH }));
+    };
+    measure();
+    // Live-track content growth (build queue rows appearing, More/Less).
+    const ro = new ResizeObserver(measure);
+    if (panelEl) ro.observe(panelEl);
+    if (fleetEl) ro.observe(fleetEl);
+    return () => ro.disconnect();
+  }, [chromeMounted, collapsed, openId]);
 
   // Wheel/pinch-out past the threshold dismisses (leave the camera
   // wherever the player pulled it — that WAS the dismissal gesture).
@@ -571,7 +580,8 @@ export const WorldMenuOverlay: React.FC = () => {
             // ABOVE the horizon so the planet reads as one contiguous
             // scene with the station. Centered.
             ? { left: '50%',
-                top: 'calc(var(--wm-topbar-h, 52px) + var(--wm-panel-h, 44px) + var(--wm-orbit-h, 40px) + 20px)',
+                // below: panel offset (10) + orbit row (40 @ +22) + 12 gap
+                top: 'calc(var(--wm-topbar-h, 52px) + var(--wm-panel-h, 44px) + var(--wm-orbit-h, 40px) + 34px)',
                 width: 100, height: 100, transform: 'translateX(-50%)' }
             : { left: staX, top: staY, width: staW, height: staH }}
         >
@@ -627,7 +637,10 @@ export const WorldMenuOverlay: React.FC = () => {
           {orbitEls.length > 0 && (
             <div
               className="wm-mrow wm-mrow-orbit" data-testid="wm-col-orbit"
-              style={{ top: 'calc(var(--wm-topbar-h, 52px) + var(--wm-panel-h, 44px) + 14px)' }}
+              // panel sits at topbar+10, so its BOTTOM is topbar+10+panelH;
+              // +12 breathing room below that (the old +14-from-topbar calc
+              // ignored the panel's own 10px offset and overlapped it).
+              style={{ top: 'calc(var(--wm-topbar-h, 52px) + var(--wm-panel-h, 44px) + 22px)' }}
             >
               {orbitEls}
             </div>
@@ -639,7 +652,7 @@ export const WorldMenuOverlay: React.FC = () => {
           {surfaceEls.length > 0 && (
             <div
               className="wm-mrow wm-mrow-surface" data-testid="wm-col-surface"
-              style={{ bottom: `calc(${chromeH.fleet}px + var(--mobile-rail-height, 72px) + 8px)` }}
+              style={{ bottom: `calc(${chromeH.fleet}px + var(--mobile-rail-height, 72px) + 6px)` }}
             >
               {surfaceEls}
             </div>
@@ -796,17 +809,15 @@ const WmFleet: React.FC<{
               onClick={() => buildShip(cls)}
               data-testid={`wm-ship-${cls}`}
             >
-              <span className="wm-shiptop">
-                <ShipIcon shipClass={cls} variant={activeVariant(cls)} size={20} color={p1} color2={p2} />
+              {/* single row: icon+name left, all meta stacked in the
+                  right-side blank space — nothing wraps or spills. */}
+              <span className="wm-shipmain">
+                <ShipIcon shipClass={cls} variant={activeVariant(cls)} size={18} color={p1} color2={p2} />
                 <span className="wm-shipnm">{lock ? '🔒 ' : ''}{def.displayName.toUpperCase()}</span>
               </span>
-              <span className="wm-shipmeta">
-                <span className="wm-cost"><i>M</i>{def.cost.ore} <i>C</i>{def.cost.credits}</span>
-                <span className="wm-time">⏱{def.buildTime}t</span>
-              </span>
-              <span className="wm-shipmeta">
-                <span className="wm-stat">◈{def.firepower} ✚{def.hp}</span>
-                <span className="wm-go">BUILD ▸</span>
+              <span className="wm-shipside">
+                <span><i>M</i>{def.cost.ore} <i>C</i>{def.cost.credits} · ⏱{def.buildTime}t</span>
+                <span>◈{def.firepower} ✚{def.hp} · <b className="wm-go">BUILD ▸</b></span>
               </span>
             </button>
           );
@@ -815,9 +826,11 @@ const WmFleet: React.FC<{
           className="wm-shipcell design"
           onClick={() => window.dispatchEvent(new CustomEvent('orbital:open-ship-designer'))}
         >
-          <span className="wm-shipnm">◈ DESIGN</span>
-          <span className="wm-shipmeta"><span>custom hull</span></span>
-          <span className="wm-shipmeta"><span className="wm-go">OPEN ▸</span></span>
+          <span className="wm-shipmain"><span className="wm-shipnm">◈ DESIGN</span></span>
+          <span className="wm-shipside">
+            <span>custom hull</span>
+            <span><b className="wm-go">OPEN ▸</b></span>
+          </span>
         </button>
       </div>
     </section>
