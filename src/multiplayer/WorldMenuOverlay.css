@@ -128,7 +128,7 @@
 .wm-station {
   position: absolute;
   pointer-events: none;
-  filter: drop-shadow(0 0 8px rgba(78, 205, 196, 0.14));
+  filter: drop-shadow(0 0 10px rgba(0, 0, 0, 0.55));
 }
 
 /* ---- build columns (position inline; hover just off the limb) ---- */
@@ -276,7 +276,7 @@
 .wm-mobile .wm-tomap { top: calc(var(--wm-topbar-h, 52px) + 6px); right: 8px; padding: 4px 8px; font-size: 9px; }
 .wm-mobile .wm-more { position: absolute; top: 4px; right: 8px; margin: 0; font-size: 8px; padding: 2px 6px; }
 /* station graphic on mobile centers itself via inline style */
-.wm-mobile .wm-station { filter: drop-shadow(0 0 6px rgba(78, 205, 196, 0.16)); }
+.wm-mobile .wm-station { filter: drop-shadow(0 0 8px rgba(0, 0, 0, 0.55)); }
 
 /* mobile-only stacked build rows:
    .wm-mrow-orbit   — station build options at the top of the sky,

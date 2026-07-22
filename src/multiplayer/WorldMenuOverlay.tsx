@@ -269,6 +269,7 @@ export const WorldMenuOverlay: React.FC = () => {
     ? gameState.factions.find(f => f.id === readout.ownerFactionId)
     : undefined;
   const p1 = ownerFaction?.color ?? '#8b6fd0';
+  const p2 = ownerFaction?.color2 || deriveSecondary(p1);
   const neighbors = useMemo(
     () => neighborsOf(openId, gameState.bodies).slice(0, 4),
     [openId, gameState.bodies],
@@ -585,34 +586,39 @@ export const WorldMenuOverlay: React.FC = () => {
                 width: 100, height: 100, transform: 'translateX(-50%)' }
             : { left: staX, top: staY, width: staW, height: staH }}
         >
-          {/* tilted torus ring (back band, then front band) */}
+          {/* Station painted in the OWNER's two tones (was neutral steel).
+              Ring = primary, its inner highlight = secondary; hub capsule
+              primary with a secondary lit face + beacon. Built modules
+              swap to the SECONDARY so they still read against the primary
+              base. */}
+          {/* tilted torus ring (back band = primary, front highlight = secondary) */}
           <ellipse cx="65" cy="66" rx="46" ry="14" fill="none"
-            stroke="#2c455f" strokeWidth="6" transform="rotate(-14 65 66)" />
+            stroke={p1} strokeWidth="6" transform="rotate(-14 65 66)" />
           <ellipse cx="65" cy="66" rx="46" ry="14" fill="none"
-            stroke="#3a5068" strokeWidth="1" transform="rotate(-14 65 66)" />
+            stroke={p2} strokeOpacity="0.7" strokeWidth="1.5" transform="rotate(-14 65 66)" />
           {/* hub — a capsule threaded through the ring */}
           <g transform="translate(65 66) rotate(-14)">
-            <rect x="-6" y="-18" width="12" height="36" rx="6" fill="#3d556e" stroke="#5a728a" strokeWidth="0.8" />
-            <rect x="-6" y="-18" width="4.5" height="36" rx="4" fill="#4a637d" />
-            <circle cx="0" cy="-18" r="2.4" fill={p1} />
+            <rect x="-6" y="-18" width="12" height="36" rx="6" fill={p1} stroke={p2} strokeWidth="0.8" />
+            <rect x="-6" y="-18" width="4.5" height="36" rx="4" fill={p2} fillOpacity="0.55" />
+            <circle cx="0" cy="-18" r="2.4" fill={p2} />
           </g>
-          {/* faction modules — appear as built */}
+          {/* faction modules — appear as built, in the secondary tone */}
           {myStation && (myStation.buildings?.weapons ?? 0) > 0 && (
-            <g style={{ fill: p1 }} data-part="weapons">
+            <g style={{ fill: p2 }} data-part="weapons">
               <rect x="12" y="60" width="10" height="10" rx="1" />
               <rect x="108" y="60" width="10" height="10" rx="1" />
             </g>
           )}
           {myStation && (myStation.buildings?.shipyard ?? 0) > 0 && (
-            <g style={{ stroke: p1, fill: 'none' }} data-part="shipyard" strokeWidth="2.5">
+            <g style={{ stroke: p2, fill: 'none' }} data-part="shipyard" strokeWidth="2.5">
               <path d="M50,96 L42,96 L42,116 L50,116" />
               <path d="M80,96 L88,96 L88,116 L80,116" />
             </g>
           )}
           {myStation && (myStation.buildings?.lab ?? 0) > 0 && (
             <g data-part="lab">
-              <circle cx="65" cy="106" r="6" fill="none" stroke={p1} strokeWidth="1.8" />
-              <circle cx="65" cy="106" r="2" fill={p1} />
+              <circle cx="65" cy="106" r="6" fill="none" stroke={p2} strokeWidth="1.8" />
+              <circle cx="65" cy="106" r="2" fill={p2} />
             </g>
           )}
           {/* Name + HP header — always readable */}

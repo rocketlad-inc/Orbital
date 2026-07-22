@@ -966,7 +966,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // Body ownership rings — drawn AFTER bodies so the halo sits around
     // the planet circle, BEFORE ships so the ring doesn't obscure ship
     // icons stacked at low altitude.
-    if (layerOn('ownership')) {
+    //
+    // Suppressed while the diegetic world menu is up (MP only): at that
+    // zoom the barber-pole halo just wraps the one focused planet as a
+    // fat dashed ring around the whole screen — noise. Ownership there
+    // is conveyed by the faction-coloured city buildings + station
+    // instead. (isWorldMenuActive() is always false in SP.)
+    if (layerOn('ownership') && !(isWorldMenuActive() && camera.focusedBodyId)) {
       drawOwnershipLayer(gameState.bodies, renderContext);
     }
 
