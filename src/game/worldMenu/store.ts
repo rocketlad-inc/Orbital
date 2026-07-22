@@ -21,6 +21,20 @@ export function isWorldMenuActive(): boolean {
   return active;
 }
 
+// Which body's world menu is currently OPEN (post-fly-in), or null when
+// no menu is open. Distinct from `active` (the overlay is *mounted* for
+// the whole MP session, so `active` is true even at zoomed-out map
+// view). Renderers use this to hide the canvas city/station art on the
+// focused body while the diegetic menu covers it — without killing the
+// same art at map zoom.
+let openBodyId: string | null = null;
+export function setWorldMenuOpenBodyId(id: string | null): void {
+  openBodyId = id;
+}
+export function getWorldMenuOpenBodyId(): string | null {
+  return openBodyId;
+}
+
 // --- interactive zoom cap -------------------------------------------
 // The map's wheel/pinch clamp is 50. Diving into a body's menu needs
 // more (menuScaleFor), so MapCanvas publishes the currently-allowed cap

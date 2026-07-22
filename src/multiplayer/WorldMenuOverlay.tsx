@@ -34,7 +34,7 @@ import {
   menuScaleFor, menuCameraOffset, menuOpacity, zOf,
   S1X_FRAC, S1Y_FRAC, Z1_FRAC,
 } from '../game/worldMenu/camera';
-import { setWorldMenuActive } from '../game/worldMenu/store';
+import { setWorldMenuActive, setWorldMenuOpenBodyId } from '../game/worldMenu/store';
 import { columnsFor, buildStatus, noHostText } from '../game/worldMenu/buildRules';
 import { hpColor } from '../game/worldMenu/combatDisplay';
 import { readoutFor, neighborsOf } from '../game/worldMenu/bodyStats';
@@ -103,6 +103,14 @@ export const WorldMenuOverlay: React.FC = () => {
   }, []);
 
   const [openId, setOpenIdRaw] = useState<string | null>(null);
+  // Publish the currently open body id to the renderer so drawCity /
+  // drawStation know to suppress their old canvas art ONLY on the
+  // focused body while the menu is up. Cleared on close so diamonds
+  // return to the map view.
+  useEffect(() => {
+    setWorldMenuOpenBodyId(openId);
+    return () => setWorldMenuOpenBodyId(null);
+  }, [openId]);
   const [collapsed, setCollapsed] = useState(true);
   // While a menu is open: tag <body> so the left rail steps aside
   // (CSS in WorldMenuOverlay.css — MP-only by construction), and

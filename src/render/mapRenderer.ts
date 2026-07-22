@@ -13,7 +13,7 @@ import { sampleTorchTrajectory, torchPositionFromSamples } from '../physics/torc
 import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
 import { COLORS, withOpacity, lighten, darken } from './colors';
 import { getShipIconImage } from './shipIconCache';
-import { isWorldMenuActive } from '../game/worldMenu/store';
+import { getWorldMenuOpenBodyId } from '../game/worldMenu/store';
 import { ShipIconClass } from '../components/ShipIcons';
 import { deriveSecondary } from '../game/colorUtils';
 import { getShipClass } from '../game/shipClasses';
@@ -3090,12 +3090,13 @@ export function drawCity(
   isSelected: boolean = false,
 ) {
   if (settlement.bodyId !== body.id) return;
-  // World menu is open → suppress this canvas city rendering entirely
-  // for BOTH: OFF-focus bodies (their flat diamonds cluttered the menu
-  // sky) AND the focused body itself (worldMenuCloseup.ts draws the new
-  // buildings on the limb — the isometric cluster here was the OLD art
-  // still showing through, the "redundant old city graphic").
-  if (isWorldMenuActive()) return;
+  // Suppress this canvas city ONLY when the world menu is actually
+  // OPEN on some body — not for the entire MP session. Suppresses
+  // both the focused body (worldMenuCloseup.ts paints its buildings)
+  // and its sibling bodies' flat markers cluttering the menu sky. At
+  // map view (no menu open), diamonds render normally so the player
+  // can see where their settlements are.
+  if (getWorldMenuOpenBodyId() !== null) return;
   const bodyPos = bodyPosition(body, ctx.t, ctx.bodies);
   const angle = settlement.surfaceAngle ?? 0;
   const surfaceR = body.radius;
@@ -3232,12 +3233,10 @@ export function drawStation(
   isSelected: boolean = false,
 ) {
   if (settlement.bodyId !== body.id || !settlement.orbit) return;
-  // World menu open → suppress this canvas station rendering entirely.
-  // Off-focus bodies: their diamonds cluttered the menu sky. Focused
-  // body: the DOM .wm-station SVG (WorldMenuOverlay) IS the new station
-  // graphic — the canvas ring+hub structure here was the old graphic
-  // still showing through underneath it.
-  if (isWorldMenuActive()) return;
+  // Same gate as drawCity: suppress ONLY while a world menu is actually
+  // open. Map-view diamonds return when no menu is up, so stations are
+  // visible on the zoomed-out system map.
+  if (getWorldMenuOpenBodyId() !== null) return;
   const bodyPos = bodyPosition(body, ctx.t, ctx.bodies);
 
   const orbit = settlement.orbit;
