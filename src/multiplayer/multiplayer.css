@@ -139,7 +139,7 @@
  */
 .mp-dock {
   position: fixed;
-  top: 94px; right: 8px; bottom: 12px;
+  top: calc(var(--topbar-h) + 16px); right: 8px; bottom: 12px;
   width: 360px;
   z-index: 3000;
   background: var(--mp-bg-panel);

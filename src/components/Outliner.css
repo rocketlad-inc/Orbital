@@ -10,7 +10,7 @@
    cleanly without absolute-position math. */
 .left-rail {
   position: fixed;
-  top: 86px;
+  top: calc(var(--topbar-h) + 8px);
   left: 8px;
   bottom: 8px;
   width: 280px;
@@ -311,7 +311,7 @@
      cover it either. */
   .outliner.outliner--collapsed {
     width: auto;
-    top: 80px;
+    top: calc(var(--topbar-h) + 2px);
     left: 12px;
     right: auto;
     bottom: auto;
