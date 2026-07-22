@@ -443,7 +443,8 @@ function RoomDetail({
                     <div className="lobby-body-card__yields">
                       {b.yield.metal > 0 && <span>M{b.yield.metal}</span>}
                       {b.yield.fuel > 0 && <span>F{b.yield.fuel}</span>}
-                      {b.yield.gold > 0 && <span>G{b.yield.gold}</span>}
+                      {/* C = credits (server field is still 'gold') */}
+                      {b.yield.gold > 0 && <span>C{b.yield.gold}</span>}
                       {b.yield.science > 0 && <span>S{b.yield.science}</span>}
                     </div>
                     {isMine && <div className="lobby-body-card__tag">✓ chosen</div>}
@@ -1005,7 +1006,8 @@ function StartingBodyPicker({
               <div className="lobby-body-card__yields">
                 {opt.yield.metal > 0 && <span>M{opt.yield.metal}</span>}
                 {opt.yield.fuel > 0 && <span>F{opt.yield.fuel}</span>}
-                {opt.yield.gold > 0 && <span>G{opt.yield.gold}</span>}
+                {/* C = credits (server field is still 'gold') */}
+                {opt.yield.gold > 0 && <span>C{opt.yield.gold}</span>}
                 {opt.yield.science > 0 && <span>S{opt.yield.science}</span>}
               </div>
               {isMine && <div className="lobby-body-card__tag">✓ yours</div>}

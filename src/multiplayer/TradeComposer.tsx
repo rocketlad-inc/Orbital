@@ -222,7 +222,11 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
                 // Round for display: server-side per-tick drains leave
                 // fp residue (a player saw "4.440892098500626e-16
                 // science" here). Stocks always read as whole numbers.
-                ? `Your stockpile: ${RESOURCE_KEYS.map(k => `${Math.round(Number(me[k]) || 0)} ${k}`).join(' · ')}`
+                // Label via RESOURCE_LABELS, not the raw key — the key
+                // is the server's 'gold', the player-facing name is
+                // 'credits' (this line was the last place still
+                // printing "gold").
+                ? `Your stockpile: ${RESOURCE_KEYS.map(k => `${Math.round(Number(me[k]) || 0)} ${RESOURCE_LABELS[k].toLowerCase()}`).join(' · ')}`
                 : undefined}
               overspend={overspend}
             />

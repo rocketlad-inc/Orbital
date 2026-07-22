@@ -3821,7 +3821,7 @@ export class Room {
               .prepare('UPDATE game_factions SET metal = metal + 500, gold = gold + 500 WHERE id = ?')
               .bind(discoverer),
           );
-          chronicleMessage = `${body_name}: DISCOVERY — a buried cache — +500 metal + 500 gold to your pool.`;
+          chronicleMessage = `${body_name}: DISCOVERY — a buried cache — +500 metal + 500 credits to your pool.`;
           break;
         }
         case 'ancient_databank': {
