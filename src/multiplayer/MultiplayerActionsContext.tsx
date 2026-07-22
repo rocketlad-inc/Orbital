@@ -40,7 +40,12 @@ export interface SettlementIntent {
 }
 
 export interface ResearchIntent {
-  techId: string;
+  /** Set the active project. Omit to leave the current project as-is
+   *  (e.g. a queue-only update); null clears it. */
+  techId?: string | null;
+  /** Full desired research queue (FIFO), replacing the stored one.
+   *  Omit to leave the queue untouched. */
+  queue?: string[];
 }
 
 /** Standing-orders update for one or more ships (DESIGN §3). Every field
@@ -460,12 +465,19 @@ export function MultiplayerActionsProvider({
       };
     },
     async research(intent) {
+      // Send only the keys the caller set: `tech_id` present (incl.
+      // null) changes the active project; absent leaves it. `queue`
+      // present replaces the stored queue. A queue-only update omits
+      // tech_id entirely so the server doesn't touch the project.
+      const payload: Record<string, unknown> = {};
+      if ('techId' in intent) payload.tech_id = intent.techId;
+      if (intent.queue !== undefined) payload.queue = intent.queue;
       const res = await apiFetch(`/api/games/${gameId}/research`, {
         method: 'POST',
-        body: JSON.stringify({ tech_id: intent.techId }),
+        body: JSON.stringify(payload),
       });
       if (res.ok) {
-        logger.info('ACTION', 'Research spent', { tech: intent.techId });
+        logger.info('ACTION', 'Research updated', { tech: intent.techId, queued: intent.queue?.length });
         return { ok: true };
       }
       console.warn('research failed', res.error);

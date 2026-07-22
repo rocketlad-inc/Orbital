@@ -3252,6 +3252,45 @@ export class Room {
         industry:     { baseCost: RESEARCH_BASE_COST, costScaling: RESEARCH_COST_SCALING },
         sensors:      { baseCost: RESEARCH_BASE_COST, costScaling: RESEARCH_COST_SCALING },
       };
+
+      // --- research queue promotion ---------------------------------
+      // Before draining: any faction that is IDLE (research_tech_id
+      // NULL) but has a non-empty research_queue auto-starts the next
+      // valid entry. This covers both "a level just completed" (the
+      // drain clears the project → idle) and "player queued something
+      // while nothing was researching". Maxed/unknown entries at the
+      // head are skipped (dropped from the queue). Running this first
+      // means a freshly-promoted project also drains THIS tick.
+      try {
+        const idle = (await this.env.DB
+          .prepare(
+            `SELECT id, research_queue FROM game_factions
+              WHERE game_id = ? AND research_tech_id IS NULL
+                AND research_queue IS NOT NULL AND research_queue != '[]'`,
+          )
+          .bind(gameId).all()).results ?? [];
+        for (const f of idle) {
+          let q;
+          try { q = JSON.parse(f.research_queue); } catch { q = []; }
+          if (!Array.isArray(q) || q.length === 0) continue;
+          // Levels for this faction, to skip queued techs already maxed.
+          const lvlRows = (await this.env.DB
+            .prepare('SELECT tech_id, level FROM faction_techs WHERE game_id = ? AND faction_id = ?')
+            .bind(gameId, f.id).all()).results ?? [];
+          const levels = Object.fromEntries(lvlRows.map(r => [r.tech_id, r.level]));
+          let next = null;
+          while (q.length > 0) {
+            const cand = q.shift();
+            if (TECH_DEFS[cand] && (levels[cand] ?? 0) < TECH_MAX_LEVEL) { next = cand; break; }
+            // else: unknown or maxed — drop and keep scanning.
+          }
+          await this.env.DB
+            .prepare('UPDATE game_factions SET research_tech_id = ?, research_progress = 0, research_queue = ? WHERE id = ?')
+            .bind(next, JSON.stringify(q), f.id)
+            .run();
+        }
+      } catch (e) { console.error('research queue promotion failed', e); }
+
       const researchers = (await this.env.DB
         .prepare(
           `SELECT f.id, f.name, f.science, f.research_tech_id, f.research_progress,

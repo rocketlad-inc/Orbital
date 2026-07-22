@@ -218,7 +218,7 @@ async function handleGetState(req, env, ctx) {
     .prepare(
       `SELECT id, slot, name, color, color2, status,
               capital_body_id, metal, fuel, gold, science,
-              research_tech_id, research_progress, reputation, senate_weight
+              research_tech_id, research_progress, research_queue, reputation, senate_weight
          FROM game_factions
         WHERE game_id = ? AND user_id = ?`,
     )
@@ -838,6 +838,7 @@ async function handleGetState(req, env, ctx) {
       research: {
         tech_id: me.research_tech_id,
         progress: me.research_progress,
+        queue: (() => { try { return JSON.parse(me.research_queue ?? '[]'); } catch { return []; } })(),
       },
       tech_levels,
       trade_deliveries,

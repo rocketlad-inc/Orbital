@@ -82,7 +82,7 @@ interface ServerState {
     }[];
     /** Active research project + accumulated progress (server drains
      *  science into this each tick). null tech_id = idle. */
-    research?: { tech_id: string | null; progress: number } | null;
+    research?: { tech_id: string | null; progress: number; queue?: string[] } | null;
     /** Faction ids the caller is allied with (active defense-pact /
      *  intel-share). Drives shared sensor vision. */
     ally_faction_ids?: string[];
@@ -716,6 +716,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     levels: srv.me.tech_levels ?? {},
     researching: (srv.me.research?.tech_id ?? null) as FactionTechStateBase['researching'],
     progress: srv.me.research?.progress ?? 0,
+    queue: (srv.me.research?.queue ?? []) as FactionTechStateBase['queue'],
   };
 
   const settlements: Settlement[] = (srv.settlements ?? []).map(s => {

@@ -1,0 +1,14 @@
+-- Research queue (MP): the next projects to auto-start once the current
+-- one finishes, so players can line up a research path instead of
+-- babysitting the tech panel every time a level completes.
+--
+-- research_queue is a JSON array of tech ids in FIFO order. The per-tick
+-- research pass in worker/room.js promotes the head of this queue into
+-- research_tech_id whenever research goes idle (a level just completed,
+-- OR the player enqueued something while nothing was researching) —
+-- skipping any maxed/unknown entries. Empty '[]' = no queue.
+--
+-- Additive with a constant DEFAULT, so every existing faction row
+-- backfills to an empty queue — no behavior change until a player
+-- actually queues something.
+ALTER TABLE game_factions ADD COLUMN research_queue TEXT NOT NULL DEFAULT '[]';

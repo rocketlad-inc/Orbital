@@ -35,6 +35,30 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
   // research requests and made the second one bounce with a stale
   // 409 'insufficient_resources' even though the user saw enough science.
   const [inFlight, setInFlight] = React.useState<Set<TechId>>(new Set());
+
+  // MP research-queue helpers. The client owns the queue array and sends
+  // the full desired list; the server persists it and its per-tick pass
+  // auto-promotes the head whenever research goes idle. SP uses the
+  // separate gameContext reducer actions (enqueueResearch etc.) — these
+  // MP helpers are only wired to buttons rendered when mpActions is set.
+  const sendQueue = React.useCallback((next: TechId[]) => {
+    mpActions?.research({ queue: next }).then(res => {
+      if (res && !res.ok) setResearchError(humanizeMpError(res.code, res.error, 'research'));
+    });
+  }, [mpActions]);
+  const mpEnqueue = (id: TechId) => {
+    const q = (tech.queue ?? []) as TechId[];
+    if (q.includes(id) || tech.researching === id) return;
+    sendQueue([...q, id]);
+  };
+  const mpDequeue = (id: TechId) => sendQueue(((tech.queue ?? []) as TechId[]).filter(t => t !== id));
+  const mpMoveUp = (id: TechId) => {
+    const q = [...((tech.queue ?? []) as TechId[])];
+    const i = q.indexOf(id);
+    if (i <= 0) return;
+    [q[i - 1], q[i]] = [q[i], q[i - 1]];
+    sendQueue(q);
+  };
   // Server-side research rejection shown as a banner at the top of
   // the tech list. Without this the button just flickers from "…" to
   // the un-clicked state when the server returns 409 tech_maxed or
@@ -193,6 +217,65 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
         </div>
       )}
 
+      {/* MP research queue — auto-starts the next project when the
+          current one completes. Touch-friendly chips (28px controls)
+          that wrap on narrow screens. */}
+      {mpActions && queue.length > 0 && (
+        <div
+          style={{
+            display: 'flex', flexWrap: 'wrap', gap: 6,
+            padding: '8px 12px',
+            background: 'rgba(78, 205, 196, 0.05)',
+            borderBottom: '1px solid #2a3d50',
+            alignItems: 'center',
+          }}
+        >
+          <span style={{ fontSize: 10, color: '#b8c8d6', letterSpacing: '0.1em', marginRight: 4 }}>
+            QUEUE ↓
+          </span>
+          {(queue as TechId[]).map((qid, qi) => {
+            const qdef = TECH_DEFS[qid];
+            if (!qdef) return null;
+            const qlvl = tech.levels[qid] ?? 0;
+            return (
+              <span
+                key={qid}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '3px 6px 3px 8px',
+                  border: '1px solid #4ecdc4', borderRadius: 4,
+                  fontSize: 11, color: '#d8e4ee',
+                }}
+                title={`${qdef.name} → level ${qlvl + 1}`}
+              >
+                <span style={{ color: '#b8c8d6', fontSize: 9 }}>{qi + 1}.</span>
+                <span>{qdef.icon} {qdef.name}</span>
+                {qi > 0 && (
+                  <button
+                    onClick={() => mpMoveUp(qid)}
+                    title="Move up" aria-label="Move up"
+                    style={{
+                      width: 28, height: 28, padding: 0,
+                      background: 'transparent', border: 'none',
+                      color: '#4ecdc4', cursor: 'pointer', fontSize: 14,
+                    }}
+                  >↑</button>
+                )}
+                <button
+                  onClick={() => mpDequeue(qid)}
+                  title="Remove from queue" aria-label="Remove"
+                  style={{
+                    width: 28, height: 28, padding: 0,
+                    background: 'transparent', border: 'none',
+                    color: '#ff5e5e', cursor: 'pointer', fontSize: 15,
+                  }}
+                >×</button>
+              </span>
+            );
+          })}
+        </div>
+      )}
+
       {researchError && (
         // MP server rejected the research spend (tech_maxed or
         // insufficient_resources, usually). Surface inline rather than
@@ -318,6 +401,13 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                     }}
                     title="This tech has reached the global cap."
                   >★ MAXED</div>
+                ) : mpActions && isQueued ? (
+                  <button
+                    className="tech-card__action"
+                    onClick={() => mpDequeue(id)}
+                    title={`Remove from queue (position ${queueIndex + 1})`}
+                    style={{ borderColor: '#ff5e5e', color: '#ff5e5e' }}
+                  >Remove (#{queueIndex + 1})</button>
                 ) : mpActions ? (
                   (() => {
                     // Banked science is applied the moment you commit
@@ -328,6 +418,7 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                     const afterBank = Math.max(0, cost - progress0 - playerScience);
                     const instant = afterBank <= 0;
                     return (
+                  <div style={{ display: 'flex', gap: 4, width: '100%' }}>
                   <button
                     className={`tech-card__action ${isActive ? 'active' : ''} ${instant ? 'instant' : ''}`}
                     onClick={async () => {
@@ -372,6 +463,18 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                             ? `Set project · ${Math.ceil(afterBank / scienceRate)}t`
                             : `Set project (${Math.ceil(afterBank)} sci)`}
                   </button>
+                  {/* Queue this tech to auto-start after the current
+                      project (only when something else is researching
+                      and this isn't it). */}
+                  {tech.researching && !isActive && (
+                    <button
+                      className="tech-card__action"
+                      onClick={() => mpEnqueue(id)}
+                      title={`Queue ${def.name} to research after your current project`}
+                      style={{ borderColor: '#4ecdc4', color: '#4ecdc4', flex: '0 0 auto' }}
+                    >+ Queue</button>
+                  )}
+                  </div>
                     );
                   })()
                 ) : isActive ? (

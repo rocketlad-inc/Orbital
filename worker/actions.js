@@ -852,6 +852,25 @@ async function handleResearch(req, env, ctx) {
   if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
   const techId = body.tech_id;
 
+  // Research QUEUE (optional, independent of the project change). The
+  // client sends the FULL desired queue each time — simplest, no
+  // add/remove race. We keep only known tech ids, cap the length, and
+  // persist as JSON. The per-tick pass promotes the head into
+  // research_tech_id whenever research goes idle. A request may carry
+  // `queue` alone (no tech_id), or `queue` + a tech_id / null together.
+  let queueOut;
+  if (Array.isArray(body.queue)) {
+    queueOut = body.queue.filter(t => typeof t === 'string' && TECH_DEFS[t]).slice(0, 16);
+    await env.DB
+      .prepare('UPDATE game_factions SET research_queue = ? WHERE id = ?')
+      .bind(JSON.stringify(queueOut), me.id)
+      .run();
+  }
+  // Queue-only request (caller didn't ask to change the active project).
+  if (techId === undefined) {
+    return json({ queue: queueOut ?? [] });
+  }
+
   // tech_id: null clears the project (research goes idle; science banks).
   if (techId === null) {
     await env.DB
