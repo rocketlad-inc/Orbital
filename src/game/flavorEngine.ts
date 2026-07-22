@@ -341,6 +341,22 @@ function resolveVars(ev: FlavorEvent, ctx: FlavorContext): Record<string, string
         tick,
       };
     }
+    case 'tech_advanced': {
+      // Payload: { tech_id, level, faction_name }. Show WHO advanced WHICH
+      // tech to what level. techName from TECH_DEFS; fall back to a
+      // prettified id if the catalog ever drifts.
+      const techId = str('tech_id');
+      const def = techId ? (TECH_DEFS as Record<string, { name: string }>)[techId] : undefined;
+      const techName = def?.name
+        ?? (techId ? techId.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase()) : undefined);
+      const lvl = num('level');
+      return {
+        actor: facName(actorFac, p.faction_name as string | undefined),
+        techName,
+        techLevel: lvl != null ? `level ${lvl}` : undefined,
+        tick,
+      };
+    }
     default:
       return null;
   }
