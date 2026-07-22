@@ -67,11 +67,15 @@ function useEasedZ(target: number): number {
 
 // Sky orbs: small (just big enough to tap — the transparent hit circle
 // adds +14px) and kept HIGH so they stay clear of the city name tag.
+// Sky orbs — smaller and clustered near the shifted planet centre so
+// they don't crowd the outliner. Slot x is measured relative to `cx`
+// (in vw fractions), not screen 0, so the whole group shifts together
+// with the planet.
 const ORB_SLOTS = [
-  { x: 0.33, y: 0.26, r: 0.040 },   // parent (biggest)
-  { x: 0.45, y: 0.18, r: 0.020 },
-  { x: 0.56, y: 0.26, r: 0.016 },
-  { x: 0.66, y: 0.18, r: 0.014 },
+  { dx: -0.13, y: 0.28, r: 0.030 },   // parent (biggest)
+  { dx: -0.02, y: 0.19, r: 0.017 },
+  { dx: 0.09,  y: 0.28, r: 0.014 },
+  { dx: 0.19,  y: 0.19, r: 0.012 },
 ];
 
 export const WorldMenuOverlay: React.FC = () => {
@@ -145,7 +149,11 @@ export const WorldMenuOverlay: React.FC = () => {
         };
       }
       const s1 = menuScaleFor(b, vh);
-      const off = menuCameraOffset(vw, vh, s1);
+      // Desktop keeps the outliner visible; shift the planet right by
+      // half the outliner width so it centers in the remaining space
+      // (outliner ~296px on the left, dock ~60px on the right).
+      const rShift = vw > 720 ? (296 - 60) / 2 : 0;
+      const off = menuCameraOffset(vw, vh, s1, rShift);
       focusBody(sel); // sets focusedBodyId (body-relative camera)
       updateCamera({ scale: s1, x: off.x, y: off.y });
       setOpenId(sel);
@@ -273,28 +281,31 @@ export const WorldMenuOverlay: React.FC = () => {
   const flavor = getBodyFlavor(body.id);
   const integrity = myCity ?? myStation ?? here[0] ?? null;
 
-  // Settled framing is deterministic: centre at S1, radius Z1_FRAC·H —
-  // same math the canvas pass uses. Everything below anchors to it.
-  const cx = S1X_FRAC * vw, cy = S1Y_FRAC * vh, cr = Z1_FRAC * vh;
+  // Settled framing is deterministic: centre at S1 (+ desktop outliner
+  // shift), radius Z1_FRAC·H — same math the canvas pass uses. Every DOM
+  // anchor below hangs off `cx` so it stays coincident with the canvas
+  // planet after the shift.
+  const rShift = !mobile ? (296 - 60) / 2 : 0;
+  const cx = S1X_FRAC * vw + rShift, cy = S1Y_FRAC * vh, cr = Z1_FRAC * vh;
   const partPos = (frac: number) => {
     const a = (-90 + frac * 46) * Math.PI / 180;
     return { x: cx + Math.cos(a) * cr, y: cy + Math.sin(a) * cr };
   };
   // Chrome geometry — build columns hover just off the limb; the
-  // station rig floats off the upper-right limb; everything clamps
-  // inside the rail/dock gutters.
-  // Rail hides while the menu is open (body.wm-open) — only a small
-  // gutter remains. Dock rail (right icons) stays.
-  const railW = mobile ? 0 : 12, dockW = mobile ? 0 : 60;
+  // station rig floats above the orbit column.
+  const railW = mobile ? 0 : 296, dockW = mobile ? 0 : 60;
   const COL_W = 168, BTN_H = 40;
   const leftColX = Math.max(railW + 10, cx - cr - COL_W - 26);
   const colTopY = cy - cr + 4;
-  // Orbit column pinned far right. The station itself is drawn on the
-  // CANVAS (mapRenderer.drawStation) — a diamond that grows into the
-  // real hub/wings/module structure as you zoom, with damage flash. We
-  // no longer draw a DOM station graphic; only the build controls +
-  // a small HP readout live in DOM.
+  // Orbit column pinned far right.
   const rightColX = vw - dockW - COL_W - 10;
+  // Station indicator: a small DOM silhouette that echoes the canvas
+  // station's ring+hub (isoStructures.drawStationStructure). Not the
+  // cartoon tall-mast — a stylized icon that sits above the orbit
+  // column so the station reads as a distinct place in the sky.
+  const staW = 130, staH = 130;
+  const staX = rightColX + (COL_W - staW) / 2;
+  const staY = Math.max(66, colTopY - staH - 10);
   // Leader-line anchor for the i-th button in a column.
   const btnAnchor = (colX: number, i: number, edge: 'right' | 'left') =>
     ({ x: edge === 'right' ? colX + COL_W : colX, y: colTopY + i * (BTN_H + 9) + BTN_H / 2 });
@@ -391,7 +402,14 @@ export const WorldMenuOverlay: React.FC = () => {
            never covered. Mobile spans full width (collapsed default). ===== */}
       <section
         className={`wm-top ${mobile && collapsed ? 'collapsed' : ''}`}
-        style={mobile ? undefined : { left: railW + 12, maxWidth: Math.min(620, vw - railW - dockW - 24) }}
+        style={mobile ? undefined : {
+          // Centered ABOVE the planet, capped so it never overlaps the
+          // outliner or the dock. Uses `cx` (post-shift planet centre).
+          left: '50%',
+          transform: `translateX(calc(-50% + ${(cx - vw / 2).toFixed(0)}px))`,
+          maxWidth: Math.min(560, vw - railW - dockW - 24),
+          width: 'max-content',
+        }}
         data-testid="wm-top"
       >
         <div className="wm-id">
@@ -465,7 +483,9 @@ export const WorldMenuOverlay: React.FC = () => {
           // parent occupies index 0 of the neighbors array, so sibling
           // indexes 1..3 map straight onto slots 1..3 (no double-count).
           const slot = ORB_SLOTS[isParent ? 0 : Math.min(3, Math.max(1, i))];
-          const ox = slot.x * vw, oy = slot.y * vh, or = Math.max(9, slot.r * vh);
+          // dx is fraction-of-vw offset from `cx`, so the whole cluster
+          // rides with the planet's outliner-aware shift.
+          const ox = cx + slot.dx * vw, oy = slot.y * vh, or = Math.max(9, slot.r * vh);
           const ownColor = bodyOwnerColor(nb.id);
           return (
             <g
@@ -500,6 +520,57 @@ export const WorldMenuOverlay: React.FC = () => {
           );
         })}
       </svg>
+      )}
+
+      {/* ===== station indicator — a stylized ring+hub silhouette that
+           echoes the canvas station (isoStructures.drawStationStructure).
+           Not the tall-mast cartoon; a compact icon above the orbit
+           column that reads as "the station" at a glance. Modules
+           appear in faction color when built. ===== */}
+      {!mobile && readout.station && (
+        <svg
+          className="wm-station" data-testid="wm-station"
+          viewBox="0 0 130 130"
+          style={{ left: staX, top: staY, width: staW, height: staH }}
+        >
+          {/* tilted torus ring (back band, then front band) */}
+          <ellipse cx="65" cy="66" rx="46" ry="14" fill="none"
+            stroke="#2c455f" strokeWidth="6" transform="rotate(-14 65 66)" />
+          <ellipse cx="65" cy="66" rx="46" ry="14" fill="none"
+            stroke="#3a5068" strokeWidth="1" transform="rotate(-14 65 66)" />
+          {/* hub — a capsule threaded through the ring */}
+          <g transform="translate(65 66) rotate(-14)">
+            <rect x="-6" y="-18" width="12" height="36" rx="6" fill="#3d556e" stroke="#5a728a" strokeWidth="0.8" />
+            <rect x="-6" y="-18" width="4.5" height="36" rx="4" fill="#4a637d" />
+            <circle cx="0" cy="-18" r="2.4" fill={p1} />
+          </g>
+          {/* faction modules — appear as built */}
+          {myStation && (myStation.buildings?.weapons ?? 0) > 0 && (
+            <g style={{ fill: p1 }} data-part="weapons">
+              <rect x="12" y="60" width="10" height="10" rx="1" />
+              <rect x="108" y="60" width="10" height="10" rx="1" />
+            </g>
+          )}
+          {myStation && (myStation.buildings?.shipyard ?? 0) > 0 && (
+            <g style={{ stroke: p1, fill: 'none' }} data-part="shipyard" strokeWidth="2.5">
+              <path d="M50,96 L42,96 L42,116 L50,116" />
+              <path d="M80,96 L88,96 L88,116 L80,116" />
+            </g>
+          )}
+          {myStation && (myStation.buildings?.lab ?? 0) > 0 && (
+            <g data-part="lab">
+              <circle cx="65" cy="106" r="6" fill="none" stroke={p1} strokeWidth="1.8" />
+              <circle cx="65" cy="106" r="2" fill={p1} />
+            </g>
+          )}
+          {/* Name + HP header — always readable */}
+          <text x="65" y="14" textAnchor="middle"
+            style={{ font: '700 10px "JetBrains Mono", monospace', letterSpacing: '0.08em', fill: '#d6e2ec' }}>
+            {readout.station.name.toUpperCase()}
+          </text>
+          <rect x="18" y="20" width="94" height="5" rx="2" fill="#0c1219" stroke="#2a3d50" strokeWidth="1" />
+          <rect x="18" y="20" width={94 * staHpRatio} height="5" rx="2" fill={hpColor(staHpRatio)} />
+        </svg>
       )}
 
       {/* ===== build controls =====
@@ -539,14 +610,6 @@ export const WorldMenuOverlay: React.FC = () => {
               style={{ left: rightColX, top: colTopY, width: COL_W }}
             >
               <div className="wm-col-label">ORBIT — <b>STATION</b></div>
-              {readout.station && (
-                <div className="wm-col-hp" title={`Station integrity ${Math.round(readout.station.hp)}/${readout.station.maxHp}`}>
-                  <span>{readout.station.name.toUpperCase()}</span>
-                  <span className="wm-col-hpbar">
-                    <i style={{ width: `${staHpRatio * 100}%`, background: hpColor(staHpRatio) }} />
-                  </span>
-                </div>
-              )}
               {orbitEls}
             </aside>
           )}

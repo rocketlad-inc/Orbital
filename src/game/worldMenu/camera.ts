@@ -101,8 +101,13 @@ export function menuCameraOffset(
   viewportW: number,
   viewportH: number,
   scale: number,
+  /** Extra screen-space shift (px) applied to the planet's landing spot.
+   *  Lets the desktop overlay push the planet right so it centers in the
+   *  content area between the outliner and the dock rail. Defaults to 0
+   *  so map/test math (spec A5) stays exact. */
+  screenShiftX: number = 0,
 ): { x: number; y: number } {
-  const dx = (S1X_FRAC - 0.5) * viewportW;
+  const dx = (S1X_FRAC - 0.5) * viewportW + screenShiftX;
   const dy = (S1Y_FRAC - 0.5) * viewportH;
   return { x: -dx / scale, y: -dy / scale };
 }

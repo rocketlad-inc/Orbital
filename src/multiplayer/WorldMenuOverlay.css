@@ -5,12 +5,15 @@
    Nothing here is reachable from single-player.
    ============================================================ */
 
-/* The outliner and the world menu never share the screen: while the
-   menu is open the left rail steps aside (Esc / ✕ MAP brings it back).
-   Class only ever set by the MP overlay — dead rule in single-player. */
-body.wm-open .left-rail { display: none; }
-
-:root { --wm-rail: 12px; --wm-dock: 60px; }
+/* Desktop: outliner (280px + 8+8 gutters ≈ 296px) stays visible; the
+   world menu's content shifts right to center in the remaining space.
+   Mobile: outliner is hidden behind the ☰ drawer anyway. Class only
+   ever set by the MP overlay — dead rule in single-player. */
+:root { --wm-rail: 296px; --wm-dock: 60px; }
+@media (max-width: 720px) {
+  body.wm-open .left-rail { display: none; }
+  :root { --wm-rail: 0px; }
+}
 
 .wm-root {
   position: fixed;
@@ -119,15 +122,14 @@ body.wm-open .left-rail { display: none; }
 .wm-orb-owned { opacity: 0.85; }
 .wm-orb-star { filter: drop-shadow(0 0 2px rgba(0,0,0,0.6)); }
 
-/* The station itself is the CANVAS graphic (mapRenderer.drawStation) —
-   a diamond that grows into the real hub/wings structure as you zoom.
-   No DOM station graphic; its name+HP live in the orbit column header. */
-.wm-col-hp {
-  display: flex; flex-direction: column; gap: 3px;
-  font-size: 8.5px; letter-spacing: 0.1em; color: #6b8195; margin-bottom: 2px;
+/* Station indicator: a stylized ring+hub silhouette (echoes the canvas
+   isoStructures station), positioned above the orbit column via inline
+   left/top set by the overlay. */
+.wm-station {
+  position: absolute;
+  pointer-events: none;
+  filter: drop-shadow(0 0 8px rgba(78, 205, 196, 0.14));
 }
-.wm-col-hpbar { height: 4px; background: #0c1219; border: 1px solid #2a3d50; border-radius: 2px; overflow: hidden; }
-.wm-col-hpbar i { display: block; height: 100%; }
 
 /* ---- build columns (position inline; hover just off the limb) ---- */
 .wm-col {
