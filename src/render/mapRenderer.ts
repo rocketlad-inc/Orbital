@@ -1718,8 +1718,12 @@ const SHIP_ICON_REST_SIZE: Record<string, number> = {
   destroyer: 22,
 };
 
+// Global multiplier on every ship sprite (and its hitbox, which derives
+// from iconSize). Bumped to 2× — the base sizes read too small on the map.
+const SHIP_ICON_SCALE = 2;
+
 function shipIconSize(shipClass: string, isSelected: boolean): number {
-  return (SHIP_ICON_REST_SIZE[shipClass] ?? 18) + (isSelected ? 4 : 0);
+  return ((SHIP_ICON_REST_SIZE[shipClass] ?? 18) + (isSelected ? 4 : 0)) * SHIP_ICON_SCALE;
 }
 
 /** Floor for a parked ship's click/hover radius. At far zoom the sprite
