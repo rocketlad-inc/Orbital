@@ -432,6 +432,57 @@ export function computeSystemRegions(
   const centerOf = (r: SystemRegion): number =>
     r.shape.kind === 'band' ? (r.shape.rInner + r.shape.rOuter) / 2 : 0;
 
+  // --- Merge adjacent same-owner territories ---
+  //
+  // Two orbit-adjacent bands held by the SAME faction are one territory,
+  // not two. Drawn separately they read as different empires: the radial
+  // alpha falloff shades the outer band fainter than the inner one, and
+  // the secondary-colour border draws a rim at their shared boundary — so
+  // a single faction's back-to-back holdings (e.g. Smiley Face Friends'
+  // Neptune + Pluto systems) looked like two owners in two shades. Merge
+  // each maximal run of consecutive same-faction exclusive bands, per
+  // star, into one band spanning their combined radial extent. A band of a
+  // DIFFERENT owner (or neutral) between them breaks the run, so only
+  // genuinely adjacent holdings combine. The merged band keeps the
+  // innermost sub-region's label + anchor; the individual body names still
+  // render, so the constituent systems remain identifiable.
+  {
+    const byStar = new Map<string, SystemRegion[]>();
+    for (const r of regions) {
+      const arr = byStar.get(r.shape.starBodyId);
+      if (arr) arr.push(r); else byStar.set(r.shape.starBodyId, [r]);
+    }
+    const removed = new Set<SystemRegion>();
+    for (const arr of byStar.values()) {
+      arr.sort((a, b) => centerOf(a) - centerOf(b));
+      let i = 0;
+      while (i < arr.length) {
+        const head = arr[i];
+        if (head.ownership.kind !== 'exclusive') { i++; continue; }
+        const fid = head.ownership.factionId;
+        let j = i + 1;
+        while (
+          j < arr.length
+          && arr[j].ownership.kind === 'exclusive'
+          && (arr[j].ownership as { factionId: string }).factionId === fid
+        ) {
+          const s = arr[j].shape;
+          head.shape.rInner = Math.min(head.shape.rInner, s.rInner);
+          head.shape.rOuter = Math.max(head.shape.rOuter, s.rOuter);
+          head.bodyIds = head.bodyIds.concat(arr[j].bodyIds);
+          removed.add(arr[j]);
+          j++;
+        }
+        i = j;
+      }
+    }
+    if (removed.size > 0) {
+      for (let k = regions.length - 1; k >= 0; k--) {
+        if (removed.has(regions[k])) regions.splice(k, 1);
+      }
+    }
+  }
+
   // --- Overlap-splitting pass ---
   //
   // Two lanes covering the same radius get painted twice, and translucent
