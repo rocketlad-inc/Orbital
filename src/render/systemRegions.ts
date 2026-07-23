@@ -32,6 +32,7 @@
 
 import { Body, Faction, Settlement } from '../types';
 import { CORE_MEMBER_IDS, CORE_LABEL } from '../game/systemGrouping';
+import { deriveSecondary } from '../game/colorUtils';
 
 /** Consecutive rubble bodies join one belt while each is within this
  *  factor of the previous orbit radius. 1.25 keeps Sol's real belts
@@ -86,7 +87,7 @@ const LANE_MAX_FRACTION = 0.12;
 export type RegionOwnership =
   | { kind: 'unowned' }
   | { kind: 'contested'; factionIds: string[] }
-  | { kind: 'exclusive'; factionId: string; color: string; factionName: string };
+  | { kind: 'exclusive'; factionId: string; color: string; color2: string; factionName: string };
 
 /**
  * Every region is an annulus centred on its star — the orbital band the
@@ -202,10 +203,14 @@ function ownershipOf(
   }
   if (leader && leaderWorlds * 2 > claimedWorlds) {
     const f = factions?.find(x => x.id === leader);
+    const primary = f?.color ?? '#8a9fb3';
     return {
       kind: 'exclusive',
       factionId: leader,
-      color: f?.color ?? '#8a9fb3',
+      color: primary,
+      // Secondary (two-tone §5): explicit pick, else derived from primary.
+      // Drives the territory border stroke on the map.
+      color2: f?.color2 || deriveSecondary(primary),
       factionName: f?.name ?? 'Unknown',
     };
   }

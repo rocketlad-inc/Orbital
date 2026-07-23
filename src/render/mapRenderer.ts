@@ -4232,6 +4232,12 @@ export function drawSystemRegions(
     const color = owned
       ? (region.ownership as { color: string }).color
       : REGION_NEUTRAL;
+    // Owned territories get a border stroke in the faction's SECONDARY
+    // colour at the band edges (two-tone §5) — reads the map's fills as
+    // primary + secondary, and crisply separates adjacent territories.
+    const color2 = owned
+      ? (region.ownership as { color2: string }).color2
+      : null;
     // Owned territory earns more presence than empty space; unowned
     // rubble is barely a stain, just enough to group it. Each tier
     // scales up with intensity, keeping their relative weighting so
@@ -4268,6 +4274,24 @@ export function drawSystemRegions(
       c.beginPath();
       c.arc(cp.x, cp.y, mid, 0, Math.PI * 2);
       c.stroke();
+
+      // Secondary-colour territory border: thin, crisp rings at the band's
+      // inner + outer edges. Punchier than the fill (so the edge reads) but
+      // still fades with the region. Inner edge skipped for a disc (The
+      // Core, rInner≈0) where it would collapse to a dot at the star.
+      if (owned && color2) {
+        const borderAlpha = Math.min(0.9, baseAlpha * 1.7);
+        c.strokeStyle = withOpacity(color2, borderAlpha);
+        c.lineWidth = 2;
+        c.beginPath();
+        c.arc(cp.x, cp.y, rOut, 0, Math.PI * 2);
+        c.stroke();
+        if (rIn > 4) {
+          c.beginPath();
+          c.arc(cp.x, cp.y, rIn, 0, Math.PI * 2);
+          c.stroke();
+        }
+      }
 
       if (region.label) {
         // Put the label on its own ring, NEXT TO the body it names —
