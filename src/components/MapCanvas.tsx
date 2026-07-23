@@ -1210,7 +1210,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const fs = big ? 15 : 13;
         c2d.save();
         c2d.globalAlpha = c2d.globalAlpha * alpha;
-        c2d.font = `800 ${fs}px var(--font-mono, ui-monospace, Menlo, Consolas, monospace)`;
+        // Concrete stack — canvas ctx.font ignores CSS var(), so the old
+        // var(--font-mono,…) silently fell back to default sans-serif.
+        // Audiowide to match the rest of the map/app (weight is a no-op for
+        // single-weight Audiowide; kept for the sans-serif fallback path).
+        c2d.font = `800 ${fs}px 'Audiowide', sans-serif`;
         c2d.textAlign = 'left';
         c2d.textBaseline = 'middle';
         const label = `▸${total}`;
