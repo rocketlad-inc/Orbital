@@ -911,6 +911,30 @@ export class Room {
         : `${b.ship_class.charAt(0).toUpperCase()}${b.ship_class.slice(1)} ` +
           `T${tick}-${String(Math.floor(Math.random() * 900) + 100)}`;
 
+      // Veteran Yards (weapons 5, project_intel_gating): new hulls launch
+      // with a QUARTER of the faction's average fleet rank instead of raw
+      // rank 0. Ungated (grandfathered) games get it for free, matching
+      // how every other research gate behaves there. Build completions
+      // are rare, so the two extra point queries per hull are cheap.
+      let spawnRank = 0;
+      try {
+        const gRow = await this.env.DB
+          .prepare('SELECT gating_enabled FROM games WHERE id = ?')
+          .bind(gameId).first();
+        const wRow = await this.env.DB
+          .prepare(`SELECT level FROM faction_techs
+                     WHERE game_id = ? AND faction_id = ? AND tech_id = 'weapons'`)
+          .bind(gameId, b.faction_id).first();
+        const veteranYards = (gRow?.gating_enabled ?? 0) !== 1 || Number(wRow?.level ?? 0) >= 5;
+        if (veteranYards) {
+          const avgRow = await this.env.DB
+            .prepare(`SELECT AVG(rank) AS r FROM game_ships
+                       WHERE game_id = ? AND owner_faction_id = ? AND status = 'active'`)
+            .bind(gameId, b.faction_id).first();
+          spawnRank = Math.max(0, Math.floor(Number(avgRow?.r ?? 0) / 4));
+        }
+      } catch (e) { console.error('veteran yards rank calc failed', e); }
+
       await this.env.DB.batch([
         this.env.DB
           .prepare(
@@ -919,13 +943,14 @@ export class Room {
                parent_body_id, orbit_rp, orbit_ra, orbit_omega,
                orbit_m0, orbit_epoch, orbit_direction,
                fuel, fuel_max, status, built_at_tick,
-               hp, hp_max, damage_per_tick, icon_variant, parts_json)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 1, ?, ?, 'active', ?, ?, ?, ?, ?, ?)`,
+               hp, hp_max, damage_per_tick, icon_variant, parts_json, rank)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 1, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)`,
           )
           .bind(shipId, gameId, b.faction_id, shipName, b.ship_class,
                 b.body_id, rp, ra, tick, fuelMax, fuelMax, tick,
                 hp, hp, dmg, b.icon_variant ?? null,
-                parts.length > 0 ? JSON.stringify(parts) : null),
+                parts.length > 0 ? JSON.stringify(parts) : null,
+                spawnRank),
         this.env.DB
           .prepare('DELETE FROM game_body_build_queue WHERE id = ?')
           .bind(b.id),
@@ -1834,6 +1859,24 @@ export class Room {
     // (see attackerWeaponMul below). Legacy games that only teched the
     // old 'weapons' line fall back to it for energy so an energy fleet
     // isn't silently un-teched by the split.
+    // Research-gated combat buffs (project_intel_gating): these effects
+    // existed as design promises only; now they key off the owner's tech.
+    // Ungated (grandfathered) games get them for free, same as every
+    // other research gate. Requirement levels mirror researchUnlocks:
+    // pdcUpgrade = armor 4 · damageControl = armor 5.
+    const gatingRow = await this.env.DB
+      .prepare('SELECT gating_enabled FROM games WHERE id = ?')
+      .bind(gameId).first();
+    const buffsGated = (gatingRow?.gating_enabled ?? 0) === 1;
+    const hasBuff = (fid, track, reqLevel) =>
+      !buffsGated || (techLvl.get(fid)?.[track] ?? 0) >= reqLevel;
+    // Point-Defense Upgrade: every hull of a researched faction mitigates
+    // a further step of incoming fire. One step below the class ladder's
+    // spacing (corvette .2 → frigate .4), capped well under immune.
+    const PDC_UPGRADE_STEP = 0.1;
+    const pdcOfShip = (cls, fid) =>
+      Math.min(0.8, pdcOfShipClass(cls) + (hasBuff(fid, 'armor', 4) ? PDC_UPGRADE_STEP : 0));
+
     const kineticMulOf = (fid) => 1 + 0.10 * (techLvl.get(fid)?.weapons ?? 0);
     const energyMulOf  = (fid) => 1 + 0.10 * Math.max(
       techLvl.get(fid)?.energy_weapons ?? 0, techLvl.get(fid)?.weapons ?? 0);
@@ -2040,7 +2083,7 @@ export class Room {
           // armor cuts energy; a target with no relevant parts takes
           // full damage exactly as before.
           const mit = Math.max(MITIGATION_FLOOR,
-            (1 - pdcOfShipClass(t.ship_class)) * defenseMitigation(t._parts, atkProfile));
+            (1 - pdcOfShip(t.ship_class, t.owner_faction_id)) * defenseMitigation(t._parts, atkProfile));
           const dmg = attackPower * mit * warAuthMul;
           addDamage(t.id, attacker.owner_faction_id, attacker.id, dmg);
         }
@@ -2082,7 +2125,7 @@ export class Room {
         for (const t of shipTargets) {
           const warAuthMul = (await sanctioned(t.owner_faction_id, 'war_authorization')) ? 2 : 1;
           const mit = Math.max(MITIGATION_FLOOR,
-            (1 - pdcOfShipClass(t.ship_class)) * defenseMitigation(t._parts, KINETIC));
+            (1 - pdcOfShip(t.ship_class, t.owner_faction_id)) * defenseMitigation(t._parts, KINETIC));
           const dmg = power * mit * warAuthMul;
           addDamage(t.id, st.owner_faction_id, null, dmg);
         }
@@ -2353,6 +2396,11 @@ export class Room {
           refuelRate += REFUEL_STATION;
         }
       }
+      // Damage Control (armor 5, project_intel_gating): hulls of a
+      // researched faction self-repair a trickle ANYWHERE — mid-fight,
+      // deep space, no dry dock required. Half the station rate, and it
+      // stacks with a station when parked at one.
+      if (hasBuff(ship.owner_faction_id, 'armor', 5)) repairRate += REPAIR_STATION / 2;
       if (repairRate <= 0 && refuelRate <= 0) continue;
       // Effective HP cap = base × rank (+1%/kill) × armor tech (+8%/level).
       // Rank matches client combat.ts rankHpMul; armor mirrors
