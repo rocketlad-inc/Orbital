@@ -4296,16 +4296,27 @@ export function drawSystemRegions(
         }
       }
 
-      if (region.label) {
-        // Put the label on its own ring, NEXT TO the body it names —
-        // never on top of it. Anchoring straight at the body's angle put
-        // the region name and its owner line directly over the planet
-        // and the planet's own label, which is what they collided with.
-        // Sliding ALONG the ring keeps the name tied to its band (and
-        // keeps a dozen concentric rings from stacking their labels in
-        // one column) while leaving the body clear.
-        const anchorId = shape.labelAnchorBodyId;
-        const anchor = anchorId ? ctx.bodies.find(b => b.id === anchorId) : null;
+      // Region labels. A merged multi-system territory (region.labels)
+      // names EACH constituent system, positioned on its OWN sub-band
+      // ring; a normal region draws its single label on its band. The
+      // label is put on its own ring NEXT TO the body it names, sliding
+      // ALONG the ring so it stays tied to its band without stacking a
+      // dozen concentric names in one column or colliding with the body.
+      const labelSpecs = region.labels && region.labels.length
+        ? region.labels.map(l => ({
+            text: l.label,
+            anchorId: l.anchorBodyId,
+            li: l.rInner * scale,
+            lo: l.rOuter * scale,
+          }))
+        : (region.label
+            ? [{ text: region.label, anchorId: shape.labelAnchorBodyId, li: rIn, lo: rOut }]
+            : []);
+      for (const ls of labelSpecs) {
+        if (!ls.text) continue;
+        const subMid = (ls.li + ls.lo) / 2;
+        const subWidth = Math.max(ls.lo - ls.li, 6);
+        const anchor = ls.anchorId ? ctx.bodies.find(b => b.id === ls.anchorId) : null;
         let baseAngle = -Math.PI / 2;
         if (anchor) {
           const ap = bodyPosition(anchor, ctx.t, ctx.bodies);
@@ -4313,25 +4324,16 @@ export function drawSystemRegions(
           const dy = ap.y - wp.y;
           if (Math.hypot(dx, dy) > 1e-6) baseAngle = Math.atan2(dy, dx);
         }
-        // Measured, not guessed — "URANUS SYSTEM" needs far more room
-        // than "THE CORE", and the search has to know the real box.
-        //
-        // BOTH lines, not just the title: the owner line ("CONFEDERACY
-        // OF INDEPENDENT SYSTEMS") is routinely twice the title's width,
-        // so reserving only the title left the wider line overhanging on
-        // both sides — which is exactly what was colliding with the
-        // neighbouring regions' labels and with body names.
-        //
-        // Sized to the room this band actually has: a thin inner ring
-        // gets small text and drops its owner line, and both come back
-        // as you zoom in and the ring fattens. `width` is already the
-        // band's screen thickness.
-        const labelScale = regionLabelScale(width);
-        const showSub = width >= REGION_SUB_HIDE_BELOW;
+        // Sized to the room this sub-band actually has — thin rings get
+        // small text and drop the owner line; both grow as you zoom in.
+        const labelScale = regionLabelScale(subWidth);
+        const showSub = subWidth >= REGION_SUB_HIDE_BELOW;
         const titlePx = REGION_TITLE_PX * labelScale;
         const subPx = REGION_SUB_PX * labelScale;
         c.font = `${titlePx.toFixed(1)}px ${REGION_FONT_STACK}`;
-        const titleWidth = c.measureText(region.label.toUpperCase()).width;
+        // Measure BOTH lines — the owner line is often wider than the
+        // title, so reserving only the title left it overhanging.
+        const titleWidth = c.measureText(ls.text.toUpperCase()).width;
         let labelWidth = titleWidth;
         if (showSub) {
           c.font = `${subPx.toFixed(1)}px ${REGION_FONT_STACK}`;
@@ -4342,7 +4344,7 @@ export function drawSystemRegions(
           : titlePx * 1.5;
         const spot = chooseRegionLabelPos({
           cx: cp.x, cy: cp.y,
-          mid, rInner: rIn, rOuter: rOut,
+          mid: subMid, rInner: ls.li, rOuter: ls.lo,
           baseAngle,
           labelWidth,
           labelHeight,
@@ -4352,7 +4354,7 @@ export function drawSystemRegions(
         obstacles.push(spot.rect);
         drawRegionLabel(
           region, spot.x, spot.y, color, owned, ctx, fade, intensity,
-          labelScale, showSub,
+          labelScale, showSub, ls.text,
         );
       }
     }
@@ -4386,9 +4388,12 @@ function drawRegionLabel(
   labelScale: number = 1,
   /** Whether there's room for the owner line under the name. */
   showSub: boolean = true,
+  /** Title override — a merged territory draws one constituent system
+   *  name per call rather than the region's single `label`. */
+  textOverride?: string,
 ) {
   const c = ctx.ctx;
-  const text = region.label.toUpperCase();
+  const text = (textOverride ?? region.label).toUpperCase();
   // Unowned used to print NOTHING, so an empty region and a held one
   // differed only by a hue you had to already know to read. Saying
   // UNCLAIMED outright means the absence of a faction is information

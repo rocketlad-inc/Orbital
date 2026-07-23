@@ -116,6 +116,12 @@ export interface SystemRegion {
   shape: RegionShape;
   bodyIds: string[];
   ownership: RegionOwnership;
+  /** Set when several same-owner bands were merged into this one: the
+   *  original per-system labels + their sub-band radial extents (world
+   *  units), so the renderer still names EACH constituent system on the
+   *  combined territory instead of collapsing to one. Undefined for a
+   *  normal single-system region (renderer falls back to `label`). */
+  labels?: Array<{ label: string; anchorBodyId?: string; rInner: number; rOuter: number }>;
 }
 
 /** A political claim: some faction has a live settlement on this body.
@@ -460,6 +466,14 @@ export function computeSystemRegions(
         const head = arr[i];
         if (head.ownership.kind !== 'exclusive') { i++; continue; }
         const fid = head.ownership.factionId;
+        // Snapshot head's OWN label + extent before the loop widens its
+        // shape, so its label still sits on its own sub-band ring.
+        const runLabels = [{
+          label: head.label,
+          anchorBodyId: head.shape.labelAnchorBodyId,
+          rInner: head.shape.rInner,
+          rOuter: head.shape.rOuter,
+        }];
         let j = i + 1;
         while (
           j < arr.length
@@ -467,12 +481,20 @@ export function computeSystemRegions(
           && (arr[j].ownership as { factionId: string }).factionId === fid
         ) {
           const s = arr[j].shape;
+          runLabels.push({
+            label: arr[j].label,
+            anchorBodyId: s.labelAnchorBodyId,
+            rInner: s.rInner,
+            rOuter: s.rOuter,
+          });
           head.shape.rInner = Math.min(head.shape.rInner, s.rInner);
           head.shape.rOuter = Math.max(head.shape.rOuter, s.rOuter);
           head.bodyIds = head.bodyIds.concat(arr[j].bodyIds);
           removed.add(arr[j]);
           j++;
         }
+        // Only a genuine merge (>1 band) keeps every constituent label.
+        if (j > i + 1) head.labels = runLabels.filter(l => l.label);
         i = j;
       }
     }
