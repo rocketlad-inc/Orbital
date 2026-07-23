@@ -32,6 +32,7 @@ import { randomShipName } from '../game/shipNames';
 import { deriveSecondary } from '../game/colorUtils';
 import { getBodyFlavor } from '../game/bodyFlavor';
 import { Body, BuildingKind, Settlement, SettlementType } from '../types';
+import { bodyPosition } from '../physics/orbitalMechanics';
 import {
   menuScaleFor, menuCameraOffset, menuOpacity, zOf,
   S1X_FRAC, S1Y_FRAC, Z1_FRAC,
@@ -185,8 +186,28 @@ export const WorldMenuOverlay: React.FC = () => {
       } else {
         focusBody(undefined);
       }
+      return;
     }
-  }, [deselectBody, focusBody, updateCamera, setOpenId]);
+    // Zoom-out dismissal: the player pulled back to the map, so LEAVE the
+    // camera where they stopped — but RELEASE the body-focus tether.
+    // While the menu is open the camera is body-relative: camera.x/y are an
+    // OFFSET from the focused body (MapCanvas render, gated on
+    // isWorldMenuActive()). If we leave focusedBodyId set, the camera stays
+    // locked to this world's frame and the wheel handler never clears it, so
+    // a click on ANOTHER planet lands in the wrong screen space and nothing
+    // re-centers — the reported bug. Convert to the equivalent FREE camera
+    // at the same scale + on-screen world centre (no visible jump), then
+    // drop the focus so any planet click flies to and opens that world.
+    const fb = camera.focusedBodyId
+      ? gameState.bodies.find(bb => bb.id === camera.focusedBodyId)
+      : undefined;
+    if (fb) {
+      const pos = bodyPosition(fb, gameState.currentTick, gameState.bodies);
+      updateCamera({ focusedBodyId: undefined, x: pos.x + camera.x, y: pos.y + camera.y, scale: camera.scale });
+    } else {
+      updateCamera({ focusedBodyId: undefined });
+    }
+  }, [deselectBody, focusBody, updateCamera, setOpenId, camera, gameState.bodies, gameState.currentTick]);
 
   // z from the real camera; eased display copy for chrome fades.
   const zTarget = body ? zOf(camera.scale, body, vh) : 0;
