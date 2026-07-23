@@ -1825,7 +1825,11 @@ export function drawShip(
   ship: Ship,
   ctx: RenderContext,
   isSelected: boolean = false,
-  formation?: { index: number; total: number }
+  formation?: { index: number; total: number },
+  /** Zoom-driven size multiplier for PARKED ships (spawn small, grow as
+   *  you zoom in — see MapCanvas ORBIT_SHIP_MIN_SCALE). Transit + selected
+   *  ships ignore it and always draw full size so they stay trackable. */
+  sizeScale: number = 1,
 ) {
   const parentBody = ctx.bodies.find(b => b.id === ship.orbit.parentBodyId);
   if (!parentBody) return;
@@ -1865,7 +1869,8 @@ export function drawShip(
     };
   }
 
-  const iconSize = shipIconSize(ship.class, isSelected);
+  const iconSize = shipIconSize(ship.class, isSelected)
+    * ((ship.transit || isSelected) ? 1 : sizeScale);
 
   // Record the true drawn box for hit-testing: canvasPos already carries
   // the orbit spin, tick interpolation AND the formation spread, so a

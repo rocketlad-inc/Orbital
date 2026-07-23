@@ -97,7 +97,19 @@ const TOUCH_HIT_PADDING = isCoarsePointer() ? 16 : 0;
  * player can still track them across the zoomed-out view; only the
  * stationary at-body clusters collapse.
  */
-const SHIP_ICON_MIN_SPANS = 12;
+const SHIP_ICON_MIN_SPANS = 18;
+/** Once individual ships appear, they don't pop straight to full size —
+ *  they ramp from ORBIT_SHIP_MIN_SCALE at the transition up to full at
+ *  SHIP_ICON_FULL_SPANS, so a planet you're diving toward grows its ships
+ *  in rather than showing a wall of big hulls the instant they appear.
+ *  Transit and selected ships always draw full (see drawShip). */
+const SHIP_ICON_FULL_SPANS = 34;
+const ORBIT_SHIP_MIN_SCALE = 0.5;
+/** A star-orbiter whose whole moon system spans fewer than this many
+ *  screen pixels collapses its bodies' ship badges into a single
+ *  SYSTEM-level count (its moons would overlap into an unreadable smear
+ *  at that zoom). Above it, badges are per-body. */
+const SYSTEM_BADGE_MAX_PX = 48;
 
 /** Camera scale at/above which a queued chronicle effect is considered
  *  "watchable" and allowed to play. Below this an explosion is a
@@ -985,6 +997,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // body so we can render a single "N⌖" badge next to the body
     // instead of N overlapping triangles + labels.
     const clusterMode = spans < SHIP_ICON_MIN_SPANS;
+    // Zoom-driven size for parked ships: small when they first appear at
+    // the transition, ramping to full by SHIP_ICON_FULL_SPANS so a planet
+    // grows its ships in as you dive toward it.
+    const orbitShipScale = Math.max(
+      ORBIT_SHIP_MIN_SCALE,
+      Math.min(1, (spans - SHIP_ICON_MIN_SPANS) / (SHIP_ICON_FULL_SPANS - SHIP_ICON_MIN_SPANS)
+        * (1 - ORBIT_SHIP_MIN_SCALE) + ORBIT_SHIP_MIN_SCALE),
+    );
     const bodyClusters = new Map<string, { mine: number; other: number }>();
     const bumpCluster = (bodyId: string, mine: boolean) => {
       const cur = bodyClusters.get(bodyId) ?? { mine: 0, other: 0 };
@@ -1109,7 +1129,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             isSelected ? 2 : 1
           );
         }
-        drawShip(ship, renderContext, isSelected, formation);
+        drawShip(ship, renderContext, isSelected, formation, orbitShipScale);
         if (isSelected) drawApsisMarkers(ship, renderContext);
 
         const previewColor = COLORS.maneuverPlanned;
@@ -1127,70 +1147,111 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             isSelected ? 2 : 1
           );
         }
-        drawShip(ship, renderContext, isSelected, formation);
+        drawShip(ship, renderContext, isSelected, formation, orbitShipScale);
         if (isSelected) drawApsisMarkers(ship, renderContext);
       }
     }
 
-    // Cluster badges. One per body that had its parked ships collapsed
-    // into the bodyClusters accumulator above. Position: a small offset
-    // up-and-right of the body so it doesn't overlap the body label.
-    // Colour: cyan for player-only, red for enemy-only, amber for mixed.
-    // Format: just the total count + a tiny ship glyph. Players see the
-    // density at a glance and click-to-zoom for detail.
-    // ...but not once the region wash is fully in. At full-system zoom
-    // the badges become the clutter (a scatter of "•2" pips over the
-    // inner planets); the political shading is the read at that range.
-    // They fade back in as the wash fades out.
-    if (clusterMode && bodyClusters.size > 0 && regionFade < 1) {
+    // Ship-count badges — two LOD tiers below the individual-ship zoom.
+    // PER-BODY: when a planet's moons are still spread out on screen, a
+    // badge up-right of each body, fading under the political wash. Once a
+    // moon system shrinks to a tight smear (systemPx < SYSTEM_BADGE_MAX_PX)
+    // it collapses to ONE SYSTEM badge at the planet — kept visible even
+    // over the wash, since per-body would be an unreadable pile there.
+    if (clusterMode && bodyClusters.size > 0) {
       const c2d = ctx;
-      c2d.save();
-      c2d.globalAlpha = c2d.globalAlpha * (1 - regionFade);
-      c2d.font = "700 11px var(--font-mono, ui-monospace, Menlo, Consolas, monospace)";
-      c2d.textAlign = 'left';
-      c2d.textBaseline = 'middle';
+      const bodyById2 = new Map(gameState.bodies.map(b => [b.id, b] as const));
+      const childrenOf2 = new Map<string, typeof gameState.bodies>();
+      for (const b of gameState.bodies) {
+        if (!b.parent) continue;
+        const arr = childrenOf2.get(b.parent) ?? [];
+        arr.push(b);
+        childrenOf2.set(b.parent, arr);
+      }
+      const isStarLike = (b: (typeof gameState.bodies)[number] | undefined) =>
+        !!b && (b.type === 'star' || b.type === 'black_hole');
+      // A moon rolls up to its planet; a planet is its own anchor.
+      const anchorOf = (id: string): string => {
+        const b = bodyById2.get(id);
+        if (!b) return id;
+        const p = b.parent ? bodyById2.get(b.parent) : undefined;
+        return (p && !isStarLike(p)) ? p.id : id;
+      };
+      const systemPx = (anchorId: string): number => {
+        const kids = childrenOf2.get(anchorId) ?? [];
+        let maxOrbit = 0;
+        for (const k of kids) if (k.orbitRadius > maxOrbit) maxOrbit = k.orbitRadius;
+        const anchor = bodyById2.get(anchorId);
+        return (maxOrbit > 0 ? maxOrbit : (anchor?.radius ?? 4)) * camera.scale;
+      };
+
+      const sysAgg = new Map<string, { mine: number; other: number }>();
+      const perBody: Array<{ bodyId: string; mine: number; other: number }> = [];
       for (const [bodyId, counts] of bodyClusters) {
-        const body = gameState.bodies.find(b => b.id === bodyId);
+        const anchor = anchorOf(bodyId);
+        const hasMoons = (childrenOf2.get(anchor)?.length ?? 0) > 0;
+        if (hasMoons && systemPx(anchor) < SYSTEM_BADGE_MAX_PX) {
+          const cur = sysAgg.get(anchor) ?? { mine: 0, other: 0 };
+          cur.mine += counts.mine; cur.other += counts.other;
+          sysAgg.set(anchor, cur);
+        } else {
+          perBody.push({ bodyId, mine: counts.mine, other: counts.other });
+        }
+      }
+
+      // Bigger, bolder, higher-contrast pill: bright tier text on a near-
+      // black fill with a 2px bright border. System badges run larger.
+      const drawBadge = (cx: number, cy: number, mine: number, other: number, big: boolean, alpha: number) => {
+        const total = mine + other;
+        if (total <= 0 || alpha <= 0.01) return;
+        let text = '#8bf5ea', border = '#4ecdc4';                       // mine-only
+        if (mine === 0)     { text = '#ff9d9d'; border = '#ff5e5e'; }    // enemy-only
+        else if (other > 0) { text = '#ffd889'; border = '#ffb84d'; }    // mixed
+        const fs = big ? 15 : 13;
+        c2d.save();
+        c2d.globalAlpha = c2d.globalAlpha * alpha;
+        c2d.font = `800 ${fs}px var(--font-mono, ui-monospace, Menlo, Consolas, monospace)`;
+        c2d.textAlign = 'left';
+        c2d.textBaseline = 'middle';
+        const label = `▸${total}`;
+        const padX = 6;
+        const pillW = c2d.measureText(label).width + padX * 2;
+        const pillH = fs + 8;
+        const anyCtx = c2d as any;
+        c2d.beginPath();
+        if (typeof anyCtx.roundRect === 'function') anyCtx.roundRect(cx, cy - pillH / 2, pillW, pillH, 5);
+        else anyCtx.rect(cx, cy - pillH / 2, pillW, pillH);
+        c2d.fillStyle = 'rgba(4, 8, 14, 0.96)';
+        c2d.fill();
+        c2d.lineWidth = 2;
+        c2d.strokeStyle = border;
+        c2d.stroke();
+        c2d.fillStyle = text;
+        c2d.fillText(label, cx + padX, cy + 0.5);
+        c2d.restore();
+      };
+
+      // Per-body badges fade out under the region wash (as before).
+      const bodyAlpha = 1 - regionFade;
+      if (bodyAlpha > 0.01) {
+        for (const { bodyId, mine, other } of perBody) {
+          const body = bodyById2.get(bodyId);
+          if (!body) continue;
+          const bp = bodyPosition(body, renderTick(), gameState.bodies);
+          const cp = worldToCanvas(bp.x, bp.y, renderContext);
+          const radius = Math.max(3, (body.radius ?? 4) * camera.scale);
+          drawBadge(cp.x + radius + 6, cp.y - radius - 6, mine, other, false, bodyAlpha);
+        }
+      }
+      // System badges: visible even when the wash is full — that IS the read.
+      for (const [anchorId, counts] of sysAgg) {
+        const body = bodyById2.get(anchorId);
         if (!body) continue;
         const bp = bodyPosition(body, renderTick(), gameState.bodies);
         const cp = worldToCanvas(bp.x, bp.y, renderContext);
-        const total = counts.mine + counts.other;
-        if (total <= 0) continue;
-        // Colour cue.
-        let fill = '#4ecdc4';   // mine-only cyan
-        let stroke = '#1a3a3a';
-        if (counts.mine === 0)        { fill = '#ff5e5e'; stroke = '#3a1a1a'; }
-        else if (counts.other > 0)    { fill = '#ffb84d'; stroke = '#3a2a10'; }
-        // Pill placement: up-right of the body marker.
-        const radius = Math.max(3, (body.radius ?? 4) * camera.scale);
-        const pillX = cp.x + radius + 6;
-        const pillY = cp.y - radius - 6;
-        const label = `▸${total}`;
-        const padX = 5;
-        const textW = c2d.measureText(label).width;
-        const pillW = textW + padX * 2;
-        const pillH = 14;
-        c2d.fillStyle = 'rgba(10, 14, 20, 0.92)';
-        c2d.strokeStyle = stroke;
-        c2d.lineWidth = 1;
-        c2d.beginPath();
-        // Rounded rect via roundRect (widely supported in Chromium/Firefox
-        // since 2023). Falls back to a plain rect on older engines. Cast
-        // through any so TS doesn't narrow the canvas type to never in
-        // the fallback branch.
-        const rr = 4;
-        const anyCtx = c2d as any;
-        if (typeof anyCtx.roundRect === 'function') {
-          anyCtx.roundRect(pillX, pillY - pillH / 2, pillW, pillH, rr);
-        } else {
-          anyCtx.rect(pillX, pillY - pillH / 2, pillW, pillH);
-        }
-        c2d.fill();
-        c2d.stroke();
-        c2d.fillStyle = fill;
-        c2d.fillText(label, pillX + padX, pillY + 0.5);
+        const radius = Math.max(4, (body.radius ?? 5) * camera.scale);
+        drawBadge(cp.x + radius + 7, cp.y - radius - 7, counts.mine, counts.other, true, 1);
       }
-      c2d.restore();
     }
 
     // Draw fog-of-war ghosts for enemies currently out of sensor range but
