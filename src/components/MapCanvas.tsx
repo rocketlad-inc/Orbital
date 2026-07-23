@@ -443,8 +443,19 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             if (s.id === ship.id || s.transit) continue;
             if (s.orbit.parentBodyId !== atBody) continue;
             if (s.ownedBy === ship.ownedBy) continue;
-            if (getShipClass(s.class).damagePerTick <= 0) continue;
+            // Server-authoritative damage when present (designer builds
+            // can arm or disarm any hull); class def for SP/legacy.
+            if ((s.damagePerTick ?? getShipClass(s.class).damagePerTick) <= 0) continue;
             if (attackerId === null || s.id < attackerId) attackerId = s.id;
+          }
+          // Hostile settlements are shooters too — every city/station
+          // returns fire server-side (SETTLEMENT_DMG + weapons modules),
+          // so a lone freighter limping past a hostile station takes its
+          // hits from SOMETHING visible. Same lowest-id determinism.
+          for (const st of gameState.settlements) {
+            if (st.bodyId !== atBody || st.hp <= 0) continue;
+            if (st.ownedBy === ship.ownedBy) continue;
+            if (attackerId === null || st.id < attackerId) attackerId = st.id;
           }
           if (attackerId) spawnTracer(attackerId, ship.id, nowMs);
         }
@@ -580,6 +591,19 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
       if (tookDamage || tickAdvanced) {
         damageFlashStartRef.current.set(settlement.id, nowMs);
+        // Bombardment tracer: only ships attack settlements, so the
+        // shooter is the lowest-id armed hostile ship at this body —
+        // same deterministic attribution the ship-damage path uses, so
+        // every client draws the same shot.
+        let attackerId: string | null = null;
+        for (const s of gameState.ships) {
+          if (s.transit) continue;
+          if (s.orbit.parentBodyId !== settlement.bodyId) continue;
+          if (s.ownedBy === settlement.ownedBy) continue;
+          if ((s.damagePerTick ?? getShipClass(s.class).damagePerTick) <= 0) continue;
+          if (attackerId === null || s.id < attackerId) attackerId = s.id;
+        }
+        if (attackerId) spawnTracer(attackerId, settlement.id, nowMs);
       }
     }
     if (prevSettlementIdsRef.current.size > 0) {
@@ -1409,12 +1433,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       },
     );
 
-    drawTracers(renderContext, gameState.ships, nowMs, transitShipCanvasPosRef.current);
+    drawTracers(renderContext, gameState.ships, gameState.settlements, nowMs, transitShipCanvasPosRef.current);
     // Sustained fire while an engagement is live. One-shot tracers alone
     // are unwatchable on real tick intervals (30s–1h per tick), so this
-    // carries the firefight between volleys.
+    // carries the firefight between volleys. Settlements participate on
+    // both ends: stations/cities visibly return fire, and bombarding
+    // ships visibly pound them.
     drawEngagementFire(
-      renderContext, gameState.ships, nowMs, nowTick, transitShipCanvasPosRef.current,
+      renderContext, gameState.ships, gameState.settlements, nowMs, nowTick,
+      transitShipCanvasPosRef.current,
     );
     drawDetonations(renderContext, nowMs);
     drawDiscoveryBlooms(renderContext, nowMs);

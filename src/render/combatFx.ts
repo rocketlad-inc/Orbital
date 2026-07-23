@@ -12,8 +12,9 @@
 //   - rolling fixed-cap arrays with slot reuse — no per-frame realloc
 //   - seeded determinism via hashStr → mulberry32 keyed on stable ids
 
-import { Ship } from '../types';
+import { Ship, Settlement } from '../types';
 import { shipWorldPosition } from '../game/combat';
+import { settlementWorldPosition } from '../game/settlements';
 import { bodyPosition, localPositionAt } from '../physics/orbitalMechanics';
 import { shipDisplayTick } from './tickPhase';
 import { withOpacity, lighten, COLORS } from './colors';
@@ -87,6 +88,18 @@ function shipLeadCanvas(
   return { dx: (p1.x - p0.x) * rc.camera.scale, dy: (p1.y - p0.y) * rc.camera.scale };
 }
 
+/** Canvas position of a settlement for FX endpoints. Stations resolve
+ *  their orbital point via the same Kepler path the sprite uses
+ *  (including the static-angle fallback on mu=0 primaries); cities sit
+ *  on their body's surface at surfaceAngle. */
+function settlementCanvasPos(
+  stl: Settlement,
+  rc: RenderContext,
+): { x: number; y: number } | null {
+  const wp = settlementWorldPosition(stl, rc.t, rc.bodies);
+  return wp ? worldToCanvas(wp.x, wp.y, rc) : null;
+}
+
 // ============================================================
 // 1. TRACER FIRE
 // ============================================================
@@ -141,11 +154,42 @@ const BOLT_MS = 600;
 const BEAT_MS = 500;
 /** One shooter's full turn in the round-robin. */
 const SLOT_MS = BOLT_MS + BEAT_MS;
-/** Scratch list reused across frames — no per-frame allocation. */
-const engagedScratch: Ship[] = [];
+/** One engaged combatant — a ship OR a settlement. Settlements return
+ *  fire server-side (SETTLEMENT_DMG + weapons modules) and get their
+ *  last_combat_tick stamped just like ships; the FX layer treating
+ *  "shooter" as ship-only was why a station brawl looked like a staring
+ *  contest. */
+interface EngagedCombatant {
+  id: string;
+  bodyId: string;
+  ownedBy: string;
+  ship: Ship | null;
+  stl: Settlement | null;
+}
+/** Scratch view + object pool reused across frames — refs are recycled,
+ *  so steady-state combat allocates nothing per frame. */
+const engagedScratch: EngagedCombatant[] = [];
+const engagedPool: EngagedCombatant[] = [];
+let engagedTaken = 0;
+
+function takeEngaged(
+  id: string, bodyId: string, ownedBy: string,
+  ship: Ship | null, stl: Settlement | null,
+): void {
+  let e = engagedPool[engagedTaken];
+  if (!e) {
+    e = { id, bodyId, ownedBy, ship, stl };
+    engagedPool.push(e);
+  } else {
+    e.id = id; e.bodyId = bodyId; e.ownedBy = ownedBy; e.ship = ship; e.stl = stl;
+  }
+  engagedTaken++;
+  engagedScratch.push(e);
+}
 
 interface Tracer {
-  fromShipId: string;
+  /** Ship OR settlement id — stations return fire too. */
+  fromId: string;
   toId: string;
   startMs: number;
 }
@@ -153,17 +197,34 @@ interface Tracer {
 const tracers: Tracer[] = [];
 let tracerWriteIdx = 0;
 
-/** Record a volley. Rolling slot reuse — no realloc after warm-up. */
-export function spawnTracer(fromShipId: string, toId: string, nowMs: number): void {
+/** Record a volley. Endpoints may be ship ids or settlement ids —
+ *  stations shoot back and get bombarded. Rolling slot reuse — no
+ *  realloc after warm-up. */
+export function spawnTracer(fromId: string, toId: string, nowMs: number): void {
   if (tracers.length < TRACER_CAP) {
-    tracers.push({ fromShipId, toId, startMs: nowMs });
+    tracers.push({ fromId, toId, startMs: nowMs });
   } else {
     const t = tracers[tracerWriteIdx];
-    t.fromShipId = fromShipId;
+    t.fromId = fromId;
     t.toId = toId;
     t.startMs = nowMs;
   }
   tracerWriteIdx = (tracerWriteIdx + 1) % TRACER_CAP;
+}
+
+/** Resolve a combat FX endpoint id against ships first, settlements
+ *  second (ids come from different tables, so no collision in practice;
+ *  ship-first keeps the historical behavior for any theoretical tie). */
+function resolveCombatant(
+  id: string,
+  ships: Ship[],
+  settlements: Settlement[],
+): { ship: Ship | null; stl: Settlement | null; ownedBy: string } | null {
+  const ship = ships.find(s => s.id === id);
+  if (ship) return { ship, stl: null, ownedBy: ship.ownedBy };
+  const stl = settlements.find(s => s.id === id);
+  if (stl) return { ship: null, stl, ownedBy: stl.ownedBy };
+  return null;
 }
 
 /**
@@ -171,10 +232,13 @@ export function spawnTracer(fromShipId: string, toId: string, nowMs: number): vo
  * current canvas position to the target's, in the ATTACKER's faction
  * primary, with a bright 2.5px head dot at the target end. Alpha
  * fades linearly over the 140ms life. NOT gated by LOD/zoom.
+ * Either endpoint may be a settlement — a station returning fire or a
+ * city under bombardment reads exactly like ship-vs-ship.
  */
 export function drawTracers(
   rc: RenderContext,
   ships: Ship[],
+  settlements: Settlement[],
   nowMs: number,
   transitCanvasPos?: Map<string, { x: number; y: number }>,
 ): void {
@@ -185,15 +249,23 @@ export function drawTracers(
     const tr = tracers[i];
     const age = nowMs - tr.startMs;
     if (age < 0 || age >= TRACER_LIFE_MS) continue;
-    const from = ships.find(s => s.id === tr.fromShipId);
-    const to = ships.find(s => s.id === tr.toId);
+    const from = resolveCombatant(tr.fromId, ships, settlements);
+    const to = resolveCombatant(tr.toId, ships, settlements);
     if (!from || !to) continue;
-    const fp = shipCanvasPos(from, rc, transitCanvasPos);
-    const tpNow = shipCanvasPos(to, rc, transitCanvasPos);
+    const fp = from.ship
+      ? shipCanvasPos(from.ship, rc, transitCanvasPos)
+      : settlementCanvasPos(from.stl!, rc);
+    const tpNow = to.ship
+      ? shipCanvasPos(to.ship, rc, transitCanvasPos)
+      : settlementCanvasPos(to.stl!, rc);
     if (!fp || !tpNow) continue;
     // Lead the aim by the target's motion over the shot's remaining life,
     // so the impact dot lands ON the moving hull instead of trailing it.
-    const lead = shipLeadCanvas(to, rc, TRACER_LIFE_MS - age);
+    // Settlements move slowly enough (surface point / station orbit)
+    // that leading them isn't worth the extra Kepler solves.
+    const lead = to.ship
+      ? shipLeadCanvas(to.ship, rc, TRACER_LIFE_MS - age)
+      : { dx: 0, dy: 0 };
     const tp = { x: tpNow.x + lead.dx, y: tpNow.y + lead.dy };
 
     if (!opened) {
@@ -234,6 +306,7 @@ export function drawTracers(
 export function drawEngagementFire(
   rc: RenderContext,
   ships: Ship[],
+  settlements: Settlement[],
   nowMs: number,
   currentTick: number,
   transitCanvasPos?: Map<string, { x: number; y: number }>,
@@ -242,9 +315,12 @@ export function drawEngagementFire(
   // the server says it fired recently (tick window) AND we observed
   // that volley recently on the viewer's clock (ms window) — the
   // second condition is what stops hour-long strobing on slow-tick
-  // games; see ENGAGED_VISUAL_MS.
+  // games; see ENGAGED_VISUAL_MS. Settlements join under the exact same
+  // rules: the server stamps their last_combat_tick whenever they
+  // return fire, so a defended world's station visibly shoots back.
   if (engagementSeen.size > 600) engagementSeen.clear();
   engagedScratch.length = 0;
+  engagedTaken = 0;
   for (const s of ships) {
     const fired = s.lastCombatTick;
     if (fired === undefined) continue;
@@ -256,31 +332,43 @@ export function drawEngagementFire(
       engagementSeen.set(s.id, seen);
     }
     if (nowMs - seen.sinceMs > ENGAGED_VISUAL_MS) continue;
-    engagedScratch.push(s);
+    takeEngaged(s.id, s.orbit.parentBodyId, s.ownedBy, s, null);
+  }
+  for (const stl of settlements) {
+    const fired = stl.lastCombatTick;
+    if (fired === undefined) continue;
+    if (currentTick - fired > ENGAGED_WINDOW_TICKS) continue;
+    if (stl.hp <= 0) continue;
+    let seen = engagementSeen.get(stl.id);
+    if (!seen || seen.tick !== fired) {
+      seen = { tick: fired, sinceMs: nowMs };
+      engagementSeen.set(stl.id, seen);
+    }
+    if (nowMs - seen.sinceMs > ENGAGED_VISUAL_MS) continue;
+    takeEngaged(stl.id, stl.bodyId, stl.ownedBy, null, stl);
   }
   if (engagedScratch.length === 0) return;
 
-  // Deterministic round-robin order: group by body, then ship id, so
-  // every client sees the same firing sequence.
+  // Deterministic round-robin order: group by body, then combatant id,
+  // so every client sees the same firing sequence.
   engagedScratch.sort((a, b) => {
-    const ab = a.orbit.parentBodyId, bb = b.orbit.parentBodyId;
-    if (ab !== bb) return ab < bb ? -1 : 1;
+    if (a.bodyId !== b.bodyId) return a.bodyId < b.bodyId ? -1 : 1;
     return a.id < b.id ? -1 : 1;
   });
 
   const c = rc.ctx;
   let opened = false;
 
-  // Walk each body's run of engaged shooters. Exactly ONE ship per
+  // Walk each body's run of engaged shooters. Exactly ONE combatant per
   // battle fires at a time: the cycle is n slots of (bolt + beat), and
   // the current wall-clock position in the cycle picks whose turn it
-  // is — one ship fires, beat, the next fires, repeat. Cycle phase is
+  // is — one fires, beat, the next fires, repeat. Cycle phase is
   // seeded per body so separate battles aren't in lockstep.
   let i = 0;
   while (i < engagedScratch.length) {
-    const bodyId = engagedScratch[i].orbit.parentBodyId;
+    const bodyId = engagedScratch[i].bodyId;
     let j = i;
-    while (j < engagedScratch.length && engagedScratch[j].orbit.parentBodyId === bodyId) j++;
+    while (j < engagedScratch.length && engagedScratch[j].bodyId === bodyId) j++;
     const n = j - i;
 
     const cycle = n * SLOT_MS;
@@ -290,17 +378,33 @@ export function drawEngagementFire(
 
     if (within < BOLT_MS) {
       const shooter = engagedScratch[i + slot];
-      // Deterministic target: lowest-id co-located hostile.
-      let target: Ship | null = null;
+      // Deterministic target: lowest-id co-located hostile. Ships may
+      // target hostile ships OR settlements (bombardment); settlements
+      // only ever return fire at ships — mirroring the server's combat
+      // rules so the visual never invents a station-vs-station duel.
+      let tShip: Ship | null = null;
+      let tStl: Settlement | null = null;
+      let bestId: string | null = null;
       for (const s of ships) {
         if (s.id === shooter.id || s.transit) continue;
         if (s.orbit.parentBodyId !== bodyId) continue;
         if (s.ownedBy === shooter.ownedBy) continue;
-        if (target === null || s.id < target.id) target = s;
+        if (bestId === null || s.id < bestId) { tShip = s; tStl = null; bestId = s.id; }
       }
-      if (target) {
-        const fp = shipCanvasPos(shooter, rc, transitCanvasPos);
-        const tpNow = shipCanvasPos(target, rc, transitCanvasPos);
+      if (shooter.ship) {
+        for (const stl of settlements) {
+          if (stl.bodyId !== bodyId || stl.hp <= 0) continue;
+          if (stl.ownedBy === shooter.ownedBy) continue;
+          if (bestId === null || stl.id < bestId) { tStl = stl; tShip = null; bestId = stl.id; }
+        }
+      }
+      if (tShip || tStl) {
+        const fp = shooter.ship
+          ? shipCanvasPos(shooter.ship, rc, transitCanvasPos)
+          : settlementCanvasPos(shooter.stl!, rc);
+        const tpNow = tShip
+          ? shipCanvasPos(tShip, rc, transitCanvasPos)
+          : settlementCanvasPos(tStl!, rc);
         if (fp && tpNow) {
           if (!opened) {
             c.save();
@@ -311,8 +415,11 @@ export function drawEngagementFire(
           // direction, then the beat gives it room to land.
           const k = within / BOLT_MS;
           // Lead the aim by the target's motion over the bolt's REMAINING
-          // flight — as k→1 the lead fades to 0 so the head lands on the hull.
-          const lead = shipLeadCanvas(target, rc, BOLT_MS * (1 - k));
+          // flight — as k→1 the lead fades to 0 so the head lands on the
+          // hull. Settlement targets drift slowly; no lead needed.
+          const lead = tShip
+            ? shipLeadCanvas(tShip, rc, BOLT_MS * (1 - k))
+            : { dx: 0, dy: 0 };
           const tp = { x: tpNow.x + lead.dx, y: tpNow.y + lead.dy };
           const alpha = 1 - k * 0.6;
           const color = factionPrimary(rc, shooter.ownedBy);
