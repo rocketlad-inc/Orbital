@@ -1,3 +1,5 @@
+import { hasFeature } from './researchUnlocks.js';
+
 // GET /api/games/:gameId/state — full renderer snapshot.
 //
 // Returns everything the client map canvas needs to draw a frame:
@@ -233,6 +235,16 @@ async function handleGetState(req, env, ctx) {
     .all()).results ?? [];
   const tech_levels = Object.fromEntries(techRows.map(r => [r.tech_id, r.level]));
 
+  // Sensor-intel gates (project_intel_gating): what of RIVALS this caller
+  // gets to see, keyed off their own Sensors research. hasFeature returns
+  // true for everything when the game is ungated (grandfathered).
+  const intelGated = (game.gating_enabled ?? 0) === 1;
+  const intel = (feat) => hasFeature(feat, tech_levels, intelGated);
+  const seeCapitals = intel('intel.capitals');           // sensors 1
+  const seeLoadouts = intel('intel.loadouts');           // sensors 5 (Deep Scan)
+  const seeAllSettlements = intel('intel.allSettlements'); // sensors 9 (Strategic Array)
+  const seeAllShips = intel('intel.allShips');           // sensors 10 (Total Awareness)
+
   // Active trade-delivery legs involving the caller (either direction).
   // ShipPanel badges hauling freighters with this; the Trades panel
   // reads richer per-trade legs from the trades list endpoint instead.
@@ -312,6 +324,17 @@ async function handleGetState(req, env, ctx) {
   // (json_each) so the IN-list works for any number of allies without
   // a variable placeholder count.
   const presenceFactionIds = JSON.stringify([me.id, ...allyIds]);
+  const friendlySet = new Set([me.id, ...allyIds]);
+
+  // Capital Ping (sensors 1): rivals' capital pins are earned, not free.
+  // Own + allied capitals stay visible (allies share vision). Only the
+  // "this is their CAPITAL" marker is hidden — the body itself renders
+  // per normal fog.
+  if (!seeCapitals) {
+    for (const f of factions) {
+      if (!friendlySet.has(f.id)) f.capital_body_id = null;
+    }
+  }
 
   // Sensor-range reveal. Load orbital params for every body (positions
   // aren't secret) plus the caller's + allies' active ships and
@@ -580,10 +603,26 @@ async function handleGetState(req, env, ctx) {
                -- visible. ?4 = JSON array of ship ids computed in JS via
                -- computeSensorVisibleShipIds against the same sensor list
                -- used for body visibility.
-               OR id IN (SELECT value FROM json_each(?4)))`,
+               OR id IN (SELECT value FROM json_each(?4))
+               -- Total Awareness (sensors 10): every enemy ship, fog or
+               -- no fog. ?5 = 1 only when the caller has intel.allShips.
+               OR 1 = ?5)`,
     )
-    .bind(gameId, presenceFactionIds, sensorVisibleBodyIds, sensorVisibleShipIds)
+    .bind(gameId, presenceFactionIds, sensorVisibleBodyIds, sensorVisibleShipIds, seeAllShips ? 1 : 0)
     .all()).results ?? [];
+
+  // Deep Scan (sensors 5): a rival ship's fitted parts are intel. Without
+  // it, non-friendly loadouts are redacted — parts_json is nulled and a
+  // flag marks WHY, so the client can show "loadout unknown" instead of
+  // mistaking a fitted warship for a bare hull.
+  if (!seeLoadouts) {
+    for (const s of ships) {
+      if (!friendlySet.has(s.owner_faction_id) && s.parts_json) {
+        s.parts_json = null;
+        s.parts_redacted = 1;
+      }
+    }
+  }
 
   // Settlements: same visibility set as ships/bodies above.
   const settlements = (await env.DB
@@ -647,9 +686,12 @@ async function handleGetState(req, env, ctx) {
         WHERE game_id = ?1
           AND destroyed_at_tick IS NULL
           AND (owner_faction_id IN (SELECT value FROM json_each(?2))
-               OR body_id IN (SELECT bid FROM visible_bodies))`,
+               OR body_id IN (SELECT bid FROM visible_bodies)
+               -- Strategic Array (sensors 9): every enemy settlement,
+               -- fog or no fog. ?4 = 1 only with intel.allSettlements.
+               OR 1 = ?4)`,
     )
-    .bind(gameId, presenceFactionIds, sensorVisibleBodyIds)
+    .bind(gameId, presenceFactionIds, sensorVisibleBodyIds, seeAllSettlements ? 1 : 0)
     .all()).results ?? [];
 
   // Fog-FREE political summary: which bodies carry whose settlements.

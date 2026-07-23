@@ -854,13 +854,26 @@ export const ShipPanel: React.FC = () => {
           {/* Ship configuration — the designer loadout as slot chips +
               a per-part legend. Shown whenever the hull has slots (MP
               designed ships); SP / colony hulls with 0 slots render
-              nothing. */}
-          <ShipLoadoutSection
-            parts={ship.parts}
-            shipClass={ship.class as ShipClassName}
-            maxHp={maxHp}
-            weaponsLvl={gameState.factionTech['player']?.levels?.weapons ?? 0}
-          />
+              nothing. Deep Scan gate (MP): an enemy hull whose parts the
+              server REDACTED shows a lock note instead of reading as a
+              bare hull — you don't know its fit until Sensors 5. */}
+          {ship.partsRedacted ? (
+            <div style={{
+              margin: '8px 12px', padding: '7px 10px',
+              border: '1px dashed #2a3d50', borderRadius: 4,
+              fontSize: 10, color: '#8aa0b4', lineHeight: 1.5,
+            }}>
+              🔒 Loadout unknown — research <b style={{ color: '#ffb84d' }}>Deep Scan (Sensors 5)</b> to
+              read enemy fittings.
+            </div>
+          ) : (
+            <ShipLoadoutSection
+              parts={ship.parts}
+              shipClass={ship.class as ShipClassName}
+              maxHp={maxHp}
+              weaponsLvl={gameState.factionTech['player']?.levels?.weapons ?? 0}
+            />
+          )}
 
           {/* Freighters show TRADE LOG (delivery count) instead of
               COMBAT RECORD (confirmed kills) — they're cargo haulers,

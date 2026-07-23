@@ -484,6 +484,10 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     stance,
     retreatHpPct,
     detonateHpPct,
+    // Deep Scan (sensors 5) gate: server nulled this enemy's parts_json
+    // and flagged it, so panels can say "loadout unknown" instead of
+    // reading a fitted warship as a bare hull.
+    partsRedacted: (s as { parts_redacted?: number }).parts_redacted === 1 || undefined,
   };
 }
 
