@@ -49,6 +49,7 @@ import {
   spawnArrivalFlash,
   drawArrivalFlashes,
   enqueueDetonation,
+  diedByChronicle,
 } from '../render/combatFx';
 import { drainVisibleFx } from '../render/pendingFx';
 import { bodyPosition } from '../physics/orbitalMechanics';
@@ -505,7 +506,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     if (prevShipIdsRef.current.size > 0) {
       for (const [id, pos] of prevShipIdsRef.current) {
         if (!curShipIds.has(id) && !destructionFlashesRef.current.has(id)) {
-          if (!wasInCoverage(pos)) continue; // fog-out, not destruction
+          // Only flash a REAL kill. A ship dropping out of /state usually
+          // just left the player's (moving) sensor coverage — a fog-out,
+          // not a death. The server chronicles actual kills; require one.
+          if (!diedByChronicle(id, nowMs)) continue;
           destructionFlashesRef.current.set(id, { pos, startMs: nowMs, baseRadius: 12, id });
         }
       }
@@ -567,11 +571,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     if (prevSettlementIdsRef.current.size > 0) {
       for (const [id, snap] of prevSettlementIdsRef.current) {
         if (!curSettlementIds.has(id) && !destructionFlashesRef.current.has(id)) {
-          // Same fog-of-war guard as ships: skip if the body that
-          // hosted this settlement is now outside the player's sensor
-          // coverage. Settlement loss without a kill chronicle event
-          // is far more likely a fog-out than a destruction.
-          if (!wasInCoverage({ x: snap.x, y: snap.y })) continue;
+          // Same rule as ships: a settlement vanishing from /state is far
+          // more likely a fog-out than a destruction, so require a
+          // server-chronicled kill (settlement_destroyed carries body_id,
+          // not a settlement id — match on the host body).
+          if (!diedByChronicle(`body:${snap.bodyId}`, nowMs)) continue;
           destructionFlashesRef.current.set(id, {
             pos: { x: snap.x, y: snap.y },
             startMs: nowMs,

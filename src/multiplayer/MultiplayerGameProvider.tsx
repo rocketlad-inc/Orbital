@@ -30,7 +30,7 @@ import {
   generateFlavor,
   type FlavorContext, type FlavorFaction, type FlavorBody,
 } from '../game/flavorEngine';
-import { enqueueDetonation } from '../render/combatFx';
+import { enqueueDetonation, markChronicleDeath } from '../render/combatFx';
 
 // Shape of /api/games/:gid/state.
 interface ServerState {
@@ -1089,6 +1089,13 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     if (ev.kind === 'ship_detonated') {
       enqueueDetonation(ev.id, ev.body_id, ev.ship_id);
     }
+    // Authoritative death signal for the map's destruction flash (see
+    // combatFx.markChronicleDeath): only a server-chronicled kill spawns
+    // an explosion, so a ship/settlement that merely left sensor coverage
+    // no longer reads as destroyed. ship_detonated already gets its own
+    // blast FX above, so it's intentionally not marked here.
+    if (ev.kind === 'ship_destroyed') markChronicleDeath(ev.ship_id);
+    else if (ev.kind === 'settlement_destroyed') markChronicleDeath(`body:${ev.body_id}`);
   }
   if (loggedEventIds.size > 4000) loggedEventIds.clear();
   const combatLog: string[] = orderedEvents.map(ev => {

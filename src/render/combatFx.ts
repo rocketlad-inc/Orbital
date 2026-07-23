@@ -393,6 +393,33 @@ export function enqueueDetonation(
   detonationWriteIdx = (detonationWriteIdx + 1) % DETONATION_CAP;
 }
 
+// ---- authoritative death registry ------------------------------------
+// A ship/settlement vanishing from /state is NOT proof it died: under
+// real-physics moving orbits it constantly slips in and out of the
+// player's (also moving) sensor coverage, and the server omits anything
+// out of range. So MapCanvas must only spawn its "destroyed" flash for
+// an entity the SERVER chronicled as destroyed. The chronicle drives this
+// registry (ship_destroyed → ship id; settlement_destroyed → 'body:<id>')
+// and the map's list-diff heuristic checks it before flashing. Without
+// this, a ship merely leaving your sensor range read as a kill — an
+// explosion at a body where nothing actually died.
+const chronicleDeaths = new Map<string, number>();
+
+/** Record that the server chronicled this entity's destruction. */
+export function markChronicleDeath(key: string | null | undefined): void {
+  if (!key) return;
+  if (chronicleDeaths.size > 4000) chronicleDeaths.clear();
+  chronicleDeaths.set(key, performance.now());
+}
+
+/** Did the server chronicle this entity dead within the recent window?
+ *  The death event and the entity's disappearance from /state land in
+ *  the same poll, so a few seconds comfortably covers any clock skew. */
+export function diedByChronicle(key: string, nowMs: number, windowMs = 6000): boolean {
+  const t = chronicleDeaths.get(key);
+  return t !== undefined && nowMs - t <= windowMs;
+}
+
 /**
  * Draw live detonator blasts: 60ms white core flash, an expanding
  * additive shockwave ring out to ~48px over 500ms, and 6 debris sparks
