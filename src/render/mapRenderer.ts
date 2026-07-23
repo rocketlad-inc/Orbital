@@ -3027,7 +3027,6 @@ export function drawTargetHighlight(
 export function drawGhostPlanet(
   body: Body,
   futureTime: number,
-  currentTick: number,
   ctx: RenderContext
 ) {
   const pos = bodyPosition(body, futureTime, ctx.bodies);
@@ -3049,14 +3048,10 @@ export function drawGhostPlanet(
   ctx.ctx.stroke();
   ctx.ctx.setLineDash([]);
 
-  // Label
-  ctx.ctx.fillStyle = withOpacity('#8aa0b4', opacity);
-  ctx.ctx.font = '9px "Audiowide", monospace';
-  ctx.ctx.textAlign = 'center';
-  ctx.ctx.textBaseline = 'top';
-  const eta = futureTime - currentTick;
-  const etaLabel = eta > 0 ? ` T-${eta.toFixed(0)}` : '';
-  ctx.ctx.fillText(`${body.name}${etaLabel}`, canvasPos.x, canvasPos.y + radius + 6);
+  // No label: the disc + dashed ring ARE the intercept marker. The old
+  // "<Name> T-N" text stamped a ghosted second copy of the body's name
+  // right over its real map label; the arrival ETA already rides on the
+  // ship's own transit label, so this text was pure duplication.
 }
 
 // ============================================================

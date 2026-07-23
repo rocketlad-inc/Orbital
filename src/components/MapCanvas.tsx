@@ -1084,7 +1084,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
         const arrivalBody = gameState.bodies.find(b => b.id === plan.targetBodyId);
         if (arrivalBody) {
-          drawGhostPlanet(arrivalBody, plan.arriveTick, renderTick(), renderContext);
+          drawGhostPlanet(arrivalBody, plan.arriveTick, renderContext);
         }
 
         // Queued chained legs — draw each as a faint dashed amber
@@ -1095,7 +1095,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           for (const queuedPlan of ship.queuedTransits) {
             drawTorchTrajectory(queuedPlan, gameState.bodies, renderContext, COLORS.fgDim, true);
             const qBody = gameState.bodies.find(b => b.id === queuedPlan.targetBodyId);
-            if (qBody) drawGhostPlanet(qBody, queuedPlan.arriveTick, renderTick(), renderContext);
+            if (qBody) drawGhostPlanet(qBody, queuedPlan.arriveTick, renderContext);
           }
         }
       } else if (ship.plannedTransit) {
@@ -1117,7 +1117,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
         const arrivalBody = gameState.bodies.find(b => b.id === ship.plannedTransit!.targetBodyId);
         if (arrivalBody) {
-          drawGhostPlanet(arrivalBody, ship.plannedTransit.arriveTick, renderTick(), renderContext);
+          drawGhostPlanet(arrivalBody, ship.plannedTransit.arriveTick, renderContext);
         }
       } else {
         if (showOrbitRing) {
