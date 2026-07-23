@@ -842,6 +842,15 @@ const WmFleet: React.FC<{
     if (res && !res.ok) onErr(res.error ?? 'Build rejected by server');
   };
 
+  // Cancel a queued OR in-progress ship build. Server (handleCancelBuild)
+  // marks cancelled_at_tick and refunds the metal/credits spent at queue
+  // time; the /state poll drops the row.
+  const cancelBuild = async (orderId: string) => {
+    onErr(null);
+    const res = await mpActions?.cancelBuild(orderId);
+    if (res && !res.ok) onErr(res.error ?? 'Could not cancel build');
+  };
+
   const qRow = (o: typeof orders[number], isBuilding: boolean) => {
     const span = Math.max(1, o.completeTick - o.startTick);
     const done = Math.max(0, Math.min(1, (gameState.currentTick - o.startTick) / span));
@@ -852,6 +861,14 @@ const WmFleet: React.FC<{
           <ShipIcon shipClass={o.shipClass} variant={o.iconVariant} size={15} color={p1} color2={p2} />
           <span className="wm-qnm">{o.shipName ?? o.shipClass}</span>
           <span className="wm-qeta">{isBuilding ? `T-${eta}` : 'queued'}</span>
+          {isMine && (
+            <button
+              className="wm-qcancel"
+              onClick={() => cancelBuild(o.id)}
+              title={isBuilding ? 'Cancel construction (refunds cost)' : 'Remove from queue (refunds cost)'}
+              aria-label="Cancel build"
+            >✕</button>
+          )}
         </div>
         <div className="wm-qbar">
           <i style={{ width: `${(isBuilding ? done : 0) * 100}%` }} />

@@ -229,6 +229,14 @@
 .wm-qrow.empty { color: #6b8195; border-style: dashed; align-items: center; }
 .wm-qnm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wm-qeta { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.wm-qcancel {
+  flex: 0 0 auto;
+  width: 22px; height: 22px; padding: 0; margin-left: 2px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid transparent; border-radius: 4px;
+  color: #6b8195; font-family: inherit; font-size: 13px; line-height: 1; cursor: pointer;
+}
+.wm-qcancel:hover { color: #ff5e5e; border-color: #ff5e5e; background: rgba(255, 94, 94, 0.08); }
 
 /* 2×3 grid of info-dense ship cells (whole cell = build action) */
 .wm-fleet-grid {
