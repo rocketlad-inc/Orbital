@@ -4269,32 +4269,38 @@ export function drawSystemRegions(
 
       // An annulus as a fat stroked circle — cheaper than a two-arc
       // path fill and it anti-aliases better at thin widths.
-      c.strokeStyle = withOpacity(color, baseAlpha);
       c.lineWidth = width;
       c.beginPath();
       c.arc(cp.x, cp.y, mid, 0, Math.PI * 2);
-      c.stroke();
-
-      // Secondary-colour territory border: a THICK, FAINT rim just inside
-      // each band edge — reads as a soft territory boundary, not a hairline
-      // ring (a thin crisp stroke was indistinguishable from the map's
-      // orbit circles). Inset by half its width so the rim stays INSIDE the
-      // owner's band rather than straddling the border into the neighbour.
-      // Inner edge skipped for a disc (The Core, rInner≈0).
-      if (owned && color2) {
-        const borderW = Math.min(10, Math.max(4, width * 0.38));
-        const borderAlpha = Math.min(0.42, baseAlpha * 1.1);
-        c.strokeStyle = withOpacity(color2, borderAlpha);
-        c.lineWidth = borderW;
-        c.beginPath();
-        c.arc(cp.x, cp.y, rOut - borderW / 2, 0, Math.PI * 2);
-        c.stroke();
-        if (rIn > borderW) {
-          c.beginPath();
-          c.arc(cp.x, cp.y, rIn + borderW / 2, 0, Math.PI * 2);
-          c.stroke();
+      // Owned territory: paint the band with a RADIAL gradient across its
+      // thickness — the secondary colour at the edges fading smoothly into
+      // the primary fill toward the middle. Because the fat stroke's pixels
+      // sit at radii between rIn and rOut, a star-centred radial gradient
+      // renders across the band width, so the border reads as a soft fuzzy
+      // rim instead of a crisp line. Disc (The Core, rInner≈0) fades only
+      // its outer edge. Neutral/contested keep the flat primary fill.
+      if (owned && color2 && rOut > rIn + 2) {
+        const edgeAlpha = Math.min(0.5, baseAlpha * 1.2);
+        const fill = withOpacity(color, baseAlpha);
+        const edge = withOpacity(color2, edgeAlpha);
+        // Fade zone as a fraction of band width — wider band, softer edge,
+        // clamped so thin rings still show some fade and fat ones don't
+        // become all-gradient.
+        const fadeFrac = Math.min(0.42, Math.max(0.16, 16 / (rOut - rIn)));
+        const g = c.createRadialGradient(cp.x, cp.y, rIn, cp.x, cp.y, rOut);
+        if (rIn > 6) {
+          g.addColorStop(0, edge);
+          g.addColorStop(fadeFrac, fill);
+        } else {
+          g.addColorStop(0, fill);
         }
+        g.addColorStop(Math.min(1 - fadeFrac, 0.999), fill);
+        g.addColorStop(1, edge);
+        c.strokeStyle = g;
+      } else {
+        c.strokeStyle = withOpacity(color, baseAlpha);
       }
+      c.stroke();
 
       // Region labels. A merged multi-system territory (region.labels)
       // names EACH constituent system, positioned on its OWN sub-band
