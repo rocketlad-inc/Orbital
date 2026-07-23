@@ -3030,14 +3030,48 @@ export function drawTargetHighlight(
   }
 }
 
+/** Two redundancy gates decide whether a ghost earns its pixels
+ *  (playtest: Uranus's moons each wearing a giant redundant ghost disc):
+ *
+ *  1. MOONS NEVER GHOST. Arriving anywhere inside a planet's system,
+ *     the intercept is by definition somewhere in that planet's tight
+ *     clutch of rings — "it'll be at Uranus" is already what the map
+ *     shows. Worse, moons move FAST around their parent, so a moon's
+ *     ghost sits far from the moon's current spot and a distance rule
+ *     reads it as "informative" — measured: a 6-tick Miranda→Ariel hop
+ *     put Ariel's ghost 377px from Ariel at focus zoom. Scrapped
+ *     categorically instead. (Parent must be a real planet — bodies
+ *     orbiting a star or a barycenter anchor are planets, not moons.)
+ *
+ *  2. PLANETS GHOST ONLY WHEN THE GHOST SAYS SOMETHING. A planet's
+ *     intercept marker shows only when it sits a good bit away from
+ *     the planet's CURRENT position on screen — scaled by the drawn
+ *     radius so a big disc demands a big separation at every zoom. A
+ *     slow target that barely crawls before arrival keeps its ghost
+ *     hidden; a long haul against a moving target still gets one. */
+const GHOST_MIN_GAP_RADII = 3.5;
+const GHOST_MIN_GAP_PX = 48;
+
 export function drawGhostPlanet(
   body: Body,
   futureTime: number,
   ctx: RenderContext
 ) {
+  // Gate 1: moons never ghost.
+  const parent = body.parent ? ctx.bodies.find(b => b.id === body.parent) : undefined;
+  if (parent && parent.type !== 'star' && parent.type !== 'black_hole' && parent.type !== 'lagrange') {
+    return;
+  }
+
   const pos = bodyPosition(body, futureTime, ctx.bodies);
   const canvasPos = worldToCanvas(pos.x, pos.y, ctx);
   const radius = Math.max(3, body.radius * ctx.camera.scale);
+
+  // Gate 2: the intercept must be a good bit from the body's current spot.
+  const nowPos = bodyPosition(body, ctx.t, ctx.bodies);
+  const nowCanvas = worldToCanvas(nowPos.x, nowPos.y, ctx);
+  const gap = Math.hypot(canvasPos.x - nowCanvas.x, canvasPos.y - nowCanvas.y);
+  if (gap < Math.max(radius * GHOST_MIN_GAP_RADII, GHOST_MIN_GAP_PX)) return;
 
   const opacity = 0.3;
   ctx.ctx.fillStyle = withOpacity(body.color || COLORS.planetDefault, opacity);
