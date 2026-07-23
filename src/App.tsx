@@ -39,6 +39,7 @@ import { MultiplayerShell } from './multiplayer/MultiplayerShell';
 import { WorldMenuOverlay, WorldMenuToggle, worldMenuPref } from './multiplayer/WorldMenuOverlay';
 import { VersionBanner } from './components/VersionBanner';
 import { SituationLog } from './components/SituationLog';
+import { DiscoveryBanner } from './components/DiscoveryBanner';
 import { EventLog } from './components/EventLog';
 import { DockRail } from './components/DockRail';
 import { MultiplayerLobby } from './multiplayer/MultiplayerLobby';
@@ -214,6 +215,9 @@ function GameUI({
       <DockRail isMultiplayer={isMultiplayer} />
       <SituationLog />
       <EventLog />
+      {/* Discovery fanfare — animated banner when a body secret is
+          uncovered (yours: celebratory + jump-to; a rival's: intel). */}
+      <DiscoveryBanner />
 
       {/* SP-only: listen for 'orbital:open-panel' so SitLog clicks on
           a research item open the Research tab. MP has its own listener

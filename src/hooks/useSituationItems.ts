@@ -53,6 +53,13 @@ import {
 } from '../game/techs';
 import { unlocksAt } from '../game/researchUnlocks';
 import { computeIncomePerTick } from '../game/settlements';
+import { SECRET_DEFS } from '../game/secrets';
+
+/** Trim the "DISCOVERY: " / "DISCOVERY — " lead-in from a secret's flavor
+ *  so the situation-report subtitle is just the payoff clause. */
+function stripDiscoveryPrefix(msg: string): string {
+  return msg.replace(/^\s*DISCOVERY\s*[:—-]\s*/i, '');
+}
 
 // ------------------------------------------------------------
 // Item types
@@ -79,7 +86,8 @@ export type SituationCategory =
   | 'damaged'        // hurt and NOT currently fighting, so in_combat is silent
   | 'idle_colony'    // colony hull parked — expansion stalled
   | 'broken_route'   // trade route whose ship or endpoint is gone
-  | 'vote_closed';   // MP — a vote you were watching has resolved
+  | 'vote_closed'    // MP — a vote you were watching has resolved
+  | 'discovery';     // one of YOUR ships uncovered a body secret
 
 export type SituationTier = 'now' | 'decision' | 'opportunity';
 
@@ -117,6 +125,9 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
   idle_colony:    'decision',
   broken_route:   'decision',
   vote_closed:    'decision',
+  // A find is a reward to notice and act on (a free city to garrison, a
+  // salvaged warship to crew), not a chore — a decision-tier prompt.
+  discovery:      'decision',
 };
 
 export interface SituationItem {
@@ -163,6 +174,7 @@ export const CATEGORY_LABEL: Record<SituationCategory, string> = {
   idle_colony:     'Idle colony ships',
   broken_route:    'Broken trade routes',
   vote_closed:     'Votes resolved',
+  discovery:       'Discoveries',
 };
 
 // ------------------------------------------------------------
@@ -196,6 +208,11 @@ const COMBAT_RECENT_TICKS = AUTO_COMBAT_INTERVAL * 2;
 /** How long a completion (building, research level, closed vote) stays
  *  in the report. Matches the 10-tick window arrivals already use. */
 const COMPLETION_TTL_TICKS = 10;
+
+/** A discovery lingers a bit longer than a routine completion — it's a
+ *  bigger deal, and the reward (a free city to garrison, a warship to
+ *  crew) is worth keeping in front of the player for a while. */
+const DISCOVERY_TTL_TICKS = 25;
 
 /** At/below this HP fraction a quiet entity is worth reporting. Above
  *  it, scratches would drown the list. */
@@ -1003,6 +1020,30 @@ export function useSituationItems(
           focus: { kind: 'panel', panel: 'senate' },
           severity: 'normal',
           sortKey: v.tick,
+        });
+      }
+    } catch { /* defensive */ }
+
+    // ---- Discoveries (YOUR finds, recent) ----
+    // A backstop for the banner: a find lingers here for a while so it's
+    // never lost to the event-log scroll if the banner was missed. Only
+    // your own discoveries — a rival's is intel, handled elsewhere.
+    try {
+      for (const b of bodies) {
+        const sec = b.secret;
+        if (!sec?.revealed || sec.discoveredByFactionId !== factionId) continue;
+        if (sec.discoveredAtTick == null) continue;
+        if (tick - sec.discoveredAtTick > DISCOVERY_TTL_TICKS) continue;
+        const def = SECRET_DEFS[sec.kind];
+        push({
+          id: `discovery:${b.id}`,
+          category: 'discovery',
+          entity: `body:${b.id}`,
+          title: `${def?.displayName ?? 'Discovery'} at ${b.name}`,
+          subtitle: def ? stripDiscoveryPrefix(def.discoveryMessage) : 'A secret uncovered',
+          focus: { kind: 'body', bodyId: b.id },
+          severity: 'normal',
+          sortKey: -sec.discoveredAtTick,   // newest first within the tier
         });
       }
     } catch { /* defensive */ }

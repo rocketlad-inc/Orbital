@@ -1,0 +1,146 @@
+// ============================================================
+// DiscoveryBanner — the moment a secret is revealed.
+//
+// Discoveries (a free city, a free tech level, a salvaged warship, a
+// warp gate) used to land as one line in the scrolling Event Log and go
+// unnoticed. This is the beat they deserve: an animated banner slides in
+// from the top when a body's secret is uncovered.
+//
+//   - YOUR find: a celebratory purple banner with the reward, click to
+//     fly the camera to the body.
+//   - a RIVAL's find: a quieter amber intel strip ("Red salvaged a
+//     derelict warship at Ceres") — you want to know they got it.
+//
+// Source of truth is the body list, not the chronicle: a revealed secret
+// carries kind + discoverer + tick, and SECRET_DEFS supplies the flavor.
+// One banner at a time; the rest queue behind it. Historical discoveries
+// present on first mount are NOT shown — only reveals that happen while
+// you're watching (same first-frame guard the situation report uses).
+// ============================================================
+
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useGameContext } from '../state/gameContext';
+import { SECRET_DEFS } from '../game/secrets';
+import type { Body } from '../types';
+import './DiscoveryBanner.css';
+
+interface Discovery {
+  bodyId: string;
+  bodyName: string;
+  title: string;
+  reward: string;
+  mine: boolean;
+  discovererName: string;
+  discovererColor: string;
+}
+
+const DISPLAY_MS = 6500;   // how long a banner holds before auto-advancing
+
+function stripPrefix(msg: string): string {
+  return msg.replace(/^\s*DISCOVERY\s*[:—-]\s*/i, '');
+}
+
+export const DiscoveryBanner: React.FC = () => {
+  const { gameState, selectBody, focusBody } = useGameContext();
+
+  // Body ids whose reveal we've already enqueued. Seeded with everything
+  // already revealed on first mount so a page load doesn't replay history.
+  const seenRef = useRef<Set<string> | null>(null);
+  const [queue, setQueue] = useState<Discovery[]>([]);
+  const [leaving, setLeaving] = useState(false);
+
+  const factionName = useMemo(() => {
+    const m = new Map<string, { name: string; color: string }>();
+    for (const f of gameState.factions) m.set(f.id, { name: f.name, color: f.color });
+    return m;
+  }, [gameState.factions]);
+
+  // Scan for newly-revealed secrets each time bodies change.
+  useEffect(() => {
+    const bodies = gameState.bodies as Body[];
+    if (seenRef.current === null) {
+      // First observation: remember every already-revealed secret WITHOUT
+      // showing it. Only future reveals get a banner.
+      const seed = new Set<string>();
+      for (const b of bodies) if (b.secret?.revealed) seed.add(b.id);
+      seenRef.current = seed;
+      return;
+    }
+    const seen = seenRef.current;
+    const fresh: Discovery[] = [];
+    for (const b of bodies) {
+      const sec = b.secret;
+      if (!sec?.revealed || seen.has(b.id)) continue;
+      seen.add(b.id);
+      const def = SECRET_DEFS[sec.kind];
+      const mine = sec.discoveredByFactionId === 'player';
+      const who = sec.discoveredByFactionId
+        ? factionName.get(sec.discoveredByFactionId)
+        : undefined;
+      fresh.push({
+        bodyId: b.id,
+        bodyName: b.name,
+        title: def?.displayName ?? 'Discovery',
+        reward: def ? stripPrefix(def.discoveryMessage) : 'A secret uncovered',
+        mine,
+        discovererName: mine ? 'You' : (who?.name ?? 'A rival'),
+        discovererColor: who?.color ?? '#e879f9',
+      });
+    }
+    if (fresh.length > 0) setQueue(q => [...q, ...fresh]);
+  }, [gameState.bodies, factionName]);
+
+  const current = queue[0];
+
+  // Auto-advance the queue. A fresh timer per banner; the leave animation
+  // gets 260ms before the next one slides in.
+  useEffect(() => {
+    if (!current) return;
+    setLeaving(false);
+    const hold = setTimeout(() => setLeaving(true), DISPLAY_MS);
+    const drop = setTimeout(() => {
+      setQueue(q => q.slice(1));
+    }, DISPLAY_MS + 260);
+    return () => { clearTimeout(hold); clearTimeout(drop); };
+  }, [current]);
+
+  if (!current) return null;
+
+  const dismiss = () => { setQueue(q => q.slice(1)); };
+  const goThere = () => {
+    selectBody(current.bodyId);
+    focusBody(current.bodyId);
+    dismiss();
+  };
+
+  return (
+    <div className="discovery-banner-layer" aria-live="polite">
+      <div
+        className={
+          'discovery-banner'
+          + (current.mine ? ' discovery-banner--mine' : ' discovery-banner--rival')
+          + (leaving ? ' discovery-banner--leaving' : '')
+        }
+        role="status"
+        onClick={current.mine ? goThere : dismiss}
+        style={!current.mine ? { ['--rival-color' as string]: current.discovererColor } : undefined}
+      >
+        <span className="discovery-banner__glyph">✦</span>
+        <div className="discovery-banner__body">
+          <div className="discovery-banner__head">
+            {current.mine ? 'DISCOVERY' : `${current.discovererName} — DISCOVERY`}
+            <span className="discovery-banner__where"> · {current.bodyName}</span>
+          </div>
+          <div className="discovery-banner__title">{current.title}</div>
+          <div className="discovery-banner__reward">{current.reward}</div>
+        </div>
+        {current.mine && <span className="discovery-banner__cta">JUMP TO ›</span>}
+        <button
+          className="discovery-banner__close"
+          onClick={(e) => { e.stopPropagation(); dismiss(); }}
+          aria-label="Dismiss"
+        >×</button>
+      </div>
+    </div>
+  );
+};

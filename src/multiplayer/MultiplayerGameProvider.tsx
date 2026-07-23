@@ -686,6 +686,12 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   const PLAYER_TOKEN = 'player';
   for (const b of bodies) {
     if (b.ownedBy === callerFactionId) b.ownedBy = PLAYER_TOKEN;
+    // Same rewrite for the secret's discoverer, so the discovery banner
+    // and situation-report row can tell "I found this" from "a rival
+    // did" with a plain === 'player' check like everything else.
+    if (b.secret?.discoveredByFactionId === callerFactionId) {
+      b.secret = { ...b.secret, discoveredByFactionId: PLAYER_TOKEN };
+    }
   }
   for (const s of ships) {
     if (s.ownedBy === callerFactionId) s.ownedBy = PLAYER_TOKEN;

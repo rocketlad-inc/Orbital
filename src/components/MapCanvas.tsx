@@ -49,6 +49,8 @@ import {
   spawnArrivalFlash,
   drawArrivalFlashes,
   enqueueDetonation,
+  spawnDiscoveryBloom,
+  drawDiscoveryBlooms,
   diedByChronicle,
 } from '../render/combatFx';
 import { drainVisibleFx } from '../render/pendingFx';
@@ -1389,6 +1391,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           enqueueDetonation(fx.id, fx.bodyId ?? null, fx.shipId ?? null);
           return;
         }
+        if (fx.kind === 'discovery') {
+          // Blooms at the body; re-located each frame so it rides the
+          // body's orbit rather than a fixed canvas point.
+          if (fx.bodyId) spawnDiscoveryBloom(fx.id, fx.bodyId);
+          return;
+        }
         // destruction / impact both read as an explosion; impacts are
         // bigger because a whole rock hit the surface.
         const world = canvasToWorld(pos.x, pos.y, renderContext);
@@ -1409,6 +1417,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       renderContext, gameState.ships, nowMs, nowTick, transitShipCanvasPosRef.current,
     );
     drawDetonations(renderContext, nowMs);
+    drawDiscoveryBlooms(renderContext, nowMs);
     drawArrivalFlashes(renderContext, gameState.ships, nowMs);
 
     // Fog-of-war: paint the dim wash and punch holes where the

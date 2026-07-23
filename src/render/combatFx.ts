@@ -420,6 +420,118 @@ export function diedByChronicle(key: string, nowMs: number, windowMs = 6000): bo
   return t !== undefined && nowMs - t <= windowMs;
 }
 
+// ============================================================
+// DISCOVERY BLOOM
+// ============================================================
+//
+// The celebratory beat when a body's secret is revealed. Unlike a blast
+// (violent, fast, 500ms), this is a slow, luminous flourish (~1.8s):
+// two expanding rings, a soft halo, and a ✦ glyph that rises and fades
+// in discovery-purple. Fired through the pendingFx queue so it plays
+// only when the player is actually looking at the body — the whole
+// point being that discoveries stop going unnoticed.
+
+const DISCOVERY_LIFE_MS = 1800;
+const DISCOVERY_RING_PX = 70;
+const DISCOVERY_COLOR = '#e879f9';   // matches the EventLog "Discovery" icon
+const DISCOVERY_CAP = 12;
+
+interface DiscoveryBloom {
+  entryId: string;
+  bodyId: string;
+  startMs: number;
+}
+
+const discoveryBlooms: DiscoveryBloom[] = [];
+let discoveryWriteIdx = 0;
+const seenDiscoveryIds = new Set<string>();
+
+/**
+ * Spawn a discovery bloom at a body. Called from MapCanvas's pending-FX
+ * fire callback (so it only fires when on-screen and zoomed in). Deduped
+ * by chronicle entry id — the played-set in pendingFx already guarantees
+ * once-ever, this is a cheap second guard.
+ */
+export function spawnDiscoveryBloom(entryId: string, bodyId: string): void {
+  if (seenDiscoveryIds.has(entryId)) return;
+  if (seenDiscoveryIds.size > 2000) seenDiscoveryIds.clear();
+  seenDiscoveryIds.add(entryId);
+  const bloom: DiscoveryBloom = { entryId, bodyId, startMs: performance.now() };
+  if (discoveryBlooms.length < DISCOVERY_CAP) discoveryBlooms.push(bloom);
+  else discoveryBlooms[discoveryWriteIdx] = bloom;
+  discoveryWriteIdx = (discoveryWriteIdx + 1) % DISCOVERY_CAP;
+}
+
+/** True while any bloom is still animating — lets MapCanvas keep the
+ *  render loop alive for the flourish even when nothing else changes. */
+export function hasActiveDiscoveryBlooms(nowMs: number): boolean {
+  return discoveryBlooms.some(b => nowMs - b.startMs < DISCOVERY_LIFE_MS);
+}
+
+export function drawDiscoveryBlooms(rc: RenderContext, nowMs: number): void {
+  if (discoveryBlooms.length === 0) return;
+  const c = rc.ctx;
+  let opened = false;
+  for (const bloom of discoveryBlooms) {
+    const age = nowMs - bloom.startMs;
+    if (age < 0 || age >= DISCOVERY_LIFE_MS) continue;
+    const body = rc.bodies.find(b => b.id === bloom.bodyId);
+    if (!body) continue;
+    const wp = bodyPosition(body, rc.t, rc.bodies);
+    const cp = worldToCanvas(wp.x, wp.y, rc);
+
+    if (!opened) {
+      c.save();
+      c.globalCompositeOperation = 'lighter';
+      opened = true;
+    }
+
+    const k = age / DISCOVERY_LIFE_MS;         // 0..1
+    const easeOut = 1 - (1 - k) * (1 - k);
+    const fade = 1 - k;
+
+    // Soft halo — a filled disc that swells then fades, giving the body
+    // a moment of glow rather than a hard flash.
+    const haloR = 14 + 26 * easeOut;
+    const halo = c.createRadialGradient(cp.x, cp.y, 0, cp.x, cp.y, haloR);
+    halo.addColorStop(0, withOpacity(DISCOVERY_COLOR, 0.35 * fade));
+    halo.addColorStop(1, withOpacity(DISCOVERY_COLOR, 0));
+    c.fillStyle = halo;
+    c.beginPath();
+    c.arc(cp.x, cp.y, haloR, 0, Math.PI * 2);
+    c.fill();
+
+    // Two expanding rings, the second lagging, so it reads as a pulse.
+    for (let r = 0; r < 2; r++) {
+      const rk = Math.max(0, Math.min(1, k * 1.25 - r * 0.22));
+      if (rk <= 0 || rk >= 1) continue;
+      const rEase = 1 - (1 - rk) * (1 - rk);
+      const ringR = 6 + (DISCOVERY_RING_PX - 6) * rEase;
+      c.strokeStyle = withOpacity(DISCOVERY_COLOR, 0.8 * (1 - rk));
+      c.lineWidth = 2;
+      c.beginPath();
+      c.arc(cp.x, cp.y, ringR, 0, Math.PI * 2);
+      c.stroke();
+    }
+
+    // The ✦ glyph: rises a few px and scales up while fading — the
+    // signature "something was found here" mark, same as the log icon.
+    const gy = cp.y - 4 - 14 * easeOut;
+    const scale = 0.8 + 0.9 * easeOut;
+    // First third: hold near-full; then fade out.
+    const glyphAlpha = k < 0.33 ? 1 : Math.max(0, 1 - (k - 0.33) / 0.67);
+    c.save();
+    c.globalCompositeOperation = 'source-over';
+    c.fillStyle = withOpacity(DISCOVERY_COLOR, glyphAlpha);
+    c.font = `${Math.round(16 * scale)}px sans-serif`;
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText('✦', cp.x, gy);
+    c.restore();
+  }
+  if (opened) c.restore();
+}
+
 /**
  * Draw live detonator blasts: 60ms white core flash, an expanding
  * additive shockwave ring out to ~48px over 500ms, and 6 debris sparks
