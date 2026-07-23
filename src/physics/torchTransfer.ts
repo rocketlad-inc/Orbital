@@ -336,6 +336,49 @@ export function torchPositionFromSamples(
 }
 
 /**
+ * Unit tangent of the sample polyline at time `t` — the direction the
+ * ship is travelling AT THE POINT THE LINE PUTS IT, by finite
+ * difference on torchPositionFromSamples. This is what ties a transit
+ * ship's nose to its drawn trajectory: probing the same polyline the
+ * ship is lerped along is on-the-line by construction, curved or
+ * straight, where "point at the target body" drifts off the dashes
+ * (they run to the plan's frozen intercept point, not the body's live
+ * position).
+ *
+ * Probes forward; when `t` is clamped at the arrival end (forward
+ * probe degenerate) probes backward and flips, so the final frames
+ * keep the last segment's direction instead of collapsing to null.
+ * Returns null only for degenerate polylines (<2 samples, zero span).
+ */
+export function trajectoryTangentAt(
+  samples: Array<{ t: number; x: number; y: number }>,
+  t: number,
+): { x: number; y: number } | null {
+  if (samples.length < 2) return null;
+  const t0 = samples[0].t;
+  const t1 = samples[samples.length - 1].t;
+  if (!(t1 > t0)) return null;
+  const eps = (t1 - t0) / 200;
+  // Clamp into the polyline's span BEFORE probing: for a `t` past the
+  // arrival tick (the frames between arriving and leaving transit),
+  // both raw probes would clamp to the last sample and degenerate to
+  // null — clamped, the backward probe still reads the final segment.
+  const tc = Math.max(t0, Math.min(t1, t));
+  const a = torchPositionFromSamples(samples, tc);
+  let b = torchPositionFromSamples(samples, tc + eps);
+  let dx = b.x - a.x;
+  let dy = b.y - a.y;
+  if (dx * dx + dy * dy < 1e-12) {
+    b = torchPositionFromSamples(samples, tc - eps);
+    dx = a.x - b.x;
+    dy = a.y - b.y;
+  }
+  const d = Math.hypot(dx, dy);
+  if (d < 1e-9) return null;
+  return { x: dx / d, y: dy / d };
+}
+
+/**
  * 1g anchor: the acceleration that would carry a ship from Sol to
  * Earth (orbitRadius ≈ 132.6 game-units) in exactly 1 tick under a
  * symmetric brachistochrone. Picked so the slider readout matches

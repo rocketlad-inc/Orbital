@@ -9,7 +9,7 @@ import { getPlanetTexture, getCloudTexture, hashStr, mulberry32 } from './planet
 import { drawCityCluster, drawStationStructure } from './isoStructures';
 import type { SystemRegion } from './systemRegions';
 import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt } from '../physics/orbitalMechanics';
-import { sampleTorchTrajectory, torchPositionFromSamples } from '../physics/torchTransfer';
+import { sampleTorchTrajectory, torchPositionFromSamples, trajectoryTangentAt } from '../physics/torchTransfer';
 import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
 import { COLORS, withOpacity, lighten, darken } from './colors';
 import { getShipIconImage } from './shipIconCache';
@@ -2638,20 +2638,17 @@ export function drawRammingBody(
     const dirX = dx / d;
     const dirY = dy / d;
     const canvasHere = worldToCanvas(here.x, here.y, ctx);
-    // Engine is on the "back" of the rock — opposite the direction
-    // of motion (during boost; ram thrust during boost = toward
-    // intercept, which is where the rock is heading).
-    const enginePos = {
-      x: canvasHere.x - dirX * body.radius * ctx.camera.scale,
-      y: canvasHere.y + dirY * body.radius * ctx.camera.scale * (-1),
-      // (canvas y inverts; flame canvas dir = (dirX, -dirY))
-    };
-    void enginePos; // kept for symmetry with the ship exhaust; use canvasHere directly
+    // Engine is on the "back" of the rock — opposite the direction of
+    // motion. The finite-difference tangent is a world vector, and
+    // worldToCanvas has NO y-flip, so it's used as-is: the old
+    // `(dirX, -dirY)` — citing the same false "canvas y inverts"
+    // premise the transit-ship heading had — mirrored the flame across
+    // the horizontal axis.
     drawThrustExhaust(
       ctx.ctx,
       { x: canvasHere.x - dirX * body.radius * ctx.camera.scale,
-        y: canvasHere.y - (-dirY) * body.radius * ctx.camera.scale },
-      { x: dirX, y: -dirY },
+        y: canvasHere.y - dirY * body.radius * ctx.camera.scale },
+      { x: dirX, y: dirY },
       Math.max(10, body.radius * ctx.camera.scale * 1.5),
       1,
     );
@@ -2833,14 +2830,17 @@ function drawThrustExhaust(
  * fresh each tick), ship.transit.vel for the heading. Falls back to a
  * dot+tick line when no ship icon is available.
  *
- * Orientation: the nose always points AT THE DESTINATION for the whole
- * flight. The earlier implementation modelled a flip-and-burn (boost
- * facing intercept, brake flipped 180° to face backward) — physically
- * correct for a real torch ship, but playtester read the half-flight
- * "backwards ship" as a bug. Now we keep the icon oriented toward the
- * intercept point for both phases; coast (outside the burn window)
- * falls back to velocity direction so a ship that's already arrived
- * or hasn't started yet isn't lurching to face an arbitrary point.
+ * Orientation: the nose points ALONG THE TRAJECTORY — the tangent of
+ * the same sample polyline the ship is lerped along, so ship and line
+ * agree by construction. (History: a flip-and-burn model read as a bug;
+ * then "point at the destination body" — but the dashes run to the
+ * plan's frozen intercept point while the body keeps moving, so nose
+ * and line visibly diverged. Worse, the heading negated world-y citing
+ * "canvas y inverts" — worldToCanvas has NO y-flip, the parked-ship
+ * path at drawShip uses un-negated atan2 — so every transit ship was
+ * mirrored across the horizontal axis and pointed anywhere but
+ * forward.) Fallbacks when no samples are threaded: direction to the
+ * target body, then velocity.
  */
 function drawTorchTransitShip(
   ship: Ship,
@@ -2869,48 +2869,44 @@ function drawTorchTransitShip(
   const isBrake = ctx.t >= currentTransfer.flipTick && ctx.t < currentTransfer.arriveTick;
   const thrusting = isBoost || isBrake;
 
-  // Ship's nose points at the TARGET BODY's CURRENT position for the
-  // whole transfer — boost, brake, and coast all use the same rule.
+  // Nose ties to the TRAJECTORY: the tangent of the sample polyline the
+  // ship is positioned on. Probing the line the ship is lerped along
+  // means nose and dashes agree by construction — pointing at the
+  // target body's live position (the previous rule) drifted off the
+  // drawn line, which runs to the plan's frozen intercept point.
   //
-  // Previous iterations split this two ways:
-  //   1) thrust → point at currentTransfer.interceptPos (a frozen lead-
-  //      point computed at transfer start). As the ship approached
-  //      that point the dx/dy vector shrank to ~0 and the rotation
-  //      swung wildly, then in the brief coast tail the icon snapped
-  //      to a velocity that was already braking toward zero.
-  //   2) coast → point along velocity. On multi-leg trade routes the
-  //      transition from leg-1 brake (vel decreasing) to leg-2 start
-  //      had a window where vel still pointed back at the origin
-  //      while the next intercept was the other way — the icon
-  //      visibly reversed.
-  //
-  // Using the live body position is robust against both. Falls back
-  // to velocity only when the target body has been destroyed or
-  // somehow can't be looked up.
+  // Fallback chain for callers that don't thread samples: direction to
+  // the target body's current position, then velocity — so the icon
+  // never snaps to an arbitrary +x.
   let facingX: number, facingY: number;
-  const targetBody = ctx.bodies.find(b => b.id === currentTransfer.targetBodyId);
-  const targetPos = targetBody ? bodyPosition(targetBody, ctx.t, ctx.bodies) : null;
-  if (targetPos) {
-    const dx = targetPos.x - lerpedPos.x;
-    const dy = targetPos.y - lerpedPos.y;
-    const d = Math.sqrt(dx * dx + dy * dy);
-    if (d > 1e-3) {
+  const tangent = trajectorySamples && trajectorySamples.length >= 2
+    ? trajectoryTangentAt(trajectorySamples, ctx.t)
+    : null;
+  if (tangent) {
+    facingX = tangent.x;
+    facingY = tangent.y;
+  } else {
+    const targetBody = ctx.bodies.find(b => b.id === currentTransfer.targetBodyId);
+    const targetPos = targetBody ? bodyPosition(targetBody, ctx.t, ctx.bodies) : null;
+    const dx = targetPos ? targetPos.x - lerpedPos.x : 0;
+    const dy = targetPos ? targetPos.y - lerpedPos.y : 0;
+    const d = Math.hypot(dx, dy);
+    if (targetPos && d > 1e-3) {
       facingX = dx / d;
       facingY = dy / d;
     } else {
-      // On top of the target — keep last-known velocity rather than
-      // snapping to +x.
-      const vMag = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
+      const vMag = Math.hypot(vel.x, vel.y);
       facingX = vMag > 1e-9 ? vel.x / vMag : 1;
       facingY = vMag > 1e-9 ? vel.y / vMag : 0;
     }
-  } else {
-    const vMag = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
-    facingX = vMag > 1e-9 ? vel.x / vMag : 1;
-    facingY = vMag > 1e-9 ? vel.y / vMag : 0;
   }
-  // Canvas y axis inverts.
-  const heading = Math.atan2(-facingY, facingX);
+  // NO y negation: worldToCanvas maps world y straight to canvas y
+  // (no flip), and the parked-ship path (drawShip) computes heading
+  // with un-negated atan2. The old `-facingY` here — justified by a
+  // false "canvas y axis inverts" comment — mirrored every transit
+  // ship across the horizontal axis. That was the "points anywhere
+  // but forward" bug.
+  const heading = Math.atan2(facingY, facingX);
 
   const iconSize = shipIconSize(ship.class, isSelected);
 
