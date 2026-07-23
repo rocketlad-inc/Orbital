@@ -1012,6 +1012,38 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       bodyClusters.set(bodyId, cur);
     };
 
+    // System grouping helpers — shared by the ship loop's transit-collapse
+    // and the badge block. A moon rolls up to its planet; a planet (parent
+    // is the star) is its own anchor.
+    const bodyById2 = new Map(gameState.bodies.map(b => [b.id, b] as const));
+    const childrenOf2 = new Map<string, typeof gameState.bodies>();
+    for (const b of gameState.bodies) {
+      if (!b.parent) continue;
+      const arr = childrenOf2.get(b.parent) ?? [];
+      arr.push(b);
+      childrenOf2.set(b.parent, arr);
+    }
+    const isStarLike = (b: (typeof gameState.bodies)[number] | undefined) =>
+      !!b && (b.type === 'star' || b.type === 'black_hole');
+    const anchorOf = (id: string | undefined | null): string | null => {
+      if (!id) return null;
+      const b = bodyById2.get(id);
+      if (!b) return null;
+      const p = b.parent ? bodyById2.get(b.parent) : undefined;
+      return (p && !isStarLike(p)) ? p.id : id;
+    };
+    const systemPx = (anchorId: string): number => {
+      const kids = childrenOf2.get(anchorId) ?? [];
+      let maxOrbit = 0;
+      for (const k of kids) if (k.orbitRadius > maxOrbit) maxOrbit = k.orbitRadius;
+      const anchor = bodyById2.get(anchorId);
+      return (maxOrbit > 0 ? maxOrbit : (anchor?.radius ?? 4)) * camera.scale;
+    };
+    // Transit ships hopping WITHIN one tight, overlapping system (moon to
+    // moon) — collapsed into that system's badge instead of drawn as a
+    // full-size hull clashing over the smear. Keyed by system anchor.
+    const systemTransitCounts = new Map<string, { mine: number; other: number }>();
+
     // Draw ships
     for (const ship of gameState.ships) {
       // Fog of war: skip enemy ships the player can't currently see
@@ -1036,6 +1068,24 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const bodyId = ship.orbit?.parentBodyId;
         if (bodyId) {
           bumpCluster(bodyId, ship.ownedBy === 'player');
+          continue;
+        }
+      }
+
+      // Collapse a transit ship that's hopping WITHIN one system whose moons
+      // overlap on screen: both endpoints anchor to the same planet and the
+      // system is in system-badge mode. Otherwise a full-size hull moving
+      // moon-to-moon clashes over the tiny system smear — count it into the
+      // system badge instead and skip the individual draw (icon + arc).
+      if (clusterMode && ship.transit && !isSelected) {
+        const originAnchor = anchorOf(ship.orbit?.parentBodyId);
+        const destAnchor = anchorOf(ship.transit.currentTransfer?.targetBodyId);
+        if (originAnchor && originAnchor === destAnchor
+            && (childrenOf2.get(originAnchor)?.length ?? 0) > 0
+            && systemPx(originAnchor) < SYSTEM_BADGE_MAX_PX) {
+          const cur = systemTransitCounts.get(originAnchor) ?? { mine: 0, other: 0 };
+          if (ship.ownedBy === 'player') cur.mine += 1; else cur.other += 1;
+          systemTransitCounts.set(originAnchor, cur);
           continue;
         }
       }
@@ -1158,37 +1208,18 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // moon system shrinks to a tight smear (systemPx < SYSTEM_BADGE_MAX_PX)
     // it collapses to ONE SYSTEM badge at the planet — kept visible even
     // over the wash, since per-body would be an unreadable pile there.
-    if (clusterMode && bodyClusters.size > 0) {
+    if (clusterMode && (bodyClusters.size > 0 || systemTransitCounts.size > 0)) {
       const c2d = ctx;
-      const bodyById2 = new Map(gameState.bodies.map(b => [b.id, b] as const));
-      const childrenOf2 = new Map<string, typeof gameState.bodies>();
-      for (const b of gameState.bodies) {
-        if (!b.parent) continue;
-        const arr = childrenOf2.get(b.parent) ?? [];
-        arr.push(b);
-        childrenOf2.set(b.parent, arr);
-      }
-      const isStarLike = (b: (typeof gameState.bodies)[number] | undefined) =>
-        !!b && (b.type === 'star' || b.type === 'black_hole');
-      // A moon rolls up to its planet; a planet is its own anchor.
-      const anchorOf = (id: string): string => {
-        const b = bodyById2.get(id);
-        if (!b) return id;
-        const p = b.parent ? bodyById2.get(b.parent) : undefined;
-        return (p && !isStarLike(p)) ? p.id : id;
-      };
-      const systemPx = (anchorId: string): number => {
-        const kids = childrenOf2.get(anchorId) ?? [];
-        let maxOrbit = 0;
-        for (const k of kids) if (k.orbitRadius > maxOrbit) maxOrbit = k.orbitRadius;
-        const anchor = bodyById2.get(anchorId);
-        return (maxOrbit > 0 ? maxOrbit : (anchor?.radius ?? 4)) * camera.scale;
-      };
-
+      // Seed the per-system aggregate with intra-system transit ships (moon-
+      // to-moon hoppers collapsed in the ship loop above), then fold in the
+      // parked per-body counts.
       const sysAgg = new Map<string, { mine: number; other: number }>();
+      for (const [anchor, counts] of systemTransitCounts) {
+        sysAgg.set(anchor, { mine: counts.mine, other: counts.other });
+      }
       const perBody: Array<{ bodyId: string; mine: number; other: number }> = [];
       for (const [bodyId, counts] of bodyClusters) {
-        const anchor = anchorOf(bodyId);
+        const anchor = anchorOf(bodyId) ?? bodyId;
         const hasMoons = (childrenOf2.get(anchor)?.length ?? 0) > 0;
         if (hasMoons && systemPx(anchor) < SYSTEM_BADGE_MAX_PX) {
           const cur = sysAgg.get(anchor) ?? { mine: 0, other: 0 };
