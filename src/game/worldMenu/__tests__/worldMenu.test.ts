@@ -135,7 +135,7 @@ describe('F · build rules', () => {
   test('F4: status text formats', () => {
     const city = mkSettlement({});
     expect(buildStatus('forge', city, { currentTick: 0, noHostText: 'no surface' }))
-      .toMatchObject({ state: 'ready', level: 0, text: 'not built · 40 ore' });
+      .toMatchObject({ state: 'ready', level: 0, text: 'not built · 40 metal' });
     const leveled = mkSettlement({ buildings: { forge: 2 } });
     const st = buildStatus('forge', leveled, { currentTick: 0, noHostText: 'x' });
     expect(st.state).toBe('ready');
@@ -150,9 +150,9 @@ describe('F · build rules', () => {
   });
 
   test('cost scaling follows BUILDING_DEFS (1.6^level, ceil)', () => {
-    expect(costText('forge', 0)).toBe('40 ore');
-    expect(costText('forge', 1)).toBe('64 ore');   // 40·1.6
-    expect(costText('shipyard', 0)).toBe('50 ore + 30 cr');
+    expect(costText('forge', 0)).toBe('40 metal');
+    expect(costText('forge', 1)).toBe('64 metal');   // 40·1.6
+    expect(costText('shipyard', 0)).toBe('50 metal + 30 cr');
   });
 
   test('lock wording per column', () => {

@@ -34,7 +34,9 @@ export function columnsFor(body: Pick<Body, 'type'>): {
 export function costText(kind: BuildingKind, currentLevel: number): string {
   const c = buildingCostForNextLevel(kind, currentLevel);
   const parts: string[] = [];
-  if (c.ore) parts.push(`${c.ore} ore`);
+  // Display sweep: the resource is METAL everywhere players see it —
+  // `ore` survives only as the internal field name.
+  if (c.ore) parts.push(`${c.ore} metal`);
   if (c.credits) parts.push(`${c.credits} cr`);
   if (c.fuel) parts.push(`${c.fuel} fuel`);
   return parts.join(' + ') || 'free';
