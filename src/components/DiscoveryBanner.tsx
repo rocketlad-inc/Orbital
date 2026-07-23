@@ -22,10 +22,13 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { SECRET_DEFS } from '../game/secrets';
 import type { Body } from '../types';
+import { ackDiscovery } from '../game/discoveryAck';
 import './DiscoveryBanner.css';
 
 interface Discovery {
   bodyId: string;
+  /** Reveal tick — pairs with bodyId to acknowledge this exact find. */
+  tick: number | undefined;
   bodyName: string;
   title: string;
   reward: string;
@@ -79,6 +82,7 @@ export const DiscoveryBanner: React.FC = () => {
         : undefined;
       fresh.push({
         bodyId: b.id,
+        tick: sec.discoveredAtTick,
         bodyName: b.name,
         title: def?.displayName ?? 'Discovery',
         reward: def ? stripPrefix(def.discoveryMessage) : 'A secret uncovered',
@@ -93,12 +97,15 @@ export const DiscoveryBanner: React.FC = () => {
   const current = queue[0];
 
   // Auto-advance the queue. A fresh timer per banner; the leave animation
-  // gets 260ms before the next one slides in.
+  // gets 260ms before the next one slides in. When a banner finishes
+  // showing it's been SEEN — mark it so the situation-report row closes
+  // instead of lingering out the tick window.
   useEffect(() => {
     if (!current) return;
     setLeaving(false);
     const hold = setTimeout(() => setLeaving(true), DISPLAY_MS);
     const drop = setTimeout(() => {
+      ackDiscovery(current.bodyId, current.tick);
       setQueue(q => q.slice(1));
     }, DISPLAY_MS + 260);
     return () => { clearTimeout(hold); clearTimeout(drop); };
@@ -106,7 +113,11 @@ export const DiscoveryBanner: React.FC = () => {
 
   if (!current) return null;
 
-  const dismiss = () => { setQueue(q => q.slice(1)); };
+  // Manual dismiss / jump-there also count as seen.
+  const dismiss = () => {
+    ackDiscovery(current.bodyId, current.tick);
+    setQueue(q => q.slice(1));
+  };
   const goThere = () => {
     selectBody(current.bodyId);
     focusBody(current.bodyId);

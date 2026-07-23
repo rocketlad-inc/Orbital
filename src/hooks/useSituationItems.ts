@@ -54,6 +54,7 @@ import {
 import { unlocksAt } from '../game/researchUnlocks';
 import { computeIncomePerTick } from '../game/settlements';
 import { SECRET_DEFS } from '../game/secrets';
+import { isDiscoveryAcked } from '../game/discoveryAck';
 
 /** Trim the "DISCOVERY: " / "DISCOVERY — " lead-in from a secret's flavor
  *  so the situation-report subtitle is just the payoff clause. */
@@ -1033,6 +1034,9 @@ export function useSituationItems(
         const sec = b.secret;
         if (!sec?.revealed || sec.discoveredByFactionId !== factionId) continue;
         if (sec.discoveredAtTick == null) continue;
+        // Close once the banner has shown it — that's "seen". The tick
+        // window is only a fallback for finds that never bannered.
+        if (isDiscoveryAcked(b.id, sec.discoveredAtTick)) continue;
         if (tick - sec.discoveredAtTick > DISCOVERY_TTL_TICKS) continue;
         const def = SECRET_DEFS[sec.kind];
         push({

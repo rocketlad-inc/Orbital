@@ -1925,9 +1925,31 @@ export class Room {
       }
     }
 
+    // Ships actually IN FLIGHT don't fight and can't be fought — they're
+    // between bodies, not at one. game_ships.parent_body_id still holds
+    // the departure body while a ship is in transit, so without this a
+    // hull that has already left still sits in its origin's combat bucket
+    // and takes fire mid-flight (player report: "Osprey at 1% HP,
+    // damaged in transit"). SP already excludes these (src/game/combat.ts
+    // `if (s.transit) continue`); this brings MP in line. Only 'in_transit'
+    // counts — a 'committed' node hasn't departed yet, so that ship is
+    // still parked and a valid combatant.
+    const inTransitIds = new Set(
+      ((await this.env.DB
+        .prepare(
+          `SELECT DISTINCT n.ship_id AS id
+             FROM game_ship_nodes n
+             JOIN game_ships s ON s.id = n.ship_id
+            WHERE s.game_id = ? AND n.status = 'in_transit'`,
+        )
+        .bind(gameId)
+        .all()).results ?? []).map(r => r.id),
+    );
+
     // Group by body, then check for multiple factions present.
     const byBody = new Map();
     for (const s of allShips) {
+      if (inTransitIds.has(s.id)) continue;
       if (!byBody.has(s.parent_body_id)) byBody.set(s.parent_body_id, []);
       byBody.get(s.parent_body_id).push(s);
     }
