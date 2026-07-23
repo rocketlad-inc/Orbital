@@ -2753,10 +2753,14 @@ function drawThrustExhaust(
   shipSize: number,
   intensity: number = 1,
 ) {
-  // Flame length scales with ship icon size. Trail length stays
-  // recognizable even when zoomed out.
-  const flameLen = shipSize * 2.4;
-  const flameWidth = shipSize * 0.42;
+  // Sized to the ship icon, so the plume reads as this hull's exhaust
+  // rather than a banner streaking across the map — and since shipSize
+  // IS the icon's on-screen size, it tracks the ship at every zoom.
+  // Base ≈ the ship's beam (half-width 0.26 → full 0.52·icon), length a
+  // touch over one icon. Was 2.4·icon long / 0.84·icon wide — a cone
+  // several times the hull, which read as "too big".
+  const flameLen = shipSize * 1.35;
+  const flameWidth = shipSize * 0.26;
   // Exhaust extends OPPOSITE to thrust.
   const tailX = enginePos.x - thrustDir.x * flameLen;
   const tailY = enginePos.y - thrustDir.y * flameLen;
@@ -2765,10 +2769,11 @@ function drawThrustExhaust(
   const perpY = thrustDir.x;
   // Per-frame jitter for a "live" flicker. Random is fine — the
   // unpredictability is the point. Cheap enough to do every frame.
-  const jitterMag = shipSize * 0.18;
+  // Scaled down with the smaller plume so the wag stays proportional.
+  const jitterMag = shipSize * 0.12;
   const jitterT = (Math.random() - 0.5) * 2 * jitterMag;       // tail wag
   const jitterP = (Math.random() - 0.5) * jitterMag * 0.3;     // base wiggle
-  const lenJitter = (Math.random() - 0.5) * shipSize * 0.4;    // length pulse
+  const lenJitter = (Math.random() - 0.5) * shipSize * 0.22;   // length pulse
 
   // Gradient: hot core at the engine bell, cooling out to the tail.
   const grad = ctx2d.createLinearGradient(
