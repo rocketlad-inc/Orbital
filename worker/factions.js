@@ -1,4 +1,5 @@
 import { DEFAULT_LOADOUTS } from './shipDesigns.js';
+import { gatingEnabled, factionTechLevels, hasFeature } from './researchUnlocks.js';
 // ============================================================================
 // Faction agent module.
 //
@@ -1124,16 +1125,51 @@ async function handleListFactions(_req, env, ctx) {
     .all();
   const factions = rows.results ?? [];
 
-  // Scoreboard extras (full open scoreboard — Lorne's call): per-faction
-  // POOL income/tick + true active ship count, attached to every row so
-  // the FactionPanel can show a rival's economy + fleet at a glance.
+  // Scoreboard extras, now GATED by the caller's Sensors research (was a
+  // "full open scoreboard"; Lorne reversed that so the Sensors track
+  // actually buys intel). A rival's ship count needs Fleet Census
+  // (sensors 3); their income needs Economic Intel (sensors 4); their
+  // tech levels need Research Intel (sensors 6). You always see your OWN.
+  // A gated-out field is sent as null so the client shows a lock chip
+  // (distinct from a real 0). Ungated games keep everything open.
   const [income, shipCounts] = await Promise.all([
     computePoolIncomePerFaction(env, gameId),
     countActiveShipsPerFaction(env, gameId),
   ]);
+  const meRow = await env.DB
+    .prepare('SELECT id FROM game_factions WHERE game_id = ? AND user_id = ?')
+    .bind(gameId, session.user_id)
+    .first();
+  const myId = meRow?.id ?? null;
+  const gated = await gatingEnabled(env, gameId);
+  const myLevels = myId ? await factionTechLevels(env, gameId, myId) : {};
+  const canSee = (feat) => !gated || hasFeature(feat, myLevels, true);
+  const seeCensus = canSee('intel.fleetCensus');
+  const seeEconomy = canSee('intel.economy');
+  const seeResearch = canSee('intel.research');
+
+  // Research Intel: rivals' tech levels. Loaded once, grouped by faction.
+  let techByFaction = null;
+  if (seeResearch) {
+    const trows = (await env.DB
+      .prepare('SELECT faction_id, tech_id, level FROM faction_techs WHERE game_id = ?')
+      .bind(gameId).all()).results ?? [];
+    techByFaction = new Map();
+    for (const r of trows) {
+      if (!techByFaction.has(r.faction_id)) techByFaction.set(r.faction_id, {});
+      techByFaction.get(r.faction_id)[r.tech_id] = r.level;
+    }
+  }
+
   for (const f of factions) {
-    f.income = income.get(f.id) ?? { metal: 0, fuel: 0, gold: 0, science: 0 };
-    f.ship_count = shipCounts.get(f.id) ?? 0;
+    const mine = f.id === myId;
+    const fullIncome = income.get(f.id) ?? { metal: 0, fuel: 0, gold: 0, science: 0 };
+    const fullCount = shipCounts.get(f.id) ?? 0;
+    f.income = (mine || seeEconomy) ? fullIncome : null;
+    f.ship_count = (mine || seeCensus) ? fullCount : null;
+    // tech_levels only attached for rivals when Research Intel is up
+    // (own tech comes from /me); null elsewhere so the panel can gate.
+    if (!mine) f.tech_levels = seeResearch ? (techByFaction.get(f.id) ?? {}) : null;
   }
 
   return jsonResponse({ factions });

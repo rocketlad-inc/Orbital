@@ -176,10 +176,15 @@ export type Faction = {
   capital_body_id: string | null;
   senate_weight: number;
   reputation: number;
-  /** Scoreboard extras from the factions endpoint (full open scoreboard):
-   *  POOL income/tick and active ship count for every faction. */
-  income?: { metal: number; fuel: number; gold: number; science: number };
-  ship_count?: number;
+  /** Scoreboard extras from the factions endpoint — GATED by the caller's
+   *  Sensors research. A rival's income needs Economic Intel (sensors 4),
+   *  ship_count needs Fleet Census (sensors 3), tech_levels needs Research
+   *  Intel (sensors 6). null = the caller hasn't unlocked that tier (show a
+   *  lock); undefined = ungated game / own faction. You always see your own. */
+  income?: { metal: number; fuel: number; gold: number; science: number } | null;
+  ship_count?: number | null;
+  /** Rival tech levels, present only with Research Intel; null when gated. */
+  tech_levels?: Record<string, number> | null;
 };
 
 export type MyFaction = Faction & {

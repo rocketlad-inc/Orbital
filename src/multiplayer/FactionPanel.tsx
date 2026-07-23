@@ -57,37 +57,68 @@ const INCOME_TINT: Record<'metal' | 'fuel' | 'gold' | 'science', string> = {
  *  economy + fleet read at a glance (full open scoreboard). Income chips
  *  hide any resource at 0 — so once fuel is retired empire-wide the fuel
  *  chip simply stops appearing. */
+const TECH_ABBR: Array<[string, string]> = [
+  ['weapons', 'W'], ['armor', 'A'], ['propulsion', 'P'],
+  ['construction', 'C'], ['industry', 'I'], ['sensors', 'S'],
+];
+const Locked = ({ tip }: { tip: string }) => (
+  <span title={tip} style={{ opacity: 0.7, color: '#ffb84d' }}>🔒</span>
+);
+
 function ScoreboardStats({ f }: { f: Faction }) {
   const income = f.income;
-  const chips = (['metal', 'fuel', 'gold', 'science'] as const)
-    .map((k) => ({ k, v: income?.[k] ?? 0 }))
-    .filter((c) => c.v > 0);
+  // null = intel-gated (show a lock). undefined = ungated/own (show data).
+  const censusLocked = f.ship_count === null;
+  const economyLocked = income === null;
+  const chips = income
+    ? (['metal', 'fuel', 'gold', 'science'] as const)
+        .map((k) => ({ k, v: income[k] ?? 0 }))
+        .filter((c) => c.v > 0)
+    : [];
+  const researchIntel = f.tech_levels; // present only with Research Intel
   return (
-    <div
-      className="mp-scoreboard"
-      style={{
-        display: 'flex', alignItems: 'center', flexWrap: 'wrap',
-        gap: 8, fontSize: 11, color: 'var(--mp-fg-dim)',
-      }}
-    >
-      <span title="Active ships" style={{ fontVariantNumeric: 'tabular-nums' }}>
-        ⬡ {f.ship_count ?? 0} {(f.ship_count ?? 0) === 1 ? 'ship' : 'ships'}
-      </span>
-      <span style={{ opacity: 0.4 }}>·</span>
-      {chips.length === 0 ? (
-        <span style={{ opacity: 0.6 }}>no income</span>
-      ) : (
-        <span
-          title="Pool income per tick (before senate effects)"
-          style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap', fontVariantNumeric: 'tabular-nums' }}
-        >
-          {chips.map((c) => (
-            <span key={c.k} style={{ color: INCOME_TINT[c.k] }}>
-              +{c.v}{c.k === 'metal' ? 'M' : c.k === 'fuel' ? 'F' : c.k === 'gold' ? 'C' : 'S'}
-            </span>
-          ))}
-          <span style={{ opacity: 0.6 }}>/t</span>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <div
+        className="mp-scoreboard"
+        style={{
+          display: 'flex', alignItems: 'center', flexWrap: 'wrap',
+          gap: 8, fontSize: 11, color: 'var(--mp-fg-dim)',
+        }}
+      >
+        <span title="Active ships" style={{ fontVariantNumeric: 'tabular-nums' }}>
+          ⬡ {censusLocked
+            ? <Locked tip="Fleet Census — research Sensors 3 to see rival ship counts" />
+            : `${f.ship_count ?? 0} ${(f.ship_count ?? 0) === 1 ? 'ship' : 'ships'}`}
         </span>
+        <span style={{ opacity: 0.4 }}>·</span>
+        {economyLocked ? (
+          <span><Locked tip="Economic Intel — research Sensors 4 to see rival income" /> income</span>
+        ) : chips.length === 0 ? (
+          <span style={{ opacity: 0.6 }}>no income</span>
+        ) : (
+          <span
+            title="Pool income per tick (before senate effects)"
+            style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap', fontVariantNumeric: 'tabular-nums' }}
+          >
+            {chips.map((c) => (
+              <span key={c.k} style={{ color: INCOME_TINT[c.k] }}>
+                +{c.v}{c.k === 'metal' ? 'M' : c.k === 'fuel' ? 'F' : c.k === 'gold' ? 'C' : 'S'}
+              </span>
+            ))}
+            <span style={{ opacity: 0.6 }}>/t</span>
+          </span>
+        )}
+      </div>
+      {researchIntel && (
+        <div
+          title="Research Intel — rival tech levels"
+          style={{ display: 'flex', gap: 7, fontSize: 10, color: 'var(--mp-fg-dim)', fontVariantNumeric: 'tabular-nums' }}
+        >
+          <span style={{ opacity: 0.6 }}>🔬</span>
+          {TECH_ABBR.map(([key, abbr]) => (
+            <span key={key}>{abbr}{researchIntel[key] ?? 0}</span>
+          ))}
+        </div>
       )}
     </div>
   );
