@@ -7,7 +7,16 @@
 import React, { useMemo, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { settlementYield, SETTLEMENT_DEFS } from '../game/settlements';
+import { deriveSecondary } from '../game/colorUtils';
 import './OverviewPanel.css';
+
+// Translucent fill from a hex colour, for faction-tinted owner badges.
+function hexToRgba(hex: string, alpha: number): string {
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  const n = parseInt(full, 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
 
 interface SettlementsPanelProps {
   onClose: () => void;
@@ -55,10 +64,49 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
     focusBody(bodyId);
   };
 
+  // Faction id -> display name + two-tone colour (mirrors FleetPanel and
+  // the map §5). Fixes the OWNER column showing a raw faction id
+  // ("FY2AB2S47DSP:F2") instead of the empire name, and carries the
+  // players' colours into the list.
+  const factionById = useMemo(() => {
+    const m = new Map<string, { name: string; color: string; color2: string }>();
+    for (const f of gameState.factions) {
+      m.set(f.id, { name: f.name, color: f.color, color2: f.color2 || deriveSecondary(f.color) });
+    }
+    return m;
+  }, [gameState.factions]);
+
+  const factionOf = (ownedBy: string): { name: string; color: string; color2: string } => {
+    if (ownedBy === 'player') return { name: 'You', color: '#4ecdc4', color2: deriveSecondary('#4ecdc4') };
+    if (ownedBy === 'enemy') return { name: 'Enemy', color: '#ff5e5e', color2: deriveSecondary('#ff5e5e') };
+    const f = factionById.get(ownedBy);
+    if (f) return f;
+    // Unknown id: show the short suffix, never the game-namespaced id.
+    return { name: ownedBy.split(':').pop() ?? ownedBy, color: '#8a9fb3', color2: deriveSecondary('#8a9fb3') };
+  };
+
   const ownerBadge = (ownedBy: string) => {
-    if (ownedBy === 'player') return <span className="owner-badge owner-badge--player">Player</span>;
-    if (ownedBy === 'enemy') return <span className="owner-badge owner-badge--enemy">Enemy</span>;
-    return <span className="owner-badge owner-badge--neutral">{ownedBy}</span>;
+    const { name, color, color2 } = factionOf(ownedBy);
+    return (
+      <span
+        className="owner-badge"
+        style={{
+          color, borderColor: color, background: hexToRgba(color, 0.12),
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+        }}
+      >
+        {/* two-tone swatch: primary / secondary split, same livery as the map */}
+        <span
+          aria-hidden
+          style={{
+            width: 10, height: 10, borderRadius: 2, flexShrink: 0,
+            background: `linear-gradient(135deg, ${color} 0%, ${color} 62%, ${color2} 62%, ${color2} 100%)`,
+            boxShadow: '0 0 0 1px rgba(0,0,0,0.45)',
+          }}
+        />
+        {name}
+      </span>
+    );
   };
 
   const renderHpBar = (s: { hp: number; maxHp: number }) => {
