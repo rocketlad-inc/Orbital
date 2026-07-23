@@ -40,6 +40,7 @@ import type {
   GameState,
   Ship,
   TradeRoute,
+  BuildingKind,
 } from '../types';
 import {
   computeIncomingThreats,
@@ -52,9 +53,47 @@ import {
   type TechId,
 } from '../game/techs';
 import { unlocksAt } from '../game/researchUnlocks';
-import { computeIncomePerTick } from '../game/settlements';
+import {
+  computeIncomePerTick,
+  BUILDING_DEFS,
+  buildingLevel,
+} from '../game/settlements';
+import { SHIP_CLASSES } from '../game/shipClasses';
 import { SECRET_DEFS } from '../game/secrets';
 import { isDiscoveryAcked } from '../game/discoveryAck';
+
+// Building kinds each settlement type can host (mirrors BuildPanel /
+// the map's world-overlay chips). Used to ask "is there anything here I
+// could afford to build?" before listing an idle settlement.
+const CITY_BUILDINGS: BuildingKind[] = ['forge', 'mint', 'lab'];
+const STATION_BUILDINGS: BuildingKind[] = ['weapons', 'lab', 'shipyard'];
+
+/** Cheapest hull anyone can lay down — the floor for "can I build a
+ *  ship at all". Computed once from the class table. */
+const CHEAPEST_SHIP_COST = (() => {
+  let best = { fuel: Infinity, ore: Infinity, credits: Infinity };
+  let bestTotal = Infinity;
+  for (const def of Object.values(SHIP_CLASSES)) {
+    const t = (def.cost.fuel ?? 0) + (def.cost.ore ?? 0) + (def.cost.credits ?? 0);
+    if (t < bestTotal) { bestTotal = t; best = def.cost; }
+  }
+  return best;
+})();
+
+interface ResBundle { fuel: number; ore: number; credits: number }
+/** Next-level cost of a building = base × scaling^currentLevel. */
+function nextBuildingCost(kind: BuildingKind, level: number): ResBundle {
+  const def = BUILDING_DEFS[kind];
+  const s = Math.pow(def.costScaling, level);
+  return {
+    fuel: (def.baseCost.fuel ?? 0) * s,
+    ore: (def.baseCost.ore ?? 0) * s,
+    credits: (def.baseCost.credits ?? 0) * s,
+  };
+}
+function canPay(have: ResBundle, cost: ResBundle): boolean {
+  return have.ore >= cost.ore && have.credits >= cost.credits && have.fuel >= cost.fuel;
+}
 
 /** Trim the "DISCOVERY: " / "DISCOVERY — " lead-in from a secret's flavor
  *  so the situation-report subtitle is just the payoff clause. */
@@ -424,6 +463,23 @@ export function useSituationItems(
     const bodyName = (id: string | undefined) =>
       (id && bodies.find(b => b.id === id)?.name) || '?';
 
+    // Spendable at a body = the faction pool PLUS local stockpiles there
+    // (both fund a local build). Drives the affordability gate on build
+    // opportunities — listing "shipyard idle / building nothing" when the
+    // player is flat broke is just nagging about something they can't do.
+    const pool = gameState.resources?.[factionId];
+    const spendableAt = (bodyId: string): ResBundle => {
+      let ore = pool?.ore ?? 0, credits = pool?.credits ?? 0, fuel = pool?.fuel ?? 0;
+      for (const s of gameState.settlements) {
+        if (s.ownedBy === factionId && s.bodyId === bodyId && s.stockpile) {
+          ore += s.stockpile.ore ?? 0;
+          credits += s.stockpile.credits ?? 0;
+          fuel += s.stockpile.fuel ?? 0;
+        }
+      }
+      return { ore, credits, fuel };
+    };
+
     // --- Shared combat context ---
     // Both the NOW-tier sections and the contextual promotion of idle
     // yards need to know where the shooting is (hostile parked at a
@@ -534,6 +590,10 @@ export function useSituationItems(
           severity: 'warn',
         });
       } else {
+        // Only an opportunity if you could actually lay down a hull.
+        // Broke → nothing to do here, don't nag. (Under threat, above,
+        // we still surface it — that's a warning, not an opportunity.)
+        if (!canPay(spendableAt(body.id), CHEAPEST_SHIP_COST)) continue;
         push({
           id: `idle_shipyard:${body.id}`,
           category: 'idle_shipyard',
@@ -860,6 +920,15 @@ export function useSituationItems(
           continue;                      // done implies idle; don't say both
         }
         if (!s.buildingQueue) {
+          // Only surface an idle slot if there's an upgrade here the
+          // player can actually pay for. A screen full of "building
+          // nothing" you can't afford is nagging, not opportunity.
+          const have = spendableAt(s.bodyId);
+          const kinds = s.type === 'city' ? CITY_BUILDINGS : STATION_BUILDINGS;
+          const canBuildSomething = kinds.some(kind =>
+            canPay(have, nextBuildingCost(kind, buildingLevel(s, kind))),
+          );
+          if (!canBuildSomething) continue;
           push({
             id: `building_idle:${s.id}`,
             category: 'building_idle',
