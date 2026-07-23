@@ -4275,20 +4275,23 @@ export function drawSystemRegions(
       c.arc(cp.x, cp.y, mid, 0, Math.PI * 2);
       c.stroke();
 
-      // Secondary-colour territory border: thin, crisp rings at the band's
-      // inner + outer edges. Punchier than the fill (so the edge reads) but
-      // still fades with the region. Inner edge skipped for a disc (The
-      // Core, rInner≈0) where it would collapse to a dot at the star.
+      // Secondary-colour territory border: a THICK, FAINT rim just inside
+      // each band edge — reads as a soft territory boundary, not a hairline
+      // ring (a thin crisp stroke was indistinguishable from the map's
+      // orbit circles). Inset by half its width so the rim stays INSIDE the
+      // owner's band rather than straddling the border into the neighbour.
+      // Inner edge skipped for a disc (The Core, rInner≈0).
       if (owned && color2) {
-        const borderAlpha = Math.min(0.9, baseAlpha * 1.7);
+        const borderW = Math.min(10, Math.max(4, width * 0.38));
+        const borderAlpha = Math.min(0.42, baseAlpha * 1.1);
         c.strokeStyle = withOpacity(color2, borderAlpha);
-        c.lineWidth = 2;
+        c.lineWidth = borderW;
         c.beginPath();
-        c.arc(cp.x, cp.y, rOut, 0, Math.PI * 2);
+        c.arc(cp.x, cp.y, rOut - borderW / 2, 0, Math.PI * 2);
         c.stroke();
-        if (rIn > 4) {
+        if (rIn > borderW) {
           c.beginPath();
-          c.arc(cp.x, cp.y, rIn, 0, Math.PI * 2);
+          c.arc(cp.x, cp.y, rIn + borderW / 2, 0, Math.PI * 2);
           c.stroke();
         }
       }
