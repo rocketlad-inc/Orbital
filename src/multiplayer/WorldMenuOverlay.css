@@ -69,6 +69,7 @@
 .wm-settlements { display: flex; flex-wrap: wrap; gap: 6px 16px; }
 .wm-settlement { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; letter-spacing: 0.06em; }
 .wm-settlement-glyph { color: #6b8195; }
+.wm-settlement-hp { font-variant-numeric: tabular-nums; font-size: 10px; opacity: 0.95; }
 .wm-out { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; }
 .wm-label { font-size: 9px; letter-spacing: 0.2em; color: #6b8195; text-transform: uppercase; }
 .wm-yields { display: flex; gap: 5px; }

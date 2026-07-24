@@ -92,6 +92,26 @@
   font-weight: 500;
 }
 
+/* Hull integrity bar — sits just under the HP stat-row. */
+.sp-hpbar {
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+  margin: 2px 0 8px;
+}
+.sp-hpbar__fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.2s linear;
+}
+.sp-hpbar__fill--good { background: #6ee7b7; }
+.sp-hpbar__fill--mid  { background: #ffb84d; }
+.sp-hpbar__fill--low  { background: #ff5e5e; }
+@media (prefers-reduced-motion: reduce) {
+  .sp-hpbar__fill { transition: none; }
+}
+
 /* Configuration name in the CLASS row — clamp long design names so the
    row can't overflow; the class stays as a muted suffix. */
 .ship-config-name {

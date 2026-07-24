@@ -566,6 +566,11 @@ export const WorldMenuOverlay: React.FC = () => {
                 <span className="wm-settlement-glyph">■</span>
                 <EditableName value={myCity.name} maxLength={32} ariaLabel="Rename this city"
                   onSave={(next) => renameOwned(myCity.id, next)} />
+                <span className="wm-settlement-hp"
+                  style={{ color: hpColor(myCity.hp / Math.max(1, myCity.maxHp)) }}
+                  title="Structure integrity (current / max)">
+                  ◈ {Math.round(myCity.hp)}/{myCity.maxHp}
+                </span>
               </span>
             )}
             {myStation && (
@@ -573,6 +578,11 @@ export const WorldMenuOverlay: React.FC = () => {
                 <span className="wm-settlement-glyph">◆</span>
                 <EditableName value={myStation.name} maxLength={32} ariaLabel="Rename this station"
                   onSave={(next) => renameOwned(myStation.id, next)} />
+                <span className="wm-settlement-hp"
+                  style={{ color: hpColor(myStation.hp / Math.max(1, myStation.maxHp)) }}
+                  title="Structure integrity (current / max)">
+                  ◈ {Math.round(myStation.hp)}/{myStation.maxHp}
+                </span>
               </span>
             )}
           </div>
@@ -737,6 +747,11 @@ export const WorldMenuOverlay: React.FC = () => {
           </text>
           <rect x="18" y="20" width="94" height="5" rx="2" fill="#0c1219" stroke="#2a3d50" strokeWidth="1" />
           <rect x="18" y="20" width={94 * staHpRatio} height="5" rx="2" fill={hpColor(staHpRatio)} />
+          {/* current / max integrity, spelled out under the bar */}
+          <text x="65" y="33" textAnchor="middle"
+            style={{ font: '700 8px "Audiowide", monospace', letterSpacing: '0.06em', fill: hpColor(staHpRatio) }}>
+            {Math.round(readout.station.hp)}/{readout.station.maxHp}
+          </text>
         </svg>
       )}
 

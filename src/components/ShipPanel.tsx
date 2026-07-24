@@ -865,6 +865,20 @@ export const ShipPanel: React.FC = () => {
                 )}
               </span>
             </div>
+            {/* Visual health bar — same green/amber/red thresholds the
+                Fleet panel + map badges use, so hull damage reads at a
+                glance instead of parsing the number. */}
+            {(() => {
+              const ratio = maxHp > 0 ? Math.max(0, Math.min(1, currentHp / maxHp)) : 0;
+              const tier = ratio > 0.5 ? 'good' : ratio > 0.25 ? 'mid' : 'low';
+              return (
+                <div className="sp-hpbar" role="meter" aria-valuenow={Math.round(currentHp)}
+                     aria-valuemin={0} aria-valuemax={maxHp} aria-label="Hull integrity">
+                  <div className={`sp-hpbar__fill sp-hpbar__fill--${tier}`}
+                       style={{ width: `${ratio * 100}%` }} />
+                </div>
+              );
+            })()}
             {/* FUEL row removed — fuel left the economy
                 (DESIGN-identity-economy.md §1.1). Transfers are free, so
                 the number never moved and refuelling was decoration. */}
