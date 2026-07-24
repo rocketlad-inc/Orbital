@@ -23,6 +23,12 @@ export interface TransferIntent {
   dvNormal?: number;
   dvRadial?: number;
   fuelCost: number;
+  /** True = this is a fresh route that SUPERSEDES the ship's current one:
+   *  the server cancels the ship's existing committed/in-transit legs
+   *  before adding this one, so a redirected ship can't end up with two
+   *  live destinations (one player seeing it at the old target, the owner
+   *  at the new). Omit/false for CHAINED legs, which append to the route. */
+  replace?: boolean;
 }
 
 export interface BuildIntent {
@@ -342,6 +348,7 @@ export function MultiplayerActionsProvider({
           dv_normal: intent.dvNormal ?? 0,
           dv_radial: intent.dvRadial ?? 0,
           fuel_cost: intent.fuelCost,
+          replace: intent.replace === true,
         }),
       });
       if (res.ok) {

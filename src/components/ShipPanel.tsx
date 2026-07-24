@@ -195,39 +195,44 @@ export const ShipPanel: React.FC = () => {
     // alarm's in_transit→arrive transition, and the other clients' MP
     // reconstruction all agree exactly.
     setTransferError(null);
-    mpActions.transfer({
-      shipId: owningShip.id,
-      targetBodyId: preview.targetBodyId,
-      scheduledT: plan.startTick,
-      arrivalT: plan.arriveTick,
-      // dvPrograde is a Δv magnitude on the server; the maneuver-node
-      // display reconstructs `deltav = sqrt(prograde²+normal²+radial²)`
-      // and we want it to read the full burn cost, not half of it.
-      dvPrograde: plan.totalDv,
-      fuelCost: Math.round(plan.totalDv * 10),
-    }).then(res => {
-      if (!res.ok) {
-        setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
-      }
-    });
-
-    // Post each queued leg. These were chained off plannedTransit's
-    // arriveTick at enqueue time, so their scheduledT lines up with
-    // when the previous leg parks the ship.
-    for (const q of queuedAtCommit) {
-      mpActions.transfer({
+    // The primary leg REPLACES the ship's current route (cancels any prior
+    // committed/in-transit legs server-side). AWAIT it before posting the
+    // chained legs so the cancel lands first — otherwise a queued leg could
+    // race ahead of the replace and get cancelled with the old route.
+    (async () => {
+      const first = await mpActions.transfer({
         shipId: owningShip.id,
-        targetBodyId: q.targetBodyId,
-        scheduledT: q.startTick,
-        arrivalT: q.arriveTick,
-        dvPrograde: q.totalDv,
-        fuelCost: Math.round(q.totalDv * 10),
-      }).then(res => {
+        targetBodyId: preview.targetBodyId,
+        scheduledT: plan.startTick,
+        arrivalT: plan.arriveTick,
+        // dvPrograde is a Δv magnitude on the server; the maneuver-node
+        // display reconstructs `deltav = sqrt(prograde²+normal²+radial²)`
+        // and we want it to read the full burn cost, not half of it.
+        dvPrograde: plan.totalDv,
+        fuelCost: Math.round(plan.totalDv * 10),
+        replace: true,
+      });
+      if (!first.ok) {
+        setTransferError(humanizeMpError(first.code, first.error, 'transfer'));
+      }
+      // Post each queued leg. These were chained off plannedTransit's
+      // arriveTick at enqueue time, so their scheduledT lines up with
+      // when the previous leg parks the ship. replace:false → append.
+      for (const q of queuedAtCommit) {
+        const res = await mpActions.transfer({
+          shipId: owningShip.id,
+          targetBodyId: q.targetBodyId,
+          scheduledT: q.startTick,
+          arrivalT: q.arriveTick,
+          dvPrograde: q.totalDv,
+          fuelCost: Math.round(q.totalDv * 10),
+          replace: false,
+        });
         if (!res.ok) {
           setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
         }
-      });
-    }
+      }
+    })();
   };
 
   const handleRemoveQueuedTransfer = (index: number) => {
@@ -743,6 +748,7 @@ export const ShipPanel: React.FC = () => {
                           arrivalT: plan.arriveTick,
                           dvPrograde: plan.totalDv,
                           fuelCost: Math.round(plan.totalDv * 10),
+                          replace: true,
                         }).then(res => {
                           if (!res.ok) setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
                         });

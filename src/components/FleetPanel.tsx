@@ -292,6 +292,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
         arrivalT: plan.arriveTick,
         dvPrograde: plan.totalDv,
         fuelCost: Math.round(plan.totalDv * 10),
+        replace: true,
       }).then(res => {
         if (!res.ok) {
           rejections.push(humanizeMpError(res.code, res.error, 'transfer'));
@@ -337,6 +338,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           arrivalT: plan.arriveTick,
           dvPrograde: plan.totalDv,
           fuelCost: Math.round(plan.totalDv * 10),
+          replace: true,
         }).then(res => {
           if (!res.ok) {
             serverRejections.push(humanizeMpError(res.code, res.error, 'transfer'));

@@ -182,6 +182,24 @@ async function handleCommitTransfer(req, env, ctx) {
   // embeds the sequence (it's opaque to the client — only round-tripped
   // for cancel), so a timestamp+random id keeps the PRIMARY KEY unique
   // without needing to know the sequence up front.
+  // A fresh route SUPERSEDES the ship's current one. Without this, each
+  // /transfer just appended a node, so re-ordering an already-moving ship
+  // left BOTH legs live — the alarm and different clients then disagreed
+  // on where it was going (player report: owner redirected a colony from
+  // Deimos to Umbriel, but another player kept seeing it inbound to
+  // Deimos off the stale node). Cancel the ship's existing committed/
+  // in-transit legs FIRST. Chained legs post with replace omitted/false
+  // and are awaited after this one, so they append cleanly instead of
+  // cancelling each other.
+  if (body.replace === true) {
+    await env.DB
+      .prepare(
+        `UPDATE game_ship_nodes SET status = 'cancelled'
+          WHERE ship_id = ? AND status IN ('committed','in_transit')`,
+      )
+      .bind(shipId)
+      .run();
+  }
   const nodeId = `${shipId}:n${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   await env.DB
     .prepare(
