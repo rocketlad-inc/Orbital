@@ -57,7 +57,7 @@ import {
 import { drainVisibleFx } from '../render/pendingFx';
 import { bodyPosition } from '../physics/orbitalMechanics';
 import { torchPositionFromSamples } from '../physics/torchTransfer';
-import { COLORS, withOpacity } from '../render/colors';
+import { COLORS, withOpacity, lighten } from '../render/colors';
 import { shipWorldPosition } from '../game/combat';
 import { getShipClass } from '../game/shipClasses';
 import { computeIncomingThreats, threatenedBodyIds } from '../game/threats';
@@ -100,14 +100,19 @@ const TOUCH_HIT_PADDING = isCoarsePointer() ? 16 : 0;
  * player can still track them across the zoomed-out view; only the
  * stationary at-body clusters collapse.
  */
-const SHIP_ICON_MIN_SPANS = 18;
+const SHIP_ICON_MIN_SPANS = 24;
 /** Once individual ships appear, they don't pop straight to full size —
  *  they ramp from ORBIT_SHIP_MIN_SCALE at the transition up to full at
  *  SHIP_ICON_FULL_SPANS, so a planet you're diving toward grows its ships
  *  in rather than showing a wall of big hulls the instant they appear.
  *  Transit and selected ships always draw full (see drawShip). */
-const SHIP_ICON_FULL_SPANS = 34;
+const SHIP_ICON_FULL_SPANS = 40;
 const ORBIT_SHIP_MIN_SCALE = 0.5;
+/** Crossfade band above the badge threshold: over these spans, parked
+ *  ships fade OUT while the owner-coloured count badges fade IN, so the
+ *  ships→numbers transition is a dissolve rather than a pop. Below
+ *  SHIP_ICON_MIN_SPANS badges are solid and individual hulls are gone. */
+const BADGE_FADE_SPANS = 6;
 /** A star-orbiter whose whole moon system spans fewer than this many
  *  screen pixels collapses its bodies' ship badges into a single
  *  SYSTEM-level count (its moons would overlap into an unreadable smear
@@ -1021,9 +1026,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
     // Per-body cluster accumulator. Active only at low zoom — see
     // SHIP_ICON_MIN_SPANS. Counts PARKED (non-transit) ships per
-    // body so we can render a single "N⌖" badge next to the body
-    // instead of N overlapping triangles + labels.
+    // body PER FACTION, so the badge tier can render one coloured
+    // segment per fleet owner instead of N overlapping triangles.
     const clusterMode = spans < SHIP_ICON_MIN_SPANS;
+    // Crossfade: 0 at spans ≥ MIN+BAND (pure ships), 1 at spans ≤ MIN
+    // (pure badges). In between, ships draw at (1-fade) alpha while the
+    // coloured badges draw at fade alpha — the owner colours literally
+    // fade in as the hulls dissolve into numbers.
+    const badgeFade = Math.max(0, Math.min(1,
+      (SHIP_ICON_MIN_SPANS + BADGE_FADE_SPANS - spans) / BADGE_FADE_SPANS));
     // Zoom-driven size for parked ships: small when they first appear at
     // the transition, ramping to full by SHIP_ICON_FULL_SPANS so a planet
     // grows its ships in as you dive toward it.
@@ -1032,11 +1043,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       Math.min(1, (spans - SHIP_ICON_MIN_SPANS) / (SHIP_ICON_FULL_SPANS - SHIP_ICON_MIN_SPANS)
         * (1 - ORBIT_SHIP_MIN_SCALE) + ORBIT_SHIP_MIN_SCALE),
     );
-    const bodyClusters = new Map<string, { mine: number; other: number }>();
-    const bumpCluster = (bodyId: string, mine: boolean) => {
-      const cur = bodyClusters.get(bodyId) ?? { mine: 0, other: 0 };
-      if (mine) cur.mine += 1; else cur.other += 1;
-      bodyClusters.set(bodyId, cur);
+    const bodyClusters = new Map<string, Map<string, number>>();
+    const bumpCluster = (bodyId: string, factionId: string) => {
+      let cur = bodyClusters.get(bodyId);
+      if (!cur) { cur = new Map(); bodyClusters.set(bodyId, cur); }
+      cur.set(factionId, (cur.get(factionId) ?? 0) + 1);
     };
 
     // System grouping helpers — shared by the ship loop's transit-collapse
@@ -1068,8 +1079,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     };
     // Transit ships hopping WITHIN one tight, overlapping system (moon to
     // moon) — collapsed into that system's badge instead of drawn as a
-    // full-size hull clashing over the smear. Keyed by system anchor.
-    const systemTransitCounts = new Map<string, { mine: number; other: number }>();
+    // full-size hull clashing over the smear. Keyed by system anchor,
+    // counted per faction like the parked clusters.
+    const systemTransitCounts = new Map<string, Map<string, number>>();
 
     // Draw ships
     for (const ship of gameState.ships) {
@@ -1085,17 +1097,19 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const showOrbitRing = isSelected || isShipHovered;
       const formation = formationMap.get(ship.id);
 
-      // Cluster collapse: at low zoom, skip the individual draw for
-      // parked ships and accumulate a count under their parent body.
+      // Cluster collapse: at low zoom, parked ships accumulate a count
+      // under their parent body. In the crossfade band the badge AND
+      // the hull both render (badge fading in, hull fading out below);
+      // only past the threshold does the individual draw stop entirely.
       // In-transit ships keep drawing — their trajectory arcs spread
       // them out so clustering at a body wouldn't be coherent — and
       // the selected ship stays visible so the player can find what
       // they picked.
-      if (clusterMode && !ship.transit && !isSelected) {
+      if (badgeFade > 0.01 && !ship.transit && !isSelected) {
         const bodyId = ship.orbit?.parentBodyId;
         if (bodyId) {
-          bumpCluster(bodyId, ship.ownedBy === 'player');
-          continue;
+          bumpCluster(bodyId, ship.ownedBy);
+          if (clusterMode) continue;   // fully collapsed — badge only
         }
       }
 
@@ -1110,12 +1124,21 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         if (originAnchor && originAnchor === destAnchor
             && (childrenOf2.get(originAnchor)?.length ?? 0) > 0
             && systemPx(originAnchor) < SYSTEM_BADGE_MAX_PX) {
-          const cur = systemTransitCounts.get(originAnchor) ?? { mine: 0, other: 0 };
-          if (ship.ownedBy === 'player') cur.mine += 1; else cur.other += 1;
-          systemTransitCounts.set(originAnchor, cur);
+          let cur = systemTransitCounts.get(originAnchor);
+          if (!cur) { cur = new Map(); systemTransitCounts.set(originAnchor, cur); }
+          cur.set(ship.ownedBy, (cur.get(ship.ownedBy) ?? 0) + 1);
           continue;
         }
       }
+
+      // Crossfade band: parked hulls dissolve as the badges take over.
+      // globalAlpha multiplies through drawShip's fills (its internal
+      // overrides are all `dressed`-gated, and dressed is impossible at
+      // these spans), so one outer alpha fades the whole sprite.
+      const parkedFadeAlpha = (!ship.transit && !isSelected) ? 1 - badgeFade : 1;
+      if (parkedFadeAlpha <= 0.01) continue;
+      const prevShipAlpha = ctx.globalAlpha;
+      if (parkedFadeAlpha < 1) ctx.globalAlpha = prevShipAlpha * parkedFadeAlpha;
 
       if (ship.transit) {
         // Torch transit — preferred path post-migration. Selected ship
@@ -1227,6 +1250,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         drawShip(ship, renderContext, isSelected, formation, orbitShipScale);
         if (isSelected) drawApsisMarkers(ship, renderContext);
       }
+      ctx.globalAlpha = prevShipAlpha;   // undo the crossfade-band fade
     }
 
     // Ship-count badges — two LOD tiers below the individual-ship zoom.
@@ -1235,74 +1259,99 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // moon system shrinks to a tight smear (systemPx < SYSTEM_BADGE_MAX_PX)
     // it collapses to ONE SYSTEM badge at the planet — kept visible even
     // over the wash, since per-body would be an unreadable pile there.
-    if (clusterMode && (bodyClusters.size > 0 || systemTransitCounts.size > 0)) {
+    if (badgeFade > 0.01 && (bodyClusters.size > 0 || systemTransitCounts.size > 0)) {
       const c2d = ctx;
       // Seed the per-system aggregate with intra-system transit ships (moon-
       // to-moon hoppers collapsed in the ship loop above), then fold in the
-      // parked per-body counts.
-      const sysAgg = new Map<string, { mine: number; other: number }>();
+      // parked per-body counts. Everything is per-faction now, so a badge
+      // can split into one coloured segment per fleet owner.
+      const foldInto = (dst: Map<string, number>, src: Map<string, number>) => {
+        for (const [fid, n] of src) dst.set(fid, (dst.get(fid) ?? 0) + n);
+      };
+      const sysAgg = new Map<string, Map<string, number>>();
       for (const [anchor, counts] of systemTransitCounts) {
-        sysAgg.set(anchor, { mine: counts.mine, other: counts.other });
+        const dst = new Map<string, number>();
+        foldInto(dst, counts);
+        sysAgg.set(anchor, dst);
       }
-      const perBody: Array<{ bodyId: string; mine: number; other: number }> = [];
+      const perBody: Array<{ bodyId: string; counts: Map<string, number> }> = [];
       for (const [bodyId, counts] of bodyClusters) {
         const anchor = anchorOf(bodyId) ?? bodyId;
         const hasMoons = (childrenOf2.get(anchor)?.length ?? 0) > 0;
         if (hasMoons && systemPx(anchor) < SYSTEM_BADGE_MAX_PX) {
-          const cur = sysAgg.get(anchor) ?? { mine: 0, other: 0 };
-          cur.mine += counts.mine; cur.other += counts.other;
-          sysAgg.set(anchor, cur);
+          let cur = sysAgg.get(anchor);
+          if (!cur) { cur = new Map(); sysAgg.set(anchor, cur); }
+          foldInto(cur, counts);
         } else {
-          perBody.push({ bodyId, mine: counts.mine, other: counts.other });
+          perBody.push({ bodyId, counts });
         }
       }
 
-      // Bigger, bolder, higher-contrast pill: bright tier text on a near-
-      // black fill with a 2px bright border. System badges run larger.
-      const drawBadge = (cx: number, cy: number, mine: number, other: number, big: boolean, alpha: number) => {
-        const total = mine + other;
-        if (total <= 0 || alpha <= 0.01) return;
-        let text = '#8bf5ea', border = '#4ecdc4';                       // mine-only
-        if (mine === 0)     { text = '#ff9d9d'; border = '#ff5e5e'; }    // enemy-only
-        else if (other > 0) { text = '#ffd889'; border = '#ffb84d'; }    // mixed
+      // Owner colour for a badge segment — same rule the combat FX layer
+      // uses: the faction's primary, falling back to cyan for the viewer
+      // and red for anyone else.
+      const badgeColorOf = (fid: string): string => {
+        const f = gameState.factions.find(fa => fa.id === fid);
+        if (f?.color) return f.color;
+        return fid === 'player' ? COLORS.neutral : COLORS.danger;
+      };
+      // Segment order: the viewer's fleet leads, then everyone else in a
+      // stable id order so segments don't reshuffle frame to frame.
+      const segOrder = (a: [string, number], b: [string, number]) => {
+        if (a[0] === 'player') return -1;
+        if (b[0] === 'player') return 1;
+        return a[0] < b[0] ? -1 : 1;
+      };
+
+      // One pill PER FACTION present, laid out left-to-right with a small
+      // gap — a mixed body reads as "▸3 ▸2" in the two fleets' own
+      // colours instead of one amber "mixed" pill. Near-black fill keeps
+      // the coloured border + count legible over the wash.
+      const drawBadge = (cx: number, cy: number, counts: Map<string, number>, big: boolean, alpha: number) => {
+        if (alpha <= 0.01 || counts.size === 0) return;
         const fs = big ? 15 : 13;
+        const padX = 6, gap = 3;
+        const pillH = fs + 8;
         c2d.save();
         c2d.globalAlpha = c2d.globalAlpha * alpha;
         // Concrete stack — canvas ctx.font ignores CSS var(), so the old
         // var(--font-mono,…) silently fell back to default sans-serif.
-        // Audiowide to match the rest of the map/app (weight is a no-op for
-        // single-weight Audiowide; kept for the sans-serif fallback path).
         c2d.font = `800 ${fs}px 'Audiowide', sans-serif`;
         c2d.textAlign = 'left';
         c2d.textBaseline = 'middle';
-        const label = `▸${total}`;
-        const padX = 6;
-        const pillW = c2d.measureText(label).width + padX * 2;
-        const pillH = fs + 8;
+        const entries = [...counts.entries()].filter(([, n]) => n > 0).sort(segOrder);
+        let x = cx;
         const anyCtx = c2d as any;
-        c2d.beginPath();
-        if (typeof anyCtx.roundRect === 'function') anyCtx.roundRect(cx, cy - pillH / 2, pillW, pillH, 5);
-        else anyCtx.rect(cx, cy - pillH / 2, pillW, pillH);
-        c2d.fillStyle = 'rgba(4, 8, 14, 0.96)';
-        c2d.fill();
-        c2d.lineWidth = 2;
-        c2d.strokeStyle = border;
-        c2d.stroke();
-        c2d.fillStyle = text;
-        c2d.fillText(label, cx + padX, cy + 0.5);
+        for (const [fid, n] of entries) {
+          const color = badgeColorOf(fid);
+          const label = `▸${n}`;
+          const pillW = c2d.measureText(label).width + padX * 2;
+          c2d.beginPath();
+          if (typeof anyCtx.roundRect === 'function') anyCtx.roundRect(x, cy - pillH / 2, pillW, pillH, 5);
+          else anyCtx.rect(x, cy - pillH / 2, pillW, pillH);
+          c2d.fillStyle = 'rgba(4, 8, 14, 0.96)';
+          c2d.fill();
+          c2d.lineWidth = 2;
+          c2d.strokeStyle = color;
+          c2d.stroke();
+          c2d.fillStyle = lighten(color, 1.45);
+          c2d.fillText(label, x + padX, cy + 0.5);
+          x += pillW + gap;
+        }
         c2d.restore();
       };
 
-      // Per-body badges fade out under the region wash (as before).
-      const bodyAlpha = 1 - regionFade;
+      // Per-body badges fade out under the region wash (as before), and
+      // fade IN through the ships→numbers crossfade band.
+      const bodyAlpha = (1 - regionFade) * badgeFade;
       if (bodyAlpha > 0.01) {
-        for (const { bodyId, mine, other } of perBody) {
+        for (const { bodyId, counts } of perBody) {
           const body = bodyById2.get(bodyId);
           if (!body) continue;
           const bp = bodyPosition(body, renderTick(), gameState.bodies);
           const cp = worldToCanvas(bp.x, bp.y, renderContext);
           const radius = Math.max(3, (body.radius ?? 4) * camera.scale);
-          drawBadge(cp.x + radius + 6, cp.y - radius - 6, mine, other, false, bodyAlpha);
+          drawBadge(cp.x + radius + 6, cp.y - radius - 6, counts, false, bodyAlpha);
         }
       }
       // System badges: visible even when the wash is full — that IS the read.
@@ -1312,7 +1361,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const bp = bodyPosition(body, renderTick(), gameState.bodies);
         const cp = worldToCanvas(bp.x, bp.y, renderContext);
         const radius = Math.max(4, (body.radius ?? 5) * camera.scale);
-        drawBadge(cp.x + radius + 7, cp.y - radius - 7, counts.mine, counts.other, true, 1);
+        drawBadge(cp.x + radius + 7, cp.y - radius - 7, counts, true, badgeFade);
       }
     }
 
