@@ -154,10 +154,33 @@ const ENGAGED_WINDOW_TICKS = 3;
 // refuses to emit a bolt with no target.
 /** Bolt flight time — one shot crosses the gap in this long. */
 const BOLT_MS = 600;
-/** Silence between one ship's shot landing and the next ship's turn. */
+/** Reload beat after each shot lands, per ship. */
 const BEAT_MS = 500;
-/** One shooter's full turn in the round-robin. */
+/** One combatant's full fire cycle: bolt + reload. EVERY engaged
+ *  combatant runs this cycle continuously on its own phase offset —
+ *  ships in combat fire 100% of the time, staggered so a 12-ship brawl
+ *  reads as crossfire, not a metronome or a single-file queue. The
+ *  cadence is deliberately slow: this loop plays for HOURS between
+ *  ticks, and it must be watchable at hour three exactly as at second
+ *  one. */
 const SLOT_MS = BOLT_MS + BEAT_MS;
+/** Muzzle bloom duration at the start of each bolt. */
+const MUZZLE_MS = 130;
+/** Impact flash duration after each bolt lands (inside the beat). */
+const IMPACT_MS = 220;
+
+/** Bounded cache of hashStr(id) so per-frame phase/target math never
+ *  re-hashes strings in the hot loop. */
+const idHashCache = new Map<string, number>();
+function idHash(id: string): number {
+  let h = idHashCache.get(id);
+  if (h === undefined) {
+    if (idHashCache.size > 4096) idHashCache.clear();
+    h = hashStr(id);
+    idHashCache.set(id, h);
+  }
+  return h;
+}
 /** One engaged combatant — a ship OR a settlement. Settlements return
  *  fire server-side (SETTLEMENT_DMG + weapons modules) and get their
  *  last_combat_tick stamped just like ships; the FX layer treating
@@ -390,103 +413,259 @@ export function drawEngagementFire(
   }
   if (engagedScratch.length === 0) return;
 
-  // Deterministic round-robin order: group by body, then combatant id,
-  // so every client sees the same firing sequence.
-  engagedScratch.sort((a, b) => {
-    if (a.bodyId !== b.bodyId) return a.bodyId < b.bodyId ? -1 : 1;
-    return a.id < b.id ? -1 : 1;
-  });
-
   const c = rc.ctx;
   let opened = false;
 
-  // Walk each body's run of engaged shooters. Exactly ONE combatant per
-  // battle fires at a time: the cycle is n slots of (bolt + beat), and
-  // the current wall-clock position in the cycle picks whose turn it
-  // is — one fires, beat, the next fires, repeat. Cycle phase is
-  // seeded per body so separate battles aren't in lockstep.
-  let i = 0;
-  while (i < engagedScratch.length) {
-    const bodyId = engagedScratch[i].bodyId;
-    let j = i;
-    while (j < engagedScratch.length && engagedScratch[j].bodyId === bodyId) j++;
-    const n = j - i;
+  // EVERY engaged combatant fires continuously on its own SLOT_MS cycle,
+  // phase-offset by its id hash — the whole fleet shoots 100% of the time
+  // it's in combat, staggered so it reads as crossfire (per-ship phases,
+  // never a synchronized strobe). Replaces the old one-shooter-at-a-time
+  // round robin, which left N-1 ships of a brawl visibly idle.
+  for (const shooter of engagedScratch) {
+    const within = (nowMs + (idHash(shooter.id) % SLOT_MS)) % SLOT_MS;
+    const firing = within < BOLT_MS;
+    const impacting = !firing && within < BOLT_MS + IMPACT_MS;
+    if (!firing && !impacting) continue;         // mid-reload
 
-    const cycle = n * SLOT_MS;
-    const phase = (nowMs + (hashStr(bodyId) % 10000)) % cycle;
-    const slot = Math.floor(phase / SLOT_MS);
-    const within = phase - slot * SLOT_MS;
-
-    if (within < BOLT_MS) {
-      const shooter = engagedScratch[i + slot];
-      // Deterministic target: lowest-id co-located hostile. Ships may
-      // target hostile ships OR settlements (bombardment); settlements
-      // only ever return fire at ships — mirroring the server's combat
-      // rules so the visual never invents a station-vs-station duel.
-      let tShip: Ship | null = null;
-      let tStl: Settlement | null = null;
-      let bestId: string | null = null;
-      for (const s of ships) {
-        if (s.id === shooter.id || s.transit) continue;
-        if (s.orbit.parentBodyId !== bodyId) continue;
-        if (s.ownedBy === shooter.ownedBy) continue;
-        if (bestId === null || s.id < bestId) { tShip = s; tStl = null; bestId = s.id; }
-      }
-      if (shooter.ship) {
-        for (const stl of settlements) {
-          if (stl.bodyId !== bodyId || stl.hp <= 0) continue;
-          if (stl.ownedBy === shooter.ownedBy) continue;
-          if (bestId === null || stl.id < bestId) { tStl = stl; tShip = null; bestId = stl.id; }
-        }
-      }
-      if (tShip || tStl) {
-        const fp = shooter.ship
-          ? shipCanvasPos(shooter.ship, rc, transitCanvasPos)
-          : settlementCanvasPos(shooter.stl!, rc);
-        const tpNow = tShip
-          ? shipCanvasPos(tShip, rc, transitCanvasPos)
-          : settlementCanvasPos(tStl!, rc);
-        if (fp && tpNow) {
-          if (!opened) {
-            c.save();
-            c.globalCompositeOperation = 'lighter';
-            opened = true;
-          }
-          // Bolt travels shooter -> target over BOLT_MS; the eye reads
-          // direction, then the beat gives it room to land.
-          const k = within / BOLT_MS;
-          // Lead the aim by the target's motion over the bolt's REMAINING
-          // flight — as k→1 the lead fades to 0 so the head lands on the
-          // hull. Settlement targets drift slowly; no lead needed.
-          const lead = tShip
-            ? shipLeadCanvas(tShip, rc, BOLT_MS * (1 - k))
-            : { dx: 0, dy: 0 };
-          const tp = { x: tpNow.x + lead.dx, y: tpNow.y + lead.dy };
-          const alpha = 1 - k * 0.6;
-          const color = factionPrimary(rc, shooter.ownedBy);
-          const headX = fp.x + (tp.x - fp.x) * k;
-          const headY = fp.y + (tp.y - fp.y) * k;
-          const tailK = Math.max(0, k - 0.3);
-          const tailX = fp.x + (tp.x - fp.x) * tailK;
-          const tailY = fp.y + (tp.y - fp.y) * tailK;
-
-          c.strokeStyle = withOpacity(color, alpha);
-          c.lineWidth = 2;
-          c.beginPath();
-          c.moveTo(tailX, tailY);
-          c.lineTo(headX, headY);
-          c.stroke();
-
-          c.fillStyle = withOpacity(lighten(color, 1.5), alpha);
-          c.beginPath();
-          c.arc(headX, headY, 2, 0, Math.PI * 2);
-          c.fill();
-        }
+    // Target: deterministic per shooter (seeded argmax over co-located
+    // hostiles), so different shooters spread their fire instead of all
+    // hammering the lowest id — and every client picks the same target.
+    // Ships may hit hostile ships OR settlements (bombardment);
+    // settlements only return fire at ships — mirrors the server.
+    let tShip: Ship | null = null;
+    let tStl: Settlement | null = null;
+    let bestScore = -1;
+    const sHash = idHash(shooter.id);
+    for (const s of ships) {
+      if (s.id === shooter.id || s.transit) continue;
+      if (s.orbit.parentBodyId !== shooter.bodyId) continue;
+      if (s.ownedBy === shooter.ownedBy) continue;
+      const score = (sHash ^ idHash(s.id)) >>> 0;
+      if (score > bestScore) { tShip = s; tStl = null; bestScore = score; }
+    }
+    if (shooter.ship) {
+      for (const stl of settlements) {
+        if (stl.bodyId !== shooter.bodyId || stl.hp <= 0) continue;
+        if (stl.ownedBy === shooter.ownedBy) continue;
+        const score = (sHash ^ idHash(stl.id)) >>> 0;
+        if (score > bestScore) { tStl = stl; tShip = null; bestScore = score; }
       }
     }
-    i = j;
+    if (!tShip && !tStl) continue;
+
+    const fp = shooter.ship
+      ? shipCanvasPos(shooter.ship, rc, transitCanvasPos)
+      : settlementCanvasPos(shooter.stl!, rc);
+    const tpNow = tShip
+      ? shipCanvasPos(tShip, rc, transitCanvasPos)
+      : settlementCanvasPos(tStl!, rc);
+    if (!fp || !tpNow) continue;
+
+    if (!opened) {
+      c.save();
+      c.globalCompositeOperation = 'lighter';
+      opened = true;
+    }
+    const color = factionPrimary(rc, shooter.ownedBy);
+
+    if (firing) {
+      // Bolt travels shooter -> target over BOLT_MS; the eye reads
+      // direction, then the beat gives it room to land.
+      const k = within / BOLT_MS;
+      // Lead the aim by the target's motion over the bolt's REMAINING
+      // flight — as k→1 the lead fades to 0 so the head lands on the
+      // hull. Settlement targets drift slowly; no lead needed.
+      const lead = tShip
+        ? shipLeadCanvas(tShip, rc, BOLT_MS * (1 - k))
+        : { dx: 0, dy: 0 };
+      const tp = { x: tpNow.x + lead.dx, y: tpNow.y + lead.dy };
+      const alpha = 1 - k * 0.6;
+      const headX = fp.x + (tp.x - fp.x) * k;
+      const headY = fp.y + (tp.y - fp.y) * k;
+      const tailK = Math.max(0, k - 0.3);
+      const tailX = fp.x + (tp.x - fp.x) * tailK;
+      const tailY = fp.y + (tp.y - fp.y) * tailK;
+
+      // Muzzle bloom — a brief hot flash at the gun as the bolt leaves.
+      if (within < MUZZLE_MS) {
+        const ma = 1 - within / MUZZLE_MS;
+        const ang = Math.atan2(tp.y - fp.y, tp.x - fp.x);
+        const mx = fp.x + Math.cos(ang) * 4;
+        const my = fp.y + Math.sin(ang) * 4;
+        c.fillStyle = withOpacity('#ffdca8', 0.55 * ma);
+        c.beginPath();
+        c.arc(mx, my, 5, 0, Math.PI * 2);
+        c.fill();
+        c.fillStyle = withOpacity('#fff0c8', 0.9 * ma);
+        c.beginPath();
+        c.arc(mx, my, 2.2, 0, Math.PI * 2);
+        c.fill();
+      }
+
+      c.strokeStyle = withOpacity(color, alpha);
+      c.lineWidth = 2;
+      c.beginPath();
+      c.moveTo(tailX, tailY);
+      c.lineTo(headX, headY);
+      c.stroke();
+
+      c.fillStyle = withOpacity(lighten(color, 1.5), alpha);
+      c.beginPath();
+      c.arc(headX, headY, 2, 0, Math.PI * 2);
+      c.fill();
+    } else {
+      // Impact — expanding ring + seeded shards where the bolt just
+      // landed. Pure cosmetic ("a shot struck here"), distinct from the
+      // damage flash, which only plays when HP actually moved at a tick.
+      const ik = (within - BOLT_MS) / IMPACT_MS;
+      const ia = 1 - ik;
+      const r = 3 + 8 * ik;
+      c.strokeStyle = withOpacity(color, 0.7 * ia);
+      c.lineWidth = 1.5;
+      c.beginPath();
+      c.arc(tpNow.x, tpNow.y, r, 0, Math.PI * 2);
+      c.stroke();
+      const rng = mulberry32(idHash(shooter.id) ^ idHash(tShip ? tShip.id : tStl!.id));
+      c.fillStyle = withOpacity('#ffdcaa', 0.8 * ia);
+      for (let sp = 0; sp < 4; sp++) {
+        const ang = rng() * Math.PI * 2;
+        c.beginPath();
+        c.arc(tpNow.x + Math.cos(ang) * r * 1.25, tpNow.y + Math.sin(ang) * r * 1.25, 1.2, 0, Math.PI * 2);
+        c.fill();
+      }
+    }
   }
   if (opened) c.restore();
+}
+
+// ============================================================
+// 1.5 BATTLE DAMAGE — persistent "damage was TAKEN" state
+// ============================================================
+//
+// The damage flash is a 900ms halo at the instant HP moves — one blink
+// every ~3 hours at 1h/tick, which nobody catches. So damage is ALSO
+// rendered as a STATE: any combatant whose last_damaged_tick (server
+// stamp, applied as damage lands) is within DAMAGE_SHOW_TICKS keeps
+// visible fire + drifting smoke on the hull for that whole window. A
+// glance at any point in the hour after a volley reads "this ship WAS
+// hit" — no need to witness the hit itself. Crippled hulls (<34% hp)
+// stay lit regardless, at reduced severity: they need repair and look
+// like it.
+//
+// Staggered ignition: when several ships take damage on the same tick,
+// each hull catches fire on its own id-seeded delay (≤550ms) and ramps
+// in over ~450ms — a damaged fleet ignites ship-by-ship, never all on
+// one frame. Flicker/smoke phases are id-seeded too, so no two hulls
+// burn in lockstep.
+
+/** How long (in ticks, against the fractional display tick) the
+ *  damaged state persists after a hit. */
+const DAMAGE_SHOW_TICKS = 1;
+/** Staggered-ignition timing: per-ship delay cap and ramp-in length. */
+const IGNITE_DELAY_MS = 550;
+const IGNITE_RAMP_MS = 450;
+/** entityId -> { tick, sinceMs }: first wall-clock observation of each
+ *  damage stamp, so ignition ramps from when THIS client saw the hit.
+ *  Bounded like engagementSeen. */
+const damageSeen = new Map<string, { tick: number; sinceMs: number }>();
+
+function battleDamageRamp(id: string, dmgTick: number, nowMs: number): number {
+  let seen = damageSeen.get(id);
+  if (!seen || seen.tick !== dmgTick) {
+    if (damageSeen.size > 600) damageSeen.clear();
+    seen = { tick: dmgTick, sinceMs: nowMs };
+    damageSeen.set(id, seen);
+  }
+  const phaseFrac = (idHash(id) % 1000) / 1000;
+  return Math.min(1, Math.max(0, (nowMs - (seen.sinceMs + phaseFrac * IGNITE_DELAY_MS)) / IGNITE_RAMP_MS));
+}
+
+/** One burning hull/settlement: 1-3 flickering fires + smoke puffs
+ *  drifting off the anchor. Cheap — arcs only, no gradients; additive
+ *  fires over normal-blend smoke. Severity 0..1 scales everything. */
+function drawBurn(
+  c: CanvasRenderingContext2D,
+  x: number, y: number, baseR: number,
+  sev: number, nowMs: number, seed: number,
+): void {
+  const ph = ((seed % 1000) / 1000) * Math.PI * 2;
+  // Smoke first (normal blend, under the fire) — puffs cycling outward.
+  const puffs = 2 + Math.round(sev);
+  for (let i = 0; i < puffs; i++) {
+    const drift = ((nowMs / 1400) + i / puffs + ph) % 1;
+    const sx = x + Math.cos(ph + i * 2.4) * baseR * 0.3 + drift * baseR * 0.5;
+    const sy = y - drift * baseR * 1.1;
+    c.fillStyle = `rgba(48, 54, 62, ${((1 - drift) * 0.25 * sev).toFixed(3)})`;
+    c.beginPath();
+    c.arc(sx, sy, baseR * (0.22 + drift * 0.3), 0, Math.PI * 2);
+    c.fill();
+  }
+  // Fires (additive) — slow flicker, per-entity phase.
+  c.save();
+  c.globalCompositeOperation = 'lighter';
+  const fires = 1 + Math.round(sev * 2);
+  for (let i = 0; i < fires; i++) {
+    const a = ph + i * 2.3;
+    const fx = x + Math.cos(a) * baseR * 0.4;
+    const fy = y + Math.sin(a) * baseR * 0.4;
+    const f = 0.55 + 0.45 * Math.sin(nowMs / 130 + i * 2 + ph);
+    const r = baseR * (0.28 + 0.18 * sev) * (0.7 + 0.5 * f);
+    c.fillStyle = `rgba(255, 150, 50, ${(0.4 * f * sev).toFixed(3)})`;
+    c.beginPath();
+    c.arc(fx, fy - r * 0.25, r, 0, Math.PI * 2);
+    c.fill();
+    c.fillStyle = `rgba(255, 240, 190, ${(0.75 * f * sev).toFixed(3)})`;
+    c.beginPath();
+    c.arc(fx, fy - r * 0.25, r * 0.4, 0, Math.PI * 2);
+    c.fill();
+  }
+  c.restore();
+}
+
+/**
+ * Draw the persistent battle-damage state for every recently-hit or
+ * crippled combatant. Called from MapCanvas after ships/settlements are
+ * drawn, so the burn sits on top of the hull it belongs to. Stateless
+ * per frame apart from the bounded first-observation map.
+ */
+export function drawBattleDamageStates(
+  rc: RenderContext,
+  ships: Ship[],
+  settlements: Settlement[],
+  nowMs: number,
+  transitCanvasPos?: Map<string, { x: number; y: number }>,
+): void {
+  const c = rc.ctx;
+  for (const s of ships) {
+    const maxHp = s.hpMax ?? 0;
+    if (maxHp <= 0 || s.hp === undefined) continue;
+    const frac = s.hp / maxHp;
+    const dmgTick = s.lastDamagedTick;
+    const recent = dmgTick !== undefined && rc.t - dmgTick < DAMAGE_SHOW_TICKS;
+    const crippled = frac < 0.34;
+    if (!recent && !crippled) continue;
+    const cp = shipCanvasPos(s, rc, transitCanvasPos);
+    if (!cp) continue;
+    const sev = Math.max(recent ? 0.5 : 0.25, 1 - frac);
+    const ramp = recent ? battleDamageRamp(s.id, dmgTick!, nowMs) : 1;
+    if (ramp <= 0.01) continue;
+    const baseR = rc.shipHitboxes?.get(s.id)?.r ?? 8;
+    drawBurn(c, cp.x, cp.y, Math.max(6, baseR * 0.8), sev * ramp, nowMs, idHash(s.id));
+  }
+  for (const stl of settlements) {
+    if (stl.hp <= 0 || !stl.maxHp) continue;
+    const frac = stl.hp / stl.maxHp;
+    const dmgTick = stl.lastDamagedTick;
+    const recent = dmgTick !== undefined && rc.t - dmgTick < DAMAGE_SHOW_TICKS;
+    const crippled = frac < 0.34;
+    if (!recent && !crippled) continue;
+    const cp = settlementCanvasPos(stl, rc);
+    if (!cp) continue;
+    const sev = Math.max(recent ? 0.5 : 0.25, 1 - frac);
+    const ramp = recent ? battleDamageRamp(stl.id, dmgTick!, nowMs) : 1;
+    if (ramp <= 0.01) continue;
+    drawBurn(c, cp.x, cp.y, 11, sev * ramp, nowMs, idHash(stl.id));
+  }
 }
 
 // ============================================================

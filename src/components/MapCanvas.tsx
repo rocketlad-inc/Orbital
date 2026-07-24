@@ -45,6 +45,7 @@ import {
   spawnTracer,
   drawTracers,
   drawEngagementFire,
+  drawBattleDamageStates,
   drawDetonations,
   spawnArrivalFlash,
   drawArrivalFlashes,
@@ -1441,6 +1442,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // ships visibly pound them.
     drawEngagementFire(
       renderContext, gameState.ships, gameState.settlements, nowMs, nowTick,
+      transitShipCanvasPosRef.current,
+    );
+    // Persistent battle damage: fire + smoke linger on anything hit
+    // within the last tick (and on crippled hulls), so "damage was
+    // taken" reads at a glance — the tick-instant flash alone is a
+    // blink nobody catches at 1h/tick. Ignition staggers per ship.
+    drawBattleDamageStates(
+      renderContext, gameState.ships, gameState.settlements, nowMs,
       transitShipCanvasPosRef.current,
     );
     drawDetonations(renderContext, nowMs);

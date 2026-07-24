@@ -1917,6 +1917,30 @@ export function drawShip(
     trimColor,
   );
   if (icon) {
+    // Engine idle glow — a soft thruster pulse at the stern so parked
+    // fleets read as alive, not parked cardboard. Dressed zoom only
+    // (far-out map stays clean); phase seeded per hull so a fleet
+    // twinkles instead of pulsing in unison. Pure cosmetic wall-clock
+    // flicker per the FX time-base rule.
+    if (dressed) {
+      const nowM = ctx.nowMs ?? performance.now();
+      const glowPhase = ((hashStr(ship.id) % 1000) / 1000) * Math.PI * 2;
+      const pulse = 0.6 + 0.4 * Math.sin(nowM / 420 + glowPhase);
+      const gx = canvasPos.x - Math.cos(heading) * iconSize * 0.46;
+      const gy = canvasPos.y - Math.sin(heading) * iconSize * 0.46;
+      const gr = Math.max(2.5, iconSize * 0.2);
+      ctx.ctx.save();
+      ctx.ctx.globalCompositeOperation = 'lighter';
+      ctx.ctx.fillStyle = `rgba(255, 158, 74, ${(0.16 * pulse).toFixed(3)})`;
+      ctx.ctx.beginPath();
+      ctx.ctx.arc(gx, gy, gr, 0, Math.PI * 2);
+      ctx.ctx.fill();
+      ctx.ctx.fillStyle = `rgba(255, 220, 168, ${(0.28 * pulse).toFixed(3)})`;
+      ctx.ctx.beginPath();
+      ctx.ctx.arc(gx, gy, gr * 0.45, 0, Math.PI * 2);
+      ctx.ctx.fill();
+      ctx.ctx.restore();
+    }
     // Retreat wake sits UNDER the icon.
     if (dressed && shipIsRetreating(ship)) {
       drawRetreatWake(ctx.ctx, canvasPos, heading, iconSize, trimColor ?? shipColorValue);
