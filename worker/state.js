@@ -614,6 +614,16 @@ async function handleGetState(req, env, ctx) {
     .bind(gameId, presenceFactionIds, sensorVisibleBodyIds, sensorVisibleShipIds, seeAllShips ? 1 : 0)
     .all()).results ?? [];
 
+  // Exactly the ships this observer is receiving. Any of them that's
+  // in-transit needs its node sent too, or the client can't place it on
+  // its arc and falls back to the ship's origin body — rendering a
+  // moving ship as parked (player report: a colony that had left Deimos
+  // for Umbriel still showed parked at Deimos for the body's owner,
+  // because the ship reached them via the visible-body path, which the
+  // narrower sensor-only node gate missed). Gating the node on THIS set
+  // guarantees node visibility exactly tracks ship visibility.
+  const sentShipIds = JSON.stringify(ships.map(s => s.id));
+
   // Deep Scan (sensors 5): a rival ship's fitted parts are intel. Without
   // it, non-friendly loadouts are redacted — parts_json is nulled and a
   // flag marks WHY, so the client can show "loadout unknown" instead of
@@ -770,22 +780,21 @@ async function handleGetState(req, env, ctx) {
             -- across the ally line).
             OR (s.owner_faction_id IN (SELECT value FROM json_each(?2))
                 AND n.status IN ('committed','in_transit'))
-            -- ANY faction's IN-TRANSIT leg for a ship the caller currently
-            -- has a sensor on (?4). Without this a detected hostile torch
-            -- was sent as a ship but had NO node, so the client couldn't
-            -- compute its in-flight position — it fell back to the ship's
-            -- origin body and the client's own fog hid it until it arrived
-            -- (player report: "didn't see it until it got to my moon"). The
-            -- node lets the client render the enemy ship along its arc the
-            -- moment it crosses your sensor range.
+            -- ANY in-transit ship the observer is actually RECEIVING this
+            -- poll (?4 = the ids in the ships payload above — friendly,
+            -- at-a-visible-body, sensor-detected, or total-awareness).
+            -- Node visibility must track ship visibility exactly: a ship
+            -- sent WITHOUT its node has no arc, so the client places it at
+            -- its origin body and renders a moving ship as parked (player
+            -- report: a colony that left Deimos for Umbriel still showed
+            -- parked at Deimos for Deimos's owner, who saw the ship via the
+            -- visible-body path the old sensor-only gate missed).
             OR (n.status = 'in_transit'
                 AND n.ship_id IN (SELECT value FROM json_each(?4)))
-            -- Total Awareness (sensors 10): every in-transit leg.
-            OR (n.status = 'in_transit' AND 1 = ?5)
           )
         ORDER BY n.ship_id, n.sequence`,
     )
-    .bind(gameId, presenceFactionIds, me.id, sensorVisibleShipIds, seeAllShips ? 1 : 0)
+    .bind(gameId, presenceFactionIds, me.id, sentShipIds)
     .all()).results ?? [];
 
   // In-flight ship builds for the caller's faction. The tick alarm
