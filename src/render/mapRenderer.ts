@@ -1095,10 +1095,12 @@ function drawPlanetBody(
     if (tex) {
       const ringed = bodyHasRings(body); // uranus routes through here (ice giant)
       if (ringed) drawRingArcs(body, canvasPos, radius, ctx, 'back');
-      drawTexturedDisk(ctx.ctx, tex, canvasPos.x, canvasPos.y, radius, 0);
-      // Drifting cloud deck on terrestrials — separate cached layer,
-      // drawn BEFORE the terminator so the night side darkens clouds too.
-      // Wall-clock driven (see drawCloudDeck) so it visibly moves.
+      // Spin the surface: scroll the texture horizontally under the fixed
+      // sun-terminator so the planet reads as rotating on its axis.
+      drawTexturedDisk(ctx.ctx, tex, canvasPos.x, canvasPos.y, radius, surfaceSpinDrift(ctx, body, radius));
+      // Drifting cloud deck — separate cached layer, drawn BEFORE the
+      // terminator so the night side darkens clouds too. Shears slightly
+      // ahead of the surface spin (see drawCloudDeck).
       drawCloudDeck(ctx, body, canvasPos.x, canvasPos.y, radius);
       drawDayNightShading(canvasPos, radius, ctx);
       drawNightLights(body, canvasPos, radius, ctx);
@@ -1155,18 +1157,39 @@ function drawTexturedDisk(
 }
 
 /**
+ * Axial-rotation scroll rate for a body's surface texture, in canvas
+ * px-per-ms-per-radius. Scrolling the disk texture horizontally (with
+ * wrap) reads as the planet spinning under the fixed sun-terminator; a
+ * full turn (2·radius px) takes 2/rate ms. Giants spin fastest (they do
+ * in reality — Jupiter's day is ~10h), terrestrials/rocky slowest.
+ */
+function surfaceSpinRate(type: string): number {
+  if (type === 'gas_giant') return 0.00006;   // full turn ~33s
+  if (type === 'ice_giant') return 0.00005;   // ~40s
+  return 0.000035;                            // terrestrial / moon / dwarf / rocky ~57s
+}
+
+/**
+ * Base-surface rotation offset in canvas px (wall-clock). Shared by the
+ * body painters and the cloud deck, so the deck can shear slightly ahead
+ * of the surface it rides rather than moving locked to it. WALL-CLOCK
+ * (ctx.nowMs), NOT the sim tick — ticks are minutes apart, which left
+ * every animated surface effectively frozen.
+ */
+export function surfaceSpinDrift(ctx: RenderContext, body: Body, radius: number): number {
+  return (ctx.nowMs ?? 0) * radius * surfaceSpinRate(body.type);
+}
+
+/**
  * Drifting cloud deck for a terrestrial or giant body, clipped to disk.
- *
- * WALL-CLOCK driven (ctx.nowMs), NOT the sim tick — ticks are minutes
- * apart, so keying drift to ctx.t left the deck effectively frozen. The
- * rate is tuned per type: terrestrials drift gently (~80s wrap) like
- * weather; gas/ice giants churn faster, matching their turbulent look.
+ * Rides ~30% ahead of the surface rotation (surfaceSpinDrift) so the
+ * clouds shear over the continents/bands instead of turning as one rigid
+ * shell. Per-type alpha: gas giants boldest, ice giants faintest.
  *
  * Shared by the overworld body paths AND the world-menu close-up so the
- * clouds drift identically in both (same texture, rate, and radius, so
- * the two layers overlap perfectly during the dive). `alphaScale` lets the
- * world-menu dive fade the deck in; overworld callers leave it at 1.
- * No-op for bodies with no cloud deck or when the texture is missing.
+ * clouds drift identically in both. `alphaScale` lets the world-menu dive
+ * fade the deck in; overworld callers leave it at 1. No-op for bodies
+ * with no cloud deck or when the texture is missing.
  */
 export function drawCloudDeck(
   ctx: RenderContext,
@@ -1182,9 +1205,8 @@ export function drawCloudDeck(
   if (!isTerr && !isGas && !isIce) return;
   const clouds = getCloudTexture(body);
   if (!clouds) return;
-  const rate = isTerr ? 0.000025 : 0.00004;
   const baseAlpha = isGas ? 0.55 : isIce ? 0.38 : 0.45;
-  const drift = (ctx.nowMs ?? 0) * radius * rate;
+  const drift = surfaceSpinDrift(ctx, body, radius) * 1.3;
   ctx.ctx.save();
   ctx.ctx.globalAlpha = baseAlpha * alphaScale;
   drawTexturedDisk(ctx.ctx, clouds, x, y, radius, drift);
@@ -1384,14 +1406,15 @@ function drawGasGiantBody(
   ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
   ctx.ctx.fill();
 
-  // Textured path — the seeded banded BODY from the cache (static), with
-  // a separate wall-clock-driven cloud deck scudding over it (drawn
-  // before the terminator so the night side darkens the clouds too).
+  // Textured path — the seeded banded BODY from the cache, spun on its
+  // axis (horizontal scroll), with a separate wall-clock-driven cloud
+  // deck scudding over it slightly faster (drawn before the terminator so
+  // the night side darkens the clouds too).
   let textured = false;
   if (radius > 8) {
     const tex = getPlanetTexture(body);
     if (tex) {
-      drawTexturedDisk(ctx.ctx, tex, canvasPos.x, canvasPos.y, radius, 0);
+      drawTexturedDisk(ctx.ctx, tex, canvasPos.x, canvasPos.y, radius, surfaceSpinDrift(ctx, body, radius));
       drawCloudDeck(ctx, body, canvasPos.x, canvasPos.y, radius);
       drawDayNightShading(canvasPos, radius, ctx);
       drawAtmosphereRimLight(body, canvasPos, radius, ctx);
