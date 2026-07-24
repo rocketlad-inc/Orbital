@@ -589,7 +589,7 @@ async function handleGetState(req, env, ctx) {
               orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
               fuel, fuel_max, hp, hp_max, damage_per_tick,
               rank, combat_history, trades_completed,
-              status, built_at_tick, last_combat_tick,
+              status, built_at_tick, last_combat_tick, last_damaged_tick,
               icon_variant, parts_json,
               stance, retreat_hp_pct, detonate_hp_pct
          FROM game_ships
@@ -680,6 +680,10 @@ async function handleGetState(req, env, ctx) {
               -- "is a hostile parked here" half of that check is what
               -- catches an ungunned city, which never stamps this at all.
               last_combat_tick,
+              -- Stamped when the settlement TAKES damage (room.js damage
+              -- resolution) — drives the client's persistent battle-damage
+              -- fire/smoke for a tick after a hit.
+              last_damaged_tick,
               has_collector, collector_built_tick,
               buildings_json, building_order_json
          FROM game_settlements

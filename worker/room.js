@@ -2215,9 +2215,13 @@ export class Room {
         if (topFid) settlementKillers.set(s.id, topFid);
       } else {
         // Survived (or only fired back): persist any hp loss + cadence.
+        // last_damaged_tick stamps ONLY when damage actually landed —
+        // COALESCE(NULL, …) preserves the old stamp on fire-only ticks.
+        // (last_combat_tick must NOT double as this stamp: it gates the
+        // return-fire cadence — see the note in worker/state.js.)
         await this.env.DB
-          .prepare('UPDATE game_settlements SET hp = ?, last_combat_tick = ? WHERE id = ?')
-          .bind(newHp, fired ? tick : (s.last_combat_tick ?? tick), s.id)
+          .prepare('UPDATE game_settlements SET hp = ?, last_combat_tick = ?, last_damaged_tick = COALESCE(?, last_damaged_tick) WHERE id = ?')
+          .bind(newHp, fired ? tick : (s.last_combat_tick ?? tick), incoming > 0 ? tick : null, s.id)
           .run();
       }
     }
@@ -2748,9 +2752,13 @@ export class Room {
           // fleet tanking at its own dry-dock under fire got ZERO
           // effective healing — precisely the case stations exist for.
           // MAX(0, …) keeps the floor without needing the snapshot.
+          // last_damaged_tick drives the client's persistent battle-
+          // damage FX (fire/smoke for a tick after a hit) — a stamp
+          // the damage-flash's hp-diff can't provide when station
+          // repair masks the net hp change within one poll.
           await this.env.DB
-            .prepare('UPDATE game_ships SET hp = MAX(0, hp - ?) WHERE id = ?')
-            .bind(entry.total, shipId)
+            .prepare('UPDATE game_ships SET hp = MAX(0, hp - ?), last_damaged_tick = ? WHERE id = ?')
+            .bind(entry.total, tick, shipId)
             .run();
         }
       }
@@ -3230,7 +3238,7 @@ export class Room {
                   ? this.env.DB
                       .prepare("UPDATE game_ships SET hp = 0, status = 'destroyed', destroyed_at_tick = ? WHERE id = ?")
                       .bind(tick, v.id)
-                  : this.env.DB.prepare('UPDATE game_ships SET hp = ? WHERE id = ?').bind(newHp, v.id),
+                  : this.env.DB.prepare('UPDATE game_ships SET hp = ?, last_damaged_tick = ? WHERE id = ?').bind(newHp, tick, v.id),
               );
               victimSummaries.push({
                 ship_id: v.id,

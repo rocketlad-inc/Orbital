@@ -479,6 +479,11 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     // "In Combat". SP sets lastCombatTick in client combat.ts; MP relies
     // on this passthrough. NULL (never fired) → undefined.
     lastCombatTick: s.last_combat_tick ?? undefined,
+    // When this hull last TOOK damage (room.js stamps it as damage is
+    // applied). Drives the persistent battle-damage FX — fire/smoke for
+    // a tick after a hit — and doubles as a damage-flash trigger that
+    // catches hits the hp-diff misses (e.g. masked by station repair).
+    lastDamagedTick: (s as { last_damaged_tick?: number | null }).last_damaged_tick ?? undefined,
     tradesCompleted: s.trades_completed ?? 0,
     iconVariant,
     stance,
@@ -551,6 +556,8 @@ function settlementToClient(
     // Stamped when the settlement returns fire; drives the Situation
     // Report's "in combat" rows. SP sets this in client combat.ts.
     lastCombatTick: s.last_combat_tick ?? undefined,
+    // Stamped when the settlement TAKES damage — persistent burning FX.
+    lastDamagedTick: (s as { last_damaged_tick?: number | null }).last_damaged_tick ?? undefined,
     lastGrowthTick: s.last_growth_tick ?? s.created_at_tick,
     surfaceAngle: s.surface_angle ?? undefined,
     orbit,
