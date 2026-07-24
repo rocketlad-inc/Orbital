@@ -10,7 +10,7 @@ import { loadoutSummary, countPart } from '../game/shipParts';
 import { effectiveShipMaxHp } from '../game/combat';
 import type { Ship } from '../types';
 import { deriveSecondary } from '../game/colorUtils';
-import { makeSystemRootOf, systemLabel as systemLabelOf, shipStatus, makeHostilesAtBody, makeArmedHostilesAtBody, makeStationsAtBody } from '../game/systemGrouping';
+import { makeSystemRootOf, systemLabel as systemLabelOf, shipStatus, makeHostilesAtBody, makeArmedHostilesAtBody, makeStationsAtBody, isArmed } from '../game/systemGrouping';
 import { nearestShipyardBodyId, isDamagedShip } from '../game/repair';
 import { ShipIcon } from './ShipIcons';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
@@ -131,10 +131,14 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     () => makeStationsAtBody(gameState.settlements),
     [gameState.settlements],
   );
-  // A freighter (non-combatant) is only "In Combat" when a warship is on
-  // it; every other class uses the general presence test.
+  // A NON-COMBATANT (unarmed) ship is only "In Combat" when an armed
+  // hostile SHIP is on it. An ARMED ship — any class, including an armed
+  // freighter — is "In Combat" whenever any hostile shares the body
+  // (enemy ship OR a settlement it's bombarding). Keying on isArmed, not
+  // class, is what fixes an armed freighter reading "not in combat" while
+  // it's actively fighting.
   const inCombatFor = (s: typeof gameState.ships[number]) =>
-    (s.class === 'freighter' ? armedHostilesAtBody : hostilesAtBody)(s.orbit.parentBodyId, s.ownedBy);
+    (isArmed(s) ? hostilesAtBody : armedHostilesAtBody)(s.orbit.parentBodyId, s.ownedBy);
 
   const ships = useMemo(() => {
     const q = query.trim().toLowerCase();

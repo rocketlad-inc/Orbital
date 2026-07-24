@@ -11,7 +11,7 @@ import { effectiveShipMaxHp } from '../game/combat';
 import type { Ship } from '../types';
 import { ShipIcon } from './ShipIcons';
 import { PlanetIcon } from './PlanetIcon';
-import { makeSystemRootOf, systemLabel, shipStatus, makeHostilesAtBody, makeArmedHostilesAtBody, makeStationsAtBody } from '../game/systemGrouping';
+import { makeSystemRootOf, systemLabel, shipStatus, makeHostilesAtBody, makeArmedHostilesAtBody, makeStationsAtBody, isArmed } from '../game/systemGrouping';
 import { useIsMobile } from '../hooks/useIsMobile';
 import './Outliner.css';
 
@@ -370,7 +370,13 @@ export const Outliner: React.FC = () => {
                     const loadout = loadoutSummary(ship.parts);
                     const status = shipStatus(
                       ship, currentTick, r,
-                      (ship.class === 'freighter' ? armedHostilesAtBody : hostilesAtBody)(ship.orbit.parentBodyId, ship.ownedBy),
+                      // Armed hulls (incl. an armed freighter) are "In Combat"
+                      // when ANY hostile shares the body — a ship OR a
+                      // settlement they're bombarding. Only UNARMED
+                      // non-combatants use the stricter "armed hostile ship
+                      // present" test, so they don't read In Combat merely for
+                      // parking near an enemy city.
+                      (isArmed(ship) ? hostilesAtBody : armedHostilesAtBody)(ship.orbit.parentBodyId, ship.ownedBy),
                       stationsAtBody(ship.orbit.parentBodyId, ship.ownedBy),
                     );
                     return (
@@ -382,13 +388,16 @@ export const Outliner: React.FC = () => {
                         <span className="outliner__ship-class" title={def.displayName}>
                           <ShipIcon shipClass={ship.class as ShipClassName} size={22} />
                         </span>
-                        <span className="outliner__ship-name">
-                          {ship.name}
-                          <span
-                            className={`outliner__status outliner__status--${status.cls}`}
-                            title={status.title}
-                          >{status.label}</span>
-                        </span>
+                        <span className="outliner__ship-name">{ship.name}</span>
+                        {/* Status is a flex SIBLING of the name, not nested
+                            inside it — otherwise a long name (which truncates
+                            with ellipsis) clipped the badge clean off, so a
+                            ship like "Temperance" never showed "In Combat"
+                            while short-named hulls did. */}
+                        <span
+                          className={`outliner__status outliner__status--${status.cls}`}
+                          title={status.title}
+                        >{status.label}</span>
                         {loadout && ship.parts && ship.parts.length > 0 && (
                           <span className="outliner__ship-loadout" title="Fitted parts">{loadout}</span>
                         )}

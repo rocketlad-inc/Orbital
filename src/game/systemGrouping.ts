@@ -19,9 +19,11 @@ import { AUTO_COMBAT_INTERVAL } from './combat';
 import { getShipClass } from './shipClasses';
 
 /** A hull is "armed" if it actually deals damage — server-authoritative
- *  damagePerTick when present (designer builds can arm/disarm any class),
- *  else the class default. A stock freighter is 0 → unarmed. */
-function isArmed(s: Ship): boolean {
+ *  damagePerTick when present (designer builds can arm OR disarm ANY
+ *  class, so a freighter can carry guns and a "warship" can be stripped),
+ *  else the class default. A stock freighter is 0 → unarmed. Combat
+ *  status keys off THIS, not the class name. */
+export function isArmed(s: Ship): boolean {
   return (s.damagePerTick ?? getShipClass(s.class).damagePerTick) > 0;
 }
 

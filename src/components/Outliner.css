@@ -440,6 +440,8 @@
    hull reads the same in both panels. */
 .outliner__status {
   display: inline-block;
+  flex: 0 0 auto;          /* sibling of the truncating name — never shrink/clip away */
+  white-space: nowrap;
   margin-left: 6px;
   padding: 0 4px;
   font-size: 8px;
