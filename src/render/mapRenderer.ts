@@ -3990,8 +3990,16 @@ export function drawOwnershipLayer(
 /** Overlay is fully present at/below this many spans... */
 export const SYSTEM_REGION_FULL_SPANS = 4.1;
 /** ...and fully faded out at/above this. Between the two it cross-fades,
- *  so there's no hard pop as you zoom. */
-export const SYSTEM_REGION_HIDE_SPANS = 6.8;
+ *  so there's no hard pop as you zoom.
+ *
+ *  Pinned to the ships→numbers LOD threshold (MapCanvas imports this as
+ *  SHIP_ICON_MIN_SPANS): the political wash BEGINS its fade-in at the
+ *  exact zoom where individual hulls finish collapsing into count
+ *  badges, then deepens all the way out to FULL/DARK. One long
+ *  continuous bleed — tactical map at one end, coloured territory at
+ *  the other — instead of the wash arriving late (old 6.8) with a dead
+ *  colour-less gap after the ships were already gone. */
+export const SYSTEM_REGION_HIDE_SPANS = 24;
 /** At/below this the wash reaches full strength — a solid political map.
  *  Between here and HIDE the colour deepens continuously, so pulling
  *  further out keeps reading as "more strategic". */
@@ -4024,6 +4032,19 @@ export function systemRegionOpacity(spans: number): number {
   if (spans <= SYSTEM_REGION_FULL_SPANS) return 1;
   return (SYSTEM_REGION_HIDE_SPANS - spans)
     / (SYSTEM_REGION_HIDE_SPANS - SYSTEM_REGION_FULL_SPANS);
+}
+
+/** Region NAME labels keep the wash's old deep-zoom schedule. The colour
+ *  SHADING now starts bleeding in at the ships→numbers threshold
+ *  (SYSTEM_REGION_HIDE_SPANS = 24), but printing territory names over the
+ *  mid-zoom tactical view would be noise — names still wait until you're
+ *  properly zoomed out, exactly where they appeared before. */
+export const REGION_LABEL_HIDE_SPANS = 6.8;
+export function regionLabelOpacity(spans: number): number {
+  if (spans >= REGION_LABEL_HIDE_SPANS) return 0;
+  if (spans <= SYSTEM_REGION_FULL_SPANS) return 1;
+  return (REGION_LABEL_HIDE_SPANS - spans)
+    / (REGION_LABEL_HIDE_SPANS - SYSTEM_REGION_FULL_SPANS);
 }
 
 /** 0 = just-appeared (faint tint), 1 = zoomed right out (solid
@@ -4293,15 +4314,20 @@ export function drawSystemRegions(
   // point the layer first appears, so the map slides continuously from
   // "a hint of who's where" to a solid political map.
   const intensity = systemRegionIntensity(spans);
+  // Names run on their own (deeper) schedule than the shading — see
+  // REGION_LABEL_HIDE_SPANS.
+  const labelFade = regionLabelOpacity(spans);
 
   // Per-star outermost-giant radius, for the outer-system alpha falloff.
   const fadeRef = buildFadeReference(ctx.bodies);
 
   // Everything a region label must not land on: each body's dot plus the
   // name drawn under it. Region labels are appended as they're placed,
-  // so later rings also dodge earlier rings' labels.
+  // so later rings also dodge earlier rings' labels. Skipped entirely
+  // while labels are out of schedule (labelFade 0) — the wash now spans
+  // a much wider zoom range than the names do.
   const obstacles: LabelRect[] = [];
-  for (const b of ctx.bodies) {
+  if (labelFade > 0) for (const b of ctx.bodies) {
     if (b.destroyedAtTick != null) continue;
     const wp = bodyPosition(b, ctx.t, ctx.bodies);
     const p = worldToCanvas(wp.x, wp.y, ctx);
@@ -4405,7 +4431,7 @@ export function drawSystemRegions(
         : (region.label
             ? [{ text: region.label, anchorId: shape.labelAnchorBodyId, li: rIn, lo: rOut }]
             : []);
-      for (const ls of labelSpecs) {
+      if (labelFade > 0) for (const ls of labelSpecs) {
         if (!ls.text) continue;
         const subMid = (ls.li + ls.lo) / 2;
         const subWidth = Math.max(ls.lo - ls.li, 6);
@@ -4446,7 +4472,7 @@ export function drawSystemRegions(
         });
         obstacles.push(spot.rect);
         drawRegionLabel(
-          region, spot.x, spot.y, color, owned, ctx, fade, intensity,
+          region, spot.x, spot.y, color, owned, ctx, labelFade, intensity,
           labelScale, showSub, ls.text,
         );
       }

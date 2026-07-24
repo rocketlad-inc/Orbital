@@ -23,6 +23,7 @@ import {
   drawSystemRegions,
   systemRegionOpacity,
   systemSpans,
+  SYSTEM_REGION_HIDE_SPANS,
   drawFogOfWarOverlay,
   drawDestructionFlashes,
   generateStarfield,
@@ -100,7 +101,11 @@ const TOUCH_HIT_PADDING = isCoarsePointer() ? 16 : 0;
  * player can still track them across the zoomed-out view; only the
  * stationary at-body clusters collapse.
  */
-const SHIP_ICON_MIN_SPANS = 24;
+// Pinned to the political wash's onset (SYSTEM_REGION_HIDE_SPANS): the
+// territory shading begins its fade-in at the exact zoom where hulls
+// finish collapsing into count badges. One shared constant so the two
+// transitions can never drift apart.
+const SHIP_ICON_MIN_SPANS = SYSTEM_REGION_HIDE_SPANS;
 /** Once individual ships appear, they don't pop straight to full size —
  *  they ramp from ORBIT_SHIP_MIN_SCALE at the transition up to full at
  *  SHIP_ICON_FULL_SPANS, so a planet you're diving toward grows its ships
