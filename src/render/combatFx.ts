@@ -132,22 +132,26 @@ const TRACER_LIFE_MS = 140;
 // engagement reads as a firefight for as long as it lasts.
 // ------------------------------------------------------------
 
-/** Ticks after last_combat_tick that a ship still counts as engaged.
- *  Matches the server's AUTO_COMBAT_INTERVAL so the visual stops when
- *  the shooting does. */
+/** Ticks after last_combat_tick that a combatant still counts as
+ *  engaged — i.e. the server says it actually fired recently. Matches
+ *  the server's AUTO_COMBAT_INTERVAL. Paired with the live-presence
+ *  test below: "fired recently" alone would let a ceasefire (stance
+ *  hold, a NAP signed mid-brawl) keep shooting. */
 const ENGAGED_WINDOW_TICKS = 3;
-/** Wall-clock cap on the firing visual after each OBSERVED volley. The
- *  tick window alone is a trap on slow games: at 1h/tick, "within 3
- *  ticks" kept survivors strobing bolts for HOURS after the last real
- *  exchange (player report: "keeps shooting after ship is destroyed").
- *  Each time we see a ship's lastCombatTick ADVANCE we stamp the
- *  moment; the firing visual runs this long past that stamp, then goes
- *  quiet until the next real volley refreshes it. Fast SP games are
- *  unaffected (volleys re-stamp every few seconds anyway). */
-const ENGAGED_VISUAL_MS = 20_000;
-/** shipId -> { tick, sinceMs } — the last lastCombatTick we observed
- *  and when we first observed it. Cleared wholesale past 600 entries. */
-const engagementSeen = new Map<string, { tick: number; sinceMs: number }>();
+
+// A 20s wall-clock cap used to sit here, so the firing visual ran for
+// 20s after each observed volley and then went quiet. It existed to
+// stop hour-long strobing on slow-tick games ("keeps shooting after
+// ship is destroyed") — but it also meant a live battle animated for
+// 20s out of every ~3 hours at 1h/tick, when what a fight should do is
+// LOOP for as long as it lasts.
+//
+// It's gone, replaced by the real question: is there still an enemy
+// here to shoot at? `hostilePresentFor` below answers that from live
+// state, so the loop runs continuously while a fight is genuinely on
+// and stops the instant the last hostile dies or leaves — strictly
+// tighter than the timer it replaces, since the draw pass already
+// refuses to emit a bolt with no target.
 /** Bolt flight time — one shot crosses the gap in this long. */
 const BOLT_MS = 600;
 /** Silence between one ship's shot landing and the next ship's turn. */
@@ -171,6 +175,33 @@ interface EngagedCombatant {
 const engagedScratch: EngagedCombatant[] = [];
 const engagedPool: EngagedCombatant[] = [];
 let engagedTaken = 0;
+
+/** bodyId -> faction ids with a parked ship / a live settlement there.
+ *  Rebuilt each frame and used to ask "is an enemy still here?" — the
+ *  test that keeps the firing loop running for exactly as long as the
+ *  battle does. Entries persist across frames and their Sets are
+ *  emptied rather than dropped, so steady-state combat allocates
+ *  nothing (module perf rule); the map is bounded by the body count. */
+const bodyShipFactions = new Map<string, Set<string>>();
+const bodyStlFactions = new Map<string, Set<string>>();
+
+function clearFactionMap(m: Map<string, Set<string>>): void {
+  for (const set of m.values()) set.clear();
+}
+
+function addFactionAt(m: Map<string, Set<string>>, bodyId: string, faction: string): void {
+  let set = m.get(bodyId);
+  if (!set) { set = new Set(); m.set(bodyId, set); }
+  set.add(faction);
+}
+
+/** Is any faction OTHER than `owner` present at this body? */
+function hasOtherFaction(m: Map<string, Set<string>>, bodyId: string, owner: string): boolean {
+  const set = m.get(bodyId);
+  if (!set) return false;
+  for (const f of set) if (f !== owner) return true;
+  return false;
+}
 
 function takeEngaged(
   id: string, bodyId: string, ownedBy: string,
@@ -311,14 +342,30 @@ export function drawEngagementFire(
   currentTick: number,
   transitCanvasPos?: Map<string, { x: number; y: number }>,
 ): void {
+  // Who is actually PRESENT at each body this frame — the live answer to
+  // "is this fight still on". Ships under burn have left; dead
+  // settlements don't shoot. Built once per frame, then queried per
+  // combatant.
+  clearFactionMap(bodyShipFactions);
+  clearFactionMap(bodyStlFactions);
+  for (const s of ships) {
+    if (s.transit) continue;
+    addFactionAt(bodyShipFactions, s.orbit.parentBodyId, s.ownedBy);
+  }
+  for (const stl of settlements) {
+    if (stl.hp <= 0) continue;
+    addFactionAt(bodyStlFactions, stl.bodyId, stl.ownedBy);
+  }
+
   // Collect engaged shooters into the reusable scratch list. Engaged =
-  // the server says it fired recently (tick window) AND we observed
-  // that volley recently on the viewer's clock (ms window) — the
-  // second condition is what stops hour-long strobing on slow-tick
-  // games; see ENGAGED_VISUAL_MS. Settlements join under the exact same
-  // rules: the server stamps their last_combat_tick whenever they
-  // return fire, so a defended world's station visibly shoots back.
-  if (engagementSeen.size > 600) engagementSeen.clear();
+  // the server says it fired recently (tick window) AND an enemy is
+  // still here to shoot at. The second condition is what lets the
+  // animation LOOP for the whole battle instead of timing out, while
+  // still cutting the instant the last hostile dies or departs.
+  // Settlements join under the same rules — the server stamps their
+  // last_combat_tick when they return fire, so a defended world's
+  // station visibly shoots back — except that stations only ever engage
+  // SHIPS, mirroring the server (no station-vs-station duels).
   engagedScratch.length = 0;
   engagedTaken = 0;
   for (const s of ships) {
@@ -326,25 +373,19 @@ export function drawEngagementFire(
     if (fired === undefined) continue;
     if (currentTick - fired > ENGAGED_WINDOW_TICKS) continue;
     if (s.transit) continue;
-    let seen = engagementSeen.get(s.id);
-    if (!seen || seen.tick !== fired) {
-      seen = { tick: fired, sinceMs: nowMs };
-      engagementSeen.set(s.id, seen);
-    }
-    if (nowMs - seen.sinceMs > ENGAGED_VISUAL_MS) continue;
-    takeEngaged(s.id, s.orbit.parentBodyId, s.ownedBy, s, null);
+    const at = s.orbit.parentBodyId;
+    // A hull can trade fire with hostile ships OR bombard a hostile
+    // settlement, so either presence keeps it engaged.
+    if (!hasOtherFaction(bodyShipFactions, at, s.ownedBy)
+        && !hasOtherFaction(bodyStlFactions, at, s.ownedBy)) continue;
+    takeEngaged(s.id, at, s.ownedBy, s, null);
   }
   for (const stl of settlements) {
     const fired = stl.lastCombatTick;
     if (fired === undefined) continue;
     if (currentTick - fired > ENGAGED_WINDOW_TICKS) continue;
     if (stl.hp <= 0) continue;
-    let seen = engagementSeen.get(stl.id);
-    if (!seen || seen.tick !== fired) {
-      seen = { tick: fired, sinceMs: nowMs };
-      engagementSeen.set(stl.id, seen);
-    }
-    if (nowMs - seen.sinceMs > ENGAGED_VISUAL_MS) continue;
+    if (!hasOtherFaction(bodyShipFactions, stl.bodyId, stl.ownedBy)) continue;
     takeEngaged(stl.id, stl.bodyId, stl.ownedBy, null, stl);
   }
   if (engagedScratch.length === 0) return;
