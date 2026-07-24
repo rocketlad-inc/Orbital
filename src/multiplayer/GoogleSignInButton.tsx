@@ -63,19 +63,31 @@ export const GoogleSignInButton: React.FC<Props> = ({
   const hostRef = useRef<HTMLDivElement>(null);
   const [ready, setReady] = useState(false);
 
+  // Keep the latest callbacks in refs so the init effect can depend ONLY
+  // on clientId. Otherwise a parent re-render — e.g. every keystroke in
+  // the login form, which passes a fresh `onError={(msg) => …}` identity
+  // — re-runs this effect and re-calls goog.renderButton(), re-drawing
+  // the GIS iframe on every letter. That flicker (and the DOM churn it
+  // caused inside the login <form>) made iOS Safari re-evaluate AutoFill
+  // and re-prompt to save the password on each character. Render once.
+  const onCredentialRef = useRef(onCredential);
+  const onErrorRef = useRef(onError);
+  useEffect(() => { onCredentialRef.current = onCredential; }, [onCredential]);
+  useEffect(() => { onErrorRef.current = onError; }, [onError]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         await loadGsi();
       } catch (e) {
-        if (!cancelled) onError?.(e instanceof Error ? e.message : 'GSI load failed');
+        if (!cancelled) onErrorRef.current?.(e instanceof Error ? e.message : 'GSI load failed');
         return;
       }
       if (cancelled || !hostRef.current) return;
       const goog = (window as any).google?.accounts?.id;
       if (!goog) {
-        onError?.('Google library missing after load');
+        onErrorRef.current?.('Google library missing after load');
         return;
       }
       try {
@@ -83,7 +95,7 @@ export const GoogleSignInButton: React.FC<Props> = ({
           client_id: clientId,
           // We use our own backend exchange, so just accept the JWT here.
           callback: (resp: { credential?: string }) => {
-            if (resp.credential) onCredential(resp.credential);
+            if (resp.credential) onCredentialRef.current(resp.credential);
           },
           // Don't auto-prompt on load — render the explicit button so the
           // user always sees the consent step before any account is shared.
@@ -103,11 +115,13 @@ export const GoogleSignInButton: React.FC<Props> = ({
         });
         setReady(true);
       } catch (e) {
-        onError?.(e instanceof Error ? e.message : 'Google button render failed');
+        onErrorRef.current?.(e instanceof Error ? e.message : 'Google button render failed');
       }
     })();
     return () => { cancelled = true; };
-  }, [clientId, onCredential, onError]);
+    // Only clientId — callbacks are read through refs so a parent
+    // re-render (login-form keystrokes) never re-inits the GIS button.
+  }, [clientId]);
 
   return (
     <div

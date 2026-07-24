@@ -66,8 +66,10 @@ export function AuthOverlay({ onGuest }: { onGuest?: () => void }) {
 
         {mode === 'signup' && (
           <>
-            <label className="mp-label">Call sign</label>
+            <label className="mp-label" htmlFor="auth-callsign">Call sign</label>
             <input
+              id="auth-callsign"
+              name="displayName"
               className="mp-input"
               type="text"
               maxLength={40}
@@ -78,18 +80,28 @@ export function AuthOverlay({ onGuest }: { onGuest?: () => void }) {
           </>
         )}
 
-        <label className="mp-label">Email</label>
+        {/* Stable id/name + autocomplete=username so Safari/password
+            managers treat this as ONE persistent login form (username +
+            password pair) and don't re-prompt to save on each edit. */}
+        <label className="mp-label" htmlFor="auth-email">Email</label>
         <input
+          id="auth-email"
+          name="username"
           className="mp-input"
           type="email"
           required
-          autoComplete="email"
+          autoComplete="username"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
           value={email}
           onChange={(e) => setEmail(e.target.value)}
         />
 
-        <label className="mp-label">Password</label>
+        <label className="mp-label" htmlFor="auth-password">Password</label>
         <input
+          id="auth-password"
+          name="password"
           className="mp-input"
           type="password"
           required
