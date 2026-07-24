@@ -4,7 +4,7 @@ import { Ship, Body, Settlement, TradeRoute } from '../types';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { maintenanceRatesForShip } from '../game/maintenance';
 import { nearestShipyardBodyId, isDamagedShip } from '../game/repair';
-import { rankHpMul } from '../game/techs';
+import { effectiveShipMaxHp } from '../game/combat';
 import {
   ShipPartId, SHIP_PART_DEFS, countPart, detonatorDamage, detonatorDisclosure,
   PART_GLYPH, SHIP_SLOT_COUNTS, ALL_PART_IDS, sanitizeParts,
@@ -338,13 +338,13 @@ export const ShipPanel: React.FC = () => {
 
   // Maintenance — repair/refuel rates at current location
   const maintenance = maintenanceRatesForShip(ship, gameState.bodies, gameState.settlements);
-  // maxHp: server-authoritative hp_max when present (MP — includes
-  // designer shield parts + Armor tech stamped at build completion);
-  // otherwise the class def scaled by veterancy (+1% per rank), which
-  // matches what combat.ts + maintenance.ts apply in SP.
-  const maxHp = ship.hpMax ?? Math.round(shipClass.hp * rankHpMul(ship.rank));
+  // Effective max HP = build-time hp_max × veterancy (+1%/rank) × the
+  // owner's armor tech (+8%/level), mirroring the server's repair cap
+  // (effectiveShipMaxHp). The stored hp_max alone lags for a ranked or
+  // armor-teched hull, which is why HP read over its max (e.g. 53/40).
+  const maxHp = effectiveShipMaxHp(ship, gameState.factionTech[ship.ownedBy]);
   const currentHp = ship.hp ?? maxHp;
-  const hpAtMax = currentHp >= maxHp;
+  const hpAtMax = currentHp >= maxHp - 0.5;
 
   // Fleet — current fleet (if any) and ships eligible to fleet with at this body
   const currentFleet = ship.fleetId
@@ -863,7 +863,7 @@ export const ShipPanel: React.FC = () => {
             <div className="stat-row">
               <span className="label">HP</span>
               <span className="value" style={{ color: currentHp < maxHp * 0.3 ? '#ff5e5e' : undefined }}>
-                {currentHp.toFixed(0)}/{maxHp}
+                {currentHp.toFixed(0)}/{Math.round(maxHp)}
                 {maintenance.repairRate > 0 && !hpAtMax && (
                   <span style={{ color: '#4ecdc4', marginLeft: 6, fontSize: '9px' }}>
                     +{maintenance.repairRate}/t

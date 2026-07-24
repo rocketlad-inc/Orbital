@@ -2,11 +2,34 @@
 // Combat System — Auto-fire at every hostile in orbit, every N ticks
 // ============================================================
 
-import { Ship, Body, Settlement, ShipKillRecord } from '../types';
+import { Ship, Body, Settlement, ShipKillRecord, FactionTechStateBase } from '../types';
 import { getShipClass, ShipClassName } from './shipClasses';
 import { bodyPosition, localPositionAt } from '../physics/orbitalMechanics';
 import { SETTLEMENT_DEFS, BUILDING_DEFS, buildingLevel } from './settlements';
-import { rankDamageMul, rankHpMul } from './techs';
+import { rankDamageMul, rankHpMul, hpModifier } from './techs';
+
+/**
+ * A ship's TRUE maximum HP for display, mirroring the server's
+ * maintenance-pass cap (worker/room.js `effectiveMaxHp`). The stored
+ * hp_max is the build-time base (class × fitted armor parts); the server
+ * then heals ships INTO a larger buffer scaled by veterancy (+1%/rank)
+ * and the owner's armor tech (+8%/level). Without applying the same two
+ * multipliers here, an armor-teched or ranked hull reads OVER 100% (e.g.
+ * a corvette healed to 52.8 against a stored max of 40). `tech` is the
+ * OWNER's faction tech (gameState.factionTech[ship.ownedBy]); undefined
+ * (unknown owner / no tech) falls back to no armor bonus.
+ */
+export function effectiveShipMaxHp(
+  ship: Ship,
+  tech: FactionTechStateBase | undefined,
+): number {
+  const base = ship.hpMax ?? getShipClass(ship.class as ShipClassName).hp;
+  // hpModifier only reads tech.levels.armor; FactionTechStateBase carries
+  // it (string-keyed levels), so the cast to the stricter TechId-keyed
+  // FactionTechState is safe.
+  return base * rankHpMul(ship.rank)
+    * hpModifier(tech as unknown as Parameters<typeof hpModifier>[0]);
+}
 
 /** Maximum entries to keep on a ship's combatHistory — LRU. Older
  *  kills age out so a long campaign doesn't bloat save blobs. */

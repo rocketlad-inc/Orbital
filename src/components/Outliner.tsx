@@ -7,6 +7,8 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { loadoutSummary } from '../game/shipParts';
+import { effectiveShipMaxHp } from '../game/combat';
+import type { Ship } from '../types';
 import { ShipIcon } from './ShipIcons';
 import { PlanetIcon } from './PlanetIcon';
 import { makeSystemRootOf, systemLabel, shipStatus, makeHostilesAtBody, makeArmedHostilesAtBody, makeStationsAtBody } from '../game/systemGrouping';
@@ -118,10 +120,11 @@ export const Outliner: React.FC = () => {
     return r > 0.66 ? 'good' : r > 0.33 ? 'mid' : 'low';
   };
 
-  const hpRatio = (ship: { hp?: number; class: string }) => {
-    const def = getShipClass(ship.class as ShipClassName);
-    const hp = ship.hp ?? def.hp;
-    return hp / def.hp;
+  const hpRatio = (ship: Ship) => {
+    // True max includes veterancy + the owner's armor tech (see
+    // effectiveShipMaxHp), so an armor-teched hull no longer reads >100%.
+    const max = effectiveShipMaxHp(ship, gameState.factionTech[ship.ownedBy]);
+    return max > 0 ? (ship.hp ?? max) / max : 1;
   };
 
   const hpClass = (r: number) =>

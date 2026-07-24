@@ -7,6 +7,8 @@ import React, { useMemo, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { loadoutSummary, countPart } from '../game/shipParts';
+import { effectiveShipMaxHp } from '../game/combat';
+import type { Ship } from '../types';
 import { deriveSecondary } from '../game/colorUtils';
 import { makeSystemRootOf, systemLabel as systemLabelOf, shipStatus, makeHostilesAtBody, makeArmedHostilesAtBody, makeStationsAtBody } from '../game/systemGrouping';
 import { nearestShipyardBodyId, isDamagedShip } from '../game/repair';
@@ -455,16 +457,18 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   //     still push real max above the base class hp, so a teched/veteran
   //     ship would read "108/100" with the fill bar overrunning its track.
   //     max(base, hp) clamps the denominator.
-  const hpOf = (ship: { hp?: number; hpMax?: number; class: string }) => {
-    const def = getShipClass(ship.class as ShipClassName);
-    const hp = ship.hp ?? ship.hpMax ?? def.hp;
-    const maxHp = ship.hpMax ?? Math.max(def.hp, hp);
+  const hpOf = (ship: Ship) => {
+    // Effective max includes veterancy + the owner's armor tech (see
+    // effectiveShipMaxHp), matching the server's repair cap — so a teched
+    // hull reads e.g. 53/53 at full instead of 53/40.
+    const maxHp = effectiveShipMaxHp(ship, gameState.factionTech[ship.ownedBy]);
+    const hp = ship.hp ?? maxHp;
     return { hp, maxHp, ratio: maxHp > 0 ? Math.min(1, hp / maxHp) : 0 };
   };
 
-  const hpRatioOf = (ship: { hp?: number; hpMax?: number; class: string }) => hpOf(ship).ratio;
+  const hpRatioOf = (ship: Ship) => hpOf(ship).ratio;
 
-  const renderHpBar = (ship: { hp?: number; hpMax?: number; class: string }) => {
+  const renderHpBar = (ship: Ship) => {
     const { hp, maxHp, ratio } = hpOf(ship);
     const hpClass = ratio > 0.66 ? 'good' : ratio > 0.33 ? 'mid' : 'low';
     return (
