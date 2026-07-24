@@ -167,15 +167,22 @@ export const Outliner: React.FC = () => {
 
   /** "In Combat" means a hostile is here NOW — computed over ALL ships and
    *  settlements, not just the player's, since the enemy is the point. */
+  /** Factions the viewer is at peace with (NAP / defense-pact / intel-
+   *  share / alliance) — their ships never trigger "In Combat", matching
+   *  the server, which never fires between peace partners. */
+  const friendlyFactions = useMemo(
+    () => new Set([...(gameState.alliedFactionIds ?? []), ...(gameState.peaceFactionIds ?? [])]),
+    [gameState.alliedFactionIds, gameState.peaceFactionIds],
+  );
   const hostilesAtBody = useMemo(
-    () => makeHostilesAtBody(gameState.ships, gameState.settlements),
-    [gameState.ships, gameState.settlements],
+    () => makeHostilesAtBody(gameState.ships, gameState.settlements, friendlyFactions),
+    [gameState.ships, gameState.settlements, friendlyFactions],
   );
   /** Stricter combat test for non-combatants — an armed hostile SHIP is
    *  actually present (see makeArmedHostilesAtBody). Freighters use this. */
   const armedHostilesAtBody = useMemo(
-    () => makeArmedHostilesAtBody(gameState.ships),
-    [gameState.ships],
+    () => makeArmedHostilesAtBody(gameState.ships, friendlyFactions),
+    [gameState.ships, friendlyFactions],
   );
   /** Friendly-station presence — feeds the "Repairing" status chip,
    *  matching the FleetPanel exactly (shared shipStatus helper). */

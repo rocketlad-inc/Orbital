@@ -105,16 +105,23 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   /** "In Combat" means a hostile shares the orbit right now. Built over
    *  ALL ships and settlements — the filter tabs hide the enemy from the
    *  list, but they must not hide it from the status calculation. */
+  // Peace partners (NAP / defense-pact / intel-share / alliance) never
+  // count as hostile — the server never fires between them, so the status
+  // must not read "In Combat" for a peace partner sharing your orbit.
+  const friendlyFactions = useMemo(
+    () => new Set([...(gameState.alliedFactionIds ?? []), ...(gameState.peaceFactionIds ?? [])]),
+    [gameState.alliedFactionIds, gameState.peaceFactionIds],
+  );
   const hostilesAtBody = useMemo(
-    () => makeHostilesAtBody(gameState.ships, gameState.settlements),
-    [gameState.ships, gameState.settlements],
+    () => makeHostilesAtBody(gameState.ships, gameState.settlements, friendlyFactions),
+    [gameState.ships, gameState.settlements, friendlyFactions],
   );
   // Stricter combat test for non-combatants — an armed hostile SHIP is
   // actually here. A freighter parked near an enemy city or a passing
   // hauler is NOT "in combat".
   const armedHostilesAtBody = useMemo(
-    () => makeArmedHostilesAtBody(gameState.ships),
-    [gameState.ships],
+    () => makeArmedHostilesAtBody(gameState.ships, friendlyFactions),
+    [gameState.ships, friendlyFactions],
   );
   // Friendly-station presence per body — feeds the "Repairing" status
   // (station repair = +2 HP/tick, worker maintenance pass).
