@@ -951,6 +951,15 @@ export function useSituationItems(
 
     // ---- Research: completions, unlocks, and stalls ----
     try {
+      // Is a project already running? Decides whether a completion is a
+      // DECISION ("pick what's next") or just news. Same bug Sean caught
+      // on buildings: "Pick the next project" kept demanding a decision
+      // the player had already made. Unlike buildings, we can't just drop
+      // the stamp when a new project starts — the server auto-promotes
+      // the next queued project on the same tick a level completes, so
+      // clearing would hide EVERY completion from anyone using the
+      // research queue, including what it unlocked.
+      const researchingNow = !!gameState.factionTech?.[factionId]?.researching;
       for (const [track, done] of researchDoneRef.current) {
         const def = (TECH_DEFS as Record<string, { name?: string }>)[track];
         const name = def?.name ?? track;
@@ -958,9 +967,14 @@ export function useSituationItems(
         // is the whole reason the level mattered.
         const opened = unlocksAt(track as Parameters<typeof unlocksAt>[0], done.level)
           .map(u => u.label);
+        // Already researching and nothing was unlocked: no decision to
+        // make and nothing to report. Don't manufacture a row.
+        if (researchingNow && opened.length === 0) continue;
         push({
           id: `research_done:${track}:${done.level}`,
           category: 'research_done',
+          // News, not a decision, while the next project is under way.
+          tier: researchingNow ? 'opportunity' : undefined,
           title: `${name} ${done.level} complete`,
           subtitle: opened.length
             ? `Unlocked: ${opened.slice(0, 3).join(', ')}${opened.length > 3 ? ` +${opened.length - 3}` : ''}`
