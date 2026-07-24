@@ -401,6 +401,13 @@ export function useSituationItems(
         }
       }
     }
+    // A settlement that's building again has already had its decision
+    // made — the slot isn't free, so drop the completion stamp. Without
+    // this the "X complete · Building slot free" row kept demanding a
+    // decision for the full 10-tick window even after the player queued
+    // the next upgrade (Sean, playtest) — and at an hour per tick that's
+    // ten hours of a prompt that's simply false.
+    for (const id of nowQueue.keys()) buildingDoneRef.current.delete(id);
     prevBuildingRef.current = nowQueue;
 
     // Research: watch the LEVEL, not `researching`. Committing to a new
