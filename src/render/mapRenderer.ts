@@ -553,6 +553,14 @@ function orbitTrailGradient(
   }
 }
 
+/** A moon system's orbit rings draw only while their parent planet is at
+ *  least this many px on screen. This is the map's shared LOD hinge:
+ *  per-system, ship sprites replace count badges exactly when that
+ *  system's rings appear; globally, the political wash starts fading in
+ *  the moment the LAST system's rings vanish (largest mooned planet
+ *  drops below this size). One constant, three transitions in step. */
+export const MOON_ORBIT_MIN_PARENT_PX = 12;
+
 export function drawOrbit(
   body: Body,
   ctx: RenderContext,
@@ -571,8 +579,10 @@ export function drawOrbit(
   // Moon orbits (parent is itself an orbiting body, not the star)
   // vanish entirely once the parent planet is too small on screen
   // to read as a system of its own — a sub-12px planet with moon
-  // rings around it is just scribble.
-  if (parentBody.type !== 'star' && parentBody.radius * ctx.camera.scale < 12) {
+  // rings around it is just scribble. MOON_ORBIT_MIN_PARENT_PX is the
+  // map's LOD hinge: ship sprites and the political wash both key off
+  // the same moment these rings appear/disappear.
+  if (parentBody.type !== 'star' && parentBody.radius * ctx.camera.scale < MOON_ORBIT_MIN_PARENT_PX) {
     return;
   }
   // The selected (or camera-focused) body's orbit and its siblings
@@ -3924,8 +3934,9 @@ export function drawOwnershipLayer(
 
   // The system-region wash owns territory at far zoom. Once it's fully
   // in, per-body halos would just double-shade the same ground with a
-  // second, noisier colour — so fade them out as the wash fades in.
-  const regionFade = systemRegionOpacity(systemSpans(ctx));
+  // second, noisier colour — so fade them out as the wash fades in
+  // (onset-aware: the wash now starts at moon-ring removal).
+  const regionFade = systemRegionOpacityFor(systemSpans(ctx), ctx.camera.scale, ctx.bodies);
   if (regionFade >= 1) return;
 
   // Hysteresis: engage halo < 0.72, back to ring > 0.88; hold the
@@ -4083,6 +4094,60 @@ export function systemRegionIntensity(spans: number): number {
   // after it was already fully present, which read as "not there".
   return (SYSTEM_REGION_HIDE_SPANS - spans)
     / (SYSTEM_REGION_HIDE_SPANS - SYSTEM_REGION_DARK_SPANS);
+}
+
+// --- Wash onset pinned to moon-orbit-ring removal --------------------
+//
+// The wash's fade-in is keyed to the exact zoom where the LAST moon
+// system's orbit rings vanish (the largest mooned planet dropping under
+// MOON_ORBIT_MIN_PARENT_PX on screen — the same rule drawOrbit uses).
+// Ship sprites hand off to count badges per-system on that rule too, so
+// zooming out reads: rings gone → hulls become numbers → colour bleeds
+// in, one continuous motion with no dead colour-less gap.
+
+/** Largest mooned-planet radius, cached per bodies array (stable between
+ *  state updates, so the O(n²) parent scan runs once per snapshot). */
+const moonedRadiusCache = new WeakMap<object, number>();
+function largestMoonedPlanetRadius(bodies: Body[]): number {
+  let r = moonedRadiusCache.get(bodies);
+  if (r !== undefined) return r;
+  r = 0;
+  for (const b of bodies) {
+    if (!b.parent) continue;
+    const p = bodies.find(x => x.id === b.parent);
+    if (p && p.type !== 'star' && p.type !== 'black_hole' && p.radius > r) r = p.radius;
+  }
+  moonedRadiusCache.set(bodies, r);
+  return r;
+}
+
+/** The spans value at which the wash starts fading in — where the last
+ *  moon system's rings disappear. spans is linear in camera.scale, so
+ *  the px rule converts directly. Falls back to the static constant on
+ *  a map with no moon systems. */
+function washOnsetSpans(spans: number, scale: number, bodies: Body[]): number {
+  const rMax = largestMoonedPlanetRadius(bodies);
+  if (rMax <= 0 || scale <= 0) return SYSTEM_REGION_HIDE_SPANS;
+  const onset = spans * ((MOON_ORBIT_MIN_PARENT_PX / rMax) / scale);
+  // Never collapse below the full-strength point — keeps the ramp sane
+  // on degenerate maps (giant planets, tiny systems).
+  return Math.max(onset, SYSTEM_REGION_FULL_SPANS + 0.5);
+}
+
+/** Wash fade, onset-aware — see washOnsetSpans. */
+export function systemRegionOpacityFor(spans: number, scale: number, bodies: Body[]): number {
+  const hide = washOnsetSpans(spans, scale, bodies);
+  if (spans >= hide) return 0;
+  if (spans <= SYSTEM_REGION_FULL_SPANS) return 1;
+  return (hide - spans) / (hide - SYSTEM_REGION_FULL_SPANS);
+}
+
+/** Wash strength, onset-aware — ramps from where the layer now appears. */
+export function systemRegionIntensityFor(spans: number, scale: number, bodies: Body[]): number {
+  const hide = washOnsetSpans(spans, scale, bodies);
+  if (spans <= SYSTEM_REGION_DARK_SPANS) return 1;
+  if (spans >= hide) return 0;
+  return (hide - spans) / (hide - SYSTEM_REGION_DARK_SPANS);
 }
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -4328,15 +4393,15 @@ export function drawSystemRegions(
   ctx: RenderContext,
 ) {
   const spans = systemSpans(ctx);
-  const fade = systemRegionOpacity(spans);
+  const scale = ctx.camera.scale;
+  const fade = systemRegionOpacityFor(spans, scale, ctx.bodies);
   if (fade <= 0) return;
 
   const c = ctx.ctx;
-  const scale = ctx.camera.scale;
   // How hard the wash pushes. Ramps as you keep zooming out past the
   // point the layer first appears, so the map slides continuously from
   // "a hint of who's where" to a solid political map.
-  const intensity = systemRegionIntensity(spans);
+  const intensity = systemRegionIntensityFor(spans, scale, ctx.bodies);
   // Names run on their own (deeper) schedule than the shading — see
   // REGION_LABEL_HIDE_SPANS.
   const labelFade = regionLabelOpacity(spans);
