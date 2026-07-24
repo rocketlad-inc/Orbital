@@ -220,7 +220,8 @@ async function handleGetState(req, env, ctx) {
     .prepare(
       `SELECT id, slot, name, color, color2, status,
               capital_body_id, metal, fuel, gold, science,
-              research_tech_id, research_progress, research_queue, reputation, senate_weight
+              research_tech_id, research_progress, research_queue, reputation, senate_weight,
+              build_list_json
          FROM game_factions
         WHERE game_id = ? AND user_id = ?`,
     )
@@ -910,6 +911,16 @@ async function handleGetState(req, env, ctx) {
     build_queue: buildQueue,
     trade_routes: tradeRoutes,
     ship_designs: shipDesigns,
+    // Curated build list (migration 0045): the caller's ordered loadout
+    // entries. NULL column = never curated → empty array; the client
+    // falls back to a sensible default (unlocked bare hulls + active
+    // designs) until the player saves an explicit list.
+    build_list: (() => {
+      try {
+        const arr = JSON.parse(me.build_list_json ?? '[]');
+        return Array.isArray(arr) ? arr : [];
+      } catch { return []; }
+    })(),
   });
 }
 

@@ -1,0 +1,11 @@
+-- Curated build list (ship builder redesign): an ordered set of loadout
+-- entries the player has assigned to their build panel, so BUILD is a
+-- pick from YOUR loadouts rather than one-active-design-per-class over a
+-- fixed roster of every hull (including ones you can't build yet).
+--
+-- JSON array on the faction, global across every owned shipyard. Each
+-- entry is either { "design_id": "<id>" } (a saved game_ship_designs row)
+-- or { "bare_class": "corvette" } (a stock hull, no parts). NULL = the
+-- player hasn't curated one yet; the client shows a sensible default
+-- (unlocked bare hulls + active designs) until they do.
+ALTER TABLE game_factions ADD COLUMN build_list_json TEXT;

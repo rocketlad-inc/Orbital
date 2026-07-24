@@ -378,18 +378,37 @@ async function handleQueueBuild(req, env, ctx) {
   }
   const cost = SHIP_BUILD_COST[shipClass];
 
-  // Ship designer (§2): BUILD uses the caller's ACTIVE design for this
-  // class. The design's parts are SNAPSHOT onto the build order here so
-  // later edits to the design never mutate queued ships. No active
-  // design (or a bare-hull design) = today's ship exactly.
-  const activeDesign = await env.DB
-    .prepare(
-      `SELECT id, parts_json, icon_variant FROM game_ship_designs
-        WHERE game_id = ? AND faction_id = ? AND ship_class = ? AND is_active = 1
-        LIMIT 1`,
-    )
-    .bind(gameId, me.id, shipClass)
-    .first();
+  // Ship designer (§2) + curated build list: which loadout to snapshot.
+  //   1. body.design_id — the build-list redesign sends the SPECIFIC
+  //      design the row represents, so you can queue different loadouts
+  //      of the same class back to back. Validated to the caller + class.
+  //   2. body.bare === true — an explicit bare-hull build-list row; skip
+  //      the active-design fallback entirely.
+  //   3. neither (legacy clients) — fall back to the caller's ACTIVE
+  //      design for this class, as before.
+  // The chosen design's parts are SNAPSHOT onto the order here so later
+  // edits to the design never mutate queued ships.
+  let activeDesign = null;
+  if (typeof body.design_id === 'string' && body.design_id.length > 0) {
+    activeDesign = await env.DB
+      .prepare(
+        `SELECT id, parts_json, icon_variant FROM game_ship_designs
+          WHERE id = ? AND game_id = ? AND faction_id = ? AND ship_class = ?
+          LIMIT 1`,
+      )
+      .bind(body.design_id, gameId, me.id, shipClass)
+      .first();
+    if (!activeDesign) return err(404, 'not_found', 'design not found for this class');
+  } else if (body.bare !== true) {
+    activeDesign = await env.DB
+      .prepare(
+        `SELECT id, parts_json, icon_variant FROM game_ship_designs
+          WHERE game_id = ? AND faction_id = ? AND ship_class = ? AND is_active = 1
+          LIMIT 1`,
+      )
+      .bind(gameId, me.id, shipClass)
+      .first();
+  }
   const designParts = activeDesign ? parsePartsJson(shipClass, activeDesign.parts_json) : [];
   const designPartsJson = designParts.length > 0 ? JSON.stringify(designParts) : null;
   const designPartsCost = partsCost(designParts);
@@ -2576,6 +2595,51 @@ async function handleDeleteDesign(req, env, ctx) {
   return json({ ok: true, design_id: designId });
 }
 
+// PUT /api/games/:gameId/build-list
+//
+// Replace the caller's curated build list (migration 0045) wholesale.
+// The client owns ordering, so it always sends the full array — this
+// sidesteps add/remove race conditions across concurrent shipyards.
+// body: { entries: Array<{ design_id: string } | { bare_class: string }> }
+async function handleSetBuildList(req, env, ctx) {
+  const { gameId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const body = await readJson(req);
+  if (!body || !Array.isArray(body.entries)) return err(400, 'bad_request', 'entries[] required');
+  if (body.entries.length > 40) return err(400, 'bad_request', 'build list too long (max 40)');
+
+  // Every design id the caller owns, so we can drop stale references
+  // (a design deleted from another tab) instead of persisting dangling
+  // rows. One query rather than per-entry lookups.
+  const owned = new Set(
+    ((await env.DB
+      .prepare('SELECT id FROM game_ship_designs WHERE game_id = ? AND faction_id = ?')
+      .bind(gameId, me.id)
+      .all()).results ?? []).map(r => r.id),
+  );
+
+  const clean = [];
+  for (const e of body.entries) {
+    if (!e || typeof e !== 'object') continue;
+    if (typeof e.design_id === 'string' && owned.has(e.design_id)) {
+      clean.push({ design_id: e.design_id });
+    } else if (typeof e.bare_class === 'string' && SHIP_CLASSES.has(e.bare_class)) {
+      clean.push({ bare_class: e.bare_class });
+    }
+    // else: unknown/stale entry — silently dropped.
+  }
+
+  await env.DB
+    .prepare('UPDATE game_factions SET build_list_json = ? WHERE id = ?')
+    .bind(JSON.stringify(clean), me.id)
+    .run();
+
+  return json({ build_list: clean });
+}
+
 // POST /api/games/:gameId/ships/:shipId/detonate
 //
 // Manual detonator trigger (spec §2.2, decided 2026-07-17):
@@ -2754,6 +2818,12 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/designs\/(?<designId>[^/]+)$/,
     auth: 'required',
     handle: handleDeleteDesign,
+  },
+  {
+    method: 'PUT',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/build-list$/,
+    auth: 'required',
+    handle: handleSetBuildList,
   },
   {
     method: 'POST',
