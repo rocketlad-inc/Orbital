@@ -4,8 +4,19 @@
 //
 // The user direction is "when in doubt, go mobile", so the
 // breakpoint is set generously: anything narrower than 1024px
-// OR any coarse-pointer device gets the mobile shell. iPad in
-// portrait (834w) → mobile. iPad in landscape (1194w) → desktop.
+// OR any touch-primary (coarse-pointer) device gets the mobile
+// shell, at any width. iPad → mobile in both orientations. A
+// Galaxy Fold's inner screen (~8", CSS width >1024) → mobile.
+// A touchscreen laptop with a trackpad reports pointer:fine →
+// stays desktop.
+//
+// LOCKSTEP: this must match the CSS shell query
+//   @media (max-width: 1023px), (pointer: coarse)
+// in ALL of these, or you get split-brain layouts:
+//   src/styles/mobile.css            (×2)
+//   src/components/Outliner.css
+//   src/components/OverviewPanel.css
+//   src/components/BodyInspector.css (the 768/769 cardinal pair)
 // ============================================================
 
 import { useEffect, useState } from 'react';
@@ -15,13 +26,20 @@ export const MOBILE_BREAKPOINT_PX = 1024;
 
 function evaluate(): boolean {
   if (typeof window === 'undefined') return false;
-  // Width-only. Must match mobile.css `@media (max-width: 1023px)` exactly,
-  // or you get split-brain layouts where the JS thinks "mobile" and renders
-  // a bottom-sheet wrapper while the CSS thinks "desktop" and keeps the
-  // floating panel — two copies of the same UI plus a scrim that blocks
-  // canvas clicks. Touch-target expansion still uses isCoarsePointer()
-  // directly, which is the correct check for that concern.
-  return window.innerWidth < MOBILE_BREAKPOINT_PX;
+  // Narrow viewport OR a touch-primary device. Must match the CSS shell
+  // query `@media (max-width: 1023px), (pointer: coarse)` EXACTLY (see the
+  // list in the module header), or you get split-brain layouts where the JS
+  // thinks "mobile" and renders a bottom-sheet wrapper while the CSS thinks
+  // "desktop" and keeps the floating panel — two copies of the same UI plus
+  // a scrim that blocks canvas clicks.
+  //
+  // The pointer clause exists for FOLDABLES: a Galaxy Fold's inner screen is
+  // ~8" and nearly square, so it reports a CSS width ABOVE 1024 and used to
+  // get the full desktop shell on a phone. `pointer: coarse` means the
+  // PRIMARY input is touch, so a touchscreen laptop with a trackpad still
+  // reports `fine` and correctly stays on desktop; a tablet or foldable with
+  // no mouse gets the mobile UX at any width.
+  return window.innerWidth < MOBILE_BREAKPOINT_PX || isCoarsePointer();
 }
 
 /**

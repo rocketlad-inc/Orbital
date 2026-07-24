@@ -12,7 +12,10 @@
 .nav-button__icon { display: none; font-size: 14px; line-height: 1; }
 .nav-button__label { display: inline; }
 
-@media (max-width: 1023px) {
+/* Shell query — MUST stay in lockstep with useIsMobile.ts evaluate().
+   The pointer clause catches foldables (Fold inner screen is >1024 CSS px
+   but is a phone) and tablets at any width. */
+@media (max-width: 1023px), (pointer: coarse) {
   /* Tap targets: nothing below 32px on the short side; aim for 44px on
      primary actions. We bump padding rather than font size so layouts
      don't reflow as drastically. */
@@ -184,7 +187,10 @@
 
 /* ThreatsPanel: anchor to top-LEFT-edge below the TopBar on mobile, full
    width minus a margin. Avoids stacking on top of the resource pills. */
-@media (max-width: 1023px) {
+/* Shell query — MUST stay in lockstep with useIsMobile.ts evaluate().
+   The pointer clause catches foldables (Fold inner screen is >1024 CSS px
+   but is a phone) and tablets at any width. */
+@media (max-width: 1023px), (pointer: coarse) {
   .threats-panel {
     top: auto !important;
     bottom: 20px !important;

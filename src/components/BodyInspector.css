@@ -111,11 +111,14 @@
 
 /* Desktop cardinal layout: force COMPACT control sizing, beating the
    global `@media (pointer: coarse)` touch min-heights in mobile.css.
-   A desktop touchscreen (coarse pointer, width > 1024) gets the
-   cardinal layout but would otherwise inherit 44px touch buttons that
-   blow the cards out and force scrolling. Scoped to min-width:769 so
-   true mobile (the BottomSheet stack) keeps its touch targets. */
-@media (min-width: 769px) {
+   Scoped to min-width:769 so true mobile (the BottomSheet stack) keeps
+   its touch targets.
+   ALSO scoped to pointer:fine — a touch-primary device is now ALWAYS the
+   mobile shell (see useIsMobile.ts), so on a foldable's wide inner screen
+   this must NOT shrink the touch targets back down. For a fine pointer the
+   coarse min-heights it counteracts never apply, so this is belt-and-
+   braces, but the guard keeps the two rules from fighting. */
+@media (min-width: 769px) and (pointer: fine) {
   .body-focus .build-btn,
   .body-focus .deploy-btn,
   .body-focus .maneuver-btn {
@@ -138,8 +141,12 @@
 /* Mobile: collapse the cardinal split. BottomSheet on mobile already
    wraps the whole .body-focus tree and renders it as a vertical-scroll
    sheet, so we just need to undo the absolute positioning and let the
-   cards stack one above the next. */
-@media (max-width: 768px) {
+   cards stack one above the next.
+   The pointer clause is REQUIRED, not cosmetic: BottomSheet wraps whenever
+   useIsMobile() is true, which now includes touch devices wider than 768px
+   (a foldable's ~1092px inner screen). Without it those cards stay
+   absolutely positioned INSIDE the scrolling sheet — a broken layout. */
+@media (max-width: 768px), (pointer: coarse) {
   .body-focus {
     position: static;
     inset: auto;
