@@ -2129,6 +2129,17 @@ export class Room {
       // resolves simultaneously (a settlement and its attacker can kill
       // each other on the same tick). Settlements never earn veterancy
       // (no attackerShipId passed), matching the client.
+      //
+      // Cities and stations are STRICTLY DEFENSIVE: they only fire at an
+      // armed hostile ship whose faction is actively aggressing at this
+      // body (has an armed attack-stance ship here — aggressorsAtBody).
+      // Two consequences the old `(damage_per_tick >= 0)` filter got
+      // wrong: (1) FREIGHTERS and other non-combatants are never shot —
+      // a hauler passing an enemy city is left alone; (2) a settlement
+      // never fires first on a warship sitting quietly in defensive
+      // stance (defensive-vs-defensive standoff), only on one that's
+      // actually attacking.
+      const stlAggressors = aggressorsAtBody.get(bodyId) ?? new Set();
       for (const st of localSettlements) {
         const base = (SETTLEMENT_DMG[st.type] ?? 0) + WEAPONS_BUILDING_DMG_PER_LEVEL * weaponsLevelOf(st);
         if (base <= 0) continue;
@@ -2137,7 +2148,9 @@ export class Room {
         const shipTargets = ships.filter(t =>
           t.owner_faction_id !== st.owner_faction_id
           && !peace.has(pairKey(st.owner_faction_id, t.owner_faction_id))
-          && (t.damage_per_tick ?? 0) >= 0,
+          && t.ship_class !== 'freighter'                    // never fire on haulers
+          && (t.damage_per_tick ?? 0) > 0                    // only armed hulls are threats
+          && stlAggressors.has(t.owner_faction_id),          // defensive: only factions aggressing here
         );
         if (shipTargets.length === 0) continue;
         // Settlement guns fire kinetic, so a target's shields blunt them

@@ -16,6 +16,14 @@
 
 import type { Body, Ship } from '../types';
 import { AUTO_COMBAT_INTERVAL } from './combat';
+import { getShipClass } from './shipClasses';
+
+/** A hull is "armed" if it actually deals damage — server-authoritative
+ *  damagePerTick when present (designer builds can arm/disarm any class),
+ *  else the class default. A stock freighter is 0 → unarmed. */
+function isArmed(s: Ship): boolean {
+  return (s.damagePerTick ?? getShipClass(s.class).damagePerTick) > 0;
+}
 
 /** Barycenter anchors orbit Sol on a fake, effectively-infinite period
  *  so the "every non-root orbits something" rule holds. Any period at
@@ -140,6 +148,33 @@ export function makeStationsAtBody(
     set.add(st.ownedBy);
   }
   return (bodyId, ownedBy) => owners.get(bodyId)?.has(ownedBy) ?? false;
+}
+
+/**
+ * Is a hostile ARMED SHIP sharing this body right now? Stricter than
+ * makeHostilesAtBody: ignores settlements and unarmed hulls, so it
+ * answers "is a warship actually here to fight me". Used for freighters
+ * and other non-combatants, which shouldn't read "In Combat" merely for
+ * parking near an enemy city or a passing hauler — only when a warship
+ * is on top of them. Ships under burn are excluded (they haven't
+ * arrived; combat is at-body).
+ */
+export function makeArmedHostilesAtBody(
+  ships: Ship[],
+): (bodyId: string, ownedBy: string) => boolean {
+  const owners = new Map<string, Set<string>>();
+  for (const s of ships) {
+    if (s.transit || !isArmed(s)) continue;
+    let set = owners.get(s.orbit.parentBodyId);
+    if (!set) { set = new Set(); owners.set(s.orbit.parentBodyId, set); }
+    set.add(s.ownedBy);
+  }
+  return (bodyId, ownedBy) => {
+    const set = owners.get(bodyId);
+    if (!set) return false;
+    for (const o of set) if (o !== ownedBy) return true;
+    return false;
+  };
 }
 
 export function makeHostilesAtBody(

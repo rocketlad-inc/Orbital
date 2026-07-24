@@ -14,12 +14,20 @@
 
 import { Ship, Settlement } from '../types';
 import { shipWorldPosition } from '../game/combat';
+import { getShipClass } from '../game/shipClasses';
 import { settlementWorldPosition } from '../game/settlements';
 import { bodyPosition, localPositionAt } from '../physics/orbitalMechanics';
 import { shipDisplayTick } from './tickPhase';
 import { withOpacity, lighten, COLORS } from './colors';
 import { RenderContext, worldToCanvas } from './mapRenderer';
 import { hashStr, mulberry32 } from './planetTexture';
+
+/** Armed = actually deals damage (server damagePerTick, else class
+ *  default). Settlements only ever fire at armed hostiles — freighters
+ *  and other non-combatants are left alone, mirroring the server. */
+function shipIsArmed(s: Ship): boolean {
+  return (s.damagePerTick ?? getShipClass(s.class).damagePerTick) > 0;
+}
 
 // Seeded randomness — one shared implementation lives in planetTexture
 // (FNV-1a → mulberry32). This module used to carry private copies
@@ -440,6 +448,12 @@ export function drawEngagementFire(
       if (s.id === shooter.id || s.transit) continue;
       if (s.orbit.parentBodyId !== shooter.bodyId) continue;
       if (s.ownedBy === shooter.ownedBy) continue;
+      // A settlement shooter never draws fire at a non-combatant
+      // (freighter / unarmed hull) — mirrors the server's defensive
+      // return-fire filter, so the visual can't invent a city shooting a
+      // passing hauler. Ship shooters may target anything (a warship
+      // legitimately fires on freighters).
+      if (!shooter.ship && !shipIsArmed(s)) continue;
       const score = (sHash ^ idHash(s.id)) >>> 0;
       if (score > bestScore) { tShip = s; tStl = null; bestScore = score; }
     }

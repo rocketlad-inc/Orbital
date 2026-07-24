@@ -9,7 +9,7 @@ import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { loadoutSummary } from '../game/shipParts';
 import { ShipIcon } from './ShipIcons';
 import { PlanetIcon } from './PlanetIcon';
-import { makeSystemRootOf, systemLabel, shipStatus, makeHostilesAtBody, makeStationsAtBody } from '../game/systemGrouping';
+import { makeSystemRootOf, systemLabel, shipStatus, makeHostilesAtBody, makeArmedHostilesAtBody, makeStationsAtBody } from '../game/systemGrouping';
 import { useIsMobile } from '../hooks/useIsMobile';
 import './Outliner.css';
 
@@ -170,6 +170,12 @@ export const Outliner: React.FC = () => {
   const hostilesAtBody = useMemo(
     () => makeHostilesAtBody(gameState.ships, gameState.settlements),
     [gameState.ships, gameState.settlements],
+  );
+  /** Stricter combat test for non-combatants — an armed hostile SHIP is
+   *  actually present (see makeArmedHostilesAtBody). Freighters use this. */
+  const armedHostilesAtBody = useMemo(
+    () => makeArmedHostilesAtBody(gameState.ships),
+    [gameState.ships],
   );
   /** Friendly-station presence — feeds the "Repairing" status chip,
    *  matching the FleetPanel exactly (shared shipStatus helper). */
@@ -354,7 +360,7 @@ export const Outliner: React.FC = () => {
                     const loadout = loadoutSummary(ship.parts);
                     const status = shipStatus(
                       ship, currentTick, r,
-                      hostilesAtBody(ship.orbit.parentBodyId, ship.ownedBy),
+                      (ship.class === 'freighter' ? armedHostilesAtBody : hostilesAtBody)(ship.orbit.parentBodyId, ship.ownedBy),
                       stationsAtBody(ship.orbit.parentBodyId, ship.ownedBy),
                     );
                     return (

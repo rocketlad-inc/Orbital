@@ -8,7 +8,7 @@ import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { loadoutSummary, countPart } from '../game/shipParts';
 import { deriveSecondary } from '../game/colorUtils';
-import { makeSystemRootOf, systemLabel as systemLabelOf, shipStatus, makeHostilesAtBody, makeStationsAtBody } from '../game/systemGrouping';
+import { makeSystemRootOf, systemLabel as systemLabelOf, shipStatus, makeHostilesAtBody, makeArmedHostilesAtBody, makeStationsAtBody } from '../game/systemGrouping';
 import { nearestShipyardBodyId, isDamagedShip } from '../game/repair';
 import { ShipIcon } from './ShipIcons';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
@@ -109,12 +109,23 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     () => makeHostilesAtBody(gameState.ships, gameState.settlements),
     [gameState.ships, gameState.settlements],
   );
+  // Stricter combat test for non-combatants — an armed hostile SHIP is
+  // actually here. A freighter parked near an enemy city or a passing
+  // hauler is NOT "in combat".
+  const armedHostilesAtBody = useMemo(
+    () => makeArmedHostilesAtBody(gameState.ships),
+    [gameState.ships],
+  );
   // Friendly-station presence per body — feeds the "Repairing" status
   // (station repair = +2 HP/tick, worker maintenance pass).
   const stationsAtBody = useMemo(
     () => makeStationsAtBody(gameState.settlements),
     [gameState.settlements],
   );
+  // A freighter (non-combatant) is only "In Combat" when a warship is on
+  // it; every other class uses the general presence test.
+  const inCombatFor = (s: typeof gameState.ships[number]) =>
+    (s.class === 'freighter' ? armedHostilesAtBody : hostilesAtBody)(s.orbit.parentBodyId, s.ownedBy);
 
   const ships = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -480,7 +491,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
 
     const status = shipStatus(
       ship, gameState.currentTick, hpRatioOf(ship),
-      hostilesAtBody(ship.orbit.parentBodyId, ship.ownedBy),
+      inCombatFor(ship),
       stationsAtBody(ship.orbit.parentBodyId, ship.ownedBy),
     );
     const statusBadge = (
