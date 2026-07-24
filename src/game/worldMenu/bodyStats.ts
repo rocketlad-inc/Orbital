@@ -10,7 +10,7 @@
 
 import { Body, Settlement, Ship } from '../../types';
 import { ProductionBundle } from '../economy';
-import { BUILDING_DEFS, SETTLEMENT_DEFS, buildingLevel, settlementYield } from '../settlements';
+import { buildingLevel, settlementYield } from '../settlements';
 
 export interface BodyReadout {
   ownerFactionId: string | null;
@@ -51,11 +51,18 @@ export function readoutFor(
   let station: BodyReadout['station'] = null;
   let hasCollector = false;
 
-  const weaponsDmg = BUILDING_DEFS.weapons.combatBoost?.damagePerLevel ?? 4;
+  // Defense = station return-fire only. Cities never fire, and a station
+  // has no guns until a Weapons module is built; damage then scales with
+  // its level. Mirrors the server (worker/room.js
+  // STATION_DMG_PER_WEAPONS_LEVEL) so the DEFENSE readout matches what a
+  // station will actually deal.
+  const STATION_DMG_PER_WEAPONS_LEVEL = 8;
 
   for (const s of here) {
     pop += s.population;
-    defense += SETTLEMENT_DEFS[s.type].damagePerTick + buildingLevel(s, 'weapons') * weaponsDmg;
+    if (s.type === 'station') {
+      defense += buildingLevel(s, 'weapons') * STATION_DMG_PER_WEAPONS_LEVEL;
+    }
     if (s.type === 'city' && !city) {
       city = { name: s.name, hp: s.hp, maxHp: s.maxHp, settlementId: s.id };
     }

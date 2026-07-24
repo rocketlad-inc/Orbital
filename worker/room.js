@@ -1834,8 +1834,10 @@ export class Room {
     //     class damage (not a flat 4) and FIRE BACK on hostile ships. ---
     const SHIP_PDC = { corvette: 0.2, frigate: 0.4, destroyer: 0.6, freighter: 0.1 };
     const SETTLEMENT_PDC = { city: 0.3, station: 0.5 };
-    const SETTLEMENT_DMG = { city: 6, station: 8 };          // return-fire base
-    const WEAPONS_BUILDING_DMG_PER_LEVEL = 4;                 // station Weapons building
+    // Return-fire: CITIES never shoot (civilian). STATIONS shoot only once
+    // a Weapons module is built, with damage scaling by its level — an
+    // unarmed station is a soft target. No flat "just for existing" base.
+    const STATION_DMG_PER_WEAPONS_LEVEL = 8;                  // L1=8, L2=16, … Ln=8n
     const pdcOfShipClass = (cls) => SHIP_PDC[cls] ?? 0;
     const pdcOfSettlement = (type) => SETTLEMENT_PDC[type] ?? 0;
 
@@ -2121,28 +2123,26 @@ export class Room {
         firedShipIds.add(attacker.id);
       }
 
-      // Settlements return fire on hostile ships at the same body —
-      // city 6 / station 8 base, plus the station Weapons building
-      // (+4/level), scaled by the owner's Weapons tech, reduced by the
-      // target ship's PDC. Gated by the settlement's own cadence.
-      // Accrues into the SAME hpDeltas the ship volley uses, so it
-      // resolves simultaneously (a settlement and its attacker can kill
-      // each other on the same tick). Settlements never earn veterancy
-      // (no attackerShipId passed), matching the client.
+      // Station return-fire on hostile ships at the same body — damage
+      // = STATION_DMG_PER_WEAPONS_LEVEL × weapons level, scaled by the
+      // owner's Weapons tech, reduced by the target ship's PDC. Gated by
+      // the settlement's own cadence. Accrues into the SAME hpDeltas the
+      // ship volley uses, so it resolves simultaneously (a station and
+      // its attacker can kill each other on the same tick). Settlements
+      // never earn veterancy (no attackerShipId passed), matching the client.
       //
-      // Cities and stations are STRICTLY DEFENSIVE: they only fire at an
-      // armed hostile ship whose faction is actively aggressing at this
-      // body (has an armed attack-stance ship here — aggressorsAtBody).
-      // Two consequences the old `(damage_per_tick >= 0)` filter got
-      // wrong: (1) FREIGHTERS and other non-combatants are never shot —
-      // a hauler passing an enemy city is left alone; (2) a settlement
-      // never fires first on a warship sitting quietly in defensive
-      // stance (defensive-vs-defensive standoff), only on one that's
-      // actually attacking.
+      // CITIES never return fire (civilian). STATIONS fire only once a
+      // Weapons module is built. And both are STRICTLY DEFENSIVE: they
+      // only shoot an armed hostile ship whose faction is actively
+      // aggressing here (has an armed attack-stance ship — aggressorsAtBody),
+      // never freighters, and never fire first on a warship parked in
+      // defensive stance.
       const stlAggressors = aggressorsAtBody.get(bodyId) ?? new Set();
       for (const st of localSettlements) {
-        const base = (SETTLEMENT_DMG[st.type] ?? 0) + WEAPONS_BUILDING_DMG_PER_LEVEL * weaponsLevelOf(st);
-        if (base <= 0) continue;
+        if (st.type !== 'station') continue;               // cities never fire
+        const weaponsLvl = weaponsLevelOf(st);
+        if (weaponsLvl < 1) continue;                      // no guns until Weapons built
+        const base = STATION_DMG_PER_WEAPONS_LEVEL * weaponsLvl;
         const lastFired = st.last_combat_tick ?? -Infinity;
         if (tick - lastFired < AUTO_COMBAT_INTERVAL) continue;
         const shipTargets = ships.filter(t =>

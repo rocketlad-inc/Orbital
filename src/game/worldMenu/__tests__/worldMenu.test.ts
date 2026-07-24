@@ -206,10 +206,11 @@ describe('E · body readout', () => {
     expect(r.stockpile.science).toBe(5);
   });
 
-  test('E2: defense = settlement PDC + weapons·damagePerLevel', () => {
+  test('E2: defense = armed-station return fire only (cities never fire)', () => {
     const r = readoutFor(EARTH, [city, station], [], 'player');
-    // city 6 + station 8 + weapons lvl2 · 4dmg = 22
-    expect(r.defense).toBe(22);
+    // City contributes 0 (civilian). Station fires only with weapons:
+    // level 2 × 8 dmg/level = 16.
+    expect(r.defense).toBe(16);
   });
 
   test('rival settlements show owner but hide books', () => {
