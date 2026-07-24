@@ -6,6 +6,7 @@
 import { Body, Settlement, SettlementType, Ship, BuildingKind } from '../types';
 import { createCircularOrbit, bodyPosition, localPositionAt } from '../physics/orbitalMechanics';
 import { bodyProductionRates } from './economy';
+import { randomSettlementName } from './settlementNames';
 
 /**
  * World position of a settlement at a given tick.
@@ -340,13 +341,17 @@ export function createStation(
 }
 
 /**
- * Suggest a default name for a new settlement based on body and existing count.
+ * Suggest a default name for a new settlement: a sci-fi bank name not
+ * already in use this game, or "<Body> City/Station[ N]" once that
+ * pool runs dry.
  */
 export function suggestSettlementName(
   body: Body,
   type: SettlementType,
   existing: Settlement[],
 ): string {
+  const fromBank = randomSettlementName(type, existing.map(s => s.name));
+  if (fromBank) return fromBank;
   const countAtBody = existing.filter(s => s.bodyId === body.id && s.type === type).length;
   const suffix = type === 'city' ? 'City' : 'Station';
   if (countAtBody === 0) return `${body.name} ${suffix}`;

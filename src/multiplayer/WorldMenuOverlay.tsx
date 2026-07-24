@@ -24,7 +24,7 @@ import { useMultiplayerActions } from './MultiplayerActionsContext';
 import { useFeatureGate } from '../hooks/useFeatureGate';
 import { BUILDING_FEATURE } from '../game/researchUnlocks';
 import { BUILDABLE_CLASSES, getShipClass } from '../game/shipClasses';
-import { shipyardSlotsAtBody, canHostCity, canHostStation } from '../game/settlements';
+import { shipyardSlotsAtBody, canHostCity, canHostStation, suggestSettlementName } from '../game/settlements';
 import { EditableName } from '../components/EditableName';
 import { humanizeMpError } from './errorMessages';
 import { ShipIcon } from '../components/ShipIcons';
@@ -345,9 +345,10 @@ export const WorldMenuOverlay: React.FC = () => {
     if (res && !res.ok) throw new Error(humanizeMpError(res.code, res.error, 'rename'));
   };
   const foundSettlement = async (type: SettlementType) => {
-    if (!openId) return;
+    if (!openId || !body) return;
     setErrMsg(null);
-    const res = await mpActions?.deploySettlement({ bodyId: openId, type });
+    const name = suggestSettlementName(body, type, gameState.settlements);
+    const res = await mpActions?.deploySettlement({ bodyId: openId, type, name });
     if (res && !res.ok) setErrMsg(res.error ?? `Could not found ${type}`);
   };
 
