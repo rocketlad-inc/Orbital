@@ -9,7 +9,7 @@ import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { loadoutSummary } from '../game/shipParts';
 import { ShipIcon } from './ShipIcons';
 import { PlanetIcon } from './PlanetIcon';
-import { makeSystemRootOf, systemLabel, shipStatus, makeHostilesAtBody } from '../game/systemGrouping';
+import { makeSystemRootOf, systemLabel, shipStatus, makeHostilesAtBody, makeStationsAtBody } from '../game/systemGrouping';
 import { useIsMobile } from '../hooks/useIsMobile';
 import './Outliner.css';
 
@@ -170,6 +170,12 @@ export const Outliner: React.FC = () => {
   const hostilesAtBody = useMemo(
     () => makeHostilesAtBody(gameState.ships, gameState.settlements),
     [gameState.ships, gameState.settlements],
+  );
+  /** Friendly-station presence — feeds the "Repairing" status chip,
+   *  matching the FleetPanel exactly (shared shipStatus helper). */
+  const stationsAtBody = useMemo(
+    () => makeStationsAtBody(gameState.settlements),
+    [gameState.settlements],
   );
 
   /** Ship builds under way at a body, for the settlement rows. */
@@ -346,7 +352,11 @@ export const Outliner: React.FC = () => {
                     const def = getShipClass(ship.class as ShipClassName);
                     const r = hpRatio(ship);
                     const loadout = loadoutSummary(ship.parts);
-                    const status = shipStatus(ship, currentTick, r, hostilesAtBody(ship.orbit.parentBodyId, ship.ownedBy));
+                    const status = shipStatus(
+                      ship, currentTick, r,
+                      hostilesAtBody(ship.orbit.parentBodyId, ship.ownedBy),
+                      stationsAtBody(ship.orbit.parentBodyId, ship.ownedBy),
+                    );
                     return (
                       <div
                         key={ship.id}

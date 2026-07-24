@@ -126,6 +126,22 @@ export type ShipStatus = { label: string; cls: string; title: string };
  * ships and settlements count as combatants. Ships under burn are excluded
  * — they haven't arrived, so they aren't fighting anyone yet.
  */
+/** Does `ownedBy` have a living STATION at this body? Stations are the
+ *  repair infrastructure (worker/room.js maintenance: +2 HP/tick), so
+ *  this feeds the "Repairing" status. */
+export function makeStationsAtBody(
+  settlements: { bodyId: string; ownedBy: string; type: string; hp: number }[],
+): (bodyId: string, ownedBy: string) => boolean {
+  const owners = new Map<string, Set<string>>();
+  for (const st of settlements) {
+    if (st.type !== 'station' || st.hp <= 0) continue;
+    let set = owners.get(st.bodyId);
+    if (!set) { set = new Set(); owners.set(st.bodyId, set); }
+    set.add(st.ownedBy);
+  }
+  return (bodyId, ownedBy) => owners.get(bodyId)?.has(ownedBy) ?? false;
+}
+
 export function makeHostilesAtBody(
   ships: Ship[],
   settlements: { bodyId: string; ownedBy: string }[],
@@ -165,6 +181,9 @@ export function shipStatus(
   currentTick: number,
   hpRatio: number,
   hostilesPresent?: boolean,
+  /** A friendly station shares this orbit (see makeStationsAtBody) —
+   *  station repair is running on any damaged hull parked here. */
+  friendlyStationPresent?: boolean,
 ): ShipStatus {
   if (ship.transit) {
     // Auto-retreat fires a server-side transfer to the nearest friendly
@@ -188,6 +207,12 @@ export function shipStatus(
   );
   if (contested) {
     return { label: 'In Combat', cls: 'combat', title: 'A hostile force shares this orbit' };
+  }
+  // Docked at a friendly station with hull damage → the maintenance pass
+  // is actively healing it (+2 HP/tick). Ranked below combat: a ship
+  // being shot AT a station is fighting first, patching second.
+  if (friendlyStationPresent && hpRatio < 0.999) {
+    return { label: 'Repairing', cls: 'repairing', title: 'Docked at a friendly station — hull repairing +2 HP/tick' };
   }
   if (ship.plannedTransit) {
     return { label: 'Planned', cls: 'planned', title: 'A transfer is planned but not yet committed' };

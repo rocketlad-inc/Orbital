@@ -8,7 +8,8 @@ import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { loadoutSummary, countPart } from '../game/shipParts';
 import { deriveSecondary } from '../game/colorUtils';
-import { makeSystemRootOf, systemLabel as systemLabelOf, shipStatus, makeHostilesAtBody } from '../game/systemGrouping';
+import { makeSystemRootOf, systemLabel as systemLabelOf, shipStatus, makeHostilesAtBody, makeStationsAtBody } from '../game/systemGrouping';
+import { nearestShipyardBodyId, isDamagedShip } from '../game/repair';
 import { ShipIcon } from './ShipIcons';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { humanizeMpError } from '../multiplayer/errorMessages';
@@ -107,6 +108,12 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const hostilesAtBody = useMemo(
     () => makeHostilesAtBody(gameState.ships, gameState.settlements),
     [gameState.ships, gameState.settlements],
+  );
+  // Friendly-station presence per body — feeds the "Repairing" status
+  // (station repair = +2 HP/tick, worker maintenance pass).
+  const stationsAtBody = useMemo(
+    () => makeStationsAtBody(gameState.settlements),
+    [gameState.settlements],
   );
 
   const ships = useMemo(() => {
@@ -235,6 +242,60 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     () => [...gameState.bodies].sort((a, b) => a.name.localeCompare(b.name)),
     [gameState.bodies]
   );
+
+  // Damaged parked player hulls NOT already healing at a friendly
+  // station — the population the one-shot repair dispatch operates on.
+  const damagedAway = useMemo(
+    () => gameState.ships.filter(s =>
+      s.ownedBy === 'player' && !s.transit && !s.plannedTransit
+      && isDamagedShip(s)
+      && !stationsAtBody(s.orbit.parentBodyId, s.ownedBy)),
+    [gameState.ships, stationsAtBody],
+  );
+
+  // Feedback line for the one-shot repair dispatch — rendered under the
+  // search row (the bulk bar's error only exists while ships are checked).
+  const [repairMsg, setRepairMsg] = useState<string | null>(null);
+
+  /** One click: every damaged parked hull heads to its nearest friendly
+   *  shipyard body (same destination rule the server's auto-retreat
+   *  uses). Ships already at a friendly station are left alone — the
+   *  maintenance pass is healing them where they sit. */
+  const sendDamagedToYards = () => {
+    setRepairMsg(null);
+    let sent = 0;
+    let noYard = 0;
+    const rejections: string[] = [];
+    for (const ship of damagedAway) {
+      const dest = nearestShipyardBodyId(
+        ship, gameState.settlements, gameState.bodies, gameState.currentTick,
+      );
+      if (!dest) { noYard++; continue; }
+      const plan = launchTorchTransfer(ship.id, dest);
+      if (!plan) continue;   // no fuel / engine down — leave it parked
+      sent++;
+      mpActions?.transfer({
+        shipId: ship.id,
+        targetBodyId: plan.targetBodyId,
+        scheduledT: plan.startTick,
+        arrivalT: plan.arriveTick,
+        dvPrograde: plan.totalDv,
+        fuelCost: Math.round(plan.totalDv * 10),
+      }).then(res => {
+        if (!res.ok) {
+          rejections.push(humanizeMpError(res.code, res.error, 'transfer'));
+          setRepairMsg(`${rejections.length} repair transfer${rejections.length === 1 ? '' : 's'} rejected — ${rejections[0]}`);
+        }
+      });
+    }
+    if (sent > 0) {
+      setRepairMsg(`${sent} ship${sent === 1 ? '' : 's'} dispatched to shipyards for repair`);
+    } else {
+      setRepairMsg(noYard > 0
+        ? 'No friendly shipyard to send them to — build a station shipyard first'
+        : 'No damaged ships needed dispatching');
+    }
+  };
 
   const issueBulkTransfer = () => {
     setBulkError(null);
@@ -417,7 +478,11 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     const target = targetBodyId ? gameState.bodies.find(b => b.id === targetBodyId) : null;
     const transit = ship.transit;
 
-    const status = shipStatus(ship, gameState.currentTick, hpRatioOf(ship), hostilesAtBody(ship.orbit.parentBodyId, ship.ownedBy));
+    const status = shipStatus(
+      ship, gameState.currentTick, hpRatioOf(ship),
+      hostilesAtBody(ship.orbit.parentBodyId, ship.ownedBy),
+      stationsAtBody(ship.orbit.parentBodyId, ship.ownedBy),
+    );
     const statusBadge = (
       <span className={`status-badge status-badge--${status.cls}`} title={status.title}>
         {status.label}
@@ -526,6 +591,23 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           <div className="overview-panel__title-main">Fleet</div>
           <div className="overview-panel__title-sub">{ships.length} ships · {orbiting.length} orbiting · {inTransit.length} in transit</div>
         </div>
+        {/* One-shot repair dispatch (MP only): every damaged parked hull
+            that ISN'T already sitting at a friendly station gets a
+            transfer to its nearest shipyard body — same destination rule
+            the auto-retreat uses. */}
+        {mpActions && (
+          <button
+            className="filter-chip"
+            style={{ marginRight: 8 }}
+            onClick={sendDamagedToYards}
+            disabled={damagedAway.length === 0}
+            title={damagedAway.length === 0
+              ? 'No damaged ships away from a friendly station'
+              : `Send ${damagedAway.length} damaged ship${damagedAway.length === 1 ? '' : 's'} to the nearest friendly shipyard for repair`}
+          >
+            ⛨ REPAIR AT YARD{damagedAway.length > 0 ? ` (${damagedAway.length})` : ''}
+          </button>
+        )}
         {/* Ship designer entry point (MP only — the designer is part of
             the identity-economy release and the SP sim is frozen). */}
         {mpActions && (
@@ -576,6 +658,12 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           >✕</button>
         )}
       </div>
+
+      {repairMsg && (
+        <div className="fleet-bulk-bar__error" style={{ margin: '0 16px 8px' }}>
+          {repairMsg}
+        </div>
+      )}
 
       {visibleSelected.length > 0 && (
         <div className="fleet-bulk-bar">

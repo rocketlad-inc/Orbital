@@ -648,6 +648,24 @@
   border: 1px solid #b7aef0;
 }
 
+/* Docked at a friendly station, hull knitting back together. Soft green
+   with a slow breathing pulse — recovery, not alarm. */
+.status-badge--repairing {
+  background: rgba(110, 231, 183, 0.14);
+  color: #6ee7b7;
+  border: 1px solid #6ee7b7;
+  animation: status-repair-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes status-repair-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.65; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-badge--repairing { animation: none; }
+}
+
 /* ============================================================
    FleetPanel bulk-action bar — sticky strip below the filter row.
    Appears when one or more eligible ships are checked in the

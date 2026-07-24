@@ -456,6 +456,7 @@
 .outliner__status--transit   { color: #4ecdc4; background: rgba(78, 205, 196, 0.12); }
 .outliner__status--planned   { color: #a4b5c4; background: rgba(164, 181, 196, 0.12); }
 .outliner__status--holding   { color: #ffb84d; background: rgba(255, 184, 77, 0.10); }
+.outliner__status--repairing { color: #6ee7b7; background: rgba(110, 231, 183, 0.12); }
 .outliner__status--orbiting  { color: #8aa0b4; background: rgba(138, 160, 180, 0.10); }
 
 /* Build progress under a settlement row — what it's making and when

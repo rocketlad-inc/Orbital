@@ -3,6 +3,7 @@ import { useGameContext } from '../state/gameContext';
 import { Ship, Body, Settlement, TradeRoute } from '../types';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { maintenanceRatesForShip } from '../game/maintenance';
+import { nearestShipyardBodyId, isDamagedShip } from '../game/repair';
 import { rankHpMul } from '../game/techs';
 import {
   ShipPartId, SHIP_PART_DEFS, countPart, detonatorDamage, detonatorDisclosure,
@@ -705,6 +706,53 @@ export const ShipPanel: React.FC = () => {
                 Auto-transfer to the nearest friendly shipyard station when HP
                 drops below the threshold. Fires once per damage episode.
               </div>
+
+              {/* One-shot repair dispatch — the manual sibling of the
+                  RETREAT AT threshold. Only offered when it would DO
+                  something: hull is damaged, parked, and not already
+                  sitting at a friendly station (station repair covers
+                  that case; the status badge says "Repairing"). */}
+              {isDamagedShip(ship) && !ship.transit && (() => {
+                const atStation = gameState.settlements.some(st =>
+                  st.type === 'station' && st.hp > 0
+                  && st.ownedBy === ship.ownedBy
+                  && st.bodyId === ship.orbit.parentBodyId);
+                if (atStation) return null;
+                const dest = nearestShipyardBodyId(
+                  ship, gameState.settlements, gameState.bodies, gameState.currentTick,
+                );
+                const destBody = dest ? gameState.bodies.find(b => b.id === dest) : null;
+                return (
+                  <div className="orders-config-row">
+                    <span className="orders-config-label">REPAIR</span>
+                    <button
+                      className="orders-stance-btn"
+                      disabled={!dest}
+                      title={dest
+                        ? `Transfer to ${destBody?.name ?? dest} — nearest friendly shipyard — and repair (+2 HP/tick docked)`
+                        : 'No friendly shipyard station anywhere — build a station shipyard first'}
+                      onClick={() => {
+                        if (!dest) return;
+                        const plan = launchTorchTransfer(ship.id, dest);
+                        if (!plan) { setTransferError('Transfer failed — check fuel'); return; }
+                        setTransferError(null);
+                        mpActions?.transfer({
+                          shipId: ship.id,
+                          targetBodyId: plan.targetBodyId,
+                          scheduledT: plan.startTick,
+                          arrivalT: plan.arriveTick,
+                          dvPrograde: plan.totalDv,
+                          fuelCost: Math.round(plan.totalDv * 10),
+                        }).then(res => {
+                          if (!res.ok) setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
+                        });
+                      }}
+                    >
+                      ⛨ SEND TO SHIPYARD{destBody ? ` (${destBody.name.toUpperCase()})` : ''}
+                    </button>
+                  </div>
+                );
+              })()}
 
               {/* Detonator-only. The row used to render on every hull with
                   a "no effect without a detonator part" disclaimer — a live
