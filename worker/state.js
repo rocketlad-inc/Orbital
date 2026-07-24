@@ -10,7 +10,9 @@ import { hasFeature } from './researchUnlocks.js';
 //   ships    — all ships (clipped to caller's faction + opponents in caller's SOIs
 //              once fog-of-war is wired through here; v1 returns ALL ships so
 //              the renderer can paint a complete picture)
-//   nodes    — planned/committed maneuvers for caller's ships only
+//   nodes    — caller's own maneuvers (all states) + allies' & sensor-
+//              detected hostiles' in-transit legs, so incoming ships render
+//              in flight instead of popping in on arrival
 //
 // Polled by the client (~once per second when in a game). When we move the
 // renderer to be server-authoritative this is the source of truth; the
@@ -760,15 +762,30 @@ async function handleGetState(req, env, ctx) {
          FROM game_ship_nodes n
          JOIN game_ships s ON s.id = n.ship_id
         WHERE n.game_id = ?1
-          AND s.owner_faction_id IN (SELECT value FROM json_each(?2))
-          AND (
-            s.owner_faction_id = ?3
-            OR n.status IN ('committed','in_transit')
-          )
           AND n.status IN ('planned','committed','in_transit')
+          AND (
+            -- Caller: every planned/committed/in_transit leg of own ships.
+            s.owner_faction_id = ?3
+            -- Allies: their committed/in_transit legs (started moves leak
+            -- across the ally line).
+            OR (s.owner_faction_id IN (SELECT value FROM json_each(?2))
+                AND n.status IN ('committed','in_transit'))
+            -- ANY faction's IN-TRANSIT leg for a ship the caller currently
+            -- has a sensor on (?4). Without this a detected hostile torch
+            -- was sent as a ship but had NO node, so the client couldn't
+            -- compute its in-flight position — it fell back to the ship's
+            -- origin body and the client's own fog hid it until it arrived
+            -- (player report: "didn't see it until it got to my moon"). The
+            -- node lets the client render the enemy ship along its arc the
+            -- moment it crosses your sensor range.
+            OR (n.status = 'in_transit'
+                AND n.ship_id IN (SELECT value FROM json_each(?4)))
+            -- Total Awareness (sensors 10): every in-transit leg.
+            OR (n.status = 'in_transit' AND 1 = ?5)
+          )
         ORDER BY n.ship_id, n.sequence`,
     )
-    .bind(gameId, presenceFactionIds, me.id)
+    .bind(gameId, presenceFactionIds, me.id, sensorVisibleShipIds, seeAllShips ? 1 : 0)
     .all()).results ?? [];
 
   // In-flight ship builds for the caller's faction. The tick alarm
