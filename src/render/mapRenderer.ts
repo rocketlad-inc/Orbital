@@ -1145,6 +1145,13 @@ function drawPlanetBody(
  * horizontally with wraparound (gas-giant band drift). `drift` is in
  * canvas px; 0 = static.
  */
+// Axial tilt of the rendered sphere, radians. The map is a top-down view
+// of the orbital plane, so a planet's spin axis really points up out of
+// the screen; drawing it dead side-on (poles at 12/6 o'clock) reads flat.
+// Leaning the surface ~20° gives a 3/4 read instead. Tied to RING_TILT so
+// a ringed giant's bands sit in the same plane as its rings.
+const PLANET_AXIAL_TILT = RING_TILT;
+
 function drawTexturedDisk(
   c: CanvasRenderingContext2D,
   tex: HTMLCanvasElement,
@@ -1155,6 +1162,15 @@ function drawTexturedDisk(
   c.beginPath();
   c.arc(x, y, r, 0, Math.PI * 2);
   c.clip();
+  // Tilt the SURFACE (not the disk silhouette, which stays a circle) so
+  // the horizontal spin happens about a leaned axis — an axial tilt. The
+  // sun-relative terminator is drawn later, unrotated, so lighting stays
+  // correct. The 2r-square texture still covers the r-radius clip circle
+  // at any rotation (a centered square's inscribed circle is rotation-
+  // invariant), so no gap opens at the tilted corners.
+  c.translate(x, y);
+  c.rotate(PLANET_AXIAL_TILT);
+  c.translate(-x, -y);
   const d = r * 2;
   if (drift > 0.5) {
     const off = drift % d;
