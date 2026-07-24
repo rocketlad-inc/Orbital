@@ -1155,17 +1155,18 @@ function drawTexturedDisk(
 }
 
 /**
- * Drifting cloud deck for a terrestrial body, clipped to its disk.
+ * Drifting cloud deck for a terrestrial or giant body, clipped to disk.
  *
  * WALL-CLOCK driven (ctx.nowMs), NOT the sim tick — ticks are minutes
  * apart, so keying drift to ctx.t left the deck effectively frozen. The
- * coefficient is tuned so a full horizontal wrap (2·radius) takes ~80s:
- * a gentle planetary drift that reads as live motion without spinning.
+ * rate is tuned per type: terrestrials drift gently (~80s wrap) like
+ * weather; gas/ice giants churn faster, matching their turbulent look.
  *
- * Shared by the overworld body path AND the world-menu close-up so the
- * clouds drift identically in both (same texture, same rate, same
- * radius → the two layers overlap perfectly during the dive). No-op for
- * non-terrestrials or when the cloud texture is unavailable.
+ * Shared by the overworld body paths AND the world-menu close-up so the
+ * clouds drift identically in both (same texture, rate, and radius, so
+ * the two layers overlap perfectly during the dive). `alphaScale` lets the
+ * world-menu dive fade the deck in; overworld callers leave it at 1.
+ * No-op for bodies with no cloud deck or when the texture is missing.
  */
 export function drawCloudDeck(
   ctx: RenderContext,
@@ -1173,14 +1174,19 @@ export function drawCloudDeck(
   x: number,
   y: number,
   radius: number,
-  alpha = 0.45,
+  alphaScale = 1,
 ) {
-  if (body.type !== 'terrestrial') return;
+  const isTerr = body.type === 'terrestrial';
+  const isGas = body.type === 'gas_giant';
+  const isIce = body.type === 'ice_giant';
+  if (!isTerr && !isGas && !isIce) return;
   const clouds = getCloudTexture(body);
   if (!clouds) return;
-  const drift = (ctx.nowMs ?? 0) * radius * 0.000025;
+  const rate = isTerr ? 0.000025 : 0.00004;
+  const baseAlpha = isGas ? 0.55 : isIce ? 0.38 : 0.45;
+  const drift = (ctx.nowMs ?? 0) * radius * rate;
   ctx.ctx.save();
-  ctx.ctx.globalAlpha = alpha;
+  ctx.ctx.globalAlpha = baseAlpha * alphaScale;
   drawTexturedDisk(ctx.ctx, clouds, x, y, radius, drift);
   ctx.ctx.restore();
 }
@@ -1378,15 +1384,15 @@ function drawGasGiantBody(
   ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
   ctx.ctx.fill();
 
-  // Textured path — seeded bands + storm from the texture cache, with
-  // a slow horizontal drift at focus sizes so the cloud deck visibly
-  // crawls (speed scales with sim tick; ~static at 1×, alive at 100×).
+  // Textured path — the seeded banded BODY from the cache (static), with
+  // a separate wall-clock-driven cloud deck scudding over it (drawn
+  // before the terminator so the night side darkens the clouds too).
   let textured = false;
   if (radius > 8) {
     const tex = getPlanetTexture(body);
     if (tex) {
-      const drift = radius > 20 ? ctx.t * radius * 0.002 : 0;
-      drawTexturedDisk(ctx.ctx, tex, canvasPos.x, canvasPos.y, radius, drift);
+      drawTexturedDisk(ctx.ctx, tex, canvasPos.x, canvasPos.y, radius, 0);
+      drawCloudDeck(ctx, body, canvasPos.x, canvasPos.y, radius);
       drawDayNightShading(canvasPos, radius, ctx);
       drawAtmosphereRimLight(body, canvasPos, radius, ctx);
       textured = true;

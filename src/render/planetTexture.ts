@@ -111,10 +111,20 @@ function paintClouds(body: Body): HTMLCanvasElement | null {
   const c = off.getContext('2d');
   if (!c) return null;
 
-  // Distinct seed stream from the surface art so clouds don't echo
-  // the continent layout.
+  // Distinct seed stream from the surface art so the clouds don't echo
+  // the body layout beneath them.
   const rand = mulberry32(hashStr(body.id + ':clouds'));
+  if (body.type === 'gas_giant' || body.type === 'ice_giant') {
+    paintGiantClouds(c, body, rand);
+  } else {
+    paintTerrestrialClouds(c, rand);
+  }
+  return off;
+}
 
+/** Puffy weather banks for terrestrials — sparse clusters biased into
+ *  horizontal streaks, plus lone wisps. */
+function paintTerrestrialClouds(c: CanvasRenderingContext2D, rand: () => number) {
   /** One soft puff. Painted at x, x−TEX_SIZE and x+TEX_SIZE so the
    *  horizontal wrap seam (the drift scroll) stays continuous. */
   const puff = (px: number, py: number, pr: number, alpha: number) => {
@@ -128,8 +138,6 @@ function paintClouds(body: Body): HTMLCanvasElement | null {
     }
   };
 
-  // Sparse cloud banks: a few clusters of overlapping puffs, biased
-  // toward horizontal streaks (weather bands), plus lone wisps.
   const clusters = 4 + Math.floor(rand() * 3);
   for (let i = 0; i < clusters; i++) {
     const cx = rand() * TEX_SIZE;
@@ -147,7 +155,71 @@ function paintClouds(body: Body): HTMLCanvasElement | null {
   for (let i = 0; i < 3; i++) {
     puff(rand() * TEX_SIZE, rand() * TEX_SIZE, TEX_R * (0.05 + rand() * 0.05), 0.3);
   }
-  return off;
+}
+
+/** Cloud deck for gas / ice giants — the moving layer the base bands
+ *  scud under. Full-width translucent streaks form the banded backdrop
+ *  (they wrap trivially, being uniform in x); the drift the renderer
+ *  applies is CARRIED by the flattened wisps and the storm oval, which
+ *  DO vary horizontally and so visibly churn across the disk. */
+function paintGiantClouds(c: CanvasRenderingContext2D, body: Body, rand: () => number) {
+  // Cream / white / pale-tan cloud tops — the tones gas-giant highlights
+  // read as, independent of the (often vivid) base hue underneath.
+  const TINTS = ['245, 240, 228', '255, 255, 255', '226, 212, 190'];
+
+  /** Flattened elliptical puff, wrap-tripled in x. A unit-circle radial
+   *  gradient is scaled into a wide, thin streak (giant cloud shear). */
+  const wisp = (px: number, py: number, prx: number, pry: number, alpha: number, tint: string) => {
+    for (const wx of [px - TEX_SIZE, px, px + TEX_SIZE]) {
+      c.save();
+      c.translate(wx, py);
+      c.scale(prx, pry);
+      const g = c.createRadialGradient(0, 0, 0, 0, 0, 1);
+      g.addColorStop(0, `rgba(${tint}, ${alpha})`);
+      g.addColorStop(0.6, `rgba(${tint}, ${alpha * 0.5})`);
+      g.addColorStop(1, `rgba(${tint}, 0)`);
+      c.fillStyle = g;
+      c.fillRect(-1, -1, 2, 2);
+      c.restore();
+    }
+  };
+
+  // Banded backdrop — soft full-width streaks.
+  const streaks = 6 + Math.floor(rand() * 4);
+  for (let i = 0; i < streaks; i++) {
+    const y = rand() * TEX_SIZE;
+    const h = TEX_R * (0.03 + rand() * 0.1);
+    const alpha = 0.1 + rand() * 0.16;
+    const tint = TINTS[Math.floor(rand() * TINTS.length)];
+    const g = c.createLinearGradient(0, y - h, 0, y + h);
+    g.addColorStop(0, `rgba(${tint}, 0)`);
+    g.addColorStop(0.5, `rgba(${tint}, ${alpha})`);
+    g.addColorStop(1, `rgba(${tint}, 0)`);
+    c.fillStyle = g;
+    c.fillRect(0, y - h, TEX_SIZE, h * 2);
+  }
+
+  // Turbulent wisps riding the bands — these drift visibly.
+  const wisps = 16 + Math.floor(rand() * 10);
+  for (let i = 0; i < wisps; i++) {
+    wisp(
+      rand() * TEX_SIZE, rand() * TEX_SIZE,
+      TEX_R * (0.08 + rand() * 0.14),          // wide
+      TEX_R * (0.02 + rand() * 0.05),          // thin
+      0.1 + rand() * 0.16,
+      TINTS[Math.floor(rand() * TINTS.length)],
+    );
+  }
+
+  // Great storm — a bright cyclonic oval with a darker eye. Ice giants
+  // get a fainter, cooler one; gas giants a bold warm one.
+  const warm = body.type === 'gas_giant';
+  const sx = rand() * TEX_SIZE;
+  const sy = TEX_SIZE * (0.3 + rand() * 0.45);
+  const srx = TEX_R * (0.12 + rand() * 0.06);
+  const sry = srx * 0.55;
+  wisp(sx, sy, srx, sry, warm ? 0.5 : 0.3, warm ? '255, 236, 210' : '210, 226, 240');
+  wisp(sx, sy, srx * 0.5, sry * 0.5, warm ? 0.4 : 0.24, warm ? '150, 90, 70' : '90, 120, 150');
 }
 
 /** Test hook / hot-reload safety. */
@@ -326,31 +398,35 @@ function paintRocky(c: CanvasRenderingContext2D, base: string, rand: () => numbe
 }
 
 function paintGasGiant(c: CanvasRenderingContext2D, base: string, rand: () => number) {
-  fillBase(c, base);
-  // Horizontal bands with slight seeded thickness variance.
+  // The base is now just the giant's BODY — a smooth banded atmosphere.
+  // All the moving detail (storm, wisps, bright streaks) lives in the
+  // separate, scrolling cloud deck (paintGiantClouds), so this stays a
+  // clean underlayer that reads well beneath it.
+  //
+  // Vertical depth gradient: lighter toward the equator-ish top, deeper
+  // toward the poles, so the disk feels spherical before shading.
+  const bg = c.createLinearGradient(0, 0, 0, TEX_SIZE);
+  bg.addColorStop(0, lighten(base, 1.14));
+  bg.addColorStop(0.5, base);
+  bg.addColorStop(1, darken(base, 0.8));
+  c.fillStyle = bg;
+  c.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
+
+  // Bold soft-edged latitudinal bands — the deep atmosphere layers.
+  // Soft (gradient) edges, not hard rects, so the cloud deck sits over
+  // a believable body instead of a striped flag.
   const bands = 7 + Math.floor(rand() * 3);
   let y = 0;
   for (let i = 0; i < bands; i++) {
     const h = (TEX_SIZE / bands) * (0.7 + rand() * 0.6);
-    const tint = i % 2 === 0 ? lighten(base, 1.18) : darken(base, 0.8);
-    c.fillStyle = withOpacity(tint, 0.5 + rand() * 0.15);
-    c.fillRect(0, y, TEX_SIZE, h * 0.85);
+    const tint = i % 2 === 0 ? lighten(base, 1.16) : darken(base, 0.8);
+    const g = c.createLinearGradient(0, y, 0, y + h);
+    g.addColorStop(0, withOpacity(tint, 0));
+    g.addColorStop(0.5, withOpacity(tint, 0.45 + rand() * 0.15));
+    g.addColorStop(1, withOpacity(tint, 0));
+    c.fillStyle = g;
+    c.fillRect(0, y, TEX_SIZE, h);
     y += h;
-  }
-  // Great-storm oval + a couple of thin streaks
-  const sy = TEX_R + (rand() - 0.5) * TEX_R * 0.8;
-  const sx = TEX_R + (rand() - 0.5) * TEX_R;
-  c.fillStyle = withOpacity(lighten(base, 1.35), 0.85);
-  c.beginPath();
-  c.ellipse(sx, sy, TEX_R * 0.16, TEX_R * 0.08, 0, 0, Math.PI * 2);
-  c.fill();
-  c.fillStyle = withOpacity(darken(base, 0.7), 0.5);
-  c.beginPath();
-  c.ellipse(sx, sy, TEX_R * 0.10, TEX_R * 0.05, 0, 0, Math.PI * 2);
-  c.fill();
-  for (let i = 0; i < 2; i++) {
-    c.fillStyle = withOpacity(lighten(base, 1.25), 0.35);
-    c.fillRect(0, rand() * TEX_SIZE, TEX_SIZE, 1.5 + rand() * 1.5);
   }
 }
 

@@ -80,13 +80,15 @@ function surfaceDetail(rc: RenderContext, body: Body, c: { x: number; y: number;
     // overworld uses, so diving into the world menu keeps the planet's
     // clouds (and keeps them moving) instead of freezing to flat art.
     // Drawn over the continents but before the terminator below, so the
-    // night side darkens the clouds too.
-    drawCloudDeck(rc, body, x, y, r, 0.5 * alpha);
+    // night side darkens the clouds too. `alpha` fades it in with the dive.
+    drawCloudDeck(rc, body, x, y, r, alpha);
   } else if (body.type === 'gas_giant') {
     g.strokeStyle = shade(base, -0.25); g.lineWidth = r * 0.16;
     band(g, x, y, r, -0.35); band(g, x, y, r, 0.05);
     g.strokeStyle = shade(base, -0.45); g.lineWidth = r * 0.12;
     band(g, x, y, r, -0.15); band(g, x, y, r, 0.3);
+    // Same drifting cloud deck as the overworld giant, over the bands.
+    drawCloudDeck(rc, body, x, y, r, alpha);
   } else { // moon / dwarf / asteroid — craters
     g.fillStyle = 'rgba(0,0,0,0.18)';
     for (let i = 0; i < 5; i++) {
