@@ -2506,6 +2506,39 @@ export class Room {
       s.population = (s.population ?? 1) + 1;
     }
 
+    // Passive settlement auto-repair. A settlement that hasn't TAKEN
+    // damage within REPAIR_GRACE_TICKS regenerates toward max HP, so a
+    // base mends between raids with no build action. "Under attack" =
+    // damaged within the grace window (last_damaged_tick, migration
+    // 0044); grace ≥ the combat cadence (AUTO_COMBAT_INTERVAL = 3) so a
+    // settlement under sustained bombardment never heals mid-siege. Heal
+    // scales with max HP (~6%/tick, min 3) so a big city and a small
+    // station both mend at a sensible pace. Runs AFTER combat resolution
+    // this tick, so anything just hit has last_damaged_tick = tick.
+    const REPAIR_GRACE_TICKS = 3;
+    try {
+      const hurt = (await this.env.DB
+        .prepare(
+          `SELECT id, hp, hp_max, last_damaged_tick FROM game_settlements
+            WHERE game_id = ? AND destroyed_at_tick IS NULL AND hp < hp_max
+              AND (last_damaged_tick IS NULL OR ? - last_damaged_tick >= ?)`,
+        )
+        .bind(gameId, tick, REPAIR_GRACE_TICKS)
+        .all()).results ?? [];
+      for (const s of hurt) {
+        const maxHp = Number(s.hp_max ?? 0);
+        if (maxHp <= 0) continue;
+        const rate = Math.max(3, Math.ceil(maxHp * 0.06));
+        const newHp = Math.min(maxHp, Number(s.hp ?? 0) + rate);
+        await this.env.DB
+          .prepare('UPDATE game_settlements SET hp = ? WHERE id = ?')
+          .bind(newHp, s.id)
+          .run();
+      }
+    } catch (e) {
+      console.error('settlement auto-repair pass failed', e);
+    }
+
     // Yield multipliers — kept in sync with src/game/settlements.ts.
     const YIELD_MULT_PER_POP = 0.1;
     const FORGE_PER_LEVEL = 0.25;

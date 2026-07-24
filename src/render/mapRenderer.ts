@@ -7,6 +7,7 @@ import { shipDisplayTick } from './tickPhase';
 import { Body, Ship, OrbitElements, TrajectoryArc, Settlement, Faction, TorchTransferPlan, BuildOrder, BuildingKind } from '../types';
 import { getPlanetTexture, getCloudTexture, hashStr, mulberry32 } from './planetTexture';
 import { drawCityCluster, drawStationStructure } from './isoStructures';
+import { flameCount } from '../game/worldMenu/combatDisplay';
 import type { SystemRegion } from './systemRegions';
 import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectorsAt } from '../physics/orbitalMechanics';
 import { sampleTorchTrajectory, torchPositionFromSamples, trajectoryTangentAt } from '../physics/torchTransfer';
@@ -3448,6 +3449,39 @@ export function drawStation(
       },
     });
     ctx.ctx.restore();
+
+    // Battle-damage fire on the station rig — same HP-driven intensity as
+    // the city surface (world-menu drawFire), so a damaged station reads
+    // as burning here AND in the world menu (this pass draws the station
+    // in both). No flames until below FIRE_THRESH; more anchors light up
+    // as HP drops. Drawn after the structure so the fire licks over it.
+    {
+      const staRatio = settlement.hp / Math.max(1, settlement.maxHp);
+      const n = flameCount(staRatio, 4);
+      if (n > 0) {
+        const nowF = ctx.nowMs ?? performance.now();
+        const R = 14 * STATION_STRUCTURE_SCALE;
+        for (let i = 0; i < n; i++) {
+          const a = (i / 4) * Math.PI * 2 + 0.6;
+          const fx = canvasPos.x + Math.cos(a) * R * 0.7;
+          const fy = canvasPos.y + Math.sin(a) * R * 0.5;   // squashed — rig is wide
+          const flick = 0.75 + 0.25 * Math.sin(nowF / 90 + i * 2.1);
+          const s = 5 * STATION_STRUCTURE_SCALE * flick;
+          ctx.ctx.fillStyle = '#ff5a1f';
+          ctx.ctx.beginPath();
+          ctx.ctx.moveTo(fx, fy);
+          ctx.ctx.bezierCurveTo(fx - s * 0.55, fy - s * 0.6, fx - s * 0.28, fy - s * 1.15, fx, fy - s * 1.7);
+          ctx.ctx.bezierCurveTo(fx + s * 0.28, fy - s * 1.15, fx + s * 0.55, fy - s * 0.6, fx, fy);
+          ctx.ctx.fill();
+          ctx.ctx.fillStyle = '#ffca28';
+          ctx.ctx.beginPath();
+          ctx.ctx.moveTo(fx, fy);
+          ctx.ctx.bezierCurveTo(fx - s * 0.3, fy - s * 0.45, fx - s * 0.15, fy - s * 0.8, fx, fy - s * 1.12);
+          ctx.ctx.bezierCurveTo(fx + s * 0.15, fy - s * 0.8, fx + s * 0.3, fy - s * 0.45, fx, fy);
+          ctx.ctx.fill();
+        }
+      }
+    }
 
     if (settlement.hp < settlement.maxHp) {
       // Bar rides above the scaled-up structure.

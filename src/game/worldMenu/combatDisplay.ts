@@ -6,8 +6,11 @@
 // combat logic lives here, and none of this is reachable from SP.
 // ============================================================
 
-/** No flames at or above this hp ratio; below it, fire scales up. */
-export const FIRE_THRESH = 0.85;
+/** No flames at or above this hp ratio; below it, fire scales up. Set
+ *  high (0.95) so even light battle damage shows a wisp of fire/smoke —
+ *  a settlement that just took a volley reads as hurt at a glance rather
+ *  than staying pristine until it's already badly beaten. */
+export const FIRE_THRESH = 0.95;
 
 /** HP-bar color by ratio. Boundaries are exclusive on the high side:
  *  exactly 0.6 is amber, exactly 0.3 is red (spec I2). */
