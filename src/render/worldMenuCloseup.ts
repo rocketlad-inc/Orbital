@@ -16,7 +16,7 @@
 // ============================================================
 
 import { Body, BuildingKind, Settlement } from '../types';
-import { RenderContext, worldToCanvas } from './mapRenderer';
+import { RenderContext, worldToCanvas, drawCloudDeck } from './mapRenderer';
 import { bodyPosition } from '../physics/orbitalMechanics';
 import { zOf, clamp01 } from '../game/worldMenu/camera';
 import { hpColor, flameCount } from '../game/worldMenu/combatDisplay';
@@ -76,6 +76,12 @@ function surfaceDetail(rc: RenderContext, body: Body, c: { x: number; y: number;
     blob(g, x + r * 0.42, y - r * 0.15, r * 0.34);
     g.fillStyle = shade(base, -0.35);
     blob(g, x - r * 0.05, y + r * 0.45, r * 0.55);
+    // Drifting cloud deck — the SAME shared, wall-clock-driven layer the
+    // overworld uses, so diving into the world menu keeps the planet's
+    // clouds (and keeps them moving) instead of freezing to flat art.
+    // Drawn over the continents but before the terminator below, so the
+    // night side darkens the clouds too.
+    drawCloudDeck(rc, body, x, y, r, 0.5 * alpha);
   } else if (body.type === 'gas_giant') {
     g.strokeStyle = shade(base, -0.25); g.lineWidth = r * 0.16;
     band(g, x, y, r, -0.35); band(g, x, y, r, 0.05);

@@ -1097,18 +1097,9 @@ function drawPlanetBody(
       if (ringed) drawRingArcs(body, canvasPos, radius, ctx, 'back');
       drawTexturedDisk(ctx.ctx, tex, canvasPos.x, canvasPos.y, radius, 0);
       // Drifting cloud deck on terrestrials — separate cached layer,
-      // scrolled slowly (0.3× the gas-giant band rate), drawn BEFORE
-      // the terminator so the night side darkens clouds too.
-      if (body.type === 'terrestrial') {
-        const clouds = getCloudTexture(body);
-        if (clouds) {
-          const drift = ctx.t * radius * 0.0006;
-          ctx.ctx.save();
-          ctx.ctx.globalAlpha = 0.45;
-          drawTexturedDisk(ctx.ctx, clouds, canvasPos.x, canvasPos.y, radius, drift);
-          ctx.ctx.restore();
-        }
-      }
+      // drawn BEFORE the terminator so the night side darkens clouds too.
+      // Wall-clock driven (see drawCloudDeck) so it visibly moves.
+      drawCloudDeck(ctx, body, canvasPos.x, canvasPos.y, radius);
       drawDayNightShading(canvasPos, radius, ctx);
       drawNightLights(body, canvasPos, radius, ctx);
       drawAtmosphereRimLight(body, canvasPos, radius, ctx);
@@ -1161,6 +1152,37 @@ function drawTexturedDisk(
     c.drawImage(tex, x - r, y - r, d, d);
   }
   c.restore();
+}
+
+/**
+ * Drifting cloud deck for a terrestrial body, clipped to its disk.
+ *
+ * WALL-CLOCK driven (ctx.nowMs), NOT the sim tick — ticks are minutes
+ * apart, so keying drift to ctx.t left the deck effectively frozen. The
+ * coefficient is tuned so a full horizontal wrap (2·radius) takes ~80s:
+ * a gentle planetary drift that reads as live motion without spinning.
+ *
+ * Shared by the overworld body path AND the world-menu close-up so the
+ * clouds drift identically in both (same texture, same rate, same
+ * radius → the two layers overlap perfectly during the dive). No-op for
+ * non-terrestrials or when the cloud texture is unavailable.
+ */
+export function drawCloudDeck(
+  ctx: RenderContext,
+  body: Body,
+  x: number,
+  y: number,
+  radius: number,
+  alpha = 0.45,
+) {
+  if (body.type !== 'terrestrial') return;
+  const clouds = getCloudTexture(body);
+  if (!clouds) return;
+  const drift = (ctx.nowMs ?? 0) * radius * 0.000025;
+  ctx.ctx.save();
+  ctx.ctx.globalAlpha = alpha;
+  drawTexturedDisk(ctx.ctx, clouds, x, y, radius, drift);
+  ctx.ctx.restore();
 }
 
 /**
