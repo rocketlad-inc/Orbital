@@ -13,8 +13,9 @@ import {
   ALL_VARIANTS, DEFAULT_SHIP_ICONS,
 } from './ShipIcons';
 import { openShipDesigner } from './ShipDesigner';
-import { sanitizeParts, partsCost, computeDesignStats, loadoutSummary } from '../game/shipParts';
+import { sanitizeParts, partsCost, computeDesignStats, loadoutSummary, ShipPartId } from '../game/shipParts';
 import { randomShipName } from '../game/shipNames';
+import type { BuildListEntry, ShipDesign } from '../types';
 import { HULL_FEATURE } from '../game/researchUnlocks';
 import { useFeatureGate } from '../hooks/useFeatureGate';
 import './BuildPanel.css';
@@ -58,6 +59,20 @@ export const BuildPanel: React.FC = () => {
     const t = setTimeout(() => setRecentlyQueued(new Set()), 600);
     return () => clearTimeout(t);
   }, [recentlyQueued]);
+
+  // --- Curated build list (MP): local state ---------------------------
+  // The build panel is now a list of LOADOUTS the player assigns, not a
+  // fixed roster of every class. pickerOpen toggles the "add loadout"
+  // menu; rowQty holds per-row build counts; pendingList is an optimistic
+  // overlay so add/remove feel instant instead of waiting ~1.5s for the
+  // next /state poll to reflect the PUT.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [rowQty, setRowQty] = useState<Record<string, number>>({});
+  const [pendingList, setPendingList] = useState<BuildListEntry[] | null>(null);
+  // Server buildList is authoritative — whenever it changes (our PUT
+  // reflected, or another tab edited), drop the optimistic overlay.
+  const buildListKey = JSON.stringify(gameState.buildList ?? []);
+  useEffect(() => { setPendingList(null); }, [buildListKey]);
 
   if (!uiState.selectedBodyId) return null;
 
@@ -199,6 +214,116 @@ export const BuildPanel: React.FC = () => {
       }
     }
     setSelectedClass(null);
+  };
+
+  // ===== Curated build list (MP only) ================================
+  // The player assigns specific LOADOUTS to this list (any saved design,
+  // or a bare hull) instead of the fixed all-classes roster. Building a
+  // row queues that exact loadout — many per class, no locked clutter.
+  const designs: ShipDesign[] = gameState.shipDesigns ?? [];
+  const mpBuildable = BUILDABLE_CLASSES.filter(cls => cls !== 'colony' || !!mpActions);
+  const isUnlocked = (cls: ShipClassName) => !gate.lockReason(HULL_FEATURE[cls]);
+  const techLevels = gameState.factionTech['player']?.levels ?? {};
+
+  // Effective entries = the optimistic overlay, else the explicit server
+  // list, else a sensible default (active design / bare hull per UNLOCKED
+  // class) so a player who has never curated one still sees buildables.
+  const serverList = gameState.buildList ?? [];
+  const deriveDefaultList = (): BuildListEntry[] => {
+    const out: BuildListEntry[] = [];
+    for (const cls of mpBuildable) {
+      if (!isUnlocked(cls)) continue;
+      const active = designs.find(d => d.shipClass === cls && d.isActive);
+      out.push(active ? { designId: active.id } : { bareClass: cls });
+    }
+    return out;
+  };
+  const effectiveEntries: BuildListEntry[] =
+    pendingList ?? (serverList.length > 0 ? serverList : deriveDefaultList());
+
+  interface BuildRow {
+    key: string; shipClass: ShipClassName; name: string;
+    iconVariant?: ShipIconVariant; parts: ShipPartId[]; designId?: string;
+  }
+  const buildRows: BuildRow[] = effectiveEntries
+    .map((e): BuildRow | null => {
+      if (e.designId) {
+        const d = designs.find(x => x.id === e.designId);
+        if (!d) return null; // stale ref (design deleted) — drop it
+        return {
+          key: `d:${d.id}`, shipClass: d.shipClass, name: d.name,
+          iconVariant: d.iconVariant, parts: sanitizeParts(d.parts), designId: d.id,
+        };
+      }
+      const cls = (e.bareClass ?? 'corvette') as ShipClassName;
+      return {
+        key: `b:${cls}`, shipClass: cls,
+        name: `Bare ${SHIP_CLASSES[cls].displayName}`, parts: [],
+      };
+    })
+    .filter((r): r is BuildRow => r !== null);
+
+  const persistList = (next: BuildListEntry[]) => {
+    setPendingList(next);
+    setBuildError(null);
+    if (mpActions) {
+      mpActions.setBuildList(next).then(res => {
+        if (!res.ok) setBuildError(humanizeMpError(res.code, res.error, 'build'));
+      });
+    }
+  };
+  const addEntry = (entry: BuildListEntry) => {
+    persistList([...effectiveEntries, entry]);
+    setPickerOpen(false);
+  };
+  const removeRow = (row: BuildRow) => persistList(
+    effectiveEntries.filter(e =>
+      row.designId ? e.designId !== row.designId : e.bareClass !== row.shipClass),
+  );
+
+  const listedDesignIds = new Set(effectiveEntries.map(e => e.designId).filter(Boolean));
+  const listedBareClasses = new Set(effectiveEntries.map(e => e.bareClass).filter(Boolean));
+
+  const getRowQty = (key: string) => Math.max(1, rowQty[key] ?? 1);
+  const bumpRowQty = (key: string, d: number) =>
+    setRowQty(prev => ({ ...prev, [key]: Math.max(1, Math.min(20, (prev[key] ?? 1) + d)) }));
+
+  const pickerRowStyle: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', gap: 7, width: '100%',
+    padding: '5px 6px', background: 'transparent', border: 'none',
+    borderRadius: 5, color: '#d8e4ee', fontFamily: 'inherit',
+    cursor: 'pointer', textAlign: 'left',
+  };
+
+  // Local stockpile at THIS body (matches server spend logic), summed
+  // once for every row's affordability check.
+  const localStock = gameState.settlements
+    .filter(s => s.ownedBy === 'player' && s.bodyId === body.id)
+    .reduce((a, s) => ({
+      fuel: a.fuel + s.stockpile.fuel,
+      ore: a.ore + s.stockpile.ore,
+      credits: a.credits + s.stockpile.credits,
+    }), { fuel: 0, ore: 0, credits: 0 });
+
+  const handleBuildRow = (row: BuildRow) => {
+    if (!mpActions) return;
+    const n = getRowQty(row.key);
+    setBuildError(null);
+    for (let i = 0; i < n; i++) {
+      const fromQueue = dequeueName();
+      const name = fromQueue ?? randomShipName(row.shipClass, existingShipNames);
+      mpActions.build({
+        bodyId: body.id, shipClass: row.shipClass, shipName: name,
+        iconVariant: row.iconVariant,
+        ...(row.designId ? { designId: row.designId } : { bare: true }),
+      }).then(res => {
+        if (!res.ok) {
+          setBuildError(humanizeMpError(res.code, res.error, 'build'));
+          if (fromQueue) setPendingNames(prev => [fromQueue, ...prev]);
+        }
+      });
+    }
+    setRecentlyQueued(s => new Set(s).add(row.key));
   };
 
   return (
@@ -380,9 +505,11 @@ export const BuildPanel: React.FC = () => {
         </div>
       )}
 
-      {/* LOCAL-first: sum the stockpiles of every player-owned
-          settlement at this body so the affordability calc matches
-          the server's spend logic in worker/actions.js handleQueueBuild. */}
+      {/* SINGLE-PLAYER roster (frozen sim). MP uses the curated build
+          list below instead. LOCAL-first: sum the stockpiles of every
+          player-owned settlement at this body so the affordability calc
+          matches worker/actions.js handleQueueBuild. */}
+      {!mpActions && (
       <div className="build-classes">
         {/* Colony ships are an MP-only verb (SP's sim is frozen on the
             legacy freighter-settle mechanics), so hide the class from
@@ -573,6 +700,211 @@ export const BuildPanel: React.FC = () => {
           );
         })}
       </div>
+      )}
+
+      {/* MULTIPLAYER curated build list — the loadouts the player has
+          assigned. Building a row queues that exact design (or bare hull),
+          with a ×N stepper; add/remove via the picker. Locked hulls live
+          only in the picker, greyed, so the list is never padded with
+          ships you can't build. Replaces the fixed all-classes roster. */}
+      {mpActions && (
+        <>
+          <div
+            className="section-title"
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+          >
+            <span>BUILD LIST</span>
+            <button
+              onClick={() => openShipDesigner()}
+              title="Open the ship designer to create and edit loadouts"
+              style={{
+                background: 'transparent', border: '1px solid #2a3d50',
+                borderRadius: 3, color: '#8aa0b4', fontFamily: 'inherit',
+                fontSize: 8, letterSpacing: '0.08em', padding: '2px 6px', cursor: 'pointer',
+              }}
+            >⚙ DESIGNER</button>
+          </div>
+
+          {pickerOpen ? (
+            <div
+              style={{
+                border: '1px solid #2a3d50', borderRadius: 6,
+                background: '#0c141d', padding: 8, marginBottom: 8,
+              }}
+            >
+              <div style={{ fontSize: 9, letterSpacing: '0.1em', color: '#8aa0b4', marginBottom: 4 }}>
+                ADD A LOADOUT TO YOUR LIST
+              </div>
+              {mpBuildable.map(cls => {
+                const lock = gate.lockReason(HULL_FEATURE[cls]);
+                if (lock) {
+                  // Locked hull: shown greyed, not addable — the "you
+                  // can't fill the list with ships you can't build" rule.
+                  return (
+                    <div
+                      key={cls}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 7,
+                        padding: '5px 6px', opacity: 0.5,
+                      }}
+                    >
+                      <ShipIcon shipClass={cls} size={14} />
+                      <span style={{ fontSize: 11, color: '#7a8a99' }}>{SHIP_CLASSES[cls].displayName}</span>
+                      <span style={{ marginLeft: 'auto', fontSize: 8, color: '#8aa0b4', letterSpacing: '0.04em' }}>
+                        🔒 {lock.text}
+                      </span>
+                    </div>
+                  );
+                }
+                const clsDesigns = designs.filter(d => d.shipClass === cls && !listedDesignIds.has(d.id));
+                const bareListed = listedBareClasses.has(cls);
+                if (bareListed && clsDesigns.length === 0) return null; // nothing left to add
+                return (
+                  <div key={cls}>
+                    <div style={{ fontSize: 9, letterSpacing: '0.1em', color: '#6f8598', margin: '7px 0 3px' }}>
+                      {SHIP_CLASSES[cls].displayName.toUpperCase()}
+                    </div>
+                    {!bareListed && (
+                      <button
+                        onClick={() => addEntry({ bareClass: cls })}
+                        style={pickerRowStyle}
+                      >
+                        <ShipIcon shipClass={cls} size={16} />
+                        <span style={{ fontSize: 11, color: '#9fb4c6' }}>Bare {SHIP_CLASSES[cls].displayName}</span>
+                        <span style={{ marginLeft: 'auto', color: '#4ecdc4', fontSize: 14 }}>+</span>
+                      </button>
+                    )}
+                    {clsDesigns.map(d => (
+                      <button
+                        key={d.id}
+                        onClick={() => addEntry({ designId: d.id })}
+                        style={pickerRowStyle}
+                      >
+                        <ShipIcon shipClass={cls} variant={d.iconVariant} size={16} />
+                        <span style={{ fontSize: 11 }}>{d.name}</span>
+                        <span style={{ fontSize: 9, color: '#8aa0b4', marginLeft: 6 }}>
+                          {loadoutSummary(d.parts) || 'bare hull'}
+                        </span>
+                        <span style={{ marginLeft: 'auto', color: '#4ecdc4', fontSize: 14 }}>+</span>
+                      </button>
+                    ))}
+                  </div>
+                );
+              })}
+              <div style={{ textAlign: 'right', marginTop: 6 }}>
+                <button
+                  onClick={() => setPickerOpen(false)}
+                  style={{
+                    background: 'transparent', border: 'none', color: '#8aa0b4',
+                    fontFamily: 'inherit', fontSize: 10, letterSpacing: '0.06em', cursor: 'pointer',
+                  }}
+                >CLOSE</button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => setPickerOpen(true)}
+              style={{
+                width: '100%', padding: 8, background: 'transparent',
+                border: '1px dashed #35566e', borderRadius: 6, color: '#7fd4cf',
+                fontFamily: 'inherit', fontSize: 11, letterSpacing: '0.08em',
+                cursor: 'pointer', marginBottom: 8,
+              }}
+            >+ ADD LOADOUT</button>
+          )}
+
+          {buildRows.length === 0 && !pickerOpen && (
+            <div style={{ fontSize: 10, color: '#8aa0b4', padding: '4px 2px 8px' }}>
+              Your build list is empty. Add a loadout above to start building.
+            </div>
+          )}
+
+          <div className="build-classes">
+            {buildRows.map(row => {
+              const def = SHIP_CLASSES[row.shipClass];
+              const pc = partsCost(row.parts);
+              const rowCostOre = def.cost.ore + pc.ore;
+              const rowCostCredits = def.cost.credits + pc.credits;
+              const dstats = row.parts.length > 0
+                ? computeDesignStats(row.shipClass, row.parts, techLevels) : null;
+              const shortFuel = Math.max(0, def.cost.fuel - playerRes.fuel - localStock.fuel);
+              const shortOre = Math.max(0, rowCostOre - playerRes.ore - localStock.ore);
+              const shortCredits = Math.max(0, rowCostCredits - playerRes.credits - localStock.credits);
+              const canAfford = shortFuel === 0 && shortOre === 0 && shortCredits === 0;
+              const qty = getRowQty(row.key);
+              const shortBits: string[] = [];
+              if (shortFuel > 0) shortBits.push(`+${shortFuel} fuel`);
+              if (shortOre > 0) shortBits.push(`+${shortOre} metal`);
+              if (shortCredits > 0) shortBits.push(`+${shortCredits} cr`);
+              const shortLabel = shortBits.length > 0 ? `Need ${shortBits.join(', ')}` : '';
+              return (
+                <div key={row.key} className={`build-class-row ${!canAfford ? 'disabled' : ''}`}>
+                  <div className="class-info">
+                    <ShipIcon shipClass={row.shipClass} variant={row.iconVariant} size={20} />
+                    <span className="class-name">{row.name}</span>
+                    <span style={{ fontSize: 8, color: '#4ecdc4', letterSpacing: '0.08em', marginLeft: 4 }}>
+                      {def.displayName.toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="class-stats">
+                    <span className="stat">FP:{dstats ? dstats.damagePerTick : def.firepower}</span>
+                    <span className="stat">HP:{dstats ? dstats.hp : def.hp}</span>
+                    {dstats && dstats.travelTimeMult < 1 && (
+                      <span className="stat" title="Engine parts: travel-time multiplier">
+                        ⏱×{dstats.travelTimeMult.toFixed(2)}
+                      </span>
+                    )}
+                    {def.cargoCapacity > 0 && <span className="stat">CG:{def.cargoCapacity}</span>}
+                  </div>
+                  <div className="class-cost" title={shortLabel || undefined}>
+                    {def.cost.fuel > 0 && (
+                      <span className="cost-fuel" style={shortFuel > 0 ? { color: '#ff5e5e', fontWeight: 700 } : undefined}>{def.cost.fuel}F</span>
+                    )}
+                    <span className="cost-metal" style={shortOre > 0 ? { color: '#ff5e5e', fontWeight: 700 } : undefined}>{rowCostOre}M</span>
+                    <span className="cost-money" style={shortCredits > 0 ? { color: '#ff5e5e', fontWeight: 700 } : undefined}>{rowCostCredits}C</span>
+                  </div>
+                  <div style={{ display: 'inline-flex', alignItems: 'center', border: '1px solid #2a3d50', borderRadius: 4, marginRight: 4 }}>
+                    <button
+                      onClick={() => bumpRowQty(row.key, -1)}
+                      disabled={qty <= 1}
+                      aria-label="Fewer"
+                      style={{ background: '#14202c', color: '#9fb4c6', border: 'none', width: 18, height: 20, cursor: 'pointer', fontSize: 12 }}
+                    >−</button>
+                    <span style={{ minWidth: 16, textAlign: 'center', fontSize: 11 }}>{qty}</span>
+                    <button
+                      onClick={() => bumpRowQty(row.key, 1)}
+                      aria-label="More"
+                      style={{ background: '#14202c', color: '#9fb4c6', border: 'none', width: 18, height: 20, cursor: 'pointer', fontSize: 12 }}
+                    >+</button>
+                  </div>
+                  <button
+                    className={`build-btn${recentlyQueued.has(row.key) ? ' build-btn--just-queued' : ''}`}
+                    disabled={!canAfford}
+                    onClick={() => handleBuildRow(row)}
+                    title={canAfford
+                      ? `${slotsFull ? 'Queue' : 'Build'} ${qty > 1 ? `${qty}× ` : ''}${row.name} (${rowCostOre}M ${rowCostCredits}C each)`
+                      : shortLabel}
+                  >
+                    {qty > 1 ? `BUILD ×${qty}` : `BUILD · ${def.buildTime}t`}
+                  </button>
+                  <button
+                    className="build-cancel"
+                    onClick={() => removeRow(row)}
+                    title="Remove this loadout from the build list (keeps the design)"
+                  >✕</button>
+                  {!canAfford && shortLabel && (
+                    <div
+                      className="build-shortage"
+                      role="status"
+                      style={{ flexBasis: '100%', margin: '2px 0 0', fontSize: 10, color: '#ff5e5e', letterSpacing: '0.04em' }}
+                    >⚠ {shortLabel}</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
 
       {buildError && (
         // Server rejected the queue. Without surfacing this the BUILD
