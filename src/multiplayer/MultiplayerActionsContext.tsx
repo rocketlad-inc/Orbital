@@ -9,6 +9,7 @@
 import React, { createContext, useContext, useMemo } from 'react';
 import { apiFetch } from './api';
 import { logger } from '../game/logger';
+import type { BuildListEntry } from '../types';
 
 export interface TransferIntent {
   shipId: string;
@@ -31,6 +32,12 @@ export interface BuildIntent {
   /** Player's picked icon variant from the BuildPanel dropdown.
    *  Server validates 'A'..'F'; undefined/null = class default. */
   iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
+  /** Curated build list: the SPECIFIC design this build-list row builds
+   *  (server snapshots its parts). Omit for a bare hull. */
+  designId?: string;
+  /** Explicit bare-hull build — tells the server to skip the legacy
+   *  active-design fallback. Set for the build list's "bare" rows. */
+  bare?: boolean;
 }
 
 export interface SettlementIntent {
@@ -228,6 +235,10 @@ export interface MultiplayerActions {
   /** Delete a design. The active pointer simply clears — builds fall
    *  back to the bare hull until another design is activated. */
   deleteDesign: (designId: string) => Promise<MpActionResult>;
+  /** Replace the caller's curated build list wholesale (migration 0045).
+   *  The client owns ordering, so it always sends the full array. The
+   *  server drops entries pointing at deleted designs. */
+  setBuildList: (entries: BuildListEntry[]) => Promise<MpActionResult>;
   /** Trigger a ship's detonator (spec §2.2). Deals 50% of the ship's
    *  max HP per detonator part to EVERY in-orbit ship at the body —
    *  friend or foe alike — and destroys the ship. The confirming UI
@@ -354,6 +365,11 @@ export function MultiplayerActionsProvider({
           ship_class: intent.shipClass,
           ship_name: intent.shipName,
           icon_variant: intent.iconVariant ?? null,
+          // Curated build list: build a specific design, or an explicit
+          // bare hull. Legacy callers send neither → server active-design
+          // fallback (unchanged).
+          ...(intent.designId ? { design_id: intent.designId } : {}),
+          ...(intent.bare ? { bare: true } : {}),
         }),
       });
       if (res.ok) {
@@ -627,6 +643,26 @@ export function MultiplayerActionsProvider({
         ok: false,
         code: res.error?.code,
         error: res.error?.message ?? 'Server rejected the delete.',
+      };
+    },
+    async setBuildList(entries) {
+      const res = await apiFetch(`/api/games/${gameId}/build-list`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          entries: entries.map(e =>
+            e.designId ? { design_id: e.designId } : { bare_class: e.bareClass },
+          ),
+        }),
+      });
+      if (res.ok) {
+        logger.info('ACTION', 'Build list updated', { count: entries.length });
+        return { ok: true };
+      }
+      console.warn('setBuildList failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the build list.',
       };
     },
     async detonateShip(shipId) {

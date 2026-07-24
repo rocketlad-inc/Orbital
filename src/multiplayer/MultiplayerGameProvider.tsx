@@ -15,7 +15,7 @@ import { GameContextProvider } from '../state/gameContext';
 import { MultiplayerActionsProvider } from './MultiplayerActionsContext';
 import {
   Body, Ship, Faction, GameState, OrbitElements, FactionResources, FactionTechStateBase,
-  Settlement, ManeuverNode, ChronicleFocus, ChronicleEditMeta, ShipDesign,
+  Settlement, ManeuverNode, ChronicleFocus, ChronicleEditMeta, ShipDesign, BuildListEntry,
 } from '../types';
 import { sanitizeParts, engineAccelMultiplier } from '../game/shipParts';
 import { ingestChronicleFx } from '../render/pendingFx';
@@ -297,6 +297,9 @@ interface ServerState {
     is_active: boolean | number;
     created_at_ms: number;
   }>;
+  /** Curated build list (migration 0045) — the caller's ordered loadout
+   *  entries. Each is { design_id } or { bare_class }. */
+  build_list?: Array<{ design_id?: string; bare_class?: string }>;
   /** Active trade routes for the caller's faction. Server names use
    *  metal/gold; the deserializer below maps to ore/credits to match
    *  the client TradeRoute shape. */
@@ -1301,6 +1304,20 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     };
   });
 
+  // Curated build list (migration 0045). Keep only well-formed entries;
+  // the BuildPanel resolves designId against shipDesigns and drops any
+  // that no longer exist.
+  const validClasses = ['corvette', 'frigate', 'destroyer', 'freighter', 'colony'];
+  const buildList: BuildListEntry[] = (srv.build_list ?? [])
+    .map((e): BuildListEntry | null => {
+      if (typeof e.design_id === 'string') return { designId: e.design_id };
+      if (typeof e.bare_class === 'string' && validClasses.includes(e.bare_class)) {
+        return { bareClass: e.bare_class as BuildListEntry['bareClass'] };
+      }
+      return null;
+    })
+    .filter((e): e is BuildListEntry => e !== null);
+
   // Dyson Sphere remap. Server returns the controller's faction id +
   // settlement id in namespaced form ("<gameId>:..."). The client
   // GameState stores ownership against PLAYER_TOKEN for the caller and
@@ -1353,6 +1370,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     lastHarvestTick: srv.game.current_tick,
     tradeRoutes,
     shipDesigns,
+    buildList,
     dysonSphere,
     // Allies keep their own (server) faction ids on the client — only
     // the caller is remapped to PLAYER_TOKEN — so ally-owned ships carry

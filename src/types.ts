@@ -445,6 +445,17 @@ export interface ShipDesign {
 }
 
 /**
+ * One row of the curated build list (ship-builder redesign, migration
+ * 0045). Exactly one of the fields is set: `designId` points at a saved
+ * ShipDesign the player wants to build; `bareClass` is a stock hull with
+ * no parts. The BuildPanel renders these in order as buildable rows.
+ */
+export interface BuildListEntry {
+  designId?: string;
+  bareClass?: 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
+}
+
+/**
  * Player/faction resources (stubbed global pool)
  */
 export interface FactionResources {
@@ -659,6 +670,13 @@ export interface GameState {
    *  identity-economy release). Multiplayer only — populated from
    *  /state's ship_designs; undefined in single-player (SP frozen). */
   shipDesigns?: ShipDesign[];
+  /** The local player's curated build list (ship-builder redesign,
+   *  migration 0045): the loadouts they've assigned to the build panel,
+   *  in order. Each entry references a saved design OR a bare hull class.
+   *  Global across every owned shipyard. Multiplayer only; undefined/empty
+   *  falls back to a client-derived default (unlocked bare hulls + active
+   *  designs) in the BuildPanel. */
+  buildList?: BuildListEntry[];
   aiActivityLog?: AIActivityEntry[];   // optional — rolling log of recent AI decisions
 
   /** Faction ids the local player is allied with — active defense-pact
