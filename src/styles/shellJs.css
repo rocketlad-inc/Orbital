@@ -1,0 +1,401 @@
+/* ============================================================
+   shellJs.css — GENERATED MIRROR. Do not hand-edit.
+
+   The mobile SHELL is chosen by JS (src/hooks/useIsMobile.ts), because one
+   of its clauses — "is this a phone/tablet OS?" — has no media-query
+   equivalent. A Fold 7's inner screen is wider than the width breakpoint
+   AND its browser doesn't report `hover: none`, so viewport + pointer
+   queries alone cannot distinguish it from a large touchscreen desktop.
+
+   useIsMobile stamps its verdict on <html data-mobile-shell>. This file
+   re-applies every shell rule under that attribute, so the CSS always
+   agrees with the JS. Without it the two disagree and you get the
+   split-brain layout: a BottomSheet wrapper AND the desktop floating
+   panel — two copies of the same UI, plus a scrim that eats canvas
+   clicks.
+
+   Each block below is a mechanical copy of the matching @media shell
+   block, with every selector prefixed by :root[data-mobile-shell].
+   If you change a shell @media block, regenerate/mirror it here too.
+   ============================================================ */
+
+/* ---- mirrored from mobile.css — main shell block ---- */
+/* Tap targets: nothing below 32px on the short side; aim for 44px on
+     primary actions. We bump padding rather than font size so layouts
+     don't reflow as drastically. */
+  :root[data-mobile-shell] body {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Generic button bump — applies to buttons that don't already have
+     mobile-aware sizing. Specific components (TopBar nav, BuildPanel
+     build button) override below. Apple HIG = 44pt; we hit that on
+     primary actions via the pointer-coarse block below and use 40px
+     as the floor for secondary actions. */
+  :root[data-mobile-shell] button {
+    min-height: 40px;
+    font-size: 12px;
+  }
+
+  /* The desktop floating panels are heavy when forced onto a small
+     screen. Hide them so the BottomSheet wrappers take over. */
+  :root[data-mobile-shell] .ship-panel,
+:root[data-mobile-shell] .body-inspector,
+:root[data-mobile-shell] .scenario-selector {
+    /* Hidden by default; BottomSheet wrappers will re-show inside the
+       sheet. We use display:none to make sure no portion peeks behind
+       a sheet. */
+    display: none !important;
+  }
+
+  /* When a ship-panel etc. is inside a bottom sheet, undo the hide AND
+     neutralize the panel's own height/overflow caps. The desktop panels
+     ship with `max-height: 55vh; overflow: hidden;` because they sit on
+     a fixed-position rail; inside the sheet those caps double up with
+     the sheet's own 55vh cap and clip inner content (Recall button,
+     last maneuver row, Combat info) with no way to scroll to it.
+     Reported by playtester: "Buttons get moved off screen on mobile
+     after pulling up ship stuff. Cant scroll down." Letting the inner
+     panel grow + show overflow lets the parent .bottom-sheet__body's
+     own `overflow-y: auto` take over as the single scroll surface. */
+  :root[data-mobile-shell] .bottom-sheet__body .ship-panel,
+:root[data-mobile-shell] .bottom-sheet__body .body-inspector,
+:root[data-mobile-shell] .bottom-sheet__body .scenario-selector {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: none !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  /* Inner scroll regions of those panels also need to release. Nested
+     overflow inside a sheet body just creates a second scroll context
+     the player has to know about — the sheet body itself should be the
+     single scroll surface. */
+  :root[data-mobile-shell] .bottom-sheet__body .ship-panel > *,
+:root[data-mobile-shell] .bottom-sheet__body .body-inspector > *,
+:root[data-mobile-shell] .bottom-sheet__body .scenario-selector > * {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  /* === TopBar: drop the Settlements/Fleet/Research nav cluster ===
+       Those three live on the bottom DockRail strip on mobile (see
+       DockRail.css --mobile-only column), freeing the top bar for the
+       resource pills. Without this hide, the science + ships pills
+       were getting overlapped by the nav cluster on a 375px viewport. */
+  :root[data-mobile-shell] .top-bar__nav { display: none; }
+
+  /* Legacy fallbacks: any .nav-button that escapes the .top-bar__nav
+     hide (e.g. one mounted from the side menu) keeps its icon-only
+     compact form rather than the desktop label+badge layout. */
+  :root[data-mobile-shell] .nav-button__icon { display: inline; }
+  :root[data-mobile-shell] .nav-button__label { display: none; }
+  :root[data-mobile-shell] .nav-button {
+    padding: 6px 10px;
+    min-width: 40px;
+  }
+
+  /* Title shrinks: drop subtitle */
+  :root[data-mobile-shell] .top-bar__title-sub { display: none; }
+  :root[data-mobile-shell] .top-bar__title { padding-right: 8px; }
+  :root[data-mobile-shell] .top-bar__title-main { font-size: 12px; letter-spacing: 0.1em; }
+
+  /* Resource bar: with the nav buttons gone there's room for ALL four
+     pills again. Previously science + ships were hidden to make space;
+     keep them visible now. */
+  :root[data-mobile-shell] .top-bar__resources { gap: 8px; padding-right: 8px; }
+  :root[data-mobile-shell] .resource-pill__label { font-size: 7px; }
+  :root[data-mobile-shell] .resource-pill__value { font-size: 12px; }
+
+  /* Time display: KEEP the tick + countdown on mobile. It was hidden
+     entirely before — the single most-missed piece of info. Compact it
+     instead: drop the "TICK" caption (T+N is self-evident) and tighten. */
+  :root[data-mobile-shell] .top-bar__time { padding-right: 8px; gap: 6px; }
+  :root[data-mobile-shell] .top-bar__time .time-display__label { display: none; }
+  :root[data-mobile-shell] .top-bar__time .time-display--ticking { min-width: 0; }
+  :root[data-mobile-shell] .top-bar__time .time-display__value { font-size: 12px; }
+  :root[data-mobile-shell] .top-bar__time .time-display__countdown { font-size: 8px; margin-top: 1px; }
+
+  /* Sim controls: keep only essentials — pause, 1×, 100×, 10000× */
+  :root[data-mobile-shell] .sim-controls .sim-btn { padding: 6px 8px; min-width: 36px; }
+  :root[data-mobile-shell] .sim-controls .sim-btn[title="10× speed"],
+:root[data-mobile-shell] .sim-controls .sim-btn[title="1000× speed"],
+:root[data-mobile-shell] .sim-controls .sim-btn[title="100000× speed"],
+:root[data-mobile-shell] .sim-controls .sim-btn[title="Skip +100 ticks"],
+:root[data-mobile-shell] .sim-controls .sim-btn[title="Skip +1000 ticks"] {
+    display: none;
+  }
+
+  /* Alerts row: hide on tight viewports — the ThreatsPanel/sheets handle this */
+  :root[data-mobile-shell] .top-bar__alerts { display: none; }
+
+  /* AI activity feed: hide on mobile. At 380px wide and anchored to
+   * bottom-left, it covers the MobileSimControls dock (also bottom-
+   * left) — players couldn't reach pause/×100/×10K controls behind it.
+   * The chronicle/Daily/CommsPanel surface the same info on mobile. */
+  :root[data-mobile-shell] .ai-feed { display: none !important; }
+
+  /* Sub-44px touch targets that the per-component CSS still emits:
+   * commit/cancel buttons in queued transfer rows, filter chips,
+   * tab pills, and various row actions. Sweep them all together so
+   * the player doesn't squint at a 24px target. */
+  :root[data-mobile-shell] .delete-btn,
+:root[data-mobile-shell] .commit-btn,
+:root[data-mobile-shell] .filter-chip,
+:root[data-mobile-shell] .commit-all-btn,
+:root[data-mobile-shell] .transfer-btn,
+:root[data-mobile-shell] .fleet-btn,
+:root[data-mobile-shell] .collector-btn,
+:root[data-mobile-shell] .deploy-btn,
+:root[data-mobile-shell] .tab-btn,
+:root[data-mobile-shell] .focus-btn,
+:root[data-mobile-shell] .panel-focus {
+    min-height: 44px;
+    padding-left: 12px;
+    padding-right: 12px;
+    font-size: 12px;
+  }
+
+  /* Order row text is too small on a phone. */
+  :root[data-mobile-shell] .order-item,
+:root[data-mobile-shell] .order-type,
+:root[data-mobile-shell] .order-details,
+:root[data-mobile-shell] .body-info,
+:root[data-mobile-shell] .info-row,
+:root[data-mobile-shell] .label,
+:root[data-mobile-shell] .value,
+:root[data-mobile-shell] .section-title {
+    font-size: 12px;
+  }
+
+  /* Buildings strip rows — the action ✓/▲ buttons need to be tappable
+   * without picking up the row's onClick by accident. */
+  :root[data-mobile-shell] .building-row button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Side-menu close button — desktop is 28×28, too small on touch. */
+  :root[data-mobile-shell] .side-menu__close {
+    width: 44px !important;
+    height: 44px !important;
+  }
+
+  /* Header ✕ inside ShipPanel/BodyInspector when wrapped in a
+   * BottomSheet: redundant with the sheet's own close button, and
+   * the inner one is only 20×20. Hide it to avoid a tiny duplicate
+   * target. */
+  :root[data-mobile-shell] .bottom-sheet__body .panel-close { display: none; }
+
+/* ---- mirrored from mobile.css — main shell block ---- */
+:root[data-mobile-shell] .threats-panel {
+    top: auto !important;
+    bottom: 20px !important;
+    left: 12px !important;
+    right: 12px !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: 38vh !important;
+  }
+
+/* ---- mirrored from mobile.css — touch tap-target block ---- */
+/* Primary action buttons hit the 44pt Apple HIG / 48dp Material
+     target on touch viewports. Generic buttons get 40 (already set
+     above in the viewport-based block); these get 44–48. */
+  :root[data-mobile-shell] .build-btn,
+:root[data-mobile-shell] .nav-button,
+:root[data-mobile-shell] .sim-btn,
+:root[data-mobile-shell] .maneuver-btn,
+:root[data-mobile-shell] .deploy-btn,
+:root[data-mobile-shell] .commit-btn,
+:root[data-mobile-shell] .commit-all-btn,
+:root[data-mobile-shell] .transfer-btn,
+:root[data-mobile-shell] .fleet-btn {
+    min-height: 44px;
+    padding-left: 16px;
+    padding-right: 16px;
+    font-size: 13px;
+  }
+
+  /* Square icon buttons (close, focus, etc.) need both dimensions
+     at the target — height alone isn't enough if width is 20px. */
+  :root[data-mobile-shell] .panel-close,
+:root[data-mobile-shell] .panel-focus,
+:root[data-mobile-shell] .focus-btn,
+:root[data-mobile-shell] .side-menu__close,
+:root[data-mobile-shell] .bottom-sheet__close,
+:root[data-mobile-shell] .delete-btn,
+:root[data-mobile-shell] .modal-close {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  /* Form inputs (custom name, etc.) get touch-friendly height */
+  :root[data-mobile-shell] input[type="text"],
+:root[data-mobile-shell] input[type="email"],
+:root[data-mobile-shell] input[type="password"],
+:root[data-mobile-shell] input[type="number"],
+:root[data-mobile-shell] textarea,
+:root[data-mobile-shell] select {
+    min-height: 40px;
+    font-size: 14px; /* 14+ stops iOS from auto-zooming on focus */
+  }
+
+  /* Hover affordances are useless and noisy on touch. */
+  :root[data-mobile-shell] .nav-button:hover,
+:root[data-mobile-shell] .sim-btn:hover,
+:root[data-mobile-shell] .maneuver-btn:hover {
+    background: transparent !important;
+    color: inherit !important;
+    border-color: inherit !important;
+  }
+
+  /* Active feedback substitutes for hover. */
+  :root[data-mobile-shell] .nav-button:active,
+:root[data-mobile-shell] .sim-btn:active,
+:root[data-mobile-shell] .maneuver-btn:active,
+:root[data-mobile-shell] .build-btn:active {
+    transform: scale(0.97);
+  }
+
+/* ---- mirrored from Outliner.css — mobile drawer ---- */
+/* Collapsed pill — bigger tap target, sits below BOTH the TopBar (44px
+     + safe-area) and the multiplayer user-pill (top:12 right:12, ~50px
+     tall) which wraps across the top in MP sessions. Top: 80px clears
+     them both with margin. Anchored LEFT so the right-edge MP dock can't
+     cover it either. */
+  :root[data-mobile-shell] .outliner.outliner--collapsed {
+    width: auto;
+    top: calc(var(--topbar-h) + 2px);
+    left: 12px;
+    right: auto;
+    bottom: auto;
+    background: rgba(10, 14, 20, 0.94);
+    border: 1px solid #4ecdc4;
+    border-radius: 22px;
+    padding: 0;
+  }
+  :root[data-mobile-shell] .outliner.outliner--collapsed .outliner__header {
+    border-bottom: none;
+    padding: 0;
+    background: transparent;
+  }
+  :root[data-mobile-shell] .outliner.outliner--collapsed .outliner__toggle {
+    font-size: 18px;
+    line-height: 1;
+    padding: 8px 14px;
+    min-height: 40px;
+    min-width: 48px;
+    display: inline-flex;
+    align-items: center;
+    color: #4ecdc4;
+  }
+
+  /* Expanded as drawer — slide from the right, near-full width, with scrim */
+  :root[data-mobile-shell] .outliner.outliner--mobile {
+    top: 0;
+    bottom: 0;
+    right: 0;
+    width: min(360px, 88vw);
+    border-radius: 0;
+    border-right: none;
+    border-top: none;
+    border-bottom: none;
+    z-index: 5520;
+    padding-top: env(safe-area-inset-top, 0);
+    padding-bottom: env(safe-area-inset-bottom, 0);
+    animation: outliner-slide-in 0.22s cubic-bezier(0.2, 0.7, 0.2, 1);
+  }
+  :root[data-mobile-shell] .outliner.outliner--mobile .outliner__header {
+    padding: 14px 14px;
+  }
+  :root[data-mobile-shell] .outliner.outliner--mobile .outliner__title {
+    font-size: 11px;
+  }
+  :root[data-mobile-shell] .outliner.outliner--mobile .outliner__toggle {
+    font-size: 18px;
+    line-height: 1;
+    min-width: 40px;
+    min-height: 40px;
+  }
+  :root[data-mobile-shell] .outliner.outliner--mobile .outliner__body {
+    padding: 6px 6px;
+  }
+
+  /* Slightly bigger rows for touch */
+  :root[data-mobile-shell] .outliner.outliner--mobile .outliner__body-row,
+:root[data-mobile-shell] .outliner.outliner--mobile .outliner__ship-row {
+    padding-top: 8px;
+    padding-bottom: 8px;
+    min-height: 38px;
+  }
+  :root[data-mobile-shell] .outliner.outliner--mobile .outliner__ship-row {
+    padding-left: 28px;
+  }
+  :root[data-mobile-shell] .outliner.outliner--mobile .outliner__body-name,
+:root[data-mobile-shell] .outliner.outliner--mobile .outliner__ship-name {
+    font-size: 13px;
+  }
+
+  :root[data-mobile-shell] .outliner__scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(2px);
+    z-index: 5510;
+    animation: outliner-fade 0.18s ease;
+  }
+
+/* ---- mirrored from OverviewPanel.css — full-screen panel ---- */
+:root[data-mobile-shell] .overview-panel {
+    left: 0;
+    right: 0;
+    width: auto;              /* cancel the desktop narrow width */
+    /* Sit BELOW the fixed resource bar (--topbar-h, which already grows
+       by the safe-area inset) so the panel's own header is fully visible
+       and never hides under the bar. */
+    top: calc(var(--topbar-h) + env(safe-area-inset-top, 0px));
+    /* Clear the bottom DockRail strip so the panel doesn't paint under
+       the nav buttons. */
+    bottom: calc(var(--mobile-rail-height, 8px) + 8px);
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;         /* edge-to-edge full-screen sheet */
+  }
+
+/* ---- mirrored from BodyInspector.css — cardinal collapse ---- */
+:root[data-mobile-shell] .body-focus {
+    position: static;
+    inset: auto;
+  }
+  :root[data-mobile-shell] .body-focus__top,
+:root[data-mobile-shell] .body-focus__left,
+:root[data-mobile-shell] .body-focus__right,
+:root[data-mobile-shell] .body-focus__bottom {
+    position: static;
+    transform: none;
+    width: auto;
+    max-width: none;
+    max-height: none;
+    margin-bottom: 10px;
+  }
+
+  /* HIDE OTHER UI ON MOBILE BODY VIEW.
+     body.body-focus-active is added/removed by BodyInspector while a
+     body is selected. On mobile the cardinal cards become a vertical
+     stack inside the BottomSheet — the TopBar + MP dock would just
+     compete for screen and overlap the cards. Hide them entirely.
+     The Outliner is in the left rail and BottomSheet already covers
+     it on mobile via its scrim, so it doesn't need its own rule.
+     Desktop ignores this rule (lives inside the 768px media query). */
+  :root[data-mobile-shell] body.body-focus-active .top-bar,
+:root[data-mobile-shell] body.body-focus-active .mp-dock {
+    display: none;
+  }

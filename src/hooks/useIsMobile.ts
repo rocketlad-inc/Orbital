@@ -25,11 +25,24 @@
 // iPad Pro 12.9" landscape (1366px) → mobile ✓. 1440p/1080p/4K desktop
 // monitors and touchscreen laptops → desktop ✓.
 //
-// LOCKSTEP: this must match the CSS shell query
+// Plus an OS clause (see isMobileOS): Android/iOS/iPadOS is a phone or
+// tablet at ANY width. That's what finally fixed the Fold 7 — its inner
+// screen is wider than the Fold 5's (<1024, already covered by width alone)
+// AND its browser doesn't report `hover: none`, so no viewport+pointer
+// combination could tell it apart from a big touchscreen desktop.
+//
+// LOCKSTEP: the CSS shell selector must match this decision exactly, or you
+// get split-brain layouts (bottom-sheet wrapper AND floating panel = two
+// copies of the UI plus a scrim that eats canvas clicks). Because the OS
+// clause has NO media-query equivalent, the JS stamps its verdict onto
+// <html data-mobile-shell> and every shell block ORs that in:
+//
 //   @media (max-width: 1023px),
-//          (pointer: coarse) and (hover: none) and (max-width: 1399px)
-// in ALL of these, or you get split-brain layouts:
-//   src/styles/mobile.css            (×2)
+//          (pointer: coarse) and (hover: none) and (max-width: 1399px) { … }
+//   :root[data-mobile-shell] … { … }   /* same rules, JS-driven */
+//
+// Sites that must stay in lockstep:
+//   src/styles/mobile.css            (×3)
 //   src/components/Outliner.css
 //   src/components/OverviewPanel.css
 //   src/components/BodyInspector.css (the 768/769 cardinal pair)
@@ -47,17 +60,120 @@ export const MOBILE_BREAKPOINT_PX = 1024;
  *  the phone shell on a big monitor. */
 export const TOUCH_DEVICE_MAX_PX = 1400;
 
+/**
+ * Is this a phone/tablet OPERATING SYSTEM? The decisive signal for
+ * foldables.
+ *
+ * Field evidence: a Fold 5's inner screen reports <1024 CSS px, so the
+ * plain width rule already caught it — but a Fold 7's inner screen reports
+ * WIDER, and its browser did not satisfy `(pointer: coarse) and
+ * (hover: none)` either (Chrome on some Android builds, and anything in
+ * "Request desktop site" mode, advertises desktop-like pointer/hover). No
+ * combination of viewport + pointer media queries can separate that device
+ * from a large touchscreen desktop, because the two genuinely overlap.
+ *
+ * The OS does separate them, cleanly: Android/iOS/iPadOS is a phone or
+ * tablet, full stop; Windows/macOS/Linux is not. This is the narrow case
+ * where platform detection beats feature detection — we're asking "what
+ * class of device is this", not "what can this browser do".
+ *
+ * Prefers UA-Client-Hints (`navigator.userAgentData`) and falls back to the
+ * UA string. Also catches iPadOS 13+, which lies and claims "MacIntel".
+ */
+export function isMobileOS(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const nav = navigator as Navigator & {
+    userAgentData?: { mobile?: boolean; platform?: string };
+    maxTouchPoints?: number;
+  };
+
+  // UA-CH: authoritative when present (Chromium). `mobile` is the phone
+  // form-factor bit; `platform` still reads "Android" on a tablet/foldable
+  // where `mobile` can be false.
+  const uaData = nav.userAgentData;
+  if (uaData) {
+    if (uaData.mobile === true) return true;
+    if (uaData.platform && /android/i.test(uaData.platform)) return true;
+  }
+
+  const ua = navigator.userAgent || '';
+  if (/Android|iPhone|iPod|iPad|Windows Phone|Silk|Kindle/i.test(ua)) return true;
+  // iPadOS 13+ reports a desktop Safari UA ("Macintosh; Intel Mac OS X")
+  // and is only distinguishable by having real touch points.
+  if (/Macintosh/i.test(ua) && (nav.maxTouchPoints ?? 0) > 1) return true;
+  return false;
+}
+
 function evaluate(): boolean {
   if (typeof window === 'undefined') return false;
-  // Narrow viewport OR a touch-primary device. Must match the CSS shell
-  // query (see the module header) EXACTLY, or you get split-brain layouts
-  // where the JS thinks "mobile" and renders a bottom-sheet wrapper while
-  // the CSS thinks "desktop" and keeps the floating panel — two copies of
-  // the same UI plus a scrim that blocks canvas clicks.
+  // Must match the CSS shell query (see the module header), or you get
+  // split-brain layouts where the JS thinks "mobile" and renders a
+  // bottom-sheet wrapper while the CSS thinks "desktop" and keeps the
+  // floating panel — two copies of the same UI plus a scrim that blocks
+  // canvas clicks. The OS clause has no CSS equivalent, so it is mirrored
+  // by a `data-mobile-shell` attribute on <html> that the CSS also keys on
+  // (see applyShellAttribute below).
   const w = window.innerWidth;
-  if (w < MOBILE_BREAKPOINT_PX) return true;                 // narrow: always mobile
-  if (w >= TOUCH_DEVICE_MAX_PX) return false;                // big screen: always desktop
-  return isTouchPrimaryDevice();                             // foldable/tablet band
+  if (w < MOBILE_BREAKPOINT_PX) return true;   // narrow: always mobile
+  if (isMobileOS()) return true;               // phone/tablet OS: mobile at ANY width
+  if (w >= TOUCH_DEVICE_MAX_PX) return false;  // big desktop screen: always desktop
+  return isTouchPrimaryDevice();               // other touch devices, 1024–1399
+}
+
+/**
+ * Publish the shell decision to the DOM as `<html data-mobile-shell>`.
+ *
+ * The OS clause above can't be expressed as a media query, so the CSS can't
+ * derive it independently — and JS/CSS disagreeing is exactly what produces
+ * a doubled UI. So the JS decides, stamps the result here, and every shell
+ * stylesheet ORs in `:root[data-mobile-shell] &`. Set as early as possible
+ * (module load) so the first paint is already correct.
+ */
+export function applyShellAttribute(): void {
+  if (typeof document === 'undefined') return;
+  const mobile = evaluate();
+  const root = document.documentElement;
+  if (mobile) root.setAttribute('data-mobile-shell', '');
+  else root.removeAttribute('data-mobile-shell');
+}
+
+// Stamp immediately on import, then keep it in sync on resize/rotate.
+if (typeof window !== 'undefined') {
+  applyShellAttribute();
+  window.addEventListener('resize', applyShellAttribute);
+  window.addEventListener('orientationchange', applyShellAttribute);
+}
+
+/** Diagnostic dump — readable on-device via `window.__orbitalShell` (or the
+ *  ?shellinfo overlay) so a mis-detected device can be diagnosed from real
+ *  numbers instead of guesswork. */
+export function shellDiagnostics(): Record<string, unknown> {
+  const nav = navigator as Navigator & {
+    userAgentData?: { mobile?: boolean; platform?: string };
+    maxTouchPoints?: number;
+  };
+  return {
+    decision: evaluate() ? 'MOBILE' : 'DESKTOP',
+    innerWidth: typeof window !== 'undefined' ? window.innerWidth : null,
+    innerHeight: typeof window !== 'undefined' ? window.innerHeight : null,
+    devicePixelRatio: typeof window !== 'undefined' ? window.devicePixelRatio : null,
+    screen: typeof window !== 'undefined' && window.screen
+      ? `${window.screen.width}x${window.screen.height}` : null,
+    pointerCoarse: isCoarsePointer(),
+    hoverNone: window.matchMedia?.('(hover: none)').matches ?? null,
+    touchPrimaryDevice: isTouchPrimaryDevice(),
+    isMobileOS: isMobileOS(),
+    maxTouchPoints: nav.maxTouchPoints ?? null,
+    uaDataMobile: nav.userAgentData?.mobile ?? null,
+    uaDataPlatform: nav.userAgentData?.platform ?? null,
+    userAgent: navigator.userAgent,
+    MOBILE_BREAKPOINT_PX,
+    TOUCH_DEVICE_MAX_PX,
+  };
+}
+if (typeof window !== 'undefined') {
+  (window as unknown as { __orbitalShell: () => Record<string, unknown> }).__orbitalShell =
+    shellDiagnostics;
 }
 
 /**

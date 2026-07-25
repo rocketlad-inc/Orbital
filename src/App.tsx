@@ -51,6 +51,11 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import './multiplayer/multiplayer.css';
 import './App.css';
 import './styles/mobile.css';
+// JS-driven mirror of the shell rules — keyed on <html data-mobile-shell>,
+// which useIsMobile stamps. Imported AFTER mobile.css so it wins ties, and
+// it's what makes a phone/tablet OS (e.g. a Fold's wide inner screen) get
+// the mobile shell even though no media query can detect it.
+import './styles/shellJs.css';
 
 const MODE_STORAGE_KEY = 'orbital.last_mode';
 
