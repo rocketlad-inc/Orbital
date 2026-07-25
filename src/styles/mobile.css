@@ -13,9 +13,12 @@
 .nav-button__label { display: inline; }
 
 /* Shell query — MUST stay in lockstep with useIsMobile.ts evaluate().
-   The pointer clause catches foldables (Fold inner screen is >1024 CSS px
-   but is a phone) and tablets at any width. */
-@media (max-width: 1023px), (pointer: coarse) {
+   Narrow viewport, OR a no-mouse touch device under 1400px (the
+   foldable/tablet band: Fold inner screen ~1092px reports >1024 but is a
+   phone). `hover: none` keeps touchscreen DESKTOPS on the desktop shell,
+   and the 1400px ceiling is a hard stop so unreliable pointer queries can
+   never put the phone shell on a big monitor. */
+@media (max-width: 1023px), (pointer: coarse) and (hover: none) and (max-width: 1399px) {
   /* Tap targets: nothing below 32px on the short side; aim for 44px on
      primary actions. We bump padding rather than font size so layouts
      don't reflow as drastically. */
@@ -188,9 +191,12 @@
 /* ThreatsPanel: anchor to top-LEFT-edge below the TopBar on mobile, full
    width minus a margin. Avoids stacking on top of the resource pills. */
 /* Shell query — MUST stay in lockstep with useIsMobile.ts evaluate().
-   The pointer clause catches foldables (Fold inner screen is >1024 CSS px
-   but is a phone) and tablets at any width. */
-@media (max-width: 1023px), (pointer: coarse) {
+   Narrow viewport, OR a no-mouse touch device under 1400px (the
+   foldable/tablet band: Fold inner screen ~1092px reports >1024 but is a
+   phone). `hover: none` keeps touchscreen DESKTOPS on the desktop shell,
+   and the 1400px ceiling is a hard stop so unreliable pointer queries can
+   never put the phone shell on a big monitor. */
+@media (max-width: 1023px), (pointer: coarse) and (hover: none) and (max-width: 1399px) {
   .threats-panel {
     top: auto !important;
     bottom: 20px !important;
@@ -212,9 +218,12 @@
   .nav-button { padding: 6px 8px; min-width: 36px; }
 }
 
-/* === Coarse-pointer specific (touch input regardless of viewport) === */
+/* === No-mouse touch devices: bigger tap targets (regardless of width) ===
+   Gated on `and (hover: none)` in LOCKSTEP with the shell: a mouse-capable
+   touchscreen desktop keeps normal button sizing (it's on the desktop
+   shell); only a phone/tablet/foldable inflates targets. */
 
-@media (pointer: coarse) {
+@media (pointer: coarse) and (hover: none) and (max-width: 1399px) {
   /* Primary action buttons hit the 44pt Apple HIG / 48dp Material
      target on touch viewports. Generic buttons get 40 (already set
      above in the viewport-based block); these get 44–48. */

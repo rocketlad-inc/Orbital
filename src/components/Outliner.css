@@ -305,7 +305,7 @@
 
 /* Shell query — lockstep with useIsMobile.ts (pointer clause = foldables
    and tablets, which are mobile at any width). */
-@media (max-width: 1023px), (pointer: coarse) {
+@media (max-width: 1023px), (pointer: coarse) and (hover: none) and (max-width: 1399px) {
   /* Collapsed pill — bigger tap target, sits below BOTH the TopBar (44px
      + safe-area) and the multiplayer user-pill (top:12 right:12, ~50px
      tall) which wraps across the top in MP sessions. Top: 80px clears

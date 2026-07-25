@@ -2,16 +2,32 @@
 // useIsMobile — returns true when the app should serve its
 // mobile-first UX (touch controls, bottom sheets, big buttons).
 //
-// The user direction is "when in doubt, go mobile", so the
-// breakpoint is set generously: anything narrower than 1024px
-// OR any touch-primary (coarse-pointer) device gets the mobile
-// shell, at any width. iPad → mobile in both orientations. A
-// Galaxy Fold's inner screen (~8", CSS width >1024) → mobile.
-// A touchscreen laptop with a trackpad reports pointer:fine →
-// stays desktop.
+// Mobile when EITHER:
+//   (a) the viewport is narrower than 1024px, or
+//   (b) it's a no-mouse touch device AND narrower than 1400px
+//       — the "foldable/tablet band".
+//
+// Why (b) is written that way, twice-guarded:
+//
+//  * `(pointer: coarse)` ALONE was the bug that put the phone shell on a
+//    2000px desktop. It matches any machine whose primary pointer is
+//    touch, and plenty of desktop environments (Windows touchscreens,
+//    2-in-1s, some embedded webviews) report coarse even with a mouse
+//    attached. Adding `(hover: none)` narrows it to devices with no
+//    hover-capable pointer at all — a real phone/tablet/foldable.
+//
+//  * The 1400px CEILING is the belt to that suspenders: pointer/hover
+//    media queries are demonstrably unreliable across environments, so a
+//    genuinely large screen must NEVER get the phone shell no matter what
+//    those queries claim. Nothing at/above 1400px is mobile, period.
+//
+// Coverage: Galaxy Fold inner screen (~1092px, no mouse) → mobile ✓.
+// iPad Pro 12.9" landscape (1366px) → mobile ✓. 1440p/1080p/4K desktop
+// monitors and touchscreen laptops → desktop ✓.
 //
 // LOCKSTEP: this must match the CSS shell query
-//   @media (max-width: 1023px), (pointer: coarse)
+//   @media (max-width: 1023px),
+//          (pointer: coarse) and (hover: none) and (max-width: 1399px)
 // in ALL of these, or you get split-brain layouts:
 //   src/styles/mobile.css            (×2)
 //   src/components/Outliner.css
@@ -21,25 +37,27 @@
 
 import { useEffect, useState } from 'react';
 
-/** Width threshold below which we switch to mobile layout. */
+/** Width threshold below which we switch to mobile layout, regardless of
+ *  input device. */
 export const MOBILE_BREAKPOINT_PX = 1024;
+/** Upper bound for the foldable/tablet band: a no-mouse touch device wider
+ *  than 1024 but NARROWER than this still gets the mobile shell (Fold inner
+ *  screen ≈1092, iPad Pro landscape 1366). At/above it we always serve
+ *  desktop — a hard stop so unreliable pointer media queries can never put
+ *  the phone shell on a big monitor. */
+export const TOUCH_DEVICE_MAX_PX = 1400;
 
 function evaluate(): boolean {
   if (typeof window === 'undefined') return false;
   // Narrow viewport OR a touch-primary device. Must match the CSS shell
-  // query `@media (max-width: 1023px), (pointer: coarse)` EXACTLY (see the
-  // list in the module header), or you get split-brain layouts where the JS
-  // thinks "mobile" and renders a bottom-sheet wrapper while the CSS thinks
-  // "desktop" and keeps the floating panel — two copies of the same UI plus
-  // a scrim that blocks canvas clicks.
-  //
-  // The pointer clause exists for FOLDABLES: a Galaxy Fold's inner screen is
-  // ~8" and nearly square, so it reports a CSS width ABOVE 1024 and used to
-  // get the full desktop shell on a phone. `pointer: coarse` means the
-  // PRIMARY input is touch, so a touchscreen laptop with a trackpad still
-  // reports `fine` and correctly stays on desktop; a tablet or foldable with
-  // no mouse gets the mobile UX at any width.
-  return window.innerWidth < MOBILE_BREAKPOINT_PX || isCoarsePointer();
+  // query (see the module header) EXACTLY, or you get split-brain layouts
+  // where the JS thinks "mobile" and renders a bottom-sheet wrapper while
+  // the CSS thinks "desktop" and keeps the floating panel — two copies of
+  // the same UI plus a scrim that blocks canvas clicks.
+  const w = window.innerWidth;
+  if (w < MOBILE_BREAKPOINT_PX) return true;                 // narrow: always mobile
+  if (w >= TOUCH_DEVICE_MAX_PX) return false;                // big screen: always desktop
+  return isTouchPrimaryDevice();                             // foldable/tablet band
 }
 
 /**
@@ -61,7 +79,7 @@ export function useIsMobile(): boolean {
     let mq: MediaQueryList | null = null;
     let mqHandler: ((e: MediaQueryListEvent) => void) | null = null;
     if (window.matchMedia) {
-      mq = window.matchMedia('(pointer: coarse)');
+      mq = window.matchMedia('(pointer: coarse) and (hover: none)');
       mqHandler = () => recompute();
       // Older Safari uses addListener; modern browsers use addEventListener.
       if (mq.addEventListener) mq.addEventListener('change', mqHandler);
@@ -85,9 +103,22 @@ export function useIsMobile(): boolean {
   return isMobile;
 }
 
-/** Quick check for coarse pointer alone — useful for input-only adjustments
- *  (e.g. larger hit targets) where the viewport width doesn't matter. */
+/** Coarse pointer alone — "touch is available" — for input-only
+ *  affordances (larger canvas hit targets, tap hints) where the viewport
+ *  width doesn't matter and a touchscreen DESKTOP should still benefit.
+ *  NOT used for the shell decision — that's isTouchPrimaryDevice(). */
 export function isCoarsePointer(): boolean {
   if (typeof window === 'undefined') return false;
   return window.matchMedia?.('(pointer: coarse)').matches ?? false;
+}
+
+/** A real no-mouse touch device (phone / tablet / foldable): coarse
+ *  primary pointer AND no hover-capable pointer. This — not
+ *  isCoarsePointer — drives the mobile SHELL, so a touchscreen desktop
+ *  or 2-in-1 that also has a mouse/trackpad (hover:hover) stays on the
+ *  desktop layout. Must match the CSS shell query
+ *  `(pointer: coarse) and (hover: none)` exactly. */
+export function isTouchPrimaryDevice(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.matchMedia?.('(pointer: coarse) and (hover: none)').matches ?? false;
 }

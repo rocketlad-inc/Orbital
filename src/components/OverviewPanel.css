@@ -36,7 +36,7 @@
    width leaks in and the panel renders as a narrow left column. */
 /* Shell query — lockstep with useIsMobile.ts (pointer clause = foldables
    and tablets, which are mobile at any width). */
-@media (max-width: 1023px), (pointer: coarse) {
+@media (max-width: 1023px), (pointer: coarse) and (hover: none) and (max-width: 1399px) {
   .overview-panel {
     left: 0;
     right: 0;
