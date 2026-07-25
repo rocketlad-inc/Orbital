@@ -497,8 +497,17 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     const active = roster.filter(c => c.status === 'active');
     const lost = roster.filter(c => c.status === 'lost');
     const myShips = gameState.ships.filter(s => s.ownedBy === 'player');
-    const shipName = (id: string | null) =>
-      id ? (myShips.find(s => s.id === id)?.name ?? id) : null;
+    // Resolve a posting to a NAME, never a raw id. Client ship ids keep the
+    // "<gameId>:" prefix while other id spaces don't, so match exactly
+    // first, then on the unprefixed tail; if it still misses (ship not in
+    // view / id form drifted) say something human instead of leaking
+    // "s10_0_u8za4" into the UI, which is what this fix was for.
+    const tail = (id: string) => id.slice(id.indexOf(':') + 1);
+    const shipName = (id: string | null): string | null => {
+      if (!id) return null;
+      const hit = myShips.find(s => s.id === id) ?? myShips.find(s => tail(s.id) === tail(id));
+      return hit?.name ?? 'on assignment';
+    };
 
     const doCap = (p: Promise<{ ok: boolean; error?: string }>) => {
       setCapBusy(true);

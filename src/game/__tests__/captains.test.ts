@@ -57,6 +57,34 @@ describe('avatars', () => {
   });
 });
 
+describe('ship-posting label resolution (regression)', () => {
+  // The captain bank printed raw ids ("⚓ s10_0_u8za4") because captain
+  // shipIds were stripped of the "<gameId>:" prefix while client ship ids
+  // keep it, so the exact-match lookup missed. Both forms must resolve,
+  // and a genuine miss must never leak an id.
+  const ships = [{ id: 'GAME1:s10_0_u8za4', name: 'Osprey' }];
+  const tail = (id: string) => id.slice(id.indexOf(':') + 1);
+  const resolve = (id: string | null): string | null => {
+    if (!id) return null;
+    const hit = ships.find(s => s.id === id) ?? ships.find(s => tail(s.id) === tail(id));
+    return hit?.name ?? 'on assignment';
+  };
+
+  it('resolves a fully-qualified id', () => {
+    expect(resolve('GAME1:s10_0_u8za4')).toBe('Osprey');
+  });
+  it('resolves a stripped id (the form that regressed)', () => {
+    expect(resolve('s10_0_u8za4')).toBe('Osprey');
+  });
+  it('never leaks a raw id on a miss', () => {
+    expect(resolve('GAME1:s99_9_zzzzz')).toBe('on assignment');
+    expect(resolve('GAME1:s99_9_zzzzz')).not.toContain('s99');
+  });
+  it('treats an unassigned captain as no posting', () => {
+    expect(resolve(null)).toBeNull();
+  });
+});
+
 describe('rankTier (fleet Captain column, spec §5.2)', () => {
   it('keeps the historical boundaries: 0/1/3/6/10', () => {
     expect(rankTier(0)).toBe('Rookie');

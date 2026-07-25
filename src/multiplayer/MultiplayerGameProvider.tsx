@@ -1364,7 +1364,11 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         return Array.isArray(arr) ? arr.filter((t): t is string => typeof t === 'string') : [];
       } catch { return []; }
     })(),
-    shipId: c.ship_id ? (stripGameId(c.ship_id) ?? c.ship_id) : null,
+    // Keep the ship id FULLY QUALIFIED. Unlike bodies, client ship ids
+    // retain the "<gameId>:" prefix (shipToClient does `id: s.id`), so
+    // stripping here broke every `ships.find(s => s.id === c.shipId)` —
+    // the captain bank fell back to printing raw ids as ship labels.
+    shipId: c.ship_id ?? null,
     status: c.status === 'lost' ? 'lost' : 'active',
     createdAtTick: c.created_at_tick ?? 0,
     lostAtTick: c.lost_at_tick ?? null,

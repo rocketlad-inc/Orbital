@@ -5,7 +5,7 @@ import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { maintenanceRatesForShip } from '../game/maintenance';
 import { nearestShipyardBodyId, isDamagedShip } from '../game/repair';
 import { effectiveShipMaxHp } from '../game/combat';
-import { traitSummary } from '../game/captains';
+import { traitSummary, rankTier, AVATAR_IDS } from '../game/captains';
 import { CaptainAvatar } from './CaptainAvatar';
 import {
   ShipPartId, SHIP_PART_DEFS, countPart, detonatorDamage, detonatorDisclosure,
@@ -962,6 +962,22 @@ export const ShipPanel: React.FC = () => {
             />
           )}
 
+          {/* CAPTAIN (DESIGN-captains §5) — the person commanding this
+              hull. Rank/kills below belong to HIM, so this sits directly
+              above the record. Own ships get inline rename + portrait
+              cycling + bio editing (all optional); rival ships show only
+              what Deep Scan reveals (name/avatar/traits, no bio). */}
+          {ship.captainName && (
+            <ShipCaptainCard
+              ship={ship}
+              captain={(gameState.captains ?? []).find(c => c.id === ship.captainId) ?? null}
+              editable={ship.ownedBy === 'player' && !!mpActions}
+              onRename={(name) => { if (ship.captainId && mpActions) mpActions.updateCaptain(ship.captainId, { name }); }}
+              onBio={(bio) => { if (ship.captainId && mpActions) mpActions.updateCaptain(ship.captainId, { bio }); }}
+              onAvatar={(avatarId) => { if (ship.captainId && mpActions) mpActions.updateCaptain(ship.captainId, { avatarId }); }}
+            />
+          )}
+
           {/* Freighters show TRADE LOG (delivery count) instead of
               COMBAT RECORD (confirmed kills) — they're cargo haulers,
               not warships, and "0 confirmed kills" was a category
@@ -1530,6 +1546,127 @@ const ShipTradeLog: React.FC<{ tradesCompleted: number }> = ({ tradesCompleted }
 // their class + which body they died at, plus the tick stamp so
 // the player can correlate with their event log.
 // ----------------------------------------------------------------
+/**
+ * CAPTAIN card (DESIGN-captains §5) — identity for the officer aboard.
+ * Everything is optional to touch: click the portrait to cycle it, ✎ to
+ * rename, the bio line to write one. Rival captains render read-only
+ * (and only once Deep Scan reveals them; the server nulls them out).
+ */
+const ShipCaptainCard: React.FC<{
+  ship: Ship;
+  captain: import('../types').Captain | null;
+  editable: boolean;
+  onRename: (name: string) => void;
+  onBio: (bio: string) => void;
+  onAvatar: (avatarId: string) => void;
+}> = ({ ship, captain, editable, onRename, onBio, onAvatar }) => {
+  const [editingName, setEditingName] = useState(false);
+  const [editingBio, setEditingBio] = useState(false);
+  const rank = ship.rank ?? 0;
+  const traits = ship.captainTraits ?? captain?.traits ?? [];
+  const avatarId = ship.captainAvatar ?? captain?.avatarId ?? null;
+  const name = ship.captainName ?? captain?.name ?? 'Unknown';
+
+  return (
+    <div className="combat-record-section" style={{ marginTop: 10 }}>
+      <div className="section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <span>CAPTAIN</span>
+        <span style={{ fontSize: 10, color: '#b8c8d6', letterSpacing: '0.06em' }}>
+          {rankTier(rank)}{rank > 0 ? ` · ${rank} ⚔` : ''}
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '6px 0 2px' }}>
+        <button
+          onClick={() => {
+            if (!editable) return;
+            const cur = AVATAR_IDS.indexOf((avatarId ?? 'a1') as typeof AVATAR_IDS[number]);
+            onAvatar(AVATAR_IDS[(cur + 1) % AVATAR_IDS.length]);
+          }}
+          disabled={!editable}
+          title={editable ? 'Change portrait' : undefined}
+          style={{
+            background: 'transparent', border: 'none', padding: 0,
+            cursor: editable ? 'pointer' : 'default', flexShrink: 0,
+          }}
+        >
+          <CaptainAvatar avatarId={avatarId} size={44} />
+        </button>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {editingName ? (
+            <input
+              autoFocus
+              defaultValue={name}
+              maxLength={32}
+              style={{
+                width: '100%', background: '#14202c', border: '1px solid #2a3d50',
+                borderRadius: 3, color: '#d8e4ee', fontFamily: 'inherit', fontSize: 12, padding: '2px 6px',
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  const v = (e.target as HTMLInputElement).value.trim();
+                  setEditingName(false);
+                  if (v && v !== name) onRename(v);
+                }
+                if (e.key === 'Escape') setEditingName(false);
+              }}
+              onBlur={() => setEditingName(false)}
+            />
+          ) : (
+            <div style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 5 }}>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+              {editable && (
+                <button
+                  onClick={() => setEditingName(true)}
+                  title="Rename captain"
+                  style={{ background: 'transparent', border: 'none', color: '#5f7488', cursor: 'pointer', fontSize: 10 }}
+                >✎</button>
+              )}
+            </div>
+          )}
+          <div style={{ fontSize: 10, color: '#9fe8e2', margin: '3px 0' }}>
+            {traitSummary(traits) || 'No notable traits'}
+          </div>
+          {editingBio ? (
+            <textarea
+              autoFocus
+              defaultValue={captain?.bio ?? ''}
+              maxLength={240}
+              rows={2}
+              style={{
+                width: '100%', background: '#14202c', border: '1px solid #2a3d50',
+                borderRadius: 3, color: '#d8e4ee', fontFamily: 'inherit', fontSize: 10,
+                padding: '3px 6px', resize: 'vertical',
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  const v = (e.target as HTMLTextAreaElement).value.trim();
+                  setEditingBio(false);
+                  if (v !== (captain?.bio ?? '')) onBio(v);
+                }
+                if (e.key === 'Escape') setEditingBio(false);
+              }}
+              onBlur={() => setEditingBio(false)}
+            />
+          ) : (
+            <div
+              onClick={() => editable && setEditingBio(true)}
+              title={editable ? 'Click to write a bio' : undefined}
+              style={{
+                fontSize: 10, color: captain?.bio ? '#8aa0b4' : '#5f7488',
+                fontStyle: captain?.bio ? 'italic' : 'normal',
+                cursor: editable ? 'pointer' : 'default', lineHeight: 1.4,
+              }}
+            >
+              {captain?.bio || (editable ? 'Write a bio…' : '')}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const ShipCombatRecord: React.FC<{
   rank: number;
   history: import('../types').ShipKillRecord[];
