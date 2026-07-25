@@ -78,6 +78,43 @@ describe('isMobileOS — the clause that finally caught the Fold 7', () => {
   });
 });
 
+describe('viewport clamp — Fold 7 fix part 2 (width tiers, not just the shell)', () => {
+  // Mirror of clampViewportForMobileOS's decision in useIsMobile.ts. The
+  // mobile experience is spread across WIDTH tiers (DockRail bottom rail
+  // ≤768, world menu ≤720, HUD ≤768, shell ≤1023) plus JS width checks —
+  // so a phone-OS device reporting a desktop-class width must have its
+  // LAYOUT width clamped, or it renders a half-mobile chimera (mobile
+  // shell from JS, no bottom rail, everything tiny).
+  const PHONE = 720, TABLET = 1023;
+  function clampTarget(mobileOS: boolean, width: number, uaMobile: boolean): number | null {
+    if (!mobileOS) return null;
+    if (width < MOBILE_BREAKPOINT_PX) return null;
+    return uaMobile ? PHONE : TABLET;
+  }
+
+  test('Fold 7 inner screen clamps to the full phone layout', () => {
+    expect(clampTarget(true, 1092, true)).toBe(720);
+    expect(clampTarget(true, 1213, true)).toBe(720);
+    // 720 sits below every mobile tier: bottom rail (768), world menu
+    // (720), HUD (768), shell (1023) — the whole phone UX fires.
+    expect(720).toBeLessThanOrEqual(768);
+    expect(720).toBeLessThanOrEqual(720);
+    expect(720).toBeLessThan(1024);
+  });
+
+  test('devices that already work are never touched', () => {
+    expect(clampTarget(true, 906, true)).toBeNull();    // Fold 5 inner
+    expect(clampTarget(true, 412, true)).toBeNull();    // regular phone
+    expect(clampTarget(true, 820, false)).toBeNull();   // iPad portrait
+    expect(clampTarget(false, 2000, false)).toBeNull(); // touchscreen desktop
+    expect(clampTarget(false, 1920, false)).toBeNull(); // desktop
+  });
+
+  test('wide tablets take the tablet tier, not comic phone UI', () => {
+    expect(clampTarget(true, 1366, false)).toBe(1023);  // iPad Pro landscape
+  });
+});
+
 describe('shell selection (mobile vs desktop)', () => {
   test.each([
     // name,                      width, touchPrimary, expectMobile

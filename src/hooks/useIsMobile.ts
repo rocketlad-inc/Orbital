@@ -137,11 +137,61 @@ export function applyShellAttribute(): void {
   else root.removeAttribute('data-mobile-shell');
 }
 
-// Stamp immediately on import, then keep it in sync on resize/rotate.
+/** Layout width forced on a PHONE-OS device that reports a desktop-class
+ *  viewport (a foldable's inner screen). 720 sits below every mobile tier
+ *  in the codebase — DockRail's bottom rail (768), the world menu's mobile
+ *  layout (720), multiplayer HUD (768), the shell breakpoint (1023) — so
+ *  the device gets the COMPLETE phone experience, and the browser scales
+ *  the 720px layout up to fill the screen (~1.5× on a Fold 7), fixing the
+ *  "everything is tiny" density too. */
+const PHONE_LAYOUT_WIDTH = 720;
+/** Tablets (mobile OS but not phone form-factor, e.g. iPads) get a gentler
+ *  clamp: just under the shell breakpoint, so they take the tablet tier
+ *  without comically large phone UI on a 13" screen. */
+const TABLET_LAYOUT_WIDTH = 1023;
+
+/**
+ * Foldable fix, part 2 — clamp the LAYOUT VIEWPORT for mobile-OS devices
+ * whose natural CSS width lands in desktop territory.
+ *
+ * Why the attribute mirror (shellJs.css) wasn't enough: the mobile
+ * experience isn't one shell block — it's spread across width tiers
+ * (480/640/720/768/1023) in many stylesheets AND JS width checks like
+ * WorldMenuOverlay's `vw <= 720`. A Fold 7 inner screen (~1092+ css px)
+ * missed every one of them: JS said "mobile" (OS clause), so it got the
+ * mobile Outliner pill, but the width-keyed bottom rail never appeared and
+ * nothing scaled up — a half-mobile chimera. Re-plumbing every tier to a
+ * JS flag is unwinnable; changing what "width" MEANS on these devices
+ * fixes all of them at once, CSS and JS alike.
+ *
+ * One-way ratchet per page load: once clamped, innerWidth reports the
+ * clamped value, so re-entry is a no-op. Desktop OSes never clamp.
+ */
+function clampViewportForMobileOS(): void {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  if (!isMobileOS()) return;
+  if (window.innerWidth < MOBILE_BREAKPOINT_PX) return;  // already phone/tablet tier — leave working devices alone
+  const nav = navigator as Navigator & { userAgentData?: { mobile?: boolean } };
+  // UA-CH `mobile:true` = phone form factor (foldables report true; iPads
+  // report false/absent) → full phone layout. Other mobile-OS → tablet tier.
+  const target = nav.userAgentData?.mobile === true ? PHONE_LAYOUT_WIDTH : TABLET_LAYOUT_WIDTH;
+  let meta = document.querySelector('meta[name="viewport"]') as HTMLMetaElement | null;
+  if (!meta) {
+    meta = document.createElement('meta');
+    meta.name = 'viewport';
+    document.head.appendChild(meta);
+  }
+  meta.setAttribute('content', `width=${target}`);
+}
+
+// Clamp first (so width-keyed tiers see phone numbers), stamp the shell
+// attribute, then keep both in sync on resize/rotate — a device that loads
+// in portrait under the breakpoint can still cross it on rotation.
 if (typeof window !== 'undefined') {
+  clampViewportForMobileOS();
   applyShellAttribute();
-  window.addEventListener('resize', applyShellAttribute);
-  window.addEventListener('orientationchange', applyShellAttribute);
+  window.addEventListener('resize', () => { clampViewportForMobileOS(); applyShellAttribute(); });
+  window.addEventListener('orientationchange', () => { clampViewportForMobileOS(); applyShellAttribute(); });
 }
 
 /** Diagnostic dump — readable on-device via `window.__orbitalShell` (or the
@@ -167,6 +217,9 @@ export function shellDiagnostics(): Record<string, unknown> {
     uaDataMobile: nav.userAgentData?.mobile ?? null,
     uaDataPlatform: nav.userAgentData?.platform ?? null,
     userAgent: navigator.userAgent,
+    viewportMeta: typeof document !== 'undefined'
+      ? document.querySelector('meta[name="viewport"]')?.getAttribute('content') ?? null
+      : null,
     MOBILE_BREAKPOINT_PX,
     TOUCH_DEVICE_MAX_PX,
   };
