@@ -4,6 +4,7 @@ import {
   validateParts, partsCost, parsePartsJson,
   countPart, detonatorDamage,
 } from './shipDesigns.js';
+import { rollCaptain, resolveCaptainOnDeath, AVATAR_IDS } from './captains.js';
 import { runDigestForGame } from './digest.js';
 import {
   factionTechLevels, gatingEnabled, hasFeature, lockedError,
@@ -714,6 +715,7 @@ async function handleDeploySettlement(req, env, ctx) {
 
   let consumedShip = null; // { id, name } when a colony ship pays the bill
   let payResourceCost = false;
+  let settleCost = { ...SETTLEMENT_COST }; // may be Colonist-discounted below
   if (type === 'city') {
     if (!colonyShip) {
       return err(409, 'need_colony_ship',
@@ -733,9 +735,24 @@ async function handleDeploySettlement(req, env, ctx) {
       .first();
     if (mySettlementHere) {
       payResourceCost = true;
-      if (me.metal < SETTLEMENT_COST.metal || me.gold < SETTLEMENT_COST.gold) {
+      // Colonist captain (DESIGN-captains §3): any of the caller's ships
+      // at this body with a Colonist officer cuts founding cost 20%.
+      const colonistHere = await env.DB
+        .prepare(
+          `SELECT 1 AS x FROM game_ships s
+             JOIN game_captains c ON c.id = s.captain_id
+            WHERE s.game_id = ? AND s.parent_body_id = ? AND s.owner_faction_id = ?
+              AND s.status = 'active' AND c.traits_json LIKE '%colonist%'
+            LIMIT 1`,
+        )
+        .bind(gameId, bodyId, me.id)
+        .first();
+      settleCost = colonistHere
+        ? { metal: Math.ceil(SETTLEMENT_COST.metal * 0.8), gold: Math.ceil(SETTLEMENT_COST.gold * 0.8) }
+        : { ...SETTLEMENT_COST };
+      if (me.metal < settleCost.metal || me.gold < settleCost.gold) {
         return err(409, 'insufficient_resources',
-          `need ${SETTLEMENT_COST.metal}M ${SETTLEMENT_COST.gold}G`);
+          `need ${settleCost.metal}M ${settleCost.gold}G`);
       }
     } else if (colonyShip) {
       consumedShip = colonyShip;
@@ -782,7 +799,7 @@ async function handleDeploySettlement(req, env, ctx) {
     deployStmts.push(
       env.DB
         .prepare('UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ?')
-        .bind(SETTLEMENT_COST.metal, SETTLEMENT_COST.gold, me.id),
+        .bind(settleCost.metal, settleCost.gold, me.id),
     );
   }
   if (consumedShip) {
@@ -2658,6 +2675,136 @@ async function handleSetBuildList(req, env, ctx) {
   return json({ build_list: clean });
 }
 
+// ============================================================
+// Captains (DESIGN-captains.md §5) — bank management.
+//   POST  /api/games/:gid/captains                — create (bank, unassigned)
+//   PATCH /api/games/:gid/captains/:captainId     — rename / avatar / bio
+//   POST  /api/games/:gid/captains/:captainId/assign — { ship_id | null }
+// ============================================================
+
+function captainToJson(row) {
+  return {
+    id: row.id, name: row.name, avatar_id: row.avatar_id, bio: row.bio,
+    rank: row.rank ?? 0, traits_json: row.traits_json ?? null,
+    ship_id: row.ship_id ?? null, status: row.status,
+    created_at_tick: row.created_at_tick ?? 0, lost_at_tick: row.lost_at_tick ?? null,
+  };
+}
+
+async function requireMyCaptain(env, gameId, userId, captainId) {
+  const me = await requireMyFaction(env, gameId, userId);
+  if (!me) return { err: err(403, 'not_member', 'not in this game') };
+  const cap = await env.DB
+    .prepare('SELECT * FROM game_captains WHERE id = ? AND game_id = ?')
+    .bind(captainId, gameId).first();
+  if (!cap) return { err: err(404, 'not_found', 'captain not found') };
+  if (cap.faction_id !== me.id) return { err: err(403, 'not_owner', 'not your captain') };
+  return { me, cap };
+}
+
+async function handleCreateCaptain(req, env, ctx) {
+  const { gameId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+  const body = (await readJson(req)) ?? {};
+
+  // Bank cap: 20 unassigned per faction — enough to pre-stage a fleet,
+  // low enough that the roster UI stays a list, not a database.
+  const bankCount = await env.DB
+    .prepare(`SELECT COUNT(*) AS c FROM game_captains
+               WHERE game_id = ? AND faction_id = ? AND ship_id IS NULL AND status = 'active'`)
+    .bind(gameId, me.id).first();
+  if ((bankCount?.c ?? 0) >= 20) return err(409, 'bank_full', 'captain bank is full (20 unassigned max)');
+
+  const game = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
+  const tick = game?.current_tick ?? 0;
+  const names = new Set(
+    ((await env.DB.prepare(`SELECT name FROM game_captains WHERE game_id = ? AND status = 'active'`)
+      .bind(gameId).all()).results ?? []).map(r => r.name),
+  );
+  const c = rollCaptain(gameId, me.id, tick, names, Math.floor(Math.random() * 1e6));
+  // Player-typed name wins over the roll (still ≤32 chars like ships).
+  let name = c.name;
+  if (typeof body.name === 'string' && body.name.trim().length > 0) {
+    name = body.name.trim().slice(0, 32);
+  }
+  await env.DB
+    .prepare(
+      `INSERT INTO game_captains
+         (id, game_id, faction_id, name, avatar_id, bio, rank, traits_json, ship_id, status, created_at_tick)
+       VALUES (?, ?, ?, ?, ?, ?, 0, ?, NULL, 'active', ?)`,
+    )
+    .bind(c.id, gameId, me.id, name, c.avatar_id, c.bio, JSON.stringify(c.traits), tick)
+    .run();
+  const row = await env.DB.prepare('SELECT * FROM game_captains WHERE id = ?').bind(c.id).first();
+  return json({ captain: captainToJson(row) }, { status: 201 });
+}
+
+async function handlePatchCaptain(req, env, ctx) {
+  const { gameId, captainId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const got = await requireMyCaptain(env, gameId, ctx.session.user_id, captainId);
+  if (got.err) return got.err;
+  const body = (await readJson(req)) ?? {};
+
+  let name = got.cap.name;
+  if (typeof body.name === 'string' && body.name.trim().length > 0) {
+    name = body.name.trim().slice(0, 32);
+  }
+  let avatar = got.cap.avatar_id;
+  if (typeof body.avatar_id === 'string') {
+    if (!AVATAR_IDS.includes(body.avatar_id)) return err(400, 'bad_request', 'unknown avatar_id');
+    avatar = body.avatar_id;
+  }
+  let bio = got.cap.bio;
+  if (typeof body.bio === 'string') bio = body.bio.slice(0, 240);
+
+  await env.DB
+    .prepare('UPDATE game_captains SET name = ?, avatar_id = ?, bio = ? WHERE id = ?')
+    .bind(name, avatar, bio, captainId)
+    .run();
+  const row = await env.DB.prepare('SELECT * FROM game_captains WHERE id = ?').bind(captainId).first();
+  return json({ captain: captainToJson(row) });
+}
+
+async function handleAssignCaptain(req, env, ctx) {
+  const { gameId, captainId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const got = await requireMyCaptain(env, gameId, ctx.session.user_id, captainId);
+  if (got.err) return got.err;
+  if (got.cap.status !== 'active') return err(409, 'captain_lost', 'this captain was lost in action');
+  const body = (await readJson(req)) ?? {};
+  const shipId = body.ship_id ?? null;
+
+  const stmts = [];
+  // Detach from current post (if any).
+  if (got.cap.ship_id) {
+    stmts.push(env.DB.prepare('UPDATE game_ships SET captain_id = NULL WHERE id = ?').bind(got.cap.ship_id));
+  }
+  if (shipId === null) {
+    stmts.push(env.DB.prepare('UPDATE game_captains SET ship_id = NULL WHERE id = ?').bind(captainId));
+    await env.DB.batch(stmts);
+    return json({ ok: true, captain_id: captainId, ship_id: null });
+  }
+  if (typeof shipId !== 'string') return err(400, 'bad_request', 'ship_id must be a string or null');
+  const ship = await env.DB
+    .prepare(`SELECT id, owner_faction_id, captain_id FROM game_ships
+               WHERE id = ? AND game_id = ? AND status = 'active'`)
+    .bind(shipId, gameId).first();
+  if (!ship) return err(404, 'not_found', 'ship not found');
+  if (ship.owner_faction_id !== got.me.id) return err(403, 'not_owner', 'not your ship');
+  // The target ship's sitting captain (if different) goes to the bank —
+  // assignment is a swap-to-bench, never a delete.
+  if (ship.captain_id && ship.captain_id !== captainId) {
+    stmts.push(env.DB.prepare('UPDATE game_captains SET ship_id = NULL WHERE id = ?').bind(ship.captain_id));
+  }
+  stmts.push(env.DB.prepare('UPDATE game_captains SET ship_id = ? WHERE id = ?').bind(shipId, captainId));
+  stmts.push(env.DB.prepare('UPDATE game_ships SET captain_id = ? WHERE id = ?').bind(captainId, shipId));
+  await env.DB.batch(stmts);
+  return json({ ok: true, captain_id: captainId, ship_id: shipId });
+}
+
 // POST /api/games/:gameId/ships/:shipId/detonate
 //
 // Manual detonator trigger (spec §2.2, decided 2026-07-17):
@@ -2796,6 +2943,34 @@ async function handleDetonateShip(req, env, ctx) {
       .bind(`c_det_${shipId.slice(-10)}_${tick}`, gameId, tick, me.id,
             ship.parent_body_id, shipId, payload, Date.now())
       .run();
+
+    // Captain survival rolls (DESIGN-captains §2.1) — the detonating hull
+    // and every victim destroyed by the blast. Chronicle each outcome.
+    const deadIds = [shipId, ...victimSummaries.filter(v => v.destroyed).map(v => v.ship_id)];
+    for (const dead of deadIds) {
+      try {
+        const fate = await resolveCaptainOnDeath(env.DB, gameId, tick, dead);
+        if (fate) {
+          await env.DB
+            .prepare(
+              `INSERT INTO chronicle_entries
+                (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'public', ?)`,
+            )
+            .bind(`c_det_cap_${dead.slice(-10)}_${tick}`, gameId, tick,
+                  fate.outcome === 'rescued' ? 'captain_rescued' : 'captain_lost',
+                  fate.captain.faction_id, ship.parent_body_id,
+                  JSON.stringify({
+                    captain_id: fate.captain.id,
+                    captain_name: fate.captain.name,
+                    captain_rank: fate.captain.rank ?? 0,
+                    body_name: bodyRow?.name ?? null,
+                  }),
+                  Date.now())
+            .run();
+        }
+      } catch (e) { console.error('detonate captain roll failed', e); }
+    }
   } catch (e) {
     console.error('ship_detonated chronicle insert failed', e);
   }
@@ -2842,6 +3017,26 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/build-list$/,
     auth: 'required',
     handle: handleSetBuildList,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/captains$/,
+    auth: 'required',
+    handle: handleCreateCaptain,
+  },
+  {
+    // MUST precede the bare :captainId PATCH-style routes — 'assign' is a
+    // literal segment the generic pattern would swallow.
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/captains\/(?<captainId>[^/]+)\/assign$/,
+    auth: 'required',
+    handle: handleAssignCaptain,
+  },
+  {
+    method: 'PATCH',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/captains\/(?<captainId>[^/]+)$/,
+    auth: 'required',
+    handle: handlePatchCaptain,
   },
   {
     method: 'POST',

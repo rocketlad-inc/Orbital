@@ -119,7 +119,11 @@ function buildFriendlySensors(bodies, friendlyShips, settlements, tick) {
 
   const sensors = [];
   for (const s of friendlyShips) {
-    const range = SHIP_SENSOR_RANGE[s.ship_class] ?? DEFAULT_SHIP_SENSOR_RANGE;
+    let range = SHIP_SENSOR_RANGE[s.ship_class] ?? DEFAULT_SHIP_SENSOR_RANGE;
+    // Pathfinder captain (DESIGN-captains §3): +15% sensor range.
+    if (typeof s.captain_traits === 'string' && s.captain_traits.includes('pathfinder')) {
+      range *= 1.15;
+    }
     sensors.push({ pos: shipPos(s), r2: range * range });
   }
   for (const st of settlements) {
@@ -355,8 +359,10 @@ async function handleGetState(req, env, ctx) {
   const sensorShips = (await env.DB
     .prepare(
       `SELECT s.ship_class, s.parent_body_id,
+              c.traits_json AS captain_traits,
               n.target_body_id, n.scheduled_t, n.arrival_at_tick
          FROM game_ships s
+         LEFT JOIN game_captains c ON c.id = s.captain_id
          LEFT JOIN game_ship_nodes n
            ON n.ship_id = s.id AND n.status = 'in_transit'
         WHERE s.game_id = ?1
@@ -588,25 +594,32 @@ async function handleGetState(req, env, ctx) {
          -- computed in JS). Reveals enemy units your scopes can reach.
          SELECT value FROM json_each(?3)
        )
-       SELECT id, name, ship_class, owner_faction_id, parent_body_id,
-              orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch, orbit_direction,
-              fuel, fuel_max, hp, hp_max, damage_per_tick,
-              rank, combat_history, trades_completed,
-              status, built_at_tick, last_combat_tick, last_damaged_tick,
-              icon_variant, parts_json,
-              stance, retreat_hp_pct, detonate_hp_pct
-         FROM game_ships
-        WHERE game_id = ?1
-          AND status = 'active'
-          AND (owner_faction_id IN (SELECT value FROM json_each(?2))
-               OR parent_body_id IN (SELECT bid FROM visible_bodies)
+       SELECT s.id, s.name, s.ship_class, s.owner_faction_id, s.parent_body_id,
+              s.orbit_rp, s.orbit_ra, s.orbit_omega, s.orbit_m0, s.orbit_epoch, s.orbit_direction,
+              s.fuel, s.fuel_max, s.hp, s.hp_max, s.damage_per_tick,
+              -- Rank belongs to the captain now (spec §2); COALESCE keeps
+              -- the field name so older clients keep working unchanged.
+              COALESCE(c.rank, s.rank) AS rank,
+              COALESCE(c.combat_history, s.combat_history) AS combat_history,
+              s.trades_completed,
+              s.status, s.built_at_tick, s.last_combat_tick, s.last_damaged_tick,
+              s.icon_variant, s.parts_json,
+              s.stance, s.retreat_hp_pct, s.detonate_hp_pct,
+              s.captain_id, c.name AS captain_name, c.avatar_id AS captain_avatar,
+              c.traits_json AS captain_traits
+         FROM game_ships s
+         LEFT JOIN game_captains c ON c.id = s.captain_id
+        WHERE s.game_id = ?1
+          AND s.status = 'active'
+          AND (s.owner_faction_id IN (SELECT value FROM json_each(?2))
+               OR s.parent_body_id IN (SELECT bid FROM visible_bodies)
                -- Sensor-on-SHIP reveal: a hostile whose current world
                -- position falls inside a friendly sensor radius shows
                -- up, even if neither its origin nor destination body is
                -- visible. ?4 = JSON array of ship ids computed in JS via
                -- computeSensorVisibleShipIds against the same sensor list
                -- used for body visibility.
-               OR id IN (SELECT value FROM json_each(?4))
+               OR s.id IN (SELECT value FROM json_each(?4))
                -- Total Awareness (sensors 10): every enemy ship, fog or
                -- no fog. ?5 = 1 only when the caller has intel.allShips.
                OR 1 = ?5)`,
@@ -636,6 +649,30 @@ async function handleGetState(req, env, ctx) {
       }
     }
   }
+  // Rival CAPTAIN identity is the same class of secret as a fitted
+  // loadout (spec §5.2): without Deep Scan a rival row keeps tier+kills
+  // (rank stays — it was already public via ships) but loses the person.
+  if (!seeLoadouts) {
+    for (const s of ships) {
+      if (!friendlySet.has(s.owner_faction_id)) {
+        s.captain_name = null;
+        s.captain_avatar = null;
+        s.captain_traits = null;
+      }
+    }
+  }
+
+  // The caller's captain roster — bank + assigned + memorial (spec §5.3).
+  const captains = (await env.DB
+    .prepare(
+      `SELECT id, name, avatar_id, bio, rank, combat_history, traits_json,
+              ship_id, status, created_at_tick, lost_at_tick
+         FROM game_captains
+        WHERE game_id = ? AND faction_id = ?
+        ORDER BY created_at_tick ASC`,
+    )
+    .bind(gameId, me.id)
+    .all()).results ?? [];
 
   // Settlements: same visibility set as ships/bodies above.
   const settlements = (await env.DB
@@ -937,6 +974,8 @@ async function handleGetState(req, env, ctx) {
     build_queue: buildQueue,
     trade_routes: tradeRoutes,
     ship_designs: shipDesigns,
+    // Captains (spec): the caller's full roster, bank + memorial.
+    captains,
     // Curated build list (migration 0045): the caller's ordered loadout
     // entries. NULL column = never curated → empty array; the client
     // falls back to a sensible default (unlocked bare hulls + active

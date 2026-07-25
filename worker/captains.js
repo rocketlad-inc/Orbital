@@ -1,0 +1,218 @@
+// ============================================================
+// Captains (DESIGN-captains.md) — server core.
+//
+// A captain is a named, persistent officer attached to a ship. Captains
+// OWN veterancy: rank + combat_history live here, not on the hull, so a
+// survivor carries his record into the next ship. Everything here is
+// auto-generated; the player edits via worker/actions.js endpoints.
+//
+// KEEP TRAIT IDS/EFFECTS IN SYNC with src/game/captains.ts (display).
+// ============================================================
+
+// Trait bank (spec §3). Small multiplicative modifiers — deliberately
+// weaker than ship-designer parts; rank is the growth axis, traits are
+// personality + new-player direction.
+export const CAPTAIN_TRAITS = {
+  gunner:        { name: 'Gunner',        dmgMul: 1.10 },
+  bulwark:       { name: 'Bulwark',       hpMul: 1.10 },
+  wrench:        { name: 'Wrench',        repairMul: 1.5 },
+  voidrunner:    { name: 'Voidrunner',    accelMul: 1.10 },   // applied client-side (torch plans are client-computed)
+  pathfinder:    { name: 'Pathfinder',    sensorMul: 1.15 },
+  quartermaster: { name: 'Quartermaster', cargoMul: 1.25 },
+  colonist:      { name: 'Colonist',      settleCostMul: 0.8 },
+};
+export const TRAIT_IDS = Object.keys(CAPTAIN_TRAITS);
+export const AVATAR_IDS = ['a1','a2','a3','a4','a5','a6','a7','a8','a9','a10','a11','a12'];
+
+const GIVEN = [
+  'Vela','Orin','Kess','Mara','Dax','Ilya','Rho','Sable','Juno','Cass',
+  'Ezra','Nyx','Tavi','Rook','Lira','Bram','Sunny','Okoye','Piet','Zadie',
+  'Halcyon','Iris','Marek','Tunde','Sorrel','Anders','Yuki','Farid','Nova','Quill',
+];
+const SURNAME = [
+  'Ordoñez','Vance','Okafor','Reyes','Silva','Kwan','Petrov','Achebe','Lindqvist','Moreau',
+  'Tanaka','Delacroix','Ferro','Adeyemi','Novak','Castellan','Byrne','Amari','Voss','Ihejirika',
+  'Stone','Halvorsen','Qadir','Mbeki','Riva','Kovacs','Sethi','Aldrin','Corvi','Yamada',
+];
+const BIO_TEMPLATES = [
+  'Signed on at sixteen hauling ice off the Belt. Never looked back.',
+  'Third generation spacer. First to make captain.',
+  'Survived the academy on stubbornness and bad coffee.',
+  'Keeps a pre-war coin in the flight console for luck.',
+  'Talks to the ship. Insists it listens.',
+  'Demoted twice. Promoted three times. Net positive.',
+  'Ran freight through a war zone once. Doesn’t recommend it.',
+  'Reads old paper books on the long burns.',
+  'Owes money in three ports and favors in five.',
+  'Quietest voice on the command channel. Nobody interrupts.',
+  'Grew up under a dome and swore off ceilings.',
+  'Navigates by feel first, math second. The math always agrees.',
+];
+
+function pick(rand, arr) { return arr[Math.floor(rand() * arr.length)]; }
+
+/** Roll a captain: name (deduped against living captains), avatar, bio,
+ *  1 trait (2 for recoveries above rank 10 — see survival path). */
+export function rollCaptain(gameId, factionId, tick, existingNames, seedIdx) {
+  // Math.random is fine here — captains are minted once and persisted;
+  // nothing re-derives them.
+  const rand = Math.random;
+  let name = `${pick(rand, GIVEN)} ${pick(rand, SURNAME)}`;
+  for (let i = 0; i < 20 && existingNames.has(name); i++) {
+    name = `${pick(rand, GIVEN)} ${pick(rand, SURNAME)}`;
+  }
+  existingNames.add(name);
+  return {
+    id: `${gameId}:c${tick}_${seedIdx}_${Math.random().toString(36).slice(2, 7)}`,
+    name,
+    avatar_id: pick(rand, AVATAR_IDS),
+    bio: pick(rand, BIO_TEMPLATES),
+    traits: [pick(rand, TRAIT_IDS)],
+  };
+}
+
+/**
+ * Lazy backfill + attach-on-build (spec §2.2, §5.4). Any active ship with
+ * no captain gets one: the LONGEST-WAITING unassigned bank captain of its
+ * faction if available, else a fresh roll INHERITING the ship's legacy
+ * rank/combat_history (so live games keep veterancy — and it runs for
+ * EVERY faction, or rival aces would be stealth-nerfed to rank 0).
+ * Idempotent; no-ops once every ship is captained.
+ */
+export async function ensureCaptains(db, gameId, tick) {
+  const orphans = (await db
+    .prepare(`SELECT id, owner_faction_id, rank, combat_history FROM game_ships
+               WHERE game_id = ? AND status = 'active' AND captain_id IS NULL
+               LIMIT 40`)
+    .bind(gameId).all()).results ?? [];
+  if (orphans.length === 0) return;
+
+  const names = new Set(
+    ((await db.prepare(`SELECT name FROM game_captains WHERE game_id = ? AND status = 'active'`)
+      .bind(gameId).all()).results ?? []).map(r => r.name),
+  );
+  // Bank pull: longest-waiting unassigned captain per faction.
+  const bank = (await db
+    .prepare(`SELECT id, faction_id FROM game_captains
+               WHERE game_id = ? AND status = 'active' AND ship_id IS NULL
+               ORDER BY created_at_tick ASC`)
+    .bind(gameId).all()).results ?? [];
+  const bankByFaction = new Map();
+  for (const c of bank) {
+    if (!bankByFaction.has(c.faction_id)) bankByFaction.set(c.faction_id, []);
+    bankByFaction.get(c.faction_id).push(c.id);
+  }
+
+  let idx = 0;
+  for (const ship of orphans) {
+    const queue = bankByFaction.get(ship.owner_faction_id);
+    if (queue && queue.length > 0) {
+      const capId = queue.shift();
+      await db.batch([
+        db.prepare('UPDATE game_captains SET ship_id = ? WHERE id = ?').bind(ship.id, capId),
+        db.prepare('UPDATE game_ships SET captain_id = ? WHERE id = ?').bind(capId, ship.id),
+      ]);
+      continue;
+    }
+    const c = rollCaptain(gameId, ship.owner_faction_id, tick, names, idx++);
+    await db.batch([
+      db.prepare(
+        `INSERT INTO game_captains
+           (id, game_id, faction_id, name, avatar_id, bio, rank, combat_history,
+            traits_json, ship_id, status, created_at_tick)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`)
+        .bind(c.id, gameId, ship.owner_faction_id, c.name, c.avatar_id, c.bio,
+              ship.rank ?? 0, ship.combat_history ?? null,
+              JSON.stringify(c.traits), ship.id, tick),
+      db.prepare('UPDATE game_ships SET captain_id = ? WHERE id = ?').bind(c.id, ship.id),
+    ]);
+  }
+}
+
+/**
+ * Survival roll when a ship dies (spec §2.1): base odds improved by
+ * friendly-station proximity, floored at 5%. Tiers (implementable proxy
+ * for the spec's distance decay):
+ *   station at the death body            → 60%
+ *   station in the same system (anchor)  → 40%
+ *   any friendly station anywhere        → 15%
+ *   no friendly stations left            → 5%
+ * Survivor → back to the bank (ship_id NULL), rank intact; recoveries
+ * above rank 10 earn a second trait. Lost → status='lost', permanent.
+ * Returns { outcome: 'rescued'|'lost', captain } or null (no captain).
+ */
+export async function resolveCaptainOnDeath(db, gameId, tick, shipId) {
+  const cap = await db
+    .prepare(`SELECT id, name, rank, faction_id, traits_json FROM game_captains
+               WHERE game_id = ? AND ship_id = ? AND status = 'active' LIMIT 1`)
+    .bind(gameId, shipId).first();
+  if (!cap) return null;
+
+  const ship = await db
+    .prepare('SELECT parent_body_id FROM game_ships WHERE id = ?')
+    .bind(shipId).first();
+  const bodyId = ship?.parent_body_id ?? null;
+
+  let odds = 0.05;
+  const stations = (await db
+    .prepare(`SELECT body_id FROM game_settlements
+               WHERE game_id = ? AND owner_faction_id = ? AND type = 'station'
+                 AND destroyed_at_tick IS NULL`)
+    .bind(gameId, cap.faction_id).all()).results ?? [];
+  if (stations.length > 0) {
+    odds = 0.15;
+    if (bodyId) {
+      const stationBodies = new Set(stations.map(s => s.body_id));
+      if (stationBodies.has(bodyId)) {
+        odds = 0.60;
+      } else {
+        // Same system = same parent anchor (both moons of one giant, or
+        // station on the planet a moon orbits, etc).
+        const anchorOf = async (bid) => {
+          const b = await db.prepare('SELECT parent_body_id FROM game_bodies WHERE id = ?').bind(bid).first();
+          return b?.parent_body_id ?? bid;
+        };
+        const deathAnchor = await anchorOf(bodyId);
+        for (const sb of stationBodies) {
+          const a = await anchorOf(sb);
+          if (a === deathAnchor || sb === deathAnchor || a === bodyId) { odds = 0.40; break; }
+        }
+      }
+    }
+  }
+
+  const rescued = Math.random() < odds;
+  if (rescued) {
+    // Rank ≥10 recoveries earn a second trait — the story writes itself.
+    let traits = [];
+    try { traits = JSON.parse(cap.traits_json ?? '[]'); } catch { traits = []; }
+    if ((cap.rank ?? 0) >= 10 && traits.length < 2) {
+      const pool = TRAIT_IDS.filter(t => !traits.includes(t));
+      if (pool.length) traits.push(pool[Math.floor(Math.random() * pool.length)]);
+    }
+    await db.prepare('UPDATE game_captains SET ship_id = NULL, traits_json = ? WHERE id = ?')
+      .bind(JSON.stringify(traits), cap.id).run();
+  } else {
+    await db.prepare(`UPDATE game_captains SET ship_id = NULL, status = 'lost', lost_at_tick = ? WHERE id = ?`)
+      .bind(tick, cap.id).run();
+  }
+  return { outcome: rescued ? 'rescued' : 'lost', captain: cap };
+}
+
+/** Parse a captain's traits_json into a validated id list. */
+export function parseTraits(json) {
+  try {
+    const arr = JSON.parse(json ?? '[]');
+    return Array.isArray(arr) ? arr.filter(t => TRAIT_IDS.includes(t)) : [];
+  } catch { return []; }
+}
+
+/** Multiplier helpers over a parsed trait list. */
+export function traitMul(traits, key) {
+  let m = 1;
+  for (const t of traits) {
+    const def = CAPTAIN_TRAITS[t];
+    if (def && def[key]) m *= def[key];
+  }
+  return m;
+}

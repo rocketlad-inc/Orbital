@@ -2,6 +2,7 @@ import { resolveSenate, getActiveSliders, hasActiveSanction } from './senate.js'
 import { recomputeBodyOwnership } from './factions.js';
 import { parsePartsJson, computeShipStats, countPart, detonatorDamage,
          damageProfile, defenseMitigation, MITIGATION_FLOOR } from './shipDesigns.js';
+import { ensureCaptains, resolveCaptainOnDeath, parseTraits, traitMul } from './captains.js';
 
 // The six tech tracks. Single source of truth for the science-victory
 // check AND the random-tech grant, so those two can't silently disagree
@@ -698,6 +699,16 @@ export class Room {
   }
 
   async resolveTick(gameId, tick) {
+    // Captains — lazy backfill + attach-on-build (spec §2.2). Runs first
+    // so every ship entering combat this tick already has its officer.
+    // Covers EVERY faction (rival aces must not be stealth-nerfed) and
+    // no-ops once drained. Never allowed to block the tick.
+    try {
+      await ensureCaptains(this.env.DB, gameId, tick);
+    } catch (e) {
+      console.error('captain backfill pass failed', e);
+    }
+
     // 0. Phantom-ownership sweep. Bodies whose last surviving settlement
     //    was destroyed used to keep their old owner attached (the
     //    recomputeBodyOwnership helper short-circuited on "zero
@@ -1178,7 +1189,9 @@ export class Room {
       // parked freighter doesn't passive-drip.
       try {
         const ship = await this.env.DB
-          .prepare('SELECT ship_class, owner_faction_id FROM game_ships WHERE id = ? AND status = ?')
+          .prepare(`SELECT s.ship_class, s.owner_faction_id, c.traits_json AS captain_traits
+                      FROM game_ships s LEFT JOIN game_captains c ON c.id = s.captain_id
+                     WHERE s.id = ? AND s.status = ?`)
           .bind(n.ship_id, 'active')
           .first();
         if (ship && ship.ship_class === 'freighter') {
@@ -1203,7 +1216,8 @@ export class Room {
             )
             .bind(n.ship_id).first();
           if (!onActiveRoute) {
-            const PICKUP_CAP = 500;  // matches CARGO_CAP further down
+            // Quartermaster captain (spec §3): +25% hold.
+            const PICKUP_CAP = Math.round(500 * traitMul(parseTraits(ship.captain_traits), 'cargoMul'));
             const stocks = (await this.env.DB
               .prepare(
                 `SELECT id, stockpile_fuel, stockpile_metal, stockpile_gold, stockpile_science
@@ -1459,7 +1473,10 @@ export class Room {
        try {
         if (r.status === 'paused') continue;
         const ship = await this.env.DB
-          .prepare("SELECT id, owner_faction_id, parent_body_id, ship_class, status FROM game_ships WHERE id = ?")
+          .prepare(`SELECT s.id, s.owner_faction_id, s.parent_body_id, s.ship_class, s.status,
+                           c.traits_json AS captain_traits
+                      FROM game_ships s LEFT JOIN game_captains c ON c.id = s.captain_id
+                     WHERE s.id = ?`)
           .bind(r.ship_id).first();
         // Dead or missing freighter → cancel the route so we don't keep
         // scanning it. Piracy step (below) handles cargo capture if the
@@ -1529,13 +1546,15 @@ export class Room {
             )
             .bind(gameId, r.origin_body_id, r.owner_faction_id)
             .all()).results ?? [];
+          // Quartermaster captain (spec §3): +25% hold on this freighter.
+          const HOLD = Math.round(CARGO_CAP * traitMul(parseTraits(ship.captain_traits), 'cargoMul'));
           let cf = 0, cm = 0, cg = 0, csci = 0;
           for (const s of stocks) {
             const take = {
-              f:  Math.min(CARGO_CAP - cf,   Number(s.stockpile_fuel    ?? 0)),
-              m:  Math.min(CARGO_CAP - cm,   Number(s.stockpile_metal   ?? 0)),
-              g:  Math.min(CARGO_CAP - cg,   Number(s.stockpile_gold    ?? 0)),
-              sc: Math.min(CARGO_CAP - csci, Number(s.stockpile_science ?? 0)),
+              f:  Math.min(HOLD - cf,   Number(s.stockpile_fuel    ?? 0)),
+              m:  Math.min(HOLD - cm,   Number(s.stockpile_metal   ?? 0)),
+              g:  Math.min(HOLD - cg,   Number(s.stockpile_gold    ?? 0)),
+              sc: Math.min(HOLD - csci, Number(s.stockpile_science ?? 0)),
             };
             if (take.f + take.m + take.g + take.sc <= 0) continue;
             cf += take.f; cm += take.m; cg += take.g; csci += take.sc;
@@ -1550,7 +1569,7 @@ export class Room {
               )
               .bind(take.f, take.m, take.g, take.sc, s.id)
               .run();
-            if (cf >= CARGO_CAP && cm >= CARGO_CAP && cg >= CARGO_CAP && csci >= CARGO_CAP) break;
+            if (cf >= HOLD && cm >= HOLD && cg >= HOLD && csci >= HOLD) break;
           }
           // Always plan the outbound leg — even an empty stockpile
           // sends the freighter cycling so it'll try again next loop.
@@ -1800,13 +1819,18 @@ export class Room {
     // (2) append a kill record + bump rank when a hull lands the
     // killing blow on another ship. Class + name are needed for the
     // history record itself (target's class/name at moment of death).
+    // Rank now lives on the CAPTAIN (spec §2): COALESCE falls back to the
+    // ship's legacy column only for hulls the backfill pass hasn't reached
+    // yet (it runs first, so in practice never after one tick).
     const allShips = (await this.env.DB
       .prepare(
-        `SELECT id, owner_faction_id, parent_body_id, hp, hp_max, damage_per_tick,
-                rank, combat_history, ship_class, name, last_combat_tick,
-                stance, retreat_hp_pct, detonate_hp_pct, parts_json
-           FROM game_ships
-          WHERE game_id = ? AND status = 'active'`,
+        `SELECT s.id, s.owner_faction_id, s.parent_body_id, s.hp, s.hp_max, s.damage_per_tick,
+                COALESCE(c.rank, s.rank) AS rank, s.ship_class, s.name, s.last_combat_tick,
+                s.stance, s.retreat_hp_pct, s.detonate_hp_pct, s.parts_json,
+                s.captain_id, c.traits_json AS captain_traits
+           FROM game_ships s
+           LEFT JOIN game_captains c ON c.id = s.captain_id
+          WHERE s.game_id = ? AND s.status = 'active'`,
       )
       .bind(gameId)
       .all()).results ?? [];
@@ -1817,6 +1841,8 @@ export class Room {
     // shield/armor counts without re-parsing JSON per pairing.
     for (const s of allShips) {
       s._parts = parsePartsJson(s.ship_class, s.parts_json);
+      // Captain traits (spec §3) — small multiplicative modifiers.
+      s._traits = parseTraits(s.captain_traits);
     }
 
     // Combat cadence — every N ticks per ship, matching the SP
@@ -2095,7 +2121,9 @@ export class Room {
         const atkProfile = damageProfile(attacker._parts);
         const attackPower =
           attacker.damage_per_tick * attackerWeaponMul(attacker.owner_faction_id, atkProfile)
-          * rankMul * combatDamageMult;
+          * rankMul * combatDamageMult
+          // Gunner captain (spec §3): +10% damage, multiplicative.
+          * traitMul(attacker._traits ?? [], 'dmgMul');
         for (const t of shipTargets) {
           // Senate war authorization: damage TO a faction the senate has
           // formally declared war on is doubled. Per-target (not per-
@@ -2390,7 +2418,8 @@ export class Room {
     const maintShips = (await this.env.DB
       .prepare(
         `SELECT s.id, s.owner_faction_id, s.parent_body_id, s.hp, s.hp_max,
-                s.fuel, s.fuel_max, s.rank,
+                s.fuel, s.fuel_max, COALESCE(c.rank, s.rank) AS rank,
+                c.traits_json AS captain_traits,
                 b.owner_faction_id AS body_owner,
                 (SELECT 1 FROM game_ship_nodes n
                   WHERE n.ship_id = s.id
@@ -2398,6 +2427,7 @@ export class Room {
                     AND n.status = 'in_transit'
                   LIMIT 1) AS in_transit
            FROM game_ships s
+           LEFT JOIN game_captains c ON c.id = s.captain_id
            JOIN game_bodies b ON b.id = s.parent_body_id
           WHERE s.game_id = ?1 AND s.status = 'active'`,
       )
@@ -2440,15 +2470,17 @@ export class Room {
       // deep space, no dry dock required. Half the station rate, and it
       // stacks with a station when parked at one.
       if (hasBuff(ship.owner_faction_id, 'armor', 5)) repairRate += REPAIR_STATION / 2;
+      const shipTraits = parseTraits(ship.captain_traits);
+      // Wrench captain (spec §3): ×1.5 repair rate.
+      repairRate *= traitMul(shipTraits, 'repairMul');
       if (repairRate <= 0 && refuelRate <= 0) continue;
-      // Effective HP cap = base × rank (+1%/kill) × armor tech (+8%/level).
-      // Rank matches client combat.ts rankHpMul; armor mirrors
-      // src/game/techs.ts hpModifier so an armor-teched fleet can repair
-      // into (and, once the client applies the same cap, display) its
-      // larger buffer. Previously armor tech did nothing server-side.
+      // Effective HP cap = base × rank (+1%/kill) × armor tech (+8%/level)
+      // × Bulwark captain (+10%). Rank is the CAPTAIN's (COALESCEd in the
+      // SELECT); the client mirrors all of this in effectiveShipMaxHp.
       const effectiveMaxHp = (ship.hp_max ?? 0)
         * (1 + 0.01 * Math.max(0, ship.rank ?? 0))
-        * armorMulOf(ship.owner_faction_id);
+        * armorMulOf(ship.owner_faction_id)
+        * traitMul(shipTraits, 'hpMul');
       const newHp = Math.min(effectiveMaxHp, (ship.hp ?? effectiveMaxHp) + repairRate);
       const newFuel = Math.min(ship.fuel_max ?? 0, (ship.fuel ?? 0) + refuelRate);
       if (newHp === ship.hp && newFuel === ship.fuel) continue;
@@ -2809,31 +2841,44 @@ export class Room {
         }
       }
 
-      // Flush veteran awards — one UPDATE per killer ship. Read the
-      // current rank + history from the live `allShips` snapshot we
-      // already queried at the top of combat (cheaper than a re-SELECT).
+      // Flush veteran awards — rank + history now belong to the CAPTAIN
+      // (spec §2), so a survivor carries his record into the next hull.
+      // The killer's current rank comes from the allShips snapshot (which
+      // already COALESCEs captain rank); history is re-read from the
+      // captain row since the snapshot no longer carries it. Legacy
+      // fallback (no captain yet) writes the old ship columns unchanged.
       const KILL_HISTORY_CAP = 20;
       for (const [killerShipId, award] of veteranAwards) {
         const killer = allShips.find(s => s.id === killerShipId);
         if (!killer) continue;
         const newRank = (killer.rank ?? 0) + award.addedRank;
-        // Parse the existing JSON history (or empty) and apply the new
-        // records LRU-style. Malformed JSON resets the column rather
-        // than crashing the tick.
-        let history = [];
-        if (killer.combat_history) {
-          try {
-            const parsed = JSON.parse(killer.combat_history);
-            if (Array.isArray(parsed)) history = parsed;
-          } catch {
-            // Bad JSON — start fresh; logging would spam the console.
+        const applyHistory = (raw) => {
+          let history = [];
+          if (raw) {
+            try {
+              const parsed = JSON.parse(raw);
+              if (Array.isArray(parsed)) history = parsed;
+            } catch { /* bad JSON — start fresh */ }
           }
+          return JSON.stringify([...history, ...award.newRecords].slice(-KILL_HISTORY_CAP));
+        };
+        if (killer.captain_id) {
+          const cap = await this.env.DB
+            .prepare('SELECT combat_history FROM game_captains WHERE id = ?')
+            .bind(killer.captain_id).first();
+          await this.env.DB
+            .prepare('UPDATE game_captains SET rank = ?, combat_history = ? WHERE id = ?')
+            .bind(newRank, applyHistory(cap?.combat_history), killer.captain_id)
+            .run();
+        } else {
+          const shipRow = await this.env.DB
+            .prepare('SELECT combat_history FROM game_ships WHERE id = ?')
+            .bind(killerShipId).first();
+          await this.env.DB
+            .prepare('UPDATE game_ships SET rank = ?, combat_history = ? WHERE id = ?')
+            .bind(newRank, applyHistory(shipRow?.combat_history), killerShipId)
+            .run();
         }
-        history = [...history, ...award.newRecords].slice(-KILL_HISTORY_CAP);
-        await this.env.DB
-          .prepare('UPDATE game_ships SET rank = ?, combat_history = ? WHERE id = ?')
-          .bind(newRank, JSON.stringify(history), killerShipId)
-          .run();
       }
 
       // Piracy: any destroyed freighter on an active trade route hands
@@ -3013,6 +3058,34 @@ export class Room {
             // chronicle log is best-effort; don't fail the whole tick.
             console.error('chronicle insert failed', e);
           }
+
+          // Captain survival roll (spec §2.1): 25%-class base improved by
+          // friendly-station proximity, permadeath on failure. Both
+          // outcomes are chronicled — THE retention hook of the feature.
+          try {
+            const fate = await resolveCaptainOnDeath(this.env.DB, gameId, tick, lost.id);
+            if (fate) {
+              const capPayload = JSON.stringify({
+                captain_id: fate.captain.id,
+                captain_name: fate.captain.name,
+                captain_rank: fate.captain.rank ?? 0,
+                ship_name: ship?.name ?? 'Unknown',
+                body_name: body?.name ?? 'unknown space',
+                owner_faction_name: factionNameById.get(lost.owner_faction_id) ?? null,
+              });
+              await this.env.DB
+                .prepare(
+                  `INSERT INTO chronicle_entries
+                    (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 'public', ?)`,
+                )
+                .bind(`c${tick}_cap_${lost.id.slice(-8)}`, gameId, tick,
+                      fate.outcome === 'rescued' ? 'captain_rescued' : 'captain_lost',
+                      lost.owner_faction_id ?? null, ship?.parent_body_id ?? null,
+                      capPayload, now)
+                .run();
+            }
+          } catch (e) { console.error('captain survival roll failed', e); }
         }
         this.broadcast({ type: 'ships_destroyed', tick, ship_ids: losses });
       }
