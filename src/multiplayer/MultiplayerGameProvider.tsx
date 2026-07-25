@@ -16,8 +16,10 @@ import { MultiplayerActionsProvider } from './MultiplayerActionsContext';
 import {
   Body, Ship, Faction, GameState, OrbitElements, FactionResources, FactionTechStateBase,
   Settlement, ManeuverNode, ChronicleFocus, ChronicleEditMeta, ShipDesign, BuildListEntry,
+  Captain,
 } from '../types';
 import { sanitizeParts, engineAccelMultiplier } from '../game/shipParts';
+import { traitMul as captainTraitMul } from '../game/captains';
 import { ingestChronicleFx } from '../render/pendingFx';
 import {
   planTorchTransfer, stepTorchShip, DEFAULT_ENGINE_G, fromG,
@@ -189,6 +191,20 @@ interface ServerState {
     stance?: string | null;
     retreat_hp_pct?: number | null;
     detonate_hp_pct?: number | null;
+    /** Captains (migration 0046). rank above is already the captain's
+     *  (server COALESCEs). name/avatar/traits NULL on rival ships until
+     *  intel.loadouts. */
+    captain_id?: string | null;
+    captain_name?: string | null;
+    captain_avatar?: string | null;
+    captain_traits?: string | null;
+  }>;
+  /** The caller's captain roster (bank + assigned + memorial). */
+  captains?: Array<{
+    id: string; name: string; avatar_id: string | null; bio: string | null;
+    rank: number; combat_history?: string | null; traits_json: string | null;
+    ship_id: string | null; status: string;
+    created_at_tick: number; lost_at_tick: number | null;
   }>;
   /** Fog-free political summary: every live settlement's body + owner,
    *  game-wide. Ownership only — no stats ride along. */
@@ -478,6 +494,17 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     orders: [],
     rank: s.rank ?? 0,
     combatHistory,
+    // Captain (DESIGN-captains): identity + traits. stripGameId keeps the
+    // captain id usable against the client captains roster.
+    captainId: s.captain_id ?? null,
+    captainName: s.captain_name ?? null,
+    captainAvatar: s.captain_avatar ?? null,
+    captainTraits: (() => {
+      try {
+        const arr = JSON.parse(s.captain_traits ?? '[]');
+        return Array.isArray(arr) ? arr.filter((t): t is string => typeof t === 'string') : [];
+      } catch { return []; }
+    })(),
     // Surface the server's firing tick so the FleetPanel can flag ships
     // "In Combat". SP sets lastCombatTick in client combat.ts; MP relies
     // on this passthrough. NULL (never fired) → undefined.
@@ -658,6 +685,8 @@ function classifyChronicleEvent(kind: string): { category: LogCategory; level: L
     case 'settlement_destroyed':
     case 'ship_detonated':
     case 'asteroid_impact':
+    case 'captain_lost':
+    case 'captain_rescued':
       return { category: 'COMBAT', level: 'INFO' };
     case 'asteroid_launched':
     case 'treaty_broken':
@@ -834,7 +863,12 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     const propulsionLvl = ship.ownedBy === srv.me.faction_id
       ? (playerTech.levels?.propulsion ?? 0)
       : 0;
-    const engineAccel = baseAccel * techScale * engineAccelMultiplier(ship.parts, propulsionLvl);
+    // Voidrunner captain (DESIGN-captains §3): +10% engine acceleration.
+    // Torch plans are client-computed and server-trusted, so applying the
+    // trait here is authoritative for travel time.
+    const engineAccel = baseAccel * techScale
+      * engineAccelMultiplier(ship.parts, propulsionLvl)
+      * captainTraitMul(ship.captainTraits, 'accelMul');
 
     const queued: TorchTransfer[] = [];
     let priorPlan: TorchTransfer | null = null;
@@ -938,6 +972,19 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         // pre-attribution rows).
         const tail = parsed.killer_faction_id ? ` by ${killer}` : '';
         return `${t}  ${owner}'s ${cls} ${name} destroyed at ${where}${tail}`;
+      }
+
+      if (ev.kind === 'captain_lost' || ev.kind === 'captain_rescued') {
+        // DESIGN-captains §2.1 — THE retention lines. Rank rides along so
+        // the loss of an ace reads as heavier than a rookie.
+        const cap = (parsed.captain_name as string) ?? 'The captain';
+        const capRank = Number(parsed.captain_rank ?? 0);
+        const kills = capRank > 0 ? ` ${capRank} kills.` : '';
+        const shipBit = parsed.ship_name ? ` of the ${parsed.ship_name}` : '';
+        const where = (parsed.body_name as string) ?? 'deep space';
+        return ev.kind === 'captain_lost'
+          ? `${t}  Captain ${cap}${shipBit} went down with the ship at ${where}.${kills}`
+          : `${t}  Captain ${cap} was recovered from the wreck at ${where} and awaits reassignment.${kills}`;
       }
 
       if (ev.kind === 'settlement_destroyed') {
@@ -1304,6 +1351,25 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     };
   });
 
+  // Captains roster (migration 0046) — the caller's bank + memorial.
+  const captains: Captain[] = (srv.captains ?? []).map(c => ({
+    id: c.id,
+    name: c.name,
+    avatarId: c.avatar_id ?? null,
+    bio: c.bio ?? null,
+    rank: c.rank ?? 0,
+    traits: (() => {
+      try {
+        const arr = JSON.parse(c.traits_json ?? '[]');
+        return Array.isArray(arr) ? arr.filter((t): t is string => typeof t === 'string') : [];
+      } catch { return []; }
+    })(),
+    shipId: c.ship_id ? (stripGameId(c.ship_id) ?? c.ship_id) : null,
+    status: c.status === 'lost' ? 'lost' : 'active',
+    createdAtTick: c.created_at_tick ?? 0,
+    lostAtTick: c.lost_at_tick ?? null,
+  }));
+
   // Curated build list (migration 0045). Keep only well-formed entries;
   // the BuildPanel resolves designId against shipDesigns and drops any
   // that no longer exist.
@@ -1371,6 +1437,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     tradeRoutes,
     shipDesigns,
     buildList,
+    captains,
     dysonSphere,
     // Allies keep their own (server) faction ids on the client — only
     // the caller is remapped to PLAYER_TOKEN — so ally-owned ships carry
@@ -1411,6 +1478,9 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
   const [missing, setMissing] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const inflightRef = useRef(false);
+  /** Own-ship ids already seen — null until the first poll seeds it, so a
+   *  rejoin never fires a debut card for the standing fleet. */
+  const seenShipIdsRef = useRef<Set<string> | null>(null);
   // Stable ref so the polling effect doesn't tear down each render.
   const onGameMissingRef = useRef(onGameMissing);
   useEffect(() => { onGameMissingRef.current = onGameMissing; }, [onGameMissing]);
@@ -1430,6 +1500,33 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
       if (res.ok) {
         const next = serverToGameState(res.data, res.data.me.faction_id);
         setState(next);
+        // Captain debut (DESIGN-captains §5.1): when one of OUR ships
+        // appears for the first time with a captain aboard, offer (never
+        // block) a rename card via a window event — GameUI mounts the
+        // dismissible <CaptainDebut/>. Seed-skip the very first poll so
+        // rejoining a running game doesn't toast the whole fleet.
+        try {
+          const mine = next.ships.filter(s => s.ownedBy === 'player');
+          if (seenShipIdsRef.current === null) {
+            seenShipIdsRef.current = new Set(mine.map(s => s.id));
+          } else {
+            for (const s of mine) {
+              if (!seenShipIdsRef.current.has(s.id)) {
+                seenShipIdsRef.current.add(s.id);
+                if (s.captainId && s.captainName) {
+                  window.dispatchEvent(new CustomEvent('orbital:captain-debut', {
+                    detail: {
+                      captainId: s.captainId, captainName: s.captainName,
+                      captainAvatar: s.captainAvatar ?? null,
+                      captainTraits: s.captainTraits ?? [],
+                      shipName: s.name,
+                    },
+                  }));
+                }
+              }
+            }
+          }
+        } catch { /* cosmetic — never block the poll */ }
         const winnerName = res.data.game.winner_faction_id
           ? (res.data.factions.find(f => f.id === res.data.game.winner_faction_id)?.name ?? null)
           : null;

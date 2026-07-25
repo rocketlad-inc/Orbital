@@ -7,6 +7,7 @@ import { getShipClass, ShipClassName } from './shipClasses';
 import { bodyPosition, localPositionAt } from '../physics/orbitalMechanics';
 import { SETTLEMENT_DEFS, BUILDING_DEFS, buildingLevel } from './settlements';
 import { rankDamageMul, rankHpMul, hpModifier } from './techs';
+import { traitMul as captainTraitMul } from './captains';
 
 /**
  * A ship's TRUE maximum HP for display, mirroring the server's
@@ -26,9 +27,11 @@ export function effectiveShipMaxHp(
   const base = ship.hpMax ?? getShipClass(ship.class as ShipClassName).hp;
   // hpModifier only reads tech.levels.armor; FactionTechStateBase carries
   // it (string-keyed levels), so the cast to the stricter TechId-keyed
-  // FactionTechState is safe.
+  // FactionTechState is safe. captainTraitMul mirrors the server's
+  // Bulwark bonus (worker/room.js maintenance cap) — DESIGN-captains §3.
   return base * rankHpMul(ship.rank)
-    * hpModifier(tech as unknown as Parameters<typeof hpModifier>[0]);
+    * hpModifier(tech as unknown as Parameters<typeof hpModifier>[0])
+    * captainTraitMul(ship.captainTraits, 'hpMul');
 }
 
 /** Maximum entries to keep on a ship's combatHistory — LRU. Older

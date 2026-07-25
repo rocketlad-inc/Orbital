@@ -245,6 +245,15 @@ export interface MultiplayerActions {
    *  The client owns ordering, so it always sends the full array. The
    *  server drops entries pointing at deleted designs. */
   setBuildList: (entries: BuildListEntry[]) => Promise<MpActionResult>;
+
+  // --- Captains (DESIGN-captains §5) ---
+  /** Create an unassigned bank captain (auto-rolled; optional name). */
+  createCaptain: (name?: string) => Promise<MpActionResult>;
+  /** Rename / re-avatar / re-bio one of the caller's captains. */
+  updateCaptain: (captainId: string, patch: { name?: string; avatarId?: string; bio?: string }) => Promise<MpActionResult>;
+  /** Assign a captain to one of the caller's ships (swapping any sitting
+   *  captain back to the bank) or bench him with shipId=null. */
+  assignCaptain: (captainId: string, shipId: string | null) => Promise<MpActionResult>;
   /** Trigger a ship's detonator (spec §2.2). Deals 50% of the ship's
    *  max HP per detonator part to EVERY in-orbit ship at the body —
    *  friend or foe alike — and destroys the ship. The confirming UI
@@ -671,6 +680,37 @@ export function MultiplayerActionsProvider({
         code: res.error?.code,
         error: res.error?.message ?? 'Server rejected the build list.',
       };
+    },
+    async createCaptain(name) {
+      const res = await apiFetch(`/api/games/${gameId}/captains`, {
+        method: 'POST',
+        body: JSON.stringify(name ? { name } : {}),
+      });
+      if (res.ok) { logger.info('ACTION', 'Captain created', { name: name ?? '(rolled)' }); return { ok: true }; }
+      console.warn('createCaptain failed', res.error);
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the captain.' };
+    },
+    async updateCaptain(captainId, patch) {
+      const res = await apiFetch(`/api/games/${gameId}/captains/${encodeURIComponent(captainId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          ...(patch.name !== undefined ? { name: patch.name } : {}),
+          ...(patch.avatarId !== undefined ? { avatar_id: patch.avatarId } : {}),
+          ...(patch.bio !== undefined ? { bio: patch.bio } : {}),
+        }),
+      });
+      if (res.ok) { logger.info('ACTION', 'Captain updated', { captain: captainId }); return { ok: true }; }
+      console.warn('updateCaptain failed', res.error);
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the edit.' };
+    },
+    async assignCaptain(captainId, shipId) {
+      const res = await apiFetch(`/api/games/${gameId}/captains/${encodeURIComponent(captainId)}/assign`, {
+        method: 'POST',
+        body: JSON.stringify({ ship_id: shipId === null ? null : qualify(shipId) }),
+      });
+      if (res.ok) { logger.info('ACTION', 'Captain assigned', { captain: captainId, ship: shipId }); return { ok: true }; }
+      console.warn('assignCaptain failed', res.error);
+      return { ok: false, code: res.error?.code, error: res.error?.message ?? 'Server rejected the assignment.' };
     },
     async detonateShip(shipId) {
       const res = await apiFetch(`/api/games/${gameId}/ships/${encodeURIComponent(qualify(shipId))}/detonate`, {

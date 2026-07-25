@@ -1,0 +1,58 @@
+// ============================================================
+// Captains (DESIGN-captains.md) — client display metadata + the
+// trait-effect mirror. KEEP TRAIT IDS/EFFECTS IN SYNC with
+// worker/captains.js — the server is authoritative for combat/repair/
+// cargo/sensors; the client applies hpMul (display cap) and accelMul
+// (torch plans are client-computed and server-trusted).
+// ============================================================
+
+export interface CaptainTraitDef {
+  name: string;
+  icon: string;
+  blurb: string;
+  /** Client-applied multipliers (subset of the server's). */
+  hpMul?: number;
+  accelMul?: number;
+}
+
+export const CAPTAIN_TRAITS: Record<string, CaptainTraitDef> = {
+  gunner:        { name: 'Gunner',        icon: '🎯', blurb: '+10% weapon damage' },
+  bulwark:       { name: 'Bulwark',       icon: '🛡', blurb: '+10% max hull', hpMul: 1.10 },
+  wrench:        { name: 'Wrench',        icon: '🔧', blurb: '+50% repair rate' },
+  voidrunner:    { name: 'Voidrunner',    icon: '💨', blurb: '+10% engine acceleration', accelMul: 1.10 },
+  pathfinder:    { name: 'Pathfinder',    icon: '🧭', blurb: '+15% sensor range' },
+  quartermaster: { name: 'Quartermaster', icon: '📦', blurb: '+25% cargo hold' },
+  colonist:      { name: 'Colonist',      icon: '🏗', blurb: '−20% settlement founding cost' },
+};
+
+export const AVATAR_IDS = ['a1','a2','a3','a4','a5','a6','a7','a8','a9','a10','a11','a12'] as const;
+export type AvatarId = typeof AVATAR_IDS[number];
+
+/** Experience tier from rank — shared by the fleet Captain column and the
+ *  bank (was FleetPanel-local). Each confirmed kill = +1 rank. */
+export function rankTier(rank: number): string {
+  if (rank >= 10) return 'Ace';
+  if (rank >= 6) return 'Elite';
+  if (rank >= 3) return 'Veteran';
+  if (rank >= 1) return 'Regular';
+  return 'Rookie';
+}
+
+/** Multiplier over a trait-id list for a client-applied effect key. */
+export function traitMul(traits: string[] | undefined, key: 'hpMul' | 'accelMul'): number {
+  let m = 1;
+  for (const t of traits ?? []) {
+    const v = CAPTAIN_TRAITS[t]?.[key];
+    if (v) m *= v;
+  }
+  return m;
+}
+
+/** One-line trait summary for tooltips/rows: "🎯 Gunner — +10% weapon damage". */
+export function traitSummary(traits: string[] | undefined): string {
+  return (traits ?? [])
+    .map(t => CAPTAIN_TRAITS[t])
+    .filter(Boolean)
+    .map(d => `${d.icon} ${d.name} — ${d.blurb}`)
+    .join(' · ');
+}

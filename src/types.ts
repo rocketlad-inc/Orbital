@@ -288,6 +288,14 @@ export interface Ship {
   // ShipPanel can surface a per-ship combat record without bloating
   // saves. Older saves migrate to an empty array on load.
   combatHistory?: ShipKillRecord[];
+  /** Captains (DESIGN-captains.md): the officer commanding this hull.
+   *  rank above is HIS rank (server COALESCEs), so all existing veterancy
+   *  math keeps working. name/avatar/traits are null on RIVAL ships until
+   *  intel.loadouts (Sensors 5) — identity is gated like fitted loadouts. */
+  captainId?: string | null;
+  captainName?: string | null;
+  captainAvatar?: string | null;
+  captainTraits?: string[];
   // Freighter-only: cumulative trade-route deliveries. Increments by 1
   // each time the ship lands at a route's dest body with cargo and
   // dumps it into the faction pool. Replaces the COMBAT RECORD panel
@@ -453,6 +461,24 @@ export interface ShipDesign {
 export interface BuildListEntry {
   designId?: string;
   bareClass?: 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
+}
+
+/**
+ * A captain (DESIGN-captains.md): named persistent officer who OWNS a
+ * ship's veterancy. ship_id null = in the bank; status 'lost' = went down
+ * with the ship (memorial). Multiplayer only.
+ */
+export interface Captain {
+  id: string;
+  name: string;
+  avatarId: string | null;
+  bio: string | null;
+  rank: number;
+  traits: string[];
+  shipId: string | null;
+  status: 'active' | 'lost';
+  createdAtTick: number;
+  lostAtTick: number | null;
 }
 
 /**
@@ -677,6 +703,9 @@ export interface GameState {
    *  falls back to a client-derived default (unlocked bare hulls + active
    *  designs) in the BuildPanel. */
   buildList?: BuildListEntry[];
+  /** The local player's captain roster — bank + assigned + memorial
+   *  (DESIGN-captains.md). Multiplayer only. */
+  captains?: Captain[];
   aiActivityLog?: AIActivityEntry[];   // optional — rolling log of recent AI decisions
 
   /** Faction ids the local player is allied with — active defense-pact

@@ -5,6 +5,8 @@ import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { maintenanceRatesForShip } from '../game/maintenance';
 import { nearestShipyardBodyId, isDamagedShip } from '../game/repair';
 import { effectiveShipMaxHp } from '../game/combat';
+import { traitSummary } from '../game/captains';
+import { CaptainAvatar } from './CaptainAvatar';
 import {
   ShipPartId, SHIP_PART_DEFS, countPart, detonatorDamage, detonatorDisclosure,
   PART_GLYPH, SHIP_SLOT_COUNTS, ALL_PART_IDS, sanitizeParts,
@@ -490,6 +492,23 @@ export const ShipPanel: React.FC = () => {
                 }}
                 title={`Rank ${ship.rank}: +${ship.rank ?? 0}% damage, +${ship.rank ?? 0}% max HP`}
               >RANK {ship.rank}</span>
+            )}
+            {/* Captain chip (DESIGN-captains §5): portrait + name. The rank
+                above is HIS. Click-through lives in the Fleet panel's
+                Captains view; here it's identity + trait tooltip. */}
+            {ship.captainName && (
+              <span
+                style={{
+                  marginLeft: 6, display: 'inline-flex', alignItems: 'center', gap: 4,
+                  padding: '1px 6px 1px 2px', fontSize: 9, letterSpacing: '0.04em',
+                  background: 'rgba(78, 205, 196, 0.10)', border: '1px solid #2f6f6a',
+                  color: '#9fe8e2', borderRadius: 3, verticalAlign: 'middle',
+                }}
+                title={traitSummary(ship.captainTraits) || 'Captain'}
+              >
+                <CaptainAvatar avatarId={ship.captainAvatar} size={14} />
+                {ship.captainName.toUpperCase()}
+              </span>
             )}
           </span>
           <button className="panel-close" onClick={deselectShip}>✕</button>

@@ -9,6 +9,7 @@ import { Outliner } from './components/Outliner';
 import { SettlementsPanel } from './components/SettlementsPanel';
 import { FleetPanel } from './components/FleetPanel';
 import { ShipDesigner } from './components/ShipDesigner';
+import { CaptainDebut } from './components/CaptainDebut';
 import type { ShipClassName } from './game/shipClasses';
 import { TechPanel } from './components/TechPanel';
 import { ThreatsPanel } from './components/ThreatsPanel';
@@ -239,6 +240,10 @@ function GameUI({
           onClose={() => setDesignerState({ open: false })}
         />
       )}
+
+      {/* Captain debut card (DESIGN-captains §5.1) — dismissible rename
+          offer when a new ship launches with a fresh captain. MP only. */}
+      {isMultiplayer && <CaptainDebut />}
 
       {/* World menu (MULTIPLAYER ONLY, default ON with a kill-switch
           pill). SP is DEAD code-wise here: isMultiplayer=false always

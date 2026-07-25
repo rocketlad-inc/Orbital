@@ -8,7 +8,9 @@ import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { loadoutSummary, countPart } from '../game/shipParts';
 import { effectiveShipMaxHp } from '../game/combat';
-import type { Ship } from '../types';
+import type { Ship, Captain } from '../types';
+import { rankTier, traitSummary, AVATAR_IDS } from '../game/captains';
+import { CaptainAvatar } from './CaptainAvatar';
 import { deriveSecondary } from '../game/colorUtils';
 import { makeSystemRootOf, systemLabel as systemLabelOf, shipStatus, makeHostilesAtBody, makeArmedHostilesAtBody, makeStationsAtBody, isArmed } from '../game/systemGrouping';
 import { nearestShipyardBodyId, isDamagedShip } from '../game/repair';
@@ -22,7 +24,7 @@ interface FleetPanelProps {
   onClose: () => void;
 }
 
-type Filter = 'all' | 'player' | 'enemy';
+type Filter = 'all' | 'player' | 'enemy' | 'captains';
 
 // System grouping and ship status now live in game/systemGrouping so the
 // Outliner renders identical headers and identical status chips. They were
@@ -50,6 +52,10 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   // MP (null in SP, where every mpActions branch below is already dead),
   // so gating on it changes nothing about the SP code path.
   const [filter, setFilter] = useState<Filter>(mpActions ? 'all' : 'player');
+  // Captain Bank state (spec §5.3): inline rename target + busy/error.
+  const [capEditId, setCapEditId] = useState<string | null>(null);
+  const [capBusy, setCapBusy] = useState(false);
+  const [capMsg, setCapMsg] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [collapsedSystems, setCollapsedSystems] = useState<Set<string>>(new Set());
   // Bulk-select set: ship ids the player has checked for a bulk
@@ -427,28 +433,217 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     );
   };
 
-  // Experience tier from veterancy rank (each confirmed kill = +1 rank).
-  const rankTier = (rank: number): string => {
-    if (rank >= 10) return 'Ace';
-    if (rank >= 6) return 'Elite';
-    if (rank >= 3) return 'Veteran';
-    if (rank >= 1) return 'Regular';
-    return 'Rookie';
-  };
-
-  // Experience + kills cell (replaces the fuel bar). Rank IS the total
-  // confirmed-kill count, so kills = rank; the tier gives a quick
-  // qualitative read alongside the raw number.
-  const renderExperience = (ship: { rank?: number }) => {
+  // Captain cell (spec §5.2) — the Experience column becomes the PERSON.
+  // Rank/kills ride along under the name (rank now lives on the captain;
+  // the server COALESCEs it onto ship.rank for compat). Rival identities
+  // are gated behind intel.loadouts server-side — captainName arrives
+  // null, so rivals show exactly the old tier+kills cell.
+  const renderExperience = (ship: Ship) => {
     const rank = ship.rank ?? 0;
-    return (
-      <div className="fleet-xp">
+    const tierBits = (
+      <>
         <span className={`fleet-xp__tier fleet-xp__tier--${rankTier(rank).toLowerCase()}`}>
           {rankTier(rank)}
         </span>
         <span className="fleet-xp__kills" title="Confirmed kills">
           {rank > 0 ? `${rank} ⚔` : '—'}
         </span>
+      </>
+    );
+    if (!ship.captainName) {
+      // Own ship with no captain (pre-backfill window) → discovery path
+      // into the bank; rival without Deep Scan → tier+kills only.
+      if (ship.ownedBy === 'player' && mpActions) {
+        return (
+          <div className="fleet-xp">
+            {tierBits}
+            <button
+              className="fleet-mini-btn"
+              style={{ fontSize: 8, marginLeft: 4 }}
+              onClick={(e) => { e.stopPropagation(); setFilter('captains'); }}
+              title="No captain assigned — open the captain bank"
+            >UNASSIGNED</button>
+          </div>
+        );
+      }
+      return <div className="fleet-xp">{tierBits}</div>;
+    }
+    return (
+      <div
+        className="fleet-xp"
+        style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: mpActions && ship.ownedBy === 'player' ? 'pointer' : undefined }}
+        onClick={mpActions && ship.ownedBy === 'player'
+          ? (e) => { e.stopPropagation(); setFilter('captains'); }
+          : undefined}
+        title={traitSummary(ship.captainTraits) || undefined}
+      >
+        <CaptainAvatar avatarId={ship.captainAvatar} size={20} />
+        <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.3, minWidth: 0 }}>
+          <span style={{ fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110 }}>
+            {ship.captainName}
+          </span>
+          <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}>{tierBits}</span>
+        </div>
+      </div>
+    );
+  };
+
+  // ===== Captain Bank (spec §5.3) =====================================
+  // Roster + memorial + create-ahead + assign/reassign. Mutations post to
+  // the server and settle on the next /state poll (~1.5s); capBusy guards
+  // double-submits, capMsg surfaces rejections.
+  const renderCaptainBank = () => {
+    const roster = gameState.captains ?? [];
+    const active = roster.filter(c => c.status === 'active');
+    const lost = roster.filter(c => c.status === 'lost');
+    const myShips = gameState.ships.filter(s => s.ownedBy === 'player');
+    const shipName = (id: string | null) =>
+      id ? (myShips.find(s => s.id === id)?.name ?? id) : null;
+
+    const doCap = (p: Promise<{ ok: boolean; error?: string }>) => {
+      setCapBusy(true);
+      p.then(res => { setCapBusy(false); setCapMsg(res.ok ? null : (res.error ?? 'Rejected')); });
+    };
+
+    const row = (c: Captain) => {
+      const editing = capEditId === c.id;
+      const aboard = shipName(c.shipId);
+      return (
+        <div
+          key={c.id}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px',
+            border: '1px solid #22303f', borderRadius: 6, marginBottom: 6,
+            background: '#0d1420', opacity: c.status === 'lost' ? 0.55 : 1,
+          }}
+        >
+          {/* avatar — click cycles the portrait set (BuildPanel icon precedent) */}
+          <button
+            onClick={() => {
+              if (!mpActions || c.status === 'lost') return;
+              const cur = AVATAR_IDS.indexOf((c.avatarId ?? 'a1') as typeof AVATAR_IDS[number]);
+              doCap(mpActions.updateCaptain(c.id, { avatarId: AVATAR_IDS[(cur + 1) % AVATAR_IDS.length] }));
+            }}
+            disabled={capBusy || c.status === 'lost'}
+            title={c.status === 'lost' ? undefined : 'Change portrait'}
+            style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer' }}
+          >
+            <CaptainAvatar avatarId={c.avatarId} size={30} />
+          </button>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {editing ? (
+              <input
+                autoFocus
+                defaultValue={c.name}
+                maxLength={32}
+                style={{
+                  background: '#14202c', border: '1px solid #2a3d50', borderRadius: 3,
+                  color: '#d8e4ee', fontFamily: 'inherit', fontSize: 11, padding: '2px 6px', width: '90%',
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const v = (e.target as HTMLInputElement).value.trim();
+                    setCapEditId(null);
+                    if (v && v !== c.name && mpActions) doCap(mpActions.updateCaptain(c.id, { name: v }));
+                  }
+                  if (e.key === 'Escape') setCapEditId(null);
+                }}
+                onBlur={() => setCapEditId(null)}
+              />
+            ) : (
+              <div style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 5 }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
+                {c.status === 'active' && mpActions && (
+                  <button
+                    onClick={() => setCapEditId(c.id)}
+                    title="Rename"
+                    style={{ background: 'transparent', border: 'none', color: '#5f7488', cursor: 'pointer', fontSize: 10 }}
+                  >✎</button>
+                )}
+                <span className={`fleet-xp__tier fleet-xp__tier--${rankTier(c.rank).toLowerCase()}`}>
+                  {rankTier(c.rank)}
+                </span>
+                <span className="fleet-xp__kills">{c.rank > 0 ? `${c.rank} ⚔` : ''}</span>
+              </div>
+            )}
+            <div style={{ fontSize: 9, color: '#8aa0b4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {traitSummary(c.traits) || 'No notable traits'}
+              {c.bio ? ` · ${c.bio}` : ''}
+            </div>
+          </div>
+          {c.status === 'lost' ? (
+            <span style={{ fontSize: 9, color: '#ff5e5e', whiteSpace: 'nowrap' }}>
+              ✝ LOST{c.lostAtTick != null ? ` T+${c.lostAtTick}` : ''}
+            </span>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              {aboard && (
+                <span style={{ fontSize: 9, color: '#4ecdc4', whiteSpace: 'nowrap' }} title="Current posting">
+                  ⚓ {aboard}
+                </span>
+              )}
+              {mpActions && (
+                <select
+                  value=""
+                  disabled={capBusy}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === '__bench') doCap(mpActions.assignCaptain(c.id, null));
+                    else if (v) doCap(mpActions.assignCaptain(c.id, v));
+                  }}
+                  style={{
+                    background: '#14202c', border: '1px solid #2a3d50', borderRadius: 3,
+                    color: '#9fb4c6', fontFamily: 'inherit', fontSize: 9, padding: '2px 4px', maxWidth: 110,
+                  }}
+                  title="Assign this captain to a ship (any sitting captain returns to the bank)"
+                >
+                  <option value="">{aboard ? 'REASSIGN…' : 'ASSIGN…'}</option>
+                  {aboard && <option value="__bench">→ To the bank</option>}
+                  {myShips.filter(s => s.id !== c.shipId).map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}{s.captainName ? ` (swap: ${s.captainName})` : ''}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    return (
+      <div style={{ padding: '4px 12px 12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '6px 0 10px' }}>
+          <span style={{ fontSize: 10, letterSpacing: '0.1em', color: '#4ecdc4' }}>
+            CAPTAIN BANK <span style={{ color: '#6f8598' }}>· {active.length} serving/{lost.length ? ` ${lost.length} lost` : ' none lost'}</span>
+          </span>
+          {mpActions && (
+            <button
+              className="filter-chip"
+              disabled={capBusy}
+              onClick={() => doCap(mpActions.createCaptain())}
+              title="Roll a new captain into the bank — future builds draw from here before generating fresh"
+            >+ NEW CAPTAIN</button>
+          )}
+        </div>
+        {capMsg && (
+          <div className="fleet-bulk-bar__error" style={{ marginBottom: 8 }} onClick={() => setCapMsg(null)}>
+            ⚠ {capMsg}
+          </div>
+        )}
+        {active.length === 0 && (
+          <div className="overview-empty">No captains yet — they generate automatically as ships launch.</div>
+        )}
+        {active.map(row)}
+        {lost.length > 0 && (
+          <>
+            <div style={{ fontSize: 10, letterSpacing: '0.1em', color: '#8aa0b4', margin: '14px 0 8px' }}>
+              ✝ MEMORIAL — went down with the ship
+            </div>
+            {lost.map(row)}
+          </>
+        )}
       </div>
     );
   };
@@ -607,7 +802,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
         <th>Status</th>
         <th>{locationLabel}</th>
         <th>HP</th>
-        <th>Experience</th>
+        <th>Captain</th>
       </tr>
     </thead>
   );
@@ -656,6 +851,8 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           ['player', 'Mine'],
           ['enemy', 'Enemies'],
           ['all', 'All'],
+          // Captain Bank (spec §5.3) — MP only; captains don't exist in SP.
+          ...(mpActions ? ([['captains', '★ Captains']] as [Filter, string][]) : []),
         ] as [Filter, string][]).map(([f, label]) => (
           <button
             key={f}
@@ -791,7 +988,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
       )}
 
       <div className="overview-panel__body">
-        {ships.length === 0 ? (
+        {filter === 'captains' ? renderCaptainBank() : ships.length === 0 ? (
           <div className="overview-empty">
             {query.trim()
               ? `No ships match “${query.trim()}”.`
