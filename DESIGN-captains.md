@@ -97,6 +97,39 @@ the events worth a Discord/digest push (worker/discord.js, worker/digest.js):
 
 That line is the thing that makes someone open the game. It is the feature.
 
+### 2.2 Rollout into existing live games
+
+Games are live right now with ranked ships, so this has to land without a reset and
+without anyone losing veterancy.
+
+**Lazy backfill, not a one-shot migration.** The SQL migration does **schema only**
+(table + `game_ships.captain_id`). The minting happens in the worker tick pass:
+
+> any `status='active'` ship with `captain_id IS NULL` gets a captain minted on the
+> next tick, **inheriting that ship's current `rank` and `combat_history` verbatim.**
+
+Why this shape:
+- **Idempotent and self-healing.** Re-runnable, and it also catches ships created by
+  any older/unconverted code path instead of leaving permanent orphans.
+- **The name bank lives in JS, not SQL.** A pure-SQL backfill can't draw from
+  `CAPTAIN_NAME_POOLS` or randomize traits; the worker can.
+- Same pattern as the research-queue promotion pass — cheap indexed query per tick
+  that no-ops once drained.
+
+**It must cover EVERY faction, not just the caller.** Rank is faction-agnostic (the
+kill-award pass ranks any killer hull), so rivals have aces too. If the backfill only
+covered the local player, every enemy veteran would silently drop to rank 0 — a
+global stealth nerf to all opposition. Backfill is per-game, all factions.
+
+**What the player sees after the update:** nothing breaks, and their existing 14-kill
+corvette now has a named captain with that same 14 kills, already editable — open the
+Fleet panel, rename him, pick a portrait, write a bio. Zero action required.
+
+**Legacy columns:** once backfilled, `game_ships.rank` / `combat_history` become
+**read-only legacy** — stop writing them, keep them for one release as rollback
+insurance, drop in a later migration. Do NOT dual-write; two sources of truth for
+veterancy is exactly how they drift.
+
 ---
 
 ## 3. Traits — flavor and *direction*
@@ -151,7 +184,46 @@ it be skippable. Both are satisfiable — **offer, never block**:
   inline rename field. Ignore it and the auto-generated captain simply stands.
 - No modal, no confirmation, no blocked build flow.
 
-### 5.2 Captain Bank (new Fleet-panel option)
+### 5.2 Fleet panel — the veterancy column becomes the captain column
+
+Today the fleet table's columns are:
+`(icon) · Ship · Owner · Status · Location · HP · Experience`
+
+**"Experience" becomes "Captain."** It currently renders a tier badge + kill count
+(`rankTier()` / `renderExperience()` in src/components/FleetPanel.tsx) — the rank data
+moves to the captain, so the cell should show the *person* and carry the rank with him:
+
+```
+CAPTAIN
+(portrait) Vela Ordoñez
+           Ace · 14 ⚔
+```
+
+- Portrait (small, §4) + name on the first line, existing tier badge + kill count on
+  the second. Keep `rankTier()` and the `fleet-xp__tier--*` styling as-is — the tiers
+  (Rookie/Regular/Veteran/Elite/Ace) still read well and are already colour-coded.
+- **No captain assigned** → em-dash + a quiet "Unassigned" affordance that opens the
+  bank filtered to this ship. This is the discovery path into the whole feature.
+- **Clicking the cell** opens that captain's detail (rename / portrait / bio / history),
+  the same target as clicking him in the bank.
+- Sorting/grouping and every other column are untouched.
+
+**Rival captains are gated intel.** `renderExperience` is currently rendered for
+*every* row including enemies, so naively swapping in a name would leak every rival
+captain's identity for free. A captain's identity is the same class of secret as a
+rival's fitted loadout, so gate it on the existing **`intel.loadouts` (Sensors 5)**
+feature:
+
+- Ungated → rivals show **tier + kills only** (exactly today's behaviour, so nothing
+  regresses): `Ace · 14 ⚔`.
+- `intel.loadouts` unlocked → rival portrait + name resolve too.
+- Your own ships always show the full captain regardless of research.
+
+This also gives Sensors 5 a second, very legible reward — you start learning *who*
+you're fighting, which makes the rivalry personal in the same way the feature makes
+your own fleet personal.
+
+### 5.3 Captain Bank (new Fleet-panel option)
 
 Fleet panel gains a **Captains** view alongside the existing `All / Player / Enemy`
 filter chips:
@@ -163,7 +235,7 @@ filter chips:
 - **Memorial**: lost captains listed with final rank + how they died. Cheap to build,
   disproportionate emotional return.
 
-### 5.3 Assignment on build
+### 5.4 Assignment on build
 
 Ship completes → if the bank holds an unassigned captain, take the
 **longest-waiting** one; otherwise generate fresh. (Player-created bank entries are
@@ -173,9 +245,15 @@ the "I planned this" path; generation is the zero-effort path.)
 
 ## 6. Sequencing
 
-1. **P0 — identity + stakes.** Table, auto-gen (name/avatar/bio), attach on build,
-   rank migration off ships, survival roll + permadeath, chronicle lines, ship-panel
-   display. *This alone delivers Alante's ask.*
+1. **P0 — identity + stakes (ships one piece).** Table + `captain_id`, lazy backfill
+   of every existing ship across every faction (§2.2), auto-gen name/avatar/bio,
+   attach on build, rank ownership moved off ships, survival roll + permadeath,
+   chronicle lines, ship-panel display, **and the fleet Captain column (§5.2)**.
+
+   The column is **not optional in P0**: the moment rank moves to the captain, the
+   existing `Experience` cell reads `ship.rank` and would show *Rookie · —* for a
+   14-kill veteran. Backfill + column must land in the same deploy or the fleet
+   panel lies. Placeholder portraits are fine here.
 2. **P1 — Captain Bank.** Fleet-panel view, assign/reassign, create-ahead, memorial.
 3. **P2 — Traits.** Trait bank + effects + the deliberate Pathfinder starter.
 4. **P3 — Polish.** Final avatar art, bio editing UI, Discord/digest push on captain
@@ -183,6 +261,10 @@ the "I planned this" path; generation is the zero-effort path.)
 
 Rationale: P0 is where the emotion lives and it's mostly server-side. Traits are
 Alante's *direction* argument, so they precede art polish. Uploads stay out.
+
+**Deploy note:** P0 spans server + client, so it must go out as ONE deploy — a server
+that has moved rank to captains paired with an old client (or vice versa) shows wrong
+veterancy everywhere. Same lockstep discipline as the mobile shell breakpoints.
 
 ---
 
@@ -198,6 +280,18 @@ Alante's *direction* argument, so they precede art polish. Uploads stay out.
   moment is an offer, never a blocking prompt.
 - **2026-07-24** — Traits are small multiplicative modifiers, deliberately weaker
   than ship-designer parts, and must not disturb the damage-type counter-matrix.
+- **2026-07-24** — Existing ships are backfilled **lazily in the tick pass**, not by
+  a one-shot SQL migration, and **for every faction** — a caller-only backfill would
+  silently nerf every rival ace to rank 0.
+- **2026-07-24** — Backfilled captains inherit the ship's exact `rank` +
+  `combat_history`; no veterancy is lost on rollout. `game_ships.rank` becomes
+  read-only legacy for one release (no dual-writing), then drops.
+- **2026-07-24** — The fleet panel's **Experience column becomes Captain** (portrait +
+  name, keeping the existing tier badge + kill count beneath). Required in P0, not
+  polish — otherwise the cell reads a rank the ship no longer owns.
+- **2026-07-24** — **Rival** captain identity is gated behind `intel.loadouts`
+  (Sensors 5); ungated rivals show tier + kills exactly as today. Your own captains
+  are always visible.
 - **OPEN** — Should captains persist across games (account-level, like ship
   templates) or die with the match? Leaning per-game for now; a cross-game "hall of
   fame" is a natural follow-up.
