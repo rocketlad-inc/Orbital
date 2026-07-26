@@ -2061,6 +2061,11 @@ export class Room {
     // applies. Tracked here instead of inline so we can batch the writes.
     const firedShipIds = new Set();
     const firedSettlementIds = new Set();
+    // shooterId -> the ONE target it engaged this volley (ship or
+    // settlement id). Stamped to last_target_id so the client animation
+    // shows who each combatant is actually shooting.
+    const firedShipTargets = new Map();
+    const firedSettlementTargets = new Map();
     // A body sees hostilities if ≥2 factions are present across ships
     // AND settlements combined (so a ship attacking an undefended
     // enemy settlement, or a settlement firing on a lone raider, both
@@ -2074,6 +2079,10 @@ export class Room {
         ...localSettlements.map(s => s.owner_faction_id),
       ]);
       if (factions.size < 2) continue;
+      // Round-robin fire distribution: the Nth shooter at this body takes
+      // the Nth target in its priority tier (offset by tick so pairings
+      // ROTATE across volleys instead of locking the same duel forever).
+      let shooterIdx = 0;
       for (const attacker of ships) {
         if (!attacker.damage_per_tick || attacker.damage_per_tick <= 0) continue;
         const stance = effectiveStance(attacker);
@@ -2086,34 +2095,52 @@ export class Room {
         // src/game/combat.ts:134.
         const lastFired = attacker.last_combat_tick ?? -Infinity;
         if (tick - lastFired < AUTO_COMBAT_INTERVAL) continue;
-        // Only target ships from factions we're at war with (no peace pact).
+        // Only engage factions we're at war with (no peace pact).
         // Defensive stance additionally requires the target's faction to be
         // an active aggressor at this body (see aggressorsAtBody above).
         const aggressors = aggressorsAtBody.get(bodyId) ?? new Set();
-        // Hostile ships and settlements from factions we're at war with.
-        const shipTargets = ships.filter(t =>
-          t.owner_faction_id !== attacker.owner_faction_id
-          && !peace.has(pairKey(attacker.owner_faction_id, t.owner_faction_id))
-          && (stance !== 'defensive' || aggressors.has(t.owner_faction_id)),
-        );
-        // Stance gates bombardment the same way it gates ship combat:
-        // hold already `continue`d above; defensive only chips the
-        // settlements of a faction actively aggressing at this body.
-        const settlementTargets = localSettlements.filter(t =>
-          t.owner_faction_id !== attacker.owner_faction_id
-          && !peace.has(pairKey(attacker.owner_faction_id, t.owner_faction_id))
-          && (stance !== 'defensive' || aggressors.has(t.owner_faction_id)),
-        );
-        if (shipTargets.length === 0 && settlementTargets.length === 0) continue;
-        // Canonical (client) damage model: FULL damage to EVERY hostile
-        // target, reduced by that target's PDC — NOT split across targets.
-        // Multipliers stack multiplicatively: faction Weapons tech
-        // (+10%/level), attacker veterancy (+1%/rank), and the senate
-        // combat-damage slider. The old server model divided damage by
-        // targets.length and ignored PDC entirely, so a ship shooting N
-        // hostiles dealt 1/N the client's per-target damage and the
-        // client's optimistic prediction constantly showed kills the
-        // server never applied.
+        const canEngage = (fid) =>
+          fid !== attacker.owner_faction_id
+          && !peace.has(pairKey(attacker.owner_faction_id, fid))
+          && (stance !== 'defensive' || aggressors.has(fid));
+
+        // === TARGET PRIORITY — one target per volley ===
+        // Everything in ORBIT dies before any settlement is touched, and
+        // combat units die before civilians:
+        //   1. armed hostile ships        (warships — the actual threat)
+        //   2. unarmed hostile ships      (freighters/colony — civilians)
+        //   3. armed stations             (weapons ≥ 1 — they shoot back)
+        //   4. remaining settlements      (unarmed stations, cities)
+        const armedShips = [];
+        const civilianShips = [];
+        for (const t of ships) {
+          if (!canEngage(t.owner_faction_id)) continue;
+          ((t.damage_per_tick ?? 0) > 0 ? armedShips : civilianShips).push(t);
+        }
+        const armedStations = [];
+        const softSettlements = [];
+        for (const t of localSettlements) {
+          if (!canEngage(t.owner_faction_id)) continue;
+          if (t.type === 'station' && weaponsLevelOf(t) >= 1) armedStations.push(t);
+          else softSettlements.push(t);
+        }
+        const tier = armedShips.length ? armedShips
+          : civilianShips.length ? civilianShips
+          : armedStations.length ? armedStations
+          : softSettlements;
+        if (tier.length === 0) continue;
+        const isShipTier = tier === armedShips || tier === civilianShips;
+        // Stable order, then round-robin pick. Sorting by id keeps every
+        // volley deterministic; (shooterIdx + tick) spreads a fleet's fire
+        // across the tier AND rotates the pairings volley to volley.
+        tier.sort((a, b) => (a.id < b.id ? -1 : 1));
+        const target = tier[(shooterIdx + tick) % tier.length];
+        shooterIdx++;
+
+        // Damage math is unchanged from the canonical model — full
+        // attacker power into the target's typed mitigation × PDC — it
+        // just lands on ONE hull per volley now instead of every hostile
+        // at the body (per design: round-robin single-target combat).
         const rankMul = 1 + 0.01 * Math.max(0, attacker.rank ?? 0);
         // Damage type this attacker fires (bare hull => kinetic), used
         // both to blend its weapon tech and to pick the target's
@@ -2124,31 +2151,26 @@ export class Room {
           * rankMul * combatDamageMult
           // Gunner captain (spec §3): +10% damage, multiplicative.
           * traitMul(attacker._traits ?? [], 'dmgMul');
-        for (const t of shipTargets) {
-          // Senate war authorization: damage TO a faction the senate has
-          // formally declared war on is doubled. Per-target (not per-
-          // attacker) so a single attacker shooting multiple factions
-          // applies the multiplier only to the sanctioned ones.
-          const warAuthMul = (await sanctioned(t.owner_faction_id, 'war_authorization')) ? 2 : 1;
+        // Senate war authorization: damage TO a faction the senate has
+        // formally declared war on is doubled.
+        const warAuthMul = (await sanctioned(target.owner_faction_id, 'war_authorization')) ? 2 : 1;
+        if (isShipTier) {
           // Typed mitigation × point-defense, floored so a stacked hull
           // is brutal but never immune (85% cap). Shields cut kinetic,
           // armor cuts energy; a target with no relevant parts takes
           // full damage exactly as before.
           const mit = Math.max(MITIGATION_FLOOR,
-            (1 - pdcOfShip(t.ship_class, t.owner_faction_id)) * defenseMitigation(t._parts, atkProfile));
-          const dmg = attackPower * mit * warAuthMul;
-          addDamage(t.id, attacker.owner_faction_id, attacker.id, dmg);
-        }
-        // Ships also bombard hostile settlements — class damage reduced
-        // by the settlement's PDC (city 0.3 / station 0.5), NOT the old
-        // flat 4/ship. Settlements carry no shield/armor parts yet, so
-        // typed mitigation is a no-op on them (v1: settlements untyped).
-        for (const t of settlementTargets) {
-          const warAuthMul = (await sanctioned(t.owner_faction_id, 'war_authorization')) ? 2 : 1;
-          const dmg = attackPower * (1 - pdcOfSettlement(t.type)) * warAuthMul;
-          addSettlementDamage(t.id, attacker.owner_faction_id, dmg);
+            (1 - pdcOfShip(target.ship_class, target.owner_faction_id)) * defenseMitigation(target._parts, atkProfile));
+          addDamage(target.id, attacker.owner_faction_id, attacker.id, attackPower * mit * warAuthMul);
+        } else {
+          // Bombardment — settlement PDC (city 0.3 / station 0.5);
+          // settlements carry no shield/armor parts yet (untyped).
+          addSettlementDamage(target.id, attacker.owner_faction_id, attackPower * (1 - pdcOfSettlement(target.type)) * warAuthMul);
         }
         firedShipIds.add(attacker.id);
+        // Record the engagement so the client's combat animation aims at
+        // the REAL target (stamped alongside last_combat_tick below).
+        firedShipTargets.set(attacker.id, target.id);
       }
 
       // Station return-fire on hostile ships at the same body — damage
@@ -2181,18 +2203,20 @@ export class Room {
           && stlAggressors.has(t.owner_faction_id),          // defensive: only factions aggressing here
         );
         if (shipTargets.length === 0) continue;
+        // Round-robin single-target, same as ships: one aggressor per
+        // volley, rotating across volleys via the tick offset.
+        shipTargets.sort((a, b) => (a.id < b.id ? -1 : 1));
+        const target = shipTargets[tick % shipTargets.length];
         // Settlement guns fire kinetic, so a target's shields blunt them
         // and armor does nothing — same counter-matrix as ship kinetic.
         const KINETIC = { kinetic: 1, energy: 0 };
         const power = base * kineticMulOf(st.owner_faction_id) * combatDamageMult;
-        for (const t of shipTargets) {
-          const warAuthMul = (await sanctioned(t.owner_faction_id, 'war_authorization')) ? 2 : 1;
-          const mit = Math.max(MITIGATION_FLOOR,
-            (1 - pdcOfShip(t.ship_class, t.owner_faction_id)) * defenseMitigation(t._parts, KINETIC));
-          const dmg = power * mit * warAuthMul;
-          addDamage(t.id, st.owner_faction_id, null, dmg);
-        }
+        const warAuthMul = (await sanctioned(target.owner_faction_id, 'war_authorization')) ? 2 : 1;
+        const mit = Math.max(MITIGATION_FLOOR,
+          (1 - pdcOfShip(target.ship_class, target.owner_faction_id)) * defenseMitigation(target._parts, KINETIC));
+        addDamage(target.id, st.owner_faction_id, null, power * mit * warAuthMul);
         firedSettlementIds.add(st.id);
+        firedSettlementTargets.set(st.id, target.id);
       }
     }
 
@@ -2261,8 +2285,8 @@ export class Room {
         // (last_combat_tick must NOT double as this stamp: it gates the
         // return-fire cadence — see the note in worker/state.js.)
         await this.env.DB
-          .prepare('UPDATE game_settlements SET hp = ?, last_combat_tick = ?, last_damaged_tick = COALESCE(?, last_damaged_tick) WHERE id = ?')
-          .bind(newHp, fired ? tick : (s.last_combat_tick ?? tick), incoming > 0 ? tick : null, s.id)
+          .prepare('UPDATE game_settlements SET hp = ?, last_combat_tick = ?, last_damaged_tick = COALESCE(?, last_damaged_tick), last_target_id = COALESCE(?, last_target_id) WHERE id = ?')
+          .bind(newHp, fired ? tick : (s.last_combat_tick ?? tick), incoming > 0 ? tick : null, firedSettlementTargets.get(s.id) ?? null, s.id)
           .run();
       }
     }
@@ -2766,10 +2790,10 @@ export class Room {
     // with a dozen ships firing doesn't burn a dozen round-trips.
     if (firedShipIds.size > 0) {
       const stmt = this.env.DB.prepare(
-        'UPDATE game_ships SET last_combat_tick = ? WHERE id = ?',
+        'UPDATE game_ships SET last_combat_tick = ?, last_target_id = ? WHERE id = ?',
       );
       await this.env.DB.batch(
-        Array.from(firedShipIds).map(id => stmt.bind(tick, id)),
+        Array.from(firedShipIds).map(id => stmt.bind(tick, firedShipTargets.get(id) ?? null, id)),
       );
     }
 

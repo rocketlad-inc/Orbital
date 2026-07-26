@@ -1767,4 +1767,52 @@ ALTER TABLE game_factions ADD COLUMN research_queue TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE game_ships ADD COLUMN last_damaged_tick INTEGER;
 ALTER TABLE game_settlements ADD COLUMN last_damaged_tick INTEGER;
 ` },
+  { name: "0045_build_list.sql", sql: `-- Curated build list (ship builder redesign): an ordered set of loadout
+-- entries the player has assigned to their build panel, so BUILD is a
+-- pick from YOUR loadouts rather than one-active-design-per-class over a
+-- fixed roster of every hull (including ones you can't build yet).
+--
+-- JSON array on the faction, global across every owned shipyard. Each
+-- entry is either { "design_id": "<id>" } (a saved game_ship_designs row)
+-- or { "bare_class": "corvette" } (a stock hull, no parts). NULL = the
+-- player hasn't curated one yet; the client shows a sensible default
+-- (unlocked bare hulls + active designs) until they do.
+ALTER TABLE game_factions ADD COLUMN build_list_json TEXT;
+` },
+  { name: "0046_captains.sql", sql: `-- Captains (DESIGN-captains.md): a named, persistent officer attached to
+-- every ship. Captains OWN veterancy (rank/combat_history move here); a
+-- ship with no captain performs at rank 0. Backfill is lazy in the tick
+-- pass (worker/captains.js ensureCaptains) — every active ship across
+-- EVERY faction gets a captain minted inheriting the ship's rank, so no
+-- live game loses veterancy and rival aces aren't stealth-nerfed.
+CREATE TABLE IF NOT EXISTS game_captains (
+  id               TEXT PRIMARY KEY,
+  game_id          TEXT NOT NULL,
+  faction_id       TEXT NOT NULL,
+  name             TEXT NOT NULL,
+  avatar_id        TEXT,                 -- code-shipped SVG id ('a1'..'a12')
+  bio              TEXT,                 -- auto-generated, player-editable
+  rank             INTEGER NOT NULL DEFAULT 0,
+  combat_history   TEXT,                 -- JSON kill records (LRU, moved off ship)
+  traits_json      TEXT,                 -- JSON array of trait ids
+  ship_id          TEXT,                 -- NULL = in the bank, unassigned
+  status           TEXT NOT NULL DEFAULT 'active',  -- active | lost
+  created_at_tick  INTEGER NOT NULL DEFAULT 0,
+  lost_at_tick     INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_captains_game_faction ON game_captains (game_id, faction_id);
+CREATE INDEX IF NOT EXISTS idx_captains_ship ON game_captains (ship_id);
+
+-- Ship -> captain pointer. game_ships.rank/combat_history become
+-- read-only legacy after backfill (kept one release for rollback).
+ALTER TABLE game_ships ADD COLUMN captain_id TEXT;
+` },
+  { name: "0047_ship_target.sql", sql: `-- Round-robin single-target combat: each combatant fires at ONE target
+-- per volley (priority: armed ships → civilian ships → armed stations →
+-- remaining settlements). The server records who each shooter is
+-- currently engaging so the client's combat animation can aim its bolts
+-- at the REAL target instead of a cosmetically-seeded guess.
+ALTER TABLE game_ships ADD COLUMN last_target_id TEXT;
+ALTER TABLE game_settlements ADD COLUMN last_target_id TEXT;
+` },
 ];

@@ -603,6 +603,10 @@ async function handleGetState(req, env, ctx) {
               COALESCE(c.combat_history, s.combat_history) AS combat_history,
               s.trades_completed,
               s.status, s.built_at_tick, s.last_combat_tick, s.last_damaged_tick,
+              -- Who this ship engaged on its last volley (round-robin
+              -- single-target combat) — the client aims its combat
+              -- animation at this id.
+              s.last_target_id,
               s.icon_variant, s.parts_json,
               s.stance, s.retreat_hp_pct, s.detonate_hp_pct,
               s.captain_id, c.name AS captain_name, c.avatar_id AS captain_avatar,
@@ -734,6 +738,9 @@ async function handleGetState(req, env, ctx) {
               -- resolution) — drives the client's persistent battle-damage
               -- fire/smoke for a tick after a hit.
               last_damaged_tick,
+              -- The ship this station engaged on its last return-fire
+              -- volley (round-robin single-target).
+              last_target_id,
               has_collector, collector_built_tick,
               buildings_json, building_order_json
          FROM game_settlements

@@ -514,6 +514,11 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     // a tick after a hit — and doubles as a damage-flash trigger that
     // catches hits the hp-diff misses (e.g. masked by station repair).
     lastDamagedTick: (s as { last_damaged_tick?: number | null }).last_damaged_tick ?? undefined,
+    // Round-robin single-target combat: who this ship engaged on its last
+    // volley. The FX layer aims the engagement bolts at this id. Kept RAW
+    // (namespaced) — ship and settlement ids stay namespaced client-side;
+    // only body ids get stripped at this boundary.
+    lastTargetId: (s as { last_target_id?: string | null }).last_target_id ?? undefined,
     tradesCompleted: s.trades_completed ?? 0,
     iconVariant,
     stance,
@@ -588,6 +593,8 @@ function settlementToClient(
     lastCombatTick: s.last_combat_tick ?? undefined,
     // Stamped when the settlement TAKES damage — persistent burning FX.
     lastDamagedTick: (s as { last_damaged_tick?: number | null }).last_damaged_tick ?? undefined,
+    // Ship this station engaged on its last return-fire volley (raw id).
+    lastTargetId: (s as { last_target_id?: string | null }).last_target_id ?? undefined,
     lastGrowthTick: s.last_growth_tick ?? s.created_at_tick,
     surfaceAngle: s.surface_angle ?? undefined,
     orbit,

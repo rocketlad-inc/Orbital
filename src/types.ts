@@ -278,6 +278,10 @@ export interface Ship {
   // Combat — tick when this ship last TOOK damage. Used by the renderer
   // to flash the ship marker briefly so the player sees hits land.
   lastDamagedTick?: number;
+  // Combat — the ship/settlement id this ship engaged on its last volley
+  // (round-robin single-target combat). The combat animation aims its
+  // bolts here so the player sees who each hull is actually shooting.
+  lastTargetId?: string;
 
   // Veterancy: every confirmed kill +1 rank. Each rank grants +1% damage
   // and +1% max HP, applied via rankDamageMul/rankHpMul in src/game/techs.ts
@@ -511,6 +515,7 @@ export interface Settlement {
   lastGrowthTick: number;             // tick when population last grew
   lastCombatTick?: number;            // tick when this settlement last returned fire
   lastDamagedTick?: number;           // tick when this settlement last TOOK damage
+  lastTargetId?: string;              // ship this station engaged on its last volley
 
   surfaceAngle?: number;              // city: angle on body surface (radians)
   orbit?: OrbitElements;              // station: orbit around body

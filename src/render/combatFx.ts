@@ -435,34 +435,63 @@ export function drawEngagementFire(
     const impacting = !firing && within < BOLT_MS + IMPACT_MS;
     if (!firing && !impacting) continue;         // mid-reload
 
-    // Target: deterministic per shooter (seeded argmax over co-located
-    // hostiles), so different shooters spread their fire instead of all
-    // hammering the lowest id — and every client picks the same target.
-    // Ships may hit hostile ships OR settlements (bombardment);
-    // settlements only return fire at ships — mirrors the server.
+    // Target: the SERVER'S stamped engagement (ship.lastTargetId — who
+    // this combatant actually shot on its last volley, round-robin
+    // single-target model), so the animation shows the real fight, not a
+    // cosmetic guess. Falls back to a seeded pick that mirrors the
+    // server's PRIORITY tiers (armed ships → civilian ships →
+    // settlements) when the stamp is missing or its target is gone/out
+    // of the viewer's fog.
     let tShip: Ship | null = null;
     let tStl: Settlement | null = null;
-    let bestScore = -1;
-    const sHash = idHash(shooter.id);
-    for (const s of ships) {
-      if (s.id === shooter.id || s.transit) continue;
-      if (s.orbit.parentBodyId !== shooter.bodyId) continue;
-      if (s.ownedBy === shooter.ownedBy) continue;
-      // A settlement shooter never draws fire at a non-combatant
-      // (freighter / unarmed hull) — mirrors the server's defensive
-      // return-fire filter, so the visual can't invent a city shooting a
-      // passing hauler. Ship shooters may target anything (a warship
-      // legitimately fires on freighters).
-      if (!shooter.ship && !shipIsArmed(s)) continue;
-      const score = (sHash ^ idHash(s.id)) >>> 0;
-      if (score > bestScore) { tShip = s; tStl = null; bestScore = score; }
+    const stampedId = shooter.ship?.lastTargetId ?? shooter.stl?.lastTargetId;
+    if (stampedId) {
+      const sHit = ships.find(s =>
+        s.id === stampedId && !s.transit
+        && s.orbit.parentBodyId === shooter.bodyId
+        && s.ownedBy !== shooter.ownedBy);
+      if (sHit) tShip = sHit;
+      else if (shooter.ship) {
+        const stlHit = settlements.find(st =>
+          st.id === stampedId && st.hp > 0
+          && st.bodyId === shooter.bodyId
+          && st.ownedBy !== shooter.ownedBy);
+        if (stlHit) tStl = stlHit;
+      }
     }
-    if (shooter.ship) {
-      for (const stl of settlements) {
-        if (stl.bodyId !== shooter.bodyId || stl.hp <= 0) continue;
-        if (stl.ownedBy === shooter.ownedBy) continue;
-        const score = (sHash ^ idHash(stl.id)) >>> 0;
-        if (score > bestScore) { tStl = stl; tShip = null; bestScore = score; }
+    if (!tShip && !tStl) {
+      // Fallback: seeded spread WITHIN the server's top priority tier.
+      const sHash = idHash(shooter.id);
+      let bestScore = -1;
+      let bestArmed = false;
+      for (const s of ships) {
+        if (s.id === shooter.id || s.transit) continue;
+        if (s.orbit.parentBodyId !== shooter.bodyId) continue;
+        if (s.ownedBy === shooter.ownedBy) continue;
+        // A settlement shooter never draws fire at a non-combatant
+        // (freighter / unarmed hull) — mirrors the server's defensive
+        // return-fire filter. Ship shooters prefer ARMED hostiles (the
+        // server's tier 1) and only fall to civilians when no warship
+        // remains.
+        const armed = shipIsArmed(s);
+        if (!shooter.ship && !armed) continue;
+        if (armed !== bestArmed) {
+          if (!armed) continue;              // never downgrade the tier
+          bestScore = -1; bestArmed = true;  // first armed candidate resets
+        }
+        const score = (sHash ^ idHash(s.id)) >>> 0;
+        if (score > bestScore) { tShip = s; tStl = null; bestScore = score; }
+      }
+      // Settlements only when NO hostile ship is left — the server never
+      // bombards past a live orbit (target priority), so neither does
+      // the visual.
+      if (!tShip && shooter.ship) {
+        for (const stl of settlements) {
+          if (stl.bodyId !== shooter.bodyId || stl.hp <= 0) continue;
+          if (stl.ownedBy === shooter.ownedBy) continue;
+          const score = (sHash ^ idHash(stl.id)) >>> 0;
+          if (score > bestScore) { tStl = stl; tShip = null; bestScore = score; }
+        }
       }
     }
     if (!tShip && !tStl) continue;
