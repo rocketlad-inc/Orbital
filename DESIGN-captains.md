@@ -51,9 +51,12 @@ New per-game table `game_captains`:
 
 `game_ships` gains `captain_id` (nullable).
 
-Name bank follows the existing `SHIP_NAME_POOLS` / `SETTLEMENT_NAME_POOLS` pattern
-in src/game/ — a `CAPTAIN_NAME_POOLS` (given + surname lists, sci-fi flavored,
-deduped against living captains).
+Name bank (`worker/captainNames.js`, `CAPTAIN_NAMES`) diverges from the
+`SHIP_NAME_POOLS` / `SETTLEMENT_NAME_POOLS` given+surname pattern — captains are
+named after specific characters from classic sci-fi (Dune, Star Wars, Star Trek,
+The Expanse, Stargate, and other popular sci-fi), picked whole from one flat pool,
+deduped against living captains. Falls back to "<Name> II"/"III"/… once a game's
+pool is exhausted.
 
 ---
 

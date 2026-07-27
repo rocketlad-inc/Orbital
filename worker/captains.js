@@ -9,6 +9,8 @@
 // KEEP TRAIT IDS/EFFECTS IN SYNC with src/game/captains.ts (display).
 // ============================================================
 
+import { pickCaptainName } from './captainNames.js';
+
 // Trait bank (spec §3). Small multiplicative modifiers — deliberately
 // weaker than ship-designer parts; rank is the growth axis, traits are
 // personality + new-player direction.
@@ -24,16 +26,6 @@ export const CAPTAIN_TRAITS = {
 export const TRAIT_IDS = Object.keys(CAPTAIN_TRAITS);
 export const AVATAR_IDS = ['a1','a2','a3','a4','a5','a6','a7','a8','a9','a10','a11','a12'];
 
-const GIVEN = [
-  'Vela','Orin','Kess','Mara','Dax','Ilya','Rho','Sable','Juno','Cass',
-  'Ezra','Nyx','Tavi','Rook','Lira','Bram','Sunny','Okoye','Piet','Zadie',
-  'Halcyon','Iris','Marek','Tunde','Sorrel','Anders','Yuki','Farid','Nova','Quill',
-];
-const SURNAME = [
-  'Ordoñez','Vance','Okafor','Reyes','Silva','Kwan','Petrov','Achebe','Lindqvist','Moreau',
-  'Tanaka','Delacroix','Ferro','Adeyemi','Novak','Castellan','Byrne','Amari','Voss','Ihejirika',
-  'Stone','Halvorsen','Qadir','Mbeki','Riva','Kovacs','Sethi','Aldrin','Corvi','Yamada',
-];
 const BIO_TEMPLATES = [
   'Signed on at sixteen hauling ice off the Belt. Never looked back.',
   'Third generation spacer. First to make captain.',
@@ -57,10 +49,7 @@ export function rollCaptain(gameId, factionId, tick, existingNames, seedIdx) {
   // Math.random is fine here — captains are minted once and persisted;
   // nothing re-derives them.
   const rand = Math.random;
-  let name = `${pick(rand, GIVEN)} ${pick(rand, SURNAME)}`;
-  for (let i = 0; i < 20 && existingNames.has(name); i++) {
-    name = `${pick(rand, GIVEN)} ${pick(rand, SURNAME)}`;
-  }
+  const name = pickCaptainName(rand, existingNames);
   existingNames.add(name);
   return {
     id: `${gameId}:c${tick}_${seedIdx}_${Math.random().toString(36).slice(2, 7)}`,
