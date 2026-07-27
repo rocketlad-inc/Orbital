@@ -16,6 +16,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { computeIncomingThreats, IncomingThreat } from '../game/threats';
+import { computeVisibility } from '../game/visibility';
 import { ShipIcon, ShipIconClass } from './ShipIcons';
 
 /** Urgency by ticks-until-arrival → label + color. A freshly-started
@@ -30,7 +31,25 @@ function urgency(ticks: number, isFreshBurn: boolean): { label: string; color: s
 
 export const ThreatsPanel: React.FC = () => {
   const { gameState, focusBody } = useGameContext();
-  const allThreats = computeIncomingThreats(gameState, 'player');
+  // Fog of war — same model the map uses. Without it this panel listed
+  // inbound hostiles the player had NO sensor on ("4 hostiles inbound →
+  // Haumea" for ships nobody could see, playtest report), which both
+  // defeats the fog and reads as a phantom-contact bug. MapCanvas
+  // already filtered its own copy; the panel didn't.
+  const visibleShipIds = React.useMemo(
+    () => computeVisibility(
+      'player',
+      gameState.ships,
+      gameState.settlements,
+      gameState.bodies,
+      gameState.currentTick,
+      new Map(),
+      new Set(gameState.alliedFactionIds ?? []),
+    ).visibleShipIds,
+    [gameState.ships, gameState.settlements, gameState.bodies,
+     gameState.currentTick, gameState.alliedFactionIds],
+  );
+  const allThreats = computeIncomingThreats(gameState, 'player', visibleShipIds);
 
   // Faction lookup for displaying the attacker's empire name + color, so
   // the player can instantly tell whose ship is incoming rather than

@@ -50,9 +50,19 @@ const FRESH_BURN_WINDOW = 20;
 export function computeIncomingThreats(
   gameState: GameState,
   forFaction: string,
+  /** Ship ids the viewer can actually SEE (fog of war). Threats are
+   *  intel: an inbound hostile you have no sensor on must not appear in
+   *  the alert list, or the panel silently defeats the fog — a player
+   *  got "4 hostiles inbound → Haumea" for ships nobody could see
+   *  (playtest report). Omitted (SP / callers with no fog model) → every
+   *  ship is considered visible, preserving the old behaviour. */
+  visibleShipIds?: ReadonlySet<string>,
 ): IncomingThreat[] {
   const threats: IncomingThreat[] = [];
   for (const ship of gameState.ships) {
+    // Fog gate first — cheapest rejection, and the one that matters for
+    // intel integrity.
+    if (visibleShipIds && ship.ownedBy !== forFaction && !visibleShipIds.has(ship.id)) continue;
     // Pull the in-flight metadata from the ship's torch transit state.
     // Skip ships that aren't moving toward anything.
     let targetBodyId: string | undefined;

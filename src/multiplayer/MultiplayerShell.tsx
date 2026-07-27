@@ -296,6 +296,17 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
             if (m.proposer_faction_id && m.proposer_faction_id === myFactionIdRef.current) {
               return;
             }
+            // …and skip trades between two OTHER factions. The broadcast
+            // is room-wide and unscoped, so every bystander was getting a
+            // popup for offers not addressed to them — and because
+            // pendingTrade is a single slot, an unrelated pair's trade
+            // would overwrite the popup you actually needed to answer
+            // (playtest: "the popup appears whenever" / "someone else
+            // closing it closed mine"). The payload already carries the
+            // responder, so scope it here — no server change needed.
+            if (m.responder_faction_id && m.responder_faction_id !== myFactionIdRef.current) {
+              return;
+            }
             const proposer = (typeof m.proposer_faction_name === 'string' && m.proposer_faction_name)
               ? m.proposer_faction_name
               : 'Another faction';

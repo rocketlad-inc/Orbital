@@ -1327,6 +1327,22 @@ export class Room {
     // every downstream consumer reads the same snapshot without
     // hammering D1 once per attacker. Falls through to slider defaults
     // (1.0 multipliers, 0% tariff) on any error.
+    // Science reaching each faction's POOL this tick — the research drain
+    // (§ further down) advances a project at the faction's ACTUAL income
+    // rate, so a big science economy researches faster.
+    //
+    // Declared THIS early (above the trade-route pass) because science
+    // arrives from two places: settlement yield in the harvest pass AND
+    // freighter trade deliveries, which run earlier in the tick. When
+    // this lived next to the harvest pass, deliveries had nowhere to
+    // register and the drain's `min(pool, income, remaining)` clamp saw
+    // income=0 — a faction whose science came only from trade routes
+    // banked it forever and never advanced a tech (playtest report:
+    // "science dropped off by trade route does not apply to the
+    // currently researching tech"). Contributions are ADDITIVE from both
+    // sources. Empty on a harvest failure → research simply pauses.
+    const scienceIncomeByFaction = new Map();
+
     let senateSliders = {};
     try { senateSliders = await getActiveSliders(this.env, gameId, tick); }
     catch (e) { console.error('getActiveSliders failed', e); }
@@ -1621,6 +1637,17 @@ export class Room {
               )
               .bind(r.id),
           ];
+          // Delivered science counts as INCOME this tick, not just bank.
+          // The research drain clamps spend to income, so without this a
+          // trade-fed faction banked science forever without advancing a
+          // tech (playtest report). Additive — the harvest pass adds its
+          // settlement yield to the same map later in the tick.
+          if (cargoScience > 0) {
+            scienceIncomeByFaction.set(
+              r.owner_faction_id,
+              (scienceIncomeByFaction.get(r.owner_faction_id) ?? 0) + cargoScience,
+            );
+          }
           if (cargoTotal > 0) {
             batch.push(
               this.env.DB
@@ -2611,14 +2638,6 @@ export class Room {
     const NO_COLLECTOR_POOL_FRACTION = 0.10;       // 10% to faction pool
     const NO_COLLECTOR_STOCK_FRACTION = 0.90;       // 90% to local stockpile
 
-    // Science reaching each faction's POOL this tick. Captured here so
-    // the research drain below can advance a project at the faction's
-    // ACTUAL income rate — a big science economy researches faster,
-    // which is the whole point of specialising worlds for science.
-    // Declared outside the try so a harvest failure leaves it empty
-    // (research simply doesn't advance) rather than undefined.
-    const scienceIncomeByFaction = new Map();
-
     // Aggregate per-faction pool deltas; apply per-(body,faction)
     // stockpile deltas individually. Wrapped: yield distribution must
     // NEVER kill resolveTick (combat, dyson, victory all run after).
@@ -2761,7 +2780,13 @@ export class Room {
       for (const [fid, delta] of perFactionPool) {
         // Record science income BEFORE the zero-delta skip, so a faction
         // whose only income is science still registers a rate.
-        if (delta.science > 0) scienceIncomeByFaction.set(fid, delta.science);
+        // ADDITIVE: a trade-route delivery may already have registered
+        // science income for this faction earlier in the tick (see the
+        // freighter dropoff). A bare .set() clobbered it, so delivered
+        // science never advanced research.
+        if (delta.science > 0) {
+          scienceIncomeByFaction.set(fid, (scienceIncomeByFaction.get(fid) ?? 0) + delta.science);
+        }
         if (delta.fuel + delta.metal + delta.gold + delta.science <= 0) continue;
         await this.env.DB
           .prepare(
@@ -3613,6 +3638,29 @@ export class Room {
             )
             .bind(gameId, f.id, f.research_tech_id, tick, tick, tick),
         ]);
+
+        // ARMOR raises every hull's effective max HP (+8%/level, see
+        // armorMulOf). HP is stored ABSOLUTE, so without a matching bump
+        // the whole fleet instantly reads as damaged the moment the tech
+        // lands — and since repair is station-only, ships in the field
+        // never close the gap and look permanently hurt (playtest report:
+        // "a lot of my ships are damaged despite not having been in
+        // combat"). Scale current HP by the same ratio so the DAMAGE
+        // FRACTION is preserved: a full hull stays full, a half-wrecked
+        // one stays half-wrecked, and the buff is a real HP gain.
+        if (f.research_tech_id === 'armor') {
+          try {
+            const prevLevel = Number(level ?? 0);
+            const ratio = (1 + 0.08 * (prevLevel + 1)) / (1 + 0.08 * prevLevel);
+            await this.env.DB
+              .prepare(
+                `UPDATE game_ships SET hp = hp * ?
+                  WHERE game_id = ? AND owner_faction_id = ? AND status = 'active'`,
+              )
+              .bind(ratio, gameId, f.id)
+              .run();
+          } catch (e) { console.error('armor hp rescale failed', e); }
+        }
 
         try {
           await this.env.DB

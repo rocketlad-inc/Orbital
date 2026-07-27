@@ -2,7 +2,7 @@
 // BodyInspector - Resource readout + build UI for selected body
 // ============================================================
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { BuildPanel } from './BuildPanel';
 import { bodyProductionRates } from '../game/economy';
@@ -22,6 +22,7 @@ import {
   planTorchTransfer, fromG,
 } from '../physics/torchTransfer';
 import { bodyPosition } from '../physics/orbitalMechanics';
+import { computeVisibility } from '../game/visibility';
 import { EditableName } from './EditableName';
 import './BodyInspector.css';
 
@@ -45,6 +46,22 @@ const RAM_ASTEROID_G = 0.005;
 
 export const BodyInspector: React.FC = () => {
   const { gameState, camera, uiState, deselectBody, focusBody, updateCamera } = useGameContext();
+  // Fog of war for the ship count below. Same model the map renderer
+  // uses (sensor radius + occlusion), so the inspector can't reveal a
+  // garrison the map itself hides.
+  const visibleShipIds = useMemo(
+    () => computeVisibility(
+      'player',
+      gameState.ships,
+      gameState.settlements,
+      gameState.bodies,
+      gameState.currentTick,
+      new Map(),
+      new Set(gameState.alliedFactionIds ?? []),
+    ).visibleShipIds,
+    [gameState.ships, gameState.settlements, gameState.bodies,
+     gameState.currentTick, gameState.alliedFactionIds],
+  );
   // Non-null only in multiplayer — used to switch the deploy setup
   // pitch between the legacy SP freighter copy and the MP colony-ship
   // rules (colony/freighter split).
@@ -237,9 +254,16 @@ export const BodyInspector: React.FC = () => {
     ? gameState.factions.find(f => f.id === body.ownedBy)
     : null;
 
-  // Count ships at this body
+  // Count ships at this body — FOG-FILTERED. The raw ships list is a
+  // superset: the server sends anything a friendly sensor can reach and
+  // the client's line-of-sight model does the final hiding. Counting it
+  // unfiltered leaked enemy fleet size at worlds the player has no
+  // vision of — click any fogged planet, read its garrison (playtest
+  // report). Own/allied ships are always visible; a rival's hull only
+  // counts once it's genuinely in sensor range.
   const shipsHere = gameState.ships.filter(
     s => !s.transit && s.orbit.parentBodyId === body.id
+      && (s.ownedBy === 'player' || visibleShipIds.has(s.id))
   );
 
   const isFocused = camera.focusedBodyId === body.id;

@@ -46,6 +46,7 @@ import {
   computeIncomingThreats,
   type IncomingThreat,
 } from '../game/threats';
+import { computeVisibility } from '../game/visibility';
 import { AUTO_COMBAT_INTERVAL } from '../game/combat';
 import {
   TECH_DEFS,
@@ -492,7 +493,15 @@ export function useSituationItems(
     // yards need to know where the shooting is (hostile parked at a
     // body) and where it's about to be (inbound burn targeting one).
     let threats: IncomingThreat[] = [];
-    try { threats = computeIncomingThreats(gameState, factionId); } catch { /* defensive */ }
+    try {
+      // Fog-gated: the situation feed must not report inbound hostiles
+      // the player has no sensor on (same leak the ThreatsPanel had).
+      const vis = computeVisibility(
+        factionId, gameState.ships, gameState.settlements, gameState.bodies,
+        gameState.currentTick, new Map(), new Set(gameState.alliedFactionIds ?? []),
+      ).visibleShipIds;
+      threats = computeIncomingThreats(gameState, factionId, vis);
+    } catch { /* defensive */ }
     const threatBodyIds = new Set(threats.map(t => t.targetBodyId));
 
     // Bodies with a hostile ship parked on them. Peace partners are
