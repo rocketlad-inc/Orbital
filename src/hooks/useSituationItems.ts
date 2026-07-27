@@ -47,7 +47,7 @@ import {
   type IncomingThreat,
 } from '../game/threats';
 import { computeVisibility } from '../game/visibility';
-import { AUTO_COMBAT_INTERVAL } from '../game/combat';
+import { AUTO_COMBAT_INTERVAL, effectiveShipMaxHp } from '../game/combat';
 import {
   TECH_DEFS,
   TECH_MAX_LEVEL,
@@ -833,8 +833,11 @@ export function useSituationItems(
 
         const where = bodies.find(b => b.id === s.orbit.parentBodyId)?.name ?? 'deep space';
         const hp = s.hp;
-        const hpMax = s.hpMax;
-        const pct = hp != null && hpMax != null && hpMax > 0
+        // TRUE max (rank × armor tech × Bulwark), matching FleetPanel /
+        // ShipPanel / Outliner — the stored hpMax is the build-time base,
+        // and dividing by it read veteran hulls at 156% HP (playtest).
+        const hpMax = effectiveShipMaxHp(s, gameState.factionTech?.[s.ownedBy]);
+        const pct = hp != null && hpMax > 0
           ? Math.max(0, Math.round((hp / hpMax) * 100))
           : null;
         // Red only when the hull is actually losing — a winning
@@ -868,11 +871,17 @@ export function useSituationItems(
         const where = bodies.find(b => b.id === st.bodyId)?.name ?? st.bodyId;
         const pct = st.maxHp > 0 ? Math.max(0, Math.round((st.hp / st.maxHp) * 100)) : null;
         const hurt = pct != null && pct <= 50;
+        // "Under fire" only when there's evidence of fire — damage or a
+        // recent combat stamp. A full-HP city listed purely because a
+        // hostile is parked overhead read "under fire · 100% HP", which
+        // contradicted itself (playtest). Same danger, honest words.
+        const firedUpon = (pct != null && pct < 100)
+          || ticksSinceCombat(st, tick) <= COMBAT_RECENT_TICKS;
 
         push({
           id: `in_combat:settlement:${st.id}`,
           category: 'in_combat',
-          title: `${st.name} under fire`,
+          title: firedUpon ? `${st.name} under fire` : `${st.name} — hostiles overhead`,
           subtitle: `${st.type} on ${where}${pct != null ? ` · ${pct}% HP` : ''}`,
           focus: { kind: 'body', bodyId: st.bodyId },
           severity: hurt ? 'danger' : 'warn',
@@ -1046,9 +1055,11 @@ export function useSituationItems(
       }
       for (const ship of gameState.ships) {
         if (ship.ownedBy !== factionId) continue;
-        // Settlements carry `maxHp`; ships carry `hpMax`. Not a typo —
-        // the same trap is flagged in the in_combat block above.
-        const max = ship.hpMax ?? 0;
+        // TRUE max, not stored base — with the raw hpMax a ranked/teched
+        // hull at 50% real HP computed r ≈ 0.65 and never crossed the
+        // DAMAGED_HP_RATIO gate, hiding exactly the hulls most worth
+        // reporting (veterans). Same fix as the in_combat block.
+        const max = effectiveShipMaxHp(ship, gameState.factionTech?.[ship.ownedBy]);
         if (!max || ship.hp == null) continue;
         if (ticksSinceCombat(ship, tick) <= COMBAT_RECENT_TICKS) continue;
         const r = ship.hp / max;
@@ -1172,9 +1183,19 @@ export function useSituationItems(
     const nowEntities = new Set(
       items.filter(i => i.tier === 'now' && i.entity).map(i => i.entity as string),
     );
-    const visible = items.filter(i =>
-      i.tier === 'now' || !i.entity || !nowEntities.has(i.entity),
+    // A damaged row also owns its ship's "awaiting orders" row — one
+    // ship, one ask, and repairing IS the order to give. Without this
+    // the same hull sat twice in the decision tier ("Illustrious at
+    // 36% HP" + "Illustrious arrived — awaiting orders", playtest).
+    const damagedEntities = new Set(
+      items.filter(i => i.category === 'damaged' && i.entity).map(i => i.entity as string),
     );
+    const visible = items.filter(i => {
+      if (i.tier !== 'now' && i.entity && nowEntities.has(i.entity)) return false;
+      if ((i.category === 'arrived' || i.category === 'created')
+        && i.entity && damagedEntities.has(i.entity)) return false;
+      return true;
+    });
 
     // --- Sort: tier, then each row's own clock, then insertion ---
     const tierRank = new Map(TIER_ORDER.map((t, i) => [t, i]));
