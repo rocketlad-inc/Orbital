@@ -1916,36 +1916,31 @@ export function drawShip(
   // load-bearing. Only the ship's angle AROUND the planet gets the
   // cosmetic spin, so hulls visibly circle instead of creeping a pixel a
   // minute. See render/tickPhase.
-  const shipT = shipDisplayTick(ctx.t, ship.orbit.period, Date.now());
+  let shipT = shipDisplayTick(ctx.t, ship.orbit.period, Date.now());
+  // Co-orbiting ships are PHASED evenly around the ring: the i-th of N
+  // gets i/N of a full orbit as a time offset, so a parked fleet reads as
+  // a ring of ships around the planet instead of a stack at the arrival
+  // point. A time (not pixel) offset keeps position AND heading on the
+  // same orbital math — each hull sits on its own point of the ellipse
+  // with its nose correctly tangent. (Replaces the old ±12px perpendicular
+  // fan, which still overlapped sprites at close zoom.)
+  if (formation && formation.total > 1 && (ship.orbit.period ?? 0) > 0) {
+    shipT += (formation.index / formation.total) * ship.orbit.period;
+  }
   const parentPos = bodyPosition(parentBody, ctx.t, ctx.bodies);
   const localPos = localPositionAt(ship.orbit, shipT);
   const worldX = parentPos.x + localPos.x;
   const worldY = parentPos.y + localPos.y;
-  let canvasPos = worldToCanvas(worldX, worldY, ctx);
+  const canvasPos = worldToCanvas(worldX, worldY, ctx);
 
   // Faction-colored: cyan for player, red for enemy.
   const shipColorValue = shipColor(ship, ctx.factions);
 
   // Velocity vector — used both to rotate the icon and as a fallback tick.
-  // Same spun time as the position, or the hull would point one way and
-  // travel another.
+  // Same spun (and phase-offset) time as the position, or the hull would
+  // point one way and travel another.
   const vel = velocityVectorsAt(ship.orbit, shipT);
   const heading = Math.atan2(vel.prograde.y, vel.prograde.x);
-
-  // When several ships share the same orbit they stack at exactly the
-  // same canvas pixel — invisible to the player. Spread them perpendicular
-  // to the orbit's velocity direction by a few canvas pixels each so a
-  // cluster of N reads as a small formation rather than a single dot.
-  if (formation && formation.total > 1) {
-    const perpX = -Math.sin(heading);
-    const perpY =  Math.cos(heading);
-    const spacing = 12;
-    const lane = formation.index - (formation.total - 1) / 2;
-    canvasPos = {
-      x: canvasPos.x + perpX * lane * spacing,
-      y: canvasPos.y + perpY * lane * spacing,
-    };
-  }
 
   const iconSize = shipIconSize(ship.class, isSelected)
     * ((ship.transit || isSelected) ? 1 : sizeScale);

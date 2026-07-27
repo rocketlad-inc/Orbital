@@ -986,10 +986,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     }
 
     // Build a co-orbit formation map: ships sharing the same parent body
-    // and a similar orbital radius (bucketed) get fanned out perpendicular
-    // to their velocity so the cluster reads as a formation instead of a
-    // single overlapping dot. Only orbiting ships are bucketed — ships in
-    // transit follow their torch trajectory and don't stack.
+    // and a similar orbital radius (bucketed) get PHASED evenly around the
+    // ring — the i-th of N draws i/N of an orbit ahead (drawShip applies it
+    // as a time offset), so a parked fleet reads as a ring of ships around
+    // the planet instead of a stack at the arrival point. Only orbiting
+    // ships are bucketed — ships in transit follow their torch trajectory
+    // and don't stack.
     const formationMap = new Map<string, { index: number; total: number }>();
     {
       const buckets = new Map<string, string[]>();
