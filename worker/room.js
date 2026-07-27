@@ -4035,6 +4035,10 @@ export class Room {
       const { body_id, body_name, body_radius, kind, discoverer } = row;
       const stmts = [];
       let chronicleMessage = `${body_name}: DISCOVERY — ${kind.replace(/_/g, ' ')}`;
+      // Extra structured fields the Herald digest reads instead of
+      // scraping chronicleMessage (worker/digest.js buildDiscoveryStories).
+      // Only ancient_databank needs one so far — which tech track leveled.
+      let chronicleExtra = {};
 
       // Mark the body revealed first; subsequent effects piggyback on
       // the same batch when they're DB-only (no DO-state writes).
@@ -4184,6 +4188,7 @@ export class Room {
             );
           }
           chronicleMessage = `${body_name}: DISCOVERY — an intact databank teaches your engineers a new trick. ${pick} +1.`;
+          chronicleExtra = { tech_id: pick };
           break;
         }
       }
@@ -4199,7 +4204,7 @@ export class Room {
           )
           .bind(
             chronicleId, gameId, tick, discoverer, body_id,
-            JSON.stringify({ kind, body_name, message: chronicleMessage }),
+            JSON.stringify({ kind, body_name, message: chronicleMessage, ...chronicleExtra }),
             now,
           ),
       );
