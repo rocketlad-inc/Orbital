@@ -12,7 +12,9 @@ import { ShipDesigner } from './components/ShipDesigner';
 import { CaptainDebut } from './components/CaptainDebut';
 import type { ShipClassName } from './game/shipClasses';
 import { TechPanel } from './components/TechPanel';
-import { ThreatsPanel } from './components/ThreatsPanel';
+// ThreatsPanel intentionally NOT imported — retired in favour of the
+// Situation Log's "Incoming threats" section (see the note at its old
+// mount point below). The component file is kept for reference/revert.
 import { AIActivityFeed } from './components/AIActivityFeed';
 import { MobileSimControls } from './components/MobileSimControls';
 import { SinglePlayerSetup } from './components/SinglePlayerSetup';
@@ -258,7 +260,12 @@ function GameUI({
         ? <WorldMenuOverlay />
         : <BodyInspector />}
       {isMultiplayer && <WorldMenuToggle on={worldMenuOn} />}
-      <ThreatsPanel />
+      {/* ThreatsPanel (the top-right popup) is RETIRED — incoming hostile
+          ships now live in the Situation Log's "Incoming threats" NOW-tier
+          section, which says strictly more than the popup did (attacker,
+          hull classes, ETA, and what's at stake) and badges the dock rail
+          with a warn state so urgency still reads without a floating
+          overlay covering the map. See src/components/ThreatsPanel.tsx. */}
       {!isMultiplayer && <AIActivityFeed />}
       <MobileSimControls hideSimControls={isMultiplayer} />
 

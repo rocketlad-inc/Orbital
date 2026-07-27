@@ -702,9 +702,18 @@ function classifyChronicleEvent(kind: string): { category: LogCategory; level: L
     case 'ship_built':
     case 'building_completed':
     case 'secret_discovered':
+    case 'tech_advanced':
       return { category: 'SIM', level: 'INFO' };
+    // Governance + diplomacy are SYSTEM, not SIM — a senate result is a
+    // rules change. These were falling through to the default.
     case 'trade_accepted':
+    case 'trade_delivered':
     case 'treaty_signed':
+    case 'senate_vote':
+    case 'senate_passed':
+    case 'senate_failed':
+    case 'chancellor_elected':
+    case 'victory':
       return { category: 'SYSTEM', level: 'INFO' };
     default:
       return { category: 'SIM', level: 'INFO' };
@@ -1141,11 +1150,52 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       }
 
       if (ev.kind === 'senate_vote') {
-        // Was falling through to the raw "senate_vote" kind. Build a
-        // real headline: the bill title + outcome.
+        // Full result, not just "resolved": bill kind + tally is the whole
+        // point of a senate line — you need to see how close it was and
+        // who it was aimed at.
         const title = (parsed.title as string) ?? 'a motion';
         const outcome = (parsed.outcome as string) ?? 'resolved';
-        return `${t}  ⚖ Senate: “${title}” ${outcome}`;
+        const kindBit = parsed.bill_kind
+          ? ` [${String(parsed.bill_kind).replace(/_/g, ' ')}]`
+          : '';
+        const yea = Number(parsed.yea_weight ?? 0);
+        const nay = Number(parsed.nay_weight ?? 0);
+        const abs = Number(parsed.abstain_weight ?? 0);
+        const tally = (yea || nay || abs)
+          ? ` — ${yea} yea / ${nay} nay${abs ? ` / ${abs} abstain` : ''}`
+          : '';
+        const verb = outcome === 'passed' ? 'PASSED' : outcome === 'failed' ? 'FAILED' : outcome.toUpperCase();
+        return `${t}  ⚖ Senate: “${title}”${kindBit} ${verb}${tally}`;
+      }
+
+      if (ev.kind === 'senate_passed' || ev.kind === 'senate_failed') {
+        const title = (parsed.title as string) ?? 'a motion';
+        return `${t}  ⚖ Senate: “${title}” ${ev.kind === 'senate_passed' ? 'PASSED' : 'FAILED'}`;
+      }
+
+      if (ev.kind === 'chancellor_elected') {
+        const who = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
+        return `${t}  ⚖ ${who} elected Chancellor`;
+      }
+
+      if (ev.kind === 'tech_advanced') {
+        // 134 of these in a live game and every one rendered as the raw
+        // string "tech_advanced" — the single noisiest unformatted kind.
+        const who = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
+        const tech = (parsed.tech_id as string) ?? 'research';
+        const lvl = parsed.level != null ? ` L${parsed.level}` : '';
+        return `${t}  ${who} completed ${tech}${lvl}`;
+      }
+
+      if (ev.kind === 'trade_delivered') {
+        const bits: string[] = [];
+        for (const [k, label] of [['metal', 'M'], ['fuel', 'F'], ['gold', 'C'], ['science', 'S']] as const) {
+          const v = Number(parsed[k] ?? 0);
+          if (v > 0) bits.push(`${Math.round(v)}${label}`);
+        }
+        const cargo = bits.length > 0 ? bits.join(' ') : 'an empty hold';
+        const to = nameOfFaction(parsed.recipient_faction_id as string | null, undefined);
+        return `${t}  Trade delivered to ${to}: ${cargo}`;
       }
 
       return `${t}  ${ev.kind}`;

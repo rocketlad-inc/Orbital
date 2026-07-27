@@ -1,4 +1,14 @@
 // ============================================================
+// ThreatsPanel — RETIRED (2026-07-26), no longer mounted.
+//
+// Incoming hostile ships now surface in the Situation Log's "Incoming
+// threats" NOW-tier section (src/hooks/useSituationItems.ts), which
+// reports strictly more than this popup did — attacker faction, hull
+// classes, ETA, and what's at stake at the target — sorts by ETA, and
+// badges the dock rail with a warn state, so nothing floats over the map.
+// Kept in-tree (unmounted) so the pulse/dismiss behaviour is easy to
+// revive if a floating alert is ever wanted again.
+//
 // ThreatsPanel — top-right HUD listing incoming hostile ships
 // whose trajectories arrive at player-owned bodies.
 // ============================================================

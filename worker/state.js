@@ -781,19 +781,54 @@ async function handleGetState(req, env, ctx) {
   // Recent public chronicle entries — combat results, key events. Surfaced
   // as a combat log on the canvas. Capped at 30 so the snapshot stays
   // small as the game ages.
-  const events = (await env.DB
-    .prepare(
-      `SELECT id, tick_number, kind, actor_faction_id, target_faction_id,
+  // Two-part feed. A flat "last 30 by recency" let HIGH-VOLUME kinds
+  // (tech_advanced, ship_built, building_completed — hundreds of rows
+  // each) flood the window, so RARE governance/diplomacy events fell out
+  // within a tick or two of happening and never reached the log at all
+  // (player report: "the console log doesn't show Senate information" —
+  // the senate_vote rows existed in D1 the whole time).
+  //
+  // So: the recency window PLUS a guaranteed reserve for notable-but-rare
+  // kinds. Union'd and de-duped by id, then re-sorted newest-first.
+  const NOTABLE_KINDS = [
+    'senate_vote', 'senate_passed', 'senate_failed', 'chancellor_elected',
+    'treaty_signed', 'treaty_broken', 'victory',
+    'asteroid_launched', 'asteroid_impact',
+  ];
+  const notablePlaceholders = NOTABLE_KINDS.map(() => '?').join(',');
+  const EVENT_COLS = `id, tick_number, kind, actor_faction_id, target_faction_id,
               body_id, ship_id, payload, created_at_ms,
-              flavor_override, flavor_edited_by, flavor_edited_at_ms
-         FROM chronicle_entries
-        WHERE game_id = ?
-          AND visibility = 'public'
-        ORDER BY tick_number DESC, created_at_ms DESC
-        LIMIT 30`,
-    )
-    .bind(gameId)
-    .all()).results ?? [];
+              flavor_override, flavor_edited_by, flavor_edited_at_ms`;
+  const [recentRows, notableRows] = await Promise.all([
+    env.DB
+      .prepare(
+        `SELECT ${EVENT_COLS}
+           FROM chronicle_entries
+          WHERE game_id = ? AND visibility = 'public'
+          ORDER BY tick_number DESC, created_at_ms DESC
+          LIMIT 30`,
+      )
+      .bind(gameId)
+      .all(),
+    env.DB
+      .prepare(
+        `SELECT ${EVENT_COLS}
+           FROM chronicle_entries
+          WHERE game_id = ? AND visibility = 'public'
+            AND kind IN (${notablePlaceholders})
+          ORDER BY tick_number DESC, created_at_ms DESC
+          LIMIT 15`,
+      )
+      .bind(gameId, ...NOTABLE_KINDS)
+      .all(),
+  ]);
+  const eventById = new Map();
+  for (const r of [...(recentRows.results ?? []), ...(notableRows.results ?? [])]) {
+    eventById.set(r.id, r);
+  }
+  const events = [...eventById.values()].sort(
+    (a, b) => (b.tick_number - a.tick_number) || (b.created_at_ms - a.created_at_ms),
+  );
 
   // Only the caller's planned maneuvers are returned — opponents' burn
   // plans are private.
