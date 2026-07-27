@@ -744,7 +744,10 @@ export function GameContextProvider({
             queuedTransits = queuedTransits.length > 1 ? queuedTransits.slice(1) : undefined;
           } else {
             const target = bodies.find(b => b.id === plan.targetBodyId);
-            const parkRadius = target ? Math.max(target.radius * 1.5, 6) : 10;
+            // Tight park orbit, matching the server's arrival pass
+            // (worker/room.js: radius + 2) so the optimistic park doesn't
+            // snap outward on the next /state poll.
+            const parkRadius = target ? Math.max(target.radius + 2, 3) : 10;
             orbit = createCircularOrbit(plan.targetBodyId, parkRadius, tick, bodies);
             transit = undefined;
           }

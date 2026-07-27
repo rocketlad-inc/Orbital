@@ -901,7 +901,11 @@ export class Room {
       );
       const hp = stats.hp;
       const dmg = stats.damage_per_tick;
-      const rp = (body.radius || 4) + 4;
+      // Tight park orbit: just off the surface. Was radius+4, which put
+      // hulls twice the planet's disc away and crowded moon lanes in big
+      // systems (player report). KEEP IN SYNC with the arrival pass below
+      // and the client's optimistic park (gameContext parkRadius).
+      const rp = (body.radius || 4) + 2;
       const ra = rp; // circular orbit
       // Collision-proof id: tick + loop index guarantees uniqueness even
       // when many builds finish on the SAME tick (a fleet spammer with
@@ -1162,7 +1166,9 @@ export class Room {
         .bind(n.target_body_id)
         .first();
       if (!target) continue;
-      const rp = (target.radius || 4) + 4;
+      // Tight park orbit on arrival — keep in sync with the build-spawn
+      // park above and the client's optimistic parkRadius.
+      const rp = (target.radius || 4) + 2;
       await this.env.DB.batch([
         this.env.DB
           .prepare(
