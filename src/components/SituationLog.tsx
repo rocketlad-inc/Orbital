@@ -20,6 +20,13 @@
 // last open get a dot. Seen-ids persist in localStorage (same pattern
 // as EventLog's read tracking); the snapshot freezes when the panel
 // opens so dots don't vanish while you're looking at them.
+//
+// Manual dismissal: every row carries a ✕. Dismissing hides the row
+// (and drops it from the rail badge) for as long as its condition
+// holds CONTINUOUSLY — the moment the underlying condition clears,
+// the stored dismissal is pruned, so the next occurrence of the same
+// situation surfaces fresh. "Stop telling me about THIS one", not
+// "never mention this ship again".
 // ============================================================
 
 import React, { useEffect, useRef, useState } from 'react';
@@ -58,6 +65,25 @@ function saveSeen(ids: Set<string>) {
   } catch { /* storage full/blocked — dots just reset next session */ }
 }
 
+// Dismissed-row ids. No cap needed: the prune effect keeps this to a
+// subset of the CURRENT item list, which is dozens at most.
+const DISMISSED_KEY = 'orbital.sitreport.dismissed.v1';
+
+function loadDismissed(): Set<string> {
+  try {
+    const raw = localStorage.getItem(DISMISSED_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch { return new Set(); }
+}
+
+function saveDismissed(ids: Set<string>) {
+  try {
+    localStorage.setItem(DISMISSED_KEY, JSON.stringify(Array.from(ids)));
+  } catch { /* storage blocked — dismissals just reset next session */ }
+}
+
 interface Props {
   /** Caller's faction id. SP = 'player'. MP also normalises to
    *  'player' via MultiplayerGameProvider's remap. */
@@ -69,12 +95,40 @@ interface Props {
 export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData }) => {
   const { gameState, selectShip, selectBody, focusBody } = useGameContext();
   const items = useSituationItems(gameState, factionId, mpData);
-  const grouped = groupByTier(items);
+
+  // Manual dismissal. A dismissal lives exactly as long as its row's
+  // condition holds continuously: the prune below drops stored ids the
+  // moment they leave the derived list, so a recurrence surfaces fresh.
+  const [dismissed, setDismissed] = useState<Set<string>>(loadDismissed);
+  useEffect(() => {
+    const present = new Set(items.map(i => i.id));
+    let changed = false;
+    const next = new Set<string>();
+    for (const id of dismissed) {
+      if (present.has(id)) next.add(id);
+      else changed = true;
+    }
+    if (changed) {
+      setDismissed(next);
+      saveDismissed(next);
+    }
+  }, [items, dismissed]);
+
+  const dismissItem = (id: string) => {
+    const next = new Set(dismissed);
+    next.add(id);
+    setDismissed(next);
+    saveDismissed(next);
+  };
+
+  const visibleItems = items.filter(i => !dismissed.has(i.id));
+  const grouped = groupByTier(visibleItems);
 
   // Badge: count what needs attention, flag red when something is
-  // being shot RIGHT NOW. Opportunities are excluded on purpose.
-  const urgentCount = items.filter(i => i.tier !== 'opportunity').length;
-  const hasNow = items.some(i => i.tier === 'now');
+  // being shot RIGHT NOW. Opportunities are excluded on purpose, and
+  // dismissed rows don't count — dismissing IS "I've seen this".
+  const urgentCount = visibleItems.filter(i => i.tier !== 'opportunity').length;
+  const hasNow = visibleItems.some(i => i.tier === 'now');
 
   const [open, setOpen] = useState(false);
   // We keep the panel mounted for one transition cycle after `open`
@@ -176,7 +230,7 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
 
   if (!mounted) return null;
 
-  const totalCount = items.length;
+  const totalCount = visibleItems.length;
 
   return (
     <div className={`dock-panel sit-panel-shell${open ? ' is-open' : ''}`} role="region" aria-label="Situation Report">
@@ -210,7 +264,7 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
                 {g.items.map(it => {
                   const isNew = !seenSnapshotRef.current.has(it.id);
                   return (
-                    <li key={it.id}>
+                    <li key={it.id} className="sit-row">
                       <button
                         className={`sit-item sit-item--${it.severity}`}
                         onClick={() => handleClick(it)}
@@ -222,6 +276,12 @@ export const SituationLog: React.FC<Props> = ({ factionId = PLAYER_TOKEN, mpData
                         </span>
                         {it.subtitle && <span className="sit-item__sub">{it.subtitle}</span>}
                       </button>
+                      <button
+                        className="sit-item__dismiss"
+                        onClick={() => dismissItem(it.id)}
+                        title="Dismiss"
+                        aria-label={`Dismiss: ${it.title}`}
+                      >×</button>
                     </li>
                   );
                 })}

@@ -165,7 +165,10 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
   damaged:        'decision',
   idle_colony:    'decision',
   broken_route:   'decision',
-  vote_closed:    'decision',
+  // A resolved vote is news to read, not a choice to make — there is
+  // nothing left to decide once it's closed. Keeping it in the decision
+  // tier made "Needs a decision" cry wolf (playtest, 2026-07-27).
+  vote_closed:    'opportunity',
   // A find is a reward to notice and act on (a free city to garrison, a
   // salvaged warship to crew), not a chore — a decision-tier prompt.
   discovery:      'decision',
@@ -685,6 +688,10 @@ export function useSituationItems(
         subtitle: `${Math.round(total)} units banked — no collector or trade route`,
         focus: { kind: 'body', bodyId },
         severity: 'normal',
+        // Biggest pile first among stockpiles, but behind any row with
+        // a real urgency clock (HP ratios, completion ticks) — hence
+        // the large base rather than a bare -total.
+        sortKey: 1e9 - total,
         entity: `body:${bodyId}`,
       });
     }
@@ -1049,9 +1056,15 @@ export function useSituationItems(
         push({
           id: `damaged:ship:${ship.id}`,
           category: 'damaged',
+          // Mid-transit there is NO decision available — you can't
+          // repair, dock, or reroute a burning hull mid-burn. It's a
+          // heads-up until it arrives, at which point the transit
+          // clears and this promotes itself back to the decision tier
+          // (playtest: "what needs a decision about this?").
+          tier: ship.transit ? 'opportunity' : undefined,
           entity: `ship:${ship.id}`,
           title: `${ship.name} at ${Math.round(r * 100)}% HP`,
-          subtitle: ship.transit ? 'Damaged — in transit' : 'Damaged — pull it back or repair',
+          subtitle: ship.transit ? 'Damaged — in transit, act on arrival' : 'Damaged — pull it back or repair',
           focus: { kind: 'ship', shipId: ship.id },
           severity: r <= 0.25 ? 'danger' : 'warn',
           sortKey: r,

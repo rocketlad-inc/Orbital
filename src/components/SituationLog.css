@@ -108,6 +108,35 @@
 
 .sit-tier__list { list-style: none; margin: 4px 0 0; padding: 0; }
 
+/* Row = the focus button + its dismiss ✕, side by side. */
+.sit-row {
+  display: flex;
+  align-items: stretch;
+}
+.sit-row .sit-item {
+  flex: 1;
+  min-width: 0;
+}
+.sit-item__dismiss {
+  flex: 0 0 auto;
+  width: 28px;
+  margin: 2px 0;
+  background: transparent;
+  border: none;
+  color: #5a6e80;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 2px;
+  opacity: 0.45;                 /* faint but always tappable (mobile) */
+  transition: opacity 0.1s ease, color 0.1s ease;
+}
+.sit-row:hover .sit-item__dismiss { opacity: 1; }
+.sit-item__dismiss:hover {
+  color: #ff5e5e;
+  background: rgba(255, 94, 94, 0.08);
+}
+
 /* Item buttons */
 .sit-item {
   display: flex;
