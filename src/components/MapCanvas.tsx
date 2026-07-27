@@ -872,6 +872,63 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // explored/coverage state (the loop below still owns the one
     // mutation that marks a body explored) so this can run first without
     // disturbing that bookkeeping.
+    // System grouping helpers — shared by the label collapse below, the
+    // ship loop's transit-collapse, and the badge block. A moon rolls up
+    // to its planet; a planet (parent is the star) is its own anchor.
+    const bodyById2 = new Map(gameState.bodies.map(b => [b.id, b] as const));
+    const childrenOf2 = new Map<string, typeof gameState.bodies>();
+    for (const b of gameState.bodies) {
+      if (!b.parent) continue;
+      const arr = childrenOf2.get(b.parent) ?? [];
+      arr.push(b);
+      childrenOf2.set(b.parent, arr);
+    }
+    const isStarLike = (b: (typeof gameState.bodies)[number] | undefined) =>
+      !!b && (b.type === 'star' || b.type === 'black_hole');
+    const anchorOf = (id: string | undefined | null): string | null => {
+      if (!id) return null;
+      const b = bodyById2.get(id);
+      if (!b) return null;
+      const p = b.parent ? bodyById2.get(b.parent) : undefined;
+      return (p && !isStarLike(p)) ? p.id : id;
+    };
+    const systemPx = (anchorId: string): number => {
+      const kids = childrenOf2.get(anchorId) ?? [];
+      let maxOrbit = 0;
+      for (const k of kids) if (k.orbitRadius > maxOrbit) maxOrbit = k.orbitRadius;
+      const anchor = bodyById2.get(anchorId);
+      return (maxOrbit > 0 ? maxOrbit : (anchor?.radius ?? 4)) * camera.scale;
+    };
+
+    /**
+     * SYSTEM-LEVEL LABEL COLLAPSE.
+     *
+     * A moon's label is suppressed while its whole system is a tight
+     * knot on screen, so the cluster reads as one place ("URANUS")
+     * instead of five overlapping name+yield stacks fighting for the
+     * same 200px. The anchor keeps its label for free — planets are
+     * bodyLabelAlwaysOn (parent === 'sol').
+     *
+     * Threshold is the system's on-screen RADIUS (outermost moon's
+     * orbit × camera.scale), which is resolution-independent and scales
+     * naturally per system: wide systems separate sooner than tight
+     * ones. Calibrated against Lorne's screenshot (2026-07-26) of the
+     * Uranus system, the worst case in the map with 5 moons — Oberon's
+     * orbit is 50u and sat ~170px out there, so 200px puts that view
+     * firmly in "just URANUS" and reveals the moons on a ~20% zoom-in.
+     * For reference at the same threshold: Neptune (78u) and Jupiter
+     * (75u) open up around scale 2.6, Saturn (65u) ~3.1, Uranus ~4.0,
+     * Mars (19u, only Phobos/Deimos) stays collapsed until far closer —
+     * which is the pair that used to shove labels clear across the map.
+     */
+    const SYSTEM_LABEL_COLLAPSE_PX = 200;
+    const labelCollapsed = (body: (typeof gameState.bodies)[number]): boolean => {
+      const anchor = anchorOf(body.id);
+      // Own anchor (planet/star) — never collapsed; it IS the system label.
+      if (!anchor || anchor === body.id) return false;
+      return systemPx(anchor) < SYSTEM_LABEL_COLLAPSE_PX;
+    };
+
     const bodyLabelCandidates: Array<{
       id: string; x: number; belowAnchor: number; aboveAnchor: number;
       width: number; priority: number;
@@ -879,6 +936,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     for (const body of gameState.bodies) {
       if (body.destroyedAtTick != null) continue;
       if (!(bodyLabelAlwaysOn(body) || renderContext.camera.scale > 0.4)) continue;
+      // Satellite inside a knotted-up system: the anchor speaks for it.
+      // Selection/hover always win — you must be able to see what you
+      // clicked on, at any zoom.
+      if (labelCollapsed(body)
+          && uiState.selectedBodyId !== body.id
+          && uiState.hoveredBodyId !== body.id) continue;
       const wp = bodyPosition(body, renderTick(), gameState.bodies);
       const cp = worldToCanvas(wp.x, wp.y, renderContext);
       const radius = Math.max(3, body.radius * renderContext.camera.scale);
@@ -945,7 +1008,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // furniture — at menu zoom they'd render as giant chevrons across
       // the sky. orbitAlpha is 1 in SP and at map zoom (no-op there).
       const menuHidesChrome = orbitAlpha < 0.5;
-      drawBody(body, renderContext, isSelected && !menuHidesChrome, isHovered && !menuHidesChrome, yieldsVisible, bodyLabelRows.get(body.id) ?? 0);
+      drawBody(
+        body, renderContext,
+        isSelected && !menuHidesChrome, isHovered && !menuHidesChrome,
+        yieldsVisible, bodyLabelRows.get(body.id) ?? 0,
+        // System-level collapse: a moon in a knotted system defers to its
+        // planet's label. Selection/hover always keep their own name.
+        labelCollapsed(body) && !isSelected && !isHovered,
+      );
       // Asteroid-weapon overlay: flame trail + projected impact path
       // + pulsing crosshair on the target. drawBody already places
       // the body's icon at its ram-mode position via bodyPosition.
@@ -1041,33 +1111,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       cur.set(factionId, (cur.get(factionId) ?? 0) + 1);
     };
 
-    // System grouping helpers — shared by the ship loop's transit-collapse
-    // and the badge block. A moon rolls up to its planet; a planet (parent
-    // is the star) is its own anchor.
-    const bodyById2 = new Map(gameState.bodies.map(b => [b.id, b] as const));
-    const childrenOf2 = new Map<string, typeof gameState.bodies>();
-    for (const b of gameState.bodies) {
-      if (!b.parent) continue;
-      const arr = childrenOf2.get(b.parent) ?? [];
-      arr.push(b);
-      childrenOf2.set(b.parent, arr);
-    }
-    const isStarLike = (b: (typeof gameState.bodies)[number] | undefined) =>
-      !!b && (b.type === 'star' || b.type === 'black_hole');
-    const anchorOf = (id: string | undefined | null): string | null => {
-      if (!id) return null;
-      const b = bodyById2.get(id);
-      if (!b) return null;
-      const p = b.parent ? bodyById2.get(b.parent) : undefined;
-      return (p && !isStarLike(p)) ? p.id : id;
-    };
-    const systemPx = (anchorId: string): number => {
-      const kids = childrenOf2.get(anchorId) ?? [];
-      let maxOrbit = 0;
-      for (const k of kids) if (k.orbitRadius > maxOrbit) maxOrbit = k.orbitRadius;
-      const anchor = bodyById2.get(anchorId);
-      return (maxOrbit > 0 ? maxOrbit : (anchor?.radius ?? 4)) * camera.scale;
-    };
     // Sprite ⇄ badge blend for a body's SYSTEM: 0 = count badge, 1 =
     // individual hulls, crossfading over SPRITE_FADE_PX above the
     // moon-ring threshold. Anchored on the SAME px rule that gates the

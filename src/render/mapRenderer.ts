@@ -1631,6 +1631,12 @@ export function drawBody(
    *  labels (LobbyMapPreview, tests). MapCanvas computes this once per
    *  frame over all visible bodies and passes it in. */
   labelRow: number = 0,
+  /** System-level label collapse (MapCanvas SYSTEM_LABEL_COLLAPSE_PX):
+   *  true means this body is a satellite in a system that's currently a
+   *  tight knot on screen, so its anchor's label speaks for it and this
+   *  one is skipped. Everything else about the body still draws. Default
+   *  false keeps every other caller (lobby preview, tests) unchanged. */
+  labelSuppressed: boolean = false,
 ) {
   const pos = bodyPosition(body, ctx.t, ctx.bodies);
   const canvasPos = worldToCanvas(pos.x, pos.y, ctx);
@@ -1679,7 +1685,7 @@ export function drawBody(
   // Sol; otherwise only at zoomed-in scales. Black holes ride the same
   // always-on rule as stars so "CYGNUS X" stays readable when the
   // player is pulled all the way out hunting for the far systems.
-  const alwaysShowLabel = bodyLabelAlwaysOn(body);
+  const alwaysShowLabel = bodyLabelAlwaysOn(body) && !labelSuppressed;
   // Rows stagger up OR down from the body's own two anchors (never
   // sideways, never onto a neighbour's territory) — see
   // bodyLabelRowTop. Mirrors exactly what MapCanvas's planBodyLabels
@@ -1688,7 +1694,7 @@ export function drawBody(
   const belowAnchor = canvasPos.y + radius + 14;
   const aboveAnchor = canvasPos.y - radius - 14 - BODY_LABEL_ROW_HEIGHT;
   const rowTop = bodyLabelRowTop(belowAnchor, aboveAnchor, labelRow);
-  if (alwaysShowLabel || ctx.camera.scale > 0.4) {
+  if (!labelSuppressed && (alwaysShowLabel || ctx.camera.scale > 0.4)) {
     // Zoom-gated labels fade in over 150ms (§E7) instead of popping at
     // the 0.4-scale threshold. Always-on labels skip the bookkeeping.
     let labelAlpha = 1;
