@@ -31,6 +31,8 @@ const MAJOR_RE = /destroyed|fell|impact|DISCOVERY|victor|wins the|detonat|assume
 const THRESHOLD = 5;       // strictly more than this many majors → offer
 const SCENE_CAP = 8;       // a long absence is a highlight reel, not a slog
 const SCENE_MS = 3200;
+/** Hard ceiling on one full playback — nobody's recap runs longer. */
+const TOTAL_MS_CAP = 20_000;
 
 const KEY = () => `recap:lastSeenCount:${typeof window !== 'undefined' ? window.location.pathname : 'default'}`;
 
@@ -72,7 +74,7 @@ function fxFor(line: string): 'boom' | 'bloom' | undefined {
 }
 
 export const RecapOverlay: React.FC = () => {
-  const { gameState, focusBody, selectBody } = useGameContext();
+  const { gameState, focusBody } = useGameContext();
   const [scenes, setScenes] = useState<Scene[] | null>(null);  // null = no offer
   const [playing, setPlaying] = useState(false);
   const [idx, setIdx] = useState(0);
@@ -123,12 +125,18 @@ export const RecapOverlay: React.FC = () => {
   }, [gameState.combatLog, gameState.chronicleFocus, gameState.chronicleFlavor, gameState.ships, gameState.bodies]);
 
   const scene = playing && scenes ? scenes[idx] : null;
+  const sceneMs = scenes && scenes.length > 0
+    ? Math.min(SCENE_MS, Math.floor(TOTAL_MS_CAP / scenes.length))
+    : SCENE_MS;
 
   // Fly the camera on scene change; pendingFx plays the queued effects
   // once the body is framed — the recap is a guided tour of that queue.
   useEffect(() => {
     if (!scene) return;
-    if (scene.bodyId) { selectBody(scene.bodyId); focusBody(scene.bodyId); }
+    // focusBody ONLY — selectBody opens the world-menu close-up, which
+    // covered the entire recap (captions included) the moment the camera
+    // arrived. The recap is a fly-by, not an inspection.
+    if (scene.bodyId) focusBody(scene.bodyId);
     // The pending-FX queue plays each real event exactly once ever, so a
     // REPLAY spawns its own effect: blast or bloom at the scene body,
     // delayed so the camera tween lands first. Unique id per showing —
@@ -140,14 +148,14 @@ export const RecapOverlay: React.FC = () => {
       fxT = setTimeout(() => {
         if (kind === 'bloom') spawnDiscoveryBloom(`recap_${Date.now()}_${bid}`, bid);
         else enqueueDetonation(`recap_${Date.now()}_${bid}`, bid, null);
-      }, 700);
+      }, Math.min(700, Math.floor(sceneMs * 0.35)));
     }
     const t = setTimeout(() => {
       setIdx(i => {
         if (!scenes || i + 1 >= scenes.length) { setPlaying(false); setScenes(null); return i; }
         return i + 1;
       });
-    }, SCENE_MS);
+    }, sceneMs);
     return () => { clearTimeout(t); if (fxT) clearTimeout(fxT); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scene]);
@@ -213,7 +221,7 @@ export const RecapOverlay: React.FC = () => {
   if (!playing) {
     // The offer — one small card, two exits, zero blocking of the map.
     return (
-      <div style={{ position: 'fixed', top: 64, left: '50%', transform: 'translateX(-50%)', zIndex: 60,
+      <div style={{ position: 'fixed', top: 64, left: '50%', transform: 'translateX(-50%)', zIndex: 300,
                     background: 'rgba(10,16,24,0.96)', border: '1px solid #4ecdc4', borderRadius: 8,
                     padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 14,
                     boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}>
@@ -234,7 +242,7 @@ export const RecapOverlay: React.FC = () => {
 
   return (
     <div onClick={() => setIdx(i => (scenes && i + 1 < scenes.length ? i + 1 : (dismiss(), i)))}
-         style={{ position: 'fixed', inset: 0, zIndex: 60, cursor: 'pointer' }}>
+         style={{ position: 'fixed', inset: 0, zIndex: 300, cursor: 'pointer' }}>
       {/* Letterbox bars — the map stays live between them. */}
       <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 64, background: 'rgba(0,0,0,0.88)' }} />
       <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 110, background: 'rgba(0,0,0,0.88)',
