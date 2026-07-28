@@ -20,7 +20,7 @@
 // trickles don't accumulate into a stale mega-recap next week.
 // ============================================================
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 
 // GameState carries no machine-kind array (only focus/flavor are
