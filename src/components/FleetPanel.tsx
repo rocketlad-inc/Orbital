@@ -1081,6 +1081,23 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                 {myFleets.map(f => {
                   const full = fullFleetId(f.id);
                   return (
+                    (() => {
+                      // Current orders, derived from the members: when every
+                      // member agrees, that IS the fleet's setting — light it
+                      // up so the buttons read as state, not just verbs.
+                      // Mixed (mid-poll or hand-edited ships) shows nothing
+                      // active rather than guessing.
+                      const members = f.shipIds
+                        .map(id => gameState.ships.find(sh => sh.id === id))
+                        .filter((sh): sh is Ship => !!sh);
+                      const agree = <T,>(get: (s: Ship) => T): T | null => {
+                        if (members.length === 0) return null;
+                        const v = get(members[0]);
+                        return members.every(sh => get(sh) === v) ? v : null;
+                      };
+                      const curStance = agree(sh => sh.stance ?? 'attack');
+                      const curRetreat = agree(sh => sh.retreatHpPct ?? null);
+                      return (
                     <div key={f.id} style={{ border: '1px solid #24344a', borderRadius: 6, padding: '8px 10px', marginBottom: 8 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                         <b style={{ fontSize: 13 }}>{f.name}</b>
@@ -1088,27 +1105,47 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                         {f.leaderless ? (
                           <span style={{ color: '#ffb84d', fontSize: 11, fontWeight: 700 }}>LEADERLESS</span>
                         ) : (
-                          <span style={{ color: '#4ecdc4', fontSize: 11 }}
-                                title={(f.flagCaptainTraits ?? []).join(', ') || undefined}>
+                          <span style={{ color: '#4ecdc4', fontSize: 11 }}>
                             ★ {f.flagCaptainName}{f.flagCaptainRank ? ` · R${f.flagCaptainRank}` : ''}
+                            {(f.flagCaptainTraits ?? []).length > 0 && (
+                              <span style={{ color: '#a78bfa', marginLeft: 6 }}>
+                                {(f.flagCaptainTraits ?? []).join(' · ')}
+                              </span>
+                            )}
                           </span>
                         )}
                         <span style={{ flex: 1 }} />
                         <button style={fleetBtn} title="Check every member into the bulk-action list — then move or order them together"
                                 onClick={() => setSelectedIds(new Set(f.shipIds))}>Select all</button>
-                        <button style={fleetBtn} onClick={() => void fleetApi('DELETE', `/fleets/${encodeURIComponent(full)}`)}>Disband</button>
+                        <button style={fleetBtn}
+                                title="Dissolve the fleet — members keep their current orders"
+                                onClick={() => {
+                                  if (window.confirm(`Disband ${f.name}? Members keep their current orders.`)) {
+                                    void fleetApi('DELETE', `/fleets/${encodeURIComponent(full)}`);
+                                  }
+                                }}>Disband</button>
                       </div>
                       <div style={{ display: 'flex', gap: 6, marginTop: 7, alignItems: 'center', flexWrap: 'wrap' }}>
                         {(['attack', 'defensive', 'hold'] as const).map(st => (
-                          <button key={st} style={{ ...fleetBtn, opacity: f.leaderless ? 0.4 : 1 }}
+                          <button key={st}
+                                  style={{ ...fleetBtn,
+                                           opacity: f.leaderless ? 0.4 : 1,
+                                           // Buttons read as STATE: the stance every
+                                           // member currently holds is lit.
+                                           ...(curStance === st ? {
+                                             background: 'rgba(78,205,196,0.18)',
+                                             borderColor: '#4ecdc4',
+                                             color: '#4ecdc4',
+                                           } : {}) }}
                                   disabled={!!f.leaderless}
+                                  aria-pressed={curStance === st}
                                   onClick={() => void fleetApi('PATCH', `/fleets/${encodeURIComponent(full)}/orders`, { stance: st })}>
                             {st === 'attack' ? 'Attack' : st === 'defensive' ? 'Defend' : 'Hold'}
                           </button>
                         ))}
                         <select style={{ ...fleetBtn, opacity: f.leaderless ? 0.4 : 1 } as React.CSSProperties}
                                 disabled={!!f.leaderless}
-                                defaultValue=""
+                                value={curRetreat == null ? '' : String(curRetreat)}
                                 onChange={e => {
                                   const v = e.target.value;
                                   void fleetApi('PATCH', `/fleets/${encodeURIComponent(full)}/orders`,
@@ -1136,6 +1173,8 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                         )}
                       </div>
                     </div>
+                      );
+                    })()
                   );
                 })}
               </div>
