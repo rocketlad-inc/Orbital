@@ -172,6 +172,25 @@ function pickTemplate(bankName, bank, used) {
 
 function safeJson(s) { try { return JSON.parse(s || '{}') || {}; } catch { return {}; } }
 
+/** "was also lost" clause for settlements destroyed alongside ships in
+ *  a battle. Folds in total population when we have it — a bare name
+ *  ("the settlement Qualor II Depot was also lost") reads as a line
+ *  item; naming how many colonists went with it gives the loss actual
+ *  weight. Population is a small stat (settlements cap at 10), so it's
+ *  a numeral readout rather than a counted noun, same reasoning as the
+ *  client-side flavor bank. Gracefully omits the clause for older
+ *  chronicle rows that predate pop_lost (totalPop <= 0). */
+function settlementLossClause(names, totalPop, used) {
+  if (!names.length) return '';
+  const nameStr = nameList(names, 2, used);
+  const many = names.length > 1;
+  // Closed on both sides as a proper parenthetical aside — a dash that
+  // only opens ("New City — population 6 was lost") runs the aside
+  // straight into the verb with no boundary.
+  const popClause = totalPop > 0 ? ` — population ${numWord(totalPop)} —` : '';
+  return ` The settlement${many ? 's' : ''} ${nameStr}${popClause} ${many ? 'were' : 'was'} also lost in the fighting.`;
+}
+
 /** Builds a story object: renders BOTH a body sentence (narrative
  *  bank) and a short ALL-CAPS headline (headline bank) from the same
  *  context, tags it with a newsworthiness weight (+ small jitter so
@@ -455,6 +474,42 @@ const ASTEROID_IMPACT_HEADLINE = [
   c => `WHO THREW THE ROCK AT ${c.body.toUpperCase()}?`,
   c => `KINETIC WARFARE COMES TO ${c.body.toUpperCase()}`,
   c => `${c.body.toUpperCase()} YIELDS CRIPPLED BY IMPACT`,
+];
+
+// Appended to a single-ship-loss battle story when that ship had a
+// named captain aboard (worker/room.js now sends captain_name on
+// ship_destroyed rows). Split lost/rescued/unknown because the
+// captain's actual fate is a SEPARATE chronicle row (captain_lost /
+// captain_rescued, fired by the same survival roll worker/room.js
+// resolveCaptainOnDeath does right after the kill) — asserting "died"
+// here would flatly contradict a rescue reported two lines down.
+// Reserved for single-ship stories only: folding a name into an
+// already-clustered multi-ship list reads as clutter, not gravity.
+const CAPTAIN_LOST_CLAUSE = [
+  name => ` Captain ${b(name)} died at the helm.`,
+  name => ` Captain ${b(name)} went down with the ship.`,
+  name => ` Command lists Captain ${b(name)} among the dead.`,
+  name => ` Captain ${b(name)} did not survive the engagement.`,
+  name => ` The name Captain ${b(name)} now joins the roll of the fallen.`,
+  name => ` Captain ${b(name)} was still aboard when the hull gave out.`,
+];
+
+const CAPTAIN_RESCUED_CLAUSE = [
+  name => ` Captain ${b(name)} was pulled from the wreck alive.`,
+  name => ` Captain ${b(name)} survived and is already back on duty.`,
+  name => ` A rescue craft reached Captain ${b(name)} before the hull cooled.`,
+  name => ` Captain ${b(name)} made it out — the ship didn't.`,
+  name => ` Command confirms Captain ${b(name)} recovered, shaken but alive.`,
+  name => ` Captain ${b(name)} lives to fly again.`,
+];
+
+// When the captain's fate isn't resolved within THIS digest's window
+// (rescued/lost row fell outside it, or the lookup simply missed) —
+// say only what's certain: someone commanded the ship. No claim about
+// what happened to them.
+const CAPTAIN_UNKNOWN_FATE_CLAUSE = [
+  name => ` Captain ${b(name)} was in command.`,
+  name => ` Captain ${b(name)} was aboard at the time.`,
 ];
 
 const INDUSTRY_BOTH = [
@@ -822,7 +877,24 @@ const MORE_INCIDENTS_TAIL = [
 // story returned is { text, headline, weight }.
 // ------------------------------------------------------------
 
-function buildBattleStories(rows, used, locator) {
+/** captain_name -> 'lost' | 'rescued', built from captain_lost /
+ *  captain_rescued rows in the same digest window. Both are chronicled
+ *  separately from the ship_destroyed row they belong to (see
+ *  worker/room.js resolveCaptainOnDeath), so a battle story that wants
+ *  to name a captain's fate has to cross-reference rather than assume. */
+function buildCaptainFateMap(rows) {
+  const fate = new Map();
+  for (const row of rows) {
+    if (row.kind !== 'captain_lost' && row.kind !== 'captain_rescued') continue;
+    const p = safeJson(row.payload);
+    if (typeof p.captain_name === 'string' && p.captain_name) {
+      fate.set(p.captain_name, row.kind === 'captain_lost' ? 'lost' : 'rescued');
+    }
+  }
+  return fate;
+}
+
+function buildBattleStories(rows, used, locator, captainFate) {
   const stories = [];
 
   // --- ship_destroyed + settlement_destroyed, clustered by body ---
@@ -835,11 +907,19 @@ function buildBattleStories(rows, used, locator) {
     const cluster = byBody.get(bodyId);
     const owner = p.owner_faction_name ?? 'An unknown faction';
     const killer = p.killer_faction_name ?? null;
-    if (!cluster.losses.has(owner)) cluster.losses.set(owner, { shipNames: [], settlementNames: [], count: 0, killers: new Map() });
+    if (!cluster.losses.has(owner)) {
+      cluster.losses.set(owner, { shipNames: [], shipCaptains: [], settlementNames: [], settlementPop: 0, count: 0, killers: new Map() });
+    }
     const bucket = cluster.losses.get(owner);
     bucket.count += 1;
-    if (row.kind === 'ship_destroyed' && p.ship_name) bucket.shipNames.push(p.ship_name);
-    if (row.kind === 'settlement_destroyed' && p.settlement_name) bucket.settlementNames.push(p.settlement_name);
+    if (row.kind === 'ship_destroyed') {
+      if (p.ship_name) bucket.shipNames.push(p.ship_name);
+      if (typeof p.captain_name === 'string' && p.captain_name) bucket.shipCaptains.push(p.captain_name);
+    }
+    if (row.kind === 'settlement_destroyed') {
+      if (p.settlement_name) bucket.settlementNames.push(p.settlement_name);
+      bucket.settlementPop += Number(p.pop_lost) || 0;
+    }
     bucket.killers.set(killer, (bucket.killers.get(killer) ?? 0) + 1);
   }
 
@@ -861,10 +941,22 @@ function buildBattleStories(rows, used, locator) {
         loser: owner, winner, body: locBody.name, bodyLoc: locBody.full, count: bucket.count,
         namesClause: names ? `, including ${names}` : '',
       };
-      let extra = '';
-      if (bucket.settlementNames.length > 0) {
-        const sNames = nameList(bucket.settlementNames, 2, used);
-        extra = ` The settlement${bucket.settlementNames.length > 1 ? 's' : ''} ${sNames} ${bucket.settlementNames.length > 1 ? 'were' : 'was'} also lost in the fighting.`;
+      let extra = settlementLossClause(bucket.settlementNames, bucket.settlementPop, used);
+      // Only for a single named ship — a multi-ship loss already gets
+      // its gravity from the casualty count + ship-name list, and
+      // stacking captain names onto that list would clutter rather
+      // than add weight.
+      if (bucket.count === 1 && bucket.shipCaptains.length === 1) {
+        const capName = bucket.shipCaptains[0];
+        const capFate = captainFate.get(capName);
+        // Distinct bank + key per fate rather than one shared key across
+        // three differently-sized banks — pickTemplate's "don't repeat"
+        // tracking is per bank-name, and mixing banks under one key
+        // would muddy that rotation for no benefit.
+        const [bankName, bank] = capFate === 'lost' ? ['captain_lost_clause', CAPTAIN_LOST_CLAUSE]
+          : capFate === 'rescued' ? ['captain_rescued_clause', CAPTAIN_RESCUED_CLAUSE]
+          : ['captain_unknown_clause', CAPTAIN_UNKNOWN_FATE_CLAUSE];
+        extra += pickTemplate(bankName, bank, used)(capName);
       }
       const weight = BATTLE_BASE_WEIGHT + BATTLE_PER_CASUALTY * bucket.count;
       stories.push(winner
@@ -886,10 +978,14 @@ function buildBattleStories(rows, used, locator) {
 
       let settlementExtra = '';
       const settlementLosers = [];
-      if (bucketA.settlementNames.length) settlementLosers.push({ who: fa, names: bucketA.settlementNames });
-      if (bucketB.settlementNames.length) settlementLosers.push({ who: fb, names: bucketB.settlementNames });
+      if (bucketA.settlementNames.length) settlementLosers.push({ who: fa, names: bucketA.settlementNames, pop: bucketA.settlementPop });
+      if (bucketB.settlementNames.length) settlementLosers.push({ who: fb, names: bucketB.settlementNames, pop: bucketB.settlementPop });
       if (settlementLosers.length > 0) {
-        settlementExtra = ' ' + settlementLosers.map(s => `${b(s.who)} also lost the settlement ${nameList(s.names, 2, used)} in the fighting.`).join(' ');
+        settlementExtra = ' ' + settlementLosers.map(s => {
+          const many = s.names.length > 1;
+          const popClause = s.pop > 0 ? ` — population ${numWord(s.pop)} —` : '';
+          return `${b(s.who)} also lost the settlement${many ? 's' : ''} ${nameList(s.names, 2, used)}${popClause} in the fighting.`;
+        }).join(' ');
       }
 
       const lo = Math.min(countA, countB);
@@ -1148,9 +1244,10 @@ function fieldFromStories(title, stories, used) {
 function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator) {
   const used = new Map(); // bank-name -> Set(indices used this edition)
 
+  const captainFate = buildCaptainFateMap(rows);
   const sections = {
     victory:     buildVictoryStories(rows, used, factionNames),
-    battles:     buildBattleStories(rows, used, locator),
+    battles:     buildBattleStories(rows, used, locator, captainFate),
     politics:    buildPoliticsStories(rows, used, factionNames),
     discoveries: buildDiscoveryStories(rows, used, locator, factionNames),
     colonies:    buildColonyStories(rows, used, locator),

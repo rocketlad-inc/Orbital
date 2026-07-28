@@ -1860,7 +1860,7 @@ export class Room {
         `SELECT s.id, s.owner_faction_id, s.parent_body_id, s.hp, s.hp_max, s.damage_per_tick,
                 COALESCE(c.rank, s.rank) AS rank, s.ship_class, s.name, s.last_combat_tick,
                 s.stance, s.retreat_hp_pct, s.detonate_hp_pct, s.parts_json,
-                s.captain_id, c.traits_json AS captain_traits
+                s.captain_id, c.traits_json AS captain_traits, c.name AS captain_name
            FROM game_ships s
            LEFT JOIN game_captains c ON c.id = s.captain_id
           WHERE s.game_id = ? AND s.status = 'active'`,
@@ -2065,7 +2065,7 @@ export class Room {
     const livingSettlements = (await this.env.DB
       .prepare(
         `SELECT id, name, body_id, owner_faction_id, type, hp, hp_max,
-                buildings_json, last_combat_tick
+                buildings_json, last_combat_tick, population
            FROM game_settlements
           WHERE game_id = ? AND destroyed_at_tick IS NULL`,
       )
@@ -2365,6 +2365,10 @@ export class Room {
           owner_faction_name: factionNameById.get(s.owner_faction_id) ?? null,
           killer_faction_id: killerFid,
           killer_faction_name: killerFid ? (factionNameById.get(killerFid) ?? null) : null,
+          // Adds weight to the loss beyond a bare name -- the client
+          // flavor engine already had a {popLost} template slot wired
+          // up (src/game/flavorEngine.ts) but nothing ever sent it.
+          pop_lost: s.population ?? 0,
         });
         try {
           await this.env.DB
@@ -3098,6 +3102,11 @@ export class Room {
             killer_faction_id: killerFid,
             killer_faction_name: killerFid ? (factionNameById.get(killerFid) ?? null) : null,
             owner_faction_name: factionNameById.get(lost.owner_faction_id) ?? null,
+            // `lost` is the allShips row (captain_id/captain_name joined
+            // above) -- still the CORRECT captain here even though
+            // resolveCaptainOnDeath below may detach/rescue them, since
+            // that runs AFTER this insert and reads its own fresh query.
+            captain_name: lost.captain_name ?? null,
           });
           try {
             await this.env.DB

@@ -35,6 +35,15 @@ export const FLAVOR_BANK: Record<string, string[]> = {
     "{shipName} burned bright and brief over {body}. {actor} cracked the {partner} {shipClass} open.",
     "Scratch one {shipClass}. {partner}'s {shipName} is gone — {body} orbit, {tick}.",
     "{shipName} went quiet above {body} at {tick}. The {partner} {shipClass} isn't coming back.",
+    // Captain-aware — only picked when the ship had one aboard
+    // (fillTemplate skips these otherwise; the plain variants above
+    // are the fallback for captain-less hulls and pre-captains rows).
+    "{shipName} goes dark over {body}. Captain {captainName} was at the helm. {actor} confirms the kill.",
+    "Kill confirmed at {tick}: {partner}'s {shipClass} {shipName}, Captain {captainName} commanding, breaks up over {body}.",
+    "{actor} guns open up over {body}. {shipName} folds — Captain {captainName} aboard. {partner} loses a {shipClass}.",
+    "Last transmission from {shipName}, Captain {captainName} commanding: static, then nothing. {body} orbit, {tick}.",
+    "The {shipClass} {shipName} stops answering hails at {tick}. Captain {captainName} was in command. {actor} on the trigger.",
+    "Hull breach, then silence. {partner}'s {shipName} — Captain {captainName}'s ship — dies above {body}.",
   ],
   settlement_destroyed: [
     "{actor} ordnance levels {settlementName} on {body}. The {settlementType} stops answering at {tick}.",
@@ -47,6 +56,17 @@ export const FLAVOR_BANK: Record<string, string[]> = {
     "{actor} razed {settlementName} at {tick}. The {settlementType} is a crater on {body}.",
     "{settlementName} took the hit and didn't get up — the {settlementType} on {body} went dark at {tick}.",
     "Whatever {partner} built at {settlementName} is ash. The {settlementType} on {body} is gone.",
+    // Population-aware — {popLost} is a small stat (settlements cap at
+    // 10 colonists), so it's phrased as a numeral readout rather than a
+    // counted noun ("population 3", not "3 colonists") to dodge
+    // singular/plural agreement entirely — templates are dumb strings
+    // with no conditionals, so there's no way to branch on popLost===1.
+    "{actor} ordnance levels {settlementName} on {body} — population {popLost}, gone dark. The {settlementType} stops answering at {tick}.",
+    "{partner}'s {settlementName} burns. Population {popLost}, status unknown. {actor} confirms the {settlementType} on {body} is gone.",
+    "The lights of {settlementName} go out over {body} — population {popLost} with them. {actor} did this.",
+    "{settlementName} is rubble, population {popLost} unaccounted for. {actor} broke the {settlementType}; {partner} lost the ground beneath it.",
+    "{actor} razed {settlementName} at {tick}. Population {popLost}. The {settlementType} is a crater on {body}.",
+    "Whatever {partner} built at {settlementName} — population {popLost} — is ash now.",
   ],
   ship_damaged: [
     "{partner}'s {shipName} limps off {body} trailing atmosphere. The {shipClass} held; {actor} pressed and broke contact.",

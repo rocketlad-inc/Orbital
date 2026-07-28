@@ -227,6 +227,11 @@ function resolveVars(ev: FlavorEvent, ctx: FlavorContext): Record<string, string
         shipClass: (str('ship_class') ?? '').replace(/^\w/, c => c.toUpperCase()) || undefined,
         body: str('body_name'),
         hpLost: num('hp_lost'),
+        // Only set on ships that had a captain aboard — older chronicle
+        // rows (pre-captains) and captain-less ships leave this
+        // undefined, which fillTemplate treats as "skip any variant
+        // that needs it."
+        captainName: str('captain_name'),
         tick,
       };
     }
