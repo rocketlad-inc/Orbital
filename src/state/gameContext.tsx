@@ -589,27 +589,17 @@ export function GameContextProvider({
       // the global GameState.orders stays in sync.
       const allOrders = mergedShips.flatMap(s => s.orders);
 
-      // Fleets are client-only — there's no server table or /state field
-      // for them. Preserve the local list across the poll, but prune any
-      // fleet whose ships no longer exist (destroyed, deserted by ID
-      // change) so the panel doesn't accumulate ghost fleets.
-      const liveShipIds = new Set(mergedShips.map(s => s.id));
-      const prunedFleets = (prev.fleets ?? []).map(f => ({
-        ...f,
-        shipIds: f.shipIds.filter(id => liveShipIds.has(id)),
-      })).filter(f => f.shipIds.length >= 1);
-      // Re-apply each surviving fleet's id onto its members' Ship.fleetId
-      // since the server snapshot doesn't carry that field.
-      const fleetByMember = new Map<string, string>();
-      for (const f of prunedFleets) {
-        for (const id of f.shipIds) fleetByMember.set(id, f.id);
-      }
-      const finalShips = fleetByMember.size > 0
-        ? mergedShips.map(s => {
-            const fleetId = fleetByMember.get(s.id);
-            return fleetId === s.fleetId ? s : { ...s, fleetId };
-          })
-        : mergedShips;
+      // Fleets are SERVER-authoritative now (game_fleets + /state.fleets,
+      // DESIGN-fleets.md) — the MP provider maps them onto the snapshot,
+      // ship.fleetId included. This merge predated the table: it said
+      // "client-only, no /state field", rebuilt the list from prev.fleets
+      // (which starts empty and therefore STAYS empty), and overwrote the
+      // server's fleets on every poll. Result: a fleet existed on the
+      // server and in the incoming snapshot, but the context the panel
+      // reads never carried one — form a fleet, watch nothing appear
+      // (QA game: "Tuvok's Squadron" in /state, FLEETS section absent).
+      // The incoming snapshot passes through untouched.
+      const finalShips = mergedShips;
 
       // Body ramPlan preservation. Same pattern as plannedTransit
       // for ships: when the player commits a RAM (CONFIRM IMPACT),
@@ -636,7 +626,7 @@ export function GameContextProvider({
         bodies: mergedBodies,
         ships: finalShips,
         orders: allOrders,
-        fleets: prunedFleets,
+        fleets: externalState.fleets ?? [],
       };
     });
   }, [externalState]);
