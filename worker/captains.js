@@ -24,6 +24,52 @@ export const CAPTAIN_TRAITS = {
   colonist:      { name: 'Colonist',      settleCostMul: 0.8 },
 };
 export const TRAIT_IDS = Object.keys(CAPTAIN_TRAITS);
+
+/** Every faction fields this many captains before money enters it —
+ *  seeded at game start (and topped up for pre-existing games) by
+ *  ensureCaptainFloor. Beyond the floor, captains are RECRUITED with
+ *  metal + credits — officers are a resource now, not a free perk. */
+export const STARTING_CAPTAINS = 10;
+export const RECRUIT_COST = { metal: 50, gold: 100 };
+
+/**
+ * Bring every faction in the game up to STARTING_CAPTAINS total ACTIVE
+ * captains (assigned + bank). New games: seeds the initial ten on the
+ * first tick. Pre-existing games: no-ops for factions that already
+ * field ten or more (their ships were auto-captained under the old
+ * free-mint model), tops up anyone under. Idempotent and cheap.
+ */
+export async function ensureCaptainFloor(db, gameId, tick) {
+  const counts = (await db
+    .prepare(`SELECT f.id AS faction_id,
+                     (SELECT COUNT(*) FROM game_captains c
+                       WHERE c.game_id = f.game_id AND c.faction_id = f.id
+                         AND c.status = 'active') AS n
+                FROM game_factions f WHERE f.game_id = ?`)
+    .bind(gameId).all()).results ?? [];
+  const short = counts.filter(r => (r.n ?? 0) < STARTING_CAPTAINS);
+  if (short.length === 0) return;
+  const names = new Set(
+    ((await db.prepare(`SELECT name FROM game_captains WHERE game_id = ? AND status = 'active'`)
+      .bind(gameId).all()).results ?? []).map(r => r.name),
+  );
+  let idx = 0;
+  for (const row of short) {
+    for (let i = row.n ?? 0; i < STARTING_CAPTAINS; i++) {
+      const c = rollCaptain(gameId, row.faction_id, tick, names, idx++);
+      names.add(c.name);
+      await db
+        .prepare(
+          `INSERT INTO game_captains
+             (id, game_id, faction_id, name, avatar_id, bio, rank, combat_history,
+              traits_json, ship_id, status, created_at_tick)
+           VALUES (?, ?, ?, ?, ?, ?, 0, NULL, ?, NULL, 'active', ?)`)
+        .bind(c.id, gameId, row.faction_id, c.name, c.avatar_id, c.bio,
+              JSON.stringify(c.traits), tick)
+        .run();
+    }
+  }
+}
 export const AVATAR_IDS = ['a1','a2','a3','a4','a5','a6','a7','a8','a9','a10','a11','a12'];
 
 const BIO_TEMPLATES = [
@@ -72,14 +118,12 @@ export async function ensureCaptains(db, gameId, tick) {
   const orphans = (await db
     .prepare(`SELECT id, owner_faction_id, rank, combat_history FROM game_ships
                WHERE game_id = ? AND status = 'active' AND captain_id IS NULL
+               ORDER BY CASE WHEN ship_class IN ('corvette','frigate','destroyer')
+                             THEN 0 ELSE 1 END, RANDOM()
                LIMIT 40`)
     .bind(gameId).all()).results ?? [];
   if (orphans.length === 0) return;
 
-  const names = new Set(
-    ((await db.prepare(`SELECT name FROM game_captains WHERE game_id = ? AND status = 'active'`)
-      .bind(gameId).all()).results ?? []).map(r => r.name),
-  );
   // Bank pull: longest-waiting unassigned captain per faction.
   const bank = (await db
     .prepare(`SELECT id, faction_id FROM game_captains
@@ -92,7 +136,6 @@ export async function ensureCaptains(db, gameId, tick) {
     bankByFaction.get(c.faction_id).push(c.id);
   }
 
-  let idx = 0;
   for (const ship of orphans) {
     const queue = bankByFaction.get(ship.owner_faction_id);
     if (queue && queue.length > 0) {
@@ -103,18 +146,11 @@ export async function ensureCaptains(db, gameId, tick) {
       ]);
       continue;
     }
-    const c = rollCaptain(gameId, ship.owner_faction_id, tick, names, idx++);
-    await db.batch([
-      db.prepare(
-        `INSERT INTO game_captains
-           (id, game_id, faction_id, name, avatar_id, bio, rank, combat_history,
-            traits_json, ship_id, status, created_at_tick)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`)
-        .bind(c.id, gameId, ship.owner_faction_id, c.name, c.avatar_id, c.bio,
-              ship.rank ?? 0, ship.combat_history ?? null,
-              JSON.stringify(c.traits), ship.id, tick),
-      db.prepare('UPDATE game_ships SET captain_id = ? WHERE id = ?').bind(c.id, ship.id),
-    ]);
+    // Bank empty: the ship sails UNCAPTAINED. Captains are a finite
+    // resource now (STARTING_CAPTAINS + recruits) — the old branch that
+    // minted a free captain for every hull is gone. Recruit more with
+    // metal + credits (POST /captains/recruit).
+    continue;
   }
 }
 

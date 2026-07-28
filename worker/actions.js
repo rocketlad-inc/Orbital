@@ -4,7 +4,7 @@ import {
   validateParts, partsCost, parsePartsJson,
   countPart, detonatorDamage,
 } from './shipDesigns.js';
-import { rollCaptain, resolveCaptainOnDeath, AVATAR_IDS } from './captains.js';
+import { rollCaptain, resolveCaptainOnDeath, AVATAR_IDS, RECRUIT_COST } from './captains.js';
 import { runDigestForGame } from './digest.js';
 import {
   factionTechLevels, gatingEnabled, hasFeature, lockedError,
@@ -2717,6 +2717,16 @@ async function handleCreateCaptain(req, env, ctx) {
     .bind(gameId, me.id).first();
   if ((bankCount?.c ?? 0) >= 20) return err(409, 'bank_full', 'captain bank is full (20 unassigned max)');
 
+  // Recruiting costs metal + credits (DESIGN-captains economy update):
+  // every faction fields STARTING_CAPTAINS for free via the floor pass;
+  // past that, officers are bought. Checked against the LIVE row and
+  // debited in the same batch as the insert so a double-click can't
+  // recruit two captains for one payment.
+  if ((me.metal ?? 0) < RECRUIT_COST.metal || (me.gold ?? 0) < RECRUIT_COST.gold) {
+    return err(409, 'cannot_afford',
+      `recruiting a captain costs ${RECRUIT_COST.metal}M + ${RECRUIT_COST.gold}C`);
+  }
+
   const game = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
   const tick = game?.current_tick ?? 0;
   const names = new Set(
@@ -2729,14 +2739,17 @@ async function handleCreateCaptain(req, env, ctx) {
   if (typeof body.name === 'string' && body.name.trim().length > 0) {
     name = body.name.trim().slice(0, 32);
   }
-  await env.DB
-    .prepare(
-      `INSERT INTO game_captains
-         (id, game_id, faction_id, name, avatar_id, bio, rank, traits_json, ship_id, status, created_at_tick)
-       VALUES (?, ?, ?, ?, ?, ?, 0, ?, NULL, 'active', ?)`,
-    )
-    .bind(c.id, gameId, me.id, name, c.avatar_id, c.bio, JSON.stringify(c.traits), tick)
-    .run();
+  await env.DB.batch([
+    env.DB.prepare('UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ?')
+      .bind(RECRUIT_COST.metal, RECRUIT_COST.gold, me.id),
+    env.DB
+      .prepare(
+        `INSERT INTO game_captains
+           (id, game_id, faction_id, name, avatar_id, bio, rank, traits_json, ship_id, status, created_at_tick)
+         VALUES (?, ?, ?, ?, ?, ?, 0, ?, NULL, 'active', ?)`,
+      )
+      .bind(c.id, gameId, me.id, name, c.avatar_id, c.bio, JSON.stringify(c.traits), tick),
+  ]);
   const row = await env.DB.prepare('SELECT * FROM game_captains WHERE id = ?').bind(c.id).first();
   return json({ captain: captainToJson(row) }, { status: 201 });
 }

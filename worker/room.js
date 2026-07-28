@@ -2,7 +2,7 @@ import { resolveSenate, getActiveSliders, hasActiveSanction } from './senate.js'
 import { recomputeBodyOwnership } from './factions.js';
 import { parsePartsJson, computeShipStats, countPart, detonatorDamage,
          damageProfile, defenseMitigation, MITIGATION_FLOOR } from './shipDesigns.js';
-import { ensureCaptains, resolveCaptainOnDeath, parseTraits, traitMul } from './captains.js';
+import { ensureCaptains, resolveCaptainOnDeath, parseTraits, traitMul, ensureCaptainFloor } from './captains.js';
 
 // The six tech tracks. Single source of truth for the science-victory
 // check AND the random-tech grant, so those two can't silently disagree
@@ -704,6 +704,7 @@ export class Room {
     // Covers EVERY faction (rival aces must not be stealth-nerfed) and
     // no-ops once drained. Never allowed to block the tick.
     try {
+      await ensureCaptainFloor(this.env.DB, gameId, tick);
       await ensureCaptains(this.env.DB, gameId, tick);
     } catch (e) {
       console.error('captain backfill pass failed', e);

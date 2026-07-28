@@ -633,8 +633,8 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               className="filter-chip"
               disabled={capBusy}
               onClick={() => doCap(mpActions.createCaptain())}
-              title="Roll a new captain into the bank — future builds draw from here before generating fresh"
-            >+ NEW CAPTAIN</button>
+              title="Recruit a fresh captain into the bank (50 metal + 100 credits). Ships without captains fly uncommanded — no trait, no rank growth."
+            >+ RECRUIT · 50M+100C</button>
           )}
         </div>
         {capMsg && (
