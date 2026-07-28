@@ -1542,6 +1542,18 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           if (fx.bodyId) spawnDiscoveryBloom(fx.id, fx.bodyId);
           return;
         }
+        if (fx.kind === 'damage') {
+          // A hit, not a kill — same flash machinery at a much smaller
+          // radius so "took fire" never reads as "died". This is the
+          // queued twin of the live hp-drop flash: it plays when you
+          // LOOK, so a battle fought while you were away still shows
+          // its hits instead of only its corpses.
+          const w = canvasToWorld(pos.x, pos.y, renderContext);
+          destructionFlashesRef.current.set(fx.id, {
+            pos: w, startMs: nowMs, baseRadius: 6, id: fx.id,
+          });
+          return;
+        }
         // destruction / impact both read as an explosion; impacts are
         // bigger because a whole rock hit the surface.
         const world = canvasToWorld(pos.x, pos.y, renderContext);

@@ -1047,6 +1047,26 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
           : `${t}  Captain ${cap} was recovered from the wreck at ${where} and awaits reassignment.${kills}`;
       }
 
+      if (ev.kind === 'ship_damaged') {
+        // Took fire and lived. Aggregated server-side per body+owner, so
+        // a brawl is one line ("4 ships take fire") and a lone hit names
+        // the hull and its remaining HP — the early warning that used to
+        // be missing entirely (only deaths were chronicled).
+        const n = Number(parsed.count ?? 1);
+        const list = Array.isArray(parsed.ships) ? parsed.ships as Array<Record<string, unknown>> : [];
+        const first = list.length > 0 ? list[0] : null;
+        const where = (parsed.body_name as string) ?? 'deep space';
+        const owner = nameOfFaction(ev.actor_faction_id, undefined);
+        if (n > 1) {
+          return `${t}  ${owner}: ${n} ships take fire at ${where} (${parsed.total_damage} damage)`;
+        }
+        const hpMax = first?.hp_max as number | undefined;
+        const hp = hpMax ? ` · ${first?.hp_after}/${hpMax} HP` : '';
+        const nm = (first?.ship_name as string) ?? 'A ship';
+        const dmg = (first?.damage as number) ?? parsed.total_damage;
+        return `${t}  ${owner}'s ${nm} takes ${dmg} damage at ${where}${hp}`;
+      }
+
       if (ev.kind === 'settlement_destroyed') {
         const sName = (parsed.settlement_name as string) ?? null;
         const sType = (parsed.settlement_type as string) ?? 'settlement';

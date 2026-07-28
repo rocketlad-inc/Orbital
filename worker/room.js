@@ -2962,6 +2962,12 @@ export class Room {
       // end (a destroyer cleaning up a squad shouldn't take N round-
       // trips). Map: killerShipId -> { addedRank, newHistoryRecords[] }
       const veteranAwards = new Map();
+      // Hulls that took fire and LIVED. Destruction is chronicled; being
+      // shot was not, so a player watching the log saw nothing until a
+      // ship actually died — no warning, which is exactly how you lose a
+      // world without noticing. Aggregated per body+owner below so a
+      // 20-ship brawl is one line, not twenty.
+      const damagedSurvivors = [];
       for (const [shipId, entry] of hpDeltas) {
         const cur = allShips.find(s => s.id === shipId);
         if (!cur) continue;
@@ -3013,6 +3019,67 @@ export class Room {
             .prepare('UPDATE game_ships SET hp = MAX(0, hp - ?), last_damaged_tick = ? WHERE id = ?')
             .bind(entry.total, tick, shipId)
             .run();
+          if (entry.total > 0) {
+            damagedSurvivors.push({
+              shipId,
+              dmg: entry.total,
+              name: cur.name ?? '?',
+              shipClass: cur.ship_class ?? 'ship',
+              bodyId: cur.parent_body_id ?? null,
+              ownerFid: cur.owner_faction_id ?? null,
+              hpAfter: newHp,
+              hpMax: cur.hp_max ?? null,
+            });
+          }
+        }
+      }
+
+      // --- Chronicle: ships that took fire and survived -------------
+      // One entry per (body, owner) per tick. The FX anchor is the
+      // WORST-hit hull, so the flash plays on the ship that most needs
+      // looking at. Best-effort: never fail the tick over a log line.
+      if (damagedSurvivors.length > 0) {
+        try {
+          const groups = new Map();
+          for (const d of damagedSurvivors) {
+            const key = `${d.bodyId ?? 'deep'}|${d.ownerFid ?? 'none'}`;
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(d);
+          }
+          const bodyIds = [...new Set(damagedSurvivors.map(d => d.bodyId).filter(Boolean))];
+          const bodyNameById = new Map();
+          if (bodyIds.length > 0) {
+            const ph = bodyIds.map(() => '?').join(',');
+            const rows = (await this.env.DB
+              .prepare(`SELECT id, name FROM game_bodies WHERE id IN (${ph})`)
+              .bind(...bodyIds).all()).results ?? [];
+            for (const r of rows) bodyNameById.set(r.id, r.name);
+          }
+          for (const [key, list] of groups) {
+            list.sort((x, y) => y.dmg - x.dmg);
+            const worst = list[0];
+            const entryId = `cd${tick}_${worst.shipId.slice(-8)}_${Math.random().toString(36).slice(2, 6)}`;
+            const payload = JSON.stringify({
+              body_id: worst.bodyId,
+              body_name: bodyNameById.get(worst.bodyId) ?? 'deep space',
+              count: list.length,
+              ships: list.slice(0, 4).map(d => ({
+                ship_id: d.shipId, ship_name: d.name, ship_class: d.shipClass,
+                damage: Math.round(d.dmg), hp_after: Math.round(d.hpAfter), hp_max: d.hpMax,
+              })),
+              total_damage: Math.round(list.reduce((n, d) => n + d.dmg, 0)),
+            });
+            await this.env.DB
+              .prepare(
+                `INSERT INTO chronicle_entries
+                  (id, game_id, tick_number, kind, actor_faction_id, body_id, ship_id, payload, visibility, created_at_ms)
+                 VALUES (?, ?, ?, 'ship_damaged', ?, ?, ?, ?, 'public', ?)`,
+              )
+              .bind(entryId, gameId, tick, worst.ownerFid, worst.bodyId, worst.shipId, payload, now)
+              .run();
+          }
+        } catch (e) {
+          console.error('damage chronicle failed', e);
         }
       }
 

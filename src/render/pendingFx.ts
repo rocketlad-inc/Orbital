@@ -27,7 +27,7 @@
 // ============================================================
 
 /** Chronicle kinds worth a visual, mapped to how they should play. */
-export type PendingFxKind = 'destruction' | 'detonation' | 'impact' | 'discovery';
+export type PendingFxKind = 'destruction' | 'detonation' | 'impact' | 'discovery' | 'damage';
 
 const KIND_MAP: Record<string, PendingFxKind> = {
   ship_destroyed: 'destruction',
@@ -38,6 +38,9 @@ const KIND_MAP: Record<string, PendingFxKind> = {
   // A discovery blooms at the body the moment you look at it — the whole
   // reason this queue exists is that these were going unnoticed.
   secret_discovered: 'discovery',
+  // Took fire and lived. Queued like the rest so a battle you weren't
+  // watching still plays its hits when you look at the body.
+  ship_damaged: 'damage',
 };
 
 export interface PendingFx {

@@ -105,6 +105,9 @@ function logEntryIcon(entry: string): { icon: string; color: string; label: stri
     return { icon: '✦', color: '#4ecdc4', label: 'Industry' };
   }
   if (s.includes('destroyed') || s.includes('collapsed')) return { icon: '✖', color: '#ff5e5e', label: 'Destruction' };
+  if (s.includes('take fire') || (s.includes('takes ') && s.includes('damage'))) {
+    return { icon: '⚔', color: '#ffb84d', label: 'Under fire' };
+  }
   if (s.includes(' hits ')) return { icon: '⚔', color: '#ffb84d', label: 'Combat' };
   return { icon: '›', color: '#8a9fb3', label: 'Event' };
 }
