@@ -323,6 +323,16 @@ export const EventLog: React.FC = () => {
         >
           <div className="event-log__head">
             <span className="event-log__title">EVENT LOG</span>
+            <button
+              title="Replay the last 12 ticks as a camera recap"
+              style={{ marginLeft: 10, fontSize: 10, letterSpacing: '0.12em',
+                       color: '#4ecdc4', background: 'rgba(78,205,196,0.08)',
+                       border: '1px solid #2a4a4a', borderRadius: 4,
+                       padding: '3px 8px', cursor: 'pointer' }}
+              onClick={() => window.dispatchEvent(
+                new CustomEvent('orbital:play-recap', { detail: { ticks: 12 } }),
+              )}
+            >▶ RECAP 12t</button>
             <button className="event-log__close" onClick={close} title="Close (Esc)">×</button>
           </div>
           <div className="event-log__body">

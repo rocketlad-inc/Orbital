@@ -105,6 +105,50 @@ export const RecapOverlay: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scene]);
 
+  // Manual replay — the EventLog's "▶ RECAP" button dispatches this
+  // (established CustomEvent idiom, same as orbital:open-panel). Builds
+  // scenes from the last N ticks by parsing the T+<tick> prefix the
+  // provider stamps on every headline; majors preferred, falling back
+  // to every event in the window so the button always shows something
+  // when anything happened at all. Bypasses the offer card and the
+  // watermark — an explicit request plays immediately and doesn't
+  // consume the login-recap state.
+  useEffect(() => {
+    const onPlay = (e: Event) => {
+      const ticks = (e as CustomEvent).detail?.ticks ?? 12;
+      const log = gameState.combatLog ?? [];
+      const focus = gameState.chronicleFocus ?? [];
+      const flavor = gameState.chronicleFlavor ?? [];
+      const cutoff = (gameState.currentTick ?? 0) - ticks;
+      const inWindow: number[] = [];
+      for (let i = 0; i < log.length; i++) {
+        const m = /^T\+(\d+)/.exec(log[i] ?? '');
+        if (m && Number(m[1]) >= cutoff) inWindow.push(i);
+      }
+      let picks = inWindow.filter(i => MAJOR_RE.test(log[i] ?? ''));
+      if (picks.length === 0) picks = inWindow;
+      if (picks.length === 0) return;
+      const built: Scene[] = [];
+      for (const i of picks) {
+        const f = focus[i];
+        const bodyId = f?.kind === 'body' ? f.bodyId : undefined;
+        const line = flavor[i] || log[i];
+        const last = built[built.length - 1];
+        if (last && last.bodyId && last.bodyId === bodyId) {
+          if (last.lines.length < 3) last.lines.push(line);
+        } else {
+          built.push({ bodyId, lines: [line] });
+        }
+      }
+      setScenes(built.slice(-SCENE_CAP));
+      setIdx(0);
+      setPlaying(true);
+    };
+    window.addEventListener('orbital:play-recap', onPlay as EventListener);
+    return () => window.removeEventListener('orbital:play-recap', onPlay as EventListener);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameState.combatLog, gameState.chronicleFocus, gameState.chronicleFlavor, gameState.currentTick]);
+
   // ESC dismisses at any stage.
   useEffect(() => {
     if (!scenes) return;
