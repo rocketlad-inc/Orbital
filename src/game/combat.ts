@@ -24,6 +24,11 @@ export function effectiveShipMaxHp(
   ship: Ship,
   tech: FactionTechStateBase | undefined,
 ): number {
+  // Server-computed ceiling wins when present: it's the number the
+  // server actually enforces, and it's the ONLY correct answer for a
+  // rival hull (whose armor tech the client never receives). The
+  // estimate below stays as the single-player / pre-enrichment path.
+  if (ship.hpMaxEffective && ship.hpMaxEffective > 0) return ship.hpMaxEffective;
   const base = ship.hpMax ?? getShipClass(ship.class as ShipClassName).hp;
   // hpModifier only reads tech.levels.armor; FactionTechStateBase carries
   // it (string-keyed levels), so the cast to the stricter TechId-keyed

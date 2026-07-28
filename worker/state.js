@@ -663,6 +663,77 @@ async function handleGetState(req, env, ctx) {
     .bind(gameId, me.id, sentShipIds)
     .all()).results ?? [];
 
+  // --- Effective HP ceiling, computed SERVER-SIDE per ship -----------
+  //
+  // The client cannot derive this. `hp_max` is the build-time base; the
+  // live ceiling is base x rank x armor tech x Bulwark captain x fleet
+  // aura — and the client only ever receives its OWN faction's tech, so
+  // for a RIVAL's hull it silently dropped the armor multiplier and
+  // rendered nonsense like "307/204" (playtest: "what hacks are this
+  // health?"). Sending the number the server already enforces makes the
+  // client's job pure display. Mirrors worker/room.js: the maintenance
+  // pass's effectiveMaxHp and the fleet-aura AXES table.
+  try {
+    const techRows = (await env.DB
+      .prepare('SELECT faction_id, tech_id, level FROM faction_techs WHERE game_id = ?')
+      .bind(gameId).all()).results ?? [];
+    const lvl = new Map(); // fid -> { armor, shields }
+    for (const r of techRows) {
+      let m = lvl.get(r.faction_id);
+      if (!m) { m = {}; lvl.set(r.faction_id, m); }
+      m[r.tech_id] = r.level;
+    }
+    const armorMulOf = (fid) =>
+      1 + 0.08 * Math.max(lvl.get(fid)?.armor ?? 0, lvl.get(fid)?.shields ?? 0);
+
+    // Fleet Bulwark aura — halved, flagship excluded (DESIGN-fleets P2).
+    // Queried UNFILTERED (not the visibility-scoped `fleets` above): a
+    // ceiling that ignores an aura it can't see would under-report the
+    // cap and reproduce the very bug this fixes.
+    const auraHp = new Map(); // shipId -> hpMul
+    const led = (await env.DB
+      .prepare(
+        `SELECT f.id, fc.ship_id AS flagship_id, fc.traits_json
+           FROM game_fleets f
+           JOIN game_captains fc ON fc.id = f.flag_captain_id
+          WHERE f.game_id = ? AND f.flag_captain_id IS NOT NULL`)
+      .bind(gameId).all()).results ?? [];
+    if (led.length > 0) {
+      const memberRows = (await env.DB
+        .prepare("SELECT id, fleet_id FROM game_ships WHERE game_id = ? AND fleet_id IS NOT NULL AND status = 'active'")
+        .bind(gameId).all()).results ?? [];
+      for (const f of led) {
+        let traits = [];
+        try { traits = JSON.parse(f.traits_json || '[]'); } catch { /* bad blob = no aura */ }
+        if (!traits.includes('bulwark')) continue;
+        const halved = 1 + (1.10 - 1) / 2;
+        for (const m of memberRows) {
+          if (m.fleet_id === f.id && m.id !== f.flagship_id) auraHp.set(m.id, halved);
+        }
+      }
+    }
+
+    for (const sh of ships) {
+      let capHp = 1;
+      if (sh.captain_traits) {
+        try {
+          if (JSON.parse(sh.captain_traits).includes('bulwark')) capHp = 1.10;
+        } catch { /* bad blob = no bonus */ }
+      }
+      sh.hp_max_effective = Math.round(
+        (sh.hp_max ?? 0)
+        * (1 + 0.01 * Math.max(0, sh.rank ?? 0))
+        * armorMulOf(sh.owner_faction_id)
+        * capHp
+        * (auraHp.get(sh.id) ?? 1),
+      );
+    }
+  } catch (e) {
+    // Display-only enrichment: never fail /state over it. The client
+    // falls back to its own (own-faction-correct) estimate.
+    console.error('hp_max_effective enrichment failed', e);
+  }
+
   // Deep Scan (sensors 5): a rival ship's fitted parts are intel. Without
   // it, non-friendly loadouts are redacted — parts_json is nulled and a
   // flag marks WHY, so the client can show "loadout unknown" instead of

@@ -250,6 +250,11 @@ export interface Ship {
    *  parts + tech applied at build completion. Undefined falls back to
    *  the class-def HP (single-player + legacy ships). */
   hpMax?: number;
+  /** Server-computed LIVE hp ceiling: hpMax x rank x armor tech x
+   *  Bulwark x fleet aura. Authoritative — the client can't derive it
+   *  for rival hulls (it only receives its own faction's tech), which
+   *  is what produced "307/204" displays. Undefined in single-player. */
+  hpMaxEffective?: number;
   /** Server-authoritative damage per volley (multiplayer only) —
    *  includes weapon parts. Undefined = class def. */
   damagePerTick?: number;

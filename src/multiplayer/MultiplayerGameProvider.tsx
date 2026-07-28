@@ -168,6 +168,7 @@ interface ServerState {
     fuel_max: number;
     hp?: number;
     hp_max?: number;
+    hp_max_effective?: number;
     damage_per_tick?: number;
     /** Veterancy: confirmed kills earned by this hull. Migration 0020. */
     rank?: number;
@@ -513,6 +514,7 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     fuel: s.fuel,
     hp: s.hp,
     hpMax: s.hp_max,
+    hpMaxEffective: s.hp_max_effective ?? undefined,
     damagePerTick: s.damage_per_tick,
     parts,
     orbit,
