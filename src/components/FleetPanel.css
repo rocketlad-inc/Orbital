@@ -1,0 +1,841 @@
+/* ============================================================
+   FleetPanel — mobile-first card layout.
+   Replaces the old OverviewPanel table layout for ships: every
+   ship is a .fleet-card (grid: check+icon | body | HP rail) so
+   nothing can ever clip off-screen. The panel is a flex column:
+   header → sticky controls → scrollable card list → sticky
+   bottom action bar (single selection surface).
+   ============================================================ */
+
+/* ---- Panel skeleton ---- */
+
+/* Rides on the same element as .overview-panel (which is fixed with
+   top/bottom anchors and already a flex column) — only guarantee the
+   children can shrink so .fleet-scroll gets the leftover height. */
+.fleet-panel {
+  min-height: 0;
+}
+
+/* ---- Compact header ---- */
+
+.fleet-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #24344a;
+  background: rgba(78, 205, 196, 0.05);
+}
+
+.fleet-header__title {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+  margin-right: auto;
+  min-width: 0;
+}
+
+.fleet-header__name {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: #4ecdc4;
+  text-transform: uppercase;
+}
+
+.fleet-header__counts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 9px;
+  color: #b8c8d6;
+  letter-spacing: 0.08em;
+  margin-top: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+.fleet-header__transit-chip {
+  display: inline-block;
+  padding: 1px 7px;
+  border: 1px solid rgba(78, 205, 196, 0.5);
+  border-radius: 9px;
+  color: #4ecdc4;
+  background: rgba(78, 205, 196, 0.1);
+  white-space: nowrap;
+}
+
+/* Icon-labeled header buttons (REPAIR AT YARD / SHIP DESIGNER). */
+.fleet-hbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid #2a3d50;
+  color: #b8c8d6;
+  padding: 6px 10px;
+  min-height: 32px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.fleet-hbtn:hover:not(:disabled) {
+  color: #4ecdc4;
+  border-color: #4ecdc4;
+}
+
+.fleet-hbtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.fleet-hbtn__icon {
+  font-size: 12px;
+  line-height: 1;
+}
+
+/* ---- Sticky controls row: filter chips + search ---- */
+
+.fleet-controls {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(10, 14, 20, 0.97);
+  border-bottom: 1px solid #24344a;
+}
+
+.fleet-controls__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.fleet-controls .fleet-search {
+  flex: 1 1 180px;
+  margin: 0;
+  min-width: 140px;
+}
+
+.fleet-controls .fleet-search__input {
+  padding: 7px 0;
+}
+
+/* ---- Scrollable content: nothing may overflow sideways ---- */
+
+.fleet-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+.fleet-scroll__inner {
+  padding: 10px 12px 0;
+}
+
+.fleet-notice {
+  margin: 0 0 8px;
+  color: #ff6b6b;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+/* ---- Ship card ---- */
+
+.fleet-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 10px;
+  min-height: 44px;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  border: 1px solid #22303f;
+  border-radius: 6px;
+  background: #0d131c;
+  cursor: pointer;
+  transition: background 0.1s ease, border-color 0.1s ease;
+}
+
+.fleet-card:hover {
+  background: rgba(78, 205, 196, 0.06);
+  border-color: #2d4255;
+}
+
+.fleet-card--selected {
+  background: rgba(78, 205, 196, 0.1);
+  border-color: #4ecdc4;
+}
+
+/* Left cell: bulk checkbox + faction-liveried ship icon. */
+.fleet-card__lead {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.fleet-card__nocheck {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
+  opacity: 0.25;
+}
+
+/* Middle cell: name/status, class/loadout/location, captain. */
+.fleet-card__main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fleet-card__line1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.fleet-card__name {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #d8e4ee;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.fleet-card__line1 .status-badge {
+  flex-shrink: 0;
+}
+
+.fleet-card__line2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 9px;
+  color: #b8c8d6;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.fleet-card__line2 > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fleet-card__sep {
+  flex-shrink: 0;
+  color: #3a4a5a;
+}
+
+/* Loadout glyphs shouldn't get letter-spaced apart. */
+.fleet-card__loadout {
+  color: #d8e4ee;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.fleet-card__dest {
+  color: #4ecdc4;
+  font-weight: 600;
+}
+
+/* Faction dot + name inline on line 2 (non-player ships only). */
+.fleet-card__owner {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  max-width: 40%;
+}
+
+.fleet-card__owner-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.fleet-card__line3 {
+  min-width: 0;
+}
+
+/* Right rail: HP bar with the number underneath, fixed width. */
+.fleet-card__rail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  width: 90px;
+  flex-shrink: 0;
+}
+
+.fleet-card__hptrack {
+  position: relative;
+  width: 100%;
+  height: 6px;
+  background: rgba(42, 61, 80, 0.5);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.fleet-card__hptext {
+  font-size: 9px;
+  color: #b8c8d6;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* ---- System grouping headers ---- */
+
+.fleet-sys {
+  margin-bottom: 12px;
+}
+
+.fleet-sys__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 10px;
+  min-height: 40px;
+  border: none;
+  border-left: 3px solid #4ecdc4;
+  border-radius: 0 6px 6px 0;
+  background: rgba(78, 205, 196, 0.07);
+  color: #d8e4ee;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  margin-bottom: 6px;
+}
+
+.fleet-sys__header:hover {
+  background: rgba(78, 205, 196, 0.13);
+}
+
+.fleet-sys__caret {
+  color: #4ecdc4;
+  font-size: 11px;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.fleet-sys__caret--collapsed {
+  transform: rotate(-90deg);
+}
+
+.fleet-sys__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.fleet-sys__name {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #4ecdc4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.fleet-sys__meta {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 9px;
+  color: #8a9fb3;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Body sub-header: one small row — "Mars · 4 ships". */
+.fleet-bodyhead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 4px 6px;
+  padding: 4px 4px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #ffb84d;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  min-height: 28px;
+}
+
+.fleet-bodyhead:hover {
+  color: #ffd28a;
+}
+
+.fleet-bodyhead__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.fleet-bodyhead__count {
+  color: #8a9fb3;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+}
+
+.fleet-sys__cards {
+  margin-left: 6px;
+}
+
+/* ---- Fleet (formation) cards ---- */
+
+.fleet-group {
+  margin: 2px 0 14px;
+}
+
+.fleet-group__title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: #8a9fb3;
+  text-transform: uppercase;
+  margin: 2px 0 6px;
+}
+
+.fleet-fleetcard {
+  border: 1px solid #24344a;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  background: #0d131c;
+}
+
+.fleet-fleetcard--leaderless {
+  border-left: 3px solid #ffb84d;
+}
+
+.fleet-fleetcard__line1 {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.fleet-fleetcard__name {
+  font-size: 12px;
+  font-weight: 700;
+  color: #d8e4ee;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.fleet-fleetcard__count {
+  color: #8a9fb3;
+  font-size: 10px;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.fleet-fleetcard__flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #4ecdc4;
+  font-size: 10px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fleet-fleetcard__trait {
+  color: #a78bfa;
+}
+
+.fleet-fleetcard__leaderless {
+  color: #ffb84d;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.fleet-fleetcard__controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+/* Chip-style fleet control (button or select). */
+.fleet-chipbtn {
+  background: transparent;
+  border: 1px solid #2d4255;
+  color: #8fb8c9;
+  padding: 5px 9px;
+  min-height: 28px;
+  font-size: 10px;
+  font-family: inherit;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  border-radius: 6px;
+  text-transform: uppercase;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.fleet-chipbtn:hover:not(:disabled) {
+  border-color: #4ecdc4;
+  color: #4ecdc4;
+}
+
+.fleet-chipbtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.fleet-chipbtn--active {
+  background: rgba(78, 205, 196, 0.18);
+  border-color: #4ecdc4;
+  color: #4ecdc4;
+}
+
+.fleet-chipbtn--promote {
+  border-color: #ffb84d;
+  color: #ffb84d;
+  background: rgba(255, 184, 77, 0.1);
+}
+
+/* ---- Captain Bank cards (same grid language as ship cards) ---- */
+
+.fleet-capbank {
+  padding: 2px 0 12px;
+}
+
+.fleet-capbank__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 10px;
+}
+
+.fleet-capbank__title {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: #4ecdc4;
+  text-transform: uppercase;
+}
+
+.fleet-capbank__title-sub {
+  color: #6f8598;
+}
+
+.fleet-capbank__memorial {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: #8aa0b4;
+  margin: 14px 0 8px;
+  text-transform: uppercase;
+}
+
+.fleet-capcard {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 7px 10px;
+  border: 1px solid #22303f;
+  border-radius: 6px;
+  margin-bottom: 6px;
+  background: #0d1420;
+}
+
+.fleet-capcard--lost {
+  opacity: 0.55;
+}
+
+.fleet-capcard__avatarbtn {
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.fleet-capcard__main {
+  min-width: 0;
+}
+
+.fleet-capcard__line1 {
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.fleet-capcard__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.fleet-capcard__rename {
+  background: transparent;
+  border: none;
+  color: #5f7488;
+  cursor: pointer;
+  font-size: 10px;
+  flex-shrink: 0;
+  padding: 2px;
+}
+
+.fleet-capcard__traits {
+  font-size: 9px;
+  color: #8aa0b4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fleet-capcard__rail {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.fleet-capcard__posting {
+  font-size: 9px;
+  color: #4ecdc4;
+  white-space: nowrap;
+}
+
+.fleet-capcard__reserve {
+  font-size: 9px;
+  color: #8a9fb3;
+  white-space: nowrap;
+}
+
+.fleet-capcard__lostmark {
+  font-size: 9px;
+  color: #ff5e5e;
+  white-space: nowrap;
+}
+
+.fleet-capcard__input {
+  background: #14202c;
+  border: 1px solid #2a3d50;
+  border-radius: 3px;
+  color: #d8e4ee;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 2px 6px;
+  width: 90%;
+}
+
+.fleet-capcard__assign {
+  background: #14202c;
+  border: 1px solid #2a3d50;
+  border-radius: 6px;
+  color: #9fb4c6;
+  font-family: inherit;
+  font-size: 9px;
+  padding: 5px 4px;
+  min-height: 28px;
+  max-width: 110px;
+}
+
+/* ---- Sticky bottom action bar (the ONE selection surface) ---- */
+
+.fleet-actionbar {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 9px 12px calc(9px + env(safe-area-inset-bottom, 0px));
+  background: rgba(10, 16, 24, 0.97);
+  border-top: 1px solid #24344a;
+  box-shadow: 0 -6px 16px rgba(0, 0, 0, 0.45);
+}
+
+.fleet-actionbar__row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.fleet-actionbar__count {
+  font-size: 10px;
+  color: #4ecdc4;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.fleet-actionbar__label {
+  color: #a5b7ca;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.fleet-actionbar__select {
+  background: rgba(10, 14, 20, 0.8);
+  color: #d8e4ee;
+  border: 1px solid #2a3d50;
+  border-radius: 6px;
+  padding: 7px 8px;
+  min-height: 32px;
+  font: inherit;
+  font-size: 11px;
+  min-width: 0;
+  flex: 1 1 130px;
+  max-width: 220px;
+  cursor: pointer;
+}
+
+.fleet-actionbar__select:focus {
+  outline: none;
+  border-color: #4ecdc4;
+}
+
+.fleet-actionbar__btn {
+  background: rgba(10, 14, 20, 0.7);
+  color: #d8e4ee;
+  border: 1px solid #2a3d50;
+  border-radius: 6px;
+  padding: 7px 12px;
+  min-height: 32px;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.fleet-actionbar__btn:hover:not(:disabled) {
+  border-color: #4a6378;
+  background: rgba(10, 14, 20, 0.95);
+}
+
+.fleet-actionbar__btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.fleet-actionbar__btn--primary {
+  background: rgba(78, 205, 196, 0.15);
+  color: #4ecdc4;
+  border-color: #4ecdc4;
+}
+
+.fleet-actionbar__btn--primary:hover:not(:disabled) {
+  background: rgba(78, 205, 196, 0.25);
+}
+
+.fleet-actionbar__spacer {
+  flex: 1;
+}
+
+.fleet-actionbar__error {
+  color: #ff6b6b;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.fleet-actionbar__warn {
+  color: #ff9e7a;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+/* ---- Mobile refinements ---- */
+
+@media (max-width: 640px) {
+  /* Filter chips become a single horizontally scrolling row. */
+  .fleet-controls__chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    max-width: 100%;
+    padding-bottom: 2px;
+  }
+
+  .fleet-controls__chips::-webkit-scrollbar {
+    display: none;
+  }
+
+  .fleet-controls__chips .filter-chip {
+    flex-shrink: 0;
+    min-height: 32px;
+  }
+
+  /* Header buttons collapse to icon-only. */
+  .fleet-hbtn__label {
+    display: none;
+  }
+
+  .fleet-hbtn {
+    min-width: 44px;
+    min-height: 36px;
+    justify-content: center;
+  }
+
+  /* Right rail HP shrinks. */
+  .fleet-card__rail {
+    width: 64px;
+  }
+
+  .fleet-sys__cards {
+    margin-left: 2px;
+  }
+}

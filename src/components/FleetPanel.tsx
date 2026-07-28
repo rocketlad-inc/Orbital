@@ -20,6 +20,7 @@ import { apiFetch } from '../multiplayer/api';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import { openShipDesigner } from './ShipDesigner';
 import './OverviewPanel.css';
+import './FleetPanel.css';
 
 interface FleetPanelProps {
   onClose: () => void;
@@ -30,17 +31,6 @@ type Filter = 'all' | 'player' | 'enemy' | 'captains';
 // System grouping and ship status now live in game/systemGrouping so the
 // Outliner renders identical headers and identical status chips. They were
 // duplicated here, and the copies had already diverged.
-
-// Translucent fill from a hex colour (for faction-tinted badges).
-function hexToRgba(hex: string, alpha: number): string {
-  const h = hex.replace('#', '');
-  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
-  const n = parseInt(full, 16);
-  const r = (n >> 16) & 255;
-  const g = (n >> 8) & 255;
-  const b = n & 255;
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
 
 export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const {
@@ -182,13 +172,20 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   // from home": Sol (0), then Centauri, then Cygnus.
   const systems = useMemo(() => {
     const bySystem = new Map<string, Map<string, typeof orbiting>>();
-    for (const s of orbiting) {
-      const root = systemRootOf(s.orbit.parentBodyId);
+    const fileUnder = (bodyId: string, s: typeof orbiting[number]) => {
+      const root = systemRootOf(bodyId);
       let bodies = bySystem.get(root);
       if (!bodies) { bodies = new Map(); bySystem.set(root, bodies); }
-      const list = bodies.get(s.orbit.parentBodyId) || [];
+      const list = bodies.get(bodyId) || [];
       list.push(s);
-      bodies.set(s.orbit.parentBodyId, list);
+      bodies.set(bodyId, list);
+    };
+    for (const s of orbiting) fileUnder(s.orbit.parentBodyId, s);
+    // Transit ships file under their DESTINATION body — the card carries
+    // the "→ dest · T-n" line, so it reads as "inbound to this world"
+    // rather than living in a separate top-level table.
+    for (const s of inTransit) {
+      fileUnder(s.transit?.currentTransfer?.targetBodyId ?? s.orbit.parentBodyId, s);
     }
     return Array.from(bySystem.entries())
       .map(([rootId, bodies]) => ({
@@ -204,7 +201,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
         || a.label.localeCompare(b.label)
       );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orbiting, bodyById, systemRootOf]);
+  }, [orbiting, inTransit, bodyById, systemRootOf]);
 
   const toggleSystem = (rootId: string) => {
     setCollapsedSystems(prev => {
@@ -422,18 +419,6 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     });
   };
 
-  const ownerBadge = (ownedBy: string) => {
-    const { name, color } = factionOf(ownedBy);
-    return (
-      <span
-        className="owner-badge"
-        style={{ color, borderColor: color, background: hexToRgba(color, 0.12) }}
-      >
-        {name}
-      </span>
-    );
-  };
-
   // Captain cell (spec §5.2) — the Experience column becomes the PERSON.
   // Rank/kills ride along under the name (rank now lives on the captain;
   // the server COALESCEs it onto ship.rank for compat). Rival identities
@@ -519,16 +504,10 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
       const editing = capEditId === c.id;
       const aboard = shipName(c.shipId);
       return (
-        <div
-          key={c.id}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px',
-            border: '1px solid #22303f', borderRadius: 6, marginBottom: 6,
-            background: '#0d1420', opacity: c.status === 'lost' ? 0.55 : 1,
-          }}
-        >
+        <div key={c.id} className={`fleet-capcard${c.status === 'lost' ? ' fleet-capcard--lost' : ''}`}>
           {/* avatar — click cycles the portrait set (BuildPanel icon precedent) */}
           <button
+            className="fleet-capcard__avatarbtn"
             onClick={() => {
               if (!mpActions || c.status === 'lost') return;
               const cur = AVATAR_IDS.indexOf((c.avatarId ?? 'a1') as typeof AVATAR_IDS[number]);
@@ -536,20 +515,16 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
             }}
             disabled={capBusy || c.status === 'lost'}
             title={c.status === 'lost' ? undefined : 'Change portrait'}
-            style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer' }}
           >
             <CaptainAvatar avatarId={c.avatarId} size={30} />
           </button>
-          <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="fleet-capcard__main">
             {editing ? (
               <input
+                className="fleet-capcard__input"
                 autoFocus
                 defaultValue={c.name}
                 maxLength={32}
-                style={{
-                  background: '#14202c', border: '1px solid #2a3d50', borderRadius: 3,
-                  color: '#d8e4ee', fontFamily: 'inherit', fontSize: 11, padding: '2px 6px', width: '90%',
-                }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     const v = (e.target as HTMLInputElement).value.trim();
@@ -561,13 +536,13 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                 onBlur={() => setCapEditId(null)}
               />
             ) : (
-              <div style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 5 }}>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
+              <div className="fleet-capcard__line1">
+                <span className="fleet-capcard__name">{c.name}</span>
                 {c.status === 'active' && mpActions && (
                   <button
+                    className="fleet-capcard__rename"
                     onClick={() => setCapEditId(c.id)}
                     title="Rename"
-                    style={{ background: 'transparent', border: 'none', color: '#5f7488', cursor: 'pointer', fontSize: 10 }}
                   >✎</button>
                 )}
                 <span className={`fleet-xp__tier fleet-xp__tier--${rankTier(c.rank).toLowerCase()}`}>
@@ -576,19 +551,19 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                 <span className="fleet-xp__kills">{c.rank > 0 ? `${c.rank} ⚔` : ''}</span>
               </div>
             )}
-            <div style={{ fontSize: 9, color: '#8aa0b4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <div className="fleet-capcard__traits">
               {traitSummary(c.traits) || 'No notable traits'}
               {c.bio ? ` · ${c.bio}` : ''}
             </div>
           </div>
           {c.status === 'lost' ? (
-            <span style={{ fontSize: 9, color: '#ff5e5e', whiteSpace: 'nowrap' }}>
+            <span className="fleet-capcard__lostmark">
               ✝ LOST{c.lostAtTick != null ? ` T+${c.lostAtTick}` : ''}
             </span>
           ) : (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div className="fleet-capcard__rail">
               {aboard && (
-                <span style={{ fontSize: 9, color: '#4ecdc4', whiteSpace: 'nowrap' }} title="Current posting">
+                <span className="fleet-capcard__posting" title="Current posting">
                   ⚓ {aboard}
                 </span>
               )}
@@ -596,23 +571,20 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                   and awaiting a posting" — only the latter gets picked up
                   by the server's auto-assign pass (migration 0051). */}
               {!aboard && c.benchedAtTick != null && (
-                <span style={{ fontSize: 9, color: '#8a9fb3', whiteSpace: 'nowrap' }}
+                <span className="fleet-capcard__reserve"
                       title="Held in reserve by you — the auto-assign pass will leave them alone">
                   ⏸ RESERVE
                 </span>
               )}
               {mpActions && (
                 <select
+                  className="fleet-capcard__assign"
                   value=""
                   disabled={capBusy}
                   onChange={(e) => {
                     const v = e.target.value;
                     if (v === '__bench') doCap(mpActions.assignCaptain(c.id, null));
                     else if (v) doCap(mpActions.assignCaptain(c.id, v));
-                  }}
-                  style={{
-                    background: '#14202c', border: '1px solid #2a3d50', borderRadius: 3,
-                    color: '#9fb4c6', fontFamily: 'inherit', fontSize: 9, padding: '2px 4px', maxWidth: 110,
                   }}
                   title="Assign this captain to a ship (any sitting captain returns to the bank)"
                 >
@@ -632,10 +604,10 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     };
 
     return (
-      <div style={{ padding: '4px 12px 12px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '6px 0 10px' }}>
-          <span style={{ fontSize: 10, letterSpacing: '0.1em', color: '#4ecdc4' }}>
-            CAPTAIN BANK <span style={{ color: '#6f8598' }}>· {active.length} serving/{lost.length ? ` ${lost.length} lost` : ' none lost'}</span>
+      <div className="fleet-capbank">
+        <div className="fleet-capbank__head">
+          <span className="fleet-capbank__title">
+            Captain Bank <span className="fleet-capbank__title-sub">· {active.length} serving/{lost.length ? ` ${lost.length} lost` : ' none lost'}</span>
           </span>
           {mpActions && (
             <button
@@ -647,7 +619,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           )}
         </div>
         {capMsg && (
-          <div className="fleet-bulk-bar__error" style={{ marginBottom: 8 }} onClick={() => setCapMsg(null)}>
+          <div className="fleet-notice" onClick={() => setCapMsg(null)}>
             ⚠ {capMsg}
           </div>
         )}
@@ -657,7 +629,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
         {active.map(row)}
         {lost.length > 0 && (
           <>
-            <div style={{ fontSize: 10, letterSpacing: '0.1em', color: '#8aa0b4', margin: '14px 0 8px' }}>
+            <div className="fleet-capbank__memorial">
               ✝ MEMORIAL — went down with the ship
             </div>
             {lost.map(row)}
@@ -686,18 +658,20 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
 
   const hpRatioOf = (ship: Ship) => hpOf(ship).ratio;
 
-  const renderHpBar = (ship: Ship) => {
+  // Card right rail: HP bar with the number beneath it (fixed-width
+  // column, so the bar never squeezes the name/loadout text).
+  const renderHpRail = (ship: Ship) => {
     const { hp, maxHp, ratio } = hpOf(ship);
     const hpClass = ratio > 0.66 ? 'good' : ratio > 0.33 ? 'mid' : 'low';
     return (
-      <div className="status-bar">
-        <div className="status-bar__fill">
+      <div className="fleet-card__rail">
+        <div className="fleet-card__hptrack">
           <div
             className={`status-bar__inner status-bar__inner--hp-${hpClass}`}
             style={{ width: `${Math.min(100, ratio * 100)}%` }}
           />
         </div>
-        <span className="status-bar__text">{Math.round(hp)}/{Math.round(maxHp)}</span>
+        <span className="fleet-card__hptext">{Math.round(hp)}/{Math.round(maxHp)}</span>
       </div>
     );
   };
@@ -739,13 +713,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     void fleetApi('POST', '/fleets', { ship_ids: ids, flag_ship_id: flag.id });
     setSelectedIds(new Set());
   };
-  const fleetBtn: React.CSSProperties = {
-    background: 'transparent', border: '1px solid #2d4255', color: '#8fb8c9',
-    padding: '3px 8px', fontSize: 10, letterSpacing: '0.08em', cursor: 'pointer',
-    borderRadius: 3, textTransform: 'uppercase',
-  };
-
-  const renderShipRow = (ship: typeof ships[0]) => {
+  const renderShipCard = (ship: typeof ships[0]) => {
     const def = getShipClass(ship.class as ShipClassName);
     const isSelected = uiState.selectedShipId === ship.id;
     // Pull transit metadata from the ship's torch transit state.
@@ -772,15 +740,37 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
 
     const eligible = bulkEligibleIds.has(ship.id);
     const checked = selectedIds.has(ship.id);
+
+    // Icon uses the ship's REAL faction colours (the same lookup the map
+    // does) so the two-tone livery matches pixel-for-pixel — including
+    // the player's own ships, which the map paints in the faction colour
+    // rather than the fleet list's teal "You" highlight.
+    const owner = factionOf(ship.ownedBy);
+    const fac = gameState.factions.find(f => f.id === ship.ownedBy);
+    const iconColor = fac?.color ?? owner.color;
+    const iconColor2 = (fac?.color && (fac.color2 || deriveSecondary(fac.color))) || owner.color2;
+
+    // Designer loadout replaces the redundant "· corvette" class echo;
+    // null (SP / colony / no parts field) falls back to the class name.
+    const loadout = loadoutSummary(ship.parts);
+    // Captain line only when there's something to say: a named captain,
+    // confirmed kills, or the player-owned UNASSIGNED discovery path.
+    const showCaptainLine = !!ship.captainName || (ship.rank ?? 0) > 0
+      || (ship.ownedBy === 'player' && !!mpActions);
+
     return (
-      <tr
+      <div
         key={ship.id}
-        className={isSelected ? 'selected' : ''}
+        className={`fleet-card${isSelected ? ' fleet-card--selected' : ''}`}
         onClick={() => handleShipClick(ship.id)}
       >
-        <td onClick={(e) => e.stopPropagation()} className="fleet-check-cell">
+        <div className="fleet-card__lead">
           {eligible ? (
-            <label className="fleet-check" title="Add to bulk selection">
+            <label
+              className="fleet-check"
+              title="Add to bulk selection"
+              onClick={(e) => e.stopPropagation()}
+            >
               <input
                 type="checkbox"
                 checked={checked}
@@ -789,88 +779,69 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               <span className="fleet-check__box" aria-hidden />
             </label>
           ) : (
-            <span title="Not eligible (not player-owned, or already in transit/planned)" style={{ opacity: 0.25 }}>—</span>
+            <span className="fleet-card__nocheck" title="Not eligible (not player-owned, or already in transit/planned)">—</span>
           )}
-        </td>
-        <td>
-          <div className="body-cell" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ flexShrink: 0 }}>
-              {(() => {
-                // Icon uses the ship's REAL faction colours (the same
-                // lookup the map does) so the two-tone livery matches
-                // pixel-for-pixel — including the player's own ships,
-                // which the map paints in the faction colour rather than
-                // the fleet list's teal "You" highlight.
-                const fac = gameState.factions.find(f => f.id === ship.ownedBy);
-                const iconColor = fac?.color ?? factionOf(ship.ownedBy).color;
-                const iconColor2 = (fac?.color && (fac.color2 || deriveSecondary(fac.color)))
-                  || factionOf(ship.ownedBy).color2;
-                return (
-                  <ShipIcon
-                    shipClass={ship.class as ShipClassName}
-                    variant={ship.iconVariant}
-                    color={iconColor}
-                    color2={iconColor2}
-                    size={20}
-                  />
-                );
-              })()}
-            </div>
-            <div>
-              <div className="body-cell__name">{ship.name}</div>
-              <div className="body-cell__type">
-                {def.displayName}
-                {(() => {
-                  // Show the designer loadout in place of the redundant
-                  // "· corvette" class echo. Null (SP / colony / no parts
-                  // field) falls back to the plain class name so nothing
-                  // reads as empty.
-                  const loadout = loadoutSummary(ship.parts);
-                  return loadout
-                    ? <span className="body-cell__loadout" title="Fitted parts"> · {loadout}</span>
-                    : <> · {ship.class}</>;
-                })()}
-              </div>
-            </div>
+          <ShipIcon
+            shipClass={ship.class as ShipClassName}
+            variant={ship.iconVariant}
+            color={iconColor}
+            color2={iconColor2}
+            size={20}
+          />
+        </div>
+
+        <div className="fleet-card__main">
+          <div className="fleet-card__line1">
+            <span className="fleet-card__name">{ship.name}</span>
+            {statusBadge}
           </div>
-        </td>
-        <td>{ownerBadge(ship.ownedBy)}</td>
-        <td>{statusBadge}</td>
-        <td>
-          {transit && target ? (
-            <span>→ <strong style={{ color: '#4ecdc4' }}>{target.name}</strong> · T-{Math.round(eta ?? 0)}</span>
-          ) : (
-            <span className="col-muted">
-              {bodyById.get(ship.orbit.parentBodyId)?.name ?? ship.orbit.parentBodyId}
-            </span>
+          <div className="fleet-card__line2">
+            {ship.ownedBy !== 'player' && (
+              <>
+                <span className="fleet-card__owner">
+                  <span className="fleet-card__owner-dot" style={{ background: owner.color }} aria-hidden />
+                  {owner.name}
+                </span>
+                <span className="fleet-card__sep" aria-hidden>·</span>
+              </>
+            )}
+            <span>{def.displayName}</span>
+            {loadout && (
+              <>
+                <span className="fleet-card__sep" aria-hidden>·</span>
+                <span className="fleet-card__loadout" title="Fitted parts">{loadout}</span>
+              </>
+            )}
+            <span className="fleet-card__sep" aria-hidden>·</span>
+            {transit && target ? (
+              <span className="fleet-card__dest">→ {target.name} · T-{Math.round(eta ?? 0)}</span>
+            ) : (
+              <span>{bodyById.get(ship.orbit.parentBodyId)?.name ?? ship.orbit.parentBodyId}</span>
+            )}
+          </div>
+          {showCaptainLine && (
+            <div className="fleet-card__line3">{renderExperience(ship)}</div>
           )}
-        </td>
-        <td>{renderHpBar(ship)}</td>
-        <td>{renderExperience(ship)}</td>
-      </tr>
+        </div>
+
+        {renderHpRail(ship)}
+      </div>
     );
   };
 
-  const tableHead = (locationLabel: string) => (
-    <thead>
-      <tr>
-        <th style={{ width: 40 }}></th>
-        <th>Ship</th>
-        <th>Owner</th>
-        <th>Status</th>
-        <th>{locationLabel}</th>
-        <th>HP</th>
-        <th>Captain</th>
-      </tr>
-    </thead>
-  );
-
   return (
-    <div className="overview-panel">
-      <div className="overview-panel__header">
-        <div className="overview-panel__title">
-          <div className="overview-panel__title-main">Fleet</div>
-          <div className="overview-panel__title-sub">{ships.length} ships · {orbiting.length} orbiting · {inTransit.length} in transit</div>
+    <div className="overview-panel fleet-panel">
+      {/* Compact header: title + counts line, icon-labeled actions that
+          wrap on narrow screens (labels drop at ≤640px, icons stay). */}
+      <div className="fleet-header">
+        <div className="fleet-header__title">
+          <div className="fleet-header__name">Fleet</div>
+          <div className="fleet-header__counts">
+            <span>{ships.length} ships · {orbiting.length} orbiting</span>
+            {inTransit.length > 0 && (
+              <span className="fleet-header__transit-chip">In transit: {inTransit.length}</span>
+            )}
+          </div>
         </div>
         {/* One-shot repair dispatch (MP only): every damaged parked hull
             that ISN'T already sitting at a friendly station gets a
@@ -878,208 +849,95 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
             the auto-retreat uses. */}
         {mpActions && (
           <button
-            className="filter-chip"
-            style={{ marginRight: 8 }}
+            className="fleet-hbtn"
             onClick={sendDamagedToYards}
             disabled={damagedAway.length === 0}
             title={damagedAway.length === 0
               ? 'No damaged ships away from a friendly station'
               : `Send ${damagedAway.length} damaged ship${damagedAway.length === 1 ? '' : 's'} to the nearest friendly shipyard for repair`}
           >
-            ⛨ REPAIR AT YARD{damagedAway.length > 0 ? ` (${damagedAway.length})` : ''}
+            <span className="fleet-hbtn__icon" aria-hidden>⛨</span>
+            <span className="fleet-hbtn__label">Repair at yard</span>
+            {damagedAway.length > 0 && <span>({damagedAway.length})</span>}
           </button>
         )}
         {/* Ship designer entry point (MP only — the designer is part of
             the identity-economy release and the SP sim is frozen). */}
         {mpActions && (
           <button
-            className="filter-chip"
-            style={{ marginRight: 8 }}
+            className="fleet-hbtn"
             onClick={() => openShipDesigner()}
             title="Design ship loadouts — weapons, shields, engines, detonators. BUILD uses each class's active design."
           >
-            ⚙ SHIP DESIGNER
+            <span className="fleet-hbtn__icon" aria-hidden>⚙</span>
+            <span className="fleet-hbtn__label">Ship designer</span>
           </button>
         )}
         <button className="overview-panel__close" onClick={onClose}>✕</button>
       </div>
 
-      <div className="overview-panel__filters">
-        {([
-          ['player', 'Mine'],
-          ['enemy', 'Enemies'],
-          ['all', 'All'],
-          // Captain Bank (spec §5.3) — MP only; captains don't exist in SP.
-          ...(mpActions ? ([['captains', '★ Captains']] as [Filter, string][]) : []),
-        ] as [Filter, string][]).map(([f, label]) => (
-          <button
-            key={f}
-            className={`filter-chip ${filter === f ? 'active' : ''}`}
-            onClick={() => setFilter(f)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      <div className="fleet-search">
-        <span className="fleet-search__icon" aria-hidden>⌕</span>
-        <input
-          className="fleet-search__input"
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search ships, worlds, systems, owners…"
-          aria-label="Search fleet"
-        />
-        {query && (
-          <button
-            className="fleet-search__clear"
-            onClick={() => setQuery('')}
-            aria-label="Clear search"
-            title="Clear search"
-          >✕</button>
-        )}
-      </div>
-
-      {repairMsg && (
-        <div className="fleet-bulk-bar__error" style={{ margin: '0 16px 8px' }}>
-          {repairMsg}
-        </div>
-      )}
-
-      {visibleSelected.length > 0 && (
-        <div className="fleet-bulk-bar">
-          <div className="fleet-bulk-bar__count">
-            {visibleSelected.length} ship{visibleSelected.length === 1 ? '' : 's'} selected
-          </div>
-          <div className="fleet-bulk-bar__actions">
-            <label className="fleet-bulk-bar__label">Transfer all to</label>
-            <select
-              className="fleet-bulk-bar__select"
-              value={bulkTarget}
-              onChange={(e) => setBulkTarget(e.target.value)}
-            >
-              <option value="">Select destination…</option>
-              {transferTargets.map(b => (
-                <option key={b.id} value={b.id}>{b.name}</option>
-              ))}
-            </select>
-            <button
-              className="fleet-bulk-bar__btn fleet-bulk-bar__btn--primary"
-              onClick={issueBulkTransfer}
-              disabled={!bulkTarget}
-            >
-              Issue {visibleSelected.length} orders
-            </button>
-            <button
-              className="fleet-bulk-bar__btn"
-              onClick={clearSelection}
-            >
-              Clear
-            </button>
-          </div>
-          {bulkError && <div className="fleet-bulk-bar__error">{bulkError}</div>}
-
-          {mpActions && (
-            <div className="fleet-bulk-bar__actions" style={{ marginTop: 6 }}>
-              <label className="fleet-bulk-bar__label">Orders</label>
-              <select
-                className="fleet-bulk-bar__select"
-                value={bulkStance}
-                onChange={(e) => setBulkStance(e.target.value)}
-                title="Stance: attack on sight / return fire only / never fire"
-              >
-                <option value="">Stance: keep</option>
-                <option value="attack">Attack on sight</option>
-                <option value="defensive">Defensive (return fire)</option>
-                <option value="hold">Hold fire</option>
-              </select>
-              <select
-                className="fleet-bulk-bar__select"
-                value={bulkRetreat}
-                onChange={(e) => setBulkRetreat(e.target.value)}
-                title="Auto-retreat to the nearest friendly shipyard station below this HP threshold"
-              >
-                <option value="">Retreat: keep</option>
-                <option value="off">Retreat: off</option>
-                <option value="25">Retreat at 25% HP</option>
-                <option value="50">Retreat at 50% HP</option>
-                <option value="75">Retreat at 75% HP</option>
-              </select>
-              {/* Only when something in the selection can actually blow
-                  up — otherwise this is a live control that no-ops on
-                  every ship it would touch. */}
-              {detonatorSelectedCount > 0 && (
-                <select
-                  className="fleet-bulk-bar__select"
-                  value={bulkDetonate}
-                  onChange={(e) => setBulkDetonate(e.target.value)}
-                  title="Auto-detonate below X% HP: deals damage to every ship in this orbit, friend or foe; this ship is destroyed."
-                >
-                  <option value="">Detonate: keep</option>
-                  <option value="off">Detonate: off</option>
-                  <option value="25">Detonate below 25% HP</option>
-                  <option value="50">Detonate below 50% HP</option>
-                </select>
-              )}
+      <div className="fleet-scroll">
+        {/* Sticky controls row: filter chips + search pin to the top of
+            the scroll area. */}
+        <div className="fleet-controls">
+          <div className="fleet-controls__chips">
+            {([
+              ['player', 'Mine'],
+              ['enemy', 'Enemies'],
+              ['all', 'All'],
+              // Captain Bank (spec §5.3) — MP only; captains don't exist in SP.
+              ...(mpActions ? ([['captains', '★ Captains']] as [Filter, string][]) : []),
+            ] as [Filter, string][]).map(([f, label]) => (
               <button
-                className="fleet-bulk-bar__btn fleet-bulk-bar__btn--primary"
-                onClick={issueBulkOrders}
-                disabled={!bulkStance && !bulkRetreat
-                  && !(bulkDetonate && detonatorSelectedCount > 0)}
+                key={f}
+                className={`filter-chip ${filter === f ? 'active' : ''}`}
+                onClick={() => setFilter(f)}
               >
-                SET ORDERS
+                {label}
               </button>
-            </div>
-          )}
-          {mpActions && bulkDetonate && bulkDetonate !== 'off' && detonatorSelectedCount > 0 && (
-            <div className="fleet-bulk-bar__error" style={{ color: '#ff9e7a' }}>
-              Auto-detonate below {bulkDetonate}% HP: deals damage to every ship
-              in this orbit, friend or foe; the detonating ship is destroyed.
-              {detonatorSelectedCount < visibleSelected.length
-                && ` Applies to ${detonatorSelectedCount} of ${visibleSelected.length} selected — the rest carry no detonator.`}
-            </div>
-          )}
-          {ordersNotice && <div className="fleet-bulk-bar__error">{ordersNotice}</div>}
-        </div>
-      )}
-
-      <div className="overview-panel__body">
-        {filter === 'captains' ? renderCaptainBank() : ships.length === 0 ? (
-          <div className="overview-empty">
-            {query.trim()
-              ? `No ships match “${query.trim()}”.`
-              : filter === 'enemy'
-                ? 'No rival ships are visible to you right now.'
-                : 'No ships match the current filter.'}
+            ))}
           </div>
-        ) : (
-          <>
-            {inTransit.length > 0 && (
-              <div className="overview-section">
-                <div className="overview-section__title">
-                  In Transit
-                  <span className="overview-section__count">{inTransit.length} ships</span>
-                </div>
-                <table className="overview-table">
-                  {tableHead('Destination')}
-                  <tbody>
-                    {inTransit.map(renderShipRow)}
-                  </tbody>
-                </table>
-              </div>
+          <div className="fleet-search">
+            <span className="fleet-search__icon" aria-hidden>⌕</span>
+            <input
+              className="fleet-search__input"
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search ships, worlds, systems, owners…"
+              aria-label="Search fleet"
+            />
+            {query && (
+              <button
+                className="fleet-search__clear"
+                onClick={() => setQuery('')}
+                aria-label="Clear search"
+                title="Clear search"
+              >✕</button>
             )}
+          </div>
+        </div>
 
-            {/* FORM FLEET moved to the sticky selection bar at the end of
-                the list — selecting ships happens deep in the system
-                groups, and an action button parked up here was several
-                scrolls away from the checkboxes driving it. */}
+        <div className="fleet-scroll__inner">
+          {repairMsg && (
+            <div className="fleet-notice">{repairMsg}</div>
+          )}
+
+          {filter === 'captains' ? renderCaptainBank() : ships.length === 0 ? (
+            <div className="overview-empty">
+              {query.trim()
+                ? `No ships match “${query.trim()}”.`
+                : filter === 'enemy'
+                  ? 'No rival ships are visible to you right now.'
+                  : 'No ships match the current filter.'}
+            </div>
+          ) : (
+            <>
             {mpActions && myFleets.length > 0 && (
-              <div style={{ margin: '8px 0 14px' }}>
-                <div style={{ fontSize: 11, letterSpacing: '0.2em', color: '#8a9fb3', margin: '2px 0 6px' }}>FLEETS</div>
+              <div className="fleet-group">
+                <div className="fleet-group__title">Fleets</div>
                 {fleetErr && (
-                  <div style={{ color: '#ff8a8a', fontSize: 11, marginBottom: 6 }}>{fleetErr}</div>
+                  <div className="fleet-notice">{fleetErr}</div>
                 )}
                 {myFleets.map(f => {
                   const full = fullFleetId(f.id);
@@ -1101,52 +959,45 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                       const curStance = agree(sh => sh.stance ?? 'attack');
                       const curRetreat = agree(sh => sh.retreatHpPct ?? null);
                       return (
-                    <div key={f.id} style={{ border: '1px solid #24344a', borderRadius: 6, padding: '8px 10px', marginBottom: 8 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                        <b style={{ fontSize: 13 }}>{f.name}</b>
-                        <span style={{ color: '#8a9fb3', fontSize: 11 }}>{f.shipIds.length} ships</span>
+                    <div key={f.id} className={`fleet-fleetcard${f.leaderless ? ' fleet-fleetcard--leaderless' : ''}`}>
+                      <div className="fleet-fleetcard__line1">
+                        <span className="fleet-fleetcard__name">{f.name}</span>
+                        <span className="fleet-fleetcard__count">{f.shipIds.length} ships</span>
                         {f.leaderless ? (
-                          <span style={{ color: '#ffb84d', fontSize: 11, fontWeight: 700 }}>LEADERLESS</span>
+                          <span className="fleet-fleetcard__leaderless">LEADERLESS</span>
                         ) : (
-                          <span style={{ color: '#4ecdc4', fontSize: 11 }}>
+                          <span className="fleet-fleetcard__flag">
                             ★ {f.flagCaptainName}{f.flagCaptainRank ? ` · R${f.flagCaptainRank}` : ''}
                             {(f.flagCaptainTraits ?? []).length > 0 && (
-                              <span style={{ color: '#a78bfa', marginLeft: 6 }}>
+                              <span className="fleet-fleetcard__trait">
                                 {(f.flagCaptainTraits ?? []).join(' · ')}
                               </span>
                             )}
                           </span>
                         )}
-                        <span style={{ flex: 1 }} />
-                        <button style={fleetBtn} title="Check every member into the bulk-action list — then move or order them together"
+                      </div>
+                      <div className="fleet-fleetcard__controls">
+                        <button className="fleet-chipbtn" title="Check every member into the bulk-action list — then move or order them together"
                                 onClick={() => setSelectedIds(new Set(f.shipIds))}>Select all</button>
-                        <button style={fleetBtn}
+                        <button className="fleet-chipbtn"
                                 title="Dissolve the fleet — members keep their current orders"
                                 onClick={() => {
                                   if (window.confirm(`Disband ${f.name}? Members keep their current orders.`)) {
                                     void fleetApi('DELETE', `/fleets/${encodeURIComponent(full)}`);
                                   }
                                 }}>Disband</button>
-                      </div>
-                      <div style={{ display: 'flex', gap: 6, marginTop: 7, alignItems: 'center', flexWrap: 'wrap' }}>
                         {(['attack', 'defensive', 'hold'] as const).map(st => (
+                          // Chips read as STATE: the stance every member
+                          // currently holds is lit.
                           <button key={st}
-                                  style={{ ...fleetBtn,
-                                           opacity: f.leaderless ? 0.4 : 1,
-                                           // Buttons read as STATE: the stance every
-                                           // member currently holds is lit.
-                                           ...(curStance === st ? {
-                                             background: 'rgba(78,205,196,0.18)',
-                                             borderColor: '#4ecdc4',
-                                             color: '#4ecdc4',
-                                           } : {}) }}
+                                  className={`fleet-chipbtn${curStance === st ? ' fleet-chipbtn--active' : ''}`}
                                   disabled={!!f.leaderless}
                                   aria-pressed={curStance === st}
                                   onClick={() => void fleetApi('PATCH', `/fleets/${encodeURIComponent(full)}/orders`, { stance: st })}>
                             {st === 'attack' ? 'Attack' : st === 'defensive' ? 'Defend' : 'Hold'}
                           </button>
                         ))}
-                        <select style={{ ...fleetBtn, opacity: f.leaderless ? 0.4 : 1 } as React.CSSProperties}
+                        <select className="fleet-chipbtn"
                                 disabled={!!f.leaderless}
                                 value={curRetreat == null ? '' : String(curRetreat)}
                                 onChange={e => {
@@ -1171,7 +1022,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                             .filter((sh): sh is NonNullable<typeof sh> => !!sh?.captainName);
                           if (options.length === 0) return null;
                           return (
-                            <select style={fleetBtn as React.CSSProperties} value=""
+                            <select className={`fleet-chipbtn${f.leaderless ? ' fleet-chipbtn--promote' : ''}`} value=""
                                     title={f.leaderless
                                       ? 'Promote a member captain to flag'
                                       : 'Change which captain flies the flag (their trait becomes the fleet aura)'}
@@ -1200,17 +1051,19 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
             )}
             {systems.map(system => {
               const isCollapsed = collapsedSystems.has(system.rootId);
+              const rootBody = bodyById.get(system.rootId);
               return (
-                <div className="fleet-system" key={system.rootId}>
+                <div className="fleet-sys" key={system.rootId}>
                   <button
-                    className="fleet-system__header"
+                    className="fleet-sys__header"
                     onClick={() => toggleSystem(system.rootId)}
                     aria-expanded={!isCollapsed}
                     title={isCollapsed ? 'Expand system' : 'Collapse system'}
                   >
-                    <span className={`fleet-system__caret${isCollapsed ? ' fleet-system__caret--collapsed' : ''}`} aria-hidden>▾</span>
-                    <span className="fleet-system__name">{system.label}</span>
-                    <span className="fleet-system__meta">
+                    <span className={`fleet-sys__caret${isCollapsed ? ' fleet-sys__caret--collapsed' : ''}`} aria-hidden>▾</span>
+                    <span className="fleet-sys__dot" style={{ background: rootBody?.color || '#888' }} aria-hidden />
+                    <span className="fleet-sys__name">{system.label}</span>
+                    <span className="fleet-sys__meta">
                       {system.bodies.length} world{system.bodies.length === 1 ? '' : 's'} · {system.shipCount} ship{system.shipCount === 1 ? '' : 's'}
                     </span>
                   </button>
@@ -1218,66 +1071,139 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                   {!isCollapsed && system.bodies.map(([bodyId, bodyShips]) => {
                     const body = bodyById.get(bodyId);
                     return (
-                      <div className="overview-section" key={bodyId}>
-                        <div className="overview-section__title">
-                          <span
-                            onClick={() => handleBodyClick(bodyId)}
-                            style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
-                            title="Click to focus map"
-                          >
-                            <span style={{
-                              width: 10, height: 10, borderRadius: '50%',
-                              background: body?.color || '#888',
-                              display: 'inline-block',
-                            }} />
-                            Orbiting {body?.name || bodyId}
-                          </span>
-                          <span className="overview-section__count">{bodyShips.length} ships</span>
+                      <div key={bodyId}>
+                        <button
+                          className="fleet-bodyhead"
+                          onClick={() => handleBodyClick(bodyId)}
+                          title="Click to focus map"
+                        >
+                          <span className="fleet-bodyhead__dot" style={{ background: body?.color || '#888' }} aria-hidden />
+                          {body?.name || bodyId}
+                          <span className="fleet-bodyhead__count">· {bodyShips.length} ship{bodyShips.length === 1 ? '' : 's'}</span>
+                        </button>
+                        <div className="fleet-sys__cards">
+                          {bodyShips.map(renderShipCard)}
                         </div>
-                        <table className="overview-table">
-                          {tableHead('Location')}
-                          <tbody>
-                            {bodyShips.map(renderShipRow)}
-                          </tbody>
-                        </table>
                       </div>
                     );
                   })}
                 </div>
               );
             })}
-            {/* Sticky selection bar — the fix for "the fleet menu is
-                several scrolls from the ships you're selecting". As the
-                LAST child of the scroll content with position:sticky
-                bottom:0, it pins to the panel viewport's bottom edge
-                whenever its natural spot is below the fold, so the
-                actions ride alongside the checkboxes at every scroll
-                position, and settle into normal flow at list end. */}
-            {mpActions && selectedIds.size > 0 && (
-              <div style={{ position: 'sticky', bottom: 0, zIndex: 3,
-                            display: 'flex', alignItems: 'center', gap: 10,
-                            marginTop: 10, padding: '9px 12px',
-                            background: 'rgba(10,16,24,0.97)',
-                            borderTop: '1px solid #24344a',
-                            boxShadow: '0 -6px 16px rgba(0,0,0,0.45)' }}>
-                <span style={{ fontSize: 11, color: '#8a9fb3', letterSpacing: '0.08em' }}>
-                  {selectedIds.size} SELECTED
-                </span>
-                {selectedIds.size >= 2 && (
-                  <button
-                    style={{ padding: '6px 12px', background: 'rgba(78,205,196,0.12)',
-                             border: '1px solid #4ecdc4', color: '#4ecdc4', borderRadius: 4,
-                             cursor: 'pointer', fontSize: 11, letterSpacing: '0.1em' }}
-                    onClick={formFleetFromSelection}
+          </>
+          )}
+        </div>
+
+        {/* Sticky selection action bar — the ONE selection surface. As
+            the LAST child of the scroll container with position:sticky
+            bottom:0, it pins to the panel viewport's bottom edge
+            whenever its natural spot is below the fold, so the actions
+            ride alongside the checkboxes at every scroll position, and
+            settle into normal flow at list end. */}
+        {filter !== 'captains' && selectedIds.size > 0 && (
+          <div className="fleet-actionbar">
+            <div className="fleet-actionbar__row">
+              <span className="fleet-actionbar__count">
+                {visibleSelected.length} selected
+                {visibleSelected.length !== selectedIds.size
+                  && ` (${selectedIds.size - visibleSelected.length} ineligible)`}
+              </span>
+              {mpActions && selectedIds.size >= 2 && (
+                <button
+                  className="fleet-actionbar__btn fleet-actionbar__btn--primary"
+                  onClick={formFleetFromSelection}
+                >
+                  ★ Form fleet
+                </button>
+              )}
+              <span className="fleet-actionbar__spacer" />
+              <button className="fleet-actionbar__btn" onClick={clearSelection}>Clear</button>
+            </div>
+
+            <div className="fleet-actionbar__row">
+              <span className="fleet-actionbar__label">Transfer to</span>
+              <select
+                className="fleet-actionbar__select"
+                value={bulkTarget}
+                onChange={(e) => setBulkTarget(e.target.value)}
+              >
+                <option value="">Destination…</option>
+                {transferTargets.map(b => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+              <button
+                className="fleet-actionbar__btn fleet-actionbar__btn--primary"
+                onClick={issueBulkTransfer}
+                disabled={!bulkTarget}
+              >
+                Issue {visibleSelected.length} order{visibleSelected.length === 1 ? '' : 's'}
+              </button>
+            </div>
+            {bulkError && <div className="fleet-actionbar__error">{bulkError}</div>}
+
+            {mpActions && (
+              <div className="fleet-actionbar__row">
+                <span className="fleet-actionbar__label">Orders</span>
+                <select
+                  className="fleet-actionbar__select"
+                  value={bulkStance}
+                  onChange={(e) => setBulkStance(e.target.value)}
+                  title="Stance: attack on sight / return fire only / never fire"
+                >
+                  <option value="">Stance: keep</option>
+                  <option value="attack">Attack on sight</option>
+                  <option value="defensive">Defensive (return fire)</option>
+                  <option value="hold">Hold fire</option>
+                </select>
+                <select
+                  className="fleet-actionbar__select"
+                  value={bulkRetreat}
+                  onChange={(e) => setBulkRetreat(e.target.value)}
+                  title="Auto-retreat to the nearest friendly shipyard station below this HP threshold"
+                >
+                  <option value="">Retreat: keep</option>
+                  <option value="off">Retreat: off</option>
+                  <option value="25">Retreat at 25% HP</option>
+                  <option value="50">Retreat at 50% HP</option>
+                  <option value="75">Retreat at 75% HP</option>
+                </select>
+                {/* Only when something in the selection can actually blow
+                    up — otherwise this is a live control that no-ops on
+                    every ship it would touch. */}
+                {detonatorSelectedCount > 0 && (
+                  <select
+                    className="fleet-actionbar__select"
+                    value={bulkDetonate}
+                    onChange={(e) => setBulkDetonate(e.target.value)}
+                    title="Auto-detonate below X% HP: deals damage to every ship in this orbit, friend or foe; this ship is destroyed."
                   >
-                    ★ FORM FLEET
-                  </button>
+                    <option value="">Detonate: keep</option>
+                    <option value="off">Detonate: off</option>
+                    <option value="25">Detonate below 25% HP</option>
+                    <option value="50">Detonate below 50% HP</option>
+                  </select>
                 )}
-                <span style={{ flex: 1 }} />
-                <button style={fleetBtn} onClick={() => setSelectedIds(new Set())}>Clear</button>
+                <button
+                  className="fleet-actionbar__btn fleet-actionbar__btn--primary"
+                  onClick={issueBulkOrders}
+                  disabled={!bulkStance && !bulkRetreat
+                    && !(bulkDetonate && detonatorSelectedCount > 0)}
+                >
+                  Set orders
+                </button>
               </div>
             )}
-          </>
+            {mpActions && bulkDetonate && bulkDetonate !== 'off' && detonatorSelectedCount > 0 && (
+              <div className="fleet-actionbar__warn">
+                Auto-detonate below {bulkDetonate}% HP: deals damage to every ship
+                in this orbit, friend or foe; the detonating ship is destroyed.
+                {detonatorSelectedCount < visibleSelected.length
+                  && ` Applies to ${detonatorSelectedCount} of ${visibleSelected.length} selected — the rest carry no detonator.`}
+              </div>
+            )}
+            {ordersNotice && <div className="fleet-actionbar__error">{ordersNotice}</div>}
+          </div>
         )}
       </div>
     </div>
