@@ -203,6 +203,19 @@ export const RecapOverlay: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameState.combatLog, gameState.chronicleFocus, gameState.chronicleFlavor, gameState.currentTick, gameState.ships, gameState.bodies]);
 
+  // While PLAYING, every other surface gets out of the way — the world
+  // menu especially: focusBody zooms the camera in, and focus-zoom is
+  // exactly what auto-opens the world-menu close-up, which buried the
+  // recap twice in playtest. A body class + scoped CSS (the
+  // outliner-collapsed idiom) hides them all for the duration instead
+  // of fighting each surface's own open/close state, and restores
+  // everything untouched on exit.
+  useEffect(() => {
+    if (!playing) return;
+    document.body.classList.add('recap-playing');
+    return () => document.body.classList.remove('recap-playing');
+  }, [playing]);
+
   // ESC dismisses at any stage.
   useEffect(() => {
     if (!scenes) return;
@@ -241,6 +254,14 @@ export const RecapOverlay: React.FC = () => {
   }
 
   return (
+    <>
+    <style>{`
+      body.recap-playing .wm-root,
+      body.recap-playing .outliner,
+      body.recap-playing .dock-rail,
+      body.recap-playing .mp-dock,
+      body.recap-playing .dock-panel { display: none !important; }
+    `}</style>
     <div onClick={() => setIdx(i => (scenes && i + 1 < scenes.length ? i + 1 : (dismiss(), i)))}
          style={{ position: 'fixed', inset: 0, zIndex: 300, cursor: 'pointer' }}>
       {/* Letterbox bars — the map stays live between them. */}
@@ -265,5 +286,6 @@ export const RecapOverlay: React.FC = () => {
         ✕ SKIP
       </button>
     </div>
+    </>
   );
 };
