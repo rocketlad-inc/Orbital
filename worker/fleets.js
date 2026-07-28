@@ -148,7 +148,7 @@ async function handleCreate(req, env, ctx) {
     // ensureCaptains fills these every tick; a null here is a freshly
     // spawned hull between ticks. Ask the player to wait a tick rather
     // than minting a captainless flag.
-    return err(409, 'no_captain', 'flagship has no captain yet — try again next tick');
+    return err(409, 'no_captain', 'flagship has no captain — assign one from the bank (or recruit: 50M+100C)');
   }
 
   const cap = await env.DB
