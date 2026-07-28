@@ -492,6 +492,11 @@ export interface Captain {
   status: 'active' | 'lost';
   createdAtTick: number;
   lostAtTick: number | null;
+  /** Tick the player deliberately put this captain in reserve (migration
+   *  0051). Non-null means the server's auto-assign pass will leave them
+   *  in the bank; null means they arrived on their own (starting
+   *  allotment or a rescue) and may be auto-posted to a captainless hull. */
+  benchedAtTick: number | null;
 }
 
 /**

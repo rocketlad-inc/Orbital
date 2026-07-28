@@ -2688,6 +2688,7 @@ function captainToJson(row) {
     rank: row.rank ?? 0, traits_json: row.traits_json ?? null,
     ship_id: row.ship_id ?? null, status: row.status,
     created_at_tick: row.created_at_tick ?? 0, lost_at_tick: row.lost_at_tick ?? null,
+    benched_at_tick: row.benched_at_tick ?? null,
   };
 }
 
@@ -2745,10 +2746,17 @@ async function handleCreateCaptain(req, env, ctx) {
     env.DB
       .prepare(
         `INSERT INTO game_captains
-           (id, game_id, faction_id, name, avatar_id, bio, rank, traits_json, ship_id, status, created_at_tick)
-         VALUES (?, ?, ?, ?, ?, ?, 0, ?, NULL, 'active', ?)`,
+           (id, game_id, faction_id, name, avatar_id, bio, rank, traits_json, ship_id,
+            status, created_at_tick, benched_at_tick)
+         VALUES (?, ?, ?, ?, ?, ?, 0, ?, NULL, 'active', ?, ?)`,
       )
-      .bind(c.id, gameId, me.id, name, c.avatar_id, c.bio, JSON.stringify(c.traits), tick),
+      // Benched on arrival (migration 0051): a recruit is a deliberate
+      // purchase, almost always for a hull the player has in mind. Left
+      // auto-assignable, ensureCaptains would post them to a random
+      // orphan ship on the very next tick — the player pays 50M+100C and
+      // the game picks the posting. The free STARTING_CAPTAINS floor is
+      // NOT benched; that one's meant to self-distribute.
+      .bind(c.id, gameId, me.id, name, c.avatar_id, c.bio, JSON.stringify(c.traits), tick, tick),
   ]);
   const row = await env.DB.prepare('SELECT * FROM game_captains WHERE id = ?').bind(c.id).first();
   return json({ captain: captainToJson(row) }, { status: 201 });
@@ -2790,13 +2798,22 @@ async function handleAssignCaptain(req, env, ctx) {
   const body = (await readJson(req)) ?? {};
   const shipId = body.ship_id ?? null;
 
+  // Current tick stamps the bench (migration 0051) so ensureCaptains
+  // knows this captain is in reserve BY CHOICE and must not be auto-
+  // posted to a random orphan hull next tick.
+  const gameRow = await env.DB
+    .prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
+  const nowTick = gameRow?.current_tick ?? 0;
+
   const stmts = [];
   // Detach from current post (if any).
   if (got.cap.ship_id) {
     stmts.push(env.DB.prepare('UPDATE game_ships SET captain_id = NULL WHERE id = ?').bind(got.cap.ship_id));
   }
   if (shipId === null) {
-    stmts.push(env.DB.prepare('UPDATE game_captains SET ship_id = NULL WHERE id = ?').bind(captainId));
+    stmts.push(env.DB
+      .prepare('UPDATE game_captains SET ship_id = NULL, benched_at_tick = ? WHERE id = ?')
+      .bind(nowTick, captainId));
     await env.DB.batch(stmts);
     return json({ ok: true, captain_id: captainId, ship_id: null });
   }
@@ -2808,11 +2825,19 @@ async function handleAssignCaptain(req, env, ctx) {
   if (!ship) return err(404, 'not_found', 'ship not found');
   if (ship.owner_faction_id !== got.me.id) return err(403, 'not_owner', 'not your ship');
   // The target ship's sitting captain (if different) goes to the bank —
-  // assignment is a swap-to-bench, never a delete.
+  // assignment is a swap-to-bench, never a delete. Stamped as benched
+  // for the same reason as an explicit bench: the displacement was a
+  // player decision, so auto-assign must not immediately re-post them
+  // onto some unrelated hull.
   if (ship.captain_id && ship.captain_id !== captainId) {
-    stmts.push(env.DB.prepare('UPDATE game_captains SET ship_id = NULL WHERE id = ?').bind(ship.captain_id));
+    stmts.push(env.DB
+      .prepare('UPDATE game_captains SET ship_id = NULL, benched_at_tick = ? WHERE id = ?')
+      .bind(nowTick, ship.captain_id));
   }
-  stmts.push(env.DB.prepare('UPDATE game_captains SET ship_id = ? WHERE id = ?').bind(shipId, captainId));
+  // Taking a post clears the bench — this captain is in service again.
+  stmts.push(env.DB
+    .prepare('UPDATE game_captains SET ship_id = ?, benched_at_tick = NULL WHERE id = ?')
+    .bind(shipId, captainId));
   stmts.push(env.DB.prepare('UPDATE game_ships SET captain_id = ? WHERE id = ?').bind(captainId, shipId));
   await env.DB.batch(stmts);
   return json({ ok: true, captain_id: captainId, ship_id: shipId });

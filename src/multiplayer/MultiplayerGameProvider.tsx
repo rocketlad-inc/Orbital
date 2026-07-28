@@ -205,6 +205,7 @@ interface ServerState {
     rank: number; combat_history?: string | null; traits_json: string | null;
     ship_id: string | null; status: string;
     created_at_tick: number; lost_at_tick: number | null;
+    benched_at_tick?: number | null;
   }>;
   /** Fog-free political summary: every live settlement's body + owner,
    *  game-wide. Ownership only — no stats ride along. */
@@ -1491,6 +1492,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     status: c.status === 'lost' ? 'lost' : 'active',
     createdAtTick: c.created_at_tick ?? 0,
     lostAtTick: c.lost_at_tick ?? null,
+    benchedAtTick: c.benched_at_tick ?? null,
   }));
 
   // Curated build list (migration 0045). Keep only well-formed entries;

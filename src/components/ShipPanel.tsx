@@ -967,11 +967,19 @@ export const ShipPanel: React.FC = () => {
               above the record. Own ships get inline rename + portrait
               cycling + bio editing (all optional); rival ships show only
               what Deep Scan reveals (name/avatar/traits, no bio). */}
-          {ship.captainName && (
+          {/* Renders for an UNCAPTAINED own ship too — captains are a
+              finite resource now (10 to start, the rest recruited), so
+              most hulls sail empty and the ship side is where you'd
+              naturally go to crew one. Rival ships still only appear
+              once Deep Scan has revealed a captain. */}
+          {(ship.captainName || (ship.ownedBy === 'player' && mpActions)) && (
             <ShipCaptainCard
               ship={ship}
               captain={(gameState.captains ?? []).find(c => c.id === ship.captainId) ?? null}
               editable={ship.ownedBy === 'player' && !!mpActions}
+              bank={(gameState.captains ?? []).filter(c => c.status === 'active' && !c.shipId)}
+              onAssign={(captainId) => { if (mpActions) mpActions.assignCaptain(captainId, ship.id); }}
+              onBench={() => { if (ship.captainId && mpActions) mpActions.assignCaptain(ship.captainId, null); }}
               onRename={(name) => { if (ship.captainId && mpActions) mpActions.updateCaptain(ship.captainId, { name }); }}
               onBio={(bio) => { if (ship.captainId && mpActions) mpActions.updateCaptain(ship.captainId, { bio }); }}
               onAvatar={(avatarId) => { if (ship.captainId && mpActions) mpActions.updateCaptain(ship.captainId, { avatarId }); }}
@@ -1556,16 +1564,67 @@ const ShipCaptainCard: React.FC<{
   ship: Ship;
   captain: import('../types').Captain | null;
   editable: boolean;
+  /** Unassigned active captains available to post to this hull. */
+  bank: import('../types').Captain[];
+  onAssign: (captainId: string) => void;
+  onBench: () => void;
   onRename: (name: string) => void;
   onBio: (bio: string) => void;
   onAvatar: (avatarId: string) => void;
-}> = ({ ship, captain, editable, onRename, onBio, onAvatar }) => {
+}> = ({ ship, captain, editable, bank, onAssign, onBench, onRename, onBio, onAvatar }) => {
   const [editingName, setEditingName] = useState(false);
   const [editingBio, setEditingBio] = useState(false);
   const rank = ship.rank ?? 0;
   const traits = ship.captainTraits ?? captain?.traits ?? [];
   const avatarId = ship.captainAvatar ?? captain?.avatarId ?? null;
   const name = ship.captainName ?? captain?.name ?? 'Unknown';
+
+  const selectStyle: React.CSSProperties = {
+    background: '#14202c', border: '1px solid #2a3d50', borderRadius: 3,
+    color: '#9fb4c6', fontFamily: 'inherit', fontSize: 10, padding: '2px 4px',
+    maxWidth: '100%',
+  };
+
+  // No officer aboard: the hull still gets a CAPTAIN section so the slot
+  // reads as empty-and-fillable rather than simply absent.
+  if (!ship.captainName) {
+    return (
+      <div className="combat-record-section" style={{ marginTop: 10 }}>
+        <div className="section-title"><span>CAPTAIN</span></div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '6px 0 2px' }}>
+          <div style={{ opacity: 0.35, flexShrink: 0 }}>
+            <CaptainAvatar avatarId={null} size={44} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 11, color: '#8aa0b4', marginBottom: 4 }}>
+              No officer aboard — no trait, no rank growth.
+            </div>
+            {editable && (
+              bank.length > 0 ? (
+                <select
+                  value=""
+                  style={selectStyle}
+                  onChange={(e) => { if (e.target.value) onAssign(e.target.value); }}
+                  title="Post a captain from the bank to this ship"
+                >
+                  <option value="">POST A CAPTAIN…</option>
+                  {bank.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}{c.rank > 0 ? ` · ${c.rank} ⚔` : ''}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div style={{ fontSize: 10, color: '#5f7488' }}>
+                  Bank empty — recruit one from the Fleet panel.
+                </div>
+              )
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="combat-record-section" style={{ marginTop: 10 }}>
@@ -1660,6 +1719,26 @@ const ShipCaptainCard: React.FC<{
             >
               {captain?.bio || (editable ? 'Write a bio…' : '')}
             </div>
+          )}
+          {editable && (
+            <select
+              value=""
+              style={{ ...selectStyle, marginTop: 6 }}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === '__bench') onBench();
+                else if (v) onAssign(v);
+              }}
+              title="Swap in another captain, or send this one back to the bank"
+            >
+              <option value="">REASSIGN…</option>
+              <option value="__bench">→ To the bank</option>
+              {bank.map(c => (
+                <option key={c.id} value={c.id}>
+                  Swap in {c.name}{c.rank > 0 ? ` · ${c.rank} ⚔` : ''}
+                </option>
+              ))}
+            </select>
           )}
         </div>
       </div>
