@@ -1062,16 +1062,10 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               </div>
             )}
 
-            {mpActions && selectedIds.size >= 2 && (
-              <button
-                style={{ margin: '8px 0', padding: '6px 12px', background: 'rgba(78,205,196,0.12)',
-                         border: '1px solid #4ecdc4', color: '#4ecdc4', borderRadius: 4,
-                         cursor: 'pointer', fontSize: 11, letterSpacing: '0.1em' }}
-                onClick={formFleetFromSelection}
-              >
-                ★ FORM FLEET FROM SELECTED ({selectedIds.size})
-              </button>
-            )}
+            {/* FORM FLEET moved to the sticky selection bar at the end of
+                the list — selecting ships happens deep in the system
+                groups, and an action button parked up here was several
+                scrolls away from the checkboxes driving it. */}
             {mpActions && myFleets.length > 0 && (
               <div style={{ margin: '8px 0 14px' }}>
                 <div style={{ fontSize: 11, letterSpacing: '0.2em', color: '#8a9fb3', margin: '2px 0 6px' }}>FLEETS</div>
@@ -1227,6 +1221,37 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                 </div>
               );
             })}
+            {/* Sticky selection bar — the fix for "the fleet menu is
+                several scrolls from the ships you're selecting". As the
+                LAST child of the scroll content with position:sticky
+                bottom:0, it pins to the panel viewport's bottom edge
+                whenever its natural spot is below the fold, so the
+                actions ride alongside the checkboxes at every scroll
+                position, and settle into normal flow at list end. */}
+            {mpActions && selectedIds.size > 0 && (
+              <div style={{ position: 'sticky', bottom: 0, zIndex: 3,
+                            display: 'flex', alignItems: 'center', gap: 10,
+                            marginTop: 10, padding: '9px 12px',
+                            background: 'rgba(10,16,24,0.97)',
+                            borderTop: '1px solid #24344a',
+                            boxShadow: '0 -6px 16px rgba(0,0,0,0.45)' }}>
+                <span style={{ fontSize: 11, color: '#8a9fb3', letterSpacing: '0.08em' }}>
+                  {selectedIds.size} SELECTED
+                </span>
+                {selectedIds.size >= 2 && (
+                  <button
+                    style={{ padding: '6px 12px', background: 'rgba(78,205,196,0.12)',
+                             border: '1px solid #4ecdc4', color: '#4ecdc4', borderRadius: 4,
+                             cursor: 'pointer', fontSize: 11, letterSpacing: '0.1em' }}
+                    onClick={formFleetFromSelection}
+                  >
+                    ★ FORM FLEET
+                  </button>
+                )}
+                <span style={{ flex: 1 }} />
+                <button style={fleetBtn} onClick={() => setSelectedIds(new Set())}>Clear</button>
+              </div>
+            )}
           </>
         )}
       </div>
