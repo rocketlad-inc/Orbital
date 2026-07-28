@@ -1,0 +1,353 @@
+// ============================================================
+// Fleets — ships under a flag captain, common orders.
+// DESIGN-fleets.md. Feature module (see worker/index.js FEATURE_MODULES).
+//
+// A fleet is a server-persistent group of same-faction ships led by a
+// FLAG CAPTAIN (the captain of one member ship). Common standing orders
+// mirror the bulk PATCH /ships/orders validation exactly; they are
+// REFUSED while the fleet is leaderless (flag_captain_id NULL) — the
+// player must promote a member captain first (surfaced as a
+// decision-tier Situation Report row client-side).
+// ============================================================
+
+const GAME_ID_RE = /^[A-Za-z0-9_-]{6,32}$/;
+const SHIP_ID_RE = /^[A-Za-z0-9_:-]{1,80}$/;
+const FLEET_ID_RE = /^[A-Za-z0-9_:-]{1,80}$/;
+const NAME_MAX = 48;
+
+const STANCES = new Set(['attack', 'defensive', 'hold']);
+const RETREAT_PCTS = new Set([25, 50, 75]);
+const DETONATE_PCTS = new Set([25, 50]);
+
+function json(data, init = {}) {
+  return new Response(JSON.stringify(data), {
+    ...init,
+    headers: { 'content-type': 'application/json', ...(init.headers ?? {}) },
+  });
+}
+function err(status, code, message) {
+  return json({ error: { code, message } }, { status });
+}
+async function readJson(req) {
+  try { return await req.json(); } catch { return null; }
+}
+
+/** The caller's faction row in this game, or null. */
+async function myFaction(env, gameId, userId) {
+  return env.DB
+    .prepare('SELECT id, name FROM game_factions WHERE game_id = ? AND user_id = ?')
+    .bind(gameId, userId)
+    .first();
+}
+
+function newFleetId(gameId) {
+  const rand = Math.random().toString(36).slice(2, 8);
+  return `${gameId}:fl_${rand}`;
+}
+
+/**
+ * Load member ships for a set of ids with all-or-nothing ownership
+ * validation (same contract as the bulk-orders endpoint: any missing,
+ * destroyed, or foreign ship fails the whole call).
+ */
+async function loadOwnedShips(env, gameId, factionId, shipIds) {
+  const unique = [...new Set(shipIds)];
+  const placeholders = unique.map(() => '?').join(',');
+  const rows = (await env.DB
+    .prepare(
+      `SELECT id, owner_faction_id, captain_id, fleet_id, status
+         FROM game_ships
+        WHERE game_id = ? AND id IN (${placeholders})`,
+    )
+    .bind(gameId, ...unique)
+    .all()).results ?? [];
+  const byId = new Map(rows.map(r => [r.id, r]));
+  for (const id of unique) {
+    const row = byId.get(id);
+    if (!row || row.status !== 'active') return { error: err(404, 'not_found', `ship not found: ${id}`) };
+    if (row.owner_faction_id !== factionId) return { error: err(403, 'not_owner', `you do not own ship ${id}`) };
+  }
+  return { ships: unique.map(id => byId.get(id)) };
+}
+
+/** Fleet row + caller-ownership check. */
+async function loadMyFleet(env, gameId, factionId, fleetId) {
+  if (!FLEET_ID_RE.test(fleetId)) return { error: err(400, 'bad_request', 'invalid fleet id') };
+  const fleet = await env.DB
+    .prepare('SELECT id, faction_id, name, flag_captain_id FROM game_fleets WHERE game_id = ? AND id = ?')
+    .bind(gameId, fleetId)
+    .first();
+  if (!fleet) return { error: err(404, 'not_found', 'fleet not found') };
+  if (fleet.faction_id !== factionId) return { error: err(403, 'not_owner', 'not your fleet') };
+  return { fleet };
+}
+
+async function memberIds(env, gameId, fleetId) {
+  const rows = (await env.DB
+    .prepare("SELECT id FROM game_ships WHERE game_id = ? AND fleet_id = ? AND status = 'active'")
+    .bind(gameId, fleetId)
+    .all()).results ?? [];
+  return rows.map(r => r.id);
+}
+
+/** Disband when membership can no longer sustain a fleet (<2 actives).
+ *  Shared by remove/patch handlers; the tick loop runs its own copy. */
+async function pruneIfTooSmall(env, gameId, fleetId) {
+  const ids = await memberIds(env, gameId, fleetId);
+  if (ids.length >= 2) return false;
+  await env.DB.batch([
+    env.DB.prepare('UPDATE game_ships SET fleet_id = NULL WHERE game_id = ? AND fleet_id = ?').bind(gameId, fleetId),
+    env.DB.prepare('DELETE FROM game_fleets WHERE game_id = ? AND id = ?').bind(gameId, fleetId),
+  ]);
+  return true;
+}
+
+async function writeChronicle(env, gameId, tick, kind, factionId, payload) {
+  try {
+    await env.DB
+      .prepare(
+        `INSERT INTO chronicle_entries
+           (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+         VALUES (?, ?, ?, ?, ?, NULL, ?, 'public', ?)`,
+      )
+      .bind(`c_fl_${Math.random().toString(36).slice(2, 10)}`, gameId, tick, kind,
+            factionId, JSON.stringify(payload), Date.now())
+      .run();
+  } catch (e) {
+    console.error('fleet chronicle write failed', kind, e);
+  }
+}
+
+async function currentTick(env, gameId) {
+  const g = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
+  return g?.current_tick ?? 0;
+}
+
+// ---------- POST /fleets ----------
+async function handleCreate(req, env, ctx) {
+  const { gameId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await myFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'no_faction', 'you are not in this game');
+
+  const body = await readJson(req);
+  const shipIds = Array.isArray(body?.ship_ids) ? body.ship_ids : null;
+  const flagShipId = typeof body?.flag_ship_id === 'string' ? body.flag_ship_id : null;
+  if (!shipIds || shipIds.length < 2) return err(400, 'bad_request', 'a fleet needs at least 2 ships');
+  if (shipIds.some(id => typeof id !== 'string' || !SHIP_ID_RE.test(id))) {
+    return err(400, 'bad_request', 'invalid ship id');
+  }
+  if (!flagShipId || !shipIds.includes(flagShipId)) {
+    return err(400, 'bad_request', 'flag_ship_id must be one of ship_ids');
+  }
+
+  const loaded = await loadOwnedShips(env, gameId, me.id, shipIds);
+  if (loaded.error) return loaded.error;
+  const flag = loaded.ships.find(s => s.id === flagShipId);
+  if (!flag.captain_id) {
+    // ensureCaptains fills these every tick; a null here is a freshly
+    // spawned hull between ticks. Ask the player to wait a tick rather
+    // than minting a captainless flag.
+    return err(409, 'no_captain', 'flagship has no captain yet — try again next tick');
+  }
+
+  const cap = await env.DB
+    .prepare('SELECT id, name FROM game_captains WHERE id = ?')
+    .bind(flag.captain_id)
+    .first();
+
+  let name = typeof body?.name === 'string' ? body.name.trim().slice(0, NAME_MAX) : '';
+  if (!name) name = `${cap?.name ?? 'Unnamed'}'s Squadron`;
+
+  const fleetId = newFleetId(gameId);
+  const tick = await currentTick(env, gameId);
+
+  const stmts = [
+    env.DB
+      .prepare('INSERT INTO game_fleets (id, game_id, faction_id, name, flag_captain_id, created_at_tick) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(fleetId, gameId, me.id, name, flag.captain_id, tick),
+  ];
+  // Claim members (this also silently pulls them out of any prior fleet).
+  const placeholders = loaded.ships.map(() => '?').join(',');
+  stmts.push(
+    env.DB
+      .prepare(`UPDATE game_ships SET fleet_id = ? WHERE game_id = ? AND id IN (${placeholders})`)
+      .bind(fleetId, gameId, ...loaded.ships.map(s => s.id)),
+  );
+  await env.DB.batch(stmts);
+
+  // Prior fleets that just lost members may have dropped below 2.
+  const priorFleets = [...new Set(loaded.ships.map(s => s.fleet_id).filter(Boolean))];
+  for (const pf of priorFleets) await pruneIfTooSmall(env, gameId, pf);
+
+  await writeChronicle(env, gameId, tick, 'fleet_formed', me.id, {
+    fleet_id: fleetId, fleet_name: name,
+    flag_captain: cap?.name ?? null, ships: loaded.ships.length,
+  });
+
+  return json({ fleet: { id: fleetId, name, flag_captain_id: flag.captain_id, ship_ids: shipIds } }, { status: 201 });
+}
+
+// ---------- PATCH /fleets/:fleetId ----------
+async function handlePatch(req, env, ctx) {
+  const { gameId, fleetId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await myFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'no_faction', 'you are not in this game');
+  const got = await loadMyFleet(env, gameId, me.id, fleetId);
+  if (got.error) return got.error;
+  const fleet = got.fleet;
+
+  const body = await readJson(req);
+  if (!body) return err(400, 'bad_request', 'body required');
+  const tick = await currentTick(env, gameId);
+
+  if (typeof body.name === 'string' && body.name.trim()) {
+    await env.DB
+      .prepare('UPDATE game_fleets SET name = ? WHERE game_id = ? AND id = ?')
+      .bind(body.name.trim().slice(0, NAME_MAX), gameId, fleetId)
+      .run();
+  }
+
+  if (Array.isArray(body.add_ship_ids) && body.add_ship_ids.length > 0) {
+    const loaded = await loadOwnedShips(env, gameId, me.id, body.add_ship_ids);
+    if (loaded.error) return loaded.error;
+    const ph = loaded.ships.map(() => '?').join(',');
+    await env.DB
+      .prepare(`UPDATE game_ships SET fleet_id = ? WHERE game_id = ? AND id IN (${ph})`)
+      .bind(fleetId, gameId, ...loaded.ships.map(s => s.id))
+      .run();
+    const priors = [...new Set(loaded.ships.map(s => s.fleet_id).filter(f => f && f !== fleetId))];
+    for (const pf of priors) await pruneIfTooSmall(env, gameId, pf);
+    // Joiners inherit the fleet's standing orders — take them from the
+    // flagship's current row, the fleet's de-facto order sheet.
+    if (fleet.flag_captain_id) {
+      const flagShip = await env.DB
+        .prepare('SELECT stance, retreat_hp_pct, detonate_hp_pct FROM game_ships WHERE captain_id = ?')
+        .bind(fleet.flag_captain_id)
+        .first();
+      if (flagShip) {
+        await env.DB
+          .prepare(`UPDATE game_ships SET stance = ?, retreat_hp_pct = ?, detonate_hp_pct = ? WHERE game_id = ? AND id IN (${ph})`)
+          .bind(flagShip.stance, flagShip.retreat_hp_pct, flagShip.detonate_hp_pct,
+                gameId, ...loaded.ships.map(s => s.id))
+          .run();
+      }
+    }
+  }
+
+  if (Array.isArray(body.remove_ship_ids) && body.remove_ship_ids.length > 0) {
+    const loaded = await loadOwnedShips(env, gameId, me.id, body.remove_ship_ids);
+    if (loaded.error) return loaded.error;
+    const ph = loaded.ships.map(() => '?').join(',');
+    await env.DB
+      .prepare(`UPDATE game_ships SET fleet_id = NULL WHERE game_id = ? AND fleet_id = ? AND id IN (${ph})`)
+      .bind(gameId, fleetId, ...loaded.ships.map(s => s.id))
+      .run();
+    // Removing the flagship beheads the fleet: leaderless until promoted.
+    if (fleet.flag_captain_id && loaded.ships.some(s => s.captain_id === fleet.flag_captain_id)) {
+      await env.DB
+        .prepare('UPDATE game_fleets SET flag_captain_id = NULL WHERE game_id = ? AND id = ?')
+        .bind(gameId, fleetId)
+        .run();
+    }
+    if (await pruneIfTooSmall(env, gameId, fleetId)) {
+      return json({ ok: true, disbanded: true });
+    }
+  }
+
+  if (typeof body.flag_ship_id === 'string') {
+    const ids = await memberIds(env, gameId, fleetId);
+    if (!ids.includes(body.flag_ship_id)) {
+      return err(400, 'bad_request', 'flag_ship_id must be a fleet member');
+    }
+    const ship = await env.DB
+      .prepare('SELECT captain_id FROM game_ships WHERE game_id = ? AND id = ?')
+      .bind(gameId, body.flag_ship_id)
+      .first();
+    if (!ship?.captain_id) return err(409, 'no_captain', 'that ship has no captain yet');
+    await env.DB
+      .prepare('UPDATE game_fleets SET flag_captain_id = ? WHERE game_id = ? AND id = ?')
+      .bind(ship.captain_id, gameId, fleetId)
+      .run();
+    const cap = await env.DB
+      .prepare('SELECT name FROM game_captains WHERE id = ?').bind(ship.captain_id).first();
+    await writeChronicle(env, gameId, tick, 'fleet_flag_promoted', me.id, {
+      fleet_id: fleetId, fleet_name: fleet.name, flag_captain: cap?.name ?? null,
+    });
+  }
+
+  const flagRow = await env.DB
+    .prepare('SELECT flag_captain_id, name FROM game_fleets WHERE game_id = ? AND id = ?')
+    .bind(gameId, fleetId)
+    .first();
+  return json({ ok: true, fleet: { id: fleetId, name: flagRow?.name, flag_captain_id: flagRow?.flag_captain_id ?? null } });
+}
+
+// ---------- DELETE /fleets/:fleetId ----------
+async function handleDisband(req, env, ctx) {
+  const { gameId, fleetId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await myFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'no_faction', 'you are not in this game');
+  const got = await loadMyFleet(env, gameId, me.id, fleetId);
+  if (got.error) return got.error;
+  await env.DB.batch([
+    env.DB.prepare('UPDATE game_ships SET fleet_id = NULL WHERE game_id = ? AND fleet_id = ?').bind(gameId, fleetId),
+    env.DB.prepare('DELETE FROM game_fleets WHERE game_id = ? AND id = ?').bind(gameId, fleetId),
+  ]);
+  return json({ ok: true });
+}
+
+// ---------- PATCH /fleets/:fleetId/orders ----------
+// Mirrors the bulk /ships/orders contract; refused while leaderless.
+async function handleFleetOrders(req, env, ctx) {
+  const { gameId, fleetId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await myFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'no_faction', 'you are not in this game');
+  const got = await loadMyFleet(env, gameId, me.id, fleetId);
+  if (got.error) return got.error;
+  if (!got.fleet.flag_captain_id) {
+    return err(409, 'fleet_leaderless', 'the fleet has no flag captain — promote one first');
+  }
+
+  const body = await readJson(req);
+  if (!body) return err(400, 'bad_request', 'body required');
+  const hasStance = 'stance' in body;
+  const hasRetreat = 'retreat_hp_pct' in body;
+  const hasDetonate = 'detonate_hp_pct' in body;
+  if (!hasStance && !hasRetreat && !hasDetonate) {
+    return err(400, 'bad_request', 'no order fields supplied');
+  }
+  if (hasStance && !STANCES.has(body.stance)) {
+    return err(400, 'bad_request', "stance must be 'attack', 'defensive', or 'hold'");
+  }
+  if (hasRetreat && body.retreat_hp_pct !== null && !RETREAT_PCTS.has(body.retreat_hp_pct)) {
+    return err(400, 'bad_request', 'retreat_hp_pct must be null, 25, 50, or 75');
+  }
+  if (hasDetonate && body.detonate_hp_pct !== null && !DETONATE_PCTS.has(body.detonate_hp_pct)) {
+    return err(400, 'bad_request', 'detonate_hp_pct must be null, 25, or 50');
+  }
+
+  const ids = await memberIds(env, gameId, fleetId);
+  if (ids.length === 0) return err(409, 'empty_fleet', 'fleet has no active members');
+  const sets = [];
+  const binds = [];
+  if (hasStance) { sets.push('stance = ?'); binds.push(body.stance); }
+  if (hasRetreat) { sets.push('retreat_hp_pct = ?'); binds.push(body.retreat_hp_pct); }
+  if (hasDetonate) { sets.push('detonate_hp_pct = ?'); binds.push(body.detonate_hp_pct); }
+  const ph = ids.map(() => '?').join(',');
+  await env.DB
+    .prepare(`UPDATE game_ships SET ${sets.join(', ')} WHERE game_id = ? AND id IN (${ph})`)
+    .bind(...binds, gameId, ...ids)
+    .run();
+  return json({ ok: true, updated: ids.length });
+}
+
+export const routes = [
+  { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/fleets$/, auth: 'required', handle: handleCreate },
+  { method: 'PATCH', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/fleets\/(?<fleetId>[^/]+)\/orders$/, auth: 'required', handle: handleFleetOrders },
+  { method: 'PATCH', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/fleets\/(?<fleetId>[^/]+)$/, auth: 'required', handle: handlePatch },
+  { method: 'DELETE', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/fleets\/(?<fleetId>[^/]+)$/, auth: 'required', handle: handleDisband },
+];

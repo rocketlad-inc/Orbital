@@ -709,6 +709,59 @@ export class Room {
       console.error('captain backfill pass failed', e);
     }
 
+    // 0.05 Fleet flag integrity + auto-disband (DESIGN-fleets.md).
+    //   - A flag captain who no longer commands an ACTIVE MEMBER ship
+    //     (flagship destroyed, captain lost or banked) beheads the
+    //     fleet: flag_captain_id -> NULL, chronicle fleet_flag_lost.
+    //     The fleet persists leaderless; promotion is a player act.
+    //   - Fleets below 2 active members dissolve silently.
+    try {
+      const beheaded = (await this.env.DB
+        .prepare(
+          `SELECT f.id, f.name, f.faction_id FROM game_fleets f
+            WHERE f.game_id = ? AND f.flag_captain_id IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM game_captains c
+                  JOIN game_ships s ON s.id = c.ship_id
+                 WHERE c.id = f.flag_captain_id AND c.status = 'active'
+                   AND s.fleet_id = f.id AND s.status = 'active')`,
+        )
+        .bind(gameId)
+        .all()).results ?? [];
+      for (const f of beheaded) {
+        await this.env.DB
+          .prepare('UPDATE game_fleets SET flag_captain_id = NULL WHERE id = ?')
+          .bind(f.id)
+          .run();
+        await this.env.DB
+          .prepare(
+            `INSERT INTO chronicle_entries
+               (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+             VALUES (?, ?, ?, 'fleet_flag_lost', ?, NULL, ?, 'public', ?)`,
+          )
+          .bind(`c_flx_${f.id.slice(-8)}_${tick}`, gameId, tick, f.faction_id,
+                JSON.stringify({ fleet_id: f.id, fleet_name: f.name }), Date.now())
+          .run();
+      }
+      const small = (await this.env.DB
+        .prepare(
+          `SELECT f.id FROM game_fleets f
+            WHERE f.game_id = ?
+              AND (SELECT COUNT(*) FROM game_ships s
+                    WHERE s.fleet_id = f.id AND s.status = 'active') < 2`,
+        )
+        .bind(gameId)
+        .all()).results ?? [];
+      for (const f of small) {
+        await this.env.DB.batch([
+          this.env.DB.prepare('UPDATE game_ships SET fleet_id = NULL WHERE game_id = ? AND fleet_id = ?').bind(gameId, f.id),
+          this.env.DB.prepare('DELETE FROM game_fleets WHERE game_id = ? AND id = ?').bind(gameId, f.id),
+        ]);
+      }
+    } catch (e) {
+      console.error('fleet integrity pass failed', e);
+    }
+
     // 0. Phantom-ownership sweep. Bodies whose last surviving settlement
     //    was destroyed used to keep their old owner attached (the
     //    recomputeBodyOwnership helper short-circuited on "zero

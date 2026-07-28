@@ -609,7 +609,7 @@ async function handleGetState(req, env, ctx) {
               s.last_target_id,
               s.icon_variant, s.parts_json,
               s.stance, s.retreat_hp_pct, s.detonate_hp_pct,
-              s.captain_id, c.name AS captain_name, c.avatar_id AS captain_avatar,
+              s.captain_id, s.fleet_id, c.name AS captain_name, c.avatar_id AS captain_avatar,
               c.traits_json AS captain_traits
          FROM game_ships s
          LEFT JOIN game_captains c ON c.id = s.captain_id
@@ -640,6 +640,28 @@ async function handleGetState(req, env, ctx) {
   // narrower sensor-only node gate missed). Gating the node on THIS set
   // guarantees node visibility exactly tracks ship visibility.
   const sentShipIds = JSON.stringify(ships.map(s => s.id));
+
+  // Fleets (DESIGN-fleets.md). Visible when yours OR any member ship is
+  // in the ships payload above — a named enemy fleet you can see is
+  // intel; one entirely outside your sensors stays unknown.
+  const fleets = (await env.DB
+    .prepare(
+      `SELECT f.id, f.faction_id, f.name, f.flag_captain_id, f.created_at_tick,
+              fc.name AS flag_captain_name, fc.rank AS flag_captain_rank,
+              fc.traits_json AS flag_captain_traits,
+              (SELECT s2.id FROM game_ships s2
+                WHERE s2.fleet_id = f.id AND s2.captain_id = f.flag_captain_id
+                LIMIT 1) AS flagship_id
+         FROM game_fleets f
+         LEFT JOIN game_captains fc ON fc.id = f.flag_captain_id
+        WHERE f.game_id = ?1
+          AND (f.faction_id = ?2
+               OR EXISTS (SELECT 1 FROM game_ships ms
+                           WHERE ms.fleet_id = f.id
+                             AND ms.id IN (SELECT value FROM json_each(?3))))`,
+    )
+    .bind(gameId, me.id, sentShipIds)
+    .all()).results ?? [];
 
   // Deep Scan (sensors 5): a rival ship's fitted parts are intel. Without
   // it, non-friendly loadouts are redacted — parts_json is nulled and a
@@ -1009,6 +1031,7 @@ async function handleGetState(req, env, ctx) {
     factions,
     bodies,
     ships,
+    fleets,
     settlements,
     settlement_claims,
     nodes,
