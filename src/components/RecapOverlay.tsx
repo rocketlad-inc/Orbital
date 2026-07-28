@@ -36,6 +36,9 @@ const SCENE_CAP = 8;       // a long absence is a highlight reel, not a slog
 /** Per Lorne: NEXT is the main way through — a scene only auto-advances
  *  after a FULL 20s, and each scene/animation never exceeds that. */
 const SCENE_MS = 20_000;
+/** Extra bite past the moon-ring threshold — the rings resolve at the
+ *  bare hinge, but the scene reads better a touch closer in. */
+const RECAP_ZOOM_BOOST = 1.1;
 
 const KEY = () => `recap:lastSeenCount:${typeof window !== 'undefined' ? window.location.pathname : 'default'}`;
 
@@ -151,7 +154,7 @@ export const RecapOverlay: React.FC = () => {
         // spans MOON_ORBIT_MIN_PARENT_PX on screen. +4px of margin so
         // the scene lands comfortably past the gate, not teetering on it.
         const scale = Math.max(2, Math.min(60,
-          (MOON_ORBIT_MIN_PARENT_PX + 4) / Math.max(0.5, ref.radius)));
+          RECAP_ZOOM_BOOST * (MOON_ORBIT_MIN_PARENT_PX + 4) / Math.max(0.5, ref.radius)));
         updateCamera({ scale });
       }
     }
