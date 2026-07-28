@@ -22,6 +22,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
+import { enqueueDetonation, spawnDiscoveryBloom } from '../render/combatFx';
 
 // GameState carries no machine-kind array (only focus/flavor are
 // parallel-indexed), so majors are classified from the headline text —
@@ -33,7 +34,42 @@ const SCENE_MS = 3200;
 
 const KEY = () => `recap:lastSeenCount:${typeof window !== 'undefined' ? window.location.pathname : 'default'}`;
 
-interface Scene { bodyId?: string; shipId?: string; lines: string[] }
+interface Scene { bodyId?: string; shipId?: string; fx?: 'boom' | 'bloom'; lines: string[] }
+
+/** Camera target for a chronicle entry. Ship-loss rows carry a SHIP
+ *  focus whose hull is usually already gone — resolve to its parent
+ *  body when it survives, else fall back to scanning the headline for a
+ *  body NAME ("Debris spreading over Mars" -> Mars). Without this the
+ *  recap captioned Mars while the camera sat wherever it already was
+ *  (playtest screenshot). Longest name wins so 'New Lorneland' beats
+ *  'Lorneland'. */
+function resolveSceneBody(
+  line: string,
+  f: { kind: 'body'; bodyId: string } | { kind: 'ship'; shipId: string } | null | undefined,
+  ships: { id: string; orbit?: { parentBodyId?: string } }[],
+  bodies: { id: string; name: string }[],
+): string | undefined {
+  if (f?.kind === 'body') return f.bodyId;
+  if (f?.kind === 'ship') {
+    const sh = ships.find(x => x.id === f.shipId);
+    if (sh?.orbit?.parentBodyId) return sh.orbit.parentBodyId;
+  }
+  let best: { id: string; len: number } | null = null;
+  for (const b of bodies) {
+    if (b.name && line.includes(b.name) && (!best || b.name.length > best.len)) {
+      best = { id: b.id, len: b.name.length };
+    }
+  }
+  return best?.id;
+}
+
+/** Which effect sells this line: destruction reads as a blast,
+ *  discoveries as the purple bloom. */
+function fxFor(line: string): 'boom' | 'bloom' | undefined {
+  if (/DISCOVERY|databank|stargate|warp gate/i.test(line)) return 'bloom';
+  if (/destroyed|fell|impact|detonat|stops transmitting|debris/i.test(line)) return 'boom';
+  return undefined;
+}
 
 export const RecapOverlay: React.FC = () => {
   const { gameState, focusBody, selectBody } = useGameContext();
@@ -63,11 +99,9 @@ export const RecapOverlay: React.FC = () => {
     const majors: { i: number; bodyId?: string; shipId?: string }[] = [];
     for (let i = log.length - fresh; i < log.length; i++) {
       if (MAJOR_RE.test(log[i] ?? '')) {
-        const f = focus[i];
         majors.push({
           i,
-          bodyId: f?.kind === 'body' ? f.bodyId : undefined,
-          shipId: f?.kind === 'ship' ? f.shipId : undefined,
+          bodyId: resolveSceneBody(log[i] ?? '', focus[i], gameState.ships, gameState.bodies),
         });
       }
     }
@@ -82,11 +116,11 @@ export const RecapOverlay: React.FC = () => {
       if (last && last.bodyId && last.bodyId === m.bodyId) {
         if (last.lines.length < 3) last.lines.push(line);
       } else {
-        built.push({ bodyId: m.bodyId, shipId: m.shipId, lines: [line] });
+        built.push({ bodyId: m.bodyId, fx: fxFor(log[m.i] ?? ''), lines: [line] });
       }
     }
     setScenes(built.slice(-SCENE_CAP));
-  }, [gameState.combatLog, gameState.chronicleFocus, gameState.chronicleFlavor]);
+  }, [gameState.combatLog, gameState.chronicleFocus, gameState.chronicleFlavor, gameState.ships, gameState.bodies]);
 
   const scene = playing && scenes ? scenes[idx] : null;
 
@@ -95,13 +129,26 @@ export const RecapOverlay: React.FC = () => {
   useEffect(() => {
     if (!scene) return;
     if (scene.bodyId) { selectBody(scene.bodyId); focusBody(scene.bodyId); }
+    // The pending-FX queue plays each real event exactly once ever, so a
+    // REPLAY spawns its own effect: blast or bloom at the scene body,
+    // delayed so the camera tween lands first. Unique id per showing —
+    // combatFx dedups by id.
+    let fxT: ReturnType<typeof setTimeout> | null = null;
+    if (scene.bodyId && scene.fx) {
+      const bid = scene.bodyId;
+      const kind = scene.fx;
+      fxT = setTimeout(() => {
+        if (kind === 'bloom') spawnDiscoveryBloom(`recap_${Date.now()}_${bid}`, bid);
+        else enqueueDetonation(`recap_${Date.now()}_${bid}`, bid, null);
+      }, 700);
+    }
     const t = setTimeout(() => {
       setIdx(i => {
         if (!scenes || i + 1 >= scenes.length) { setPlaying(false); setScenes(null); return i; }
         return i + 1;
       });
     }, SCENE_MS);
-    return () => clearTimeout(t);
+    return () => { clearTimeout(t); if (fxT) clearTimeout(fxT); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scene]);
 
@@ -130,14 +177,13 @@ export const RecapOverlay: React.FC = () => {
       if (picks.length === 0) return;
       const built: Scene[] = [];
       for (const i of picks) {
-        const f = focus[i];
-        const bodyId = f?.kind === 'body' ? f.bodyId : undefined;
+        const bodyId = resolveSceneBody(log[i] ?? '', focus[i], gameState.ships, gameState.bodies);
         const line = flavor[i] || log[i];
         const last = built[built.length - 1];
         if (last && last.bodyId && last.bodyId === bodyId) {
           if (last.lines.length < 3) last.lines.push(line);
         } else {
-          built.push({ bodyId, lines: [line] });
+          built.push({ bodyId, fx: fxFor(log[i] ?? ''), lines: [line] });
         }
       }
       setScenes(built.slice(-SCENE_CAP));
@@ -147,7 +193,7 @@ export const RecapOverlay: React.FC = () => {
     window.addEventListener('orbital:play-recap', onPlay as EventListener);
     return () => window.removeEventListener('orbital:play-recap', onPlay as EventListener);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameState.combatLog, gameState.chronicleFocus, gameState.chronicleFlavor, gameState.currentTick]);
+  }, [gameState.combatLog, gameState.chronicleFocus, gameState.chronicleFlavor, gameState.currentTick, gameState.ships, gameState.bodies]);
 
   // ESC dismisses at any stage.
   useEffect(() => {
