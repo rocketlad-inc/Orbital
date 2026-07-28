@@ -885,7 +885,7 @@ export class Room {
         const rows = (await this.env.DB
           .prepare(
             `SELECT tech_id, level FROM faction_techs
-              WHERE game_id = ? AND faction_id = ? AND tech_id IN ('weapons','armor')`,
+              WHERE game_id = ? AND faction_id = ? AND tech_id IN ('weapons','armor','shields')`,
           )
           .bind(gameId, factionId)
           .all()).results ?? [];
@@ -949,9 +949,13 @@ export class Room {
       // parts_json is the snapshot taken at queue time; NULL = bare
       // hull = the legacy HP/DMG table values exactly.
       const parts = parsePartsJson(b.ship_class, b.parts_json);
+      // Cached per faction, so reading it unconditionally costs nothing
+      // extra — the spawn-HP math below needs the defense level even for
+      // a bare hull, which the `parts.length > 0` gate used to skip.
+      const techLevels = await techLevelsFor(b.faction_id);
       const stats = computeShipStats(
         b.ship_class, parts,
-        parts.length > 0 ? await techLevelsFor(b.faction_id) : {},
+        parts.length > 0 ? techLevels : {},
       );
       const hp = stats.hp;
       const dmg = stats.damage_per_tick;
@@ -1004,6 +1008,27 @@ export class Room {
         }
       } catch (e) { console.error('veteran yards rank calc failed', e); }
 
+      // Launch at the EFFECTIVE ceiling, not the bare baked hull.
+      // hp_max is stored as the build-time base; the live ceiling is
+      // base × defense tech (+8%/level) × rank (+1%/kill) — see
+      // armorMulOf and the maintenance pass's effectiveMaxHp, which the
+      // client mirrors in effectiveShipMaxHp. Spawning at `hp` meant a
+      // fresh hull was born short of its own ceiling by exactly that
+      // multiplier: at Defense 6 it launched reading 68%, and because
+      // repair is station-only it stayed that way (playtest report:
+      // "all my ships are launching at like half health"). Same fix the
+      // armor-research pass already applies to EXISTING hulls when a
+      // level lands; the spawn path never got it.
+      //
+      // Bulwark/aura hpMul are deliberately NOT folded in: a new hull
+      // has no captain and no fleet yet. Once ensureCaptains posts one,
+      // the maintenance pass repairs it up to the higher ceiling.
+      const defenseLvl = Math.max(
+        Number(techLevels.armor ?? 0),
+        Number(techLevels.shields ?? 0),
+      );
+      const spawnHp = hp * (1 + 0.08 * defenseLvl) * (1 + 0.01 * spawnRank);
+
       await this.env.DB.batch([
         this.env.DB
           .prepare(
@@ -1017,7 +1042,7 @@ export class Room {
           )
           .bind(shipId, gameId, b.faction_id, shipName, b.ship_class,
                 b.body_id, rp, ra, tick, fuelMax, fuelMax, tick,
-                hp, hp, dmg, b.icon_variant ?? null,
+                spawnHp, hp, dmg, b.icon_variant ?? null,
                 parts.length > 0 ? JSON.stringify(parts) : null,
                 spawnRank),
         this.env.DB
@@ -4228,6 +4253,18 @@ export class Room {
           const shipId = `${gameId}:wreck_${body_id.slice(-8)}_${Math.random().toString(36).slice(2, 6)}`;
           const rp = (body_radius || 4) * 1.5;
           const ra = (body_radius || 4) * 2.0;
+          // Same launch-at-the-ceiling rule as the build path above: the
+          // hardcoded 180/180 says the author meant a FULL hull, but the
+          // live ceiling is 180 × defense tech, so a Defense-10 finder
+          // salvaged a "free destroyer" that showed up reading 56%.
+          let wreckHp = 180;
+          try {
+            const dRow = await this.env.DB
+              .prepare(`SELECT MAX(level) AS lvl FROM faction_techs
+                         WHERE game_id = ? AND faction_id = ? AND tech_id IN ('armor','shields')`)
+              .bind(gameId, discoverer).first();
+            wreckHp = 180 * (1 + 0.08 * Number(dRow?.lvl ?? 0));
+          } catch (e) { console.error('derelict hp scale failed', e); }
           stmts.push(
             this.env.DB
               .prepare(
@@ -4239,10 +4276,10 @@ export class Room {
                  VALUES (?, ?, ?, ?, 'destroyer', ?,
                          ?, ?, 0, 0, ?, 1,
                          200, 200, 'active', ?,
-                         180, 180, 10)`,
+                         ?, 180, 10)`,
               )
               .bind(shipId, gameId, discoverer, `${body_name} Salvage`, body_id,
-                    rp, ra, tick, tick),
+                    rp, ra, tick, tick, wreckHp),
           );
           chronicleMessage = `${body_name}: DISCOVERY — a derelict destroyer is salvageable. Claimed.`;
           break;
