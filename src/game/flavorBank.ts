@@ -56,11 +56,13 @@ export const FLAVOR_BANK: Record<string, string[]> = {
     "{actor} razed {settlementName} at {tick}. The {settlementType} is a crater on {body}.",
     "{settlementName} took the hit and didn't get up — the {settlementType} on {body} went dark at {tick}.",
     "Whatever {partner} built at {settlementName} is ash. The {settlementType} on {body} is gone.",
-    // Population-aware — {popLost} is a small stat (settlements cap at
-    // 10 colonists), so it's phrased as a numeral readout rather than a
-    // counted noun ("population 3", not "3 colonists") to dodge
-    // singular/plural agreement entirely — templates are dumb strings
-    // with no conditionals, so there's no way to branch on popLost===1.
+    // Population-aware — {popLost} is scaled from the settlement's raw
+    // population stat (1-10) to a people count (1 pop = 200,000, see
+    // flavorEngine.ts formatPopulation) and formatted as a string
+    // ("600,000" / "1.2 million") before it ever reaches a template.
+    // Phrased as a numeral readout ("population 600,000") rather than a
+    // counted noun to dodge singular/plural agreement — templates are
+    // dumb strings with no conditionals, no way to branch on the value.
     "{actor} ordnance levels {settlementName} on {body} — population {popLost}, gone dark. The {settlementType} stops answering at {tick}.",
     "{partner}'s {settlementName} burns. Population {popLost}, status unknown. {actor} confirms the {settlementType} on {body} is gone.",
     "The lights of {settlementName} go out over {body} — population {popLost} with them. {actor} did this.",

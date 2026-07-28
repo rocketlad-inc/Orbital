@@ -84,6 +84,23 @@ const INDUSTRY_COLLAPSE_THRESHOLD = 5;
 // them, so "ten hulls" and "20 cargo runs" sat two paragraphs apart.
 const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
 function numWord(n) { return n >= 0 && n <= 9 ? NUMBER_WORDS[n] : String(n); }
+
+// Settlement `population` is an internal game stat (1-10, a development
+// tier — src/game/settlements.ts GROWTH_INTERVAL/POP_MAX). For newspaper
+// copy it stands in for a real populace: 1 pop = 200,000 people. Display
+// layer only — mirrors src/game/flavorEngine.ts's formatPopulation
+// (same constant, duplicated because client TS and this worker JS don't
+// share a module).
+const POP_PER_UNIT = 200_000;
+function formatPopulation(units) {
+  const people = units * POP_PER_UNIT;
+  if (people >= 1_000_000) {
+    const millions = people / 1_000_000;
+    const str = Number.isInteger(millions) ? String(millions) : millions.toFixed(1);
+    return `${str} million`;
+  }
+  return people.toLocaleString('en-US');
+}
 function shipsWord(n) { return n === 1 ? 'ship' : 'ships'; }
 function plural(n, word, pluralWord) { return n === 1 ? word : (pluralWord ?? `${word}s`); }
 
@@ -185,9 +202,9 @@ function settlementLossClause(names, totalPop, used) {
   const nameStr = nameList(names, 2, used);
   const many = names.length > 1;
   // Closed on both sides as a proper parenthetical aside — a dash that
-  // only opens ("New City — population 6 was lost") runs the aside
+  // only opens ("New City — home to 600,000 was lost") runs the aside
   // straight into the verb with no boundary.
-  const popClause = totalPop > 0 ? ` — population ${numWord(totalPop)} —` : '';
+  const popClause = totalPop > 0 ? ` — home to ${formatPopulation(totalPop)} —` : '';
   return ` The settlement${many ? 's' : ''} ${nameStr}${popClause} ${many ? 'were' : 'was'} also lost in the fighting.`;
 }
 
@@ -983,7 +1000,7 @@ function buildBattleStories(rows, used, locator, captainFate) {
       if (settlementLosers.length > 0) {
         settlementExtra = ' ' + settlementLosers.map(s => {
           const many = s.names.length > 1;
-          const popClause = s.pop > 0 ? ` — population ${numWord(s.pop)} —` : '';
+          const popClause = s.pop > 0 ? ` — home to ${formatPopulation(s.pop)} —` : '';
           return `${b(s.who)} also lost the settlement${many ? 's' : ''} ${nameList(s.names, 2, used)}${popClause} in the fighting.`;
         }).join(' ');
       }

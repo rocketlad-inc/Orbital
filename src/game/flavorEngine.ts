@@ -153,6 +153,22 @@ function distanceBucket(body: FlavorBody | undefined): string {
 
 const VAR_RE = /\{(\w+)\}/g;
 
+// Settlement `population` is an internal game stat (1-10, tracks
+// development tier — see src/game/settlements.ts GROWTH_INTERVAL).
+// For narrative purposes it stands in for a much larger populace:
+// 1 pop = 200,000 people. Purely a display-layer read — the stored
+// stat itself is untouched, this only affects what prose shows.
+const POP_PER_UNIT = 200_000;
+function formatPopulation(units: number): string {
+  const people = units * POP_PER_UNIT;
+  if (people >= 1_000_000) {
+    const millions = people / 1_000_000;
+    const str = Number.isInteger(millions) ? String(millions) : millions.toFixed(1);
+    return `${str} million`;
+  }
+  return people.toLocaleString('en-US');
+}
+
 function fillTemplate(tpl: string, vars: Record<string, string | undefined>): string | null {
   let missing = false;
   const out = tpl.replace(VAR_RE, (_m, key: string) => {
@@ -244,7 +260,13 @@ function resolveVars(ev: FlavorEvent, ctx: FlavorContext): Record<string, string
         settlementName: str('settlement_name'),
         settlementType: str('settlement_type') ?? 'settlement',
         body: str('body_name'),
-        popLost: num('pop_lost'),
+        // "population 6" reads like a stat, not a loss. Scaled to
+        // people (200,000 per pop unit) so the templates below can
+        // land the actual weight of a settlement falling.
+        popLost: (() => {
+          const raw = num('pop_lost');
+          return raw ? formatPopulation(Number(raw)) : undefined;
+        })(),
         tick,
       };
     }
