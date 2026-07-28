@@ -23,6 +23,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { enqueueDetonation, spawnDiscoveryBloom } from '../render/combatFx';
+import { MOON_ORBIT_MIN_PARENT_PX } from '../render/mapRenderer';
 
 // GameState carries no machine-kind array (only focus/flavor are
 // parallel-indexed), so majors are classified from the headline text —
@@ -32,9 +33,9 @@ import { enqueueDetonation, spawnDiscoveryBloom } from '../render/combatFx';
 const MAJOR_RE = /destroyed|fell|impact|DISCOVERY|victor|wins the|detonat|assumed command|leaderless|launched|arrived|inbound|complete/i;
 const THRESHOLD = 5;       // strictly more than this many majors → offer
 const SCENE_CAP = 8;       // a long absence is a highlight reel, not a slog
-const SCENE_MS = 3200;
-/** Hard ceiling on one full playback — nobody's recap runs longer. */
-const TOTAL_MS_CAP = 20_000;
+/** Per Lorne: NEXT is the main way through — a scene only auto-advances
+ *  after a FULL 20s, and each scene/animation never exceeds that. */
+const SCENE_MS = 20_000;
 
 const KEY = () => `recap:lastSeenCount:${typeof window !== 'undefined' ? window.location.pathname : 'default'}`;
 
@@ -76,7 +77,7 @@ function fxFor(line: string): 'boom' | 'bloom' | undefined {
 }
 
 export const RecapOverlay: React.FC = () => {
-  const { gameState, focusBody } = useGameContext();
+  const { gameState, focusBody, updateCamera } = useGameContext();
   const [scenes, setScenes] = useState<Scene[] | null>(null);  // null = no offer
   const [playing, setPlaying] = useState(false);
   const [idx, setIdx] = useState(0);
@@ -127,9 +128,7 @@ export const RecapOverlay: React.FC = () => {
   }, [gameState.combatLog, gameState.chronicleFocus, gameState.chronicleFlavor, gameState.ships, gameState.bodies]);
 
   const scene = playing && scenes ? scenes[idx] : null;
-  const sceneMs = scenes && scenes.length > 0
-    ? Math.min(SCENE_MS, Math.floor(TOTAL_MS_CAP / scenes.length))
-    : SCENE_MS;
+  const sceneMs = SCENE_MS;
 
   // Fly the camera on scene change; pendingFx plays the queued effects
   // once the body is framed — the recap is a guided tour of that queue.
@@ -138,7 +137,24 @@ export const RecapOverlay: React.FC = () => {
     // focusBody ONLY — selectBody opens the world-menu close-up, which
     // covered the entire recap (captions included) the moment the camera
     // arrived. The recap is a fly-by, not an inspection.
-    if (scene.bodyId) focusBody(scene.bodyId);
+    if (scene.bodyId) {
+      focusBody(scene.bodyId);
+      // focusBody lands at flat scale=2 — often too far out for the moon
+      // orbit rings (they need parentRadius*scale past the LOD gate).
+      // Zoom so the scene body's moon rings resolve: ref is the planet
+      // (or the moon's parent), target comfortably past the ~12px gate,
+      // clamped to the focus-zoom band.
+      const b = gameState.bodies.find(x => x.id === scene.bodyId);
+      const ref = b?.parent ? gameState.bodies.find(x => x.id === b.parent) ?? b : b;
+      if (ref) {
+        // The map's shared LOD hinge: moon rings draw once the parent
+        // spans MOON_ORBIT_MIN_PARENT_PX on screen. +4px of margin so
+        // the scene lands comfortably past the gate, not teetering on it.
+        const scale = Math.max(2, Math.min(60,
+          (MOON_ORBIT_MIN_PARENT_PX + 4) / Math.max(0.5, ref.radius)));
+        updateCamera({ scale });
+      }
+    }
     // The pending-FX queue plays each real event exactly once ever, so a
     // REPLAY spawns its own effect: blast or bloom at the scene body,
     // delayed so the camera tween lands first. Unique id per showing —
