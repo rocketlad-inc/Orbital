@@ -2798,6 +2798,21 @@ async function handleAssignCaptain(req, env, ctx) {
   const body = (await readJson(req)) ?? {};
   const shipId = body.ship_id ?? null;
 
+  // One captain per fleet: members surrendered theirs on joining, and
+  // the bank must not re-officer them through the side door. Assigning
+  // to a fleet member is only legal via the fleet PROMOTE flow (which
+  // also raises them to flag).
+  if (shipId) {
+    const tgt = await env.DB
+      .prepare('SELECT fleet_id FROM game_ships WHERE id = ? AND game_id = ?')
+      .bind(shipId, gameId)
+      .first();
+    if (tgt?.fleet_id) {
+      return err(409, 'fleet_member',
+        'fleet members sail under the flag captain — use PROMOTE to give this ship the flag');
+    }
+  }
+
   // Current tick stamps the bench (migration 0051) so ensureCaptains
   // knows this captain is in reserve BY CHOICE and must not be auto-
   // posted to a random orphan hull next tick.

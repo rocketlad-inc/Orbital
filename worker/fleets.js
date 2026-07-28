@@ -124,6 +124,25 @@ async function currentTick(env, gameId) {
 }
 
 // ---------- POST /fleets ----------
+
+/** ONE CAPTAIN PER FLEET (Lorne): the flag is the fleet's only officer.
+ *  Ships joining a fleet surrender their captain back to the bank —
+ *  rank intact, ready for reassignment. The flagship is exempt: its
+ *  captain IS the fleet captain. */
+async function bankMemberCaptains(env, gameId, shipIds, exceptShipId) {
+  const ids = shipIds.filter(id => id !== exceptShipId);
+  if (ids.length === 0) return;
+  const ph = ids.map(() => '?').join(',');
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE game_captains SET ship_id = NULL
+        WHERE game_id = ? AND ship_id IN (${ph})`).bind(gameId, ...ids),
+    env.DB.prepare(
+      `UPDATE game_ships SET captain_id = NULL
+        WHERE game_id = ? AND id IN (${ph})`).bind(gameId, ...ids),
+  ]);
+}
+
 async function handleCreate(req, env, ctx) {
   const { gameId } = ctx.params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -207,6 +226,7 @@ async function handlePatch(req, env, ctx) {
       .prepare('UPDATE game_fleets SET name = ? WHERE game_id = ? AND id = ?')
       .bind(body.name.trim().slice(0, NAME_MAX), gameId, fleetId)
       .run();
+    await bankMemberCaptains(env, gameId, shipIds, flagShipId);
   }
 
   if (Array.isArray(body.add_ship_ids) && body.add_ship_ids.length > 0) {
@@ -217,6 +237,7 @@ async function handlePatch(req, env, ctx) {
       .prepare(`UPDATE game_ships SET fleet_id = ? WHERE game_id = ? AND id IN (${ph})`)
       .bind(fleetId, gameId, ...loaded.ships.map(s => s.id))
       .run();
+    await bankMemberCaptains(env, gameId, loaded.ships.map(x => x.id), null);
     const priors = [...new Set(loaded.ships.map(s => s.fleet_id).filter(f => f && f !== fleetId))];
     for (const pf of priors) await pruneIfTooSmall(env, gameId, pf);
     // Joiners inherit the fleet's standing orders — take them from the
@@ -265,13 +286,33 @@ async function handlePatch(req, env, ctx) {
       .prepare('SELECT captain_id FROM game_ships WHERE game_id = ? AND id = ?')
       .bind(gameId, body.flag_ship_id)
       .first();
-    if (!ship?.captain_id) return err(409, 'no_captain', 'that ship has no captain yet');
+    let capId = ship?.captain_id ?? null;
+    if (!capId) {
+      // Members are captainless BY DESIGN (one captain per fleet), so
+      // promotion assigns the longest-waiting bank captain to the
+      // chosen hull, then raises them to flag.
+      const bank = await env.DB
+        .prepare(`SELECT id FROM game_captains
+                   WHERE game_id = ? AND faction_id = ? AND ship_id IS NULL
+                     AND status = 'active'
+                   ORDER BY created_at_tick ASC LIMIT 1`)
+        .bind(gameId, me.id)
+        .first();
+      if (!bank) return err(409, 'no_captain', 'no captain in the bank — recruit one first');
+      capId = bank.id;
+      await env.DB.batch([
+        env.DB.prepare('UPDATE game_captains SET ship_id = ? WHERE id = ?')
+          .bind(body.flag_ship_id, capId),
+        env.DB.prepare('UPDATE game_ships SET captain_id = ? WHERE game_id = ? AND id = ?')
+          .bind(capId, gameId, body.flag_ship_id),
+      ]);
+    }
     await env.DB
       .prepare('UPDATE game_fleets SET flag_captain_id = ? WHERE game_id = ? AND id = ?')
-      .bind(ship.captain_id, gameId, fleetId)
+      .bind(capId, gameId, fleetId)
       .run();
     const cap = await env.DB
-      .prepare('SELECT name FROM game_captains WHERE id = ?').bind(ship.captain_id).first();
+      .prepare('SELECT name FROM game_captains WHERE id = ?').bind(capId).first();
     await writeChronicle(env, gameId, tick, 'fleet_flag_promoted', me.id, {
       fleet_id: fleetId, fleet_name: fleet.name, flag_captain: cap?.name ?? null,
     });

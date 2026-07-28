@@ -118,6 +118,11 @@ export async function ensureCaptains(db, gameId, tick) {
   const orphans = (await db
     .prepare(`SELECT id, owner_faction_id, rank, combat_history FROM game_ships
                WHERE game_id = ? AND status = 'active' AND captain_id IS NULL
+                 -- One captain per fleet: members surrendered theirs on
+                 -- joining; auto-assign must not re-captain them. The
+                 -- flagship keeps its captain and never matches (captain
+                 -- NOT NULL); leaderless fleets re-officer via PROMOTE.
+                 AND fleet_id IS NULL
                ORDER BY CASE WHEN ship_class IN ('corvette','frigate','destroyer')
                              THEN 0 ELSE 1 END, RANDOM()
                LIMIT 40`)
