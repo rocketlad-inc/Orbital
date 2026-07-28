@@ -493,6 +493,24 @@ const ASTEROID_IMPACT_HEADLINE = [
   c => `${c.body.toUpperCase()} YIELDS CRIPPLED BY IMPACT`,
 ];
 
+const SHIP_DETONATED = [
+  c => `${b(c.actor)}'s ${c.shipName} went out in a blaze at ${c.bodyLoc} — the crew triggered the core rather than surrender, ${c.destroyedText}.`,
+  c => `Rather than be boarded, ${b(c.actor)}'s ${c.shipName} self-destructed at ${c.bodyLoc}. ${c.destroyedText}.`,
+  c => `${c.shipName} took itself apart at ${c.bodyLoc} in a final act of defiance — ${b(c.actor)} confirms the detonation, ${c.destroyedText}.`,
+  c => `A last stand at ${c.bodyLoc}: ${b(c.actor)}'s ${c.shipName} blew its core rather than fall into enemy hands, ${c.destroyedText}.`,
+  c => `The crew of ${c.shipName} chose the void over defeat, detonating at ${c.bodyLoc}. ${c.destroyedText}.`,
+  c => `${b(c.actor)} lost ${c.shipName} to a deliberate detonation at ${c.bodyLoc} — ${c.destroyedText}.`,
+  c => `No surrender at ${c.bodyLoc}: ${c.shipName} went up rather than go dark quietly, ${c.destroyedText}.`,
+];
+
+const SHIP_DETONATED_HEADLINE = [
+  c => `SUICIDE STRIKE AT ${c.body.toUpperCase()}`,
+  c => `${c.actor.toUpperCase()} SHIP SELF-DESTRUCTS AT ${c.body.toUpperCase()}`,
+  c => `LAST STAND AT ${c.body.toUpperCase()}`,
+  c => `${c.body.toUpperCase()} ROCKED BY DELIBERATE BLAST`,
+  c => `NO SURRENDER: ${c.actor.toUpperCase()} DETONATES AT ${c.body.toUpperCase()}`,
+];
+
 // Appended to a single-ship-loss battle story when that ship had a
 // named captain aboard (worker/room.js now sends captain_name on
 // ship_destroyed rows). Split lost/rescued/unknown because the
@@ -888,6 +906,57 @@ const MORE_INCIDENTS_TAIL = [
   (n, s) => `…${n} more incident${s} came in too late to make the front page.`,
 ];
 
+// Shared between buildPoliticsStories (treaty_signed) and
+// buildTradeStories (a trade that bundled a pact) so the two don't
+// carry independent copies that could drift.
+const PACT_NAMES = {
+  defense_pact: 'a defense pact',
+  nap: 'a non-aggression pact',
+  trade_agreement: 'a trade agreement',
+};
+
+const TRADE_ACCEPTED = [
+  c => `${b(c.proposer)} and ${b(c.responder)} struck a deal — ${c.offerText} for ${c.requestText}${c.pactClause}.`,
+  c => `A trade cleared between ${b(c.proposer)} and ${b(c.responder)}: ${c.offerText} changed hands for ${c.requestText}${c.pactClause}.`,
+  c => `${b(c.proposer)} sent ${c.offerText} to ${b(c.responder)} and got ${c.requestText} in return${c.pactClause}.`,
+  c => `The merchants close the books on a new arrangement — ${b(c.proposer)} traded ${c.offerText} to ${b(c.responder)} for ${c.requestText}${c.pactClause}.`,
+  c => `${b(c.responder)} accepted terms from ${b(c.proposer)}: ${c.requestText} for ${c.offerText}${c.pactClause}.`,
+  c => `A quiet exchange between ${b(c.proposer)} and ${b(c.responder)} — ${c.offerText} for ${c.requestText}${c.pactClause}.`,
+];
+
+const TRADE_ACCEPTED_HEADLINE = [
+  c => `${c.proposer.toUpperCase()} AND ${c.responder.toUpperCase()} STRIKE A DEAL`,
+  c => `NEW TRADE BETWEEN ${c.proposer.toUpperCase()} AND ${c.responder.toUpperCase()}`,
+  c => `${c.proposer.toUpperCase()} CUTS A DEAL WITH ${c.responder.toUpperCase()}`,
+  c => `MERCHANTS SEAL EXCHANGE: ${c.proposer.toUpperCase()} / ${c.responder.toUpperCase()}`,
+];
+
+const BUILDS_DESTROYED = [
+  c => `${b(c.actor)}'s shipyard at ${c.bodyLoc} went up along with everything on the slipways — ${c.countText} lost mid-build.`,
+  c => `Construction never finished at ${c.bodyLoc}: ${b(c.actor)}'s yard was hit, taking ${c.countText} down with it.`,
+  c => `${c.countText} died on the slipways at ${c.bodyLoc} when ${b(c.actor)}'s shipyard was destroyed before the hulls could launch.`,
+  c => `${b(c.actor)} loses more than a building at ${c.bodyLoc} — the yard's destruction took ${c.countText} still under construction.`,
+];
+
+const BUILDS_DESTROYED_HEADLINE = [
+  c => `${c.body.toUpperCase()} YARD DESTROYED MID-BUILD`,
+  c => `${c.actor.toUpperCase()} LOSES SHIPYARD AND SLIPWAYS AT ${c.body.toUpperCase()}`,
+  c => `UNFINISHED HULLS LOST IN ${c.body.toUpperCase()} STRIKE`,
+];
+
+const SHIP_RETREATED = [
+  c => `${b(c.actor)}'s ${c.shipName} broke off from ${c.fromLoc}${c.hpText}, falling back to ${c.toLoc} for repairs.`,
+  c => `Battered but afloat: ${b(c.actor)}'s ${c.shipName} disengaged at ${c.fromLoc}${c.hpText} and is running for ${c.toLoc}.`,
+  c => `${c.shipName} pulled out of the fight at ${c.fromLoc}${c.hpText} — ${b(c.actor)} is routing it to ${c.toLoc}.`,
+  c => `${b(c.actor)} pulled ${c.shipName} back from ${c.fromLoc}${c.hpText} rather than lose it. Bound for ${c.toLoc}.`,
+];
+
+const SHIP_RETREATED_HEADLINE = [
+  c => `${c.actor.toUpperCase()} PULLS BACK FROM ${c.fromBody.toUpperCase()}`,
+  c => `${c.shipName.toUpperCase()} DISENGAGES AT ${c.fromBody.toUpperCase()}`,
+  c => `${c.actor.toUpperCase()} SHIP LIMPS TOWARD ${c.toBody.toUpperCase()}`,
+];
+
 // ------------------------------------------------------------
 // Story builders — cluster raw chronicle rows into narrative units
 // per section, then render each via the phrase banks above. Every
@@ -1053,6 +1122,65 @@ function buildBattleStories(rows, used, locator, captainFate) {
     stories.push(mkStory(700, used, 'asteroid_impact', ASTEROID_IMPACT, 'asteroid_impact_hl', ASTEROID_IMPACT_HEADLINE, ctx));
   }
 
+  // --- ship detonations: a deliberate self-destruct, always dramatic ---
+  for (const row of rows) {
+    if (row.kind !== 'ship_detonated') continue;
+    const p = safeJson(row.payload);
+    const destroyedCount = Number(p.destroyed_count) || 0;
+    const destroyedText = destroyedCount > 0
+      ? `taking ${numWord(destroyedCount)} ${shipsWord(destroyedCount)} down with it`
+      : 'though the blast caught nothing else';
+    const locBody = locate(locator, row.body_id, p.body_name ?? 'deep space');
+    const ctx = {
+      actor: p.owner_faction_name ?? 'An unknown faction',
+      shipName: p.ship_name ?? 'a ship',
+      body: locBody.name, bodyLoc: locBody.full, destroyedText,
+    };
+    const weight = BATTLE_BASE_WEIGHT + BATTLE_PER_CASUALTY * (destroyedCount + 1);
+    stories.push(mkStory(weight, used, 'ship_detonated', SHIP_DETONATED, 'ship_detonated_hl', SHIP_DETONATED_HEADLINE, ctx));
+  }
+
+  // --- shipyards destroyed mid-build, alongside a settlement loss ---
+  for (const row of rows) {
+    if (row.kind !== 'builds_destroyed') continue;
+    const p = safeJson(row.payload);
+    const count = Number(p.builds_lost) || 0;
+    if (count <= 0) continue;
+    const locBody = locate(locator, row.body_id, p.body_name ?? 'a nearby world');
+    const ctx = {
+      actor: p.owner_faction_name ?? 'An unknown faction',
+      body: locBody.name, bodyLoc: locBody.full,
+      countText: `${numWord(count)} ${shipsWord(count)}`,
+    };
+    const weight = 300 + BATTLE_PER_CASUALTY * count;
+    stories.push(mkStory(weight, used, 'builds_destroyed', BUILDS_DESTROYED, 'builds_destroyed_hl', BUILDS_DESTROYED_HEADLINE, ctx));
+  }
+
+  // --- ships retreating from a fight — low-weight status update, not
+  // a casualty, so it'll never outrank a real loss for the headline,
+  // and is the first thing MAX_STORIES_PER_SECTION truncates away on
+  // a heavy battle day (it's appended last, and the section isn't
+  // otherwise weight-sorted). ---
+  for (const row of rows) {
+    if (row.kind !== 'ship_retreated') continue;
+    const p = safeJson(row.payload);
+    const fromLoc = locate(locator, row.body_id ?? p.from_body_id, p.from_body_name ?? 'the line');
+    const toLoc = locate(locator, p.to_body_id, p.to_body_name ?? 'a friendly yard');
+    const hp = Number(p.hp);
+    const hpMax = Number(p.hp_max);
+    const hpText = Number.isFinite(hp) && Number.isFinite(hpMax) && hpMax > 0
+      ? ` at ${Math.round((hp / hpMax) * 100)}% HP`
+      : '';
+    const ctx = {
+      actor: p.owner_faction_name ?? 'An unknown faction',
+      shipName: p.ship_name ?? 'a ship',
+      fromLoc: fromLoc.full, fromBody: fromLoc.name,
+      toLoc: toLoc.full, toBody: toLoc.name,
+      hpText,
+    };
+    stories.push(mkStory(150, used, 'ship_retreated', SHIP_RETREATED, 'ship_retreated_hl', SHIP_RETREATED_HEADLINE, ctx));
+  }
+
   return stories;
 }
 
@@ -1178,12 +1306,6 @@ function buildPoliticsStories(rows, used, factionNames) {
   const stories = [];
   const nameOf = (id) => factionNames.get(id) ?? 'an unnamed faction';
 
-  const PACT_NAMES = {
-    defense_pact: 'a defense pact',
-    nap: 'a non-aggression pact',
-    trade_agreement: 'a trade agreement',
-  };
-
   for (const row of rows) {
     const p = safeJson(row.payload);
     if (row.kind === 'treaty_signed') {
@@ -1202,6 +1324,46 @@ function buildPoliticsStories(rows, used, factionNames) {
         stories.push(mkStory(120, used, 'senate_failed', SENATE_FAILED, 'senate_failed_hl', SENATE_FAILED_HEADLINE, ctx));
       }
     }
+  }
+  return stories;
+}
+
+/** trade_accepted rows carry the full offer/request + any bundled
+ *  pacts — previously the ONLY trace of an individual trade in the
+ *  Herald was the aggregate "Trade ledger" delivery count, which
+ *  can't name who traded what with whom. */
+function buildTradeStories(rows, used, factionNames) {
+  const stories = [];
+  const nameOf = (id) => factionNames.get(id) ?? 'an unnamed faction';
+
+  const fmtBundle = (b) => {
+    if (!b || typeof b !== 'object') return 'nothing';
+    const parts = [];
+    if ((b.metal ?? 0) > 0)   parts.push(`${numWord(Math.round(b.metal))} metal`);
+    if ((b.fuel ?? 0) > 0)    parts.push(`${numWord(Math.round(b.fuel))} fuel`);
+    if ((b.gold ?? 0) > 0)    parts.push(`${numWord(Math.round(b.gold))} credits`);
+    if ((b.science ?? 0) > 0) parts.push(`${numWord(Math.round(b.science))} science`);
+    return parts.length ? parts.join(', ') : 'nothing';
+  };
+
+  for (const row of rows) {
+    if (row.kind !== 'trade_accepted') continue;
+    const p = safeJson(row.payload);
+    const pacts = Array.isArray(p.pacts) ? p.pacts : [];
+    const pactNames = pacts.map(k => PACT_NAMES[k] ?? 'a treaty');
+    const pactClause = pactNames.length > 0 ? ` — sealed with ${pactNames.join(' and ')}` : '';
+    const ctx = {
+      proposer: nameOf(row.actor_faction_id),
+      responder: nameOf(row.target_faction_id),
+      offerText: fmtBundle(p.offer),
+      requestText: fmtBundle(p.request),
+      pactClause,
+    };
+    // Routine unless it bundled a pact, same "rarely the headline"
+    // register as industry — a pact bundled in makes it a bit more
+    // newsworthy without approaching treaty_signed's own weight.
+    const weight = pactNames.length > 0 ? 130 : 60;
+    stories.push(mkStory(weight, used, 'trade_accepted', TRADE_ACCEPTED, 'trade_accepted_hl', TRADE_ACCEPTED_HEADLINE, ctx));
   }
   return stories;
 }
@@ -1234,6 +1396,7 @@ const SECTION_META = {
   discoveries: { title: '✨  Dispatches from deep space', color: 0x67e8f9 },
   industry:    { title: '🏗️  Industry & shipping',  color: 0xffb84d },
   politics:    { title: '🏛️  Halls of the Senate',  color: 0xc4b5fd },
+  trades:      { title: '🤝  Deals struck',          color: 0x67e8f9 },
   victory:     { title: '👑  History in the making', color: 0xffd700 },
 };
 
@@ -1268,6 +1431,7 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator) 
     politics:    buildPoliticsStories(rows, used, factionNames),
     discoveries: buildDiscoveryStories(rows, used, locator, factionNames),
     colonies:    buildColonyStories(rows, used, locator),
+    trades:      buildTradeStories(rows, used, factionNames),
     industry:    buildIndustryStories(rows, used),
   };
 
@@ -1289,7 +1453,7 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator) 
   }
 
   const fields = [];
-  for (const key of ['victory', 'battles', 'politics', 'discoveries', 'colonies', 'industry']) {
+  for (const key of ['victory', 'battles', 'politics', 'discoveries', 'colonies', 'trades', 'industry']) {
     const field = fieldFromStories(SECTION_META[key].title, sections[key], used);
     if (field) fields.push(field);
   }

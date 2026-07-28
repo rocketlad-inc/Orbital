@@ -720,6 +720,7 @@ function classifyChronicleEvent(kind: string): { category: LogCategory; level: L
     case 'asteroid_impact':
     case 'captain_lost':
     case 'captain_rescued':
+    case 'trade_shipment_lost':
       return { category: 'COMBAT', level: 'INFO' };
     case 'asteroid_launched':
     case 'treaty_broken':
@@ -736,9 +737,6 @@ function classifyChronicleEvent(kind: string): { category: LogCategory; level: L
     case 'trade_delivered':
     case 'treaty_signed':
     case 'senate_vote':
-    case 'senate_passed':
-    case 'senate_failed':
-    case 'chancellor_elected':
     case 'victory':
       return { category: 'SYSTEM', level: 'INFO' };
     default:
@@ -1003,6 +1001,25 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       try { parsed = JSON.parse(ev.payload || '{}'); } catch { /* ignore */ }
       const t = `T+${ev.tick_number}`;
 
+      // --------- Session lifecycle ---------
+      // Neither of these binds actor_faction_id (there's no single
+      // "actor" for the game starting, and a joining faction hasn't
+      // been created yet at insert time) — both fell through to the
+      // raw-kind fallback ("T+0  game_started") before this.
+      if (ev.kind === 'game_started') {
+        const factions = Array.isArray(parsed.factions)
+          ? (parsed.factions as Array<{ name?: string }>)
+          : [];
+        const names = factions.map(f => f.name).filter(Boolean).join(', ');
+        return `${t}  🚀 The game begins — ${factions.length} faction${factions.length === 1 ? '' : 's'}${names ? `: ${names}` : ''}`;
+      }
+
+      if (ev.kind === 'faction_joined') {
+        const name = (parsed.name as string) ?? 'A new faction';
+        const capital = (parsed.capital_name as string) ?? 'an unclaimed world';
+        return `${t}  ${name} joins the game — capital at ${capital}`;
+      }
+
       if (ev.kind === 'ship_destroyed') {
         const name = (parsed.ship_name as string) ?? 'Unknown';
         const cls = (parsed.ship_class as string) ?? 'ship';
@@ -1125,6 +1142,20 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         return `${t}  🔍 ${owner}: ${msg}`;
       }
 
+      if (ev.kind === 'victory') {
+        // The most important line the log ever prints and, until now,
+        // the ONE kind with a hand-written server payload that fell
+        // straight through to the raw-kind fallback below — a completed
+        // match rendered as literally "T+45  victory". `detail` is
+        // always populated by every victory path (src/game/victory.ts,
+        // worker/senate.js's chancellor win) and already names the
+        // specific condition ("All rival settlements destroyed"), so
+        // there's no need to duplicate that in a separate type label.
+        const winner = nameOfFaction(ev.actor_faction_id);
+        const detail = (parsed.detail as string) ?? null;
+        return `${t}  👑 GAME OVER — ${winner} wins${detail ? `: ${detail}` : ''}`;
+      }
+
       // --------- Diplomacy events ---------
       // Pact-kind labels — keep in sync with src/multiplayer/api.ts
       // PACT_LABELS but expanded so the log copy reads grammatically.
@@ -1194,16 +1225,6 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         return `${t}  ⚖ Senate: “${title}”${kindBit} ${verb}${tally}`;
       }
 
-      if (ev.kind === 'senate_passed' || ev.kind === 'senate_failed') {
-        const title = (parsed.title as string) ?? 'a motion';
-        return `${t}  ⚖ Senate: “${title}” ${ev.kind === 'senate_passed' ? 'PASSED' : 'FAILED'}`;
-      }
-
-      if (ev.kind === 'chancellor_elected') {
-        const who = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
-        return `${t}  ⚖ ${who} elected Chancellor`;
-      }
-
       if (ev.kind === 'tech_advanced') {
         // 134 of these in a live game and every one rendered as the raw
         // string "tech_advanced" — the single noisiest unformatted kind.
@@ -1222,6 +1243,21 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         const cargo = bits.length > 0 ? bits.join(' ') : 'an empty hold';
         const to = nameOfFaction(parsed.recipient_faction_id as string | null, undefined);
         return `${t}  Trade delivered to ${to}: ${cargo}`;
+      }
+
+      if (ev.kind === 'trade_shipment_lost') {
+        const bits: string[] = [];
+        for (const [k, label] of [['metal', 'M'], ['fuel', 'F'], ['gold', 'C'], ['science', 'S']] as const) {
+          const v = Number(parsed[k] ?? 0);
+          if (v > 0) bits.push(`${Math.round(v)}${label}`);
+        }
+        const cargo = bits.length > 0 ? bits.join(' ') : 'its cargo';
+        const sender = nameOfFaction(parsed.sender_faction_id as string | null, undefined);
+        const recipient = nameOfFaction(parsed.recipient_faction_id as string | null, undefined);
+        const killer = parsed.killer_faction_id
+          ? ` — intercepted by ${nameOfFaction(parsed.killer_faction_id as string | null, undefined)}`
+          : '';
+        return `${t}  📦 Shipment lost: ${sender} → ${recipient} (${cargo})${killer}`;
       }
 
       return `${t}  ${ev.kind}`;

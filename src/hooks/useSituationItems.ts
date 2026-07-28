@@ -129,6 +129,7 @@ export type SituationCategory =
   | 'broken_route'   // trade route whose ship or endpoint is gone
   | 'vote_closed'    // MP — a vote you were watching has resolved
   | 'discovery'      // one of YOUR ships uncovered a body secret
+  | 'idle_captain'   // MP — a captain sits in the bank, unassigned to any ship
   | 'fleet_leaderless'; // a fleet lost its flagship — promote a captain
 
 export type SituationTier = 'now' | 'decision' | 'opportunity';
@@ -173,6 +174,9 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
   // A find is a reward to notice and act on (a free city to garrison, a
   // salvaged warship to crew), not a chore — a decision-tier prompt.
   discovery:      'decision',
+  // No clock at all — an unassigned captain just sits in the bank
+  // until you get around to it, same argument as an idle freighter.
+  idle_captain:   'opportunity',
   // A beheaded fleet refuses new common orders until you promote —
   // a decision by construction (DESIGN-fleets.md).
   fleet_leaderless: 'decision',
@@ -189,7 +193,7 @@ export interface SituationItem {
   focus?:
     | { kind: 'ship'; shipId: string }
     | { kind: 'body'; bodyId: string }
-    | { kind: 'panel'; panel: 'research' | 'senate' | 'trades' };
+    | { kind: 'panel'; panel: 'research' | 'senate' | 'trades' | 'fleet' };
   /** Severity colour. danger = red (dying hull, settlement at risk),
    *  warn = amber (engaged / time-bounded), normal = neutral. */
   severity: 'normal' | 'warn' | 'danger';
@@ -223,6 +227,7 @@ export const CATEGORY_LABEL: Record<SituationCategory, string> = {
   broken_route:    'Broken trade routes',
   vote_closed:     'Votes resolved',
   discovery:       'Discoveries',
+  idle_captain:    'Captains unassigned',
   fleet_leaderless: 'Fleets without a flag',
 };
 
@@ -666,6 +671,28 @@ export function useSituationItems(
         });
       }
     }
+
+    // ---- 4b) Idle captains (bank, unassigned to any ship) ----
+    // MP-only in practice (SP never populates gameState.captains), but
+    // written generically like every other category here rather than
+    // gated on mpData — an empty array is simply a no-op. `/state`
+    // already scopes the caller's captain roster to their own faction
+    // (worker/state.js), so no ownership filter is needed here.
+    try {
+      const idleCaptains = (gameState.captains ?? []).filter(c => c.status === 'active' && !c.shipId);
+      if (idleCaptains.length > 0) {
+        const names = idleCaptains.slice(0, 2).map(c => c.name).join(', ');
+        const more = idleCaptains.length > 2 ? ` +${idleCaptains.length - 2} more` : '';
+        push({
+          id: 'idle_captain:bank',
+          category: 'idle_captain',
+          title: `${idleCaptains.length} captain${idleCaptains.length === 1 ? '' : 's'} unassigned`,
+          subtitle: `${names}${more} · waiting in the bank`,
+          focus: { kind: 'panel', panel: 'fleet' },
+          severity: 'normal',
+        });
+      }
+    } catch { /* defensive */ }
 
     // ---- 5) Stranded stockpiles (grouped per body) ----
     // The stockpile model is per-body in the UI (city + station on the

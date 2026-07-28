@@ -202,4 +202,11 @@ export const FLAVOR_BANK: Record<string, string[]> = {
     "{body} shuddered and broke at {tick}. {settlementName} was already gone. {actor} aimed it; {partner} will count the dead for cycles.",
     "They saw it coming and could not move it. {actor}'s asteroid took {body} and {settlementName} with it at {tick}, and {partner} was left with the silence.",
   ],
+  victory: [
+    "It's over. {actor} has won — {detail}. The record closes here, {tick}.",
+    "{tick}: {actor} takes the system. {detail}. Every other flag comes down.",
+    "The long campaign ends at {tick}. {actor} stands alone: {detail}.",
+    "Final entry, {tick}: {actor} wins. {detail}. Nothing left to report but the aftermath.",
+    "{detail}. {actor} claims the system at {tick}, and the war is finished.",
+  ],
 };
