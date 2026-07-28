@@ -23,11 +23,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 
-const MAJOR_KINDS = new Set([
-  'settlement_destroyed', 'ship_destroyed', 'builds_destroyed',
-  'ship_detonated', 'asteroid_impact', 'secret_discovered',
-  'victory', 'fleet_flag_lost',
-]);
+// GameState carries no machine-kind array (only focus/flavor are
+// parallel-indexed), so majors are classified from the headline text —
+// the exact idiom EventLog's icon classifier already uses.
+const MAJOR_RE = /destroyed|fell|impact|DISCOVERY|victor|wins|detonat|assumed command|leaderless/i;
 const THRESHOLD = 5;       // strictly more than this many majors → offer
 const SCENE_CAP = 8;       // a long absence is a highlight reel, not a slog
 const SCENE_MS = 3200;
@@ -59,13 +58,11 @@ export const RecapOverlay: React.FC = () => {
     const fresh = Math.max(0, Math.min(log.length, log.length - stored));
     if (fresh === 0) return;
 
-    const kinds = gameState.chronicleKind ?? [];
     const focus = gameState.chronicleFocus ?? [];
     const flavor = gameState.chronicleFlavor ?? [];
     const majors: { i: number; bodyId?: string; shipId?: string }[] = [];
     for (let i = log.length - fresh; i < log.length; i++) {
-      const k = kinds[i];
-      if (k && MAJOR_KINDS.has(k)) {
+      if (MAJOR_RE.test(log[i] ?? '')) {
         const f = focus[i];
         majors.push({
           i,
@@ -89,7 +86,7 @@ export const RecapOverlay: React.FC = () => {
       }
     }
     setScenes(built.slice(-SCENE_CAP));
-  }, [gameState.combatLog, gameState.chronicleKind, gameState.chronicleFocus, gameState.chronicleFlavor]);
+  }, [gameState.combatLog, gameState.chronicleFocus, gameState.chronicleFlavor]);
 
   const scene = playing && scenes ? scenes[idx] : null;
 
