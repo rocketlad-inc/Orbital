@@ -125,9 +125,14 @@ export async function ensureCaptains(db, gameId, tick) {
   if (orphans.length === 0) return;
 
   // Bank pull: longest-waiting unassigned captain per faction.
+  // benched_at_tick IS NULL excludes captains the player deliberately put
+  // in reserve (migration 0051) — without it, "→ To the bank" was undone
+  // within one tick, since a faction short on captains always has an
+  // orphan hull for this pass to soak one up with.
   const bank = (await db
     .prepare(`SELECT id, faction_id FROM game_captains
                WHERE game_id = ? AND status = 'active' AND ship_id IS NULL
+                 AND benched_at_tick IS NULL
                ORDER BY created_at_tick ASC`)
     .bind(gameId).all()).results ?? [];
   const bankByFaction = new Map();

@@ -692,7 +692,7 @@ async function handleGetState(req, env, ctx) {
   const captains = (await env.DB
     .prepare(
       `SELECT id, name, avatar_id, bio, rank, combat_history, traits_json,
-              ship_id, status, created_at_tick, lost_at_tick
+              ship_id, status, created_at_tick, lost_at_tick, benched_at_tick
          FROM game_captains
         WHERE game_id = ? AND faction_id = ?
         ORDER BY created_at_tick ASC`,

@@ -592,6 +592,15 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                   ⚓ {aboard}
                 </span>
               )}
+              {/* Distinguishes "held back on purpose" from "in the bank
+                  and awaiting a posting" — only the latter gets picked up
+                  by the server's auto-assign pass (migration 0051). */}
+              {!aboard && c.benchedAtTick != null && (
+                <span style={{ fontSize: 9, color: '#8a9fb3', whiteSpace: 'nowrap' }}
+                      title="Held in reserve by you — the auto-assign pass will leave them alone">
+                  ⏸ RESERVE
+                </span>
+              )}
               {mpActions && (
                 <select
                   value=""
@@ -1150,21 +1159,37 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                           <option value="50">Retreat 50%</option>
                           <option value="75">Retreat 75%</option>
                         </select>
-                        {f.leaderless && (
-                          <select style={fleetBtn as React.CSSProperties} defaultValue=""
-                                  onChange={e => {
-                                    if (e.target.value) {
-                                      void fleetApi('PATCH', `/fleets/${encodeURIComponent(full)}`, { flag_ship_id: e.target.value });
-                                    }
-                                  }}>
-                            <option value="" disabled>Promote captain…</option>
-                            {f.shipIds.map(id => {
-                              const sh = gameState.ships.find(x => x.id === id);
-                              if (!sh?.captainName) return null;
-                              return <option key={id} value={id}>{sh.captainName} ({sh.name})</option>;
-                            })}
-                          </select>
-                        )}
+                        {/* Shown for HEALTHY fleets too, not just leaderless
+                            ones — the server has never gated flag_ship_id on
+                            leaderless (worker/fleets.js), so refusing to let
+                            a player change a living fleet's flag was purely a
+                            client-side restriction. Swapping the flag is how
+                            you decide whose trait becomes the fleet aura. */}
+                        {(() => {
+                          const options = f.shipIds
+                            .map(id => gameState.ships.find(x => x.id === id))
+                            .filter((sh): sh is NonNullable<typeof sh> => !!sh?.captainName);
+                          if (options.length === 0) return null;
+                          return (
+                            <select style={fleetBtn as React.CSSProperties} value=""
+                                    title={f.leaderless
+                                      ? 'Promote a member captain to flag'
+                                      : 'Change which captain flies the flag (their trait becomes the fleet aura)'}
+                                    onChange={e => {
+                                      if (e.target.value) {
+                                        void fleetApi('PATCH', `/fleets/${encodeURIComponent(full)}`, { flag_ship_id: e.target.value });
+                                      }
+                                    }}>
+                              <option value="">{f.leaderless ? 'Promote captain…' : 'Change flag…'}</option>
+                              {options.map(sh => (
+                                <option key={sh.id} value={sh.id}>
+                                  {sh.captainName} ({sh.name})
+                                  {sh.captainName === f.flagCaptainName ? ' ★ current' : ''}
+                                </option>
+                              ))}
+                            </select>
+                          );
+                        })()}
                       </div>
                     </div>
                       );
