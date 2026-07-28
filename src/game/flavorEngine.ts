@@ -77,6 +77,7 @@ const KIND_MAP: Record<string, string> = {
   asteroid_impact:      'asteroid_impact',
   senate_vote:          'vote_resolved',
   tech_advanced:        'tech_advanced',
+  victory:              'victory',
   // No banks wired for these server kinds yet (or the server doesn't
   // emit them under these names): vote_opened, trade_declined,
   // asteroid_launched.
@@ -381,6 +382,17 @@ function resolveVars(ev: FlavorEvent, ctx: FlavorContext): Record<string, string
         actor: facName(actorFac, p.faction_name as string | undefined),
         techName,
         techLevel: lvl != null ? `level ${lvl}` : undefined,
+        tick,
+      };
+    }
+    case 'victory': {
+      // detail is always populated (src/game/victory.ts, worker/senate.js
+      // chancellor path) and already names the specific condition, so
+      // the templates below lean on it rather than re-deriving one from
+      // victoryType.
+      return {
+        actor: facName(actorFac),
+        detail: str('detail'),
         tick,
       };
     }
