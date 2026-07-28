@@ -16,6 +16,7 @@ import { makeSystemRootOf, systemLabel as systemLabelOf, shipStatus, makeHostile
 import { nearestShipyardBodyId, isDamagedShip } from '../game/repair';
 import { ShipIcon } from './ShipIcons';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { apiFetch } from '../multiplayer/api';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import { openShipDesigner } from './ShipDesigner';
 import './OverviewPanel.css';
@@ -696,6 +697,45 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   // (DESIGN-identity-economy.md §1.1). Its column slot now holds the
   // ship's Experience (veterancy tier + confirmed kills).
 
+  // ===== Server fleets (DESIGN-fleets.md) — MP only =====
+  // Client fleet ids are stripped ('fl_x'); API paths need the full
+  // game-namespaced id back.
+  const fullFleetId = (id: string) => `${mpActions?.gameId}:${id}`;
+  const myFleets = useMemo(
+    () => (gameState.fleets ?? []).filter(f => f.ownedBy === 'player'),
+    [gameState.fleets],
+  );
+  const [fleetErr, setFleetErr] = useState<string | null>(null);
+  const fleetApi = async (method: string, path: string, body?: unknown) => {
+    if (!mpActions) return;
+    setFleetErr(null);
+    const res = await apiFetch(`/api/games/${mpActions.gameId}${path}`, {
+      method,
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    });
+    if (!res.ok) {
+      setFleetErr(res.error?.code === 'fleet_leaderless'
+        ? 'Fleet is leaderless — promote a captain first.'
+        : (res.error?.message ?? 'fleet action failed'));
+    }
+  };
+  const formFleetFromSelection = () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length < 2) return;
+    const members = ids
+      .map(id => gameState.ships.find(sh => sh.id === id))
+      .filter((sh): sh is NonNullable<typeof sh> => !!sh);
+    // Flag defaults to the highest-rank captain among the selection.
+    const flag = members.reduce((best, sh) => ((sh.rank ?? 0) > (best.rank ?? 0) ? sh : best), members[0]);
+    void fleetApi('POST', '/fleets', { ship_ids: ids, flag_ship_id: flag.id });
+    setSelectedIds(new Set());
+  };
+  const fleetBtn: React.CSSProperties = {
+    background: 'transparent', border: '1px solid #2d4255', color: '#8fb8c9',
+    padding: '3px 8px', fontSize: 10, letterSpacing: '0.08em', cursor: 'pointer',
+    borderRadius: 3, textTransform: 'uppercase',
+  };
+
   const renderShipRow = (ship: typeof ships[0]) => {
     const def = getShipClass(ship.class as ShipClassName);
     const isSelected = uiState.selectedShipId === ship.id;
@@ -1022,6 +1062,84 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               </div>
             )}
 
+            {mpActions && selectedIds.size >= 2 && (
+              <button
+                style={{ margin: '8px 0', padding: '6px 12px', background: 'rgba(78,205,196,0.12)',
+                         border: '1px solid #4ecdc4', color: '#4ecdc4', borderRadius: 4,
+                         cursor: 'pointer', fontSize: 11, letterSpacing: '0.1em' }}
+                onClick={formFleetFromSelection}
+              >
+                ★ FORM FLEET FROM SELECTED ({selectedIds.size})
+              </button>
+            )}
+            {mpActions && myFleets.length > 0 && (
+              <div style={{ margin: '8px 0 14px' }}>
+                <div style={{ fontSize: 11, letterSpacing: '0.2em', color: '#8a9fb3', margin: '2px 0 6px' }}>FLEETS</div>
+                {fleetErr && (
+                  <div style={{ color: '#ff8a8a', fontSize: 11, marginBottom: 6 }}>{fleetErr}</div>
+                )}
+                {myFleets.map(f => {
+                  const full = fullFleetId(f.id);
+                  return (
+                    <div key={f.id} style={{ border: '1px solid #24344a', borderRadius: 6, padding: '8px 10px', marginBottom: 8 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                        <b style={{ fontSize: 13 }}>{f.name}</b>
+                        <span style={{ color: '#8a9fb3', fontSize: 11 }}>{f.shipIds.length} ships</span>
+                        {f.leaderless ? (
+                          <span style={{ color: '#ffb84d', fontSize: 11, fontWeight: 700 }}>LEADERLESS</span>
+                        ) : (
+                          <span style={{ color: '#4ecdc4', fontSize: 11 }}
+                                title={(f.flagCaptainTraits ?? []).join(', ') || undefined}>
+                            ★ {f.flagCaptainName}{f.flagCaptainRank ? ` · R${f.flagCaptainRank}` : ''}
+                          </span>
+                        )}
+                        <span style={{ flex: 1 }} />
+                        <button style={fleetBtn} title="Check every member into the bulk-action list — then move or order them together"
+                                onClick={() => setSelectedIds(new Set(f.shipIds))}>Select all</button>
+                        <button style={fleetBtn} onClick={() => void fleetApi('DELETE', `/fleets/${encodeURIComponent(full)}`)}>Disband</button>
+                      </div>
+                      <div style={{ display: 'flex', gap: 6, marginTop: 7, alignItems: 'center', flexWrap: 'wrap' }}>
+                        {(['attack', 'defensive', 'hold'] as const).map(st => (
+                          <button key={st} style={{ ...fleetBtn, opacity: f.leaderless ? 0.4 : 1 }}
+                                  disabled={!!f.leaderless}
+                                  onClick={() => void fleetApi('PATCH', `/fleets/${encodeURIComponent(full)}/orders`, { stance: st })}>
+                            {st === 'attack' ? 'Attack' : st === 'defensive' ? 'Defend' : 'Hold'}
+                          </button>
+                        ))}
+                        <select style={{ ...fleetBtn, opacity: f.leaderless ? 0.4 : 1 } as React.CSSProperties}
+                                disabled={!!f.leaderless}
+                                defaultValue=""
+                                onChange={e => {
+                                  const v = e.target.value;
+                                  void fleetApi('PATCH', `/fleets/${encodeURIComponent(full)}/orders`,
+                                    { retreat_hp_pct: v === '' ? null : Number(v) });
+                                }}>
+                          <option value="">Retreat off</option>
+                          <option value="25">Retreat 25%</option>
+                          <option value="50">Retreat 50%</option>
+                          <option value="75">Retreat 75%</option>
+                        </select>
+                        {f.leaderless && (
+                          <select style={fleetBtn as React.CSSProperties} defaultValue=""
+                                  onChange={e => {
+                                    if (e.target.value) {
+                                      void fleetApi('PATCH', `/fleets/${encodeURIComponent(full)}`, { flag_ship_id: e.target.value });
+                                    }
+                                  }}>
+                            <option value="" disabled>Promote captain…</option>
+                            {f.shipIds.map(id => {
+                              const sh = gameState.ships.find(x => x.id === id);
+                              if (!sh?.captainName) return null;
+                              return <option key={id} value={id}>{sh.captainName} ({sh.name})</option>;
+                            })}
+                          </select>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             {systems.map(system => {
               const isCollapsed = collapsedSystems.has(system.rootId);
               return (

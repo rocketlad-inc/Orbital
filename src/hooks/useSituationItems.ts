@@ -128,7 +128,8 @@ export type SituationCategory =
   | 'idle_colony'    // colony hull parked — expansion stalled
   | 'broken_route'   // trade route whose ship or endpoint is gone
   | 'vote_closed'    // MP — a vote you were watching has resolved
-  | 'discovery';     // one of YOUR ships uncovered a body secret
+  | 'discovery'      // one of YOUR ships uncovered a body secret
+  | 'fleet_leaderless'; // a fleet lost its flagship — promote a captain
 
 export type SituationTier = 'now' | 'decision' | 'opportunity';
 
@@ -172,6 +173,9 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
   // A find is a reward to notice and act on (a free city to garrison, a
   // salvaged warship to crew), not a chore — a decision-tier prompt.
   discovery:      'decision',
+  // A beheaded fleet refuses new common orders until you promote —
+  // a decision by construction (DESIGN-fleets.md).
+  fleet_leaderless: 'decision',
 };
 
 export interface SituationItem {
@@ -219,6 +223,7 @@ export const CATEGORY_LABEL: Record<SituationCategory, string> = {
   broken_route:    'Broken trade routes',
   vote_closed:     'Votes resolved',
   discovery:       'Discoveries',
+  fleet_leaderless: 'Fleets without a flag',
 };
 
 // ------------------------------------------------------------
@@ -1171,6 +1176,24 @@ export function useSituationItems(
           focus: { kind: 'body', bodyId: b.id },
           severity: 'normal',
           sortKey: -sec.discoveredAtTick,   // newest first within the tier
+        });
+      }
+    } catch { /* defensive */ }
+
+    // ---- Fleets without a flag (DESIGN-fleets.md) ----
+    // Condition-based, no stamp: the row exists exactly while the fleet
+    // is leaderless and clears the instant a captain is promoted.
+    try {
+      for (const f of gameState.fleets ?? []) {
+        if (f.ownedBy !== factionId || !f.leaderless) continue;
+        const anchor = f.shipIds[0];
+        push({
+          id: `fleet_leaderless:${f.id}`,
+          category: 'fleet_leaderless',
+          title: `${f.name} is leaderless`,
+          subtitle: 'Promote a member captain to restore command',
+          focus: anchor ? { kind: 'ship', shipId: anchor } : undefined,
+          severity: 'warn',
         });
       }
     } catch { /* defensive */ }

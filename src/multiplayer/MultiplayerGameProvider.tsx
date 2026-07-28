@@ -425,6 +425,30 @@ function bodyToClient(b: ServerState['bodies'][number]): Body {
   };
 }
 
+/** Server game_fleets rows -> client Fleet[] (DESIGN-fleets.md). Ships
+ *  must already be mapped (their fleetId is the stripped local id). */
+function mapServerFleets(srv: unknown, ships: Ship[], callerFactionId: string): import('../types').Fleet[] {
+  const rows: any[] = (srv as any)?.fleets ?? [];
+  return rows.map((f: any) => {
+    const localId = stripGameId(f.id) ?? f.id;
+    const shipIds = ships.filter(sh => sh.fleetId === localId).map(sh => sh.id);
+    let traits: string[] = [];
+    try { traits = JSON.parse(f.flag_captain_traits || '[]'); } catch { /* redacted/bad */ }
+    return {
+      id: localId,
+      name: f.name,
+      shipIds,
+      leadShipId: stripGameId(f.flagship_id) ?? shipIds[0] ?? '',
+      ownedBy: f.faction_id === callerFactionId ? 'player' : f.faction_id,
+      flagCaptainId: f.flag_captain_id ?? null,
+      flagCaptainName: f.flag_captain_name ?? null,
+      flagCaptainRank: f.flag_captain_rank ?? 0,
+      flagCaptainTraits: traits,
+      leaderless: !f.flag_captain_id,
+    };
+  });
+}
+
 function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship {
   // Period from Kepler's 3rd law: T = 2π √(a³ / μ)
   const a = (s.orbit_rp + s.orbit_ra) / 2;
@@ -493,6 +517,8 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     orbit,
     orders: [],
     rank: s.rank ?? 0,
+    // Fleet membership (DESIGN-fleets.md) — server-persistent.
+    fleetId: stripGameId((s as any).fleet_id) ?? undefined,
     combatHistory,
     // Captain (DESIGN-captains): identity + traits. stripGameId keeps the
     // captain id usable against the client captains roster.
@@ -1470,7 +1496,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     tickIntervalMs: srv.game.tick_interval_ms,
     bodies,
     ships,
-    fleets: [],
+    fleets: mapServerFleets(srv, ships, callerFactionId),
     factions,
     settlements,
     orders,

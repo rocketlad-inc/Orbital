@@ -1913,7 +1913,7 @@ export class Room {
         `SELECT s.id, s.owner_faction_id, s.parent_body_id, s.hp, s.hp_max, s.damage_per_tick,
                 COALESCE(c.rank, s.rank) AS rank, s.ship_class, s.name, s.last_combat_tick,
                 s.stance, s.retreat_hp_pct, s.detonate_hp_pct, s.parts_json,
-                s.captain_id, c.traits_json AS captain_traits, c.name AS captain_name
+                s.captain_id, s.fleet_id, c.traits_json AS captain_traits, c.name AS captain_name
            FROM game_ships s
            LEFT JOIN game_captains c ON c.id = s.captain_id
           WHERE s.game_id = ? AND s.status = 'active'`,
@@ -1936,6 +1936,39 @@ export class Room {
     // a server constant rather than imported because the worker is a
     // separate Cloudflare bundle that doesn't share the React build
     // tree. Keep in sync if SP's interval changes.
+    // --- Flag-trait aura (DESIGN-fleets.md P2) ---
+    // Members of a LED fleet get the flag captain's trait at HALF
+    // strength — 1 + (mul-1)/2 — stacking with their own captain's
+    // full trait. The flagship is excluded: its captain already
+    // applies at full strength via _traits, and an aura on itself
+    // would double-dip a single trait. Combat axes only here (gunner/
+    // bulwark/wrench); voidrunner/pathfinder/quartermaster/colonist
+    // run in other passes and are a recorded follow-up.
+    const fleetAura = new Map(); // shipId -> { dmgMul, hpMul, repairMul }
+    try {
+      const led = (await this.env.DB
+        .prepare(
+          `SELECT f.id, fc.ship_id AS flagship_id, fc.traits_json
+             FROM game_fleets f
+             JOIN game_captains fc ON fc.id = f.flag_captain_id
+            WHERE f.game_id = ? AND f.flag_captain_id IS NOT NULL`,
+        )
+        .bind(gameId)
+        .all()).results ?? [];
+      const AXES = { gunner: ['dmgMul', 1.10], bulwark: ['hpMul', 1.10], wrench: ['repairMul', 1.5] };
+      for (const f of led) {
+        let traits = [];
+        try { traits = JSON.parse(f.traits_json || '[]'); } catch { /* bad blob = no aura */ }
+        const eff = { dmgMul: 1, hpMul: 1, repairMul: 1 };
+        for (const t of traits) { const ax = AXES[t]; if (ax) eff[ax[0]] *= 1 + (ax[1] - 1) / 2; }
+        if (eff.dmgMul === 1 && eff.hpMul === 1 && eff.repairMul === 1) continue;
+        for (const sh of allShips) {
+          if (sh.fleet_id === f.id && sh.id !== f.flagship_id) fleetAura.set(sh.id, eff);
+        }
+      }
+    } catch (e) { console.error('fleet aura build failed', e); }
+    const auraMul = (shipId, k) => fleetAura.get(shipId)?.[k] ?? 1;
+
     const AUTO_COMBAT_INTERVAL = 3;
 
     // --- Canonical combat constants, mirrored from the client (the
@@ -2236,7 +2269,9 @@ export class Room {
           attacker.damage_per_tick * attackerWeaponMul(attacker.owner_faction_id, atkProfile)
           * rankMul * combatDamageMult
           // Gunner captain (spec §3): +10% damage, multiplicative.
-          * traitMul(attacker._traits ?? [], 'dmgMul');
+          * traitMul(attacker._traits ?? [], 'dmgMul')
+          // Flag aura, halved (never on the flagship itself).
+          * auraMul(attacker.id, 'dmgMul');
         // Senate war authorization: damage TO a faction the senate has
         // formally declared war on is doubled.
         const warAuthMul = (await sanctioned(target.owner_faction_id, 'war_authorization')) ? 2 : 1;
@@ -2591,10 +2626,12 @@ export class Room {
       // Effective HP cap = base × rank (+1%/kill) × armor tech (+8%/level)
       // × Bulwark captain (+10%). Rank is the CAPTAIN's (COALESCEd in the
       // SELECT); the client mirrors all of this in effectiveShipMaxHp.
+      repairRate *= auraMul(ship.id, 'repairMul');   // Wrench flag aura
       const effectiveMaxHp = (ship.hp_max ?? 0)
         * (1 + 0.01 * Math.max(0, ship.rank ?? 0))
         * armorMulOf(ship.owner_faction_id)
-        * traitMul(shipTraits, 'hpMul');
+        * traitMul(shipTraits, 'hpMul')
+        * auraMul(ship.id, 'hpMul');   // Bulwark flag aura
       const newHp = Math.min(effectiveMaxHp, (ship.hp ?? effectiveMaxHp) + repairRate);
       const newFuel = Math.min(ship.fuel_max ?? 0, (ship.fuel ?? 0) + refuelRate);
       if (newHp === ship.hp && newFuel === ship.fuel) continue;

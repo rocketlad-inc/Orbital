@@ -186,6 +186,15 @@ export interface Fleet {
   shipIds: string[];
   leadShipId: string;                   // the ship whose position represents the fleet
   ownedBy: string;                      // faction id
+
+  /** Server fleets (DESIGN-fleets.md): the flag captain who commands.
+   *  null flagCaptainId (leaderless=true) = flagship lost; the fleet
+   *  refuses new common orders until a member captain is promoted. */
+  flagCaptainId?: string | null;
+  flagCaptainName?: string | null;
+  flagCaptainRank?: number;
+  flagCaptainTraits?: string[];
+  leaderless?: boolean;
 }
 
 /**
