@@ -26,7 +26,7 @@ import { useGameContext } from '../state/gameContext';
 // GameState carries no machine-kind array (only focus/flavor are
 // parallel-indexed), so majors are classified from the headline text —
 // the exact idiom EventLog's icon classifier already uses.
-const MAJOR_RE = /destroyed|fell|impact|DISCOVERY|victor|wins|detonat|assumed command|leaderless/i;
+const MAJOR_RE = /destroyed|fell|impact|DISCOVERY|victor|wins the|detonat|assumed command|leaderless/i;
 const THRESHOLD = 5;       // strictly more than this many majors → offer
 const SCENE_CAP = 8;       // a long absence is a highlight reel, not a slog
 const SCENE_MS = 3200;
