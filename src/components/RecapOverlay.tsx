@@ -231,6 +231,8 @@ export const RecapOverlay: React.FC = () => {
   if (!scenes) return null;
 
   const dismiss = () => { setPlaying(false); setScenes(null); };
+  const next = () =>
+    setIdx(i => (scenes && i + 1 < scenes.length ? i + 1 : (dismiss(), i)));
   const mono: React.CSSProperties = { fontFamily: 'Orbitron, system-ui, sans-serif', letterSpacing: '0.14em' };
 
   if (!playing) {
@@ -264,7 +266,7 @@ export const RecapOverlay: React.FC = () => {
       body.recap-playing .mp-dock,
       body.recap-playing .dock-panel { display: none !important; }
     `}</style>
-    <div onClick={() => setIdx(i => (scenes && i + 1 < scenes.length ? i + 1 : (dismiss(), i)))}
+    <div onClick={next}
          style={{ position: 'fixed', inset: 0, zIndex: 300, cursor: 'pointer' }}>
       {/* Letterbox bars — the map stays live between them. */}
       <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 64, background: 'rgba(0,0,0,0.88)' }} />
@@ -274,11 +276,19 @@ export const RecapOverlay: React.FC = () => {
           <div key={i} style={{ ...mono, fontSize: i === 0 ? 14 : 11, color: i === 0 ? '#e8eef5' : '#8a9fb3',
                                 maxWidth: '72ch', textAlign: 'center', padding: '0 16px' }}>{l}</div>
         ))}
-        <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+        <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center' }}>
           {scenes.map((_, i) => (
             <span key={i} style={{ width: 6, height: 6, borderRadius: 3,
                                    background: i === idx ? '#4ecdc4' : '#2a3d50' }} />
           ))}
+          <button onClick={(e) => { e.stopPropagation(); next(); }}
+                  title="Next scene (or click anywhere)"
+                  style={{ marginLeft: 12, fontFamily: 'Orbitron, system-ui, sans-serif',
+                           letterSpacing: '0.14em', fontSize: 11, color: '#4ecdc4',
+                           background: 'rgba(78,205,196,0.08)', border: '1px solid #2a4a4a',
+                           borderRadius: 4, padding: '4px 12px', cursor: 'pointer' }}>
+            {idx + 1 < scenes.length ? 'NEXT ▸' : 'DONE ✓'}
+          </button>
         </div>
       </div>
       <button onClick={(e) => { e.stopPropagation(); dismiss(); }} title="Dismiss (Esc)"
