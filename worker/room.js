@@ -4755,7 +4755,16 @@ export class Room {
       }
     }
 
-    // ----- SCIENCE -----
+    // ----- SCIENCE ----- (DISABLED)
+    // Maxing all six tracks ended a live 7-faction game at tick 208 —
+    // far too cheap for a win condition, because research accrues on a
+    // fixed income curve nobody has to contest. Disabled pending a
+    // rebalance (raise the bar, gate it behind something contestable,
+    // or drop it entirely). The detection code below is left INTACT and
+    // flag-gated so re-enabling is one constant, and so the block
+    // doesn't silently rot out of sync with TECH_TRACKS meanwhile.
+    const SCIENCE_VICTORY_ENABLED = false;
+
     // Every tech track at TECH_MAX_LEVEL. Pull all faction_techs
     // rows in one query and bucket per faction.
     const techRows = (await this.env.DB
@@ -4771,6 +4780,7 @@ export class Room {
       m.set(r.tech_id, r.level);
     }
     for (const candidate of factions) {
+      if (!SCIENCE_VICTORY_ENABLED) break;
       const levels = byFaction.get(candidate.id) ?? new Map();
       const maxedAll = TECH_TRACKS.every(t => (levels.get(t) ?? 0) >= TECH_MAX_LEVEL);
       if (maxedAll) {
