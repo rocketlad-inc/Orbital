@@ -94,7 +94,14 @@ export function checkVictory(state: GameState): VictoryResolution | null {
   // TypeScript can't widen the `researching` field's string type to
   // TechId implicitly. Cast through unknown — values are equivalent
   // for the read-only level lookups allTechsMaxed performs.
+  // Science victory is DISABLED — mirrors worker/room.js checkVictory's
+  // SCIENCE_VICTORY_ENABLED gate. Maxing all six tracks ended a live
+  // game far too cheaply (research accrues on an uncontestable income
+  // curve). Kept flag-gated, not deleted, so re-enabling after a
+  // rebalance is one constant in each engine.
+  const SCIENCE_VICTORY_ENABLED = false;
   for (const candidate of active) {
+    if (!SCIENCE_VICTORY_ENABLED) break;
     const techState = state.factionTech?.[candidate.id] as unknown as
       Parameters<typeof allTechsMaxed>[0];
     if (allTechsMaxed(techState)) {
