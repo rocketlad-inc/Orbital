@@ -77,6 +77,21 @@ export async function logEvent(env, { gameId, userId, kind }) {
   }
 }
 
+// Spend-by-category: called at each debiting action site alongside the
+// debit batch. Best-effort like logEvent - a lost row must never fail
+// the player's action.
+export async function logSpend(env, { gameId, factionId, category, metal = 0, gold = 0 }) {
+  if (!category || (!metal && !gold)) return;
+  try {
+    await env.DB
+      .prepare('INSERT INTO spend_events (game_id, faction_id, category, metal, gold, created_at_ms) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(gameId ?? null, factionId ?? null, category, Math.round(metal), Math.round(gold), Date.now())
+      .run();
+  } catch (e) {
+    console.error('analytics logSpend failed', e);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // GET /api/admin/overview
 // The landing view: every non-setup game with engagement vitals, plus a
@@ -87,6 +102,7 @@ async function handleOverview(req, env, { session }) {
   if (gate) return gate;
   const now = Date.now();
   const d14 = now - 14 * 86_400_000;
+  const d7 = now - 7 * 86_400_000;
 
   const games = await env.DB
     .prepare(
@@ -100,7 +116,13 @@ async function handleOverview(req, env, { session }) {
                 WHERE e.game_id = g.id AND e.kind != 'heartbeat') AS last_action_ms,
               (SELECT COUNT(*) FROM analytics_events e
                 WHERE e.game_id = g.id AND e.kind != 'heartbeat'
-                  AND e.created_at_ms > ?) AS actions_14d
+                  AND e.created_at_ms > ?) AS actions_14d,
+              (SELECT MAX(e.created_at_ms) FROM analytics_events e
+                WHERE e.game_id = g.id AND e.kind = 'heartbeat') AS last_heartbeat_ms,
+              (SELECT MAX(c.created_at_ms) FROM chronicle_entries c
+                WHERE c.game_id = g.id AND c.kind = 'ship_destroyed') AS last_combat_ms,
+              (SELECT MAX(sp.proposed_at_tick) FROM senate_proposals sp
+                WHERE sp.game_id = g.id) AS last_proposal_tick
          FROM games g JOIN rooms r ON r.id = g.id
         WHERE g.status IN ('active', 'completed')
         ORDER BY (g.status = 'active') DESC, g.next_tick_at DESC
@@ -120,6 +142,12 @@ async function handleOverview(req, env, { session }) {
               (SELECT COUNT(*) FROM analytics_events e
                 WHERE e.user_id = u.id AND e.kind = 'heartbeat'
                   AND e.created_at_ms > ?) AS minutes_14d,
+              (SELECT COUNT(*) FROM analytics_events e
+                WHERE e.user_id = u.id AND e.kind = 'heartbeat'
+                  AND e.created_at_ms > ?) AS minutes_7d,
+              (SELECT COUNT(*) FROM analytics_events e
+                WHERE e.user_id = u.id AND e.kind = 'heartbeat'
+                  AND e.created_at_ms > ? AND e.created_at_ms <= ?) AS minutes_prior7,
               (SELECT COUNT(DISTINCT date(e.created_at_ms / 1000, 'unixepoch'))
                  FROM analytics_events e
                 WHERE e.user_id = u.id AND e.kind = 'heartbeat'
@@ -130,7 +158,7 @@ async function handleOverview(req, env, { session }) {
         ORDER BY last_seen_ms DESC
         LIMIT 50`,
     )
-    .bind(d14, d14, d14)
+    .bind(d14, d7, d14, d7, d14)
     .all();
 
   // Retention: users created in the last 28 days, with their latest
@@ -161,23 +189,58 @@ async function handleOverview(req, env, { session }) {
   // The client relabels to the viewer's timezone.
   const heat = await env.DB
     .prepare(
-      `SELECT CAST(strftime('%H', created_at_ms / 1000, 'unixepoch') AS INTEGER) AS hour,
+      `SELECT CAST(strftime('%w', created_at_ms / 1000, 'unixepoch') AS INTEGER) AS dow,
+              CAST(strftime('%H', created_at_ms / 1000, 'unixepoch') AS INTEGER) AS hour,
               COUNT(*) AS n
          FROM analytics_events
         WHERE kind = 'heartbeat' AND created_at_ms > ?
-        GROUP BY hour`,
+        GROUP BY dow, hour`,
     )
     .bind(d14)
     .all();
-  const hours = new Array(24).fill(0);
-  for (const r of heat.results ?? []) hours[r.hour] = r.n;
+  // 7x24 grid, UTC; the client shifts to the viewer's local clock.
+  const heatGrid = Array.from({ length: 7 }, () => new Array(24).fill(0));
+  for (const r of heat.results ?? []) heatGrid[r.dow][r.hour] = r.n;
+
+  // Sparkline series for each ACTIVE game's card: total gold across all
+  // factions at the last 30 recorded ticks. One tiny query per active
+  // game - the list is short (LIMIT guards the pathological case).
+  const sparks = {};
+  const activeGames = (games.results ?? []).filter(g => g.status === 'active').slice(0, 20);
+  for (const g of activeGames) {
+    try {
+      const rows = await env.DB
+        .prepare(
+          `SELECT tick_number, SUM(gold) AS v FROM faction_metrics
+            WHERE game_id = ? GROUP BY tick_number
+            ORDER BY tick_number DESC LIMIT 30`,
+        )
+        .bind(g.id)
+        .all();
+      sparks[g.id] = (rows.results ?? []).reverse().map(r => [r.tick_number, r.v]);
+    } catch (e) { console.error('spark query failed', e); }
+  }
+
+  // Cross-game meta: which features are used ANYWHERE. The client
+  // compares this against the feature registry to list what is unused
+  // everywhere (cut/rework candidates).
+  const usageGlobal = await env.DB
+    .prepare(
+      `SELECT kind, COUNT(*) AS total, COUNT(DISTINCT game_id) AS games_used
+         FROM analytics_events
+        WHERE kind != 'heartbeat'
+        GROUP BY kind ORDER BY total DESC LIMIT 60`,
+    )
+    .all();
 
   return json({
     now,
     games: games.results ?? [],
     players: players.results ?? [],
     retention,
-    hours_utc: hours,
+    heat_grid: heatGrid,
+    sparks,
+    usage_global: usageGlobal.results ?? [],
   });
 }
 
@@ -264,7 +327,7 @@ async function handleGameAnalytics(req, env, { session, params }) {
   // for retention even if they split time across games.
   const engagement = await env.DB
     .prepare(
-      `SELECT u.id, u.display_name, f.name AS faction_name, f.color,
+      `SELECT u.id, u.display_name, f.id AS faction_id, f.name AS faction_name, f.color,
               (SELECT COUNT(*) FROM sessions s
                 WHERE s.user_id = u.id AND s.created_at > ?) AS sessions_14d,
               (SELECT MAX(COALESCE(s.last_seen_at, s.created_at)) FROM sessions s
@@ -448,6 +511,27 @@ async function handleGameAnalytics(req, env, { session, params }) {
     .sort((x, y) => y.n - x.n)
     .slice(0, 12);
 
+  // --- Spend by category (0053): where the resources actually go.
+  const spendRows = await env.DB
+    .prepare(
+      `SELECT faction_id, category, SUM(metal) AS metal, SUM(gold) AS gold
+         FROM spend_events WHERE game_id = ?
+        GROUP BY faction_id, category`,
+    )
+    .bind(gameId)
+    .all();
+
+  // --- Per-player daily activity timeline: minutes per day, last 14d.
+  const timelineRows = await env.DB
+    .prepare(
+      `SELECT user_id, date(created_at_ms / 1000, 'unixepoch') AS day, COUNT(*) AS n
+         FROM analytics_events
+        WHERE game_id = ? AND kind = 'heartbeat' AND created_at_ms > ?
+        GROUP BY user_id, day`,
+    )
+    .bind(gameId, d14)
+    .all();
+
   return json({
     now,
     game,
@@ -461,6 +545,8 @@ async function handleGameAnalytics(req, env, { session, params }) {
     senate,
     trade,
     dropoff,
+    spend: spendRows.results ?? [],
+    timeline: timelineRows.results ?? [],
   });
 }
 

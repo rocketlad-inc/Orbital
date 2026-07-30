@@ -20,11 +20,14 @@ type OverviewGame = {
   tick_interval_ms: number; next_tick_at: number | null; victory_type: string | null;
   created_at: number; humans: number; factions: number;
   last_action_ms: number | null; actions_14d: number;
+  last_heartbeat_ms?: number | null; last_combat_ms?: number | null;
+  last_proposal_tick?: number | null;
 };
 type OverviewPlayer = {
   id: string; display_name: string; email: string;
   sessions_14d: number; last_seen_ms: number | null;
   minutes_14d: number; active_days_14d: number;
+  minutes_7d: number; minutes_prior7: number;
 };
 type RetentionRow = {
   id: string; display_name: string; created_at: number;
@@ -32,7 +35,9 @@ type RetentionRow = {
 };
 type Overview = {
   now: number; games: OverviewGame[]; players: OverviewPlayer[];
-  retention: RetentionRow[]; hours_utc: number[];
+  retention: RetentionRow[]; heat_grid: number[][];
+  sparks: Record<string, Array<[number, number]>>;
+  usage_global: Array<{ kind: string; total: number; games_used: number }>;
 };
 
 type FactionRow = {
@@ -47,7 +52,7 @@ type CurvePoint = {
 };
 type UsageRow = { kind: string; total: number; last_14d: number; distinct_users: number };
 type EngagementRow = {
-  id: string; display_name: string; faction_name: string; color: string;
+  id: string; display_name: string; faction_id: string; faction_name: string; color: string;
   sessions_14d: number; last_seen_ms: number | null;
   minutes_14d: number; active_days_14d: number; actions_14d: number;
 };
@@ -65,6 +70,8 @@ type GameAnalytics = {
   senate: { proposals: FactionCount[]; votes: Array<{ faction_id: string; vote: string; n: number }>; proposal_total: number };
   trade: { routes: FactionCount[]; offers: Array<{ status: string; n: number }> };
   dropoff: Array<{ kind: string; n: number }>;
+  spend: Array<{ faction_id: string | null; category: string; metal: number; gold: number }>;
+  timeline: Array<{ user_id: string; day: string; n: number }>;
 };
 
 const METRICS = ['metal', 'fuel', 'gold', 'science', 'ships', 'settlements'] as const;
@@ -120,6 +127,99 @@ export function AdminAnalytics({ onEnterRoom }: { onEnterRoom: (roomId: string) 
 
 // ---------- overview ----------
 
+// Tiny inline trend line. Points are [tick, value]; renders flat-line
+// for <2 points rather than nothing so cards keep a stable layout.
+function Spark({ points, color = '#4ecdc4', w = 96, h = 22 }: {
+  points: Array<[number, number]>; color?: string; w?: number; h?: number;
+}) {
+  if (!points || points.length < 2) return <svg width={w} height={h} className="aa-spark" />;
+  const xs = points.map(pt => pt[0]);
+  const ys = points.map(pt => pt[1]);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const spanX = Math.max(1, maxX - minX), spanY = Math.max(1, maxY - minY);
+  const path = points
+    .map(([px, py]) => `${((px - minX) / spanX) * (w - 2) + 1},${h - 2 - ((py - minY) / spanY) * (h - 4)}`)
+    .join(' ');
+  const rising = ys[ys.length - 1] >= ys[0];
+  return (
+    <svg width={w} height={h} className="aa-spark">
+      <polyline points={path} fill="none" stroke={rising ? color : '#d06a75'} strokeWidth={1.5} />
+    </svg>
+  );
+}
+
+// Triage dots: green = healthy signal, dim = stale/absent. Titles carry
+// the specifics so the dots stay glanceable.
+function HealthDots({ g, now }: { g: OverviewGame; now: number }) {
+  const DAY = 86_400_000;
+  const cadenceOk = g.status !== 'active'
+    ? false
+    : g.next_tick_at != null && now < g.next_tick_at + 2 * g.tick_interval_ms;
+  const playersToday = g.last_heartbeat_ms != null && now - g.last_heartbeat_ms < DAY;
+  const combatRecent = g.last_combat_ms != null && now - g.last_combat_ms < 2 * DAY;
+  const senateAlive = g.last_proposal_tick != null && g.current_tick - g.last_proposal_tick < 150;
+  const dot = (on: boolean, label: string, color: string) => (
+    <span
+      key={label}
+      className="aa-hdot"
+      title={`${label}: ${on ? 'yes' : 'no'}`}
+      style={{ background: on ? color : 'rgba(120,140,160,0.25)' }}
+    />
+  );
+  return (
+    <span className="aa-hdots">
+      {dot(cadenceOk, 'Ticking on schedule', '#4ecdc4')}
+      {dot(playersToday, 'Players active today', '#7fd8cf')}
+      {dot(combatRecent, 'Combat in last 48h', '#d06a75')}
+      {dot(senateAlive, 'Senate active', '#c9a84c')}
+    </span>
+  );
+}
+
+// 7x24 day-of-week x hour grid. DB buckets are UTC; shift each cell to
+// the viewer's local clock (day wraps along with the hour).
+function HeatGrid({ grid }: { grid: number[][] }) {
+  const offset = -new Date().getTimezoneOffset() / 60;
+  const local = Array.from({ length: 7 }, () => new Array(24).fill(0));
+  for (let d = 0; d < 7; d++) {
+    for (let h = 0; h < 24; h++) {
+      const shifted = h + offset;
+      const lh = ((shifted % 24) + 24) % 24;
+      const ld = (((d + Math.floor(shifted / 24)) % 7) + 7) % 7;
+      local[ld][lh] += grid[d]?.[h] ?? 0;
+    }
+  }
+  const max = Math.max(1, ...local.flat());
+  const total = local.flat().reduce((x, y) => x + y, 0);
+  if (total === 0) return <div className="aa-empty">No play recorded yet.</div>;
+  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  return (
+    <div className="aa-scroll-x">
+      <table className="aa-heatgrid">
+        <tbody>
+          {local.map((row, d) => (
+            <tr key={d}>
+              <td className="aa-heatgrid__day">{days[d]}</td>
+              {row.map((n, h) => (
+                <td key={h} title={`${days[d]} ${h}:00 - ${n} min`}>
+                  <div className="aa-heatgrid__cell" style={{ opacity: n ? 0.25 + 0.75 * (n / max) : 0.06 }} />
+                </td>
+              ))}
+            </tr>
+          ))}
+          <tr>
+            <td />
+            {Array.from({ length: 24 }, (_, h) => (
+              <td key={h} className="aa-heatgrid__lbl">{h % 6 === 0 ? h : ''}</td>
+            ))}
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function OverviewView({ data, onOpen }: { data: Overview; onOpen: (id: string) => void }) {
   const { now } = data;
   const live = data.games.filter(g => g.status === 'active');
@@ -129,7 +229,7 @@ function OverviewView({ data, onOpen }: { data: Overview; onOpen: (id: string) =
       <section>
         <div className="aa-section-title">LIVE GAMES · {live.length}</div>
         <div className="aa-cards">
-          {live.map(g => <GameCard key={g.id} g={g} now={now} onOpen={onOpen} />)}
+          {live.map(g => <GameCard key={g.id} g={g} now={now} spark={data.sparks[g.id]} onOpen={onOpen} />)}
           {live.length === 0 && <div className="aa-empty">No active games.</div>}
         </div>
       </section>
@@ -142,8 +242,12 @@ function OverviewView({ data, onOpen }: { data: Overview; onOpen: (id: string) =
         </section>
       )}
       <section>
-        <div className="aa-section-title">PLAY HOURS · HEARTBEATS BY LOCAL HOUR · 14D</div>
-        <HourHeatmap hoursUtc={data.hours_utc} />
+        <div className="aa-section-title">PLAY HOURS · LOCAL TIME · 14D</div>
+        <HeatGrid grid={data.heat_grid} />
+      </section>
+      <section>
+        <div className="aa-section-title">CROSS-GAME FEATURE USE</div>
+        <MetaUsage rows={data.usage_global} />
       </section>
       <section>
         <div className="aa-section-title">NEW-PLAYER RETENTION · 28D COHORT</div>
@@ -153,7 +257,7 @@ function OverviewView({ data, onOpen }: { data: Overview; onOpen: (id: string) =
         <div className="aa-section-title">PLAYERS · LAST 14 DAYS</div>
         <table className="aa-table">
           <thead>
-            <tr><th>Player</th><th>Logins</th><th>Time in game</th><th>Active days</th><th>Last seen</th></tr>
+            <tr><th>Player</th><th>Logins</th><th>Time in game</th><th>Δ vs prior wk</th><th>Active days</th><th>Last seen</th></tr>
           </thead>
           <tbody>
             {data.players.map(p => (
@@ -161,6 +265,7 @@ function OverviewView({ data, onOpen }: { data: Overview; onOpen: (id: string) =
                 <td>{p.display_name}</td>
                 <td>{p.sessions_14d}</td>
                 <td>{playTime(p.minutes_14d)}</td>
+                <td><WeekDelta cur={p.minutes_7d} prev={p.minutes_prior7} /></td>
                 <td>{p.active_days_14d}</td>
                 <td>{ago(now, p.last_seen_ms)}</td>
               </tr>
@@ -172,28 +277,6 @@ function OverviewView({ data, onOpen }: { data: Overview; onOpen: (id: string) =
   );
 }
 
-// 24 bars, relabeled from UTC to the viewer's local hours so "when do
-// people play" reads in Lorne's own clock.
-function HourHeatmap({ hoursUtc }: { hoursUtc: number[] }) {
-  const offset = -new Date().getTimezoneOffset() / 60; // e.g. -7 for PDT
-  const local = new Array(24).fill(0);
-  for (let h = 0; h < 24; h++) {
-    local[((h + offset) % 24 + 24) % 24] += hoursUtc[h] ?? 0;
-  }
-  const max = Math.max(1, ...local);
-  const total = local.reduce((x, y) => x + y, 0);
-  if (total === 0) return <div className="aa-empty">No play recorded yet — accrues from the analytics release.</div>;
-  return (
-    <div className="aa-heat">
-      {local.map((n, h) => (
-        <div key={h} className="aa-heat__col" title={`${h}:00 — ${n} min`}>
-          <div className="aa-heat__bar" style={{ height: `${Math.max(2, (n / max) * 56)}px` }} />
-          {h % 3 === 0 && <div className="aa-heat__lbl">{h}</div>}
-        </div>
-      ))}
-    </div>
-  );
-}
 
 function RetentionTable({ rows, now }: { rows: RetentionRow[]; now: number }) {
   if (rows.length === 0) return <div className="aa-empty">No new accounts in the last 28 days.</div>;
@@ -232,10 +315,26 @@ function RetentionTable({ rows, now }: { rows: RetentionRow[]; now: number }) {
   );
 }
 
-function GameCard({ g, now, onOpen }: { g: OverviewGame; now: number; onOpen: (id: string) => void }) {
+// Rising/falling arrow with magnitude for week-over-week comparisons.
+function WeekDelta({ cur, prev }: { cur: number; prev: number }) {
+  if (!cur && !prev) return <span className="aa-delta aa-delta--flat">-</span>;
+  const diff = cur - prev;
+  if (Math.abs(diff) < Math.max(5, prev * 0.1)) return <span className="aa-delta aa-delta--flat">≈</span>;
+  return diff > 0
+    ? <span className="aa-delta aa-delta--up">▲ {playTime(diff)}</span>
+    : <span className="aa-delta aa-delta--down">▼ {playTime(-diff)}</span>;
+}
+
+function GameCard({ g, now, spark, onOpen }: {
+  g: OverviewGame; now: number; spark?: Array<[number, number]>; onOpen: (id: string) => void;
+}) {
   return (
     <button className="aa-card" onClick={() => onOpen(g.id)}>
-      <div className="aa-card__name">{g.name}</div>
+      <div className="aa-card__name">
+        {g.name}
+        <HealthDots g={g} now={now} />
+        {spark && <Spark points={spark} />}
+      </div>
       <div className="aa-card__row">
         <span>T+{g.current_tick}</span>
         <span>{Math.round(g.tick_interval_ms / 60000)} min/tick</span>
@@ -259,7 +358,7 @@ function GameDetail({
   const [metric, setMetric] = useState<Metric>('gold');
   // stock = balances; flow = per-tick delta (income minus spend), the
   // economy-balancing lens.
-  const [mode, setMode] = useState<'stock' | 'flow'>('stock');
+  const [mode, setMode] = useState<'stock' | 'flow' | 'share'>('stock');
 
   useEffect(() => {
     let dead = false;
@@ -274,6 +373,14 @@ function GameDetail({
 
   if (!data) return <div className="aa-empty">Loading game analytics…</div>;
   const { now, game, factions } = data;
+  const DAY = 86_400_000;
+  // Factions whose human hasn't been seen in 3+ days: their flat curves
+  // are absences, not play styles - dim + dash them on the chart.
+  const idleFactions = new Set(
+    data.engagement
+      .filter(e => e.last_seen_ms == null || now - e.last_seen_ms > 3 * DAY)
+      .map(e => e.faction_id),
+  );
 
   return (
     <div className="aa-root">
@@ -292,6 +399,10 @@ function GameDetail({
       </div>
 
       <section>
+        <AlertsFeed data={data} idleFactions={idleFactions} />
+      </section>
+
+      <section>
         <div className="aa-section-title">
           EMPIRE YIELD CURVES
           <span className="aa-metric-tabs">
@@ -307,8 +418,9 @@ function GameDetail({
         <div className="aa-metric-tabs" style={{ marginBottom: 8 }}>
           <button className={`aa-chip ${mode === 'stock' ? 'is-active' : ''}`} onClick={() => setMode('stock')}>stockpile</button>
           <button className={`aa-chip ${mode === 'flow' ? 'is-active' : ''}`} onClick={() => setMode('flow')}>per-tick flow</button>
+          <button className={`aa-chip ${mode === 'share' ? 'is-active' : ''}`} onClick={() => setMode('share')}>share of economy</button>
         </div>
-        <YieldChart curves={data.curves} factions={factions} metric={metric} mode={mode} />
+        <YieldChart curves={data.curves} factions={factions} metric={metric} mode={mode} idleFactionIds={idleFactions} />
       </section>
 
       <section>
@@ -339,6 +451,21 @@ function GameDetail({
       <section>
         <div className="aa-section-title">FEATURE USAGE</div>
         <UsageBars usage={data.usage} />
+      </section>
+
+      <section>
+        <div className="aa-section-title">RUNAWAY-LEADER SCORE · SHARE OF ECONOMY + FLEET</div>
+        <RunawayChart data={data} />
+      </section>
+
+      <section>
+        <div className="aa-section-title">SPEND BY CATEGORY</div>
+        <SpendTable data={data} />
+      </section>
+
+      <section>
+        <div className="aa-section-title">PLAYER ACTIVITY · LAST 14 DAYS</div>
+        <TimelineStrips data={data} />
       </section>
 
       <section>
@@ -407,8 +534,11 @@ function GameDetail({
 // curves are directly comparable (the whole point: who is out-yielding
 // whom, and when did the gap open).
 function YieldChart({
-  curves, factions, metric, mode = 'stock',
-}: { curves: CurvePoint[]; factions: FactionRow[]; metric: Metric; mode?: 'stock' | 'flow' }) {
+  curves, factions, metric, mode = 'stock', idleFactionIds,
+}: {
+  curves: CurvePoint[]; factions: FactionRow[]; metric: Metric;
+  mode?: 'stock' | 'flow' | 'share'; idleFactionIds?: Set<string>;
+}) {
   const W = 720, H = 220, PAD = 34;
 
   const series = useMemo(() => {
@@ -469,9 +599,10 @@ function YieldChart({
         })}
         {minVal < 0 && <line x1={PAD} x2={W - PAD} y1={y(0)} y2={y(0)} className="aa-grid" style={{ strokeDasharray: '4 3' }} />}
         <text x={W - PAD} y={H - 8} className="aa-axis" textAnchor="end">T+{maxTick}</text>
-        {factions.map(f => {
+        {mode !== 'share' && factions.map(f => {
           const pts = series.get(f.id);
           if (!pts || pts.length === 0) return null;
+          const idle = idleFactionIds?.has(f.id);
           return (
             <polyline
               key={f.id}
@@ -479,16 +610,45 @@ function YieldChart({
               fill="none"
               stroke={f.color}
               strokeWidth={2}
-              opacity={f.status === 'active' ? 1 : 0.35}
+              strokeDasharray={idle ? '3 4' : undefined}
+              opacity={f.status !== 'active' ? 0.3 : idle ? 0.4 : 1}
             />
           );
         })}
+        {mode === 'share' && (() => {
+          // 100%-stacked bands: who OWNS the economy. Build per-tick
+          // totals, then cumulative bands in faction order.
+          const ticks = [...new Set(curves.map(c => c.tick_number))].sort((m, n) => m - n);
+          const byTick = new Map(ticks.map(t => [t, new Map<string, number>()]));
+          for (const c of curves) byTick.get(c.tick_number)!.set(c.faction_id, Math.max(0, c[metric]));
+          const totals = new Map(ticks.map(t => {
+            let sum = 0;
+            byTick.get(t)!.forEach(v => { sum += v; });
+            return [t, Math.max(1, sum)];
+          }));
+          const yShare = (v: number) => H - PAD - v * (H - PAD * 2);
+          const cum = new Map(ticks.map(t => [t, 0]));
+          return factions.map(f => {
+            const lower = ticks.map(t => [t, cum.get(t)!] as [number, number]);
+            const upper = ticks.map(t => {
+              const next = cum.get(t)! + (byTick.get(t)!.get(f.id) ?? 0) / totals.get(t)!;
+              cum.set(t, next);
+              return [t, next] as [number, number];
+            });
+            const path = [
+              ...upper.map(([t, v]) => `${x(t)},${yShare(v)}`),
+              ...lower.reverse().map(([t, v]) => `${x(t)},${yShare(v)}`),
+            ].join(' ');
+            return <polygon key={f.id} points={path} fill={f.color} opacity={0.55} stroke="none" />;
+          });
+        })()}
       </svg>
       <div className="aa-legend">
         {factions.map(f => (
-          <span key={f.id} className="aa-legend__item">
+          <span key={f.id} className="aa-legend__item" style={{ opacity: idleFactionIds?.has(f.id) ? 0.55 : 1 }}>
             <span className="aa-dot" style={{ background: f.color }} />
             {f.name}{f.player_name ? ` (${f.player_name})` : ''}
+            {idleFactionIds?.has(f.id) ? ' · idle' : ''}
           </span>
         ))}
       </div>
@@ -531,25 +691,36 @@ function CombatLedger({ data }: { data: GameAnalytics }) {
   data.combat.settlements_lost.forEach(r => { if (r.faction_id) ids.add(r.faction_id); });
   if (ids.size === 0) return <div className="aa-empty">No combat yet.</div>;
   const rows = [...ids].sort((x, y) => n(data.combat.kills, y) - n(data.combat.kills, x));
+  // Mirror bars: losses grow LEFT (red), kills grow RIGHT (teal).
+  // A faction feeding ships into a grinder reads as a lopsided red wing.
+  const max = Math.max(1, ...rows.map(id => Math.max(n(data.combat.kills, id), n(data.combat.losses, id))));
   return (
-    <table className="aa-table">
-      <thead><tr><th>Faction</th><th>Kills</th><th>Ships lost</th><th>K/D</th><th>Cities lost</th></tr></thead>
-      <tbody>
-        {rows.map(id => {
-          const k = n(data.combat.kills, id);
-          const l = n(data.combat.losses, id);
-          return (
-            <tr key={id}>
-              <td><FactionChip id={id} factions={data.factions} /></td>
-              <td>{k}</td>
-              <td>{l}</td>
-              <td>{l ? (k / l).toFixed(1) : (k ? 'perfect' : '-')}</td>
-              <td>{n(data.combat.settlements_lost, id)}</td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+    <div className="aa-mirror">
+      <div className="aa-mirror__head">
+        <span>ships lost</span><span /><span>kills</span>
+      </div>
+      {rows.map(id => {
+        const k = n(data.combat.kills, id);
+        const l = n(data.combat.losses, id);
+        const razed = n(data.combat.settlements_lost, id);
+        return (
+          <div key={id} className="aa-mirror__row">
+            <div className="aa-mirror__left">
+              <span className="aa-mirror__num">{l}</span>
+              <span className="aa-mirror__bar aa-mirror__bar--loss" style={{ width: `${(l / max) * 100}%` }} />
+            </div>
+            <div className="aa-mirror__label">
+              <FactionChip id={id} factions={data.factions} />
+              {razed > 0 && <span className="aa-mirror__razed"> · {razed} cities lost</span>}
+            </div>
+            <div className="aa-mirror__right">
+              <span className="aa-mirror__bar aa-mirror__bar--kill" style={{ width: `${(k / max) * 100}%` }} />
+              <span className="aa-mirror__num">{k}</span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -670,6 +841,237 @@ function Funnels({ usage }: { usage: UsageRow[] }) {
         ))}
       </tbody>
     </table>
+  );
+}
+
+// ---------- v3 components ----------
+
+// Composite dominance: mean of a faction's share of (gold+metal) and
+// share of ships, per tick. >40% = runaway leader; the balance alarm.
+function runawayShares(data: GameAnalytics): Map<string, Array<[number, number]>> {
+  const ticks = [...new Set(data.curves.map(c => c.tick_number))].sort((m, n) => m - n);
+  const out = new Map<string, Array<[number, number]>>();
+  for (const t of ticks) {
+    const rows = data.curves.filter(c => c.tick_number === t);
+    const ecoTotal = Math.max(1, rows.reduce((acc, r) => acc + r.gold + r.metal, 0));
+    const shipTotal = Math.max(1, rows.reduce((acc, r) => acc + r.ships, 0));
+    for (const r of rows) {
+      const score = ((r.gold + r.metal) / ecoTotal + r.ships / shipTotal) / 2;
+      let arr = out.get(r.faction_id);
+      if (!arr) { arr = []; out.set(r.faction_id, arr); }
+      arr.push([t, score]);
+    }
+  }
+  return out;
+}
+
+function RunawayChart({ data }: { data: GameAnalytics }) {
+  const series = runawayShares(data);
+  if (series.size === 0) {
+    return <div className="aa-empty">Needs curve history - accrues per tick.</div>;
+  }
+  const W = 720, H = 180, PAD = 34;
+  let maxTick = 1;
+  series.forEach(arr => { for (const [t] of arr) if (t > maxTick) maxTick = t; });
+  const x = (t: number) => PAD + (t / maxTick) * (W - PAD * 2);
+  const y = (v: number) => H - PAD - v * (H - PAD * 2);
+  return (
+    <div className="aa-chart-wrap">
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 180, display: 'block' }} preserveAspectRatio="none">
+        {[0, 0.2, 0.4, 0.6].map(f => (
+          <g key={f}>
+            <line x1={PAD} x2={W - PAD} y1={y(f)} y2={y(f)} className="aa-grid" />
+            <text x={4} y={y(f) + 4} className="aa-axis">{Math.round(f * 100)}%</text>
+          </g>
+        ))}
+        <line x1={PAD} x2={W - PAD} y1={y(0.4)} y2={y(0.4)} stroke="#d06a75" strokeWidth={1} strokeDasharray="5 4" />
+        {data.factions.map(f => {
+          const pts = series.get(f.id);
+          if (!pts || pts.length === 0) return null;
+          return (
+            <polyline
+              key={f.id}
+              points={pts.map(([t, v]) => `${x(t)},${y(v)}`).join(' ')}
+              fill="none" stroke={f.color} strokeWidth={2}
+              opacity={f.status === 'active' ? 1 : 0.3}
+            />
+          );
+        })}
+      </svg>
+      <div className="aa-axis" style={{ padding: '4px 6px', fontSize: 11 }}>
+        Dashed red line = 40% dominance threshold.
+      </div>
+    </div>
+  );
+}
+
+const SPEND_CATEGORIES = ['ships', 'buildings', 'colonies', 'captains'];
+
+function SpendTable({ data }: { data: GameAnalytics }) {
+  if (data.spend.length === 0) {
+    return <div className="aa-empty">No spend logged yet - records per player action from the v3 release.</div>;
+  }
+  const cats = [...new Set([...SPEND_CATEGORIES, ...data.spend.map(r => r.category)])];
+  const cell = (fid: string, cat: string) => {
+    const r = data.spend.find(sp => sp.faction_id === fid && sp.category === cat);
+    if (!r || (!r.metal && !r.gold)) return '-';
+    return `${r.metal}M+${r.gold}C`;
+  };
+  const spenders = data.factions.filter(f =>
+    data.spend.some(sp => sp.faction_id === f.id));
+  if (spenders.length === 0) return <div className="aa-empty">No spend logged yet.</div>;
+  return (
+    <div className="aa-scroll-x">
+      <table className="aa-table">
+        <thead>
+          <tr><th>Faction</th>{cats.map(c => <th key={c}>{c}</th>)}</tr>
+        </thead>
+        <tbody>
+          {spenders.map(f => (
+            <tr key={f.id}>
+              <td><FactionChip id={f.id} factions={data.factions} /></td>
+              {cats.map(c => <td key={c}>{cell(f.id, c)}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// One strip per player: 14 day-cells, intensity = minutes that day.
+// Churn risk is visible as a strip fading to black.
+function TimelineStrips({ data }: { data: GameAnalytics }) {
+  if (data.engagement.length === 0) return <div className="aa-empty">No players.</div>;
+  const days: string[] = [];
+  for (let i = 13; i >= 0; i--) {
+    days.push(new Date(data.now - i * 86_400_000).toISOString().slice(0, 10));
+  }
+  const byKey = new Map(data.timeline.map(t => [`${t.user_id}:${t.day}`, t.n]));
+  const max = Math.max(1, ...data.timeline.map(t => t.n));
+  return (
+    <div className="aa-strips">
+      {data.engagement.map(e => (
+        <div key={e.id} className="aa-strip">
+          <span className="aa-strip__name">
+            <span className="aa-dot" style={{ background: e.color }} />{e.display_name}
+          </span>
+          <span className="aa-strip__cells">
+            {days.map(d => {
+              const n = byKey.get(`${e.id}:${d}`) ?? 0;
+              return (
+                <span
+                  key={d}
+                  className="aa-strip__cell"
+                  title={`${d} - ${n} min`}
+                  style={{ opacity: n ? 0.3 + 0.7 * (n / max) : 0.08 }}
+                />
+              );
+            })}
+          </span>
+          <span className="aa-strip__total">{playTime(e.minutes_14d)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// The push layer: anomalies the queries can already detect, so the
+// dashboard states what is wrong instead of waiting to be read.
+function AlertsFeed({ data, idleFactions }: { data: GameAnalytics; idleFactions: Set<string> }) {
+  const alerts: string[] = [];
+  const nameOf = (fid: string | null) =>
+    data.factions.find(f => f.id === fid)?.name ?? 'Unknown';
+
+  // Runaway leader: latest composite share > 40%.
+  const shares = runawayShares(data);
+  let leaderFid: string | null = null;
+  let leaderV = 0;
+  shares.forEach((arr, fid) => {
+    const last = arr[arr.length - 1];
+    if (last && last[1] > leaderV) { leaderFid = fid; leaderV = last[1]; }
+  });
+  if (leaderFid && leaderV > 0.4) {
+    alerts.push(`${nameOf(leaderFid)} controls ${Math.round(leaderV * 100)}% of the solar economy + fleet - runaway leader.`);
+  }
+
+  // Tech outlier: fastest researcher vs the median pace.
+  const paces = data.techPace.filter(t => t.completed >= 3).map(t => t.avg_ticks).sort((x, y) => x - y);
+  if (paces.length >= 3) {
+    const median = paces[Math.floor(paces.length / 2)];
+    const fastest = data.techPace.filter(t => t.completed >= 3).sort((x, y) => x.avg_ticks - y.avg_ticks)[0];
+    if (fastest && median > 0 && fastest.avg_ticks * 4 < median) {
+      alerts.push(`${nameOf(fastest.faction_id)} completes techs ${Math.round(median / Math.max(1, fastest.avg_ticks))}x faster than the median (${fastest.avg_ticks} vs ${median} ticks).`);
+    }
+  }
+
+  // Hull dominance.
+  const totalAlive = data.shipClasses.alive.reduce((acc, r) => acc + r.n, 0);
+  const top = data.shipClasses.alive[0];
+  if (top && totalAlive >= 10 && top.n / totalAlive > 0.5) {
+    alerts.push(`${top.ship_class}s are ${Math.round((top.n / totalAlive) * 100)}% of all hulls - class balance is off.`);
+  }
+
+  // Senate silence.
+  if (data.senate.proposal_total === 0 && data.game.current_tick > 100) {
+    alerts.push(`No senate proposal in ${data.game.current_tick} ticks - the senate is dead weight in this game.`);
+  }
+
+  // Player absence.
+  for (const e of data.engagement) {
+    if (e.last_seen_ms == null) continue;
+    const days = Math.floor((data.now - e.last_seen_ms) / 86_400_000);
+    if (days >= 7) alerts.push(`${e.display_name} (${e.faction_name}) hasn't logged in for ${days} days.`);
+  }
+  if (idleFactions.size > 0 && alerts.length === 0) {
+    alerts.push(`${idleFactions.size} faction(s) idle 3+ days - curves dimmed on the chart.`);
+  }
+
+  if (alerts.length === 0) {
+    return <div className="aa-alerts aa-alerts--ok">✓ No anomalies detected.</div>;
+  }
+  return (
+    <div className="aa-alerts">
+      {alerts.map((msg, i) => <div key={i} className="aa-alert">⚠ {msg}</div>)}
+    </div>
+  );
+}
+
+// Cross-game: what is used anywhere, and what is used NOWHERE.
+const FEATURE_REGISTRY: Array<{ label: string; match: (k: string) => boolean }> = [
+  { label: 'Fleets', match: k => k.includes('fleets') },
+  { label: 'Senate votes', match: k => k.includes('senate') && !k.startsWith('ui/') },
+  { label: 'Trade offers', match: k => k.includes('trade') || k.includes('offers') },
+  { label: 'Ship building', match: k => k.includes('build') },
+  { label: 'Research', match: k => k.includes('research') },
+  { label: 'Captains', match: k => k.includes('captain') },
+  { label: 'Ship designs', match: k => k.includes('designs') },
+  { label: 'Recap', match: k => k === 'ui/recap' },
+];
+
+function MetaUsage({ rows }: { rows: Array<{ kind: string; total: number; games_used: number }> }) {
+  if (rows.length === 0) return <div className="aa-empty">No actions logged anywhere yet.</div>;
+  const unused = FEATURE_REGISTRY.filter(f => !rows.some(r => f.match(r.kind)));
+  const max = Math.max(...rows.map(r => r.total));
+  return (
+    <div>
+      {unused.length > 0 && (
+        <div className="aa-alerts" style={{ marginBottom: 10 }}>
+          <div className="aa-alert">⚠ Never used in any game: {unused.map(f => f.label).join(', ')} - cut or rework candidates.</div>
+        </div>
+      )}
+      <div className="aa-bars">
+        {rows.slice(0, 14).map(r => (
+          <div key={r.kind} className="aa-bar-row">
+            <span className="aa-bar-label">{r.kind}</span>
+            <span className="aa-bar-track">
+              <span className="aa-bar-fill" style={{ width: `${(r.total / max) * 100}%` }} />
+            </span>
+            <span className="aa-bar-num">{r.total} <em>in {r.games_used} game{r.games_used === 1 ? '' : 's'}</em></span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

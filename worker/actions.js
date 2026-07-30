@@ -1,4 +1,5 @@
 import { getActiveSliders } from './senate.js';
+import { logSpend } from './analytics.js';
 import { recomputeBodyOwnership } from './factions.js';
 import {
   validateParts, partsCost, parsePartsJson,
@@ -623,6 +624,10 @@ async function handleQueueBuild(req, env, ctx) {
     );
   }
   await env.DB.batch(batchStmts);
+  await logSpend(env, {
+    gameId, factionId: me.id, category: 'ships',
+    metal: (cost.metal ?? 0), gold: (cost.gold ?? 0),
+  });
 
   return json({
     order: {
@@ -1591,6 +1596,10 @@ async function handleQueueBuilding(req, env, ctx) {
     );
   }
   await env.DB.batch(batchStmts);
+  await logSpend(env, {
+    gameId, factionId: me.id, category: 'buildings',
+    metal: (cost.metal ?? 0), gold: (cost.gold ?? 0),
+  });
 
   return json({ ok: true, order, cost });
 }
@@ -2830,6 +2839,10 @@ async function handleAssignCaptain(req, env, ctx) {
       .prepare('UPDATE game_captains SET ship_id = NULL, benched_at_tick = ? WHERE id = ?')
       .bind(nowTick, captainId));
     await env.DB.batch(stmts);
+  await logSpend(env, {
+    gameId, factionId: me.id, category: 'captains',
+    metal: RECRUIT_COST.metal, gold: RECRUIT_COST.gold,
+  });
     return json({ ok: true, captain_id: captainId, ship_id: null });
   }
   if (typeof shipId !== 'string') return err(400, 'bad_request', 'ship_id must be a string or null');
