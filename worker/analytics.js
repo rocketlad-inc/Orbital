@@ -38,6 +38,18 @@ export function isAdminEmail(email) {
   return ADMIN_EMAILS.has(String(email ?? '').toLowerCase());
 }
 
+// ---------------------------------------------------------------------------
+// QA-account exclusion. Every harness identity lives on one of these
+// domains (qa/provision.js, sim runners, deploy checks) - real players
+// never do. One predicate, applied to every people-facing query, so a
+// new report can't accidentally count robots as engagement.
+// ---------------------------------------------------------------------------
+const QA_DOMAINS = ['%@example.com', '%@example.test', '%@orbital-test.local'];
+// For queries that already join users as `u`.
+const NOT_QA_USER = QA_DOMAINS.map(d => `u.email NOT LIKE '${d}'`).join(' AND ');
+// For event tables with only a user_id: subselect of QA account ids.
+const QA_USER_IDS = `SELECT id FROM users WHERE ${QA_DOMAINS.map(d => `email LIKE '${d}'`).join(' OR ')}`;
+
 // 404 (not 403) so probing for the endpoint learns nothing.
 function requireAdmin(session) {
   if (!session || !isAdminEmail(session.email)) {
@@ -125,6 +137,8 @@ async function handleOverview(req, env, { session }) {
                 WHERE sp.game_id = g.id) AS last_proposal_tick
          FROM games g JOIN rooms r ON r.id = g.id
         WHERE g.status IN ('active', 'completed')
+          AND EXISTS (SELECT 1 FROM game_factions f JOIN users u ON u.id = f.user_id
+                       WHERE f.game_id = g.id AND ${NOT_QA_USER})
         ORDER BY (g.status = 'active') DESC, g.next_tick_at DESC
         LIMIT 100`,
     )
@@ -153,7 +167,7 @@ async function handleOverview(req, env, { session }) {
                 WHERE e.user_id = u.id AND e.kind = 'heartbeat'
                   AND e.created_at_ms > ?) AS active_days_14d
          FROM users u JOIN sessions s ON s.user_id = u.id
-        WHERE s.created_at > ? AND u.email NOT LIKE '%@example.com'
+        WHERE s.created_at > ? AND ${NOT_QA_USER}
         GROUP BY u.id
         ORDER BY last_seen_ms DESC
         LIMIT 50`,
@@ -171,7 +185,7 @@ async function handleOverview(req, env, { session }) {
               (SELECT MAX(e.created_at_ms) FROM analytics_events e
                 WHERE e.user_id = u.id AND e.kind = 'heartbeat') AS last_hb
          FROM users u
-        WHERE u.created_at > ? AND u.email NOT LIKE '%@example.com'`,
+        WHERE u.created_at > ? AND ${NOT_QA_USER}`,
     )
     .bind(d28)
     .all();
@@ -194,6 +208,7 @@ async function handleOverview(req, env, { session }) {
               COUNT(*) AS n
          FROM analytics_events
         WHERE kind = 'heartbeat' AND created_at_ms > ?
+          AND user_id NOT IN (${QA_USER_IDS})
         GROUP BY dow, hour`,
     )
     .bind(d14)
@@ -229,6 +244,7 @@ async function handleOverview(req, env, { session }) {
       `SELECT kind, COUNT(*) AS total, COUNT(DISTINCT game_id) AS games_used
          FROM analytics_events
         WHERE kind != 'heartbeat'
+          AND (user_id IS NULL OR user_id NOT IN (${QA_USER_IDS}))
         GROUP BY kind ORDER BY total DESC LIMIT 60`,
     )
     .all();
@@ -344,7 +360,7 @@ async function handleGameAnalytics(req, env, { session, params }) {
                   AND e.kind != 'heartbeat' AND e.created_at_ms > ?) AS actions_14d
          FROM game_factions f JOIN users u ON u.id = f.user_id
         WHERE f.game_id = ?
-        ORDER BY last_seen_ms DESC`,
+        ORDER BY last_seen_ms DESC AND ${NOT_QA_USER}`,
     )
     .bind(d14, d14, d14, d14, gameId)
     .all();
@@ -527,6 +543,7 @@ async function handleGameAnalytics(req, env, { session, params }) {
       `SELECT user_id, date(created_at_ms / 1000, 'unixepoch') AS day, COUNT(*) AS n
          FROM analytics_events
         WHERE game_id = ? AND kind = 'heartbeat' AND created_at_ms > ?
+          AND user_id NOT IN (${QA_USER_IDS})
         GROUP BY user_id, day`,
     )
     .bind(gameId, d14)
