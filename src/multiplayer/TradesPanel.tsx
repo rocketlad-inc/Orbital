@@ -22,6 +22,7 @@ import {
   MyFaction,
   ResourceBundle,
 } from './api';
+import { logUiEvent } from './telemetry';
 import { TradeComposer } from './TradeComposer';
 import { hasFeature, requirementFor } from '../game/researchUnlocks';
 import { TECH_DEFS } from '../game/techs';
@@ -48,6 +49,7 @@ const RESOURCE_LABELS: Record<keyof ResourceBundle, string> = {
 };
 
 export function TradesPanel({ gameId }: { gameId: string }) {
+  useEffect(() => { logUiEvent(gameId, 'trades'); }, [gameId]);
   const api = useMemo(() => tradesApi(gameId), [gameId]);
   const [me, setMe] = useState<MyFaction | null>(null);
   const [factions, setFactions] = useState<Faction[]>([]);

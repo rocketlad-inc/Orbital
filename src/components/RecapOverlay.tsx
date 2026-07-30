@@ -22,6 +22,8 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
+import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { logUiEvent } from '../multiplayer/telemetry';
 import { enqueueDetonation, spawnDiscoveryBloom } from '../render/combatFx';
 import { MOON_ORBIT_MIN_PARENT_PX } from '../render/mapRenderer';
 
@@ -83,6 +85,11 @@ export const RecapOverlay: React.FC = () => {
   const { gameState, focusBody, updateCamera } = useGameContext();
   const [scenes, setScenes] = useState<Scene[] | null>(null);  // null = no offer
   const [playing, setPlaying] = useState(false);
+  const mpActions = useMultiplayerActions();
+  // Funnel telemetry: recap actually watched (not merely offered).
+  useEffect(() => {
+    if (playing) logUiEvent(mpActions?.gameId, 'recap');
+  }, [playing, mpActions?.gameId]);
   const [idx, setIdx] = useState(0);
   const evaluatedRef = useRef(false);
 

@@ -3,7 +3,7 @@
 // Orbiting (grouped by body) + separate "In Transit" group
 // ============================================================
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { loadoutSummary, countPart } from '../game/shipParts';
@@ -19,6 +19,7 @@ import { ShipIcon } from './ShipIcons';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { apiFetch } from '../multiplayer/api';
 import { humanizeMpError } from '../multiplayer/errorMessages';
+import { logUiEvent } from '../multiplayer/telemetry';
 import { openShipDesigner } from './ShipDesigner';
 import './OverviewPanel.css';
 import './FleetPanel.css';
@@ -44,6 +45,8 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   // MP (null in SP, where every mpActions branch below is already dead),
   // so gating on it changes nothing about the SP code path.
   const [filter, setFilter] = useState<Filter>(mpActions ? 'all' : 'player');
+  // Funnel telemetry: menu opened (deduped per page load in logUiEvent).
+  useEffect(() => { logUiEvent(mpActions?.gameId, 'fleet-menu'); }, [mpActions?.gameId]);
   // Captain Bank state (spec §5.3): inline rename target + busy/error.
   const [capEditId, setCapEditId] = useState<string | null>(null);
   const [capBusy, setCapBusy] = useState(false);

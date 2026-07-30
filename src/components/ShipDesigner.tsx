@@ -16,6 +16,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions, ServerShipDesign, ServerShipTemplate } from '../multiplayer/MultiplayerActionsContext';
+import { logUiEvent } from '../multiplayer/telemetry';
 import { ShipClassName, SHIP_CLASSES, BUILDABLE_CLASSES } from '../game/shipClasses';
 import {
   ShipPartId, ALL_PART_IDS, SHIP_PART_DEFS, SHIP_SLOT_COUNTS,
@@ -100,6 +101,7 @@ function serverDesignToClient(d: ServerShipDesign): ShipDesign {
 export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClose }) => {
   const { gameState } = useGameContext();
   const mpActions = useMultiplayerActions();
+  useEffect(() => { logUiEvent(mpActions?.gameId, 'ship-designer'); }, [mpActions?.gameId]);
   const gate = useFeatureGate();
 
   const [activeClass, setActiveClass] = useState<ShipClassName>(initialClass ?? 'corvette');

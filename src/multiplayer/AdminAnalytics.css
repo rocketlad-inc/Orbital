@@ -166,6 +166,9 @@
   white-space: nowrap;
 }
 .aa-bar-track {
+  /* flex so a second segment (ship-classes' "lost" bar) sits beside
+     the first instead of wrapping out of the 10px-tall clip box */
+  display: flex;
   height: 10px;
   background: rgba(96, 130, 160, 0.15);
   border-radius: 5px;
@@ -185,3 +188,21 @@
   .aa-bar-track { order: 3; }
   .aa-detail-head .aa-btn--primary { margin-left: 0; }
 }
+
+/* --- play-hour heatmap --- */
+.aa-heat {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  padding: 6px 2px 2px;
+}
+.aa-heat__col { flex: 1; text-align: center; }
+.aa-heat__bar {
+  background: linear-gradient(180deg, #4ecdc4, #2b8f88);
+  border-radius: 2px 2px 0 0;
+  min-height: 2px;
+}
+.aa-heat__lbl { font-size: 9px; color: #64768a; margin-top: 3px; }
+
+/* stacked built/lost bars */
+.aa-bar-fill--lost { background: linear-gradient(90deg, #a04555, #d06a75); }

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch, Faction, SenateProposal, SenateSlider } from './api';
+import { logUiEvent } from './telemetry';
 import { DiscordLink } from './DiscordLink';
 import { hasFeature, requirementFor } from '../game/researchUnlocks';
 import { TECH_DEFS } from '../game/techs';
@@ -59,6 +60,7 @@ const STATUS_LABEL: Record<SenateProposal['status'], string> = {
 };
 
 export function SenatePanel({ gameId }: { gameId: string }) {
+  useEffect(() => { logUiEvent(gameId, 'senate'); }, [gameId]);
   const [sliders, setSliders] = useState<SenateSlider[]>([]);
   const [currentTick, setCurrentTick] = useState<number>(0);
   const [proposals, setProposals] = useState<SenateProposal[]>([]);

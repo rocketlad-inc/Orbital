@@ -956,7 +956,8 @@ export default {
       // choke point so every module's routes are covered without
       // per-handler instrumentation. GETs (polling) are deliberately
       // not logged — they'd swamp the table with /state noise.
-      if (req.method !== 'GET' && url.pathname.startsWith('/api/games/')) {
+      if (req.method !== 'GET' && url.pathname.startsWith('/api/games/')
+          && !url.pathname.endsWith('/telemetry')) {
         const kind = analytics.eventKindFromPath(req.method, url.pathname);
         if (kind) {
           const gm = url.pathname.match(/^\/api\/games\/([^/]+)\//);

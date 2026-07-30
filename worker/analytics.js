@@ -133,7 +133,52 @@ async function handleOverview(req, env, { session }) {
     .bind(d14, d14, d14)
     .all();
 
-  return json({ now, games: games.results ?? [], players: players.results ?? [] });
+  // Retention: users created in the last 28 days, with their latest
+  // activity. D1/D7/D14 = "had a heartbeat on or after created + N
+  // days". Computed in JS - the cohort is tiny.
+  const d28 = now - 28 * 86_400_000;
+  const cohortRows = await env.DB
+    .prepare(
+      `SELECT u.id, u.display_name, u.created_at,
+              (SELECT MAX(e.created_at_ms) FROM analytics_events e
+                WHERE e.user_id = u.id AND e.kind = 'heartbeat') AS last_hb
+         FROM users u
+        WHERE u.created_at > ? AND u.email NOT LIKE '%@example.com'`,
+    )
+    .bind(d28)
+    .all();
+  const DAY = 86_400_000;
+  const retention = (cohortRows.results ?? []).map(u => ({
+    id: u.id,
+    display_name: u.display_name,
+    created_at: u.created_at,
+    d1: u.last_hb != null && u.last_hb >= u.created_at + DAY,
+    d7: u.last_hb != null && u.last_hb >= u.created_at + 7 * DAY,
+    d14: u.last_hb != null && u.last_hb >= u.created_at + 14 * DAY,
+  }));
+
+  // Play-hour heatmap: heartbeats by UTC hour over the last 14 days.
+  // The client relabels to the viewer's timezone.
+  const heat = await env.DB
+    .prepare(
+      `SELECT CAST(strftime('%H', created_at_ms / 1000, 'unixepoch') AS INTEGER) AS hour,
+              COUNT(*) AS n
+         FROM analytics_events
+        WHERE kind = 'heartbeat' AND created_at_ms > ?
+        GROUP BY hour`,
+    )
+    .bind(d14)
+    .all();
+  const hours = new Array(24).fill(0);
+  for (const r of heat.results ?? []) hours[r.hour] = r.n;
+
+  return json({
+    now,
+    games: games.results ?? [],
+    players: players.results ?? [],
+    retention,
+    hours_utc: hours,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -241,6 +286,168 @@ async function handleGameAnalytics(req, env, { session, params }) {
     .bind(d14, d14, d14, d14, gameId)
     .all();
 
+  // --- Tech pace: how fast research completes, per faction. The direct
+  // measure of "is science too cheap" (it already ended one game).
+  const techRows = await env.DB
+    .prepare(
+      `SELECT faction_id, tech_id, started_at_tick, completed_at_tick
+         FROM faction_techs
+        WHERE game_id = ? AND status = 'completed' AND completed_at_tick IS NOT NULL`,
+    )
+    .bind(gameId)
+    .all();
+  const techByFaction = new Map();
+  for (const t of techRows.results ?? []) {
+    let agg = techByFaction.get(t.faction_id);
+    if (!agg) { agg = { completed: 0, total_ticks: 0, last_tick: 0 }; techByFaction.set(t.faction_id, agg); }
+    agg.completed += 1;
+    agg.total_ticks += Math.max(0, (t.completed_at_tick ?? 0) - (t.started_at_tick ?? 0));
+    if (t.completed_at_tick > agg.last_tick) agg.last_tick = t.completed_at_tick;
+  }
+  const techPace = [...techByFaction.entries()].map(([faction_id, agg]) => ({
+    faction_id,
+    completed: agg.completed,
+    avg_ticks: agg.completed ? Math.round(agg.total_ticks / agg.completed) : 0,
+    last_completed_tick: agg.last_tick,
+  }));
+
+  // --- Combat ledger: losses by owner, kills by attacker (from the
+  // ship_destroyed payload's killer attribution), settlements razed.
+  const losses = await env.DB
+    .prepare(
+      `SELECT actor_faction_id AS faction_id, COUNT(*) AS n
+         FROM chronicle_entries
+        WHERE game_id = ? AND kind = 'ship_destroyed'
+        GROUP BY actor_faction_id`,
+    )
+    .bind(gameId)
+    .all();
+  const kills = await env.DB
+    .prepare(
+      `SELECT json_extract(payload, '$.killer_faction_id') AS faction_id, COUNT(*) AS n
+         FROM chronicle_entries
+        WHERE game_id = ? AND kind = 'ship_destroyed'
+          AND json_extract(payload, '$.killer_faction_id') IS NOT NULL
+        GROUP BY 1`,
+    )
+    .bind(gameId)
+    .all();
+  const razed = await env.DB
+    .prepare(
+      `SELECT actor_faction_id AS faction_id, COUNT(*) AS n
+         FROM chronicle_entries
+        WHERE game_id = ? AND kind = 'settlement_destroyed'
+        GROUP BY actor_faction_id`,
+    )
+    .bind(gameId)
+    .all();
+  const combat = {
+    losses: losses.results ?? [],
+    kills: kills.results ?? [],
+    settlements_lost: razed.results ?? [],
+  };
+
+  // --- Ship class popularity: what people build (alive) and what dies
+  // (lost, from the destruction payload).
+  const classesAlive = await env.DB
+    .prepare(
+      `SELECT ship_class, COUNT(*) AS n FROM game_ships
+        WHERE game_id = ? AND hp > 0 GROUP BY ship_class ORDER BY n DESC`,
+    )
+    .bind(gameId)
+    .all();
+  const classesLost = await env.DB
+    .prepare(
+      `SELECT json_extract(payload, '$.ship_class') AS ship_class, COUNT(*) AS n
+         FROM chronicle_entries
+        WHERE game_id = ? AND kind = 'ship_destroyed'
+        GROUP BY 1 ORDER BY n DESC`,
+    )
+    .bind(gameId)
+    .all();
+  const shipClasses = { alive: classesAlive.results ?? [], lost: classesLost.results ?? [] };
+
+  // --- Senate participation: proposals raised per faction + vote
+  // behaviour. No-shows are derivable client-side (proposal_total minus
+  // a faction's total votes).
+  const proposals = await env.DB
+    .prepare(
+      `SELECT COALESCE(proposer_faction_id, 'system') AS faction_id, COUNT(*) AS n
+         FROM senate_proposals WHERE game_id = ? GROUP BY 1`,
+    )
+    .bind(gameId)
+    .all();
+  const votes = await env.DB
+    .prepare(
+      `SELECT v.faction_id, v.vote, COUNT(*) AS n
+         FROM senate_votes v JOIN senate_proposals p ON p.id = v.proposal_id
+        WHERE p.game_id = ? GROUP BY v.faction_id, v.vote`,
+    )
+    .bind(gameId)
+    .all();
+  const proposalTotal = (proposals.results ?? []).reduce((acc, r) => acc + r.n, 0);
+  const senate = {
+    proposals: proposals.results ?? [],
+    votes: votes.results ?? [],
+    proposal_total: proposalTotal,
+  };
+
+  // --- Trade & diplomacy volume.
+  const routes = await env.DB
+    .prepare(
+      `SELECT owner_faction_id AS faction_id, COUNT(*) AS n
+         FROM game_trade_routes WHERE game_id = ? GROUP BY 1`,
+    )
+    .bind(gameId)
+    .all();
+  const offers = await env.DB
+    .prepare(
+      `SELECT status, COUNT(*) AS n FROM trade_offers WHERE game_id = ? GROUP BY status`,
+    )
+    .bind(gameId)
+    .all();
+  const trade = { routes: routes.results ?? [], offers: offers.results ?? [] };
+
+  // --- Session drop-off: the last real action players take before going
+  // idle (>30 min without even a heartbeat). A repeated pattern here is
+  // a frustration-point flag. JS pass over recent events, newest 4000.
+  const evRows = await env.DB
+    .prepare(
+      `SELECT user_id, kind, created_at_ms FROM analytics_events
+        WHERE game_id = ? AND user_id IS NOT NULL
+        ORDER BY created_at_ms DESC LIMIT 4000`,
+    )
+    .bind(gameId)
+    .all();
+  const byUser = new Map();
+  for (const e of (evRows.results ?? []).reverse()) {
+    let arr = byUser.get(e.user_id);
+    if (!arr) { arr = []; byUser.set(e.user_id, arr); }
+    arr.push(e);
+  }
+  const GAP = 30 * 60_000;
+  const dropoffCounts = new Map();
+  byUser.forEach(arr => {
+    let lastAction = null;
+    for (let i = 0; i < arr.length; i++) {
+      const e = arr[i];
+      const prev = arr[i - 1];
+      if (prev && e.created_at_ms - prev.created_at_ms > GAP && lastAction) {
+        dropoffCounts.set(lastAction, (dropoffCounts.get(lastAction) ?? 0) + 1);
+      }
+      if (e.kind !== 'heartbeat') lastAction = e.kind;
+    }
+    // Tail: a player who is idle RIGHT NOW ended a session too.
+    const last = arr[arr.length - 1];
+    if (last && now - last.created_at_ms > GAP && lastAction) {
+      dropoffCounts.set(lastAction, (dropoffCounts.get(lastAction) ?? 0) + 1);
+    }
+  });
+  const dropoff = [...dropoffCounts.entries()]
+    .map(([kind, n]) => ({ kind, n }))
+    .sort((x, y) => y.n - x.n)
+    .slice(0, 12);
+
   return json({
     now,
     game,
@@ -248,10 +455,37 @@ async function handleGameAnalytics(req, env, { session, params }) {
     curves: curves.results ?? [],
     usage: usage.results ?? [],
     engagement: engagement.results ?? [],
+    techPace,
+    combat,
+    shipClasses,
+    senate,
+    trade,
+    dropoff,
   });
 }
 
+// POST /api/games/:gameId/telemetry {kind} - client-side UI events
+// ("opened the fleet menu"), so the dashboard can build funnels the
+// server's mutation log can't see. Kind is whitelisted to a slug and
+// force-prefixed 'ui/' so a client can never spoof server kinds.
+const UI_KIND_RE = /^[a-z0-9][a-z0-9_-]{1,32}$/;
+async function handleUiTelemetry(req, env, { session, params }) {
+  let body = null;
+  try { body = await req.json(); } catch { /* unreadable -> bad_kind below */ }
+  const kind = body && body.kind;
+  if (typeof kind !== 'string' || !UI_KIND_RE.test(kind)) {
+    return err(400, 'bad_kind', 'kind must be a short slug');
+  }
+  await logEvent(env, {
+    gameId: params.gameId,
+    userId: session.user_id,
+    kind: `ui/${kind}`,
+  });
+  return new Response(null, { status: 204 });
+}
+
 export const routes = [
+  { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/telemetry$/, auth: 'required', handle: handleUiTelemetry },
   { method: 'GET', pattern: '/api/admin/overview', auth: 'required', handle: handleOverview },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/analytics$/, auth: 'required', handle: handleGameAnalytics },
 ];
