@@ -97,9 +97,10 @@ async function handleOverview(req, env, { session }) {
               (SELECT COUNT(*) FROM game_factions f
                 WHERE f.game_id = g.id AND f.status = 'active') AS factions,
               (SELECT MAX(e.created_at_ms) FROM analytics_events e
-                WHERE e.game_id = g.id) AS last_action_ms,
+                WHERE e.game_id = g.id AND e.kind != 'heartbeat') AS last_action_ms,
               (SELECT COUNT(*) FROM analytics_events e
-                WHERE e.game_id = g.id AND e.created_at_ms > ?) AS actions_14d
+                WHERE e.game_id = g.id AND e.kind != 'heartbeat'
+                  AND e.created_at_ms > ?) AS actions_14d
          FROM games g JOIN rooms r ON r.id = g.id
         WHERE g.status IN ('active', 'completed')
         ORDER BY (g.status = 'active') DESC, g.next_tick_at DESC
@@ -116,15 +117,20 @@ async function handleOverview(req, env, { session }) {
       `SELECT u.id, u.display_name, u.email,
               COUNT(s.token) AS sessions_14d,
               MAX(COALESCE(s.last_seen_at, s.created_at)) AS last_seen_ms,
-              AVG(CASE WHEN s.last_seen_at IS NOT NULL
-                       THEN (s.last_seen_at - s.created_at) / 60000.0 END) AS avg_session_min
+              (SELECT COUNT(*) FROM analytics_events e
+                WHERE e.user_id = u.id AND e.kind = 'heartbeat'
+                  AND e.created_at_ms > ?) AS minutes_14d,
+              (SELECT COUNT(DISTINCT date(e.created_at_ms / 1000, 'unixepoch'))
+                 FROM analytics_events e
+                WHERE e.user_id = u.id AND e.kind = 'heartbeat'
+                  AND e.created_at_ms > ?) AS active_days_14d
          FROM users u JOIN sessions s ON s.user_id = u.id
         WHERE s.created_at > ? AND u.email NOT LIKE '%@example.com'
         GROUP BY u.id
         ORDER BY last_seen_ms DESC
         LIMIT 50`,
     )
-    .bind(d14)
+    .bind(d14, d14, d14)
     .all();
 
   return json({ now, games: games.results ?? [], players: players.results ?? [] });
@@ -155,7 +161,11 @@ async function handleGameAnalytics(req, env, { session, params }) {
   const factions = await env.DB
     .prepare(
       `SELECT f.id, f.name, f.color, f.status, f.user_id, u.display_name AS player_name,
-              f.metal, f.fuel, f.gold, f.science, f.reputation,
+              CAST(ROUND(f.metal) AS INTEGER) AS metal,
+              CAST(ROUND(f.fuel) AS INTEGER) AS fuel,
+              CAST(ROUND(f.gold) AS INTEGER) AS gold,
+              CAST(ROUND(f.science) AS INTEGER) AS science,
+              f.reputation,
               (SELECT COUNT(*) FROM game_ships s
                 WHERE s.game_id = f.game_id AND s.owner_faction_id = f.id AND s.hp > 0) AS ships,
               (SELECT COUNT(*) FROM game_settlements st
@@ -176,7 +186,12 @@ async function handleGameAnalytics(req, env, { session, params }) {
   const step = Math.max(1, Math.floor(tickCount / 200));
   const curves = await env.DB
     .prepare(
-      `SELECT tick_number, faction_id, metal, fuel, gold, science, ships, settlements
+      `SELECT tick_number, faction_id,
+              CAST(ROUND(metal) AS INTEGER) AS metal,
+              CAST(ROUND(fuel) AS INTEGER) AS fuel,
+              CAST(ROUND(gold) AS INTEGER) AS gold,
+              CAST(ROUND(science) AS INTEGER) AS science,
+              ships, settlements
          FROM faction_metrics
         WHERE game_id = ? AND (tick_number % ? = 0 OR tick_number = ?)
         ORDER BY tick_number`,
@@ -191,7 +206,7 @@ async function handleGameAnalytics(req, env, { session, params }) {
               SUM(created_at_ms > ?) AS last_14d,
               COUNT(DISTINCT user_id) AS distinct_users
          FROM analytics_events
-        WHERE game_id = ?
+        WHERE game_id = ? AND kind != 'heartbeat'
         GROUP BY kind
         ORDER BY total DESC`,
     )
@@ -209,16 +224,21 @@ async function handleGameAnalytics(req, env, { session, params }) {
                 WHERE s.user_id = u.id AND s.created_at > ?) AS sessions_14d,
               (SELECT MAX(COALESCE(s.last_seen_at, s.created_at)) FROM sessions s
                 WHERE s.user_id = u.id) AS last_seen_ms,
-              (SELECT AVG(CASE WHEN s.last_seen_at IS NOT NULL
-                               THEN (s.last_seen_at - s.created_at) / 60000.0 END)
-                 FROM sessions s WHERE s.user_id = u.id AND s.created_at > ?) AS avg_session_min,
               (SELECT COUNT(*) FROM analytics_events e
-                WHERE e.user_id = u.id AND e.game_id = f.game_id AND e.created_at_ms > ?) AS actions_14d
+                WHERE e.user_id = u.id AND e.game_id = f.game_id
+                  AND e.kind = 'heartbeat' AND e.created_at_ms > ?) AS minutes_14d,
+              (SELECT COUNT(DISTINCT date(e.created_at_ms / 1000, 'unixepoch'))
+                 FROM analytics_events e
+                WHERE e.user_id = u.id AND e.game_id = f.game_id
+                  AND e.kind = 'heartbeat' AND e.created_at_ms > ?) AS active_days_14d,
+              (SELECT COUNT(*) FROM analytics_events e
+                WHERE e.user_id = u.id AND e.game_id = f.game_id
+                  AND e.kind != 'heartbeat' AND e.created_at_ms > ?) AS actions_14d
          FROM game_factions f JOIN users u ON u.id = f.user_id
         WHERE f.game_id = ?
         ORDER BY last_seen_ms DESC`,
     )
-    .bind(d14, d14, d14, gameId)
+    .bind(d14, d14, d14, d14, gameId)
     .all();
 
   return json({

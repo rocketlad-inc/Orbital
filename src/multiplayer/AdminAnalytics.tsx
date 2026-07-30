@@ -23,7 +23,8 @@ type OverviewGame = {
 };
 type OverviewPlayer = {
   id: string; display_name: string; email: string;
-  sessions_14d: number; last_seen_ms: number | null; avg_session_min: number | null;
+  sessions_14d: number; last_seen_ms: number | null;
+  minutes_14d: number; active_days_14d: number;
 };
 type Overview = { now: number; games: OverviewGame[]; players: OverviewPlayer[] };
 
@@ -40,8 +41,8 @@ type CurvePoint = {
 type UsageRow = { kind: string; total: number; last_14d: number; distinct_users: number };
 type EngagementRow = {
   id: string; display_name: string; faction_name: string; color: string;
-  sessions_14d: number; last_seen_ms: number | null; avg_session_min: number | null;
-  actions_14d: number;
+  sessions_14d: number; last_seen_ms: number | null;
+  minutes_14d: number; active_days_14d: number; actions_14d: number;
 };
 type GameAnalytics = {
   now: number;
@@ -51,6 +52,14 @@ type GameAnalytics = {
 
 const METRICS = ['metal', 'fuel', 'gold', 'science', 'ships', 'settlements'] as const;
 type Metric = typeof METRICS[number];
+
+// Heartbeats arrive once per active minute, so a count of them IS
+// minutes of play. Format 90 -> "1h 30m".
+function playTime(minutes: number): string {
+  if (!minutes) return '—';
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
 
 function ago(now: number, ms: number | null | undefined): string {
   if (!ms) return 'never';
@@ -119,14 +128,15 @@ function OverviewView({ data, onOpen }: { data: Overview; onOpen: (id: string) =
         <div className="aa-section-title">PLAYERS · LAST 14 DAYS</div>
         <table className="aa-table">
           <thead>
-            <tr><th>Player</th><th>Logins</th><th>Avg session</th><th>Last seen</th></tr>
+            <tr><th>Player</th><th>Logins</th><th>Time in game</th><th>Active days</th><th>Last seen</th></tr>
           </thead>
           <tbody>
             {data.players.map(p => (
               <tr key={p.id}>
                 <td>{p.display_name}</td>
                 <td>{p.sessions_14d}</td>
-                <td>{p.avg_session_min != null ? `${Math.round(p.avg_session_min)} min` : '—'}</td>
+                <td>{playTime(p.minutes_14d)}</td>
+                <td>{p.active_days_14d}</td>
                 <td>{ago(now, p.last_seen_ms)}</td>
               </tr>
             ))}
@@ -243,7 +253,7 @@ function GameDetail({
         <div className="aa-section-title">PLAYER ENGAGEMENT</div>
         <table className="aa-table">
           <thead>
-            <tr><th>Player</th><th>Faction</th><th>Logins·14d</th><th>Avg session</th><th>Actions·14d</th><th>Last seen</th></tr>
+            <tr><th>Player</th><th>Faction</th><th>Logins·14d</th><th>Time in game·14d</th><th>Active days</th><th>Actions·14d</th><th>Last seen</th></tr>
           </thead>
           <tbody>
             {data.engagement.map(e => (
@@ -251,7 +261,8 @@ function GameDetail({
                 <td>{e.display_name}</td>
                 <td><span className="aa-dot" style={{ background: e.color }} />{e.faction_name}</td>
                 <td>{e.sessions_14d}</td>
-                <td>{e.avg_session_min != null ? `${Math.round(e.avg_session_min)} min` : '—'}</td>
+                <td>{playTime(e.minutes_14d)}</td>
+                <td>{e.active_days_14d}</td>
                 <td>{e.actions_14d}</td>
                 <td>{ago(now, e.last_seen_ms)}</td>
               </tr>

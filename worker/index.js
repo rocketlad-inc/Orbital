@@ -978,6 +978,16 @@ export default {
               .prepare('UPDATE sessions SET last_seen_at = ? WHERE token = ?')
               .bind(now, session.token)
               .run();
+            // Heartbeat: one event per active minute per player. This is
+            // the time-in-game source — (last_seen − created_at) measures
+            // COOKIE lifetime (days), not play time, so the dashboard
+            // counts these rows instead. ~60 rows/hour of actual play.
+            const gm = url.pathname.match(/^\/api\/games\/([^/]+)\//);
+            await analytics.logEvent(env, {
+              gameId: gm ? decodeURIComponent(gm[1]) : null,
+              userId: session.user_id,
+              kind: 'heartbeat',
+            });
           } catch (e) { console.error('last_seen touch failed', e); }
         }
       }
