@@ -11,6 +11,7 @@ import { effectiveShipMaxHp } from '../game/combat';
 import type { Ship, Captain } from '../types';
 import { rankTier, traitSummary, AVATAR_IDS } from '../game/captains';
 import { CaptainAvatar } from './CaptainAvatar';
+import { EditableName } from './EditableName';
 import { deriveSecondary } from '../game/colorUtils';
 import { makeSystemRootOf, systemLabel as systemLabelOf, shipStatus, makeHostilesAtBody, makeArmedHostilesAtBody, makeStationsAtBody, isArmed } from '../game/systemGrouping';
 import { nearestShipyardBodyId, isDamagedShip } from '../game/repair';
@@ -35,7 +36,7 @@ type Filter = 'all' | 'player' | 'enemy' | 'captains';
 export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const {
     gameState, selectShip, focusBody, uiState,
-    launchTorchTransfer,
+    launchTorchTransfer, renameShip,
   } = useGameContext();
   const mpActions = useMultiplayerActions();
   // Default to the "All" tab in multiplayer (per request); single-player
@@ -792,7 +793,28 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
 
         <div className="fleet-card__main">
           <div className="fleet-card__line1">
-            <span className="fleet-card__name">{ship.name}</span>
+            {/* Rename in place (fartmaster, playtest) — the same
+                EditableName the ShipPanel header uses, so the pencil,
+                keyboard handling and optimistic-then-reconcile
+                behaviour are identical wherever you rename. Rivals'
+                hulls are read-only. stopPropagation keeps a click on
+                the pencil from also selecting/focusing the ship. */}
+            <span className="fleet-card__name" onClick={e => e.stopPropagation()}>
+              <EditableName
+                value={ship.name}
+                readOnly={ship.ownedBy !== 'player' || !mpActions}
+                ariaLabel={`Rename ${ship.name}`}
+                onSave={async (next) => {
+                  renameShip(ship.id, next);
+                  if (mpActions) {
+                    const res = await mpActions.renameShip(ship.id, next);
+                    if (!res.ok) {
+                      throw new Error(humanizeMpError(res.code, res.error, 'rename'));
+                    }
+                  }
+                }}
+              />
+            </span>
             {statusBadge}
           </div>
           <div className="fleet-card__line2">

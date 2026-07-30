@@ -225,6 +225,27 @@
   min-width: 0;
 }
 
+/* Inline rename lives in the name slot, so EditableName's own span
+   (display) / input (edit) are the elements that actually hold the
+   text — the truncation rules above sit on the wrapper and would never
+   reach them, letting a long name blow the card's grid. */
+.fleet-card__name > * {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fleet-card__name input {
+  font: inherit;
+  color: #e8eef5;
+  background: #0a1018;
+  border: 1px solid #4ecdc4;
+  border-radius: 4px;
+  padding: 2px 6px;
+  min-width: 0;
+  width: 16ch;
+}
+
 .fleet-card__line1 .status-badge {
   flex-shrink: 0;
 }
