@@ -338,7 +338,13 @@ async function handleLogout(req, env) {
 async function handleMe(req, env) {
   const session = await currentSession(req, env);
   if (!session) return err(401, 'unauthenticated', 'not signed in');
-  return json({ user: { id: session.user_id, email: session.email, display_name: session.display_name } });
+  return json({ user: {
+    id: session.user_id, email: session.email, display_name: session.display_name,
+    // Admin flag drives ONLY whether the client renders the Analytics
+    // tab. Every /api/admin route re-checks the email server-side, so a
+    // spoofed flag shows an empty tab, not data.
+    is_admin: analytics.isAdminEmail(session.email),
+  } });
 }
 
 async function currentSession(req, env) {
@@ -728,8 +734,9 @@ import * as state   from './state.js';
 import * as actions from './actions.js';
 import * as fleets from './fleets.js';
 import * as discord from './discord.js';
+import * as analytics from './analytics.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, state, actions, fleets, discord];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, state, actions, fleets, discord, analytics];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {
@@ -943,6 +950,37 @@ export default {
       // everything below requires a session
       const session = await currentSession(req, env);
       if (!session) return err(401, 'unauthenticated', 'sign in required');
+
+      // --- analytics telemetry (fire-and-forget semantics) -----------
+      // Feature usage: one row per mutating game action. Logged at this
+      // choke point so every module's routes are covered without
+      // per-handler instrumentation. GETs (polling) are deliberately
+      // not logged — they'd swamp the table with /state noise.
+      if (req.method !== 'GET' && url.pathname.startsWith('/api/games/')) {
+        const kind = analytics.eventKindFromPath(req.method, url.pathname);
+        if (kind) {
+          const gm = url.pathname.match(/^\/api\/games\/([^/]+)\//);
+          await analytics.logEvent(env, {
+            gameId: gm ? decodeURIComponent(gm[1]) : null,
+            userId: session.user_id,
+            kind,
+          });
+        }
+      }
+      // Session liveness: the /state poll runs every ~1.5s, so touching
+      // last_seen_at on each one would be pure write churn. Throttle to
+      // once a minute — good enough for "minutes per session".
+      if (req.method === 'GET' && /\/state$/.test(url.pathname)) {
+        const now = Date.now();
+        if (!session.last_seen_at || now - session.last_seen_at > 60_000) {
+          try {
+            await env.DB
+              .prepare('UPDATE sessions SET last_seen_at = ? WHERE token = ?')
+              .bind(now, session.token)
+              .run();
+          } catch (e) { console.error('last_seen touch failed', e); }
+        }
+      }
 
       if (req.method === 'GET'  && url.pathname === '/api/rooms') return handleListRooms(req, env);
       if (req.method === 'POST' && url.pathname === '/api/rooms') return handleCreateRoom(req, env, session);

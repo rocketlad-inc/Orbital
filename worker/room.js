@@ -3893,6 +3893,32 @@ export class Room {
       console.error('dyson tick failed', e);
     }
 
+    // === Analytics: per-tick faction metrics ================
+    // One tiny row per faction per tick — the admin dashboard's yield
+    // curves read these. Recorded LAST so the numbers reflect every
+    // pass above (income, combat losses, construction spend). A single
+    // INSERT..SELECT keeps it one round-trip regardless of faction
+    // count. INSERT OR IGNORE because a re-resolved tick (crash retry)
+    // must not fail the whole loop on the PK.
+    try {
+      await this.env.DB
+        .prepare(
+          `INSERT OR IGNORE INTO faction_metrics
+             (game_id, tick_number, faction_id, metal, fuel, gold, science, ships, settlements)
+           SELECT f.game_id, ?, f.id, f.metal, f.fuel, f.gold, f.science,
+                  (SELECT COUNT(*) FROM game_ships s
+                    WHERE s.game_id = f.game_id AND s.owner_faction_id = f.id AND s.hp > 0),
+                  (SELECT COUNT(*) FROM game_settlements st
+                    WHERE st.game_id = f.game_id AND st.owner_faction_id = f.id)
+             FROM game_factions f
+            WHERE f.game_id = ? AND f.status = 'active'`,
+        )
+        .bind(tick, gameId)
+        .run();
+    } catch (e) {
+      console.error('faction metrics pass failed', e);
+    }
+
     // === Victory check =====================================
     // Mirrors src/game/victory.ts. Runs at the end of resolveTick so
     // every per-tick mutation above is already reflected in the DB.

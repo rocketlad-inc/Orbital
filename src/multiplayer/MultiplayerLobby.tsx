@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { apiFetch, RoomSummary } from './api';
 import { useAuth } from './AuthContext';
+import { AdminAnalytics } from './AdminAnalytics';
 
 // Full-screen pre-game lobby. The player picks one of four sections:
 //   - My Games   : resume rooms they've already joined
@@ -12,7 +13,7 @@ import { useAuth } from './AuthContext';
 // in the room-detail view. The lobby itself never knows about ticks or
 // game state — it's just the discovery / setup phase.
 
-type Tab = 'my' | 'browse' | 'create' | 'code';
+type Tab = 'my' | 'browse' | 'create' | 'code' | 'admin';
 
 interface Props {
   onEnterRoom: (roomId: string) => void;
@@ -69,6 +70,12 @@ export function MultiplayerLobby({ onEnterRoom, onExit }: Props) {
         <TabButton active={tab === 'browse'} onClick={() => setTab('browse')}>Browse</TabButton>
         <TabButton active={tab === 'create'} onClick={() => setTab('create')}>Create Room</TabButton>
         <TabButton active={tab === 'code'} onClick={() => setTab('code')}>Join by Code</TabButton>
+        {/* Live-ops dashboard — rendered only for the allow-listed
+            admin account. The flag is display-only; every /api/admin
+            route re-checks the email server-side. */}
+        {user?.is_admin && (
+          <TabButton active={tab === 'admin'} onClick={() => setTab('admin')}>Analytics</TabButton>
+        )}
       </nav>
 
       <main className="mp-lobby__main">
@@ -83,6 +90,7 @@ export function MultiplayerLobby({ onEnterRoom, onExit }: Props) {
         {tab === 'browse' && <BrowsePanel onEnter={onEnterRoom} />}
         {tab === 'create' && <CreatePanel onCreated={onEnterRoom} />}
         {tab === 'code'   && <JoinByCodePanel onJoined={onEnterRoom} />}
+        {tab === 'admin' && user?.is_admin && <AdminAnalytics onEnterRoom={onEnterRoom} />}
       </main>
     </div>
   );

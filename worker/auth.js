@@ -77,7 +77,7 @@ export async function lookupSession(db, token) {
   if (!token) return null;
   const row = await db
     .prepare(
-      `SELECT s.token, s.user_id, s.expires_at, u.email, u.display_name
+      `SELECT s.token, s.user_id, s.expires_at, s.last_seen_at, u.email, u.display_name
        FROM sessions s JOIN users u ON u.id = s.user_id
        WHERE s.token = ?`,
     )

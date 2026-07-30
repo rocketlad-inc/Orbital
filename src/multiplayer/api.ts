@@ -101,6 +101,9 @@ export type User = {
   id: string;
   email: string;
   display_name: string;
+  // Server-computed (email allow-list). Drives ONLY whether the client
+  // renders the Analytics tab — every /api/admin route re-checks.
+  is_admin?: boolean;
 };
 
 export type RoomSummary = {
