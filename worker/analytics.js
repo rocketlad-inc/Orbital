@@ -158,7 +158,7 @@ async function handleOverview(req, env, { session }) {
         ORDER BY last_seen_ms DESC
         LIMIT 50`,
     )
-    .bind(d14, d7, d14, d7, d14)
+    .bind(d14, d7, d14, d7, d14, d14)
     .all();
 
   // Retention: users created in the last 28 days, with their latest
