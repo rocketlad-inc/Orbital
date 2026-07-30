@@ -62,6 +62,10 @@ type GameAnalytics = {
   game: OverviewGame & { winner_faction_id: string | null };
   factions: FactionRow[]; curves: CurvePoint[]; usage: UsageRow[]; engagement: EngagementRow[];
   techPace: Array<{ faction_id: string; completed: number; avg_ticks: number; last_completed_tick: number }>;
+  techDetail: Array<{
+    faction_id: string; tech_id: string; level: number; status: string;
+    started_at_tick: number | null; completed_at_tick: number | null;
+  }>;
   combat: { losses: FactionCount[]; kills: FactionCount[]; settlements_lost: FactionCount[] };
   shipClasses: {
     alive: Array<{ ship_class: string; n: number }>;
@@ -736,23 +740,99 @@ function FactionChip({ id, factions }: { id: string | null; factions: FactionRow
   return <span><span className="aa-dot" style={{ background: f.color }} />{f.name}</span>;
 }
 
+// Research cost curve - MUST mirror worker/room.js TECH_DEFS:
+// stepping to level n costs 15 * n^1.72, so total cost to reach L is the
+// partial sum. This is what makes pace comparable across tech levels.
+function costToLevel(level: number): number {
+  let total = 0;
+  for (let n = 1; n <= level; n++) total += 15 * Math.pow(n, 1.72);
+  return total;
+}
+const TRACK_ABBR: Record<string, string> = {
+  armor: 'AR', construction: 'CO', industry: 'IN',
+  propulsion: 'PR', sensors: 'SE', weapons: 'WE',
+};
+
+// Cost-weighted research speed per faction: total science cost of every
+// level reached, divided by the game clock everyone shares.
+function researchThroughput(data: GameAnalytics): Map<string, { cost: number; levels: number }> {
+  const out = new Map<string, { cost: number; levels: number }>();
+  for (const t of data.techDetail) {
+    let agg = out.get(t.faction_id);
+    if (!agg) { agg = { cost: 0, levels: 0 }; out.set(t.faction_id, agg); }
+    agg.cost += costToLevel(t.level);
+    agg.levels += t.level;
+  }
+  return out;
+}
+
 function TechPace({ data }: { data: GameAnalytics }) {
-  if (data.techPace.length === 0) return <div className="aa-empty">No completed research yet.</div>;
-  const rows = [...data.techPace].sort((x, y) => y.completed - x.completed);
+  if (data.techDetail.length === 0) return <div className="aa-empty">No research yet.</div>;
+  const ticks = Math.max(1, data.game.current_tick);
+  const thru = researchThroughput(data);
+  const rows = data.factions
+    .filter(f => thru.has(f.id))
+    .map(f => ({ f, levels: thru.get(f.id)!.levels, rate: thru.get(f.id)!.cost / ticks }))
+    .sort((x, y) => y.rate - x.rate);
+  const maxRate = Math.max(...rows.map(r => r.rate), 0.001);
+  const byFactionTrack = new Map(
+    data.techDetail.map(t => [`${t.faction_id}:${t.tech_id}`, t]));
+  const tracks = Object.keys(TRACK_ABBR);
   return (
-    <table className="aa-table">
-      <thead><tr><th>Faction</th><th>Techs done</th><th>Avg ticks each</th><th>Last completed</th></tr></thead>
-      <tbody>
-        {rows.map(r => (
-          <tr key={r.faction_id}>
-            <td><FactionChip id={r.faction_id} factions={data.factions} /></td>
-            <td>{r.completed}</td>
-            <td>{r.avg_ticks}</td>
-            <td>T+{r.last_completed_tick}</td>
-          </tr>
+    <div>
+      <div className="aa-axis" style={{ padding: '0 2px 8px', fontSize: 11 }}>
+        Speed is cost-weighted (level n costs 15·n^1.72 science), so one
+        level-8 counts like ~35 level-1s - fair across different tech heights.
+      </div>
+      <div className="aa-bars">
+        {rows.map(({ f, rate, levels }) => (
+          <div key={f.id} className="aa-bar-row">
+            <span className="aa-bar-label"><FactionChip id={f.id} factions={data.factions} /></span>
+            <span className="aa-bar-track">
+              <span className="aa-bar-fill" style={{ width: `${(rate / maxRate) * 100}%` }} />
+            </span>
+            <span className="aa-bar-num">
+              {rate.toFixed(1)} sci/tick <em>· {levels} levels</em>
+            </span>
+          </div>
         ))}
-      </tbody>
-    </table>
+      </div>
+      <div className="aa-scroll-x" style={{ marginTop: 12 }}>
+        <table className="aa-table">
+          <thead>
+            <tr>
+              <th>Faction</th>
+              {tracks.map(t => <th key={t} title={t}>{TRACK_ABBR[t]}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ f }) => (
+              <tr key={f.id}>
+                <td><FactionChip id={f.id} factions={data.factions} /></td>
+                {tracks.map(t => {
+                  const row = byFactionTrack.get(`${f.id}:${t}`);
+                  const lv = row?.level ?? 0;
+                  const researching = row?.status === 'researching';
+                  return (
+                    <td key={t} title={`${t} level ${lv}${researching ? ' (researching)' : ''}`}>
+                      {lv > 0 || researching ? (
+                        <span style={{
+                          color: researching ? '#c9a84c' : '#cdd9e4',
+                          fontWeight: lv >= 6 ? 700 : 400,
+                        }}>{lv}{researching ? '*' : ''}</span>
+                      ) : <span style={{ color: '#4a5a6c' }}>-</span>}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="aa-axis" style={{ padding: '4px 2px', fontSize: 10.5 }}>
+          * = researching now · bold = level 6+
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1068,13 +1148,21 @@ function AlertsFeed({ data, idleFactions }: { data: GameAnalytics; idleFactions:
     alerts.push(`${nameOf(leaderFid)} controls ${Math.round(leaderV * 100)}% of the solar economy + fleet - runaway leader.`);
   }
 
-  // Tech outlier: fastest researcher vs the median pace.
-  const paces = data.techPace.filter(t => t.completed >= 3).map(t => t.avg_ticks).sort((x, y) => x - y);
-  if (paces.length >= 3) {
-    const median = paces[Math.floor(paces.length / 2)];
-    const fastest = data.techPace.filter(t => t.completed >= 3).sort((x, y) => x.avg_ticks - y.avg_ticks)[0];
-    if (fastest && median > 0 && fastest.avg_ticks * 4 < median) {
-      alerts.push(`${nameOf(fastest.faction_id)} completes techs ${Math.round(median / Math.max(1, fastest.avg_ticks))}x faster than the median (${fastest.avg_ticks} vs ${median} ticks).`);
+  // Tech outlier, cost-weighted: total research cost achieved per tick.
+  // Raw ticks-per-tech flagged an early quitter with three cheap
+  // level-1s as "15x faster" than level-8 grinders - controlling for
+  // level via the cost curve kills that false positive.
+  const thru = researchThroughput(data);
+  const ticksNow = Math.max(1, data.game.current_tick);
+  const rates = [...thru.entries()]
+    .map(([fid, v]) => ({ fid, rate: v.cost / ticksNow, levels: v.levels }))
+    .filter(r => r.levels >= 6)
+    .sort((x, y) => x.rate - y.rate);
+  if (rates.length >= 3) {
+    const median = rates[Math.floor(rates.length / 2)].rate;
+    const fastest = rates[rates.length - 1];
+    if (median > 0 && fastest.rate > median * 3) {
+      alerts.push(`${nameOf(fastest.fid)} researches ${(fastest.rate / median).toFixed(1)}x faster than the median, cost-weighted (${fastest.rate.toFixed(1)} vs ${median.toFixed(1)} sci/tick).`);
     }
   }
 

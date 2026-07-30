@@ -367,16 +367,22 @@ async function handleGameAnalytics(req, env, { session, params }) {
 
   // --- Tech pace: how fast research completes, per faction. The direct
   // measure of "is science too cheap" (it already ended one game).
+  // Raw rows, level included: one row per (faction, track), where level
+  // is how far up the 15*(n^1.72) cost curve that faction has climbed.
+  // The client computes cost-weighted throughput from this - raw
+  // ticks-per-tech made an early-quitter with three cheap level-1s look
+  // "15x faster" than players grinding level-8s.
   const techRows = await env.DB
     .prepare(
-      `SELECT faction_id, tech_id, started_at_tick, completed_at_tick
+      `SELECT faction_id, tech_id, level, status, started_at_tick, completed_at_tick
          FROM faction_techs
-        WHERE game_id = ? AND status = 'completed' AND completed_at_tick IS NOT NULL`,
+        WHERE game_id = ?`,
     )
     .bind(gameId)
     .all();
+  const techDetail = (techRows.results ?? []).filter(t => (t.level ?? 0) > 0 || t.status === 'completed');
   const techByFaction = new Map();
-  for (const t of techRows.results ?? []) {
+  for (const t of (techRows.results ?? []).filter(r => r.status === 'completed' && r.completed_at_tick != null)) {
     let agg = techByFaction.get(t.faction_id);
     if (!agg) { agg = { completed: 0, total_ticks: 0, last_tick: 0 }; techByFaction.set(t.faction_id, agg); }
     agg.completed += 1;
@@ -557,6 +563,7 @@ async function handleGameAnalytics(req, env, { session, params }) {
     usage: usage.results ?? [],
     engagement: engagement.results ?? [],
     techPace,
+    techDetail,
     combat,
     shipClasses,
     senate,
