@@ -77,6 +77,66 @@ type GameAnalytics = {
 const METRICS = ['metal', 'fuel', 'gold', 'science', 'ships', 'settlements'] as const;
 type Metric = typeof METRICS[number];
 
+// Event kinds are normalized route strings ("POST bodies/build") -
+// meaningful to the server, gibberish on a dashboard. Known kinds get
+// hand-written labels; unknown ones get a generic de-HTTP-ing so a new
+// route never shows a raw method verb again.
+const KIND_LABELS: Record<string, string> = {
+  'POST bodies/build': 'Build ship',
+  'POST bodies/settlement': 'Found colony',
+  'POST bodies/ram': 'Asteroid ram',
+  'POST settlements/buildings': 'Queue building',
+  'DELETE settlements/buildings': 'Cancel building',
+  'POST settlements/collector': 'Build collector',
+  'DELETE settlements': 'Abandon settlement',
+  'PATCH settlements': 'Rename settlement',
+  'POST research': 'Set research',
+  'POST trades': 'Propose trade',
+  'POST trades/accept': 'Accept trade',
+  'POST trades/decline': 'Decline trade',
+  'POST trades/counter': 'Counter trade',
+  'POST trades/cancel': 'Cancel trade',
+  'POST trades/deliveries/assign': 'Assign trade delivery',
+  'POST trade-routes': 'Create trade route',
+  'DELETE trade-routes': 'Cancel trade route',
+  'POST fleets': 'Form fleet',
+  'PATCH fleets': 'Edit fleet',
+  'DELETE fleets': 'Disband fleet',
+  'POST fleets/orders': 'Fleet orders',
+  'POST designs': 'Save ship design',
+  'PATCH designs': 'Edit ship design',
+  'DELETE designs': 'Delete ship design',
+  'POST captains': 'Recruit captain',
+  'PATCH captains': 'Edit captain',
+  'POST captains/assign': 'Assign captain',
+  'POST senate/proposals': 'Raise senate proposal',
+  'POST senate/proposals/vote': 'Senate vote',
+  'POST senate/proposals/withdraw': 'Withdraw proposal',
+  'POST senate/sliders': 'Senate sliders',
+  'POST ships/orders': 'Ship standing orders',
+  'PATCH ships': 'Rename ship',
+  'POST ships/transfer': 'Ship transfer',
+  'POST ships/detonate': 'Detonate ship',
+  'DELETE builds': 'Cancel ship build',
+  'DELETE nodes': 'Cancel maneuver',
+  'POST build-list': 'Set build list',
+  'POST dyson/initiate': 'Begin Dyson project',
+  'POST pacts': 'Pact action',
+  'POST treaties/break': 'Break treaty',
+  'POST turn/commit': 'Commit turn',
+  'ui/trades': 'Open trade panel',
+  'ui/recap': 'Play recap',
+};
+function labelForKind(kind: string): string {
+  if (KIND_LABELS[kind]) return KIND_LABELS[kind];
+  if (kind.startsWith('ui/')) return `Open ${kind.slice(3)} panel`;
+  const m = kind.match(/^(GET|POST|PATCH|PUT|DELETE)\s+(.*)$/);
+  if (!m) return kind;
+  const verb = { POST: '', PATCH: 'Edit ', PUT: 'Edit ', DELETE: 'Cancel ', GET: 'View ' }[m[1]] ?? '';
+  const noun = m[2].replace(/[/-]/g, ' ');
+  return (verb + noun).trim().replace(/^./, c => c.toUpperCase());
+}
+
 // Heartbeats arrive once per active minute, so a count of them IS
 // minutes of play. Format 90 -> "1h 30m".
 function playTime(minutes: number): string {
@@ -360,18 +420,31 @@ function GameDetail({
   // economy-balancing lens.
   const [mode, setMode] = useState<'stock' | 'flow' | 'share'>('stock');
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   useEffect(() => {
     let dead = false;
     const load = async () => {
       const res = await apiFetch<GameAnalytics>(`/api/admin/games/${gameId}/analytics`);
-      if (!dead && res.ok) setData(res.data);
+      if (dead) return;
+      // A failed poll must SAY so - this view once spun forever on a
+      // server 500 and read as "loading" instead of "broken".
+      if (res.ok) { setData(res.data); setLoadError(null); }
+      else setLoadError(`Analytics failed to load (HTTP ${res.status}). Retrying in 30s.`);
     };
     load();
     const t = setInterval(load, 30_000);
     return () => { dead = true; clearInterval(t); };
   }, [gameId]);
 
-  if (!data) return <div className="aa-empty">Loading game analytics…</div>;
+  if (!data) {
+    return (
+      <div className="aa-root">
+        <button className="aa-btn" onClick={onBack}>← All games</button>
+        <div className="aa-empty">{loadError ?? 'Loading game analytics…'}</div>
+      </div>
+    );
+  }
   const { now, game, factions } = data;
   const DAY = 86_400_000;
   // Factions whose human hasn't been seen in 3+ days: their flat curves
@@ -1057,13 +1130,13 @@ function MetaUsage({ rows }: { rows: Array<{ kind: string; total: number; games_
     <div>
       {unused.length > 0 && (
         <div className="aa-alerts" style={{ marginBottom: 10 }}>
-          <div className="aa-alert">⚠ Never used in any game: {unused.map(f => f.label).join(', ')} - cut or rework candidates.</div>
+          <div className="aa-alert">⚠ No recorded use in any game (incl. backfilled history): {unused.map(f => f.label).join(', ')}.</div>
         </div>
       )}
       <div className="aa-bars">
         {rows.slice(0, 14).map(r => (
           <div key={r.kind} className="aa-bar-row">
-            <span className="aa-bar-label">{r.kind}</span>
+            <span className="aa-bar-label" title={r.kind}>{labelForKind(r.kind)}</span>
             <span className="aa-bar-track">
               <span className="aa-bar-fill" style={{ width: `${(r.total / max) * 100}%` }} />
             </span>
@@ -1082,7 +1155,7 @@ function Dropoff({ rows }: { rows: Array<{ kind: string; n: number }> }) {
     <div className="aa-bars">
       {rows.map(r => (
         <div key={r.kind} className="aa-bar-row">
-          <span className="aa-bar-label">{r.kind}</span>
+          <span className="aa-bar-label" title={r.kind}>{labelForKind(r.kind)}</span>
           <span className="aa-bar-track">
             <span className="aa-bar-fill" style={{ width: `${(r.n / max) * 100}%` }} />
           </span>
@@ -1107,7 +1180,7 @@ function UsageBars({ usage }: { usage: UsageRow[] }) {
     <div className="aa-bars">
       {usage.map(u => (
         <div key={u.kind} className="aa-bar-row">
-          <span className="aa-bar-label">{u.kind}</span>
+          <span className="aa-bar-label" title={u.kind}>{labelForKind(u.kind)}</span>
           <span className="aa-bar-track">
             <span className="aa-bar-fill" style={{ width: `${(u.total / max) * 100}%` }} />
           </span>

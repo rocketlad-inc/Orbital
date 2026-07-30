@@ -359,8 +359,8 @@ async function handleGameAnalytics(req, env, { session, params }) {
                 WHERE e.user_id = u.id AND e.game_id = f.game_id
                   AND e.kind != 'heartbeat' AND e.created_at_ms > ?) AS actions_14d
          FROM game_factions f JOIN users u ON u.id = f.user_id
-        WHERE f.game_id = ?
-        ORDER BY last_seen_ms DESC AND ${NOT_QA_USER}`,
+        WHERE f.game_id = ? AND ${NOT_QA_USER}
+        ORDER BY last_seen_ms DESC`,
     )
     .bind(d14, d14, d14, d14, gameId)
     .all();
