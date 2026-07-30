@@ -29,7 +29,8 @@ function err(status, code, message) {
 // The allow-list. Deliberately code, not config: adding an admin should
 // be a reviewed commit, and there is exactly one intended member.
 const ADMIN_EMAILS = new Set([
-  'lcfeeser@gmail.com',      // Lorne's play account
+  'spaceboy1243@gmail.com',  // Lorne's play account ("Rocketlad" — the one he's actually signed in as)
+  'lcfeeser@gmail.com',      // Lorne's infra account
   'lorne@bigtickets.com',    // Lorne's work account, in case he ever signs up with it
 ]);
 
