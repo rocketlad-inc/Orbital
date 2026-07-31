@@ -119,6 +119,8 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
         <div className="hero-tagline">
           Burn between worlds. Build an empire across the Sol system.
           <br />
+          One hour per turn, running whether you&rsquo;re watching or not.
+          <br />
           Win by science, by conquest, or by building a sphere around the sun.
         </div>
         <div className="hero-cta">
@@ -142,11 +144,20 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
         <h2 className="section-title">A Solar System on Rails</h2>
         <div className="section-body">
           <p>
-            Orbital is a real-time strategy game played across the inner planets,
-            the asteroid belt, and the gas giants. Ships ride a continuous-thrust
-            torch from origin to target &mdash; every transfer commits you to a
-            flight time you can&rsquo;t take back, computed from the
-            ship&rsquo;s engine and the distance to the rendezvous.
+            Orbital is a real-time strategy game played across the whole Sol
+            system &mdash; inner planets, the asteroid belt, the gas giants and
+            their moons, out to the dwarf worlds of the Kuiper belt. Ships ride
+            a continuous-thrust torch from origin to target: every transfer
+            commits you to a flight time you can&rsquo;t take back, computed
+            from the ship&rsquo;s engine and the distance to the rendezvous.
+          </p>
+          <p>
+            The clock never stops. A turn is an hour of real time and the
+            simulation ticks whether or not you&rsquo;re logged in, so an empire
+            runs in the background and you drop in to give orders &mdash; a
+            fleet you sent last night has arrived, fought, and repaired by
+            morning. Play it solo against the sim, or share a system with a
+            lobby of other people.
           </p>
           <p>
             Stake a claim by deploying <strong>cities on planets</strong> and{' '}
@@ -156,10 +167,20 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
             collector or watch your income pile up unused.
           </p>
           <p>
-            When two factions want the same moon, ships engage at range and
-            settlements return fire. Veteran hulls grow deadlier with every kill;
-            destroyers can shatter a city, but only if they survive the trip home
-            to refuel.
+            When two factions want the same moon, fleets trade fire one target
+            at a time &mdash; warships first, then the freighters, and only once
+            the orbit is clear does anyone touch a settlement. Armed stations
+            shoot back; cities never do. Veteran hulls grow deadlier with every
+            kill, and a mauled destroyer has to limp back to a shipyard to
+            repair.
+          </p>
+          <p>
+            Rivals are people, so the fight is only half the game. Sign
+            non-aggression pacts and defence treaties, swap resources through
+            player-to-player trade offers, run freighters on standing trade
+            routes, and take proposals to a <strong>senate</strong> whose votes
+            bend the rules for everyone &mdash; damage multipliers, embargoes,
+            formal declarations of war.
           </p>
         </div>
       </section>
@@ -167,7 +188,7 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
       {/* Features */}
       <section className="landing-section landing-features-section">
         <div className="section-eyebrow">— THE LOOP</div>
-        <h2 className="section-title">Four pillars of empire</h2>
+        <h2 className="section-title">Six pillars of empire</h2>
         <div className="features-grid">
           <FeatureCard
             icon="↗"
@@ -182,12 +203,22 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
           <FeatureCard
             icon="◈"
             title="Fleets, combat & veterans"
-            body="Build corvettes, frigates, destroyers, and freighters. Group them into fleets that transfer as one. Every kill bumps a hull&rsquo;s rank with permanent damage and HP bonuses — a senior destroyer is worth retreating."
+            body="Build corvettes, frigates, destroyers, and freighters. Group them into fleets that transfer as one. Combat is round-robin: each hull picks one target, warships before civilians, orbit before ground. Every kill bumps a rank with permanent damage and HP bonuses — a senior destroyer is worth retreating."
+          />
+          <FeatureCard
+            icon="⚙"
+            title="Ship designer & captains"
+            body="Design your own hulls — weapons, shields, armour plate, engines, detonators — and pick the silhouette they fly under. Name your ships, then crew them with captains whose traits carry real weight: sharper gunnery, tougher hulls, longer sensor reach."
+          />
+          <FeatureCard
+            icon="⚖"
+            title="Diplomacy & the senate"
+            body="Non-aggression pacts, defence treaties, intel sharing. Trade resources directly with rivals or run freighters on repeating routes. Propose motions to a shared senate — embargoes, war authorisations, economy-wide multipliers — and live with whatever passes."
           />
           <FeatureCard
             icon="✦"
             title="Research & exploration"
-            body="Six tech tracks — weapons, defense, propulsion, construction, society, sensors — each capped at level 10. You start with a corvette and a colony ship; everything else is behind research, arriving one piece at a time. Hidden caches, derelict warships, and ancient databanks wait on random moons; every match seeds them differently. Send ships out to find them."
+            body="Six tech tracks — weapons, defense, propulsion, construction, society, sensors — each capped at level 10. You start with a corvette and a colony ship; everything else is behind research, arriving one piece at a time. Sensors are their own ladder: rival fleet counts, economies, loadouts and finally the whole map. Hidden caches, derelict warships, and ancient databanks wait on random moons; every match seeds them differently."
           />
         </div>
       </section>
@@ -200,7 +231,7 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
           <FeatureCard
             icon="⚛"
             title="Science"
-            body="Research every track to the top. Seven disciplines, ten levels each — the early levels are cheap but the last few are punishing. Found by the player whose labs run hottest."
+            body="Research every track to the top. Six disciplines, ten levels each — the early levels are cheap but the last few are punishing. Won by the player whose labs run hottest."
           />
           <FeatureCard
             icon="✕"
@@ -243,7 +274,7 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
 
       <footer className="landing-footer">
         <div className="footer-line">
-          ORBITAL · v0.2 prototype · built with TypeScript, React, and a lot of brachistochrone
+          ORBITAL · v0.3 alpha · built with TypeScript, React, and a lot of brachistochrone
         </div>
       </footer>
     </div>
@@ -515,13 +546,13 @@ const ScreenshotSettlement: React.FC = () => (
       <g transform="translate(0 22)">
         <rect x="6" y="0" width="128" height="28" fill="rgba(255,184,77,0.08)" stroke="#ffb84d" strokeWidth="0.8" />
         <text x="12" y="11" className="ss-info" fill="#ff4444">■ NEW SHANGHAI</text>
-        <text x="12" y="22" className="ss-info-sm">HP 200/200 · POP 3</text>
+        <text x="12" y="22" className="ss-info-sm">HP 100/100 · POP 3</text>
       </g>
 
       <g transform="translate(0 56)">
         <rect x="6" y="0" width="128" height="28" fill="rgba(78,205,196,0.05)" stroke="#2a3d50" strokeWidth="0.8" />
         <text x="12" y="11" className="ss-info" fill="#ff4444">◆ ARES STATION</text>
-        <text x="12" y="22" className="ss-info-sm">HP 88/100 · POP 1</text>
+        <text x="12" y="22" className="ss-info-sm">HP 52/60 · POP 1</text>
       </g>
     </g>
   </svg>
