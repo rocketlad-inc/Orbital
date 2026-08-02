@@ -297,6 +297,11 @@ export interface Ship {
   // bolts here so the player sees who each hull is actually shooting.
   lastTargetId?: string;
 
+  /** Refit propagation (DESIGN-fleet-economy §2, MP only): non-null
+   *  means this hull is queued to refit to that design (and pay the
+   *  fee) at its next friendly yard. Drives "Refit pending" badges. */
+  refitPendingDesignId?: string;
+
   // Veterancy: every confirmed kill +1 rank. Each rank grants +1% damage
   // and +1% max HP, applied via rankDamageMul/rankHpMul in src/game/techs.ts
   // (alongside the weapons/armor tech modifiers). Defaults to 0 for fresh
@@ -451,6 +456,13 @@ export interface BuildOrder {
    *  which may differ from the CURRENTLY active design if it changed
    *  after this order was placed. Undefined = bare hull. */
   parts?: string[];
+  /** Rush construction (DESIGN-fleet-economy §3): how many times this
+   *  order has been rushed (each rush paid the ship's price again and
+   *  halved the remaining time). MP only; undefined = never rushed. */
+  rushCount?: number;
+  /** A rush roll came up bad — this hull will be delivered at HALF
+   *  health. Sticky (can't get worse, can't be undone). MP only. */
+  botched?: boolean;
 }
 
 /**
@@ -661,6 +673,13 @@ export interface GameState {
   buildOrders: BuildOrder[];           // ships under construction
   resources: Record<string, FactionResources>; // factionId → resources
   factionTech: Record<string, FactionTechStateBase>; // factionId → tech progress
+  /** Fleet upkeep (DESIGN-fleet-economy §1, MP only): the player's
+   *  per-tick maintenance bill (senate multiplier folded in server-side).
+   *  TopBar shows NET income = delivered − upkeep. Undefined in SP. */
+  fleetUpkeep?: { credits: number; ore: number; multiplier: number };
+  /** Standing upkeep debt. Any positive value = the whole fleet fights
+   *  at −25% damage until income clears it. Undefined/zeros in SP. */
+  fleetArrears?: { credits: number; ore: number };
   /** Fog-FREE political claims: bodyId -> owning faction for every live
    *  settlement in the game. This is what region ownership shading reads
    *  — political borders are common knowledge even when the settlements

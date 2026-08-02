@@ -3,7 +3,7 @@ import { logSpend } from './analytics.js';
 import { recomputeBodyOwnership } from './factions.js';
 import {
   validateParts, partsCost, parsePartsJson,
-  countPart, detonatorDamage,
+  countPart, detonatorDamage, refitFee, computeShipStats,
 } from './shipDesigns.js';
 import { rollCaptain, resolveCaptainOnDeath, AVATAR_IDS, RECRUIT_COST } from './captains.js';
 import { runDigestForGame } from './digest.js';
@@ -260,7 +260,7 @@ async function handleCancelBuild(req, env, ctx) {
 
   const order = await env.DB
     .prepare(
-      `SELECT id, faction_id, ship_class, completes_at_tick, cancelled_at_tick, parts_json
+      `SELECT id, faction_id, ship_class, completes_at_tick, cancelled_at_tick, parts_json, rush_count
          FROM game_body_build_queue
         WHERE id = ? AND game_id = ?`,
     )
@@ -277,11 +277,14 @@ async function handleCancelBuild(req, env, ctx) {
   const cost = SHIP_BUILD_COST[order.ship_class];
   // Parts were charged at queue time (snapshot of the active design) —
   // refund them too, or a cancelled fully-loaded destroyer would eat
-  // the loadout price.
+  // the loadout price. Every rush paid the same hull+parts price AGAIN
+  // (§3), so a rushed-then-cancelled order refunds (1 + rush_count)×
+  // the base — cancelling never eats the rush fees.
   const orderParts = parsePartsJson(order.ship_class, order.parts_json);
   const orderPartsCost = partsCost(orderParts);
-  const refundMetal = (cost?.metal ?? 0) + orderPartsCost.metal;
-  const refundGold = (cost?.gold ?? 0) + orderPartsCost.gold;
+  const refundMul = 1 + Math.max(0, Number(order.rush_count ?? 0));
+  const refundMetal = ((cost?.metal ?? 0) + orderPartsCost.metal) * refundMul;
+  const refundGold = ((cost?.gold ?? 0) + orderPartsCost.gold) * refundMul;
   const game = await env.DB
     .prepare('SELECT current_tick FROM games WHERE id = ?')
     .bind(gameId)
@@ -312,6 +315,155 @@ async function handleCancelBuild(req, env, ctx) {
     ok: true,
     order_id: orderId,
     refund: { metal: refundMetal, gold: refundGold },
+  });
+}
+
+// POST /api/games/:gameId/builds/:orderId/rush  (DESIGN-fleet-economy §3)
+//
+// Pay the ship's full current price (hull + escalated parts, × the same
+// senate/tech build multipliers the queue charged, × the rush_cost
+// senate knob) to halve the REMAINING build time — ceil, floor of 1
+// tick. Unlimited rushes per order; each rush rolls a 25% chance the
+// hull is delivered at HALF health. The roll happens here, server-side,
+// and is sticky on the order (a botched order can't get worse — no
+// further rolls — and can't be un-botched). Cancel refunds every fee.
+const RUSH_BOTCH_CHANCE = 0.25;
+async function handleRushBuild(req, env, ctx) {
+  const { gameId, orderId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const order = await env.DB
+    .prepare(
+      `SELECT id, body_id, faction_id, ship_class, ship_name, status,
+              completes_at_tick, cancelled_at_tick, parts_json,
+              rush_count, botched
+         FROM game_body_build_queue
+        WHERE id = ? AND game_id = ?`,
+    )
+    .bind(orderId, gameId)
+    .first();
+  if (!order) return err(404, 'not_found', 'build order not found');
+  if (order.faction_id !== me.id) return err(403, 'not_owner', 'not your build order');
+  if (order.cancelled_at_tick != null) return err(409, 'already_cancelled', 'this build was cancelled');
+  // Waiting orders have a placeholder schedule — there's no "remaining
+  // time" to halve until promotion stamps one. Rushing the queue's
+  // FRONT is the way to pull a waiting order forward.
+  if (order.status !== 'building') return err(409, 'not_building', 'order is still waiting for a build slot');
+
+  const game = await env.DB
+    .prepare('SELECT current_tick FROM games WHERE id = ?')
+    .bind(gameId)
+    .first();
+  const tick = game?.current_tick ?? 0;
+  const remaining = Number(order.completes_at_tick) - tick;
+  if (remaining <= 1) return err(409, 'already_imminent', 'ship completes next tick — nothing to rush');
+
+  // Price: the same scaled ship price the queue charged (hull + the
+  // order's parts snapshot, senate build multiplier, construction tech
+  // discount), times the senate's rush knob.
+  const cost = SHIP_BUILD_COST[order.ship_class];
+  const orderParts = parsePartsJson(order.ship_class, order.parts_json);
+  const orderPartsCost = partsCost(orderParts);
+  let costMult = 1;
+  try {
+    const sliders = await getActiveSliders(env, gameId, tick);
+    const b = Number(sliders.ship_build_cost_multiplier);
+    if (Number.isFinite(b) && b > 0) costMult *= b;
+    const r = Number(sliders.rush_cost_multiplier);
+    if (Number.isFinite(r) && r > 0) costMult *= r;
+  } catch { /* defaults */ }
+  try {
+    const ct = await env.DB
+      .prepare("SELECT level FROM faction_techs WHERE game_id = ? AND faction_id = ? AND tech_id = 'construction'")
+      .bind(gameId, me.id)
+      .first();
+    costMult *= Math.max(0.25, 1 - 0.05 * (ct?.level ?? 0));
+  } catch { /* no discount */ }
+  const rushMetal = Math.ceil(((cost?.metal ?? 0) + orderPartsCost.metal) * costMult);
+  const rushGold  = Math.ceil(((cost?.gold  ?? 0) + orderPartsCost.gold)  * costMult);
+
+  // Charge FIRST, guarded on affordability, so two racing rushes can't
+  // both slip under one balance check. changes=0 means broke.
+  const charge = await env.DB
+    .prepare(
+      `UPDATE game_factions SET metal = metal - ?, gold = gold - ?
+        WHERE id = ? AND metal >= ? AND gold >= ?`,
+    )
+    .bind(rushMetal, rushGold, me.id, rushMetal, rushGold)
+    .run();
+  if (!charge.meta?.changes) {
+    return err(409, 'insufficient_resources', `rushing costs ${rushMetal}M ${rushGold}G`);
+  }
+
+  // The 25% botch roll — once per rush, but sticky: an already-botched
+  // order stays botched without rolling again (can't get worse).
+  const alreadyBotched = (order.botched ?? 0) === 1;
+  const botchedNow = !alreadyBotched && Math.random() < RUSH_BOTCH_CHANCE;
+  const newCompletes = tick + Math.max(1, Math.ceil(remaining / 2));
+
+  // Guard on the schedule we read, so a double-submit that already
+  // charged twice at least can't halve twice off the same baseline —
+  // the second UPDATE misses and we refund its fee.
+  const flip = await env.DB
+    .prepare(
+      `UPDATE game_body_build_queue
+          SET completes_at_tick = ?, rush_count = rush_count + 1, botched = MAX(botched, ?)
+        WHERE id = ? AND cancelled_at_tick IS NULL AND status = 'building'
+          AND completes_at_tick = ?`,
+    )
+    .bind(newCompletes, botchedNow ? 1 : 0, orderId, order.completes_at_tick)
+    .run();
+  if (!flip.meta?.changes) {
+    await env.DB
+      .prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?')
+      .bind(rushMetal, rushGold, me.id)
+      .run();
+    return err(409, 'conflict', 'order changed underfoot — try again');
+  }
+
+  await logSpend(env, {
+    gameId, factionId: me.id, category: 'ships',
+    metal: rushMetal, gold: rushGold,
+  });
+
+  // Public chronicle ONLY on a botch — the herald wants the cautionary
+  // tale, not every clean rush.
+  if (botchedNow) {
+    try {
+      const body = await env.DB
+        .prepare('SELECT name FROM game_bodies WHERE id = ?')
+        .bind(order.body_id).first();
+      const fac = await env.DB
+        .prepare('SELECT name FROM game_factions WHERE id = ?')
+        .bind(me.id).first();
+      const payload = JSON.stringify({
+        ship_name: order.ship_name ?? null,
+        ship_class: order.ship_class,
+        body_name: body?.name ?? null,
+        faction_name: fac?.name ?? null,
+        rush_count: Number(order.rush_count ?? 0) + 1,
+      });
+      await env.DB
+        .prepare(
+          `INSERT INTO chronicle_entries
+            (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+           VALUES (?, ?, ?, 'ship_rush_botched', ?, ?, ?, 'public', ?)`,
+        )
+        .bind(`c_rush_${orderId}_${tick}`, gameId, tick, me.id, order.body_id, payload, Date.now())
+        .run();
+    } catch (e) { console.error('ship_rush_botched chronicle insert failed', e); }
+  }
+
+  return json({
+    ok: true,
+    order_id: orderId,
+    completes_at_tick: newCompletes,
+    rush_count: Number(order.rush_count ?? 0) + 1,
+    botched: alreadyBotched || botchedNow,
+    cost: { metal: rushMetal, gold: rushGold },
   });
 }
 
@@ -2619,6 +2771,155 @@ async function handlePatchDesign(req, env, ctx) {
   });
 }
 
+// POST /api/games/:gameId/designs/:designId/refit-fleet
+// (DESIGN-fleet-economy §2)
+//
+// Propagate a template to every live hull of its class. Fee per ship =
+// half the ADDED parts' escalated price (refitFee — removals refund
+// nothing, kept copies are free). Ships parked at a body where the
+// caller has a living settlement refit IMMEDIATELY (charged now, pool
+// only); everything else — in transit, at hostile/empty bodies, or
+// unaffordable right now — gets refit_pending_design_id stamped and is
+// refitted + charged by the room tick pass when it's next parked at a
+// friendly yard with funds available.
+async function handleRefitFleet(req, env, ctx) {
+  const { gameId, designId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+
+  const design = await env.DB
+    .prepare('SELECT id, faction_id, ship_class, parts_json FROM game_ship_designs WHERE id = ? AND game_id = ?')
+    .bind(designId, gameId)
+    .first();
+  if (!design) return err(404, 'not_found', 'design not found');
+  if (design.faction_id !== me.id) return err(403, 'not_owner', 'not your design');
+  const newParts = parsePartsJson(design.ship_class, design.parts_json);
+  // Research gate: refitting INTO locked parts is building them.
+  const gate = await requireParts(env, gameId, me.id, newParts);
+  if (gate) return gate;
+
+  const ships = (await env.DB
+    .prepare(
+      `SELECT id, parent_body_id, hp, hp_max, parts_json, refit_pending_design_id
+         FROM game_ships
+        WHERE game_id = ? AND owner_faction_id = ? AND ship_class = ? AND status = 'active'
+        ORDER BY id ASC`,
+    )
+    .bind(gameId, me.id, design.ship_class)
+    .all()).results ?? [];
+  if (ships.length === 0) return json({ ok: true, refitted: [], pending: [], charged: { metal: 0, gold: 0 } });
+
+  // In-flight hulls can't dock a refit mid-burn.
+  const movingIds = new Set(
+    ((await env.DB
+      .prepare(
+        `SELECT DISTINCT ship_id FROM game_ship_nodes
+          WHERE game_id = ? AND status IN ('committed', 'in_transit')`,
+      )
+      .bind(gameId)
+      .all()).results ?? []).map(r => r.ship_id),
+  );
+  // "Friendly yard" = same gate handleQueueBuild uses: a living
+  // settlement of the caller's at the body.
+  const yardBodies = new Set(
+    ((await env.DB
+      .prepare(
+        `SELECT DISTINCT body_id FROM game_settlements
+          WHERE game_id = ? AND owner_faction_id = ? AND destroyed_at_tick IS NULL`,
+      )
+      .bind(gameId, me.id)
+      .all()).results ?? []).map(r => r.body_id),
+  );
+  const techRows = (await env.DB
+    .prepare(
+      `SELECT tech_id, level FROM faction_techs
+        WHERE game_id = ? AND faction_id = ?
+          AND tech_id IN ('weapons', 'energy_weapons', 'armor', 'shields')`,
+    )
+    .bind(gameId, me.id)
+    .all()).results ?? [];
+  const techLevels = Object.fromEntries(techRows.map(r => [r.tech_id, r.level ?? 0]));
+
+  const normalize = (parts) => [...parts].sort().join(',');
+  const targetKey = normalize(newParts);
+  const stats = computeShipStats(design.ship_class, newParts, techLevels);
+  const newPartsJson = newParts.length > 0 ? JSON.stringify(newParts) : null;
+
+  let poolMetal = Number(me.metal ?? 0);
+  let poolGold = Number(me.gold ?? 0);
+  let chargedMetal = 0, chargedGold = 0;
+  const refitted = [];
+  const pending = [];
+  const stmts = [];
+  for (const s of ships) {
+    const curParts = parsePartsJson(design.ship_class, s.parts_json);
+    if (normalize(curParts) === targetKey) {
+      // Already matches — clear a stale pending marker if one exists.
+      if (s.refit_pending_design_id) {
+        stmts.push(env.DB
+          .prepare('UPDATE game_ships SET refit_pending_design_id = NULL WHERE id = ?')
+          .bind(s.id));
+      }
+      continue;
+    }
+    const fee = refitFee(curParts, newParts);
+    const atYard = !movingIds.has(s.id) && yardBodies.has(s.parent_body_id);
+    const affordable = fee.metal <= poolMetal && fee.gold <= poolGold;
+    if (atYard && affordable) {
+      poolMetal -= fee.metal;
+      poolGold -= fee.gold;
+      chargedMetal += fee.metal;
+      chargedGold += fee.gold;
+      // Preserve the DAMAGE FRACTION across the base-HP change (same
+      // trick as the armor-research bump): hp scales by newBase/oldBase.
+      const oldBase = Number(s.hp_max ?? 0) > 0 ? Number(s.hp_max) : stats.hp;
+      const hpScale = stats.hp / oldBase;
+      stmts.push(env.DB
+        .prepare(
+          `UPDATE game_ships
+              SET parts_json = ?, hp_max = ?, hp = MIN(hp * ?, ?),
+                  damage_per_tick = ?, refit_pending_design_id = NULL
+            WHERE id = ?`,
+        )
+        .bind(newPartsJson, stats.hp, hpScale, stats.hp, stats.damage_per_tick, s.id));
+      refitted.push(s.id);
+    } else {
+      stmts.push(env.DB
+        .prepare('UPDATE game_ships SET refit_pending_design_id = ? WHERE id = ?')
+        .bind(designId, s.id));
+      pending.push(s.id);
+    }
+  }
+  if (chargedMetal > 0 || chargedGold > 0) {
+    // Guarded charge — if a concurrent spend drained the pool since we
+    // snapshotted it, fail the whole refit rather than going negative.
+    const charge = await env.DB
+      .prepare(
+        `UPDATE game_factions SET metal = metal - ?, gold = gold - ?
+          WHERE id = ? AND metal >= ? AND gold >= ?`,
+      )
+      .bind(chargedMetal, chargedGold, me.id, chargedMetal, chargedGold)
+      .run();
+    if (!charge.meta?.changes) {
+      return err(409, 'insufficient_resources', `refit needs ${chargedMetal}M ${chargedGold}G`);
+    }
+  }
+  if (stmts.length > 0) await env.DB.batch(stmts);
+  if (chargedMetal > 0 || chargedGold > 0) {
+    await logSpend(env, {
+      gameId, factionId: me.id, category: 'ships',
+      metal: chargedMetal, gold: chargedGold,
+    });
+  }
+  return json({
+    ok: true,
+    refitted,
+    pending,
+    charged: { metal: chargedMetal, gold: chargedGold },
+  });
+}
+
 async function handleDeleteDesign(req, env, ctx) {
   const { gameId, designId } = ctx.params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -3079,6 +3380,12 @@ export const routes = [
     handle: handleDeleteDesign,
   },
   {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/designs\/(?<designId>[^/]+)\/refit-fleet$/,
+    auth: 'required',
+    handle: handleRefitFleet,
+  },
+  {
     method: 'PUT',
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/build-list$/,
     auth: 'required',
@@ -3225,6 +3532,12 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/builds\/(?<orderId>[^/]+)$/,
     auth: 'required',
     handle: handleCancelBuild,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/builds\/(?<orderId>[^/]+)\/rush$/,
+    auth: 'required',
+    handle: handleRushBuild,
   },
   {
     method: 'DELETE',

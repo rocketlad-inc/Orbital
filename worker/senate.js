@@ -64,6 +64,24 @@ const SLIDER_CATALOG = [
     max: 50,
     step: 1,
   },
+  {
+    id: 'fleet_upkeep_multiplier',
+    label: 'Fleet Upkeep Multiplier',
+    description: 'Scales per-tick fleet maintenance. 0 suspends upkeep entirely; 2 makes standing armies genuinely expensive.',
+    default: 1.0,
+    min: 0,
+    max: 2.0,
+    step: 0.05,
+  },
+  {
+    id: 'rush_cost_multiplier',
+    label: 'Rush Cost Multiplier',
+    description: 'Scales the price of rushing shipyard orders. High values make patience the law of the land.',
+    default: 1.0,
+    min: 0.5,
+    max: 3.0,
+    step: 0.05,
+  },
 ];
 
 const SLIDER_BY_ID = Object.fromEntries(SLIDER_CATALOG.map((s) => [s.id, s]));

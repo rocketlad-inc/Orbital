@@ -128,6 +128,49 @@ export function partsCost(parts) {
   return { metal, gold };
 }
 
+/** Refit fee: half the ADDED parts' price (DESIGN-fleet-economy §2).
+ *
+ *  Per part type: copies kept from the old loadout are free, removed
+ *  copies refund NOTHING, and each added copy is priced at its stack
+ *  position in the NEW loadout (cost of the new stack minus the cost of
+ *  the retained prefix) — i.e. the current escalated rate. The half-off
+ *  multiplier is applied per resource with ceil so quotes stay integers.
+ *  KEEP IN SYNC with refitFee in src/game/shipParts.ts (the client's
+ *  quote must equal the server's charge). */
+export const REFIT_MULTIPLIER = 0.5;
+
+function stackCost(counts) {
+  let metal = 0, gold = 0;
+  for (const [p, n] of Object.entries(counts)) {
+    const def = SHIP_PART_DEFS[p];
+    if (!def) continue;
+    for (let k = 0; k < n; k++) {
+      const mul = Math.pow(PART_STACK_ESCALATION, k);
+      metal += Math.round(def.metal * mul);
+      gold += Math.round(def.gold * mul);
+    }
+  }
+  return { metal, gold };
+}
+
+export function refitFee(oldParts, newParts) {
+  const count = (parts) => {
+    const c = Object.create(null);
+    for (const p of parts ?? []) c[p] = (c[p] ?? 0) + 1;
+    return c;
+  };
+  const oldC = count(oldParts);
+  const newC = count(newParts);
+  const kept = Object.create(null);
+  for (const [p, n] of Object.entries(newC)) kept[p] = Math.min(n, oldC[p] ?? 0);
+  const full = stackCost(newC);
+  const retained = stackCost(kept);
+  return {
+    metal: Math.ceil(Math.max(0, full.metal - retained.metal) * REFIT_MULTIPLIER),
+    gold: Math.ceil(Math.max(0, full.gold - retained.gold) * REFIT_MULTIPLIER),
+  };
+}
+
 /** Count occurrences of a part id in a loadout. */
 export function countPart(parts, partId) {
   let n = 0;

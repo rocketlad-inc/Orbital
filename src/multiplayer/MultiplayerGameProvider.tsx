@@ -71,6 +71,10 @@ interface ServerState {
     color2?: string | null;
     capital_body_id: string | null;
     resources: { metal: number; fuel: number; gold: number; science: number };
+    /** Fleet upkeep (§1): per-tick maintenance bill (senate multiplier
+     *  included) + standing debt. Absent on a pre-0054 worker. */
+    upkeep?: { gold: number; metal: number; multiplier: number };
+    arrears?: { gold: number; metal: number };
     tech_levels?: Record<string, number>;
     /** Active physical trade-delivery legs involving me (either side).
      *  Drives the ShipPanel "hauling" badge + Trades panel status. */
@@ -304,6 +308,10 @@ interface ServerState {
     started_at_tick?: number | null;
     /** Construction duration snapshot taken at queue time. */
     build_ticks?: number | null;
+    /** Rush construction (§3): times rushed / delivered-at-half-health
+     *  flag. Absent on rows from a pre-0054 worker. */
+    rush_count?: number | null;
+    botched?: number | null;
   }>;
   /** The caller's ship-design library (ship designer §2, migration 0033). */
   ship_designs?: Array<{
@@ -548,6 +556,10 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
     // (namespaced) — ship and settlement ids stay namespaced client-side;
     // only body ids get stripped at this boundary.
     lastTargetId: (s as { last_target_id?: string | null }).last_target_id ?? undefined,
+    // Refit propagation (§2): this hull refits to that design (and pays
+    // the fee) at its next friendly yard — "Refit pending" badge.
+    refitPendingDesignId:
+      (s as { refit_pending_design_id?: string | null }).refit_pending_design_id ?? undefined,
     tradesCompleted: s.trades_completed ?? 0,
     iconVariant,
     stance,
@@ -1147,6 +1159,27 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         return `${t}  ${owner}'s yard at ${where} launched a ${label}`;
       }
 
+      if (ev.kind === 'ship_rush_botched') {
+        // §3 rush gone wrong — herald fodder. The hull still delivers,
+        // just at half health.
+        const cls = (parsed.ship_class as string) ?? 'ship';
+        const name = (parsed.ship_name as string) ?? null;
+        const where = (parsed.body_name as string) ?? 'a yard';
+        const owner = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
+        const label = name ? `${cls} ${name}` : cls;
+        const nth = (parsed.rush_count as number) ?? 1;
+        return `${t}  ⚠ ${owner} rushed the ${label} at ${where}${nth > 1 ? ` (rush ×${nth})` : ''} — corners were cut; it will launch at HALF hull`;
+      }
+
+      if (ev.kind === 'fleet_arrears') {
+        // §1 upkeep transitions — entering or clearing arrears.
+        const owner = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
+        if (parsed.entered === true) {
+          return `${t}  💸 ${owner}'s treasury ran dry — fleet upkeep unpaid, ships fight at −25% damage`;
+        }
+        return `${t}  💰 ${owner} cleared its fleet-upkeep debt — full combat effectiveness restored`;
+      }
+
       if (ev.kind === 'building_completed') {
         const kind = (parsed.building_kind as string) ?? 'building';
         const lvl = (parsed.new_level as number) ?? 1;
@@ -1447,6 +1480,9 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       // Design parts snapshot taken at queue time (may differ from the
       // now-active design). Lets the queue row show the real loadout.
       parts: orderParts,
+      // Rush construction (§3).
+      rushCount: b.rush_count ?? 0,
+      botched: (b.botched ?? 0) === 1,
     };
   });
 
@@ -1562,6 +1598,18 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     orders,
     buildOrders,
     resources: { [PLAYER_TOKEN]: playerRes },
+    // Fleet upkeep (§1): server gold/metal → client credits/ore. TopBar
+    // subtracts this from delivered income to show NET; arrears > 0
+    // paints the red "fleet unpaid, −25% damage" chip.
+    fleetUpkeep: srv.me.upkeep ? {
+      credits: srv.me.upkeep.gold,
+      ore: srv.me.upkeep.metal,
+      multiplier: srv.me.upkeep.multiplier,
+    } : undefined,
+    fleetArrears: srv.me.arrears ? {
+      credits: srv.me.arrears.gold,
+      ore: srv.me.arrears.metal,
+    } : undefined,
     factionTech: { [PLAYER_TOKEN]: playerTech },
     gatingEnabled: (srv.game.gating_enabled ?? 0) === 1,
     settlementClaims: (srv.settlement_claims ?? []).map(c => ({

@@ -163,6 +163,21 @@ export const SHIP_CLASSES: Record<ShipClassName, ShipClassDef> = {
 export const BUILDABLE_CLASSES: ShipClassName[] = ['corvette', 'frigate', 'destroyer', 'freighter', 'colony'];
 
 /**
+ * Per-tick fleet upkeep (DESIGN-fleet-economy §1). Every ACTIVE hull
+ * bills this each tick; an empty stockpile puts the whole fleet in
+ * arrears (−25% damage) until income clears the debt. Display/quote
+ * table only — the server bills authoritatively. KEEP IN SYNC with the
+ * UPKEEP tables in worker/room.js (upkeep pass) and worker/state.js.
+ */
+export const SHIP_UPKEEP: Record<ShipClassName, { credits: number; ore: number }> = {
+  corvette:  { credits: 0.25, ore: 0 },
+  frigate:   { credits: 1,    ore: 1 },
+  destroyer: { credits: 2,    ore: 2 },
+  freighter: { credits: 1,    ore: 0 },
+  colony:    { credits: 0,    ore: 0 },
+};
+
+/**
  * Get class definition. Never throws — an unknown class returns the
  * frigate def with a console warning, so a single bad ship from the
  * server can't crash the whole React tree (which previously happened

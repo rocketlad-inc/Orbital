@@ -275,6 +275,53 @@ export function partsCost(parts: readonly ShipPartId[]): { ore: number; credits:
 }
 
 /**
+ * Refit fee (DESIGN-fleet-economy §2): half the ADDED parts' escalated
+ * price. Per part type, copies kept from the old loadout are free,
+ * removed copies refund NOTHING, and each added copy is priced at its
+ * stack position in the NEW loadout. Applied per resource with ceil so
+ * quotes stay integers. KEEP IN SYNC with refitFee in
+ * worker/shipDesigns.js — the client's quote must equal the server's charge.
+ */
+export const REFIT_MULTIPLIER = 0.5;
+
+function stackCost(counts: Partial<Record<ShipPartId, number>>): { ore: number; credits: number } {
+  let ore = 0, credits = 0;
+  for (const [p, n] of Object.entries(counts) as [ShipPartId, number][]) {
+    const def = SHIP_PART_DEFS[p];
+    if (!def) continue;
+    for (let k = 0; k < n; k++) {
+      const mul = Math.pow(PART_STACK_ESCALATION, k);
+      ore += Math.round(def.cost.ore * mul);
+      credits += Math.round(def.cost.credits * mul);
+    }
+  }
+  return { ore, credits };
+}
+
+export function refitFee(
+  oldParts: readonly ShipPartId[],
+  newParts: readonly ShipPartId[],
+): { ore: number; credits: number } {
+  const count = (parts: readonly ShipPartId[]) => {
+    const c: Partial<Record<ShipPartId, number>> = {};
+    for (const p of parts) c[p] = (c[p] ?? 0) + 1;
+    return c;
+  };
+  const oldC = count(oldParts);
+  const newC = count(newParts);
+  const kept: Partial<Record<ShipPartId, number>> = {};
+  for (const [p, n] of Object.entries(newC) as [ShipPartId, number][]) {
+    kept[p] = Math.min(n, oldC[p] ?? 0);
+  }
+  const full = stackCost(newC);
+  const retained = stackCost(kept);
+  return {
+    ore: Math.ceil(Math.max(0, full.ore - retained.ore) * REFIT_MULTIPLIER),
+    credits: Math.ceil(Math.max(0, full.credits - retained.credits) * REFIT_MULTIPLIER),
+  };
+}
+
+/**
  * Travel-time multiplier from engine parts: (1 − 0.15·techBoost)^n.
  * Propulsion tech boosts the per-engine effect (+6%/lvl). Floor 0.1 so
  * a stacked destroyer can't hit zero-time transfers.

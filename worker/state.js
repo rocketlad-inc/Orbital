@@ -1,4 +1,5 @@
 import { hasFeature } from './researchUnlocks.js';
+import { getActiveSliders } from './senate.js';
 
 // GET /api/games/:gameId/state — full renderer snapshot.
 //
@@ -227,7 +228,7 @@ async function handleGetState(req, env, ctx) {
       `SELECT id, slot, name, color, color2, status,
               capital_body_id, metal, fuel, gold, science,
               research_tech_id, research_progress, research_queue, reputation, senate_weight,
-              build_list_json
+              build_list_json, arrears_gold, arrears_metal
          FROM game_factions
         WHERE game_id = ? AND user_id = ?`,
     )
@@ -608,6 +609,10 @@ async function handleGetState(req, env, ctx) {
               -- animation at this id.
               s.last_target_id,
               s.icon_variant, s.parts_json,
+              -- Refit propagation (§2): non-null means this hull refits
+              -- to that design (and pays the fee) at its next friendly
+              -- yard. The client shows a "Refit pending" badge.
+              s.refit_pending_design_id,
               s.stance, s.retreat_hp_pct, s.detonate_hp_pct,
               s.captain_id, s.fleet_id, c.name AS captain_name, c.avatar_id AS captain_avatar,
               c.traits_json AS captain_traits
@@ -979,7 +984,8 @@ async function handleGetState(req, env, ctx) {
   const buildQueue = (await env.DB
     .prepare(
       `SELECT id, body_id, ship_class, queued_at_tick, completes_at_tick,
-              icon_variant, parts_json, status, started_at_tick, build_ticks
+              icon_variant, parts_json, status, started_at_tick, build_ticks,
+              rush_count, botched
          FROM game_body_build_queue
         WHERE game_id = ? AND faction_id = ?
           AND cancelled_at_tick IS NULL
@@ -987,6 +993,45 @@ async function handleGetState(req, env, ctx) {
     )
     .bind(gameId, me.id)
     .all()).results ?? [];
+
+  // Fleet upkeep (DESIGN-fleet-economy §1) — server-authoritative per-tick
+  // bill for the caller's fleet, WITH the senate multiplier folded in, so
+  // the TopBar can show NET income and the designer can quote real upkeep
+  // without duplicating the slider lookup client-side. KEEP the class
+  // table IN SYNC with worker/room.js upkeep pass + src/game/shipClasses.ts.
+  let upkeep = { gold: 0, metal: 0, multiplier: 1 };
+  try {
+    const UPKEEP = {
+      corvette:  { gold: 0.25, metal: 0 },
+      frigate:   { gold: 1,    metal: 1 },
+      destroyer: { gold: 2,    metal: 2 },
+      freighter: { gold: 1,    metal: 0 },
+      colony:    { gold: 0,    metal: 0 },
+    };
+    const counts = (await env.DB
+      .prepare(
+        `SELECT ship_class, COUNT(*) AS n FROM game_ships
+          WHERE game_id = ? AND owner_faction_id = ? AND status = 'active'
+          GROUP BY ship_class`,
+      )
+      .bind(gameId, me.id)
+      .all()).results ?? [];
+    let mult = 1;
+    try {
+      const sliders = await getActiveSliders(env, gameId, game.current_tick ?? 0);
+      const v = Number(sliders.fleet_upkeep_multiplier);
+      if (Number.isFinite(v) && v >= 0) mult = v;
+    } catch { /* default */ }
+    let g = 0, m = 0;
+    for (const row of counts) {
+      const u = UPKEEP[row.ship_class];
+      if (!u) continue;
+      g += u.gold * row.n;
+      m += u.metal * row.n;
+    }
+    const round3 = (n) => Math.round(n * 1000) / 1000;
+    upkeep = { gold: round3(g * mult), metal: round3(m * mult), multiplier: mult };
+  } catch { /* leave zeros */ }
 
   // Ship designs — the caller's design library (ship designer §2).
   // Small table (≤12 per class), so shipping it with every /state poll
@@ -1079,6 +1124,14 @@ async function handleGetState(req, env, ctx) {
         fuel: me.fuel,
         gold: me.gold,
         science: me.science,
+      },
+      // Fleet upkeep (§1): the caller's per-tick maintenance bill (senate
+      // multiplier included) and any standing debt. arrears > 0 means the
+      // whole fleet is fighting at −25% damage until income clears it.
+      upkeep,
+      arrears: {
+        gold: Number(me.arrears_gold ?? 0),
+        metal: Number(me.arrears_metal ?? 0),
       },
       research: {
         tech_id: me.research_tech_id,

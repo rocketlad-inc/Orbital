@@ -1,7 +1,7 @@
 import { resolveSenate, getActiveSliders, hasActiveSanction } from './senate.js';
 import { recomputeBodyOwnership } from './factions.js';
 import { parsePartsJson, computeShipStats, countPart, detonatorDamage,
-         damageProfile, defenseMitigation, MITIGATION_FLOOR } from './shipDesigns.js';
+         damageProfile, defenseMitigation, MITIGATION_FLOOR, refitFee } from './shipDesigns.js';
 import { ensureCaptains, resolveCaptainOnDeath, parseTraits, traitMul, ensureCaptainFloor } from './captains.js';
 
 // The six tech tracks. Single source of truth for the science-victory
@@ -863,7 +863,7 @@ export class Room {
     const builds = (await this.env.DB
       .prepare(
         `SELECT id, body_id, faction_id, ship_class, completes_at_tick,
-                icon_variant, ship_name, parts_json
+                icon_variant, ship_name, parts_json, rush_count, botched
            FROM game_body_build_queue
           WHERE game_id = ?
             AND cancelled_at_tick IS NULL
@@ -1027,7 +1027,13 @@ export class Room {
         Number(techLevels.armor ?? 0),
         Number(techLevels.shields ?? 0),
       );
-      const spawnHp = hp * (1 + 0.08 * defenseLvl) * (1 + 0.01 * spawnRank);
+      // Botched rush (§3): the 25% roll happened at rush time (sticky —
+      // stamped on the order); the hull rolls out at HALF the effective
+      // ceiling. hp_max stays the full base, so the ship reads 50% and
+      // repairs normally at any friendly station. The rush endpoint
+      // already chronicled the botch publicly for the herald.
+      const botchMul = (b.botched ?? 0) ? 0.5 : 1;
+      const spawnHp = hp * (1 + 0.08 * defenseLvl) * (1 + 0.01 * spawnRank) * botchMul;
 
       await this.env.DB.batch([
         this.env.DB
@@ -1165,6 +1171,112 @@ export class Room {
       }
     } catch (e) {
       console.error('build promotion pass failed', e);
+    }
+
+    // 1c. Pending refits (DESIGN-fleet-economy §2). Ships stamped with
+    //     refit_pending_design_id by the refit-fleet endpoint catch up
+    //     here: whenever such a hull is PARKED (no committed/in-transit
+    //     node) at a body where its owner holds a living settlement, and
+    //     the owner's pool covers the fee (half the added parts'
+    //     escalated price, computed against the design's CURRENT parts —
+    //     later template edits are honored, not the snapshot at stamp
+    //     time), the loadout applies and the marker clears. Unaffordable
+    //     hulls stay pending and simply retry next tick; a deleted
+    //     design clears the marker as a no-op.
+    try {
+      const pendingRefits = (await this.env.DB
+        .prepare(
+          `SELECT s.id, s.owner_faction_id, s.ship_class, s.parent_body_id,
+                  s.hp, s.hp_max, s.parts_json, s.refit_pending_design_id,
+                  d.parts_json AS design_parts_json, d.ship_class AS design_class
+             FROM game_ships s
+             LEFT JOIN game_ship_designs d ON d.id = s.refit_pending_design_id
+            WHERE s.game_id = ? AND s.status = 'active'
+              AND s.refit_pending_design_id IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM game_ship_nodes n
+                 WHERE n.ship_id = s.id AND n.status IN ('committed', 'in_transit')
+              )
+              AND EXISTS (
+                SELECT 1 FROM game_settlements st
+                 WHERE st.game_id = s.game_id AND st.body_id = s.parent_body_id
+                   AND st.owner_faction_id = s.owner_faction_id
+                   AND st.destroyed_at_tick IS NULL
+              )
+            ORDER BY s.id ASC`,
+        )
+        .bind(gameId)
+        .all()).results ?? [];
+      if (pendingRefits.length > 0) {
+        // Per-faction running pool so a squadron refitting at once can't
+        // collectively overdraw. Tech per faction for the stat rebake.
+        const poolCache = new Map();
+        const refitTech = new Map();
+        for (const s of pendingRefits) {
+          // Design deleted (LEFT JOIN miss) or class mismatch → the
+          // refit can never apply; clear the marker. A bare-hull design
+          // (parts_json NULL) is a legitimate refit target.
+          if (s.design_class == null || s.design_class !== s.ship_class) {
+            await this.env.DB
+              .prepare('UPDATE game_ships SET refit_pending_design_id = NULL WHERE id = ?')
+              .bind(s.id).run();
+            continue;
+          }
+          const newParts = parsePartsJson(s.ship_class, s.design_parts_json);
+          const curParts = parsePartsJson(s.ship_class, s.parts_json);
+          const same = [...newParts].sort().join(',') === [...curParts].sort().join(',');
+          const fee = same ? { metal: 0, gold: 0 } : refitFee(curParts, newParts);
+          let pool = poolCache.get(s.owner_faction_id);
+          if (!pool) {
+            const row = await this.env.DB
+              .prepare('SELECT metal, gold FROM game_factions WHERE id = ?')
+              .bind(s.owner_faction_id).first();
+            pool = { metal: Number(row?.metal ?? 0), gold: Number(row?.gold ?? 0) };
+            poolCache.set(s.owner_faction_id, pool);
+          }
+          if (fee.metal > pool.metal || fee.gold > pool.gold) continue; // retry next tick
+          let tech = refitTech.get(s.owner_faction_id);
+          if (!tech) {
+            const rows = (await this.env.DB
+              .prepare(
+                `SELECT tech_id, level FROM faction_techs
+                  WHERE game_id = ? AND faction_id = ?
+                    AND tech_id IN ('weapons', 'energy_weapons', 'armor', 'shields')`,
+              )
+              .bind(gameId, s.owner_faction_id)
+              .all()).results ?? [];
+            tech = Object.fromEntries(rows.map(r => [r.tech_id, r.level ?? 0]));
+            refitTech.set(s.owner_faction_id, tech);
+          }
+          const stats = computeShipStats(s.ship_class, newParts, tech);
+          const oldBase = Number(s.hp_max ?? 0) > 0 ? Number(s.hp_max) : stats.hp;
+          const hpScale = stats.hp / oldBase;
+          const stmts = [
+            this.env.DB
+              .prepare(
+                `UPDATE game_ships
+                    SET parts_json = ?, hp_max = ?, hp = MIN(hp * ?, ?),
+                        damage_per_tick = ?, refit_pending_design_id = NULL
+                  WHERE id = ?`,
+              )
+              .bind(newParts.length > 0 ? JSON.stringify(newParts) : null,
+                    stats.hp, hpScale, stats.hp, stats.damage_per_tick, s.id),
+          ];
+          if (fee.metal > 0 || fee.gold > 0) {
+            stmts.push(this.env.DB
+              .prepare(
+                `UPDATE game_factions SET metal = metal - ?, gold = gold - ?
+                  WHERE id = ? AND metal >= ? AND gold >= ?`,
+              )
+              .bind(fee.metal, fee.gold, s.owner_faction_id, fee.metal, fee.gold));
+          }
+          await this.env.DB.batch(stmts);
+          pool.metal -= fee.metal;
+          pool.gold -= fee.gold;
+        }
+      }
+    } catch (e) {
+      console.error('pending refit pass failed (non-fatal)', e);
     }
 
     // 2a. Depart. A committed node whose scheduled_t has come up: stamp
@@ -2064,6 +2176,26 @@ export class Room {
     const attackerWeaponMul = (fid, profile) =>
       profile.kinetic * kineticMulOf(fid) + profile.energy * energyMulOf(fid);
 
+    // Fleet arrears (DESIGN-fleet-economy §1): an unpaid fleet fights at
+    // 75% damage until the debt clears. Reads the ledger AS OF the last
+    // upkeep pass (upkeep bills later in this same tick), so the penalty
+    // always reflects a full tick of being broke, never a mid-tick race.
+    // Ships only — station return-fire is settlement infrastructure and
+    // pays no upkeep, so it never suffers the malus.
+    const ARREARS_DAMAGE_MULT = 0.75;
+    const arrearsSet = new Set();
+    try {
+      const arrearsRows = (await this.env.DB
+        .prepare(
+          `SELECT id FROM game_factions
+            WHERE game_id = ? AND (arrears_gold > 0 OR arrears_metal > 0)`,
+        )
+        .bind(gameId)
+        .all()).results ?? [];
+      for (const r of arrearsRows) arrearsSet.add(r.id);
+    } catch (e) { console.error('arrears lookup failed (no combat penalty applied)', e); }
+    const arrearsMulOf = (fid) => (arrearsSet.has(fid) ? ARREARS_DAMAGE_MULT : 1);
+
     // Build a fast at-peace lookup: pacts.has(fA + '|' + fB) === true iff
     // they have an active NAP/defense pact (unordered key).
     const peaceRows = (await this.env.DB
@@ -2294,6 +2426,8 @@ export class Room {
         const attackPower =
           attacker.damage_per_tick * attackerWeaponMul(attacker.owner_faction_id, atkProfile)
           * rankMul * combatDamageMult
+          // Unpaid fleet (§1 arrears): −25% damage until the debt clears.
+          * arrearsMulOf(attacker.owner_faction_id)
           // Gunner captain (spec §3): +10% damage, multiplicative.
           * traitMul(attacker._traits ?? [], 'dmgMul')
           // Flag aura, halved (never on the flagship itself).
@@ -2940,6 +3074,136 @@ export class Room {
       }
     } catch (e) {
       console.error('per-tick yield distribution failed (non-fatal)', e);
+    }
+
+    // === Fleet upkeep (DESIGN-fleet-economy §1) ===
+    //
+    // Runs AFTER yield distribution (this tick's income lands first) and
+    // BEFORE the research drain (warships outrank lab budgets). Every
+    // active hull bills per-tick maintenance; what a faction can't pay
+    // lands in game_factions.arrears_* and the whole fleet fights at 75%
+    // damage (arrearsMulOf in the volley, which reads LAST tick's ledger
+    // — combat resolves earlier in this pass) until income clears the
+    // debt. Civ model on purpose: no HP penalty (HP is stored absolute —
+    // a cap change would desync every hull), no ship destruction, no
+    // manual repayment step. Fractional bills (corvette 0.25c) accumulate
+    // in the upkeep_carry_* columns until a whole unit is due, so pools
+    // stay integers and a lone corvette bills 1 gold every 4th tick.
+    try {
+      const upkeepMult = Number(senateSliders.fleet_upkeep_multiplier ?? 1);
+      // KEEP IN SYNC with SHIP_UPKEEP in src/game/shipClasses.ts.
+      const UPKEEP = {
+        corvette:  { gold: 0.25, metal: 0 },
+        frigate:   { gold: 1,    metal: 1 },
+        destroyer: { gold: 2,    metal: 2 },
+        freighter: { gold: 1,    metal: 0 },
+        colony:    { gold: 0,    metal: 0 },
+      };
+      const round3 = (n) => Math.round(n * 1000) / 1000;
+      const fleetCounts = (await this.env.DB
+        .prepare(
+          `SELECT owner_faction_id AS fid, ship_class, COUNT(*) AS n
+             FROM game_ships
+            WHERE game_id = ? AND status = 'active'
+            GROUP BY owner_faction_id, ship_class`,
+        )
+        .bind(gameId)
+        .all()).results ?? [];
+      const owedByFaction = new Map(); // fid -> { gold, metal }
+      for (const row of fleetCounts) {
+        const u = UPKEEP[row.ship_class];
+        if (!u) continue;
+        const agg = owedByFaction.get(row.fid) ?? { gold: 0, metal: 0 };
+        agg.gold  += u.gold  * row.n;
+        agg.metal += u.metal * row.n;
+        owedByFaction.set(row.fid, agg);
+      }
+      const ledger = (await this.env.DB
+        .prepare(
+          `SELECT id, name, gold, metal,
+                  upkeep_carry_gold, upkeep_carry_metal,
+                  arrears_gold, arrears_metal
+             FROM game_factions
+            WHERE game_id = ?`,
+        )
+        .bind(gameId)
+        .all()).results ?? [];
+      for (const f of ledger) {
+        const owed = owedByFaction.get(f.id) ?? { gold: 0, metal: 0 };
+        const prevArrears = Number(f.arrears_gold ?? 0) + Number(f.arrears_metal ?? 0);
+        // Slider at 0 = upkeep suspended: nothing bills, and any standing
+        // debt is forgiven so a passed "no upkeep" law is a real amnesty.
+        if (upkeepMult <= 0) {
+          if (prevArrears > 0 || Number(f.upkeep_carry_gold ?? 0) > 0 || Number(f.upkeep_carry_metal ?? 0) > 0) {
+            await this.env.DB
+              .prepare(
+                `UPDATE game_factions
+                    SET upkeep_carry_gold = 0, upkeep_carry_metal = 0,
+                        arrears_gold = 0, arrears_metal = 0
+                  WHERE id = ?`,
+              )
+              .bind(f.id).run();
+          }
+          continue;
+        }
+        // Whole-unit billing per resource: carry accumulates the
+        // fractional part; the integer part becomes this tick's bill.
+        const settle = (pool, carryPrev, owedNow, arrearsPrev) => {
+          const carry = round3(Number(carryPrev ?? 0) + owedNow * upkeepMult);
+          const bill = Math.floor(carry + 1e-9);
+          const due = round3(Number(arrearsPrev ?? 0) + bill);
+          const pay = Math.min(Math.max(0, Number(pool ?? 0)), due);
+          return {
+            pay,
+            newCarry: round3(carry - bill),
+            newArrears: round3(due - pay),
+          };
+        };
+        const g = settle(f.gold,  f.upkeep_carry_gold,  owed.gold,  f.arrears_gold);
+        const m = settle(f.metal, f.upkeep_carry_metal, owed.metal, f.arrears_metal);
+        const nothingToDo =
+          g.pay === 0 && m.pay === 0
+          && g.newCarry === Number(f.upkeep_carry_gold ?? 0)
+          && m.newCarry === Number(f.upkeep_carry_metal ?? 0)
+          && g.newArrears === Number(f.arrears_gold ?? 0)
+          && m.newArrears === Number(f.arrears_metal ?? 0);
+        if (nothingToDo) continue;
+        await this.env.DB
+          .prepare(
+            `UPDATE game_factions
+                SET gold = gold - ?, metal = metal - ?,
+                    upkeep_carry_gold = ?, upkeep_carry_metal = ?,
+                    arrears_gold = ?, arrears_metal = ?
+              WHERE id = ?`,
+          )
+          .bind(g.pay, m.pay, g.newCarry, m.newCarry, g.newArrears, m.newArrears, f.id)
+          .run();
+        // Chronicle the TRANSITIONS only (enter/leave arrears), not the
+        // steady state — the herald wants the drama, not a per-tick drone.
+        const nowArrears = g.newArrears + m.newArrears;
+        const entered = prevArrears <= 0 && nowArrears > 0;
+        const cleared = prevArrears > 0 && nowArrears <= 0;
+        if (entered || cleared) {
+          try {
+            const payload = JSON.stringify({
+              faction_name: f.name ?? null,
+              entered,
+              arrears_gold: g.newArrears,
+              arrears_metal: m.newArrears,
+            });
+            await this.env.DB
+              .prepare(
+                `INSERT INTO chronicle_entries
+                  (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
+                 VALUES (?, ?, ?, 'fleet_arrears', ?, ?, 'public', ?)`,
+              )
+              .bind(`c_arr_${f.id}_${tick}`, gameId, tick, f.id, payload, Date.now())
+              .run();
+          } catch (e) { console.error('fleet_arrears chronicle insert failed', e); }
+        }
+      }
+    } catch (e) {
+      console.error('fleet upkeep pass failed (non-fatal)', e);
     }
 
     // Stamp last_combat_tick on every ship that fired this tick. Done

@@ -424,6 +424,20 @@ export const BuildPanel: React.FC = () => {
                   <div className="build-progress-fill" style={{ width: `${Math.min(100, progress * 100)}%` }} />
                 </div>
                 <div className="build-eta">T-{remaining.toFixed(0)}</div>
+                {bo.botched && (
+                  <span
+                    className="build-botched"
+                    title="A rush went badly — this hull will be delivered at HALF health."
+                    style={{ color: '#ff8a5c', fontSize: 11, whiteSpace: 'nowrap' }}
+                  >⚠ half-hull</span>
+                )}
+                {mpActions && remaining > 1 && (
+                  <RushControl
+                    order={bo}
+                    remaining={remaining}
+                    constructionLvl={gameState.factionTech?.player?.levels?.construction ?? 0}
+                  />
+                )}
                 <button
                   className="build-cancel"
                   onClick={() => {
@@ -930,6 +944,101 @@ export const BuildPanel: React.FC = () => {
         <span className="resource">METAL: {Math.round(playerRes.ore)}</span>
         <span className="resource">CR: {Math.round(playerRes.credits)}</span>
       </div>
+    </div>
+  );
+};
+
+// ----------------------------------------------------------------
+// Rush construction (DESIGN-fleet-economy §3). ⚡ opens a small confirm
+// popover — cost, new delivery, and the 25% half-hull risk — because a
+// rush spends the ship's FULL price again with a real chance of wasting
+// half of it; that stake deserves a deliberate second tap, and repeat
+// rushes on the same order make a mis-tap expensive. (UX-juror verdict:
+// confirm-popover over instant-apply.)
+// ----------------------------------------------------------------
+
+const RushControl: React.FC<{
+  order: import('../types').BuildOrder;
+  remaining: number;
+  constructionLvl: number;
+}> = ({ order, remaining, constructionLvl }) => {
+  const mpActions = useMultiplayerActions();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!mpActions) return null;
+  // Client-side quote: hull + the order's parts snapshot at the same
+  // construction-tech discount the server applies. The senate's
+  // build-cost / rush-cost sliders (default 1.0) aren't in the /state
+  // payload, so this is exact in the common case and marked "≈".
+  const def = SHIP_CLASSES[order.shipClass];
+  const pc = partsCost(sanitizeParts(order.parts ?? []));
+  const mult = Math.max(0.25, 1 - 0.05 * constructionLvl);
+  const quoteOre = Math.ceil((def.cost.ore + pc.ore) * mult);
+  const quoteCr = Math.ceil((def.cost.credits + pc.credits) * mult);
+  const newRemaining = Math.max(1, Math.ceil(remaining / 2));
+  return (
+    <div style={{ position: 'relative', display: 'inline-flex' }}>
+      <button
+        className="build-rush"
+        onClick={() => { setError(null); setOpen(o => !o); }}
+        title={`Rush: pay the ship's price again to halve remaining build time (${(order.rushCount ?? 0) > 0 ? `rushed ×${order.rushCount} — ` : ''}25% risk of half-hull delivery)`}
+        style={{
+          background: 'rgba(255, 200, 80, 0.12)',
+          border: '1px solid rgba(255, 200, 80, 0.5)',
+          borderRadius: 4, color: '#ffcf70', cursor: 'pointer',
+          fontSize: 11, padding: '2px 6px', whiteSpace: 'nowrap',
+        }}
+      >⚡{(order.rushCount ?? 0) > 0 ? `×${order.rushCount}` : ''}</button>
+      {open && (
+        <div
+          role="dialog"
+          aria-label="Confirm rush"
+          style={{
+            position: 'absolute', right: 0, top: '110%', zIndex: 40,
+            width: 210, padding: '8px 10px',
+            background: '#0d1722', border: '1px solid #3a5068',
+            borderRadius: 6, boxShadow: '0 6px 18px rgba(0,0,0,0.55)',
+            fontSize: 11, lineHeight: 1.5, color: '#c8d8e8',
+          }}
+        >
+          <div style={{ fontWeight: 700, color: '#ffcf70', marginBottom: 4 }}>⚡ RUSH BUILD</div>
+          <div>Cost: <b>≈{quoteOre}M {quoteCr}C</b> (full ship price)</div>
+          <div>Delivery: T-{remaining.toFixed(0)} → <b>T-{newRemaining}</b></div>
+          <div style={{ color: '#ff8a5c', marginTop: 2 }}>
+            25% risk: delivered at <b>half hull</b>{order.botched ? ' (already botched — no further risk)' : ''}
+          </div>
+          {error && <div style={{ color: '#ff5e5e', marginTop: 4 }}>⚠ {error}</div>}
+          <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+            <button
+              disabled={busy}
+              onClick={() => {
+                setBusy(true);
+                setError(null);
+                mpActions.rushBuild(order.id).then(res => {
+                  setBusy(false);
+                  if (res.ok) setOpen(false);
+                  else setError(humanizeMpError(res.code, res.error ?? 'Rush failed.', 'build'));
+                });
+              }}
+              style={{
+                flex: 1, background: 'rgba(255, 200, 80, 0.18)',
+                border: '1px solid rgba(255, 200, 80, 0.6)', borderRadius: 4,
+                color: '#ffcf70', cursor: 'pointer', padding: '3px 0', fontSize: 11,
+              }}
+            >{busy ? '…' : 'CONFIRM'}</button>
+            <button
+              disabled={busy}
+              onClick={() => setOpen(false)}
+              style={{
+                flex: 1, background: 'transparent',
+                border: '1px solid #3a5068', borderRadius: 4,
+                color: '#9fb4c6', cursor: 'pointer', padding: '3px 0', fontSize: 11,
+              }}
+            >CANCEL</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

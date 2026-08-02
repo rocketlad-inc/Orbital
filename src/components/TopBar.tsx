@@ -227,6 +227,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             rate={income.delivered.ore}
             local={income.local.ore}
             hasCollector={income.hasCollector}
+            upkeep={gameState.fleetUpkeep?.ore ?? 0}
           />
           <ResourcePill
             label="CR" modifier="credits"
@@ -234,6 +235,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             rate={income.delivered.credits}
             local={income.local.credits}
             hasCollector={income.hasCollector}
+            upkeep={gameState.fleetUpkeep?.credits ?? 0}
           />
           <ResourcePill
             label="SCI" modifier="science"
@@ -246,6 +248,23 @@ export const TopBar: React.FC<TopBarProps> = ({
             <div className="resource-pill__label">SHIPS</div>
             <div className="resource-pill__value">{playerShips.length}</div>
           </div>
+          {((gameState.fleetArrears?.credits ?? 0) > 0 || (gameState.fleetArrears?.ore ?? 0) > 0) && (
+            // Arrears (§1): the fleet is unpaid and fighting at −25%
+            // damage. Red pulsing chip — this is a combat debuff, it
+            // must be impossible to miss.
+            <div
+              className="resource-pill resource-pill--arrears"
+              title={`Fleet upkeep unpaid — owing ${fmtRate(gameState.fleetArrears?.credits ?? 0)} CR, ${fmtRate(gameState.fleetArrears?.ore ?? 0)} metal. Your ships fight at −25% damage until income clears the debt.`}
+              style={{
+                background: 'rgba(255, 70, 70, 0.18)',
+                border: '1px solid rgba(255, 90, 90, 0.65)',
+                animation: 'arrears-pulse 1.6s ease-in-out infinite',
+              }}
+            >
+              <div className="resource-pill__label" style={{ color: '#ff8a8a' }}>ARREARS</div>
+              <div className="resource-pill__value" style={{ color: '#ff8a8a' }}>−25% DMG</div>
+            </div>
+          )}
         </div>
       )}
 
@@ -412,27 +431,38 @@ const ResourcePill: React.FC<{
   rate: number;              // per-tick income arriving in the pool (delivered)
   local: number;             // per-tick income banking to LOCAL settlement stockpiles (90% of non-collector yield)
   hasCollector: boolean;     // does the empire have any collector at all
-}> = ({ label, modifier, value, rate, local, hasCollector }) => {
-  const hasRate = rate > 0.01;
+  /** Fleet upkeep drain on this resource (§1). The headline rate shows
+   *  NET (delivered − upkeep) so the real economic picture is visible
+   *  BEFORE arrears hit; the popover breaks out the subtraction. */
+  upkeep?: number;
+}> = ({ label, modifier, value, rate, local, hasCollector, upkeep = 0 }) => {
+  const hasUpkeep = upkeep > 0.001;
+  // NET is the number that matters at a glance — income the fleet is
+  // eating counts against you every tick whether you look or not.
+  const net = rate - upkeep;
+  const hasRate = rate > 0.01 || hasUpkeep;
   const hasLocal = local > 0.01;
+  const upkeepTip = hasUpkeep ? ` Fleet upkeep −${fmtRate(upkeep)}/t (net ${net < 0 ? '−' : '+'}${fmtRate(Math.abs(net))}/t).` : '';
   let tooltip: string;
   if (hasLocal && !hasCollector) {
-    tooltip = `${label}: ${displayResource(value)} (pool). ${fmtRate(local)}/t banking LOCAL at settlements — spendable on body builds, or send a freighter to vacuum it up. Build a collector for the 10× pump.`;
+    tooltip = `${label}: ${displayResource(value)} (pool). ${fmtRate(local)}/t banking LOCAL at settlements — spendable on body builds, or send a freighter to vacuum it up. Build a collector for the 10× pump.${upkeepTip}`;
   } else if (hasLocal && hasCollector) {
-    tooltip = `${label}: ${displayResource(value)} (pool) — +${fmtRate(rate)}/t delivered, +${fmtRate(local)}/t banking LOCAL at uncollectered settlements.`;
+    tooltip = `${label}: ${displayResource(value)} (pool) — +${fmtRate(rate)}/t delivered, +${fmtRate(local)}/t banking LOCAL at uncollectered settlements.${upkeepTip}`;
   } else if (hasRate) {
-    tooltip = `${label}: ${displayResource(value)} (pool) — gaining +${fmtRate(rate)} per tick.`;
+    tooltip = `${label}: ${displayResource(value)} (pool) — gaining +${fmtRate(rate)} per tick.${upkeepTip}`;
   } else {
     tooltip = `${label}: ${displayResource(value)} (pool)`;
   }
   // ONE rate line, not two stacked (+ a third for the label). The old
   // 4-line stack (label / value / +net / ~LOCAL) is what made the bar
-  // tall + wide. We show the number that matters at a glance — delivered
-  // rate when a collector is pumping, else the local trickle (your only
-  // income without one) — and move the full breakdown into a popover
-  // that reveals on hover (desktop) / focus-tap (mobile). Nothing lost.
+  // tall + wide. We show the number that matters at a glance — NET
+  // delivered rate when a collector is pumping, else the local trickle
+  // (your only income without one) — and move the full breakdown into a
+  // popover that reveals on hover (desktop) / focus-tap (mobile).
   const primary = hasRate
-    ? { txt: `+${fmtRate(rate)}/t`, color: '#7fffa1' }
+    ? net >= 0
+      ? { txt: `+${fmtRate(net)}/t`, color: '#7fffa1' }
+      : { txt: `−${fmtRate(Math.abs(net))}/t`, color: '#ff7a7a' }
     : hasLocal
       ? { txt: `~${fmtRate(local)}/t`, color: '#ffb84d' }
       : null;
@@ -456,6 +486,9 @@ const ResourcePill: React.FC<{
         // so revealing it never reflows the bar.
         <div className="resource-pill__pop" role="note">
           <span style={{ color: '#7fffa1' }}>+{fmtRate(rate)}/t</span> pool
+          {hasUpkeep && (
+            <> &nbsp;·&nbsp; <span style={{ color: '#ff7a7a' }}>−{fmtRate(upkeep)}/t</span> fleet</>
+          )}
           {hasLocal && (
             <> &nbsp;·&nbsp; <span style={{ color: '#ffb84d' }}>~{fmtRate(local)}/t</span> local</>
           )}

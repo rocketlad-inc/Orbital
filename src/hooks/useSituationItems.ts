@@ -130,7 +130,8 @@ export type SituationCategory =
   | 'vote_closed'    // MP — a vote you were watching has resolved
   | 'discovery'      // one of YOUR ships uncovered a body secret
   | 'idle_captain'   // MP — a captain sits in the bank, unassigned to any ship
-  | 'fleet_leaderless'; // a fleet lost its flagship — promote a captain
+  | 'fleet_leaderless' // a fleet lost its flagship — promote a captain
+  | 'fleet_arrears'; // MP — upkeep unpaid, whole fleet at −25% damage
 
 export type SituationTier = 'now' | 'decision' | 'opportunity';
 
@@ -180,6 +181,9 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
   // A beheaded fleet refuses new common orders until you promote —
   // a decision by construction (DESIGN-fleets.md).
   fleet_leaderless: 'decision',
+  // The whole fleet is fighting at −25% damage RIGHT NOW and stays
+  // that way every tick until income clears the debt.
+  fleet_arrears:  'now',
 };
 
 export interface SituationItem {
@@ -229,6 +233,7 @@ export const CATEGORY_LABEL: Record<SituationCategory, string> = {
   discovery:       'Discoveries',
   idle_captain:    'Captains unassigned',
   fleet_leaderless: 'Fleets without a flag',
+  fleet_arrears:   'Fleet upkeep unpaid',
 };
 
 // ------------------------------------------------------------
@@ -477,6 +482,27 @@ export function useSituationItems(
     const items: SituationItem[] = [];
     const push = (it: Omit<SituationItem, 'tier'> & { tier?: SituationTier }) =>
       items.push({ ...it, tier: it.tier ?? TIER_OF[it.category] });
+
+    // --- Fleet arrears (DESIGN-fleet-economy §1) — NOW tier. The whole
+    // fleet is at −25% damage this tick and every tick until the debt
+    // clears. One row, no entity key (it's empire-wide, nothing to
+    // suppress against).
+    const arr = gameState.fleetArrears;
+    if (arr && (arr.credits > 0 || arr.ore > 0)) {
+      const owed = [
+        arr.credits > 0 ? `${Math.ceil(arr.credits)} CR` : null,
+        arr.ore > 0 ? `${Math.ceil(arr.ore)} metal` : null,
+      ].filter(Boolean).join(', ');
+      push({
+        id: 'fleet_arrears',
+        category: 'fleet_arrears',
+        title: 'Fleet upkeep unpaid — ships fight at −25% damage',
+        subtitle: `Owing ${owed}. Clears automatically as income lands.`,
+        severity: 'danger',
+        sortKey: 0,
+        focus: { kind: 'panel', panel: 'fleet' },
+      });
+    }
 
     const mine = gameState.ships.filter(s => s.ownedBy === factionId);
     const byId = new Map<string, Ship>(mine.map(s => [s.id, s]));

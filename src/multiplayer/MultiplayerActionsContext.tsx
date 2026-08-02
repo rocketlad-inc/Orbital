@@ -285,6 +285,19 @@ export interface MultiplayerActions {
    *  refunds metal+gold). Without this, optimistic local removal was
    *  clobbered by the next /state poll and the build re-appeared. */
   cancelBuild: (orderId: string) => Promise<MpActionResult>;
+  /** Rush a building order (§3): pay the ship's full price again, halve
+   *  the remaining time. Unlimited; each rush risks a 25% half-health
+   *  delivery. Result carries the new schedule + botch flag. */
+  rushBuild: (orderId: string) => Promise<MpActionResult & {
+    completesAtTick?: number; rushCount?: number; botched?: boolean;
+    cost?: { ore: number; credits: number };
+  }>;
+  /** Propagate a design to every live hull of its class (§2). Ships at
+   *  a friendly yard refit + pay now; the rest go "refit pending". */
+  refitFleet: (designId: string) => Promise<MpActionResult & {
+    refitted?: string[]; pending?: string[];
+    charged?: { ore: number; credits: number };
+  }>;
   /** Cancel a planned or committed maneuver node server-side (flips
    *  status='cancelled'). Same problem as build cancel: local-only
    *  removal got rewound by the next /state. */
@@ -770,6 +783,53 @@ export function MultiplayerActionsProvider({
         ok: false,
         code: res.error?.code,
         error: res.error?.message ?? 'Server rejected cancel.',
+      };
+    },
+    async rushBuild(orderId) {
+      const res = await apiFetch<{
+        ok: boolean; completes_at_tick: number; rush_count: number;
+        botched: boolean; cost: { metal: number; gold: number };
+      }>(
+        `/api/games/${gameId}/builds/${encodeURIComponent(orderId)}/rush`,
+        { method: 'POST' },
+      );
+      if (res.ok) {
+        return {
+          ok: true,
+          completesAtTick: res.data.completes_at_tick,
+          rushCount: res.data.rush_count,
+          botched: res.data.botched,
+          cost: { ore: res.data.cost?.metal ?? 0, credits: res.data.cost?.gold ?? 0 },
+        };
+      }
+      console.warn('rushBuild failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the rush.',
+      };
+    },
+    async refitFleet(designId) {
+      const res = await apiFetch<{
+        ok: boolean; refitted: string[]; pending: string[];
+        charged: { metal: number; gold: number };
+      }>(
+        `/api/games/${gameId}/designs/${encodeURIComponent(designId)}/refit-fleet`,
+        { method: 'POST' },
+      );
+      if (res.ok) {
+        return {
+          ok: true,
+          refitted: res.data.refitted ?? [],
+          pending: res.data.pending ?? [],
+          charged: { ore: res.data.charged?.metal ?? 0, credits: res.data.charged?.gold ?? 0 },
+        };
+      }
+      console.warn('refitFleet failed', res.error);
+      return {
+        ok: false,
+        code: res.error?.code,
+        error: res.error?.message ?? 'Server rejected the refit.',
       };
     },
     async cancelNode(nodeId) {

@@ -703,3 +703,10 @@
   0%, 100% { transform: scale(1);  box-shadow: 0 0 4px rgba(78, 205, 196, 0.5); }
   50%      { transform: scale(1.3); box-shadow: 0 0 10px rgba(78, 205, 196, 0.95); }
 }
+
+/* Fleet arrears chip (DESIGN-fleet-economy §1) — the fleet is unpaid and
+   fighting at -25% damage. Red pulse so the debuff can't be missed. */
+@keyframes arrears-pulse {
+  0%, 100% { box-shadow: 0 0 4px rgba(255, 90, 90, 0.35); }
+  50%      { box-shadow: 0 0 12px rgba(255, 90, 90, 0.85); }
+}
