@@ -392,8 +392,15 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
 
   const save = async (setActive: boolean) => {
     if (!mpActions || busy) return;
-    const name = draftName.trim();
-    if (name.length === 0) { setError('Give the design a name first.'); return; }
+    // Auto-name when the field is blank — a disabled save button with no
+    // stated reason reads as "there is no way to save" (playtest). The
+    // player can rename any time; a generated mark number beats a wall.
+    let name = draftName.trim();
+    if (name.length === 0) {
+      const taken = new Set(classDesigns.map(d => d.name));
+      let mk = classDesigns.length + 1;
+      do { name = `${SHIP_CLASSES[activeClass].displayName} Mk ${mk}`; mk++; } while (taken.has(name));
+    }
     setBusy(true);
     setError(null);
     const res = selected
@@ -408,7 +415,14 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
     setBusy(false);
     if (!res.ok) { setError(res.error); return; }
     await refresh();
-    if (!selected) loadDesign(null);  // clear the "new design" form
+    if (setActive) {
+      // Say what "active" MEANS, right where the click happened — the
+      // save-then-deploy loop was invisible to playtesters.
+      setRefitNote(`${name} is now ACTIVE — every shipyard BUILD for this class launches this design.`);
+    }
+    // Keep the (possibly generated) name in the field so the player sees
+    // what their design is called; the library list refresh shows it too.
+    setDraftName(name);
   };
 
   const setActiveDesign = async (d: ShipDesign, active: boolean) => {
@@ -561,15 +575,18 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
           {refitInfo.pendingAlready} hull{refitInfo.pendingAlready === 1 ? '' : 's'} pending refit — applies at the next friendly yard.
         </div>
       )}
-      {refitNote && <div className="sd-refit__note">{refitNote}</div>}
     </div>
   );
+
+  // Standalone so it also shows after CREATE & SET ACTIVE on a fresh
+  // design (the refit bar above only exists once live hulls differ).
+  const noteLine = refitNote && <div className="sd-refit__note">{refitNote}</div>;
 
   const actionButtons = (
     <div className="sd-actions">
       <button
         className="sd-btn sd-btn--primary"
-        disabled={busy || draftName.trim().length === 0}
+        disabled={busy}
         onClick={() => save(true)}
         title="Save this design and make it the one BUILD uses for this class"
       >
@@ -577,7 +594,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
       </button>
       <button
         className="sd-btn"
-        disabled={busy || draftName.trim().length === 0}
+        disabled={busy}
         onClick={() => save(false)}
         title="Save without changing which design is active"
       >
@@ -585,7 +602,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
       </button>
       <button
         className="sd-btn"
-        disabled={busy || draftName.trim().length === 0}
+        disabled={busy}
         onClick={saveAsTemplate}
         title="Save this loadout to your account so you can load it in future games"
       >
@@ -895,6 +912,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
               Builds snapshot the ACTIVE design at queue time.
             </div>
             {refitBar}
+            {noteLine}
             {error && (
               <button className="sd-error" onClick={() => setError(null)} title="Click to dismiss">
                 ⚠ {error}
@@ -921,6 +939,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
             <div className="sd-footer__sheet">
               <div className="sd-side__stats">{statRows}</div>
               {refitBar}
+              {noteLine}
               {error && (
                 <button className="sd-error" onClick={() => setError(null)}>⚠ {error}</button>
               )}
@@ -931,7 +950,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
             <div className="sd-footer__cta">
               <button
                 className="sd-btn sd-btn--primary"
-                disabled={busy || draftName.trim().length === 0}
+                disabled={busy}
                 onClick={() => save(true)}
               >
                 {selected ? 'SAVE & ACTIVATE' : 'CREATE & ACTIVATE'}

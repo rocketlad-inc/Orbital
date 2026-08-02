@@ -971,6 +971,19 @@ export const RushControl: React.FC<{
   // CONFIRM unreachable (QA finding). Flip upward when there isn't room.
   const [openUp, setOpenUp] = useState(false);
   const wrapRef = React.useRef<HTMLDivElement>(null);
+  // Outside click closes the popover — without this, tapping ⚡ on two
+  // queue rows stacked two open dialogs on top of each other (playtest
+  // screenshot) and neither was dismissable except via its own CANCEL.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', onDown);
+    return () => window.removeEventListener('mousedown', onDown);
+  }, [open]);
   if (!mpActions) return null;
   // Client-side quote: hull + the order's parts snapshot at the same
   // construction-tech discount the server applies. The senate's
