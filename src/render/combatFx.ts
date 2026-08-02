@@ -15,6 +15,7 @@
 import { Ship, Settlement } from '../types';
 import { shipWorldPosition } from '../game/combat';
 import { getShipClass } from '../game/shipClasses';
+import { damageProfile } from '../game/shipParts';
 import { settlementWorldPosition } from '../game/settlements';
 import { bodyPosition, localPositionAt } from '../physics/orbitalMechanics';
 import { shipDisplayTick } from './tickPhase';
@@ -177,6 +178,24 @@ const MUZZLE_MS = 130;
 /** Impact flash duration after each bolt lands (inside the beat). */
 const IMPACT_MS = 220;
 
+// ------------------------------------------------------------
+// WEAPON-TYPE READS (player ask: energy and kinetic fire must LOOK
+// different). The shooter's damage profile picks the shot:
+//   KINETIC — the traveling slug: a faction-colored tracer with a hot
+//     head, warm muzzle flash, and a ring+shards impact. (The original
+//     bolt, unchanged — it already reads as ballistics.)
+//   ENERGY — a charge-then-lance beam: a cyan glow builds at the
+//     emitter for CHARGE_MS, then a bright-cored beam snaps across the
+//     whole gap and fades, ending in a soft bloom instead of shrapnel.
+// Mixed loadouts alternate per volley at their real kinetic/energy
+// ratio (seeded on shooter id + volley index, so the mix is steady but
+// not a metronome). Settlement guns are kinetic, mirroring the server.
+// ------------------------------------------------------------
+const ENERGY_COLOR = '#7fd4ff';
+const ENERGY_CORE = '#e8fbff';
+/** Charge-up portion of an energy shot's BOLT_MS window. */
+const CHARGE_MS = 180;
+
 /** Bounded cache of hashStr(id) so per-frame phase/target math never
  *  re-hashes strings in the hot loop. */
 const idHashCache = new Map<string, number>();
@@ -337,17 +356,39 @@ export function drawTracers(
     }
     const alpha = 1 - age / TRACER_LIFE_MS;
     const color = factionPrimary(rc, from.ownedBy);
-    c.strokeStyle = withOpacity(color, alpha);
-    c.lineWidth = 2;
-    c.beginPath();
-    c.moveTo(fp.x, fp.y);
-    c.lineTo(tp.x, tp.y);
-    c.stroke();
-    // Bright head dot at the impact end — reads as the shell landing.
-    c.fillStyle = withOpacity(lighten(color, 1.5), alpha);
-    c.beginPath();
-    c.arc(tp.x, tp.y, 2.5, 0, Math.PI * 2);
-    c.fill();
+    // Weapon-type read: an energy-majority loadout flashes a cyan lance
+    // (wide glow + bright core) instead of the kinetic tracer line.
+    const prof = from.ship ? damageProfile(from.ship.parts) : { kinetic: 1, energy: 0 };
+    if (prof.energy >= 0.5) {
+      c.strokeStyle = withOpacity(ENERGY_COLOR, 0.4 * alpha);
+      c.lineWidth = 4;
+      c.beginPath();
+      c.moveTo(fp.x, fp.y);
+      c.lineTo(tp.x, tp.y);
+      c.stroke();
+      c.strokeStyle = withOpacity(ENERGY_CORE, alpha);
+      c.lineWidth = 1.4;
+      c.beginPath();
+      c.moveTo(fp.x, fp.y);
+      c.lineTo(tp.x, tp.y);
+      c.stroke();
+      c.fillStyle = withOpacity(ENERGY_CORE, alpha);
+      c.beginPath();
+      c.arc(tp.x, tp.y, 2.5, 0, Math.PI * 2);
+      c.fill();
+    } else {
+      c.strokeStyle = withOpacity(color, alpha);
+      c.lineWidth = 2;
+      c.beginPath();
+      c.moveTo(fp.x, fp.y);
+      c.lineTo(tp.x, tp.y);
+      c.stroke();
+      // Bright head dot at the impact end — reads as the shell landing.
+      c.fillStyle = withOpacity(lighten(color, 1.5), alpha);
+      c.beginPath();
+      c.arc(tp.x, tp.y, 2.5, 0, Math.PI * 2);
+      c.fill();
+    }
   }
   if (opened) c.restore();
 }
@@ -511,7 +552,59 @@ export function drawEngagementFire(
     }
     const color = factionPrimary(rc, shooter.ownedBy);
 
-    if (firing) {
+    // Which weapon fires THIS volley — kinetic slug or energy lance.
+    // Settlements + bare/redacted hulls read as pure kinetic (matches
+    // damageProfile's neutral default and the server's combat model).
+    // Mixed loadouts alternate at their real ratio, seeded per volley so
+    // a 50/50 gunboat interleaves rather than strobing.
+    const prof = shooter.ship ? damageProfile(shooter.ship.parts) : { kinetic: 1, energy: 0 };
+    const volleyIdx = Math.floor((nowMs + (idHash(shooter.id) % SLOT_MS)) / SLOT_MS);
+    const energyShot = prof.energy > 0
+      && (prof.kinetic === 0 || mulberry32(idHash(shooter.id) ^ volleyIdx)() < prof.energy);
+
+    if (firing && energyShot) {
+      // ENERGY LANCE — charge at the emitter, then a full-gap beam.
+      // Endpoints recompute every frame, so the beam tracks the moving
+      // hull live — no ballistic lead needed.
+      const ang = Math.atan2(tpNow.y - fp.y, tpNow.x - fp.x);
+      const mx = fp.x + Math.cos(ang) * 4;
+      const my = fp.y + Math.sin(ang) * 4;
+      if (within < CHARGE_MS) {
+        // Charge-up: a cyan glow swelling at the emitter.
+        const ck = within / CHARGE_MS;
+        c.fillStyle = withOpacity(ENERGY_COLOR, 0.25 + 0.35 * ck);
+        c.beginPath();
+        c.arc(mx, my, 1.5 + 3.5 * ck, 0, Math.PI * 2);
+        c.fill();
+        c.fillStyle = withOpacity(ENERGY_CORE, 0.5 * ck);
+        c.beginPath();
+        c.arc(mx, my, 0.8 + 1.4 * ck, 0, Math.PI * 2);
+        c.fill();
+      } else {
+        // Lance: snaps on fast, holds, fades — wide soft glow under a
+        // thin near-white core, unmistakably not a slug.
+        const bk = (within - CHARGE_MS) / (BOLT_MS - CHARGE_MS);
+        const beamA = bk < 0.2 ? bk / 0.2 : 1 - (bk - 0.2) / 0.8;
+        c.strokeStyle = withOpacity(ENERGY_COLOR, 0.35 * beamA);
+        c.lineWidth = 4.5;
+        c.beginPath();
+        c.moveTo(mx, my);
+        c.lineTo(tpNow.x, tpNow.y);
+        c.stroke();
+        c.strokeStyle = withOpacity(ENERGY_CORE, 0.9 * beamA);
+        c.lineWidth = 1.4;
+        c.beginPath();
+        c.moveTo(mx, my);
+        c.lineTo(tpNow.x, tpNow.y);
+        c.stroke();
+        // Emitter stays lit while the beam is on.
+        c.fillStyle = withOpacity(ENERGY_CORE, 0.8 * beamA);
+        c.beginPath();
+        c.arc(mx, my, 2, 0, Math.PI * 2);
+        c.fill();
+      }
+    } else if (firing) {
+      // KINETIC SLUG — the traveling bolt (original behavior).
       // Bolt travels shooter -> target over BOLT_MS; the eye reads
       // direction, then the beat gives it room to land.
       const k = within / BOLT_MS;
@@ -556,10 +649,24 @@ export function drawEngagementFire(
       c.beginPath();
       c.arc(headX, headY, 2, 0, Math.PI * 2);
       c.fill();
+    } else if (energyShot) {
+      // ENERGY IMPACT — a soft heat bloom where the lance burned in,
+      // not shrapnel: two fading concentric discs in the beam's color.
+      const ik = (within - BOLT_MS) / IMPACT_MS;
+      const ia = 1 - ik;
+      const r = 3 + 7 * ik;
+      c.fillStyle = withOpacity(ENERGY_COLOR, 0.3 * ia);
+      c.beginPath();
+      c.arc(tpNow.x, tpNow.y, r, 0, Math.PI * 2);
+      c.fill();
+      c.fillStyle = withOpacity(ENERGY_CORE, 0.55 * ia);
+      c.beginPath();
+      c.arc(tpNow.x, tpNow.y, r * 0.45, 0, Math.PI * 2);
+      c.fill();
     } else {
-      // Impact — expanding ring + seeded shards where the bolt just
-      // landed. Pure cosmetic ("a shot struck here"), distinct from the
-      // damage flash, which only plays when HP actually moved at a tick.
+      // KINETIC IMPACT — expanding ring + seeded shards where the bolt
+      // just landed. Pure cosmetic ("a shot struck here"), distinct from
+      // the damage flash, which only plays when HP actually moved.
       const ik = (within - BOLT_MS) / IMPACT_MS;
       const ia = 1 - ik;
       const r = 3 + 8 * ik;
