@@ -829,7 +829,7 @@ export const ShipPanel: React.FC = () => {
                 title={configName ? `${configName} · ${ship.class.toUpperCase()}` : undefined}
               >
                 <span style={{ color: '#4ecdc4', display: 'inline-flex', flexShrink: 0 }}>
-                  <ShipIcon shipClass={ship.class as ShipClassName} size={16} />
+                  <ShipIcon shipClass={ship.class as ShipClassName} size={16} parts={ship.parts} />
                 </span>
                 {configName ? (
                   <span className="ship-config-name">

@@ -417,7 +417,7 @@ async function handleCreateShipTemplate(req, env, session) {
 
   let iconVariant = null;
   if (body.icon_variant != null) {
-    if (typeof body.icon_variant !== 'string' || !/^[A-F]$/.test(body.icon_variant)) {
+    if (typeof body.icon_variant !== 'string' || !/^[A-I]$/.test(body.icon_variant)) {
       return err(400, 'bad_request', 'invalid icon_variant');
     }
     iconVariant = body.icon_variant;

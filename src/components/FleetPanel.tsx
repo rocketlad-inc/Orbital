@@ -801,6 +801,9 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
             color={iconColor}
             color2={iconColor2}
             size={20}
+            // Sub-40px sizes render only the big-silhouette reads
+            // (shield bubble + engine plume) — tanky/fast at a glance.
+            parts={ship.parts}
           />
         </div>
 

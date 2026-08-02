@@ -366,7 +366,9 @@ interface GameContextType {
     bodyId: string,
     shipClass: ShipClassName,
     name: string,
-    iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F',
+    // Type-only widening for the G/H/I icon expansion (MP feature) —
+    // SP behavior is untouched; the variant is stored verbatim.
+    iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I',
   ) => boolean;
   cancelBuild: (buildOrderId: string) => void;
   /** Rename one of the player's ships. Trims + length-caps (1..32).
@@ -2079,7 +2081,9 @@ export function GameContextProvider({
     bodyId: string,
     shipClass: ShipClassName,
     name: string,
-    iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F',
+    // Type-only widening for the G/H/I icon expansion (MP feature) —
+    // SP behavior is untouched; the variant is stored verbatim.
+    iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I',
   ): boolean => {
     const classDef = SHIP_CLASSES[shipClass];
     if (!classDef) {

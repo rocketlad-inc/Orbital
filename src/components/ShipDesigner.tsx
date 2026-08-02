@@ -71,7 +71,7 @@ function serverTemplateToClient(t: ServerShipTemplate): ShipTemplate {
     try { parts = sanitizeParts(JSON.parse(t.parts_json)); } catch { /* bare hull */ }
   }
   let iv: ShipDesign['iconVariant'];
-  if (t.icon_variant && /^[A-F]$/.test(t.icon_variant)) {
+  if (t.icon_variant && /^[A-I]$/.test(t.icon_variant)) {
     iv = t.icon_variant as ShipDesign['iconVariant'];
   }
   return {
@@ -92,7 +92,7 @@ function serverDesignToClient(d: ServerShipDesign): ShipDesign {
     try { parts = sanitizeParts(JSON.parse(d.parts_json)); } catch { /* bare hull */ }
   }
   let iv: ShipDesign['iconVariant'];
-  if (d.icon_variant && /^[A-F]$/.test(d.icon_variant)) {
+  if (d.icon_variant && /^[A-I]$/.test(d.icon_variant)) {
     iv = d.icon_variant as ShipDesign['iconVariant'];
   }
   return {
@@ -782,7 +782,10 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
             {/* ---------- THE CANVAS: avatar + socket ring ---------- */}
             <div className={`sd-canvas ${dragging ? 'sd-canvas--dragging' : ''}`}>
               <div className="sd-canvas__avatar">
-                <ShipIcon shipClass={activeClass} variant={iconVariant} size={96} />
+                {/* Component avatar: the portrait physically grows the
+                    fitted hardware (barrel, emitter, plating, plume,
+                    shield bubble) — live, as parts land in sockets. */}
+                <ShipIcon shipClass={activeClass} variant={iconVariant} size={96} parts={draftParts} />
                 <div className="sd-canvas__hull-name">{SHIP_CLASSES[activeClass].displayName}</div>
               </div>
               {Array.from({ length: slots }).map((_, i) => {

@@ -528,7 +528,7 @@ async function handleQueueBuild(req, env, ctx) {
   // clients that don't post the field still work.
   let iconVariant = null;
   if (body.icon_variant !== undefined && body.icon_variant !== null) {
-    if (typeof body.icon_variant !== 'string' || !/^[A-F]$/.test(body.icon_variant)) {
+    if (typeof body.icon_variant !== 'string' || !/^[A-I]$/.test(body.icon_variant)) {
       return err(400, 'bad_request', 'invalid icon_variant');
     }
     iconVariant = body.icon_variant;
@@ -587,7 +587,7 @@ async function handleQueueBuild(req, env, ctx) {
   // Icon fallback chain: explicit BuildPanel pick > design's variant >
   // class default (NULL). The design variant went through the same
   // 'A'..'F' validation at design-save time.
-  if (iconVariant == null && activeDesign?.icon_variant && /^[A-F]$/.test(activeDesign.icon_variant)) {
+  if (iconVariant == null && activeDesign?.icon_variant && /^[A-I]$/.test(activeDesign.icon_variant)) {
     iconVariant = activeDesign.icon_variant;
   }
 
@@ -2645,7 +2645,7 @@ async function handleCreateDesign(req, env, ctx) {
   if (partsGate) return partsGate;
   let iconVariant = null;
   if (body.icon_variant != null) {
-    if (typeof body.icon_variant !== 'string' || !/^[A-F]$/.test(body.icon_variant)) {
+    if (typeof body.icon_variant !== 'string' || !/^[A-I]$/.test(body.icon_variant)) {
       return err(400, 'bad_request', 'invalid icon_variant');
     }
     iconVariant = body.icon_variant;
@@ -2733,7 +2733,7 @@ async function handlePatchDesign(req, env, ctx) {
   let iconVariant = row.icon_variant ?? null;
   if (body.icon_variant !== undefined) {
     if (body.icon_variant === null) iconVariant = null;
-    else if (typeof body.icon_variant === 'string' && /^[A-F]$/.test(body.icon_variant)) {
+    else if (typeof body.icon_variant === 'string' && /^[A-I]$/.test(body.icon_variant)) {
       iconVariant = body.icon_variant;
     } else {
       return err(400, 'bad_request', 'invalid icon_variant');

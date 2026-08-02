@@ -235,7 +235,7 @@ export interface Ship {
   /** Per-ship icon variant override picked at construction. Falls back
    *  to DEFAULT_SHIP_ICONS[class] when undefined. Values map 1:1 to
    *  ShipIconVariant ('A'..'F') in src/components/ShipIcons.tsx. */
-  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
+  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I';
   /** Ship-designer parts loadout (multiplayer only, migration 0033).
    *  Snapshot from the active design at queue time; undefined/empty =
    *  bare hull = legacy class-def stats. Part ids are ShipPartId
@@ -446,7 +446,7 @@ export interface BuildOrder {
   shipName: string;                     // name for the new ship
   /** Icon variant picked at build time. Copied to Ship.iconVariant
    *  when the build completes. Undefined falls back to the class default. */
-  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
+  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I';
   /** MP unlimited queue: 'building' = occupying a slot (progress bar),
    *  'waiting' = queued beyond concurrency, promoted FIFO server-side
    *  when a slot frees. Undefined (SP / legacy rows) means building. */
@@ -477,7 +477,7 @@ export interface ShipDesign {
   name: string;
   /** Part ids (ShipPartId in src/game/shipParts.ts). Empty = bare hull. */
   parts: string[];
-  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
+  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I';
   isActive: boolean;
   createdAtMs: number;
 }

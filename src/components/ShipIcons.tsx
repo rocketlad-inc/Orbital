@@ -7,10 +7,11 @@
 import React from 'react';
 import { lighten, darken } from '../render/colors';
 
-// A/B/C — the original three; D/E/F — new candidates added for player
-// selection (gallery at ?icons). The picker dropdown at ship construction
-// lets the player override the default per-build.
-export type ShipIconVariant = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
+// A/B/C — the original three; D/E/F — the first expansion; G/H/I — the
+// 2026-08 expansion (more icon options, DESIGN-fleet-economy follow-up).
+// The picker dropdown at ship construction lets the player override the
+// default per-build. Server validators accept /^[A-I]$/ — keep in sync.
+export type ShipIconVariant = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I';
 export type ShipIconClass = 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
 
 interface IconProps {
@@ -24,14 +25,104 @@ interface IconProps {
    *  absent color2 falls back to a single-color ship. */
   color2?: string;
   className?: string;
+  /** Component avatar (DESIGN-fleet-economy follow-up): fitted parts
+   *  render as PHYSICAL HARDWARE on the hull — a nose barrel that grows
+   *  per kinetic copy, a glowing energy emitter, armor plating strips,
+   *  longer engine plumes, a red detonator core, and a shield bubble
+   *  enclosing the ship (UX-juror adjudicated). Below 40px only the two
+   *  big-silhouette reads survive scaling (shield bubble + plume); the
+   *  greebles render at designer/panel scale. Undefined = plain hull. */
+  parts?: readonly string[];
 }
+
+/** Fixed semantic colors for part hardware — deliberately NOT faction
+ *  colors, so "what is this ship carrying" reads the same on every hull. */
+const HW = {
+  kinetic: '#c9d4de',
+  energy: '#7fd4ff',
+  shield: '#4ecdc4',
+  armor: '#8a94a0',
+  plume: '#ff9e4a',
+  detonator: '#ff5e5e',
+};
+
+const countOf = (parts: readonly string[], id: string) =>
+  parts.reduce((n, p) => n + (p === id ? 1 : 0), 0);
+
+/** Part hardware overlay. Icons share a geometry contract: face +x,
+ *  midline y=16, nose ≈x=29, engine bell ≈x=4 — anchors below lean on it. */
+const PartHardware: React.FC<{ parts: readonly string[]; size: number }> = ({ parts, size }) => {
+  const nKinetic = countOf(parts, 'kinetic');
+  const nEnergy = countOf(parts, 'energy');
+  const nShield = countOf(parts, 'shield');
+  const nArmor = countOf(parts, 'armor');
+  const nEngine = countOf(parts, 'engine');
+  const nDet = countOf(parts, 'detonator');
+  // Small sizes keep only the reads that survive scaling: is it tanky
+  // (bubble), is it fast (plume). Everything else is one click away.
+  const greebles = size >= 40;
+  return (
+    <g>
+      {nEngine > 0 && (
+        // Exhaust plume behind the bell — longer per booster.
+        <path
+          d={`M4.5 14.6 L${Math.max(0.5, 4 - 1.4 * nEngine)} 16 L4.5 17.4 Z`}
+          fill={HW.plume} fillOpacity={0.85} stroke="none"
+        />
+      )}
+      {greebles && nKinetic > 0 && (
+        // One nose barrel that grows longer + thicker per copy — the
+        // "I bolted on a bigger gun" read without hardpoint clutter.
+        <path
+          d={`M28 14.6 L${Math.min(31.5, 28.5 + 1.2 * nKinetic)} 14.6`}
+          stroke={HW.kinetic} strokeWidth={0.9 + 0.45 * nKinetic} strokeLinecap="round"
+        />
+      )}
+      {greebles && nEnergy > 0 && (
+        // Charged emitter under the nose — brighter halo per copy.
+        <>
+          <circle cx="27.5" cy="18" r={1.6 + 0.5 * nEnergy} fill={HW.energy} fillOpacity={0.22} stroke="none" />
+          <circle cx="27.5" cy="18" r={0.9 + 0.25 * nEnergy} fill={HW.energy} stroke="none" />
+        </>
+      )}
+      {greebles && nArmor > 0 && (
+        // Riveted plating strips along the dorsal + keel lines.
+        <g stroke={HW.armor} strokeWidth={1.6} strokeLinecap="round">
+          {Array.from({ length: Math.min(3, nArmor) }).map((_, i) => (
+            <React.Fragment key={i}>
+              <path d={`M${11 + i * 4.5} 11.2 L${13.5 + i * 4.5} 11.2`} />
+              <path d={`M${11 + i * 4.5} 20.8 L${13.5 + i * 4.5} 20.8`} />
+            </React.Fragment>
+          ))}
+        </g>
+      )}
+      {greebles && nDet > 0 && (
+        // The self-destruct core — unmistakably red, amidships.
+        <path
+          d="M14 14.4 L15.6 16 L14 17.6 L12.4 16 Z"
+          fill={HW.detonator} stroke="none"
+        />
+      )}
+      {nShield > 0 && (
+        // Shield bubble enclosing the whole hull — the tanky-at-a-glance
+        // read. Opacity + weight scale with the array count.
+        <ellipse
+          cx="16" cy="16" rx="14" ry="10.5"
+          fill="none" stroke={HW.shield}
+          strokeOpacity={Math.min(0.85, 0.3 + 0.18 * nShield)}
+          strokeWidth={0.8 + 0.25 * nShield}
+        />
+      )}
+    </g>
+  );
+};
 
 // Monotonic id counter so every rendered icon gets unique def ids
 // (clipPaths / gradients). SVGs rendered into the DOM share one id
 // namespace per document; a raw fixed id would cross-wire icons.
 let svgUid = 0;
 
-const SVG = ({ size = 24, color, color2, className, children }: IconProps & { children: React.ReactNode }) => {
+const SVG = ({ size = 24, color, color2, className, parts, children }: IconProps & { children: React.ReactNode }) => {
   // Convention across every icon: the FIRST child is the hull, the rest
   // are detail accents. The hull gets the full shaded treatment (solid
   // primary fill + keel shade + dorsal highlight + baked engine glow);
@@ -132,6 +223,9 @@ const SVG = ({ size = 24, color, color2, className, children }: IconProps & { ch
           fill={`url(#${glowId})`} stroke="none" opacity={0.32}
         />
       )}
+      {/* Component avatar: fitted parts as physical hardware, drawn over
+          everything so the loadout reads at a glance. */}
+      {parts && parts.length > 0 && <PartHardware parts={parts} size={size} />}
     </svg>
   );
 };
@@ -519,6 +613,181 @@ export const FreighterF: React.FC<IconProps> = (p) => (
   </SVG>
 );
 
+// ============================================================
+// G / H / I — the 2026-08 expansion (player ask: more icon options).
+// Same house rules: hull is the FIRST child, details after; face +x,
+// midline y=16, bell ≈x=4, nose ≈x=29.
+// ============================================================
+
+// ===== CORVETTE G/H/I =====
+
+/** Corvette G — VIPER: twin-boom raider with a central pod */
+export const CorvetteG: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    {/* Central pod hull */}
+    <path d="M6 13 L20 13 L29 16 L20 19 L6 19 L3 16 Z" />
+    {/* Twin booms above/below */}
+    <path d="M8 13 L8 9 L18 9" />
+    <path d="M8 19 L8 23 L18 23" />
+    {/* Cockpit dot */}
+    <circle cx="23" cy="16" r="1.1" fill="currentColor" stroke="none" />
+  </SVG>
+);
+
+/** Corvette H — SCYTHE: curved blade profile */
+export const CorvetteH: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    {/* Curved blade hull */}
+    <path d="M4 19 Q13 8 30 14 L26 18 Q14 13 7 21 Z" />
+    {/* Tail fin */}
+    <path d="M5 20 L2 25 L8 22" />
+    {/* Edge glint dot */}
+    <circle cx="24" cy="15.5" r="1" fill="currentColor" stroke="none" />
+  </SVG>
+);
+
+/** Corvette I — WASP: pinched waist with a stinger nose */
+export const CorvetteI: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    {/* Two-lobe body */}
+    <path d="M4 14 L10 13 L13 15 L22 13 L29 16 L22 19 L13 17 L10 19 L4 18 Z" />
+    {/* Stinger */}
+    <path d="M29 16 L32 16" />
+    {/* Swept wing pair at the waist */}
+    <path d="M12 14 L9 9 L15 13" />
+    <path d="M12 18 L9 23 L15 19" />
+  </SVG>
+);
+
+// ===== FRIGATE G/H/I =====
+
+/** Frigate G — TRIDENT: triple-prong prow */
+export const FrigateG: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    {/* Body */}
+    <path d="M4 13 L18 13 L24 16 L18 19 L4 19 Z" />
+    {/* Three prongs */}
+    <path d="M22 13 L30 12" />
+    <path d="M24 16 L32 16" />
+    <path d="M22 19 L30 20" />
+    {/* Bridge dome */}
+    <circle cx="12" cy="16" r="1.6" />
+  </SVG>
+);
+
+/** Frigate H — MANTA: wide ray silhouette */
+export const FrigateH: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    {/* Ray body */}
+    <path d="M5 16 Q12 6 29 16 Q12 26 5 16 Z" />
+    {/* Tail */}
+    <path d="M5 16 L1 16" />
+    {/* Eye dots */}
+    <circle cx="24" cy="14.5" r="0.9" fill="currentColor" stroke="none" />
+    <circle cx="24" cy="17.5" r="0.9" fill="currentColor" stroke="none" />
+  </SVG>
+);
+
+/** Frigate I — LANCE: spear hull behind a shield boss */
+export const FrigateI: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    {/* Spear hull */}
+    <path d="M4 14 L22 14 L31 16 L22 18 L4 18 Z" />
+    {/* Shield boss amidships */}
+    <circle cx="12" cy="16" r="3.2" />
+    {/* Aft fins */}
+    <path d="M6 14 L4 10 L9 13" />
+    <path d="M6 18 L4 22 L9 19" />
+  </SVG>
+);
+
+// ===== DESTROYER G/H/I =====
+
+/** Destroyer G — CITADEL: fortress hull with twin towers */
+export const DestroyerG: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    {/* Fortress hull */}
+    <rect x="4" y="11" width="22" height="10" rx="1" />
+    {/* Twin towers */}
+    <path d="M8 11 L8 7 L12 7 L12 11" />
+    <path d="M18 11 L18 7 L22 7 L22 11" />
+    {/* Ram prow */}
+    <path d="M26 12 L31 16 L26 20" />
+    {/* Keel battery */}
+    <path d="M10 21 L10 24 M15 21 L15 24 M20 21 L20 24" />
+  </SVG>
+);
+
+/** Destroyer H — HAMMER: hammerhead prow on a long haft */
+export const DestroyerH: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    {/* Haft + head as one silhouette */}
+    <path d="M3 14 L21 14 L21 10 L27 10 L27 22 L21 22 L21 18 L3 18 Z" />
+    {/* Head face plate */}
+    <path d="M27 12 L30 12 M27 20 L30 20" />
+    {/* Aft engine block */}
+    <path d="M3 15 L1 15 L1 17 L3 17" />
+    {/* Hull blisters */}
+    <circle cx="9" cy="16" r="1" />
+    <circle cx="15" cy="16" r="1" />
+  </SVG>
+);
+
+/** Destroyer I — LEVIATHAN: segmented long hull with dorsal spines */
+export const DestroyerI: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    {/* Long segmented hull */}
+    <path d="M3 13 L28 13 L31 16 L28 19 L3 19 Z" />
+    {/* Segment joints */}
+    <path d="M9 13 L9 19 M15 13 L15 19 M21 13 L21 19" />
+    {/* Dorsal spines */}
+    <path d="M11 13 L12 9 L13 13" />
+    <path d="M17 13 L18 9 L19 13" />
+    {/* Aft thruster */}
+    <path d="M3 14 L1 16 L3 18" />
+  </SVG>
+);
+
+// ===== FREIGHTER G/H/I =====
+
+/** Freighter G — CLIPPER: sleek fast hauler with a window strip */
+export const FreighterG: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    {/* Sleek hull */}
+    <path d="M4 14 L24 12 L30 16 L24 20 L4 18 Z" />
+    {/* Cargo window strip */}
+    <rect x="9" y="14.5" width="10" height="3" rx="1" />
+    {/* Aft engines */}
+    <path d="M4 15 L1 15 M4 17 L1 17" />
+  </SVG>
+);
+
+/** Freighter H — GANTRY: crane frame carrying a slung container */
+export const FreighterH: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    {/* Slab hull */}
+    <rect x="4" y="14" width="21" height="5" rx="1" />
+    {/* Gantry frame */}
+    <path d="M7 14 L7 8 L22 8 L22 14" />
+    {/* Slung container */}
+    <rect x="11" y="9.5" width="6" height="4" />
+    {/* Forward cab */}
+    <path d="M25 14 L28 14 L30 16.5 L28 19 L25 19" />
+  </SVG>
+);
+
+/** Freighter I — HIVE: hex-cell cluster hauler */
+export const FreighterI: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    {/* Hex cluster hull */}
+    <path d="M6 12 L14 10 L22 12 L25 16 L22 20 L14 22 L6 20 L4 16 Z" />
+    {/* Cell walls */}
+    <path d="M10 12 L10 20 M15 10.5 L15 21.5 M20 12 L20 20" />
+    {/* Nose pod */}
+    <path d="M25 14 L29 16 L25 18" />
+  </SVG>
+);
+
 // ===== COLONY SHIP — consumable settler transport =====
 
 /** Colony A — ARK: rounded hull with a habitat dome. One silhouette
@@ -545,25 +814,25 @@ export const ColonyA: React.FC<IconProps> = (p) => (
 // ============================================================
 
 const REGISTRY: Record<ShipIconClass, Record<ShipIconVariant, React.FC<IconProps>>> = {
-  corvette:  { A: CorvetteA,  B: CorvetteB,  C: CorvetteC,  D: CorvetteD,  E: CorvetteE,  F: CorvetteF  },
-  frigate:   { A: FrigateA,   B: FrigateB,   C: FrigateC,   D: FrigateD,   E: FrigateE,   F: FrigateF   },
-  destroyer: { A: DestroyerA, B: DestroyerB, C: DestroyerC, D: DestroyerD, E: DestroyerE, F: DestroyerF },
-  freighter: { A: FreighterA, B: FreighterB, C: FreighterC, D: FreighterD, E: FreighterE, F: FreighterF },
-  colony:    { A: ColonyA,    B: ColonyA,    C: ColonyA,    D: ColonyA,    E: ColonyA,    F: ColonyA    },
+  corvette:  { A: CorvetteA,  B: CorvetteB,  C: CorvetteC,  D: CorvetteD,  E: CorvetteE,  F: CorvetteF,  G: CorvetteG,  H: CorvetteH,  I: CorvetteI  },
+  frigate:   { A: FrigateA,   B: FrigateB,   C: FrigateC,   D: FrigateD,   E: FrigateE,   F: FrigateF,   G: FrigateG,   H: FrigateH,   I: FrigateI   },
+  destroyer: { A: DestroyerA, B: DestroyerB, C: DestroyerC, D: DestroyerD, E: DestroyerE, F: DestroyerF, G: DestroyerG, H: DestroyerH, I: DestroyerI },
+  freighter: { A: FreighterA, B: FreighterB, C: FreighterC, D: FreighterD, E: FreighterE, F: FreighterF, G: FreighterG, H: FreighterH, I: FreighterI },
+  colony:    { A: ColonyA,    B: ColonyA,    C: ColonyA,    D: ColonyA,    E: ColonyA,    F: ColonyA,    G: ColonyA,    H: ColonyA,    I: ColonyA    },
 };
 
 /** Human-readable names for each variant, surfaced in the picker
  *  dropdown and the ?icons gallery. */
 export const ICON_VARIANT_NAMES: Record<ShipIconClass, Record<ShipIconVariant, string>> = {
-  corvette:  { A: 'Dart',      B: 'Delta',     C: 'Gunship',     D: 'Needle',     E: 'Dart-Fin',   F: 'Raptor'   },
-  frigate:   { A: 'Cruciform', B: 'Diamond',   C: 'Triple-Turret', D: 'Starship', E: 'Hawk',       F: 'Carrier'  },
-  destroyer: { A: 'Hexagon',   B: 'Wedge',     C: 'Capital',     D: 'Dreadnought', E: 'Railgun',   F: 'Broadside' },
-  freighter: { A: 'Containers', B: 'Tug',      C: 'Bulk',        D: 'Tanker',     E: 'Ring',       F: 'Barge'    },
-  colony:    { A: 'Ark',       B: 'Ark',       C: 'Ark',         D: 'Ark',        E: 'Ark',        F: 'Ark'      },
+  corvette:  { A: 'Dart',      B: 'Delta',     C: 'Gunship',     D: 'Needle',     E: 'Dart-Fin',   F: 'Raptor',   G: 'Viper',    H: 'Scythe',    I: 'Wasp'      },
+  frigate:   { A: 'Cruciform', B: 'Diamond',   C: 'Triple-Turret', D: 'Starship', E: 'Hawk',       F: 'Carrier',  G: 'Trident',  H: 'Manta',     I: 'Lance'     },
+  destroyer: { A: 'Hexagon',   B: 'Wedge',     C: 'Capital',     D: 'Dreadnought', E: 'Railgun',   F: 'Broadside', G: 'Citadel', H: 'Hammer',    I: 'Leviathan' },
+  freighter: { A: 'Containers', B: 'Tug',      C: 'Bulk',        D: 'Tanker',     E: 'Ring',       F: 'Barge',    G: 'Clipper',  H: 'Gantry',    I: 'Hive'      },
+  colony:    { A: 'Ark',       B: 'Ark',       C: 'Ark',         D: 'Ark',        E: 'Ark',        F: 'Ark',      G: 'Ark',      H: 'Ark',       I: 'Ark'       },
 };
 
 /** Every variant id, ordered for the gallery + picker. */
-export const ALL_VARIANTS: ShipIconVariant[] = ['A', 'B', 'C', 'D', 'E', 'F'];
+export const ALL_VARIANTS: ShipIconVariant[] = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'];
 
 /** Player-chosen default icon variant per class. */
 export const DEFAULT_SHIP_ICONS: Record<ShipIconClass, ShipIconVariant> = {

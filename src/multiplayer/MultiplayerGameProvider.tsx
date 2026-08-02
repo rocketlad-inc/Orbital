@@ -489,7 +489,7 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
   // a malformed row (e.g. lowercase or garbage) falls back to undefined
   // (= class default at render time) instead of poisoning the type.
   let iconVariant: Ship['iconVariant'] = undefined;
-  if (s.icon_variant && /^[A-F]$/.test(s.icon_variant)) {
+  if (s.icon_variant && /^[A-I]$/.test(s.icon_variant)) {
     iconVariant = s.icon_variant as Ship['iconVariant'];
   }
   // Designer parts loadout. Defensive parse + sanitize so a malformed
@@ -1449,9 +1449,9 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   const buildOrders = (srv.build_queue ?? []).map(b => {
     // Narrow the icon variant defensively so a malformed/legacy row
     // becomes "use class default" instead of poisoning the type.
-    let iv: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | undefined;
-    if (b.icon_variant && /^[A-F]$/.test(b.icon_variant)) {
-      iv = b.icon_variant as 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
+    let iv: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | undefined;
+    if (b.icon_variant && /^[A-I]$/.test(b.icon_variant)) {
+      iv = b.icon_variant as 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I';
     }
     // Defensive-parse the parts snapshot: a malformed blob degrades to
     // bare hull rather than throwing out the whole build order.
@@ -1513,7 +1513,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       try { parts = sanitizeParts(JSON.parse(d.parts_json)); } catch { /* bare hull */ }
     }
     let iv: ShipDesign['iconVariant'];
-    if (d.icon_variant && /^[A-F]$/.test(d.icon_variant)) {
+    if (d.icon_variant && /^[A-I]$/.test(d.icon_variant)) {
       iv = d.icon_variant as ShipDesign['iconVariant'];
     }
     return {
