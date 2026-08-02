@@ -558,7 +558,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           destructionFlashesRef.current.set(id, { pos: drawnPos, startMs: nowMs, baseRadius: 12, id });
           // Leave a wreck at the kill site — the battle scars the map
           // for a few minutes instead of vanishing with the flash.
-          spawnWreck(id, drawnPos, 12, nowMs);
+          spawnWreck(id, drawnPos, 12, nowMs, nowTick);
         }
       }
     }

@@ -921,7 +921,11 @@ export function drawBattleDamageStates(
 // front on the map reads at half a zoom level out) plus a thin field of
 // drifting debris motes while the shooting lasts.
 
-const WRECK_LIFE_MS = 360000;
+/** Wreck lifetime in GAME TICKS (per Lorne: a kill site persists for
+ *  two full ticks — hours of wall clock on a live game, so the scar of
+ *  a battle is still there when you check back in). Wall clock still
+ *  drives the cosmetic tumble/drift; the tick clock owns expiry. */
+const WRECK_LIFE_TICKS = 2;
 const WRECK_CAP = 48;
 
 interface Wreck {
@@ -930,7 +934,8 @@ interface Wreck {
   y: number;
   driftAng: number;
   size: number;    // canvas px base
-  startMs: number;
+  startMs: number;   // wall clock — cosmetic tumble/drift phase
+  startTick: number; // game clock — expiry
 }
 
 const wrecks: Wreck[] = [];
@@ -944,6 +949,7 @@ export function spawnWreck(
   worldPos: { x: number; y: number },
   baseRadius: number,
   nowMs: number,
+  nowTick: number,
 ): void {
   const w: Wreck = {
     id: shipId,
@@ -952,6 +958,7 @@ export function spawnWreck(
     driftAng: ((idHash(shipId) % 1000) / 1000) * Math.PI * 2,
     size: Math.max(4, baseRadius * 0.55),
     startMs: nowMs,
+    startTick: nowTick,
   };
   if (wrecks.length < WRECK_CAP) wrecks.push(w);
   else wrecks[wreckWriteIdx] = w;
@@ -964,11 +971,14 @@ export function drawWrecks(rc: RenderContext, nowMs: number): void {
   if (wrecks.length === 0) return;
   const c = rc.ctx;
   for (const w of wrecks) {
+    // Expiry on the GAME clock (rc.t is the fractional display tick).
+    const tickAge = rc.t - w.startTick;
+    if (tickAge < 0 || tickAge >= WRECK_LIFE_TICKS) continue;
+    const k = Math.max(0, Math.min(1, tickAge / WRECK_LIFE_TICKS));
     const age = nowMs - w.startMs;
-    if (age < 0 || age >= WRECK_LIFE_MS) continue;
-    const k = age / WRECK_LIFE_MS;
-    // Slow world-space drift away from the kill point.
-    const drift = (age / 1000) * 0.05;
+    // Slow world-space drift away from the kill point — capped so a
+    // two-hour-old wreck hasn't wandered out of the battlefield.
+    const drift = Math.min(6, (age / 1000) * 0.05);
     const wx = w.x + Math.cos(w.driftAng) * drift;
     const wy = w.y + Math.sin(w.driftAng) * drift;
     const cp = worldToCanvas(wx, wy, rc);
