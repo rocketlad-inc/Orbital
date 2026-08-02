@@ -33,10 +33,14 @@ Every active hull bills its owner **every tick**.
 | Class | Credits | Metal |
 |---|---|---|
 | Corvette | 0.25 | 0 |
-| Frigate | 1 | 1 |
-| Destroyer | 2 | 2 |
+| Frigate | 0.5 | 0.5 |
+| Destroyer | 1 | 1 |
 | Freighter | 1 | 0 |
 | Colony | 0 | 0 |
+
+*(2026-08-02 rebalance: frigate was 1/1 and destroyer 2/2 at launch;
+halved after the first live playtest — the warship bill outran the
+early-game economy. The carry columns handle the new fractions.)*
 
 Colony ships are exempt: they're consumable one-shots, and charging rent
 on an expansion hull punishes the slowest strategy in the game.

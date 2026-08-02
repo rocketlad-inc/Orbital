@@ -1003,8 +1003,8 @@ async function handleGetState(req, env, ctx) {
   try {
     const UPKEEP = {
       corvette:  { gold: 0.25, metal: 0 },
-      frigate:   { gold: 1,    metal: 1 },
-      destroyer: { gold: 2,    metal: 2 },
+      frigate:   { gold: 0.5,  metal: 0.5 },
+      destroyer: { gold: 1,    metal: 1 },
       freighter: { gold: 1,    metal: 0 },
       colony:    { gold: 0,    metal: 0 },
     };

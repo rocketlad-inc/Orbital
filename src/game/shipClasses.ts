@@ -171,8 +171,8 @@ export const BUILDABLE_CLASSES: ShipClassName[] = ['corvette', 'frigate', 'destr
  */
 export const SHIP_UPKEEP: Record<ShipClassName, { credits: number; ore: number }> = {
   corvette:  { credits: 0.25, ore: 0 },
-  frigate:   { credits: 1,    ore: 1 },
-  destroyer: { credits: 2,    ore: 2 },
+  frigate:   { credits: 0.5,  ore: 0.5 },
+  destroyer: { credits: 1,    ore: 1 },
   freighter: { credits: 1,    ore: 0 },
   colony:    { credits: 0,    ore: 0 },
 };

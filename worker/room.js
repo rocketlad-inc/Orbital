@@ -3092,10 +3092,12 @@ export class Room {
     try {
       const upkeepMult = Number(senateSliders.fleet_upkeep_multiplier ?? 1);
       // KEEP IN SYNC with SHIP_UPKEEP in src/game/shipClasses.ts.
+      // 2026-08-02 rebalance: frigate 1/1 → 0.5/0.5, destroyer 2/2 → 1/1
+      // (first playtest read the original bill as too steep).
       const UPKEEP = {
         corvette:  { gold: 0.25, metal: 0 },
-        frigate:   { gold: 1,    metal: 1 },
-        destroyer: { gold: 2,    metal: 2 },
+        frigate:   { gold: 0.5,  metal: 0.5 },
+        destroyer: { gold: 1,    metal: 1 },
         freighter: { gold: 1,    metal: 0 },
         colony:    { gold: 0,    metal: 0 },
       };
