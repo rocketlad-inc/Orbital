@@ -2097,6 +2097,25 @@ async function handleInitiateDyson(req, env, ctx) {
     )
     .run();
 
+  // Chronicle the initiation — laying a Dyson foundation is a
+  // declaration of intent to WIN and everyone deserves to hear it.
+  // The herald/digest treats dyson kinds as headline news.
+  try {
+    const fac = await env.DB
+      .prepare('SELECT name FROM game_factions WHERE id = ?')
+      .bind(me.id).first();
+    await env.DB
+      .prepare(
+        `INSERT INTO chronicle_entries
+          (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+         VALUES (?, ?, ?, 'dyson_initiated', ?, ?, ?, 'public', ?)`,
+      )
+      .bind(`c_dyi_${gameId}_${tick}`, gameId, tick, me.id, `${gameId}:sol`,
+            JSON.stringify({ faction_name: fac?.name ?? null, target_total: DYSON_MAX_HP }),
+            Date.now())
+      .run();
+  } catch (e) { console.error('dyson_initiated chronicle insert failed', e); }
+
   return json({
     ok: true,
     dyson: {

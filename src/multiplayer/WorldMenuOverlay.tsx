@@ -625,6 +625,10 @@ export const WorldMenuOverlay: React.FC = () => {
             </button>
           );
         })()}
+        {/* Dyson Sphere (Sol only) — the engineering-victory megaproject
+            had NO surface in the default world-menu UI; the initiate/
+            progress panel lived only in the legacy BodyInspector. */}
+        {body.id === 'sol' && <WmDysonCard />}
         {mobile && (
           <button className="wm-more" onClick={() => setCollapsed(c => !c)}>
             {collapsed ? '▾ More' : '▴ Less'}
@@ -997,6 +1001,112 @@ const WmFleet: React.FC<{
         </button>
       </div>
     </section>
+  );
+};
+
+// ============================================================
+// WmDysonCard — the Dyson Sphere's home in the DEFAULT UI.
+//
+// The entire megaproject experience (see the foundation slot, lay it,
+// watch the bar fill) previously existed only in the legacy
+// BodyInspector, which the world menu replaced as the default — so a
+// player on the standard UI had no way to discover or track the
+// engineering victory at all. This card renders inside the Sol top
+// panel:
+//   no sphere  → initiate buttons per owned Sol station (research-
+//                gated on Construction 6, lock reason surfaced)
+//   sphere     → progress bar + controller + the supply-line readout:
+//                how many of YOUR freighters are parked at Sol pumping
+//                (delivery = per-freighter drain of the faction POOL;
+//                collectors and trade routes keep the pool filled).
+// ============================================================
+const DYSON_PUMP = { ore: 10, credits: 10, science: 5 };
+
+const WmDysonCard: React.FC = () => {
+  const { gameState } = useGameContext();
+  const mpActions = useMultiplayerActions();
+  const gate = useFeatureGate();
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const dyson = gameState.dysonSphere;
+
+  if (dyson) {
+    const isMine = dyson.controllerFactionId === 'player';
+    const controller = gameState.factions.find(f => f.id === dyson.controllerFactionId);
+    const pct = dyson.maxHp > 0 ? (dyson.hp / dyson.maxHp) * 100 : 0;
+    const pumps = gameState.ships.filter(s =>
+      s.ownedBy === 'player' && s.class === 'freighter' && !s.transit
+      && s.orbit.parentBodyId === 'sol').length;
+    return (
+      <div className="wm-dyson" data-testid="wm-dyson">
+        <div className="wm-dyson-head">
+          <span className="wm-dyson-title">☀ DYSON SPHERE</span>
+          <span className="wm-dyson-owner" style={{ color: isMine ? '#6ee7b7' : '#ff8a4d' }}>
+            {isMine ? '★ YOUR PROJECT' : `RIVAL: ${(controller?.name ?? '?').toUpperCase()}`}
+          </span>
+        </div>
+        <div className="wm-dyson-bar">
+          <i style={{ width: `${Math.min(100, pct)}%` }} />
+        </div>
+        <div className="wm-dyson-meta">
+          {Math.round(dyson.hp).toLocaleString()} / {dyson.maxHp.toLocaleString()} · {pct.toFixed(1)}%
+        </div>
+        {isMine && (
+          <div className="wm-dyson-supply" title={`Each of your freighters parked at Sol delivers ${DYSON_PUMP.ore} metal + ${DYSON_PUMP.credits} credits + ${DYSON_PUMP.science} science per tick from your resource POOL into the sphere. Collectors and trade routes keep the pool filled — the freighters here are the pump.`}>
+            {pumps > 0
+              ? <>□ {pumps} freighter{pumps === 1 ? '' : 's'} pumping ≈{pumps * DYSON_PUMP.ore}M {pumps * DYSON_PUMP.credits}C {pumps * DYSON_PUMP.science}S /t from your pool</>
+              : <span style={{ color: '#ffb84d' }}>⚠ No freighters at Sol — construction is stalled. Park freighters here to pump your pool into the sphere.</span>}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // No sphere yet — the slot is open. Show initiate affordances.
+  const myStations = gameState.settlements.filter(s =>
+    s.ownedBy === 'player' && s.type === 'station' && s.bodyId === 'sol');
+  const lock = gate.lockReason('dyson');
+  return (
+    <div className="wm-dyson" data-testid="wm-dyson">
+      <div className="wm-dyson-head">
+        <span className="wm-dyson-title">☀ DYSON SPHERE · slot open</span>
+      </div>
+      <div className="wm-dyson-meta">
+        Lay the foundation at a Sol station, then park freighters here to
+        deliver 15K metal · 15K credits · 10K science. Completion wins the
+        match. Destroying the foundation destroys ALL progress.
+      </div>
+      {lock ? (
+        <div className="wm-dyson-meta" style={{ color: '#8aa0b4' }}>🔒 {lock.label} — {lock.text}</div>
+      ) : myStations.length === 0 ? (
+        <div className="wm-dyson-meta" style={{ color: '#ffb84d' }}>
+          Deploy a station in Sol orbit first to host the foundation.
+        </div>
+      ) : (
+        myStations.map(s => (
+          <button
+            key={s.id}
+            className="wm-dyson-initiate"
+            disabled={busy}
+            onClick={() => {
+              if (!mpActions) return;
+              setBusy(true);
+              setErr(null);
+              mpActions.initiateDysonSphere(s.id).then(res => {
+                setBusy(false);
+                if (!res.ok) setErr(humanizeMpError(res.code, res.error ?? 'Initiate rejected.', 'build'));
+              });
+            }}
+            title={`Lay the Dyson Sphere foundation on ${s.name}. One per game — losing the station collapses the whole project.`}
+          >◆ INITIATE AT {s.name.toUpperCase()}</button>
+        ))
+      )}
+      {err && (
+        <button className="wm-dyson-err" onClick={() => setErr(null)} title="Click to dismiss">
+          ⚠ {err}
+        </button>
+      )}
+    </div>
   );
 };
 

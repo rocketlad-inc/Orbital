@@ -4838,9 +4838,32 @@ export class Room {
       .bind(foundationId, gameId)
       .first();
 
+    // Chronicle helper — dyson events are HEADLINE news (a wonder being
+    // built, bombed, or broken is the biggest story a tick can carry),
+    // so every one is public and carries the controller's name for the
+    // herald. Failures never abort the tick.
+    const dysonChronicle = async (kind, idFrag, payload) => {
+      try {
+        const fac = await this.env.DB
+          .prepare('SELECT name FROM game_factions WHERE id = ?')
+          .bind(ctrl).first();
+        await this.env.DB
+          .prepare(
+            `INSERT OR IGNORE INTO chronicle_entries
+              (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'public', ?)`,
+          )
+          .bind(`c_${idFrag}_${gameId}_${tick}`, gameId, tick, kind, ctrl, `${gameId}:sol`,
+                JSON.stringify({ faction_name: fac?.name ?? null, ...payload }),
+                Date.now())
+          .run();
+      } catch (e) { console.error(`${kind} chronicle insert failed`, e); }
+    };
+
     let collapse = false;
     let collapseReason = '';
     let stationHpForNextTick = null;
+    let damageTaken = 0;
     if (!station || station.destroyed_at_tick != null) {
       collapse = true;
       collapseReason = 'foundation destroyed';
@@ -4854,6 +4877,7 @@ export class Room {
       const prevHp = game.dyson_station_last_hp;
       if (prevHp != null && station.hp < prevHp) {
         const dmg = prevHp - station.hp;
+        damageTaken = dmg;
         const oldHp = acc.fuel + acc.ore + acc.credits + acc.science;
         const newHp = oldHp - dmg;
         if (newHp <= 0) {
@@ -4871,9 +4895,29 @@ export class Room {
         }
       }
       hp = acc.fuel + acc.ore + acc.credits + acc.science;
+      // The sphere took fire and survived — chronicle it as a BATTLE
+      // beat (the herald ranks dyson damage as front-page combat). One
+      // entry per tick at most; the id embeds the tick for dedup.
+      if (damageTaken > 0 && !collapse) {
+        await dysonChronicle('dyson_damaged', 'dyd', {
+          damage: Math.round(damageTaken),
+          progress_lost: Math.round(damageTaken),
+          hp: Math.round(hp),
+          max_hp: Math.round(maxHp),
+          pct: maxHp > 0 ? Math.round((hp / maxHp) * 100) : 0,
+        });
+      }
     }
 
     if (collapse) {
+      // Persist the fall of the wonder BEFORE wiping the columns — the
+      // websocket broadcast below is transient; this is the record.
+      const lostProgress = acc.fuel + acc.ore + acc.credits + acc.science;
+      await dysonChronicle('dyson_collapsed', 'dyc', {
+        reason: collapseReason,
+        progress_lost: Math.round(lostProgress + damageTaken),
+        max_hp: Math.round(maxHp),
+      });
       await this.env.DB
         .prepare(
           `UPDATE games SET
@@ -4961,11 +5005,30 @@ export class Room {
       return;
     }
 
+    const hpBefore = hp;
     acc.fuel    += move.fuel;
     acc.ore     += move.ore;
     acc.credits += move.credits;
     acc.science += move.science;
     hp = Math.min(maxHp, acc.fuel + acc.ore + acc.credits + acc.science);
+
+    // Construction milestones — one public beat per quarter crossed
+    // (25/50/75%). Completion itself is the 'victory' chronicle from
+    // checkVictory, so 100% isn't duplicated here. If damage knocks
+    // progress back below a line, re-crossing it re-announces — that's
+    // the drama working as intended (tick-scoped ids keep it deduped).
+    if (maxHp > 0) {
+      for (const pct of [25, 50, 75]) {
+        const line = (maxHp * pct) / 100;
+        if (hpBefore < line && hp >= line) {
+          await dysonChronicle('dyson_milestone', `dym${pct}`, {
+            pct,
+            hp: Math.round(hp),
+            max_hp: Math.round(maxHp),
+          });
+        }
+      }
+    }
 
     await this.env.DB.batch([
       this.env.DB

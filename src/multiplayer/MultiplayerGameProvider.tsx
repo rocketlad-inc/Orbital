@@ -736,6 +736,8 @@ function classifyChronicleEvent(kind: string): { category: LogCategory; level: L
     case 'captain_lost':
     case 'captain_rescued':
     case 'trade_shipment_lost':
+    case 'dyson_damaged':      // attacks on the wonder are combat —
+    case 'dyson_collapsed':    // the biggest combat there is
       return { category: 'COMBAT', level: 'INFO' };
     case 'asteroid_launched':
     case 'treaty_broken':
@@ -1157,6 +1159,33 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         const owner = nameOfFaction(ev.actor_faction_id, parsed.owner_faction_name as string | undefined);
         const label = name ? `${cls} ${name}` : cls;
         return `${t}  ${owner}'s yard at ${where} launched a ${label}`;
+      }
+
+      // --------- Dyson Sphere (megaproject) events ---------
+      // EventLog's icon classifier keys on the 'dyson' substring, so
+      // every line here says the word and gets the ☀ Megaproject tag.
+      if (ev.kind === 'dyson_initiated') {
+        const owner = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
+        return `${t}  ☀ ${owner} laid the foundation of a DYSON SPHERE at Sol — the engineering victory clock is running`;
+      }
+      if (ev.kind === 'dyson_milestone') {
+        const owner = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
+        const pct = (parsed.pct as number) ?? 0;
+        return `${t}  ☀ ${owner}'s Dyson Sphere reached ${pct}% completion`;
+      }
+      if (ev.kind === 'dyson_damaged') {
+        const owner = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
+        const dmg = (parsed.damage as number) ?? 0;
+        const pct = (parsed.pct as number) ?? 0;
+        return `${t}  💥 The Dyson Sphere took fire at Sol — ${dmg} construction destroyed, ${owner}'s great work holds at ${pct}%`;
+      }
+      if (ev.kind === 'dyson_collapsed') {
+        const owner = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
+        const lost = (parsed.progress_lost as number) ?? 0;
+        const reason = parsed.reason === 'foundation destroyed'
+          ? 'its foundation station was destroyed'
+          : 'sustained bombardment broke the lattice';
+        return `${t}  💥 THE DYSON SPHERE HAS FALLEN — ${reason}; ${lost} units of ${owner}'s progress erased. The Sol slot stands open.`;
       }
 
       if (ev.kind === 'ship_rush_botched') {

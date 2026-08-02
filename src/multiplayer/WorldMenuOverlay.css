@@ -336,3 +336,69 @@
 }
 .wm-mobile .wm-fleet-queue { flex: 0 0 auto; }
 .wm-mobile .wm-fleet-grid { grid-template-columns: 1fr 1fr; }
+
+/* ===== Dyson Sphere card (Sol top panel) ===== */
+.wm-dyson {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 184, 77, 0.45);
+  border-radius: 8px;
+  background: rgba(60, 44, 12, 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  text-align: left;
+}
+.wm-dyson-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.wm-dyson-title {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: #ffb84d;
+}
+.wm-dyson-owner { font-size: 9px; font-weight: 700; letter-spacing: 0.08em; }
+.wm-dyson-bar {
+  height: 8px;
+  background: rgba(42, 61, 80, 0.6);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.wm-dyson-bar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #ffb84d, #ffd180);
+  transition: width 0.3s ease;
+}
+.wm-dyson-meta { font-size: 10px; color: #a8b8c8; line-height: 1.45; }
+.wm-dyson-supply { font-size: 10px; color: #9fdcff; line-height: 1.45; }
+.wm-dyson-initiate {
+  padding: 7px 10px;
+  background: rgba(255, 184, 77, 0.08);
+  color: #ffb84d;
+  border: 1px solid #ffb84d;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+.wm-dyson-initiate:hover:not(:disabled) { background: rgba(255, 184, 77, 0.18); }
+.wm-dyson-initiate:disabled { opacity: 0.5; cursor: not-allowed; }
+.wm-dyson-err {
+  padding: 6px 10px;
+  background: rgba(255, 94, 94, 0.1);
+  border: 1px solid #ff5e5e;
+  border-radius: 4px;
+  color: #ff5e5e;
+  font-size: 10px;
+  line-height: 1.4;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}

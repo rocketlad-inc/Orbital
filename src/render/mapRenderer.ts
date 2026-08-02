@@ -64,6 +64,10 @@ export interface RenderContext {
    *  building levels from them. Optional: only the main MapCanvas
    *  passes it, other callers (lobby preview) skip the extras. */
   settlements?: Settlement[];
+  /** Dyson Sphere megaproject state — drives the construction lattice
+   *  drawn around Sol (progress 0..1) and the completed sun-cage. Only
+   *  the main MapCanvas passes it; absent = no sphere this match. */
+  dysonSphere?: { progress: number; complete: boolean };
   /** In-flight ship builds — lets the station shipyard scaffold show
    *  a hull under construction at focus zoom. Optional. */
   buildOrders?: BuildOrder[];
@@ -1616,6 +1620,88 @@ export function planBodyLabels(
  * Draw a celestial body (circle with label) — enhanced with shading, glow,
  * gas giant bands, and a multi-layer sun corona.
  */
+/**
+ * Dyson Sphere construction lattice around Sol.
+ *
+ * A ring of arc segments caging the star: lit segments = real progress
+ * (progress × SEGMENTS, amber, additive glow), unlit segments = faint
+ * dashed scaffold so "something is being built here" reads even at 2%.
+ * The whole cage rotates slowly (pure cosmetic wall-clock). A COMPLETED
+ * sphere drops the scaffold and draws a solid double ring with a bloom
+ * — the sun is caged, the era is over. Skipped below 7px star radius
+ * (sub-pixel mush) — at those zooms the political wash carries the map.
+ */
+const DYSON_SEGMENTS = 24;
+function drawDysonLattice(
+  canvasPos: { x: number; y: number },
+  radius: number,
+  ctx: RenderContext,
+): void {
+  if (radius < 7) return;
+  const dy = ctx.dysonSphere!;
+  const c = ctx.ctx;
+  const r = radius * 1.45 + 3;
+  const nowMs = ctx.nowMs ?? performance.now();
+  const spin = (nowMs / 60000) * Math.PI * 2 * 0.15;   // one turn / ~6.7min
+  c.save();
+  if (dy.complete) {
+    // The finished cage — solid double ring + additive bloom.
+    c.globalCompositeOperation = 'lighter';
+    c.strokeStyle = 'rgba(255, 209, 128, 0.9)';
+    c.lineWidth = Math.max(1.5, radius * 0.08);
+    c.beginPath();
+    c.arc(canvasPos.x, canvasPos.y, r, 0, Math.PI * 2);
+    c.stroke();
+    c.strokeStyle = 'rgba(255, 184, 77, 0.5)';
+    c.lineWidth = Math.max(1, radius * 0.05);
+    c.beginPath();
+    c.arc(canvasPos.x, canvasPos.y, r * 1.12, 0, Math.PI * 2);
+    c.stroke();
+    const bloom = c.createRadialGradient(canvasPos.x, canvasPos.y, r * 0.9, canvasPos.x, canvasPos.y, r * 1.5);
+    bloom.addColorStop(0, 'rgba(255, 200, 110, 0.18)');
+    bloom.addColorStop(1, 'rgba(255, 200, 110, 0)');
+    c.fillStyle = bloom;
+    c.beginPath();
+    c.arc(canvasPos.x, canvasPos.y, r * 1.5, 0, Math.PI * 2);
+    c.fill();
+    c.restore();
+    return;
+  }
+  const seg = (Math.PI * 2) / DYSON_SEGMENTS;
+  const gap = seg * 0.22;                              // visible joints
+  const lit = Math.floor(Math.max(0, Math.min(1, dy.progress)) * DYSON_SEGMENTS);
+  // Scaffold pass — every segment, faint and dashed, normal blend.
+  c.strokeStyle = 'rgba(255, 184, 77, 0.18)';
+  c.lineWidth = 1;
+  c.setLineDash([3, 4]);
+  c.beginPath();
+  c.arc(canvasPos.x, canvasPos.y, r, 0, Math.PI * 2);
+  c.stroke();
+  c.setLineDash([]);
+  // Lit pass — completed segments, additive.
+  if (lit > 0) {
+    c.globalCompositeOperation = 'lighter';
+    c.strokeStyle = 'rgba(255, 200, 110, 0.85)';
+    c.lineWidth = Math.max(1.5, radius * 0.07);
+    for (let i = 0; i < lit; i++) {
+      const a0 = spin + i * seg + gap / 2;
+      c.beginPath();
+      c.arc(canvasPos.x, canvasPos.y, r, a0, a0 + seg - gap);
+      c.stroke();
+    }
+    // The construction head — a bright working node at the frontier,
+    // pulsing so the build reads ALIVE.
+    const headA = spin + lit * seg;
+    const pulse = 0.6 + 0.4 * Math.sin(nowMs / 300);
+    c.fillStyle = `rgba(255, 236, 190, ${(0.8 * pulse).toFixed(3)})`;
+    c.beginPath();
+    c.arc(canvasPos.x + Math.cos(headA) * r, canvasPos.y + Math.sin(headA) * r,
+          Math.max(1.5, radius * 0.06), 0, Math.PI * 2);
+    c.fill();
+  }
+  c.restore();
+}
+
 export function drawBody(
   body: Body,
   ctx: RenderContext,
@@ -1644,6 +1730,13 @@ export function drawBody(
 
   if (body.type === 'star') {
     drawStarBody(body, canvasPos, radius, ctx);
+    // Dyson Sphere lattice — the win-condition megaproject finally has
+    // a face on the map. Segments of the sun-cage light up with real
+    // construction progress; a completed sphere reads as a full golden
+    // cage. Sol only (the one foundation site).
+    if (ctx.dysonSphere && body.id === 'sol') {
+      drawDysonLattice(canvasPos, radius, ctx);
+    }
   } else if (body.type === 'black_hole') {
     drawBlackHoleBody(body, canvasPos, radius, ctx);
   } else if (body.type === 'gas_giant') {

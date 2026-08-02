@@ -33,7 +33,10 @@ import { enqueueDetonation, spawnDiscoveryBloom } from '../render/combatFx';
 // the exact idiom EventLog's icon classifier already uses.
 // Per Lorne: launches, arrivals/incoming ships, and finished buildings
 // are recap-worthy alongside the catastrophes.
-const MAJOR_RE = /destroyed|fell|impact|DISCOVERY|victor|wins the|detonat|assumed command|leaderless|launched|arrived|inbound|complete/i;
+// 'dyson|collapsed' catches every megaproject beat (foundation laid,
+// milestone, damage, THE SPHERE HAS FALLEN) — the collapse line's old
+// phrasing slipped past this filter entirely.
+const MAJOR_RE = /destroyed|fell|impact|DISCOVERY|victor|wins the|detonat|assumed command|leaderless|launched|arrived|inbound|complete|dyson|collapsed/i;
 const THRESHOLD = 5;       // strictly more than this many majors → offer
 const SCENE_CAP = 8;       // a long absence is a highlight reel, not a slog
 /** Per Lorne: NEXT is the main way through — a scene only auto-advances

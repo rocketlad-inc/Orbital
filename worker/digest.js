@@ -1387,6 +1387,138 @@ function buildVictoryStories(rows, used, factionNames) {
 }
 
 // ------------------------------------------------------------
+// Dyson Sphere — megaproject coverage. The sphere is the win-condition
+// wonder, so its beats carry front-page gravity: an attack on it is a
+// BATTLE story weighted above any ordinary engagement, a collapse sits
+// just under a victory, and the laying of the foundation is history in
+// the making. Kinds emitted by worker/actions.js (dyson_initiated) and
+// worker/room.js tickDysonSphere (dyson_damaged / dyson_milestone /
+// dyson_collapsed).
+// ------------------------------------------------------------
+
+const DYSON_INITIATED = [
+  (c) => `**${c.faction}** has laid the foundation of a **Dyson Sphere** at Sol — the greatest engineering work ever attempted. Every hauler they can spare now matters, and every rival knows exactly where to point its guns.`,
+  (c) => `Cranes over the sun: **${c.faction}** began construction of a **Dyson Sphere** at Sol today. If the lattice closes, the war is over — the only question is whether the galaxy lets it close.`,
+];
+const DYSON_INITIATED_HEADLINE = [
+  (c) => `${c.faction.toUpperCase()} DARES THE IMPOSSIBLE`,
+  () => 'A SPHERE RISES OVER SOL',
+];
+const DYSON_MILESTONE = [
+  (c) => `The **Dyson Sphere** stands at **${c.pct}%** — **${c.faction}**'s engineers report the lattice holding. The countdown the whole system pretends not to hear grows louder.`,
+  (c) => `**${c.faction}**'s sun-cage reached **${c.pct}%** completion this edition. Diplomats are polite about it. Admirals are not.`,
+];
+const DYSON_MILESTONE_HEADLINE = [
+  (c) => `SPHERE AT ${c.pct}%`,
+  (c) => `${c.pct}% OF A SUN, CLAIMED`,
+];
+const DYSON_DAMAGED = [
+  (c) => `The **Dyson Sphere** took fire at Sol — **${c.damage}** units of construction burned off the lattice under bombardment. **${c.faction}**'s great work stands at **${c.pct}%** and bleeding.`,
+  (c) => `Battle at the sun: raiders hammered **${c.faction}**'s Dyson foundation, erasing **${c.damage}** of accumulated work. The sphere holds at **${c.pct}%** — for now.`,
+];
+const DYSON_DAMAGED_HEADLINE = [
+  () => 'THE SPHERE BLEEDS',
+  () => 'FIRE AT THE FOUNDATION',
+];
+const DYSON_COLLAPSED = [
+  (c) => `The **Dyson Sphere is gone.** ${c.reason === 'foundation destroyed' ? 'Its foundation station was blown out of Sol orbit' : 'Sustained bombardment finally broke the lattice'}, and with it **${c.faction}**'s bid to end the war by engineering. Every unit of progress — **${c.lost}** in all — is dust in the solar wind.`,
+  (c) => `It fell. **${c.faction}**'s sun-cage collapsed ${c.reason === 'foundation destroyed' ? 'when its foundation was destroyed' : 'under sustained attack'} — **${c.lost}** units of the grandest project in history, erased in a single stroke. The Sol slot stands open for whoever dares next.`,
+];
+const DYSON_COLLAPSED_HEADLINE = [
+  () => 'THE SPHERE HAS FALLEN',
+  () => 'A SUN UNCAGED',
+];
+
+/** Dyson battle beats — damage + collapse — for the BATTLES section. */
+function buildDysonBattleStories(rows, used, factionNames) {
+  const stories = [];
+  for (const row of rows) {
+    const p = safeJson(row.payload);
+    const faction = p.faction_name ?? factionNames.get(row.actor_faction_id) ?? 'A faction';
+    if (row.kind === 'dyson_damaged') {
+      const ctx = { faction, damage: p.damage ?? 0, pct: p.pct ?? 0 };
+      // Above any ordinary engagement (BATTLE_BASE_WEIGHT 380) and
+      // scaling with how much progress actually burned.
+      const weight = 450 + Math.min(200, (p.damage ?? 0) / 10);
+      stories.push(mkStory(weight, used, 'dyson_damaged', DYSON_DAMAGED, 'dyson_damaged_hl', DYSON_DAMAGED_HEADLINE, ctx));
+    } else if (row.kind === 'dyson_collapsed') {
+      const ctx = { faction, reason: p.reason ?? '', lost: p.progress_lost ?? 0 };
+      // Just under a victory (1000) — losing the wonder IS the story.
+      stories.push(mkStory(850, used, 'dyson_collapsed', DYSON_COLLAPSED, 'dyson_collapsed_hl', DYSON_COLLAPSED_HEADLINE, ctx));
+    }
+  }
+  return stories;
+}
+
+/** Dyson construction beats — initiation + milestones — for the
+ *  "History in the making" section. */
+function buildDysonHistoryStories(rows, used, factionNames) {
+  const stories = [];
+  for (const row of rows) {
+    const p = safeJson(row.payload);
+    const faction = p.faction_name ?? factionNames.get(row.actor_faction_id) ?? 'A faction';
+    if (row.kind === 'dyson_initiated') {
+      stories.push(mkStory(500, used, 'dyson_initiated', DYSON_INITIATED, 'dyson_initiated_hl', DYSON_INITIATED_HEADLINE, { faction }));
+    } else if (row.kind === 'dyson_milestone') {
+      // Later milestones are bigger news — 75% outranks a treaty broken.
+      stories.push(mkStory(250 + (p.pct ?? 0) * 2, used, 'dyson_milestone', DYSON_MILESTONE, 'dyson_milestone_hl', DYSON_MILESTONE_HEADLINE, { faction, pct: p.pct ?? 0 }));
+    }
+  }
+  return stories;
+}
+
+// ------------------------------------------------------------
+// Fleet-economy beats (rush botches + arrears) — color for the
+// industry column. Chronicled by worker/actions.js / worker/room.js.
+// ------------------------------------------------------------
+
+const RUSH_BOTCHED = [
+  (c) => `**${c.faction}** paid double to rush the ${c.cls} **${c.name}** out of the yards at ${c.body} — and got what rushing buys: she'll launch at half hull, welds still smoking.`,
+  (c) => `Corners were cut at ${c.body}: **${c.faction}**'s rushed ${c.cls} **${c.name}** will leave the slips at half integrity. The yard foreman was unavailable for comment.`,
+];
+const RUSH_BOTCHED_HEADLINE = [
+  () => 'HASTE MAKES HALF A HULL',
+  (c) => `BOTCHED JOB AT ${(c.body || 'THE YARDS').toUpperCase()}`,
+];
+const ARREARS_ENTERED = [
+  (c) => `**${c.faction}**'s treasury ran dry this edition — fleet wages unpaid, and every one of its hulls fights at three-quarters strength until the debts clear.`,
+];
+const ARREARS_ENTERED_HEADLINE = [
+  (c) => `${c.faction.toUpperCase()} CAN'T MAKE PAYROLL`,
+];
+const ARREARS_CLEARED = [
+  (c) => `**${c.faction}** cleared its fleet-upkeep debts — full combat pay restored, full combat effectiveness with it.`,
+];
+const ARREARS_CLEARED_HEADLINE = [
+  (c) => `${c.faction.toUpperCase()} SQUARES ITS DEBTS`,
+];
+
+function buildFleetEconomyStories(rows, used, factionNames, locator) {
+  const stories = [];
+  for (const row of rows) {
+    const p = safeJson(row.payload);
+    const faction = p.faction_name ?? factionNames.get(row.actor_faction_id) ?? 'A faction';
+    if (row.kind === 'ship_rush_botched') {
+      const loc = locate(locator, row.body_id, p.body_name);
+      const ctx = {
+        faction,
+        cls: p.ship_class ?? 'ship',
+        name: p.ship_name ?? 'an unnamed hull',
+        body: loc.full,
+      };
+      stories.push(mkStory(90, used, 'rush_botched', RUSH_BOTCHED, 'rush_botched_hl', RUSH_BOTCHED_HEADLINE, { ...ctx, body: loc.name }));
+    } else if (row.kind === 'fleet_arrears') {
+      if (p.entered === true) {
+        stories.push(mkStory(200, used, 'arrears_entered', ARREARS_ENTERED, 'arrears_entered_hl', ARREARS_ENTERED_HEADLINE, { faction }));
+      } else {
+        stories.push(mkStory(80, used, 'arrears_cleared', ARREARS_CLEARED, 'arrears_cleared_hl', ARREARS_CLEARED_HEADLINE, { faction }));
+      }
+    }
+  }
+  return stories;
+}
+
+// ------------------------------------------------------------
 // Embed assembly
 // ------------------------------------------------------------
 
@@ -1426,13 +1558,25 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator) 
 
   const captainFate = buildCaptainFateMap(rows);
   const sections = {
-    victory:     buildVictoryStories(rows, used, factionNames),
-    battles:     buildBattleStories(rows, used, locator, captainFate),
+    // Dyson beats merge into the existing columns: an attack on the
+    // sphere IS a battle (and outweighs any ordinary engagement); its
+    // founding and milestones are history in the making.
+    victory:     [
+      ...buildVictoryStories(rows, used, factionNames),
+      ...buildDysonHistoryStories(rows, used, factionNames),
+    ],
+    battles:     [
+      ...buildDysonBattleStories(rows, used, factionNames),
+      ...buildBattleStories(rows, used, locator, captainFate),
+    ],
     politics:    buildPoliticsStories(rows, used, factionNames),
     discoveries: buildDiscoveryStories(rows, used, locator, factionNames),
     colonies:    buildColonyStories(rows, used, locator),
     trades:      buildTradeStories(rows, used, factionNames),
-    industry:    buildIndustryStories(rows, used),
+    industry:    [
+      ...buildIndustryStories(rows, used),
+      ...buildFleetEconomyStories(rows, used, factionNames, locator),
+    ],
   };
 
   // Find the single most newsworthy story across every section.

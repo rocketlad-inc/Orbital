@@ -131,7 +131,9 @@ export type SituationCategory =
   | 'discovery'      // one of YOUR ships uncovered a body secret
   | 'idle_captain'   // MP — a captain sits in the bank, unassigned to any ship
   | 'fleet_leaderless' // a fleet lost its flagship — promote a captain
-  | 'fleet_arrears'; // MP — upkeep unpaid, whole fleet at −25% damage
+  | 'fleet_arrears' // MP — upkeep unpaid, whole fleet at −25% damage
+  | 'dyson_project' // YOUR Dyson Sphere — progress / stalled / under attack
+  | 'dyson_threat'; // a RIVAL's Dyson Sphere is rising — stop it or lose
 
 export type SituationTier = 'now' | 'decision' | 'opportunity';
 
@@ -184,6 +186,11 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
   // The whole fleet is fighting at −25% damage RIGHT NOW and stays
   // that way every tick until income clears the debt.
   fleet_arrears:  'now',
+  // Defaults — both PROMOTE themselves: your sphere under attack /
+  // stalled becomes NOW/decision; a rival sphere near completion is a
+  // NOW-tier alarm (it is literally the game ending).
+  dyson_project:  'opportunity',
+  dyson_threat:   'decision',
 };
 
 export interface SituationItem {
@@ -234,6 +241,8 @@ export const CATEGORY_LABEL: Record<SituationCategory, string> = {
   idle_captain:    'Captains unassigned',
   fleet_leaderless: 'Fleets without a flag',
   fleet_arrears:   'Fleet upkeep unpaid',
+  dyson_project:   'Dyson Sphere',
+  dyson_threat:    'Rival megaproject',
 };
 
 // ------------------------------------------------------------
@@ -502,6 +511,65 @@ export function useSituationItems(
         sortKey: 0,
         focus: { kind: 'panel', panel: 'fleet' },
       });
+    }
+
+    // --- Dyson Sphere — the game clock. Yours: progress / stalled /
+    // under attack. A rival's: an alarm that scales with completion.
+    const dy = gameState.dysonSphere;
+    if (dy && dy.maxHp > 0) {
+      const pct = Math.round((dy.hp / dy.maxHp) * 100);
+      const foundation = gameState.settlements.find(s => s.id === dy.foundationSettlementId);
+      if (dy.controllerFactionId === factionId) {
+        const underAttack = foundation?.lastDamagedTick !== undefined
+          && gameState.currentTick - foundation.lastDamagedTick < 3;
+        const pumps = gameState.ships.filter(s =>
+          s.ownedBy === factionId && s.class === 'freighter' && !s.transit
+          && s.orbit.parentBodyId === 'sol').length;
+        if (underAttack) {
+          push({
+            id: 'dyson_project',
+            category: 'dyson_project',
+            tier: 'now',
+            title: `Dyson Sphere UNDER ATTACK — ${pct}% and taking fire`,
+            subtitle: 'Damage burns accumulated progress. Defend the foundation or lose the project.',
+            severity: 'danger',
+            sortKey: 0,
+            focus: foundation ? { kind: 'body', bodyId: foundation.bodyId } : undefined,
+          });
+        } else if (pumps === 0) {
+          push({
+            id: 'dyson_project',
+            category: 'dyson_project',
+            tier: 'decision',
+            title: `Dyson Sphere stalled at ${pct}% — no freighters at Sol`,
+            subtitle: 'Park freighters at Sol to pump your resource pool into the sphere.',
+            severity: 'warn',
+            focus: foundation ? { kind: 'body', bodyId: foundation.bodyId } : undefined,
+          });
+        } else {
+          push({
+            id: 'dyson_project',
+            category: 'dyson_project',
+            title: `Dyson Sphere at ${pct}% — ${pumps} freighter${pumps === 1 ? '' : 's'} pumping`,
+            subtitle: 'Completion wins the match by Engineering Victory.',
+            severity: 'normal',
+            focus: foundation ? { kind: 'body', bodyId: foundation.bodyId } : undefined,
+          });
+        }
+      } else {
+        const rival = gameState.factions.find(f => f.id === dy.controllerFactionId);
+        push({
+          id: 'dyson_threat',
+          category: 'dyson_threat',
+          // Past 75% this IS the game ending — NOW tier, red.
+          tier: pct >= 75 ? 'now' : 'decision',
+          title: `${rival?.name ?? 'A rival'}'s Dyson Sphere at ${pct}%`,
+          subtitle: 'If it completes, they win. Destroying the Sol foundation destroys all progress.',
+          severity: pct >= 75 ? 'danger' : 'warn',
+          sortKey: 100 - pct,
+          focus: foundation ? { kind: 'body', bodyId: foundation.bodyId } : undefined,
+        });
+      }
     }
 
     const mine = gameState.ships.filter(s => s.ownedBy === factionId);
