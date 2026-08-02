@@ -25,7 +25,8 @@ import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { logUiEvent } from '../multiplayer/telemetry';
 import { enqueueDetonation, spawnDiscoveryBloom } from '../render/combatFx';
-import { MOON_ORBIT_MIN_PARENT_PX } from '../render/mapRenderer';
+// (MOON_ORBIT_MIN_PARENT_PX no longer imported — the recap frames by
+//  content extent now, not by the moon-ring LOD gate. See the zoom block.)
 
 // GameState carries no machine-kind array (only focus/flavor are
 // parallel-indexed), so majors are classified from the headline text —
@@ -42,9 +43,20 @@ const SCENE_MS = 20_000;
  *  bare hinge, but the scene reads better a touch closer in. */
 const RECAP_ZOOM_BOOST = 1.1;
 
+/**
+ * How long a scene holds before its effect fires.
+ *
+ * Was 700ms, which landed the blast/bloom while the camera was still
+ * settling and before the player had read WHERE they were — the payoff
+ * went off over a body they hadn't identified yet. +1s (Lorne,
+ * 2026-07-27) gives a beat to register the place first, then the
+ * fireworks. Camera tween is 250ms, so the frame is long since still.
+ */
+const FX_DELAY_MS = 1700;
+
 const KEY = () => `recap:lastSeenCount:${typeof window !== 'undefined' ? window.location.pathname : 'default'}`;
 
-interface Scene { bodyId?: string; shipId?: string; fx?: 'boom' | 'bloom'; lines: string[] }
+interface Scene { bodyId?: string; shipId?: string; fx?: 'boom' | 'bloom' | 'spark'; lines: string[] }
 
 /** Camera target for a chronicle entry. Ship-loss rows carry a SHIP
  *  focus whose hull is usually already gone — resolve to its parent
@@ -74,10 +86,21 @@ function resolveSceneBody(
 }
 
 /** Which effect sells this line: destruction reads as a blast,
- *  discoveries as the purple bloom. */
-function fxFor(line: string): 'boom' | 'bloom' | undefined {
+ *  discoveries as the purple bloom, and every GOOD beat as a gold
+ *  firework.
+ *
+ *  The celebratory branch is the point: previously anything that wasn't
+ *  a death or a discovery returned undefined and the scene played in
+ *  total silence — a hull delivered, a colony founded, a tech finished,
+ *  a captain pulled alive from a wreck all got nothing. Those are most
+ *  of the recap, and they're the beats worth cheering.
+ *
+ *  Order matters: destruction is checked before celebration so
+ *  "...destroyed the colony" can't be read as a founding. */
+function fxFor(line: string): 'boom' | 'bloom' | 'spark' | undefined {
   if (/DISCOVERY|databank|stargate|warp gate/i.test(line)) return 'bloom';
-  if (/destroyed|fell|impact|detonat|stops transmitting|debris/i.test(line)) return 'boom';
+  if (/destroyed|fell|impact|detonat|stops transmitting|debris|lost with|went down/i.test(line)) return 'boom';
+  if (/founded|took delivery|launched|completed|colonis|coloniz|settled|claimed|recovered|rescued|elected|ratified|passed|signed|delivered|advanced|breakthrough/i.test(line)) return 'spark';
   return undefined;
 }
 
@@ -155,13 +178,35 @@ export const RecapOverlay: React.FC = () => {
       // (or the moon's parent), target comfortably past the ~12px gate,
       // clamped to the focus-zoom band.
       const b = gameState.bodies.find(x => x.id === scene.bodyId);
-      const ref = b?.parent ? gameState.bodies.find(x => x.id === b.parent) ?? b : b;
-      if (ref) {
-        // The map's shared LOD hinge: moon rings draw once the parent
-        // spans MOON_ORBIT_MIN_PARENT_PX on screen. +4px of margin so
-        // the scene lands comfortably past the gate, not teetering on it.
-        const scale = Math.max(2, Math.min(60,
-          RECAP_ZOOM_BOOST * (MOON_ORBIT_MIN_PARENT_PX + 4) / Math.max(0.5, ref.radius)));
+      if (b) {
+        // FIT THE CONTENT, don't pin the LOD gate.
+        //
+        // The old rule was scale = K / body.radius, which cancels out
+        // exactly: rendered radius = radius × scale = K = ~17.6px for
+        // EVERY body, always. Earth, Jupiter and a moon all framed as
+        // the same speck, with the system's moons and ships wherever
+        // they happened to land — usually off frame or as a row of
+        // disconnected count badges.
+        //
+        // Instead: work out the world-space radius this scene actually
+        // needs in frame, then pick the scale that fills the viewport
+        // with it.
+        //   - a planet: out to its outermost moon, so the system reads
+        //   - a moon / moonless body: its own neighbourhood, far enough
+        //     to show the hulls parked around it (ships sit at
+        //     radius + 4 game units — see the spawn rule in room.js)
+        const kids = gameState.bodies.filter(x => x.parent === b.id);
+        const parked = (b.radius || 4) + 4;
+        let need = kids.length > 0
+          ? Math.max(...kids.map(k => k.orbitRadius)) * 1.15
+          : parked * 3.5;
+        // Never closer than a comfortable read of the body + its traffic.
+        need = Math.max(need, parked * 3);
+
+        // Fill the smaller half-axis. 0.62 leaves room for the caption
+        // bar and the letterboxing rather than running content under them.
+        const halfMin = Math.max(120, Math.min(window.innerWidth, window.innerHeight) / 2);
+        const scale = Math.max(2, Math.min(60, RECAP_ZOOM_BOOST * (halfMin * 0.62) / need));
         updateCamera({ scale });
       }
     }
@@ -174,9 +219,10 @@ export const RecapOverlay: React.FC = () => {
       const bid = scene.bodyId;
       const kind = scene.fx;
       fxT = setTimeout(() => {
-        if (kind === 'bloom') spawnDiscoveryBloom(`recap_${Date.now()}_${bid}`, bid);
+        if (kind === 'bloom') spawnDiscoveryBloom(`recap_${Date.now()}_${bid}`, bid, 'discovery');
+        else if (kind === 'spark') spawnDiscoveryBloom(`recap_${Date.now()}_${bid}`, bid, 'firework');
         else enqueueDetonation(`recap_${Date.now()}_${bid}`, bid, null);
-      }, Math.min(700, Math.floor(sceneMs * 0.35)));
+      }, FX_DELAY_MS);
     }
     const t = setTimeout(() => {
       setIdx(i => {

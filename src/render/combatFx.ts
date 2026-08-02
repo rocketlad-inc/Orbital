@@ -806,10 +806,18 @@ const DISCOVERY_RING_PX = 70;
 const DISCOVERY_COLOR = '#e879f9';   // matches the EventLog "Discovery" icon
 const DISCOVERY_CAP = 12;
 
+/** Celebratory variant of the bloom — same animation machinery, warm
+ *  gold, plus radiating sparks. Used by the recap for the GOOD beats
+ *  (a hull delivered, a colony founded, a captain pulled from a wreck),
+ *  which previously played no effect at all. */
+const FIREWORK_COLOR = '#ffd27a';
+
 interface DiscoveryBloom {
   entryId: string;
   bodyId: string;
   startMs: number;
+  /** 'discovery' = purple ✦ find; 'firework' = gold celebration burst. */
+  variant: 'discovery' | 'firework';
 }
 
 const discoveryBlooms: DiscoveryBloom[] = [];
@@ -822,11 +830,15 @@ const seenDiscoveryIds = new Set<string>();
  * by chronicle entry id — the played-set in pendingFx already guarantees
  * once-ever, this is a cheap second guard.
  */
-export function spawnDiscoveryBloom(entryId: string, bodyId: string): void {
+export function spawnDiscoveryBloom(
+  entryId: string,
+  bodyId: string,
+  variant: 'discovery' | 'firework' = 'discovery',
+): void {
   if (seenDiscoveryIds.has(entryId)) return;
   if (seenDiscoveryIds.size > 2000) seenDiscoveryIds.clear();
   seenDiscoveryIds.add(entryId);
-  const bloom: DiscoveryBloom = { entryId, bodyId, startMs: performance.now() };
+  const bloom: DiscoveryBloom = { entryId, bodyId, startMs: performance.now(), variant };
   if (discoveryBlooms.length < DISCOVERY_CAP) discoveryBlooms.push(bloom);
   else discoveryBlooms[discoveryWriteIdx] = bloom;
   discoveryWriteIdx = (discoveryWriteIdx + 1) % DISCOVERY_CAP;
@@ -862,10 +874,13 @@ export function drawDiscoveryBlooms(rc: RenderContext, nowMs: number): void {
 
     // Soft halo — a filled disc that swells then fades, giving the body
     // a moment of glow rather than a hard flash.
+    const isFirework = bloom.variant === 'firework';
+    const color = isFirework ? FIREWORK_COLOR : DISCOVERY_COLOR;
+
     const haloR = 14 + 26 * easeOut;
     const halo = c.createRadialGradient(cp.x, cp.y, 0, cp.x, cp.y, haloR);
-    halo.addColorStop(0, withOpacity(DISCOVERY_COLOR, 0.35 * fade));
-    halo.addColorStop(1, withOpacity(DISCOVERY_COLOR, 0));
+    halo.addColorStop(0, withOpacity(color, 0.35 * fade));
+    halo.addColorStop(1, withOpacity(color, 0));
     c.fillStyle = halo;
     c.beginPath();
     c.arc(cp.x, cp.y, haloR, 0, Math.PI * 2);
@@ -877,11 +892,33 @@ export function drawDiscoveryBlooms(rc: RenderContext, nowMs: number): void {
       if (rk <= 0 || rk >= 1) continue;
       const rEase = 1 - (1 - rk) * (1 - rk);
       const ringR = 6 + (DISCOVERY_RING_PX - 6) * rEase;
-      c.strokeStyle = withOpacity(DISCOVERY_COLOR, 0.8 * (1 - rk));
+      c.strokeStyle = withOpacity(color, 0.8 * (1 - rk));
       c.lineWidth = 2;
       c.beginPath();
       c.arc(cp.x, cp.y, ringR, 0, Math.PI * 2);
       c.stroke();
+    }
+
+    // Firework only: radiating spark streaks that shoot out and fade —
+    // the bit that reads as a CELEBRATION rather than a detection ping.
+    // Angles are fixed (not random) so a replayed scene looks identical.
+    if (isFirework) {
+      const SPARKS = 10;
+      c.lineCap = 'round';
+      for (let s = 0; s < SPARKS; s++) {
+        const a = (s / SPARKS) * Math.PI * 2 + 0.31;
+        // Alternating lengths give the burst a ragged, non-mechanical edge.
+        const reach = (s % 2 === 0 ? 1 : 0.66) * DISCOVERY_RING_PX * 0.95;
+        const inner = 8 + reach * easeOut * 0.55;
+        const outer = 8 + reach * easeOut;
+        c.strokeStyle = withOpacity(color, 0.9 * fade * fade);
+        c.lineWidth = 2;
+        c.beginPath();
+        c.moveTo(cp.x + Math.cos(a) * inner, cp.y + Math.sin(a) * inner);
+        c.lineTo(cp.x + Math.cos(a) * outer, cp.y + Math.sin(a) * outer);
+        c.stroke();
+      }
+      c.lineCap = 'butt';
     }
 
     // The ✦ glyph: rises a few px and scales up while fading — the
@@ -892,11 +929,11 @@ export function drawDiscoveryBlooms(rc: RenderContext, nowMs: number): void {
     const glyphAlpha = k < 0.33 ? 1 : Math.max(0, 1 - (k - 0.33) / 0.67);
     c.save();
     c.globalCompositeOperation = 'source-over';
-    c.fillStyle = withOpacity(DISCOVERY_COLOR, glyphAlpha);
+    c.fillStyle = withOpacity(color, glyphAlpha);
     c.font = `${Math.round(16 * scale)}px sans-serif`;
     c.textAlign = 'center';
     c.textBaseline = 'middle';
-    c.fillText('✦', cp.x, gy);
+    c.fillText(isFirework ? '✧' : '✦', cp.x, gy);
     c.restore();
   }
   if (opened) c.restore();
