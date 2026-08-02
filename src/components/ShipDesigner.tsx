@@ -1,28 +1,43 @@
 // ============================================================
 // ShipDesigner — multiplayer-only design library + loadout editor.
-// DESIGN-identity-economy.md §2.
+// DESIGN-identity-economy.md §2 (data model) + DESIGN-fleet-economy §4
+// (this layout rebuild) + §2 (fleet refit bar).
 //
-// Reachable from the Fleet panel button and the BuildPanel quick-link
-// (both dispatch the 'orbital:open-ship-designer' window event; GameUI
-// mounts this overlay in response — MP only).
+// Layout (UX-juror adjudicated, 2026-08):
+//   - Dominant center CANVAS: big ship avatar with its equip slots as a
+//     RING of sockets orbiting it. Drag a part card onto a socket, or
+//     click/tap a card to fit the first empty socket (touch fallback).
+//     Click a filled socket to unfit it. Invalid drops are refused
+//     visibly with a reason toast.
+//   - Collapsible bottom DRAWER: the part palette as compact rows —
+//     icon, name, one-line effect, visible "countered by" micro-text
+//     (counter-play is a decision input, not flavor), and the NEXT
+//     copy's escalated price.
+//   - Slim always-visible right SIDEBAR: stat readout with
+//     before→after deltas (vs the saved design being edited, or the
+//     bare hull for a new design), total cost, per-tick upkeep, and
+//     the fleet-refit summary bar ("N live hulls — refit for X").
+//   - Mobile (narrow / mobile shell): single scrolling column — canvas
+//     pinned at top, palette scrolls, stats as a sticky footer with an
+//     expandable detail sheet.
 //
-// Data flow: the design library arrives on every /state poll
-// (gameState.shipDesigns). Mutations post through mpActions and then
-// refresh via GET /designs so the UI doesn't wait ~1.5s for the next
-// poll. The server is authoritative on validation (slots, part
-// compatibility, one-active-per-class).
+// Data flow unchanged from the original designer: the design library
+// arrives on every /state poll (gameState.shipDesigns); mutations post
+// through mpActions then refresh via GET /designs. The server is
+// authoritative on validation (slots, part compatibility, one active
+// per class) and on every price actually charged.
 // ============================================================
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions, ServerShipDesign, ServerShipTemplate } from '../multiplayer/MultiplayerActionsContext';
 import { logUiEvent } from '../multiplayer/telemetry';
-import { ShipClassName, SHIP_CLASSES, BUILDABLE_CLASSES } from '../game/shipClasses';
+import { ShipClassName, SHIP_CLASSES, BUILDABLE_CLASSES, SHIP_UPKEEP } from '../game/shipClasses';
 import {
   ShipPartId, ALL_PART_IDS, SHIP_PART_DEFS, SHIP_SLOT_COUNTS,
   sanitizeParts, computeDesignStats, partsCost, countPart,
   detonatorDamage, detonatorDisclosure, SERVER_HULL_BASE, PART_GLYPH,
-  damageProfile,
+  damageProfile, refitFee, PART_STACK_ESCALATION,
 } from '../game/shipParts';
 import {
   ShipIcon, ShipIconVariant, ALL_VARIANTS, ICON_VARIANT_NAMES, DEFAULT_SHIP_ICONS,
@@ -39,8 +54,6 @@ interface ShipDesignerProps {
   onClose: () => void;
 }
 
-/** Map a server design row to the client shape (mirrors the
- *  MultiplayerGameProvider deserializer). */
 /** Client shape for a cross-game template. Mirrors ShipDesign minus the
  *  per-game `isActive` pointer — a template is inert until loaded. */
 interface ShipTemplate {
@@ -95,8 +108,25 @@ function serverDesignToClient(d: ServerShipDesign): ShipDesign {
   };
 }
 
-// PART_GLYPH now lives in ../game/shipParts (shared with FleetPanel's
-// loadout summary) so the two never drift.
+/** "Countered by" micro-text per part — visible on the card, not hidden
+ *  in a tooltip: what beats this choice is a decision input. */
+const COUNTER_TEXT: Partial<Record<ShipPartId, string>> = {
+  kinetic: 'blunted by shields',
+  energy: 'scattered by armor',
+  shield: 'bypassed by energy fire',
+  armor: 'bypassed by kinetic fire',
+};
+
+/** Escalated price of the NEXT copy given n already fitted. Mirrors the
+ *  per-copy rounding in partsCost so quote == charge. */
+function nextCopyCost(pid: ShipPartId, n: number): { ore: number; credits: number } {
+  const def = SHIP_PART_DEFS[pid];
+  const mul = Math.pow(PART_STACK_ESCALATION, n);
+  return { ore: Math.round(def.cost.ore * mul), credits: Math.round(def.cost.credits * mul) };
+}
+
+const sameLoadout = (a: readonly string[], b: readonly string[]) =>
+  [...a].sort().join(',') === [...b].sort().join(',');
 
 export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClose }) => {
   const { gameState } = useGameContext();
@@ -115,9 +145,28 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   const iconDropdownRef = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /** Cross-game template library. null = still loading (distinct from
-   *  [] = loaded-and-empty, so the UI can say "loading" vs "none yet"). */
+  /** Cross-game template library. null = still loading. */
   const [templates, setTemplates] = useState<ShipTemplate[] | null>(null);
+  /** Part id being dragged from the palette (sockets pulse while set). */
+  const [dragging, setDragging] = useState<ShipPartId | null>(null);
+  /** Transient refusal toast ("Slots full — unfit a part first"). */
+  const [flash, setFlash] = useState<string | null>(null);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Palette drawer collapse (desktop). Mobile always shows it inline. */
+  const [drawerOpen, setDrawerOpen] = useState(true);
+  /** Library strip collapse — designs/templates picker above the canvas. */
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  /** Mobile stat sheet expansion (sticky footer → full detail). */
+  const [statsSheetOpen, setStatsSheetOpen] = useState(false);
+  /** Refit-bar feedback ("Refitted 4, 2 pending"). */
+  const [refitNote, setRefitNote] = useState<string | null>(null);
+
+  const showFlash = (msg: string) => {
+    setFlash(msg);
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlash(null), 2200);
+  };
+  useEffect(() => () => { if (flashTimer.current) clearTimeout(flashTimer.current); }, []);
 
   // Close the icon dropdown on any outside click while it's open.
   useEffect(() => {
@@ -132,8 +181,6 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   }, [iconMenuOpen]);
 
   // Load the account-level template library once when the designer opens.
-  // Templates aren't part of /state (they're user-scoped, not game-scoped),
-  // so they need their own fetch.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -171,13 +218,25 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   const slots = SHIP_SLOT_COUNTS[activeClass];
   const hullDef = SHIP_CLASSES[activeClass];
   const stats = computeDesignStats(activeClass, draftParts, techLevels);
-  const bare = computeDesignStats(activeClass, [], {});
+  // Delta baseline: the SAVED loadout when editing an existing design
+  // (a real before→after), else the bare hull.
+  const baselineParts = useMemo(
+    () => (selected ? sanitizeParts(selected.parts) : []),
+    [selected],
+  );
+  const base = computeDesignStats(activeClass, baselineParts, techLevels);
   const draftCost = partsCost(draftParts);
   const nDetonators = countPart(draftParts, 'detonator');
+  const upkeepMult = gameState.fleetUpkeep?.multiplier ?? 1;
+  const upkeep = SHIP_UPKEEP[activeClass];
+  const upkeepLabel = (upkeep.credits * upkeepMult) > 0 || (upkeep.ore * upkeepMult) > 0
+    ? [
+        upkeep.credits * upkeepMult > 0 ? `${(upkeep.credits * upkeepMult).toFixed(2).replace(/\.?0+$/, '')}C` : null,
+        upkeep.ore * upkeepMult > 0 ? `${(upkeep.ore * upkeepMult).toFixed(2).replace(/\.?0+$/, '')}M` : null,
+      ].filter(Boolean).join(' + ') + ' /tick'
+    : 'free';
 
-  // Combat-profile readout: what this hull deals and what it shrugs off,
-  // so the counter-matrix is legible at design time. Bare/weaponless
-  // hulls fire kinetic by default (matches the combat resolver).
+  // Combat-profile readout: what this hull deals and what it shrugs off.
   const nKinetic = countPart(draftParts, 'kinetic');
   const nEnergy = countPart(draftParts, 'energy');
   const nShields = countPart(draftParts, 'shield');
@@ -192,7 +251,6 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
     ? 'Unshielded'
     : [nShields > 0 ? `🛡×${nShields} vs kinetic` : '', nArmor > 0 ? `🪨×${nArmor} vs energy` : '']
         .filter(Boolean).join(' · ');
-  // One-line tactical read of the matchup this build wins/loses.
   const matchupHint = (() => {
     const parts: string[] = [];
     if (nEnergy > 0 && nKinetic === 0) parts.push('Strong vs shielded targets; weak vs armored.');
@@ -203,6 +261,29 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
     return parts.join(' ');
   })();
   const detDamage = detonatorDamage(stats.hp, nDetonators, techLevels.weapons ?? 0);
+
+  // --- Fleet refit summary (§2, juror Q7-A) --------------------------
+  // Live hulls of this class whose CURRENT parts differ from the
+  // selected design's saved loadout — one bar, one bill, one button.
+  const refitInfo = useMemo(() => {
+    if (!selected) return null;
+    const target = sanitizeParts(selected.parts);
+    // /state only ships active hulls, so no destroyed-filter needed.
+    const mine = gameState.ships.filter(s =>
+      s.ownedBy === 'player' && s.class === activeClass);
+    let hulls = 0, ore = 0, credits = 0, pendingAlready = 0;
+    for (const s of mine) {
+      if (s.refitPendingDesignId === selected.id) { pendingAlready++; continue; }
+      const cur = sanitizeParts(s.parts ?? []);
+      if (sameLoadout(cur, target)) continue;
+      const fee = refitFee(cur, target);
+      hulls++;
+      ore += fee.ore;
+      credits += fee.credits;
+    }
+    return { hulls, ore, credits, pendingAlready };
+  }, [selected, gameState.ships, activeClass]);
+  const draftMatchesSelected = selected != null && sameLoadout(draftParts, baselineParts);
 
   const refresh = async () => {
     if (!mpActions) return;
@@ -216,25 +297,23 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
     setDraftParts(d ? sanitizeParts(d.parts) : []);
     setDraftIcon(d?.iconVariant);
     setError(null);
+    setRefitNote(null);
   };
 
   const refreshTemplates = async () => {
     if (!mpActions) return;
     const rows = await mpActions.getShipTemplates();
-    // Keep null on failure so the UI shows "loading" rather than lying
-    // with "no templates yet" when the request simply errored.
     if (rows) setTemplates(rows.map(serverTemplateToClient));
   };
 
-  /** Load a template into the EDITOR as a new unsaved design. Clears
-   *  selectedId so saving creates a fresh design rather than silently
-   *  overwriting whichever design happened to be selected. */
+  /** Load a template into the editor as a new unsaved design. */
   const loadTemplate = (t: ShipTemplate) => {
     setSelectedId(null);
     setDraftName(t.name);
     setDraftParts(sanitizeParts(t.parts));
     setDraftIcon(t.iconVariant);
     setError(null);
+    setRefitNote(null);
   };
 
   const saveAsTemplate = async () => {
@@ -243,10 +322,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
     if (!name) { setError('Name the loadout before saving it as a template.'); return; }
     setBusy(true);
     const res = await mpActions.saveShipTemplate({
-      shipClass: activeClass,
-      name,
-      parts: draftParts,
-      iconVariant: draftIcon,
+      shipClass: activeClass, name, parts: draftParts, iconVariant: draftIcon,
     });
     setBusy(false);
     if (!res.ok) { setError(res.error); return; }
@@ -270,18 +346,44 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
     setDraftParts([]);
     setDraftIcon(undefined);
     setError(null);
+    setRefitNote(null);
   };
 
-  const addPart = (id: ShipPartId) => {
-    if (draftParts.length >= slots) return;
-    setDraftParts(prev => [...prev, id]);
+  // --- Fit / unfit ----------------------------------------------------
+  /** Why a part can't be fitted right now, or null when it can. */
+  const fitRefusal = (pid: ShipPartId, slotIdx?: number): string | null => {
+    const lock = gate.lockReason(PART_FEATURE[pid]);
+    if (lock) return `🔒 ${SHIP_PART_DEFS[pid].name} is locked — ${lock.text}`;
+    // Replacing a filled socket frees its slot, so only a fit into an
+    // EMPTY socket can overflow.
+    const replacing = slotIdx != null && draftParts[slotIdx] != null;
+    if (!replacing && draftParts.length >= slots) {
+      return `All ${slots} slots are fitted — tap a socket to unfit a part first.`;
+    }
+    return null;
   };
-  const removePart = (id: ShipPartId) => {
+
+  /** Fit into the first empty slot (click/tap-to-fit). */
+  const fitPart = (pid: ShipPartId) => {
+    const why = fitRefusal(pid);
+    if (why) { showFlash(why); return; }
+    setDraftParts(prev => [...prev, pid]);
+  };
+
+  /** Drop onto a specific socket: fill it, or swap out what's there. */
+  const dropOnSocket = (pid: ShipPartId, slotIdx: number) => {
+    const why = fitRefusal(pid, slotIdx);
+    if (why) { showFlash(why); return; }
     setDraftParts(prev => {
-      const idx = prev.lastIndexOf(id);
-      if (idx < 0) return prev;
-      return [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+      const next = [...prev];
+      if (slotIdx < next.length) next[slotIdx] = pid;   // replace in place
+      else next.push(pid);                              // fill empty
+      return next;
     });
+  };
+
+  const unfitSocket = (slotIdx: number) => {
+    setDraftParts(prev => prev.filter((_, i) => i !== slotIdx));
   };
 
   const save = async (setActive: boolean) => {
@@ -324,380 +426,514 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
     await refresh();
   };
 
+  const doRefitFleet = async () => {
+    if (!mpActions || busy || !selected) return;
+    setBusy(true);
+    setRefitNote(null);
+    const res = await mpActions.refitFleet(selected.id);
+    setBusy(false);
+    if (!res.ok) { setError(res.error ?? 'Refit failed.'); return; }
+    const done = res.refitted?.length ?? 0;
+    const pend = res.pending?.length ?? 0;
+    const cost = res.charged;
+    setRefitNote(
+      `Refitted ${done} hull${done === 1 ? '' : 's'} now`
+      + (cost && (cost.ore > 0 || cost.credits > 0) ? ` for ${cost.ore}M ${cost.credits}C` : '')
+      + (pend > 0 ? ` · ${pend} pending (refit at next friendly yard)` : '')
+      + '.',
+    );
+  };
+
   // MP-only feature — GameUI already gates the mount, but be defensive.
   if (!mpActions) return null;
 
   const iconVariant = draftIcon ?? DEFAULT_SHIP_ICONS[activeClass];
   const allowedParts = ALL_PART_IDS.filter(p => SHIP_PART_DEFS[p].allowedOn.includes(activeClass));
+  const activeDesignForClass = classDesigns.find(d => d.isActive) ?? null;
+
+  // Socket ring geometry: N sockets evenly spaced, starting at 12
+  // o'clock. Percent-based so the ring scales with the canvas.
+  const socketPos = (i: number, n: number) => {
+    const angle = (i / Math.max(1, n)) * Math.PI * 2 - Math.PI / 2;
+    const R = 42; // % of canvas half-size
+    return {
+      left: `${50 + R * Math.cos(angle)}%`,
+      top: `${50 + R * Math.sin(angle)}%`,
+    };
+  };
+
+  // Compact delta chip for the stat sidebar ("120 → 154").
+  const Delta: React.FC<{ from: number; to: number; fmt?: (n: number) => string; invert?: boolean }> =
+    ({ from, to, fmt = (n) => `${n}`, invert = false }) => {
+      if (from === to) return <>{fmt(to)}</>;
+      const better = invert ? to < from : to > from;
+      return (
+        <>
+          <span className="sd-delta-from">{fmt(from)}</span>
+          <span className="sd-delta-arrow">→</span>
+          <span className={better ? 'sd-delta-up' : 'sd-delta-down'}>{fmt(to)}</span>
+        </>
+      );
+    };
+
+  const statRows = (
+    <>
+      <div className="sd-stat">
+        <span className="sd-stat__label">Max HP</span>
+        <span className="sd-stat__value"><Delta from={base.hp} to={stats.hp} /></span>
+      </div>
+      <div className="sd-stat">
+        <span className="sd-stat__label">Damage / volley</span>
+        <span className="sd-stat__value"><Delta from={base.damagePerTick} to={stats.damagePerTick} /></span>
+      </div>
+      <div className="sd-stat">
+        <span className="sd-stat__label">Damage type</span>
+        <span className="sd-stat__value">{dmgTypeLabel}</span>
+      </div>
+      <div className="sd-stat">
+        <span className="sd-stat__label">Defense</span>
+        <span className="sd-stat__value">{defLabel}</span>
+      </div>
+      <div className="sd-stat">
+        <span className="sd-stat__label">Travel time</span>
+        <span className="sd-stat__value">
+          <Delta from={base.travelTimeMult} to={stats.travelTimeMult} fmt={n => `×${n.toFixed(2)}`} invert />
+        </span>
+      </div>
+      <div className="sd-stat">
+        <span className="sd-stat__label">Cost / ship</span>
+        <span className="sd-stat__value">
+          <Delta
+            from={base.totalCost.ore} to={hullDef.cost.ore + draftCost.ore}
+            fmt={n => `${n}M`} invert
+          />
+          {' '}
+          <Delta
+            from={base.totalCost.credits} to={hullDef.cost.credits + draftCost.credits}
+            fmt={n => `${n}C`} invert
+          />
+        </span>
+      </div>
+      <div className="sd-stat">
+        <span className="sd-stat__label">Upkeep</span>
+        <span className="sd-stat__value">{upkeepLabel}</span>
+      </div>
+      {nDetonators > 0 && (
+        <div className="sd-stat">
+          <span className="sd-stat__label">Detonation</span>
+          <span className="sd-stat__value" style={{ color: '#ff5e5e' }}>{detDamage} dmg</span>
+        </div>
+      )}
+    </>
+  );
+
+  const refitBar = selected && refitInfo && (refitInfo.hulls > 0 || refitInfo.pendingAlready > 0) && (
+    <div className="sd-refit">
+      {refitInfo.hulls > 0 ? (
+        <>
+          <div className="sd-refit__line">
+            {refitInfo.hulls} live hull{refitInfo.hulls === 1 ? '' : 's'} differ{refitInfo.hulls === 1 ? 's' : ''} from this template
+            {refitInfo.pendingAlready > 0 && <> · {refitInfo.pendingAlready} already pending</>}
+          </div>
+          <button
+            className="sd-btn sd-btn--refit"
+            disabled={busy || !draftMatchesSelected}
+            onClick={doRefitFleet}
+            title={draftMatchesSelected
+              ? 'Refit every live hull of this class to this template. Ships at a friendly yard refit now; the rest refit on arrival at one.'
+              : 'Save your edits first — the fleet refits to the SAVED template.'}
+          >
+            ⟳ REFIT FLEET · {refitInfo.ore}M {refitInfo.credits}C
+          </button>
+          {!draftMatchesSelected && (
+            <div className="sd-refit__hint">Unsaved edits — save first, then refit.</div>
+          )}
+          <div className="sd-refit__hint">
+            Fee = half the added parts' price per hull. Removals refund nothing.
+          </div>
+        </>
+      ) : (
+        <div className="sd-refit__line">
+          {refitInfo.pendingAlready} hull{refitInfo.pendingAlready === 1 ? '' : 's'} pending refit — applies at the next friendly yard.
+        </div>
+      )}
+      {refitNote && <div className="sd-refit__note">{refitNote}</div>}
+    </div>
+  );
+
+  const actionButtons = (
+    <div className="sd-actions">
+      <button
+        className="sd-btn sd-btn--primary"
+        disabled={busy || draftName.trim().length === 0}
+        onClick={() => save(true)}
+        title="Save this design and make it the one BUILD uses for this class"
+      >
+        {selected ? 'SAVE & SET ACTIVE' : 'CREATE & SET ACTIVE'}
+      </button>
+      <button
+        className="sd-btn"
+        disabled={busy || draftName.trim().length === 0}
+        onClick={() => save(false)}
+        title="Save without changing which design is active"
+      >
+        {selected ? 'SAVE' : 'CREATE'}
+      </button>
+      <button
+        className="sd-btn"
+        disabled={busy || draftName.trim().length === 0}
+        onClick={saveAsTemplate}
+        title="Save this loadout to your account so you can load it in future games"
+      >
+        SAVE AS TEMPLATE
+      </button>
+      {selected && (
+        <button
+          className="sd-btn sd-btn--danger"
+          disabled={busy}
+          onClick={() => deleteDesign(selected)}
+        >
+          DELETE
+        </button>
+      )}
+    </div>
+  );
 
   return (
     <div className="ship-designer-overlay" onClick={onClose}>
-      <div className="ship-designer" onClick={e => e.stopPropagation()}>
-        <div className="ship-designer__header">
-          <span className="ship-designer__title">Ship Designer</span>
-          <button className="ship-designer__close" onClick={onClose} aria-label="Close">✕</button>
-        </div>
-
-        <div className="ship-designer__body">
-          {/* Class tabs */}
-          <div className="ship-designer__tabs">
+      <div className="sd" onClick={e => e.stopPropagation()}>
+        {/* ---------- Header: title + class tabs + close ---------- */}
+        <div className="sd-header">
+          <span className="sd-title">SHIP DESIGNER</span>
+          <div className="sd-tabs">
             {BUILDABLE_CLASSES.filter(cls => (SHIP_SLOT_COUNTS[cls] ?? 0) > 0).map(cls => (
               <button
                 key={cls}
-                className={`ship-designer__tab ${cls === activeClass ? 'active' : ''}`}
+                className={`sd-tab ${cls === activeClass ? 'active' : ''}`}
                 onClick={() => switchClass(cls)}
               >
                 <ShipIcon shipClass={cls} size={14} />
-                {SHIP_CLASSES[cls].displayName} · {SHIP_SLOT_COUNTS[cls]} slot{SHIP_SLOT_COUNTS[cls] === 1 ? '' : 's'}
+                <span className="sd-tab__name">{SHIP_CLASSES[cls].displayName}</span>
+                <span className="sd-tab__slots">{SHIP_SLOT_COUNTS[cls]}◯</span>
               </button>
             ))}
           </div>
-          {activeClass === 'freighter' && (
-            <div className="ship-designer__hint">
-              Freighters take engine or shield parts only — they haul, they don't fight.
-            </div>
-          )}
+          <button className="sd-close" onClick={onClose} aria-label="Close">✕</button>
+        </div>
 
-          {/* Design library for this class */}
-          <div className="ship-designer__section-title">
-            Saved {SHIP_CLASSES[activeClass].displayName} designs
-          </div>
-          {classDesigns.length === 0 ? (
-            <div className="ship-designer__hint">
-              No designs yet. A build with no active design launches the bare hull (today's stats, no extra cost).
-            </div>
-          ) : (
-            <div className="ship-designer__list">
-              {classDesigns.map(d => (
-                <div
-                  key={d.id}
-                  className={`ship-designer__list-row ${d.id === selectedId ? 'selected' : ''}`}
-                  onClick={() => loadDesign(d)}
-                >
-                  <ShipIcon shipClass={d.shipClass} variant={d.iconVariant} size={16} />
-                  <span className="ship-designer__list-row-name">
-                    {d.name}
-                    <span style={{ color: '#8aa0b4', marginLeft: 6, fontSize: 9 }}>
-                      {d.parts.length === 0 ? 'bare hull' : d.parts.map(p => PART_GLYPH[p as ShipPartId] ?? '?').join(' ')}
-                    </span>
-                  </span>
-                  {d.isActive ? (
-                    <span className="ship-designer__badge" title="BUILD uses this design for this class">ACTIVE</span>
-                  ) : (
-                    <button
-                      className="ship-designer__mini-btn"
-                      disabled={busy}
-                      onClick={e => { e.stopPropagation(); setActiveDesign(d, true); }}
-                      title="Make this the design BUILD uses for this class"
-                    >SET ACTIVE</button>
-                  )}
-                  {d.isActive && (
-                    <button
-                      className="ship-designer__mini-btn"
-                      disabled={busy}
-                      onClick={e => { e.stopPropagation(); setActiveDesign(d, false); }}
-                      title="Deactivate — builds fall back to the bare hull"
-                    >UNSET</button>
-                  )}
-                  <button
-                    className="ship-designer__mini-btn ship-designer__mini-btn--danger"
-                    disabled={busy}
-                    onClick={e => { e.stopPropagation(); deleteDesign(d); }}
-                    title="Delete this design (queued and completed ships keep their loadout)"
-                  >✕</button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Cross-game template library. Designs live and die with a
-              game; templates live on the account, so a loadout you like
-              survives into the next match. Loading one drops it into the
-              editor below — it doesn't become a design until you save. */}
-          <div className="ship-designer__section-title">
-            Templates <span style={{ color: '#8aa0b4', fontWeight: 400 }}>· saved across games</span>
-          </div>
-          {templates === null ? (
-            <div className="ship-designer__hint">Loading templates…</div>
-          ) : classTemplates.length === 0 ? (
-            <div className="ship-designer__hint">
-              No saved {SHIP_CLASSES[activeClass].displayName.toLowerCase()} templates. Build a loadout below and
-              hit SAVE AS TEMPLATE to reuse it in future games.
-            </div>
-          ) : (
-            <div className="ship-designer__list">
-              {classTemplates.map(t => (
-                <div key={t.id} className="ship-designer__list-row">
-                  <ShipIcon shipClass={activeClass} variant={t.iconVariant} size={16} />
-                  <span className="ship-designer__list-row-name">
-                    {t.name}
-                    <span style={{ color: '#8aa0b4', marginLeft: 6, fontSize: 9 }}>
-                      {t.parts.length === 0 ? 'bare hull' : t.parts.map(p => PART_GLYPH[p as ShipPartId] ?? '?').join(' ')}
-                    </span>
-                  </span>
-                  <button
-                    className="ship-designer__mini-btn"
-                    disabled={busy}
-                    onClick={() => loadTemplate(t)}
-                    title="Load this loadout into the editor"
-                  >LOAD</button>
-                  <button
-                    className="ship-designer__mini-btn ship-designer__mini-btn--danger"
-                    disabled={busy}
-                    onClick={() => deleteTemplate(t)}
-                    title="Delete this saved template"
-                  >✕</button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Editor */}
-          <div className="ship-designer__section-title">
-            {selected ? `Editing: ${selected.name}` : 'New design'}
-          </div>
-          <div className="ship-designer__name-row">
-            <input
-              className="ship-designer__name-input"
-              placeholder="Design name (e.g. Brawler MkII)"
-              value={draftName}
-              maxLength={32}
-              onChange={e => setDraftName(e.target.value)}
-            />
-            <div className="ship-designer__icon-dd" ref={iconDropdownRef}>
+        <div className="sd-main">
+          {/* ---------- Center column: canvas + palette drawer ---------- */}
+          <div className="sd-center">
+            {/* Library strip: saved designs + cross-game templates. */}
+            <div className="sd-library">
               <button
-                type="button"
-                className={`ship-designer__icon-btn ${iconMenuOpen ? 'open' : ''}`}
-                onClick={() => setIconMenuOpen(o => !o)}
-                aria-haspopup="listbox"
-                aria-expanded={iconMenuOpen}
-                title="Change ship icon"
+                className="sd-library__toggle"
+                onClick={() => setLibraryOpen(o => !o)}
+                aria-expanded={libraryOpen}
               >
-                <ShipIcon shipClass={activeClass} variant={iconVariant} size={18} />
-                <span className="ship-designer__icon-btn-name">
-                  {ICON_VARIANT_NAMES[activeClass][iconVariant]}
+                {libraryOpen ? '▾' : '▸'} LIBRARY
+                <span className="sd-library__meta">
+                  {classDesigns.length} design{classDesigns.length === 1 ? '' : 's'}
+                  {activeDesignForClass ? ` · active: ${activeDesignForClass.name}` : ' · builds launch bare hull'}
                 </span>
-                <span className="ship-designer__icon-caret" aria-hidden>▾</span>
               </button>
-              {iconMenuOpen && (
-                <div className="ship-designer__icon-menu" role="listbox" aria-label="Ship icon">
-                  <div className="ship-designer__icon-menu-title">Icon</div>
-                  {ALL_VARIANTS.map(v => {
-                    const isDefault = v === DEFAULT_SHIP_ICONS[activeClass];
-                    return (
-                      <button
-                        key={v}
-                        type="button"
-                        role="option"
-                        aria-selected={v === iconVariant}
-                        className={`ship-designer__icon-option ${v === iconVariant ? 'selected' : ''}`}
-                        onClick={() => { setDraftIcon(v); setIconMenuOpen(false); }}
-                      >
-                        <ShipIcon shipClass={activeClass} variant={v} size={22} />
-                        <span className="ship-designer__icon-option-name">
-                          {ICON_VARIANT_NAMES[activeClass][v]}
-                          {isDefault && <span className="ship-designer__icon-default"> · default</span>}
+              {libraryOpen && (
+                <div className="sd-library__body">
+                  {classDesigns.length === 0 && (
+                    <div className="sd-hint">
+                      No designs yet. A build with no active design launches the bare hull (base stats, no extra cost).
+                    </div>
+                  )}
+                  {classDesigns.map(d => (
+                    <div
+                      key={d.id}
+                      className={`sd-library__row ${d.id === selectedId ? 'selected' : ''}`}
+                      onClick={() => loadDesign(d)}
+                    >
+                      <ShipIcon shipClass={d.shipClass} variant={d.iconVariant} size={16} />
+                      <span className="sd-library__row-name">
+                        {d.name}
+                        <span className="sd-library__row-parts">
+                          {d.parts.length === 0 ? 'bare hull' : d.parts.map(p => PART_GLYPH[p as ShipPartId] ?? '?').join(' ')}
                         </span>
-                        {v === iconVariant && <span className="ship-designer__icon-check" aria-hidden>✓</span>}
-                      </button>
+                      </span>
+                      {d.isActive ? (
+                        <>
+                          <span className="sd-badge" title="BUILD uses this design for this class">ACTIVE</span>
+                          <button
+                            className="sd-mini-btn"
+                            disabled={busy}
+                            onClick={e => { e.stopPropagation(); setActiveDesign(d, false); }}
+                            title="Deactivate — builds fall back to the bare hull"
+                          >UNSET</button>
+                        </>
+                      ) : (
+                        <button
+                          className="sd-mini-btn"
+                          disabled={busy}
+                          onClick={e => { e.stopPropagation(); setActiveDesign(d, true); }}
+                          title="Make this the design BUILD uses for this class"
+                        >SET ACTIVE</button>
+                      )}
+                      <button
+                        className="sd-mini-btn sd-mini-btn--danger"
+                        disabled={busy}
+                        onClick={e => { e.stopPropagation(); deleteDesign(d); }}
+                        title="Delete this design (queued and completed ships keep their loadout)"
+                      >✕</button>
+                    </div>
+                  ))}
+                  <div className="sd-library__subhead">TEMPLATES · saved across games</div>
+                  {templates === null ? (
+                    <div className="sd-hint">Loading templates…</div>
+                  ) : classTemplates.length === 0 ? (
+                    <div className="sd-hint">
+                      None yet — build a loadout and hit SAVE AS TEMPLATE to reuse it in future games.
+                    </div>
+                  ) : classTemplates.map(t => (
+                    <div key={t.id} className="sd-library__row">
+                      <ShipIcon shipClass={activeClass} variant={t.iconVariant} size={16} />
+                      <span className="sd-library__row-name">
+                        {t.name}
+                        <span className="sd-library__row-parts">
+                          {t.parts.length === 0 ? 'bare hull' : t.parts.map(p => PART_GLYPH[p as ShipPartId] ?? '?').join(' ')}
+                        </span>
+                      </span>
+                      <button className="sd-mini-btn" disabled={busy} onClick={() => loadTemplate(t)} title="Load this loadout into the editor">LOAD</button>
+                      <button className="sd-mini-btn sd-mini-btn--danger" disabled={busy} onClick={() => deleteTemplate(t)} title="Delete this saved template">✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Name + icon row */}
+            <div className="sd-name-row">
+              <input
+                className="sd-name-input"
+                placeholder={selected ? selected.name : 'Design name (e.g. Brawler MkII)'}
+                value={draftName}
+                maxLength={32}
+                onChange={e => setDraftName(e.target.value)}
+              />
+              <div className="sd-icon-dd" ref={iconDropdownRef}>
+                <button
+                  type="button"
+                  className={`sd-icon-btn ${iconMenuOpen ? 'open' : ''}`}
+                  onClick={() => setIconMenuOpen(o => !o)}
+                  aria-haspopup="listbox"
+                  aria-expanded={iconMenuOpen}
+                  title="Change ship icon"
+                >
+                  <ShipIcon shipClass={activeClass} variant={iconVariant} size={18} />
+                  <span className="sd-icon-caret" aria-hidden>▾</span>
+                </button>
+                {iconMenuOpen && (
+                  <div className="sd-icon-menu" role="listbox" aria-label="Ship icon">
+                    {ALL_VARIANTS.map(v => {
+                      const isDefault = v === DEFAULT_SHIP_ICONS[activeClass];
+                      return (
+                        <button
+                          key={v}
+                          type="button"
+                          role="option"
+                          aria-selected={v === iconVariant}
+                          className={`sd-icon-option ${v === iconVariant ? 'selected' : ''}`}
+                          onClick={() => { setDraftIcon(v); setIconMenuOpen(false); }}
+                        >
+                          <ShipIcon shipClass={activeClass} variant={v} size={22} />
+                          <span>
+                            {ICON_VARIANT_NAMES[activeClass][v]}
+                            {isDefault && <span className="sd-icon-default"> · default</span>}
+                          </span>
+                          {v === iconVariant && <span aria-hidden>✓</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              {selected && (
+                <button className="sd-mini-btn" onClick={() => loadDesign(null)}>+ NEW</button>
+              )}
+            </div>
+
+            {/* ---------- THE CANVAS: avatar + socket ring ---------- */}
+            <div className={`sd-canvas ${dragging ? 'sd-canvas--dragging' : ''}`}>
+              <div className="sd-canvas__avatar">
+                <ShipIcon shipClass={activeClass} variant={iconVariant} size={96} />
+                <div className="sd-canvas__hull-name">{SHIP_CLASSES[activeClass].displayName}</div>
+              </div>
+              {Array.from({ length: slots }).map((_, i) => {
+                const part = draftParts[i] as ShipPartId | undefined;
+                const pos = socketPos(i, slots);
+                const acceptable = dragging != null && (part != null || draftParts.length < slots || i < draftParts.length);
+                return (
+                  <button
+                    key={i}
+                    type="button"
+                    className={[
+                      'sd-socket',
+                      part ? 'sd-socket--filled' : 'sd-socket--empty',
+                      part === 'detonator' ? 'sd-socket--detonator' : '',
+                      dragging && acceptable ? 'sd-socket--accepting' : '',
+                    ].filter(Boolean).join(' ')}
+                    style={pos}
+                    title={part
+                      ? `${SHIP_PART_DEFS[part].name} — click to unfit`
+                      : 'Empty slot (free) — drag a part here, or tap a part card to fit'}
+                    onClick={() => { if (part) unfitSocket(i); }}
+                    onDragOver={e => { if (dragging) e.preventDefault(); }}
+                    onDrop={e => {
+                      e.preventDefault();
+                      const pid = (e.dataTransfer.getData('text/orbital-part') || dragging) as ShipPartId | '';
+                      if (pid && SHIP_PART_DEFS[pid as ShipPartId]) dropOnSocket(pid as ShipPartId, i);
+                      setDragging(null);
+                    }}
+                  >
+                    {part ? PART_GLYPH[part] : '+'}
+                  </button>
+                );
+              })}
+              <div className="sd-canvas__slots-label">
+                SLOTS {draftParts.length}/{slots} · empty slots are free
+              </div>
+              {flash && <div className="sd-flash" role="alert">⚠ {flash}</div>}
+              {nDetonators > 0 && (
+                <div className="sd-canvas__det-warning">⚠ {detonatorDisclosure(detDamage)}</div>
+              )}
+            </div>
+
+            {/* ---------- Palette drawer ---------- */}
+            <div className={`sd-drawer ${drawerOpen ? 'open' : ''}`}>
+              <button
+                className="sd-drawer__toggle"
+                onClick={() => setDrawerOpen(o => !o)}
+                aria-expanded={drawerOpen}
+              >
+                {drawerOpen ? '▾' : '▴'} PARTS
+                {activeClass === 'freighter' && (
+                  <span className="sd-drawer__hint">freighters take engine/shield only — they haul, they don't fight</span>
+                )}
+              </button>
+              {drawerOpen && (
+                <div className="sd-drawer__body">
+                  {allowedParts.map(pid => {
+                    const def = SHIP_PART_DEFS[pid];
+                    const n = countPart(draftParts, pid);
+                    const isDet = pid === 'detonator';
+                    const lock = gate.lockReason(PART_FEATURE[pid]);
+                    const next = nextCopyCost(pid, n);
+                    const full = !lock && draftParts.length >= slots;
+                    return (
+                      <div
+                        key={pid}
+                        className={[
+                          'sd-part',
+                          isDet ? 'sd-part--detonator' : '',
+                          lock ? 'sd-part--locked' : '',
+                          dragging === pid ? 'sd-part--dragging' : '',
+                        ].filter(Boolean).join(' ')}
+                        draggable={!lock}
+                        onDragStart={e => {
+                          if (lock) { e.preventDefault(); return; }
+                          e.dataTransfer.setData('text/orbital-part', pid);
+                          e.dataTransfer.effectAllowed = 'copy';
+                          setDragging(pid);
+                        }}
+                        onDragEnd={() => setDragging(null)}
+                        onClick={() => { if (!lock) fitPart(pid); else showFlash(`🔒 ${def.name} — ${lock.text}`); }}
+                        title={`${def.blurb}\n${def.techNote}${lock ? `\n🔒 ${lock.text}` : ''}\nClick to fit · drag onto a socket`}
+                        role="button"
+                        aria-disabled={!!lock || full}
+                      >
+                        <span className="sd-part__glyph">{PART_GLYPH[pid]}</span>
+                        <span className="sd-part__text">
+                          <span className="sd-part__name">
+                            {def.name}
+                            {n > 0 && <span className="sd-part__fitted"> ×{n}</span>}
+                            {lock && <span className="sd-part__lock"> 🔒</span>}
+                          </span>
+                          <span className="sd-part__blurb">{def.blurb}</span>
+                          {COUNTER_TEXT[pid] && (
+                            <span className="sd-part__counter">countered: {COUNTER_TEXT[pid]}</span>
+                          )}
+                          {isDet && (
+                            <span className="sd-part__counter" style={{ color: '#ff8a5c' }}>
+                              hits friend AND foe · ship is destroyed
+                            </span>
+                          )}
+                        </span>
+                        <span className="sd-part__price" title={n > 0 ? `Copies of the same part escalate ×${PART_STACK_ESCALATION} each` : 'Base price'}>
+                          {n > 0 && <span className="sd-part__price-nth">#{n + 1}</span>}
+                          {next.ore}M {next.credits}C
+                        </span>
+                      </div>
                     );
                   })}
                 </div>
               )}
             </div>
-            {selected && (
-              <button className="ship-designer__mini-btn" onClick={() => loadDesign(null)}>
-                + NEW
+          </div>
+
+          {/* ---------- Right sidebar: stats + refit + actions ---------- */}
+          <div className="sd-side">
+            <div className="sd-side__title">
+              {selected ? `EDITING: ${selected.name}` : 'NEW DESIGN'}
+              {selected && !draftMatchesSelected && <span className="sd-side__dirty"> · unsaved</span>}
+            </div>
+            <div className="sd-side__stats">{statRows}</div>
+            {matchupHint && <div className="sd-hint sd-hint--matchup">⚔ vs 🛡 · {matchupHint}</div>}
+            <div className="sd-hint">
+              <strong>Kinetic ⚔</strong> chews armor, shields blunt it. <strong>Energy ⚡</strong> melts
+              shields, armor scatters it. Each 🛡/🪨 cuts its countered damage to 78% (stacking).
+              Hull base: {SERVER_HULL_BASE[activeClass].hp} HP · {SERVER_HULL_BASE[activeClass].damagePerTick} dmg.
+              Builds snapshot the ACTIVE design at queue time.
+            </div>
+            {refitBar}
+            {error && (
+              <button className="sd-error" onClick={() => setError(null)} title="Click to dismiss">
+                ⚠ {error}
               </button>
             )}
+            {actionButtons}
           </div>
+        </div>
 
-          {/* Slot pips */}
-          <div className="ship-designer__slots">
-            SLOTS
-            {Array.from({ length: slots }).map((_, i) => {
-              const part = draftParts[i] as ShipPartId | undefined;
-              return (
-                <span
-                  key={i}
-                  className={`ship-designer__slot-pip ${part ? 'filled' : ''} ${part === 'detonator' ? 'detonator' : ''}`}
-                  title={part ? SHIP_PART_DEFS[part].name : 'Empty slot (free)'}
-                >
-                  {part ? PART_GLYPH[part] : ''}
-                </span>
-              );
-            })}
-            <span style={{ color: '#8aa0b4' }}>{draftParts.length}/{slots} · empty slots are free</span>
-          </div>
-
-          {/* Part cards */}
-          {allowedParts.map(pid => {
-            const def = SHIP_PART_DEFS[pid];
-            const n = countPart(draftParts, pid);
-            const isDet = pid === 'detonator';
-            // Research gate. Locked parts stay listed so the designer
-            // doubles as a preview of the counter-matrix — you can read
-            // what energy mounts do before you can fit one.
-            const lock = gate.lockReason(PART_FEATURE[pid]);
-            return (
-              <div
-                key={pid}
-                className={`ship-designer__part ${isDet ? 'ship-designer__part--detonator' : ''}`}
-                style={lock ? { opacity: 0.55 } : undefined}
-              >
-                <div className="ship-designer__part-info">
-                  <div className="ship-designer__part-name">{PART_GLYPH[pid]} {def.name}</div>
-                  <div className="ship-designer__part-blurb">{def.blurb}</div>
-                  <div className="ship-designer__part-tech">{def.techNote}</div>
-                  <div className="ship-designer__part-cost">{def.cost.ore}M {def.cost.credits}C per part</div>
-                  {lock && (
-                    <div className="ship-designer__part-tech" style={{ color: '#8aa0b4' }}>
-                      🔒 {lock.text}
-                    </div>
-                  )}
-                  {isDet && n > 0 && (
-                    // REQUIRED disclosure (spec §2.2): damage number +
-                    // friendly fire + ship consumed — all three, always.
-                    <div className="ship-designer__part-warning">
-                      ⚠ {detonatorDisclosure(detDamage)}
-                    </div>
-                  )}
-                </div>
-                <div className="ship-designer__count">
-                  <button
-                    className="ship-designer__count-btn"
-                    disabled={n === 0}
-                    onClick={() => removePart(pid)}
-                    aria-label={`Remove a ${def.name}`}
-                  >−</button>
-                  <span className="ship-designer__count-num">{n}</span>
-                  <button
-                    className="ship-designer__count-btn"
-                    disabled={!!lock || draftParts.length >= slots}
-                    onClick={() => addPart(pid)}
-                    title={lock ? `${lock.label} — ${lock.text}` : undefined}
-                    aria-label={`Add a ${def.name}`}
-                  >+</button>
-                </div>
-              </div>
-            );
-          })}
-
-          {/* Computed stats (tech multipliers applied) */}
-          <div className="ship-designer__section-title">Computed stats · your current tech applied</div>
-          <div className="ship-designer__stats">
-            <div className="ship-designer__stat">
-              <div className="ship-designer__stat-label">Max HP</div>
-              <div className="ship-designer__stat-value">
-                {stats.hp}
-                {stats.hp !== bare.hp && (
-                  <span className="ship-designer__stat-delta">(+{stats.hp - bare.hp})</span>
-                )}
-              </div>
-            </div>
-            <div className="ship-designer__stat">
-              <div className="ship-designer__stat-label">Damage / volley</div>
-              <div className="ship-designer__stat-value">
-                {stats.damagePerTick}
-                {stats.damagePerTick !== bare.damagePerTick && (
-                  <span className="ship-designer__stat-delta">
-                    (+{Math.round((stats.damagePerTick - bare.damagePerTick) * 10) / 10})
-                  </span>
-                )}
-              </div>
-            </div>
-            <div className="ship-designer__stat">
-              <div className="ship-designer__stat-label">Damage type</div>
-              <div className="ship-designer__stat-value">{dmgTypeLabel}</div>
-            </div>
-            <div className="ship-designer__stat">
-              <div className="ship-designer__stat-label">Defense</div>
-              <div className="ship-designer__stat-value">{defLabel}</div>
-            </div>
-            <div className="ship-designer__stat">
-              <div className="ship-designer__stat-label">Travel time</div>
-              <div className="ship-designer__stat-value">
-                ×{stats.travelTimeMult.toFixed(2)}
-                {stats.travelTimeMult < 1 && (
-                  <span className="ship-designer__stat-delta">
-                    (−{Math.round((1 - stats.travelTimeMult) * 100)}%)
-                  </span>
-                )}
-              </div>
-            </div>
-            <div className="ship-designer__stat">
-              <div className="ship-designer__stat-label">Cost / ship</div>
-              <div className="ship-designer__stat-value">
-                {hullDef.cost.ore + draftCost.ore}M {hullDef.cost.credits + draftCost.credits}C
-                {(draftCost.ore > 0 || draftCost.credits > 0) && (
-                  <span className="ship-designer__stat-delta">
-                    (hull {hullDef.cost.ore}M {hullDef.cost.credits}C + parts {draftCost.ore}M {draftCost.credits}C)
-                  </span>
-                )}
-              </div>
-            </div>
-            {nDetonators > 0 && (
-              <div className="ship-designer__stat">
-                <div className="ship-designer__stat-label">Detonation</div>
-                <div className="ship-designer__stat-value" style={{ color: '#ff5e5e' }}>
-                  {detDamage} dmg
-                </div>
-              </div>
-            )}
-          </div>
-          {matchupHint && (
-            <div className="ship-designer__hint ship-designer__hint--matchup">
-              ⚔ vs 🛡 · {matchupHint}
+        {/* ---------- Mobile sticky stat footer ---------- */}
+        <div className="sd-footer">
+          <button
+            className="sd-footer__summary"
+            onClick={() => setStatsSheetOpen(o => !o)}
+            aria-expanded={statsSheetOpen}
+          >
+            <span>{stats.hp} HP</span>
+            <span>{stats.damagePerTick} dmg</span>
+            <span>{hullDef.cost.ore + draftCost.ore}M {hullDef.cost.credits + draftCost.credits}C</span>
+            <span>{upkeepLabel}</span>
+            <span aria-hidden>{statsSheetOpen ? '▾' : '▴'}</span>
+          </button>
+          {statsSheetOpen && (
+            <div className="sd-footer__sheet">
+              <div className="sd-side__stats">{statRows}</div>
+              {refitBar}
+              {error && (
+                <button className="sd-error" onClick={() => setError(null)}>⚠ {error}</button>
+              )}
+              {actionButtons}
             </div>
           )}
-          <div className="ship-designer__hint">
-            <strong>Kinetic ⚔</strong> chews armor, shields blunt it. <strong>Energy ⚡</strong> melts shields, armor scatters it.
-            Each 🛡/🪨 cuts its countered damage type to 78% (stacking). Hull base:{' '}
-            {SERVER_HULL_BASE[activeClass].hp} HP · {SERVER_HULL_BASE[activeClass].damagePerTick} dmg.
-            The ACTIVE design is snapshot onto each build at queue time — editing a design never changes ships already queued or flying.
-          </div>
-
-          {error && (
-            <button className="ship-designer__error" onClick={() => setError(null)} title="Click to dismiss">
-              ⚠ {error}
-            </button>
-          )}
-
-          <div className="ship-designer__actions">
-            <button
-              className="ship-designer__btn ship-designer__btn--primary"
-              disabled={busy || draftName.trim().length === 0}
-              onClick={() => save(true)}
-              title="Save this design and make it the one BUILD uses for this class"
-            >
-              {selected ? 'SAVE & SET ACTIVE' : 'CREATE & SET ACTIVE'}
-            </button>
-            <button
-              className="ship-designer__btn"
-              disabled={busy || draftName.trim().length === 0}
-              onClick={() => save(false)}
-              title="Save without changing which design is active"
-            >
-              {selected ? 'SAVE' : 'CREATE'}
-            </button>
-            <button
-              className="ship-designer__btn"
-              disabled={busy || draftName.trim().length === 0}
-              onClick={saveAsTemplate}
-              title="Save this loadout to your account so you can load it in future games"
-            >
-              SAVE AS TEMPLATE
-            </button>
-            {selected && (
+          {!statsSheetOpen && (
+            <div className="sd-footer__cta">
               <button
-                className="ship-designer__btn ship-designer__btn--danger"
-                disabled={busy}
-                onClick={() => deleteDesign(selected)}
+                className="sd-btn sd-btn--primary"
+                disabled={busy || draftName.trim().length === 0}
+                onClick={() => save(true)}
               >
-                DELETE
+                {selected ? 'SAVE & ACTIVATE' : 'CREATE & ACTIVATE'}
               </button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

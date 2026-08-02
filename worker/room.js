@@ -3168,16 +3168,24 @@ export class Room {
           && g.newArrears === Number(f.arrears_gold ?? 0)
           && m.newArrears === Number(f.arrears_metal ?? 0);
         if (nothingToDo) continue;
-        await this.env.DB
+        // Guarded on the LIVE balance (QA finding): `pay` was clamped to
+        // a pool read several awaits ago, and a concurrent rush/refit/
+        // build can legally spend it down in between — an unguarded
+        // subtraction here could drive the pool negative. On a miss we
+        // skip this faction for the tick: carry/arrears stay untouched,
+        // so nothing drifts and next tick simply bills again.
+        const paid = await this.env.DB
           .prepare(
             `UPDATE game_factions
                 SET gold = gold - ?, metal = metal - ?,
                     upkeep_carry_gold = ?, upkeep_carry_metal = ?,
                     arrears_gold = ?, arrears_metal = ?
-              WHERE id = ?`,
+              WHERE id = ? AND gold >= ? AND metal >= ?`,
           )
-          .bind(g.pay, m.pay, g.newCarry, m.newCarry, g.newArrears, m.newArrears, f.id)
+          .bind(g.pay, m.pay, g.newCarry, m.newCarry, g.newArrears, m.newArrears,
+                f.id, g.pay, m.pay)
           .run();
+        if (!paid.meta?.changes) continue;
         // Chronicle the TRANSITIONS only (enter/leave arrears), not the
         // steady state — the herald wants the drama, not a per-tick drone.
         const nowArrears = g.newArrears + m.newArrears;

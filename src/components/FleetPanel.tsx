@@ -741,6 +741,16 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
         {status.label}
       </span>
     );
+    // Refit propagation (§2): this hull refits (and pays the fee) at its
+    // next friendly yard — surfaced so a "why is my loadout old" ship is
+    // self-explanatory.
+    const refitBadge = ship.refitPendingDesignId ? (
+      <span
+        className="status-badge"
+        style={{ color: '#9fdcff', borderColor: 'rgba(127,212,255,0.5)', flex: '0 0 auto' }}
+        title="Refit pending — this ship updates to its latest template (and pays the refit fee) when it next parks at a friendly yard."
+      >⟳ Refit pending</span>
+    ) : null;
 
     const eligible = bulkEligibleIds.has(ship.id);
     const checked = selectedIds.has(ship.id);
@@ -819,6 +829,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               />
             </span>
             {statusBadge}
+            {refitBadge}
           </div>
           <div className="fleet-card__line2">
             {ship.ownedBy !== 'player' && (
