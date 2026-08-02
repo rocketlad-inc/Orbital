@@ -2039,6 +2039,28 @@ export interface ShipFormation {
   arcCenter?: number;
   /** Battle-line arc width in radians. */
   arcWidth?: number;
+  /** Ring-level wheel direction for the battle line — shared by every
+   *  ship in the bucket (QA: per-ship orbit.direction can differ when
+   *  fleets inserted from opposite approaches, which would rotate the
+   *  two lines in opposite senses and drift them out of opposition). */
+  arcDir?: number;
+}
+
+/** Last WORLD position drawShip/drawTorchTransitShip actually rendered
+ *  each hull at — including battle-line arc + lane placement, which the
+ *  raw orbital elements know nothing about. Death FX (wrecks,
+ *  destruction flashes) read this so a kill scars the map where the
+ *  ship visibly WAS, not at its textbook orbital point on the far side
+ *  of the planet (QA finding). Bounded like the other per-ship caches. */
+const lastDrawnShipWorldPos = new Map<string, { x: number; y: number }>();
+export function drawnShipWorldPos(shipId: string): { x: number; y: number } | undefined {
+  return lastDrawnShipWorldPos.get(shipId);
+}
+function recordDrawnShipWorldPos(shipId: string, x: number, y: number): void {
+  if (lastDrawnShipWorldPos.size > 2000) lastDrawnShipWorldPos.clear();
+  const e = lastDrawnShipWorldPos.get(shipId);
+  if (e) { e.x = x; e.y = y; }
+  else lastDrawnShipWorldPos.set(shipId, { x, y });
 }
 
 /** Class lane base + deterministic per-hull jitter, in world units. */
@@ -2095,7 +2117,11 @@ export function drawShip(
   let lx = localPos.x;
   let ly = localPos.y;
   let heading: number;
-  const dir = ship.orbit.direction ?? 1;
+  // Battle lines wheel with a RING-LEVEL direction (formation.arcDir)
+  // so opposing lines hold their facing — per-ship orbit.direction can
+  // legitimately differ across factions that inserted from opposite
+  // approaches, which would spin the lines apart.
+  const dir = formation?.arcDir ?? ship.orbit.direction ?? 1;
 
   if (formation?.arcCenter !== undefined) {
     // BATTLE LINE placement — absolute arc angle, not phase offset.
@@ -2134,6 +2160,8 @@ export function drawShip(
   const worldX = parentPos.x + lx;
   const worldY = parentPos.y + ly;
   const canvasPos = worldToCanvas(worldX, worldY, ctx);
+  // Death FX (wrecks, destruction flash) spawn where the hull was DRAWN.
+  recordDrawnShipWorldPos(ship.id, worldX, worldY);
 
   // Faction-colored: cyan for player, red for enemy.
   const shipColorValue = shipColor(ship, ctx.factions);
@@ -3220,6 +3248,7 @@ function drawTorchTransitShip(
     ? torchPositionFromSamples(trajectorySamples, ctx.t)
     : { x: ship.transit.pos.x, y: ship.transit.pos.y };
   const canvasPos = worldToCanvas(lerpedPos.x, lerpedPos.y, ctx);
+  recordDrawnShipWorldPos(ship.id, lerpedPos.x, lerpedPos.y);
   const shipColorValue = shipColor(ship, ctx.factions);
 
   // Phase detection: BOOST (engine fires prograde toward intercept) vs

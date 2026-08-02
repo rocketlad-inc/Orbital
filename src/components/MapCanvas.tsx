@@ -41,6 +41,7 @@ import {
   ShipFormation,
   shipLane,
   shipLaneOnly,
+  drawnShipWorldPos,
 } from '../render/mapRenderer';
 import { computeSystemRegions } from '../render/systemRegions';
 import { BUILDING_DEFS, buildingLevel } from '../game/settlements';
@@ -549,10 +550,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // just left the player's (moving) sensor coverage — a fog-out,
           // not a death. The server chronicles actual kills; require one.
           if (!diedByChronicle(id, nowMs)) continue;
-          destructionFlashesRef.current.set(id, { pos, startMs: nowMs, baseRadius: 12, id });
+          // Prefer the position the renderer actually DREW the hull at
+          // last frame — battle-line arcs and lane offsets place ships
+          // far from their textbook orbital point, and a wreck on the
+          // wrong side of the planet reads as a bug (QA finding).
+          const drawnPos = drawnShipWorldPos(id) ?? pos;
+          destructionFlashesRef.current.set(id, { pos: drawnPos, startMs: nowMs, baseRadius: 12, id });
           // Leave a wreck at the kill site — the battle scars the map
           // for a few minutes instead of vanishing with the flash.
-          spawnWreck(id, pos, 12, nowMs);
+          spawnWreck(id, drawnPos, 12, nowMs);
         }
       }
     }
@@ -1124,6 +1130,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // Each faction's arc: centers spread around the ring, width
           // capped so adjacent lines keep a visible no-man's-land gap.
           const arcWidth = Math.min((Math.PI * 2 / F) * 0.62, 2.1);
+          // One wheel direction for the whole ring (lowest-id ship's),
+          // so opposing lines hold their facing instead of counter-
+          // rotating when fleets inserted from opposite approaches.
+          const arcDir = list[0].orbit.direction ?? 1;
           owners.forEach((owner, k) => {
             const arcCenter = (Math.PI * 2 * k) / F;
             const mine = list.filter(s => s.ownedBy === owner);
@@ -1131,7 +1141,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
               formationMap.set(s.id, {
                 index: i, total: mine.length,
                 lane: shipLane(s),
-                arcCenter, arcWidth,
+                arcCenter, arcWidth, arcDir,
               });
             });
           });
