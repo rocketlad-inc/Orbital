@@ -2003,6 +2003,50 @@ function drawRankChevron(
   c2d.restore();
 }
 
+// ---- Orbital lanes + battle lines (endgame juice pass) ----
+//
+// LANES: co-orbiting ships used to share one exact radius, so stacked
+// arrivals drew on top of each other. Every parked ship now carries a
+// small deterministic radial offset — warships hold the tight inner
+// lane, freighters and colony ships park wider — plus a per-hull jitter
+// so even same-class ships separate. World units, so the separation
+// scales naturally with zoom.
+//
+// BATTLE LINES: when hostile fleets share a ring, each faction is
+// assigned an opposing ARC of the orbit (computed in MapCanvas's
+// formation pass) instead of interleaving. drawShip places arc ships at
+// an absolute angle — faction line abreast, slowly wheeling around the
+// planet — with the nose on the correct tangent.
+
+export interface ShipFormation {
+  index: number;
+  total: number;
+  /** Radial lane offset in world units (class base + per-hull jitter). */
+  lane?: number;
+  /** Battle-line arc: absolute angle of this faction's line center. */
+  arcCenter?: number;
+  /** Battle-line arc width in radians. */
+  arcWidth?: number;
+}
+
+/** Class lane base + deterministic per-hull jitter, in world units. */
+export function shipLane(ship: Ship): number {
+  const base = ship.class === 'freighter' ? 2.2
+    : ship.class === 'colony' ? 3.4
+    : 0;
+  return base + ((hashStr(ship.id) % 100) / 100) * 1.4;
+}
+
+/** Formation entry for a ship alone on its ring — lane only. */
+export function shipLaneOnly(ship: Ship): ShipFormation {
+  return { index: 0, total: 1, lane: shipLane(ship) };
+}
+
+/** How fast a battle line wheels around its planet: one full turn per
+ *  ~4 minutes of wall clock. Slow enough to aim at, alive enough to
+ *  read as an engagement holding station rather than a screenshot. */
+const BATTLE_LINE_TURN_MS = 240000;
+
 /**
  * Draw a ship on its orbit
  */
@@ -2010,7 +2054,7 @@ export function drawShip(
   ship: Ship,
   ctx: RenderContext,
   isSelected: boolean = false,
-  formation?: { index: number; total: number },
+  formation?: ShipFormation,
   /** Zoom-driven size multiplier for PARKED ships (spawn small, grow as
    *  you zoom in — see MapCanvas ORBIT_SHIP_MIN_SCALE). Transit + selected
    *  ships ignore it and always draw full size so they stay trackable. */
@@ -2036,18 +2080,51 @@ export function drawShip(
   }
   const parentPos = bodyPosition(parentBody, ctx.t, ctx.bodies);
   const localPos = localPositionAt(ship.orbit, shipT);
-  const worldX = parentPos.x + localPos.x;
-  const worldY = parentPos.y + localPos.y;
+  let lx = localPos.x;
+  let ly = localPos.y;
+  let heading: number;
+  const dir = ship.orbit.direction ?? 1;
+
+  if (formation?.arcCenter !== undefined) {
+    // BATTLE LINE placement — absolute arc angle, not phase offset.
+    // The line wheels slowly around the planet (shared drift, so both
+    // factions' lines hold their relative facing) and this hull takes
+    // its slot within the faction's arc. Radius keeps the ship's own
+    // ring (plus its lane), so lines at different altitudes still read.
+    const nowM = ctx.nowMs ?? performance.now();
+    const drift = ((nowM % BATTLE_LINE_TURN_MS) / BATTLE_LINE_TURN_MS) * Math.PI * 2 * dir;
+    const width = formation.arcWidth ?? 1.6;
+    const within = formation.total > 1
+      ? (formation.index / (formation.total - 1) - 0.5) * width
+      : 0;
+    const theta = formation.arcCenter + drift + within;
+    const r = Math.hypot(lx, ly) + (formation.lane ?? 0);
+    lx = Math.cos(theta) * r;
+    ly = Math.sin(theta) * r;
+    // Nose on the orbit tangent — prograde for the ring's direction.
+    heading = theta + (Math.PI / 2) * dir;
+  } else {
+    // Normal ring — apply the radial lane offset by scaling the local
+    // vector outward; heading stays on the true orbital tangent.
+    const lane = formation?.lane ?? 0;
+    if (lane > 0) {
+      const r0 = Math.hypot(lx, ly);
+      if (r0 > 1e-6) {
+        const k = (r0 + lane) / r0;
+        lx *= k;
+        ly *= k;
+      }
+    }
+    const vel = velocityVectorsAt(ship.orbit, shipT);
+    heading = Math.atan2(vel.prograde.y, vel.prograde.x);
+  }
+
+  const worldX = parentPos.x + lx;
+  const worldY = parentPos.y + ly;
   const canvasPos = worldToCanvas(worldX, worldY, ctx);
 
   // Faction-colored: cyan for player, red for enemy.
   const shipColorValue = shipColor(ship, ctx.factions);
-
-  // Velocity vector — used both to rotate the icon and as a fallback tick.
-  // Same spun (and phase-offset) time as the position, or the hull would
-  // point one way and travel another.
-  const vel = velocityVectorsAt(ship.orbit, shipT);
-  const heading = Math.atan2(vel.prograde.y, vel.prograde.x);
 
   const iconSize = shipIconSize(ship.class, isSelected)
     * ((ship.transit || isSelected) ? 1 : sizeScale);
@@ -2126,7 +2203,7 @@ export function drawShip(
     ctx.ctx.lineWidth = 1.5;
     ctx.ctx.beginPath();
     ctx.ctx.moveTo(canvasPos.x, canvasPos.y);
-    ctx.ctx.lineTo(canvasPos.x + vel.prograde.x * 10, canvasPos.y + vel.prograde.y * 10);
+    ctx.ctx.lineTo(canvasPos.x + Math.cos(heading) * 10, canvasPos.y + Math.sin(heading) * 10);
     ctx.ctx.stroke();
   }
 

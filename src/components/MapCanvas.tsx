@@ -38,10 +38,13 @@ import {
   bodyLabelAlwaysOn,
   planBodyLabels,
   BODY_LABEL_ROW_HEIGHT,
+  ShipFormation,
+  shipLane,
+  shipLaneOnly,
 } from '../render/mapRenderer';
 import { computeSystemRegions } from '../render/systemRegions';
 import { BUILDING_DEFS, buildingLevel } from '../game/settlements';
-import { BuildingKind } from '../types';
+import { BuildingKind, Ship } from '../types';
 import {
   spawnTracer,
   drawTracers,
@@ -1074,9 +1077,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // the planet instead of a stack at the arrival point. Only orbiting
     // ships are bucketed — ships in transit follow their torch trajectory
     // and don't stack.
-    const formationMap = new Map<string, { index: number; total: number }>();
+    const formationMap = new Map<string, ShipFormation>();
     {
-      const buckets = new Map<string, string[]>();
+      const buckets = new Map<string, Ship[]>();
       for (const s of gameState.ships) {
         if (s.transit) continue;
         if (s.ownedBy !== 'player' && !visibleShipIds.has(s.id)) continue;
@@ -1086,15 +1089,54 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const sma = ((s.orbit.rp ?? 0) + (s.orbit.ra ?? 0)) / 2;
         const key = `${s.orbit.parentBodyId}|${Math.round(sma)}`;
         const list = buckets.get(key) || [];
-        list.push(s.id);
+        list.push(s);
         buckets.set(key, list);
       }
       for (const list of buckets.values()) {
-        if (list.length < 2) continue;
-        list.sort();  // stable order so a ship's lane doesn't jitter frame-to-frame
-        list.forEach((sid, i) => {
-          formationMap.set(sid, { index: i, total: list.length });
-        });
+        if (list.length < 2) {
+          // Lone ship still gets its lane offset so a freighter parked
+          // over a moon doesn't sit inside the station's ring.
+          if (list.length === 1) formationMap.set(list[0].id, shipLaneOnly(list[0]));
+          continue;
+        }
+        // Stable order so a ship's slot doesn't jitter frame-to-frame.
+        list.sort((a, b) => (a.id < b.id ? -1 : 1));
+
+        // BATTLE LINES: when two or more factions with ARMED hulls share
+        // this ring, each faction claims an opposing arc — your line on
+        // one side, theirs on the other, fire crossing the gap — instead
+        // of interleaving into a blender. Factions with only civilians
+        // present (a freighter caught in the crossfire) still get an arc
+        // of their own so they visibly huddle away from the guns.
+        const owners = [...new Set(list.map(s => s.ownedBy))].sort();
+        const armedOwners = new Set(
+          list.filter(s => (s.damagePerTick ?? getShipClass(s.class).damagePerTick) > 0)
+              .map(s => s.ownedBy));
+        const battle = owners.length >= 2 && armedOwners.size >= 2;
+
+        if (battle) {
+          const F = owners.length;
+          // Each faction's arc: centers spread around the ring, width
+          // capped so adjacent lines keep a visible no-man's-land gap.
+          const arcWidth = Math.min((Math.PI * 2 / F) * 0.62, 2.1);
+          owners.forEach((owner, k) => {
+            const arcCenter = (Math.PI * 2 * k) / F;
+            const mine = list.filter(s => s.ownedBy === owner);
+            mine.forEach((s, i) => {
+              formationMap.set(s.id, {
+                index: i, total: mine.length,
+                lane: shipLane(s),
+                arcCenter, arcWidth,
+              });
+            });
+          });
+        } else {
+          list.forEach((s, i) => {
+            formationMap.set(s.id, {
+              index: i, total: list.length, lane: shipLane(s),
+            });
+          });
+        }
       }
     }
 
