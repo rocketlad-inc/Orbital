@@ -26,6 +26,7 @@ import { BUILDING_FEATURE } from '../game/researchUnlocks';
 import { BUILDABLE_CLASSES, getShipClass } from '../game/shipClasses';
 import { shipyardSlotsAtBody, canHostCity, canHostStation, suggestSettlementName } from '../game/settlements';
 import { EditableName } from '../components/EditableName';
+import { RushControl } from '../components/BuildPanel';
 import { humanizeMpError } from './errorMessages';
 import { ShipIcon } from '../components/ShipIcons';
 import { randomShipName } from '../game/shipNames';
@@ -898,6 +899,21 @@ const WmFleet: React.FC<{
           <ShipIcon shipClass={o.shipClass} variant={o.iconVariant} size={15} color={p1} color2={p2} />
           <span className="wm-qnm">{o.shipName ?? o.shipClass}</span>
           <span className="wm-qeta">{isBuilding ? `T-${eta}` : 'queued'}</span>
+          {o.botched && (
+            <span
+              title="A rush went badly — this hull will be delivered at HALF health."
+              style={{ color: '#ff8a5c', fontSize: 10, flex: '0 0 auto' }}
+            >⚠</span>
+          )}
+          {isMine && isBuilding && eta > 1 && (
+            // Rush (§3): confirm popover with cost + new ETA + the 25%
+            // half-hull risk. Same control the BuildPanel rows use.
+            <RushControl
+              order={o}
+              remaining={eta}
+              constructionLvl={gameState.factionTech?.player?.levels?.construction ?? 0}
+            />
+          )}
           {isMine && (
             <button
               className="wm-qcancel"

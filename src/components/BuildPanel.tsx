@@ -957,7 +957,7 @@ export const BuildPanel: React.FC = () => {
 // confirm-popover over instant-apply.)
 // ----------------------------------------------------------------
 
-const RushControl: React.FC<{
+export const RushControl: React.FC<{
   order: import('../types').BuildOrder;
   remaining: number;
   constructionLvl: number;
