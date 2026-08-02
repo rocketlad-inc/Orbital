@@ -15,10 +15,14 @@ up, and one-off purchases can't drain it — the player buys the thing, and
 the surplus resumes climbing. What converts a stockpile problem into a
 *rate* problem is a recurring cost. That's §1.
 
-§2 and §3 exist because the sinks only work if spending is legible and
-pleasant. A refit fee nobody understands is a tax; a designer that's
-painful to use means players fit the default loadout forever and never
-engage with the part economy at all.
+§2 and §3 add the other two sinks: changing your mind costs something,
+and — the sharpest of the three — resources can be converted into TIME,
+the one thing an hour-per-tick game cannot manufacture.
+
+§4 exists because none of it works if spending is illegible. A refit fee
+nobody understands is a tax; a designer that's painful to use means
+players fit the default loadout forever and never engage with the part
+economy at all.
 
 ---
 
@@ -153,7 +157,65 @@ yards now (84c), 3 pending arrival."*
 
 ---
 
-## §3 — The Ship Designer, rebuilt
+## §3 — Rush construction
+
+At any shipyard with a build in progress: **pay the ship's cost a second
+time to halve the remaining build time.**
+
+This is the best sink of the three, and it's worth saying why. Upkeep and
+refit drain resources; rush converts them into the one thing the game
+can't manufacture. At an hour per tick, **time is the scarcest resource in
+Orbital** — a destroyer that lands eight hours early is the difference
+between relieving a siege and reading about it. A rich player will always
+want this, which is exactly the property a sink needs.
+
+### Rules
+
+- **Cost = the full current build cost, paid again** — hull *plus* fitted
+  parts at the escalated rate (§ cost curve). You pay for the ship twice,
+  total.
+- **Halves the REMAINING time, not the total.** `remaining = ceil(remaining
+  / 2)`, minimum 1 tick. Halving the total would make rushing useless late
+  in a build, which is precisely when the player wants it.
+- **Once per build order.** A `rushed` flag on the queue row. Repeated
+  halving would let a wealthy empire buy an effectively instant fleet for
+  a geometric-but-finite sum; one rush caps the tempo advantage at 2× and
+  keeps the UI a single button rather than a spend-o-meter.
+- **Cancelling refunds both** the base cost and the rush fee, matching the
+  existing cancel-refund behaviour.
+- **Not separately chronicled.** `ship_built` already fires publicly; a
+  rush only changes *when*. Whether you paid double is your business.
+
+### Second-order effect worth noting
+
+Shipyard slots are limited (`shipyardSlotsAtBody`). Rushing doesn't just
+deliver one hull sooner — it **frees the slot**, so the whole queue behind
+it moves up. That makes rush most valuable to players who've invested in
+shipyard levels, which is a nice reinforcement of the building ladder.
+
+### The risk: snowballing
+
+This lets a rich player out-tempo a poor one, which in a game with
+hoarding problems is *mostly* the point — but it does widen a lead. Two
+things keep it honest:
+
+1. **It's deliberately inefficient.** 2× cost for 2× speed means you are
+   always trading resource-efficiency for time. A player who rushes
+   everything fields half the fleet of one who doesn't.
+2. **It's knob-able.** `rush_cost_multiplier` in the senate catalog
+   (default `1.0` = pay cost again, `max: 3.0`). A senate watching a
+   runaway leader can vote rushing prohibitively expensive — the same
+   political-object property the upkeep knob has.
+
+### Where it runs
+
+New action `POST /api/games/:id/builds/:orderId/rush` in `worker/actions.js`,
+beside `handleCancelBuild` (it needs the same cost table and the same
+parts-cost recomputation). The build queue row gains `rushed INTEGER`.
+
+---
+
+## §4 — The Ship Designer, rebuilt
 
 The current designer (`src/components/ShipDesigner.tsx`, 713 lines) is a
 form: dropdowns and a text list of parts. It communicates nothing about
@@ -249,12 +311,15 @@ must warn.
 
 1. **Upkeep** (§1) — server-only, smallest surface, biggest economic
    effect. Ships with the knob at `1.0`; can be voted to `0` if it's wrong.
-2. **Refit fee + propagation** (§2) — needs the schema column and the
+2. **Rush** (§3) — also server-only and the smallest build of the four
+   (one action, one column, one button). Highest sink-per-line-of-code,
+   so it is worth doing early even though it is numbered third.
+3. **Refit fee + propagation** (§2) — needs the schema column and the
    arrival hook.
-3. **Designer rebuild** (§3) — largest, and the one that makes 1 & 2
-   legible. Wants its own session.
+4. **Designer rebuild** (§4) — largest, and the one that makes the other
+   three legible. Wants its own session.
 
-§3 depends on nothing in §1/§2 except displaying their numbers, so it can
+§4 depends on nothing in §1–§3 except displaying their numbers, so it can
 be built in parallel if desired.
 
 ## Open questions for playtest
@@ -262,6 +327,13 @@ be built in parallel if desired.
 - Are freighters still profitable at 1c/tick? (Most likely thing to break.)
 - Does upkeep punish early-game too hard? Consider an N-hull exemption.
 - Is `REFIT_MULTIPLIER = 0.5` cheap enough to encourage experimentation?
+- Is a **single** rush per order the right cap? If players routinely rush
+  everything and still hoard, allowing a second rush (at the same doubled
+  cost, compounding to 4× for 4× speed) is the obvious next notch — but
+  start capped, because uncapping is easy and re-capping is a nerf.
+- Does rush let a leading player snowball out of reach? Watch whether the
+  senate ever actually votes `rush_cost_multiplier` up; if it never does,
+  the knob is decoration and the real fix is a higher base multiplier.
 - Should upkeep scale with fitted parts, or stay per-class flat? Flat is
   simpler to read; part-scaled is more consistent with the build-cost
   curve. **Recommend flat to start** — one new number for players to
