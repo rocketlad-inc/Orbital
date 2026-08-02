@@ -49,6 +49,8 @@ import {
   spawnTracer,
   drawTracers,
   drawEngagementFire,
+  spawnWreck,
+  drawWrecks,
   drawBattleDamageStates,
   drawDetonations,
   spawnArrivalFlash,
@@ -548,6 +550,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // not a death. The server chronicles actual kills; require one.
           if (!diedByChronicle(id, nowMs)) continue;
           destructionFlashesRef.current.set(id, { pos, startMs: nowMs, baseRadius: 12, id });
+          // Leave a wreck at the kill site — the battle scars the map
+          // for a few minutes instead of vanishing with the flash.
+          spawnWreck(id, pos, 12, nowMs);
         }
       }
     }
@@ -1200,6 +1205,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // full-size hull clashing over the smear. Keyed by system anchor,
     // counted per faction like the parked clusters.
     const systemTransitCounts = new Map<string, Map<string, number>>();
+
+    // Wrecks first — kill-site debris sits UNDER live hulls.
+    drawWrecks(renderContext, nowMs);
 
     // Draw ships
     for (const ship of gameState.ships) {

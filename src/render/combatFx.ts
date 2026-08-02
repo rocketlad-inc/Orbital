@@ -15,7 +15,7 @@
 import { Ship, Settlement } from '../types';
 import { shipWorldPosition } from '../game/combat';
 import { getShipClass } from '../game/shipClasses';
-import { damageProfile } from '../game/shipParts';
+import { damageProfile, countPart } from '../game/shipParts';
 import { settlementWorldPosition } from '../game/settlements';
 import { bodyPosition, localPositionAt } from '../physics/orbitalMechanics';
 import { shipDisplayTick } from './tickPhase';
@@ -268,6 +268,41 @@ function takeEngaged(
   engagedScratch.push(e);
 }
 
+/**
+ * Planet occlusion for fire lines (endgame juice pass): a bolt whose
+ * chord passes through the parent planet's disc used to draw straight
+ * THROUGH the planet (playtest screenshot: tracers piercing Oberon).
+ * Returns true when the segment fp→tp crosses the given body's canvas
+ * disc — callers skip the shot (the hull will wheel around and fire
+ * when it has line of sight; with battle lines, same-side facing makes
+ * blocked shots rare anyway).
+ */
+function occludedByBody(
+  fp: { x: number; y: number },
+  tp: { x: number; y: number },
+  bodyId: string | undefined,
+  rc: RenderContext,
+): boolean {
+  if (!bodyId) return false;
+  const body = rc.bodies.find(b => b.id === bodyId);
+  if (!body) return false;
+  const bp = bodyPosition(body, rc.t, rc.bodies);
+  const c = worldToCanvas(bp.x, bp.y, rc);
+  // 0.92: graze the limb rather than clipping shots that skim the edge.
+  const r = Math.max(3, body.radius * rc.camera.scale) * 0.92;
+  const dx = tp.x - fp.x;
+  const dy = tp.y - fp.y;
+  const len2 = dx * dx + dy * dy;
+  if (len2 < 1e-6) return false;
+  // Closest point on the SEGMENT to the disc center.
+  let t = ((c.x - fp.x) * dx + (c.y - fp.y) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  const px = fp.x + dx * t;
+  const py = fp.y + dy * t;
+  const d2 = (c.x - px) * (c.x - px) + (c.y - py) * (c.y - py);
+  return d2 < r * r;
+}
+
 interface Tracer {
   /** Ship OR settlement id — stations return fire too. */
   fromId: string;
@@ -348,6 +383,10 @@ export function drawTracers(
       ? shipLeadCanvas(to.ship, rc, TRACER_LIFE_MS - age)
       : { dx: 0, dy: 0 };
     const tp = { x: tpNow.x + lead.dx, y: tpNow.y + lead.dy };
+    // Never draw fire THROUGH the planet the fight is around.
+    const occluderId = to.ship?.orbit.parentBodyId
+      ?? from.ship?.orbit.parentBodyId;
+    if (occludedByBody(fp, tp, occluderId, rc)) continue;
 
     if (!opened) {
       c.save();
@@ -462,6 +501,12 @@ export function drawEngagementFire(
   }
   if (engagedScratch.length === 0) return;
 
+  // Battle ambience first (under the fire): contested ring + drifting
+  // debris at every body with a live engagement.
+  const contestedBodies = new Set<string>();
+  for (const e of engagedScratch) contestedBodies.add(e.bodyId);
+  drawContestedBodies(rc, contestedBodies, nowMs);
+
   const c = rc.ctx;
   let opened = false;
 
@@ -544,6 +589,8 @@ export function drawEngagementFire(
       ? shipCanvasPos(tShip, rc, transitCanvasPos)
       : settlementCanvasPos(tStl!, rc);
     if (!fp || !tpNow) continue;
+    // Planet in the way → hold fire this pass (never shoot THROUGH it).
+    if (occludedByBody(fp, tpNow, shooter.bodyId, rc)) continue;
 
     if (!opened) {
       c.save();
@@ -650,38 +697,82 @@ export function drawEngagementFire(
       c.arc(headX, headY, 2, 0, Math.PI * 2);
       c.fill();
     } else if (energyShot) {
-      // ENERGY IMPACT — a soft heat bloom where the lance burned in,
-      // not shrapnel: two fading concentric discs in the beam's color.
+      // ENERGY IMPACT. Armor is energy's counter — an armored target
+      // SCATTERS the lance: short deflection streaks glancing off the
+      // struck side and a dimmed bloom, so "my shots are bouncing"
+      // reads on sight. Unarmored targets take the full heat bloom.
       const ik = (within - BOLT_MS) / IMPACT_MS;
       const ia = 1 - ik;
-      const r = 3 + 7 * ik;
-      c.fillStyle = withOpacity(ENERGY_COLOR, 0.3 * ia);
-      c.beginPath();
-      c.arc(tpNow.x, tpNow.y, r, 0, Math.PI * 2);
-      c.fill();
-      c.fillStyle = withOpacity(ENERGY_CORE, 0.55 * ia);
-      c.beginPath();
-      c.arc(tpNow.x, tpNow.y, r * 0.45, 0, Math.PI * 2);
-      c.fill();
+      const armor = tShip ? countPart(tShip.parts, 'armor') : 0;
+      const hitAng = Math.atan2(fp.y - tpNow.y, fp.x - tpNow.x);
+      if (armor > 0) {
+        // Glancing streaks fan back toward the shooter's side.
+        const rng = mulberry32(idHash(shooter.id) ^ idHash(tShip!.id) ^ 0x5ca7);
+        c.strokeStyle = withOpacity('#fff2d0', 0.75 * ia);
+        c.lineWidth = 1.2;
+        for (let sp = 0; sp < 3; sp++) {
+          const a = hitAng + (rng() - 0.5) * 1.6;
+          const r0 = 3 + 5 * ik;
+          const r1 = r0 + 5 + 5 * ik;
+          c.beginPath();
+          c.moveTo(tpNow.x + Math.cos(a) * r0, tpNow.y + Math.sin(a) * r0);
+          c.lineTo(tpNow.x + Math.cos(a) * r1, tpNow.y + Math.sin(a) * r1);
+          c.stroke();
+        }
+        c.fillStyle = withOpacity(ENERGY_COLOR, 0.15 * ia);
+        c.beginPath();
+        c.arc(tpNow.x, tpNow.y, 3 + 5 * ik, 0, Math.PI * 2);
+        c.fill();
+      } else {
+        // Full heat bloom — the lance burning in unopposed.
+        const r = 3 + 7 * ik;
+        c.fillStyle = withOpacity(ENERGY_COLOR, 0.3 * ia);
+        c.beginPath();
+        c.arc(tpNow.x, tpNow.y, r, 0, Math.PI * 2);
+        c.fill();
+        c.fillStyle = withOpacity(ENERGY_CORE, 0.55 * ia);
+        c.beginPath();
+        c.arc(tpNow.x, tpNow.y, r * 0.45, 0, Math.PI * 2);
+        c.fill();
+      }
     } else {
-      // KINETIC IMPACT — expanding ring + seeded shards where the bolt
-      // just landed. Pure cosmetic ("a shot struck here"), distinct from
-      // the damage flash, which only plays when HP actually moved.
+      // KINETIC IMPACT. Shields are kinetic's counter — a shielded
+      // target flashes a teal ARC SEGMENT on the struck side (the
+      // bubble taking the hit) over a muted ring; unshielded targets
+      // take the full ring + shrapnel. Mitigation becomes visible.
       const ik = (within - BOLT_MS) / IMPACT_MS;
       const ia = 1 - ik;
       const r = 3 + 8 * ik;
-      c.strokeStyle = withOpacity(color, 0.7 * ia);
-      c.lineWidth = 1.5;
-      c.beginPath();
-      c.arc(tpNow.x, tpNow.y, r, 0, Math.PI * 2);
-      c.stroke();
-      const rng = mulberry32(idHash(shooter.id) ^ idHash(tShip ? tShip.id : tStl!.id));
-      c.fillStyle = withOpacity('#ffdcaa', 0.8 * ia);
-      for (let sp = 0; sp < 4; sp++) {
-        const ang = rng() * Math.PI * 2;
+      const shields = tShip ? countPart(tShip.parts, 'shield') : 0;
+      if (shields > 0) {
+        const hitAng = Math.atan2(fp.y - tpNow.y, fp.x - tpNow.x);
+        const hb = rc.shipHitboxes?.get(tShip!.id);
+        const bubbleR = Math.max(6, (hb?.r ?? 8) + 2);
+        c.strokeStyle = withOpacity('#4ecdc4', 0.85 * ia);
+        c.lineWidth = 2 + shields * 0.5;
         c.beginPath();
-        c.arc(tpNow.x + Math.cos(ang) * r * 1.25, tpNow.y + Math.sin(ang) * r * 1.25, 1.2, 0, Math.PI * 2);
-        c.fill();
+        c.arc(tpNow.x, tpNow.y, bubbleR, hitAng - 0.65, hitAng + 0.65);
+        c.stroke();
+        // Faint full bubble so the arc reads as part of a sphere.
+        c.strokeStyle = withOpacity('#4ecdc4', 0.2 * ia);
+        c.lineWidth = 1;
+        c.beginPath();
+        c.arc(tpNow.x, tpNow.y, bubbleR, 0, Math.PI * 2);
+        c.stroke();
+      } else {
+        c.strokeStyle = withOpacity(color, 0.7 * ia);
+        c.lineWidth = 1.5;
+        c.beginPath();
+        c.arc(tpNow.x, tpNow.y, r, 0, Math.PI * 2);
+        c.stroke();
+        const rng = mulberry32(idHash(shooter.id) ^ idHash(tShip ? tShip.id : tStl!.id));
+        c.fillStyle = withOpacity('#ffdcaa', 0.8 * ia);
+        for (let sp = 0; sp < 4; sp++) {
+          const ang = rng() * Math.PI * 2;
+          c.beginPath();
+          c.arc(tpNow.x + Math.cos(ang) * r * 1.25, tpNow.y + Math.sin(ang) * r * 1.25, 1.2, 0, Math.PI * 2);
+          c.fill();
+        }
       }
     }
   }
@@ -815,6 +906,137 @@ export function drawBattleDamageStates(
     const ramp = recent ? battleDamageRamp(stl.id, dmgTick!, nowMs) : 1;
     if (ramp <= 0.01) continue;
     drawBurn(c, cp.x, cp.y, 11, sev * ramp, nowMs, idHash(stl.id));
+  }
+}
+
+// ============================================================
+// 1.7 WRECKS + BATTLE AMBIENCE (endgame juice pass)
+// ============================================================
+//
+// Deaths used to flash for 400ms and vanish — an endgame brawl left no
+// trace. Now every chronicled kill leaves a WRECK: a tumbling cluster
+// of charred shards drifting slowly off the kill site, fading over six
+// minutes of wall clock. And any body with an active engagement gets a
+// CONTESTED RING (slow red pulse just outside the traffic lanes — every
+// front on the map reads at half a zoom level out) plus a thin field of
+// drifting debris motes while the shooting lasts.
+
+const WRECK_LIFE_MS = 360000;
+const WRECK_CAP = 48;
+
+interface Wreck {
+  id: string;
+  x: number;       // world coords at death
+  y: number;
+  driftAng: number;
+  size: number;    // canvas px base
+  startMs: number;
+}
+
+const wrecks: Wreck[] = [];
+let wreckWriteIdx = 0;
+
+/** Register a kill site. Called from MapCanvas right where the
+ *  destruction flash spawns (already chronicle-gated, so fog-outs
+ *  never leave ghost wrecks). */
+export function spawnWreck(
+  shipId: string,
+  worldPos: { x: number; y: number },
+  baseRadius: number,
+  nowMs: number,
+): void {
+  const w: Wreck = {
+    id: shipId,
+    x: worldPos.x,
+    y: worldPos.y,
+    driftAng: ((idHash(shipId) % 1000) / 1000) * Math.PI * 2,
+    size: Math.max(4, baseRadius * 0.55),
+    startMs: nowMs,
+  };
+  if (wrecks.length < WRECK_CAP) wrecks.push(w);
+  else wrecks[wreckWriteIdx] = w;
+  wreckWriteIdx = (wreckWriteIdx + 1) % WRECK_CAP;
+}
+
+/** Charred tumbling shards at every recent kill site. Drawn before
+ *  ships so live hulls pass over the debris. */
+export function drawWrecks(rc: RenderContext, nowMs: number): void {
+  if (wrecks.length === 0) return;
+  const c = rc.ctx;
+  for (const w of wrecks) {
+    const age = nowMs - w.startMs;
+    if (age < 0 || age >= WRECK_LIFE_MS) continue;
+    const k = age / WRECK_LIFE_MS;
+    // Slow world-space drift away from the kill point.
+    const drift = (age / 1000) * 0.05;
+    const wx = w.x + Math.cos(w.driftAng) * drift;
+    const wy = w.y + Math.sin(w.driftAng) * drift;
+    const cp = worldToCanvas(wx, wy, rc);
+    // Fade the last third; hold readable before that.
+    const alpha = k < 0.66 ? 0.55 : 0.55 * (1 - (k - 0.66) / 0.34);
+    const tumble = nowMs / 4000 + w.driftAng;
+    const rng = mulberry32(idHash(w.id));
+    for (let s = 0; s < 3; s++) {
+      const a = tumble + (s * Math.PI * 2) / 3 + rng() * 0.8;
+      const d = w.size * (0.35 + rng() * 0.5);
+      const sx = cp.x + Math.cos(a) * d;
+      const sy = cp.y + Math.sin(a) * d;
+      const shard = w.size * (0.3 + rng() * 0.25);
+      c.save();
+      c.translate(sx, sy);
+      c.rotate(a * 1.7);
+      c.fillStyle = `rgba(96, 84, 72, ${alpha.toFixed(3)})`;
+      c.fillRect(-shard / 2, -shard / 4, shard, shard / 2);
+      // Ember glint on one shard, cooling with age.
+      if (s === 0 && k < 0.4) {
+        c.fillStyle = `rgba(255, 140, 60, ${(alpha * (1 - k / 0.4) * 0.8).toFixed(3)})`;
+        c.fillRect(-shard / 4, -shard / 8, shard / 2, shard / 4);
+      }
+      c.restore();
+    }
+  }
+}
+
+/** Contested ring + drifting battle debris around every body with a
+ *  live engagement this frame. Called from drawEngagementFire once the
+ *  engaged set is known. */
+function drawContestedBodies(
+  rc: RenderContext,
+  bodyIds: Set<string>,
+  nowMs: number,
+): void {
+  const c = rc.ctx;
+  for (const bodyId of bodyIds) {
+    const body = rc.bodies.find(b => b.id === bodyId);
+    if (!body) continue;
+    const bp = bodyPosition(body, rc.t, rc.bodies);
+    const cp = worldToCanvas(bp.x, bp.y, rc);
+    const planetR = Math.max(4, body.radius * rc.camera.scale);
+    const ringR = planetR + Math.max(14, planetR * 0.9);
+    // Slow red pulse — a front line you can spot from altitude.
+    const pulse = 0.5 + 0.5 * Math.sin(nowMs / 700);
+    c.save();
+    c.strokeStyle = `rgba(255, 80, 80, ${(0.1 + 0.14 * pulse).toFixed(3)})`;
+    c.lineWidth = 1.5;
+    c.setLineDash([8, 6]);
+    c.lineDashOffset = -(nowMs * 0.006) % 14;
+    c.beginPath();
+    c.arc(cp.x, cp.y, ringR, 0, Math.PI * 2);
+    c.stroke();
+    c.setLineDash([]);
+    // Battle debris — faint motes drifting through the engagement band
+    // while the shooting lasts. Seeded per body; wall-clock drift.
+    const rng = mulberry32(idHash(bodyId));
+    c.fillStyle = 'rgba(200, 190, 170, 0.22)';
+    for (let m = 0; m < 8; m++) {
+      const baseA = rng() * Math.PI * 2;
+      const rad = planetR * (1.15 + rng() * 1.1);
+      const a = baseA + (nowMs / 60000) * (0.4 + rng() * 0.6);
+      c.beginPath();
+      c.arc(cp.x + Math.cos(a) * rad, cp.y + Math.sin(a) * rad, 0.8 + rng() * 0.8, 0, Math.PI * 2);
+      c.fill();
+    }
+    c.restore();
   }
 }
 

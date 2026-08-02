@@ -1960,26 +1960,38 @@ function shipIsRetreating(ship: Ship): boolean {
   return hp / maxHp <= ship.retreatHpPct / 100;
 }
 
-/** Thin 12px wake line astern of a retreating ship, in the faction
- *  secondary at 35% alpha. Drawn before the icon so it sits under it. */
+/** Flickering triple wake astern of a retreating ship, in the faction
+ *  secondary. Drawn before the icon so it sits under it. Reseeds every
+ *  ~110ms so the streaks shimmer — a hull visibly RUNNING, not just
+ *  trailing a line. */
 function drawRetreatWake(
   c2d: CanvasRenderingContext2D,
   canvasPos: { x: number; y: number },
   heading: number,
   iconSize: number,
   secondary: string,
+  nowMs?: number,
+  shipId?: string,
 ) {
   const cosH = Math.cos(heading);
   const sinH = Math.sin(heading);
-  const x0 = canvasPos.x - cosH * iconSize / 2;
-  const y0 = canvasPos.y - sinH * iconSize / 2;
+  const perpX = -sinH;
+  const perpY = cosH;
+  const rng = mulberry32(
+    hashStr(shipId ?? 'wake') ^ Math.floor((nowMs ?? performance.now()) / 110));
   c2d.save();
-  c2d.strokeStyle = withOpacity(secondary, 0.35);
-  c2d.lineWidth = 1;
-  c2d.beginPath();
-  c2d.moveTo(x0, y0);
-  c2d.lineTo(x0 - cosH * 12, y0 - sinH * 12);
-  c2d.stroke();
+  for (let s = 0; s < 3; s++) {
+    const off = (s - 1) * iconSize * 0.28 + (rng() - 0.5) * 2;
+    const len = 9 + rng() * 9;
+    const x0 = canvasPos.x - cosH * iconSize / 2 + perpX * off;
+    const y0 = canvasPos.y - sinH * iconSize / 2 + perpY * off;
+    c2d.strokeStyle = withOpacity(secondary, 0.2 + 0.25 * rng());
+    c2d.lineWidth = s === 1 ? 1.4 : 1;
+    c2d.beginPath();
+    c2d.moveTo(x0, y0);
+    c2d.lineTo(x0 - cosH * len, y0 - sinH * len);
+    c2d.stroke();
+  }
   c2d.restore();
 }
 
@@ -2178,7 +2190,7 @@ export function drawShip(
     }
     // Retreat wake sits UNDER the icon.
     if (dressed && shipIsRetreating(ship)) {
-      drawRetreatWake(ctx.ctx, canvasPos, heading, iconSize, trimColor ?? shipColorValue);
+      drawRetreatWake(ctx.ctx, canvasPos, heading, iconSize, trimColor ?? shipColorValue, ctx.nowMs, ship.id);
     }
     // Draw the icon rotated to face the velocity direction, plus a
     // transient bank lean while the heading is changing.
@@ -3059,12 +3071,24 @@ function thrustVisibility(scale: number): number {
   return Math.max(0, Math.min(1, (scale - THRUST_FADE_LO) / (THRUST_FADE_HI - THRUST_FADE_LO)));
 }
 
+// Per-class plume shaping (endgame juice pass): a corvette's torch is a
+// needle, a destroyer's is a broad triple-bell wash, a freighter pushes
+// a short wide cargo-tug flare. Same geometry code — just class-scaled.
+const PLUME_SHAPE: Record<string, { len: number; width: number; bells: number }> = {
+  corvette:  { len: 1.5,  width: 0.7, bells: 1 },
+  frigate:   { len: 1.0,  width: 1.0, bells: 1 },
+  destroyer: { len: 1.1,  width: 1.4, bells: 3 },
+  freighter: { len: 0.75, width: 1.5, bells: 1 },
+  colony:    { len: 0.9,  width: 1.1, bells: 1 },
+};
+
 function drawThrustExhaust(
   ctx2d: CanvasRenderingContext2D,
   enginePos: { x: number; y: number },
   thrustDir: { x: number; y: number },
   shipSize: number,
   intensity: number = 1,
+  shipClass?: string,
 ) {
   // Sized to the ship icon, so the plume reads as this hull's exhaust
   // rather than a banner streaking across the map — and since shipSize
@@ -3072,8 +3096,9 @@ function drawThrustExhaust(
   // Base ≈ the ship's beam (half-width 0.26 → full 0.52·icon), length a
   // touch over one icon. Was 2.4·icon long / 0.84·icon wide — a cone
   // several times the hull, which read as "too big".
-  const flameLen = shipSize * 1.35;
-  const flameWidth = shipSize * 0.26;
+  const shape = PLUME_SHAPE[shipClass ?? ''] ?? { len: 1, width: 1, bells: 1 };
+  const flameLen = shipSize * 1.35 * shape.len;
+  const flameWidth = shipSize * 0.26 * shape.width;
   // Exhaust extends OPPOSITE to thrust.
   const tailX = enginePos.x - thrustDir.x * flameLen;
   const tailY = enginePos.y - thrustDir.y * flameLen;
@@ -3099,6 +3124,25 @@ function drawThrustExhaust(
   grad.addColorStop(1,     'rgba(255, 60, 30, 0)');
 
   ctx2d.save();
+  // Additive: exhaust GLOWS over the void instead of painting on it.
+  ctx2d.globalCompositeOperation = 'lighter';
+  // Destroyer-style multi-bell: two smaller side cones flanking the
+  // main plume, offset along the beam. Drawn first so the core sits on top.
+  if (shape.bells >= 3) {
+    const sideW = flameWidth * 0.45;
+    const sideLen = flameLen * 0.6;
+    for (const side of [-1, 1]) {
+      const bx = enginePos.x + perpX * flameWidth * 0.85 * side;
+      const by = enginePos.y + perpY * flameWidth * 0.85 * side;
+      ctx2d.fillStyle = `rgba(255, 150, 70, ${0.35 * intensity})`;
+      ctx2d.beginPath();
+      ctx2d.moveTo(bx + perpX * sideW, by + perpY * sideW);
+      ctx2d.lineTo(bx - perpX * sideW, by - perpY * sideW);
+      ctx2d.lineTo(bx - thrustDir.x * sideLen, by - thrustDir.y * sideLen);
+      ctx2d.closePath();
+      ctx2d.fill();
+    }
+  }
   ctx2d.fillStyle = grad;
   ctx2d.beginPath();
   // Flared base near the engine nozzle.
@@ -3247,8 +3291,30 @@ function drawTorchTransitShip(
       { x: canvasPos.x - cosH * iconSize / 2, y: canvasPos.y - sinH * iconSize / 2 },
       { x: cosH, y: sinH },
       iconSize,
-      (isSelected ? 1.0 : 0.85) * thrustVis,
+      // Retreating hulls burn HOT — running for home reads as running.
+      (isSelected ? 1.0 : 0.85) * thrustVis * (shipIsRetreating(ship) ? 1.25 : 1),
+      ship.class,
     );
+    // Speed streaks on a retreating burn: brief parallel motion lines
+    // shedding off the hull, flickering — unmistakably "getting out".
+    if (shipIsRetreating(ship)) {
+      const nowM = ctx.nowMs ?? performance.now();
+      const rng = mulberry32(hashStr(ship.id) ^ Math.floor(nowM / 90));
+      ctx.ctx.save();
+      ctx.ctx.strokeStyle = `rgba(220, 235, 255, ${(0.25 + 0.2 * rng()).toFixed(3)})`;
+      ctx.ctx.lineWidth = 1;
+      for (let s = 0; s < 3; s++) {
+        const off = (rng() - 0.5) * iconSize * 0.9;
+        const back = iconSize * (0.7 + rng() * 0.8);
+        const sx = canvasPos.x - sinH * off - cosH * iconSize * 0.3;
+        const sy = canvasPos.y + cosH * off - sinH * iconSize * 0.3;
+        ctx.ctx.beginPath();
+        ctx.ctx.moveTo(sx, sy);
+        ctx.ctx.lineTo(sx - cosH * back, sy - sinH * back);
+        ctx.ctx.stroke();
+      }
+      ctx.ctx.restore();
+    }
   }
 
   const trimColor = shipTrimColor(ship, ctx.factions);
@@ -3261,7 +3327,7 @@ function drawTorchTransitShip(
   if (icon) {
     // Retreat wake sits UNDER the icon.
     if (dressed && shipIsRetreating(ship)) {
-      drawRetreatWake(ctx.ctx, canvasPos, heading, iconSize, trimColor ?? shipColorValue);
+      drawRetreatWake(ctx.ctx, canvasPos, heading, iconSize, trimColor ?? shipColorValue, ctx.nowMs, ship.id);
     }
     ctx.ctx.save();
     ctx.ctx.translate(canvasPos.x, canvasPos.y);
@@ -3940,13 +4006,18 @@ export function drawAllTransfersLayer(
   playerFactionId: string,
   allies: ReadonlySet<string>,
 ) {
+  // Zoom quiet (endgame de-spaghetti): at system-wide zoom a dozen
+  // simultaneous transfers grid the sky with dashes. Lines whisper when
+  // zoomed out and speak at focus zoom. Threat lines (enemy layer,
+  // incoming) keep their own, gentler treatment.
+  const quiet = Math.max(0.3, Math.min(1, ctx.camera.scale / 0.9));
   for (const ship of ships) {
     if (!ship.transit) continue;
     const role = trajectoryRole(ship, playerFactionId, allies);
     if (role === 'hostile') continue; // owned by the next pass
 
     ctx.ctx.save();
-    ctx.ctx.globalAlpha = role === 'mine' ? 0.55 : 0.3;
+    ctx.ctx.globalAlpha = (role === 'mine' ? 0.55 : 0.3) * quiet;
     ctx.ctx.lineWidth = role === 'mine' ? 1.5 : 1.2;
     drawTorchTrajectory(
       ship.transit.currentTransfer, ctx.bodies, ctx,
@@ -3984,7 +4055,11 @@ export function drawEnemyTrajectoriesLayer(
     const color = targetOwned ? TRAJECTORY_COLORS.incoming : TRAJECTORY_COLORS.hostile;
 
     ctx.ctx.save();
-    ctx.ctx.globalAlpha = targetOwned ? 0.85 : 0.65;
+    // Non-targeting hostile lines quiet down with zoom-out like the
+    // friendly pass; INCOMING (aimed at you) never fades — that's the
+    // one line that must read at any altitude.
+    const hquiet = targetOwned ? 1 : Math.max(0.45, Math.min(1, ctx.camera.scale / 0.9));
+    ctx.ctx.globalAlpha = (targetOwned ? 0.85 : 0.65) * hquiet;
     ctx.ctx.lineWidth = targetOwned ? 2 : 1.5;
     ctx.ctx.shadowColor = color;
     // shadowBlur is canvas-pixel-based; scale with sqrt(zoom) so it
