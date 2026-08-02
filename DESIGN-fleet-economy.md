@@ -32,7 +32,7 @@ Every active hull bills its owner **every tick**.
 
 | Class | Credits | Metal |
 |---|---|---|
-| Corvette | 1 | 0 |
+| Corvette | 0.25 | 0 |
 | Frigate | 1 | 1 |
 | Destroyer | 2 | 2 |
 | Freighter | 1 | 0 |
@@ -40,6 +40,14 @@ Every active hull bills its owner **every tick**.
 
 Colony ships are exempt: they're consumable one-shots, and charging rent
 on an expansion hull punishes the slowest strategy in the game.
+
+**Corvettes are deliberately near-free (0.25c).** They are the starting
+hull and the scout, and a new player with four corvettes and two cities
+is who upkeep hurts most. At a quarter-credit they cost something real
+in bulk (a 20-corvette swarm is 5c/tick) without taxing the opening. The
+fraction is safe: the yield pass already carries per-resource remainder
+columns and settles in integers, so sub-credit upkeep accumulates
+correctly instead of rounding to zero every tick.
 
 ### The knob
 
@@ -78,19 +86,24 @@ async game where a player is asleep for eight ticks.
 
 1. **Partial payment is fine.** Pay what you can; the remainder becomes
    `arrears` on the faction row.
-2. **In arrears, the fleet degrades — it does not die.** All hulls of that
-   faction take a **−25% damage** and **−25% max-HP** penalty while
-   arrears is non-zero ("unpaid crews, deferred maintenance"). This is
-   visible, painful, and instantly undone by paying.
+2. **In arrears, the fleet fights at −25% damage** (the Civ model). No
+   HP penalty, no destruction — unpaid crews shoot worse, that is all.
+   Instantly undone by paying.
+
+   *Damage-only is a deliberate choice, not a simplification.* A max-HP
+   penalty would re-create the bug fixed earlier this cycle: HP is stored
+   ABSOLUTE while the cap is derived, so anything that moves the cap makes
+   every hull instantly read as damaged (armor research did exactly this).
+   Docking damage touches no stored value and cannot desync.
 3. **Arrears clears the moment income covers it.** The next tick with
    surplus pays it down automatically.
 4. **No ship is ever destroyed by upkeep.** Full stop. The failure mode is
-   a weakened navy, not a deleted one.
+   a navy that punches soft, not a deleted one.
 
 A `fleet_arrears` chronicle entry fires on entering and leaving arrears,
 and the Situation Report gets a `now`-tier row while it persists — this
 must be impossible to miss, because a player who doesn't notice their
-whole fleet is at 75% will read it as a combat bug.
+whole fleet is at 75% damage will read it as a combat bug.
 
 ### Consequences worth stating plainly
 
@@ -172,19 +185,41 @@ want this, which is exactly the property a sink needs.
 ### Rules
 
 - **Cost = the full current build cost, paid again** — hull *plus* fitted
-  parts at the escalated rate (§ cost curve). You pay for the ship twice,
-  total.
+  parts at the escalated rate (§ cost curve). Each rush costs this again,
+  so N rushes cost (N+1)× the ship.
 - **Halves the REMAINING time, not the total.** `remaining = ceil(remaining
   / 2)`, minimum 1 tick. Halving the total would make rushing useless late
   in a build, which is precisely when the player wants it.
-- **Once per build order.** A `rushed` flag on the queue row. Repeated
-  halving would let a wealthy empire buy an effectively instant fleet for
-  a geometric-but-finite sum; one rush caps the tempo advantage at 2× and
-  keeps the UI a single button rather than a spend-o-meter.
-- **Cancelling refunds both** the base cost and the rush fee, matching the
-  existing cancel-refund behaviour.
-- **Not separately chronicled.** `ship_built` already fires publicly; a
-  rush only changes *when*. Whether you paid double is your business.
+- **Unlimited rushes per order** — but each one carries a **25% chance the
+  hull is delivered at HALF HEALTH.** Rush a 40-tick destroyer three times
+  and it arrives in 5 ticks for 4× the price, with a 58% chance of rolling
+  off the line already crippled.
+
+  This replaces a hard cap with a risk curve, and it is a better mechanic
+  for it. A cap says "no"; a risk says "how badly do you need this?" —
+  which is the actual question a commander is asking. The odds compound
+  against greed automatically: P(clean) = 0.75^rushes, so 1 rush is 75%
+  safe, 2 is 56%, 4 is 32%. Nobody has to be told when to stop; the maths
+  tells them.
+
+  **Each rush rolls independently and the botch is sticky.** Once a build
+  is flagged botched, further rushes still cost full price and still halve
+  the clock — they just cannot make it *more* botched. That keeps
+  "emergency, get it out NOW" a legal move rather than a trap.
+- **Cancelling refunds the base cost and EVERY rush fee paid**, matching
+  the existing cancel-refund behaviour. (Refunding only one rush would
+  quietly punish the player who paid most.)
+- **A clean rush is not chronicled.** `ship_built` already fires publicly
+  and a rush only changes *when*. Whether you paid double is your business.
+- **A BOTCHED rush is chronicled** — `ship_rush_botched`, carrying the ship
+  name, class, yard body and the rush count that earned it. This one is
+  for the herald: "the yards at Callisto pushed the *Indomitable* out the
+  door at half hull." It is the best story the sink generates, and the
+  fiction writes itself.
+
+  Visibility: **public**, like `ship_built`. A rival learning that your
+  rushed destroyer is limping is exactly the kind of intel that should
+  leak, and it gives the gamble a social cost as well as a mechanical one.
 
 ### Second-order effect worth noting
 
@@ -211,7 +246,16 @@ things keep it honest:
 
 New action `POST /api/games/:id/builds/:orderId/rush` in `worker/actions.js`,
 beside `handleCancelBuild` (it needs the same cost table and the same
-parts-cost recomputation). The build queue row gains `rushed INTEGER`.
+parts-cost recomputation). The build queue row gains `rush_count INTEGER
+DEFAULT 0` and `botched INTEGER DEFAULT 0`.
+
+The botch roll happens **at rush time, on the server** — never at
+delivery, and never client-side. Rolling at rush time means the player
+learns the outcome when they make the decision (and the herald gets its
+entry immediately) rather than being ambushed ticks later; rolling
+server-side is non-negotiable because a client-rolled dice is a client
+that always wins. On completion the spawn reads `botched` and sets
+`hp = hp_max / 2`.
 
 ---
 
@@ -327,10 +371,15 @@ be built in parallel if desired.
 - Are freighters still profitable at 1c/tick? (Most likely thing to break.)
 - Does upkeep punish early-game too hard? Consider an N-hull exemption.
 - Is `REFIT_MULTIPLIER = 0.5` cheap enough to encourage experimentation?
-- Is a **single** rush per order the right cap? If players routinely rush
-  everything and still hoard, allowing a second rush (at the same doubled
-  cost, compounding to 4× for 4× speed) is the obvious next notch — but
-  start capped, because uncapping is easy and re-capping is a nerf.
+- Is **25%** the right botch chance? It is the only number holding back
+  unlimited rushing, so it is the most load-bearing constant in §3. Too
+  low and a rich empire buys instant fleets with no real risk; too high
+  and nobody rushes twice. Watch the observed rush-count distribution: if
+  players almost never go past 1, it is too punishing.
+- Does a half-health delivery feel like a fair gamble or a feel-bad? If
+  the latter, the softer version is a smaller penalty (75% hull) rather
+  than a lower probability — players forgive a scratch more readily than
+  a coin-flip that occasionally guts a destroyer.
 - Does rush let a leading player snowball out of reach? Watch whether the
   senate ever actually votes `rush_cost_multiplier` up; if it never does,
   the knob is decoration and the real fix is a higher base multiplier.
