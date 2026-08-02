@@ -5121,12 +5121,13 @@ export class Room {
     }
 
     // ----- DOMINATION -----
-    // Own MORE than 60% of the map's claimable bodies. The denominator
-    // is every non-destroyed body except stars and black holes (scenery
-    // and hazards — you park a station AROUND Sol, you don't own the
-    // sun). Ownership is game_bodies.owner_faction_id, the settlement-
-    // derived claim recomputeBodyOwnership maintains, so this is the
-    // same fact the political map shading paints.
+    // Own MORE than 60% of the worlds that can hold a station — which
+    // is EVERY non-destroyed body (stations have no body-type gate;
+    // that's how gas giants and Sol itself get settled, and a Sol
+    // station claims Sol through the same settlement-derived ownership
+    // as anywhere else). Ownership is game_bodies.owner_faction_id,
+    // the claim recomputeBodyOwnership maintains — the same fact the
+    // political map shading paints. Even the sun is territory.
     try {
       const DOMINATION_FRACTION = 0.6;
       const counts = (await this.env.DB
@@ -5134,7 +5135,6 @@ export class Room {
           `SELECT owner_faction_id AS fid, COUNT(*) AS n
              FROM game_bodies
             WHERE game_id = ? AND destroyed_at_tick IS NULL
-              AND type NOT IN ('star', 'black_hole')
             GROUP BY owner_faction_id`,
         )
         .bind(gameId)

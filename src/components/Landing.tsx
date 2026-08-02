@@ -231,7 +231,7 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
           <FeatureCard
             icon="◉"
             title="Domination"
-            body="Claim more than 60% of the worlds on the map. Every city and station plants your flag — expand faster than your rivals can, or take what they&rsquo;ve built. Loud or quiet, territory wins."
+            body="Claim more than 60% of the worlds on the map — anywhere a station can orbit counts, the sun included. Expand faster than your rivals can, or take what they&rsquo;ve built. Loud or quiet, territory wins."
           />
           <FeatureCard
             icon="🏛"

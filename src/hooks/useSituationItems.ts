@@ -582,8 +582,9 @@ export function useSituationItems(
     // everyone can see who's swallowing the map. One row for the
     // leader once anyone crosses 45%.
     {
-      const claimable = gameState.bodies.filter(
-        b => b.type !== 'star' && b.type !== 'black_hole');
+      // Every body counts — stations have no body-type gate, so every
+      // world (Sol included) can be claimed. Mirrors victory.ts.
+      const claimable = gameState.bodies;
       if (claimable.length > 0) {
         const claims = gameState.settlementClaims;
         const ownerOf = (bodyId: string): string | undefined =>

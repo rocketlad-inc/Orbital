@@ -12,9 +12,9 @@
 //   CHANCELLOR   The senate elects you Supreme Chancellor — fires
 //                from the senate module when a chancellor_vote bill
 //                passes (server-authoritative; not evaluated here).
-//   DOMINATION   Own MORE than 60% of the map's claimable bodies
-//                (everything except stars and black holes — you park
-//                a station AROUND Sol, you don't own the sun).
+//   DOMINATION   Own MORE than 60% of the worlds that can hold a
+//                station — which is every body on the map (stations
+//                have no body-type gate; even Sol is territory).
 //
 // MILITARY (all rival settlements destroyed) was retired in the same
 // rework — total elimination now wins by growing into 60% of the map,
@@ -40,10 +40,11 @@ export interface VictoryResolution {
   detail?: string;
 }
 
-/** Bodies that count toward domination — everything on the map except
- *  stars and black holes (scenery and hazards, not territory). */
+/** Bodies that count toward domination — every world that can hold a
+ *  station, which is EVERY body on the map (stations have no body-type
+ *  gate; that's how gas giants and Sol get settled). */
 function claimableBodies(state: GameState) {
-  return state.bodies.filter(b => b.type !== 'star' && b.type !== 'black_hole');
+  return state.bodies;
 }
 
 /**
