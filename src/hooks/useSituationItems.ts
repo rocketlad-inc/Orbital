@@ -133,7 +133,8 @@ export type SituationCategory =
   | 'fleet_leaderless' // a fleet lost its flagship — promote a captain
   | 'fleet_arrears' // MP — upkeep unpaid, whole fleet at −25% damage
   | 'dyson_project' // YOUR Dyson Sphere — progress / stalled / under attack
-  | 'dyson_threat'; // a RIVAL's Dyson Sphere is rising — stop it or lose
+  | 'dyson_threat' // a RIVAL's Dyson Sphere is rising — stop it or lose
+  | 'domination_watch'; // someone is closing on the 60%-of-worlds win
 
 export type SituationTier = 'now' | 'decision' | 'opportunity';
 
@@ -191,6 +192,8 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
   // NOW-tier alarm (it is literally the game ending).
   dyson_project:  'opportunity',
   dyson_threat:   'decision',
+  // Promotes itself to NOW when a rival is within 5 points of the line.
+  domination_watch: 'decision',
 };
 
 export interface SituationItem {
@@ -243,6 +246,7 @@ export const CATEGORY_LABEL: Record<SituationCategory, string> = {
   fleet_arrears:   'Fleet upkeep unpaid',
   dyson_project:   'Dyson Sphere',
   dyson_threat:    'Rival megaproject',
+  domination_watch: 'Domination race',
 };
 
 // ------------------------------------------------------------
@@ -569,6 +573,51 @@ export function useSituationItems(
           sortKey: 100 - pct,
           focus: foundation ? { kind: 'body', bodyId: foundation.bodyId } : undefined,
         });
+      }
+    }
+
+    // --- Domination race (win condition: own >60% of claimable
+    // bodies). Political claims are fog-free by design, so this uses
+    // the same settlementClaims the map's border shading paints —
+    // everyone can see who's swallowing the map. One row for the
+    // leader once anyone crosses 45%.
+    {
+      const claimable = gameState.bodies.filter(
+        b => b.type !== 'star' && b.type !== 'black_hole');
+      if (claimable.length > 0) {
+        const claims = gameState.settlementClaims;
+        const ownerOf = (bodyId: string): string | undefined =>
+          claims
+            ? claims.find(c => c.bodyId === bodyId)?.ownedBy
+            : gameState.bodies.find(b => b.id === bodyId)?.ownedBy;
+        const counts = new Map<string, number>();
+        for (const b of claimable) {
+          const o = ownerOf(b.id);
+          if (o) counts.set(o, (counts.get(o) ?? 0) + 1);
+        }
+        let leader: string | null = null;
+        let leaderN = 0;
+        for (const [fid, n] of counts) {
+          if (n > leaderN) { leader = fid; leaderN = n; }
+        }
+        const pct = Math.round((leaderN / claimable.length) * 100);
+        if (leader && pct >= 45) {
+          const mineLead = leader === factionId;
+          const name = mineLead
+            ? 'You'
+            : gameState.factions.find(f => f.id === leader)?.name ?? 'A rival';
+          push({
+            id: 'domination_watch',
+            category: 'domination_watch',
+            tier: !mineLead && pct >= 55 ? 'now' : mineLead ? 'opportunity' : 'decision',
+            title: `${name} control${mineLead ? '' : 's'} ${pct}% of the map — 60% wins`,
+            subtitle: mineLead
+              ? `${leaderN} of ${claimable.length} worlds. Claim ${Math.floor(claimable.length * 0.6) + 1 - leaderN} more for a Domination Victory.`
+              : 'Take worlds back or expand faster — at 60% the game ends.',
+            severity: mineLead ? 'normal' : pct >= 55 ? 'danger' : 'warn',
+            sortKey: 100 - pct,
+          });
+        }
       }
     }
 

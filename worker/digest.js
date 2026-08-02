@@ -1473,8 +1473,8 @@ function buildDysonHistoryStories(rows, used, factionNames) {
 // ------------------------------------------------------------
 
 const RUSH_BOTCHED = [
-  (c) => `**${c.faction}** paid double to rush the ${c.cls} **${c.name}** out of the yards at ${c.body} — and got what rushing buys: she'll launch at half hull, welds still smoking.`,
-  (c) => `Corners were cut at ${c.body}: **${c.faction}**'s rushed ${c.cls} **${c.name}** will leave the slips at half integrity. The yard foreman was unavailable for comment.`,
+  (c) => `**${c.faction}** paid double to rush the ${c.cls} **${c.name}** out of the yards at ${c.bodyLoc} — and got what rushing buys: she'll launch at half hull, welds still smoking.`,
+  (c) => `Corners were cut at ${c.bodyLoc}: **${c.faction}**'s rushed ${c.cls} **${c.name}** will leave the slips at half integrity. The yard foreman was unavailable for comment.`,
 ];
 const RUSH_BOTCHED_HEADLINE = [
   () => 'HASTE MAKES HALF A HULL',
@@ -1500,13 +1500,15 @@ function buildFleetEconomyStories(rows, used, factionNames, locator) {
     const faction = p.faction_name ?? factionNames.get(row.actor_faction_id) ?? 'A faction';
     if (row.kind === 'ship_rush_botched') {
       const loc = locate(locator, row.body_id, p.body_name);
-      const ctx = {
+      // House convention: narrative templates read bodyLoc (bold,
+      // located form), headline templates read plain body.
+      stories.push(mkStory(90, used, 'rush_botched', RUSH_BOTCHED, 'rush_botched_hl', RUSH_BOTCHED_HEADLINE, {
         faction,
         cls: p.ship_class ?? 'ship',
         name: p.ship_name ?? 'an unnamed hull',
-        body: loc.full,
-      };
-      stories.push(mkStory(90, used, 'rush_botched', RUSH_BOTCHED, 'rush_botched_hl', RUSH_BOTCHED_HEADLINE, { ...ctx, body: loc.name }));
+        body: loc.name,
+        bodyLoc: loc.full,
+      }));
     } else if (row.kind === 'fleet_arrears') {
       if (p.entered === true) {
         stories.push(mkStory(200, used, 'arrears_entered', ARREARS_ENTERED, 'arrears_entered_hl', ARREARS_ENTERED_HEADLINE, { faction }));

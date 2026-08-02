@@ -1,31 +1,37 @@
 // ============================================================
 // Victory conditions
 //
-// Three independent paths; whichever fires first wins. The
-// checker runs once per tick at the end of advanceToTick. The
-// server mirrors this logic in worker/room.js resolveTick so
-// multiplayer ends the match at the same instant single-player
-// would.
+// THREE paths (2026-08-02 rework); whichever fires first wins. The
+// checker runs once per tick at the end of advanceToTick. The server
+// mirrors this logic in worker/room.js resolveTick so multiplayer
+// ends the match at the same instant single-player would.
 //
 //   ENGINEERING  Build a Dyson Sphere at Sol. The sphere's
 //                hit-points are its accumulated resources;
 //                completing it (HP = max) wins.
-//   MILITARY     Every other faction has zero settlements
-//                (cities and stations both count toward
-//                elimination — per the player's spec).
-//   SCIENCE      Every tech track at TECH_MAX_LEVEL.
+//   CHANCELLOR   The senate elects you Supreme Chancellor — fires
+//                from the senate module when a chancellor_vote bill
+//                passes (server-authoritative; not evaluated here).
+//   DOMINATION   Own MORE than 60% of the map's claimable bodies
+//                (everything except stars and black holes — you park
+//                a station AROUND Sol, you don't own the sun).
 //
+// MILITARY (all rival settlements destroyed) was retired in the same
+// rework — total elimination now wins by growing into 60% of the map,
+// which a sole survivor does uncontested. SCIENCE was removed after
+// being flag-disabled (it ended a live game far too cheaply).
 // ============================================================
 
 import { GameState, Faction } from '../types';
-import { allTechsMaxed } from './techs';
 
-/** New victory types added in the three-conditions PR plus 'chancellor'
- *  for the Senate election win (server-only — fires when a
- *  chancellor_vote bill passes; the client just renders the overlay).
- *  Older labels (hegemony/wealth/tiebreak) still compile in the
- *  VictoryOverlay's label table for back-compat with replays. */
-export type VictoryType = 'engineering' | 'military' | 'science' | 'chancellor';
+/** Current victory types plus retired ones ('military'/'science') so
+ *  old completed games keep rendering their overlays correctly. */
+export type VictoryType =
+  | 'engineering' | 'chancellor' | 'domination'
+  | 'military' | 'science';
+
+/** Own strictly more than this fraction of claimable bodies to win. */
+export const DOMINATION_FRACTION = 0.6;
 
 export interface VictoryResolution {
   winnerFactionId: string;
@@ -34,15 +40,18 @@ export interface VictoryResolution {
   detail?: string;
 }
 
+/** Bodies that count toward domination — everything on the map except
+ *  stars and black holes (scenery and hazards, not territory). */
+function claimableBodies(state: GameState) {
+  return state.bodies.filter(b => b.type !== 'star' && b.type !== 'black_hole');
+}
+
 /**
  * Run the per-tick victory check across every faction. Returns the
  * first faction that meets any condition, or null if the game
- * continues. Stops at the first match — by design only one
- * winner per match.
- *
- * Order of evaluation: engineering → military → science. Engineering
- * is a one-shot, military requires elimination which is a strong
- * signal, science is the long-tail.
+ * continues. Stops at the first match — by design only one winner
+ * per match. (Chancellor never fires here — the senate module ends
+ * the game directly when the bill passes.)
  */
 export function checkVictory(state: GameState): VictoryResolution | null {
   // Eligible factions — exclude observers and eliminated seats so
@@ -69,47 +78,20 @@ export function checkVictory(state: GameState): VictoryResolution | null {
     };
   }
 
-  // ----- MILITARY -----
-  // For each candidate, count rivals that still have at least one
-  // settlement (city OR station). If none remain, candidate wins.
-  for (const candidate of active) {
-    const rivals = active.filter(f => f.id !== candidate.id);
-    if (rivals.length === 0) continue; // 1-faction game = no military win possible
-    const anyRivalAlive = rivals.some(r =>
-      state.settlements.some(s => s.ownedBy === r.id),
-    );
-    if (!anyRivalAlive) {
-      return {
-        winnerFactionId: candidate.id,
-        victoryType: 'military',
-        detail: 'All rival settlements destroyed',
-      };
-    }
-  }
-
-  // ----- SCIENCE -----
-  // Any faction with every tech track at TECH_MAX_LEVEL wins.
-  // FactionTechStateBase (in types.ts) and FactionTechState (in techs.ts)
-  // are structurally identical for the level-counter use case here, but
-  // TypeScript can't widen the `researching` field's string type to
-  // TechId implicitly. Cast through unknown — values are equivalent
-  // for the read-only level lookups allTechsMaxed performs.
-  // Science victory is DISABLED — mirrors worker/room.js checkVictory's
-  // SCIENCE_VICTORY_ENABLED gate. Maxing all six tracks ended a live
-  // game far too cheaply (research accrues on an uncontestable income
-  // curve). Kept flag-gated, not deleted, so re-enabling after a
-  // rebalance is one constant in each engine.
-  const SCIENCE_VICTORY_ENABLED = false;
-  for (const candidate of active) {
-    if (!SCIENCE_VICTORY_ENABLED) break;
-    const techState = state.factionTech?.[candidate.id] as unknown as
-      Parameters<typeof allTechsMaxed>[0];
-    if (allTechsMaxed(techState)) {
-      return {
-        winnerFactionId: candidate.id,
-        victoryType: 'science',
-        detail: 'All tech tracks mastered',
-      };
+  // ----- DOMINATION -----
+  // Ownership is the settlement-derived Body.ownedBy claim — the same
+  // fact the political map shading paints.
+  const claimable = claimableBodies(state);
+  if (claimable.length > 0) {
+    for (const candidate of active) {
+      const n = claimable.filter(b => b.ownedBy === candidate.id).length;
+      if (n > claimable.length * DOMINATION_FRACTION) {
+        return {
+          winnerFactionId: candidate.id,
+          victoryType: 'domination',
+          detail: `Controls ${n} of ${claimable.length} worlds (${Math.round((n / claimable.length) * 100)}%)`,
+        };
+      }
     }
   }
 

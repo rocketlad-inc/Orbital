@@ -4912,10 +4912,14 @@ export class Room {
     if (collapse) {
       // Persist the fall of the wonder BEFORE wiping the columns — the
       // websocket broadcast below is transient; this is the record.
+      // acc is UNSCALED on both collapse paths (the ratio-scaling else
+      // only runs on survivable damage), so the accumulator total IS the
+      // full progress lost — adding damageTaken again double-counted it
+      // (QA: a 500-progress sphere killed by 600 damage reported 1100).
       const lostProgress = acc.fuel + acc.ore + acc.credits + acc.science;
       await dysonChronicle('dyson_collapsed', 'dyc', {
         reason: collapseReason,
-        progress_lost: Math.round(lostProgress + damageTaken),
+        progress_lost: Math.round(lostProgress),
         max_hp: Math.round(maxHp),
       });
       await this.env.DB
@@ -4939,14 +4943,25 @@ export class Room {
     }
 
     // 3: delivery. Count parked freighters at Sol owned by ctrl.
+    // PARKED means parked: parent_body_id is a stale snapshot for the
+    // whole duration of a transit (the departure pass leaves it on the
+    // origin body so the canvas can animate the arc), so a freighter
+    // that undocked 50 ticks ago still read as "at Sol" and kept
+    // pumping (QA). Exclude anything with a live transfer node — the
+    // design intent is that feeding the sphere TIES THE SHIP UP, and
+    // the world-menu supply readout already counts it this way.
     const freighters = (await this.env.DB
       .prepare(
-        `SELECT id FROM game_ships
-            WHERE game_id = ?
-              AND owner_faction_id = ?
-              AND ship_class = 'freighter'
-              AND status = 'active'
-              AND parent_body_id = ?`,
+        `SELECT id FROM game_ships s
+            WHERE s.game_id = ?
+              AND s.owner_faction_id = ?
+              AND s.ship_class = 'freighter'
+              AND s.status = 'active'
+              AND s.parent_body_id = ?
+              AND NOT EXISTS (
+                SELECT 1 FROM game_ship_nodes n
+                 WHERE n.ship_id = s.id AND n.status IN ('committed', 'in_transit')
+              )`,
       )
       .bind(gameId, ctrl, `${gameId}:sol`)
       .all()).results ?? [];
@@ -5054,10 +5069,18 @@ export class Room {
   /**
    * Server mirror of src/game/victory.ts checkVictory.
    *
-   *   ENGINEERING  dyson_sphere row hp >= max_hp (Phase B)
-   *   MILITARY     every rival faction has zero non-destroyed
-   *                settlements (cities and stations both count)
-   *   SCIENCE      faction has every tech track at TECH_MAX_LEVEL
+   * THREE win conditions (2026-08-02 rework — per Lorne):
+   *   ENGINEERING  dyson_hp >= dyson_max_hp — the Sol Dyson Sphere
+   *   CHANCELLOR   senate elects you Supreme Chancellor (fires from
+   *                worker/senate.js when a chancellor_vote bill passes,
+   *                NOT from this checker — listed for completeness)
+   *   DOMINATION   own MORE than 60% of the map's claimable bodies
+   *                (everything except stars/black holes; ownership is
+   *                the settlement-derived game_bodies.owner_faction_id)
+   *
+   * MILITARY (all rival settlements destroyed) was retired in the same
+   * rework: total elimination now wins by growing into 60% of the map,
+   * which a sole survivor does uncontested. SCIENCE remains disabled.
    *
    * Returns { winnerFactionId, victoryType, detail } or null.
    */
@@ -5097,72 +5120,51 @@ export class Room {
       // Column may not exist yet (pre-Phase-B DBs). Fall through.
     }
 
-    // ----- MILITARY -----
-    // For each candidate, count rival factions with at least one
-    // non-destroyed settlement (city OR station). If none, candidate
-    // wins. Single-faction games can't win by military.
-    if (factions.length >= 2) {
-      const settled = (await this.env.DB
+    // ----- DOMINATION -----
+    // Own MORE than 60% of the map's claimable bodies. The denominator
+    // is every non-destroyed body except stars and black holes (scenery
+    // and hazards — you park a station AROUND Sol, you don't own the
+    // sun). Ownership is game_bodies.owner_faction_id, the settlement-
+    // derived claim recomputeBodyOwnership maintains, so this is the
+    // same fact the political map shading paints.
+    try {
+      const DOMINATION_FRACTION = 0.6;
+      const counts = (await this.env.DB
         .prepare(
-          `SELECT DISTINCT owner_faction_id
-             FROM game_settlements
-            WHERE game_id = ? AND destroyed_at_tick IS NULL`,
+          `SELECT owner_faction_id AS fid, COUNT(*) AS n
+             FROM game_bodies
+            WHERE game_id = ? AND destroyed_at_tick IS NULL
+              AND type NOT IN ('star', 'black_hole')
+            GROUP BY owner_faction_id`,
         )
         .bind(gameId)
         .all()).results ?? [];
-      const factionsWithSettlements = new Set(settled.map(r => r.owner_faction_id));
-      for (const candidate of factions) {
-        let anyRivalAlive = false;
-        for (const f of factions) {
-          if (f.id === candidate.id) continue;
-          if (factionsWithSettlements.has(f.id)) { anyRivalAlive = true; break; }
-        }
-        if (!anyRivalAlive) {
-          return {
-            winnerFactionId: candidate.id,
-            victoryType: 'military',
-            detail: 'All rival settlements destroyed',
-          };
+      let total = 0;
+      const owned = new Map();
+      for (const r of counts) {
+        total += Number(r.n ?? 0);
+        if (r.fid) owned.set(r.fid, Number(r.n ?? 0));
+      }
+      if (total > 0) {
+        for (const candidate of factions) {
+          const n = owned.get(candidate.id) ?? 0;
+          if (n > total * DOMINATION_FRACTION) {
+            return {
+              winnerFactionId: candidate.id,
+              victoryType: 'domination',
+              detail: `Controls ${n} of ${total} worlds (${Math.round((n / total) * 100)}%)`,
+            };
+          }
         }
       }
+    } catch (e) {
+      console.error('domination victory check failed', e);
     }
 
-    // ----- SCIENCE ----- (DISABLED)
-    // Maxing all six tracks ended a live 7-faction game at tick 208 —
-    // far too cheap for a win condition, because research accrues on a
-    // fixed income curve nobody has to contest. Disabled pending a
-    // rebalance (raise the bar, gate it behind something contestable,
-    // or drop it entirely). The detection code below is left INTACT and
-    // flag-gated so re-enabling is one constant, and so the block
-    // doesn't silently rot out of sync with TECH_TRACKS meanwhile.
-    const SCIENCE_VICTORY_ENABLED = false;
-
-    // Every tech track at TECH_MAX_LEVEL. Pull all faction_techs
-    // rows in one query and bucket per faction.
-    const techRows = (await this.env.DB
-      .prepare(`SELECT faction_id, tech_id, level FROM faction_techs WHERE game_id = ?`)
-      .bind(gameId)
-      .all()).results ?? [];
-    // Science victory = every one of the module-level TECH_TRACKS maxed.
-    const TECH_MAX_LEVEL = 10;
-    const byFaction = new Map();
-    for (const r of techRows) {
-      let m = byFaction.get(r.faction_id);
-      if (!m) { m = new Map(); byFaction.set(r.faction_id, m); }
-      m.set(r.tech_id, r.level);
-    }
-    for (const candidate of factions) {
-      if (!SCIENCE_VICTORY_ENABLED) break;
-      const levels = byFaction.get(candidate.id) ?? new Map();
-      const maxedAll = TECH_TRACKS.every(t => (levels.get(t) ?? 0) >= TECH_MAX_LEVEL);
-      if (maxedAll) {
-        return {
-          winnerFactionId: candidate.id,
-          victoryType: 'science',
-          detail: 'All tech tracks mastered',
-        };
-      }
-    }
+    // SCIENCE victory was removed outright in the three-conditions
+    // rework (it had already been flag-disabled after ending a live
+    // game at tick 208 — research accrues on an uncontestable curve).
+    // The three paths are engineering / chancellor / domination.
 
     return null;
   }

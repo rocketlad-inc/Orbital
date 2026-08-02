@@ -773,11 +773,13 @@ export interface GameState {
   // conditions in src/game/victory.ts fires.
   status?: 'lobby' | 'active' | 'completed' | 'abandoned';
   winnerFactionId?: string;            // set when status flips to 'completed'
-  /** Legacy labels (hegemony/wealth/tiebreak) stay in the union for
-   *  back-compat with replays from before three-conditions landed.
+  /** The three live paths are engineering / chancellor / domination
+   *  (2026-08 rework). Retired + legacy labels stay in the union for
+   *  back-compat with games completed before the rework.
    *  'chancellor' is the server-only senate election win — fires when
    *  a chancellor_vote bill passes (see worker/senate.js). */
-  victoryType?: 'engineering' | 'military' | 'science' | 'chancellor' | 'hegemony' | 'wealth' | 'tiebreak';
+  victoryType?: 'engineering' | 'chancellor' | 'domination'
+    | 'military' | 'science' | 'hegemony' | 'wealth' | 'tiebreak';
 
   /** Dyson-Sphere megaproject state. Present only after a faction has
    *  begun construction at a Sol station; completing it triggers

@@ -13,11 +13,13 @@ interface Props {
 }
 
 const VICTORY_LABEL: Record<string, string> = {
+  // The three live paths (2026-08 rework).
   engineering: 'ENGINEERING VICTORY',
-  military:    'MILITARY VICTORY',
-  science:     'SCIENCE VICTORY',
   chancellor:  'POLITICAL VICTORY',
-  // Legacy types kept for back-compat with old replays.
+  domination:  'DOMINATION VICTORY',
+  // Retired/legacy types kept for back-compat with old completed games.
+  military: 'MILITARY VICTORY',
+  science:  'SCIENCE VICTORY',
   hegemony: 'HEGEMONY VICTORY',
   wealth:   'ECONOMIC VICTORY',
   tiebreak: 'TIEBREAK VICTORY',
@@ -25,10 +27,11 @@ const VICTORY_LABEL: Record<string, string> = {
 
 const VICTORY_BLURB: Record<string, string> = {
   engineering: 'completed the Sol Dyson Sphere',
-  military:    'eliminated every rival empire',
-  science:     'mastered every tech track',
   chancellor:  'was elected Supreme Chancellor by a majority of the Senate',
-  // Legacy types kept for back-compat with old replays.
+  domination:  'controls more than 60% of the worlds on the map',
+  // Retired/legacy types kept for back-compat with old completed games.
+  military: 'eliminated every rival empire',
+  science:  'mastered every tech track',
   hegemony: 'controls the most worlds at game end',
   wealth:   'amassed the greatest wealth at game end',
   tiebreak: 'won on slot tiebreaker',

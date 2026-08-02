@@ -121,7 +121,7 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
           <br />
           One hour per turn, running whether you&rsquo;re watching or not.
           <br />
-          Win by science, by conquest, or by building a sphere around the sun.
+          Win by conquest, by politics, or by building a sphere around the sun.
         </div>
         <div className="hero-cta">
           <button className="cta-primary" onClick={onSignIn}>
@@ -229,14 +229,14 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
         <h2 className="section-title">Decide how you win.</h2>
         <div className="features-grid">
           <FeatureCard
-            icon="⚛"
-            title="Science"
-            body="Research every track to the top. Six disciplines, ten levels each — the early levels are cheap but the last few are punishing. Won by the player whose labs run hottest."
+            icon="◉"
+            title="Domination"
+            body="Claim more than 60% of the worlds on the map. Every city and station plants your flag — expand faster than your rivals can, or take what they&rsquo;ve built. Loud or quiet, territory wins."
           />
           <FeatureCard
-            icon="✕"
-            title="Military"
-            body="Eliminate every rival settlement off the map. Pick your moment, build your destroyers, and start with the ones that can&rsquo;t fight back. Permanent. Loud."
+            icon="🏛"
+            title="Political"
+            body="Get elected Supreme Chancellor. Every planet you hold is a vote in the Senate — build a coalition, call the chancellor bill to the floor, and end the war with a gavel instead of a fleet."
           />
           <FeatureCard
             icon="☀"

@@ -2078,7 +2078,13 @@ async function handleInitiateDyson(req, env, ctx) {
     .first();
   const tick = gameRow?.current_tick ?? 0;
 
-  await env.DB
+  // Guarded on the slot STILL being open (QA): the read-check above and
+  // this write aren't atomic, and initiate isn't serialized through the
+  // room DO — two racing initiates could both pass the check and both
+  // get a 201 while one silently overwrote the other. The guard makes
+  // SQLite pick exactly one winner; the loser gets the same 409 the
+  // pre-check would have given it.
+  const claim = await env.DB
     .prepare(
       `UPDATE games SET
          dyson_controller_faction_id = ?,
@@ -2087,7 +2093,7 @@ async function handleInitiateDyson(req, env, ctx) {
          dyson_acc_fuel = 0, dyson_acc_ore = 0, dyson_acc_credits = 0, dyson_acc_science = 0,
          dyson_target_fuel = ?, dyson_target_ore = ?, dyson_target_credits = ?, dyson_target_science = ?,
          dyson_hp = 0, dyson_max_hp = ?
-       WHERE id = ?`,
+       WHERE id = ? AND dyson_controller_faction_id IS NULL`,
     )
     .bind(
       me.id, stationId, tick,
@@ -2096,6 +2102,9 @@ async function handleInitiateDyson(req, env, ctx) {
       gameId,
     )
     .run();
+  if (!claim.meta?.changes) {
+    return err(409, 'slot_taken', 'a Dyson Sphere is already under construction this match');
+  }
 
   // Chronicle the initiation — laying a Dyson foundation is a
   // declaration of intent to WIN and everyone deserves to hear it.
@@ -2104,13 +2113,17 @@ async function handleInitiateDyson(req, env, ctx) {
     const fac = await env.DB
       .prepare('SELECT name FROM game_factions WHERE id = ?')
       .bind(me.id).first();
+    // OR IGNORE + station id in the key (QA): a collapse-then-reinitiate
+    // in the same tick is legitimate, and a bare game+tick key made the
+    // second insert a swallowed PK violation — the headline story of the
+    // edition, silently dropped.
     await env.DB
       .prepare(
-        `INSERT INTO chronicle_entries
+        `INSERT OR IGNORE INTO chronicle_entries
           (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
          VALUES (?, ?, ?, 'dyson_initiated', ?, ?, ?, 'public', ?)`,
       )
-      .bind(`c_dyi_${gameId}_${tick}`, gameId, tick, me.id, `${gameId}:sol`,
+      .bind(`c_dyi_${stationId}_${tick}`, gameId, tick, me.id, `${gameId}:sol`,
             JSON.stringify({ faction_name: fac?.name ?? null, target_total: DYSON_MAX_HP }),
             Date.now())
       .run();
