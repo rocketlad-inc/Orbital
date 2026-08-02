@@ -376,8 +376,12 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
     if (why) { showFlash(why); return; }
     setDraftParts(prev => {
       const next = [...prev];
+      // draftParts is contiguous (unfit closes gaps), so empty sockets
+      // are exactly the indices >= length — clamping keeps the visual
+      // drop target and the filled socket aligned (QA finding: dropping
+      // on ring position 5 used to fill position 2).
       if (slotIdx < next.length) next[slotIdx] = pid;   // replace in place
-      else next.push(pid);                              // fill empty
+      else next.push(pid);                              // fills the next ring position
       return next;
     });
   };

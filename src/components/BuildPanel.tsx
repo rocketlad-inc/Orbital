@@ -966,6 +966,11 @@ export const RushControl: React.FC<{
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The world menu's fleet box is pinned to the BOTTOM of the screen, so
+  // a popover that always opens downward can land off-viewport with its
+  // CONFIRM unreachable (QA finding). Flip upward when there isn't room.
+  const [openUp, setOpenUp] = useState(false);
+  const wrapRef = React.useRef<HTMLDivElement>(null);
   if (!mpActions) return null;
   // Client-side quote: hull + the order's parts snapshot at the same
   // construction-tech discount the server applies. The senate's
@@ -978,10 +983,17 @@ export const RushControl: React.FC<{
   const quoteCr = Math.ceil((def.cost.credits + pc.credits) * mult);
   const newRemaining = Math.max(1, Math.ceil(remaining / 2));
   return (
-    <div style={{ position: 'relative', display: 'inline-flex' }}>
+    <div ref={wrapRef} style={{ position: 'relative', display: 'inline-flex' }}>
       <button
         className="build-rush"
-        onClick={() => { setError(null); setOpen(o => !o); }}
+        onClick={() => {
+          setError(null);
+          const r = wrapRef.current?.getBoundingClientRect();
+          // ~170px covers the popover incl. an error line; flip up when
+          // the space below the button is tighter than that.
+          setOpenUp(!!r && window.innerHeight - r.bottom < 170);
+          setOpen(o => !o);
+        }}
         title={`Rush: pay the ship's price again to halve remaining build time (${(order.rushCount ?? 0) > 0 ? `rushed ×${order.rushCount} — ` : ''}25% risk of half-hull delivery)`}
         style={{
           background: 'rgba(255, 200, 80, 0.12)',
@@ -995,7 +1007,8 @@ export const RushControl: React.FC<{
           role="dialog"
           aria-label="Confirm rush"
           style={{
-            position: 'absolute', right: 0, top: '110%', zIndex: 40,
+            position: 'absolute', right: 0, zIndex: 40,
+            ...(openUp ? { bottom: '110%' } : { top: '110%' }),
             width: 210, padding: '8px 10px',
             background: '#0d1722', border: '1px solid #3a5068',
             borderRadius: 6, boxShadow: '0 6px 18px rgba(0,0,0,0.55)',
