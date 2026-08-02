@@ -684,6 +684,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // Hover-only ship labels — read fresh each frame from the ref the
       // mousemove hit-test writes.
       hoveredShipId: hoveredShipIdRef.current,
+      // Resolves a ship's EFFECTIVE max HP for the hover/selection health
+      // bar, so the map agrees with the Fleet/Ship panels.
+      factionTech: gameState.factionTech,
       // Dyson Sphere lattice around Sol — progress fraction drives how
       // many cage segments are lit; complete = the solid sun-cage.
       dysonSphere: gameState.dysonSphere ? {

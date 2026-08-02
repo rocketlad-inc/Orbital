@@ -4,7 +4,8 @@ import { shipDisplayTick } from './tickPhase';
 // Map Canvas Rendering - Draw the orbital system
 // ============================================================
 
-import { Body, Ship, OrbitElements, TrajectoryArc, Settlement, Faction, TorchTransferPlan, BuildOrder, BuildingKind } from '../types';
+import { Body, Ship, OrbitElements, TrajectoryArc, Settlement, Faction, TorchTransferPlan, BuildOrder, BuildingKind, FactionTechStateBase } from '../types';
+import { effectiveShipMaxHp } from '../game/combat';
 import { getPlanetTexture, getCloudTexture, hashStr, mulberry32 } from './planetTexture';
 import { drawCityCluster, drawStationStructure } from './isoStructures';
 import { flameCount } from '../game/worldMenu/combatDisplay';
@@ -59,6 +60,13 @@ export interface RenderContext {
    *  the MapCanvas mousemove hit-test; undefined on touch/lobby
    *  previews, where selection alone drives labels. */
   hoveredShipId?: string | null;
+  /** Per-faction tech, keyed by faction id. Only used to resolve a ship's
+   *  EFFECTIVE max HP for the hover/selection health bar, and only as the
+   *  fallback path: in MP the server sends hp_max_effective on the ship
+   *  itself (which is the sole correct answer for a rival hull, whose
+   *  armor tech the client never receives). Optional — callers that don't
+   *  pass it get the base ceiling. */
+  factionTech?: Record<string, FactionTechStateBase>;
   /** Settlements in this game — the textured-planet path uses them for
    *  night-side city lights; the focus-zoom structure painters read
    *  building levels from them. Optional: only the main MapCanvas
@@ -2129,12 +2137,47 @@ export function drawShip(
 
   // Ship name label — hover/selection only (see RenderContext.hoveredShipId).
   if (isSelected || ctx.hoveredShipId === ship.id) {
+    const labelX = canvasPos.x + iconSize / 2 + 4;
     ctx.ctx.fillStyle = isSelected ? '#ffb84d' : shipColorValue;
     ctx.ctx.font = '9px "Audiowide", monospace';
     ctx.ctx.textAlign = 'left';
     ctx.ctx.textBaseline = 'middle';
-    ctx.ctx.fillText(ship.name.split(' ')[0], canvasPos.x + iconSize / 2 + 4, canvasPos.y - 6);
+    ctx.ctx.fillText(ship.name.split(' ')[0], labelX, canvasPos.y - 6);
+    drawShipHpBar(ship, labelX, canvasPos.y + 3, ctx);
   }
+}
+
+/**
+ * Health bar under a ship's hover/selection name label.
+ *
+ * Same visual language as the settlement bar (dark trough, green/amber/
+ * red fill at the >0.5 / >0.25 thresholds) so "how hurt is this thing"
+ * reads identically for hulls and stations. Drawn whenever the name is —
+ * i.e. only on hover or selection, so it never becomes ambient clutter.
+ *
+ * Max HP resolves through effectiveShipMaxHp, the same helper the Fleet
+ * panel, Outliner and Ship panel use, so the bar can't disagree with the
+ * numbers in the UI: server hp_max_effective wins when present (the only
+ * correct value for a rival hull), else base × armor tech × captain rank.
+ */
+function drawShipHpBar(
+  ship: Ship,
+  x: number,
+  y: number,
+  ctx: RenderContext,
+) {
+  const maxHp = effectiveShipMaxHp(ship, ctx.factionTech?.[ship.ownedBy]);
+  if (!(maxHp > 0)) return;
+  const frac = Math.max(0, Math.min(1, (ship.hp ?? maxHp) / maxHp));
+  const barW = 36;
+  const barH = 3;
+  const c = ctx.ctx;
+  c.save();
+  c.fillStyle = '#2a3d50';
+  c.fillRect(x, y, barW, barH);
+  c.fillStyle = frac > 0.5 ? COLORS.success : frac > 0.25 ? COLORS.warning : COLORS.danger;
+  c.fillRect(x, y, barW * frac, barH);
+  c.restore();
 }
 
 /**
@@ -3175,12 +3218,17 @@ function drawTorchTransitShip(
   }
 
   // Ship name — hover/selection only (see RenderContext.hoveredShipId).
-  if (isSelected || ctx.hoveredShipId === ship.id) {
+  // Stack is NAME / HP BAR / ETA, so the bar slots between them and the
+  // ETA drops 8px rather than colliding with it.
+  const named = isSelected || ctx.hoveredShipId === ship.id;
+  if (named) {
+    const labelX = canvasPos.x + iconSize / 2 + 4;
     ctx.ctx.fillStyle = isSelected ? '#ffb84d' : shipColorValue;
     ctx.ctx.font = '9px "Audiowide", monospace';
     ctx.ctx.textAlign = 'left';
     ctx.ctx.textBaseline = 'middle';
-    ctx.ctx.fillText(ship.name.split(' ')[0], canvasPos.x + iconSize / 2 + 4, canvasPos.y - 6);
+    ctx.ctx.fillText(ship.name.split(' ')[0], labelX, canvasPos.y - 6);
+    drawShipHpBar(ship, labelX, canvasPos.y + 3, ctx);
   }
 
   // ETA + phase label when selected
@@ -3191,7 +3239,11 @@ function drawTorchTransitShip(
       ctx.ctx.fillStyle = COLORS.fgDim;
       ctx.ctx.font = '8px "Audiowide", monospace';
       ctx.ctx.textAlign = 'left';
-      ctx.ctx.fillText(`${phase} · ETA T-${eta.toFixed(0)}`, canvasPos.x + 8, canvasPos.y + 6);
+      ctx.ctx.fillText(
+        `${phase} · ETA T-${eta.toFixed(0)}`,
+        canvasPos.x + 8,
+        canvasPos.y + (named ? 14 : 6),
+      );
     }
   }
 }
