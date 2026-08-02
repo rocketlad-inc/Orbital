@@ -2798,9 +2798,18 @@ export class Room {
         const popMul = 1 + YIELD_MULT_PER_POP * Math.max(0, Number(s.population ?? 1) - 1);
         let bld = {};
         if (s.buildings_json) { try { bld = JSON.parse(s.buildings_json) ?? {}; } catch { bld = {}; } }
-        const forgeMul = 1 + Number(bld.forge ?? 0) * FORGE_PER_LEVEL;
-        const mintMul  = 1 + Number(bld.mint  ?? 0) * MINT_PER_LEVEL;
-        const labMul   = 1 + Number(bld.lab   ?? 0) * LAB_PER_LEVEL;
+        // COMPOUNDING yield per level (1.25^n), not additive (1+0.25n).
+        // Costs scale 1.6^n, so with a flat +0.25 return each level cost
+        // 1.6x more for the SAME increment — by L8 you paid 27x more
+        // metal per unit of yield than at L1. Players correctly stopped
+        // upgrading around L4 and the surplus piled up with nowhere to
+        // go. Compounding keeps the curve diminishing (1.6 cost vs 1.25
+        // yield) while leaving deep levels genuinely worth buying, which
+        // turns buildings back into the economy's long sink.
+        // KEEP IN SYNC with settlementYield() in src/game/settlements.ts.
+        const forgeMul = Math.pow(1 + FORGE_PER_LEVEL, Number(bld.forge ?? 0));
+        const mintMul  = Math.pow(1 + MINT_PER_LEVEL,  Number(bld.mint  ?? 0));
+        const labMul   = Math.pow(1 + LAB_PER_LEVEL,   Number(bld.lab   ?? 0));
         // Senate production sanction: while active, the target faction's
         // settlement yields are halved across every resource at the
         // source. Hits both pool and stockpile pathways uniformly so the

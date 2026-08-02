@@ -28,14 +28,14 @@ const SHIP_CLASSES = new Set(['corvette', 'frigate', 'destroyer', 'freighter', '
 // columns (metal/fuel/gold). Note ore->metal and credits->gold renames
 // (server schema vs client naming).
 const SHIP_BUILD_COST = {
-  corvette:  { fuel: 0,  metal: 5,  gold: 4,  build_ticks: 10 },
-  frigate:   { fuel: 0,  metal: 10, gold: 8,  build_ticks: 20 },
-  destroyer: { fuel: 0,  metal: 20, gold: 17, build_ticks: 40 },
-  freighter: { fuel: 0,  metal: 7,  gold: 5,  build_ticks: 15 },
+  corvette:  { fuel: 0,  metal: 20,  gold: 16,  build_ticks: 10 },
+  frigate:   { fuel: 0,  metal: 45,  gold: 36,  build_ticks: 20 },
+  destroyer: { fuel: 0,  metal: 110, gold: 95,  build_ticks: 40 },
+  freighter: { fuel: 0,  metal: 28,  gold: 20,  build_ticks: 15 },
   // Colony ship — consumable expansion hull (DESIGN-identity-economy §4).
   // ~3x freighter cost: it IS the price of founding a city (deploy
   // consumes the ship instead of charging SETTLEMENT_COST).
-  colony:    { fuel: 0,  metal: 20, gold: 15, build_ticks: 15 },
+  colony:    { fuel: 0,  metal: 80, gold: 60, build_ticks: 15 },
 };
 
 function json(data, init = {}) {

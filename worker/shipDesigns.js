@@ -107,13 +107,23 @@ export function validateParts(shipClass, parts) {
 }
 
 /** Total metal/gold cost of a parts list (hull cost NOT included). */
+/** Cost escalation for STACKING the same part — the k-th copy costs
+ *  base × ESCALATION^(k-1). KEEP IN SYNC with PART_STACK_ESCALATION in
+ *  src/game/shipParts.ts (and the identical rounding below, or the
+ *  client's quoted price won't match what the server charges). */
+export const PART_STACK_ESCALATION = 1.75;
+
 export function partsCost(parts) {
+  const seen = Object.create(null);
   let metal = 0, gold = 0;
   for (const p of parts ?? []) {
     const def = SHIP_PART_DEFS[p];
     if (!def) continue;
-    metal += def.metal;
-    gold += def.gold;
+    const n = seen[p] ?? 0;
+    seen[p] = n + 1;
+    const mul = Math.pow(PART_STACK_ESCALATION, n);
+    metal += Math.round(def.metal * mul);
+    gold += Math.round(def.gold * mul);
   }
   return { metal, gold };
 }

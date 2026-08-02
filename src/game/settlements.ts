@@ -78,10 +78,12 @@ export const NO_COLLECTOR_STOCK_FRACTION = 0.90;
 // === Settlement upgrade buildings ============================
 //
 // Each settlement can host buildings that compound its native output.
-// Levels stack additively (`yield × (1 + level × perLevel)`), costs
-// compound multiplicatively (`baseCost × scaling^level`), build times
-// compound mildly. Soft-cap is natural — by L8 a Forge costs ~671c
-// per level and takes ~9 real hours at the default 7.5-min cadence.
+// Levels COMPOUND (`yield × (1 + perLevel)^level`) and costs compound
+// faster (`baseCost × scaling^level`), so the curve still diminishes —
+// 1.6x cost against 1.25x yield per level — but a deep upgrade stays
+// worth buying instead of turning into a dead end at ~L4, which is what
+// left mature economies with nothing to spend on. Build times compound
+// mildly; the soft cap is time and the widening cost/yield gap.
 //
 // City-only: forge / mint / lab (surface industry)
 // Station-only: weapons / shipyard (orbital platforms)
@@ -378,9 +380,13 @@ export function settlementYield(
 
   // Building multipliers — city Forge/Mint/Lab compound the matching
   // resource. Stations don't host yield buildings, so these are 0 there.
-  const forgeMul   = 1 + buildingLevel(settlement, 'forge') * (BUILDING_DEFS.forge.yieldBoost?.perLevel ?? 0);
-  const mintMul    = 1 + buildingLevel(settlement, 'mint')  * (BUILDING_DEFS.mint.yieldBoost?.perLevel  ?? 0);
-  const labMul     = 1 + buildingLevel(settlement, 'lab')   * (BUILDING_DEFS.lab.yieldBoost?.perLevel   ?? 0);
+  // COMPOUNDING per level ((1+perLevel)^n) — mirrors worker/room.js.
+  // Additive levels made every upgrade past ~L4 a bad trade (cost 1.6^n
+  // against a flat +0.25 return), which is why mature economies stalled
+  // and hoarded. See the long note at the server call site.
+  const forgeMul   = Math.pow(1 + (BUILDING_DEFS.forge.yieldBoost?.perLevel ?? 0), buildingLevel(settlement, 'forge'));
+  const mintMul    = Math.pow(1 + (BUILDING_DEFS.mint.yieldBoost?.perLevel  ?? 0), buildingLevel(settlement, 'mint'));
+  const labMul     = Math.pow(1 + (BUILDING_DEFS.lab.yieldBoost?.perLevel   ?? 0), buildingLevel(settlement, 'lab'));
 
   return {
     fuel:    base.fuel    * mult * typeMult.fuel,

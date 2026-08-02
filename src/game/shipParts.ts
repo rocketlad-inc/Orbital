@@ -241,12 +241,35 @@ export function countPart(parts: readonly string[] | undefined, id: ShipPartId):
   return n;
 }
 
-/** Sum of part costs (hull cost NOT included). */
+/**
+ * Cost escalation for STACKING the same part. The k-th copy of a part
+ * type costs base × ESCALATION^(k-1), so a triple-kinetic destroyer pays
+ * a real premium over a single-mount one.
+ *
+ * Why: hull + part costs were FLAT, so a fully-armed destroyer (48 metal
+ * / 37 credits) cost less than a single mid-tier building upgrade — the
+ * strongest unit in the game was effectively free and there was nothing
+ * to spend a mature economy on. Escalation makes heavy loadouts a real
+ * investment and gives specialisation a price, without taxing the player
+ * who fits one of each.
+ *
+ * KEEP IN SYNC with worker/shipDesigns.js partsCost().
+ */
+export const PART_STACK_ESCALATION = 1.75;
+
+/** Sum of part costs (hull cost NOT included), with stacking escalation.
+ *  Rounded per-part so client and server agree exactly on integers. */
 export function partsCost(parts: readonly ShipPartId[]): { ore: number; credits: number } {
+  const seen: Partial<Record<ShipPartId, number>> = {};
   let ore = 0, credits = 0;
   for (const p of parts) {
-    ore += SHIP_PART_DEFS[p].cost.ore;
-    credits += SHIP_PART_DEFS[p].cost.credits;
+    const def = SHIP_PART_DEFS[p];
+    if (!def) continue;
+    const n = (seen[p] ?? 0);           // copies already counted
+    seen[p] = n + 1;
+    const mul = Math.pow(PART_STACK_ESCALATION, n);
+    ore += Math.round(def.cost.ore * mul);
+    credits += Math.round(def.cost.credits * mul);
   }
   return { ore, credits };
 }
