@@ -1761,6 +1761,15 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
         const mapT0 = performance.now();
         const next = serverToGameState(res.data, res.data.me.faction_id);
         perf.recordMap(performance.now() - mapT0, next.ships.length);
+        // Scene complexity, so render cost can be read against what is
+        // actually on screen rather than in the abstract.
+        perf.recordScene(
+          next.ships.length,
+          next.settlements.length,
+          next.ships.filter(sh => sh.transit).length,
+          next.ships.length ? 0 : 0,
+        );
+        perf.startHeartbeat();
         setState(next);
         // Captain debut (DESIGN-captains §5.1): when one of OUR ships
         // appears for the first time with a captain aboard, offer (never

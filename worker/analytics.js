@@ -603,10 +603,69 @@ async function handleGameAnalytics(req, env, { session, params }) {
     mobile: e.mobile, ua: e.ua,
   })).sort((x, y) => y.total_p95 - x.total_p95);
 
+  // --- Render vitals + session degradation. Grouped per player, and
+  // within a player per SESSION, so we can compare the first minutes of
+  // a session against the last: a flat line means "this machine is
+  // simply slow", a downward slope means we are leaking.
+  const hbRows = await env.DB
+    .prepare(
+      `SELECT user_id, session_id, session_ms, fps_avg, fps_low1, frame_p95,
+              long_frames, draw_p50, draw_p95, heap_mb, ships, gpu, cores,
+              mem_gb, dpr, screen_w, screen_h, mobile, ua
+         FROM perf_heartbeats
+        WHERE game_id = ? AND created_at_ms > ?
+        ORDER BY created_at_ms DESC
+        LIMIT 5000`,
+    )
+    .bind(gameId, now - 7 * 86_400_000)
+    .all();
+  const nameById = new Map();
+  for (const e of engagement.results ?? []) nameById.set(e.id, e.display_name);
+  const hbByUser = new Map();
+  for (const r of hbRows.results ?? []) {
+    let e = hbByUser.get(r.user_id);
+    if (!e) {
+      e = {
+        user_id: r.user_id,
+        display_name: nameById.get(r.user_id) ?? 'Unknown',
+        beats: 0, fps: [], low1: [], draws: [], longFrames: 0,
+        early: [], late: [], heapEarly: [], heapLate: [],
+        gpu: r.gpu, cores: r.cores, mem_gb: r.mem_gb, dpr: r.dpr,
+        screen: r.screen_w && r.screen_h ? `${r.screen_w}x${r.screen_h}` : null,
+        mobile: r.mobile, ua: r.ua, ships: r.ships,
+      };
+      hbByUser.set(r.user_id, e);
+    }
+    e.beats++;
+    e.fps.push(r.fps_avg);
+    e.low1.push(r.fps_low1);
+    e.draws.push(r.draw_p95);
+    e.longFrames += r.long_frames;
+    // First 5 minutes vs 15+ minutes into a session.
+    if (r.session_ms < 300_000) { e.early.push(r.fps_avg); if (r.heap_mb) e.heapEarly.push(r.heap_mb); }
+    if (r.session_ms > 900_000) { e.late.push(r.fps_avg); if (r.heap_mb) e.heapLate.push(r.heap_mb); }
+  }
+  const mean = arr => (arr.length ? Math.round(arr.reduce((x, y) => x + y, 0) / arr.length) : 0);
+  const render = [...hbByUser.values()].map(e => ({
+    user_id: e.user_id, display_name: e.display_name, beats: e.beats,
+    fps_avg: mean(e.fps),
+    fps_low1: mean(e.low1),
+    draw_p95: mean(e.draws),
+    long_frames: e.longFrames,
+    fps_early: mean(e.early),
+    fps_late: mean(e.late),
+    heap_early: mean(e.heapEarly),
+    heap_late: mean(e.heapLate),
+    ships: e.ships,
+    gpu: e.gpu, cores: e.cores, mem_gb: e.mem_gb, dpr: e.dpr,
+    screen: e.screen, mobile: e.mobile, ua: e.ua,
+  })).sort((x, y) => x.fps_avg - y.fps_avg);
+
   return json({
     now,
     game,
     perf,
+    render,
     factions: factions.results ?? [],
     curves: curves.results ?? [],
     usage: usage.results ?? [],
@@ -686,7 +745,61 @@ async function handlePerfSample(req, env, { session, params }) {
   return json({ ok: true });
 }
 
+// ---------------------------------------------------------------------------
+// POST /api/games/:gameId/perf/session
+// One row per minute of active play per client: frame-rate distribution,
+// draw cost, heap, scene size, device/GPU. Same trust model as
+// /perf — untrusted numbers, clamped, diagnostics only.
+// ---------------------------------------------------------------------------
+async function handlePerfHeartbeat(req, env, { session, params }) {
+  if (!session) return err(401, 'unauthorized', 'sign in');
+  let b;
+  try { b = await req.json(); } catch { return json({ ok: true }); }
+  const n = (v, max = 600_000) => {
+    const x = Math.round(Number(v));
+    return Number.isFinite(x) ? Math.max(0, Math.min(max, x)) : 0;
+  };
+  const nOrNull = (v, max) => (v == null ? null : n(v, max));
+  const f = (v, max) => {
+    const x = Number(v);
+    return Number.isFinite(x) ? Math.max(0, Math.min(max, x)) : null;
+  };
+  try {
+    await env.DB
+      .prepare(
+        `INSERT INTO perf_heartbeats
+           (game_id, user_id, session_id, session_ms, fps_avg, fps_low1,
+            frame_p50, frame_p95, long_frames, frames_seen, draw_p50, draw_p95,
+            heap_mb, heap_limit_mb, ships, settlements, in_transit, zoom,
+            gpu, cores, mem_gb, dpr, screen_w, screen_h, mobile, ua, created_at_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        params.gameId ?? null, session.user_id,
+        String(b.session_id ?? '').slice(0, 24) || 'unknown',
+        n(b.session_ms, 86_400_000),
+        n(b.fps_avg, 1000), n(b.fps_low1, 1000),
+        n(b.frame_p50, 60_000), n(b.frame_p95, 60_000),
+        n(b.long_frames, 1_000_000), n(b.frames_seen, 1_000_000),
+        n(b.draw_p50, 60_000), n(b.draw_p95, 60_000),
+        nOrNull(b.heap_mb, 1_000_000), nOrNull(b.heap_limit_mb, 1_000_000),
+        n(b.ships, 100_000), n(b.settlements, 100_000), n(b.in_transit, 100_000),
+        f(b.zoom, 10_000),
+        String(b.gpu ?? '').slice(0, 120) || null,
+        nOrNull(b.cores, 256), nOrNull(b.mem_gb, 1024),
+        f(b.dpr, 16), nOrNull(b.screen_w, 100_000), nOrNull(b.screen_h, 100_000),
+        b.mobile ? 1 : 0, String(b.ua ?? '').slice(0, 180),
+        Date.now(),
+      )
+      .run();
+  } catch (e) {
+    console.error('perf heartbeat insert failed', e);
+  }
+  return json({ ok: true });
+}
+
 export const routes = [
+  { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/perf\/session$/, auth: 'required', handle: handlePerfHeartbeat },
   { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/perf$/, auth: 'required', handle: handlePerfSample },
   { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/telemetry$/, auth: 'required', handle: handleUiTelemetry },
   { method: 'GET', pattern: '/api/admin/overview', auth: 'required', handle: handleOverview },

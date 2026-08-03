@@ -67,9 +67,18 @@ type PerfRow = {
   mobile: number; ua: string;
 };
 
+type RenderRow = {
+  user_id: string; display_name: string; beats: number;
+  fps_avg: number; fps_low1: number; draw_p95: number; long_frames: number;
+  fps_early: number; fps_late: number; heap_early: number; heap_late: number;
+  ships: number; gpu: string | null; cores: number | null; mem_gb: number | null;
+  dpr: number | null; screen: string | null; mobile: number; ua: string;
+};
+
 type GameAnalytics = {
   now: number;
   perf: PerfRow[];
+  render: RenderRow[];
   game: OverviewGame & { winner_faction_id: string | null };
   factions: FactionRow[]; curves: CurvePoint[]; usage: UsageRow[]; engagement: EngagementRow[];
   techPace: Array<{ faction_id: string; completed: number; avg_ticks: number; last_completed_tick: number }>;
@@ -547,6 +556,11 @@ function GameDetail({
       </section>
 
       <section>
+        <div className="aa-section-title">ANIMATION / FRAME RATE · 7D</div>
+        <RenderTable rows={data.render ?? []} />
+      </section>
+
+      <section>
         <div className="aa-section-title">RUNAWAY-LEADER SCORE · SHARE OF ECONOMY + FLEET</div>
         <RunawayChart data={data} />
       </section>
@@ -1010,6 +1024,61 @@ function Funnels({ usage }: { usage: UsageRow[] }) {
         ))}
       </tbody>
     </table>
+  );
+}
+
+// Frame-rate health per player. fps_low1 (mean of the worst 1% of
+// frames) matters more than the average: a 55fps average with 8fps
+// stutters is what players describe as "animations slowing down".
+// early/late compare the first 5 min of a session against 15+ min in —
+// a big drop, especially alongside a climbing heap, is a LEAK rather
+// than a slow machine, and those need opposite fixes.
+function RenderTable({ rows }: { rows: RenderRow[] }) {
+  if (rows.length === 0) {
+    return <div className="aa-empty">No frame data yet — clients report once a minute of active play.</div>;
+  }
+  return (
+    <div className="aa-scroll-x">
+      <table className="aa-table">
+        <thead>
+          <tr>
+            <th>Player</th><th>beats</th>
+            <th>fps avg</th><th>1% low</th>
+            <th>draw p95</th><th>long frames</th>
+            <th>fps early→late</th><th>heap early→late</th>
+            <th>ships</th><th>device</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(r => {
+            const degraded = r.fps_early > 0 && r.fps_late > 0 && r.fps_late < r.fps_early * 0.75;
+            const leaking = r.heap_early > 0 && r.heap_late > r.heap_early * 1.5;
+            return (
+              <tr key={r.user_id}>
+                <td>{r.display_name}</td>
+                <td>{r.beats}</td>
+                <td style={{ color: r.fps_avg < 30 ? '#ff6b6b' : '#cdd9e4' }}><b>{r.fps_avg}</b></td>
+                <td style={{ color: r.fps_low1 < 15 ? '#ff6b6b' : '#cdd9e4' }}>{r.fps_low1}</td>
+                <td style={{ color: r.draw_p95 > 16 ? '#ff6b6b' : '#cdd9e4' }}>{r.draw_p95} ms</td>
+                <td>{r.long_frames}</td>
+                <td style={{ color: degraded ? '#ff6b6b' : '#cdd9e4' }}>
+                  {r.fps_early || '—'} → {r.fps_late || '—'}{degraded ? ' ⚠' : ''}
+                </td>
+                <td style={{ color: leaking ? '#ff6b6b' : '#8a9fb3' }}>
+                  {r.heap_early ? `${r.heap_early}MB` : '—'} → {r.heap_late ? `${r.heap_late}MB` : '—'}
+                  {leaking ? ' ⚠' : ''}
+                </td>
+                <td>{r.ships}</td>
+                <td style={{ color: '#8a9fb3', fontSize: 11 }} title={r.gpu ?? r.ua}>
+                  {(r.gpu ?? '?').slice(0, 28)}{r.mobile ? ' · mobile' : ''}
+                  {r.cores ? ` · ${r.cores}c` : ''}{r.dpr && r.dpr !== 1 ? ` · ${r.dpr}x` : ''}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

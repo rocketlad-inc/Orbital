@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
+import { perf } from '../multiplayer/PerfHud';
 import { smoothedTick, shipDisplayTick } from '../render/tickPhase';
 import { useGameContext } from '../state/gameContext';
 import { useMapLayers } from '../state/mapLayers';
@@ -2070,7 +2071,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   useEffect(() => {
     let raf: number | null = null;
     const loop = () => {
+      // Time the draw itself: frame INTERVAL alone can't tell "our canvas
+      // work is heavy" from "something else stalled the main thread".
+      const t0 = performance.now();
       renderRef.current();
+      perf.recordDraw(performance.now() - t0);
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
