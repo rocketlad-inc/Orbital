@@ -855,6 +855,12 @@ export interface MapUIState {
   selectedBodyId?: string;
   hoveredBodyId?: string;
   targetSelectionMode?: boolean;        // true when picking a transfer target on the map
+  /** Shift-click group selection, shared by the map and the Fleet panel
+   *  so one list drives both. Independent of `selectedShipId`: a plain
+   *  click selects ONE ship and clears this; shift-click builds a group
+   *  to move or give common orders. Array (not Set) to keep MapUIState
+   *  plainly serializable like every other field here. */
+  selectedShipIds?: string[];
 }
 
 /**

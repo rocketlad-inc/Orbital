@@ -162,6 +162,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     updateCamera, selectShip, selectBody, deselectShip, deselectBody,
     hoverBody, focusBody,
     setTargetSelectionMode,
+    toggleShipSelection, clearShipSelection,
     selectedSettlementId,
   } = useGameContext();
   /**
@@ -1684,6 +1685,42 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     drawDiscoveryBlooms(renderContext, nowMs);
     drawArrivalFlashes(renderContext, gameState.ships, nowMs);
 
+    // Shift-click group markers. Without these the group is invisible —
+    // the panel would know about it and the map wouldn't. Reads the same
+    // hitboxes the click test uses (with pickShipAt's identical fallback
+    // for ships the main pass hasn't boxed yet) so the ring lands exactly
+    // where a click would register.
+    {
+      const groupIds = uiState.selectedShipIds;
+      if (groupIds && groupIds.length > 0) {
+        const c = renderContext.ctx;
+        c.save();
+        c.strokeStyle = '#ffb84d';
+        c.lineWidth = 2;
+        c.setLineDash([4, 3]);
+        const dashPhase = (nowMs / 60) % 7;   // slow crawl so it reads as "live"
+        c.lineDashOffset = -dashPhase;
+        for (const id of groupIds) {
+          const ship = gameState.ships.find(s => s.id === id);
+          if (!ship) continue;
+          const hb = shipHitboxesRef.current.get(id);
+          let x: number, y: number, r: number;
+          if (hb) {
+            x = hb.x; y = hb.y; r = hb.r + 4;
+          } else {
+            const cached = ship.transit ? transitShipCanvasPosRef.current.get(id) : undefined;
+            const p = cached ?? getShipCanvasPos(ship, c.canvas, gameState.bodies, camera, nowTick);
+            if (!p) continue;
+            x = p.x; y = p.y; r = (ship.transit ? 20 : 14) + 4;
+          }
+          c.beginPath();
+          c.arc(x, y, r, 0, Math.PI * 2);
+          c.stroke();
+        }
+        c.restore();
+      }
+    }
+
     // Fog-of-war: paint the dim wash and punch holes where the
     // player's sensors reach. The dim↔bright transition is its own
     // boundary — no separate outline pass needed.
@@ -1929,7 +1966,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // the touch-input layer. Hit radii are padded on coarse-pointer devices
   // (mobile/tablet) so fingers can reliably grab ships and bodies.
   const handleTapAt = useCallback(
-    (canvasX: number, canvasY: number) => {
+    (canvasX: number, canvasY: number, additive = false) => {
       if (!canvasRef.current) return;
 
       if (uiState.targetSelectionMode) {
@@ -1951,21 +1988,53 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
 
       const hitShip = pickShipAt(canvasX, canvasY, true);
-      if (hitShip) { selectShip(hitShip); return; }
+      if (hitShip) {
+        // Shift+click builds a group. Own hulls only — you can't give
+        // orders to someone else's ship, and silently collecting them
+        // would make the count lie about what a group order will touch.
+        if (additive) {
+          const s = gameState.ships.find(sh => sh.id === hitShip);
+          if (s && s.ownedBy === 'player') toggleShipSelection(hitShip);
+          return;
+        }
+        // Plain click on a hull = "just this one" (RTS convention), so
+        // the group resets here rather than inside selectShip — see the
+        // note there about not coupling focus to selection.
+        clearShipSelection();
+        selectShip(hitShip);
+        return;
+      }
 
       for (const body of gameState.bodies) {
         const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, renderTick());
         const clickRadius = Math.max(8, body.radius! * camera.scale + 5) + TOUCH_HIT_PADDING;
         if (Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < clickRadius) {
+          // Shift+click a world while a group is selected = "everyone go
+          // there". Handled by the group bar (which owns the transfer
+          // hook and the result summary) so this stays a pure event.
+          if (additive && (uiState.selectedShipIds?.length ?? 0) > 0) {
+            window.dispatchEvent(new CustomEvent('orbital:group-move', {
+              detail: { bodyId: body.id },
+            }));
+            return;
+          }
+          // Body click PRESERVES the group on purpose: inspecting a world
+          // while holding a selection is the natural lead-in to sending
+          // them there (look at it, then shift-click to commit).
           selectBody(body.id);
           return;
         }
       }
 
+      // Empty space: a plain click drops everything, including the
+      // group. Shift+click on nothing leaves the group intact — an
+      // errant miss while collecting ships shouldn't undo the work.
+      if (additive) return;
       deselectShip();
       deselectBody();
+      clearShipSelection();
     },
-    [gameState, camera, uiState.targetSelectionMode, selectShip, selectBody, deselectShip, deselectBody, renderTick, pickShipAt]
+    [gameState, camera, uiState.targetSelectionMode, uiState.selectedShipIds, selectShip, selectBody, deselectShip, deselectBody, renderTick, pickShipAt, toggleShipSelection, clearShipSelection]
   );
 
   const handleClick = useCallback(
@@ -1975,6 +2044,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       handleTapAt(
         (e.clientX - rect.left) * renderScaleRef.current,
         (e.clientY - rect.top) * renderScaleRef.current,
+        // metaKey too so the gesture matches the platform convention on
+        // Mac; the touch path never sets either and keeps single-select.
+        e.shiftKey || e.metaKey,
       );
     },
     [handleTapAt]

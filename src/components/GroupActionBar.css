@@ -1,0 +1,86 @@
+/* ============================================================
+   GroupActionBar — floating shift-click group controls over the map.
+   Bottom-centre so it sits clear of the left rail (ShipPanel +
+   Outliner) and the right-edge dock panels, both of which are
+   full-height columns.
+   ============================================================ */
+
+.group-bar {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 18px;
+  z-index: 60;
+  background: rgba(10, 17, 27, 0.94);
+  border: 1px solid #ffb84d;
+  border-radius: 6px;
+  padding: 7px 12px 6px;
+  font-family: var(--font-body);
+  color: #d8e4ee;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.55);
+  max-width: min(560px, calc(100vw - 32px));
+}
+
+.group-bar__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.group-bar__count {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: #ffb84d;
+  white-space: nowrap;
+}
+
+.group-bar__sub {
+  color: #8a9fb3;
+  font-size: 11px;
+}
+
+.group-bar__stances {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.group-bar__btn {
+  background: #14202c;
+  border: 1px solid #2a3d50;
+  border-radius: 3px;
+  color: #9fb4c6;
+  font-family: inherit;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: border-color 0.1s ease, color 0.1s ease;
+}
+.group-bar__btn:hover {
+  border-color: #4ecdc4;
+  color: #d8e4ee;
+}
+.group-bar__btn--ghost {
+  border-color: transparent;
+  color: #7d8fa0;
+}
+.group-bar__btn--ghost:hover {
+  border-color: #ff5e5e;
+  color: #ff5e5e;
+}
+
+.group-bar__hint {
+  margin-top: 4px;
+  font-size: 10px;
+  color: #8a9fb3;
+  line-height: 1.35;
+}
+
+/* The map's bottom edge is where the mobile dock rail lives; nudge up
+   so the bar never sits under it on short/!wide viewports. Shift-click
+   is a desktop gesture, so this is a safety margin, not a mobile
+   layout. */
+@media (max-width: 720px) {
+  .group-bar { bottom: 88px; }
+}

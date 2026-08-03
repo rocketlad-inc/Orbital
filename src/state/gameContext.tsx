@@ -334,6 +334,12 @@ interface GameContextType {
   hoverBody: (bodyId: string | null) => void;
   setTargetSelectionMode: (enabled: boolean) => void;
 
+  /** Shift-click group selection (uiState.selectedShipIds), shared by
+   *  the map and the Fleet panel. */
+  toggleShipSelection: (shipId: string) => void;
+  setShipSelection: (shipIds: string[]) => void;
+  clearShipSelection: () => void;
+
   addManeuverNode: (node: ManeuverNode) => void;
   commitManeuverNode: (nodeId: string) => void;
   deleteManeuverNode: (nodeId: string) => void;
@@ -1713,9 +1719,40 @@ export function GameContextProvider({
       if (prev.selectedShipId && prev.selectedShipId !== shipId) {
         clearPlannedTransitOnLeave(prev.selectedShipId);
       }
+      // Deliberately does NOT touch selectedShipIds. selectShip is the
+      // generic "focus this hull" action — the Fleet panel's rows, the
+      // Situation Report, the Event Log's take-me-there all call it, and
+      // wiping a group as a side effect of inspecting one ship would be
+      // a hidden coupling (tick three boxes, click a row to look at one,
+      // lose the group). The MAP clears the group explicitly on a plain
+      // click, which is where "start over" is the actual intent.
       return { ...prev, selectedShipId: shipId, selectedBodyId: undefined };
     });
   }, [clearPlannedTransitOnLeave]);
+
+  /** Shift-click add/remove. Toggling the last ship out clears the field
+   *  entirely (rather than leaving an empty array) so "is there a group?"
+   *  is a simple truthiness check everywhere downstream. */
+  const toggleShipSelection = useCallback((shipId: string) => {
+    setUIStateInternal(prev => {
+      const cur = prev.selectedShipIds ?? [];
+      const next = cur.includes(shipId)
+        ? cur.filter(id => id !== shipId)
+        : [...cur, shipId];
+      return { ...prev, selectedShipIds: next.length > 0 ? next : undefined };
+    });
+  }, []);
+
+  const setShipSelection = useCallback((shipIds: string[]) => {
+    setUIStateInternal(prev => ({
+      ...prev,
+      selectedShipIds: shipIds.length > 0 ? [...shipIds] : undefined,
+    }));
+  }, []);
+
+  const clearShipSelection = useCallback(() => {
+    setUIStateInternal(prev => ({ ...prev, selectedShipIds: undefined }));
+  }, []);
 
   const deselectShip = useCallback(() => {
     setUIStateInternal(prev => {
@@ -2876,6 +2913,7 @@ export function GameContextProvider({
     updateCamera, focusBody,
     selectShip, deselectShip, selectBody, deselectBody, hoverBody,
     setTargetSelectionMode,
+    toggleShipSelection, setShipSelection, clearShipSelection,
     addManeuverNode, commitManeuverNode, deleteManeuverNode,
     launchTorchTransfer, enqueueTorchTransfer, planTorchPreview, cancelTorchPreview,
     buildShip, cancelBuild, renameShip,

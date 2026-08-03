@@ -45,6 +45,7 @@ import { SituationLog } from './components/SituationLog';
 import { DiscoveryBanner } from './components/DiscoveryBanner';
 import { RecapOverlay } from './components/RecapOverlay';
 import { EventLog } from './components/EventLog';
+import { GroupActionBar } from './components/GroupActionBar';
 import { DockRail } from './components/DockRail';
 import { MultiplayerLobby } from './multiplayer/MultiplayerLobby';
 import { MultiplayerGameProvider } from './multiplayer/MultiplayerGameProvider';
@@ -235,6 +236,9 @@ function GameUI({
           uncovered (yours: celebratory + jump-to; a rival's: intel). */}
       <DiscoveryBanner />
       <RecapOverlay />
+      {/* Shift-click group controls — renders nothing until a group
+          exists, so it costs a mount and no screen space otherwise. */}
+      <GroupActionBar />
 
       {/* SP-only: listen for 'orbital:open-panel' so SitLog clicks on
           a research item open the Research tab. MP has its own listener

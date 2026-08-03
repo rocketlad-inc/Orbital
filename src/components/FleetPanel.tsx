@@ -3,7 +3,7 @@
 // Orbiting (grouped by body) + separate "In Transit" group
 // ============================================================
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { loadoutSummary, countPart } from '../game/shipParts';
@@ -38,6 +38,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const {
     gameState, selectShip, focusBody, uiState,
     launchTorchTransfer, renameShip,
+    toggleShipSelection, setShipSelection, clearShipSelection,
   } = useGameContext();
   const mpActions = useMultiplayerActions();
   // Default to the "All" tab in multiplayer (per request); single-player
@@ -55,7 +56,18 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const [collapsedSystems, setCollapsedSystems] = useState<Set<string>>(new Set());
   // Bulk-select set: ship ids the player has checked for a bulk
   // maneuver action. Only player-owned ships can join the set.
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  //
+  // Lives in gameContext (uiState.selectedShipIds) rather than local
+  // state so the map's shift-click group and these checkboxes are ONE
+  // list — tick a box here and the ship rings on the map; shift-click
+  // three hulls out there and this action bar is already armed.
+  const selectedIds = useMemo(
+    () => new Set(uiState.selectedShipIds ?? []),
+    [uiState.selectedShipIds],
+  );
+  const setSelectedIds = useCallback((next: Set<string>) => {
+    setShipSelection(Array.from(next));
+  }, [setShipSelection]);
   const [bulkTarget, setBulkTarget] = useState<string>('');
   const [bulkError, setBulkError] = useState<string | null>(null);
   // Bulk standing orders (MP only). '' = leave that field unchanged;
@@ -232,14 +244,12 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     focusBody(bodyId);
   };
 
-  const toggleSelected = (shipId: string) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(shipId)) next.delete(shipId);
-      else next.add(shipId);
-      return next;
-    });
-  };
+  // Delegates to the context toggle rather than reading `selectedIds`
+  // and writing a new Set: the shared state is the source of truth, and
+  // going through it keeps this correct if two toggles land in the same
+  // render (the old local version used a function updater for exactly
+  // that reason, which the shared setter can't express).
+  const toggleSelected = (shipId: string) => toggleShipSelection(shipId);
 
   // Set of player ships currently eligible for a bulk transfer
   // (orbiting, with no in-flight or planned transit already attached).
@@ -382,7 +392,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   };
 
   const clearSelection = () => {
-    setSelectedIds(new Set());
+    clearShipSelection();
     setBulkError(null);
     setOrdersNotice(null);
   };
