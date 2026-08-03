@@ -1114,11 +1114,22 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         list.sort((a, b) => (a.id < b.id ? -1 : 1));
 
         // BATTLE LINES: when two or more factions with ARMED hulls share
-        // this ring, each faction claims an opposing arc — your line on
-        // one side, theirs on the other, fire crossing the gap — instead
-        // of interleaving into a blender. Factions with only civilians
-        // present (a freighter caught in the crossfire) still get an arc
+        // this ring, each faction forms its own line and the lines face
+        // each other across a no-man's-land gap — instead of everyone
+        // interleaving into a blender. Factions with only civilians
+        // present (a freighter caught in the crossfire) still get a line
         // of their own so they visibly huddle away from the guns.
+        //
+        // The lines sit inside a CONTESTED SECTOR rather than spread
+        // around the whole ring. Diametrically-opposed arcs (the first
+        // cut) put the fleets on opposite sides of the planet, which
+        // (a) hid half the battle behind the world and (b) collided with
+        // the tracer-occlusion rule — every cross-fleet shot passed
+        // through the planet and was suppressed, so a ten-ship brawl
+        // drew one bolt. Park orbits are TIGHT (body radius + 2), so the
+        // planet blocks any pair more than roughly 90° apart; keeping
+        // the whole engagement inside BATTLE_SECTOR preserves line of
+        // sight AND frames the entire fight on screen at once.
         const owners = [...new Set(list.map(s => s.ownedBy))].sort();
         const armedOwners = new Set(
           list.filter(s => (s.damagePerTick ?? getShipClass(s.class).damagePerTick) > 0)
@@ -1127,15 +1138,18 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
         if (battle) {
           const F = owners.length;
-          // Each faction's arc: centers spread around the ring, width
-          // capped so adjacent lines keep a visible no-man's-land gap.
-          const arcWidth = Math.min((Math.PI * 2 / F) * 0.62, 2.1);
+          // Total angular span the whole engagement occupies (~86°).
+          const BATTLE_SECTOR = 1.5;
+          // Line centers spread evenly across the sector, centered on 0.
+          const spacing = F > 1 ? BATTLE_SECTOR / (F - 1) : 0;
+          // Each line's own width, leaving a visible gap between lines.
+          const arcWidth = Math.min(spacing * 0.55, 0.8);
           // One wheel direction for the whole ring (lowest-id ship's),
           // so opposing lines hold their facing instead of counter-
           // rotating when fleets inserted from opposite approaches.
           const arcDir = list[0].orbit.direction ?? 1;
           owners.forEach((owner, k) => {
-            const arcCenter = (Math.PI * 2 * k) / F;
+            const arcCenter = -BATTLE_SECTOR / 2 + spacing * k;
             const mine = list.filter(s => s.ownedBy === owner);
             mine.forEach((s, i) => {
               formationMap.set(s.id, {

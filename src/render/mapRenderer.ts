@@ -3152,8 +3152,13 @@ function drawThrustExhaust(
   grad.addColorStop(1,     'rgba(255, 60, 30, 0)');
 
   ctx2d.save();
-  // Additive: exhaust GLOWS over the void instead of painting on it.
-  ctx2d.globalCompositeOperation = 'lighter';
+  // Blending: the BODY of the plume paints normally, only the small hot
+  // core is additive. Making the whole cone additive (the first cut)
+  // looked great over black space but summed past white over anything
+  // bright — a destroyer crossing a lit gas giant painted a solid white
+  // triangle bigger than the ship (live screenshot at Uranus). Normal
+  // blend keeps the plume translucent over planets while the additive
+  // core still gives the nozzle its glow against the void.
   // Destroyer-style multi-bell: two smaller side cones flanking the
   // main plume, offset along the beam. Drawn first so the core sits on top.
   if (shape.bells >= 3) {
@@ -3191,7 +3196,11 @@ function drawThrustExhaust(
   ctx2d.fill();
 
   // Hot inner core — a smaller, brighter triangle layered over the
-  // outer flame so the engine bell reads as the brightest point.
+  // outer flame so the engine bell reads as the brightest point. THIS is
+  // the additive part: small enough that blowing out to white is the
+  // desired look (an engine bell IS blindingly bright) without washing
+  // over a planet behind it.
+  ctx2d.globalCompositeOperation = 'lighter';
   const coreLen = flameLen * 0.45;
   const coreW = flameWidth * 0.55;
   const coreTailX = enginePos.x - thrustDir.x * coreLen;

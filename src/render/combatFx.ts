@@ -272,11 +272,20 @@ function takeEngaged(
  * Planet occlusion for fire lines (endgame juice pass): a bolt whose
  * chord passes through the parent planet's disc used to draw straight
  * THROUGH the planet (playtest screenshot: tracers piercing Oberon).
- * Returns true when the segment fp→tp crosses the given body's canvas
- * disc — callers skip the shot (the hull will wheel around and fire
- * when it has line of sight; with battle lines, same-side facing makes
- * blocked shots rare anyway).
+ * Returns true when the segment fp→tp passes close to the body's CENTER
+ * — callers skip that shot.
+ *
+ * OCCLUSION_CORE (0.55, was 0.92 of the disc) is deliberately permissive.
+ * Park orbits are tight (body radius + 2), so from any ship the planet
+ * fills a huge slice of sky: at 0.92 the test suppressed every pair more
+ * than ~90° apart around the ring, which silenced whole battles (live
+ * report: a ten-ship brawl at Uranus drawing a single bolt). Only shots
+ * that would skewer the planet through the middle are dropped now;
+ * anything grazing the limb draws, which reads fine and keeps the fight
+ * legible. Paired with the battle-line sector in MapCanvas, which keeps
+ * engaged fleets within line of sight of each other in the first place.
  */
+const OCCLUSION_CORE = 0.55;
 function occludedByBody(
   fp: { x: number; y: number },
   tp: { x: number; y: number },
@@ -288,8 +297,7 @@ function occludedByBody(
   if (!body) return false;
   const bp = bodyPosition(body, rc.t, rc.bodies);
   const c = worldToCanvas(bp.x, bp.y, rc);
-  // 0.92: graze the limb rather than clipping shots that skim the edge.
-  const r = Math.max(3, body.radius * rc.camera.scale) * 0.92;
+  const r = Math.max(3, body.radius * rc.camera.scale) * OCCLUSION_CORE;
   const dx = tp.x - fp.x;
   const dy = tp.y - fp.y;
   const len2 = dx * dx + dy * dy;
