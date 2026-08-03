@@ -759,30 +759,59 @@ function drawSphereShading(
 ) {
   // Light comes FROM the sun, so highlight is on the side facing it (-lightDir)
   const ld = lightDirToBody(canvasPos, ctx);
-  const hx = canvasPos.x - ld.x * radius * 0.4;
-  const hy = canvasPos.y - ld.y * radius * 0.4;
-  const sx = canvasPos.x + ld.x * radius * 0.4;
-  const sy = canvasPos.y + ld.y * radius * 0.4;
+  // Perf (telemetry: draw p95 66ms, 14fps on a GeForce): this used to
+  // build TWO radial gradients per body per frame. The overlay is pure
+  // white/black shading - identical for every body of a given radius up
+  // to rotation - so it's rendered once per radius bucket (light along
+  // +X) into a sprite and blitted rotated. Gradient construction per
+  // frame drops from ~90 to 0 on a steady scene.
+  const sprite = sphereShadeSprite(radius);
+  if (sprite) {
+    const c = ctx.ctx;
+    c.save();
+    c.translate(canvasPos.x, canvasPos.y);
+    // Sprite's highlight faces +X; light comes from -ld, so rotate to it.
+    c.rotate(Math.atan2(-ld.y, -ld.x));
+    c.drawImage(sprite, -radius, -radius, radius * 2, radius * 2);
+    c.restore();
+  }
+}
 
-  // Highlight (sun-facing)
-  const highlight = ctx.ctx.createRadialGradient(hx, hy, 0, hx, hy, radius * 1.1);
+// Sphere-shading sprites: highlight + terminator baked per radius
+// bucket. ~40 buckets alive at typical zoom; capped and cleared
+// wholesale on overflow (cheap to rebuild, simpler than LRU).
+const sphereShadeCache = new Map<number, HTMLCanvasElement>();
+function sphereShadeSprite(radius: number): HTMLCanvasElement | null {
+  // Bucket radii: 1px steps below 60, 4px above (large bodies tolerate
+  // coarser buckets - the overlay is a soft gradient).
+  const r = radius < 60 ? Math.max(1, Math.round(radius)) : Math.round(radius / 4) * 4;
+  let sp = sphereShadeCache.get(r);
+  if (sp) return sp;
+  if (sphereShadeCache.size > 80) sphereShadeCache.clear();
+  sp = document.createElement('canvas');
+  sp.width = sp.height = r * 2;
+  const c = sp.getContext('2d');
+  if (!c) return null;
+  // Light along +X: highlight center right of middle, shadow left.
+  const hx = r + r * 0.4, sx2 = r - r * 0.4, cy = r;
+  const highlight = c.createRadialGradient(hx, cy, 0, hx, cy, r * 1.1);
   highlight.addColorStop(0, 'rgba(255, 255, 255, 0.25)');
   highlight.addColorStop(0.4, 'rgba(255, 255, 255, 0.06)');
   highlight.addColorStop(1, 'rgba(255, 255, 255, 0)');
-  ctx.ctx.fillStyle = highlight;
-  ctx.ctx.beginPath();
-  ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
-  ctx.ctx.fill();
-
-  // Terminator/shadow (far-from-sun side)
-  const shadow = ctx.ctx.createRadialGradient(sx, sy, 0, sx, sy, radius * 1.3);
+  c.fillStyle = highlight;
+  c.beginPath();
+  c.arc(r, r, r, 0, Math.PI * 2);
+  c.fill();
+  const shadow = c.createRadialGradient(sx2, cy, 0, sx2, cy, r * 1.3);
   shadow.addColorStop(0, 'rgba(0, 0, 0, 0.55)');
   shadow.addColorStop(0.5, 'rgba(0, 0, 0, 0.2)');
   shadow.addColorStop(1, 'rgba(0, 0, 0, 0)');
-  ctx.ctx.fillStyle = shadow;
-  ctx.ctx.beginPath();
-  ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
-  ctx.ctx.fill();
+  c.fillStyle = shadow;
+  c.beginPath();
+  c.arc(r, r, r, 0, Math.PI * 2);
+  c.fill();
+  sphereShadeCache.set(r, sp);
+  return sp;
 }
 
 // ------------------------------------------------------------
@@ -2084,6 +2113,19 @@ const BATTLE_LINE_TURN_MS = 240000;
 /**
  * Draw a ship on its orbit
  */
+// bodies.find(...) per ship per frame was a 229x45 linear scan. The
+// state graph is replaced wholesale (never mutated), so array identity
+// is a sound memo key for an id map.
+let bodyMapArr: Body[] | null = null;
+let bodyMapVal: Map<string, Body> | null = null;
+function bodyByIdOf(bodies: Body[]): Map<string, Body> {
+  if (bodies !== bodyMapArr) {
+    bodyMapArr = bodies;
+    bodyMapVal = new Map(bodies.map(b => [b.id, b]));
+  }
+  return bodyMapVal!;
+}
+
 export function drawShip(
   ship: Ship,
   ctx: RenderContext,
@@ -2094,7 +2136,7 @@ export function drawShip(
    *  ships ignore it and always draw full size so they stay trackable. */
   sizeScale: number = 1,
 ) {
-  const parentBody = ctx.bodies.find(b => b.id === ship.orbit.parentBodyId);
+  const parentBody = bodyByIdOf(ctx.bodies).get(ship.orbit.parentBodyId);
   if (!parentBody) return;
 
   // The PLANET keeps true time — its position along its own orbit is
@@ -2162,6 +2204,21 @@ export function drawShip(
   const canvasPos = worldToCanvas(worldX, worldY, ctx);
   // Death FX (wrecks, destruction flash) spawn where the hull was DRAWN.
   recordDrawnShipWorldPos(ship.id, worldX, worldY);
+
+  // Off-screen cull. A 229-ship game draws every parked hull every
+  // frame even when the camera is zoomed onto one moon; a hull 100px+
+  // outside the viewport can't be seen OR clicked, so skip its icon,
+  // dressing, and hitbox entirely. Selected ships are exempt - their
+  // selection brackets/labels may straddle the edge during a fly-to.
+  if (!isSelected) {
+    const m = 100;
+    if (canvasPos.x < -m || canvasPos.y < -m
+        || canvasPos.x > ctx.canvas.width + m
+        || canvasPos.y > ctx.canvas.height + m) {
+      ctx.shipHitboxes?.delete(ship.id);
+      return;
+    }
+  }
 
   // Faction-colored: cyan for player, red for enemy.
   const shipColorValue = shipColor(ship, ctx.factions);
@@ -2538,7 +2595,7 @@ export function drawApsisMarkers(
   ship: Ship,
   ctx: RenderContext
 ) {
-  const parentBody = ctx.bodies.find(b => b.id === ship.orbit.parentBodyId);
+  const parentBody = bodyByIdOf(ctx.bodies).get(ship.orbit.parentBodyId);
   if (!parentBody) return;
 
   const parentPos = bodyPosition(parentBody, ctx.t, ctx.bodies);
@@ -4719,6 +4776,17 @@ export function chooseRegionLabelPos(opts: {
  * Drawn UNDER bodies and orbits (called early in the frame) so it
  * reads as a background wash rather than a veil over the map.
  */
+// Wash layer cache: the region rings are the single largest fill-rate
+// cost on the map (full-screen gradient strokes), yet between frames
+// they only change when the camera or ownership does. Render them into
+// an offscreen layer and blit while the pose is stable. Key rounds the
+// camera to 0.5px / 0.1% zoom, so focused-body orbital drift (a fraction
+// of a pixel per frame) keeps hitting the cache; pans and zooms redraw.
+// Label hover rects (side effects of a real draw) stay valid on cache
+// hits precisely BECAUSE the pose hasn't moved.
+let washLayer: HTMLCanvasElement | null = null;
+let washKey = '';
+
 export function drawSystemRegions(
   regions: SystemRegion[],
   ctx: RenderContext,
@@ -4727,6 +4795,51 @@ export function drawSystemRegions(
   const scale = ctx.camera.scale;
   const fade = systemRegionOpacityFor(spans, scale, ctx.bodies);
   if (fade <= 0) return;
+
+  // Ownership signature: any claim change redraws the layer.
+  let sig = '';
+  for (const rg of regions) {
+    sig += rg.id + rg.ownership.kind
+      + ((rg.ownership as { factionId?: string }).factionId ?? '') + ';';
+  }
+  const key = [
+    Math.round(ctx.camera.x * scale * 2), Math.round(ctx.camera.y * scale * 2),
+    Math.round(scale * 1000), ctx.canvas.width, ctx.canvas.height,
+    Math.round(fade * 100), sig,
+  ].join('|');
+  if (key === washKey && washLayer) {
+    ctx.ctx.drawImage(washLayer, 0, 0);
+    return;
+  }
+  if (!washLayer || washLayer.width !== ctx.canvas.width || washLayer.height !== ctx.canvas.height) {
+    washLayer = document.createElement('canvas');
+    washLayer.width = ctx.canvas.width;
+    washLayer.height = ctx.canvas.height;
+  }
+  const layerCtx = washLayer.getContext('2d');
+  if (!layerCtx) return;                    // degrade: skip wash this frame
+  layerCtx.clearRect(0, 0, washLayer.width, washLayer.height);
+  // Draw the wash into the LAYER via a proxied context, then blit. The
+  // rest of this function (and everything it calls) keeps using
+  // `ctx.ctx` - swapped here and restored in the tail.
+  const realCtx = ctx.ctx;
+  (ctx as { ctx: CanvasRenderingContext2D }).ctx = layerCtx;
+  try {
+    drawSystemRegionsInner(regions, ctx, spans, scale, fade);
+  } finally {
+    (ctx as { ctx: CanvasRenderingContext2D }).ctx = realCtx;
+  }
+  washKey = key;
+  realCtx.drawImage(washLayer, 0, 0);
+}
+
+function drawSystemRegionsInner(
+  regions: SystemRegion[],
+  ctx: RenderContext,
+  spans: ReturnType<typeof systemSpans>,
+  scale: number,
+  fade: number,
+) {
 
   const c = ctx.ctx;
   // How hard the wash pushes. Ramps as you keep zooming out past the

@@ -2070,11 +2070,29 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // zero. renderRef always points at the freshest closure.
   useEffect(() => {
     let raf: number | null = null;
+    // Synchronous draw benchmark for A/B-ing render changes from the
+    // console: __benchDraw(60) -> mean ms/draw. Works even in a
+    // backgrounded tab (no rAF involved).
+    (window as unknown as { __benchDraw?: (n?: number) => number }).__benchDraw = (n = 60) => {
+      const t0 = performance.now();
+      for (let i = 0; i < n; i++) renderRef.current();
+      return (performance.now() - t0) / n;
+    };
     const loop = () => {
       // Time the draw itself: frame INTERVAL alone can't tell "our canvas
       // work is heavy" from "something else stalled the main thread".
       const t0 = performance.now();
-      renderRef.current();
+      try {
+        renderRef.current();
+      } catch (e) {
+        // A mid-frame exception must never poison canvas state: an
+        // unbalanced save() or leftover transform COMPOUNDS on later
+        // frames (the chase-FX incident: every frame re-scaled until the
+        // map was giant). Reset the transform and keep the loop alive.
+        console.error('render frame failed', e);
+        const c = canvasRef.current?.getContext('2d');
+        if (c) c.setTransform(1, 0, 0, 1, 0, 0);
+      }
       perf.recordDraw(performance.now() - t0);
       raf = requestAnimationFrame(loop);
     };
