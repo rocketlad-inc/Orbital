@@ -428,8 +428,24 @@
 
 /* === Responsive === */
 @media (max-width: 640px) {
+  /* Usability report: at 375px the nav's fixed row was 480px wide
+     inside an overflow-hidden page, clipping LOGIN entirely off-screen
+     — a mobile visitor could not sign in. Wrap instead of clip, and
+     let the action row shrink. */
   .landing-nav {
-    padding: 14px 18px;
+    padding: 12px 14px;
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .landing-nav-actions {
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .landing-nav-link {
+    padding: 7px 10px;
+    letter-spacing: 0.1em;
   }
 
   .landing-section {

@@ -54,7 +54,7 @@ export const TutorialPromptModal: React.FC = () => {
         <div style={{ fontSize: 13, lineHeight: 1.5, color: '#d8e4ee', marginBottom: 18 }}>
           We can walk you through the menus, the map, and the main
           flows — transfers, building, settlements, research.
-          Takes about a minute. You can skip any time.
+          Takes a few minutes. You can skip any time.
         </div>
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
           <button

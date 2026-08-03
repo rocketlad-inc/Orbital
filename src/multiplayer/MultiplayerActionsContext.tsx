@@ -298,6 +298,14 @@ export interface MultiplayerActions {
     refitted?: string[]; pending?: string[];
     charged?: { ore: number; credits: number };
   }>;
+  /** The in-game Orbital Herald edition — the same clustered newspaper
+   *  the Discord digest posts, composed read-only over the last 24h.
+   *  null on any failure (the reader shows a "presses jammed" note). */
+  getHerald: () => Promise<{
+    title: string; description: string;
+    fields: Array<{ name: string; value: string }>;
+    tick: number; generated_at_ms: number; window_hours: number;
+  } | null>;
   /** Cancel a planned or committed maneuver node server-side (flips
    *  status='cancelled'). Same problem as build cancel: local-only
    *  removal got rewound by the next /state. */
@@ -784,6 +792,18 @@ export function MultiplayerActionsProvider({
         code: res.error?.code,
         error: res.error?.message ?? 'Server rejected cancel.',
       };
+    },
+    async getHerald() {
+      const res = await apiFetch<{
+        edition: {
+          title: string; description: string;
+          fields: Array<{ name: string; value: string }>;
+          tick: number; generated_at_ms: number; window_hours: number;
+        };
+      }>(`/api/games/${gameId}/herald`);
+      if (res.ok) return res.data.edition;
+      console.warn('getHerald failed', res.error);
+      return null;
     },
     async rushBuild(orderId) {
       const res = await apiFetch<{

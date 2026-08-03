@@ -6,7 +6,7 @@ import {
   countPart, detonatorDamage, refitFee, computeShipStats,
 } from './shipDesigns.js';
 import { rollCaptain, resolveCaptainOnDeath, AVATAR_IDS, RECRUIT_COST } from './captains.js';
-import { runDigestForGame } from './digest.js';
+import { runDigestForGame, composeHeraldForGame } from './digest.js';
 import {
   factionTechLevels, gatingEnabled, hasFeature, lockedError,
   HULL_FEATURE, BUILDING_FEATURE, PART_FEATURE,
@@ -496,6 +496,33 @@ async function handleCancelNode(req, env, ctx) {
     .run();
 
   return json({ ok: true, node_id: nodeId, was: row.status });
+}
+
+// GET /api/games/:gameId/herald
+//
+// The in-game edition of the Orbital Herald (P4 polish): the same
+// clustered, weighted, phrase-banked newspaper the Discord digest
+// posts, composed read-only over the trailing 24h and returned as
+// JSON for the client's reader panel. Members only; public chronicle
+// rows only. Never touches digest_state, so the Discord cadence is
+// unaffected however often players refresh their paper.
+async function handleGetHerald(req, env, ctx) {
+  const { gameId } = ctx.params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const me = await requireMyFaction(env, gameId, ctx.session.user_id);
+  if (!me) return err(403, 'not_member', 'not in this game');
+  const game = await env.DB
+    .prepare('SELECT id, name, current_tick FROM games WHERE id = ?')
+    .bind(gameId)
+    .first();
+  if (!game) return err(404, 'not_found', 'game not found');
+  try {
+    const edition = await composeHeraldForGame(env, game);
+    return json({ edition });
+  } catch (e) {
+    console.error('herald compose failed', e);
+    return err(500, 'compose_failed', 'the presses jammed — try again shortly');
+  }
 }
 
 // POST /api/games/:gameId/bodies/:bodyId/build
@@ -3528,6 +3555,12 @@ export const routes = [
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/admin\/digest-now$/,
     auth: 'required',
     handle: handleDigestNow,
+  },
+  {
+    method: 'GET',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/herald$/,
+    auth: 'required',
+    handle: handleGetHerald,
   },
   {
     method: 'POST',

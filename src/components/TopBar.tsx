@@ -26,7 +26,7 @@ import { GIT_SHA } from '../_version';
 
 // Hint text under the Restart Tutorial menu item. Pulled out to a
 // constant so it doesn't allocate a new string every render.
-const TUTORIAL_STEP_COUNT_HINT = `${TUTORIAL_STEP_COUNT} steps · ~1 min`;
+const TUTORIAL_STEP_COUNT_HINT = `${TUTORIAL_STEP_COUNT} steps · ~3 min`;
 
 export type PanelId = 'settlements' | 'fleet' | 'research' | null;
 

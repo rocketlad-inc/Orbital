@@ -181,6 +181,20 @@ export function SenatePanel({ gameId }: { gameId: string }) {
       body.target_value = target;
     } else if (kind === 'chancellor_vote') {
       if (!targetFactionId) { setError('Pick a candidate.'); return; }
+      // The chancellor bill is ONE-SHOT per faction: a failed bid burns
+      // your only attempt forever. That consequence lived in a server
+      // comment and nowhere in the UI (usability report) — make the
+      // player say it out loud before the die is cast.
+      const candidateName = factions.find(f => f.id === targetFactionId)?.name ?? 'the candidate';
+      const confirmed = window.confirm(
+        `Call the Chancellor election for ${candidateName}?\n\n` +
+        'THIS IS YOUR FACTION\'S ONLY ATTEMPT — ever. If the bill fails ' +
+        'on the floor, you can never call another Chancellor vote this ' +
+        'game. If it passes, the game ends immediately with ' +
+        `${candidateName} as Supreme Chancellor.\n\n` +
+        'Count your votes first: weight = worlds held.',
+      );
+      if (!confirmed) return;
       body.candidate_faction_id = targetFactionId;
     } else {
       // Targeted sanctions: trade_embargo, war_authorization,

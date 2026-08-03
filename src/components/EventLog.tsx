@@ -112,6 +112,22 @@ function logEntryIcon(entry: string): { icon: string; color: string; label: stri
   return { icon: '›', color: '#8a9fb3', label: 'Event' };
 }
 
+/** Minimal renderer for the herald's Discord-flavored markdown: only
+ *  **bold** is used by the phrase banks; everything else passes as
+ *  plain text (no HTML injection surface — output is React nodes). */
+function renderHeraldMd(text: string): React.ReactNode[] {
+  const out: React.ReactNode[] = [];
+  const parts = text.split('**');
+  for (let i = 0; i < parts.length; i++) {
+    if (i % 2 === 1 && i < parts.length - (parts.length % 2 === 0 ? 1 : 0)) {
+      out.push(<strong key={i} style={{ color: '#eaf4ff' }}>{parts[i]}</strong>);
+    } else {
+      out.push(parts[i]);
+    }
+  }
+  return out;
+}
+
 /** localStorage bucket per game route (so MP rooms + SP don't share a
  *  bookmark). `window.location.pathname` is stable per game; if the
  *  client side-routes to a new game the key naturally flips. SSR safe. */
@@ -213,6 +229,29 @@ export const EventLog: React.FC = () => {
       focusBody(body.id);
       close();
     };
+  };
+
+  // LOG | HERALD tab (P4 polish): the Orbital Herald was Discord-only —
+  // players in the game had no access to the newspaper being written
+  // about their war. The HERALD tab fetches a read-only 24h edition
+  // from the same composer the Discord digest uses. MP only.
+  const [view, setView] = useState<'log' | 'herald'>('log');
+  type HeraldEdition = NonNullable<Awaited<ReturnType<NonNullable<typeof mpActions>['getHerald']>>>;
+  const [herald, setHerald] = useState<HeraldEdition | null>(null);
+  const [heraldBusy, setHeraldBusy] = useState(false);
+  const [heraldError, setHeraldError] = useState(false);
+  const fetchHerald = async () => {
+    if (!mpActions || heraldBusy) return;
+    setHeraldBusy(true);
+    setHeraldError(false);
+    const e = await mpActions.getHerald();
+    setHeraldBusy(false);
+    if (e) setHerald(e);
+    else setHeraldError(true);
+  };
+  const openHerald = () => {
+    setView('herald');
+    if (!herald) fetchHerald();
   };
 
   const [open, setOpen] = useState(false);
@@ -325,19 +364,91 @@ export const EventLog: React.FC = () => {
           aria-label="Event Log"
         >
           <div className="event-log__head">
-            <span className="event-log__title">EVENT LOG</span>
-            <button
-              title="Replay the last 12 ticks as a camera recap"
-              style={{ marginLeft: 10, fontSize: 10, letterSpacing: '0.12em',
-                       color: '#4ecdc4', background: 'rgba(78,205,196,0.08)',
-                       border: '1px solid #2a4a4a', borderRadius: 4,
-                       padding: '3px 8px', cursor: 'pointer' }}
-              onClick={() => window.dispatchEvent(
-                new CustomEvent('orbital:play-recap', { detail: { ticks: 12 } }),
-              )}
-            >▶ RECAP 12t</button>
+            <span className="event-log__title">
+              {mpActions ? (
+                <>
+                  <button
+                    onClick={() => setView('log')}
+                    style={{
+                      background: 'transparent', border: 'none', cursor: 'pointer',
+                      font: 'inherit', letterSpacing: 'inherit', padding: 0,
+                      color: view === 'log' ? 'inherit' : '#5b7185',
+                    }}
+                  >EVENT LOG</button>
+                  <span style={{ color: '#33475c', margin: '0 6px' }}>|</span>
+                  <button
+                    onClick={openHerald}
+                    title="The Orbital Herald — today's edition, same paper the Discord digest prints"
+                    style={{
+                      background: 'transparent', border: 'none', cursor: 'pointer',
+                      font: 'inherit', letterSpacing: 'inherit', padding: 0,
+                      color: view === 'herald' ? '#ffd27a' : '#5b7185',
+                    }}
+                  >🗞 HERALD</button>
+                </>
+              ) : 'EVENT LOG'}
+            </span>
+            {view === 'log' && (
+              <button
+                title="Replay the last 12 ticks as a camera recap"
+                style={{ marginLeft: 10, fontSize: 10, letterSpacing: '0.12em',
+                         color: '#4ecdc4', background: 'rgba(78,205,196,0.08)',
+                         border: '1px solid #2a4a4a', borderRadius: 4,
+                         padding: '3px 8px', cursor: 'pointer' }}
+                onClick={() => window.dispatchEvent(
+                  new CustomEvent('orbital:play-recap', { detail: { ticks: 12 } }),
+                )}
+              >▶ RECAP 12t</button>
+            )}
+            {view === 'herald' && (
+              <button
+                title="Fetch a fresh edition"
+                disabled={heraldBusy}
+                style={{ marginLeft: 10, fontSize: 10, letterSpacing: '0.12em',
+                         color: '#ffd27a', background: 'rgba(255,210,122,0.08)',
+                         border: '1px solid #4a3e2a', borderRadius: 4,
+                         padding: '3px 8px', cursor: 'pointer' }}
+                onClick={fetchHerald}
+              >{heraldBusy ? '…' : '↻ LATEST'}</button>
+            )}
             <button className="event-log__close" onClick={close} title="Close (Esc)">×</button>
           </div>
+          {view === 'herald' && mpActions ? (
+            <div className="event-log__body" style={{ padding: '10px 14px' }}>
+              {heraldError && (
+                <div style={{ color: '#ff8a5c', fontSize: 11 }}>
+                  The presses jammed — hit ↻ LATEST to try again.
+                </div>
+              )}
+              {!herald && !heraldError && (
+                <div style={{ color: '#7d93a8', fontSize: 11 }}>Printing today's edition…</div>
+              )}
+              {herald && (
+                <div style={{ fontSize: 12, lineHeight: 1.55, color: '#c8d8e8' }}>
+                  <div style={{
+                    fontSize: 15, fontWeight: 800, letterSpacing: '0.04em',
+                    color: '#ffd27a', margin: '2px 0 8px',
+                  }}>{herald.title}</div>
+                  <div style={{ whiteSpace: 'pre-wrap', marginBottom: 10 }}>
+                    {renderHeraldMd(herald.description)}
+                  </div>
+                  {herald.fields.map((f, i) => (
+                    <div key={i} style={{ marginBottom: 10 }}>
+                      <div style={{
+                        fontSize: 11, fontWeight: 700, letterSpacing: '0.08em',
+                        color: '#9fdcff', borderBottom: '1px solid #22334a',
+                        paddingBottom: 2, marginBottom: 4,
+                      }}>{f.name}</div>
+                      <div style={{ whiteSpace: 'pre-wrap' }}>{renderHeraldMd(f.value)}</div>
+                    </div>
+                  ))}
+                  <div style={{ fontSize: 9, color: '#5b7185', letterSpacing: '0.08em' }}>
+                    T+{herald.tick} · last {herald.window_hours}h · The Orbital Herald
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
           <div className="event-log__body">
             {totalCount === 0 ? (
               <div className="event-log__empty">No events yet. Combat results and game milestones will appear here.</div>
@@ -472,8 +583,11 @@ export const EventLog: React.FC = () => {
                 })
             )}
           </div>
+          )}
           <footer className="event-log__foot">
-            {totalCount} {totalCount === 1 ? 'entry' : 'entries'} · Press <kbd>Esc</kbd> to close
+            {view === 'herald'
+              ? <>The Orbital Herald · Press <kbd>Esc</kbd> to close</>
+              : <>{totalCount} {totalCount === 1 ? 'entry' : 'entries'} · Press <kbd>Esc</kbd> to close</>}
           </footer>
         </div>
       )}

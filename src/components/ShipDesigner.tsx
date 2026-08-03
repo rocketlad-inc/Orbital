@@ -351,6 +351,19 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
 
   // --- Fit / unfit ----------------------------------------------------
   /** Why a part can't be fitted right now, or null when it can. */
+  // First-open drag affordance (P4 polish): nothing on desktop said the
+  // part cards were draggable — new players tapped around the canvas
+  // looking for an "add" button. A one-time ghost hint floats over the
+  // canvas until the player fits their first part, ever.
+  const [dragHintSeen, setDragHintSeen] = useState(() => {
+    try { return localStorage.getItem('orbital.sd_drag_hint') === '1'; } catch { return true; }
+  });
+  const dismissDragHint = () => {
+    if (dragHintSeen) return;
+    setDragHintSeen(true);
+    try { localStorage.setItem('orbital.sd_drag_hint', '1'); } catch { /* noop */ }
+  };
+
   const fitRefusal = (pid: ShipPartId, slotIdx?: number): string | null => {
     const lock = gate.lockReason(PART_FEATURE[pid]);
     if (lock) return `🔒 ${SHIP_PART_DEFS[pid].name} is locked — ${lock.text}`;
@@ -367,6 +380,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   const fitPart = (pid: ShipPartId) => {
     const why = fitRefusal(pid);
     if (why) { showFlash(why); return; }
+    dismissDragHint();
     setDraftParts(prev => [...prev, pid]);
   };
 
@@ -374,6 +388,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   const dropOnSocket = (pid: ShipPartId, slotIdx: number) => {
     const why = fitRefusal(pid, slotIdx);
     if (why) { showFlash(why); return; }
+    dismissDragHint();
     setDraftParts(prev => {
       const next = [...prev];
       // draftParts is contiguous (unfit closes gaps), so empty sockets
@@ -822,6 +837,11 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
               <div className="sd-canvas__slots-label">
                 SLOTS {draftParts.length}/{slots} · empty slots are free
               </div>
+              {!dragHintSeen && draftParts.length === 0 && slots > 0 && (
+                <div className="sd-drag-hint" aria-hidden>
+                  ⤵ Drag a part from the tray onto a socket — or just tap a card to fit it
+                </div>
+              )}
               {flash && <div className="sd-flash" role="alert">⚠ {flash}</div>}
               {nDetonators > 0 && (
                 <div className="sd-canvas__det-warning">⚠ {detonatorDisclosure(detDamage)}</div>

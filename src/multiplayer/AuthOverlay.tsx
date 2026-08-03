@@ -117,14 +117,10 @@ export function AuthOverlay({ onGuest }: { onGuest?: () => void }) {
 
         <div className="mp-error">{error || ''}</div>
       </form>
-      {onGuest && (
-        <button
-          className="mp-guest-btn"
-          onClick={onGuest}
-        >
-          Continue as Guest → Single Player
-        </button>
-      )}
+      {/* Guest → Single Player entry RETIRED (per Lorne, usability
+          report): guest mode dropped visitors into the deprecated SP
+          engine — broken shell states and all — as their first taste
+          of the game. The prop is kept for type-compat but ignored. */}
     </div>
   );
 }

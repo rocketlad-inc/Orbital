@@ -62,15 +62,9 @@ export function ModePicker({ activeRooms, onPick }: ModePickerProps) {
         <section className="mode-picker__section">
           <h3 className="mode-picker__heading">NEW GAME</h3>
           <div className="mode-picker__choices">
-            <button
-              className="mode-picker__choice"
-              onClick={() => onPick('singleplayer')}
-            >
-              <div className="mode-picker__choice-title">Single Player</div>
-              <div className="mode-picker__choice-desc">
-                Local sandbox. Pick a scenario and play. Nothing is saved or shared.
-              </div>
-            </button>
+            {/* Single-player entry RETIRED (per Lorne, usability report):
+                the SP engine is deprecated and unmaintained, and it was
+                the first thing new visitors touched. MP is the game. */}
             <button
               className="mode-picker__choice mode-picker__choice--primary"
               onClick={() => onPick('multiplayer')}

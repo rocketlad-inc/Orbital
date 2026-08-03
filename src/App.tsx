@@ -452,7 +452,11 @@ function AppShell() {
       // they don't see the picker every load.
       if (mode === null) {
         const remembered = localStorage.getItem(MODE_STORAGE_KEY);
-        if (remembered === 'singleplayer' || remembered === 'multiplayer') {
+        // 'singleplayer' is no longer restorable — SP entry is retired.
+        // A stale stored value from an old session falls through to the
+        // picker (which now only offers multiplayer) instead of dropping
+        // the player into the deprecated engine.
+        if (remembered === 'multiplayer') {
           setMode(remembered);
         }
       }
@@ -618,11 +622,9 @@ function AppShell() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomGameId]);
 
-  const handleGuest = () => {
-    setGuestMode(true);
-    setMode('singleplayer');
-    localStorage.setItem(MODE_STORAGE_KEY, 'singleplayer');
-  };
+  // Guest → SP entry retired (usability report): AuthOverlay no longer
+  // renders a guest button and no path sets guestMode/mode='singleplayer'.
+  // SinglePlayerView stays in the tree for type-compat but is unreachable.
 
   if (loading) {
     return (
@@ -645,8 +647,8 @@ function AppShell() {
     }} />;
   }
 
-  // Unauthenticated, not yet in guest mode: show landing first, then auth overlay.
-  // The auth overlay still offers a "continue as guest" path.
+  // Unauthenticated: show landing first, then auth overlay (guest path
+  // retired — accounts only).
   // The Tunables sandbox and UX Lab are reachable from the landing nav and bypass auth.
   if (!user && !guestMode) {
     if (showTunables) {
@@ -664,7 +666,7 @@ function AppShell() {
         />
       );
     }
-    return <AuthOverlay onGuest={handleGuest} />;
+    return <AuthOverlay />;
   }
 
   if (guestMode) {

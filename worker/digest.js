@@ -1755,6 +1755,58 @@ export async function runDigestForGame(env, game, { force = false } = {}) {
 }
 
 /**
+ * READ-ONLY edition composer for the IN-GAME herald reader (P4 polish:
+ * the digest was Discord-only — players inside the game had no access
+ * to the newspaper being written about their war). Same clustering,
+ * weights, and phrase banks as the Discord edition over a trailing
+ * window, but: no webhook post, no digest_state mutation (the Discord
+ * cadence is untouched), and a quiet day still returns a readable
+ * "all quiet" edition instead of null. Public chronicle rows only, so
+ * it leaks nothing the Discord channel wouldn't.
+ */
+export async function composeHeraldForGame(env, game, lookbackMs = 24 * 60 * 60 * 1000) {
+  const now = Date.now();
+  const sinceMs = now - lookbackMs;
+  const rows = (await env.DB
+    .prepare(
+      `SELECT kind, actor_faction_id, target_faction_id, body_id, payload, created_at_ms
+         FROM chronicle_entries
+        WHERE game_id = ? AND created_at_ms > ? AND visibility = 'public'
+        ORDER BY created_at_ms ASC
+        LIMIT 200`,
+    )
+    .bind(game.id, sinceMs)
+    .all()).results ?? [];
+
+  const factions = (await env.DB
+    .prepare('SELECT id, name FROM game_factions WHERE game_id = ?')
+    .bind(game.id)
+    .all()).results ?? [];
+  const factionNames = new Map(factions.map(f => [f.id, f.name]));
+  const locator = await buildBodyLocator(env, game.id, collectBodyIds(rows));
+
+  // No trades-delta bookkeeping here — that snapshot belongs to the
+  // Discord edition's incremental state and must not be disturbed.
+  let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, 0, locator);
+  if (!embed) {
+    const used = new Map();
+    embed = {
+      title: pickTemplate('quiet_hl', QUIET_DAY_HEADLINE, used)(),
+      description: `🗞️ **THE ORBITAL HERALD** · ${game.name ?? game.id} · T+${game.current_tick ?? 0}\n\n${pickTemplate('quiet_body', QUIET_DAY_BODY, used)()}`,
+      fields: [],
+    };
+  }
+  return {
+    title: embed.title ?? '',
+    description: embed.description ?? '',
+    fields: (embed.fields ?? []).map(f => ({ name: f.name, value: f.value })),
+    tick: game.current_tick ?? 0,
+    generated_at_ms: now,
+    window_hours: Math.round(lookbackMs / 3600000),
+  };
+}
+
+/**
  * Entry point — called from the every-minute cron. Cheap early-outs:
  * no webhook secret, wrong hour, or already digested recently.
  */
