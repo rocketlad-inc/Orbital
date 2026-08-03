@@ -69,7 +69,15 @@ export const LOD: Record<string, Band> = {
    *  moon rings are on screen, and only lets go when the frame is a
    *  single planet's traffic. Text still wins contrast: labels draw
    *  last, over the wash. */
-  POLITICAL_WASH: [0.2, 0.45, 10, 20],
+  //  NO fade-IN here. Adding one (0.2->0.45, my first cut) was a
+  //  regression: the fully-zoomed-out strategic view sits near scale
+  //  0.19, so that band silently erased the wash at precisely the zoom
+  //  its territorial read matters most. The zoomed-out side is already
+  //  governed by systemRegionOpacityFor()'s spans test, which — unlike a
+  //  raw camera.scale threshold — is invariant to SYSTEM_SCALE. This
+  //  entry now only governs the deep-zoom fade-OUT; the wash is visible
+  //  everywhere else.
+  POLITICAL_WASH: [0, 0, 10, 20],
   /** Torch plumes: pure decoration below L2. */
   THRUST_PLUME: [1.2, 2.5, Infinity, Infinity],
   /** Per-hull dressing (rank chevrons, wakes, trim). */
