@@ -14,6 +14,8 @@ import { bodyPosition, localPositionAt, semiMajor, eccentricity, velocityVectors
 import { sampleTorchTrajectory, torchPositionFromSamples, trajectoryTangentAt } from '../physics/torchTransfer';
 import { STRAIGHT_LINE_TRAJECTORIES } from '../game/featureFlags';
 import { COLORS, withOpacity, lighten, darken } from './colors';
+import { requestLabel } from './labelLayer';
+import { LOD, lodAlpha } from './lod';
 import { getShipIconImage } from './shipIconCache';
 import { getWorldMenuOpenBodyId } from '../game/worldMenu/store';
 import { ShipIconClass } from '../components/ShipIcons';
@@ -1821,9 +1823,7 @@ export function drawBody(
   // bodyLabelRowTop. Mirrors exactly what MapCanvas's planBodyLabels
   // pre-pass computed these same two anchors as, so the reserved
   // collision box and the actually-painted text always agree.
-  const belowAnchor = canvasPos.y + radius + 14;
-  const aboveAnchor = canvasPos.y - radius - 14 - BODY_LABEL_ROW_HEIGHT;
-  const rowTop = bodyLabelRowTop(belowAnchor, aboveAnchor, labelRow);
+  // (label row geometry now belongs to the solver — see labelLayer.ts)
   if (!labelSuppressed && (alwaysShowLabel || ctx.camera.scale > 0.4)) {
     // Zoom-gated labels fade in over 150ms (§E7) instead of popping at
     // the 0.4-scale threshold. Always-on labels skip the bookkeeping.
@@ -1838,52 +1838,54 @@ export function drawBody(
       }
       labelAlpha = Math.min(1, (nowM - appear) / 150);
     }
-    ctx.ctx.save();
-    ctx.ctx.globalAlpha *= labelAlpha;
-    ctx.ctx.fillStyle = isSelected ? '#ffb84d' : '#8aa0b4';
-    ctx.ctx.font = '10px "Audiowide", monospace';
-    ctx.ctx.textAlign = 'center';
-    ctx.ctx.textBaseline = 'top';
-    ctx.ctx.fillText(body.name.toUpperCase(), canvasPos.x, rowTop);
-
-    // Neptune's-Pride-style yield readout under the name. Each token
-    // is color-coded to the resource pill (ore silver, credits gold,
-    // science sky-cyan). Zero yields are skipped so a barren rock
-    // doesn't pad three "0" tokens. Stars / black holes / gas giants
-    // without body.resources fall through here.
-    //
-    // Fuel is deliberately NOT shown: the game is METAL / CREDITS /
-    // SCIENCE (DESIGN-identity-economy.md §1.1 removed fuel from body
-    // yields). The live MP catalog seeds fuel: 0 everywhere, but the
-    // frozen single-player seed still carries nonzero fuel on 18 bodies,
-    // so a token here would advertise a resource nothing can spend.
-    if (body.resources && showYields) {
-      const tokens: Array<{ text: string; color: string }> = [];
-      if (body.resources.metal > 0)   tokens.push({ text: `${body.resources.metal}M`,   color: '#a0a0a0' });
-      if (body.resources.gold > 0)    tokens.push({ text: `${body.resources.gold}C`,    color: '#ffd700' });
-      if (body.resources.science > 0) tokens.push({ text: `${body.resources.science}S`, color: '#67e8f9' });
-      if (tokens.length > 0) {
-        ctx.ctx.font = '9px "Audiowide", monospace';
-        ctx.ctx.textBaseline = 'top';
-        const baseY = rowTop + 12; // name sits at rowTop in a 10px font; this lines up just below it
-        const gap = 4;
-        // Measure total width to center the row.
-        let totalW = 0;
-        const widths: number[] = [];
-        for (const t of tokens) {
-          const w = ctx.ctx.measureText(t.text).width;
-          widths.push(w);
-          totalW += w;
-        }
-        totalW += gap * (tokens.length - 1);
-        let cursorX = canvasPos.x - totalW / 2;
-        for (let i = 0; i < tokens.length; i++) {
-          ctx.ctx.fillStyle = tokens[i].color;
-          ctx.ctx.textAlign = 'left';
-          ctx.ctx.fillText(tokens[i].text, cursorX, baseY);
-          cursorX += widths[i] + gap;
+    // ---- routed through the unified label solver (labelLayer.ts) ----
+    // Was: direct fillText here, plus separate fillTexts for the yield
+    // tokens — each unaware of region titles, threat markers and every
+    // other body's label. That mutual blindness is what produced the
+    // overprinted centre in the strategic view. Now this only DECLARES
+    // the label; one pass later decides where it can actually go, and
+    // drops it entirely rather than stacking it on someone else.
+    const isMoon = body.type === 'moon' || body.type === 'asteroid';
+    const nameAlpha = labelAlpha * lodAlpha(
+      ctx.camera.scale,
+      isMoon ? LOD.BODY_LABEL_MINOR : LOD.BODY_LABEL_MAJOR,
+    );
+    if (nameAlpha > 0.02) {
+      // Yield pills ride as a sub-line, and only once they're
+      // actionable — at strategic zoom they doubled the glyph count for
+      // a number nobody can act on.
+      const yieldAlpha = lodAlpha(ctx.camera.scale, LOD.BODY_RESOURCES);
+      let subTokens: Array<{ text: string; color: string }> | undefined;
+      let subPlain: string | undefined;
+      if (body.resources && showYields && yieldAlpha > 0.35) {
+        const toks: Array<{ text: string; color: string }> = [];
+        if (body.resources.metal > 0)   toks.push({ text: `${body.resources.metal}M`,   color: '#a0a0a0' });
+        if (body.resources.gold > 0)    toks.push({ text: `${body.resources.gold}C`,    color: '#ffd700' });
+        if (body.resources.science > 0) toks.push({ text: `${body.resources.science}S`, color: '#67e8f9' });
+        if (toks.length > 0) {
+          subTokens = toks;
+          subPlain = toks.map(t => t.text).join(' ');
         }
       }
+      requestLabel({
+        id: `body:${body.id}`,
+        kind: 'body',
+        text: body.name.toUpperCase(),
+        sub: subPlain,
+        subTokens,
+        x: canvasPos.x,
+        y: canvasPos.y,
+        radius: Math.max(6, radius) + 4,
+        // Selection beats ownership beats size. The survivors of a tight
+        // ink budget are the bodies the player is actually working with.
+        priority: isSelected ? 100 : (alwaysShowLabel ? 62 : (isMoon ? 30 : 52)),
+        font: '10px "Audiowide", monospace',
+        color: isSelected ? '#ffb84d' : '#8aa0b4',
+        subFont: '9px "Audiowide", monospace',
+        alpha: nameAlpha,
+        leader: true,
+        force: isSelected,
+      });
     }
     ctx.ctx.restore();
   } else {
@@ -5037,7 +5039,6 @@ function drawRegionLabel(
    *  name per call rather than the region's single `label`. */
   textOverride?: string,
 ) {
-  const c = ctx.ctx;
   const text = (textOverride ?? region.label).toUpperCase();
   // Unowned used to print NOTHING, so an empty region and a held one
   // differed only by a hue you had to already know to read. Saying
@@ -5055,22 +5056,34 @@ function drawRegionLabel(
   const titleAlpha = owned ? lerp(0.85, 1, intensity) : lerp(0.5, 0.8, intensity);
   const subAlpha = owned ? lerp(0.6, 0.9, intensity) : lerp(0.45, 0.75, intensity);
 
-  c.save();
-  c.globalAlpha = c.globalAlpha * fade;
-  c.textAlign = 'center';
-  c.textBaseline = 'bottom';
-  const titlePx = REGION_TITLE_PX * labelScale;
-  const subPx = REGION_SUB_PX * labelScale;
-  c.font = `${titlePx.toFixed(1)}px ${REGION_FONT_STACK}`;
-  c.fillStyle = withOpacity(ink, titleAlpha);
-  c.fillText(text, x, y);
-  if (sub && showSub) {
-    c.font = `${subPx.toFixed(1)}px ${REGION_FONT_STACK}`;
-    c.fillStyle = withOpacity(ink, subAlpha);
-    // Rides just under the title, scaling with it.
-    c.fillText(sub, x, y + titlePx * 1.08);
+  // Routed through the solver: a region title is just another label,
+  // and it must lose to the bodies it sits among rather than print
+  // through them ("EARTH SYSTEM" over "EARTH 2M 6C 35" in the playtest
+  // shots). The owner sub-line fades out a band earlier than the title —
+  // two lines per region is what crowded the inner system.
+  const regionAlpha = lodAlpha(ctx.camera.scale, LOD.REGION_LABEL);
+  if (regionAlpha > 0.02) {
+    const subAlphaLod = lodAlpha(ctx.camera.scale, LOD.REGION_SUB);
+    requestLabel({
+      id: `region:${text}`,
+      kind: 'region',
+      text,
+      sub: (sub && showSub && subAlphaLod > 0.35) ? sub : undefined,
+      x,
+      y,
+      // Regions have no disc of their own; a modest keep-out stops the
+      // title sitting exactly on whatever body occupies the centroid.
+      radius: 10,
+      // Below bodies deliberately: at the zooms where both compete, the
+      // body name is the actionable one.
+      priority: 40,
+      font: `${(REGION_TITLE_PX * labelScale).toFixed(1)}px ${REGION_FONT_STACK}`,
+      subFont: `${(REGION_SUB_PX * labelScale).toFixed(1)}px ${REGION_FONT_STACK}`,
+      color: withOpacity(ink, titleAlpha),
+      subColor: withOpacity(ink, subAlpha),
+      alpha: fade * regionAlpha,
+    });
   }
-  c.restore();
 }
 
 // ============================================================

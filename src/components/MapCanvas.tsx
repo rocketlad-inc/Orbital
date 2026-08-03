@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { perf } from '../multiplayer/PerfHud';
+import { requestLabel, flushLabels } from '../render/labelLayer';
 import { smoothedTick, shipDisplayTick } from '../render/tickPhase';
 import { useGameContext } from '../state/gameContext';
 import { useMapLayers } from '../state/mapLayers';
@@ -1074,12 +1075,26 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         ctx.arc(cp.x, cp.y, baseR + 4 * pulse, 0, Math.PI * 2);
         ctx.stroke();
         ctx.setLineDash([]);
-        // "THREAT" label
-        ctx.fillStyle = '#ff5e5e';
-        ctx.font = 'bold 9px "Audiowide", monospace';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'bottom';
-        ctx.fillText('⚠ THREAT', cp.x, cp.y - baseR - 6);
+        // THREAT marker via the solver. Each threatened body used to
+        // print its own label unconditionally, so a moon system under
+        // attack stacked three "⚠ THREAT"s on the same pixels (the
+        // Uranus screenshot). Now they compete for space like everything
+        // else — and lose to nothing, since threats outrank all other
+        // text. The ring still marks every threatened body, so no
+        // information is lost when a label is displaced or dropped: the
+        // ring IS the signal, the word is the amplifier.
+        requestLabel({
+          id: `threat:${body.id}`,
+          kind: 'threat',
+          text: '⚠ THREAT',
+          x: cp.x,
+          y: cp.y,
+          radius: baseR + 6,
+          priority: 90,
+          font: 'bold 9px "Audiowide", monospace',
+          color: '#ff5e5e',
+          leader: true,
+        });
       }
     }
 
@@ -1683,7 +1698,18 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     );
     drawDetonations(renderContext, nowMs);
     drawDiscoveryBlooms(renderContext, nowMs);
+    // ---- ALL TEXT, LAST, ON TOP ----
+    // One placement pass for every label requested this frame. Drawn
+    // after the world so a sprite can never occlude text (the Uranus
+    // deep-zoom shot had hulls sitting over body names), and wrapped so
+    // a solver fault can degrade to "no labels" instead of corrupting
+    // the canvas transform for every subsequent frame.
     drawArrivalFlashes(renderContext, gameState.ships, nowMs);
+    try {
+      flushLabels(ctx, camera.scale, ctx.canvas.width, ctx.canvas.height);
+    } catch (e) {
+      console.error('label solver failed', e);
+    }
 
     // Shift-click group markers. Without these the group is invisible —
     // the panel would know about it and the map wouldn't. Reads the same
