@@ -1726,12 +1726,27 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
     logger.setSession({ mode: 'multiplayer', gameId });
   }, [gameId]);
 
+  // Raw-body fingerprint of the last APPLIED /state. Between ticks the
+  // server response is byte-identical poll after poll (verified live:
+  // 364KB, same bytes at 1.5s apart), yet every poll was re-mapped
+  // through serverToGameState and setState - a full-app re-render ~40
+  // times per minute for nothing. That churn is what made clicks feel
+  // mushy (Sean: "unresponsive... takes a second"): interactions
+  // competed with a heavyweight no-op render every 1.5s. Skip identical
+  // bodies entirely; cleared (forced) after every player action so a
+  // server-REJECTED optimistic change still gets rewound by the very
+  // next poll even though the server body didn't change.
+  const lastAppliedBodyRef = useRef<string | null>(null);
+
   const fetchState = useCallback(async () => {
     if (inflightRef.current) return;
     inflightRef.current = true;
     try {
       const res = await apiFetch<ServerState>(`/api/games/${gameId}/state`);
       if (res.ok) {
+        const body = JSON.stringify(res.data);
+        if (body === lastAppliedBodyRef.current) return;   // no-op poll
+        lastAppliedBodyRef.current = body;
         const next = serverToGameState(res.data, res.data.me.faction_id);
         setState(next);
         // Captain debut (DESIGN-captains §5.1): when one of OUR ships
@@ -1798,6 +1813,10 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
     // a burst of actions (bulk orders fan-out) triggers ONE refetch.
     let coalesce: ReturnType<typeof setTimeout> | null = null;
     const onActionRefresh = () => {
+      // Force-apply the next body: a rejected action leaves the server
+      // state unchanged (identical body), but any optimistic local
+      // change must still be rewound by a full re-apply.
+      lastAppliedBodyRef.current = null;
       if (coalesce) clearTimeout(coalesce);
       coalesce = setTimeout(() => { coalesce = null; fetchState(); }, 60);
     };
