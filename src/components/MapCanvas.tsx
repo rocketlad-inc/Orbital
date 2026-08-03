@@ -12,7 +12,6 @@ import {
   drawOrbitEllipse,
   drawApsisMarkers,
   drawTorchTrajectory,
-  computeChaseContext, chaseActive, chaseInvolves, drawChaseTethers,
   drawTransitShip,
   drawGhostPlanet,
   drawTargetHighlight,
@@ -407,9 +406,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // per-frame by the per-ship overlay below. A ship that arrived and
     // dropped out of transit shouldn't keep its old hitbox.
     transitShipCanvasPosRef.current.clear();
-    // Chase context (pursuit tethers, echelon lanes, chips) - one pass
-    // over the ship list per frame, before any transit ship draws.
-    computeChaseContext(gameState.ships, gameState.pactPairs);
     // Parked-ship hit boxes are rebuilt every frame by drawShip. Clear
     // here so a ship that left orbit doesn't keep a stale box.
     shipHitboxesRef.current.clear();
@@ -1332,11 +1328,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           : role === 'mine'    ? 0.85
           : role === 'hostile' ? 0.85
           : 0.45;                                    // neutral
-        // During a live pursuit, lines not in the chase drop back so
-        // the hunt's corridor is the brightest thing on the map.
-        if (chaseActive() && !isSelected && !chaseInvolves(ship.id)) {
-          ctx.globalAlpha *= 0.45;
-        }
         // Pass currentTick so the segment behind the ship fades out
         // gradually — reduces visual noise from many in-flight ships.
         // Auto-disabled inside drawTorchTrajectory when splitPhaseColors
@@ -1667,7 +1658,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // carries the firefight between volleys. Settlements participate on
     // both ends: stations/cities visibly return fire, and bombarding
     // ships visibly pound them.
-    drawChaseTethers(renderContext);
     drawEngagementFire(
       renderContext, gameState.ships, gameState.settlements, nowMs, nowTick,
       transitShipCanvasPosRef.current, gameState.pactPairs,
