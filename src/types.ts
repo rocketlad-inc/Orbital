@@ -766,6 +766,12 @@ export interface GameState {
    *  even though they don't share sensors with you — peace is peace.
    *  Empty/undefined in single-player. */
   peaceFactionIds?: string[];
+  /** Every active at-peace pair in the game (nap / defense pact), as
+   *  unordered 'a|b' keys in the same id space as Ship.ownedBy. Unlike
+   *  peaceFactionIds (player-centric), this covers THIRD-party pairs -
+   *  combat FX uses it so two co-located allies are never drawn
+   *  shooting each other. */
+  pactPairs?: string[];
 
   // Match shape — populated in single-player by setup, in multiplayer by
   // the server. The match ends when status flips to 'completed', either

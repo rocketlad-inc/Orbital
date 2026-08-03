@@ -246,10 +246,20 @@ function addFactionAt(m: Map<string, Set<string>>, bodyId: string, faction: stri
 }
 
 /** Is any faction OTHER than `owner` present at this body? */
-function hasOtherFaction(m: Map<string, Set<string>>, bodyId: string, owner: string): boolean {
+// Like hasOtherFaction, but a peace partner does not count as hostile -
+// an ally parked in the same orbit must neither sustain the engagement
+// loop nor be eligible to take a drawn bolt.
+function hasHostileFaction(
+  m: Map<string, Set<string>>, bodyId: string, owner: string,
+  peace: Set<string> | null,
+): boolean {
   const set = m.get(bodyId);
   if (!set) return false;
-  for (const f of set) if (f !== owner) return true;
+  for (const f of set) {
+    if (f === owner) continue;
+    if (peace && peace.has(f < owner ? `${f}|${owner}` : `${owner}|${f}`)) continue;
+    return true;
+  }
   return false;
 }
 
@@ -453,6 +463,24 @@ export function drawTracers(
  * Stateless: no arrays, no allocation, nothing to prune — it's derived
  * purely from ship state each frame.
  */
+// pactPairs array -> Set, cached by array identity so the per-frame
+// call never rebuilds (the provider only allocates a new array when
+// /state actually changes).
+let pactArrCache: string[] | undefined;
+let pactSetCache: Set<string> | null = null;
+function pactSetOf(pairs?: string[]): Set<string> | null {
+  if (!pairs || pairs.length === 0) return null;
+  if (pairs !== pactArrCache) {
+    pactArrCache = pairs;
+    pactSetCache = new Set(pairs);
+  }
+  return pactSetCache;
+}
+function atPeace(peace: Set<string> | null, a: string, b: string): boolean {
+  if (!peace) return false;
+  return peace.has(a < b ? `${a}|${b}` : `${b}|${a}`);
+}
+
 export function drawEngagementFire(
   rc: RenderContext,
   ships: Ship[],
@@ -460,7 +488,14 @@ export function drawEngagementFire(
   nowMs: number,
   currentTick: number,
   transitCanvasPos?: Map<string, { x: number; y: number }>,
+  pactPairs?: string[],
 ): void {
+  // The server never fires between at-peace factions (room.js builds the
+  // same nap/defense-pact set) - so neither may the animation. Without
+  // this, a fleet legitimately fighting faction A would draw bolts at
+  // allied faction B's freighters sharing the orbit (player report:
+  // "Why are my ships in battle with my allied ships?").
+  const peace = pactSetOf(pactPairs);
   // Who is actually PRESENT at each body this frame — the live answer to
   // "is this fight still on". Ships under burn have left; dead
   // settlements don't shoot. Built once per frame, then queried per
@@ -495,8 +530,8 @@ export function drawEngagementFire(
     const at = s.orbit.parentBodyId;
     // A hull can trade fire with hostile ships OR bombard a hostile
     // settlement, so either presence keeps it engaged.
-    if (!hasOtherFaction(bodyShipFactions, at, s.ownedBy)
-        && !hasOtherFaction(bodyStlFactions, at, s.ownedBy)) continue;
+    if (!hasHostileFaction(bodyShipFactions, at, s.ownedBy, peace)
+        && !hasHostileFaction(bodyStlFactions, at, s.ownedBy, peace)) continue;
     takeEngaged(s.id, at, s.ownedBy, s, null);
   }
   for (const stl of settlements) {
@@ -504,7 +539,7 @@ export function drawEngagementFire(
     if (fired === undefined) continue;
     if (currentTick - fired > ENGAGED_WINDOW_TICKS) continue;
     if (stl.hp <= 0) continue;
-    if (!hasOtherFaction(bodyShipFactions, stl.bodyId, stl.ownedBy)) continue;
+    if (!hasHostileFaction(bodyShipFactions, stl.bodyId, stl.ownedBy, peace)) continue;
     takeEngaged(stl.id, stl.bodyId, stl.ownedBy, null, stl);
   }
   if (engagedScratch.length === 0) return;
@@ -543,13 +578,15 @@ export function drawEngagementFire(
       const sHit = ships.find(s =>
         s.id === stampedId && !s.transit
         && s.orbit.parentBodyId === shooter.bodyId
-        && s.ownedBy !== shooter.ownedBy);
+        && s.ownedBy !== shooter.ownedBy
+        && !atPeace(peace, s.ownedBy, shooter.ownedBy));
       if (sHit) tShip = sHit;
       else if (shooter.ship) {
         const stlHit = settlements.find(st =>
           st.id === stampedId && st.hp > 0
           && st.bodyId === shooter.bodyId
-          && st.ownedBy !== shooter.ownedBy);
+          && st.ownedBy !== shooter.ownedBy
+          && !atPeace(peace, st.ownedBy, shooter.ownedBy));
         if (stlHit) tStl = stlHit;
       }
     }
@@ -562,6 +599,7 @@ export function drawEngagementFire(
         if (s.id === shooter.id || s.transit) continue;
         if (s.orbit.parentBodyId !== shooter.bodyId) continue;
         if (s.ownedBy === shooter.ownedBy) continue;
+        if (atPeace(peace, s.ownedBy, shooter.ownedBy)) continue;
         // A settlement shooter never draws fire at a non-combatant
         // (freighter / unarmed hull) — mirrors the server's defensive
         // return-fire filter. Ship shooters prefer ARMED hostiles (the
@@ -583,6 +621,7 @@ export function drawEngagementFire(
         for (const stl of settlements) {
           if (stl.bodyId !== shooter.bodyId || stl.hp <= 0) continue;
           if (stl.ownedBy === shooter.ownedBy) continue;
+          if (atPeace(peace, stl.ownedBy, shooter.ownedBy)) continue;
           const score = (sHash ^ idHash(stl.id)) >>> 0;
           if (score > bestScore) { tStl = stl; tShip = null; bestScore = score; }
         }

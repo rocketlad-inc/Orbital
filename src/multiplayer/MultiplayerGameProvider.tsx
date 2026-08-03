@@ -100,6 +100,7 @@ interface ServerState {
      *  by threat detection only — sensors stay on the narrower ally set. */
     peace_faction_ids?: string[];
   };
+  pact_pairs?: string[];
   factions: Array<{
     id: string; slot: number; name: string; color: string;
     /** Two-tone (§5): secondary trim color. Decoration only. */
@@ -780,6 +781,14 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   // Tag the caller's faction as the "player" so all the existing client
   // code that checks ownedBy === 'player' keeps working without rewrites.
   const PLAYER_TOKEN = 'player';
+  // Game-wide at-peace pairs (nap/defense pact), unordered keys in the
+  // same rewritten id space as ownedBy so combat FX can test any two
+  // combatants directly.
+  const rwFid = (fid: string) => (fid === callerFactionId ? PLAYER_TOKEN : fid);
+  const pactPairs = (srv.pact_pairs ?? []).map(pair => {
+    const [a, b] = pair.split('|').map(rwFid);
+    return a < b ? `${a}|${b}` : `${b}|${a}`;
+  });
   for (const b of bodies) {
     if (b.ownedBy === callerFactionId) b.ownedBy = PLAYER_TOKEN;
     // Same rewrite for the secret's discoverer, so the discovery banner
@@ -1670,6 +1679,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     // Same id space as alliedFactionIds — peace partners are also other
     // server-side faction ids. Used by computeIncomingThreats only.
     peaceFactionIds: srv.me.peace_faction_ids ?? [],
+    pactPairs,
   };
 }
 

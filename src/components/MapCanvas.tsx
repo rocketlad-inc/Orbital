@@ -1660,7 +1660,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // ships visibly pound them.
     drawEngagementFire(
       renderContext, gameState.ships, gameState.settlements, nowMs, nowTick,
-      transitShipCanvasPosRef.current,
+      transitShipCanvasPosRef.current, gameState.pactPairs,
     );
     // Persistent battle damage: fire + smoke linger on anything hit
     // within the last tick (and on crippled hulls), so "damage was

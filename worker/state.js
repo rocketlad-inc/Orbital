@@ -281,6 +281,42 @@ async function handleGetState(req, env, ctx) {
     .bind(gameId)
     .all()).results ?? [];
 
+  // Every active at-peace pair in the game - not just the caller's.
+  // The combat-FX layer needs pairwise knowledge ("are THESE two at
+  // peace?") to never draw two allied fleets shooting each other when
+  // they share an orbit with a real enemy. Kinds mirror room.js's
+  // combat suppression exactly (nap + defense_pact): the visual must
+  // match what the server will actually never do.
+  const pactPairRows = (await env.DB
+    .prepare(
+      `SELECT t.id, ts.faction_id
+         FROM treaties t
+         JOIN treaty_signatories ts ON ts.treaty_id = t.id
+        WHERE t.game_id = ?1
+          AND t.status = 'active'
+          AND t.broken_at_tick IS NULL
+          AND ts.signed_at_tick IS NOT NULL
+          AND t.kind IN ('nap', 'defense_pact')
+          AND (t.expires_at_tick IS NULL OR t.expires_at_tick > ?2)`,
+    )
+    .bind(gameId, game.current_tick)
+    .all()).results ?? [];
+  const pactTreaties = new Map();
+  for (const r of pactPairRows) {
+    if (!pactTreaties.has(r.id)) pactTreaties.set(r.id, []);
+    pactTreaties.get(r.id).push(r.faction_id);
+  }
+  const pactPairSet = new Set();
+  for (const sigs of pactTreaties.values()) {
+    for (let i = 0; i < sigs.length; i++) {
+      for (let j = i + 1; j < sigs.length; j++) {
+        const [a, b] = sigs[i] < sigs[j] ? [sigs[i], sigs[j]] : [sigs[j], sigs[i]];
+        pactPairSet.add(`${a}|${b}`);
+      }
+    }
+  }
+  const pact_pairs = [...pactPairSet];
+
   // Allies — factions the caller co-signs an ACTIVE defense-pact or
   // intel-share treaty with. They share sensor vision: the fog CTEs
   // below expand "my presence" to include allied presence, so anything
@@ -1155,6 +1191,7 @@ async function handleGetState(req, env, ctx) {
       // narrower ally set.
       peace_faction_ids: peaceIds,
     },
+    pact_pairs,
     factions,
     bodies,
     ships,
