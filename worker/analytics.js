@@ -564,7 +564,7 @@ async function handleGameAnalytics(req, env, { session, params }) {
               p.map_ms, p.paint_ms, p.frame_ms, p.ships, p.cores, p.mem_gb,
               p.mobile, p.ua
          FROM perf_samples p JOIN users u ON u.id = p.user_id
-        WHERE p.game_id = ? AND p.created_at_ms > ?
+        WHERE p.game_id = ? AND p.created_at_ms > ? AND ${NOT_QA_USER}
         ORDER BY p.created_at_ms DESC
         LIMIT 4000`,
     )
@@ -614,6 +614,7 @@ async function handleGameAnalytics(req, env, { session, params }) {
               mem_gb, dpr, screen_w, screen_h, mobile, ua
          FROM perf_heartbeats
         WHERE game_id = ? AND created_at_ms > ?
+          AND user_id NOT IN (${QA_USER_IDS})
         ORDER BY created_at_ms DESC
         LIMIT 5000`,
     )

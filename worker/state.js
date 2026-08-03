@@ -240,10 +240,83 @@ async function handleGetState(req, env, ctx) {
   if (!me) return err(403, 'not_member', 'not in this game');
 
   // Caller's tech levels, keyed by tech_id.
-  const techRows = (await env.DB
+  // PERF WAVE (caller tech + trade legs + factions + diplomacy): these queries are independent of one
+  // another, but ran as sequential awaits - a D1 round-trip each.
+  // 27 serial queries at ~20ms is where /state took its ~550ms
+  // (measured: fetch p50 434-650ms; it is the floor under every
+  // click). Start them together, await at the original sites so
+  // all derived code keeps its exact order and shape.
+const techRowsP = env.DB
     .prepare('SELECT tech_id, level FROM faction_techs WHERE game_id = ? AND faction_id = ?')
     .bind(gameId, me.id)
-    .all()).results ?? [];
+    .all();
+const trade_deliveriesP = env.DB
+    .prepare(
+      `SELECT id, trade_id, sender_faction_id, recipient_faction_id,
+              ship_id, status, pickup_body_id, dest_body_id,
+              metal, fuel, gold, science, loaded
+         FROM trade_deliveries
+        WHERE game_id = ? AND resolved_at_tick IS NULL
+          AND (sender_faction_id = ? OR recipient_faction_id = ?)`,
+    )
+    .bind(gameId, me.id, me.id)
+    .all();
+const factionsP = env.DB
+    .prepare(
+      `SELECT id, slot, name, color, color2, status, capital_body_id, senate_weight, reputation
+         FROM game_factions
+        WHERE game_id = ?
+        ORDER BY slot ASC`,
+    )
+    .bind(gameId)
+    .all();
+const pactPairRowsP = env.DB
+    .prepare(
+      `SELECT t.id, ts.faction_id
+         FROM treaties t
+         JOIN treaty_signatories ts ON ts.treaty_id = t.id
+        WHERE t.game_id = ?1
+          AND t.status = 'active'
+          AND t.broken_at_tick IS NULL
+          AND ts.signed_at_tick IS NOT NULL
+          AND t.kind IN ('nap', 'defense_pact')
+          AND (t.expires_at_tick IS NULL OR t.expires_at_tick > ?2)`,
+    )
+    .bind(gameId, game.current_tick)
+    .all();
+const allyRowsP = env.DB
+    .prepare(
+      `SELECT DISTINCT ts2.faction_id AS ally_id
+         FROM treaties t
+         JOIN treaty_signatories ts1
+           ON ts1.treaty_id = t.id AND ts1.faction_id = ?2 AND ts1.signed_at_tick IS NOT NULL
+         JOIN treaty_signatories ts2
+           ON ts2.treaty_id = t.id AND ts2.faction_id != ?2 AND ts2.signed_at_tick IS NOT NULL
+        WHERE t.game_id = ?1
+          AND t.status = 'active'
+          AND t.broken_at_tick IS NULL
+          AND t.kind IN ('defense_pact', 'intel_share')
+          AND (t.expires_at_tick IS NULL OR t.expires_at_tick > ?3)`,
+    )
+    .bind(gameId, me.id, game.current_tick)
+    .all();
+const peaceRowsP = env.DB
+    .prepare(
+      `SELECT DISTINCT ts2.faction_id AS peace_id
+         FROM treaties t
+         JOIN treaty_signatories ts1
+           ON ts1.treaty_id = t.id AND ts1.faction_id = ?2 AND ts1.signed_at_tick IS NOT NULL
+         JOIN treaty_signatories ts2
+           ON ts2.treaty_id = t.id AND ts2.faction_id != ?2 AND ts2.signed_at_tick IS NOT NULL
+        WHERE t.game_id = ?1
+          AND t.status = 'active'
+          AND t.broken_at_tick IS NULL
+          AND t.kind IN ('nap', 'defense_pact', 'intel_share')
+          AND (t.expires_at_tick IS NULL OR t.expires_at_tick > ?3)`,
+    )
+    .bind(gameId, me.id, game.current_tick)
+    .all();
+  const techRows = (await techRowsP).results ?? [];
   const tech_levels = Object.fromEntries(techRows.map(r => [r.tech_id, r.level]));
 
   // Sensor-intel gates (project_intel_gating): what of RIVALS this caller
@@ -259,27 +332,9 @@ async function handleGetState(req, env, ctx) {
   // Active trade-delivery legs involving the caller (either direction).
   // ShipPanel badges hauling freighters with this; the Trades panel
   // reads richer per-trade legs from the trades list endpoint instead.
-  const trade_deliveries = (await env.DB
-    .prepare(
-      `SELECT id, trade_id, sender_faction_id, recipient_faction_id,
-              ship_id, status, pickup_body_id, dest_body_id,
-              metal, fuel, gold, science, loaded
-         FROM trade_deliveries
-        WHERE game_id = ? AND resolved_at_tick IS NULL
-          AND (sender_faction_id = ? OR recipient_faction_id = ?)`,
-    )
-    .bind(gameId, me.id, me.id)
-    .all()).results ?? [];
+  const trade_deliveries = (await trade_deliveriesP).results ?? [];
 
-  const factions = (await env.DB
-    .prepare(
-      `SELECT id, slot, name, color, color2, status, capital_body_id, senate_weight, reputation
-         FROM game_factions
-        WHERE game_id = ?
-        ORDER BY slot ASC`,
-    )
-    .bind(gameId)
-    .all()).results ?? [];
+  const factions = (await factionsP).results ?? [];
 
   // Every active at-peace pair in the game - not just the caller's.
   // The combat-FX layer needs pairwise knowledge ("are THESE two at
@@ -287,20 +342,7 @@ async function handleGetState(req, env, ctx) {
   // they share an orbit with a real enemy. Kinds mirror room.js's
   // combat suppression exactly (nap + defense_pact): the visual must
   // match what the server will actually never do.
-  const pactPairRows = (await env.DB
-    .prepare(
-      `SELECT t.id, ts.faction_id
-         FROM treaties t
-         JOIN treaty_signatories ts ON ts.treaty_id = t.id
-        WHERE t.game_id = ?1
-          AND t.status = 'active'
-          AND t.broken_at_tick IS NULL
-          AND ts.signed_at_tick IS NOT NULL
-          AND t.kind IN ('nap', 'defense_pact')
-          AND (t.expires_at_tick IS NULL OR t.expires_at_tick > ?2)`,
-    )
-    .bind(gameId, game.current_tick)
-    .all()).results ?? [];
+  const pactPairRows = (await pactPairRowsP).results ?? [];
   const pactTreaties = new Map();
   for (const r of pactPairRows) {
     if (!pactTreaties.has(r.id)) pactTreaties.set(r.id, []);
@@ -323,22 +365,7 @@ async function handleGetState(req, env, ctx) {
   // an ally can see, the caller sees too. (NAP is peace-only, not an
   // alliance, so it's deliberately excluded.) Both signatories must
   // have signed and the treaty must be live (not broken / expired).
-  const allyRows = (await env.DB
-    .prepare(
-      `SELECT DISTINCT ts2.faction_id AS ally_id
-         FROM treaties t
-         JOIN treaty_signatories ts1
-           ON ts1.treaty_id = t.id AND ts1.faction_id = ?2 AND ts1.signed_at_tick IS NOT NULL
-         JOIN treaty_signatories ts2
-           ON ts2.treaty_id = t.id AND ts2.faction_id != ?2 AND ts2.signed_at_tick IS NOT NULL
-        WHERE t.game_id = ?1
-          AND t.status = 'active'
-          AND t.broken_at_tick IS NULL
-          AND t.kind IN ('defense_pact', 'intel_share')
-          AND (t.expires_at_tick IS NULL OR t.expires_at_tick > ?3)`,
-    )
-    .bind(gameId, me.id, game.current_tick)
-    .all()).results ?? [];
+  const allyRows = (await allyRowsP).results ?? [];
   const allyIds = allyRows.map(r => r.ally_id);
 
   // Peace partners — superset of allies that also includes NAP-only
@@ -348,22 +375,7 @@ async function handleGetState(req, env, ctx) {
   // shared vision), so we run a separate query. Player report: MCRN
   // ships were flagged as a threat after Confederacy signed NAP +
   // Intel-Share with them, because threats.ts had no peace check at all.
-  const peaceRows = (await env.DB
-    .prepare(
-      `SELECT DISTINCT ts2.faction_id AS peace_id
-         FROM treaties t
-         JOIN treaty_signatories ts1
-           ON ts1.treaty_id = t.id AND ts1.faction_id = ?2 AND ts1.signed_at_tick IS NOT NULL
-         JOIN treaty_signatories ts2
-           ON ts2.treaty_id = t.id AND ts2.faction_id != ?2 AND ts2.signed_at_tick IS NOT NULL
-        WHERE t.game_id = ?1
-          AND t.status = 'active'
-          AND t.broken_at_tick IS NULL
-          AND t.kind IN ('nap', 'defense_pact', 'intel_share')
-          AND (t.expires_at_tick IS NULL OR t.expires_at_tick > ?3)`,
-    )
-    .bind(gameId, me.id, game.current_tick)
-    .all()).results ?? [];
+  const peaceRows = (await peaceRowsP).results ?? [];
   const peaceIds = peaceRows.map(r => r.peace_id);
 
   // Faction ids whose presence illuminates the map for the caller:
@@ -389,14 +401,20 @@ async function handleGetState(req, env, ctx) {
   // and feed that id set into each visible_bodies CTE below as ?3. This is
   // what lets you see an enemy fleet/station at a body your sensors reach
   // without having to physically park there. See computeSensorVisibleBodyIds.
-  const sensorBodies = (await env.DB
+  // PERF WAVE (sensor presence): these queries are independent of one
+  // another, but ran as sequential awaits - a D1 round-trip each.
+  // 27 serial queries at ~20ms is where /state took its ~550ms
+  // (measured: fetch p50 434-650ms; it is the floor under every
+  // click). Start them together, await at the original sites so
+  // all derived code keeps its exact order and shape.
+const sensorBodiesP = env.DB
     .prepare(
       `SELECT id, parent_body_id, orbit_radius, orbit_period, angle0
          FROM game_bodies WHERE game_id = ?1 AND destroyed_at_tick IS NULL`,
     )
     .bind(gameId)
-    .all()).results ?? [];
-  const sensorShips = (await env.DB
+    .all();
+const sensorShipsP = env.DB
     .prepare(
       `SELECT s.ship_class, s.parent_body_id,
               c.traits_json AS captain_traits,
@@ -410,8 +428,8 @@ async function handleGetState(req, env, ctx) {
           AND s.status = 'active'`,
     )
     .bind(gameId, presenceFactionIds)
-    .all()).results ?? [];
-  const sensorSettlements = (await env.DB
+    .all();
+const sensorSettlementsP = env.DB
     .prepare(
       `SELECT body_id, type FROM game_settlements
         WHERE game_id = ?1
@@ -419,7 +437,10 @@ async function handleGetState(req, env, ctx) {
           AND destroyed_at_tick IS NULL`,
     )
     .bind(gameId, presenceFactionIds)
-    .all()).results ?? [];
+    .all();
+  const sensorBodies = (await sensorBodiesP).results ?? [];
+  const sensorShips = (await sensorShipsP).results ?? [];
+  const sensorSettlements = (await sensorSettlementsP).results ?? [];
   const { sensors, bodyPos, shipPos } = buildFriendlySensors(
     sensorBodies, sensorShips, sensorSettlements, game.current_tick,
   );
@@ -457,7 +478,13 @@ async function handleGetState(req, env, ctx) {
   //   (3) parent-by-child — it's the parent of a body in (1), so a ship
   //       at Luna can see Earth. We exclude Sol from this expansion (a
   //       ship at any planet shouldn't auto-illuminate the whole system).
-  const bodiesRaw = (await env.DB
+  // PERF WAVE (world bodies + fleet): these queries are independent of one
+  // another, but ran as sequential awaits - a D1 round-trip each.
+  // 27 serial queries at ~20ms is where /state took its ~550ms
+  // (measured: fetch p50 434-650ms; it is the floor under every
+  // click). Start them together, await at the original sites so
+  // all derived code keeps its exact order and shape.
+const bodiesRawP = env.DB
     .prepare(
       `WITH my_presence AS (
          SELECT DISTINCT parent_body_id AS bid
@@ -537,62 +564,8 @@ async function handleGetState(req, env, ctx) {
           AND destroyed_at_tick IS NULL`,
     )
     .bind(gameId, presenceFactionIds, sensorVisibleBodyIds)
-    .all()).results ?? [];
-
-  // Body geometry is physical reality, always visible. But who owns a
-  // world is intel — mask owner_faction_id (and the development levels
-  // that follow from it) on bodies the caller hasn't actually scouted.
-  // The caller's own worlds are always 'visible_to_me=1' via the CTE.
-  //
-  // Secrets are also intel: unrevealed secret_kind never leaks to the
-  // client. After reveal, the secret IS public (it's a chronicle event
-  // — every player sees the announcement) so we ship it to everyone.
-  const bodies = bodiesRaw.map(b => {
-    const isRevealed = b.secret_revealed === 1;
-    // Strip unrevealed secret_kind so clients can't sniff what's buried
-    // on bodies they haven't visited. After reveal it's broadcast.
-    const secretFields = isRevealed
-      ? {
-          secret_kind: b.secret_kind,
-          secret_revealed: 1,
-          secret_discovered_by_faction_id: b.secret_discovered_by_faction_id,
-          secret_discovered_at_tick: b.secret_discovered_at_tick,
-        }
-      : {
-          secret_kind: null,
-          secret_revealed: 0,
-          secret_discovered_by_faction_id: null,
-          secret_discovered_at_tick: null,
-        };
-    if (b.visible_to_me) {
-      const {
-        visible_to_me,
-        secret_kind, secret_revealed,
-        secret_discovered_by_faction_id, secret_discovered_at_tick,
-        ...rest
-      } = b;
-      return { ...rest, ...secretFields };
-    }
-    const {
-      visible_to_me, owner_faction_id, development_level, fortification_level, shipyard_level,
-      secret_kind, secret_revealed,
-      secret_discovered_by_faction_id, secret_discovered_at_tick,
-      ...rest
-    } = b;
-    return {
-      ...rest,
-      owner_faction_id: null,
-      development_level: 0,
-      fortification_level: 0,
-      shipyard_level: 0,
-      ...secretFields,
-    };
-  });
-
-  // Ship fog — same visibility set as the body select above (presence +
-  // moons-of-presence + planet-of-moon-presence). Caller's own ships are
-  // always visible regardless.
-  const ships = (await env.DB
+    .all();
+const shipsP = env.DB
     .prepare(
       `WITH my_presence AS (
          SELECT DISTINCT parent_body_id AS bid
@@ -673,7 +646,63 @@ async function handleGetState(req, env, ctx) {
                OR 1 = ?5)`,
     )
     .bind(gameId, presenceFactionIds, sensorVisibleBodyIds, sensorVisibleShipIds, seeAllShips ? 1 : 0)
-    .all()).results ?? [];
+    .all();
+  const bodiesRaw = (await bodiesRawP).results ?? [];
+
+  // Body geometry is physical reality, always visible. But who owns a
+  // world is intel — mask owner_faction_id (and the development levels
+  // that follow from it) on bodies the caller hasn't actually scouted.
+  // The caller's own worlds are always 'visible_to_me=1' via the CTE.
+  //
+  // Secrets are also intel: unrevealed secret_kind never leaks to the
+  // client. After reveal, the secret IS public (it's a chronicle event
+  // — every player sees the announcement) so we ship it to everyone.
+  const bodies = bodiesRaw.map(b => {
+    const isRevealed = b.secret_revealed === 1;
+    // Strip unrevealed secret_kind so clients can't sniff what's buried
+    // on bodies they haven't visited. After reveal it's broadcast.
+    const secretFields = isRevealed
+      ? {
+          secret_kind: b.secret_kind,
+          secret_revealed: 1,
+          secret_discovered_by_faction_id: b.secret_discovered_by_faction_id,
+          secret_discovered_at_tick: b.secret_discovered_at_tick,
+        }
+      : {
+          secret_kind: null,
+          secret_revealed: 0,
+          secret_discovered_by_faction_id: null,
+          secret_discovered_at_tick: null,
+        };
+    if (b.visible_to_me) {
+      const {
+        visible_to_me,
+        secret_kind, secret_revealed,
+        secret_discovered_by_faction_id, secret_discovered_at_tick,
+        ...rest
+      } = b;
+      return { ...rest, ...secretFields };
+    }
+    const {
+      visible_to_me, owner_faction_id, development_level, fortification_level, shipyard_level,
+      secret_kind, secret_revealed,
+      secret_discovered_by_faction_id, secret_discovered_at_tick,
+      ...rest
+    } = b;
+    return {
+      ...rest,
+      owner_faction_id: null,
+      development_level: 0,
+      fortification_level: 0,
+      shipyard_level: 0,
+      ...secretFields,
+    };
+  });
+
+  // Ship fog — same visibility set as the body select above (presence +
+  // moons-of-presence + planet-of-moon-presence). Caller's own ships are
+  // always visible regardless.
+  const ships = (await shipsP).results ?? [];
 
   // Exactly the ships this observer is receiving. Any of them that's
   // in-transit needs its node sent too, or the client can't place it on
@@ -688,7 +717,13 @@ async function handleGetState(req, env, ctx) {
   // Fleets (DESIGN-fleets.md). Visible when yours OR any member ship is
   // in the ships payload above — a named enemy fleet you can see is
   // intel; one entirely outside your sensors stays unknown.
-  const fleets = (await env.DB
+  // PERF WAVE (tail entities): these queries are independent of one
+  // another, but ran as sequential awaits - a D1 round-trip each.
+  // 27 serial queries at ~20ms is where /state took its ~550ms
+  // (measured: fetch p50 434-650ms; it is the floor under every
+  // click). Start them together, await at the original sites so
+  // all derived code keeps its exact order and shape.
+const fleetsP = env.DB
     .prepare(
       `SELECT f.id, f.faction_id, f.name, f.flag_captain_id, f.created_at_tick,
               fc.name AS flag_captain_name, fc.rank AS flag_captain_rank,
@@ -705,7 +740,170 @@ async function handleGetState(req, env, ctx) {
                              AND ms.id IN (SELECT value FROM json_each(?3))))`,
     )
     .bind(gameId, me.id, sentShipIds)
-    .all()).results ?? [];
+    .all();
+const captainsP = env.DB
+    .prepare(
+      `SELECT id, name, avatar_id, bio, rank, combat_history, traits_json,
+              ship_id, status, created_at_tick, lost_at_tick, benched_at_tick
+         FROM game_captains
+        WHERE game_id = ? AND faction_id = ?
+        ORDER BY created_at_tick ASC`,
+    )
+    .bind(gameId, me.id)
+    .all();
+const settlementsP = env.DB
+    .prepare(
+      `WITH my_presence AS (
+         SELECT DISTINCT parent_body_id AS bid
+           FROM game_ships
+          WHERE game_id = ?1 AND owner_faction_id IN (SELECT value FROM json_each(?2)) AND status = 'active'
+         UNION
+         SELECT id AS bid FROM game_bodies
+          WHERE game_id = ?1 AND owner_faction_id IN (SELECT value FROM json_each(?2))
+            AND destroyed_at_tick IS NULL
+       ),
+       -- Non-star parents of presence bodies. See the long-form CTE
+       -- in the bodies query above for the why.
+       my_parents_visible AS (
+         SELECT p.id FROM game_bodies p
+          WHERE p.game_id = ?1 AND p.destroyed_at_tick IS NULL
+            AND p.parent_body_id IS NOT NULL
+            AND p.id IN (
+              SELECT parent_body_id FROM game_bodies
+               WHERE game_id = ?1 AND destroyed_at_tick IS NULL
+                 AND id IN (SELECT bid FROM my_presence)
+                 AND parent_body_id IS NOT NULL
+            )
+       ),
+       visible_bodies AS (
+         SELECT bid FROM my_presence
+         UNION
+         SELECT id FROM game_bodies
+          WHERE game_id = ?1 AND destroyed_at_tick IS NULL
+            AND parent_body_id IN (SELECT bid FROM my_presence)
+         UNION
+         SELECT id FROM my_parents_visible
+         UNION
+         -- Sibling moons — see the bodies-query comment for the why.
+         SELECT id FROM game_bodies
+          WHERE game_id = ?1 AND destroyed_at_tick IS NULL
+            AND parent_body_id IN (SELECT id FROM my_parents_visible)
+         UNION
+         -- Sensor range — bodies inside a friendly sensor radius (?3,
+         -- computed in JS). Reveals enemy units your scopes can reach.
+         SELECT value FROM json_each(?3)
+       )
+       SELECT id, body_id, owner_faction_id, type, name,
+              hp, hp_max, population,
+              surface_angle, orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch,
+              stockpile_metal, stockpile_fuel, stockpile_gold, stockpile_science,
+              created_at_tick, last_growth_tick, last_harvest_tick,
+              -- Stamped when the settlement RETURNS FIRE (it also gates the
+              -- return-fire cadence — see resolveTick, so do NOT also stamp
+              -- it on taking damage or bombarded settlements stop shooting
+              -- back). Surfaced so the Situation Report can keep a
+              -- settlement listed for a beat after the last shot; the
+              -- "is a hostile parked here" half of that check is what
+              -- catches an ungunned city, which never stamps this at all.
+              last_combat_tick,
+              -- Stamped when the settlement TAKES damage (room.js damage
+              -- resolution) — drives the client's persistent battle-damage
+              -- fire/smoke for a tick after a hit.
+              last_damaged_tick,
+              -- The ship this station engaged on its last return-fire
+              -- volley (round-robin single-target).
+              last_target_id,
+              has_collector, collector_built_tick,
+              buildings_json, building_order_json
+         FROM game_settlements
+        WHERE game_id = ?1
+          AND destroyed_at_tick IS NULL
+          AND (owner_faction_id IN (SELECT value FROM json_each(?2))
+               OR body_id IN (SELECT bid FROM visible_bodies)
+               -- Strategic Array (sensors 9): every enemy settlement,
+               -- fog or no fog. ?4 = 1 only with intel.allSettlements.
+               OR 1 = ?4)`,
+    )
+    .bind(gameId, presenceFactionIds, sensorVisibleBodyIds, seeAllSettlements ? 1 : 0)
+    .all();
+const settlement_claimsP = env.DB
+    .prepare(
+      `SELECT DISTINCT body_id, owner_faction_id
+         FROM game_settlements
+        WHERE game_id = ? AND destroyed_at_tick IS NULL`,
+    )
+    .bind(gameId)
+    .all();
+const hostRowP = env.DB
+    .prepare('SELECT host_id FROM rooms WHERE id = ?')
+    .bind(gameId).first();
+const nodesP = env.DB
+    .prepare(
+      `SELECT n.id, n.ship_id, n.sequence, n.anchor_kind, n.anchor_body_id, n.target_body_id,
+              n.scheduled_t, n.arrival_at_tick,
+              n.dv_prograde, n.dv_normal, n.dv_radial, n.fuel_cost,
+              n.status, n.committed_at_tick,
+              s.parent_body_id AS departure_body_id
+         FROM game_ship_nodes n
+         JOIN game_ships s ON s.id = n.ship_id
+        WHERE n.game_id = ?1
+          AND n.status IN ('planned','committed','in_transit')
+          AND (
+            -- Caller: every planned/committed/in_transit leg of own ships.
+            s.owner_faction_id = ?3
+            -- Allies: their committed/in_transit legs (started moves leak
+            -- across the ally line).
+            OR (s.owner_faction_id IN (SELECT value FROM json_each(?2))
+                AND n.status IN ('committed','in_transit'))
+            -- ANY in-transit ship the observer is actually RECEIVING this
+            -- poll (?4 = the ids in the ships payload above — friendly,
+            -- at-a-visible-body, sensor-detected, or total-awareness).
+            -- Node visibility must track ship visibility exactly: a ship
+            -- sent WITHOUT its node has no arc, so the client places it at
+            -- its origin body and renders a moving ship as parked (player
+            -- report: a colony that left Deimos for Umbriel still showed
+            -- parked at Deimos for Deimos's owner, who saw the ship via the
+            -- visible-body path the old sensor-only gate missed).
+            OR (n.status = 'in_transit'
+                AND n.ship_id IN (SELECT value FROM json_each(?4)))
+          )
+        ORDER BY n.ship_id, n.sequence`,
+    )
+    .bind(gameId, presenceFactionIds, me.id, sentShipIds)
+    .all();
+const buildQueueP = env.DB
+    .prepare(
+      `SELECT id, body_id, ship_class, queued_at_tick, completes_at_tick,
+              icon_variant, parts_json, status, started_at_tick, build_ticks,
+              rush_count, botched
+         FROM game_body_build_queue
+        WHERE game_id = ? AND faction_id = ?
+          AND cancelled_at_tick IS NULL
+        ORDER BY queued_at_tick ASC, id ASC`,
+    )
+    .bind(gameId, me.id)
+    .all();
+const shipDesignsP = env.DB
+    .prepare(
+      `SELECT id, ship_class, name, parts_json, icon_variant, is_active, created_at_ms
+         FROM game_ship_designs
+        WHERE game_id = ? AND faction_id = ?
+        ORDER BY created_at_ms ASC`,
+    )
+    .bind(gameId, me.id)
+    .all();
+const tradeRoutesP = env.DB
+    .prepare(
+      `SELECT id, ship_id, origin_body_id, dest_body_id, status,
+              cargo_fuel, cargo_metal, cargo_gold, cargo_science,
+              created_at_tick
+         FROM game_trade_routes
+        WHERE game_id = ? AND owner_faction_id = ?
+          AND cancelled_at_tick IS NULL`,
+    )
+    .bind(gameId, me.id)
+    .all();
+  const fleets = (await fleetsP).results ?? [];
 
   // --- Effective HP ceiling, computed SERVER-SIDE per ship -----------
   //
@@ -804,93 +1002,10 @@ async function handleGetState(req, env, ctx) {
   }
 
   // The caller's captain roster — bank + assigned + memorial (spec §5.3).
-  const captains = (await env.DB
-    .prepare(
-      `SELECT id, name, avatar_id, bio, rank, combat_history, traits_json,
-              ship_id, status, created_at_tick, lost_at_tick, benched_at_tick
-         FROM game_captains
-        WHERE game_id = ? AND faction_id = ?
-        ORDER BY created_at_tick ASC`,
-    )
-    .bind(gameId, me.id)
-    .all()).results ?? [];
+  const captains = (await captainsP).results ?? [];
 
   // Settlements: same visibility set as ships/bodies above.
-  const settlements = (await env.DB
-    .prepare(
-      `WITH my_presence AS (
-         SELECT DISTINCT parent_body_id AS bid
-           FROM game_ships
-          WHERE game_id = ?1 AND owner_faction_id IN (SELECT value FROM json_each(?2)) AND status = 'active'
-         UNION
-         SELECT id AS bid FROM game_bodies
-          WHERE game_id = ?1 AND owner_faction_id IN (SELECT value FROM json_each(?2))
-            AND destroyed_at_tick IS NULL
-       ),
-       -- Non-star parents of presence bodies. See the long-form CTE
-       -- in the bodies query above for the why.
-       my_parents_visible AS (
-         SELECT p.id FROM game_bodies p
-          WHERE p.game_id = ?1 AND p.destroyed_at_tick IS NULL
-            AND p.parent_body_id IS NOT NULL
-            AND p.id IN (
-              SELECT parent_body_id FROM game_bodies
-               WHERE game_id = ?1 AND destroyed_at_tick IS NULL
-                 AND id IN (SELECT bid FROM my_presence)
-                 AND parent_body_id IS NOT NULL
-            )
-       ),
-       visible_bodies AS (
-         SELECT bid FROM my_presence
-         UNION
-         SELECT id FROM game_bodies
-          WHERE game_id = ?1 AND destroyed_at_tick IS NULL
-            AND parent_body_id IN (SELECT bid FROM my_presence)
-         UNION
-         SELECT id FROM my_parents_visible
-         UNION
-         -- Sibling moons — see the bodies-query comment for the why.
-         SELECT id FROM game_bodies
-          WHERE game_id = ?1 AND destroyed_at_tick IS NULL
-            AND parent_body_id IN (SELECT id FROM my_parents_visible)
-         UNION
-         -- Sensor range — bodies inside a friendly sensor radius (?3,
-         -- computed in JS). Reveals enemy units your scopes can reach.
-         SELECT value FROM json_each(?3)
-       )
-       SELECT id, body_id, owner_faction_id, type, name,
-              hp, hp_max, population,
-              surface_angle, orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch,
-              stockpile_metal, stockpile_fuel, stockpile_gold, stockpile_science,
-              created_at_tick, last_growth_tick, last_harvest_tick,
-              -- Stamped when the settlement RETURNS FIRE (it also gates the
-              -- return-fire cadence — see resolveTick, so do NOT also stamp
-              -- it on taking damage or bombarded settlements stop shooting
-              -- back). Surfaced so the Situation Report can keep a
-              -- settlement listed for a beat after the last shot; the
-              -- "is a hostile parked here" half of that check is what
-              -- catches an ungunned city, which never stamps this at all.
-              last_combat_tick,
-              -- Stamped when the settlement TAKES damage (room.js damage
-              -- resolution) — drives the client's persistent battle-damage
-              -- fire/smoke for a tick after a hit.
-              last_damaged_tick,
-              -- The ship this station engaged on its last return-fire
-              -- volley (round-robin single-target).
-              last_target_id,
-              has_collector, collector_built_tick,
-              buildings_json, building_order_json
-         FROM game_settlements
-        WHERE game_id = ?1
-          AND destroyed_at_tick IS NULL
-          AND (owner_faction_id IN (SELECT value FROM json_each(?2))
-               OR body_id IN (SELECT bid FROM visible_bodies)
-               -- Strategic Array (sensors 9): every enemy settlement,
-               -- fog or no fog. ?4 = 1 only with intel.allSettlements.
-               OR 1 = ?4)`,
-    )
-    .bind(gameId, presenceFactionIds, sensorVisibleBodyIds, seeAllSettlements ? 1 : 0)
-    .all()).results ?? [];
+  const settlements = (await settlementsP).results ?? [];
 
   // Fog-FREE political summary: which bodies carry whose settlements.
   // Deliberately unfiltered, unlike the settlements list above — the
@@ -900,19 +1015,10 @@ async function handleGetState(req, env, ctx) {
   // (playtest report 2026-07-19). Ownership is the ONLY thing leaked:
   // no hp, population, buildings, stockpiles, or orbits ride along —
   // scouting those still requires actual sensor coverage.
-  const settlement_claims = (await env.DB
-    .prepare(
-      `SELECT DISTINCT body_id, owner_faction_id
-         FROM game_settlements
-        WHERE game_id = ? AND destroyed_at_tick IS NULL`,
-    )
-    .bind(gameId)
-    .all()).results ?? [];
+  const settlement_claims = (await settlement_claimsP).results ?? [];
 
   // Host flag for the EventLog flavor-edit gate. game.id === room.id.
-  const hostRow = await env.DB
-    .prepare('SELECT host_id FROM rooms WHERE id = ?')
-    .bind(gameId).first();
+  const hostRow = await hostRowP;
   const isHost = !!hostRow && hostRow.host_id === ctx.session.user_id;
 
   // Recent public chronicle entries — combat results, key events. Surfaced
@@ -978,40 +1084,7 @@ async function handleGetState(req, env, ctx) {
   // started states leak across the ally line, which matches the
   // physical observability rule (a torch is visible to anyone with a
   // sensor on the segment).
-  const nodes = (await env.DB
-    .prepare(
-      `SELECT n.id, n.ship_id, n.sequence, n.anchor_kind, n.anchor_body_id, n.target_body_id,
-              n.scheduled_t, n.arrival_at_tick,
-              n.dv_prograde, n.dv_normal, n.dv_radial, n.fuel_cost,
-              n.status, n.committed_at_tick,
-              s.parent_body_id AS departure_body_id
-         FROM game_ship_nodes n
-         JOIN game_ships s ON s.id = n.ship_id
-        WHERE n.game_id = ?1
-          AND n.status IN ('planned','committed','in_transit')
-          AND (
-            -- Caller: every planned/committed/in_transit leg of own ships.
-            s.owner_faction_id = ?3
-            -- Allies: their committed/in_transit legs (started moves leak
-            -- across the ally line).
-            OR (s.owner_faction_id IN (SELECT value FROM json_each(?2))
-                AND n.status IN ('committed','in_transit'))
-            -- ANY in-transit ship the observer is actually RECEIVING this
-            -- poll (?4 = the ids in the ships payload above — friendly,
-            -- at-a-visible-body, sensor-detected, or total-awareness).
-            -- Node visibility must track ship visibility exactly: a ship
-            -- sent WITHOUT its node has no arc, so the client places it at
-            -- its origin body and renders a moving ship as parked (player
-            -- report: a colony that left Deimos for Umbriel still showed
-            -- parked at Deimos for Deimos's owner, who saw the ship via the
-            -- visible-body path the old sensor-only gate missed).
-            OR (n.status = 'in_transit'
-                AND n.ship_id IN (SELECT value FROM json_each(?4)))
-          )
-        ORDER BY n.ship_id, n.sequence`,
-    )
-    .bind(gameId, presenceFactionIds, me.id, sentShipIds)
-    .all()).results ?? [];
+  const nodes = (await nodesP).results ?? [];
 
   // In-flight ship builds for the caller's faction. The tick alarm
   // processes these via game_body_build_queue → spawning the ship into
@@ -1020,18 +1093,7 @@ async function handleGetState(req, env, ctx) {
   // "BUILDING" progress strip — local optimistic state survived ~1.5s
   // until the next poll wiped MultiplayerGameProvider's buildOrders,
   // so players saw their money vanish with nothing in queue.
-  const buildQueue = (await env.DB
-    .prepare(
-      `SELECT id, body_id, ship_class, queued_at_tick, completes_at_tick,
-              icon_variant, parts_json, status, started_at_tick, build_ticks,
-              rush_count, botched
-         FROM game_body_build_queue
-        WHERE game_id = ? AND faction_id = ?
-          AND cancelled_at_tick IS NULL
-        ORDER BY queued_at_tick ASC, id ASC`,
-    )
-    .bind(gameId, me.id)
-    .all()).results ?? [];
+  const buildQueue = (await buildQueueP).results ?? [];
 
   // Fleet upkeep (DESIGN-fleet-economy §1) — server-authoritative per-tick
   // bill for the caller's fleet, WITH the senate multiplier folded in, so
@@ -1075,30 +1137,12 @@ async function handleGetState(req, env, ctx) {
   // Ship designs — the caller's design library (ship designer §2).
   // Small table (≤12 per class), so shipping it with every /state poll
   // keeps the designer + BuildPanel in sync without a separate fetch.
-  const shipDesigns = (await env.DB
-    .prepare(
-      `SELECT id, ship_class, name, parts_json, icon_variant, is_active, created_at_ms
-         FROM game_ship_designs
-        WHERE game_id = ? AND faction_id = ?
-        ORDER BY created_at_ms ASC`,
-    )
-    .bind(gameId, me.id)
-    .all()).results ?? [];
+  const shipDesigns = (await shipDesignsP).results ?? [];
 
   // Active trade routes for the caller's faction. The auto-pilot loop
   // in worker/room.js resolveTick mutates these; the client deserializer
   // converts server's metal/gold column names back to client's ore/credits.
-  const tradeRoutes = (await env.DB
-    .prepare(
-      `SELECT id, ship_id, origin_body_id, dest_body_id, status,
-              cargo_fuel, cargo_metal, cargo_gold, cargo_science,
-              created_at_tick
-         FROM game_trade_routes
-        WHERE game_id = ? AND owner_faction_id = ?
-          AND cancelled_at_tick IS NULL`,
-    )
-    .bind(gameId, me.id)
-    .all()).results ?? [];
+  const tradeRoutes = (await tradeRoutesP).results ?? [];
 
   // Dyson Sphere megaproject — populated only when a foundation has
   // been laid. Null until the first `initiate` POST per match. See

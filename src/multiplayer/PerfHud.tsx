@@ -101,7 +101,9 @@ class PerfBus {
     // to ~1fps in a hidden tab, so counting those would report a
     // catastrophic frame rate for anyone who alt-tabs.
     if (document.visibilityState === 'visible' && ms < 5000) {
-      this.frames.push(ms);
+      // Capped: outside a game no heartbeat drains these, and a lobby
+      // left open overnight must not grow arrays forever.
+      if (this.frames.length < 20_000) this.frames.push(ms);
       if (ms > 50) this.longFrames++;
     }
   }
@@ -110,7 +112,9 @@ class PerfBus {
    *  frame interval distinguishes "our canvas work is heavy" from
    *  "something else on the page is stalling the main thread". */
   recordDraw(ms: number) {
-    if (document.visibilityState === 'visible') this.draws.push(ms);
+    if (document.visibilityState === 'visible' && this.draws.length < 20_000) {
+      this.draws.push(ms);
+    }
   }
 
   recordScene(ships: number, settlements: number, inTransit: number, zoom: number) {

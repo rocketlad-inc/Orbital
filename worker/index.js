@@ -822,7 +822,7 @@ function ensureMigrated(env) {
 }
 
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, execCtx) {
     const url = new URL(req.url);
 
     if (url.pathname.startsWith('/api/')) {
@@ -961,11 +961,16 @@ export default {
         const kind = analytics.eventKindFromPath(req.method, url.pathname);
         if (kind) {
           const gm = url.pathname.match(/^\/api\/games\/([^/]+)\//);
-          await analytics.logEvent(env, {
+          // Deferred: this INSERT used to be AWAITED here, taxing every
+          // player action one D1 write (~20-60ms) before its handler even
+          // ran - measured in the action POST times while hunting click
+          // latency. waitUntil runs it after the response is sent.
+          const ev = analytics.logEvent(env, {
             gameId: gm ? decodeURIComponent(gm[1]) : null,
             userId: session.user_id,
             kind,
           });
+          if (execCtx?.waitUntil) execCtx.waitUntil(ev); else await ev;
         }
       }
       // Session liveness: the /state poll runs every ~1.5s, so touching
@@ -975,20 +980,26 @@ export default {
         const now = Date.now();
         if (!session.last_seen_at || now - session.last_seen_at > 60_000) {
           try {
-            await env.DB
-              .prepare('UPDATE sessions SET last_seen_at = ? WHERE token = ?')
-              .bind(now, session.token)
-              .run();
-            // Heartbeat: one event per active minute per player. This is
-            // the time-in-game source — (last_seen − created_at) measures
-            // COOKIE lifetime (days), not play time, so the dashboard
-            // counts these rows instead. ~60 rows/hour of actual play.
+            // Both writes deferred off the poll's critical path - the
+            // once-a-minute /state that drew these paid two D1 writes
+            // before state assembly even started.
             const gm = url.pathname.match(/^\/api\/games\/([^/]+)\//);
-            await analytics.logEvent(env, {
-              gameId: gm ? decodeURIComponent(gm[1]) : null,
-              userId: session.user_id,
-              kind: 'heartbeat',
-            });
+            const touch = (async () => {
+              await env.DB
+                .prepare('UPDATE sessions SET last_seen_at = ? WHERE token = ?')
+                .bind(now, session.token)
+                .run();
+              // Heartbeat: one event per active minute per player. This is
+              // the time-in-game source — (last_seen − created_at) measures
+              // COOKIE lifetime (days), not play time, so the dashboard
+              // counts these rows instead. ~60 rows/hour of actual play.
+              await analytics.logEvent(env, {
+                gameId: gm ? decodeURIComponent(gm[1]) : null,
+                userId: session.user_id,
+                kind: 'heartbeat',
+              });
+            })();
+            if (execCtx?.waitUntil) execCtx.waitUntil(touch); else await touch;
           } catch (e) { console.error('last_seen touch failed', e); }
         }
       }
