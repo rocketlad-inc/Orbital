@@ -444,7 +444,10 @@ function TradeCard({
       )}
 
       {actions && (
-        <div style={{ display: 'flex', gap: 4, marginTop: 8, justifyContent: 'flex-end' }}>
+        // Wrapping + stretch, not flex-end: three buttons on a narrow
+        // panel overflowed LEFT (flex-end pushes overflow off-screen),
+        // clipping ACCEPT. Class lives in multiplayer.css.
+        <div className="mp-trade__actions">
           {actions(trade)}
         </div>
       )}

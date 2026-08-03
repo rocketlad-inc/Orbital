@@ -1600,3 +1600,20 @@
 }
 .discord-link__cmd code { font-size: 15px; letter-spacing: 0.06em; color: #c7d2fe; }
 .discord-link__copy { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--mp-fg-dim); }
+
+/* Trade-offer action row: buttons share the row width and wrap when it
+   gets narrow, instead of overflowing off the panel's left edge. */
+.mp-trade__actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.mp-trade__actions .mp-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-left: 8px;
+  padding-right: 8px;
+  white-space: nowrap;
+  text-align: center;
+}
