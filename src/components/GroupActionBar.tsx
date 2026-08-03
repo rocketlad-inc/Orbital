@@ -135,7 +135,7 @@ export const GroupActionBar: React.FC = () => {
         >CLEAR</button>
       </div>
       <div className="group-bar__hint">
-        {notice ?? 'Shift-click more ships to add · shift-click a world to send them there'}
+        {notice ?? 'Drag a box or shift-click to add · shift-click a world to send them there'}
       </div>
     </div>
   );

@@ -88,6 +88,10 @@ import './MapCanvas.css';
  *  guidelines recommend ~44px tap targets; we widen the click radius rather
  *  than enlarge the rendered icon. */
 const TOUCH_HIT_PADDING = isCoarsePointer() ? 16 : 0;
+/** Pointer travel (CSS px) before a left-drag counts as a selection box
+ *  rather than a click. Keeps a slightly-shaky click from turning into a
+ *  one-pixel box that silently wipes the current group. */
+const BOX_DRAG_THRESHOLD_PX = 5;
 
 /**
  * Below this camera scale, parked ships at a body collapse into a single
@@ -163,7 +167,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     updateCamera, selectShip, selectBody, deselectShip, deselectBody,
     hoverBody, focusBody,
     setTargetSelectionMode,
-    toggleShipSelection, clearShipSelection,
+    toggleShipSelection, setShipSelection, clearShipSelection,
     selectedSettlementId,
   } = useGameContext();
   /**
@@ -285,6 +289,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // hit-test reads these so the box is always ON the visible hull, spin,
   // interpolation and formation spread included.
   const shipHitboxesRef = useRef<Map<string, { x: number; y: number; r: number }>>(new Map());
+  // Drag-box selection. Rendered as a fixed-position DOM overlay in
+  // CLIENT coords rather than on the canvas: it changes every mousemove,
+  // and feeding that through the canvas render effect would redraw the
+  // whole map per pixel of drag. Null when no box is in flight.
+  const [boxSel, setBoxSel] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  // A completed drag must not also fire the click handler underneath —
+  // otherwise releasing the box over empty space would immediately clear
+  // the selection the drag just made.
+  const suppressClickRef = useRef(false);
   // Ship under the cursor — drives the hover-only name label. A ref, not
   // state: mousemove fires on every pixel and the render loop already
   // runs each frame, so re-rendering the component for a label would be
@@ -1824,7 +1837,91 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     [panState, camera.scale, directUpdateCamera]
   );
 
+  /** Canvas-space centre of a ship, using the same sources (and the same
+   *  fallback order) the click hit-test uses so box-select agrees with
+   *  what a click would have grabbed. */
+  const shipCanvasPoint = useCallback(
+    (ship: Ship): { x: number; y: number } | null => {
+      const hb = shipHitboxesRef.current.get(ship.id);
+      if (hb) return { x: hb.x, y: hb.y };
+      const cached = ship.transit ? transitShipCanvasPosRef.current.get(ship.id) : undefined;
+      if (cached) return cached;
+      if (!canvasRef.current) return null;
+      return getShipCanvasPos(ship, canvasRef.current, gameState.bodies, camera, renderTick());
+    },
+    [gameState.bodies, camera, renderTick],
+  );
+
+  /** Finalize a drag box: every OWN ship whose centre falls inside wins.
+   *  Plain drag replaces the group (dragging empty space clears it, the
+   *  usual RTS meaning); shift/meta-drag adds to it. */
+  const commitBoxSelection = useCallback(
+    (c0x: number, c0y: number, c1x: number, c1y: number, additive: boolean) => {
+      if (!canvasRef.current) return;
+      const rect = canvasRef.current.getBoundingClientRect();
+      const s = renderScaleRef.current;
+      const toCanvas = (cx: number, cy: number) => ({
+        x: (cx - rect.left) * s,
+        y: (cy - rect.top) * s,
+      });
+      const a = toCanvas(c0x, c0y);
+      const b = toCanvas(c1x, c1y);
+      const minX = Math.min(a.x, b.x), maxX = Math.max(a.x, b.x);
+      const minY = Math.min(a.y, b.y), maxY = Math.max(a.y, b.y);
+
+      const caught: string[] = [];
+      for (const ship of gameState.ships) {
+        if (ship.ownedBy !== 'player') continue;   // same rule as shift-click
+        const p = shipCanvasPoint(ship);
+        if (!p) continue;
+        if (p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY) caught.push(ship.id);
+      }
+
+      if (additive) {
+        const merged = new Set(uiState.selectedShipIds ?? []);
+        for (const id of caught) merged.add(id);
+        setShipSelection(Array.from(merged));
+      } else {
+        setShipSelection(caught);
+      }
+    },
+    [gameState.ships, shipCanvasPoint, uiState.selectedShipIds, setShipSelection],
+  );
+
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    // Clear any suppress flag left over from a drag that ended OFF the
+    // canvas: that mouseup fires (window listener) but no click follows,
+    // so without this reset the stale flag would swallow the next real
+    // click. Every click is preceded by a mousedown, so resetting here
+    // is always safe and always early enough.
+    suppressClickRef.current = false;
+    // Left button drags a selection box. Panning is on the RIGHT button
+    // (below), so the two gestures never contend. Listeners go on the
+    // WINDOW, not the canvas, so releasing off-canvas still finalizes
+    // instead of leaving a box stuck to the cursor.
+    if (e.button === 0 && !uiState.targetSelectionMode) {
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const additive = e.shiftKey || e.metaKey;
+      let dragging = false;
+      const onMove = (ev: MouseEvent) => {
+        if (!dragging && Math.hypot(ev.clientX - startX, ev.clientY - startY) > BOX_DRAG_THRESHOLD_PX) {
+          dragging = true;
+        }
+        if (dragging) setBoxSel({ x0: startX, y0: startY, x1: ev.clientX, y1: ev.clientY });
+      };
+      const onUp = (ev: MouseEvent) => {
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+        setBoxSel(null);
+        if (!dragging) return;             // a plain click — let onClick handle it
+        suppressClickRef.current = true;
+        commitBoxSelection(startX, startY, ev.clientX, ev.clientY, additive);
+      };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+      return;
+    }
     if (e.button === 2) {
       if (uiState.targetSelectionMode) {
         setTargetSelectionMode(false);
@@ -1850,7 +1947,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
       setPanState({ startX: e.clientX, startY: e.clientY, camX: startCamX, camY: startCamY });
     }
-  }, [camera, gameState.bodies, renderTick, uiState.targetSelectionMode, setTargetSelectionMode, directUpdateCamera]);
+  }, [camera, gameState.bodies, renderTick, uiState.targetSelectionMode, setTargetSelectionMode, directUpdateCamera, commitBoxSelection]);
 
   const handleMouseUp = useCallback(() => {
     setPanState(null);
@@ -2085,6 +2182,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   const handleClick = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       if (!canvasRef.current) return;
+      // The click that closes a drag-box must not also run the tap logic:
+      // a box released over empty space would otherwise clear the very
+      // selection it just made.
+      if (suppressClickRef.current) { suppressClickRef.current = false; return; }
       const rect = canvasRef.current.getBoundingClientRect();
       handleTapAt(
         (e.clientX - rect.left) * renderScaleRef.current,
@@ -2251,6 +2352,25 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   }, [width, height]);
 
   return (
+    <>
+    {/* Drag-box rubber band. Fixed-position in client coords so it needs
+        no positioned ancestor and never participates in canvas layout;
+        pointerEvents none so it can't eat the mouseup that ends it. */}
+    {boxSel && (
+      <div
+        style={{
+          position: 'fixed',
+          left: Math.min(boxSel.x0, boxSel.x1),
+          top: Math.min(boxSel.y0, boxSel.y1),
+          width: Math.abs(boxSel.x1 - boxSel.x0),
+          height: Math.abs(boxSel.y1 - boxSel.y0),
+          border: '1px solid #ffb84d',
+          background: 'rgba(255, 184, 77, 0.10)',
+          pointerEvents: 'none',
+          zIndex: 55,
+        }}
+      />
+    )}
     <canvas
       ref={canvasRef}
       width={width}
@@ -2275,6 +2395,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         touchAction: 'none',
       }}
     />
+    </>
   );
 };
 
