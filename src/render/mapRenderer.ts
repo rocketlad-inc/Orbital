@@ -4795,7 +4795,14 @@ export function drawSystemRegions(
 ) {
   const spans = systemSpans(ctx);
   const scale = ctx.camera.scale;
-  const fade = systemRegionOpacityFor(spans, scale, ctx.bodies);
+  // Two gates now: the existing spans-based one (which knows about
+  // SYSTEM_SCALE geometry), AND the LOD contract, which retires the wash
+  // by L2. Past that zoom the player is reading individual hulls and the
+  // wash is a pure contrast tax on the text sitting over it — the
+  // Neptune/Uranus screenshot is a giant soft gradient behind ships,
+  // adding nothing and costing legibility.
+  const fade = systemRegionOpacityFor(spans, scale, ctx.bodies)
+    * lodAlpha(scale, LOD.POLITICAL_WASH);
   if (fade <= 0) return;
 
   // Ownership signature: any claim change redraws the layer.

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { perf } from '../multiplayer/PerfHud';
-import { requestLabel, flushLabels } from '../render/labelLayer';
+import { requestLabel, flushLabels, reserveBox, resetReservations } from '../render/labelLayer';
 import { smoothedTick, shipDisplayTick } from '../render/tickPhase';
 import { useGameContext } from '../state/gameContext';
 import { useMapLayers } from '../state/mapLayers';
@@ -418,6 +418,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // per-frame by the per-ship overlay below. A ship that arrived and
     // dropped out of transit shouldn't keep its old hitbox.
     transitShipCanvasPosRef.current.clear();
+    // Label/badge occupancy is per-frame state.
+    resetReservations();
     // Parked-ship hit boxes are rebuilt every frame by drawShip. Clear
     // here so a ship that left orbit doesn't keep a stale box.
     shipHitboxesRef.current.clear();
@@ -1486,7 +1488,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // gap — a mixed body reads as "▸3 ▸2" in the two fleets' own
       // colours instead of one amber "mixed" pill. Near-black fill keeps
       // the coloured border + count legible over the wash.
-      const drawBadge = (cx: number, cy: number, counts: Map<string, number>, big: boolean, alpha: number) => {
+      // `id`/`ax`/`ay`/`anchorR` let the badge claim a collision-free slot
+      // instead of always sitting at a fixed up-right offset — which is
+      // why neighbouring bodies' badges piled onto each other in the
+      // strategic screenshot. If nothing is free the badge is SKIPPED,
+      // never stacked: an unreadable pile communicates less than absence.
+      const drawBadge = (
+        id: string, ax: number, ay: number, anchorR: number,
+        counts: Map<string, number>, big: boolean, alpha: number,
+      ) => {
         if (alpha <= 0.01 || counts.size === 0) return;
         const fs = big ? 15 : 13;
         const padX = 6, gap = 3;
@@ -1499,7 +1509,16 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         c2d.textAlign = 'left';
         c2d.textBaseline = 'middle';
         const entries = [...counts.entries()].filter(([, n]) => n > 0).sort(segOrder);
-        let x = cx;
+        // Total width first, so the whole multi-faction strip is placed
+        // as ONE box (placing segments individually would let a second
+        // faction's pill land on another body's label).
+        let totalW = 0;
+        for (const [, n] of entries) totalW += c2d.measureText(`▸${n}`).width + padX * 2 + gap;
+        totalW = Math.max(0, totalW - gap);
+        const slot = reserveBox(id, ax, ay, anchorR, totalW, pillH);
+        if (!slot) { c2d.restore(); return; }
+        const cy = slot.y + pillH / 2;
+        let x = slot.x;
         const anyCtx = c2d as any;
         for (const [fid, n] of entries) {
           const { p, s } = badgeTonesOf(fid);
@@ -1535,7 +1554,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const bp = bodyPosition(body, renderTick(), gameState.bodies);
         const cp = worldToCanvas(bp.x, bp.y, renderContext);
         const radius = Math.max(3, (body.radius ?? 4) * camera.scale);
-        drawBadge(cp.x + radius + 6, cp.y - radius - 6, counts, false, alpha);
+        drawBadge(`badge:${bodyId}`, cp.x, cp.y, radius + 4, counts, false, alpha);
       }
       // System badges: visible even when the wash is full — that IS the read.
       for (const [anchorId, counts] of sysAgg) {
@@ -1544,7 +1563,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         const bp = bodyPosition(body, renderTick(), gameState.bodies);
         const cp = worldToCanvas(bp.x, bp.y, renderContext);
         const radius = Math.max(4, (body.radius ?? 5) * camera.scale);
-        drawBadge(cp.x + radius + 7, cp.y - radius - 7, counts, true, 1);
+        drawBadge(`sysbadge:${anchorId}`, cp.x, cp.y, radius + 5, counts, true, 1);
       }
     }
 
