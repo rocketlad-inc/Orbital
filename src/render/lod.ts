@@ -61,9 +61,14 @@ export const LOD: Record<string, Band> = {
   REGION_SUB: [0.34, 0.6, 2.5, 4],
 
   // ---- decoration -------------------------------------------------------
-  /** Political wash. Its whole job is territorial read at a glance; by L2
-   *  you're looking at individual hulls and it's just a contrast tax. */
-  POLITICAL_WASH: [0.2, 0.45, 2.2, 3.4],
+  /** Political wash. Territorial read at a glance — and it turns out
+   *  that read stays valuable much further in than the first cut
+   *  assumed (Lorne, after seeing it retire at L2). It now survives the
+   *  whole approach band and most of the neighbourhood band, only
+   *  dissolving as you drop toward moon-system depth where the frame is
+   *  a single planet's traffic and territory is no longer the question.
+   *  Text still wins contrast: labels draw last, over the wash. */
+  POLITICAL_WASH: [0.2, 0.45, 6, 11],
   /** Torch plumes: pure decoration below L2. */
   THRUST_PLUME: [1.2, 2.5, Infinity, Infinity],
   /** Per-hull dressing (rank chevrons, wakes, trim). */

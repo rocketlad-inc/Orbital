@@ -4795,12 +4795,11 @@ export function drawSystemRegions(
 ) {
   const spans = systemSpans(ctx);
   const scale = ctx.camera.scale;
-  // Two gates now: the existing spans-based one (which knows about
-  // SYSTEM_SCALE geometry), AND the LOD contract, which retires the wash
-  // by L2. Past that zoom the player is reading individual hulls and the
-  // wash is a pure contrast tax on the text sitting over it — the
-  // Neptune/Uranus screenshot is a giant soft gradient behind ships,
-  // adding nothing and costing legibility.
+  // Two gates: the existing spans-based one (which knows about
+  // SYSTEM_SCALE geometry), AND the LOD contract, which now carries the
+  // wash deep into the neighbourhood band before dissolving it. See
+  // LOD.POLITICAL_WASH for the reasoning — territory stays worth seeing
+  // far closer in than the first cut assumed.
   const fade = systemRegionOpacityFor(spans, scale, ctx.bodies)
     * lodAlpha(scale, LOD.POLITICAL_WASH);
   if (fade <= 0) return;
