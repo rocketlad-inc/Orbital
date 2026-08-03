@@ -1070,6 +1070,9 @@ function RenderTable({ rows }: { rows: RenderRow[] }) {
                 </td>
                 <td>{r.ships}</td>
                 <td style={{ color: '#8a9fb3', fontSize: 11 }} title={r.gpu ?? r.ua}>
+                  {r.gpu && /microsoft basic|swiftshader|llvmpipe|software/i.test(r.gpu) && (
+                    <b style={{ color: '#ff6b6b' }}>⚠ SOFTWARE </b>
+                  )}
                   {(r.gpu ?? '?').slice(0, 28)}{r.mobile ? ' · mobile' : ''}
                   {r.cores ? ` · ${r.cores}c` : ''}{r.dpr && r.dpr !== 1 ? ` · ${r.dpr}x` : ''}
                 </td>

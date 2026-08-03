@@ -265,6 +265,51 @@ try {
 
 const cell: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', gap: 12 };
 
+// Software-rasterizer detection: ANGLE reporting the Microsoft Basic
+// Render Driver / SwiftShader / llvmpipe means the browser is drawing
+// this canvas on the CPU - no code change of ours can make that fast,
+// but the player can fix it in browser settings in ten seconds. Tell
+// them once.
+export function isSoftwareRenderer(gpu: string | null): boolean {
+  return !!gpu && /microsoft basic|swiftshader|llvmpipe|software/i.test(gpu);
+}
+
+export function SoftwareRenderWarning() {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem('orbital:swWarnDismissed')) return;
+      const gpu = detectGpu();
+      if (isSoftwareRenderer(gpu)) setShow(true);
+    } catch { /* private mode */ }
+  }, []);
+  if (!show) return null;
+  return (
+    <div style={{
+      position: 'fixed', top: 60, left: '50%', transform: 'translateX(-50%)',
+      zIndex: 9000, maxWidth: 460, background: 'rgba(46, 26, 8, 0.96)',
+      border: '1px solid #c9a84c', borderRadius: 8, padding: '10px 14px',
+      font: '12.5px/1.5 sans-serif', color: '#e8d9b0',
+    }}>
+      <b>Orbital is running without GPU acceleration.</b> Your browser is
+      drawing the map in software, which makes everything feel slow. Enable
+      hardware acceleration in your browser settings (Settings → System in
+      Chrome/Edge, Settings → Performance in Firefox), then restart the
+      browser.
+      <button
+        onClick={() => {
+          try { localStorage.setItem('orbital:swWarnDismissed', '1'); } catch { /* ok */ }
+          setShow(false);
+        }}
+        style={{
+          marginLeft: 10, background: 'none', border: '1px solid #c9a84c',
+          borderRadius: 4, color: '#e8d9b0', cursor: 'pointer', padding: '2px 8px',
+        }}
+      >Got it</button>
+    </div>
+  );
+}
+
 export function PerfHud() {
   const [, force] = useState(0);
   // Frame sampling runs for EVERY player, HUD or not — frame time is the

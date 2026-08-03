@@ -148,6 +148,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   height = typeof window !== 'undefined' ? window.innerHeight : 800,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // DYNAMIC RESOLUTION (telemetry-driven): two playtesters render the
+  // canvas WITHOUT GPU acceleration (ANGLE reports Microsoft Basic
+  // Render Driver for one; Firefox software-canvas for the other) - for
+  // them every pixel is CPU-rasterized and frame cost scales with AREA.
+  // When sustained fps drops, shrink the canvas BACKING store while CSS
+  // size stays fixed: the browser upscales, slightly soft, but 0.65x
+  // scale = 42% of the pixels. Hardware-accelerated clients never
+  // trip the down-step. Mouse input converts via renderScaleRef.
+  const renderScaleRef = useRef(1);
   const {
     gameState, camera, uiState, simSpeed,
     updateCamera, selectShip, selectBody, deselectShip, deselectBody,
@@ -1723,8 +1732,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       if (!canvasRef.current) return;
       if (panState) {
-        const deltaX = e.clientX - panState.startX;
-        const deltaY = e.clientY - panState.startY;
+        const deltaX = (e.clientX - panState.startX) * renderScaleRef.current;
+        const deltaY = (e.clientY - panState.startY) * renderScaleRef.current;
         const newCamX = panState.camX - deltaX / camera.scale;
         const newCamY = panState.camY - deltaY / camera.scale;
         directUpdateCamera({ x: newCamX, y: newCamY });
@@ -1774,8 +1783,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const rect = canvas.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
+      const mouseX = (e.clientX - rect.left) * renderScaleRef.current;
+      const mouseY = (e.clientY - rect.top) * renderScaleRef.current;
       const worldBeforeX = camera.x + (mouseX - canvas.width / 2) / camera.scale;
       const worldBeforeY = camera.y + (mouseY - canvas.height / 2) / camera.scale;
       const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
@@ -1963,7 +1972,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       if (!canvasRef.current) return;
       const rect = canvasRef.current.getBoundingClientRect();
-      handleTapAt(e.clientX - rect.left, e.clientY - rect.top);
+      handleTapAt(
+        (e.clientX - rect.left) * renderScaleRef.current,
+        (e.clientY - rect.top) * renderScaleRef.current,
+      );
     },
     [handleTapAt]
   );
@@ -1972,8 +1984,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       if (!canvasRef.current) return;
       const rect = canvasRef.current.getBoundingClientRect();
-      const canvasX = e.clientX - rect.left;
-      const canvasY = e.clientY - rect.top;
+      const canvasX = (e.clientX - rect.left) * renderScaleRef.current;
+      const canvasY = (e.clientY - rect.top) * renderScaleRef.current;
 
       // Ship hover drives the name label. Same boxes the click hit-test
       // uses, so a label appears exactly where a click would land — no
@@ -2019,7 +2031,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       if (!canvasRef.current) return;
       const rect = canvasRef.current.getBoundingClientRect();
-      handleFocusAt(e.clientX - rect.left, e.clientY - rect.top);
+      handleFocusAt(
+        (e.clientX - rect.left) * renderScaleRef.current,
+        (e.clientY - rect.top) * renderScaleRef.current,
+      );
     },
     [handleFocusAt]
   );
@@ -2078,7 +2093,25 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       for (let i = 0; i < n; i++) renderRef.current();
       return (performance.now() - t0) / n;
     };
+    let frameCount = 0;
     const loop = () => {
+      // Adaptive resolution: evaluate every ~90 frames on the rolling
+      // frame-time EMA. Hysteresis (down under 18fps, up over 45) so it
+      // never oscillates. Floor 0.55 - below that text becomes mush.
+      if (++frameCount % 90 === 0 && canvasRef.current) {
+        const q = renderScaleRef.current;
+        let next = q;
+        if (perf.frameMs > 55 && q > 0.55) next = Math.max(0.55, q - 0.15);
+        else if (perf.frameMs < 22 && q < 1) next = Math.min(1, q + 0.15);
+        if (next !== q) {
+          renderScaleRef.current = next;
+          const cv = canvasRef.current;
+          cv.style.width = `${width}px`;
+          cv.style.height = `${height}px`;
+          cv.width = Math.round(width * next);   // clears + resizes backing
+          cv.height = Math.round(height * next);
+        }
+      }
       // Time the draw itself: frame INTERVAL alone can't tell "our canvas
       // work is heavy" from "something else stalled the main thread".
       const t0 = performance.now();
@@ -2098,7 +2131,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     };
     raf = requestAnimationFrame(loop);
     return () => { if (raf != null) cancelAnimationFrame(raf); };
-  }, []);
+  }, [width, height]);
 
   return (
     <canvas

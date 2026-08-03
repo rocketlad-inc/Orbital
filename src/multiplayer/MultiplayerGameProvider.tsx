@@ -9,7 +9,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from './api';
-import { perf, PerfHud } from './PerfHud';
+import { perf, PerfHud, SoftwareRenderWarning } from './PerfHud';
 import { logger, LogCategory, LogLevel } from '../game/logger';
 import { isNodeCancelPending, reconcilePendingNodeCancels } from './pendingNodeCancels';
 import { GameContextProvider } from '../state/gameContext';
@@ -1992,6 +1992,7 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
         {/* Latency stopwatch — inert unless ?perf=1. Renders null
             otherwise, so it costs nothing for normal players. */}
         <PerfHud />
+        <SoftwareRenderWarning />
         {gameOver && (
           <div
             className="mp-overlay"
