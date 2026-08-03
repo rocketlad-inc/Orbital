@@ -28,6 +28,7 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
   const {
     gameState, startResearch, cancelResearch,
     enqueueResearch, dequeueResearch, moveResearchUp,
+    updateGameState,
   } = useGameContext();
   const mpActions = useMultiplayerActions();
   // Set of tech ids currently in flight (POSTed but /state hasn't yet
@@ -429,6 +430,36 @@ export const TechPanel: React.FC<TechPanelProps> = ({ onClose }) => {
                       // income fills whatever remains per tick.
                       setInFlight(prev => new Set(prev).add(id));
                       setResearchError(null);
+                      // OPTIMISTIC: apply the click NOW. The actor's
+                      // post-action refetch is always a cache MISS (their
+                      // own bump invalidated it) and can queue behind an
+                      // in-flight poll - measured worst case ~2s. The
+                      // server reconciles within a poll either way; a
+                      // rejection rewinds via the forced post-action
+                      // re-apply. Mirrors the server's banked-science
+                      // rule: covered -> level completes and the pool
+                      // pays; else it becomes the active project.
+                      if (instant) {
+                        const tech0 = gameState.factionTech.player ?? { levels: {}, researching: null, progress: 0, queue: [] };
+                        const res0 = gameState.resources.player;
+                        updateGameState({
+                          factionTech: {
+                            ...gameState.factionTech,
+                            player: {
+                              ...tech0,
+                              levels: { ...tech0.levels, [id]: (tech0.levels[id] ?? 0) + 1 },
+                              researching: tech0.researching === id ? null : tech0.researching,
+                              progress: tech0.researching === id ? 0 : tech0.progress,
+                            },
+                          },
+                          ...(res0 ? {
+                            resources: {
+                              ...gameState.resources,
+                              player: { ...res0, science: Math.max(0, res0.science - cost) },
+                            },
+                          } : {}),
+                        });
+                      }
                       try {
                         const res = await mpActions.research({ techId: id });
                         if (!res.ok) {
