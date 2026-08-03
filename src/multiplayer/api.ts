@@ -42,7 +42,14 @@ export async function apiFetch<T = unknown>(
   const t0 = performance.now();
   let res: Response;
   try {
-    res = await fetch(path, { credentials: 'same-origin', ...init, headers });
+    // cache: 'no-store' — game API responses must NEVER be served from
+    // the browser's HTTP cache. A server-side caching bug once leaked a
+    // max-age header onto /state, and every player's browser dutifully
+    // served two-minute-old game state from disk ("pressing build does
+    // nothing" while six frigates queued server-side). This line makes
+    // that entire class of bug impossible from the client side, and it
+    // also purges any poisoned entry the moment this bundle loads.
+    res = await fetch(path, { credentials: 'same-origin', cache: 'no-store', ...init, headers });
   } catch (e) {
     logger.error('API', `${method} ${path} — network error`, {
       ms: Math.round(performance.now() - t0),
