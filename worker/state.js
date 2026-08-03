@@ -257,7 +257,18 @@ async function handleGetState(req, env, ctx) {
     `https://state-cache.orbital.internal/${gameId}/${me ? me.id : 'spec'}/v${game.state_version ?? 0}/t${game.current_tick}`);
   try {
     const cached = await caches.default.match(__cacheKey);
-    if (cached) return cached;
+    if (cached) {
+      // CRITICAL: strip the stored max-age before returning. The stored
+      // copy carries cache-control so the EDGE cache API accepts it -
+      // but served as-is, the BROWSER also honored it and served /state
+      // from disk for 120s. Result: a player's own action looked like it
+      // did nothing until the browser cache expired ("pressing build
+      // does nothing" - six duplicate frigates queued by retry-clicks).
+      const fresh = new Response(cached.body, { status: cached.status });
+      fresh.headers.set('content-type', 'application/json');
+      fresh.headers.set('cache-control', 'no-store');
+      return fresh;
+    }
   } catch { /* cache API unavailable - assemble normally */ }
 
   if (!me) return err(403, 'not_member', 'not in this game');
@@ -1295,6 +1306,7 @@ const tradeRoutesP = env.DB
   // Store for the next identical poll. TTL is a backstop only - the
   // version/tick key is what actually invalidates. Failures are
   // swallowed: caching is an optimization, never a dependency.
+  __resp.headers.set('cache-control', 'no-store');
   try {
     const __copy = new Response(__resp.clone().body, {
       headers: {
