@@ -864,7 +864,10 @@ const WmFleet: React.FC<{
   bodyId: string; mobile: boolean; isMine: boolean; hasStation: boolean;
   railW: number; onErr: (m: string | null) => void;
 }> = ({ bodyId, mobile, isMine, hasStation, railW, onErr }) => {
-  const { gameState } = useGameContext();
+  const { gameState, updateGameState } = useGameContext();
+  // Live view for async rollbacks (a poll may land while the POST flies).
+  const gsRef = React.useRef(gameState);
+  React.useEffect(() => { gsRef.current = gameState; }, [gameState]);
   const mpActions = useMultiplayerActions();
   const gate = useFeatureGate();
   const [nameDraft, setNameDraft] = useState('');
@@ -890,8 +893,37 @@ const WmFleet: React.FC<{
     ]);
     const shipName = nameDraft.trim() || randomShipName(cls, existing);
     setNameDraft('');
+    // Optimistic queue row - THE build path players actually use (the
+    // world menu), which the earlier BuildPanel-only optimism missed
+    // entirely; this is why "build, very specifically, takes a beat".
+    // Same contract as BuildPanel/TechPanel: the row appears NOW with
+    // status 'waiting' (the server decides slot promotion), the next
+    // /state replaces it wholesale, a rejection rolls it back via the
+    // live ref (never the stale closure).
+    const optimisticId = `opt_${Date.now()}_${cls}`;
+    updateGameState({
+      buildOrders: [
+        ...gameState.buildOrders,
+        {
+          id: optimisticId,
+          bodyId,
+          shipClass: cls,
+          ownedBy: 'player',
+          startTick: gameState.currentTick,
+          completeTick: gameState.currentTick + getShipClass(cls).buildTime,
+          shipName,
+          iconVariant: activeVariant(cls),
+          status: 'waiting',
+        },
+      ],
+    });
     const res = await mpActions?.build({ bodyId, shipClass: cls, shipName, iconVariant: activeVariant(cls) });
-    if (res && !res.ok) onErr(res.error ?? 'Build rejected by server');
+    if (res && !res.ok) {
+      updateGameState({
+        buildOrders: gsRef.current.buildOrders.filter(o => o.id !== optimisticId),
+      });
+      onErr(res.error ?? 'Build rejected by server');
+    }
   };
 
   // Cancel a queued OR in-progress ship build. Server (handleCancelBuild)
