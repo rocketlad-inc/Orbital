@@ -5,6 +5,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { useGameContext } from '../state/gameContext';
+import type { GameState } from '../types';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { loadoutSummary } from '../game/shipParts';
 import { effectiveShipMaxHp } from '../game/combat';
@@ -15,11 +16,67 @@ import { makeSystemRootOf, systemLabel, shipStatus, makeHostilesAtBody, makeArme
 import { useIsMobile } from '../hooks/useIsMobile';
 import './Outliner.css';
 
+// Wrapper + memo boundary. Every useGameContext consumer re-renders on
+// ANY gameState change, so an optimistic click (science debit, build
+// row) re-rendered a few hundred Outliner rows that display none of it
+// - the "short beat" after otherwise-instant clicks. The entity arrays
+// keep their identity across such updates (updateGameState spreads),
+// so a memo keyed on the slices skips the whole row tree.
 export const Outliner: React.FC = () => {
   const {
     gameState, uiState, selectShip, selectBody, focusBody,
     selectSettlement, selectedSettlementId,
   } = useGameContext();
+  return (
+    <OutlinerInner
+      ships={gameState.ships}
+      bodies={gameState.bodies}
+      settlements={gameState.settlements}
+      buildOrders={gameState.buildOrders}
+      factionTech={gameState.factionTech}
+      alliedFactionIds={gameState.alliedFactionIds}
+      peaceFactionIds={gameState.peaceFactionIds}
+      currentTick={gameState.currentTick}
+      uiState={uiState}
+      selectShip={selectShip}
+      selectBody={selectBody}
+      focusBody={focusBody}
+      selectSettlement={selectSettlement}
+      selectedSettlementId={selectedSettlementId}
+    />
+  );
+};
+
+type Ctx = ReturnType<typeof useGameContext>;
+interface OutlinerInnerProps {
+  ships: GameState['ships'];
+  bodies: GameState['bodies'];
+  settlements: GameState['settlements'];
+  buildOrders: GameState['buildOrders'];
+  factionTech: GameState['factionTech'];
+  alliedFactionIds: GameState['alliedFactionIds'];
+  peaceFactionIds: GameState['peaceFactionIds'];
+  currentTick: number;
+  uiState: Ctx['uiState'];
+  selectShip: Ctx['selectShip'];
+  selectBody: Ctx['selectBody'];
+  focusBody: Ctx['focusBody'];
+  selectSettlement: Ctx['selectSettlement'];
+  selectedSettlementId: Ctx['selectedSettlementId'];
+}
+
+const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
+  ships, bodies, settlements, buildOrders, factionTech,
+  alliedFactionIds, peaceFactionIds, currentTick,
+  uiState, selectShip, selectBody, focusBody,
+  selectSettlement, selectedSettlementId,
+}) => {
+  // Facade so the 400 lines below keep reading `gameState.X` verbatim.
+  const gameState = React.useMemo(() => ({
+    ships, bodies, settlements, buildOrders, factionTech,
+    alliedFactionIds, peaceFactionIds, currentTick,
+  }), [ships, bodies, settlements, buildOrders, factionTech,
+       alliedFactionIds, peaceFactionIds, currentTick]) as unknown as GameState;
   const isMobile = useIsMobile();
   // Default collapsed on mobile so it doesn't eat the whole screen.
   const [collapsed, setCollapsed] = useState<boolean>(() => isMobile);
@@ -166,7 +223,7 @@ export const Outliner: React.FC = () => {
         a.label.localeCompare(b.label));
   }, [tracked, systemRootOf, gameState.bodies]);
 
-  const currentTick = gameState.currentTick;
+  // currentTick arrives as a prop (memo slice) - no re-read needed.
 
   /** "In Combat" means a hostile is here NOW — computed over ALL ships and
    *  settlements, not just the player's, since the enemy is the point. */
@@ -447,4 +504,6 @@ export const Outliner: React.FC = () => {
     </div>
     </>
   );
-};
+});
+OutlinerInner.displayName = 'OutlinerInner';
+
