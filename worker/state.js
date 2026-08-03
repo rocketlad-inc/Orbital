@@ -192,7 +192,7 @@ async function handleGetState(req, env, ctx) {
 
   const game = await env.DB
     .prepare(
-      `SELECT id, status, current_tick, tick_interval_ms,
+      `SELECT id, status, current_tick, tick_interval_ms, state_version,
               next_tick_at, started_at, completed_at, map_seed,
               winner_faction_id, victory_type, gating_enabled,
               dyson_controller_faction_id, dyson_foundation_settlement_id,
@@ -243,6 +243,23 @@ async function handleGetState(req, env, ctx) {
     )
     .bind(gameId, ctx.session.user_id)
     .first();
+
+  // ---- Versioned state cache ------------------------------------------
+  // Assembly below costs ~500ms in a large game (~15 D1 trips that
+  // barely overlap). Between mutations the payload is byte-identical
+  // (verified live), so: cache per (game, faction, state_version,
+  // current_tick). Actions bump state_version at the dispatch choke
+  // point BEFORE their handler runs; ticks change current_tick. Either
+  // rolls the key, so a hit can never serve pre-action state to the
+  // player who just acted. caches.default is per-colo - a miss just
+  // pays the old full assembly.
+  const __cacheKey = new Request(
+    `https://state-cache.orbital.internal/${gameId}/${me ? me.id : 'spec'}/v${game.state_version ?? 0}/t${game.current_tick}`);
+  try {
+    const cached = await caches.default.match(__cacheKey);
+    if (cached) return cached;
+  } catch { /* cache API unavailable - assemble normally */ }
+
   if (!me) return err(403, 'not_member', 'not in this game');
 
   // Caller's tech levels, keyed by tech_id.
@@ -1183,7 +1200,7 @@ const tradeRoutesP = env.DB
   if (__total > 250) {
     console.log(`STATE-TIMING ${gameId} total=${__total}ms ${__marks.join(' ')}`);
   }
-  return json({
+  const __resp = json({
     game: {
       id: game.id,
       status: game.status,
@@ -1275,6 +1292,19 @@ const tradeRoutesP = env.DB
       } catch { return []; }
     })(),
   });
+  // Store for the next identical poll. TTL is a backstop only - the
+  // version/tick key is what actually invalidates. Failures are
+  // swallowed: caching is an optimization, never a dependency.
+  try {
+    const __copy = new Response(__resp.clone().body, {
+      headers: {
+        'content-type': 'application/json',
+        'cache-control': 'public, max-age=120',
+      },
+    });
+    await caches.default.put(__cacheKey, __copy);
+  } catch { /* no cache - fine */ }
+  return __resp;
 }
 
 export const routes = [

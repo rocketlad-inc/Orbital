@@ -958,6 +958,23 @@ export default {
       // not logged — they'd swamp the table with /state noise.
       if (req.method !== 'GET' && url.pathname.startsWith('/api/games/')
           && !url.pathname.endsWith('/telemetry')) {
+        // State-cache invalidation (0056): bump the game's version BEFORE
+        // the handler runs. Awaited deliberately - the client refetches
+        // ~100ms after the response, and that refetch must see the new
+        // version or it would cache-hit its own pre-action state. A bump
+        // for an action the handler then rejects is a harmless miss.
+        // /perf reports mutate nothing and are excluded.
+        if (!/\/perf(\/session)?$/.test(url.pathname)) {
+          const gmv = url.pathname.match(/^\/api\/games\/([^/]+)\//);
+          if (gmv) {
+            try {
+              await env.DB
+                .prepare('UPDATE games SET state_version = state_version + 1 WHERE id = ?')
+                .bind(decodeURIComponent(gmv[1]))
+                .run();
+            } catch (e) { console.error('state_version bump failed', e); }
+          }
+        }
         const kind = analytics.eventKindFromPath(req.method, url.pathname);
         if (kind) {
           const gm = url.pathname.match(/^\/api\/games\/([^/]+)\//);
