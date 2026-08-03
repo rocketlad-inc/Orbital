@@ -184,6 +184,12 @@ async function handleGetState(req, env, ctx) {
   const gameId = ctx.params.gameId;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
 
+  // Section timing - logged when assembly is slow so `wrangler tail`
+  // shows WHERE the time goes instead of us guessing at it.
+  const __t0 = Date.now();
+  const __marks = [];
+  const __mark = (label) => __marks.push(`${label}:${Date.now() - __t0}`);
+
   const game = await env.DB
     .prepare(
       `SELECT id, status, current_tick, tick_interval_ms,
@@ -246,7 +252,8 @@ async function handleGetState(req, env, ctx) {
   // (measured: fetch p50 434-650ms; it is the floor under every
   // click). Start them together, await at the original sites so
   // all derived code keeps its exact order and shape.
-const techRowsP = env.DB
+__mark('pre-wave2');
+  const techRowsP = env.DB
     .prepare('SELECT tech_id, level FROM faction_techs WHERE game_id = ? AND faction_id = ?')
     .bind(gameId, me.id)
     .all();
@@ -407,7 +414,8 @@ const peaceRowsP = env.DB
   // (measured: fetch p50 434-650ms; it is the floor under every
   // click). Start them together, await at the original sites so
   // all derived code keeps its exact order and shape.
-const sensorBodiesP = env.DB
+__mark('wave2-done');
+  const sensorBodiesP = env.DB
     .prepare(
       `SELECT id, parent_body_id, orbit_radius, orbit_period, angle0
          FROM game_bodies WHERE game_id = ?1 AND destroyed_at_tick IS NULL`,
@@ -484,7 +492,8 @@ const sensorSettlementsP = env.DB
   // (measured: fetch p50 434-650ms; it is the floor under every
   // click). Start them together, await at the original sites so
   // all derived code keeps its exact order and shape.
-const bodiesRawP = env.DB
+__mark('sensors-done');
+  const bodiesRawP = env.DB
     .prepare(
       `WITH my_presence AS (
          SELECT DISTINCT parent_body_id AS bid
@@ -723,7 +732,8 @@ const shipsP = env.DB
   // (measured: fetch p50 434-650ms; it is the floor under every
   // click). Start them together, await at the original sites so
   // all derived code keeps its exact order and shape.
-const fleetsP = env.DB
+__mark('world-done');
+  const fleetsP = env.DB
     .prepare(
       `SELECT f.id, f.faction_id, f.name, f.flag_captain_id, f.created_at_tick,
               fc.name AS flag_captain_name, fc.rank AS flag_captain_rank,
@@ -1168,6 +1178,11 @@ const tradeRoutesP = env.DB
     maxHp: game.dyson_max_hp ?? 0,
   } : null;
 
+  __mark('assembled');
+  const __total = Date.now() - __t0;
+  if (__total > 250) {
+    console.log(`STATE-TIMING ${gameId} total=${__total}ms ${__marks.join(' ')}`);
+  }
   return json({
     game: {
       id: game.id,

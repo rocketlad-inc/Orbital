@@ -832,7 +832,7 @@ export default {
         await ensureMigrated(env);
       }
       try {
-        return await this._dispatch(req, env, url);
+        return await this._dispatch(req, env, url, execCtx);
       } catch (e) {
         return json(
           { error: { code: 'worker_exception', message: String(e?.message || e), stack: String(e?.stack || '').slice(0, 1000) } },
@@ -915,7 +915,7 @@ export default {
     })());
   },
 
-  async _dispatch(req, env, url) {
+  async _dispatch(req, env, url, execCtx) {
       // Version probe — unauthenticated. Returns the git SHA + build time
       // the worker bundle was produced from, so a smoke test can answer
       // "is my latest fix actually deployed?" without needing to inspect
