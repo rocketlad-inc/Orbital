@@ -9,6 +9,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from './api';
+import { perf, PerfHud } from './PerfHud';
 import { logger, LogCategory, LogLevel } from '../game/logger';
 import { isNodeCancelPending, reconcilePendingNodeCancels } from './pendingNodeCancels';
 import { GameContextProvider } from '../state/gameContext';
@@ -1749,12 +1750,16 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
     if (inflightRef.current) { refetchQueuedRef.current = true; return; }
     inflightRef.current = true;
     try {
+      const fetchT0 = performance.now();
       const res = await apiFetch<ServerState>(`/api/games/${gameId}/state`);
+      perf.recordFetch(performance.now() - fetchT0);
       if (res.ok) {
         const body = JSON.stringify(res.data);
-        if (body === lastAppliedBodyRef.current) return;   // no-op poll
+        if (body === lastAppliedBodyRef.current) { perf.recordSkip(); return; }
         lastAppliedBodyRef.current = body;
+        const mapT0 = performance.now();
         const next = serverToGameState(res.data, res.data.me.faction_id);
+        perf.recordMap(performance.now() - mapT0, next.ships.length);
         setState(next);
         // Captain debut (DESIGN-captains §5.1): when one of OUR ships
         // appears for the first time with a captain aboard, offer (never
@@ -1974,6 +1979,9 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
     >
       <MultiplayerActionsProvider gameId={gameId}>
         {children}
+        {/* Latency stopwatch — inert unless ?perf=1. Renders null
+            otherwise, so it costs nothing for normal players. */}
+        <PerfHud />
         {gameOver && (
           <div
             className="mp-overlay"

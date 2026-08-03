@@ -8,6 +8,7 @@
 
 import React, { createContext, useContext, useMemo } from 'react';
 import { apiFetch as rawApiFetch } from './api';
+import { perf } from './PerfHud';
 import { logger } from '../game/logger';
 import type { BuildListEntry } from '../types';
 
@@ -364,9 +365,13 @@ export function MultiplayerActionsProvider({
     // 1.5s poll happens to fire. Shadowing the import means all ~30
     // action closures below inherit it without a 30-site rewrite.
     const apiFetch = async <T = unknown,>(path: string, init?: RequestInit) => {
+      const t0 = performance.now();
       const res = await rawApiFetch<T>(path, init);
       const method = init?.method ?? 'GET';
       if (res.ok && method.toUpperCase() !== 'GET') {
+        // Starts the click->pixels stopwatch; PerfHud closes it on the
+        // frame that actually paints the resulting state.
+        perf.recordAction(performance.now() - t0);
         window.dispatchEvent(new CustomEvent('orbital:refresh-state'));
       }
       return res;
