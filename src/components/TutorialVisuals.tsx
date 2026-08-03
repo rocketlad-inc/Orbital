@@ -224,6 +224,36 @@ const Herald = () => (
   </Frame>
 );
 
+/** Expansion: colony ship leaving an owned world to plant a flag. */
+const Expand = () => (
+  <Frame>
+    {/* Home world — already yours (teal wash) */}
+    <g transform="translate(56,55)">
+      <circle r={18} fill="rgba(78,205,196,0.25)" stroke="#4ecdc4" strokeWidth={1.4} />
+      <circle r={26} fill="none" stroke="#4ecdc4" strokeWidth={1} opacity={0.35} />
+      <text y={40} textAnchor="middle" fill="#4ecdc4" fontSize={8.5} letterSpacing={1}>YOURS</text>
+    </g>
+    {/* Colony ship en route */}
+    <g stroke="#7fd4ff" strokeWidth={1.4} fill="none">
+      <path d="M84 55 h116" strokeDasharray="5 4" />
+    </g>
+    <g transform="translate(146,55)">
+      <path d="M-10 0 L6 -6 L12 0 L6 6 Z" fill="rgba(127,212,255,0.4)" stroke="#7fd4ff" strokeWidth={1.3} />
+      <path d="M-10 -2 L-16 0 L-10 2 Z" fill="#ff9e4a" opacity={0.85} />
+      <text y={22} textAnchor="middle" fill="#7fd4ff" fontSize={8.5} letterSpacing={1}>COLONY SHIP</text>
+    </g>
+    {/* New world gaining the flag */}
+    <g transform="translate(244,55)">
+      <circle r={18} fill="rgba(100,128,156,0.15)" stroke="#64809c" strokeWidth={1.2} strokeDasharray="3 3" />
+      <path d="M0 6 v-16 m0 0 h10 l-3 4 l3 4 h-10" stroke="#4ecdc4" strokeWidth={1.6} fill="none" />
+      <text y={40} textAnchor="middle" fill="#8fa8bf" fontSize={8.5} letterSpacing={1}>CLAIM IT</text>
+    </g>
+    <text x={150} y={16} textAnchor="middle" fill="#4ecdc4" fontSize={8.5} letterSpacing={1}>
+      EVERY WORLD COUNTS TOWARD 60% DOMINATION
+    </text>
+  </Frame>
+);
+
 const VISUALS: Record<TutorialVisualId, React.FC> = {
   victory: Victory,
   'map-controls': MapControls,
@@ -232,6 +262,7 @@ const VISUALS: Record<TutorialVisualId, React.FC> = {
   senate: Senate,
   dyson: Dyson,
   herald: Herald,
+  expand: Expand,
 };
 
 export const TutorialVisual: React.FC<{ id: TutorialVisualId }> = ({ id }) => {

@@ -38,6 +38,7 @@ export type Placement = 'above' | 'below' | 'left' | 'right' | 'center';
  *  "if you're explaining a menu, the menu is open" rule. */
 export type TutorialEffect =
   | 'open-capital-menu'    // selectBody(player capital) → world menu flies in
+  | 'open-sol-menu'        // selectBody(sol) → the sun's menu (Dyson card)
   | 'select-first-ship'    // selectShip(first player ship) → ship panel mounts
   | 'open-panel-research'  // window 'orbital:open-panel' {panel:'research'}
   | 'open-panel-fleet'
@@ -60,7 +61,7 @@ export type TutorialCheckId =
 
 /** Inline SVG illustration key (TutorialVisuals.tsx). */
 export type TutorialVisualId =
-  | 'victory' | 'map-controls' | 'economy' | 'upkeep' | 'senate' | 'dyson' | 'herald';
+  | 'victory' | 'map-controls' | 'economy' | 'upkeep' | 'senate' | 'dyson' | 'herald' | 'expand';
 
 export interface TutorialStep {
   id: string;
@@ -193,6 +194,30 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
     target: 'ship-maneuver-section',
     placement: 'right',
   },
+  {
+    id: 'fleets',
+    title: 'Fleets move as one',
+    body: 'Group ships into a fleet and a transfer ordered for any member sweeps the whole group along — one captain flies the flag and shares their trait. Form one here when you have hulls to spare.',
+    target: 'ship-fleet-section',
+    placement: 'right',
+    onEnter: 'select-first-ship',
+  },
+  {
+    id: 'expand',
+    title: 'Claim more worlds',
+    body: 'Build a COLONY SHIP, fly it to any world, and found a city (or a station — even gas giants and the sun take those). Every world you claim paints the map your color and counts toward the 60% Domination win.',
+    target: null,
+    placement: 'center',
+    visual: 'expand',
+  },
+  {
+    id: 'freighters',
+    title: 'Freighters do the hauling',
+    body: 'That freighter in your starter fleet earns its keep: set a TRADE ROUTE to shuttle a settlement’s stranded stockpile home, park it at Sol to feed a Dyson Sphere, or use it to deliver trade deals with other players.',
+    target: null,
+    placement: 'center',
+    visual: 'economy',
+  },
 
   // === Act 3: the designer ===================================
   {
@@ -244,9 +269,10 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'dyson',
     title: 'The Dyson Sphere · Engineering Victory',
-    body: 'Deep Construction research unlocks the foundation at a Sol-orbit station. Freighters parked at Sol pump your treasury into the sphere every tick — and rivals can shoot the progress right back off it.',
-    target: null,
-    placement: 'center',
+    body: 'Yes — even the sun has a menu. Deep Construction research unlocks the foundation at a Sol-orbit station; freighters parked at Sol pump your treasury into the sphere every tick, and rivals can shoot the progress right back off it.',
+    target: 'dyson-sphere-section',
+    placement: 'below',
+    onEnter: 'open-sol-menu',
     visual: 'dyson',
   },
   {

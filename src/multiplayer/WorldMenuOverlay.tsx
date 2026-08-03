@@ -151,7 +151,13 @@ export const WorldMenuOverlay: React.FC = () => {
     const sel = uiState.selectedBodyId;
     if (!sel) return;
     const b = gameState.bodies.find(bb => bb.id === sel);
-    if (!b || b.type === 'star' || b.type === 'lagrange') return;
+    // Stars ARE clickable now (per Lorne: "can't open a world menu on
+    // the sun to build the Dyson sphere"). Sol flows through the same
+    // no-surface path as a gas giant — empty SURFACE column, live ORBIT
+    // column (stations can orbit anything, that's the Dyson foundation)
+    // — and the WmDysonCard in the top panel is finally reachable in
+    // the default UI. Only lagrange markers stay unclickable.
+    if (!b || b.type === 'lagrange') return;
     if (openId !== sel) {
       if (!openId) {
         camSnapshotRef.current = {
@@ -1043,7 +1049,7 @@ const WmDysonCard: React.FC = () => {
       s.ownedBy === 'player' && s.class === 'freighter' && !s.transit
       && s.orbit.parentBodyId === 'sol').length;
     return (
-      <div className="wm-dyson" data-testid="wm-dyson">
+      <div className="wm-dyson" data-testid="wm-dyson" data-tutorial-id="dyson-sphere-section">
         <div className="wm-dyson-head">
           <span className="wm-dyson-title">☀ DYSON SPHERE</span>
           <span className="wm-dyson-owner" style={{ color: isMine ? '#6ee7b7' : '#ff8a4d' }}>
@@ -1072,7 +1078,7 @@ const WmDysonCard: React.FC = () => {
     s.ownedBy === 'player' && s.type === 'station' && s.bodyId === 'sol');
   const lock = gate.lockReason('dyson');
   return (
-    <div className="wm-dyson" data-testid="wm-dyson">
+    <div className="wm-dyson" data-testid="wm-dyson" data-tutorial-id="dyson-sphere-section">
       <div className="wm-dyson-head">
         <span className="wm-dyson-title">☀ DYSON SPHERE · slot open</span>
       </div>

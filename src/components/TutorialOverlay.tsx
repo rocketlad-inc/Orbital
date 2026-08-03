@@ -169,6 +169,13 @@ export const TutorialOverlay: React.FC = () => {
         if (mine) selectBody(mine.bodyId);
         break;
       }
+      case 'open-sol-menu': {
+        // The sun has a menu too (Dyson foundation site). Body ids are
+        // client-local after the deserializer strips the game prefix.
+        const sol = gameState.bodies.find(b => b.type === 'star');
+        if (sol) selectBody(sol.id);
+        break;
+      }
       case 'select-first-ship': {
         // Prefer a PARKED ship — the transfer task needs one that can
         // take a fresh order and shows the full panel.
