@@ -1791,7 +1791,22 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
     if (missing) return;
     fetchState();
     const id = setInterval(fetchState, POLL_INTERVAL_MS);
-    return () => clearInterval(id);
+    // Instant refresh after any successful mutation (Sean: "when I click
+    // something it takes a second to update"). The actions layer fires
+    // this event on every 2xx non-GET, so the UI reflects an action after
+    // one round-trip instead of waiting out the poll interval. Coalesced:
+    // a burst of actions (bulk orders fan-out) triggers ONE refetch.
+    let coalesce: ReturnType<typeof setTimeout> | null = null;
+    const onActionRefresh = () => {
+      if (coalesce) clearTimeout(coalesce);
+      coalesce = setTimeout(() => { coalesce = null; fetchState(); }, 60);
+    };
+    window.addEventListener('orbital:refresh-state', onActionRefresh);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener('orbital:refresh-state', onActionRefresh);
+      if (coalesce) clearTimeout(coalesce);
+    };
   }, [fetchState, missing]);
 
   // Auto-exit on missing after a brief pause so the user sees the message.

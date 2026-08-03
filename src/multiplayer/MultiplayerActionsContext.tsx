@@ -7,7 +7,7 @@
 // of) mutating local state.
 
 import React, { createContext, useContext, useMemo } from 'react';
-import { apiFetch } from './api';
+import { apiFetch as rawApiFetch } from './api';
 import { logger } from '../game/logger';
 import type { BuildListEntry } from '../types';
 
@@ -357,6 +357,20 @@ export function MultiplayerActionsProvider({
   gameId, children,
 }: { gameId: string; children: React.ReactNode }) {
   const value = useMemo<MultiplayerActions>(() => {
+    // Every action in this provider goes through this wrapper: on any
+    // successful non-GET, ping the game provider for an immediate /state
+    // refetch (coalesced there). This is the "responsive UI" fix - the
+    // result of a click shows up after one round-trip, not after the
+    // 1.5s poll happens to fire. Shadowing the import means all ~30
+    // action closures below inherit it without a 30-site rewrite.
+    const apiFetch = async <T = unknown,>(path: string, init?: RequestInit) => {
+      const res = await rawApiFetch<T>(path, init);
+      const method = init?.method ?? 'GET';
+      if (res.ok && method.toUpperCase() !== 'GET') {
+        window.dispatchEvent(new CustomEvent('orbital:refresh-state'));
+      }
+      return res;
+    };
     // The client stores body IDs in the unprefixed form ('jupiter', 'sol')
     // after MultiplayerGameProvider strips the "<gameId>:" namespace at the
     // deserialization boundary. The server still expects the namespaced
