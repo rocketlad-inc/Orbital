@@ -21,7 +21,7 @@ import { useFeatureGate } from '../hooks/useFeatureGate';
 import './BuildPanel.css';
 
 export const BuildPanel: React.FC = () => {
-  const { gameState, uiState, buildShip, cancelBuild } = useGameContext();
+  const { gameState, uiState, buildShip, cancelBuild, updateGameState } = useGameContext();
   const mpActions = useMultiplayerActions();
   const gate = useFeatureGate();
   const [, setSelectedClass] = useState<ShipClassName | null>(null);
@@ -54,6 +54,10 @@ export const BuildPanel: React.FC = () => {
   // class so the player can spam BUILD on Corvette without losing the
   // animation on Frigate.
   const [recentlyQueued, setRecentlyQueued] = useState<Set<string>>(new Set());
+  // Live view of gameState for async rollbacks — a build rejection lands
+  // hundreds of ms later, by which time the closed-over snapshot is stale.
+  const gameStateRef = React.useRef(gameState);
+  React.useEffect(() => { gameStateRef.current = gameState; }, [gameState]);
   useEffect(() => {
     if (recentlyQueued.size === 0) return;
     const t = setTimeout(() => setRecentlyQueued(new Set()), 600);
@@ -195,10 +199,47 @@ export const BuildPanel: React.FC = () => {
       // Surface server rejections inline so the BUILD button doesn't
       // appear to "do nothing" when the queue actually 4xx'd.
       setBuildError(null);
+      // Optimistic queue row: show it NOW. The old code posted intent
+      // and waited for /state, which on a big game is a 650ms fetch that
+      // may not even start for another second — the "3 second delay"
+      // playtest report. The server list is canonical and replaces this
+      // wholesale on the next poll; the temp id just has to survive
+      // until then. Resources are NOT deducted locally (that double-
+      // counted against the server's own deduction — see the note this
+      // replaces), so only the row itself is predicted.
+      const optimisticId = `opt_${Date.now()}_${shipClass}`;
+      const cls = SHIP_CLASSES[shipClass];
+      updateGameState({
+        buildOrders: [
+          ...gameState.buildOrders,
+          {
+            id: optimisticId,
+            bodyId: body.id,
+            shipClass,
+            ownedBy: 'player',
+            startTick: gameState.currentTick,
+            completeTick: gameState.currentTick + (cls?.buildTime ?? 10),
+            shipName: name,
+            iconVariant: variant,
+            // 'waiting' not 'building': the server decides whether a
+            // slot is free, and claiming 'building' would draw a
+            // progress bar that could snap backwards a second later.
+            status: 'waiting',
+          },
+        ],
+      });
       mpActions.build({ bodyId: body.id, shipClass, shipName: name, iconVariant: variant })
         .then(res => {
           if (!res.ok) {
             setBuildError(humanizeMpError(res.code, res.error, 'build'));
+            // Roll back the optimistic row. Read through a ref, not the
+            // closed-over snapshot: a /state poll almost certainly landed
+            // while the request was in flight, and filtering the stale
+            // array would resurrect rows the server has since changed.
+            updateGameState({
+              buildOrders: gameStateRef.current.buildOrders.filter(
+                o => o.id !== optimisticId),
+            });
             // Server rejected the build — put the name back at the
             // head of the queue so the player doesn't lose what they
             // committed. (Only if we pulled from the queue; typed

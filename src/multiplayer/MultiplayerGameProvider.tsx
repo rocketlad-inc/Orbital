@@ -1738,8 +1738,15 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
   // next poll even though the server body didn't change.
   const lastAppliedBodyRef = useRef<string | null>(null);
 
+  // Set when a refetch is requested while one is already in flight. The
+  // in-flight response was issued BEFORE the player's action, so it
+  // cannot contain the result - dropping the request (the old behaviour)
+  // meant waiting for the next scheduled poll. Instead we remember and
+  // immediately re-run when the current one lands.
+  const refetchQueuedRef = useRef(false);
+
   const fetchState = useCallback(async () => {
-    if (inflightRef.current) return;
+    if (inflightRef.current) { refetchQueuedRef.current = true; return; }
     inflightRef.current = true;
     try {
       const res = await apiFetch<ServerState>(`/api/games/${gameId}/state`);
@@ -1798,8 +1805,19 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
       }
     } finally {
       inflightRef.current = false;
+      if (refetchQueuedRef.current) {
+        refetchQueuedRef.current = false;
+        // Chain, don't recurse-await: this call re-enters with the guard
+        // clear, so the queued refetch runs right now instead of at the
+        // next 1.5s poll boundary.
+        void fetchStateRef.current?.();
+      }
     }
   }, [gameId]);
+  // Stable self-reference so the finally block above can re-enter the
+  // latest fetchState without making it a dependency of itself.
+  const fetchStateRef = useRef<typeof fetchState | null>(null);
+  useEffect(() => { fetchStateRef.current = fetchState; }, [fetchState]);
 
   // Polling loop — halts when the game is missing so we don't spam 404s.
   useEffect(() => {
