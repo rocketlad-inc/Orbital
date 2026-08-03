@@ -795,7 +795,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
             </div>
 
             {/* ---------- THE CANVAS: avatar + socket ring ---------- */}
-            <div className={`sd-canvas ${dragging ? 'sd-canvas--dragging' : ''}`}>
+            <div className={`sd-canvas ${dragging ? 'sd-canvas--dragging' : ''}`} data-tutorial-id="designer-canvas">
               <div className="sd-canvas__avatar">
                 {/* Component avatar: the portrait physically grows the
                     fitted hardware (barrel, emitter, plating, plume,
@@ -921,7 +921,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
           </div>
 
           {/* ---------- Right sidebar: stats + refit + actions ---------- */}
-          <div className="sd-side">
+          <div className="sd-side" data-tutorial-id="designer-stats">
             <div className="sd-side__title">
               {selected ? `EDITING: ${selected.name}` : 'NEW DESIGN'}
               {selected && !draftMatchesSelected && <span className="sd-side__dirty"> · unsaved</span>}

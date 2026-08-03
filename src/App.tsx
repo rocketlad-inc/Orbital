@@ -139,7 +139,14 @@ function GameUI({
       setDesignerState({ open: true, cls: detail?.shipClass });
     };
     window.addEventListener('orbital:open-ship-designer', onOpenDesigner as EventListener);
-    return () => window.removeEventListener('orbital:open-ship-designer', onOpenDesigner as EventListener);
+    // Close twin — lets the tutorial (and anything else) dismiss the
+    // designer programmatically when it moves on to another surface.
+    const onCloseDesigner = () => setDesignerState({ open: false });
+    window.addEventListener('orbital:close-ship-designer', onCloseDesigner);
+    return () => {
+      window.removeEventListener('orbital:open-ship-designer', onOpenDesigner as EventListener);
+      window.removeEventListener('orbital:close-ship-designer', onCloseDesigner);
+    };
   }, [isMultiplayer]);
 
   // Broadcast the active panel id whenever it changes so the DockRail

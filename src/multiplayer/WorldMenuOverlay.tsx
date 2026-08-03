@@ -521,6 +521,7 @@ export const WorldMenuOverlay: React.FC = () => {
            The world's NAME leads the hierarchy: biggest thing in the box,
            never covered. Mobile spans full width (collapsed default). ===== */}
       <section
+        data-tutorial-id="world-menu"
         className={`wm-top ${mobile && collapsed ? 'collapsed' : ''}`}
         style={mobile ? undefined : {
           // Centered ABOVE the planet, capped so it never overlaps the
@@ -616,6 +617,7 @@ export const WorldMenuOverlay: React.FC = () => {
               disabled={built || !!collectorLock}
               title={collectorLock ? `${collectorLock.label} — ${collectorLock.text}` : undefined}
               data-testid="wm-collector"
+              data-tutorial-id="collector-button"
             >
               {built
                 ? '◉ Collector online'
@@ -798,6 +800,7 @@ export const WorldMenuOverlay: React.FC = () => {
           {surfaceEls.length > 0 && (
             <aside
               className="wm-col" data-testid="wm-col-surface"
+              data-tutorial-id="wm-columns"
               style={{ left: leftColX, top: colTopY, width: COL_W }}
             >
               <div className="wm-col-label">SURFACE — <b>CITY</b></div>
@@ -807,6 +810,7 @@ export const WorldMenuOverlay: React.FC = () => {
           {orbitEls.length > 0 && (
             <aside
               className="wm-col" data-testid="wm-col-orbit"
+              data-tutorial-id="wm-columns-orbit"
               style={{ left: rightColX, top: colTopY, width: COL_W }}
             >
               <div className="wm-col-label">ORBIT — <b>STATION</b></div>
@@ -939,6 +943,7 @@ const WmFleet: React.FC<{
       className="wm-fleet"
       style={mobile ? undefined : { left: '50%', transform: 'translateX(-50%)' }}
       data-testid="wm-fleet"
+      data-tutorial-id="wm-build"
     >
       <div className="wm-fleet-queue">
         <div className="wm-fleet-title">

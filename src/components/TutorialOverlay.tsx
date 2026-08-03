@@ -21,7 +21,12 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTutorial } from '../state/tutorial';
 import { useGameContext } from '../state/gameContext';
-import { TUTORIAL_STEPS, TutorialStep } from '../game/tutorialSteps';
+import {
+  TUTORIAL_STEPS, TutorialStep, TutorialEffect, TutorialCheckId,
+} from '../game/tutorialSteps';
+import { TutorialVisual } from './TutorialVisuals';
+import { getWorldMenuOpenBodyId } from '../game/worldMenu/store';
+import type { GameState } from '../types';
 
 interface Rect {
   x: number;
@@ -106,9 +111,35 @@ function placeCard(
   return { x, y };
 }
 
+// ---- Task baselines + checks (show-don't-tell tutorial) --------------
+//
+// Counts snapshotted when a task step becomes active, so replaying
+// players' EXISTING queues/orders don't auto-complete the task — the
+// tour asks them to do the thing NOW. `research-started` deliberately
+// has no baseline: a project already running counts as done.
+
+interface TaskBaseline {
+  buildOrders: number;
+  orders: number;
+  buildingQueues: number;
+}
+
+function playerBuildOrderCount(gs: GameState): number {
+  return gs.buildOrders.filter(o => o.ownedBy === 'player').length;
+}
+function playerBuildingQueueCount(gs: GameState): number {
+  return gs.settlements.filter(s => s.ownedBy === 'player' && s.buildingQueue != null).length;
+}
+function playerOrderCount(gs: GameState): number {
+  const mine = new Set(gs.ships.filter(s => s.ownedBy === 'player').map(s => s.id));
+  // Any state counts — the check is a DELTA against the step-entry
+  // baseline, so only orders the player just placed complete the task.
+  return gs.orders.filter(o => mine.has(o.shipId)).length;
+}
+
 export const TutorialOverlay: React.FC = () => {
   const { active, index, advance, back, skip, finish, jumpTo } = useTutorial();
-  const { gameState, selectBody, selectShip } = useGameContext();
+  const { gameState, uiState, selectBody, selectShip } = useGameContext();
   const [targetRect, setTargetRect] = useState<Rect | null>(null);
   // Extra cutout rects for steps that highlight more than one element
   // (e.g. select-body highlights the Outliner AND the freshly-opened
@@ -124,28 +155,113 @@ export const TutorialOverlay: React.FC = () => {
 
   const step = active && index >= 0 ? TUTORIAL_STEPS[index] : null;
 
-  // Auto-select a body / ship when the tour reaches the
-  // 'select-body' / 'select-ship' steps so the BodyInspector and
-  // ShipPanel actually mount — otherwise the subsequent inspector /
-  // panel steps would point at elements that don't exist yet and the
-  // overlay would fall back to a centered card with no halo.
-  //
-  // Picks the first PLAYER-owned target. If the player has nothing
-  // (rare — they'd have already lost), we silently skip and the
-  // panel-deep-dive steps degrade to centered cards.
-  useEffect(() => {
-    if (!step) return;
-    if (step.id === 'select-body') {
-      const mine = gameState.settlements.find(s => s.ownedBy === 'player');
-      if (mine) selectBody(mine.bodyId);
-    } else if (step.id === 'select-ship') {
-      const mine = gameState.ships.find(s => s.ownedBy === 'player');
-      if (mine) selectShip(mine.id);
+  // --- onEnter effects: "if you're explaining a menu, the menu is
+  // OPEN." Each step may declare an effect that opens the surface it
+  // talks about before the card renders. Missing prerequisites (no
+  // owned settlement, no ship) degrade silently to a centered card.
+  const runEffect = (effect: TutorialEffect) => {
+    switch (effect) {
+      case 'open-capital-menu': {
+        // Prefer the CAPITAL (first owned settlement's body). selectBody
+        // is what the world menu keys its fly-in on, so this both
+        // selects and opens.
+        const mine = gameState.settlements.find(s => s.ownedBy === 'player');
+        if (mine) selectBody(mine.bodyId);
+        break;
+      }
+      case 'select-first-ship': {
+        // Prefer a PARKED ship — the transfer task needs one that can
+        // take a fresh order and shows the full panel.
+        const mine = gameState.ships.find(s => s.ownedBy === 'player' && !s.transit)
+          ?? gameState.ships.find(s => s.ownedBy === 'player');
+        if (mine) selectShip(mine.id);
+        break;
+      }
+      case 'open-panel-research':
+        window.dispatchEvent(new CustomEvent('orbital:open-panel', { detail: { panel: 'research' } }));
+        break;
+      case 'open-panel-fleet':
+        window.dispatchEvent(new CustomEvent('orbital:open-panel', { detail: { panel: 'fleet' } }));
+        break;
+      case 'open-panel-settlements':
+        window.dispatchEvent(new CustomEvent('orbital:open-panel', { detail: { panel: 'settlements' } }));
+        break;
+      case 'open-designer':
+        window.dispatchEvent(new CustomEvent('orbital:open-ship-designer'));
+        break;
+      case 'close-designer':
+        window.dispatchEvent(new CustomEvent('orbital:close-ship-designer'));
+        break;
+      case 'close-panels':
+        window.dispatchEvent(new CustomEvent('orbital:open-panel', { detail: { panel: null } }));
+        window.dispatchEvent(new CustomEvent('orbital:close-ship-designer'));
+        break;
     }
-    // gameState.settlements/ships intentionally NOT in deps — we only
-    // want this to fire on step change, not whenever the world ticks.
+  };
+  useEffect(() => {
+    if (step?.onEnter) runEffect(step.onEnter);
+    // gameState intentionally NOT in deps — effects fire on step change
+    // only, not whenever the world ticks.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step?.id]);
+
+  // --- Task engine: snapshot baselines on step entry, evaluate the
+  // check every render (a low-rate ticker forces re-evaluation for
+  // checks reading non-reactive sources like the world-menu store),
+  // celebrate + auto-advance shortly after it passes.
+  const baselineRef = useRef<TaskBaseline | null>(null);
+  const [taskDone, setTaskDone] = useState(false);
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    setTaskDone(false);
+    if (!step?.task) { baselineRef.current = null; return; }
+    baselineRef.current = {
+      buildOrders: playerBuildOrderCount(gameState),
+      orders: playerOrderCount(gameState),
+      buildingQueues: playerBuildingQueueCount(gameState),
+    };
+    const iv = setInterval(() => forceTick(n => n + 1), 400);
+    return () => clearInterval(iv);
+    // Baselines snapshot once per step by design.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step?.id]);
+
+  const evalCheck = (check: TutorialCheckId): boolean => {
+    const base = baselineRef.current;
+    switch (check) {
+      case 'world-menu-open-owned': {
+        const id = getWorldMenuOpenBodyId();
+        if (!id) return false;
+        const body = gameState.bodies.find(b => b.id === id);
+        return body?.ownedBy === 'player';
+      }
+      case 'building-queued':
+        return playerBuildingQueueCount(gameState) > (base?.buildingQueues ?? 0);
+      case 'ship-queued':
+        return playerBuildOrderCount(gameState) > (base?.buildOrders ?? 0);
+      case 'ship-selected': {
+        const sel = uiState.selectedShipId;
+        return !!sel && gameState.ships.some(s => s.id === sel && s.ownedBy === 'player');
+      }
+      case 'transfer-committed':
+        return playerOrderCount(gameState) > (base?.orders ?? 0);
+      case 'research-started':
+        return gameState.factionTech?.player?.researching != null;
+    }
+  };
+  const checkPassed = step?.task ? (taskDone || evalCheck(step.task.check)) : false;
+  useEffect(() => {
+    if (!step?.task || !checkPassed || taskDone) return;
+    setTaskDone(true);
+    // Let the ✓ + green flash land, then move on. Captured index guards
+    // against advancing a step the player already navigated away from.
+    const at = index;
+    const t = setTimeout(() => {
+      if (at === index) advance();
+    }, 1300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checkPassed, step?.id]);
 
   // Re-measure target on every animation frame while active. Cheap —
   // getBoundingClientRect is fast and the overlay is short-lived. Avoids
@@ -208,7 +324,8 @@ export const TutorialOverlay: React.FC = () => {
     }
   }, [step, cardSize.width, cardSize.height]);
 
-  // Keyboard: Esc skips, Enter / Right advances, Left goes back.
+  // Keyboard: Esc skips, Enter / Right advances (unless a task is
+  // gating the step), Left goes back.
   useEffect(() => {
     if (!active) return;
     const onKey = (e: KeyboardEvent) => {
@@ -216,6 +333,8 @@ export const TutorialOverlay: React.FC = () => {
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
       if (e.key === 'Escape') skip();
       else if (e.key === 'ArrowRight' || e.key === 'Enter') {
+        const cur = TUTORIAL_STEPS[index];
+        if (cur?.task && !taskDone) return; // do the thing, don't skim past it
         if (index === TUTORIAL_STEPS.length - 1) finish();
         else advance();
       }
@@ -223,7 +342,7 @@ export const TutorialOverlay: React.FC = () => {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [active, index, advance, back, skip, finish]);
+  }, [active, index, advance, back, skip, finish, taskDone]);
 
   if (!step) return null;
 
@@ -245,17 +364,18 @@ export const TutorialOverlay: React.FC = () => {
       }}
     >
       {/* Dim backdrop with the target rect cut out via even-odd fill.
-          Click intercepts skip — but only if there's no target (centered
-          steps), so target-aware steps don't accidentally dismiss the
-          tour when the player tries to click the highlighted element. */}
+          ALWAYS click-through: the interactive tutorial asks the player
+          to click real UI (world menu, build strip, transfer buttons),
+          so the backdrop must never eat those clicks — and a stray
+          backdrop click silently killing the whole tour was a footgun.
+          Skip lives on the button and Esc. */}
       <svg
         width={viewport.width}
         height={viewport.height}
         style={{
           position: 'absolute', inset: 0,
-          pointerEvents: targetRect ? 'none' : 'auto',
+          pointerEvents: 'none',
         }}
-        onClick={targetRect ? undefined : skip}
       >
         <defs>
           <mask id="tutorial-cutout">
@@ -357,6 +477,32 @@ export const TutorialOverlay: React.FC = () => {
         <div style={{ fontSize: 12, lineHeight: 1.45, color: '#d8e4ee' }}>
           {step.body}
         </div>
+        {/* Illustration for menu-less concept steps (Lorne's rule:
+            every step either points at a live surface or shows one). */}
+        {step.visual && <TutorialVisual id={step.visual} />}
+        {/* Task checklist — the show-don't-tell gate. Pending: amber
+            checkbox + the imperative label. Done: green ✓ with a beat
+            before auto-advance so the win registers. */}
+        {step.task && (
+          <div
+            role="status"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              marginTop: 10, padding: '7px 10px',
+              borderRadius: 6,
+              border: `1px solid ${taskDone ? 'rgba(127, 255, 161, 0.7)' : 'rgba(255, 184, 77, 0.55)'}`,
+              background: taskDone ? 'rgba(127, 255, 161, 0.1)' : 'rgba(255, 184, 77, 0.07)',
+              transition: 'border-color 0.25s, background 0.25s',
+            }}
+          >
+            <span style={{ fontSize: 14, lineHeight: 1, color: taskDone ? '#7fffa1' : '#ffb84d' }}>
+              {taskDone ? '✓' : '▢'}
+            </span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: taskDone ? '#7fffa1' : '#ffd98a' }}>
+              {step.task.label}{taskDone ? ' — nice.' : ''}
+            </span>
+          </div>
+        )}
         <div
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -421,16 +567,34 @@ export const TutorialOverlay: React.FC = () => {
             </div>
           )}
 
-          <button
-            onClick={() => isLast ? finish() : advance()}
-            style={{
-              padding: '5px 14px',
-              background: '#ffb84d', color: '#0a1018',
-              border: 'none', borderRadius: 4, cursor: 'pointer',
-              fontFamily: 'inherit', fontSize: 11, fontWeight: 700, letterSpacing: '0.08em',
-              flexShrink: 0, whiteSpace: 'nowrap',
-            }}
-          >{isLast ? 'DONE ▸' : 'NEXT ›'}</button>
+          {step.task && !taskDone ? (
+            // Task pending: NEXT is replaced by a quiet escape hatch so
+            // nobody hard-stucks (broke, weird state, just not feeling
+            // it) — but the loud affordance is DOING the task.
+            <button
+              onClick={advance}
+              title="Skip this task and move on"
+              style={{
+                padding: '5px 12px',
+                background: 'transparent', color: '#8fa8bf',
+                border: '1px solid #2a3d50', borderRadius: 4, cursor: 'pointer',
+                fontFamily: 'inherit', fontSize: 10, letterSpacing: '0.06em',
+                flexShrink: 0, whiteSpace: 'nowrap',
+              }}
+            >skip task ›</button>
+          ) : (
+            <button
+              onClick={() => isLast ? finish() : advance()}
+              style={{
+                padding: '5px 14px',
+                background: taskDone ? '#7fffa1' : '#ffb84d', color: '#0a1018',
+                border: 'none', borderRadius: 4, cursor: 'pointer',
+                fontFamily: 'inherit', fontSize: 11, fontWeight: 700, letterSpacing: '0.08em',
+                flexShrink: 0, whiteSpace: 'nowrap',
+                transition: 'background 0.25s',
+              }}
+            >{isLast ? 'DONE ▸' : 'NEXT ›'}</button>
+          )}
         </div>
       </div>
     </div>,
