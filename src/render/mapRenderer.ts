@@ -4529,77 +4529,22 @@ export function systemRegionIntensityFor(spans: number, scale: number, bodies: B
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
-// --- Outer-system falloff --------------------------------------------
+// --- Outer-system falloff: REMOVED (2026-08, per Lorne) ---------------
 //
-// A region's painted band scales with its orbit radius twice over: the
-// lane is a fraction of the radius (wider) AND the ring's circumference
-// grows with it (longer). So a single settlement on a lone Kuiper rock —
-// Sedna at the very edge — paints the biggest, most saturated annulus on
-// the map, dwarfing a whole held inner system. One rock reads as an
-// empire. (Reported live: a faction's lone Sedna holding washing the
-// outer map in vivid cyan.)
+// There used to be a radial alpha falloff here that faded region shading
+// toward zero with distance from the star, anchored to end exactly at
+// the star's OUTERMOST BODY. It was a fix for a real report (a lone
+// Sedna holding washing the outer map in vivid cyan) but it
+// overcorrected into the opposite bug: in Sol the outermost body IS
+// Sedna, so the fade's zero point landed precisely on the deep-Kuiper
+// worlds it was meant to temper. Claiming the farthest rock in the
+// system erased its own colour — the territory computed as exclusively
+// yours and then rendered invisible.
 //
-// Fade region alpha with distance from the star so the deep outer system
-// is a hint, not a billboard. Keyed PER STAR to its own outermost giant,
-// not a hardcoded radius, so it survives the 1x/2x scale split and the
-// far Centauri / Cygnus systems (which have no giants and so never fade).
-
-/** Steepen the ramp so the wash drops off FAST once past the giants,
- *  rather than a lazy linear taper that leaves the near-Kuiper half-lit.
- *  >1 = fades harder early. */
-const OUTER_FADE_EXP = 1.6;
-
-export interface FadeBand {
-  /** At/inside this radius: full strength (the outermost giant). */
-  start: number;
-  /** At/outside this radius: gone (the star's outermost body). */
-  end: number;
-}
-
-/**
- * 1.0 inside the giants, ramping to 0 by the star's OUTERMOST BODY.
- *
- * Anchoring the zero point to a real body — not a blind multiple of the
- * giant's radius — is the whole fix: the previous 3.2x multiple put zero
- * at 9600 while the farthest body (Sedna) sat at 7000, so the fade never
- * finished and Sedna's band stayed at ~0.42. Ending exactly at the edge
- * guarantees the deep outer system reaches zero regardless of how the
- * system is scaled or spread.
- *
- * Pure and exported for testing.
- */
-export function regionRadialFalloff(midRadius: number, band: FadeBand | undefined): number {
-  if (!band || !(band.end > band.start)) return 1;
-  if (midRadius <= band.start) return 1;
-  if (midRadius >= band.end) return 0;
-  const t = (midRadius - band.start) / (band.end - band.start);
-  return Math.pow(1 - t, OUTER_FADE_EXP);
-}
-
-/**
- * Per-star fade band: start at that star's outermost gas/ice giant, end
- * at its outermost body of any kind. A star with no giants gets an empty
- * band (start === end), which regionRadialFalloff treats as "never fade"
- * — so a giant-less far system is never touched.
- */
-function buildFadeReference(bodies: Body[]): Map<string, FadeBand> {
-  const giant = new Map<string, number>();
-  const outermost = new Map<string, number>();
-  for (const b of bodies) {
-    if (!b.parent) continue;
-    const r = b.orbitRadius ?? 0;
-    if (r > (outermost.get(b.parent) ?? 0)) outermost.set(b.parent, r);
-    if ((b.type === 'gas_giant' || b.type === 'ice_giant') && r > (giant.get(b.parent) ?? 0)) {
-      giant.set(b.parent, r);
-    }
-  }
-  const ref = new Map<string, FadeBand>();
-  for (const [star, edge] of outermost) {
-    const g = giant.get(star);
-    ref.set(star, g != null ? { start: g, end: edge } : { start: edge, end: edge });
-  }
-  return ref;
-}
+// Holding the edge of the map is hard-won and should LOOK like it. If
+// a lone outer claim ever reads as too loud again, the lane width is
+// the knob to reach for (LANE_MAX_FRACTION in systemRegions.ts), not an
+// alpha fade that punishes distance itself.
 
 /** Grey for unowned AND contested — see systemRegions.ts for why
  *  contested deliberately isn't a second faction colour.
@@ -4783,9 +4728,6 @@ export function drawSystemRegions(
   // REGION_LABEL_HIDE_SPANS.
   const labelFade = regionLabelOpacity(spans);
 
-  // Per-star outermost-giant radius, for the outer-system alpha falloff.
-  const fadeRef = buildFadeReference(ctx.bodies);
-
   // Everything a region label must not land on: each body's dot plus the
   // name drawn under it. Region labels are appended as they're placed,
   // so later rings also dodge earlier rings' labels. Skipped entirely
@@ -4820,16 +4762,13 @@ export function drawSystemRegions(
     // rubble is barely a stain, just enough to group it. Each tier
     // scales up with intensity, keeping their relative weighting so
     // owned ground still dominates at full strength.
-    let baseAlpha = owned
+    // No distance falloff: a claim at the edge of the system paints as
+    // proudly as one in the core (see the removal note above).
+    const baseAlpha = owned
       ? lerp(0.22, 0.70, intensity)
       : region.ownership.kind === 'contested'
         ? lerp(0.16, 0.52, intensity)
         : lerp(0.09, 0.32, intensity);
-    // Fade the deep outer system so a lone Kuiper holding stops shouting.
-    baseAlpha *= regionRadialFalloff(
-      (region.shape.rInner + region.shape.rOuter) / 2,
-      fadeRef.get(region.shape.starBodyId),
-    );
 
     c.save();
     c.globalAlpha = c.globalAlpha * fade;
