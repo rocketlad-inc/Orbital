@@ -197,20 +197,29 @@ export interface WorldPosition {
 }
 
 /**
- * Global planet-motion scaling. 1.0 = real Kepler periods; 0.5 = planets
- * move at half-speed so transfers don't look like they're chasing a
- * fast-moving target. Applies ONLY to celestial bodies (Body.orbitPeriod);
- * ship orbits (OrbitElements.period) are untouched so combat windows and
- * ship-on-ship engagement still feel responsive.
+ * Global planet-motion scaling. 1.0 = real Kepler periods; lower values
+ * slow the whole system down so transfers don't look like they're
+ * chasing a fast-moving target. Applies ONLY to celestial bodies
+ * (Body.orbitPeriod); ship orbits (OrbitElements.period) are untouched
+ * so combat windows and ship-on-ship engagement still feel responsive.
  *
- * Tuned at 0.5 per playtest feedback: "the planets move so much during
- * a transfer it's confusing." Hohmann travel time is unaffected (it
- * depends on the transfer-orbit semi-major axis + Sol's μ, not on how
- * fast the destination planet rotates), but phase-angle windows for
- * "soonest" transfers now come around half as often — which is the
- * intended trade-off.
+ * History: originally 0.5, tuned down from real periods on playtest
+ * feedback ("the planets move so much during a transfer it's
+ * confusing"). Raised to 0.7 (+40%) in 2026-08 — the system read as
+ * too static at 0.5 now that a tick is an hour and players check in
+ * across days rather than watching continuously.
+ *
+ * Travel time is unaffected (it depends on the transfer distance and
+ * engine acceleration, not on how fast the destination orbits), but
+ * phase-angle windows for cheap transfers come around proportionally
+ * more often — which is the intended trade-off.
+ *
+ * MUST match ORBITAL_SPEED_SCALE in worker/state.js, which computes
+ * body positions for the server's fog-of-war pass. If the two drift,
+ * the server decides what you can see using planet positions the
+ * client isn't drawing.
  */
-export const ORBITAL_SPEED_SCALE = 0.5;
+export const ORBITAL_SPEED_SCALE = 0.7;
 
 /**
  * Angle (radians) of a body around its parent at tick `t`. Applies the

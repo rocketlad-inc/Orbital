@@ -61,7 +61,10 @@ const SHIP_SENSOR_RANGE = {
 const SETTLEMENT_SENSOR_RANGE = { city: 250 * SENSOR_SCALE, station: 400 * SENSOR_SCALE };
 const DEFAULT_SHIP_SENSOR_RANGE = 25;
 const DEFAULT_SETTLEMENT_SENSOR_RANGE = 40;
-const ORBITAL_SPEED_SCALE = 0.5;
+// KEEP IN SYNC with ORBITAL_SPEED_SCALE in src/physics/orbitalMechanics.ts
+// (0.7 since 2026-08, was 0.5). A mismatch means the server computes fog
+// of war against planet positions the client never draws.
+const ORBITAL_SPEED_SCALE = 0.7;
 const TWO_PI = Math.PI * 2;
 
 /**
