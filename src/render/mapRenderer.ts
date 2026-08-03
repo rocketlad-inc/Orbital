@@ -2046,6 +2046,132 @@ export interface ShipFormation {
   arcDir?: number;
 }
 
+// ---------------------------------------------------------------------------
+// CHASE CONTEXT - the storytelling layer for pursuit scenes.
+//
+// A "chase" is: a RETREATING hull in transit to some body, with hostile
+// combat hulls in transit to the SAME body. Recomputed once per frame
+// (computeChaseContext), then read by three consumers: echelon lanes in
+// drawTorchTransitShip, PURSUIT/RETREATING chips, and the tether +
+// trajectory de-emphasis pass. Peace pairs (same set combat FX uses)
+// keep two allied fleets converging on one body from reading as a hunt.
+// ---------------------------------------------------------------------------
+interface ChaseState {
+  pursuers: Set<string>;
+  quarries: Set<string>;
+  tethers: Array<{ pursuer: string; quarry: string }>;
+  lanes: Map<string, number>;
+}
+const EMPTY_CHASE: ChaseState = {
+  pursuers: new Set(), quarries: new Set(), tethers: [], lanes: new Map(),
+};
+let chaseState: ChaseState = EMPTY_CHASE;
+
+const COMBAT_CLASSES = new Set(['corvette', 'frigate', 'destroyer']);
+
+export function computeChaseContext(ships: Ship[], pactPairs?: string[]): void {
+  const peace = pactPairs && pactPairs.length ? new Set(pactPairs) : null;
+  const atPeace = (a: string, b: string) =>
+    !!peace && peace.has(a < b ? `${a}|${b}` : `${b}|${a}`);
+
+  const byDest = new Map<string, Ship[]>();
+  const lanes = new Map<string, number>();
+  const laneGroups = new Map<string, Ship[]>();
+  for (const sh of ships) {
+    if (!sh.transit) continue;
+    const dest = sh.transit.currentTransfer.targetBodyId;
+    let arr = byDest.get(dest);
+    if (!arr) { arr = []; byDest.set(dest, arr); }
+    arr.push(sh);
+    // Echelon lanes: hulls of one owner launched together at one target
+    // (a fleet under way) stagger perpendicular to the path instead of
+    // stacking into a single blob of overlapping sprites and plumes.
+    const lk = `${dest}|${sh.ownedBy}|${Math.round(sh.transit.currentTransfer.startTick)}`;
+    let lg = laneGroups.get(lk);
+    if (!lg) { lg = []; laneGroups.set(lk, lg); }
+    lg.push(sh);
+  }
+  for (const group of laneGroups.values()) {
+    if (group.length < 2) continue;
+    group.sort((a, b) => (a.id < b.id ? -1 : 1));
+    const mid = (group.length - 1) / 2;
+    for (let i = 0; i < group.length; i++) {
+      // Clamp so a 12-ship armada fans to +-3 lanes, not off the line.
+      lanes.set(group[i].id, Math.max(-3, Math.min(3, i - mid)));
+    }
+  }
+
+  const pursuers = new Set<string>();
+  const quarries = new Set<string>();
+  const tethers: Array<{ pursuer: string; quarry: string }> = [];
+  for (const group of byDest.values()) {
+    if (group.length < 2) continue;
+    const fleeing = group.filter(sh => shipIsRetreating(sh));
+    if (fleeing.length === 0) continue;
+    for (const q of fleeing) {
+      const hunters = group.filter(h =>
+        h.id !== q.id
+        && h.ownedBy !== q.ownedBy
+        && !atPeace(h.ownedBy, q.ownedBy)
+        && COMBAT_CLASSES.has(h.class)
+        && !shipIsRetreating(h));
+      if (hunters.length === 0) continue;
+      quarries.add(q.id);
+      for (const h of hunters) pursuers.add(h.id);
+      // One tether per quarry, from the LEAD hunter (earliest arrival) -
+      // one taut line reads as a hunt; five parallel ones read as noise.
+      hunters.sort((a, b) =>
+        a.transit!.currentTransfer.arriveTick - b.transit!.currentTransfer.arriveTick);
+      if (tethers.length < 6) tethers.push({ pursuer: hunters[0].id, quarry: q.id });
+    }
+  }
+  chaseState = (pursuers.size || quarries.size || lanes.size)
+    ? { pursuers, quarries, tethers, lanes }
+    : EMPTY_CHASE;
+}
+
+export function chaseActive(): boolean {
+  return chaseState.pursuers.size > 0;
+}
+export function chaseInvolves(shipId: string): boolean {
+  return chaseState.pursuers.has(shipId) || chaseState.quarries.has(shipId);
+}
+
+/** Pursuit tethers: a taut dashed line from lead hunter to its quarry,
+ *  dashes marching TOWARD the quarry so direction reads without an
+ *  arrowhead. Drawn from the same rendered-position registry death FX
+ *  use, so the tether pins to where the hulls actually are on screen
+ *  (lanes included). */
+export function drawChaseTethers(ctx: RenderContext): void {
+  if (chaseState.tethers.length === 0) return;
+  const now = ctx.nowMs ?? performance.now();
+  const c = ctx.ctx;
+  c.save();
+  for (const t of chaseState.tethers) {
+    const pw = lastDrawnShipWorldPos.get(t.pursuer);
+    const qw = lastDrawnShipWorldPos.get(t.quarry);
+    if (!pw || !qw) continue;
+    const p = worldToCanvas(pw.x, pw.y, ctx);
+    const q = worldToCanvas(qw.x, qw.y, ctx);
+    const gap = Math.hypot(q.x - p.x, q.y - p.y);
+    if (gap < 24) continue;                    // touching - the fight FX takes over
+    const pulse = 0.5 + 0.5 * Math.sin(now / 420);
+    const grad = c.createLinearGradient(p.x, p.y, q.x, q.y);
+    grad.addColorStop(0, `rgba(255, 96, 70, ${0.10 + 0.08 * pulse})`);
+    grad.addColorStop(1, `rgba(255, 96, 70, ${0.32 + 0.16 * pulse})`);
+    c.strokeStyle = grad;
+    c.lineWidth = 1;
+    c.setLineDash([5, 7]);
+    c.lineDashOffset = -((now / 40) % 12);     // march toward the quarry
+    c.beginPath();
+    c.moveTo(p.x, p.y);
+    c.lineTo(q.x, q.y);
+    c.stroke();
+  }
+  c.setLineDash([]);
+  c.restore();
+}
+
 /** Last WORLD position drawShip/drawTorchTransitShip actually rendered
  *  each hull at — including battle-line arc + lane placement, which the
  *  raw orbital elements know nothing about. Death FX (wrecks,
@@ -3117,6 +3243,7 @@ function drawThrustExhaust(
   shipSize: number,
   intensity: number = 1,
   shipClass?: string,
+  lenMul: number = 1,
 ) {
   // Sized to the ship icon, so the plume reads as this hull's exhaust
   // rather than a banner streaking across the map — and since shipSize
@@ -3125,7 +3252,10 @@ function drawThrustExhaust(
   // touch over one icon. Was 2.4·icon long / 0.84·icon wide — a cone
   // several times the hull, which read as "too big".
   const shape = PLUME_SHAPE[shipClass ?? ''] ?? { len: 1, width: 1, bells: 1 };
-  const flameLen = shipSize * 1.35 * shape.len;
+  // lenMul carries the ship's CURRENT speed vs its transfer average, so
+  // a hull late in its boost drags a visibly longer torch than one just
+  // off the pad - the chase reads as speed, not as identical candles.
+  const flameLen = shipSize * 1.35 * shape.len * lenMul;
   const flameWidth = shipSize * 0.26 * shape.width;
   // Exhaust extends OPPOSITE to thrust.
   const tailX = enginePos.x - thrustDir.x * flameLen;
@@ -3256,6 +3386,19 @@ function drawTorchTransitShip(
   const lerpedPos = trajectorySamples && trajectorySamples.length > 0
     ? torchPositionFromSamples(trajectorySamples, ctx.t)
     : { x: ship.transit.pos.x, y: ship.transit.pos.y };
+  // Echelon lane: fleet-mates on the same leg offset perpendicular to
+  // the path (computeChaseContext), so a squadron reads as a formation
+  // wedge instead of one blob of stacked sprites. World-space offset so
+  // hitboxes, death FX and the tether all agree with the drawn spot.
+  const lane = chaseState.lanes.get(ship.id) ?? 0;
+  if (lane !== 0 && trajectorySamples && trajectorySamples.length >= 2) {
+    const tg = trajectoryTangentAt(trajectorySamples, ctx.t);
+    if (tg) {
+      const laneWorld = (shipIconSize(ship.class, isSelected) * 0.75 * lane) / ctx.camera.scale;
+      lerpedPos.x += -tg.y * laneWorld;
+      lerpedPos.y += tg.x * laneWorld;
+    }
+  }
   const canvasPos = worldToCanvas(lerpedPos.x, lerpedPos.y, ctx);
   recordDrawnShipWorldPos(ship.id, lerpedPos.x, lerpedPos.y);
   const shipColorValue = shipColor(ship, ctx.factions);
@@ -3324,14 +3467,30 @@ function drawTorchTransitShip(
   if (thrusting && thrustVis > 0) {
     const cosH = Math.cos(heading);
     const sinH = Math.sin(heading);
+    // Speed-scaled torch: current velocity vs the leg's average. Late in
+    // a boost the plume stretches toward 1.5x; just off the pad it's a
+    // stub. Self-normalizing - no absolute speed constant to tune.
+    const tf = currentTransfer;
+    const legDur = tf.arriveTick - tf.startTick;
+    const avgSpd = legDur > 0
+      ? Math.hypot(tf.interceptPos.x - tf.startPos.x, tf.interceptPos.y - tf.startPos.y) / legDur
+      : 0;
+    const vNow = Math.hypot(vel.x, vel.y);
+    const speedMul = avgSpd > 1e-9
+      ? Math.max(0.7, Math.min(1.5, vNow / avgSpd))
+      : 1;
     drawThrustExhaust(
       ctx.ctx,
-      { x: canvasPos.x - cosH * iconSize / 2, y: canvasPos.y - sinH * iconSize / 2 },
+      // 0.36, not 0.5: the icon sprite has internal padding, so anchoring
+      // at the bounding-box edge left a visible gap between hull and
+      // flame (chase-scene screenshot). 0.36 lands on the drawn tail.
+      { x: canvasPos.x - cosH * iconSize * 0.36, y: canvasPos.y - sinH * iconSize * 0.36 },
       { x: cosH, y: sinH },
       iconSize,
       // Retreating hulls burn HOT — running for home reads as running.
       (isSelected ? 1.0 : 0.85) * thrustVis * (shipIsRetreating(ship) ? 1.25 : 1),
       ship.class,
+      speedMul,
     );
     // Speed streaks on a retreating burn: brief parallel motion lines
     // shedding off the hull, flickering — unmistakably "getting out".
@@ -3375,6 +3534,25 @@ function drawTorchTransitShip(
     ctx.ctx.restore();
     if (dressed && (ship.rank ?? 0) >= 5) {
       drawRankChevron(ctx.ctx, canvasPos, iconSize);
+    }
+    // Chase chips - the geometry says "two groups, one heading"; the
+    // chip says which story that is. Dressed zooms only, and never on
+    // a selected ship (its label stack already owns that space).
+    if (dressed && !isSelected) {
+      const role = chaseState.pursuers.has(ship.id) ? 'PURSUIT'
+        : (chaseState.quarries.has(ship.id) || shipIsRetreating(ship)) ? 'RETREATING'
+        : null;
+      if (role) {
+        ctx.ctx.save();
+        ctx.ctx.font = '7px "Audiowide", monospace';
+        ctx.ctx.textAlign = 'center';
+        ctx.ctx.textBaseline = 'bottom';
+        ctx.ctx.fillStyle = role === 'PURSUIT'
+          ? 'rgba(255, 110, 90, 0.85)'
+          : 'rgba(255, 190, 80, 0.85)';
+        ctx.ctx.fillText(role, canvasPos.x, canvasPos.y - iconSize / 2 - 4);
+        ctx.ctx.restore();
+      }
     }
   } else {
     const shipSize = isSelected ? 5 : 4;
