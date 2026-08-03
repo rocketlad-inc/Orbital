@@ -1750,6 +1750,7 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
     if (inflightRef.current) { refetchQueuedRef.current = true; return; }
     inflightRef.current = true;
     try {
+      perf.gameId = gameId;
       const fetchT0 = performance.now();
       const res = await apiFetch<ServerState>(`/api/games/${gameId}/state`);
       perf.recordFetch(performance.now() - fetchT0);

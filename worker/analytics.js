@@ -555,9 +555,58 @@ async function handleGameAnalytics(req, env, { session, params }) {
     .bind(gameId, d14)
     .all();
 
+  // --- Client performance: per-player percentiles over the last 7 days.
+  // Median tells the typical feel; p95 is the stall the player remembers
+  // and complains about, which an average would hide entirely.
+  const perfRows = await env.DB
+    .prepare(
+      `SELECT p.user_id, u.display_name, p.total_ms, p.action_ms, p.fetch_ms,
+              p.map_ms, p.paint_ms, p.frame_ms, p.ships, p.cores, p.mem_gb,
+              p.mobile, p.ua
+         FROM perf_samples p JOIN users u ON u.id = p.user_id
+        WHERE p.game_id = ? AND p.created_at_ms > ?
+        ORDER BY p.created_at_ms DESC
+        LIMIT 4000`,
+    )
+    .bind(gameId, now - 7 * 86_400_000)
+    .all();
+  const perfByUser = new Map();
+  for (const r of perfRows.results ?? []) {
+    let e = perfByUser.get(r.user_id);
+    if (!e) {
+      e = {
+        user_id: r.user_id, display_name: r.display_name,
+        n: 0, totals: [], maps: [], paints: [], fetches: [], frames: [],
+        ships: r.ships, cores: r.cores, mem_gb: r.mem_gb,
+        mobile: r.mobile, ua: r.ua,
+      };
+      perfByUser.set(r.user_id, e);
+    }
+    e.n++;
+    e.totals.push(r.total_ms); e.maps.push(r.map_ms);
+    e.paints.push(r.paint_ms); e.fetches.push(r.fetch_ms);
+    e.frames.push(r.frame_ms);
+  }
+  const pct = (arr, q) => {
+    if (arr.length === 0) return 0;
+    const a = [...arr].sort((x, y) => x - y);
+    return a[Math.min(a.length - 1, Math.floor(a.length * q))];
+  };
+  const perf = [...perfByUser.values()].map(e => ({
+    user_id: e.user_id, display_name: e.display_name, samples: e.n,
+    total_p50: pct(e.totals, 0.5), total_p95: pct(e.totals, 0.95),
+    map_p50: pct(e.maps, 0.5), map_p95: pct(e.maps, 0.95),
+    paint_p50: pct(e.paints, 0.5), paint_p95: pct(e.paints, 0.95),
+    fetch_p50: pct(e.fetches, 0.5),
+    frame_p50: pct(e.frames, 0.5),
+    ships: e.ships, cores: e.cores, mem_gb: e.mem_gb,
+    mobile: e.mobile, ua: e.ua,
+  })).sort((x, y) => y.total_p95 - x.total_p95);
+
   return json({
     now,
     game,
+    perf,
     factions: factions.results ?? [],
     curves: curves.results ?? [],
     usage: usage.results ?? [],
@@ -594,7 +643,51 @@ async function handleUiTelemetry(req, env, { session, params }) {
   return new Response(null, { status: 204 });
 }
 
+// ---------------------------------------------------------------------------
+// POST /api/games/:gameId/perf
+// Client latency sample. Not admin-gated - every player reports their own
+// numbers; that is the entire point (the slow client is the one we cannot
+// reach). Fire-and-forget: a bad or malicious body is clamped and stored,
+// never trusted for anything but diagnostics, and never fails the caller.
+// ---------------------------------------------------------------------------
+async function handlePerfSample(req, env, { session, params }) {
+  if (!session) return err(401, 'unauthorized', 'sign in');
+  let b;
+  try { b = await req.json(); } catch { return json({ ok: true }); }
+  // Clamp every number: these come from an untrusted client and only ever
+  // feed percentile math, so garbage must degrade to a harmless value
+  // rather than skewing an aggregate into nonsense.
+  const n = (v, max = 600_000) => {
+    const x = Math.round(Number(v));
+    return Number.isFinite(x) ? Math.max(0, Math.min(max, x)) : 0;
+  };
+  try {
+    await env.DB
+      .prepare(
+        `INSERT INTO perf_samples
+           (game_id, user_id, total_ms, action_ms, fetch_ms, map_ms, paint_ms,
+            frame_ms, ships, cores, mem_gb, mobile, ua, created_at_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        params.gameId ?? null, session.user_id,
+        n(b.total), n(b.action), n(b.fetch), n(b.map), n(b.paint),
+        n(b.frame, 10_000), n(b.ships, 100_000),
+        b.cores == null ? null : n(b.cores, 256),
+        b.mem == null ? null : n(b.mem, 1024),
+        b.mobile ? 1 : 0,
+        String(b.ua ?? '').slice(0, 180),
+        Date.now(),
+      )
+      .run();
+  } catch (e) {
+    console.error('perf sample insert failed', e);
+  }
+  return json({ ok: true });
+}
+
 export const routes = [
+  { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/perf$/, auth: 'required', handle: handlePerfSample },
   { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/telemetry$/, auth: 'required', handle: handleUiTelemetry },
   { method: 'GET', pattern: '/api/admin/overview', auth: 'required', handle: handleOverview },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/analytics$/, auth: 'required', handle: handleGameAnalytics },

@@ -30,7 +30,11 @@ import React, { useEffect, useState } from 'react';
 interface Sample { action: number; fetch: number; map: number; paint: number; total: number; }
 
 class PerfBus {
+  /** HUD visibility. Sampling/reporting runs regardless — the whole point
+   *  is to collect from players who never type ?perf=1. */
   enabled = false;
+  gameId: string | null = null;
+  private lastSentAt = 0;
   last: Sample = { action: 0, fetch: 0, map: 0, paint: 0, total: 0 };
   fetchMs = 0;
   mapMs = 0;
@@ -46,15 +50,13 @@ class PerfBus {
   private pending = false;
 
   recordAction(ms: number) {
-    if (!this.enabled) return;
     this.actionMs = ms;
     this.actionAt = performance.now();
     this.pending = true;
   }
-  recordFetch(ms: number) { if (this.enabled) { this.fetchMs = ms; this.polls++; } }
-  recordSkip() { if (this.enabled) this.skipped++; }
+  recordFetch(ms: number) { this.fetchMs = ms; this.polls++; }
+  recordSkip() { this.skipped++; }
   recordMap(ms: number, ships: number) {
-    if (!this.enabled) return;
     this.mapMs = ms;
     this.ships = ships;
     // Measure through to the frame that actually shows it: rAF fires
@@ -73,10 +75,39 @@ class PerfBus {
           paint: Math.round(paint),
           total: Math.round(painted - this.actionAt),
         };
+        this.report(this.last);
       }
     }));
   }
-  recordFrame(ms: number) { if (this.enabled) this.frameMs = ms; }
+  recordFrame(ms: number) { this.frameMs = ms; }
+
+  /** Ship one sample to the server, at most every 30s per session, and
+   *  only for real player actions — idle players send nothing. Failures
+   *  are swallowed: diagnostics must never disturb the game. */
+  private report(sample: Sample) {
+    const now = Date.now();
+    if (!this.gameId) return;
+    if (now - this.lastSentAt < 30_000) return;
+    this.lastSentAt = now;
+    const nav = navigator as Navigator & { deviceMemory?: number };
+    try {
+      void fetch(`/api/games/${this.gameId}/perf`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        keepalive: true,
+        body: JSON.stringify({
+          ...sample,
+          frame: Math.round(this.frameMs),
+          ships: this.ships,
+          cores: nav.hardwareConcurrency ?? null,
+          mem: nav.deviceMemory ?? null,
+          mobile: /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent),
+          ua: navigator.userAgent,
+        }),
+      }).catch(() => {});
+    } catch { /* never disturb the game */ }
+  }
 }
 
 export const perf = new PerfBus();
@@ -94,8 +125,12 @@ const cell: React.CSSProperties = { display: 'flex', justifyContent: 'space-betw
 
 export function PerfHud() {
   const [, force] = useState(0);
+  // Frame sampling runs for EVERY player, HUD or not — frame time is the
+  // headline signal for "the whole app is janky", and the players we most
+  // need it from are exactly the ones who will never type ?perf=1. One
+  // rAF callback doing two multiplications is free next to the map's own
+  // render loop.
   useEffect(() => {
-    if (!perf.enabled) return;
     let raf = 0;
     let prev = performance.now();
     const tick = () => {
@@ -106,8 +141,13 @@ export function PerfHud() {
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  // Repaint the overlay only while it is actually on screen.
+  useEffect(() => {
+    if (!perf.enabled) return;
     const id = setInterval(() => force(n => n + 1), 250);
-    return () => { cancelAnimationFrame(raf); clearInterval(id); };
+    return () => clearInterval(id);
   }, []);
   if (!perf.enabled) return null;
   const L = perf.last;

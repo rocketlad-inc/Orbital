@@ -57,8 +57,19 @@ type EngagementRow = {
   minutes_14d: number; active_days_14d: number; actions_14d: number;
 };
 type FactionCount = { faction_id: string | null; n: number };
+type PerfRow = {
+  user_id: string; display_name: string; samples: number;
+  total_p50: number; total_p95: number;
+  map_p50: number; map_p95: number;
+  paint_p50: number; paint_p95: number;
+  fetch_p50: number; frame_p50: number;
+  ships: number; cores: number | null; mem_gb: number | null;
+  mobile: number; ua: string;
+};
+
 type GameAnalytics = {
   now: number;
+  perf: PerfRow[];
   game: OverviewGame & { winner_faction_id: string | null };
   factions: FactionRow[]; curves: CurvePoint[]; usage: UsageRow[]; engagement: EngagementRow[];
   techPace: Array<{ faction_id: string; completed: number; avg_ticks: number; last_completed_tick: number }>;
@@ -531,6 +542,11 @@ function GameDetail({
       </section>
 
       <section>
+        <div className="aa-section-title">CLIENT PERFORMANCE · CLICK → PIXELS · 7D</div>
+        <PerfTable rows={data.perf ?? []} />
+      </section>
+
+      <section>
         <div className="aa-section-title">RUNAWAY-LEADER SCORE · SHARE OF ECONOMY + FLEET</div>
         <RunawayChart data={data} />
       </section>
@@ -994,6 +1010,61 @@ function Funnels({ usage }: { usage: UsageRow[] }) {
         ))}
       </tbody>
     </table>
+  );
+}
+
+// Per-player click->pixels latency, reported by each client. p95, not
+// average: the occasional 3-second stall is what a player remembers and
+// complains about, and a mean buries it. Device columns are here so a
+// slow report can be correlated with hardware instead of guessed at.
+function PerfTable({ rows }: { rows: PerfRow[] }) {
+  if (rows.length === 0) {
+    return <div className="aa-empty">No samples yet — clients report one per 30s of active play.</div>;
+  }
+  const ms = (v: number, lim: number) => (
+    <span style={{ color: v > lim ? '#ff6b6b' : '#cdd9e4' }}>{v}</span>
+  );
+  const browserOf = (ua: string) => {
+    if (/Edg\//.test(ua)) return 'Edge';
+    if (/OPR\//.test(ua)) return 'Opera';
+    if (/Firefox\//.test(ua)) return 'Firefox';
+    if (/Chrome\//.test(ua)) return 'Chrome';
+    if (/Safari\//.test(ua)) return 'Safari';
+    return '?';
+  };
+  return (
+    <div className="aa-scroll-x">
+      <table className="aa-table">
+        <thead>
+          <tr>
+            <th>Player</th><th>n</th>
+            <th>click→UI p50</th><th>p95</th>
+            <th>map p95</th><th>paint p95</th><th>fetch p50</th>
+            <th>frame</th><th>ships</th><th>device</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(r => (
+            <tr key={r.user_id}>
+              <td>{r.display_name}</td>
+              <td>{r.samples}</td>
+              <td>{ms(r.total_p50, 800)}</td>
+              <td><b>{ms(r.total_p95, 1500)}</b></td>
+              <td>{ms(r.map_p95, 150)}</td>
+              <td>{ms(r.paint_p95, 200)}</td>
+              <td>{ms(r.fetch_p50, 500)}</td>
+              <td>{ms(r.frame_p50, 40)} ms</td>
+              <td>{r.ships}</td>
+              <td style={{ color: '#8a9fb3', fontSize: 11 }}>
+                {browserOf(r.ua)}{r.mobile ? ' · mobile' : ''}
+                {r.cores ? ` · ${r.cores} cores` : ''}
+                {r.mem_gb ? ` · ${r.mem_gb}GB` : ''}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
