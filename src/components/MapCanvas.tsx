@@ -1511,6 +1511,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         counts: Map<string, number>, big: boolean, alpha: number,
       ) => {
         if (alpha <= 0.01 || counts.size === 0) return;
+        // Viewport cull. Text was already culled inside the solver, but
+        // badges were laid out and RESERVED for every ship-bearing body
+        // in the game — an audit found badge:sedna reserved at x=-45193,
+        // i.e. measured, slot-searched and occupancy-tested every frame
+        // for something that can never be drawn. Off-screen reservations
+        // also polluted the collision set. 120px margin keeps a badge
+        // that's partly on-screen.
+        if (ax < -120 || ay < -120
+            || ax > c2d.canvas.width + 120 || ay > c2d.canvas.height + 120) return;
         const fs = big ? 15 : 13;
         const padX = 6, gap = 3;
         const pillH = fs + 8;
@@ -1528,7 +1537,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         let totalW = 0;
         for (const [, n] of entries) totalW += c2d.measureText(`▸${n}`).width + padX * 2 + gap;
         totalW = Math.max(0, totalW - gap);
-        const slot = reserveBox(id, ax, ay, anchorR, totalW, pillH);
+        // Pass the visible pill text so an overlap report can say WHAT
+        // collided ("▸12 ▸3") instead of only which body it belonged to.
+        const slot = reserveBox(id, ax, ay, anchorR, totalW, pillH,
+          entries.map(([, n]) => `▸${n}`).join(' '));
         if (!slot) { c2d.restore(); return; }
         const cy = slot.y + pillH / 2;
         let x = slot.x;
