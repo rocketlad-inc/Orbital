@@ -802,11 +802,11 @@ async function handleQueueBuild(req, env, ctx) {
         .bind(poolDrawMetal, poolDrawGold, me.id),
     );
   }
+  batchStmts.push(
+    env.DB.prepare('INSERT INTO spend_events (game_id, faction_id, category, metal, gold, created_at_ms) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(gameId, me.id, 'ships', Math.round(cost.metal ?? 0), Math.round(cost.gold ?? 0), Date.now()),
+  );
   await env.DB.batch(batchStmts);
-  await logSpend(env, {
-    gameId, factionId: me.id, category: 'ships',
-    metal: (cost.metal ?? 0), gold: (cost.gold ?? 0),
-  });
 
   return json({
     order: {
@@ -1774,11 +1774,11 @@ async function handleQueueBuilding(req, env, ctx) {
         .bind(takePoolMetal, takePoolGold, me.id),
     );
   }
+  batchStmts.push(
+    env.DB.prepare('INSERT INTO spend_events (game_id, faction_id, category, metal, gold, created_at_ms) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(gameId, me.id, 'buildings', Math.round(cost.metal ?? 0), Math.round(cost.gold ?? 0), Date.now()),
+  );
   await env.DB.batch(batchStmts);
-  await logSpend(env, {
-    gameId, factionId: me.id, category: 'buildings',
-    metal: (cost.metal ?? 0), gold: (cost.gold ?? 0),
-  });
 
   return json({ ok: true, order, cost });
 }

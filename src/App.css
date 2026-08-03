@@ -150,3 +150,18 @@ body {
   border-left: 1px solid rgba(255, 184, 77, 0.15);
   white-space: nowrap;
 }
+
+/* ============================================================
+   PERF KILL-SWITCH: backdrop-filter (2026-08-03)
+   30 panels blurred the map behind them. backdrop-filter forces the
+   compositor to RE-BLUR the animating canvas underneath on EVERY
+   frame - measured on the live HUD as fps 34 -> 18 the moment a world
+   menu opens, on a hardware-accelerated 12-core machine. Frosted glass
+   is not worth half the frame rate; panel rgba() backgrounds already
+   carry the look. Blanket override beats editing 30 call sites and
+   guards against the next blurred panel reintroducing the cliff.
+   ============================================================ */
+* {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
