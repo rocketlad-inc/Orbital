@@ -16,7 +16,7 @@
 // there's no touch equivalent to design around here.
 // ============================================================
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { useBulkTransfer } from '../hooks/useBulkTransfer';
@@ -36,6 +36,7 @@ export const GroupActionBar: React.FC = () => {
   const mpActions = useMultiplayerActions();
   const bulkTransfer = useBulkTransfer();
   const [notice, setNotice] = useState<string | null>(null);
+  const [dest, setDest] = useState('');
 
   const ids = uiState.selectedShipIds ?? [];
 
@@ -48,6 +49,17 @@ export const GroupActionBar: React.FC = () => {
   // A move needs a hull that isn't already committed to a burn — same
   // eligibility rule the Fleet panel's bulk transfer uses.
   const movable = ships.filter(s => !s.transit && !s.plannedTransit);
+
+  // Destination list for the picker — every body, alphabetical, matching
+  // the Fleet panel's transfer dropdown so the two read the same. Own
+  // worlds carry a ★ because "where do I already hold ground" is the
+  // question you're usually answering when you move a group.
+  const destinations = useMemo(
+    () => [...gameState.bodies]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(b => ({ id: b.id, label: `${b.ownedBy === 'player' ? '★ ' : ''}${b.name}` })),
+    [gameState.bodies],
+  );
 
   const groupMove = useCallback((bodyId: string) => {
     const body = gameState.bodies.find(b => b.id === bodyId);
@@ -66,6 +78,9 @@ export const GroupActionBar: React.FC = () => {
         `${res.issued} ship${res.issued === 1 ? '' : 's'} bound for ${body?.name ?? 'target'}`
         + (res.unplannable > 0 ? ` · ${res.unplannable} couldn't` : ''),
       );
+      // Reset the picker so the same destination can't be re-fired by a
+      // stray second click on SEND after the group has already launched.
+      setDest('');
     }
   }, [bulkTransfer, gameState.bodies, movable]);
 
@@ -134,6 +149,35 @@ export const GroupActionBar: React.FC = () => {
           title="Clear the group (Esc)"
         >CLEAR</button>
       </div>
+
+      {/* Pick-from-list transfer, for when the destination is off-screen
+          or too small to shift-click comfortably. Same code path as the
+          map gesture — both call groupMove. */}
+      <div className="group-bar__row">
+        <span className="group-bar__label">Transfer to</span>
+        <select
+          className="group-bar__select"
+          value={dest}
+          onChange={(e) => setDest(e.target.value)}
+          title="Send the whole group to one world"
+        >
+          <option value="">Destination…</option>
+          {destinations.map(d => (
+            <option key={d.id} value={d.id}>{d.label}</option>
+          ))}
+        </select>
+        <button
+          className="group-bar__btn group-bar__btn--primary"
+          disabled={!dest || movable.length === 0}
+          onClick={() => { if (dest) groupMove(dest); }}
+          title={movable.length === 0
+            ? 'Every ship in the group is already on a burn'
+            : `Send ${movable.length} ship${movable.length === 1 ? '' : 's'}`}
+        >
+          SEND {movable.length}
+        </button>
+      </div>
+
       <div className="group-bar__hint">
         {notice ?? 'Drag a box or shift-click to add · shift-click a world to send them there'}
       </div>

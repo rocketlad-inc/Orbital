@@ -27,6 +27,29 @@
   gap: 10px;
   flex-wrap: wrap;
 }
+.group-bar__row + .group-bar__row { margin-top: 6px; }
+
+.group-bar__label {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: #8a9fb3;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.group-bar__select {
+  background: #14202c;
+  border: 1px solid #2a3d50;
+  border-radius: 3px;
+  color: #9fb4c6;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 3px 6px;
+  /* Long system with 30+ bodies — cap so the bar can't grow past its
+     max-width and start wrapping oddly. */
+  max-width: 220px;
+  flex: 1 1 140px;
+}
 
 .group-bar__count {
   font-size: 12px;
@@ -68,6 +91,23 @@
 .group-bar__btn--ghost:hover {
   border-color: #ff5e5e;
   color: #ff5e5e;
+}
+
+.group-bar__btn--primary {
+  border-color: #ffb84d;
+  color: #ffb84d;
+  white-space: nowrap;
+}
+.group-bar__btn--primary:hover:not(:disabled) {
+  background: rgba(255, 184, 77, 0.14);
+  border-color: #ffb84d;
+  color: #ffd18a;
+}
+.group-bar__btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  border-color: #2a3d50;
+  color: #7d8fa0;
 }
 
 .group-bar__hint {
