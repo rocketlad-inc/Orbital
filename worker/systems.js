@@ -77,9 +77,15 @@ function isBeltable(b) {
   return b.type === 'asteroid' || b.type === 'dwarf';
 }
 
-/** A rogue on a long ellipse crosses a dozen lanes and belongs to none.
- *  Black Sky runs 400->4000, Vagrant 500->5300, Augustín 600->7000. The
- *  map already gives them no belt lane; the senate agrees. */
+/**
+ * A rogue on a long ellipse occupies no RING — it crosses a dozen.
+ * Black Sky runs 400->4000, Vagrant 500->5300, Augustín 600->7000.
+ *
+ * This test exists only to keep them out of belt GEOMETRY (the map's
+ * political wash). They ARE belt members everywhere else, votes
+ * included: a Kuiper object is a Kuiper object. See members vs
+ * laneMembers on the returned belts.
+ */
 function isEccentricRogue(b) {
   const rp = b.orbit_rp;
   const ra = b.orbit_ra;
@@ -104,9 +110,13 @@ export function findBelts(bodies) {
   }
   const anchors = new Set(bodies.filter(isStellarAnchor).map(b => b.id));
 
+  const isRubble = (b) => !!b.parent_body_id && anchors.has(b.parent_body_id)
+    && !childCount.get(b.id) && isBeltable(b);
+
+  // Clustering runs on ring-dwellers ONLY — a rogue's nominal radius is
+  // a fiction and would decide where the chain breaks.
   const rubble = bodies
-    .filter(b => b.parent_body_id && anchors.has(b.parent_body_id)
-      && !childCount.get(b.id) && isBeltable(b) && !isEccentricRogue(b))
+    .filter(b => isRubble(b) && !isEccentricRogue(b))
     .sort((a, b) => (a.orbit_radius ?? 0) - (b.orbit_radius ?? 0));
 
   const clusters = [];
@@ -132,7 +142,32 @@ export function findBelts(bodies) {
     const label = median < outermostPlanetSystem
       ? (inner++ === 0 ? 'Asteroid Belt' : `Inner Belt ${inner}`)
       : (outer++ === 0 ? 'Kuiper Belt' : `Outer Belt ${outer}`);
-    belts.push({ id: `belt:${Math.round(median)}`, label, members: cluster });
+    belts.push({
+      id: `belt:${Math.round(median)}`, label,
+      members: cluster.slice(), laneMembers: cluster,
+    });
+  }
+
+  // Fold the rogues in as MEMBERS. A Kuiper object is a Kuiper object:
+  // it belongs to the belt for grouping, ownership and votes, but never
+  // joins laneMembers, so the map's political wash is unaffected.
+  //
+  // Placed by APOAPSIS, not nominal radius — Black Sky's nominal 2200
+  // sits inside Pluto's orbit and would file as inner-belt, but it
+  // reaches 4000, past every planet system. Reach is where a crossing
+  // orbit actually lives.
+  const beltClass = (belt) => {
+    const radii = belt.laneMembers.map(m => m.orbit_radius ?? 0);
+    return radii[Math.floor(radii.length / 2)] < outermostPlanetSystem ? 'inner' : 'outer';
+  };
+  for (const b of bodies) {
+    if (!isRubble(b) || !isEccentricRogue(b)) continue;
+    const reach = b.orbit_ra ?? b.orbit_radius ?? 0;
+    const want = reach < outermostPlanetSystem ? 'inner' : 'outer';
+    const host = belts.find(belt => beltClass(belt) === want);
+    // No belt of that class here — the rogue stays its own system rather
+    // than being filed under a belt that doesn't exist.
+    if (host) host.members.push(b);
   }
   return belts;
 }
@@ -147,6 +182,8 @@ function beltsOf(bodies) {
   const byId = new Map();
   for (const belt of findBelts(bodies)) {
     byId.set(belt.id, belt);
+    // members, not laneMembers — a rogue roots to its belt even though
+    // it is absent from the belt's shaded lane.
     for (const m of belt.members) byBody.set(m.id, belt);
   }
   const built = { byBody, byId };

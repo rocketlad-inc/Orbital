@@ -294,7 +294,13 @@ export function computeSystemRegions(
     // everywhere or nowhere.
     const banded = new Set<string>();
     for (const belt of findBelts(alive)) {
-      const cluster = belt.members;
+      // laneMembers, NOT members: eccentric rogues belong to the belt
+      // politically but hold none of its ring. Letting them into the
+      // geometry would stretch the lane across half the outer system and
+      // paint a second coat over Uranus and Pluto — the exact overlap
+      // bug that put isEccentricRogue here in the first place. The
+      // political wash is unchanged by their membership.
+      const cluster = belt.laneMembers;
       const radii = cluster.map(b => b.orbitRadius);
       const rInner = Math.min(...radii);
       const rOuter = Math.max(...radii);
