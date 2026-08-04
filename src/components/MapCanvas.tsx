@@ -128,6 +128,35 @@ const SPRITE_FADE_PX = 5;
 /** Anchor px at which hulls reach full size (ramp from the threshold). */
 const SPRITE_FULL_PX = 34;
 const ORBIT_SHIP_MIN_SCALE = 0.5;
+
+// --- In-transit hull size vs zoom -------------------------------------
+// Parked hulls shrink via spriteSizeFor, which keys off their parent
+// body's on-screen radius. A ship between worlds has no such anchor, so
+// it drew at FULL size at every zoom — a wall of same-size sprites once
+// you pulled back to see the whole system. These drive a straight
+// camera-zoom ramp instead.
+/** Floor: how small an in-transit hull gets at max zoom-out. Half. */
+const TRANSIT_SHIP_MIN_SIZE = 0.5;
+/** Camera scale at/above which transit hulls draw full size. This is the
+ *  default view scale (gameContext DEFAULT_CAMERA_SCALE), so zooming IN
+ *  never shrinks anything and zooming out starts the ramp immediately. */
+const TRANSIT_FULL_CAM_SCALE = 0.5;
+/** The wheel handler's hard zoom-out clamp — the ramp bottoms out here
+ *  so "fully zoomed out" and "half size" line up exactly. Keep in sync
+ *  with the Math.max floor in the wheel handler below. */
+const TRANSIT_MIN_CAM_SCALE = 0.0012;
+
+/** Size multiplier for an in-transit hull at the given camera scale.
+ *  Interpolated in LOG space because zoom is multiplicative — a linear
+ *  ramp across a ~400x range would spend almost its entire travel in the
+ *  last sliver of zoom and read as an abrupt pop. */
+function transitShipScale(camScale: number): number {
+  const s = Math.max(TRANSIT_MIN_CAM_SCALE, camScale);
+  const t = Math.max(0, Math.min(1,
+    Math.log(s / TRANSIT_MIN_CAM_SCALE)
+      / Math.log(TRANSIT_FULL_CAM_SCALE / TRANSIT_MIN_CAM_SCALE)));
+  return TRANSIT_SHIP_MIN_SIZE + (1 - TRANSIT_SHIP_MIN_SIZE) * t;
+}
 /** A star-orbiter whose whole moon system spans fewer than this many
  *  screen pixels collapses its bodies' ship badges into a single
  *  SYSTEM-level count (its moons would overlap into an unreadable smear
@@ -1384,7 +1413,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           isSelected && !tradeLeg, renderTick(),
         );
         ctx.restore();
-        drawTransitShip(ship, renderContext, isSelected, samples);
+        drawTransitShip(ship, renderContext, isSelected, samples, transitShipScale(camera.scale));
         // Cache the canvas position the renderer just drew at, so the
         // click hit-test uses the SAME polyline-lerped point (not the
         // diverging ship.transit.pos integration). Matches the lerp

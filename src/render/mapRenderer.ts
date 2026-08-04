@@ -3006,10 +3006,15 @@ export function drawTransitShip(
   // line at every t — not on the underlying analytic curve, which
   // diverges from the visible chord between sample points.
   trajectorySamples?: Array<{ t: number; x: number; y: number }>,
+  /** Zoom-driven size multiplier — see MapCanvas transitShipScale. A
+   *  ship between worlds has no parent body to size against, so this
+   *  rides the camera scale directly. Selected hulls ignore it and stay
+   *  full size so the player can always find their pick. */
+  sizeScale: number = 1,
 ) {
   // Torch transit: read state-vector path directly.
   if (ship.transit) {
-    drawTorchTransitShip(ship, ctx, isSelected, trajectorySamples);
+    drawTorchTransitShip(ship, ctx, isSelected, trajectorySamples, sizeScale);
   }
 }
 
@@ -3326,6 +3331,7 @@ function drawTorchTransitShip(
   ctx: RenderContext,
   isSelected: boolean,
   trajectorySamples?: Array<{ t: number; x: number; y: number }>,
+  sizeScale: number = 1,
 ) {
   if (!ship.transit) return;
   const { vel, currentTransfer } = ship.transit;
@@ -3388,7 +3394,11 @@ function drawTorchTransitShip(
   // but forward" bug.
   const heading = Math.atan2(facingY, facingX);
 
-  const iconSize = shipIconSize(ship.class, isSelected);
+  // Everything downstream (exhaust plume, wake, selection brackets, rank
+  // chevron, label offset) is derived from iconSize, so scaling here
+  // shrinks the whole hull-and-dressing group together rather than
+  // leaving a full-size flame on a half-size ship.
+  const iconSize = shipIconSize(ship.class, isSelected) * (isSelected ? 1 : sizeScale);
 
   const flashStartT = ctx.damageFlashStart?.get(ship.id);
   drawDamageFlash(canvasPos, iconSize / 2, flashStartT, ctx.nowMs ?? performance.now(), ctx, 'damage');
