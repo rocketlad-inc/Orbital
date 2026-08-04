@@ -23,6 +23,12 @@
       "autoPort": true
     },
     {
+      "name": "solar-sailor",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["--prefix", "C:/Users/lcfee/OneDrive/Documents/Claude/Projects/SolarSailor", "vite", "C:/Users/lcfee/OneDrive/Documents/Claude/Projects/SolarSailor", "--port", "5199"],
+      "port": 5199
+    },
+    {
       "name": "event-hub",
       "runtimeExecutable": "npx",
       "runtimeArgs": [

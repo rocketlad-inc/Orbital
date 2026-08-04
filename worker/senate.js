@@ -684,6 +684,17 @@ async function handleVote(req, env, { params, session }) {
 
   const shaped = await shapeOne(env, res.row, ctx.faction.id);
   return json({ proposal: shaped, your_weight: res.weight });
+
+  // Mirror the vote onto the Discord card. Without this, a bill voted on
+  // in-game showed a stale tally in the channel — people read it and
+  // believed it.
+  try {
+    const discord = await import('./discord.js');
+    await discord.refreshSenateCard(env, proposalId);
+  } catch (e) {
+    console.error('refreshSenateCard (in-game vote) failed', e);
+  }
+
 }
 
 async function handleWithdraw(_req, env, { params, session }) {

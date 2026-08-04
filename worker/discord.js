@@ -121,11 +121,20 @@ const KIND_LABELS = {
   chancellor_vote: 'Chancellor Vote',
 };
 
+/** Weight AND headcount. A bare "Yea 18" reads as eighteen voters when
+ *  it's actually two factions holding eighteen planets between them —
+ *  Lorne asked why a 2-vote bill said 18. The line explains itself now. */
 function tallyLine(totals) {
-  const y = totals.yea?.weight ?? 0;
-  const n = totals.nay?.weight ?? 0;
-  const a = totals.abstain?.weight ?? 0;
-  return `✅ Yea **${y}**   ·   ❌ Nay **${n}**   ·   ⚪ Abstain **${a}**`;
+  const cell = (k, icon, label) => {
+    const w = totals[k]?.weight ?? 0;
+    const c = totals[k]?.count ?? 0;
+    return `${icon} ${label} **${w}** _(${c} vote${c === 1 ? '' : 's'})_`;
+  };
+  return [
+    cell('yea', '✅', 'Yea'),
+    cell('nay', '❌', 'Nay'),
+    cell('abstain', '⚪', 'Abstain'),
+  ].join('   ·   ');
 }
 
 /**
@@ -342,6 +351,44 @@ export async function postChannelEmbed(env, embed) {
     return { posted: false, reason: `http_${res.status}` };
   }
   return { posted: true };
+}
+
+/**
+ * Re-render a proposal's posted card in place.
+ *
+ * Called after ANY vote, not just Discord ones. Votes cast in-game used
+ * to leave the channel card frozen — a bill could show "Nay 0" while a
+ * 15-weight nay sat in the database, which is worse than showing no
+ * tally at all because people were reading it and believing it.
+ *
+ * Best-effort: a failed refresh must never fail the vote.
+ */
+export async function refreshSenateCard(env, proposalId) {
+  if (!env.DISCORD_BOT_TOKEN) return;
+  try {
+    const msg = await env.DB
+      .prepare('SELECT game_id, channel_id, message_id FROM discord_senate_messages WHERE proposal_id = ?')
+      .bind(proposalId).first();
+    if (!msg) return;                      // never posted; nothing to refresh
+    const row = await env.DB
+      .prepare('SELECT * FROM senate_proposals WHERE id = ?').bind(proposalId).first();
+    if (!row) return;
+
+    const totals = await loadProposalTotals(env, proposalId);
+    const payload = buildVoteMessage(
+      row, totals, await gameName(env, msg.game_id),
+      await effectFor(env, msg.game_id, row));
+
+    // A resolved bill keeps its card but loses its buttons — clicking
+    // Yea on a closed vote is a dead end that looks like a bug.
+    const done = row.status !== 'voting' && row.status !== 'debating';
+    await botFetch(env, 'PATCH', `/channels/${msg.channel_id}/messages/${msg.message_id}`, {
+      embeds: payload.embeds,
+      components: done ? [] : payload.components,
+    });
+  } catch (e) {
+    console.error('refreshSenateCard failed', e, { proposalId });
+  }
 }
 
 // ---------- interactions endpoint ----------
@@ -561,11 +608,39 @@ async function handleComponent(env, interaction) {
   });
   if (!res.ok) return ephemeral(`Couldn’t record your vote: ${res.message}`);
 
-  // Success — refresh the shared message tally in place (keeps buttons).
+  // Update the shared card for everyone...
   const totals = await loadProposalTotals(env, proposalId);
   const payload = buildVoteMessage(
     res.row, totals, await gameName(env, prop.game_id),
     await effectFor(env, prop.game_id, res.row));
+
+  // ...and privately confirm to the CLICKER what they just did. The
+  // shared card can't show per-person state (components are per-message,
+  // not per-viewer), so without this a voter has no idea whether their
+  // click registered as theirs — only that some number moved.
+  // Read back the weight actually recorded, rather than trusting a field
+  // on the result object that may not exist.
+  const myWeight = (await env.DB
+    .prepare('SELECT weight FROM senate_votes WHERE proposal_id = ? AND faction_id = ?')
+    .bind(proposalId, faction.id).first())?.weight ?? null;
+
+  const appId = interaction.application_id;
+  const token = interaction.token;
+  if (appId && token) {
+    const mine = choice === 'yea' ? '✅ Yea' : choice === 'nay' ? '❌ Nay' : '⚪ Abstain';
+    // Fire-and-forget followup; the UPDATE response below is what Discord
+    // is waiting on and must not be delayed by this.
+    void fetch(`${DISCORD_API}/webhooks/${appId}/${token}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        flags: FLAG_EPHEMERAL,
+        content: `Your vote is recorded as **${mine}**${myWeight != null ? ` · weight **${myWeight}**` : ''}`
+          + `. You can change it until the vote closes.`,
+      }),
+    }).catch(() => {});
+  }
+
   return json({ type: R_UPDATE, data: { embeds: payload.embeds, components: payload.components } });
 }
 
