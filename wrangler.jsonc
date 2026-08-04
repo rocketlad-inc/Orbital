@@ -14,7 +14,10 @@
     "directory": "build/",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
+    // /herald/* is Worker-rendered HTML (the territory strip). Without
+    // it listed here the static-asset layer answers first and serves the
+    // SPA shell instead, so the route silently 200s with the wrong page.
+    "run_worker_first": ["/api/*", "/herald/*"]
   },
   "d1_databases": [
     {

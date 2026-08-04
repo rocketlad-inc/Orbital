@@ -735,6 +735,7 @@ import * as actions from './actions.js';
 import * as fleets from './fleets.js';
 import * as discord from './discord.js';
 import * as analytics from './analytics.js';
+import * as heraldStrip from './heraldStrip.js';
 
 const FEATURE_MODULES = [lobby, factions, messages, senate, trades, state, actions, fleets, discord, analytics];
 
@@ -824,6 +825,24 @@ function ensureMigrated(env) {
 export default {
   async fetch(req, env, execCtx) {
     const url = new URL(req.url);
+
+    // Herald territory strip — a shareable public page (and the surface
+    // the screenshotter loads). Matched BEFORE the /api gate so the URL
+    // stays human-friendly; feature-module routes only run under /api/*.
+    {
+      const hm = url.pathname.match(heraldStrip.STRIP_RE);
+      if (hm && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await heraldStrip.handleStripPage(req, env, {
+            params: { gameId: decodeURIComponent(hm[1]) },
+          });
+        } catch (e) {
+          console.error('herald strip page failed', e);
+          return new Response('strip unavailable', { status: 500 });
+        }
+      }
+    }
 
     if (url.pathname.startsWith('/api/')) {
       // Skip the auto-init for /api/__init itself (avoid a recursive call)
