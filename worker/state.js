@@ -451,7 +451,8 @@ __mark('wave2-done');
       // unmasked" read, and the chamber counts the real map rather than
       // the caller's fog. Reusing it keeps /state at the same query count.
       `SELECT id, template_id, name, type, parent_body_id,
-              orbit_radius, orbit_period, angle0, owner_faction_id
+              orbit_radius, orbit_period, angle0, orbit_rp, orbit_ra,
+              owner_faction_id
          FROM game_bodies WHERE game_id = ?1 AND destroyed_at_tick IS NULL`,
     )
     .bind(gameId)

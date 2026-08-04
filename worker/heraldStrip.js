@@ -25,23 +25,18 @@
 // view here — that would leak their private intel to everyone.
 // ============================================================================
 
-/** Mirrors src/game/systemGrouping.ts CORE_MEMBER_IDS. Two lists that
- *  disagree about what "The Core" contains is worse than not grouping,
- *  so this is a deliberate, commented duplicate rather than an accident. */
 import {
   createSurface, fillRect, fillVGrad, fillRadial, fillCircle, strokeCircle,
   strokeEllipse, drawLine, hatchRect, drawText, textWidth, encodePng, hexToRgb,
 } from './heraldPng.js';
+import { CORE_TEMPLATES, CORE_LABEL, findBelts } from './systems.js';
 
-const CORE_TEMPLATES = new Set(['sol', 'mercury', 'venus']);
-const CORE_LABEL = 'The Core';
-
-/** Rocks with no meaningful individual identity get pooled by orbit
- *  band rather than each claiming a sector column of its own. */
-function beltLabelFor(orbitRadius) {
-  if (orbitRadius < 900) return 'Asteroid Belt';
-  return 'Kuiper Reach';
-}
+// CORE_TEMPLATES / CORE_LABEL and the belt grouping come from systems.js —
+// the same source the senate counts and the client map draws from. This
+// file used to carry its own copies, including a `beltLabelFor` that
+// split on a hard-coded radius of 900 and named the outer band "Kuiper
+// Reach" while the map called it "Kuiper Belt". A player reading the
+// Herald and looking at the map saw two different names for one place.
 
 // ---------------------------------------------------------------------------
 // Data
@@ -74,7 +69,8 @@ export async function buildTerritoryData(env, gameId) {
   const bodyRows = (await env.DB
     .prepare(
       `SELECT b.id, b.template_id, b.name, b.type, b.parent_body_id,
-              b.orbit_radius, b.owner_faction_id,
+              b.orbit_radius, b.orbit_period, b.orbit_rp, b.orbit_ra,
+              b.owner_faction_id,
               (SELECT s.owner_faction_id FROM game_settlements s
                 WHERE s.body_id = b.id LIMIT 1) AS settle_owner
          FROM game_bodies b
@@ -135,6 +131,15 @@ export async function buildTerritoryData(env, gameId) {
   const coreBodies = [];
   const belts = new Map();
 
+  // Which rocks belong to which belt, decided by the SHARED rule so the
+  // Herald, the map and the senate cut the belts in the same place. A
+  // rock the rule leaves out (a lone rogue on a crossing orbit) falls
+  // through to its own column, exactly as the map gives it its own lane.
+  const beltOfBody = new Map();
+  for (const belt of findBelts(bodyRows)) {
+    for (const m of belt.members) beltOfBody.set(m.id, belt.label);
+  }
+
   for (const b of heliocentric) {
     const owner = ownerOf(b);
     const entry = {
@@ -148,11 +153,10 @@ export async function buildTerritoryData(env, gameId) {
     if (CORE_TEMPLATES.has(b.template_id)) { coreBodies.push(entry); continue; }
 
     const moons = moonsOf(b.id);
-    const isRock = entry.kind === 'd' && moons.length === 0;
-    if (isRock) {
-      const label = beltLabelFor(entry.orbitRadius);
-      if (!belts.has(label)) belts.set(label, []);
-      belts.get(label).push(entry);
+    const beltLabel = beltOfBody.get(b.id);
+    if (beltLabel) {
+      if (!belts.has(beltLabel)) belts.set(beltLabel, []);
+      belts.get(beltLabel).push(entry);
       continue;
     }
     sectors.push({

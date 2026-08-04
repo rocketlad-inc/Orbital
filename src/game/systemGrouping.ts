@@ -58,6 +58,137 @@ export function isStellarAnchor(b: Body): boolean {
     || b.orbitPeriod >= PRETEND_ORBIT_PERIOD;
 }
 
+// ---------------------------------------------------------------------------
+// Belts
+//
+// A run of rubble in neighbouring orbits is ONE place. Fifteen dwarf
+// planets each heading their own "system" is not a map of the solar
+// system, it's a list of rocks — and it let a player buy fifteen senate
+// votes by grabbing fifteen pebbles nobody would ever fight over.
+//
+// These constants and this clustering were already live in
+// render/systemRegions.ts, where the map has drawn "Asteroid Belt" and
+// "Kuiper Belt" lanes for a while. They moved here so the panels, the
+// outliner, the map and the SENATE all group identically — the map
+// saying "Asteroid Belt" while the outliner listed eight separate
+// systems was the drift this closes.
+// ---------------------------------------------------------------------------
+
+/** Adjacent-orbit ratio below which two rocks belong to the same belt.
+ *  Keeps the dense runs intact while leaving genuine long-range rogues
+ *  (Black Sky, Vagrant, Sedna) as their own islands — they orbit alone,
+ *  and calling them "the belt" would claim a neighbourhood that isn't
+ *  there. */
+export const BELT_RATIO = 1.25;
+
+/** Fewer than this and it's a pair of neighbours, not a belt. */
+export const BELT_MIN_MEMBERS = 3;
+
+/** Rubble — the only things that form belts. */
+export function isBeltable(b: Body): boolean {
+  return b.type === 'asteroid' || b.type === 'dwarf';
+}
+
+/** Apoapsis:periapsis beyond which an orbit is a crossing trajectory
+ *  rather than a lane. Circular bodies carry no rp/ra at all, so this
+ *  only ever judges the seeded rogues. */
+const ROGUE_ECCENTRICITY_RATIO = 1.5;
+
+/**
+ * A rogue on a long elliptical orbit doesn't BELONG to a belt — it
+ * crosses a dozen of them. Black Sky runs 400 -> 4000, Vagrant 500 ->
+ * 5300, Augustín 600 -> 7000, each sweeping from inside the asteroid
+ * belt out past Eris, yet each carries a single nominal orbitRadius the
+ * clustering maths would treat as its home ring.
+ *
+ * The map already excludes them from belt lanes for exactly this reason
+ * (they were the source of every overlapping border in the outer
+ * system). Excluding them here too means the senate counts what the map
+ * draws: a rogue is its own system, because it lives nowhere and
+ * everywhere.
+ */
+export function isEccentricRogue(b: Body): boolean {
+  const rp = b.orbit_rp;
+  const ra = b.orbit_ra;
+  if (rp == null || ra == null || rp <= 0) return false;
+  return ra > rp * ROGUE_ECCENTRICITY_RATIO;
+}
+
+export type Belt = {
+  /** Synthetic system root id. Matches systemRegions' region id scheme. */
+  id: string;
+  label: string;
+  members: Body[];
+};
+
+/**
+ * Cluster star-orbiting rubble into belts.
+ *
+ * Naming is STRUCTURAL, not a hard-coded body list: a belt whose median
+ * orbit sits inside the outermost planet system is an asteroid belt,
+ * beyond it a Kuiper belt. That keeps working for any seeded system,
+ * not just Sol.
+ */
+export function findBelts(bodies: Body[]): Belt[] {
+  const childCount = new Map<string, number>();
+  for (const b of bodies) {
+    if (b.parent) childCount.set(b.parent, (childCount.get(b.parent) ?? 0) + 1);
+  }
+  const anchors = new Set(bodies.filter(isStellarAnchor).map(b => b.id));
+
+  // Only bodies orbiting the star directly, with no satellites of their
+  // own. A rock with a moon (Pluto/Charon) is a system, not rubble.
+  const rubble = bodies
+    .filter(b => b.parent && anchors.has(b.parent)
+      && !childCount.get(b.id) && isBeltable(b) && !isEccentricRogue(b))
+    .sort((a, b) => a.orbitRadius - b.orbitRadius);
+
+  const clusters: Body[][] = [];
+  for (const b of rubble) {
+    const last = clusters[clusters.length - 1];
+    const prev = last?.[last.length - 1];
+    if (prev && b.orbitRadius <= prev.orbitRadius * BELT_RATIO) last.push(b);
+    else clusters.push([b]);
+  }
+
+  const planetSystemRadii = bodies
+    .filter(b => b.parent && anchors.has(b.parent) && (childCount.get(b.id) ?? 0) > 0)
+    .map(b => b.orbitRadius);
+  const outermostPlanetSystem = planetSystemRadii.length
+    ? Math.max(...planetSystemRadii)
+    : Infinity;
+
+  const belts: Belt[] = [];
+  let inner = 0, outer = 0;
+  for (const cluster of clusters) {
+    if (cluster.length < BELT_MIN_MEMBERS) continue;
+    const radii = cluster.map(b => b.orbitRadius);
+    const median = radii[Math.floor(radii.length / 2)];
+    const label = median < outermostPlanetSystem
+      ? (inner++ === 0 ? 'Asteroid Belt' : `Inner Belt ${inner}`)
+      : (outer++ === 0 ? 'Kuiper Belt' : `Outer Belt ${outer}`);
+    belts.push({ id: `belt:${Math.round(median)}`, label, members: cluster });
+  }
+  return belts;
+}
+
+/** Memoized per bodies-array so the root resolver and the labeller agree
+ *  without re-clustering on every call. */
+const beltCache = new WeakMap<Body[], { byBody: Map<string, Belt>; byId: Map<string, Belt> }>();
+function beltsOf(bodies: Body[]) {
+  const hit = beltCache.get(bodies);
+  if (hit) return hit;
+  const byBody = new Map<string, Belt>();
+  const byId = new Map<string, Belt>();
+  for (const belt of findBelts(bodies)) {
+    byId.set(belt.id, belt);
+    for (const m of belt.members) byBody.set(m.id, belt);
+  }
+  const built = { byBody, byId };
+  beltCache.set(bodies, built);
+  return built;
+}
+
 /**
  * Build a memoized `bodyId -> planetary-system root id` resolver.
  *
@@ -72,9 +203,14 @@ export function isStellarAnchor(b: Body): boolean {
 export function makeSystemRootOf(bodies: Body[]): (bodyId: string) => string {
   const byId = new Map(bodies.map(b => [b.id, b]));
   const cache = new Map<string, string>();
+  const belts = beltsOf(bodies);
   return (bodyId: string): string => {
     const hit = cache.get(bodyId);
     if (hit) return hit;
+    // Belt membership outranks the parent walk: a belt rock's parent IS
+    // the star, so without this it would root to itself.
+    const belt = belts.byBody.get(bodyId);
+    if (belt) { cache.set(bodyId, belt.id); return belt.id; }
     const chain: string[] = [];
     let cur = byId.get(bodyId);
     const seen = new Set<string>();
@@ -112,9 +248,11 @@ export function makeSystemRootOf(bodies: Body[]): (bodyId: string) => string {
  * would promise the whole solar system and deliver one star.
  */
 export function systemLabel(bodies: Body[], rootId: string): string {
-  // Synthetic root — no body carries this id, so name it before the
+  // Synthetic roots — no body carries these ids, so name them before the
   // lookup below falls through to shouting the raw id.
   if (rootId === CORE_SYSTEM_ID) return CORE_LABEL;
+  const belt = beltsOf(bodies).byId.get(rootId);
+  if (belt) return belt.label;
   const root = bodies.find(b => b.id === rootId);
   if (!root) return rootId.toUpperCase();
   const name = root.name.replace(/\s*Barycenter$/i, '');

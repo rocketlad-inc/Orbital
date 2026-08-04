@@ -31,48 +31,25 @@
 // ============================================================
 
 import { Body, Faction, Settlement } from '../types';
-import { CORE_MEMBER_IDS, CORE_LABEL } from '../game/systemGrouping';
+import {
+  CORE_MEMBER_IDS, CORE_LABEL, findBelts, isEccentricRogue,
+} from '../game/systemGrouping';
 import { deriveSecondary } from '../game/colorUtils';
 
-/** Consecutive rubble bodies join one belt while each is within this
- *  factor of the previous orbit radius. 1.25 keeps Sol's real belts
- *  intact (345→390, 1900→2400) while leaving the lone rogues
- *  (Black Sky 1100, Vagrant 1450, Sedna 3500) as their own islands. */
-const BELT_RATIO = 1.25;
-
-/** Minimum members before a cluster is a "belt" rather than a pair of
- *  neighbours that happen to sit near each other. */
-const BELT_MIN_MEMBERS = 3;
+// BELT_RATIO / BELT_MIN_MEMBERS / isBeltable used to live here. They moved
+// to systemGrouping so the map, the panels, the outliner and the senate
+// all cut the belts in the same place — the map drew one "Asteroid Belt"
+// lane while the outliner listed eight separate systems and the senate
+// paid eight votes for them.
 
 /** Padding on a planet system's lane, as a factor of its outermost
  *  moon's orbit — enough that the moon sits inside the shading. */
 const SYSTEM_DISC_PAD = 1.3;
 
-/** Apoapsis:periapsis beyond which an orbit is a crossing trajectory
- *  rather than a lane. Circular bodies carry no rp/ra at all, so this
- *  only ever judges the seeded rogues. */
-const ROGUE_ECCENTRICITY_RATIO = 1.5;
-
-/**
- * A rogue on a long elliptical orbit doesn't OCCUPY an annulus — it
- * crosses a dozen of them. Black Sky runs 200 -> 2000, Vagrant 250 ->
- * 2650, Augustin 300 -> 3500, yet each carries a single nominal
- * orbitRadius (1100 / 1450 / 1900) that the lane maths treats as its
- * home ring. Shading that ring claims territory the rock doesn't hold,
- * and — because the nominal values collide with real planets — paints a
- * second coat over Uranus and Pluto, which is where the map's invented
- * colours and "overlapping borders" came from. Every overlap in the
- * live outer system traced to exactly these three.
- *
- * So they get no band. They still render, stay selectable, and keep
- * their owner; they just stop claiming a lane they only visit.
- */
-function isEccentricRogue(b: Body): boolean {
-  const rp = b.orbit_rp;
-  const ra = b.orbit_ra;
-  if (rp == null || ra == null || rp <= 0) return false;
-  return ra > rp * ROGUE_ECCENTRICITY_RATIO;
-}
+// isEccentricRogue moved to systemGrouping — the senate needs the same
+// judgement (a rock that crosses a dozen lanes belongs to no belt), and
+// two copies of that test would drift. A rogue still renders, stays
+// selectable and keeps its owner; it just claims no lane it only visits.
 
 /** Half-lane as a fraction of the distance to the nearest neighbouring
  *  orbit. Below 0.5 so two adjacent rings leave a visible seam. */
@@ -231,11 +208,6 @@ export function claimsFromSettlements(settlements: Settlement[] | undefined): Se
     .map(s => ({ bodyId: s.bodyId, ownedBy: s.ownedBy as string }));
 }
 
-/** Rubble — the only things that form belts. */
-function isBeltable(b: Body): boolean {
-  return b.type === 'asteroid' || b.type === 'dwarf';
-}
-
 /**
  * Derive the political regions of every star system on the map.
  *
@@ -291,12 +263,10 @@ export function computeSystemRegions(
 
     // --- planet systems: star-orbiters that have moons ---
     const solitaries: Body[] = [];
-    const planetSystemRadii: number[] = [];
     for (const b of orbiters) {
       const moons = childrenOf.get(b.id) ?? [];
       if (moons.length === 0) { solitaries.push(b); continue; }
       const members = [b, ...moons];
-      planetSystemRadii.push(b.orbitRadius);
       // At minimum the lane covers the moon system itself, so the band
       // never reads as narrower than the thing it represents.
       const outermost = Math.max(...moons.map(m => m.orbitRadius));
@@ -317,40 +287,23 @@ export function computeSystemRegions(
     }
 
     // --- belts: runs of nearby rubble ---
-    const rubble = solitaries.filter(isBeltable);
-    const clusters: Body[][] = [];
-    for (const b of rubble) {
-      const last = clusters[clusters.length - 1];
-      const prev = last?.[last.length - 1];
-      if (prev && b.orbitRadius <= prev.orbitRadius * BELT_RATIO) last.push(b);
-      else clusters.push([b]);
-    }
-
-    // A belt inside the outermost planet system is the "asteroid" belt;
-    // beyond it, the "kuiper" belt. Naming off structure rather than a
-    // body-id table keeps it sensible for other seeded systems too.
-    const outermostPlanetSystem = planetSystemRadii.length
-      ? Math.max(...planetSystemRadii)
-      : Infinity;
-    let innerBelts = 0;
-    let outerBelts = 0;
+    //
+    // Clustering and naming come from systemGrouping.findBelts, the same
+    // call the outliner, the fleet panel and the senate make. This file
+    // used to own a private copy of that loop; a belt is now one place
+    // everywhere or nowhere.
     const banded = new Set<string>();
-
-    for (const cluster of clusters) {
-      if (cluster.length < BELT_MIN_MEMBERS) continue;
+    for (const belt of findBelts(alive)) {
+      const cluster = belt.members;
       const radii = cluster.map(b => b.orbitRadius);
       const rInner = Math.min(...radii);
       const rOuter = Math.max(...radii);
       const median = radii[Math.floor(radii.length / 2)];
-      const isInner = median < outermostPlanetSystem;
-      let label: string;
-      if (isInner) label = innerBelts++ === 0 ? 'Asteroid Belt' : `Inner Belt ${innerBelts}`;
-      else label = outerBelts++ === 0 ? 'Kuiper Belt' : `Outer Belt ${outerBelts}`;
 
       for (const b of cluster) banded.add(b.id);
       regions.push({
         id: `belt:${star.id}:${Math.round(median)}`,
-        label,
+        label: belt.label,
         shape: {
           kind: 'band',
           starBodyId: star.id,

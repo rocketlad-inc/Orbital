@@ -225,7 +225,11 @@ async function loadGameAndFaction(env, gameId, session) {
 async function bodiesForWeight(env, gameId) {
   return (await env.DB
     .prepare(
-      `SELECT id, template_id, name, type, parent_body_id, orbit_period,
+      // orbit_radius/rp/ra feed the belt clustering (systems.js): a run of
+      // neighbouring rubble is one system, and a rogue on a long ellipse
+      // is its own. Without these columns every rock counts separately.
+      `SELECT id, template_id, name, type, parent_body_id,
+              orbit_period, orbit_radius, orbit_rp, orbit_ra,
               owner_faction_id
          FROM game_bodies
         WHERE game_id = ? AND destroyed_at_tick IS NULL`,

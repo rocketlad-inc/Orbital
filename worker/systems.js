@@ -57,6 +57,103 @@ function isStellarAnchor(b) {
     || (b.orbit_period ?? 0) >= PRETEND_ORBIT_PERIOD;
 }
 
+// ---------------------------------------------------------------------------
+// Belts — mirror of findBelts() in src/game/systemGrouping.ts.
+//
+// A run of rubble in neighbouring orbits is ONE place. Without this the
+// asteroid belt was eight systems and eight votes, so the cheapest route
+// to political power was grabbing pebbles nobody contests.
+//
+// These constants MUST match the client's. The map draws one "Asteroid
+// Belt" lane; if the senate counted eight, the number on the vote card
+// would contradict the picture the player is looking at.
+// ---------------------------------------------------------------------------
+
+const BELT_RATIO = 1.25;
+const BELT_MIN_MEMBERS = 3;
+const ROGUE_ECCENTRICITY_RATIO = 1.5;
+
+function isBeltable(b) {
+  return b.type === 'asteroid' || b.type === 'dwarf';
+}
+
+/** A rogue on a long ellipse crosses a dozen lanes and belongs to none.
+ *  Black Sky runs 400->4000, Vagrant 500->5300, Augustín 600->7000. The
+ *  map already gives them no belt lane; the senate agrees. */
+function isEccentricRogue(b) {
+  const rp = b.orbit_rp;
+  const ra = b.orbit_ra;
+  if (rp == null || ra == null || rp <= 0) return false;
+  return ra > rp * ROGUE_ECCENTRICITY_RATIO;
+}
+
+/**
+ * Cluster star-orbiting rubble into belts. Naming is structural: a belt
+ * whose median orbit sits inside the outermost planet system is an
+ * asteroid belt, beyond it a Kuiper belt — so it stays sensible for any
+ * seeded system, not just Sol.
+ *
+ * Returns [{ id, label, members }].
+ */
+export function findBelts(bodies) {
+  const childCount = new Map();
+  for (const b of bodies) {
+    if (b.parent_body_id) {
+      childCount.set(b.parent_body_id, (childCount.get(b.parent_body_id) ?? 0) + 1);
+    }
+  }
+  const anchors = new Set(bodies.filter(isStellarAnchor).map(b => b.id));
+
+  const rubble = bodies
+    .filter(b => b.parent_body_id && anchors.has(b.parent_body_id)
+      && !childCount.get(b.id) && isBeltable(b) && !isEccentricRogue(b))
+    .sort((a, b) => (a.orbit_radius ?? 0) - (b.orbit_radius ?? 0));
+
+  const clusters = [];
+  for (const b of rubble) {
+    const last = clusters[clusters.length - 1];
+    const prev = last?.[last.length - 1];
+    if (prev && (b.orbit_radius ?? 0) <= (prev.orbit_radius ?? 0) * BELT_RATIO) last.push(b);
+    else clusters.push([b]);
+  }
+
+  const planetRadii = bodies
+    .filter(b => b.parent_body_id && anchors.has(b.parent_body_id)
+      && (childCount.get(b.id) ?? 0) > 0)
+    .map(b => b.orbit_radius ?? 0);
+  const outermostPlanetSystem = planetRadii.length ? Math.max(...planetRadii) : Infinity;
+
+  const belts = [];
+  let inner = 0, outer = 0;
+  for (const cluster of clusters) {
+    if (cluster.length < BELT_MIN_MEMBERS) continue;
+    const radii = cluster.map(b => b.orbit_radius ?? 0);
+    const median = radii[Math.floor(radii.length / 2)];
+    const label = median < outermostPlanetSystem
+      ? (inner++ === 0 ? 'Asteroid Belt' : `Inner Belt ${inner}`)
+      : (outer++ === 0 ? 'Kuiper Belt' : `Outer Belt ${outer}`);
+    belts.push({ id: `belt:${Math.round(median)}`, label, members: cluster });
+  }
+  return belts;
+}
+
+/** Memoized per bodies-array so the resolver and the labeller agree
+ *  without re-clustering on every lookup. */
+const beltCache = new WeakMap();
+function beltsOf(bodies) {
+  const hit = beltCache.get(bodies);
+  if (hit) return hit;
+  const byBody = new Map();
+  const byId = new Map();
+  for (const belt of findBelts(bodies)) {
+    byId.set(belt.id, belt);
+    for (const m of belt.members) byBody.set(m.id, belt);
+  }
+  const built = { byBody, byId };
+  beltCache.set(bodies, built);
+  return built;
+}
+
 function templateOf(b) {
   if (b.template_id) return b.template_id;
   const colon = String(b.id).indexOf(':');
@@ -77,9 +174,14 @@ function templateOf(b) {
 export function makeSystemRootOf(bodies) {
   const byId = new Map(bodies.map(b => [b.id, b]));
   const cache = new Map();
+  const belts = beltsOf(bodies);
   return (bodyId) => {
     const hit = cache.get(bodyId);
     if (hit) return hit;
+    // Belt membership outranks the parent walk: a belt rock's parent IS
+    // the star, so without this it would root to itself.
+    const belt = belts.byBody.get(bodyId);
+    if (belt) { cache.set(bodyId, belt.id); return belt.id; }
     const chain = [];
     let cur = byId.get(bodyId);
     const seen = new Set();
@@ -105,6 +207,8 @@ export function makeSystemRootOf(bodies) {
  *  "Midas System" for one bare asteroid is pretend grandeur. */
 export function systemLabel(bodies, rootId) {
   if (rootId === CORE_SYSTEM_ID) return CORE_LABEL;
+  const belt = beltsOf(bodies).byId.get(rootId);
+  if (belt) return belt.label;
   const root = bodies.find(b => b.id === rootId);
   if (!root) return rootId;
   const name = String(root.name ?? '').replace(/\s*Barycenter$/i, '');
