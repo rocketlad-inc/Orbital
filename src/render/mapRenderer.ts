@@ -683,20 +683,34 @@ export function drawOrbit(
 /**
  * Draw orbital path for an orbit (ellipse)
  */
+/**
+ * @param laneOffset  The formation lane (drawShip's `formation.lane`) —
+ *   the radial nudge that fans stacked hulls apart so they don't draw on
+ *   top of each other. The ring MUST carry it too: the hull sits at
+ *   r + lane, so drawing the ellipse at bare r left the ship visibly off
+ *   its own orbit line (player report). Parked orbits are circular
+ *   (rp === ra, see the deploy/arrival park code), so widening both radii
+ *   is exact for every ship this actually fires on; on an eccentric orbit
+ *   it's a uniform outward offset, which is the intent regardless.
+ */
 export function drawOrbitEllipse(
   orbit: OrbitElements,
   ctx: RenderContext,
   color: string = COLORS.orbitTrajectory,
   width: number = 1,
-  isDashed: boolean = false
+  isDashed: boolean = false,
+  laneOffset: number = 0,
 ) {
   const parentBody = ctx.bodies.find(b => b.id === orbit.parentBodyId);
   if (!parentBody) return;
 
   const parentPos = bodyPosition(parentBody, ctx.t, ctx.bodies);
 
-  const a = semiMajor(orbit);
-  const e = eccentricity(orbit);
+  const laned = laneOffset > 0
+    ? { ...orbit, rp: orbit.rp + laneOffset, ra: orbit.ra + laneOffset }
+    : orbit;
+  const a = semiMajor(laned);
+  const e = eccentricity(laned);
   const b = a * Math.sqrt(1 - e * e);
   const c = a * e;
 
@@ -2593,9 +2607,17 @@ export function drawManeuverNodeLabel(
 /**
  * Draw periapsis and apoapsis markers on a ship's current orbit
  */
+/**
+ * @param laneOffset  Formation lane, same value drawShip and
+ *   drawOrbitEllipse get. The DOTS shift out with the ring so they stay
+ *   on the drawn ellipse; the LABELS keep reporting the true rp/ra,
+ *   because the lane is a display fan to unstack sprites, not a real
+ *   change to the orbit.
+ */
 export function drawApsisMarkers(
   ship: Ship,
-  ctx: RenderContext
+  ctx: RenderContext,
+  laneOffset: number = 0,
 ) {
   const parentBody = bodyByIdOf(ctx.bodies).get(ship.orbit.parentBodyId);
   if (!parentBody) return;
@@ -2605,15 +2627,16 @@ export function drawApsisMarkers(
   const orbit = ship.orbit;
   const cosOmega = Math.cos(orbit.omega);
   const sinOmega = Math.sin(orbit.omega);
+  const lane = laneOffset > 0 ? laneOffset : 0;
 
   // Periapsis position: along omega direction at distance rp from parent
-  const periWorldX = parentPos.x + cosOmega * orbit.rp;
-  const periWorldY = parentPos.y + sinOmega * orbit.rp;
+  const periWorldX = parentPos.x + cosOmega * (orbit.rp + lane);
+  const periWorldY = parentPos.y + sinOmega * (orbit.rp + lane);
   const periCanvas = worldToCanvas(periWorldX, periWorldY, ctx);
 
   // Apoapsis position: opposite omega direction at distance ra from parent
-  const apoWorldX = parentPos.x - cosOmega * orbit.ra;
-  const apoWorldY = parentPos.y - sinOmega * orbit.ra;
+  const apoWorldX = parentPos.x - cosOmega * (orbit.ra + lane);
+  const apoWorldY = parentPos.y - sinOmega * (orbit.ra + lane);
   const apoCanvas = worldToCanvas(apoWorldX, apoWorldY, ctx);
 
   const orbitColor = COLORS.orbitCurrent;

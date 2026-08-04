@@ -1419,11 +1419,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           drawOrbitEllipse(
             ship.orbit, renderContext,
             isSelected ? COLORS.orbitCurrent : COLORS.orbitTrajectory,
-            isSelected ? 2 : 1
+            isSelected ? 2 : 1,
+            false,
+            // Match the lane drawShip fans this hull out by, or the ring
+            // draws under a ship that isn't on it.
+            formation?.lane ?? 0,
           );
         }
         drawShip(ship, renderContext, isSelected, formation, orbitShipScale);
-        if (isSelected) drawApsisMarkers(ship, renderContext);
+        if (isSelected) drawApsisMarkers(ship, renderContext, formation?.lane ?? 0);
 
         const previewColor = COLORS.maneuverPlanned;
         drawTorchTrajectory(ship.plannedTransit, gameState.bodies, renderContext, previewColor, true);
@@ -1437,11 +1441,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           drawOrbitEllipse(
             ship.orbit, renderContext,
             isSelected ? COLORS.orbitCurrent : COLORS.orbitTrajectory,
-            isSelected ? 2 : 1
+            isSelected ? 2 : 1,
+            false,
+            formation?.lane ?? 0,
           );
         }
         drawShip(ship, renderContext, isSelected, formation, orbitShipScale);
-        if (isSelected) drawApsisMarkers(ship, renderContext);
+        if (isSelected) drawApsisMarkers(ship, renderContext, formation?.lane ?? 0);
       }
       ctx.globalAlpha = prevShipAlpha;   // undo the crossfade-band fade
     }
