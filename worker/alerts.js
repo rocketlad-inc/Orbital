@@ -15,9 +15,6 @@
 // never cost a player their turn.
 // ============================================================================
 
-/** Combat is worth interrupting for; the same 3-tick window the Herald
- *  and the sitrep use, so all three agree about what "now" means. */
-const COMBAT_WINDOW = 3;
 /** Warn about a vote this many ticks before it closes. */
 const VOTE_WARN_TICKS = 2;
 /** An idle player hears from us at most this often. */
@@ -37,78 +34,18 @@ export async function runTickAlerts(env, gameId, tick) {
     .prepare('SELECT r.name FROM rooms r WHERE r.id = ?').bind(gameId).first();
   const gameName = gameRow?.name ?? gameId;
 
-  await combatAlerts(env, notify, gameId, gameName, tick);
+  // NOTE: combat deliberately does NOT alert from here. A war lasts many
+  // ticks, and an hourly "you are under fire" DM about the same ongoing
+  // battle is noise — Lorne's call, and the right one. Combat now reports
+  // in the daily situation report, where a day of fighting reads as one
+  // narrative instead of eight interruptions. What stays here is
+  // genuinely time-critical: a vote that will CLOSE before the next
+  // briefing, and a debt that silently weakens every battle.
   await arrearsAlerts(env, notify, gameId, gameName, tick);
   await voteClosingAlerts(env, notify, gameId, gameName, tick);
 }
 
 // ---------------------------------------------------------------------------
-
-async function combatAlerts(env, notify, gameId, gameName, tick) {
-  // Group by body so a ten-ship brawl is ONE alert, not ten. The dedupe
-  // key includes the body and tick, so a battle spanning several ticks
-  // re-alerts at most once per tick per place — enough to convey "still
-  // happening" without becoming a machine gun.
-  const rows = (await env.DB
-    .prepare(
-      `SELECT f.user_id, b.name AS body, b.id AS body_id,
-              COUNT(*) AS n, MAX(x.lct) AS last_tick
-         FROM (
-           SELECT owner_faction_id AS fid, parent_body_id AS bid, last_combat_tick AS lct
-             FROM game_ships
-            WHERE game_id = ?1 AND last_combat_tick >= ?2
-           UNION ALL
-           SELECT owner_faction_id, body_id, last_combat_tick
-             FROM game_settlements
-            WHERE game_id = ?1 AND last_combat_tick >= ?2
-         ) x
-         JOIN game_factions f ON f.id = x.fid
-         JOIN game_bodies b ON b.id = x.bid
-        WHERE f.user_id IS NOT NULL AND f.status = 'active'
-        GROUP BY f.user_id, b.id`,
-    )
-    .bind(gameId, tick - COMBAT_WINDOW).all()).results ?? [];
-
-  // ONE alert per player, listing every front — not one per body. The
-  // first cut keyed dedupe on the body and fired seven DMs in a burst to
-  // a player fighting on seven fronts, which is precisely the
-  // over-notifying this module's header warns against. A player at war
-  // wants a briefing, not a machine gun.
-  const byUser = new Map();
-  for (const r of rows) {
-    let e = byUser.get(r.user_id);
-    if (!e) { e = { fronts: [], last: 0, total: 0 }; byUser.set(r.user_id, e); }
-    e.fronts.push({ body: r.body, n: r.n });
-    e.total += r.n;
-    if (r.last_tick > e.last) e.last = r.last_tick;
-  }
-
-  for (const [userId, e] of byUser) {
-    e.fronts.sort((a, b) => b.n - a.n);
-    const shown = e.fronts.slice(0, 6);
-    const more = e.fronts.length - shown.length;
-    await notify.sendDm(env, {
-      userId,
-      gameId,
-      category: 'combat',
-      // Keyed on the player and the latest combat tick: a battle that
-      // rages for hours re-alerts at most once per tick, and only when
-      // there is genuinely new fighting.
-      dedupeKey: `combat:${gameId}:${userId}:${e.last}`,
-      embed: {
-        title: e.fronts.length > 1
-          ? `⚔️ Fighting on ${e.fronts.length} fronts`
-          : '⚔️ Your forces are under fire',
-        description: [
-          ...shown.map(f => `**${f.body}** — ${f.n} of yours engaged`),
-          more > 0 ? `_…and ${more} more_` : null,
-        ].filter(Boolean).join('\n'),
-        color: 0xff5e5e,
-        footer: { text: `Orbital · ${gameName} · T+${tick}` },
-      },
-    });
-  }
-}
 
 // ---------------------------------------------------------------------------
 

@@ -41,10 +41,12 @@ export async function buildSituationReport(env, gameId, userId) {
   const fields = [];
   let urgency = 0;   // 0 calm, 1 things pending, 2 under attack
 
-  // ---- under attack -------------------------------------------------------
-  // The one thing worth waking someone for. Window of 3 ticks matches the
-  // Herald's combat marker: combat resolves DURING a tick, so an exact
-  // match would almost always look peaceful.
+  // ---- the war, since yesterday -------------------------------------------
+  // A DAY's window, not 3 ticks. Combat used to interrupt hourly from the
+  // tick loop; it now lives here, so the window has to match the report's
+  // cadence or a battle that ended four hours ago would vanish without
+  // ever being mentioned.
+  const COMBAT_WINDOW_TICKS = 24;
   const attacked = (await env.DB
     .prepare(
       `SELECT b.name AS body, COUNT(*) AS n FROM (
@@ -58,12 +60,61 @@ export async function buildSituationReport(env, gameId, userId) {
        ) x JOIN game_bodies b ON b.id = x.bid
        GROUP BY b.id`,
     )
-    .bind(gameId, me.id, tick - 3).all()).results ?? [];
+    .bind(gameId, me.id, tick - COMBAT_WINDOW_TICKS).all()).results ?? [];
   if (attacked.length) {
     urgency = 2;
     fields.push({
-      name: '⚔️ Under fire',
+      name: '⚔️ Fighting in the last day',
       value: attacked.map(a => `**${a.body}** — ${a.n} of yours engaged`).join('\n').slice(0, 1000),
+    });
+  }
+
+  // ---- inbound ------------------------------------------------------------
+  // The most valuable line in the report: a fleet already under way toward
+  // somewhere you hold. Unlike everything else here it is about the
+  // FUTURE, and it is the only warning you get while there is still time
+  // to reinforce or evacuate.
+  //
+  // "Somewhere you hold" = a body with your settlement on it, or one
+  // recorded as yours. Peace partners are excluded — an allied fleet
+  // arriving is not a threat, and crying wolf about friends is how a
+  // player learns to skim past this section.
+  const incoming = (await env.DB
+    .prepare(
+      `SELECT b.name AS body, ef.name AS attacker, COUNT(*) AS n,
+              MIN(n2.scheduled_t) AS eta_t
+         FROM game_ship_nodes n2
+         JOIN game_ships sh ON sh.id = n2.ship_id
+         JOIN game_factions ef ON ef.id = sh.owner_faction_id
+         JOIN game_bodies b ON b.id = n2.target_body_id
+        WHERE n2.game_id = ?1
+          AND n2.status = 'in_transit'
+          AND sh.owner_faction_id != ?2
+          AND sh.hp > 0
+          AND (
+            EXISTS (SELECT 1 FROM game_settlements st
+                     WHERE st.body_id = b.id AND st.owner_faction_id = ?2)
+            OR b.owner_faction_id = ?2
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM treaties t
+              JOIN treaty_signatories s1 ON s1.treaty_id = t.id AND s1.faction_id = ?2
+              JOIN treaty_signatories s2 ON s2.treaty_id = t.id AND s2.faction_id = sh.owner_faction_id
+             WHERE t.game_id = ?1 AND t.status = 'active' AND t.broken_at_tick IS NULL
+               AND t.kind IN ('nap','defense_pact')
+               AND s1.signed_at_tick IS NOT NULL AND s2.signed_at_tick IS NOT NULL
+          )
+        GROUP BY b.id, ef.id
+        ORDER BY n DESC`,
+    )
+    .bind(gameId, me.id).all()).results ?? [];
+  if (incoming.length) {
+    urgency = 2;
+    fields.push({
+      name: '🚀 Inbound — hostile fleets under way',
+      value: incoming.slice(0, 8)
+        .map(i => `**${i.body}** ← ${i.n} ship${i.n === 1 ? '' : 's'} · ${i.attacker}`)
+        .join('\n').slice(0, 1000),
     });
   }
 
@@ -161,7 +212,8 @@ export async function buildSituationReport(env, gameId, userId) {
     ? Math.max(0, Math.round((game.next_tick_at - Date.now()) / 60000))
     : null;
 
-  const headline = urgency === 2 ? 'Your empire is under attack'
+  const headline = incoming.length ? 'Hostile fleets are inbound'
+    : urgency === 2 ? 'Your empire is under attack'
     : urgency === 1 ? 'Decisions are waiting on you'
     : 'All quiet';
 
