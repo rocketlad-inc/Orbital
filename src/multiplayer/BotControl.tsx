@@ -23,8 +23,11 @@ type Delivery = { category: string; ok: number; created_ms: number; game_id: str
 type Count = { category: string; n: number; delivered: number };
 type GameRow = { id: string; name: string; current_tick: number };
 
+type Guild = { id: string; name: string };
+
 type BotData = {
   settings: Record<string, number | boolean>;
+  guilds: Guild[];
   defaults: Record<string, number | boolean>;
   categories: Record<string, string>;
   wired: Record<string, boolean>;
@@ -205,13 +208,16 @@ export function BotControl() {
               Situation reports · {g.name}
             </button>
           ))}
-          <button
-            className="aa-chip"
-            disabled={busy === 'register'}
-            onClick={() => fire('/api/admin/discord/register-commands?guild=1088110522987184140', 'register')}
-          >
-            Re-register slash commands
-          </button>
+          {(data.guilds ?? []).map(g => (
+            <button
+              key={g.id}
+              className="aa-chip"
+              disabled={busy === `register:${g.id}`}
+              onClick={() => fire(`/api/admin/discord/register-commands?guild=${g.id}`, `register:${g.id}`)}
+            >
+              Re-register commands · {g.name}
+            </button>
+          ))}
         </div>
         <div className="aa-axis" style={{ fontSize: 11, paddingTop: 8 }}>
           Forced sends use a one-off dedupe key, so testing never consumes the day's real delivery.

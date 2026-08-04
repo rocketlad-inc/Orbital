@@ -173,6 +173,8 @@ async function handleSend(req, env, { session, params }) {
   // and a notification that quietly unmasked the sender would be a
   // gameplay exploit dressed as a convenience.
   try {
+    const cfg = await (await import('./botSettings.js')).getSettings(env);
+    if (cfg.dm_relay_enabled === false) throw new Error('relay_disabled');
     const notify = await import('./notify.js');
     const claimedName = (await env.DB
       .prepare('SELECT name FROM game_factions WHERE id = ?')
@@ -201,7 +203,9 @@ async function handleSend(req, env, { session, params }) {
       });
     }
   } catch (e) {
-    console.error('message DM relay failed', e);
+    // 'relay_disabled' is the admin switch, not a fault — don't cry wolf
+    // in the logs for a deliberate configuration.
+    if (e?.message !== 'relay_disabled') console.error('message DM relay failed', e);
   }
 
   // Fire-and-forget live notification (best effort).

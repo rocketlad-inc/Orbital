@@ -192,6 +192,16 @@ async function gameName(env, gameId) {
   return r?.name ?? null;
 }
 
+/** Master switch from the Bot Control panel. Defaults to ON when the
+ *  settings table is unreachable — a D1 hiccup should not silently
+ *  disable a feature the admin believes is running. */
+async function senateCardsEnabled(env) {
+  try {
+    const cfg = await (await import('./botSettings.js')).getSettings(env);
+    return cfg.senate_cards_enabled !== false;
+  } catch { return true; }
+}
+
 // ---------- publishing (called from resolveSenate) ----------
 
 /**
@@ -201,6 +211,7 @@ async function gameName(env, gameId) {
  */
 export async function publishSenateVoteOpen(env, gameId, row) {
   if (!env.DISCORD_BOT_TOKEN) return { posted: false, reason: 'no_bot_token' };
+  if (!(await senateCardsEnabled(env))) return { posted: false, reason: 'disabled' };
   const channelId = await resolveChannelId(env);
   if (!channelId) return { posted: false, reason: 'no_channel' };
 
@@ -237,6 +248,7 @@ export async function publishSenateVoteOpen(env, gameId, row) {
  */
 export async function publishSenateProposed(env, gameId, row, proposerName) {
   if (!env.DISCORD_BOT_TOKEN) return { posted: false, reason: 'no_bot_token' };
+  if (!(await senateCardsEnabled(env))) return { posted: false, reason: 'disabled' };
   const channelId = await resolveChannelId(env);
   if (!channelId) return { posted: false, reason: 'no_channel' };
 
@@ -543,9 +555,21 @@ async function handleBotOverview(_req, env, { session }) {
     .prepare(`SELECT g.id, r.name, g.current_tick FROM games g JOIN rooms r ON r.id=g.id WHERE g.status='active'`)
     .all()).results ?? [];
 
+  // Which servers the bot is actually in — so the panel offers real
+  // choices instead of a hardcoded id that breaks the moment a second
+  // server appears.
+  let guilds = [];
+  if (env.DISCORD_BOT_TOKEN) {
+    try {
+      const gr = await botFetch(env, 'GET', '/users/@me/guilds');
+      if (gr.ok) guilds = (await gr.json()).map(g => ({ id: g.id, name: g.name }));
+    } catch { /* panel still works without it */ }
+  }
+
   return json({
     ok: true,
     settings,
+    guilds,
     defaults: settingsMod.DEFAULTS,
     categories: notify.CATEGORIES,
     wired: {
