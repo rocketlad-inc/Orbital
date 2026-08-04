@@ -128,3 +128,56 @@ const pill: React.CSSProperties = {
 const code: React.CSSProperties = {
   fontFamily: 'ui-monospace, Menlo, Consolas, monospace', color: '#4ecdc4', fontSize: 11.5,
 };
+
+
+/**
+ * The same panel as a centred dialog, opened from the ACCOUNT section of
+ * the side menu. It lives there rather than inside the Senate because
+ * these are account preferences, not a senate feature — a player looking
+ * to stop a notification will reach for the menu, not for a government
+ * screen they may never open.
+ */
+export function NotificationSettingsModal({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 8000,
+        background: 'rgba(4,8,14,.72)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18,
+      }}
+    >
+      <div
+        role="dialog"
+        aria-label="Discord alert settings"
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: '#0b111a', border: '1px solid rgba(96,130,160,.35)',
+          borderRadius: 10, padding: '18px 20px 20px',
+          width: 'min(520px, 100%)', maxHeight: '86vh', overflowY: 'auto',
+          boxShadow: '0 18px 60px rgba(0,0,0,.6)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: '#e7eef6' }}>Notifications</div>
+          <button
+            onClick={onClose}
+            title="Close (Esc)"
+            style={{
+              background: 'transparent', border: '1px solid rgba(96,130,160,.4)',
+              color: '#8a9fb3', borderRadius: 6, cursor: 'pointer',
+              width: 30, height: 30, fontSize: 15, lineHeight: 1,
+            }}
+          >×</button>
+        </div>
+        <NotificationSettings />
+      </div>
+    </div>
+  );
+}

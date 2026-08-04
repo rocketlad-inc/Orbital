@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch, Faction, SenateProposal, SenateSlider } from './api';
 import { logUiEvent } from './telemetry';
 import { DiscordLink } from './DiscordLink';
-import { NotificationSettings } from './NotificationSettings';
 import { hasFeature, requirementFor } from '../game/researchUnlocks';
 import { TECH_DEFS } from '../game/techs';
 
@@ -266,10 +265,6 @@ export function SenatePanel({ gameId }: { gameId: string }) {
   return (
     <div>
       <DiscordLink />
-      {/* Alert permissions live right under the link control: the moment
-          a player connects Discord is exactly when they want to decide
-          what it's allowed to send them. */}
-      <NotificationSettings />
       <div className="mp-section-title">Propose a bill</div>
       <form onSubmit={propose}>
         <label className="mp-label">Kind</label>

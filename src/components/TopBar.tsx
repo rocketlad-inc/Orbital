@@ -5,6 +5,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { NotificationSettingsModal } from '../multiplayer/NotificationSettings';
 import { useGameContext } from '../state/gameContext';
 import { useTurnBasedSettings } from '../state/turnBasedSettings';
 import { computeTurnBudget } from '../game/turnBudget';
@@ -70,6 +71,9 @@ export const TopBar: React.FC<TopBarProps> = ({
   const mpTbmActive = !!mpTurnStatus?.turn_based_enabled;
   const { user, signOut } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
+  // Account-level dialog. Owned by TopBar, not SideMenu, so closing the
+  // drawer doesn't also dismiss the dialog it opened.
+  const [notifOpen, setNotifOpen] = useState(false);
   // Save / Load modal state. Lifted into TopBar (rather than SideMenu)
   // because closing the menu shouldn't kill the modal — players want to
   // see the picker without the menu also occupying the screen.
@@ -173,12 +177,15 @@ export const TopBar: React.FC<TopBarProps> = ({
         <div className="top-bar__title-sub" title={`Build ${GIT_SHA}`}>v0.3 · {GIT_SHA.slice(0,7)}</div>
       </button>
 
+      {notifOpen && <NotificationSettingsModal onClose={() => setNotifOpen(false)} />}
+
       {menuOpen && (
         <SideMenu
           onClose={() => setMenuOpen(false)}
           onExitMode={onExitMode}
           user={user}
           onSignOut={signOut}
+          onOpenNotifications={() => setNotifOpen(true)}
           adminGameId={adminGameId}
           isHost={isHost}
           activePanel={activePanel}
@@ -877,6 +884,8 @@ interface SideMenuProps {
   onExitMode?: () => void;
   user: { display_name: string; email: string } | null;
   onSignOut: () => Promise<void> | void;
+  /** Opens the account-level notification preferences dialog. */
+  onOpenNotifications?: () => void;
   /** When set + isHost, the menu shows admin controls (force tick, etc.). */
   adminGameId?: string | null;
   isHost?: boolean;
@@ -896,7 +905,7 @@ interface SideMenuProps {
 }
 
 const SideMenu: React.FC<SideMenuProps> = ({
-  onClose, onExitMode, user, onSignOut,
+  onClose, onExitMode, user, onSignOut, onOpenNotifications,
   adminGameId = null, isHost = false,
   activePanel, onTogglePanel,
   playerShipCount = 0, settlementCount = 0, researchTotal = 0,
@@ -1212,6 +1221,14 @@ const SideMenu: React.FC<SideMenuProps> = ({
           {user && (
             <>
               <div className="side-menu__group-label">ACCOUNT</div>
+              <button
+                className="side-menu__item"
+                onClick={() => { onClose(); onOpenNotifications?.(); }}
+              >
+                <span className="side-menu__item-icon">🔔</span>
+                <span className="side-menu__item-label">Notifications</span>
+                <span className="side-menu__item-hint">Discord alerts</span>
+              </button>
               <button
                 className="side-menu__item side-menu__item--danger"
                 onClick={async () => { onClose(); await onSignOut(); }}
