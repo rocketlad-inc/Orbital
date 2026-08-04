@@ -67,7 +67,7 @@ export const TECH_DEFS: Record<TechId, TechDef> = {
   weapons: {
     id: 'weapons',
     name: 'Weapons',
-    description: 'Guns, and what you bolt them to. Unlocks ⚔ kinetic mounts, then the ☠ detonator, then ⚡ energy mounts — and scales every mount you fit. Kinetic shreds armor; energy melts shields.',
+    description: 'Guns, and what you bolt them to. Unlocks ⚔ kinetic mounts, then the ☠ detonator, then ⚡ energy mounts — and scales every mount you fit. Shields only stop kinetic; armor only stops energy.',
     icon: '⚔',
     perLevel: 0.10,
     effectText: '+10% ship damage',

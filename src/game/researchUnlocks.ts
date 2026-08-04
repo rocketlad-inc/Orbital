@@ -68,11 +68,11 @@ export interface UnlockRow {
 export const RESEARCH_UNLOCKS: UnlockRow[] = [
   // ── ⚔ WEAPONS ───────────────────────────────────────────────
   { track: 'weapons', level: 1, feature: 'part.kinetic',
-    label: 'Kinetic Mount', blurb: 'Your first fittable gun. Shreds armor; shields blunt it.' },
+    label: 'Kinetic Mount', blurb: 'Your first fittable gun. Armor never stops it; shields cut it to 78% each.' },
   { track: 'weapons', level: 2, feature: 'part.detonator',
     label: 'Fusion Detonator', blurb: 'Turns a cheap hull into a threat. Hits friend and foe.' },
   { track: 'weapons', level: 3, feature: 'part.energy',
-    label: 'Energy Mount', blurb: 'Melts shields, scatters off armor. Opens the counter-game.' },
+    label: 'Energy Mount', blurb: 'Shields never stop it; armor cuts it to 78% each. Opens the counter-game.' },
   { track: 'weapons', level: 4, feature: 'building.weapons',
     label: 'Station Weapons', blurb: 'Your stations shoot back. Needs a station in orbit.' },
   { track: 'weapons', level: 5, feature: 'veteranYards',
@@ -80,9 +80,9 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
 
   // ── 🛡 DEFENSE ──────────────────────────────────────────────
   { track: 'armor', level: 1, feature: 'part.shield',
-    label: 'Shield Array', blurb: 'The answer to kinetic. Energy passes straight through.' },
+    label: 'Shield Array', blurb: 'The answer to kinetic. Does nothing against energy.' },
   { track: 'armor', level: 2, feature: 'part.armor',
-    label: 'Armor Plate', blurb: 'The answer to energy. Kinetic chews through it.' },
+    label: 'Armor Plate', blurb: 'The answer to energy. Does nothing against kinetic.' },
   { track: 'armor', level: 3, feature: 'building.shields',
     label: 'Hardened Settlements', blurb: 'Shield + armor buildings for stations.' },
   { track: 'armor', level: 4, feature: 'pdcUpgrade',

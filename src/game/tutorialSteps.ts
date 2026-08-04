@@ -223,7 +223,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'designer',
     title: 'Design your own hulls',
-    body: 'Drag parts onto the sockets: kinetic chews armor, energy melts shields, engines make it faster — and the ship visibly grows the hardware. Duplicates of a part cost more each time.',
+    body: 'Drag parts onto the sockets: shields only stop kinetic, armor only stops energy, engines make it faster — and the ship visibly grows the hardware. Duplicates of a part cost more each time.',
     target: 'designer-canvas',
     extraTargets: ['designer-stats'],
     placement: 'right',

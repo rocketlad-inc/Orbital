@@ -16,8 +16,11 @@ import { ShipClassName, SHIP_CLASSES } from './shipClasses';
 export type ShipPartId = 'kinetic' | 'energy' | 'shield' | 'armor' | 'engine' | 'detonator';
 
 /** Damage type a weapon mount deals / a defensive part resists.
- *  Kinetic is shredded by armor and blunted by shields; energy melts
- *  shields and scatters off armor — the counter-matrix. */
+ *  The counter-matrix is REDUCTION-ONLY: shields cut kinetic, armor cuts
+ *  energy, and neither type ever gets a damage BONUS against the defence
+ *  that can't stop it — it simply arrives at full strength. Copy that
+ *  says a gun "chews" or "melts" its off-counter implies a bonus that
+ *  does not exist in defenseMitigation(); say "full damage" instead. */
 export type DamageType = 'kinetic' | 'energy';
 
 /** Legacy part ids from before the kinetic/energy split. `weapon` was
@@ -82,7 +85,7 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   kinetic: {
     id: 'kinetic',
     name: 'Kinetic Mount',
-    blurb: '+40% hull base damage, kinetic. Chews armor; shields blunt it.',
+    blurb: '+40% hull base damage, kinetic. Each 🛡 shield cuts it to 78%; 🪨 armor does not stop it.',
     cost: { ore: 6, credits: 2 },
     allowedOn: ['corvette', 'frigate', 'destroyer'],
     techTrack: 'weapons',
@@ -92,7 +95,7 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   energy: {
     id: 'energy',
     name: 'Energy Mount',
-    blurb: '+40% hull base damage, energy. Melts shields; armor scatters it.',
+    blurb: '+40% hull base damage, energy. Each 🪨 armor plate cuts it to 78%; 🛡 shields do not stop it.',
     cost: { ore: 2, credits: 6 },
     allowedOn: ['corvette', 'frigate', 'destroyer'],
     techTrack: 'energy_weapons',
@@ -102,7 +105,7 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   shield: {
     id: 'shield',
     name: 'Shield Array',
-    blurb: '+35% hull base HP. Cuts incoming KINETIC to 78% per array.',
+    blurb: '+35% hull base HP. Cuts incoming ⚔ KINETIC to 78% per array (stacking). No effect on ⚡ energy.',
     cost: { ore: 4, credits: 4 },
     allowedOn: ['corvette', 'frigate', 'destroyer', 'freighter'],
     techTrack: 'shields',
@@ -111,7 +114,7 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   armor: {
     id: 'armor',
     name: 'Armor Plate',
-    blurb: '+35% hull base HP. Cuts incoming ENERGY to 78% per plate.',
+    blurb: '+35% hull base HP. Cuts incoming ⚡ ENERGY to 78% per plate (stacking). No effect on ⚔ kinetic.',
     cost: { ore: 6, credits: 2 },
     allowedOn: ['corvette', 'frigate', 'destroyer', 'freighter'],
     techTrack: 'armor',
@@ -232,6 +235,20 @@ export function defenseMitigation(
   const kMit = Math.pow(DAMAGE_MITIGATION_PER_PART, countPart(targetParts, COUNTERED_BY.kinetic));
   const eMit = Math.pow(DAMAGE_MITIGATION_PER_PART, countPart(targetParts, COUNTERED_BY.energy));
   return profile.kinetic * kMit + profile.energy * eMit;
+}
+
+/**
+ * What percentage of its countered damage type gets THROUGH `n` matching
+ * defensive parts — 100 at n=0, 78 at n=1, 61 at n=2, and so on, floored
+ * by MITIGATION_FLOOR the way room.js floors the blended result.
+ *
+ * Exists so UI copy quotes the real constants instead of hardcoding
+ * "78%" in a dozen strings that then drift when the matrix is tuned.
+ */
+export function mitigationPct(n: number): number {
+  return Math.round(
+    Math.max(MITIGATION_FLOOR, Math.pow(DAMAGE_MITIGATION_PER_PART, Math.max(0, n))) * 100,
+  );
 }
 
 export function countPart(parts: readonly string[] | undefined, id: ShipPartId): number {

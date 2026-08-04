@@ -2508,7 +2508,7 @@ export class Room {
         // volley, rotating across volleys via the tick offset.
         shipTargets.sort((a, b) => (a.id < b.id ? -1 : 1));
         const target = shipTargets[tick % shipTargets.length];
-        // Settlement guns fire kinetic, so a target's shields blunt them
+        // Settlement guns fire kinetic, so a target's shields cut them
         // and armor does nothing — same counter-matrix as ship kinetic.
         const KINETIC = { kinetic: 1, energy: 0 };
         const power = base * kineticMulOf(st.owner_faction_id) * combatDamageMult;

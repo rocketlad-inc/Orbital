@@ -38,7 +38,7 @@ import {
   ShipPartId, ALL_PART_IDS, SHIP_PART_DEFS, SHIP_SLOT_COUNTS,
   sanitizeParts, computeDesignStats, partsCost, countPart,
   detonatorDamage, detonatorDisclosure, SERVER_HULL_BASE, PART_GLYPH,
-  damageProfile, refitFee, PART_STACK_ESCALATION,
+  damageProfile, refitFee, PART_STACK_ESCALATION, mitigationPct,
 } from '../game/shipParts';
 import {
   ShipIcon, ShipIconVariant, ALL_VARIANTS, ICON_VARIANT_NAMES, DEFAULT_SHIP_ICONS,
@@ -112,10 +112,10 @@ function serverDesignToClient(d: ServerShipDesign): ShipDesign {
 /** "Countered by" micro-text per part — visible on the card, not hidden
  *  in a tooltip: what beats this choice is a decision input. */
 const COUNTER_TEXT: Partial<Record<ShipPartId, string>> = {
-  kinetic: 'blunted by shields',
-  energy: 'scattered by armor',
-  shield: 'bypassed by energy fire',
-  armor: 'bypassed by kinetic fire',
+  kinetic: 'each 🛡 shield cuts it to 78%',
+  energy: 'each 🪨 armor plate cuts it to 78%',
+  shield: 'does nothing against ⚡ energy',
+  armor: 'does nothing against ⚔ kinetic',
 };
 
 /** Escalated price of the NEXT copy given n already fitted. Mirrors the
@@ -258,14 +258,25 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
     ? 'Unshielded'
     : [nShields > 0 ? `🛡×${nShields} vs kinetic` : '', nArmor > 0 ? `🪨×${nArmor} vs energy` : '']
         .filter(Boolean).join(' · ');
-  const matchupHint = (() => {
-    const parts: string[] = [];
-    if (nEnergy > 0 && nKinetic === 0) parts.push('Strong vs shielded targets; weak vs armored.');
-    else if (nKinetic > 0 && nEnergy === 0) parts.push('Strong vs armored targets; weak vs shielded.');
-    else if (nKinetic > 0 && nEnergy > 0) parts.push('Mixed guns — no hard counter, no hard weakness.');
-    if (nShields > 0 && nArmor === 0) parts.push('Vulnerable to energy.');
-    else if (nArmor > 0 && nShields === 0) parts.push('Vulnerable to kinetic.');
-    return parts.join(' ');
+  // The old hint said "strong vs armored targets", which read as a damage
+  // BONUS. There is none: defenseMitigation only ever reduces, so the
+  // off-counter simply arrives at 100%. Both lines below quote the real
+  // multiplier, and the incoming line quotes THIS draft's actual stack.
+  const outgoingHint = (() => {
+    if (nKinetic > 0 && nEnergy > 0) return 'Mixed guns — each type is cut only by its own counter.';
+    if (nKinetic > 0) return '⚔ Kinetic: 100% through 🪨 armor · cut to 78% by each 🛡 shield.';
+    if (nEnergy > 0) return '⚡ Energy: 100% through 🛡 shields · cut to 78% by each 🪨 armor plate.';
+    return '';
+  })();
+  const incomingHint = (() => {
+    if (nShields === 0 && nArmor === 0) return 'No 🛡/🪨 fitted — all incoming damage lands at 100%.';
+    const kin = nShields > 0
+      ? `⚔ kinetic → ${mitigationPct(nShields)}%`
+      : '⚔ kinetic → 100%';
+    const nrg = nArmor > 0
+      ? `⚡ energy → ${mitigationPct(nArmor)}%`
+      : '⚡ energy → 100%';
+    return `Incoming: ${kin} · ${nrg}`;
   })();
   const detDamage = detonatorDamage(stats.hp, nDetonators, techLevels.weapons ?? 0);
 
@@ -934,10 +945,13 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
               {selected && !draftMatchesSelected && <span className="sd-side__dirty"> · unsaved</span>}
             </div>
             <div className="sd-side__stats">{statRows}</div>
-            {matchupHint && <div className="sd-hint sd-hint--matchup">⚔ vs 🛡 · {matchupHint}</div>}
+            {outgoingHint && <div className="sd-hint sd-hint--matchup">{outgoingHint}</div>}
+            <div className="sd-hint sd-hint--matchup">{incomingHint}</div>
             <div className="sd-hint">
-              <strong>Kinetic ⚔</strong> chews armor, shields blunt it. <strong>Energy ⚡</strong> melts
-              shields, armor scatters it. Each 🛡/🪨 cuts its countered damage to 78% (stacking).
+              <strong>🛡 Shields</strong> only stop ⚔ kinetic. <strong>🪨 Armor</strong> only stops
+              ⚡ energy. Each part cuts its own type to 78%, stacking
+              ({mitigationPct(1)}% → {mitigationPct(2)}% → {mitigationPct(3)}%); the other type is
+              never boosted, it just arrives at 100%.
               Hull base: {SERVER_HULL_BASE[activeClass].hp} HP · {SERVER_HULL_BASE[activeClass].damagePerTick} dmg.
               {hpOut(100) !== 100 && (
                 <> Max HP shown includes your defense tech (×{(hpOut(1000) / 1000).toFixed(2)}).</>
