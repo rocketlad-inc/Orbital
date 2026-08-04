@@ -734,11 +734,12 @@ import * as state   from './state.js';
 import * as actions from './actions.js';
 import * as fleets from './fleets.js';
 import * as discord from './discord.js';
+import * as discordOauth from './discordOauth.js';
 import * as analytics from './analytics.js';
 import * as heraldStrip from './heraldStrip.js';
 import * as battleCard from './battleCard.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, state, actions, fleets, discord, analytics];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, state, actions, fleets, discord, discordOauth, analytics];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {
