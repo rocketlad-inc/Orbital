@@ -2133,16 +2133,28 @@ export class Room {
     //     authoritative combat spec — src/game/shipClasses.ts +
     //     src/game/settlements.ts). MP combat now matches SP exactly:
     //     each attacker deals FULL damage to EVERY hostile (not split),
-    //     reduced by the target's PDC; settlements bombard with their
-    //     class damage (not a flat 4) and FIRE BACK on hostile ships. ---
-    const SHIP_PDC = { corvette: 0.2, frigate: 0.4, destroyer: 0.6, freighter: 0.1 };
-    const SETTLEMENT_PDC = { city: 0.3, station: 0.5 };
+    //     settlements bombard with their class damage (not a flat 4) and
+    //     FIRE BACK on hostile ships. ---
+    //
+    // POINT DEFENCE REMOVED (Lorne, 2026-08-04). Every hull used to carry
+    // a free untyped damage cut by class — corvette 20% / frigate 40% /
+    // destroyer 60%, plus a further flat +10% from Defense 4. It was the
+    // single largest survivability term in the game and it appeared in
+    // ZERO player-facing surfaces, so a destroyer read as 5x a corvette
+    // (200 HP vs 40) while actually soaking 10x. The only mitigation left
+    // is the TYPED one players can see and choose: shields cut kinetic,
+    // armor cuts energy, 0.78 per part, floored at MITIGATION_FLOOR.
+    //
+    // Effect: incoming damage rises across the board, most for the hulls
+    // that had the most PDC — destroyers take +150%, frigates +67%,
+    // corvettes +25%. Modelled at ~2x faster battles (94 -> 43 ticks on a
+    // 9v9 mixed fleet) and the class durability spread compressing from
+    // 10x to 5x.
+    //
     // Return-fire: CITIES never shoot (civilian). STATIONS shoot only once
     // a Weapons module is built, with damage scaling by its level — an
     // unarmed station is a soft target. No flat "just for existing" base.
     const STATION_DMG_PER_WEAPONS_LEVEL = 8;                  // L1=8, L2=16, … Ln=8n
-    const pdcOfShipClass = (cls) => SHIP_PDC[cls] ?? 0;
-    const pdcOfSettlement = (type) => SETTLEMENT_PDC[type] ?? 0;
 
     // Per-faction tech multipliers for this tick (one indexed query,
     // bucketed). perLevel values mirror src/game/techs.ts TECH_DEFS.
@@ -2168,19 +2180,13 @@ export class Room {
     // existed as design promises only; now they key off the owner's tech.
     // Ungated (grandfathered) games get them for free, same as every
     // other research gate. Requirement levels mirror researchUnlocks:
-    // pdcUpgrade = armor 4 · damageControl = armor 5.
+    // damageControl = armor 5. (armor 4 was pdcUpgrade — removed with PDC.)
     const gatingRow = await this.env.DB
       .prepare('SELECT gating_enabled FROM games WHERE id = ?')
       .bind(gameId).first();
     const buffsGated = (gatingRow?.gating_enabled ?? 0) === 1;
     const hasBuff = (fid, track, reqLevel) =>
       !buffsGated || (techLvl.get(fid)?.[track] ?? 0) >= reqLevel;
-    // Point-Defense Upgrade: every hull of a researched faction mitigates
-    // a further step of incoming fire. One step below the class ladder's
-    // spacing (corvette .2 → frigate .4), capped well under immune.
-    const PDC_UPGRADE_STEP = 0.1;
-    const pdcOfShip = (cls, fid) =>
-      Math.min(0.8, pdcOfShipClass(cls) + (hasBuff(fid, 'armor', 4) ? PDC_UPGRADE_STEP : 0));
 
     const kineticMulOf = (fid) => 1 + 0.10 * (techLvl.get(fid)?.weapons ?? 0);
     const energyMulOf  = (fid) => 1 + 0.10 * Math.max(
@@ -2434,10 +2440,11 @@ export class Room {
         const target = tier[(shooterIdx + tick) % tier.length];
         shooterIdx++;
 
-        // Damage math is unchanged from the canonical model — full
-        // attacker power into the target's typed mitigation × PDC — it
-        // just lands on ONE hull per volley now instead of every hostile
-        // at the body (per design: round-robin single-target combat).
+        // Damage math: full attacker power into the target's TYPED
+        // mitigation (shields v kinetic, armor v energy). Lands on ONE
+        // hull per volley (per design: round-robin single-target combat).
+        // The untyped per-class PDC cut that used to multiply in here was
+        // removed — see the note by STATION_DMG_PER_WEAPONS_LEVEL.
         const rankMul = 1 + 0.01 * Math.max(0, attacker.rank ?? 0);
         // Damage type this attacker fires (bare hull => kinetic), used
         // both to blend its weapon tech and to pick the target's
@@ -2456,17 +2463,18 @@ export class Room {
         // formally declared war on is doubled.
         const warAuthMul = (await sanctioned(target.owner_faction_id, 'war_authorization')) ? 2 : 1;
         if (isShipTier) {
-          // Typed mitigation × point-defense, floored so a stacked hull
-          // is brutal but never immune (85% cap). Shields cut kinetic,
-          // armor cuts energy; a target with no relevant parts takes
-          // full damage exactly as before.
+          // Typed mitigation only, floored so a stacked hull is brutal
+          // but never immune (85% cap). Shields cut kinetic, armor cuts
+          // energy; a target with NO relevant parts now takes the volley
+          // in full — there is no longer a free class-based reduction.
           const mit = Math.max(MITIGATION_FLOOR,
-            (1 - pdcOfShip(target.ship_class, target.owner_faction_id)) * defenseMitigation(target._parts, atkProfile));
+            defenseMitigation(target._parts, atkProfile));
           addDamage(target.id, attacker.owner_faction_id, attacker.id, attackPower * mit * warAuthMul);
         } else {
-          // Bombardment — settlement PDC (city 0.3 / station 0.5);
-          // settlements carry no shield/armor parts yet (untyped).
-          addSettlementDamage(target.id, attacker.owner_faction_id, attackPower * (1 - pdcOfSettlement(target.type)) * warAuthMul);
+          // Bombardment — settlements carry no shield/armor parts yet, and
+          // their PDC (city 0.3 / station 0.5) went with the rest of the
+          // system, so a bombarding volley now lands in full.
+          addSettlementDamage(target.id, attacker.owner_faction_id, attackPower * warAuthMul);
         }
         firedShipIds.add(attacker.id);
         // Record the engagement so the client's combat animation aims at
@@ -2476,7 +2484,7 @@ export class Room {
 
       // Station return-fire on hostile ships at the same body — damage
       // = STATION_DMG_PER_WEAPONS_LEVEL × weapons level, scaled by the
-      // owner's Weapons tech, reduced by the target ship's PDC. Gated by
+      // owner's Weapons tech, reduced by the target ship's typed parts. Gated by
       // the settlement's own cadence. Accrues into the SAME hpDeltas the
       // ship volley uses, so it resolves simultaneously (a station and
       // its attacker can kill each other on the same tick). Settlements
@@ -2514,7 +2522,7 @@ export class Room {
         const power = base * kineticMulOf(st.owner_faction_id) * combatDamageMult;
         const warAuthMul = (await sanctioned(target.owner_faction_id, 'war_authorization')) ? 2 : 1;
         const mit = Math.max(MITIGATION_FLOOR,
-          (1 - pdcOfShip(target.ship_class, target.owner_faction_id)) * defenseMitigation(target._parts, KINETIC));
+          defenseMitigation(target._parts, KINETIC));
         addDamage(target.id, st.owner_faction_id, null, power * mit * warAuthMul);
         firedSettlementIds.add(st.id);
         firedSettlementTargets.set(st.id, target.id);
@@ -2551,7 +2559,7 @@ export class Room {
 
     // 3.4 Settlement damage resolution. Damage was accrued into
     //     `settlementDamage` during the volley loop above (ships
-    //     bombarding hostile settlements with class damage × (1−PDC),
+    //     bombarding hostile settlements with class damage,
     //     not the old flat 4/ship). Peace pacts already suppressed at
     //     accrual time. Here we just apply it + credit the kill to the
     //     top-damage faction, and stamp last_combat_tick on settlements

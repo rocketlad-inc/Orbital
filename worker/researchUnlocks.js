@@ -18,7 +18,8 @@ export const REQUIREMENTS = {
   'part.armor':            { track: 'armor', level: 2, label: 'Armor Plate' },
   'building.shields':      { track: 'armor', level: 3, label: 'Hardened Settlements' },
   'building.armor':        { track: 'armor', level: 3, label: 'Hardened Settlements' },
-  'pdcUpgrade':            { track: 'armor', level: 4, label: 'Point-Defense Upgrade' },
+  // 'pdcUpgrade' (armor 4) removed with point defence — Defense 4 currently
+  // grants NO unlock. Needs a replacement reward before the track ships as-is.
   'damageControl':         { track: 'armor', level: 5, label: 'Damage Control' },
   // Propulsion
   'hull.freighter':        { track: 'propulsion', level: 1, label: 'Freighter' },

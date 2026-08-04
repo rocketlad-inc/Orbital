@@ -31,7 +31,7 @@ export type FeatureId =
   // — Defense —
   | 'part.shield' | 'part.armor'
   | 'building.shields' | 'building.armor'
-  | 'pdcUpgrade' | 'damageControl'
+  | 'damageControl'
   // — Propulsion —
   | 'hull.freighter' | 'part.engine' | 'transferLanes' | 'collectors'
   // — Construction —
@@ -85,8 +85,9 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
     label: 'Armor Plate', blurb: 'The answer to energy. Does nothing against kinetic.' },
   { track: 'armor', level: 3, feature: 'building.shields',
     label: 'Hardened Settlements', blurb: 'Shield + armor buildings for stations.' },
-  { track: 'armor', level: 4, feature: 'pdcUpgrade',
-    label: 'Point-Defense Upgrade', blurb: 'Every hull mitigates a further step of incoming fire.' },
+  // Defense 4 is EMPTY: 'pdcUpgrade' died with point defence. Listing it
+  // would promise a mechanic that no longer exists, so the level shows no
+  // unlock until it gets a real one.
   { track: 'armor', level: 5, feature: 'damageControl',
     label: 'Damage Control', blurb: 'Ships repair a trickle between volleys, mid-fight.' },
 
