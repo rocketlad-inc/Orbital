@@ -1759,8 +1759,9 @@ export async function runDigestForGame(env, game, { force = false } = {}) {
     // attachment:// resolves against the multipart file posted alongside.
     embed = { ...embed, image: { url: 'attachment://territory.png' } };
   } else if (stripUrl) {
-    // No screenshot binding: link the live page instead. Less pretty than
-    // an inline image, but it is the SAME chart and it costs nothing.
+    // Rasterising is self-contained, so this branch means something
+    // genuinely broke. Link the live chart rather than dropping the
+    // territory report entirely — the edition still goes out.
     embed = {
       ...embed,
       fields: [

@@ -28,6 +28,11 @@
 /** Mirrors src/game/systemGrouping.ts CORE_MEMBER_IDS. Two lists that
  *  disagree about what "The Core" contains is worse than not grouping,
  *  so this is a deliberate, commented duplicate rather than an accident. */
+import {
+  createSurface, fillRect, fillVGrad, fillRadial, fillCircle, strokeCircle,
+  strokeEllipse, drawLine, hatchRect, drawText, textWidth, encodePng, hexToRgb,
+} from './heraldPng.js';
+
 const CORE_TEMPLATES = new Set(['sol', 'mercury', 'venus']);
 const CORE_LABEL = 'The Core';
 
@@ -492,37 +497,226 @@ function escapeHtml(s) {
  * BROWSER binding is configured — callers fall back to linking the page.
  * Never throws: the Herald must publish even if imaging fails.
  */
+/**
+ * The strip as PNG bytes, rasterised in-Worker.
+ *
+ * Layout mirrors renderStripPage's compact mode deliberately: same
+ * two-row split, same band weights, same anchor offsets. The two
+ * renderers are separate because one has smooth system type and the
+ * other a bitmap face; keeping the GEOMETRY identical is what stops
+ * them drifting into different charts.
+ *
+ * Everything is laid out in display units and multiplied by SS on the
+ * way to pixels, so the numbers below read the same as the page's.
+ */
 export async function renderStripPng(env, gameId, opts = {}) {
-  if (!env.BROWSER) return null;
-  let browser = null;
-  try {
-    // Indirected through a variable ON PURPOSE: a literal specifier is
-    // statically analysable, so the bundler would try to resolve
-    // @cloudflare/puppeteer at BUILD time even though this line only
-    // runs when a BROWSER binding exists. The package isn't installed
-    // until that binding is enabled, and a failed worker build blocks
-    // every deploy — not just this feature.
-    const pkg = '@cloudflare/puppeteer';
-    const puppeteer = await import(/* webpackIgnore: true */ pkg);
-    browser = await puppeteer.launch(env.BROWSER);
-    const page = await browser.newPage();
-    const W = opts.width ?? 1200;
-    const H = opts.height ?? 420;
-    await page.setViewport({ width: W, height: H, deviceScaleFactor: 2 });
-    const data = await buildTerritoryData(env, gameId);
-    if (!data) return null;
-    await page.setContent(renderStripPage(data, { width: W, height: H }),
-      { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('#strip[data-ready="1"]', { timeout: 8000 });
-    const el = await page.$('#strip');
-    const shot = await el.screenshot({ type: 'png' });
-    return shot;
-  } catch (e) {
-    console.error('herald strip screenshot failed', e);
-    return null;
-  } finally {
-    try { if (browser) await browser.close(); } catch { /* best effort */ }
+  const data = opts.data || await buildTerritoryData(env, gameId);
+  if (!data) return null;
+
+  const W = opts.width ?? 550;
+  const H = opts.height ?? 440;
+  const SS = 2;                       // supersample; 550x440 -> 1100x880
+  const s = createSurface(W * SS, H * SS, [6, 9, 15]);
+  const X = (v) => v * SS;
+
+  // Font cell sizes, chosen so glyph height lands near the display type
+  // size it replaces: cell 3 => 21px tall => ~10.5 display px.
+  const F_TITLE = 3, F_HOLDER = 3, F_SMALL = 2, F_FOOT = 2;
+  const GRID = [78, 205, 196];
+
+  const colOf = (k) => hexToRgb((data.factions[k] || {}).color || '#888888');
+  const nameOf = (k) => (data.factions[k] || {}).name || '';
+
+  const shortName = (n) => String(n || '')
+    .replace(/[^\w\s'-]/g, ' ').replace(/\s+/g, ' ').trim()
+    .replace(/^(the|a)\s+/i, '').toUpperCase();
+
+  // Truncate on a word boundary to fit an actual-pixel width.
+  const fit = (text, scale, maxPx) => {
+    let t = String(text);
+    if (textWidth(t, scale) <= maxPx) return t;
+    const words = t.split(' ');
+    let out = '';
+    for (const w of words) {
+      const next = out ? out + ' ' + w : w;
+      if (textWidth(next + '…', scale) > maxPx) break;
+      out = next;
+    }
+    if (!out) {
+      out = t;
+      while (out.length > 1 && textWidth(out + '…', scale) > maxPx) out = out.slice(0, -1);
+    }
+    return out + '…';
+  };
+
+  const dominant = (sec) => {
+    const tally = {};
+    const all = sec.bodies.map(b => b.owner).concat((sec.moons || []).map(m => m.owner));
+    if (sec.starOwner) all.push(sec.starOwner);
+    for (const o of all) if (o) tally[o] = (tally[o] || 0) + 1;
+    let best = null, n = 0, tie = false;
+    for (const k in tally) {
+      if (tally[k] > n) { best = k; n = tally[k]; tie = false; }
+      else if (tally[k] === n) tie = true;
+    }
+    return { owner: best, contested: tie && !!best };
+  };
+
+  // faint instrument grid
+  for (let gx = 0; gx < W; gx += 28) fillRect(s, X(gx), 0, 1, s.h, GRID, 0.05);
+  for (let gy = 0; gy < H; gy += 28) fillRect(s, 0, X(gy), s.w, 1, GRID, 0.05);
+
+  // Two hulls trading fire, in pure geometry.
+  const combatIcon = (cx, cy, size) => {
+    const S = X(size);
+    fillRadial(s, X(cx), X(cy), S * 0.85, [255, 110, 70], 0.5, 0);
+    const h = S * 0.42, gap = S * 0.20;
+    // left hull, prow right
+    for (let t = 0; t <= 1; t += 0.02) {
+      const x = X(cx) - gap - (S * 0.5 - gap) * t;
+      const hh = h * 0.5 * t;
+      drawLine(s, x, X(cy) - hh, x, X(cy) + hh, [255, 230, 194], 1, 1);
+    }
+    // right hull, prow left
+    for (let t = 0; t <= 1; t += 0.02) {
+      const x = X(cx) + gap + (S * 0.5 - gap) * t;
+      const hh = h * 0.5 * t;
+      drawLine(s, x, X(cy) - hh, x, X(cy) + hh, [255, 230, 194], 1, 1);
+    }
+    drawLine(s, X(cx) - gap * 0.55, X(cy), X(cx) + gap * 0.55, X(cy),
+      [255, 90, 60], 1, Math.max(1, S * 0.10));
+    fillCircle(s, X(cx), X(cy), Math.max(1, S * 0.10), [255, 241, 208], 1);
+  };
+
+  const footH = 22;
+  const secs = data.sectors.slice();
+  const rows = [secs.slice(0, Math.ceil(secs.length / 2)), secs.slice(Math.ceil(secs.length / 2))];
+  const rowH = (H - footH) / rows.length;
+
+  rows.forEach((rowSecs, ri) => {
+    const yTop = ri * rowH, yBot = yTop + rowH;
+    let x0 = 8;
+
+    if (ri === 0) {
+      // star
+      const sunR = Math.min(rowH * 0.46, 54);
+      const scy = yTop + rowH * 0.46, scx = 10;
+      const sunCol = colOf(data.starOwner);
+      fillRadial(s, X(scx), X(scy), X(sunR), sunCol, 0.42, 0);
+      fillRadial(s, X(scx), X(scy), X(sunR) * 0.5, [255, 236, 180], 0.95, 0);
+      strokeCircle(s, X(scx), X(scy), X(sunR * 0.42), sunCol, 0.85, 2 * SS);
+      if (data.starCombat) combatIcon(scx + sunR * 0.30, scy - sunR * 0.34, 15);
+      drawText(s, 'SOL', X(scx + 8), X(scy) - 3.5 * F_TITLE, F_TITLE, [255, 217, 138], 1, 'left');
+      if (data.starOwner) {
+        drawText(s, fit(shortName(nameOf(data.starOwner)), F_SMALL, X(70)),
+          X(scx + 8), X(scy) + 6, F_SMALL, sunCol, 0.95, 'left');
+      }
+      x0 = 78;
+    }
+
+    const total = rowSecs.reduce((a, x) => a + x.weight, 0) || 1;
+    const avail = (W - 8) - x0;
+    let cur = x0;
+
+    for (const sec of rowSecs) {
+      const w = avail * (sec.weight / total);
+      const sx0 = cur, sx1 = cur + w;
+      cur += w;
+      const cx = (sx0 + sx1) / 2, bandW = (sx1 - sx0) - 10;
+      const cy = yTop + (yBot - yTop) * 0.46;
+      const d = dominant(sec);
+
+      if (d.owner) {
+        const col = colOf(d.owner);
+        const a = d.contested ? 0.13 : 0.22;
+        fillVGrad(s, X(sx0 + 4), X(yTop), X(Math.max(2, w - 8)), X(rowH), [
+          [0, col, 0], [0.40, col, a], [0.62, col, a], [1, col, 0],
+        ]);
+        if (d.contested) {
+          hatchRect(s, X(sx0 + 4), X(yTop), X(Math.max(2, w - 8)), X(rowH), col, 0.16, 11 * SS);
+        }
+      }
+
+      // sector name + holder
+      drawText(s, fit(sec.label.toUpperCase(), F_TITLE, X(bandW)),
+        X(cx), X(yTop + 9), F_TITLE,
+        d.owner ? colOf(d.owner) : [147, 163, 184], d.owner ? 0.95 : 0.75, 'center');
+      if (d.contested) {
+        drawText(s, 'CONTESTED', X(cx), X(yTop + 23), F_HOLDER, [255, 194, 74], 0.95, 'center');
+      } else if (d.owner) {
+        drawText(s, fit(shortName(nameOf(d.owner)), F_HOLDER, X(bandW)),
+          X(cx), X(yTop + 23), F_HOLDER, colOf(d.owner), 0.95, 'center');
+      } else {
+        drawText(s, 'UNCLAIMED', X(cx), X(yTop + 23), F_HOLDER, [95, 113, 134], 0.85, 'center');
+      }
+
+      const many = sec.bodies.length > 1;
+      if (many) {
+        const per = Math.min(4, Math.max(2, Math.floor(bandW / 16)));
+        const nrows = Math.ceil(sec.bodies.length / per);
+        sec.bodies.forEach((b, i) => {
+          const rr = Math.floor(i / per), cc = i % per;
+          const n = Math.min(per, sec.bodies.length - rr * per);
+          const bx = cx + (cc - (n - 1) / 2) * 15;
+          const by = cy - ((nrows - 1) / 2) * 15 + rr * 15;
+          const col = b.owner ? colOf(b.owner) : [42, 55, 69];
+          fillCircle(s, X(bx), X(by), X(5), col, 1);
+          strokeCircle(s, X(bx), X(by), X(5), b.owner ? col : [147, 163, 184],
+            b.owner ? 0.9 : 0.4, 1.2 * SS);
+          if (b.combat) combatIcon(bx + 8, by - 7, 11);
+        });
+        drawText(s, sec.bodies.length + ' BODIES', X(cx), X(yBot - 14), F_SMALL,
+          [147, 163, 184], 0.8, 'center');
+      } else {
+        const b = sec.bodies[0];
+        const r = b.kind === 'g' ? 15 : b.kind === 'p' ? 11 : 7;
+        const col = b.owner ? colOf(b.owner) : [74, 90, 107];
+        if (b.owner) fillCircle(s, X(cx), X(cy), X(r + 6), col, 0.18);
+        fillCircle(s, X(cx), X(cy), X(r), b.owner ? col : [38, 51, 63], 1);
+        strokeCircle(s, X(cx), X(cy), X(r), b.owner ? col : [147, 163, 184],
+          b.owner ? 0.9 : 0.45, 1.5 * SS);
+        if (b.kind === 'g') {
+          strokeEllipse(s, X(cx), X(cy), X(r * 1.8), X(r * 0.4), -0.32,
+            b.owner ? col : [147, 163, 184], b.owner ? 0.5 : 0.3, 1.5 * SS);
+        }
+        if (b.combat) combatIcon(cx + r + 3, cy - r - 2, 15);
+
+        const moons = sec.moons || [];
+        if (moons.length) {
+          const per = Math.min(5, Math.max(3, Math.floor(bandW / 13)));
+          moons.forEach((m, i) => {
+            const rr = Math.floor(i / per), cc = i % per;
+            const n = Math.min(per, moons.length - rr * per);
+            const mx = cx + (cc - (n - 1) / 2) * 12;
+            const my = cy + r + 16 + rr * 12;
+            fillCircle(s, X(mx), X(my), X(4), m.owner ? colOf(m.owner) : [57, 72, 90], 1);
+            strokeCircle(s, X(mx), X(my), X(4), [6, 9, 15], 0.9, 1 * SS);
+            if (m.combat) combatIcon(mx + 6, my - 6, 10);
+          });
+          drawText(s, moons.length + (moons.length === 1 ? ' MOON' : ' MOONS'),
+            X(cx), X(yBot - 14), F_SMALL, [147, 163, 184], 0.75, 'center');
+        }
+      }
+    }
+
+    if (ri < rows.length - 1) {
+      fillRect(s, X(8), X(yBot), X(W - 16), 1, GRID, 0.12);
+    }
+  });
+
+  // footer
+  drawText(s, (data.game.name + ' · TICK ' + data.game.tick).toUpperCase(),
+    X(10), X(H - 15), F_FOOT, [95, 113, 134], 0.95, 'left');
+  if (data.combatCount > 0) {
+    const label = data.combatCount + ' UNDER FIRE';
+    drawText(s, label, X(W - 10), X(H - 15), F_FOOT, [255, 140, 100], 0.95, 'right');
+    combatIcon(W - 12 - textWidth(label, F_FOOT) / SS - 7, H - 11, 11);
+  } else {
+    drawText(s, data.bodyCount + ' BODIES', X(W - 10), X(H - 15), F_FOOT,
+      [95, 113, 134], 0.95, 'right');
   }
+
+  return encodePng(s);
 }
 
 // ---------------------------------------------------------------------------
@@ -553,6 +747,23 @@ export async function handleStripPage(req, env, { params }) {
 // reads like plumbing. index.js matches it directly, ahead of the /api
 // gate. See STRIP_PATH there.
 export const STRIP_RE = /^\/herald\/([^/]+)\/strip$/;
+/** Same chart as a real PNG — what the Herald attaches, and a way to
+ *  eyeball the actual published artefact rather than a lookalike. */
+export const STRIP_PNG_RE = /^\/herald\/([^/]+)\/strip\.png$/;
+
+export async function handleStripPng(req, env, { params }) {
+  const url = new URL(req.url);
+  const width = Math.max(320, Math.min(1400, Number(url.searchParams.get('w')) || 550));
+  const height = Math.max(220, Math.min(1000, Number(url.searchParams.get('h')) || 440));
+  const png = await renderStripPng(env, params.gameId, { width, height });
+  if (!png) return new Response('no such game', { status: 404 });
+  return new Response(png, {
+    headers: {
+      'content-type': 'image/png',
+      'cache-control': 'public, max-age=60',
+    },
+  });
+}
 
 /**
  * Absolute, shareable URL for a game's strip. Needs an explicit origin

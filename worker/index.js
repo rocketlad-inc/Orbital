@@ -830,6 +830,18 @@ export default {
     // the screenshotter loads). Matched BEFORE the /api gate so the URL
     // stays human-friendly; feature-module routes only run under /api/*.
     {
+      const pm = url.pathname.match(heraldStrip.STRIP_PNG_RE);
+      if (pm && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await heraldStrip.handleStripPng(req, env, {
+            params: { gameId: decodeURIComponent(pm[1]) },
+          });
+        } catch (e) {
+          console.error('herald strip png failed', e);
+          return new Response('strip unavailable', { status: 500 });
+        }
+      }
       const hm = url.pathname.match(heraldStrip.STRIP_RE);
       if (hm && req.method === 'GET') {
         try {
