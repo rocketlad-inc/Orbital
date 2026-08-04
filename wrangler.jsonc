@@ -17,7 +17,12 @@
     // /herald/* is Worker-rendered HTML (the territory strip). Without
     // it listed here the static-asset layer answers first and serves the
     // SPA shell instead, so the route silently 200s with the wrong page.
-    "run_worker_first": ["/api/*", "/herald/*"]
+    // Paths the Worker must see BEFORE the static-asset handler. Anything
+    // absent from this list is swallowed by the SPA fallback
+    // (not_found_handling above), which returns index.html with a 200 —
+    // so a missing entry looks like a working route serving the wrong
+    // content, not like a 404. Add every new non-/api Worker route here.
+    "run_worker_first": ["/api/*", "/herald/*", "/battle/*"]
   },
   "d1_databases": [
     {

@@ -736,6 +736,7 @@ import * as fleets from './fleets.js';
 import * as discord from './discord.js';
 import * as analytics from './analytics.js';
 import * as heraldStrip from './heraldStrip.js';
+import * as battleCard from './battleCard.js';
 
 const FEATURE_MODULES = [lobby, factions, messages, senate, trades, state, actions, fleets, discord, analytics];
 
@@ -830,6 +831,18 @@ export default {
     // the screenshotter loads). Matched BEFORE the /api gate so the URL
     // stays human-friendly; feature-module routes only run under /api/*.
     {
+      const bm = url.pathname.match(battleCard.BATTLE_PNG_RE);
+      if (bm && req.method === 'GET') {
+        try {
+          await ensureMigrated(env);
+          return await battleCard.handleBattlePng(req, env, {
+            params: { gameId: decodeURIComponent(bm[1]), bodyId: decodeURIComponent(bm[2]), tick: bm[3] },
+          });
+        } catch (e) {
+          console.error('battle card failed', e);
+          return new Response('card unavailable', { status: 500 });
+        }
+      }
       const pm = url.pathname.match(heraldStrip.STRIP_PNG_RE);
       if (pm && req.method === 'GET') {
         try {

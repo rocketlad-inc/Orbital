@@ -22,6 +22,8 @@ export const DEFAULTS = {
   sitrep_enabled: true,
   herald_enabled: true,
   senate_cards_enabled: true,
+  /** Post a poster to the channel when a real battle resolves. */
+  battle_cards_enabled: true,
   dm_relay_enabled: true,
 };
 

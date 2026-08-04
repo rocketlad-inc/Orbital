@@ -261,6 +261,20 @@ export async function publishSenateProposed(env, gameId, row, proposerName) {
   return { posted: true };
 }
 
+/** Post a plain embed to the shared channel. Used by battle cards and
+ *  anything else that belongs to the room rather than a person. */
+export async function postChannelEmbed(env, embed) {
+  if (!env.DISCORD_BOT_TOKEN) return { posted: false, reason: 'no_bot_token' };
+  const channelId = await resolveChannelId(env);
+  if (!channelId) return { posted: false, reason: 'no_channel' };
+  const res = await botFetch(env, 'POST', `/channels/${channelId}/messages`, { embeds: [embed] });
+  if (!res.ok) {
+    console.error(`channel embed post failed ${res.status}`, await res.text().catch(() => ''));
+    return { posted: false, reason: `http_${res.status}` };
+  }
+  return { posted: true };
+}
+
 // ---------- interactions endpoint ----------
 
 // Interaction + response type constants (Discord API).
@@ -293,6 +307,22 @@ function discordUserOf(interaction) {
 async function handleSlashCommand(env, interaction) {
   const name = interaction.data?.name;
   if (name === 'notify') return handleNotifyCommand(env, interaction);
+
+  // Read-only commands: checking your empire from a phone. All replies
+  // are ephemeral — nobody wants their fleet disposition posted into a
+  // channel full of rivals.
+  const cmds = await import('./commands.js');
+  if (cmds.READ_COMMANDS[name]) {
+    const user = discordUserOf(interaction);
+    if (!user?.id) return ephemeral('Could not read your Discord identity.');
+    try {
+      return json(await cmds.READ_COMMANDS[name](env, user.id));
+    } catch (e) {
+      console.error(`slash /${name} failed`, e);
+      return ephemeral('Something went wrong reading your empire. Try again.');
+    }
+  }
+
   if (name !== 'link') return ephemeral('Unknown command.');
 
   const user = discordUserOf(interaction);
@@ -370,6 +400,51 @@ async function handleNotifyCommand(env, interaction) {
 async function handleComponent(env, interaction) {
   const customId = interaction.data?.custom_id ?? '';
   const parts = customId.split(':');
+
+  // orb:t:<gameId>:<tradeId>:<accept|decline>
+  // Reuses trades.js's real handlers rather than reimplementing them —
+  // accepting a trade moves resources and can create treaties, and a
+  // second copy of that logic would drift from the authoritative one.
+  if (parts[0] === 'orb' && parts[1] === 't') {
+    const [, , gameId, tradeId, action] = parts;
+    const user = discordUserOf(interaction);
+    if (!user?.id) return ephemeral('Could not read your Discord identity.');
+    const linked = await env.DB
+      .prepare('SELECT id FROM users WHERE discord_id = ?').bind(user.id).first();
+    if (!linked) return ephemeral('Link your Orbital account first with `/link <code>`.');
+
+    const trades = await import('./trades.js');
+    const fn = action === 'accept' ? trades.handleAccept
+      : action === 'decline' ? trades.handleDecline : null;
+    if (!fn) return ephemeral('Unrecognized action.');
+
+    // Synthetic session: the handlers only read user_id, and going
+    // through them keeps every ownership and affordability check intact.
+    const res = await fn(new Request('https://orbital/internal', { method: 'POST' }), env, {
+      session: { user_id: linked.id },
+      params: { gameId, tradeId },
+    });
+    let payload = null;
+    try { payload = await res.clone().json(); } catch { /* non-json */ }
+    if (!res.ok) {
+      return ephemeral(`Could not ${action} that trade: ${payload?.error?.message ?? res.status}`);
+    }
+    // Replace the buttons so the offer can't be actioned twice from a
+    // stale message sitting in someone's DM history.
+    return json({
+      type: 7,
+      data: {
+        embeds: [{
+          title: action === 'accept' ? '✅ Trade accepted' : '✖️ Trade declined',
+          description: action === 'accept'
+            ? 'Resources have moved and any pacts are in force.'
+            : 'The offer was turned down.',
+          color: action === 'accept' ? 0x4ecdc4 : 0x8a9fb3,
+        }],
+        components: [],
+      },
+    });
+  }
   // orb:v:<proposalId>:<choice>
   if (parts[0] !== 'orb' || parts[1] !== 'v') return ephemeral('Unrecognized action.');
   const proposalId = parts[2];
@@ -464,6 +539,11 @@ export const SLASH_COMMANDS = [
     description: 'Link your Discord account to your Orbital empire so you can vote in the Senate.',
     options: [{ name: 'code', description: 'The code shown in-game under Senate → Link Discord.', type: 3, required: true }],
   },
+  { name: 'status',   description: 'Your empire at a glance — resources, fleet, what needs you.' },
+  { name: 'fleet',    description: 'Where your ships are, and what is under way.' },
+  { name: 'research', description: 'Your current project and tech levels.' },
+  { name: 'bills',    description: 'Senate bills on the floor and how you voted.' },
+  { name: 'map',      description: 'The current territory map.' },
   {
     name: 'notify',
     description: 'See or change which Orbital events DM you.',

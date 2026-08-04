@@ -274,6 +274,55 @@ async function handlePropose(req, env, { session, params }) {
     responder_faction_id: responderId,
   });
 
+  // DM the responder with working buttons. Trade is the most
+  // friction-heavy thing in the game — an offer sitting unseen for hours
+  // is a deal that doesn't happen — and senate voting already proved a
+  // Discord button can carry a real game action safely.
+  try {
+    const notify = await import('./notify.js');
+    const uid = await notify.userIdForFaction(env, responderId);
+    if (uid) {
+      const roomName = (await env.DB
+        .prepare('SELECT name FROM rooms WHERE id = ?').bind(gameId).first())?.name ?? gameId;
+      const bits = (o) => {
+        const out = [];
+        if (o.metal) out.push(`**${Math.round(o.metal)}** metal`);
+        if (o.fuel) out.push(`**${Math.round(o.fuel)}** fuel`);
+        if (o.gold) out.push(`**${Math.round(o.gold)}** credits`);
+        if (o.science) out.push(`**${Math.round(o.science)}** science`);
+        return out.length ? out.join(' · ') : '_nothing_';
+      };
+      // pactCheck holds the validated arrays the INSERT binds above.
+      const pacts = (arr) => (Array.isArray(arr) && arr.length ? ` · ${arr.join(', ')}` : '');
+
+      await notify.sendDm(env, {
+        userId: uid,
+        gameId,
+        category: 'dm',
+        dedupeKey: `trade:${id}`,
+        embed: {
+          title: `🤝 Trade offer from ${proposer.name}`,
+          description: [
+            `**They give you:** ${bits(res.offer)}${pacts(pactCheck.offerPacts)}`,
+            `**They want:** ${bits(res.request)}${pacts(pactCheck.requestPacts)}`,
+            note ? `\n_"${String(note).slice(0, 200)}"_` : null,
+          ].filter(Boolean).join('\n'),
+          color: 0x4ecdc4,
+          footer: { text: `Orbital · ${roomName} · T+${tick}` },
+        },
+        components: [{
+          type: 1,
+          components: [
+            { type: 2, style: 3, label: 'Accept', custom_id: `orb:t:${gameId}:${id}:accept` },
+            { type: 2, style: 4, label: 'Decline', custom_id: `orb:t:${gameId}:${id}:decline` },
+          ],
+        }],
+      });
+    }
+  } catch (e) {
+    console.error('trade offer DM failed', e, { tradeId: id });
+  }
+
   const row = await env.DB
     .prepare('SELECT * FROM trade_offers WHERE id = ?')
     .bind(id)
@@ -343,7 +392,7 @@ async function handleList(req, env, { url, session, params }) {
 
 // ---------- POST /api/games/:gameId/trades/:tradeId/accept ----------
 
-async function handleAccept(req, env, { session, params }) {
+export async function handleAccept(req, env, { session, params }) {
   const gameId = params.gameId;
   const tradeId = params.tradeId;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -547,7 +596,7 @@ async function handleAccept(req, env, { session, params }) {
 
 // ---------- POST /api/games/:gameId/trades/:tradeId/decline ----------
 
-async function handleDecline(req, env, { session, params }) {
+export async function handleDecline(req, env, { session, params }) {
   const gameId = params.gameId;
   const tradeId = params.tradeId;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');

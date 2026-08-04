@@ -1525,6 +1525,15 @@ export class Room {
       console.error('runTickAlerts failed', e);
     }
 
+    // Battle posters for any fight big enough to be news. Channel-level,
+    // and isolated like everything else that talks to Discord.
+    try {
+      const battles = await import('./battleCard.js');
+      await battles.publishBattles(this.env, gameId, tick);
+    } catch (e) {
+      console.error('publishBattles failed', e);
+    }
+
     // Senate effects active this tick. Cached in a closure local so
     // every downstream consumer reads the same snapshot without
     // hammering D1 once per attacker. Falls through to slider defaults
