@@ -608,6 +608,26 @@ async function handleBotPrefWrite(req, env, { session }) {
 }
 
 /**
+ * POST /api/admin/alerts/:gameId — evaluate the interrupt alerts now.
+ * The tick loop already does this, but on an hourly game that's an hour
+ * per attempt to learn whether an alert reads well. Dedupe still applies,
+ * so firing this repeatedly cannot spam anyone.
+ */
+async function handleAlertsNow(_req, env, { session, params }) {
+  if (!session || !isAdminEmail(session.email)) return err(404, 'not_found', 'no such route');
+  const game = await env.DB
+    .prepare('SELECT current_tick FROM games WHERE id = ?').bind(params.gameId).first();
+  if (!game) return err(404, 'not_found', 'no such game');
+  const alerts = await import('./alerts.js');
+  await alerts.runTickAlerts(env, params.gameId, game.current_tick ?? 0);
+  const recent = (await env.DB
+    .prepare(`SELECT category, ok, created_ms FROM notification_log
+               WHERE game_id = ? ORDER BY created_ms DESC LIMIT 10`)
+    .bind(params.gameId).all()).results ?? [];
+  return json({ ok: true, tick: game.current_tick, recent });
+}
+
+/**
  * POST /api/admin/sitrep/:gameId[?user=<id>&force=1]
  * Fire situation-report DMs on demand. Exists because the scheduled
  * version can only be observed once a day — which is a miserable loop
@@ -657,6 +677,7 @@ export const routes = [
   { method: 'PATCH', pattern: '/api/admin/bot/prefs', auth: 'required', handle: handleBotPrefWrite },
   { method: 'POST', pattern: '/api/admin/discord/register-commands', auth: 'required', handle: handleRegisterCommands },
   { method: 'POST', pattern: /^\/api\/admin\/sitrep\/(?<gameId>[^/]+)$/, auth: 'required', handle: handleSitrepNow },
+  { method: 'POST', pattern: /^\/api\/admin\/alerts\/(?<gameId>[^/]+)$/, auth: 'required', handle: handleAlertsNow },
   { method: 'POST', pattern: /^\/api\/admin\/senate\/(?<proposalId>[^/]+)\/announce$/, auth: 'required', handle: handleAnnounceProposal },
   { method: 'POST', pattern: '/api/discord/link-code',  auth: 'required', handle: handleMintLinkCode },
   { method: 'GET',  pattern: '/api/discord/link-status', auth: 'required', handle: handleLinkStatus },

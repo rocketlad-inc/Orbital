@@ -1514,6 +1514,17 @@ export class Room {
       console.error('resolveSenate failed', e);
     }
 
+    // Interrupt-grade notifications (combat, arrears, closing votes).
+    // AFTER senate so a bill that just opened can already warn the
+    // players who haven't voted. Isolated: an alert failing must never
+    // cost a player their tick.
+    try {
+      const alerts = await import('./alerts.js');
+      await alerts.runTickAlerts(this.env, gameId, tick);
+    } catch (e) {
+      console.error('runTickAlerts failed', e);
+    }
+
     // Senate effects active this tick. Cached in a closure local so
     // every downstream consumer reads the same snapshot without
     // hammering D1 once per attacker. Falls through to slider defaults

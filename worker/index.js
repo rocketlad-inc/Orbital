@@ -949,6 +949,15 @@ export default {
         } catch (e) {
           console.error('sitrep cron failed', e);
         }
+        // Idle nudges run on the CRON, not the tick loop: absence is
+        // wall-clock, and a player who stopped playing isn't generating
+        // ticks to hang a reminder off.
+        try {
+          const alerts = await import('./alerts.js');
+          await alerts.runIdleNudges(env);
+        } catch (e) {
+          console.error('idle nudge cron failed', e);
+        }
       } catch (e) {
         console.error('daily digest failed', e);
       }
