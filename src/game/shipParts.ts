@@ -18,9 +18,14 @@ export type ShipPartId = 'kinetic' | 'energy' | 'shield' | 'armor' | 'engine' | 
 /** Damage type a weapon mount deals / a defensive part resists.
  *  The counter-matrix is REDUCTION-ONLY: shields cut kinetic, armor cuts
  *  energy, and neither type ever gets a damage BONUS against the defence
- *  that can't stop it — it simply arrives at full strength. Copy that
- *  says a gun "chews" or "melts" its off-counter implies a bonus that
- *  does not exist in defenseMitigation(); say "full damage" instead. */
+ *  that can't stop it — it simply arrives unreduced.
+ *
+ *  Gun copy says "Strong against 🪨 armor" anyway, and that is a
+ *  deliberate call by Lorne, not an oversight: it is COMPARATIVE pick
+ *  advice (into an armored target, kinetic is the better of the two
+ *  guns), immediately followed by the only real number — what the
+ *  counter takes off. Do not "correct" it into a damage bonus, and do
+ *  not add a "+X% vs armor" figure; there is none to quote. */
 export type DamageType = 'kinetic' | 'energy';
 
 /** Legacy part ids from before the kinetic/energy split. `weapon` was
@@ -85,7 +90,7 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   kinetic: {
     id: 'kinetic',
     name: 'Kinetic Mount',
-    blurb: '+40% hull base damage, kinetic. Each 🛡 shield cuts it by 22% (compounding); 🪨 armor does not stop it.',
+    blurb: '+40% hull base damage, kinetic. Strong against 🪨 armor. Each 🛡 shield cuts damage by 22% (compounding).',
     cost: { ore: 6, credits: 2 },
     allowedOn: ['corvette', 'frigate', 'destroyer'],
     techTrack: 'weapons',
@@ -95,7 +100,7 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   energy: {
     id: 'energy',
     name: 'Energy Mount',
-    blurb: '+40% hull base damage, energy. Each 🪨 armor plate cuts it by 22% (compounding); 🛡 shields do not stop it.',
+    blurb: '+40% hull base damage, energy. Strong against 🛡 shields. Each 🪨 armor plate cuts damage by 22% (compounding).',
     cost: { ore: 2, credits: 6 },
     allowedOn: ['corvette', 'frigate', 'destroyer'],
     techTrack: 'energy_weapons',

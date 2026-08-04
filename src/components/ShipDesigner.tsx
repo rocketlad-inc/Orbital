@@ -264,8 +264,8 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   // multiplier, and the incoming line quotes THIS draft's actual stack.
   const outgoingHint = (() => {
     if (nKinetic > 0 && nEnergy > 0) return 'Mixed guns — each type is cut only by its own counter.';
-    if (nKinetic > 0) return '⚔ Kinetic: unreduced by 🪨 armor · −22% per 🛡 shield (compounding).';
-    if (nEnergy > 0) return '⚡ Energy: unreduced by 🛡 shields · −22% per 🪨 armor plate (compounding).';
+    if (nKinetic > 0) return '⚔ Kinetic: strong against 🪨 armor · each 🛡 shield cuts damage 22% (compounding).';
+    if (nEnergy > 0) return '⚡ Energy: strong against 🛡 shields · each 🪨 armor plate cuts damage 22% (compounding).';
     return '';
   })();
   const incomingHint = (() => {
