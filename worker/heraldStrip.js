@@ -496,7 +496,14 @@ export async function renderStripPng(env, gameId, opts = {}) {
   if (!env.BROWSER) return null;
   let browser = null;
   try {
-    const puppeteer = await import('@cloudflare/puppeteer');
+    // Indirected through a variable ON PURPOSE: a literal specifier is
+    // statically analysable, so the bundler would try to resolve
+    // @cloudflare/puppeteer at BUILD time even though this line only
+    // runs when a BROWSER binding exists. The package isn't installed
+    // until that binding is enabled, and a failed worker build blocks
+    // every deploy — not just this feature.
+    const pkg = '@cloudflare/puppeteer';
+    const puppeteer = await import(/* webpackIgnore: true */ pkg);
     browser = await puppeteer.launch(env.BROWSER);
     const page = await browser.newPage();
     const W = opts.width ?? 1200;
@@ -546,3 +553,14 @@ export async function handleStripPage(req, env, { params }) {
 // reads like plumbing. index.js matches it directly, ahead of the /api
 // gate. See STRIP_PATH there.
 export const STRIP_RE = /^\/herald\/([^/]+)\/strip$/;
+
+/**
+ * Absolute, shareable URL for a game's strip. Needs an explicit origin
+ * because the digest runs on a cron with no inbound request to infer
+ * one from. PUBLIC_ORIGIN falls back to the production hostname so the
+ * link works out of the box; set the var for a custom domain.
+ */
+export function STRIP_PUBLIC_URL(env, gameId) {
+  const origin = (env.PUBLIC_ORIGIN || 'https://orbital.lcfeeser.workers.dev').replace(/\/+$/, '');
+  return `${origin}/herald/${encodeURIComponent(gameId)}/strip`;
+}

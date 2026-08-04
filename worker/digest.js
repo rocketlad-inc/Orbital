@@ -26,6 +26,8 @@
 //     window since the previous one.
 // ============================================================
 
+import { renderStripPng, STRIP_PUBLIC_URL } from './heraldStrip.js';
+
 /** Publish hour, in US Eastern local time (noon). Checked via Intl
  *  against the America/New_York zone so it stays at local noon across
  *  DST — noon EDT in summer (16:00 UTC), noon EST in winter (17:00 UTC)
@@ -1742,11 +1744,48 @@ export async function runDigestForGame(env, game, { force = false } = {}) {
 
   if (!embed) return { posted: false, events: rows.length, reason: 'quiet_day' };
 
-  const res = await fetch(webhook, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ embeds: [embed] }),
-  });
+  // ---- territory strip ---------------------------------------------------
+  // Attach the ownership chart when we can render one. Two paths, and the
+  // Herald publishes either way — a missing image must never cost the
+  // edition.
+  const stripUrl = STRIP_PUBLIC_URL(env, game.id);
+  let stripPng = null;
+  try {
+    stripPng = await renderStripPng(env, game.id, { width: 550, height: 440 });
+  } catch (e) {
+    console.error('herald strip render failed', e);
+  }
+  if (stripPng) {
+    // attachment:// resolves against the multipart file posted alongside.
+    embed = { ...embed, image: { url: 'attachment://territory.png' } };
+  } else if (stripUrl) {
+    // No screenshot binding: link the live page instead. Less pretty than
+    // an inline image, but it is the SAME chart and it costs nothing.
+    embed = {
+      ...embed,
+      fields: [
+        ...(embed.fields ?? []),
+        { name: 'Territory', value: `[View the current map](${stripUrl})` },
+      ],
+    };
+  }
+
+  let res;
+  if (stripPng) {
+    // Discord takes the embed as a `payload_json` part with the image as
+    // a sibling file part. FormData sets its own multipart boundary, so
+    // we must NOT set content-type ourselves here.
+    const form = new FormData();
+    form.append('payload_json', JSON.stringify({ embeds: [embed] }));
+    form.append('files[0]', new Blob([stripPng], { type: 'image/png' }), 'territory.png');
+    res = await fetch(webhook, { method: 'POST', body: form });
+  } else {
+    res = await fetch(webhook, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ embeds: [embed] }),
+    });
+  }
   if (!res.ok) {
     console.error(`digest webhook post failed for ${game.id}: ${res.status} ${await res.text().catch(() => '')}`);
     return { posted: false, events: rows.length, reason: `webhook_${res.status}` };
