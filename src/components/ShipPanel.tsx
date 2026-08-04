@@ -19,6 +19,8 @@ import { EditableName } from './EditableName';
 import { ShipIcon } from './ShipIcons';
 import { DEFAULT_ENGINE_G } from '../physics/torchTransfer';
 import { planExploreTour, type ExploreScope } from '../game/autoExplore';
+import { canHostCity, canHostStation, suggestSettlementName } from '../game/settlements';
+import { useFeatureGate } from '../hooks/useFeatureGate';
 import {
   BINARY_SYSTEM_BODY_IDS,
   BLACK_HOLE_SYSTEM_BODY_IDS,
@@ -45,6 +47,7 @@ export const ShipPanel: React.FC = () => {
   // waiting for the next /state poll to reconcile).
   const mpActions = useMultiplayerActions();
   const isMobile = useIsMobile();
+  const deployGate = useFeatureGate();
 
   const [transferModalOpen, setTransferModalOpen] = useState(false);
   const [fleetModalOpen, setFleetModalOpen] = useState(false);
@@ -59,6 +62,9 @@ export const ShipPanel: React.FC = () => {
   // result line after one is dispatched.
   const [exploreScope, setExploreScope] = useState<ExploreScope>('system');
   const [exploreNotice, setExploreNotice] = useState<string | null>(null);
+  // Colony ship "deploy settlement" — inline result/rejection line.
+  const [deployNotice, setDeployNotice] = useState<string | null>(null);
+  const [deployBusy, setDeployBusy] = useState(false);
   // Server-side standing-orders rejection (MP only). Shown inline in the
   // ORDERS section; the next /state poll rewinds the optimistic change.
   const [ordersError, setOrdersError] = useState<string | null>(null);
@@ -252,6 +258,26 @@ export const ShipPanel: React.FC = () => {
     ? planExploreTour(ship, gameState.bodies, gameState.settlements, gameState.currentTick, exploreScope)
     : [];
 
+  // ---- Colony ship: deploy a settlement where it's parked ----
+  // Same gates the world menu applies from the body side, read from the
+  // ship's own orbit so the action lives where the player is looking.
+  // A colony ship is CONSUMED either way, so both types are offered
+  // when both are legal and the ship isn't mid-burn.
+  const colonyBody = (isOwn && ship.class === 'colony' && !ship.transit && ship.orbit.parentBodyId)
+    ? gameState.bodies.find(b => b.id === ship.orbit.parentBodyId) ?? null
+    : null;
+  const cityHere = !!colonyBody
+    && gameState.settlements.some(s => s.bodyId === colonyBody.id && s.type === 'city');
+  const stationHere = !!colonyBody
+    && gameState.settlements.some(s => s.bodyId === colonyBody.id && s.type === 'station');
+  const stationLock = deployGate.lockReason('settlement.station');
+  const canDeployCity = !!colonyBody && canHostCity(colonyBody) && !cityHere;
+  const canDeployStation = !!colonyBody && canHostStation(colonyBody) && !stationHere && !stationLock;
+  const deployTypes: Array<'city' | 'station'> = [
+    ...(canDeployCity ? ['city' as const] : []),
+    ...(canDeployStation ? ['station' as const] : []),
+  ];
+
   /**
    * Queue the survey: plan every leg locally in one shot, then post
    * them in order. Leg 1 carries replace:true so it cancels whatever
@@ -296,6 +322,30 @@ export const ShipPanel: React.FC = () => {
         }
       }
     })();
+  };
+
+  /**
+   * Found a settlement under this colony ship. The server owns the
+   * whole transaction — it validates the body, creates the settlement
+   * and consumes the hull — so there's no optimistic local deploy here:
+   * a client-side mirror would double-count the settlement for ~1.5s
+   * until /state caught up, and this ship is about to stop existing.
+   */
+  const deploySettlementHere = async (type: 'city' | 'station') => {
+    if (!ship || !colonyBody || !mpActions || deployBusy) return;
+    setDeployBusy(true);
+    setDeployNotice(null);
+    const name = suggestSettlementName(colonyBody, type, gameState.settlements);
+    const res = await mpActions.deploySettlement({ bodyId: colonyBody.id, type, name });
+    setDeployBusy(false);
+    if (res.ok) {
+      // Deliberately doesn't name the hull: the server consumes the
+      // first colony ship it finds at the body (LIMIT 1), which isn't
+      // necessarily the one selected here when two share an orbit.
+      setDeployNotice(`${name} founded on ${colonyBody.name} — a colony ship was consumed`);
+    } else {
+      setDeployNotice(humanizeMpError(res.code, res.error, 'deploy'));
+    }
   };
 
   const handleRemoveQueuedTransfer = (index: number) => {
@@ -650,6 +700,50 @@ export const ShipPanel: React.FC = () => {
               {exploreNotice}
             </div>
           )}
+
+          {/* DEPLOY SETTLEMENT — colony ships only. Founding was
+              previously reachable only from the body side (world menu /
+              body inspector), so a player who had the colony ship
+              selected had to go find the planet's panel to use it. The
+              button only renders when this hull is parked somewhere it
+              can actually found, so it never appears as a dead control. */}
+          {isOwn && ship.class === 'colony' && mpActions && (
+            <div style={{ marginTop: 6 }}>
+              {deployTypes.length > 0 ? (
+                <div className="maneuver-buttons">
+                  {deployTypes.map(t => (
+                    <button
+                      key={t}
+                      className="maneuver-btn"
+                      disabled={deployBusy}
+                      onClick={() => deploySettlementHere(t)}
+                      title={`Found a ${t} on ${colonyBody?.name} — consumes ${ship.name}`}
+                    >
+                      ▲ DEPLOY {t === 'city' ? 'CITY' : 'STATION'}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ fontSize: 10, color: '#5f7488', lineHeight: 1.4 }}>
+                  {ship.transit
+                    ? 'Deploy available once parked at a target'
+                    : !colonyBody
+                      ? 'Deploy available in orbit of a world'
+                      : cityHere && stationHere
+                        ? `${colonyBody.name} is already fully settled`
+                        : stationLock && !canDeployCity
+                          ? `🔒 ${stationLock.label} — ${stationLock.text}`
+                          : `Nothing left to found at ${colonyBody.name}`}
+                </div>
+              )}
+            </div>
+          )}
+          {deployNotice && (
+            <div style={{ fontSize: 10, color: '#8aa0b4', margin: '4px 0 0', lineHeight: 1.4 }}>
+              {deployNotice}
+            </div>
+          )}
+
           {/* Maneuver nodes + COMMIT ride with the move buttons: you pick a
               destination, then confirm the burn. Splitting those across a
               scroll meant staging a move and losing sight of the button
