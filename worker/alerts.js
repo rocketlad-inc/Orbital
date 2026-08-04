@@ -64,14 +64,21 @@ export async function runTickAlerts(env, gameId, tick) {
 // ---------------------------------------------------------------------------
 
 async function urgentAlerts(env, notify, gameId, gameName, tick) {
-  // ---- a settlement is being shot at ------------------------------------
+  // ---- a settlement is actually TAKING DAMAGE ----------------------------
+  // last_damaged_tick, NOT last_combat_tick. The latter records when a
+  // settlement FIRED — migration 0044 says so explicitly — so a station
+  // successfully defending itself at full health stamps it every tick.
+  // The first cut used it and told Lorne "UrANUS Station is under fire,
+  // structure at 100%", which is the station winning. A false alarm on
+  // the one category meant to be trustworthy is worse than no alarm:
+  // it teaches players that red means nothing.
   const cities = (await env.DB
     .prepare(
       `SELECT st.id, st.name, b.name AS body, f.user_id, st.hp, st.hp_max
          FROM game_settlements st
          JOIN game_factions f ON f.id = st.owner_faction_id
          JOIN game_bodies b ON b.id = st.body_id
-        WHERE st.game_id = ? AND st.last_combat_tick >= ?
+        WHERE st.game_id = ? AND st.last_damaged_tick >= ?
           AND f.user_id IS NOT NULL AND f.status = 'active' AND st.hp > 0`,
     )
     .bind(gameId, tick - 1).all()).results ?? [];
@@ -84,10 +91,10 @@ async function urgentAlerts(env, notify, gameId, gameName, tick) {
       category: 'urgent',
       dedupeKey: `urgent:city:${c.id}:${Math.floor(tick / URGENT_REPEAT_TICKS)}`,
       embed: {
-        title: '🔥 A city of yours is under fire',
+        title: '🔥 A city of yours is taking damage',
         description: [
-          `**${c.name}** on **${c.body}** is taking fire.`,
-          pct != null ? `Structure at **${pct}%**.` : null,
+          `**${c.name}** on **${c.body}** is losing structure.`,
+          pct != null ? `Down to **${pct}%**.` : null,
           'A razed settlement does not come back.',
         ].filter(Boolean).join('\n'),
         color: 0xff3b30,
