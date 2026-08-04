@@ -139,11 +139,23 @@ export async function buildSituationReport(env, gameId, userId) {
     .bind(gameId, me.id).all()).results ?? [];
   if (openBills.length) {
     urgency = Math.max(urgency, 1);
+    // Lead with what the vote is WORTH. "You have a bill to vote on" is a
+    // chore; "your 4-weight vote is missing" is leverage going unspent.
+    let weightNote = '';
+    try {
+      const senate = await import('./senate.js');
+      const d = await senate.voteWeightDetail(env, gameId, me.id);
+      weightNote = `_Your vote carries weight **${d.weight}** (base 1`
+        + (d.controlled.length ? ` + ${d.controlled.length} system${d.controlled.length === 1 ? '' : 's'}` : '')
+        + ')._\n';
+    } catch (e) {
+      console.error('sitrep weight failed', e);
+    }
     fields.push({
       name: '🏛️ Your vote is missing',
-      value: openBills
+      value: (weightNote + openBills
         .map(b => `**${b.title}** — closes T+${b.vote_closes_at_tick} (${b.vote_closes_at_tick - tick} ticks)`)
-        .join('\n').slice(0, 1000),
+        .join('\n')).slice(0, 1000),
     });
   }
 

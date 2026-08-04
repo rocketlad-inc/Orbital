@@ -15,11 +15,14 @@
 //     - Yea/Nay/Abstain button clicks (resolve discord_id -> faction ->
 //       castVoteCore, then refresh the message tally)
 //
+// Vote weight is 1 + one per SYSTEM controlled — see worker/systems.js.
+// Every surface quotes WEIGHT_RULE verbatim rather than paraphrasing it.
+//
 // Identity:
 //   A player mints a short code in-game (POST /api/discord/link-code) and
 //   runs /link <code> in Discord. That stores users.discord_id, which the
 //   button handler resolves per-game to a faction so a vote lands with the
-//   right planet-count weight. See migration 0035.
+//   right weight. See migration 0035.
 //
 // Required worker secrets (feature no-ops cleanly when unset):
 //   DISCORD_PUBLIC_KEY   — app public key, for signature verification
@@ -29,6 +32,7 @@
 // ============================================================
 
 import { castVoteCore, loadProposalTotals } from './senate.js';
+import { WEIGHT_RULE } from './systems.js';
 import { isAdminEmail } from './analytics.js';
 
 const DISCORD_API = 'https://discord.com/api/v10';
@@ -193,7 +197,9 @@ function buildVoteMessage(row, totals, gameName, effect) {
   // voter can tell the two apart at a glance.
   if (effect) descParts.push(`\n**If this passes**\n${effect}`);
   descParts.push(`\nVoting closes at tick **${row.vote_closes_at_tick}**.`);
-  descParts.push('Vote weight = your planet count. You can change your vote until it closes.');
+  // Spell the weighting rule out on every card. "Yea 18" with two voters
+  // reads as a bug unless the reader already knows what weight is.
+  descParts.push(`_${WEIGHT_RULE} You can change your vote until it closes._`);
 
   return {
     embeds: [{
@@ -624,6 +630,21 @@ async function handleComponent(env, interaction) {
     .prepare('SELECT weight FROM senate_votes WHERE proposal_id = ? AND faction_id = ?')
     .bind(proposalId, faction.id).first())?.weight ?? null;
 
+  // Where that weight came from, by name. A player who sees "weight 4"
+  // and can also see WHICH four systems bought it learns the rule once
+  // and never has to ask again.
+  let whyWeight = '';
+  try {
+    const senate = await import('./senate.js');
+    const detail = await senate.voteWeightDetail(env, prop.game_id, faction.id);
+    whyWeight = detail.controlled.length
+      ? `\n_Base 1 + ${detail.controlled.length} system${detail.controlled.length === 1 ? '' : 's'}: `
+        + `${detail.controlled.map(s => s.label).join(', ')}._`
+      : '\n_Base 1 — you control no systems outright yet._';
+  } catch (e) {
+    console.error('weight breakdown failed', e);
+  }
+
   const appId = interaction.application_id;
   const token = interaction.token;
   if (appId && token) {
@@ -636,7 +657,7 @@ async function handleComponent(env, interaction) {
       body: JSON.stringify({
         flags: FLAG_EPHEMERAL,
         content: `Your vote is recorded as **${mine}**${myWeight != null ? ` · weight **${myWeight}**` : ''}`
-          + `. You can change it until the vote closes.`,
+          + `. You can change it until the vote closes.${whyWeight}`,
       }),
     }).catch(() => {});
   }

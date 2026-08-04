@@ -80,7 +80,10 @@ routes hit the worker; everything else falls through to the SPA bundle.
   via the `Room` Durable Object.
 - **Faction identity** — pick empire name + bio per room.
 - **Comms** — DM / group / broadcast messaging once a game is running.
-- **Senate** — proposal + voting with vote weight = planet count.
+- **Senate** — proposal + voting. Vote weight is `1 + 1 per system
+  controlled` (a system = a planet and its moons, or a lone body orbiting
+  the star; you control one by owning more of its bodies than anyone
+  else, ties count for nobody). See `worker/systems.js`.
 
 ## What does not work yet
 

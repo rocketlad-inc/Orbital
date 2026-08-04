@@ -1,5 +1,6 @@
 import { hasFeature } from './researchUnlocks.js';
 import { getActiveSliders } from './senate.js';
+import { voteWeights } from './systems.js';
 
 // GET /api/games/:gameId/state — full renderer snapshot.
 //
@@ -445,7 +446,12 @@ const peaceRowsP = env.DB
 __mark('wave2-done');
   const sensorBodiesP = env.DB
     .prepare(
-      `SELECT id, parent_body_id, orbit_radius, orbit_period, angle0
+      // template_id/type/name/owner_faction_id ride along for the senate
+      // weight roll-up below: this is already the "every undestroyed body,
+      // unmasked" read, and the chamber counts the real map rather than
+      // the caller's fog. Reusing it keeps /state at the same query count.
+      `SELECT id, template_id, name, type, parent_body_id,
+              orbit_radius, orbit_period, angle0, owner_faction_id
          FROM game_bodies WHERE game_id = ?1 AND destroyed_at_tick IS NULL`,
     )
     .bind(gameId)
@@ -483,6 +489,18 @@ const sensorSettlementsP = env.DB
   const sensorVisibleBodyIds = JSON.stringify(
     computeSensorVisibleBodyIds(sensorBodies, sensors, bodyPos),
   );
+
+  // Senate weight for every faction, derived here rather than trusted
+  // from the game_factions.senate_weight column. That column was seeded
+  // at 1 and never written, so the scoreboard's ★ read "1" for an empire
+  // holding half the map. Computing it from bodies we've already loaded
+  // costs no extra query and can't go stale.
+  // Only ACTIVE factions get the base 1 — it's a seat in the chamber, and
+  // an eliminated empire doesn't hold one (mirrors voteWeightFor).
+  const senateWeights = voteWeights(
+    sensorBodies, factions.filter(f => f.status === 'active').map(f => f.id),
+  );
+  for (const f of factions) f.senate_weight = senateWeights.get(f.id) ?? 0;
 
   // Non-friendly ship candidates for the sensor-on-ship visibility pass.
   // An enemy ship parked at a body in visible_bodies is already covered by
@@ -1267,7 +1285,8 @@ const tradeRoutesP = env.DB
       tech_levels,
       trade_deliveries,
       reputation: me.reputation,
-      senate_weight: me.senate_weight,
+      // Live, not the stale column — see the senateWeights roll-up above.
+      senate_weight: senateWeights.get(me.id) ?? 1,
       // Allies (active defense-pact / intel-share). The client treats
       // these faction ids as friendly for fog of war — shared vision.
       ally_faction_ids: allyIds,

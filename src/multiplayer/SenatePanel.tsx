@@ -51,6 +51,74 @@ const STATUS_COLORS: Record<SenateProposal['status'], string> = {
   withdrawn: '#8a9fb3',
 };
 
+/** Shape of GET /senate/weight. Mirrors weightBreakdown() in
+ *  worker/systems.js. */
+type WeightDetail = {
+  weight: number;
+  base: number;
+  rule: string;
+  controlled: { label: string; held: number; total: number }[];
+  contesting: { label: string; held: number; total: number; need: number; contested: boolean }[];
+};
+
+/**
+ * "Your vote is worth N, and here is exactly why."
+ *
+ * Weight used to be one vote per body owned, which nobody could see and
+ * which quietly rewarded hoovering up moons. It is now 1 + one per
+ * SYSTEM controlled — a number small enough to reason about, attached to
+ * places players already fight over. Showing the arithmetic here is the
+ * whole point: a tally reading "Yea 4 (2 votes)" only makes sense if you
+ * know where your own 3 came from.
+ *
+ * The "one more body to take it" list is deliberate. It turns an
+ * explanation into a target list.
+ */
+function WeightCard({ detail }: { detail: WeightDetail | null }) {
+  if (!detail) return null;
+  const near = detail.contesting.filter(s => s.need <= 1);
+  return (
+    <div style={{
+      border: '1px solid rgba(96,130,160,.3)', borderRadius: 6,
+      padding: '10px 12px', marginBottom: 12,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <span style={{ fontSize: 22, color: '#4ecdc4', fontWeight: 700 }}>★ {detail.weight}</span>
+        <span style={{ fontSize: 11, color: 'var(--mp-fg-dim)' }}>
+          your vote weight
+        </span>
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--mp-fg-dim)', marginTop: 6, lineHeight: 1.55 }}>
+        {detail.rule}
+      </div>
+      <div style={{ fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>
+        <span style={{ color: 'var(--mp-fg-dim)' }}>Base {detail.base}</span>
+        {detail.controlled.length > 0 ? (
+          <>
+            <span style={{ color: 'var(--mp-fg-dim)' }}> + </span>
+            {detail.controlled.map((s, i) => (
+              <span key={s.label}>
+                {i > 0 && <span style={{ color: 'var(--mp-fg-dim)' }}> + </span>}
+                <span style={{ color: '#6ee7b7' }} title={`You hold ${s.held} of ${s.total} bodies here`}>
+                  {s.label}
+                </span>
+              </span>
+            ))}
+          </>
+        ) : (
+          <span style={{ color: 'var(--mp-fg-dim)' }}> — you control no system outright yet.</span>
+        )}
+      </div>
+      {near.length > 0 && (
+        <div style={{ fontSize: 11, color: '#ffb84d', marginTop: 6, lineHeight: 1.6 }}>
+          One more body would win you{' '}
+          {near.map(s => s.label).join(', ')}.
+        </div>
+      )}
+    </div>
+  );
+}
+
 const STATUS_LABEL: Record<SenateProposal['status'], string> = {
   debating:  'DEBATING',
   voting:    'VOTING NOW',
@@ -68,6 +136,7 @@ export function SenatePanel({ gameId }: { gameId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [myFactionId, setMyFactionId] = useState<string | null>(null);
+  const [weight, setWeight] = useState<WeightDetail | null>(null);
   const [myTech, setMyTech] = useState<{ levels: Record<string, number>; gating: boolean }>(
     { levels: {}, gating: false },
   );
@@ -96,10 +165,11 @@ export function SenatePanel({ gameId }: { gameId: string }) {
   }, [kind, myTech]);
 
   const refresh = useCallback(async () => {
-    const [sRes, pRes, fRes] = await Promise.all([
+    const [sRes, pRes, fRes, wRes] = await Promise.all([
       apiFetch<{ sliders: SenateSlider[]; current_tick: number }>(`/api/games/${gameId}/senate/sliders`),
       apiFetch<{ proposals: SenateProposal[] }>(`/api/games/${gameId}/senate/proposals`),
       apiFetch<{ factions: Faction[] }>(`/api/games/${gameId}/factions`),
+      apiFetch<WeightDetail>(`/api/games/${gameId}/senate/weight`),
     ]);
     if (sRes.ok) {
       setSliders(sRes.data.sliders);
@@ -111,6 +181,7 @@ export function SenatePanel({ gameId }: { gameId: string }) {
     }
     if (pRes.ok) setProposals(pRes.data.proposals);
     if (fRes.ok) setFactions(fRes.data.factions);
+    if (wRes.ok) setWeight(wRes.data);
   }, [gameId, sliderId]);
 
   useEffect(() => {
@@ -192,7 +263,8 @@ export function SenatePanel({ gameId }: { gameId: string }) {
         'on the floor, you can never call another Chancellor vote this ' +
         'game. If it passes, the game ends immediately with ' +
         `${candidateName} as Supreme Chancellor.\n\n` +
-        'Count your votes first: weight = worlds held.',
+        'Count your votes first: each faction has 1 vote, plus 1 for every '
+          + 'system it controls.',
       );
       if (!confirmed) return;
       body.candidate_faction_id = targetFactionId;
@@ -265,6 +337,7 @@ export function SenatePanel({ gameId }: { gameId: string }) {
   return (
     <div>
       <DiscordLink />
+      <WeightCard detail={weight} />
       <div className="mp-section-title">Propose a bill</div>
       <form onSubmit={propose}>
         <label className="mp-label">Kind</label>
@@ -573,9 +646,10 @@ function ProposalEffectLine({
   return null;
 }
 
-// Vote weight bar. Source of truth for ratification is WEIGHT (one
-// vote per body owned), not count (one per faction). Count is shown
-// alongside so it's clear how many factions a weight represents.
+// Vote weight bar. Source of truth for ratification is WEIGHT (1 per
+// faction + 1 per system controlled), not headcount. Count is shown
+// alongside so it's clear how many factions a weight represents —
+// without it, "Yea 18" reads as eighteen voters.
 function VoteBar({ totals }: { totals: SenateProposal['totals'] }) {
   const yeaW     = totals?.yea?.weight     ?? 0;
   const nayW     = totals?.nay?.weight     ?? 0;

@@ -2,13 +2,20 @@
 //
 // Owns the political/legislative layer: the slider catalog, proposal
 // lifecycle (debating -> voting -> passed/failed/withdrawn), vote casting
-// with planet-count weight snapshotting, and the deferred-effect lookup
-// helper that other systems use to read effective slider values.
+// with weight snapshotting, and the deferred-effect lookup helper that
+// other systems use to read effective slider values.
 //
-// Vote weight is RECOMPUTED at cast time from COUNT(game_bodies WHERE
-// owner_faction_id=?) and snapshotted into senate_votes.weight. The stored
-// game_factions.senate_weight column is intentionally ignored here — it is
-// stale by design and managed by other systems.
+// VOTE WEIGHT = 1 + one per SYSTEM controlled (systems.js). It is
+// RECOMPUTED at cast time and snapshotted into senate_votes.weight, so a
+// vote keeps the weight it was cast with even if the map moves under it
+// — losing a system shouldn't retroactively rewrite a ballot.
+//
+// It used to be a raw body count, which made the senate a prize for
+// grabbing moons rather than for holding ground: Jupiter and its four
+// Galileans were five votes for what is strategically one place.
+//
+// The stored game_factions.senate_weight column is written each tick for
+// the scoreboard, but never read here — the ballot always recomputes.
 //
 // Passed proposals do NOT mutate `games` columns directly. They insert into
 // `senate_effects`; downstream systems (tick processor, build cost, fuel,
@@ -17,6 +24,9 @@
 import {
   factionTechLevels, gatingEnabled, hasFeature, lockedError,
 } from './researchUnlocks.js';
+import { voteWeights, weightBreakdown, WEIGHT_RULE } from './systems.js';
+
+export { WEIGHT_RULE };
 
 const SLIDER_CATALOG = [
   {
@@ -203,19 +213,50 @@ async function loadGameAndFaction(env, gameId, session) {
   return { game, faction };
 }
 
-async function planetCount(env, gameId, factionId) {
-  // Filter destroyed_at_tick so an asteroid wiped by a ram impact
-  // (migration 0024) no longer counts toward its former owner's
-  // vote weight.
-  const row = await env.DB
+/**
+ * Every undestroyed body in the game, with just enough shape to group
+ * into systems. Destroyed bodies are filtered (migration 0024) so an
+ * asteroid wiped by a ram impact stops counting for its former owner.
+ *
+ * This reads ALL bodies, not the caller's visible ones: the senate
+ * counts the real map. Fog of war hides what a PLAYER sees, never what
+ * the chamber is.
+ */
+async function bodiesForWeight(env, gameId) {
+  return (await env.DB
     .prepare(
-      `SELECT COUNT(*) AS c FROM game_bodies
-        WHERE game_id = ? AND owner_faction_id = ?
-          AND destroyed_at_tick IS NULL`,
+      `SELECT id, template_id, name, type, parent_body_id, orbit_period,
+              owner_faction_id
+         FROM game_bodies
+        WHERE game_id = ? AND destroyed_at_tick IS NULL`,
     )
-    .bind(gameId, factionId)
-    .first();
-  return row?.c ?? 0;
+    .bind(gameId)
+    .all()).results ?? [];
+}
+
+/**
+ * Senate vote weight: 1 + one per system controlled. See systems.js for
+ * the grouping and the plurality rule, and WEIGHT_RULE for the sentence
+ * every surface quotes.
+ *
+ * Replaced a raw body count, which made the senate a prize for grabbing
+ * moons: Jupiter plus four Galileans was five votes for one place.
+ */
+async function voteWeightFor(env, gameId, factionId) {
+  // The base 1 is a SEAT, and a dead empire doesn't hold one. Under the
+  // old body count an eliminated faction fell to 0 on its own; a floor
+  // would quietly hand it a vote back, so gate it explicitly.
+  const alive = await env.DB
+    .prepare(`SELECT 1 AS x FROM game_factions WHERE id = ? AND status = 'active'`)
+    .bind(factionId).first();
+  if (!alive) return 0;
+  const bodies = await bodiesForWeight(env, gameId);
+  return voteWeights(bodies, [factionId]).get(factionId) ?? 1;
+}
+
+/** Weight plus the systems that produced it — for "why is my vote a 4?" */
+export async function voteWeightDetail(env, gameId, factionId) {
+  return weightBreakdown(await bodiesForWeight(env, gameId), factionId);
 }
 
 // ---------- effective slider lookup ----------
@@ -647,7 +688,7 @@ export async function castVoteCore(env, { gameId, proposalId, factionId, current
     return { ok: false, status: 409, code: 'not_voting', message: 'this proposal is not in its voting window' };
   }
 
-  const weight = await planetCount(env, gameId, factionId);
+  const weight = await voteWeightFor(env, gameId, factionId);
 
   const existing = await env.DB
     .prepare('SELECT 1 AS x FROM senate_votes WHERE proposal_id = ? AND faction_id = ?')
@@ -682,12 +723,10 @@ async function handleVote(req, env, { params, session }) {
   });
   if (!res.ok) return err(res.status, res.code, res.message);
 
-  const shaped = await shapeOne(env, res.row, ctx.faction.id);
-  return json({ proposal: shaped, your_weight: res.weight });
-
-  // Mirror the vote onto the Discord card. Without this, a bill voted on
-  // in-game showed a stale tally in the channel — people read it and
-  // believed it.
+  // Mirror the vote onto the Discord card BEFORE returning. Without this,
+  // a bill voted on in-game showed a stale tally in the channel — people
+  // read it and believed it. (This block sat after the return for one
+  // release and therefore did nothing.)
   try {
     const discord = await import('./discord.js');
     await discord.refreshSenateCard(env, proposalId);
@@ -695,6 +734,8 @@ async function handleVote(req, env, { params, session }) {
     console.error('refreshSenateCard (in-game vote) failed', e);
   }
 
+  const shaped = await shapeOne(env, res.row, ctx.faction.id);
+  return json({ proposal: shaped, your_weight: res.weight });
 }
 
 async function handleWithdraw(_req, env, { params, session }) {
@@ -1045,7 +1086,29 @@ async function handleDevTick(_req, env, { params, session }) {
 const GAME_ID = '[A-Za-z0-9_-]{6,32}';
 const PROP_ID = '[A-Za-z0-9_-]{1,80}';
 
+/**
+ * GET .../senate/weight — your vote weight and the systems behind it.
+ *
+ * A bare number invites the exact confusion this rework was meant to end
+ * ("why does it say 18 when two people voted?"). Shipping the reasoning
+ * alongside the number means the panel can show its work, and a player
+ * deciding where to attack can see which system is one body from
+ * flipping.
+ */
+async function handleWeight(_req, env, { params, session }) {
+  const ctx = await loadGameAndFaction(env, params.gameId, session);
+  if (ctx.error) return ctx.error;
+  const detail = await voteWeightDetail(env, params.gameId, ctx.faction.id);
+  return json({ ...detail, rule: WEIGHT_RULE });
+}
+
 export const routes = [
+  {
+    method: 'GET',
+    pattern: new RegExp(`^/api/games/(?<gameId>${GAME_ID})/senate/weight$`),
+    auth: 'required',
+    handle: handleWeight,
+  },
   {
     method: 'GET',
     pattern: new RegExp(`^/api/games/(?<gameId>${GAME_ID})/senate/sliders$`),

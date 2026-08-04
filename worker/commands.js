@@ -203,10 +203,24 @@ export async function cmdBills(env, discordId) {
     .bind(row.faction_id, row.game_id).all()).results ?? [];
   if (!bills.length) return reply('Nothing on the senate floor.');
 
+  // Weight, with the systems that bought it. A player looking at a bill
+  // needs to know what their own "aye" is actually worth before they
+  // spend it — and the breakdown teaches the rule without a tutorial.
+  let weightLine = '';
+  try {
+    const senate = await import('./senate.js');
+    const d = await senate.voteWeightDetail(env, row.game_id, row.faction_id);
+    weightLine = `Your vote weight: **${d.weight}** — base 1`
+      + (d.controlled.length ? ` + ${d.controlled.map(s => s.label).join(' + ')}` : ', no systems controlled')
+      + '\n\n';
+  } catch (e) {
+    console.error('/bills weight failed', e);
+  }
+
   return replyEmbed({
     title: '🏛️ On the floor',
     color: 0xc4b5fd,
-    description: bills.slice(0, 10).map(b => {
+    description: weightLine + bills.slice(0, 10).map(b => {
       const state = b.status === 'debating'
         ? `debating · opens soon`
         : `closes T+${b.vote_closes_at_tick} (${b.vote_closes_at_tick - row.current_tick})`;

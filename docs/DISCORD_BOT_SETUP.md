@@ -74,9 +74,13 @@ faction in that game is told they can't vote on that bill.
 
 ## Notes / limits
 
-- The card shows a live **weighted** tally (weight = planet count), so it
-  reveals the running result mid-vote — matching the in-game panel, which
-  already shows tallies.
+- The card shows a live **weighted** tally, so it reveals the running
+  result mid-vote — matching the in-game panel, which already shows
+  tallies. Weight is **1 + 1 per system controlled**: you control a system
+  when you own more of its bodies than any other faction, and a tie leaves
+  it contested and worth nothing to anyone. The tally shows weight and
+  headcount together (`Yea 4 (2 votes)`) because the two diverge and
+  showing only one of them reads as a bug.
 - Vote buttons stay clickable after the window closes; a late click gets a
   private "voting has closed" reply rather than changing anything.
 - Everything is best-effort and isolated: a Discord outage or missing

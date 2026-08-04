@@ -253,7 +253,16 @@ export function FactionPanel({ gameId }: { gameId: string }) {
                     {STATUS_LABEL[statusKey] || 'ELIMINATED'}
                   </span>
                 )}
-                <span className="meta" style={{ color: 'var(--mp-fg-dim)', fontSize: 10 }}>
+                <span
+                  className="meta"
+                  style={{ color: 'var(--mp-fg-dim)', fontSize: 10 }}
+                  title={
+                    'Senate vote weight: 1 + 1 per system controlled. '
+                    + 'A faction controls a system when it owns more of that '
+                    + "system's bodies than anyone else; ties are contested "
+                    + 'and count for nobody.'
+                  }
+                >
                   ★ {f.senate_weight}
                 </span>
               </div>
