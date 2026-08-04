@@ -96,16 +96,22 @@ class PerfBus {
     }));
   }
   recordFrame(ms: number) {
-    this.frameMs = ms;
     // Only count frames the player could actually SEE. rAF is throttled
     // to ~1fps in a hidden tab, so counting those would report a
     // catastrophic frame rate for anyone who alt-tabs.
-    if (document.visibilityState === 'visible' && ms < 5000) {
-      // Capped: outside a game no heartbeat drains these, and a lobby
-      // left open overnight must not grow arrays forever.
-      if (this.frames.length < 20_000) this.frames.push(ms);
-      if (ms > 50) this.longFrames++;
-    }
+    //
+    // This gate now covers `frameMs` as well. It used to sit BELOW the
+    // assignment, so a hidden-tab sample still landed in frameMs — and
+    // frameMs is what MapCanvas's adaptive-resolution stepper reads, so
+    // a single alt-tab shrank the canvas backing store and the map
+    // visibly "zoomed in". Holding the last good value is the right
+    // failure mode: a stale reading beats a fabricated one.
+    if (document.visibilityState !== 'visible' || ms >= 5000) return;
+    this.frameMs = ms;
+    // Capped: outside a game no heartbeat drains these, and a lobby
+    // left open overnight must not grow arrays forever.
+    if (this.frames.length < 20_000) this.frames.push(ms);
+    if (ms > 50) this.longFrames++;
   }
 
   /** Map draw cost, timed inside the render call. Separating this from
@@ -320,11 +326,21 @@ export function PerfHud() {
   useEffect(() => {
     let raf = 0;
     let prev = performance.now();
+    // rAF suspends entirely while the tab is hidden, so `prev` goes
+    // stale and the first callback after a return measures the WHOLE
+    // time away — minutes, in ms. Feeding that to the EMA poisons it for
+    // dozens of frames. Anything past this cap isn't a frame we rendered
+    // slowly, it's a gap where we didn't render at all (backgrounded,
+    // debugger paused, OS sleep); drop it and re-baseline.
+    const MAX_PLAUSIBLE_FRAME_MS = 250;
     const tick = () => {
       const now = performance.now();
-      // EMA so one hitch doesn't dominate, but sustained jank shows.
-      perf.recordFrame(perf.frameMs * 0.9 + (now - prev) * 0.1);
+      const dt = now - prev;
       prev = now;
+      if (dt <= MAX_PLAUSIBLE_FRAME_MS) {
+        // EMA so one hitch doesn't dominate, but sustained jank shows.
+        perf.recordFrame(perf.frameMs * 0.9 + dt * 0.1);
+      }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
