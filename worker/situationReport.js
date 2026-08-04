@@ -1,0 +1,217 @@
+// ============================================================================
+// situationReport.js — the personal counterpart to the Herald.
+//
+// The Herald is a newspaper: everyone gets the same edition, written
+// about the whole system. This is a briefing: written for ONE commander,
+// about their empire, and it leads with whatever most needs them.
+//
+// Design rule: every line must be ACTIONABLE or a genuine change. A
+// report that recites your metal total every day teaches players to
+// ignore it, and an ignored notification is worse than none — it costs
+// the same attention and buys nothing. So: threats, decisions waiting,
+// things that finished, things that are stuck. Not a status dump.
+// ============================================================================
+
+const COLOR_CALM = 0x4ecdc4;
+const COLOR_BUSY = 0xffca28;
+const COLOR_ALARM = 0xff5e5e;
+
+/**
+ * Assemble one player's briefing for one game.
+ * Returns null when the player has no faction (spectator / vacated).
+ */
+export async function buildSituationReport(env, gameId, userId) {
+  const game = await env.DB
+    .prepare(
+      `SELECT g.id, g.current_tick, g.status, g.tick_interval_ms, g.next_tick_at, r.name
+         FROM games g JOIN rooms r ON r.id = g.id WHERE g.id = ?`,
+    )
+    .bind(gameId).first();
+  if (!game || game.status !== 'active') return null;
+
+  const me = await env.DB
+    .prepare(
+      `SELECT id, name, color, metal, fuel, gold, science, reputation
+         FROM game_factions WHERE game_id = ? AND user_id = ? AND status = 'active'`,
+    )
+    .bind(gameId, userId).first();
+  if (!me) return null;
+
+  const tick = game.current_tick ?? 0;
+  const fields = [];
+  let urgency = 0;   // 0 calm, 1 things pending, 2 under attack
+
+  // ---- under attack -------------------------------------------------------
+  // The one thing worth waking someone for. Window of 3 ticks matches the
+  // Herald's combat marker: combat resolves DURING a tick, so an exact
+  // match would almost always look peaceful.
+  const attacked = (await env.DB
+    .prepare(
+      `SELECT b.name AS body, COUNT(*) AS n FROM (
+         SELECT parent_body_id AS bid FROM game_ships
+          WHERE game_id = ?1 AND owner_faction_id = ?2
+            AND last_combat_tick IS NOT NULL AND last_combat_tick >= ?3
+         UNION ALL
+         SELECT body_id FROM game_settlements
+          WHERE game_id = ?1 AND owner_faction_id = ?2
+            AND last_combat_tick IS NOT NULL AND last_combat_tick >= ?3
+       ) x JOIN game_bodies b ON b.id = x.bid
+       GROUP BY b.id`,
+    )
+    .bind(gameId, me.id, tick - 3).all()).results ?? [];
+  if (attacked.length) {
+    urgency = 2;
+    fields.push({
+      name: '⚔️ Under fire',
+      value: attacked.map(a => `**${a.body}** — ${a.n} of yours engaged`).join('\n').slice(0, 1000),
+    });
+  }
+
+  // ---- losses since yesterday --------------------------------------------
+  const lost = (await env.DB
+    .prepare(
+      `SELECT COUNT(*) AS n FROM chronicle_entries
+        WHERE game_id = ? AND kind = 'ship_destroyed'
+          AND actor_faction_id = ? AND tick_number > ?`,
+    )
+    .bind(gameId, me.id, tick - 24).first())?.n ?? 0;
+
+  // ---- senate: bills waiting on YOUR vote --------------------------------
+  const openBills = (await env.DB
+    .prepare(
+      `SELECT p.id, p.title, p.vote_closes_at_tick
+         FROM senate_proposals p
+        WHERE p.game_id = ? AND p.status = 'voting'
+          AND NOT EXISTS (SELECT 1 FROM senate_votes v
+                           WHERE v.proposal_id = p.id AND v.faction_id = ?)`,
+    )
+    .bind(gameId, me.id).all()).results ?? [];
+  if (openBills.length) {
+    urgency = Math.max(urgency, 1);
+    fields.push({
+      name: '🏛️ Your vote is missing',
+      value: openBills
+        .map(b => `**${b.title}** — closes T+${b.vote_closes_at_tick} (${b.vote_closes_at_tick - tick} ticks)`)
+        .join('\n').slice(0, 1000),
+    });
+  }
+
+  // ---- trade offers awaiting your answer ---------------------------------
+  const offers = (await env.DB
+    .prepare(
+      `SELECT COUNT(*) AS n FROM trade_offers
+        WHERE game_id = ? AND responder_faction_id = ? AND status = 'open'`,
+    )
+    .bind(gameId, me.id).first())?.n ?? 0;
+  if (offers > 0) {
+    urgency = Math.max(urgency, 1);
+    fields.push({ name: '🤝 Trade offers waiting', value: `${offers} offer${offers === 1 ? '' : 's'} need an answer.` });
+  }
+
+  // ---- unread messages ----------------------------------------------------
+  const unread = (await env.DB
+    .prepare(
+      `SELECT COUNT(*) AS n FROM message_recipients mr
+         JOIN messages m ON m.id = mr.message_id
+        WHERE mr.faction_id = ? AND mr.read_at_ms IS NULL AND m.game_id = ?`,
+    )
+    .bind(me.id, gameId).first())?.n ?? 0;
+  if (unread > 0) {
+    urgency = Math.max(urgency, 1);
+    fields.push({ name: '✉️ Unread messages', value: `${unread} waiting in the comms panel.` });
+  }
+
+  // ---- construction: finished, and idle yards ----------------------------
+  const building = (await env.DB
+    .prepare(
+      `SELECT COUNT(*) AS n FROM game_body_build_queue
+        WHERE game_id = ? AND faction_id = ? AND cancelled_at_tick IS NULL
+          AND completes_at_tick > ?`,
+    )
+    .bind(gameId, me.id, tick).first())?.n ?? 0;
+
+  // ---- research -----------------------------------------------------------
+  const researching = await env.DB
+    .prepare(
+      `SELECT tech_id, level FROM faction_techs
+        WHERE game_id = ? AND faction_id = ? AND status = 'researching' LIMIT 1`,
+    )
+    .bind(gameId, me.id).first();
+
+  // ---- holdings snapshot --------------------------------------------------
+  const ships = (await env.DB
+    .prepare(`SELECT COUNT(*) AS n FROM game_ships WHERE game_id = ? AND owner_faction_id = ? AND hp > 0`)
+    .bind(gameId, me.id).first())?.n ?? 0;
+  const cities = (await env.DB
+    .prepare(`SELECT COUNT(*) AS n FROM game_settlements WHERE game_id = ? AND owner_faction_id = ?`)
+    .bind(gameId, me.id).first())?.n ?? 0;
+
+  fields.push({
+    name: '📊 Your empire',
+    value: [
+      `**${ships}** ships · **${cities}** settlements`,
+      `**${Math.round(me.metal)}**M · **${Math.round(me.gold)}**C · **${Math.round(me.science)}**S`,
+      building > 0 ? `**${building}** under construction` : '_Nothing in the yards_',
+      researching ? `Researching **${researching.tech_id}** L${(researching.level ?? 0) + 1}` : '_No active research_',
+      lost > 0 ? `Lost **${lost}** ship${lost === 1 ? '' : 's'} in the last day` : null,
+    ].filter(Boolean).join('\n'),
+  });
+
+  const nextIn = game.next_tick_at
+    ? Math.max(0, Math.round((game.next_tick_at - Date.now()) / 60000))
+    : null;
+
+  const headline = urgency === 2 ? 'Your empire is under attack'
+    : urgency === 1 ? 'Decisions are waiting on you'
+    : 'All quiet';
+
+  return {
+    urgency,
+    embed: {
+      title: `🛰️ Situation Report — ${headline}`,
+      description: [
+        `**${me.name}** · ${game.name} · T+${tick}`,
+        nextIn != null ? `Next tick in ~${nextIn} min.` : null,
+      ].filter(Boolean).join('\n'),
+      color: urgency === 2 ? COLOR_ALARM : urgency === 1 ? COLOR_BUSY : COLOR_CALM,
+      fields,
+      footer: { text: 'Orbital · /notify to change what reaches you' },
+      timestamp: new Date().toISOString(),
+    },
+  };
+}
+
+/**
+ * Send the briefing to every linked human in a game. `force` bypasses
+ * the once-a-day dedupe so it can be triggered on demand for testing.
+ */
+export async function sendSituationReports(env, gameId, { force = false, onlyUserId = null } = {}) {
+  const notify = await import('./notify.js');
+  const rows = (await env.DB
+    .prepare(
+      `SELECT f.user_id FROM game_factions f
+         JOIN users u ON u.id = f.user_id
+        WHERE f.game_id = ? AND f.status = 'active'
+          AND f.user_id IS NOT NULL AND u.discord_id IS NOT NULL`,
+    )
+    .bind(gameId).all()).results ?? [];
+
+  const out = [];
+  const day = new Date().toISOString().slice(0, 10);
+  for (const r of rows) {
+    if (onlyUserId && r.user_id !== onlyUserId) continue;
+    const report = await buildSituationReport(env, gameId, r.user_id);
+    if (!report) { out.push({ user: r.user_id, sent: false, reason: 'no_faction' }); continue; }
+    const res = await notify.sendDm(env, {
+      userId: r.user_id,
+      gameId,
+      category: 'digest',
+      // Once per player per game per day — unless forced, which uses a
+      // timestamped key so a test never collides with the real one.
+      dedupeKey: force ? `sitrep:${gameId}:force:${Date.now()}` : `sitrep:${gameId}:${day}`,
+      embed: report.embed,
+    });
+    out.push({ user: r.user_id, ...res, urgency: report.urgency });
+  }
+  return out;
+}

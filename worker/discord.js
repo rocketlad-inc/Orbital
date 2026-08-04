@@ -504,6 +504,24 @@ async function handleRegisterCommands(req, env, { session }) {
 }
 
 /**
+ * POST /api/admin/sitrep/:gameId[?user=<id>&force=1]
+ * Fire situation-report DMs on demand. Exists because the scheduled
+ * version can only be observed once a day — which is a miserable loop
+ * for verifying that a report reads well. force=1 uses a timestamped
+ * dedupe key so a test send never consumes the day's real slot.
+ */
+async function handleSitrepNow(req, env, { session, params }) {
+  if (!session || !isAdminEmail(session.email)) return err(404, 'not_found', 'no such route');
+  const url = new URL(req.url);
+  const mod = await import('./situationReport.js');
+  const results = await mod.sendSituationReports(env, params.gameId, {
+    force: url.searchParams.get('force') === '1',
+    onlyUserId: url.searchParams.get('user') || null,
+  });
+  return json({ ok: true, game: params.gameId, results });
+}
+
+/**
  * POST /api/admin/senate/:proposalId/announce
  * Re-post a bill's debate card. Exists because announcements fire at
  * CREATION, so any proposal made before the announcement feature landed
@@ -531,6 +549,7 @@ async function handleAnnounceProposal(_req, env, { session, params }) {
 
 export const routes = [
   { method: 'POST', pattern: '/api/admin/discord/register-commands', auth: 'required', handle: handleRegisterCommands },
+  { method: 'POST', pattern: /^\/api\/admin\/sitrep\/(?<gameId>[^/]+)$/, auth: 'required', handle: handleSitrepNow },
   { method: 'POST', pattern: /^\/api\/admin\/senate\/(?<proposalId>[^/]+)\/announce$/, auth: 'required', handle: handleAnnounceProposal },
   { method: 'POST', pattern: '/api/discord/link-code',  auth: 'required', handle: handleMintLinkCode },
   { method: 'GET',  pattern: '/api/discord/link-status', auth: 'required', handle: handleLinkStatus },
