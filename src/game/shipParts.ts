@@ -85,7 +85,7 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   kinetic: {
     id: 'kinetic',
     name: 'Kinetic Mount',
-    blurb: '+40% hull base damage, kinetic. Each 🛡 shield cuts it to 78%; 🪨 armor does not stop it.',
+    blurb: '+40% hull base damage, kinetic. Each 🛡 shield cuts it by 22% (compounding); 🪨 armor does not stop it.',
     cost: { ore: 6, credits: 2 },
     allowedOn: ['corvette', 'frigate', 'destroyer'],
     techTrack: 'weapons',
@@ -95,7 +95,7 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   energy: {
     id: 'energy',
     name: 'Energy Mount',
-    blurb: '+40% hull base damage, energy. Each 🪨 armor plate cuts it to 78%; 🛡 shields do not stop it.',
+    blurb: '+40% hull base damage, energy. Each 🪨 armor plate cuts it by 22% (compounding); 🛡 shields do not stop it.',
     cost: { ore: 2, credits: 6 },
     allowedOn: ['corvette', 'frigate', 'destroyer'],
     techTrack: 'energy_weapons',
@@ -105,7 +105,7 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   shield: {
     id: 'shield',
     name: 'Shield Array',
-    blurb: '+35% hull base HP. Cuts incoming ⚔ KINETIC to 78% per array (stacking). No effect on ⚡ energy.',
+    blurb: '+35% hull base HP. Cuts incoming ⚔ KINETIC by 22% per array, compounding: 22% / 39% / 53% for 1 / 2 / 3. No effect on ⚡ energy.',
     cost: { ore: 4, credits: 4 },
     allowedOn: ['corvette', 'frigate', 'destroyer', 'freighter'],
     techTrack: 'shields',
@@ -114,7 +114,7 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   armor: {
     id: 'armor',
     name: 'Armor Plate',
-    blurb: '+35% hull base HP. Cuts incoming ⚡ ENERGY to 78% per plate (stacking). No effect on ⚔ kinetic.',
+    blurb: '+35% hull base HP. Cuts incoming ⚡ ENERGY by 22% per plate, compounding: 22% / 39% / 53% for 1 / 2 / 3. No effect on ⚔ kinetic.',
     cost: { ore: 6, credits: 2 },
     allowedOn: ['corvette', 'frigate', 'destroyer', 'freighter'],
     techTrack: 'armor',
@@ -249,6 +249,28 @@ export function mitigationPct(n: number): number {
   return Math.round(
     Math.max(MITIGATION_FLOOR, Math.pow(DAMAGE_MITIGATION_PER_PART, Math.max(0, n))) * 100,
   );
+}
+
+/**
+ * How much damage `n` countering parts REMOVE — 0, 22, 39, 53, 63...
+ *
+ * The complement of mitigationPct, and the number players actually want.
+ * "Cuts it to 78%" was read as a 32% reduction by the game's own designer,
+ * and two parts were assumed to stack to 64%. Neither is right: one part
+ * removes 22%, and the second removes 22% of what SURVIVED the first, so
+ * two compound to 39% rather than adding to 44%. Copy that quotes a
+ * per-part figure without the ladder invites exactly that addition, so
+ * every surface using this should also show reductionLadder().
+ */
+export function reductionPct(n: number): number {
+  return 100 - mitigationPct(n);
+}
+
+/** "22% / 39% / 53% for 1 / 2 / 3" — the compounding made unmissable. */
+export function reductionLadder(upTo: number = 3): string {
+  const cuts: number[] = [];
+  for (let i = 1; i <= upTo; i++) cuts.push(reductionPct(i));
+  return cuts.map(c => `${c}%`).join(' / ');
 }
 
 export function countPart(parts: readonly string[] | undefined, id: ShipPartId): number {

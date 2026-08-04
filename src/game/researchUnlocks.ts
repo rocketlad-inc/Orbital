@@ -68,11 +68,11 @@ export interface UnlockRow {
 export const RESEARCH_UNLOCKS: UnlockRow[] = [
   // ── ⚔ WEAPONS ───────────────────────────────────────────────
   { track: 'weapons', level: 1, feature: 'part.kinetic',
-    label: 'Kinetic Mount', blurb: 'Your first fittable gun. Armor never stops it; shields cut it to 78% each.' },
+    label: 'Kinetic Mount', blurb: 'Your first fittable gun. Armor never stops it; shields cut it 22% each, compounding.' },
   { track: 'weapons', level: 2, feature: 'part.detonator',
     label: 'Fusion Detonator', blurb: 'Turns a cheap hull into a threat. Hits friend and foe.' },
   { track: 'weapons', level: 3, feature: 'part.energy',
-    label: 'Energy Mount', blurb: 'Shields never stop it; armor cuts it to 78% each. Opens the counter-game.' },
+    label: 'Energy Mount', blurb: 'Shields never stop it; armor cuts it 22% each, compounding. Opens the counter-game.' },
   { track: 'weapons', level: 4, feature: 'building.weapons',
     label: 'Station Weapons', blurb: 'Your stations shoot back. Needs a station in orbit.' },
   { track: 'weapons', level: 5, feature: 'veteranYards',

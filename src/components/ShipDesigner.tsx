@@ -38,7 +38,7 @@ import {
   ShipPartId, ALL_PART_IDS, SHIP_PART_DEFS, SHIP_SLOT_COUNTS,
   sanitizeParts, computeDesignStats, partsCost, countPart,
   detonatorDamage, detonatorDisclosure, SERVER_HULL_BASE, PART_GLYPH,
-  damageProfile, refitFee, PART_STACK_ESCALATION, mitigationPct,
+  damageProfile, refitFee, PART_STACK_ESCALATION, reductionPct, reductionLadder,
 } from '../game/shipParts';
 import {
   ShipIcon, ShipIconVariant, ALL_VARIANTS, ICON_VARIANT_NAMES, DEFAULT_SHIP_ICONS,
@@ -112,8 +112,8 @@ function serverDesignToClient(d: ServerShipDesign): ShipDesign {
 /** "Countered by" micro-text per part — visible on the card, not hidden
  *  in a tooltip: what beats this choice is a decision input. */
 const COUNTER_TEXT: Partial<Record<ShipPartId, string>> = {
-  kinetic: 'each 🛡 shield cuts it to 78%',
-  energy: 'each 🪨 armor plate cuts it to 78%',
+  kinetic: 'each 🛡 shield cuts it by 22%',
+  energy: 'each 🪨 armor plate cuts it by 22%',
   shield: 'does nothing against ⚡ energy',
   armor: 'does nothing against ⚔ kinetic',
 };
@@ -264,19 +264,19 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   // multiplier, and the incoming line quotes THIS draft's actual stack.
   const outgoingHint = (() => {
     if (nKinetic > 0 && nEnergy > 0) return 'Mixed guns — each type is cut only by its own counter.';
-    if (nKinetic > 0) return '⚔ Kinetic: 100% through 🪨 armor · cut to 78% by each 🛡 shield.';
-    if (nEnergy > 0) return '⚡ Energy: 100% through 🛡 shields · cut to 78% by each 🪨 armor plate.';
+    if (nKinetic > 0) return '⚔ Kinetic: unreduced by 🪨 armor · −22% per 🛡 shield (compounding).';
+    if (nEnergy > 0) return '⚡ Energy: unreduced by 🛡 shields · −22% per 🪨 armor plate (compounding).';
     return '';
   })();
   const incomingHint = (() => {
     if (nShields === 0 && nArmor === 0) return 'No 🛡/🪨 fitted — all incoming damage lands at 100%.';
     const kin = nShields > 0
-      ? `⚔ kinetic → ${mitigationPct(nShields)}%`
-      : '⚔ kinetic → 100%';
+      ? `⚔ kinetic −${reductionPct(nShields)}%`
+      : '⚔ kinetic unreduced';
     const nrg = nArmor > 0
-      ? `⚡ energy → ${mitigationPct(nArmor)}%`
-      : '⚡ energy → 100%';
-    return `Incoming: ${kin} · ${nrg}`;
+      ? `⚡ energy −${reductionPct(nArmor)}%`
+      : '⚡ energy unreduced';
+    return `Incoming damage: ${kin} · ${nrg}`;
   })();
   const detDamage = detonatorDamage(stats.hp, nDetonators, techLevels.weapons ?? 0);
 
@@ -949,9 +949,9 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
             <div className="sd-hint sd-hint--matchup">{incomingHint}</div>
             <div className="sd-hint">
               <strong>🛡 Shields</strong> only stop ⚔ kinetic. <strong>🪨 Armor</strong> only stops
-              ⚡ energy. Each part cuts its own type to 78%, stacking
-              ({mitigationPct(1)}% → {mitigationPct(2)}% → {mitigationPct(3)}%); the other type is
-              never boosted, it just arrives at 100%.
+              ⚡ energy. Each part cuts its own type by 22%, and they <em>compound</em> rather than
+              add — {reductionLadder(3)} off for 1 / 2 / 3 parts, not 22 / 44 / 66. The other type
+              is never boosted; it just arrives unreduced.
               Hull base: {SERVER_HULL_BASE[activeClass].hp} HP · {SERVER_HULL_BASE[activeClass].damagePerTick} dmg.
               {hpOut(100) !== 100 && (
                 <> Max HP shown includes your defense tech (×{(hpOut(1000) / 1000).toFixed(2)}).</>
