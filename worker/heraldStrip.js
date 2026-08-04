@@ -79,6 +79,32 @@ export async function buildTerritoryData(env, gameId) {
     .bind(gameId)
     .all()).results ?? [];
 
+  // Bodies with live fighting. Ships stamp last_combat_tick when they
+  // FIRE and settlements when they take or return fire, so the union of
+  // the two is "something shot here". A 3-tick window, not just the
+  // current tick: combat resolves during the tick, so an exact match
+  // would only ever catch a fight in the instant it was resolved and
+  // the Herald would almost always show a peaceful map.
+  const COMBAT_WINDOW_TICKS = 3;
+  const combatRows = (await env.DB
+    .prepare(
+      `SELECT x.bid AS body_id, MAX(x.lct) AS last_tick
+         FROM (
+           SELECT parent_body_id AS bid, last_combat_tick AS lct
+             FROM game_ships
+            WHERE game_id = ?1 AND last_combat_tick IS NOT NULL
+           UNION ALL
+           SELECT body_id AS bid, last_combat_tick AS lct
+             FROM game_settlements
+            WHERE game_id = ?1 AND last_combat_tick IS NOT NULL
+         ) x
+        WHERE x.bid IS NOT NULL AND x.lct >= ?2
+        GROUP BY x.bid`,
+    )
+    .bind(gameId, (game.current_tick ?? 0) - COMBAT_WINDOW_TICKS)
+    .all()).results ?? [];
+  const combatBodies = new Set(combatRows.map(r => r.body_id));
+
   const factions = {};
   for (const f of factionRows) {
     factions[f.id] = { name: f.name, color: f.color, color2: f.color2 || f.color };
@@ -94,7 +120,7 @@ export async function buildTerritoryData(env, gameId) {
   const moonsOf = (parentId) =>
     bodyRows.filter(b => b.parent_body_id === parentId)
       .sort((a, b) => (a.orbit_radius ?? 0) - (b.orbit_radius ?? 0))
-      .map(m => ({ name: m.name, owner: ownerOf(m) }));
+      .map(m => ({ name: m.name, owner: ownerOf(m), combat: combatBodies.has(m.id) }));
 
   // ---- sector assembly --------------------------------------------------
   // A "sector" is a planet and its moons, EXCEPT: the inner three collapse
@@ -112,6 +138,7 @@ export async function buildTerritoryData(env, gameId) {
       orbitRadius: b.orbit_radius ?? 0,
       kind: b.type === 'gas-giant' || b.type === 'ice-giant' ? 'g'
         : b.type === 'terrestrial' ? 'p' : 'd',
+      combat: combatBodies.has(b.id),
     };
     if (CORE_TEMPLATES.has(b.template_id)) { coreBodies.push(entry); continue; }
 
@@ -163,7 +190,9 @@ export async function buildTerritoryData(env, gameId) {
     factions,
     sectors,
     starOwner: star ? ownerOf(star) : null,
+    starCombat: star ? combatBodies.has(star.id) : false,
     bodyCount: bodyRows.length,
+    combatCount: combatBodies.size,
   };
 }
 
@@ -232,6 +261,34 @@ function dominant(sec){
   for(var k in tally){ if(tally[k]>n){best=k;n=tally[k];tie=false;} else if(tally[k]===n) tie=true; }
   return {owner:best,contested:tie&&!!best};
 }
+// Two hulls trading fire: prows facing each other with a bolt between.
+// Drawn as pure geometry (no glyph) so it renders identically wherever
+// the page is screenshotted, and stays legible down to ~13px wide where
+// an emoji would turn to mush.
+function drawCombatIcon(x, y, size){
+  var h = size*0.42, gap = size*0.20;
+  c.save();
+  c.translate(x,y);
+  // soft heat behind, so the mark reads before the eye resolves it
+  var glow=c.createRadialGradient(0,0,0,0,0,size*0.85);
+  glow.addColorStop(0,"rgba(255,110,70,.55)");
+  glow.addColorStop(1,"rgba(255,110,70,0)");
+  c.fillStyle=glow; c.beginPath(); c.arc(0,0,size*0.85,0,Math.PI*2); c.fill();
+  // left hull, prow right
+  c.fillStyle="#FFE6C2";
+  c.beginPath(); c.moveTo(-gap,0); c.lineTo(-size*0.5,-h*0.5); c.lineTo(-size*0.5,h*0.5);
+  c.closePath(); c.fill();
+  // right hull, prow left
+  c.beginPath(); c.moveTo(gap,0); c.lineTo(size*0.5,-h*0.5); c.lineTo(size*0.5,h*0.5);
+  c.closePath(); c.fill();
+  // the exchange
+  c.strokeStyle="#FF5A3C"; c.lineWidth=Math.max(1,size*0.10); c.lineCap="round";
+  c.beginPath(); c.moveTo(-gap*0.55,0); c.lineTo(gap*0.55,0); c.stroke();
+  c.fillStyle="#FFF1D0";
+  c.beginPath(); c.arc(0,0,Math.max(.9,size*0.10),0,Math.PI*2); c.fill();
+  c.restore();
+}
+
 function colOf(k){ return (D.factions[k]||{}).color || "#888"; }
 function nameOf(k){ return (D.factions[k]||{}).name || ""; }
 
@@ -262,6 +319,7 @@ function drawSun(x, cy, r){
   c.fillStyle=sg; c.beginPath(); c.arc(x,cy,r,0,Math.PI*2); c.fill();
   c.strokeStyle=hexA(sunCol,.85); c.lineWidth=2;
   c.beginPath(); c.arc(x,cy,r*0.42,0,Math.PI*2); c.stroke();
+  if(D.starCombat) drawCombatIcon(x+r*0.30, cy-r*0.34, COMPACT?15:13);
   c.textAlign="left"; c.textBaseline="alphabetic";
   c.font='700 '+FS.sun+'px ui-monospace, Menlo, Consolas, monospace';
   c.fillStyle="#FFD98A"; c.fillText("SOL", x+8, cy+4);
@@ -329,6 +387,7 @@ function drawSector(s, x0, x1, yTop, yBot){
       c.beginPath(); c.arc(bx,by,5,0,Math.PI*2); c.fill();
       c.strokeStyle=b.owner?hexA(colOf(b.owner),.9):"rgba(147,163,184,.4)";
       c.lineWidth=1.2; c.beginPath(); c.arc(bx,by,5,0,Math.PI*2); c.stroke();
+      if(b.combat) drawCombatIcon(bx+8,by-7,11);
     });
     c.font='600 '+FS.moon+'px ui-monospace, Menlo, Consolas, monospace';
     c.fillStyle="rgba(147,163,184,.8)";
@@ -346,6 +405,7 @@ function drawSector(s, x0, x1, yTop, yBot){
       c.strokeStyle=b.owner?hexA(bcol,.5):"rgba(147,163,184,.3)"; c.lineWidth=1.5;
       c.beginPath(); c.ellipse(cx,cy,r*1.8,r*0.4,-0.32,0,Math.PI*2); c.stroke();
     }
+    if(b.combat) drawCombatIcon(cx+r+3, cy-r-2, COMPACT?15:13);
     // Moons as a pip cluster, NOT a labelled list. Those labels were
     // unbounded text running clean across neighbouring sectors.
     var moons=s.moons||[];
@@ -360,6 +420,7 @@ function drawSector(s, x0, x1, yTop, yBot){
         c.beginPath(); c.arc(mx,my,4,0,Math.PI*2); c.fill();
         c.strokeStyle="rgba(6,9,15,.9)"; c.lineWidth=1;
         c.beginPath(); c.arc(mx,my,4,0,Math.PI*2); c.stroke();
+        if(m.combat) drawCombatIcon(mx+6,my-6,10);
       });
       c.font='600 '+FS.moon+'px ui-monospace, Menlo, Consolas, monospace';
       c.fillStyle="rgba(147,163,184,.75)";
@@ -404,7 +465,13 @@ c.font='600 '+FS.foot+'px ui-monospace, Menlo, Consolas, monospace';
 c.fillStyle="rgba(95,113,134,.95)"; c.textAlign="left"; c.textBaseline="alphabetic";
 c.fillText((D.game.name+" · TICK "+D.game.tick).toUpperCase(), 10, H-8);
 c.textAlign="right";
-c.fillText(D.bodyCount+" BODIES", W-10, H-8);
+if(D.combatCount>0){
+  drawCombatIcon(W-10-c.measureText(D.combatCount+" UNDER FIRE").width-9, H-11, 11);
+  c.fillStyle="rgba(255,140,100,.95)";
+  c.fillText(D.combatCount+" UNDER FIRE", W-10, H-8);
+} else {
+  c.fillText(D.bodyCount+" BODIES", W-10, H-8);
+}
 
 cv.setAttribute("data-ready","1");
 </script>
