@@ -473,6 +473,17 @@ async function handleCreateProposal(req, env, { params, session }) {
   const row = await env.DB.prepare('SELECT * FROM senate_proposals WHERE id = ?').bind(id).first();
   const shaped = await shapeOne(env, row, ctx.faction.id);
 
+  // Announce the bill to Discord straight away so the debate window has
+  // somewhere to happen. Fully isolated: a Discord outage, a missing
+  // token, or a slow API must never fail the player's proposal — they
+  // already have their bill, the announcement is a bonus.
+  try {
+    const discord = await import('./discord.js');
+    await discord.publishSenateProposed(env, gameId, row, ctx.faction.name ?? null);
+  } catch (e) {
+    console.error('publishSenateProposed failed', e, { proposalId: id });
+  }
+
   // Broadcast so other clients show the new proposal immediately
   // (badge + toast) instead of waiting up to 5s for the next poll.
   try {

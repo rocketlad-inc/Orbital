@@ -29,6 +29,7 @@
 // ============================================================
 
 import { castVoteCore, loadProposalTotals } from './senate.js';
+import { isAdminEmail } from './analytics.js';
 
 const DISCORD_API = 'https://discord.com/api/v10';
 const POLITICS_COLOR = 0xc4b5fd; // matches the digest "Halls of the Senate" hue
@@ -159,6 +160,33 @@ function buildVoteMessage(row, totals, gameName) {
   };
 }
 
+/**
+ * The card posted the moment a bill hits the floor. Deliberately has NO
+ * buttons: voting isn't open yet, and a disabled button reads like a
+ * bug. Its job is to give the debate window somewhere to happen — before
+ * this, Discord stayed silent for the entire debate (12 ticks on an
+ * hourly game = half a day of dead air) and the vote card was the first
+ * anyone heard of a bill.
+ */
+function buildDebateMessage(row, gameName, proposerName) {
+  const kindLabel = KIND_LABELS[row.kind] ?? row.kind;
+  const parts = [];
+  if (row.summary) parts.push(row.summary);
+  parts.push(`**Bill:** ${kindLabel}`);
+  if (proposerName) parts.push(`**Proposed by:** ${proposerName}`);
+  parts.push(`Debate is open. Voting begins at tick **${row.vote_opens_at_tick}** and closes at tick **${row.vote_closes_at_tick}**.`);
+  parts.push('_A vote card with buttons posts here when the floor opens._');
+
+  return {
+    embeds: [{
+      title: `📜  Bill on the Floor — ${row.title}`,
+      description: parts.join('\n'),
+      color: POLITICS_COLOR,
+      footer: { text: gameName ? `Orbital · ${gameName}` : 'Orbital' },
+    }],
+  };
+}
+
 async function gameName(env, gameId) {
   const r = await env.DB.prepare('SELECT name FROM rooms WHERE id = ?').bind(gameId).first();
   return r?.name ?? null;
@@ -199,6 +227,26 @@ export async function publishSenateVoteOpen(env, gameId, row) {
     console.error('discord_senate_messages upsert failed', e);
   }
   return { posted: true, message_id: msg.id };
+}
+
+/**
+ * Announce a newly-proposed bill. Best-effort and non-fatal: a Discord
+ * problem must never block a player from proposing. Fire-and-forget by
+ * design — nothing downstream depends on the message id, so unlike the
+ * vote card we don't record it.
+ */
+export async function publishSenateProposed(env, gameId, row, proposerName) {
+  if (!env.DISCORD_BOT_TOKEN) return { posted: false, reason: 'no_bot_token' };
+  const channelId = await resolveChannelId(env);
+  if (!channelId) return { posted: false, reason: 'no_channel' };
+
+  const payload = buildDebateMessage(row, await gameName(env, gameId), proposerName);
+  const res = await botFetch(env, 'POST', `/channels/${channelId}/messages`, payload);
+  if (!res.ok) {
+    console.error(`discord debate post failed: ${res.status} ${await res.text().catch(() => '')}`);
+    return { posted: false, reason: `http_${res.status}` };
+  }
+  return { posted: true };
 }
 
 // ---------- interactions endpoint ----------
@@ -355,7 +403,34 @@ async function handleUnlink(_req, env, { session }) {
 // dispatch, so a cookieless Discord request would 401 before its signature
 // could be checked. It's wired directly in index.js _dispatch alongside the
 // other unauthenticated routes (signup/login/…), calling handleInteractions.
+/**
+ * POST /api/admin/senate/:proposalId/announce
+ * Re-post a bill's debate card. Exists because announcements fire at
+ * CREATION, so any proposal made before the announcement feature landed
+ * (or during a Discord outage) has no card and would stay invisible
+ * until its vote opens — which on an hourly game can be half a day.
+ * Admin-gated; re-announcing is idempotent from the game's side since
+ * nothing downstream keys off the debate message.
+ */
+async function handleAnnounceProposal(_req, env, { session, params }) {
+  if (!session || !isAdminEmail(session.email)) {
+    return err(404, 'not_found', 'no such route');
+  }
+  const row = await env.DB
+    .prepare('SELECT * FROM senate_proposals WHERE id = ?')
+    .bind(params.proposalId).first();
+  if (!row) return err(404, 'not_found', 'no such proposal');
+
+  const prop = await env.DB
+    .prepare('SELECT name FROM game_factions WHERE id = ?')
+    .bind(row.proposer_faction_id).first();
+
+  const res = await publishSenateProposed(env, row.game_id, row, prop?.name ?? null);
+  return json({ ok: !!res.posted, ...res, proposal: row.id, status: row.status });
+}
+
 export const routes = [
+  { method: 'POST', pattern: /^\/api\/admin\/senate\/(?<proposalId>[^/]+)\/announce$/, auth: 'required', handle: handleAnnounceProposal },
   { method: 'POST', pattern: '/api/discord/link-code',  auth: 'required', handle: handleMintLinkCode },
   { method: 'GET',  pattern: '/api/discord/link-status', auth: 'required', handle: handleLinkStatus },
   { method: 'POST', pattern: '/api/discord/unlink',      auth: 'required', handle: handleUnlink },
