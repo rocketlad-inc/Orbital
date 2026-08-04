@@ -270,12 +270,24 @@ async function handleList(req, env, { url, session, params }) {
 
   const messages = rows.map(r => {
     const recs = recipientMap.get(r.id) ?? [];
+    // recipient_faction_ids stays null for a broadcast on purpose — the
+    // client doesn't need (and shouldn't get) a roster of every faction
+    // in the game just to render an announcement.
     const recipient_faction_ids = r.scope === 'broadcast' ? null : recs.map(x => x.faction_id);
-    let read_by_caller = null;
-    if (r.scope !== 'broadcast') {
-      const mine = recs.find(x => x.faction_id === fid);
-      read_by_caller = mine ? mine.read_at_ms != null : null;
-    }
+    // read_by_caller, however, MUST be resolved for broadcasts too.
+    // Broadcasts materialise a message_recipients row per non-sender
+    // faction (see handleSend), and unread-count keys off exactly those
+    // rows — but this used to hard-null read_by_caller for scope
+    // 'broadcast'. The client treats null as "not applicable": it only
+    // counts `read_by_caller === false` and only marks `!== false`, so
+    // an announcement was never markable-as-read while still being
+    // counted as unread by the badge. Result: the comms ping stuck
+    // forever and no amount of reading cleared it.
+    // A sender gets no recipient row for their own broadcast, so `mine`
+    // is undefined there and null is the right answer — the client
+    // skips its own messages anyway.
+    const mine = recs.find(x => x.faction_id === fid);
+    const read_by_caller = mine ? mine.read_at_ms != null : null;
     return {
       id: r.id,
       scope: r.scope,
