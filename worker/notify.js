@@ -22,6 +22,10 @@
 const DISCORD_API = 'https://discord.com/api/v10';
 
 export const CATEGORIES = {
+  // Listed first because it is the one category worth interrupting a
+  // meal for: a city being shelled, or a fleet large enough to take a
+  // world already under way toward one of yours.
+  urgent: 'Cities under fire and major fleets inbound',
   dm: 'Messages from other factions',
   combat: 'Attacks on your ships and settlements',
   senate: 'Senate bills and closing votes',

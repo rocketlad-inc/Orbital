@@ -15,6 +15,14 @@
 // never cost a player their turn.
 // ============================================================================
 
+/** A fleet of at least this many hostile hulls, already under way toward
+ *  something you hold, is a strategic event rather than a skirmish. */
+const URGENT_FLEET_SIZE = 5;
+/** How often the same urgent situation may re-alert, in ticks. A city
+ *  under sustained bombardment shouldn't ping every hour, but it should
+ *  ping more than once a day. */
+const URGENT_REPEAT_TICKS = 4;
+
 /** Warn about a vote this many ticks before it closes. */
 const VOTE_WARN_TICKS = 2;
 /** An idle player hears from us at most this often. */
@@ -41,8 +49,106 @@ export async function runTickAlerts(env, gameId, tick) {
   // narrative instead of eight interruptions. What stays here is
   // genuinely time-critical: a vote that will CLOSE before the next
   // briefing, and a debt that silently weakens every battle.
+  await urgentAlerts(env, notify, gameId, gameName, tick);
   await arrearsAlerts(env, notify, gameId, gameName, tick);
   await voteClosingAlerts(env, notify, gameId, gameName, tick);
+}
+
+// ---------------------------------------------------------------------------
+// URGENT — the two things that outrank "wait for the 6pm briefing".
+//
+// Both are chosen because they are IRREVERSIBLE or nearly so: a razed
+// city doesn't come back, and a fleet of five-plus hulls arriving
+// unopposed usually takes whatever it was aimed at. Ordinary ship
+// skirmishes stay in the daily report, where Lorne rightly put them.
+// ---------------------------------------------------------------------------
+
+async function urgentAlerts(env, notify, gameId, gameName, tick) {
+  // ---- a settlement is being shot at ------------------------------------
+  const cities = (await env.DB
+    .prepare(
+      `SELECT st.id, st.name, b.name AS body, f.user_id, st.hp, st.hp_max
+         FROM game_settlements st
+         JOIN game_factions f ON f.id = st.owner_faction_id
+         JOIN game_bodies b ON b.id = st.body_id
+        WHERE st.game_id = ? AND st.last_combat_tick >= ?
+          AND f.user_id IS NOT NULL AND f.status = 'active' AND st.hp > 0`,
+    )
+    .bind(gameId, tick - 1).all()).results ?? [];
+
+  for (const c of cities) {
+    const pct = c.hp_max ? Math.round((c.hp / c.hp_max) * 100) : null;
+    await notify.sendDm(env, {
+      userId: c.user_id,
+      gameId,
+      category: 'urgent',
+      dedupeKey: `urgent:city:${c.id}:${Math.floor(tick / URGENT_REPEAT_TICKS)}`,
+      embed: {
+        title: '🔥 A city of yours is under fire',
+        description: [
+          `**${c.name}** on **${c.body}** is taking fire.`,
+          pct != null ? `Structure at **${pct}%**.` : null,
+          'A razed settlement does not come back.',
+        ].filter(Boolean).join('\n'),
+        color: 0xff3b30,
+        footer: { text: `Orbital · ${gameName} · T+${tick}` },
+      },
+    });
+  }
+
+  // ---- a serious fleet is inbound ---------------------------------------
+  // Same ownership and peace rules as the daily report's inbound section,
+  // but only fires above the size threshold — a lone scout is not an
+  // emergency, and treating it as one is how a player learns to ignore
+  // the red ones.
+  const waves = (await env.DB
+    .prepare(
+      `SELECT b.id AS body_id, b.name AS body, ef.name AS attacker,
+              f.user_id, COUNT(*) AS n
+         FROM game_ship_nodes n2
+         JOIN game_ships sh ON sh.id = n2.ship_id
+         JOIN game_factions ef ON ef.id = sh.owner_faction_id
+         JOIN game_bodies b ON b.id = n2.target_body_id
+         JOIN game_factions f ON f.game_id = ?1
+        WHERE n2.game_id = ?1 AND n2.status = 'in_transit' AND sh.hp > 0
+          AND f.user_id IS NOT NULL AND f.status = 'active'
+          AND sh.owner_faction_id != f.id
+          AND (
+            EXISTS (SELECT 1 FROM game_settlements st
+                     WHERE st.body_id = b.id AND st.owner_faction_id = f.id)
+            OR b.owner_faction_id = f.id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM treaties t
+              JOIN treaty_signatories s1 ON s1.treaty_id = t.id AND s1.faction_id = f.id
+              JOIN treaty_signatories s2 ON s2.treaty_id = t.id AND s2.faction_id = sh.owner_faction_id
+             WHERE t.game_id = ?1 AND t.status = 'active' AND t.broken_at_tick IS NULL
+               AND t.kind IN ('nap','defense_pact')
+               AND s1.signed_at_tick IS NOT NULL AND s2.signed_at_tick IS NOT NULL
+          )
+        GROUP BY b.id, ef.id, f.id
+        HAVING COUNT(*) >= ?2`,
+    )
+    .bind(gameId, URGENT_FLEET_SIZE).all()).results ?? [];
+
+  for (const w of waves) {
+    await notify.sendDm(env, {
+      userId: w.user_id,
+      gameId,
+      category: 'urgent',
+      dedupeKey: `urgent:wave:${w.body_id}:${Math.floor(tick / URGENT_REPEAT_TICKS)}`,
+      embed: {
+        title: '🚨 Major fleet inbound',
+        description: [
+          `**${w.n} hostile ships** are under way to **${w.body}**.`,
+          `Flying colours of **${w.attacker}**.`,
+          'Reinforce or evacuate while there is still time.',
+        ].join('\n'),
+        color: 0xff3b30,
+        footer: { text: `Orbital · ${gameName} · T+${tick}` },
+      },
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------

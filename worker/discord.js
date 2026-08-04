@@ -516,6 +516,41 @@ async function handleRegisterCommands(req, env, { session }) {
 }
 
 /**
+ * GET /api/me/notifications — a player's OWN preferences.
+ *
+ * Session-authed and self-scoped: there is no user_id parameter, so this
+ * cannot be pointed at somebody else's settings. The admin panel has its
+ * own route for support cases.
+ */
+async function handleMyNotifications(_req, env, { session }) {
+  if (!session) return err(401, 'unauthenticated', 'sign in required');
+  const notify = await import('./notify.js');
+  const user = await env.DB
+    .prepare('SELECT discord_id, discord_username FROM users WHERE id = ?')
+    .bind(session.user_id).first();
+  return json({
+    ok: true,
+    linked: !!user?.discord_id,
+    discord_username: user?.discord_username ?? null,
+    categories: notify.CATEGORIES,
+    prefs: await notify.getPrefs(env, session.user_id),
+  });
+}
+
+/** PATCH /api/me/notifications — change one of your own categories. */
+async function handleMyNotificationsWrite(req, env, { session }) {
+  if (!session) return err(401, 'unauthenticated', 'sign in required');
+  const notify = await import('./notify.js');
+  let body;
+  try { body = await req.json(); } catch { return err(400, 'bad_request', 'invalid json'); }
+  if (body.category === 'all') await notify.setAllPrefs(env, session.user_id, !!body.enabled);
+  else if (!(await notify.setPref(env, session.user_id, body.category, !!body.enabled))) {
+    return err(400, 'bad_request', 'unknown category');
+  }
+  return json({ ok: true, prefs: await notify.getPrefs(env, session.user_id) });
+}
+
+/**
  * GET /api/admin/bot — everything the control panel renders: settings,
  * which categories each linked player has muted, recent deliveries, and
  * whether the bot is actually wired (secrets present).
@@ -672,6 +707,8 @@ async function handleAnnounceProposal(_req, env, { session, params }) {
 }
 
 export const routes = [
+  { method: 'GET',   pattern: '/api/me/notifications', auth: 'required', handle: handleMyNotifications },
+  { method: 'PATCH', pattern: '/api/me/notifications', auth: 'required', handle: handleMyNotificationsWrite },
   { method: 'GET',   pattern: '/api/admin/bot', auth: 'required', handle: handleBotOverview },
   { method: 'PATCH', pattern: '/api/admin/bot', auth: 'required', handle: handleBotSettingWrite },
   { method: 'PATCH', pattern: '/api/admin/bot/prefs', auth: 'required', handle: handleBotPrefWrite },
