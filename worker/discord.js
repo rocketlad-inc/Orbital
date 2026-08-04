@@ -133,12 +133,57 @@ function tallyLine(totals) {
  * initial post AND every button-click refresh so the message shape stays
  * identical and buttons survive updates.
  */
-function buildVoteMessage(row, totals, gameName) {
+/**
+ * What the bill actually DOES if it passes, in plain language.
+ *
+ * The card used to show only the proposer's pitch and a bill-kind label,
+ * which is a campaign slogan, not a policy — a voter had no idea what
+ * they were agreeing to. ("What does the bill do?" — Sean, in the
+ * channel, looking at a card.) Every number here mirrors the constant
+ * that actually applies the effect in senate.js/room.js.
+ */
+function billEffect(row, sliderById, targetName) {
+  let payload = {};
+  try { payload = JSON.parse(row.payload || '{}'); } catch { /* best effort */ }
+  const who = targetName || 'the target';
+
+  switch (row.kind) {
+    case 'slider_law': {
+      const def = sliderById?.[payload.slider_id];
+      const label = def?.label ?? payload.slider_id ?? 'a rule';
+      const val = payload.target_value;
+      return [
+        `Sets **${label}** to **${val}** for everyone.`,
+        def?.description ? `_${def.description}_` : null,
+      ].filter(Boolean).join('\n');
+    }
+    case 'trade_embargo':
+      return `Blocks **${who}** from all trade routes and deliveries for **14 ticks**.`;
+    case 'war_authorization':
+      return [
+        `Everyone deals **double damage** to **${who}** for **21 ticks**.`,
+        `Also **breaks every treaty ${who} holds** — NAPs, defense pacts and intel-sharing alike.`,
+      ].join('\n');
+    case 'production_sanction':
+      return `Halves **${who}**'s resource harvest for **14 ticks**.`;
+    case 'reparations':
+      return `**${who}** pays **200 credits to every other faction** immediately (capped at what they actually hold).`;
+    case 'chancellor_vote':
+      return `Elects **${who}** Chancellor. **This can end the game.**`;
+    default:
+      return null;
+  }
+}
+
+function buildVoteMessage(row, totals, gameName, effect) {
   const kindLabel = KIND_LABELS[row.kind] ?? row.kind;
   const descParts = [];
   if (row.summary) descParts.push(row.summary);
   descParts.push(`**Bill:** ${kindLabel}`);
-  descParts.push(`Voting closes at tick **${row.vote_closes_at_tick}**.`);
+  // The mechanical consequence, separated from the proposer's pitch so a
+  // voter can tell the two apart at a glance.
+  if (effect) descParts.push(`\n**If this passes**\n${effect}`);
+  descParts.push(`\nVoting closes at tick **${row.vote_closes_at_tick}**.`);
   descParts.push('Vote weight = your planet count. You can change your vote until it closes.');
 
   return {
@@ -168,13 +213,14 @@ function buildVoteMessage(row, totals, gameName) {
  * hourly game = half a day of dead air) and the vote card was the first
  * anyone heard of a bill.
  */
-function buildDebateMessage(row, gameName, proposerName) {
+function buildDebateMessage(row, gameName, proposerName, effect) {
   const kindLabel = KIND_LABELS[row.kind] ?? row.kind;
   const parts = [];
   if (row.summary) parts.push(row.summary);
   parts.push(`**Bill:** ${kindLabel}`);
   if (proposerName) parts.push(`**Proposed by:** ${proposerName}`);
-  parts.push(`Debate is open. Voting begins at tick **${row.vote_opens_at_tick}** and closes at tick **${row.vote_closes_at_tick}**.`);
+  if (effect) parts.push(`\n**If this passes**\n${effect}`);
+  parts.push(`\nDebate is open. Voting begins at tick **${row.vote_opens_at_tick}** and closes at tick **${row.vote_closes_at_tick}**.`);
   parts.push('_A vote card with buttons posts here when the floor opens._');
 
   return {
@@ -185,6 +231,27 @@ function buildDebateMessage(row, gameName, proposerName) {
       footer: { text: gameName ? `Orbital · ${gameName}` : 'Orbital' },
     }],
   };
+}
+
+/** Resolve everything billEffect needs: the slider catalogue and the
+ *  targeted faction's display name. */
+async function effectFor(env, gameId, row) {
+  try {
+    const senate = await import('./senate.js');
+    let payload = {};
+    try { payload = JSON.parse(row.payload || '{}'); } catch { /* ok */ }
+    const targetId = payload.target_faction_id || payload.candidate_faction_id;
+    let targetName = null;
+    if (targetId) {
+      targetName = (await env.DB
+        .prepare('SELECT name FROM game_factions WHERE id = ?')
+        .bind(targetId).first())?.name ?? null;
+    }
+    return billEffect(row, senate.SLIDER_BY_ID, targetName);
+  } catch (e) {
+    console.error('billEffect failed', e);
+    return null;   // a card without the effect line still beats no card
+  }
 }
 
 async function gameName(env, gameId) {
@@ -216,7 +283,8 @@ export async function publishSenateVoteOpen(env, gameId, row) {
   if (!channelId) return { posted: false, reason: 'no_channel' };
 
   const totals = await loadProposalTotals(env, row.id);
-  const payload = buildVoteMessage(row, totals, await gameName(env, gameId));
+  const payload = buildVoteMessage(
+    row, totals, await gameName(env, gameId), await effectFor(env, gameId, row));
 
   const res = await botFetch(env, 'POST', `/channels/${channelId}/messages`, payload);
   if (!res.ok) {
@@ -252,7 +320,8 @@ export async function publishSenateProposed(env, gameId, row, proposerName) {
   const channelId = await resolveChannelId(env);
   if (!channelId) return { posted: false, reason: 'no_channel' };
 
-  const payload = buildDebateMessage(row, await gameName(env, gameId), proposerName);
+  const payload = buildDebateMessage(
+    row, await gameName(env, gameId), proposerName, await effectFor(env, gameId, row));
   const res = await botFetch(env, 'POST', `/channels/${channelId}/messages`, payload);
   if (!res.ok) {
     console.error(`discord debate post failed: ${res.status} ${await res.text().catch(() => '')}`);
@@ -494,7 +563,9 @@ async function handleComponent(env, interaction) {
 
   // Success — refresh the shared message tally in place (keeps buttons).
   const totals = await loadProposalTotals(env, proposalId);
-  const payload = buildVoteMessage(res.row, totals, await gameName(env, prop.game_id));
+  const payload = buildVoteMessage(
+    res.row, totals, await gameName(env, prop.game_id),
+    await effectFor(env, prop.game_id, res.row));
   return json({ type: R_UPDATE, data: { embeds: payload.embeds, components: payload.components } });
 }
 

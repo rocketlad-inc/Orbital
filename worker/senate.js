@@ -85,6 +85,9 @@ const SLIDER_CATALOG = [
 ];
 
 const SLIDER_BY_ID = Object.fromEntries(SLIDER_CATALOG.map((s) => [s.id, s]));
+/** Exported so the Discord vote card can describe a slider law in
+ *  the same words the in-game senate uses. */
+export { SLIDER_BY_ID, SLIDER_CATALOG };
 
 // Defaults when a proposal doesn't specify per-proposal durations. The
 // new schema's debate_ticks/vote_ticks columns are nullable so legacy
