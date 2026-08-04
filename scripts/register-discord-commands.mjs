@@ -70,7 +70,7 @@ if (!res.ok) {
 console.log(`Registered ${commands.length} command(s) ${GUILD_ID ? `to guild ${GUILD_ID}` : 'globally'}.`);
 for (const c of JSON.parse(text)) console.log(`  /${c.name} — ${c.description}`);
 if (!GUILD_ID) {
-  console.log('
-Global registration can take up to an hour to appear in Discord.');
+  console.log('');
+  console.log('Global registration can take up to an hour to appear in Discord.');
   console.log('Re-run with --guild <serverId> if you want it immediately.');
 }
