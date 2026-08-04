@@ -33,6 +33,7 @@ import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions, ServerShipDesign, ServerShipTemplate } from '../multiplayer/MultiplayerActionsContext';
 import { logUiEvent } from '../multiplayer/telemetry';
 import { ShipClassName, SHIP_CLASSES, BUILDABLE_CLASSES, SHIP_UPKEEP } from '../game/shipClasses';
+import { deliveredHullHp } from '../game/combat';
 import {
   ShipPartId, ALL_PART_IDS, SHIP_PART_DEFS, SHIP_SLOT_COUNTS,
   sanitizeParts, computeDesignStats, partsCost, countPart,
@@ -218,6 +219,12 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   const slots = SHIP_SLOT_COUNTS[activeClass];
   const hullDef = SHIP_CLASSES[activeClass];
   const stats = computeDesignStats(activeClass, draftParts, techLevels);
+  // Quote the hull the yard will DELIVER. computeDesignStats returns the
+  // build-time base (what gets stored as hp_max); worker/room.js spawns
+  // at base × defense tech, so the raw number reads far short of the ship
+  // you actually get — 40 vs 72 for a corvette at Defense 10.
+  const playerTech = gameState.factionTech['player'];
+  const hpOut = (n: number) => deliveredHullHp(n, playerTech);
   // Delta baseline: the SAVED loadout when editing an existing design
   // (a real before→after), else the bare hull.
   const baselineParts = useMemo(
@@ -513,7 +520,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
     <>
       <div className="sd-stat">
         <span className="sd-stat__label">Max HP</span>
-        <span className="sd-stat__value"><Delta from={base.hp} to={stats.hp} /></span>
+        <span className="sd-stat__value"><Delta from={hpOut(base.hp)} to={hpOut(stats.hp)} /></span>
       </div>
       <div className="sd-stat">
         <span className="sd-stat__label">Damage / volley</span>
@@ -932,6 +939,9 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
               <strong>Kinetic ⚔</strong> chews armor, shields blunt it. <strong>Energy ⚡</strong> melts
               shields, armor scatters it. Each 🛡/🪨 cuts its countered damage to 78% (stacking).
               Hull base: {SERVER_HULL_BASE[activeClass].hp} HP · {SERVER_HULL_BASE[activeClass].damagePerTick} dmg.
+              {hpOut(100) !== 100 && (
+                <> Max HP shown includes your defense tech (×{(hpOut(1000) / 1000).toFixed(2)}).</>
+              )}
               Builds snapshot the ACTIVE design at queue time.
             </div>
             {refitBar}
@@ -952,7 +962,7 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
             onClick={() => setStatsSheetOpen(o => !o)}
             aria-expanded={statsSheetOpen}
           >
-            <span>{stats.hp} HP</span>
+            <span>{hpOut(stats.hp)} HP</span>
             <span>{stats.damagePerTick} dmg</span>
             <span>{hullDef.cost.ore + draftCost.ore}M {hullDef.cost.credits + draftCost.credits}C</span>
             <span>{upkeepLabel}</span>

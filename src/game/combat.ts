@@ -10,6 +10,30 @@ import { rankDamageMul, rankHpMul, hpModifier } from './techs';
 import { traitMul as captainTraitMul } from './captains';
 
 /**
+ * HP the yard will actually DELIVER for a fresh hull of a given design.
+ *
+ * `computeDesignStats().hp` is the build-time base — class hull plus
+ * fitted armor/shield parts — and that is what gets stored as hp_max.
+ * It is NOT what launches. worker/room.js spawns at the effective
+ * ceiling: base × defense tech (+8% per level of the higher of
+ * armor/shields). At Defense 10 that is ×1.80, so a build menu showing
+ * the bare base under-reports a corvette as 40 HP when the yard hands
+ * over 72 (playtest report: "ship building menu does not give accurate
+ * stats for ship HP which makes planning a bit difficult").
+ *
+ * Veteran Yards (+1% per 4 average fleet rank, gated on weapons 5) is
+ * deliberately NOT folded in: it depends on live fleet state the build
+ * menu doesn't have, and it only ever adds. Under-promising by a couple
+ * of percent is fine; under-promising by 80% is the bug.
+ */
+export function deliveredHullHp(
+  baseHp: number,
+  tech: FactionTechStateBase | undefined,
+): number {
+  return Math.round(baseHp * hpModifier(tech as unknown as Parameters<typeof hpModifier>[0]));
+}
+
+/**
  * A ship's TRUE maximum HP for display, mirroring the server's
  * maintenance-pass cap (worker/room.js `effectiveMaxHp`). The stored
  * hp_max is the build-time base (class × fitted armor parts); the server

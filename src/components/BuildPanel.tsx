@@ -13,7 +13,10 @@ import {
   ALL_VARIANTS, DEFAULT_SHIP_ICONS,
 } from './ShipIcons';
 import { openShipDesigner } from './ShipDesigner';
-import { sanitizeParts, partsCost, computeDesignStats, loadoutSummary, ShipPartId } from '../game/shipParts';
+import {
+  sanitizeParts, partsCost, computeDesignStats, loadoutSummary, ShipPartId, SERVER_HULL_BASE,
+} from '../game/shipParts';
+import { deliveredHullHp } from '../game/combat';
 import { randomShipName } from '../game/shipNames';
 import type { BuildListEntry, ShipDesign } from '../types';
 import { HULL_FEATURE } from '../game/researchUnlocks';
@@ -265,6 +268,19 @@ export const BuildPanel: React.FC = () => {
   const mpBuildable = BUILDABLE_CLASSES.filter(cls => cls !== 'colony' || !!mpActions);
   const isUnlocked = (cls: ShipClassName) => !gate.lockReason(HULL_FEATURE[cls]);
   const techLevels = gameState.factionTech['player']?.levels ?? {};
+  // The build menu must quote the DELIVERED hull, not the build-time base:
+  // the yard spawns at base × defense tech, so at Defense 10 the base
+  // number is 80% short of what actually launches.
+  const playerTech = gameState.factionTech['player'];
+  const deliveredHp = (cls: ShipClassName, stats: { hp: number } | null) =>
+    deliveredHullHp(stats ? stats.hp : SERVER_HULL_BASE[cls].hp, playerTech);
+  const hpTitle = (cls: ShipClassName, stats: { hp: number } | null) => {
+    const base = stats ? stats.hp : SERVER_HULL_BASE[cls].hp;
+    const out = deliveredHp(cls, stats);
+    return out === base
+      ? `${base} HP on delivery`
+      : `${base} HP hull + defense tech = ${out} HP on delivery`;
+  };
 
   // Effective entries = the optimistic overlay, else the explicit server
   // list, else a sensible default (active design / bare hull per UNLOCKED
@@ -680,7 +696,9 @@ export const BuildPanel: React.FC = () => {
               </div>
               <div className="class-stats">
                 <span className="stat">FP:{designStats ? designStats.damagePerTick : def.firepower}</span>
-                <span className="stat">HP:{designStats ? designStats.hp : def.hp}</span>
+                <span className="stat" title={hpTitle(cls, designStats)}>
+                  HP:{deliveredHp(cls, designStats)}
+                </span>
                 {designStats && designStats.travelTimeMult < 1 && (
                   <span className="stat" title="Engine parts: travel-time multiplier">
                     ⏱×{designStats.travelTimeMult.toFixed(2)}
@@ -903,7 +921,9 @@ export const BuildPanel: React.FC = () => {
                   </div>
                   <div className="class-stats">
                     <span className="stat">FP:{dstats ? dstats.damagePerTick : def.firepower}</span>
-                    <span className="stat">HP:{dstats ? dstats.hp : def.hp}</span>
+                    <span className="stat" title={hpTitle(row.shipClass, dstats)}>
+                      HP:{deliveredHp(row.shipClass, dstats)}
+                    </span>
                     {dstats && dstats.travelTimeMult < 1 && (
                       <span className="stat" title="Engine parts: travel-time multiplier">
                         ⏱×{dstats.travelTimeMult.toFixed(2)}
