@@ -280,6 +280,7 @@ function discordUserOf(interaction) {
 
 async function handleSlashCommand(env, interaction) {
   const name = interaction.data?.name;
+  if (name === 'notify') return handleNotifyCommand(env, interaction);
   if (name !== 'link') return ephemeral('Unknown command.');
 
   const user = discordUserOf(interaction);
@@ -314,6 +315,44 @@ async function handleSlashCommand(env, interaction) {
     return ephemeral('Something went wrong linking your account. Try a fresh code.');
   }
   return ephemeral('✅ Linked! You can now vote in Senate polls straight from Discord.');
+}
+
+/**
+ * /notify [category] [on|off] — read or change DM preferences.
+ * With no options it just reports current state, which doubles as the
+ * discovery surface: most players will never read docs, but they will
+ * type a command they saw mentioned in a footer.
+ */
+async function handleNotifyCommand(env, interaction) {
+  const notify = await import('./notify.js');
+  const user = discordUserOf(interaction);
+  if (!user?.id) return ephemeral('Could not read your Discord identity.');
+
+  const linked = await env.DB
+    .prepare('SELECT id FROM users WHERE discord_id = ?').bind(user.id).first();
+  if (!linked) {
+    return ephemeral('Link your account first: in-game Senate panel → Link Discord, then `/link <code>` here.');
+  }
+
+  const opts = interaction.data?.options ?? [];
+  const category = opts.find(o => o.name === 'category')?.value;
+  const stateRaw = opts.find(o => o.name === 'state')?.value;
+
+  if (category && stateRaw) {
+    const on = String(stateRaw) === 'on';
+    if (category === 'all') await notify.setAllPrefs(env, linked.id, on);
+    else if (!(await notify.setPref(env, linked.id, category, on))) {
+      return ephemeral(`Unknown category '${category}'.`);
+    }
+  }
+
+  const prefs = await notify.getPrefs(env, linked.id);
+  const lines = Object.entries(notify.CATEGORIES)
+    .map(([k, label]) => `${prefs[k] ? '🔔' : '🔕'} \`${k}\` — ${label}`);
+  return ephemeral(
+    ['**Your Orbital notifications**', ...lines, '',
+     'Change with `/notify category:<name> state:<on|off>` (or `category:all`).'].join('\n'),
+  );
 }
 
 async function handleComponent(env, interaction) {
@@ -403,6 +442,67 @@ async function handleUnlink(_req, env, { session }) {
 // dispatch, so a cookieless Discord request would 401 before its signature
 // could be checked. It's wired directly in index.js _dispatch alongside the
 // other unauthenticated routes (signup/login/…), calling handleInteractions.
+/** The bot's command set, defined ONCE here so the worker is the source
+ *  of truth. scripts/register-discord-commands.mjs remains for offline
+ *  use, but the admin endpoint below means adding a command no longer
+ *  requires having the bot token on someone's laptop. */
+export const SLASH_COMMANDS = [
+  {
+    name: 'link',
+    description: 'Link your Discord account to your Orbital empire so you can vote in the Senate.',
+    options: [{ name: 'code', description: 'The code shown in-game under Senate → Link Discord.', type: 3, required: true }],
+  },
+  {
+    name: 'notify',
+    description: 'See or change which Orbital events DM you.',
+    options: [
+      { name: 'category', description: 'Which kind of notification to change.', type: 3, required: false,
+        choices: [
+          { name: 'all', value: 'all' },
+          { name: 'messages from factions', value: 'dm' },
+          { name: 'attacks on you', value: 'combat' },
+          { name: 'senate bills & votes', value: 'senate' },
+          { name: 'upkeep & build problems', value: 'economy' },
+          { name: 'daily situation report', value: 'digest' },
+          { name: 'away reminders', value: 'nudge' },
+        ] },
+      { name: 'state', description: 'Turn it on or off.', type: 3, required: false,
+        choices: [{ name: 'on', value: 'on' }, { name: 'off', value: 'off' }] },
+    ],
+  },
+];
+
+/**
+ * POST /api/admin/discord/register-commands?guild=<id>
+ * Registers SLASH_COMMANDS using the worker's OWN stored bot token, so
+ * shipping a new command never requires the token to exist on a laptop
+ * or pass through a chat transcript. Guild scope is instant; omit for
+ * global (up to an hour to propagate).
+ */
+async function handleRegisterCommands(req, env, { session }) {
+  if (!session || !isAdminEmail(session.email)) return err(404, 'not_found', 'no such route');
+  if (!env.DISCORD_BOT_TOKEN) return err(400, 'not_configured', 'DISCORD_BOT_TOKEN is not set');
+
+  const appRes = await botFetch(env, 'GET', '/applications/@me');
+  if (!appRes.ok) return err(502, 'discord_error', `could not read application: ${appRes.status}`);
+  const app = await appRes.json();
+
+  const guild = new URL(req.url).searchParams.get('guild');
+  const path = guild
+    ? `/applications/${app.id}/guilds/${guild}/commands`
+    : `/applications/${app.id}/commands`;
+
+  const res = await botFetch(env, 'PUT', path, SLASH_COMMANDS);
+  const text = await res.text();
+  if (!res.ok) return err(502, 'discord_error', `register failed ${res.status}: ${text.slice(0, 300)}`);
+  const registered = JSON.parse(text);
+  return json({
+    ok: true,
+    scope: guild ? `guild:${guild}` : 'global',
+    commands: registered.map(c => c.name),
+  });
+}
+
 /**
  * POST /api/admin/senate/:proposalId/announce
  * Re-post a bill's debate card. Exists because announcements fire at
@@ -430,6 +530,7 @@ async function handleAnnounceProposal(_req, env, { session, params }) {
 }
 
 export const routes = [
+  { method: 'POST', pattern: '/api/admin/discord/register-commands', auth: 'required', handle: handleRegisterCommands },
   { method: 'POST', pattern: /^\/api\/admin\/senate\/(?<proposalId>[^/]+)\/announce$/, auth: 'required', handle: handleAnnounceProposal },
   { method: 'POST', pattern: '/api/discord/link-code',  auth: 'required', handle: handleMintLinkCode },
   { method: 'GET',  pattern: '/api/discord/link-status', auth: 'required', handle: handleLinkStatus },

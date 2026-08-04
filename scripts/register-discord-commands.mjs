@@ -47,6 +47,37 @@ const commands = [
       },
     ],
   },
+  {
+    name: 'notify',
+    description: 'See or change which Orbital events DM you.',
+    options: [
+      {
+        name: 'category',
+        description: 'Which kind of notification to change.',
+        type: 3,
+        required: false,
+        choices: [
+          { name: 'all', value: 'all' },
+          { name: 'messages from factions', value: 'dm' },
+          { name: 'attacks on you', value: 'combat' },
+          { name: 'senate bills & votes', value: 'senate' },
+          { name: 'upkeep & build problems', value: 'economy' },
+          { name: 'daily situation report', value: 'digest' },
+          { name: 'away reminders', value: 'nudge' },
+        ],
+      },
+      {
+        name: 'state',
+        description: 'Turn it on or off.',
+        type: 3,
+        required: false,
+        choices: [
+          { name: 'on', value: 'on' },
+          { name: 'off', value: 'off' },
+        ],
+      },
+    ],
+  },
 ];
 
 const endpoint = GUILD_ID

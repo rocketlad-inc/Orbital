@@ -164,6 +164,46 @@ async function handleSend(req, env, { session, params }) {
   }
   await env.DB.batch(stmts);
 
+  // Relay to Discord DMs. The game's diplomacy happens between people who
+  // may not have the tab open for hours, so a message that only exists
+  // in-game often isn't read until the moment has passed.
+  //
+  // Deliberately preserves the fiction: we send the CLAIMED sender, not
+  // the actual one. Forged and anonymous diplomacy is a mechanic here,
+  // and a notification that quietly unmasked the sender would be a
+  // gameplay exploit dressed as a convenience.
+  try {
+    const notify = await import('./notify.js');
+    const claimedName = (await env.DB
+      .prepare('SELECT name FROM game_factions WHERE id = ?')
+      .bind(sender.id).first())?.name ?? 'Unknown';
+    const roomName = (await env.DB
+      .prepare('SELECT name FROM rooms WHERE id = ?').bind(gameId).first())?.name ?? gameId;
+    const preview = text.length > 300 ? text.slice(0, 300) + '…' : text;
+    const targets = scope === 'broadcast' ? recipients : recipients;
+    for (const factionId of targets) {
+      if (factionId === sender.id) continue;
+      const uid = await notify.userIdForFaction(env, factionId);
+      if (!uid) continue;
+      await notify.sendDm(env, {
+        userId: uid,
+        gameId,
+        category: 'dm',
+        dedupeKey: `msg:${id}:${factionId}`,
+        embed: {
+          title: scope === 'broadcast'
+            ? `📡 Broadcast from ${claimedName}`
+            : `✉️ Message from ${claimedName}`,
+          description: preview,
+          color: 0x5865f2,
+          footer: { text: `Orbital · ${roomName} · T+${tick}` },
+        },
+      });
+    }
+  } catch (e) {
+    console.error('message DM relay failed', e);
+  }
+
   // Fire-and-forget live notification (best effort).
   notifyRoom(env, gameId, {
     kind: 'message',
