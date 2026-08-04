@@ -312,6 +312,22 @@ async function handleSlashCommand(env, interaction) {
   // are ephemeral — nobody wants their fleet disposition posted into a
   // channel full of rivals.
   const cmds = await import('./commands.js');
+
+  // /msg closes the communication loop: relayed messages arrived in
+  // Discord, but replying meant opening the game.
+  if (name === 'msg') {
+    const u = discordUserOf(interaction);
+    if (!u?.id) return ephemeral('Could not read your Discord identity.');
+    const o = interaction.data?.options ?? [];
+    const get = (k) => o.find(x => x.name === k)?.value;
+    try {
+      return json(await cmds.cmdMsg(env, u.id, { to: get('to'), text: get('text') }));
+    } catch (e) {
+      console.error('slash /msg failed', e);
+      return ephemeral('Could not send that message. Try again.');
+    }
+  }
+
   if (cmds.READ_COMMANDS[name]) {
     const user = discordUserOf(interaction);
     if (!user?.id) return ephemeral('Could not read your Discord identity.');
@@ -538,6 +554,14 @@ export const SLASH_COMMANDS = [
     name: 'link',
     description: 'Link your Discord account to your Orbital empire so you can vote in the Senate.',
     options: [{ name: 'code', description: 'The code shown in-game under Senate → Link Discord.', type: 3, required: true }],
+  },
+  {
+    name: 'msg',
+    description: 'Send a message to another faction (or everyone) without opening the game.',
+    options: [
+      { name: 'to', description: 'Faction name, or "all" to broadcast.', type: 3, required: true },
+      { name: 'text', description: 'What to say.', type: 3, required: true },
+    ],
   },
   { name: 'status',   description: 'Your empire at a glance — resources, fleet, what needs you.' },
   { name: 'fleet',    description: 'Where your ships are, and what is under way.' },

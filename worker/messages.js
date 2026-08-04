@@ -69,7 +69,7 @@ async function notifyRoom(env, gameId, payload) {
 
 // ---------- POST /api/games/:gameId/messages ----------
 
-async function handleSend(req, env, { session, params }) {
+export async function handleSend(req, env, { session, params }) {
   const gameId = params.gameId;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
 

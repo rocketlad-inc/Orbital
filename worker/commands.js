@@ -243,6 +243,79 @@ export async function cmdMap(env, discordId) {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * /msg to:<faction|all> text:<...>
+ *
+ * The half of the bridge that was missing: relayed messages arrived in
+ * Discord but replying meant opening the game. Diplomacy in a game like
+ * this already happens in Discord — the bot may as well carry it.
+ *
+ * Sends as YOU. The schema supports a claimed sender distinct from the
+ * real one (forged diplomacy), but the send API has never exposed it,
+ * and quietly adding a deception mechanic from a chat command is a
+ * game-design decision rather than a bot feature.
+ */
+export async function cmdMsg(env, discordId, opts) {
+  const r = await resolveCaller(env, discordId);
+  if (r.error) return r.error;
+  const { user, row } = r;
+
+  const to = String(opts.to ?? '').trim();
+  const text = String(opts.text ?? '').trim();
+  if (!to || !text) return reply('Usage: `/msg to:<faction or "all"> text:<your message>`');
+
+  const factions = (await env.DB
+    .prepare(`SELECT id, name FROM game_factions
+               WHERE game_id = ? AND status = 'active' AND id != ?`)
+    .bind(row.game_id, row.faction_id).all()).results ?? [];
+
+  const messages = await import('./messages.js');
+  const send = async (body) => {
+    // handleSend parses its payload from the Request, so give it a real
+    // one rather than a fourth argument it would ignore.
+    const res = await messages.handleSend(
+      new Request('https://orbital/internal', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+      env,
+      { session: { user_id: user.id }, params: { gameId: row.game_id } },
+    );
+    let payload = null;
+    try { payload = await res.clone().json(); } catch { /* non-json */ }
+    return { ok: res.ok, payload };
+  };
+
+  if (to.toLowerCase() === 'all' || to.toLowerCase() === 'broadcast') {
+    const out = await send({ scope: 'broadcast', body: text, signed: 1 });
+    if (!out.ok) return reply(`Could not send: ${out.payload?.error?.message ?? 'rejected'}`);
+    return reply(`📡 Broadcast sent to every faction in **${row.game_name}**.`);
+  }
+
+  // Match on name, case-insensitively: exact first, then unique prefix,
+  // then unique substring. Ambiguity is reported rather than guessed —
+  // sending a private message to the wrong empire is unrecoverable.
+  const lower = to.toLowerCase();
+  let hits = factions.filter(f => f.name.toLowerCase() === lower);
+  if (!hits.length) hits = factions.filter(f => f.name.toLowerCase().startsWith(lower));
+  if (!hits.length) hits = factions.filter(f => f.name.toLowerCase().includes(lower));
+
+  if (!hits.length) {
+    return reply(`No faction matches "${to}". In this game: ${factions.map(f => `**${f.name}**`).join(', ') || '(none)'}`);
+  }
+  if (hits.length > 1) {
+    return reply(`"${to}" matches ${hits.length} factions: ${hits.map(f => `**${f.name}**`).join(', ')}. Be more specific.`);
+  }
+
+  const target = hits[0];
+  const out = await send({
+    scope: 'dm', body: text, signed: 1, recipient_faction_ids: [target.id],
+  });
+  if (!out.ok) return reply(`Could not send: ${out.payload?.error?.message ?? 'rejected'}`);
+  return reply(`✉️ Sent to **${target.name}**.`);
+}
+
 export const READ_COMMANDS = {
   status: cmdStatus,
   fleet: cmdFleet,
