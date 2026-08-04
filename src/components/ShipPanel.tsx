@@ -18,6 +18,7 @@ import { useIsMobile } from '../hooks/useIsMobile';
 import { EditableName } from './EditableName';
 import { ShipIcon } from './ShipIcons';
 import { DEFAULT_ENGINE_G } from '../physics/torchTransfer';
+import { planExploreTour, type ExploreScope } from '../game/autoExplore';
 import {
   BINARY_SYSTEM_BODY_IDS,
   BLACK_HOLE_SYSTEM_BODY_IDS,
@@ -34,7 +35,7 @@ export const ShipPanel: React.FC = () => {
   const {
     gameState, uiState, deselectShip, setGameState,
     deleteManeuverNode, setTargetSelectionMode,
-    launchTorchTransfer, enqueueTorchTransfer, planTorchPreview, cancelTorchPreview,
+    launchTorchTransfer, enqueueTorchTransfer, queueTorchTour, planTorchPreview, cancelTorchPreview,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
     createTradeRoute, cancelTradeRoute, renameShip,
   } = useGameContext();
@@ -54,6 +55,10 @@ export const ShipPanel: React.FC = () => {
   // like it worked but the next /state poll silently rewinds the
   // optimistic local state.
   const [transferError, setTransferError] = useState<string | null>(null);
+  // Auto-explore (corvettes): how far the survey ranges, and the
+  // result line after one is dispatched.
+  const [exploreScope, setExploreScope] = useState<ExploreScope>('system');
+  const [exploreNotice, setExploreNotice] = useState<string | null>(null);
   // Server-side standing-orders rejection (MP only). Shown inline in the
   // ORDERS section; the next /state poll rewinds the optimistic change.
   const [ordersError, setOrdersError] = useState<string | null>(null);
@@ -232,6 +237,62 @@ export const ShipPanel: React.FC = () => {
         });
         if (!res.ok) {
           setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
+        }
+      }
+    })();
+  };
+
+  const isOwn = ship.ownedBy === 'player';
+
+  // Plain computation, not useMemo — this sits after the panel's early
+  // `if (!ship) return null`, so a hook here would break the rules of
+  // hooks (same reasoning as the other post-guard computations here).
+  // Cheap: bodies × at most MAX_TOUR_LEGS.
+  const exploreTour = (isOwn && ship.class === 'corvette')
+    ? planExploreTour(ship, gameState.bodies, gameState.settlements, gameState.currentTick, exploreScope)
+    : [];
+
+  /**
+   * Queue the survey: plan every leg locally in one shot, then post
+   * them in order. Leg 1 carries replace:true so it cancels whatever
+   * route the hull had; the rest append. Awaited in sequence for the
+   * same reason commitTransferLocal does it — a queued leg racing ahead
+   * of the replace would get cancelled along with the old route.
+   */
+  const startAutoExplore = () => {
+    if (!ship) return;
+    setExploreNotice(null);
+    setTransferError(null);
+    const tour = exploreTour;
+    if (tour.length === 0) return;
+
+    const plans = queueTorchTour(ship.id, tour);
+    if (plans.length === 0) {
+      setExploreNotice('Could not plot a course to any of those worlds');
+      return;
+    }
+    const firstName = gameState.bodies.find(b => b.id === plans[0].targetBodyId)?.name ?? 'the first stop';
+    setExploreNotice(
+      `Surveying ${plans.length} world${plans.length === 1 ? '' : 's'} — next stop ${firstName}`
+      + (plans.length < tour.length ? ` (${tour.length - plans.length} unreachable)` : ''),
+    );
+    if (!mpActions) return;
+
+    (async () => {
+      for (let i = 0; i < plans.length; i++) {
+        const p = plans[i];
+        const res = await mpActions.transfer({
+          shipId: ship.id,
+          targetBodyId: p.targetBodyId,
+          scheduledT: p.startTick,
+          arrivalT: p.arriveTick,
+          dvPrograde: p.totalDv,
+          fuelCost: Math.round(p.totalDv * 10),
+          replace: i === 0,
+        });
+        if (!res.ok) {
+          setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
+          break;
         }
       }
     })();
@@ -548,6 +609,47 @@ export const ShipPanel: React.FC = () => {
               CHOOSE FROM LIST
             </button>
           </div>
+
+          {/* AUTO-EXPLORE — corvettes only. Scouting is what the class is
+              for, and a one-click survey tour is the difference between
+              a scout being useful and being 10 manual transfers. The leg
+              count is on the button so the commitment is visible before
+              the click, not after. */}
+          {isOwn && ship.class === 'corvette' && (
+            <div className="maneuver-buttons" style={{ marginTop: 6 }}>
+              <select
+                value={exploreScope}
+                onChange={(e) => setExploreScope(e.target.value as ExploreScope)}
+                title="How far the survey ranges"
+                style={{
+                  background: '#14202c', border: '1px solid #2a3d50', borderRadius: 3,
+                  color: '#9fb4c6', fontFamily: 'inherit', fontSize: 10, padding: '3px 5px',
+                  flex: '0 1 auto', minWidth: 0,
+                }}
+              >
+                <option value="system">This system</option>
+                <option value="all">Whole map</option>
+              </select>
+              <button
+                className="maneuver-btn"
+                disabled={exploreTour.length === 0 || !!ship.transit}
+                onClick={startAutoExplore}
+                title={ship.transit
+                  ? 'Already under way — auto-explore starts from a parked hull'
+                  : exploreTour.length === 0
+                    ? 'Nothing left to survey in range'
+                    : `Queue a ${exploreTour.length}-stop survey`}
+                style={exploreTour.length === 0 || ship.transit ? { opacity: 0.45 } : undefined}
+              >
+                ⌖ AUTO-EXPLORE{exploreTour.length > 0 ? ` (${exploreTour.length})` : ''}
+              </button>
+            </div>
+          )}
+          {exploreNotice && (
+            <div style={{ fontSize: 10, color: '#8aa0b4', margin: '4px 0 0', lineHeight: 1.4 }}>
+              {exploreNotice}
+            </div>
+          )}
           {/* Maneuver nodes + COMMIT ride with the move buttons: you pick a
               destination, then confirm the burn. Splitting those across a
               scroll meant staging a move and losing sight of the button

@@ -357,6 +357,9 @@ interface GameContextType {
    *  in transit can't enqueue chained legs — use launchTorchTransfer
    *  to start the first one. Returns the planned leg or null. */
   enqueueTorchTransfer: (shipId: string, targetBodyId: string) => import('../physics/torchTransfer').TorchTransfer | null;
+  /** Plan + apply a whole multi-leg tour at once; returns every leg's
+   *  plan so the caller can post them to the server in order. */
+  queueTorchTour: (shipId: string, targetBodyIds: string[]) => import('../physics/torchTransfer').TorchTransfer[];
 
   /** Stage a torch transfer as a PREVIEW (ship.plannedTransit) without
    *  firing the burn. The map renderer shows it as a dashed amber arc;
@@ -2056,6 +2059,95 @@ export function GameContextProvider({
     return appendedPlan;
   }, []);
 
+  /**
+   * Plan a WHOLE multi-leg tour in one call: leg 1 launches from the
+   * ship's current orbit, every later leg chains off the previous
+   * plan's intercept point and arrival tick. Applies transit +
+   * queuedTransits in a single update and returns every plan so the
+   * caller can post them (leg 1 with replace:true, the rest appended).
+   *
+   * Why this exists rather than "call launchTorchTransfer then
+   * enqueueTorchTransfer N times": enqueueTorchTransfer computes its
+   * plan INSIDE the state updater and returns it via closure, which
+   * only works for the first call in a synchronous batch — React runs
+   * the first queued updater eagerly and defers the rest. That's the
+   * exact trap launchTorchTransfer documents (clownking's "only the
+   * first ship got the order" report); a loop of enqueues would build
+   * the local chain correctly but hand back nulls for every leg past
+   * the first, so nothing after leg 1 would ever reach the server.
+   *
+   * Planning eagerly off gameStateRef sidesteps it entirely: the whole
+   * chain is computed before any state is touched.
+   */
+  const queueTorchTour = useCallback((shipId: string, targetBodyIds: string[]): TorchTransfer[] => {
+    if (targetBodyIds.length === 0) return [];
+    const live = gameStateRef.current;
+    const ship = live.ships.find(s => s.id === shipId);
+    if (!ship || ship.transit) return [];
+
+    const faction = live.factions.find(f => f.id === ship.ownedBy);
+    const tech = live.factionTech?.[ship.ownedBy];
+    const baseAccel = fromG(faction?.engineG ?? DEFAULT_ENGINE_G);
+    const engineAccel = baseAccel * engineGModifier(tech)
+      * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
+
+    const plans: TorchTransfer[] = [];
+    // Leg 1 mirrors launchTorchTransfer: real orbital position + velocity.
+    const launchPos = orbitWorldPos(ship.orbit, live.currentTick, live.bodies);
+    const launchVel = orbitWorldVelocity(ship.orbit, live.currentTick, live.bodies);
+    let pos: { x: number; y: number } = launchPos;
+    let vel: { x: number; y: number } = launchVel;
+    let departTick = live.currentTick;
+
+    for (const targetBodyId of targetBodyIds) {
+      const plan = planTorchTransfer(
+        { pos, vel }, targetBodyId, engineAccel, engineAccel, departTick, live.bodies,
+      );
+      // A leg we can't plan ends the tour — everything after it chained
+      // off an arrival that now never happens.
+      if (!plan) break;
+      plans.push(plan);
+      // Next leg departs from where this one parks us, moving with the
+      // body we just arrived at (same handoff enqueueTorchTransfer uses).
+      const arrivedBody = live.bodies.find(b => b.id === plan.targetBodyId);
+      pos = { x: plan.interceptPos.x, y: plan.interceptPos.y };
+      vel = arrivedBody
+        ? bodyWorldVelocity(arrivedBody, plan.arriveTick, live.bodies)
+        : { x: 0, y: 0 };
+      departTick = plan.arriveTick;
+    }
+    if (plans.length === 0) return [];
+
+    const [first, ...rest] = plans;
+    setGameStateInternal(prev => {
+      const cur = prev.ships.find(s => s.id === shipId);
+      // Same bail-out as launchTorchTransfer: if the ship left or got
+      // underway between the eager plan and this apply, drop the tour.
+      if (!cur || cur.transit) return prev;
+      return {
+        ...prev,
+        ships: prev.ships.map(s =>
+          s.id === shipId
+            ? {
+                ...s,
+                transit: {
+                  pos: { x: launchPos.x, y: launchPos.y },
+                  vel: { x: launchVel.x, y: launchVel.y },
+                  currentTransfer: first,
+                },
+                plannedTransit: undefined,
+                queuedTransits: rest,
+                // Same reason as launchTorchTransfer: a stale 'transfer'
+                // maneuver node must not fire once the torch is lit.
+                orders: s.orders.filter(o => o.type !== 'transfer'),
+              }
+            : s,
+        ),
+      };
+    });
+    return plans;
+  }, []);
+
   /** Stage a torch transfer as a preview (ship.plannedTransit). The
    *  ship stays parked — this is the "I've picked a destination, show
    *  me the path" step before COMMIT. */
@@ -2915,7 +3007,7 @@ export function GameContextProvider({
     setTargetSelectionMode,
     toggleShipSelection, setShipSelection, clearShipSelection,
     addManeuverNode, commitManeuverNode, deleteManeuverNode,
-    launchTorchTransfer, enqueueTorchTransfer, planTorchPreview, cancelTorchPreview,
+    launchTorchTransfer, enqueueTorchTransfer, queueTorchTour, planTorchPreview, cancelTorchPreview,
     buildShip, cancelBuild, renameShip,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
     deploySettlement, damageSettlement, renameSettlement, buildCollector,
