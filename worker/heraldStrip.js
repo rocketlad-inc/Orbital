@@ -182,6 +182,12 @@ export async function buildTerritoryData(env, gameId) {
 export function renderStripPage(data, opts = {}) {
   const W = opts.width ?? 1200;
   const H = opts.height ?? 420;
+  // Discord renders embed images at roughly 550 CSS px. A chart laid out
+  // for 1200 and scaled down halves every font - 9px type became ~4px,
+  // and the first live post was unreadable. Below this width the chart
+  // switches to a two-row layout with larger type, and the caller renders
+  // AT that size (device-pixel-ratio buys crispness, never more room).
+  const compact = W < 760;
   const payload = JSON.stringify(data).replace(/</g, '\\u003c');
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>${escapeHtml(data.game.name)} — Territory</title>
@@ -194,7 +200,7 @@ export function renderStripPage(data, opts = {}) {
 <canvas id="strip"></canvas>
 <script>
 const D = ${payload};
-const W = ${W}, H = ${H};
+const W = ${W}, H = ${H}, COMPACT = ${compact};
 
 function hexA(hex,a){
   const h=String(hex||"#888").replace("#","");
@@ -202,164 +208,204 @@ function hexA(hex,a){
   return "rgba("+r+","+g+","+b+","+a+")";
 }
 function shortName(n){
-  return String(n||"").replace(/[^\\w\\s'-]/g," ").replace(/\\s+/g," ").trim()
-          .replace(/^(the|a)\\s+/i,"").toUpperCase();
+  return String(n||"").replace(/[^\w\s'-]/g," ").replace(/\s+/g," ").trim()
+          .replace(/^(the|a)\s+/i,"").toUpperCase();
 }
 function fitText(c,text,maxW){
-  if(c.measureText(text).width<=maxW) return text;
-  const words=text.split(" "); let out="";
-  for(const w of words){
-    const next=out?out+" "+w:w;
-    if(c.measureText(next+"\\u2026").width>maxW) break;
+  var t=String(text);
+  if(c.measureText(t).width<=maxW) return t;
+  var words=t.split(" "), out="";
+  for(var i=0;i<words.length;i++){
+    var next=out?out+" "+words[i]:words[i];
+    if(c.measureText(next+"…").width>maxW) break;
     out=next;
   }
-  if(!out){ out=text; while(out.length>1&&c.measureText(out+"\\u2026").width>maxW) out=out.slice(0,-1); }
-  return out+"\\u2026";
+  if(!out){ out=t; while(out.length>1&&c.measureText(out+"…").width>maxW) out=out.slice(0,-1); }
+  return out+"…";
 }
 function dominant(sec){
-  const tally={};
-  const all=[...sec.bodies.map(b=>b.owner),...(sec.moons||[]).map(m=>m.owner)];
+  var tally={}, all=sec.bodies.map(function(b){return b.owner;})
+    .concat((sec.moons||[]).map(function(m){return m.owner;}));
   if(sec.starOwner) all.push(sec.starOwner);
-  for(const o of all) if(o) tally[o]=(tally[o]||0)+1;
-  let best=null,n=0,tie=false;
-  for(const k in tally){ if(tally[k]>n){best=k;n=tally[k];tie=false;} else if(tally[k]===n) tie=true; }
+  all.forEach(function(o){ if(o) tally[o]=(tally[o]||0)+1; });
+  var best=null,n=0,tie=false;
+  for(var k in tally){ if(tally[k]>n){best=k;n=tally[k];tie=false;} else if(tally[k]===n) tie=true; }
   return {owner:best,contested:tie&&!!best};
 }
+function colOf(k){ return (D.factions[k]||{}).color || "#888"; }
+function nameOf(k){ return (D.factions[k]||{}).name || ""; }
 
-const cv=document.getElementById("strip");
-const dpr=2;
+var cv=document.getElementById("strip");
+var dpr = COMPACT ? 3 : 2;
 cv.width=W*dpr; cv.height=H*dpr;
-const c=cv.getContext("2d");
+var c=cv.getContext("2d");
 c.setTransform(dpr,0,0,dpr,0,0);
 
 c.fillStyle="#06090F"; c.fillRect(0,0,W,H);
 c.strokeStyle="rgba(78,205,196,.05)"; c.lineWidth=1;
-for(let x=0;x<W;x+=44){c.beginPath();c.moveTo(x+.5,0);c.lineTo(x+.5,H);c.stroke();}
-for(let y=0;y<H;y+=44){c.beginPath();c.moveTo(0,y+.5);c.lineTo(W,y+.5);c.stroke();}
+var grid = COMPACT ? 28 : 44;
+for(var gx=0;gx<W;gx+=grid){c.beginPath();c.moveTo(gx+.5,0);c.lineTo(gx+.5,H);c.stroke();}
+for(var gy=0;gy<H;gy+=grid){c.beginPath();c.moveTo(0,gy+.5);c.lineTo(W,gy+.5);c.stroke();}
 
-const padL=100,padR=28,axisY=H*0.52,span=W-padL-padR;
-const totalW=D.sectors.reduce((a,s)=>a+s.weight,0)||1;
-let cursor=padL; const bands=[];
-for(const s of D.sectors){ const w=span*(s.weight/totalW); bands.push({s,x0:cursor,x1:cursor+w}); cursor+=w; }
+// Type scale in DISPLAY pixels - sized for legibility first, with the
+// layout fitted around it. The reverse of the first attempt.
+var FS = COMPACT
+  ? { title:11, holder:10, body:10, moon:8.5, foot:9, sun:12 }
+  : { title:10, holder:9,  body:9.5, moon:8.5, foot:9, sun:11 };
 
-// sector wash
-for(const {s,x0,x1} of bands){
-  const d=dominant(s); if(!d.owner) continue;
-  const col=(D.factions[d.owner]||{}).color||"#888";
-  const g=c.createLinearGradient(0,axisY-H*0.42,0,axisY+H*0.42);
-  g.addColorStop(0,hexA(col,0));
-  g.addColorStop(.42,hexA(col,d.contested?.13:.22));
-  g.addColorStop(.58,hexA(col,d.contested?.13:.22));
-  g.addColorStop(1,hexA(col,0));
-  c.fillStyle=g;
-  const pad=5, bw=Math.max(2,(x1-x0)-pad*2);
-  c.fillRect(x0+pad,0,bw,H);
-  if(d.contested){
-    c.save(); c.beginPath(); c.rect(x0+pad,0,bw,H); c.clip();
-    c.strokeStyle=hexA(col,.16); c.lineWidth=2;
-    for(let x=x0-H;x<x1+H;x+=11){c.beginPath();c.moveTo(x,H);c.lineTo(x+H,0);c.stroke();}
-    c.restore();
+function drawSun(x, cy, r){
+  var sunCol = colOf(D.starOwner);
+  var sg=c.createRadialGradient(x,cy,3,x,cy,r);
+  sg.addColorStop(0,"rgba(255,236,180,.95)");
+  sg.addColorStop(.45,hexA(sunCol,.42));
+  sg.addColorStop(1,"rgba(255,194,74,0)");
+  c.fillStyle=sg; c.beginPath(); c.arc(x,cy,r,0,Math.PI*2); c.fill();
+  c.strokeStyle=hexA(sunCol,.85); c.lineWidth=2;
+  c.beginPath(); c.arc(x,cy,r*0.42,0,Math.PI*2); c.stroke();
+  c.textAlign="left"; c.textBaseline="alphabetic";
+  c.font='700 '+FS.sun+'px ui-monospace, Menlo, Consolas, monospace';
+  c.fillStyle="#FFD98A"; c.fillText("SOL", x+8, cy+4);
+  if(D.starOwner){
+    c.font='600 '+(FS.sun-2)+'px ui-monospace, Menlo, Consolas, monospace';
+    c.fillStyle=hexA(sunCol,.95);
+    c.fillText(fitText(c, shortName(nameOf(D.starOwner)), 78), x+8, cy+16);
   }
 }
 
-// the star
-const sunOwner=D.starOwner, sunCol=(D.factions[sunOwner]||{}).color||"#FFC24A";
-const sunR=H*0.46;
-const sg=c.createRadialGradient(6,axisY,4,6,axisY,sunR);
-sg.addColorStop(0,"rgba(255,236,180,.95)");
-sg.addColorStop(.45,hexA(sunCol,.42));
-sg.addColorStop(1,"rgba(255,194,74,0)");
-c.fillStyle=sg; c.beginPath(); c.arc(6,axisY,sunR,0,Math.PI*2); c.fill();
-c.strokeStyle=hexA(sunCol,.85); c.lineWidth=2;
-c.beginPath(); c.arc(6,axisY,sunR*0.42,0,Math.PI*2); c.stroke();
-c.font='700 11px ui-monospace, Menlo, Consolas, monospace';
-c.fillStyle="#FFD98A"; c.textAlign="left"; c.textBaseline="alphabetic";
-c.fillText("SOL",20,axisY+4);
-if(sunOwner){
-  c.font='600 9px ui-monospace, Menlo, Consolas, monospace';
-  c.fillStyle=hexA(sunCol,.95);
-  c.fillText(fitText(c,shortName((D.factions[sunOwner]||{}).name),74),20,axisY+17);
-}
+// One sector cell, CLIPPED to its own band so a long name can never
+// bleed into a neighbour - the failure that wrecked the first version.
+function drawSector(s, x0, x1, yTop, yBot){
+  var cx=(x0+x1)/2, bandW=(x1-x0)-10, d=dominant(s);
+  var cy = yTop + (yBot-yTop)*0.46;
 
-// sectors
-for(const {s,x0,x1} of bands){
-  const cx=(x0+x1)/2, d=dominant(s), bandW=(x1-x0)-8;
+  if(d.owner){
+    var col=colOf(d.owner);
+    var g=c.createLinearGradient(0,yTop,0,yBot);
+    g.addColorStop(0,hexA(col,0));
+    g.addColorStop(.40,hexA(col,d.contested?.13:.22));
+    g.addColorStop(.62,hexA(col,d.contested?.13:.22));
+    g.addColorStop(1,hexA(col,0));
+    c.fillStyle=g;
+    c.fillRect(x0+4,yTop,Math.max(2,(x1-x0)-8),yBot-yTop);
+    if(d.contested){
+      c.save(); c.beginPath(); c.rect(x0+4,yTop,Math.max(2,(x1-x0)-8),yBot-yTop); c.clip();
+      c.strokeStyle=hexA(col,.16); c.lineWidth=2;
+      for(var hx=x0-(yBot-yTop);hx<x1+(yBot-yTop);hx+=11){
+        c.beginPath(); c.moveTo(hx,yBot); c.lineTo(hx+(yBot-yTop),yTop); c.stroke(); }
+      c.restore();
+    }
+  }
 
+  c.save();
+  c.beginPath(); c.rect(x0,yTop,x1-x0,yBot-yTop); c.clip();
   c.textAlign="center"; c.textBaseline="alphabetic";
-  c.font='700 10px ui-monospace, Menlo, Consolas, monospace';
-  c.fillStyle=d.owner?hexA((D.factions[d.owner]||{}).color,.92):"rgba(147,163,184,.7)";
-  c.fillText(fitText(c,s.label.toUpperCase().split("").join(" "),bandW),cx,22);
 
-  // who holds it — the line that turns a colour into a claim
-  c.font='700 9px ui-monospace, Menlo, Consolas, monospace';
-  if(d.contested){
-    c.fillStyle="rgba(255,194,74,.92)";
-    c.fillText("CONTESTED",cx,35);
-  } else if(d.owner){
-    c.fillStyle=hexA((D.factions[d.owner]||{}).color,.95);
-    c.fillText(fitText(c,shortName((D.factions[d.owner]||{}).name),bandW),cx,35);
-  } else {
-    c.fillStyle="rgba(95,113,134,.8)";
-    c.fillText("UNCLAIMED",cx,35);
-  }
+  // Sector name. NO letter-spacing: the split("").join(" ") trick that
+  // read well at 1200px made every title ~2x wider and was the single
+  // biggest cause of collisions at embed width.
+  c.font='700 '+FS.title+'px ui-monospace, Menlo, Consolas, monospace';
+  c.fillStyle=d.owner?hexA(colOf(d.owner),.95):"rgba(147,163,184,.75)";
+  c.fillText(fitText(c,s.label.toUpperCase(),bandW), cx, yTop+15);
 
-  const many=s.bodies.length>1;
-  s.bodies.forEach((b,i)=>{
-    let bx=cx,by=axisY;
-    if(many){
-      const cols=Math.ceil(s.bodies.length/3), col=Math.floor(i/3), row=i%3;
-      const gapX=Math.min(26,(x1-x0)/(cols+1));
-      bx=cx+(col-(cols-1)/2)*gapX; by=axisY+(row-1)*22;
-    }
-    const r=b.kind==="g"?15:b.kind==="p"?10:4.5;
-    const col=b.owner?((D.factions[b.owner]||{}).color||"#888"):"#4A5A6B";
-    if(b.owner){ c.fillStyle=hexA(col,.18); c.beginPath(); c.arc(bx,by,r+5,0,Math.PI*2); c.fill(); }
-    c.fillStyle=b.owner?col:"#26333F";
-    c.beginPath(); c.arc(bx,by,r,0,Math.PI*2); c.fill();
-    c.strokeStyle=b.owner?hexA(col,.9):"rgba(147,163,184,.45)"; c.lineWidth=1.5;
-    c.beginPath(); c.arc(bx,by,r,0,Math.PI*2); c.stroke();
-    if(b.kind==="g"){
-      c.strokeStyle=b.owner?hexA(col,.5):"rgba(147,163,184,.3)"; c.lineWidth=1.5;
-      c.beginPath(); c.ellipse(bx,by,r*1.85,r*0.42,-0.32,0,Math.PI*2); c.stroke();
-    }
-    if(!many){
-      c.font='600 9.5px ui-monospace, Menlo, Consolas, monospace';
-      c.fillStyle="rgba(231,238,246,.82)"; c.textAlign="center";
-      c.fillText(fitText(c,b.name.toUpperCase(),bandW),bx,by-r-9);
-    }
-  });
+  c.font='700 '+FS.holder+'px ui-monospace, Menlo, Consolas, monospace';
+  if(d.contested){ c.fillStyle="rgba(255,194,74,.95)"; c.fillText("CONTESTED",cx,yTop+29); }
+  else if(d.owner){
+    c.fillStyle=hexA(colOf(d.owner),.95);
+    c.fillText(fitText(c,shortName(nameOf(d.owner)),bandW),cx,yTop+29);
+  } else { c.fillStyle="rgba(95,113,134,.85)"; c.fillText("UNCLAIMED",cx,yTop+29); }
+
+  var many=s.bodies.length>1;
   if(many){
-    c.font='600 9px ui-monospace, Menlo, Consolas, monospace';
-    c.fillStyle="rgba(147,163,184,.75)"; c.textAlign="center";
-    c.fillText(s.bodies.length+" BODIES",cx,axisY-46);
-  }
-
-  if(s.moons&&s.moons.length){
-    s.moons.forEach((m,i)=>{
-      const my=axisY+40+i*17;
-      const col=m.owner?((D.factions[m.owner]||{}).color||"#888"):"#39485A";
-      c.fillStyle=col; c.beginPath(); c.arc(cx,my,3.6,0,Math.PI*2); c.fill();
-      c.strokeStyle="rgba(6,9,15,.9)"; c.lineWidth=1;
-      c.beginPath(); c.arc(cx,my,3.6,0,Math.PI*2); c.stroke();
-      c.font='500 8.5px ui-monospace, Menlo, Consolas, monospace';
-      c.fillStyle="rgba(147,163,184,.7)"; c.textAlign="left";
-      c.fillText(m.name.toUpperCase(),cx+8,my+3);
+    // Pooled band: a grid of pips. Individual rock names carry no
+    // decision value at this size, so they become a count.
+    var per=Math.min(4,Math.max(2,Math.floor(bandW/16)));
+    var rws=Math.ceil(s.bodies.length/per);
+    s.bodies.forEach(function(b,i){
+      var rr=Math.floor(i/per), cc=i%per;
+      var n=Math.min(per,s.bodies.length-rr*per);
+      var bx=cx+(cc-(n-1)/2)*15;
+      var by=cy-((rws-1)/2)*15+rr*15;
+      c.fillStyle=b.owner?colOf(b.owner):"#2A3745";
+      c.beginPath(); c.arc(bx,by,5,0,Math.PI*2); c.fill();
+      c.strokeStyle=b.owner?hexA(colOf(b.owner),.9):"rgba(147,163,184,.4)";
+      c.lineWidth=1.2; c.beginPath(); c.arc(bx,by,5,0,Math.PI*2); c.stroke();
     });
-    c.strokeStyle="rgba(147,163,184,.18)"; c.lineWidth=1;
-    c.beginPath(); c.moveTo(cx,axisY+18); c.lineTo(cx,axisY+23+s.moons.length*17-17); c.stroke();
+    c.font='600 '+FS.moon+'px ui-monospace, Menlo, Consolas, monospace';
+    c.fillStyle="rgba(147,163,184,.8)";
+    c.fillText(s.bodies.length+" BODIES", cx, yBot-10);
+  } else {
+    var b=s.bodies[0];
+    var r=b.kind==="g"?15:b.kind==="p"?11:7;
+    var bcol=b.owner?colOf(b.owner):"#4A5A6B";
+    if(b.owner){ c.fillStyle=hexA(bcol,.18); c.beginPath(); c.arc(cx,cy,r+6,0,Math.PI*2); c.fill(); }
+    c.fillStyle=b.owner?bcol:"#26333F";
+    c.beginPath(); c.arc(cx,cy,r,0,Math.PI*2); c.fill();
+    c.strokeStyle=b.owner?hexA(bcol,.9):"rgba(147,163,184,.45)"; c.lineWidth=1.5;
+    c.beginPath(); c.arc(cx,cy,r,0,Math.PI*2); c.stroke();
+    if(b.kind==="g"){
+      c.strokeStyle=b.owner?hexA(bcol,.5):"rgba(147,163,184,.3)"; c.lineWidth=1.5;
+      c.beginPath(); c.ellipse(cx,cy,r*1.8,r*0.4,-0.32,0,Math.PI*2); c.stroke();
+    }
+    // Moons as a pip cluster, NOT a labelled list. Those labels were
+    // unbounded text running clean across neighbouring sectors.
+    var moons=s.moons||[];
+    if(moons.length){
+      var mper=Math.min(5,Math.max(3,Math.floor(bandW/13)));
+      moons.forEach(function(m,i){
+        var rr=Math.floor(i/mper), cc=i%mper;
+        var n=Math.min(mper,moons.length-rr*mper);
+        var mx=cx+(cc-(n-1)/2)*12;
+        var my=cy+r+16+rr*12;
+        c.fillStyle=m.owner?colOf(m.owner):"#39485A";
+        c.beginPath(); c.arc(mx,my,4,0,Math.PI*2); c.fill();
+        c.strokeStyle="rgba(6,9,15,.9)"; c.lineWidth=1;
+        c.beginPath(); c.arc(mx,my,4,0,Math.PI*2); c.stroke();
+      });
+      c.font='600 '+FS.moon+'px ui-monospace, Menlo, Consolas, monospace';
+      c.fillStyle="rgba(147,163,184,.75)";
+      c.fillText(moons.length+(moons.length===1?" MOON":" MOONS"), cx, yBot-10);
+    }
   }
+  c.restore();
 }
 
-c.strokeStyle="rgba(78,205,196,.18)"; c.lineWidth=1;
-c.beginPath(); c.moveTo(padL,H-26); c.lineTo(W-padR,H-26); c.stroke();
-c.font='600 9px ui-monospace, Menlo, Consolas, monospace';
-c.fillStyle="rgba(95,113,134,.95)"; c.textAlign="left";
-c.fillText((D.game.name+" \\u00b7 TICK "+D.game.tick+" \\u00b7 "+D.bodyCount+" BODIES").toUpperCase(),padL,H-12);
-c.textAlign="right";
-c.fillText("ORBITAL HERALD",W-padR,H-12);
+// Ten sectors across 550px is ~55px each - not enough for a name, a
+// holder and a planet. Two rows doubles the width per sector, which is
+// what makes the embed legible at all.
+var secs = D.sectors.slice();
+var rows = COMPACT
+  ? [secs.slice(0,Math.ceil(secs.length/2)), secs.slice(Math.ceil(secs.length/2))]
+  : [secs];
+var footH = 22;
+var rowH = (H-footH)/rows.length;
 
-// Signals the screenshotter that a real frame exists — waiting on this
-// beats guessing a sleep duration.
+rows.forEach(function(rowSecs, ri){
+  var yTop = ri*rowH, yBot = yTop + rowH;
+  var x0 = 8;
+  if(ri===0){
+    drawSun(COMPACT?10:6, yTop+rowH*0.46, Math.min(rowH*0.46, COMPACT?54:96));
+    x0 = COMPACT ? 78 : 100;
+  }
+  var total = rowSecs.reduce(function(a,s){return a+s.weight;},0)||1;
+  var cur = x0;
+  var avail = (W-8) - x0;
+  rowSecs.forEach(function(s){
+    var w = avail*(s.weight/total);
+    drawSector(s, cur, cur+w, yTop, yBot);
+    cur += w;
+  });
+  if(ri<rows.length-1){
+    c.strokeStyle="rgba(78,205,196,.12)"; c.lineWidth=1;
+    c.beginPath(); c.moveTo(8,yBot+.5); c.lineTo(W-8,yBot+.5); c.stroke();
+  }
+});
+
+c.font='600 '+FS.foot+'px ui-monospace, Menlo, Consolas, monospace';
+c.fillStyle="rgba(95,113,134,.95)"; c.textAlign="left"; c.textBaseline="alphabetic";
+c.fillText((D.game.name+" · TICK "+D.game.tick).toUpperCase(), 10, H-8);
+c.textAlign="right";
+c.fillText(D.bodyCount+" BODIES", W-10, H-8);
+
 cv.setAttribute("data-ready","1");
 </script>
 </body></html>`;
