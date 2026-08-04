@@ -940,6 +940,15 @@ export default {
       // separate catch.
       try {
         await maybeRunDailyDigest(env);
+        // Personal briefings. Separate from the Herald on purpose: one is
+        // a newspaper for the channel, the other is mail for a person,
+        // and they want different hours.
+        try {
+          const sitrep = await import('./situationReport.js');
+          await sitrep.maybeSendDailySitreps(env);
+        } catch (e) {
+          console.error('sitrep cron failed', e);
+        }
       } catch (e) {
         console.error('daily digest failed', e);
       }

@@ -185,7 +185,7 @@ export async function buildSituationReport(env, gameId, userId) {
  * Send the briefing to every linked human in a game. `force` bypasses
  * the once-a-day dedupe so it can be triggered on demand for testing.
  */
-export async function sendSituationReports(env, gameId, { force = false, onlyUserId = null } = {}) {
+export async function sendSituationReports(env, gameId, { force = false, onlyUserId = null, quietOk = true } = {}) {
   const notify = await import('./notify.js');
   const rows = (await env.DB
     .prepare(
@@ -202,6 +202,13 @@ export async function sendSituationReports(env, gameId, { force = false, onlyUse
     if (onlyUserId && r.user_id !== onlyUserId) continue;
     const report = await buildSituationReport(env, gameId, r.user_id);
     if (!report) { out.push({ user: r.user_id, sent: false, reason: 'no_faction' }); continue; }
+    // A briefing that says "nothing happened" is how players learn to
+    // stop opening briefings. When quiet days are suppressed, every
+    // report that DOES arrive means something wants you.
+    if (!force && quietOk === false && report.urgency === 0) {
+      out.push({ user: r.user_id, sent: false, reason: 'quiet_suppressed' });
+      continue;
+    }
     const res = await notify.sendDm(env, {
       userId: r.user_id,
       gameId,
@@ -214,4 +221,32 @@ export async function sendSituationReports(env, gameId, { force = false, onlyUse
     out.push({ user: r.user_id, ...res, urgency: report.urgency });
   }
   return out;
+}
+
+/**
+ * Cron entry point. Called every minute alongside the tick advancer and
+ * the Herald; self-gates to the configured Eastern hour.
+ *
+ * The per-player dedupe key is the real guard, not this hour check: the
+ * cron fires ~60 times inside the target hour, and only the first send
+ * per player per day claims the key. That means a worker restart, a
+ * retry, or a slow minute can't produce duplicate briefings.
+ */
+export async function maybeSendDailySitreps(env) {
+  const settings = await import('./botSettings.js');
+  const cfg = await settings.getSettings(env);
+  if (!cfg.sitrep_enabled) return;
+  if (!settings.isEasternHour(Date.now(), cfg.sitrep_hour_eastern)) return;
+
+  const games = (await env.DB
+    .prepare(`SELECT id FROM games WHERE status = 'active'`)
+    .all()).results ?? [];
+
+  for (const g of games) {
+    try {
+      await sendSituationReports(env, g.id, { quietOk: cfg.sitrep_send_when_quiet });
+    } catch (e) {
+      console.error('sitrep batch failed', e, { gameId: g.id });
+    }
+  }
 }

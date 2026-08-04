@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { apiFetch, RoomSummary } from './api';
 import { useAuth } from './AuthContext';
 import { AdminAnalytics } from './AdminAnalytics';
+import { BotControl } from './BotControl';
 
 // Full-screen pre-game lobby. The player picks one of four sections:
 //   - My Games   : resume rooms they've already joined
@@ -13,7 +14,7 @@ import { AdminAnalytics } from './AdminAnalytics';
 // in the room-detail view. The lobby itself never knows about ticks or
 // game state — it's just the discovery / setup phase.
 
-type Tab = 'my' | 'browse' | 'create' | 'code' | 'admin';
+type Tab = 'my' | 'browse' | 'create' | 'code' | 'admin' | 'bot';
 
 interface Props {
   onEnterRoom: (roomId: string) => void;
@@ -76,6 +77,9 @@ export function MultiplayerLobby({ onEnterRoom, onExit }: Props) {
         {user?.is_admin && (
           <TabButton active={tab === 'admin'} onClick={() => setTab('admin')}>Analytics</TabButton>
         )}
+        {user?.is_admin && (
+          <TabButton active={tab === 'bot'} onClick={() => setTab('bot')}>Bot</TabButton>
+        )}
       </nav>
 
       <main className="mp-lobby__main">
@@ -91,6 +95,7 @@ export function MultiplayerLobby({ onEnterRoom, onExit }: Props) {
         {tab === 'create' && <CreatePanel onCreated={onEnterRoom} />}
         {tab === 'code'   && <JoinByCodePanel onJoined={onEnterRoom} />}
         {tab === 'admin' && user?.is_admin && <AdminAnalytics onEnterRoom={onEnterRoom} />}
+        {tab === 'bot' && user?.is_admin && <BotControl />}
       </main>
     </div>
   );

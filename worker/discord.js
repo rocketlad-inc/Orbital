@@ -504,6 +504,86 @@ async function handleRegisterCommands(req, env, { session }) {
 }
 
 /**
+ * GET /api/admin/bot — everything the control panel renders: settings,
+ * which categories each linked player has muted, recent deliveries, and
+ * whether the bot is actually wired (secrets present).
+ */
+async function handleBotOverview(_req, env, { session }) {
+  if (!session || !isAdminEmail(session.email)) return err(404, 'not_found', 'no such route');
+  const settingsMod = await import('./botSettings.js');
+  const notify = await import('./notify.js');
+
+  const settings = await settingsMod.getSettings(env);
+
+  const players = (await env.DB
+    .prepare(
+      `SELECT u.id, u.display_name, u.discord_username, u.discord_id
+         FROM users u WHERE u.discord_id IS NOT NULL ORDER BY u.display_name`,
+    ).all()).results ?? [];
+  for (const p of players) {
+    p.prefs = await notify.getPrefs(env, p.id);
+    delete p.discord_id;          // no need to expose ids to the client
+  }
+
+  const recent = (await env.DB
+    .prepare(
+      `SELECT n.category, n.ok, n.created_ms, n.game_id, u.display_name
+         FROM notification_log n LEFT JOIN users u ON u.id = n.user_id
+        ORDER BY n.created_ms DESC LIMIT 40`,
+    ).all()).results ?? [];
+
+  const counts = (await env.DB
+    .prepare(
+      `SELECT category, COUNT(*) AS n, SUM(ok) AS delivered
+         FROM notification_log WHERE created_ms > ?
+        GROUP BY category`,
+    ).bind(Date.now() - 7 * 86400000).all()).results ?? [];
+
+  const games = (await env.DB
+    .prepare(`SELECT g.id, r.name, g.current_tick FROM games g JOIN rooms r ON r.id=g.id WHERE g.status='active'`)
+    .all()).results ?? [];
+
+  return json({
+    ok: true,
+    settings,
+    defaults: settingsMod.DEFAULTS,
+    categories: notify.CATEGORIES,
+    wired: {
+      bot_token: !!env.DISCORD_BOT_TOKEN,
+      public_key: !!env.DISCORD_PUBLIC_KEY,
+      digest_webhook: !!env.DISCORD_DIGEST_WEBHOOK,
+      channel_override: !!env.DISCORD_CHANNEL_ID,
+    },
+    players, recent, counts, games,
+  });
+}
+
+/** PATCH /api/admin/bot — write one setting. */
+async function handleBotSettingWrite(req, env, { session }) {
+  if (!session || !isAdminEmail(session.email)) return err(404, 'not_found', 'no such route');
+  const settingsMod = await import('./botSettings.js');
+  let body;
+  try { body = await req.json(); } catch { return err(400, 'bad_request', 'invalid json'); }
+  const res = await settingsMod.setSetting(env, body.key, body.value, session.user_id);
+  if (!res.ok) return err(400, 'bad_request', res.reason);
+  return json({ ok: true, settings: await settingsMod.getSettings(env) });
+}
+
+/** PATCH /api/admin/bot/prefs — mute a category for a specific player. */
+async function handleBotPrefWrite(req, env, { session }) {
+  if (!session || !isAdminEmail(session.email)) return err(404, 'not_found', 'no such route');
+  const notify = await import('./notify.js');
+  let body;
+  try { body = await req.json(); } catch { return err(400, 'bad_request', 'invalid json'); }
+  if (!body.user_id) return err(400, 'bad_request', 'user_id required');
+  if (body.category === 'all') await notify.setAllPrefs(env, body.user_id, !!body.enabled);
+  else if (!(await notify.setPref(env, body.user_id, body.category, !!body.enabled))) {
+    return err(400, 'bad_request', 'unknown category');
+  }
+  return json({ ok: true, prefs: await notify.getPrefs(env, body.user_id) });
+}
+
+/**
  * POST /api/admin/sitrep/:gameId[?user=<id>&force=1]
  * Fire situation-report DMs on demand. Exists because the scheduled
  * version can only be observed once a day — which is a miserable loop
@@ -548,6 +628,9 @@ async function handleAnnounceProposal(_req, env, { session, params }) {
 }
 
 export const routes = [
+  { method: 'GET',   pattern: '/api/admin/bot', auth: 'required', handle: handleBotOverview },
+  { method: 'PATCH', pattern: '/api/admin/bot', auth: 'required', handle: handleBotSettingWrite },
+  { method: 'PATCH', pattern: '/api/admin/bot/prefs', auth: 'required', handle: handleBotPrefWrite },
   { method: 'POST', pattern: '/api/admin/discord/register-commands', auth: 'required', handle: handleRegisterCommands },
   { method: 'POST', pattern: /^\/api\/admin\/sitrep\/(?<gameId>[^/]+)$/, auth: 'required', handle: handleSitrepNow },
   { method: 'POST', pattern: /^\/api\/admin\/senate\/(?<proposalId>[^/]+)\/announce$/, auth: 'required', handle: handleAnnounceProposal },

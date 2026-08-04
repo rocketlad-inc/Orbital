@@ -1855,7 +1855,15 @@ export async function maybeRunDailyDigest(env) {
   if (!webhook) return;                              // feature off
 
   const now = Date.now();
-  if (!isEasternDigestHour(now)) return;              // only at noon Eastern
+  // Hour and master switch are now runtime settings, so the Herald can be
+  // rescheduled or paused from the control panel without a deploy.
+  try {
+    const cfg = await (await import('./botSettings.js')).getSettings(env);
+    if (!cfg.herald_enabled) return;
+    if (!(await import('./botSettings.js')).isEasternHour(now, cfg.herald_hour_eastern)) return;
+  } catch {
+    if (!isEasternDigestHour(now)) return;            // settings unavailable
+  }
 
   const games = (await env.DB
     .prepare(`SELECT g.id, g.current_tick, r.name
