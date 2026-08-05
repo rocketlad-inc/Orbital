@@ -2555,12 +2555,21 @@ export class Room {
         // capital ships become unplayable.
         tier.sort((a, b) => (a.id < b.id ? -1 : 1));   // deterministic tie-break
         const atkSpeed = speedOfShip(attacker);
+        // Nearest speed wins; on an EQUAL gap the slower target wins
+        // (close, then below, then above — Lorne's rule). Slower is the
+        // better shot, so the tie resolves toward the target you'd
+        // actually hit, instead of falling through to ship-id order.
         let target = tier[0];
         let bestGap = Infinity;
+        let bestBelow = false;
         for (const cand of tier) {
           const candSpeed = isShipTier ? speedOfShip(cand) : speedOfSettlement();
           const gap = Math.abs(atkSpeed - candSpeed);
-          if (gap < bestGap) { bestGap = gap; target = cand; }
+          const below = candSpeed <= atkSpeed;
+          if (gap < bestGap - 1e-9
+              || (Math.abs(gap - bestGap) <= 1e-9 && below && !bestBelow)) {
+            bestGap = gap; bestBelow = below; target = cand;
+          }
         }
         shooterIdx++;
 

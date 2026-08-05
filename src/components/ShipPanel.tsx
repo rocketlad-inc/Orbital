@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { Ship, Body, Settlement, TradeRoute, TargetPriorityKey } from '../types';
-import { TargetPriorityCards } from './TargetPriorityCards';
+import { TargetPriorityCards, autoTargetOrderFor } from './TargetPriorityCards';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { maintenanceRatesForShip } from '../game/maintenance';
 import { nearestShipyardBodyId, isDamagedShip } from '../game/repair';
@@ -1419,6 +1419,9 @@ export const ShipPanel: React.FC = () => {
               {mpActions && ship.ownedBy === 'player' && (
                 <TargetPriorityCards
                   value={ship.targetPriority ?? null}
+                  autoOrder={autoTargetOrderFor(
+                    combatSpeedOf(ship.class as ShipClassName, ship.parts),
+                  )}
                   onChange={(next) => applyOrders({ targetPriority: next })}
                 />
               )}

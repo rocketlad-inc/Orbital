@@ -36,6 +36,33 @@ const CATEGORY_META: Record<TargetPriorityKey, { label: string; sub: string; gly
  *  keys off this, so the two files move together or the preview drifts. */
 const CARD_STRIDE = 40;
 
+/** Base combat speed per category — mirrors SHIP_COMBAT_STATS /
+ *  SETTLEMENT_SPEED in worker/factions.js. Display only: real candidates
+ *  carry engine parts, but the class base is what makes the auto ladder
+ *  legible. KEEP IN SYNC. */
+const CATEGORY_SPEED: Record<TargetPriorityKey, number> = {
+  corvette: 0.85, frigate: 0.50, destroyer: 0.30,
+  civilian: 0.55, settlement: 0.30,
+};
+
+/** What AUTO actually does for a ship of the given combat speed, as a
+ *  ranked list: warship classes by speed proximity (equal gap → the
+ *  slower class first), then civilians, then settlements — the server's
+ *  peer targeting inside its tier ladder (worker/room.js). Rendering a
+ *  static class-order ladder here made a destroyer look like it hunts
+ *  corvettes first, which is exactly backwards. */
+export function autoTargetOrderFor(speed: number): TargetPriorityKey[] {
+  const warships: TargetPriorityKey[] = ['corvette', 'frigate', 'destroyer'];
+  warships.sort((a, b) => {
+    const ga = Math.abs(speed - CATEGORY_SPEED[a]);
+    const gb = Math.abs(speed - CATEGORY_SPEED[b]);
+    if (Math.abs(ga - gb) > 1e-9) return ga - gb;
+    // Equal gap: below own speed beats above (close, then below, then above).
+    return (CATEGORY_SPEED[a] <= speed ? 0 : 1) - (CATEGORY_SPEED[b] <= speed ? 0 : 1);
+  });
+  return [...warships, 'civilian', 'settlement'];
+}
+
 export interface TargetPriorityCardsProps {
   /** Current ranked order; null = auto (server default). */
   value: TargetPriorityKey[] | null;
@@ -44,13 +71,17 @@ export interface TargetPriorityCardsProps {
   disabled?: boolean;
   /** Extra line under the header, e.g. "applies to 4 ships". */
   note?: string | null;
+  /** What AUTO ranks for THIS ship (autoTargetOrderFor). Omitted on the
+   *  bulk surfaces, where the group mixes classes and there is no single
+   *  "own speed" — those fall back to the generic ladder. */
+  autoOrder?: TargetPriorityKey[];
 }
 
 export const TargetPriorityCards: React.FC<TargetPriorityCardsProps> = ({
-  value, onChange, disabled, note,
+  value, onChange, disabled, note, autoOrder,
 }) => {
   const auto = value == null;
-  const order = value ?? TARGET_PRIORITY_DEFAULT;
+  const order = value ?? autoOrder ?? TARGET_PRIORITY_DEFAULT;
 
   // Drag state. dragIdx = which card is lifted; dy = raw pointer delta;
   // overIdx = the slot the card would land in if dropped now.
@@ -122,7 +153,7 @@ export const TargetPriorityCards: React.FC<TargetPriorityCardsProps> = ({
       <div className="tpc-head">
         <span className="tpc-title">TARGET PRIORITY</span>
         {auto ? (
-          <span className="tpc-badge tpc-badge--auto" title="Peer targeting: engages whoever is closest to this ship's own speed, warships before civilians before settlements. Drag a card to take manual control.">AUTO</span>
+          <span className="tpc-badge tpc-badge--auto" title="Peer targeting: closest to this ship's own speed first, slower before faster on a tie; warships before civilians before settlements. Drag a card to take manual control.">AUTO</span>
         ) : (
           <button
             className="tpc-badge tpc-badge--reset"
@@ -185,7 +216,9 @@ export const TargetPriorityCards: React.FC<TargetPriorityCardsProps> = ({
       </div>
       <div className="tpc-foot">
         {auto
-          ? 'Auto: fights its speed peers first — drag to override.'
+          ? (autoOrder
+            ? 'Auto: this ship’s actual order — closest speed first, slower before faster. Drag to override.'
+            : 'Auto: closest speed first, slower before faster — drag to override.')
           : 'Engages the first ranked category present. Within a rank: closest speed.'}
       </div>
     </div>
