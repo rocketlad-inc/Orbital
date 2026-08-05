@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useGameContext } from '../state/gameContext';
-import { Ship, Body, Settlement, TradeRoute } from '../types';
+import { Ship, Body, Settlement, TradeRoute, TargetPriorityKey } from '../types';
+import { TargetPriorityCards } from './TargetPriorityCards';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { maintenanceRatesForShip } from '../game/maintenance';
 import { nearestShipyardBodyId, isDamagedShip } from '../game/repair';
@@ -521,6 +522,7 @@ export const ShipPanel: React.FC = () => {
     stance?: 'attack' | 'defensive' | 'hold';
     retreatHpPct?: 25 | 50 | 75 | null;
     detonateHpPct?: 25 | 50 | null;
+    targetPriority?: TargetPriorityKey[] | null;
   }) => {
     if (!mpActions) return;
     setOrdersError(null);
@@ -533,6 +535,7 @@ export const ShipPanel: React.FC = () => {
       ...(patch.stance !== undefined ? { stance: patch.stance } : {}),
       ...('retreatHpPct' in patch ? { retreatHpPct: patch.retreatHpPct ?? null } : {}),
       ...('detonateHpPct' in patch ? { detonateHpPct: patch.detonateHpPct ?? null } : {}),
+      ...('targetPriority' in patch ? { targetPriority: patch.targetPriority ?? null } : {}),
     }).then(res => {
       if (!res.ok) {
         setOrdersError(humanizeMpError(res.code, res.error, 'orders'));
@@ -1410,6 +1413,15 @@ export const ShipPanel: React.FC = () => {
                     ? 'Returns fire only — engages hostiles that attack here.'
                     : 'Holding fire — will not engage, even under attack.'}
               </div>
+              {/* Target priority (migration 0064): ranked drag cards.
+                  MP + own ship only — rivals' doctrine is their business
+                  and SP's frozen sim doesn't read the column. */}
+              {mpActions && ship.ownedBy === 'player' && (
+                <TargetPriorityCards
+                  value={ship.targetPriority ?? null}
+                  onChange={(next) => applyOrders({ targetPriority: next })}
+                />
+              )}
             </div>
           )}
 

@@ -682,7 +682,7 @@ const shipsP = env.DB
               -- to that design (and pays the fee) at its next friendly
               -- yard. The client shows a "Refit pending" badge.
               s.refit_pending_design_id,
-              s.stance, s.retreat_hp_pct, s.detonate_hp_pct,
+              s.stance, s.retreat_hp_pct, s.detonate_hp_pct, s.target_priority,
               s.captain_id, s.fleet_id, c.name AS captain_name, c.avatar_id AS captain_avatar,
               c.traits_json AS captain_traits
          FROM game_ships s

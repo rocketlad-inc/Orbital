@@ -2396,4 +2396,29 @@ CREATE TABLE IF NOT EXISTS game_combat_tally (
 
 CREATE INDEX IF NOT EXISTS idx_combat_tally_game ON game_combat_tally(game_id);
 ` },
+  { name: "0064_target_priority.sql", sql: `-- 0064_target_priority.sql
+--
+-- Player-set TARGET PRIORITY (combat v2 follow-up). The v2 targeting
+-- default is peer targeting — engage whoever is closest to your own
+-- speed, inside a fixed tier ladder (armed ships > civilians > armed
+-- stations > soft settlements). That default stays. This column lets a
+-- player OVERRIDE the ladder per ship with a ranked list of target
+-- categories, set from the ship card or in bulk.
+--
+--   NULL          auto — peer targeting, tier ladder (today's behavior)
+--   JSON array    ranked category keys, a permutation of:
+--                 ["corvette","frigate","destroyer","civilian","settlement"]
+--                 'civilian'   = freighters + colony ships
+--                 'settlement' = stations + cities (armed stations first
+--                                within the category, matching the ladder)
+--
+-- The combat loop walks the ranked list and engages the first category
+-- with a valid hostile present; WITHIN a category the nearest-speed pick
+-- is unchanged. Putting 'settlement' first is legal and deliberate — a
+-- raider can bomb the port while its escort tanks the guns. Stance,
+-- peace pacts, and defensive-aggressor gating all still apply before
+-- priority is consulted.
+
+ALTER TABLE game_ships ADD COLUMN target_priority TEXT;
+` },
 ];

@@ -8,7 +8,9 @@ import { useGameContext } from '../state/gameContext';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { loadoutSummary, countPart } from '../game/shipParts';
 import { effectiveShipMaxHp } from '../game/combat';
-import type { Ship, Captain } from '../types';
+import type { Ship, Captain, TargetPriorityKey } from '../types';
+import { TARGET_PRIORITY_DEFAULT } from '../types';
+import { TargetPriorityCards } from './TargetPriorityCards';
 import { rankTier, traitSummary, AVATAR_IDS } from '../game/captains';
 import { CaptainAvatar } from './CaptainAvatar';
 import { EditableName } from './EditableName';
@@ -152,6 +154,12 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const [bulkStance, setBulkStance] = useState<string>('');
   const [bulkRetreat, setBulkRetreat] = useState<string>('');
   const [bulkDetonate, setBulkDetonate] = useState<string>('');
+  // Bulk target priority (migration 0064). '' = keep, 'auto' = reset to
+  // peer targeting, 'custom' = apply bulkPriorityOrder (staged via the
+  // drag cards below the row).
+  const [bulkTargeting, setBulkTargeting] = useState<'' | 'auto' | 'custom'>('');
+  const [bulkPriorityOrder, setBulkPriorityOrder] =
+    useState<TargetPriorityKey[]>(TARGET_PRIORITY_DEFAULT);
   const [ordersNotice, setOrdersNotice] = useState<string | null>(null);
 
   const bodyById = useMemo(
@@ -484,7 +492,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     // hulls, but its state survives the selection change — drop it here
     // so a stale value can't ride along on a later SET ORDERS.
     const detonate = detonatorSelectedCount > 0 ? bulkDetonate : '';
-    if (!bulkStance && !bulkRetreat && !detonate) {
+    if (!bulkStance && !bulkRetreat && !detonate && !bulkTargeting) {
       setOrdersNotice('Pick at least one order to apply');
       return;
     }
@@ -497,12 +505,17 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
       ...(detonate
         ? { detonateHpPct: detonate === 'off' ? null : (Number(detonate) as 25 | 50) }
         : {}),
+      ...(bulkTargeting
+        ? { targetPriority: bulkTargeting === 'auto' ? null : bulkPriorityOrder }
+        : {}),
     }).then(res => {
       if (res.ok) {
         setOrdersNotice(`Orders set on ${visibleSelected.length} ship${visibleSelected.length === 1 ? '' : 's'}`);
         setBulkStance('');
         setBulkRetreat('');
         setBulkDetonate('');
+        setBulkTargeting('');
+        setBulkPriorityOrder(TARGET_PRIORITY_DEFAULT);
       } else {
         setOrdersNotice(humanizeMpError(res.code, res.error, 'orders'));
       }
@@ -1310,14 +1323,38 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                     <option value="50">Detonate below 50% HP</option>
                   </select>
                 )}
+                <select
+                  className="fleet-actionbar__select"
+                  value={bulkTargeting}
+                  onChange={(e) => setBulkTargeting(e.target.value as '' | 'auto' | 'custom')}
+                  title="Target priority: auto matches speed peers; custom ranks target categories"
+                >
+                  <option value="">Targeting: keep</option>
+                  <option value="auto">Targeting: auto</option>
+                  <option value="custom">Targeting: custom…</option>
+                </select>
                 <button
                   className="fleet-actionbar__btn fleet-actionbar__btn--primary"
                   onClick={issueBulkOrders}
-                  disabled={!bulkStance && !bulkRetreat
+                  disabled={!bulkStance && !bulkRetreat && !bulkTargeting
                     && !(bulkDetonate && detonatorSelectedCount > 0)}
                 >
                   Set orders
                 </button>
+              </div>
+            )}
+            {/* Staged priority cards — drag here, then SET ORDERS applies
+                the order to every selected ship in the same PATCH. */}
+            {mpActions && bulkTargeting === 'custom' && (
+              <div style={{ maxWidth: 300 }}>
+                <TargetPriorityCards
+                  value={bulkPriorityOrder}
+                  onChange={(next) => {
+                    if (next == null) setBulkTargeting('auto');
+                    else setBulkPriorityOrder(next);
+                  }}
+                  note={`Will apply to ${visibleSelected.length} selected ship${visibleSelected.length === 1 ? '' : 's'} on SET ORDERS.`}
+                />
               </div>
             )}
             {mpActions && bulkDetonate && bulkDetonate !== 'off' && detonatorSelectedCount > 0 && (

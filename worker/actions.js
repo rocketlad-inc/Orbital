@@ -2387,7 +2387,9 @@ async function handleRamAsteroid(req, env, ctx) {
 }
 
 // PATCH /api/games/:gameId/ships/orders
-// body: { ship_ids: string[], stance?, retreat_hp_pct?, detonate_hp_pct? }
+// body: { ship_ids: string[], stance?, retreat_hp_pct?, detonate_hp_pct?,
+//         target_priority? }  — target_priority: null = auto, or a ranked
+// permutation of TARGET_PRIORITY_KEYS (migration 0064).
 //
 // Bulk standing-orders update (DESIGN-identity-economy.md §3). Fields are
 // optional-but-at-least-one; an explicitly-null retreat/detonate value
@@ -2397,6 +2399,10 @@ async function handleRamAsteroid(req, env, ctx) {
 const STANCES = new Set(['attack', 'defensive', 'hold']);
 const RETREAT_PCTS = new Set([25, 50, 75]);
 const DETONATE_PCTS = new Set([25, 50]);
+// Target-priority category keys (migration 0064). A custom priority must
+// be a PERMUTATION of this exact set — every category ranked, none
+// duplicated — so the combat loop never falls off the end of the list.
+const TARGET_PRIORITY_KEYS = ['corvette', 'frigate', 'destroyer', 'civilian', 'settlement'];
 
 async function handleSetShipOrders(req, env, ctx) {
   const { gameId } = ctx.params;
@@ -2427,7 +2433,8 @@ async function handleSetShipOrders(req, env, ctx) {
   const hasStance   = 'stance' in body;
   const hasRetreat  = 'retreat_hp_pct' in body;
   const hasDetonate = 'detonate_hp_pct' in body;
-  if (!hasStance && !hasRetreat && !hasDetonate) {
+  const hasPriority = 'target_priority' in body;
+  if (!hasStance && !hasRetreat && !hasDetonate && !hasPriority) {
     return err(400, 'bad_request', 'no order fields supplied');
   }
   let stance = null;
@@ -2452,6 +2459,21 @@ async function handleSetShipOrders(req, env, ctx) {
       return err(400, 'bad_request', 'detonate_hp_pct must be null, 25, or 50');
     }
     detonatePct = v;
+  }
+  // target_priority: null = auto (peer targeting), or a full permutation
+  // of TARGET_PRIORITY_KEYS. Stored as a canonical JSON string.
+  let priorityJson = null;
+  if (hasPriority && body.target_priority !== null) {
+    const p = body.target_priority;
+    const valid = Array.isArray(p)
+      && p.length === TARGET_PRIORITY_KEYS.length
+      && new Set(p).size === p.length
+      && p.every(k => TARGET_PRIORITY_KEYS.includes(k));
+    if (!valid) {
+      return err(400, 'bad_request',
+        `target_priority must be null or a permutation of ${TARGET_PRIORITY_KEYS.join(', ')}`);
+    }
+    priorityJson = JSON.stringify(p);
   }
 
   // Ownership check for EVERY ship — all-or-nothing.
@@ -2480,6 +2502,7 @@ async function handleSetShipOrders(req, env, ctx) {
   if (hasStance)   { sets.push('stance = ?');          binds.push(stance); }
   if (hasRetreat)  { sets.push('retreat_hp_pct = ?');  binds.push(retreatPct); }
   if (hasDetonate) { sets.push('detonate_hp_pct = ?'); binds.push(detonatePct); }
+  if (hasPriority) { sets.push('target_priority = ?'); binds.push(priorityJson); }
   await env.DB
     .prepare(
       `UPDATE game_ships SET ${sets.join(', ')}
@@ -2495,6 +2518,7 @@ async function handleSetShipOrders(req, env, ctx) {
       ...(hasStance ? { stance } : {}),
       ...(hasRetreat ? { retreat_hp_pct: retreatPct } : {}),
       ...(hasDetonate ? { detonate_hp_pct: detonatePct } : {}),
+      ...(hasPriority ? { target_priority: priorityJson ? JSON.parse(priorityJson) : null } : {}),
     },
   });
 }

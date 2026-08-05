@@ -2080,6 +2080,7 @@ export class Room {
         `SELECT s.id, s.owner_faction_id, s.parent_body_id, s.hp, s.hp_max, s.damage_per_tick,
                 COALESCE(c.rank, s.rank) AS rank, s.ship_class, s.name, s.last_combat_tick,
                 s.stance, s.retreat_hp_pct, s.detonate_hp_pct, s.parts_json,
+                s.target_priority,
                 s.captain_id, s.fleet_id, c.traits_json AS captain_traits, c.name AS captain_name
            FROM game_ships s
            LEFT JOIN game_captains c ON c.id = s.captain_id
@@ -2096,6 +2097,19 @@ export class Room {
       s._parts = parsePartsJson(s.ship_class, s.parts_json);
       // Captain traits (spec §3) — small multiplicative modifiers.
       s._traits = parseTraits(s.captain_traits);
+      // Player-set target priority (migration 0064). NULL/bad JSON = auto.
+      // The API validated the permutation on write; a defensive re-check
+      // here means a hand-edited row degrades to auto instead of throwing
+      // mid-tick.
+      s._targetPriority = null;
+      if (s.target_priority) {
+        try {
+          const p = JSON.parse(s.target_priority);
+          if (Array.isArray(p) && p.length > 0 && p.every(k => typeof k === 'string')) {
+            s._targetPriority = p;
+          }
+        } catch { /* auto */ }
+      }
     }
 
     // (The old per-ship cadence gate lived here. COMBAT V2 fires every tick
@@ -2497,12 +2511,40 @@ export class Room {
           if (t.type === 'station' && weaponsLevelOf(t) >= 1) armedStations.push(t);
           else softSettlements.push(t);
         }
-        const tier = armedShips.length ? armedShips
-          : civilianShips.length ? civilianShips
-          : armedStations.length ? armedStations
-          : softSettlements;
+        // Player-set priority (migration 0064) overrides the ladder: walk
+        // the ranked categories and engage the first one with a live
+        // hostile. Putting 'settlement' above warships is legal — that's
+        // the raider doctrine the control exists for. Auto (NULL) keeps
+        // the ladder above.
+        let tier;
+        if (attacker._targetPriority) {
+          tier = [];
+          for (const cat of attacker._targetPriority) {
+            if (cat === 'civilian') tier = civilianShips;
+            else if (cat === 'settlement') {
+              // Preserve the ladder's sub-order inside the category:
+              // armed stations are the threat, they die first.
+              tier = armedStations.length ? armedStations : softSettlements;
+            } else tier = armedShips.filter(t => t.ship_class === cat);
+            if (tier.length > 0) break;
+          }
+          // Ranked list exhausted with hostiles still present (e.g. an
+          // armed freighter would never match a class key) — fall back to
+          // the ladder rather than standing idle in a fight.
+          if (tier.length === 0) {
+            tier = armedShips.length ? armedShips
+              : civilianShips.length ? civilianShips
+              : armedStations.length ? armedStations
+              : softSettlements;
+          }
+        } else {
+          tier = armedShips.length ? armedShips
+            : civilianShips.length ? civilianShips
+            : armedStations.length ? armedStations
+            : softSettlements;
+        }
         if (tier.length === 0) continue;
-        const isShipTier = tier === armedShips || tier === civilianShips;
+        const isShipTier = tier.length > 0 && tier[0].ship_class !== undefined;
         // COMBAT V2 — PEER TARGETING. Tier priority is unchanged (everything
         // in orbit still dies before a settlement is touched); what changes is
         // the pick WITHIN the tier: engage whoever is closest to your own

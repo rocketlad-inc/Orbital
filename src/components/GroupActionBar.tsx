@@ -21,6 +21,8 @@ import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { useBulkTransfer } from '../hooks/useBulkTransfer';
 import { humanizeMpError } from '../multiplayer/errorMessages';
+import type { TargetPriorityKey } from '../types';
+import { TargetPriorityCards } from './TargetPriorityCards';
 import './GroupActionBar.css';
 
 type Stance = 'attack' | 'defensive' | 'hold';
@@ -37,6 +39,11 @@ export const GroupActionBar: React.FC = () => {
   const bulkTransfer = useBulkTransfer();
   const [notice, setNotice] = useState<string | null>(null);
   const [dest, setDest] = useState('');
+  // Target-priority flyout. Group members may carry different priorities,
+  // so the cards open on the shared DEFAULT ladder — the first drop
+  // overwrites the whole group with one order (same immediate-apply model
+  // as the stance buttons).
+  const [showTargeting, setShowTargeting] = useState(false);
 
   const ids = uiState.selectedShipIds ?? [];
 
@@ -96,8 +103,20 @@ export const GroupActionBar: React.FC = () => {
 
   // Drop the notice whenever the group itself changes — a stale "3 ships
   // bound for Io" hanging over a different selection reads as this one's
-  // result.
-  useEffect(() => { setNotice(null); }, [uiState.selectedShipIds]);
+  // result. The targeting flyout closes with it: it was scoped to the
+  // old group.
+  useEffect(() => { setNotice(null); setShowTargeting(false); }, [uiState.selectedShipIds]);
+
+  // What the targeting flyout shows: if EVERY ship in the group already
+  // shares one custom order, start from it (so a tweak reads as a tweak);
+  // otherwise the default ladder. Above the early return — hooks must run
+  // on every render.
+  const sharedPriority = useMemo(() => {
+    const first = ships[0]?.targetPriority ?? null;
+    if (!first) return null;
+    const key = JSON.stringify(first);
+    return ships.every(s => JSON.stringify(s.targetPriority ?? null) === key) ? first : null;
+  }, [ships]);
 
   // Escape clears the group, matching how the panels dismiss.
   useEffect(() => {
@@ -122,6 +141,20 @@ export const GroupActionBar: React.FC = () => {
     });
   };
 
+  const setTargeting = (priority: TargetPriorityKey[] | null) => {
+    if (!mpActions) return;
+    const targets = ships.map(s => s.id);
+    if (targets.length === 0) return;
+    mpActions.setShipOrders({ shipIds: targets, targetPriority: priority }).then(res => {
+      setNotice(res.ok
+        ? (priority === null
+          ? `${targets.length} ship${targets.length === 1 ? '' : 's'} back to auto targeting`
+          : `Priority set on ${targets.length} ship${targets.length === 1 ? '' : 's'}`)
+        : humanizeMpError(res.code, res.error, 'orders'));
+    });
+  };
+
+
   return (
     <div className="group-bar" role="region" aria-label="Group actions">
       <div className="group-bar__row">
@@ -141,6 +174,11 @@ export const GroupActionBar: React.FC = () => {
                 onClick={() => setStance(s.id)}
               >{s.label}</button>
             ))}
+            <button
+              className={`group-bar__btn${showTargeting ? ' group-bar__btn--active' : ''}`}
+              title="Rank which target categories the group engages first"
+              onClick={() => setShowTargeting(v => !v)}
+            >TARGETING</button>
           </span>
         )}
         <button
@@ -177,6 +215,20 @@ export const GroupActionBar: React.FC = () => {
           SEND {movable.length}
         </button>
       </div>
+
+      {/* Target-priority flyout — every drop applies to the whole group
+          immediately, matching the stance buttons' apply model. */}
+      {mpActions && showTargeting && (
+        <div className="group-bar__targeting">
+          <TargetPriorityCards
+            value={sharedPriority}
+            onChange={setTargeting}
+            note={sharedPriority
+              ? undefined
+              : `Applies to all ${ships.length} ship${ships.length === 1 ? '' : 's'} on drop.`}
+          />
+        </div>
+      )}
 
       <div className="group-bar__hint">
         {notice ?? 'Drag a box or shift-click to add · shift-click a world to send them there'}

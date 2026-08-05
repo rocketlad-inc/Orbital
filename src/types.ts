@@ -343,7 +343,24 @@ export interface Ship {
   // Dead-man detonate threshold. null/undefined = off. Only meaningful
   // for hulls carrying a detonator part; inert otherwise.
   detonateHpPct?: 25 | 50 | null;
+  // Target priority (migration 0064). null/undefined = auto (peer
+  // targeting inside the tier ladder). Otherwise a ranked permutation of
+  // the five TargetPriorityKey categories — the ship engages the first
+  // ranked category with a live hostile at its body.
+  targetPriority?: TargetPriorityKey[] | null;
 }
+
+/** Target-priority category keys, mirroring TARGET_PRIORITY_KEYS in
+ *  worker/actions.js. 'civilian' = freighters + colony ships;
+ *  'settlement' = stations + cities. */
+export type TargetPriorityKey =
+  | 'corvette' | 'frigate' | 'destroyer' | 'civilian' | 'settlement';
+
+/** The auto/default ranking shown before a player customizes — matches the
+ *  server ladder (warships > civilians > settlements). Warship order here
+ *  is cosmetic: auto mode actually targets by speed proximity. */
+export const TARGET_PRIORITY_DEFAULT: TargetPriorityKey[] =
+  ['corvette', 'frigate', 'destroyer', 'civilian', 'settlement'];
 
 /** One confirmed kill credited to a ship. Stored on Ship.combatHistory.
  *  Recorded by combat.ts when a destroyed ship's top-damaging attacker

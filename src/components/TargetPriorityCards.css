@@ -1,0 +1,133 @@
+/* TargetPriorityCards — ranked drag-to-reorder cards.
+   CARD_STRIDE in the TSX is 40px = 34px card + 6px gap. Change both. */
+
+.tpc {
+  margin-top: 8px;
+}
+.tpc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.tpc-title {
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: #7fa0bb;
+}
+.tpc-badge {
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid #2a3b4d;
+  background: transparent;
+}
+.tpc-badge--auto {
+  color: #6fc06f;
+  border-color: rgba(111, 192, 111, 0.4);
+}
+.tpc-badge--reset {
+  color: #ffb84d;
+  border-color: rgba(255, 184, 77, 0.45);
+  cursor: pointer;
+  font-family: inherit;
+}
+.tpc-badge--reset:hover { background: rgba(255, 184, 77, 0.12); }
+.tpc-note {
+  font-size: 9px;
+  color: #b8c8d6;
+  margin: 2px 0 4px;
+}
+
+.tpc-list {
+  position: relative;
+}
+.tpc-card {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px 0 8px;
+  background: linear-gradient(180deg, #16202e 0%, #101823 100%);
+  border: 1px solid #22334a;
+  border-radius: 5px;
+  cursor: grab;
+  user-select: none;
+  touch-action: none; /* pointer drag owns vertical gestures on the card */
+  transition: transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1),
+              box-shadow 160ms ease, border-color 160ms ease;
+  will-change: transform;
+}
+.tpc-card--drag {
+  transition: box-shadow 160ms ease, border-color 160ms ease; /* raw Y follow */
+  cursor: grabbing;
+  z-index: 3;
+  border-color: #ffb84d;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+}
+.tpc--auto .tpc-card {
+  opacity: 0.72; /* greyed ladder until the player takes the stick */
+}
+.tpc--auto .tpc-card--drag,
+.tpc--auto .tpc-card:hover { opacity: 1; }
+.tpc--disabled .tpc-card { cursor: default; opacity: 0.5; }
+
+.tpc-rank {
+  width: 14px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #ffb84d;
+  font-variant-numeric: tabular-nums;
+}
+.tpc-glyph {
+  width: 14px;
+  text-align: center;
+  font-size: 10px;
+  color: #7fa0bb;
+}
+.tpc-labels {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+  min-width: 0;
+  flex: 1;
+}
+.tpc-label {
+  font-size: 9.5px;
+  letter-spacing: 0.09em;
+  color: #dfe8f0;
+}
+.tpc-sub {
+  font-size: 8px;
+  color: #6c7c8c;
+}
+.tpc-nudges {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.tpc-nudge {
+  background: transparent;
+  border: none;
+  color: #5f7890;
+  font-size: 7px;
+  line-height: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+}
+.tpc-nudge:hover:not(:disabled) { color: #ffb84d; }
+.tpc-nudge:disabled { opacity: 0.25; cursor: default; }
+
+.tpc-foot {
+  margin-top: 6px;
+  font-size: 8.5px;
+  font-style: italic;
+  color: #6c7c8c;
+  line-height: 1.4;
+}

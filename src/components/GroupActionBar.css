@@ -124,3 +124,15 @@
 @media (max-width: 720px) {
   .group-bar { bottom: 88px; }
 }
+
+/* Target-priority flyout (migration 0064) — the ranked cards drop in
+   under the button rows; width capped so five 34px cards read as a
+   compact stack, not a full-bar spread. */
+.group-bar__targeting {
+  margin-top: 6px;
+  max-width: 280px;
+}
+.group-bar__btn--active {
+  border-color: #ffb84d;
+  color: #ffb84d;
+}

@@ -205,6 +205,9 @@ interface ServerState {
     stance?: string | null;
     retreat_hp_pct?: number | null;
     detonate_hp_pct?: number | null;
+    /** Target priority (migration 0064). NULL = auto; else a JSON array
+     *  of ranked category keys. */
+    target_priority?: string | null;
     /** Captains (migration 0046). rank above is already the captain's
      *  (server COALESCEs). name/avatar/traits NULL on rival ships until
      *  intel.loadouts. */
@@ -523,9 +526,24 @@ function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship
   const detonateHpPct: Ship['detonateHpPct'] =
     (s.detonate_hp_pct === 25 || s.detonate_hp_pct === 50)
       ? s.detonate_hp_pct : null;
+  // Target priority (migration 0064) — malformed JSON degrades to auto,
+  // matching how the combat loop itself reads the column.
+  let targetPriority: Ship['targetPriority'] = null;
+  if (s.target_priority) {
+    try {
+      const p = JSON.parse(s.target_priority);
+      if (Array.isArray(p) && p.length > 0
+          && p.every((k: unknown) =>
+            k === 'corvette' || k === 'frigate' || k === 'destroyer'
+            || k === 'civilian' || k === 'settlement')) {
+        targetPriority = p;
+      }
+    } catch { /* auto */ }
+  }
   return {
     id: s.id,
     name: s.name,
+    targetPriority,
     class: translateShipClass(s.ship_class),
     ownedBy: s.owner_faction_id,
     fuel: s.fuel,

@@ -10,7 +10,7 @@ import React, { createContext, useContext, useMemo } from 'react';
 import { apiFetch as rawApiFetch } from './api';
 import { perf } from './PerfHud';
 import { logger } from '../game/logger';
-import type { BuildListEntry } from '../types';
+import type { BuildListEntry, TargetPriorityKey } from '../types';
 
 export interface TransferIntent {
   shipId: string;
@@ -71,6 +71,8 @@ export interface ShipOrdersIntent {
   stance?: 'attack' | 'defensive' | 'hold' | null;
   retreatHpPct?: 25 | 50 | 75 | null;
   detonateHpPct?: 25 | 50 | null;
+  /** Ranked target categories (migration 0064). null = reset to auto. */
+  targetPriority?: TargetPriorityKey[] | null;
 }
 
 /** RAM intent — commits an asteroid (with built Trajectory Control
@@ -468,6 +470,7 @@ export function MultiplayerActionsProvider({
       if ('stance' in intent) payload.stance = intent.stance ?? null;
       if ('retreatHpPct' in intent) payload.retreat_hp_pct = intent.retreatHpPct ?? null;
       if ('detonateHpPct' in intent) payload.detonate_hp_pct = intent.detonateHpPct ?? null;
+      if ('targetPriority' in intent) payload.target_priority = intent.targetPriority ?? null;
       const res = await apiFetch(`/api/games/${gameId}/ships/orders`, {
         method: 'PATCH',
         body: JSON.stringify(payload),
