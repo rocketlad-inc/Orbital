@@ -22,6 +22,7 @@
 import React, { useRef, useState } from 'react';
 import type { TargetPriorityKey } from '../types';
 import { TARGET_PRIORITY_DEFAULT } from '../types';
+import { hitChanceOf } from '../game/shipParts';
 import './TargetPriorityCards.css';
 
 const CATEGORY_META: Record<TargetPriorityKey, { label: string; sub: string; glyph: string }> = {
@@ -75,10 +76,15 @@ export interface TargetPriorityCardsProps {
    *  bulk surfaces, where the group mixes classes and there is no single
    *  "own speed" — those fall back to the generic ladder. */
   autoOrder?: TargetPriorityKey[];
+  /** This ship's combat speed. When present each card shows the per-tick
+   *  chance to hit that category's STOCK hull — engines on the real
+   *  target shift the true number, so it's a read on the matchup, not a
+   *  quote. Omitted on bulk surfaces (no single own speed). */
+  ownSpeed?: number;
 }
 
 export const TargetPriorityCards: React.FC<TargetPriorityCardsProps> = ({
-  value, onChange, disabled, note, autoOrder,
+  value, onChange, disabled, note, autoOrder, ownSpeed,
 }) => {
   const auto = value == null;
   const order = value ?? autoOrder ?? TARGET_PRIORITY_DEFAULT;
@@ -198,6 +204,15 @@ export const TargetPriorityCards: React.FC<TargetPriorityCardsProps> = ({
                 <span className="tpc-label">{meta.label}</span>
                 <span className="tpc-sub">{meta.sub}</span>
               </span>
+              {ownSpeed !== undefined && (
+                <span
+                  className="tpc-hit"
+                  title={`This ship lands ${Math.round(100 * hitChanceOf(ownSpeed, CATEGORY_SPEED[key]))}% of its shots on a stock ${meta.label.toLowerCase()} hull. Engines on the target lower it.`}
+                >
+                  {Math.round(100 * hitChanceOf(ownSpeed, CATEGORY_SPEED[key]))}%
+                  <span className="tpc-hit__sub">to hit</span>
+                </span>
+              )}
               <span className="tpc-nudges">
                 <button
                   className="tpc-nudge" disabled={disabled || idx === 0}

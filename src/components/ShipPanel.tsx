@@ -1427,6 +1427,7 @@ export const ShipPanel: React.FC = () => {
                   autoOrder={autoTargetOrderFor(
                     combatSpeedOf(ship.class as ShipClassName, ship.parts),
                   )}
+                  ownSpeed={combatSpeedOf(ship.class as ShipClassName, ship.parts)}
                   onChange={(next) => applyOrders({ targetPriority: next })}
                 />
               )}
