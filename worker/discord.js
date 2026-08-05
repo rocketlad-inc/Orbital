@@ -100,6 +100,10 @@ async function botFetch(env, method, path, body) {
  * ask the existing digest webhook which channel it lives in, so a setup
  * that only configured the webhook + bot token still works.
  */
+/** Same resolution, exported for the mention poller — one definition of
+ *  "the channel" rather than two that can drift apart. */
+export function resolveChannelIdPublic(env) { return resolveChannelId(env); }
+
 async function resolveChannelId(env) {
   if (env.DISCORD_CHANNEL_ID) return env.DISCORD_CHANNEL_ID;
   const webhook = env.DISCORD_DIGEST_WEBHOOK;
@@ -925,6 +929,62 @@ async function handleRegisterCommands(req, env, { session }) {
 }
 
 /**
+ * GET /api/admin/discord/probe-messages — can we read the channel at all?
+ *
+ * Diagnostic for the mention-responder. A Worker cannot hold a Gateway
+ * socket, and @mentions are never delivered to an interactions endpoint,
+ * so the only way for the bot to notice one is to poll the channel over
+ * REST. That hinges on a question worth answering with evidence rather
+ * than folklore: Discord's MESSAGE_CONTENT privileged intent gates
+ * `content` on GATEWAY events, and it is widely — but not universally —
+ * reported that REST fetches still return it. If it comes back empty
+ * here, the whole approach is dead and we need the intent enabled.
+ */
+async function handleProbeMessages(_req, env, { session }) {
+  if (!session || !isAdminEmail(session.email)) return err(404, 'not_found', 'no such route');
+  if (!env.DISCORD_BOT_TOKEN) return err(400, 'not_configured', 'DISCORD_BOT_TOKEN is not set');
+  const channelId = await resolveChannelId(env);
+  if (!channelId) return err(400, 'not_configured', 'no channel configured');
+
+  const appRes = await botFetch(env, 'GET', '/applications/@me');
+  const app = appRes.ok ? await appRes.json() : null;
+
+  const res = await botFetch(env, 'GET', `/channels/${channelId}/messages?limit=10`);
+  if (!res.ok) {
+    return json({
+      ok: false, channelId,
+      status: res.status,
+      body: (await res.text().catch(() => '')).slice(0, 400),
+      hint: res.status === 403 ? 'bot lacks View Channel / Read Message History here' : null,
+    });
+  }
+  const msgs = await res.json();
+  return json({
+    ok: true,
+    channelId,
+    botId: app?.id ?? null,
+    count: msgs.length,
+    // The verdict: if every non-empty-looking message reports
+    // content_len 0, the intent is required.
+    sample: msgs.slice(0, 10).map(m => ({
+      id: m.id,
+      author: m.author?.username,
+      bot: !!m.author?.bot,
+      content_len: (m.content ?? '').length,
+      preview: (m.content ?? '').slice(0, 60),
+      mentions_me: (m.mentions ?? []).some(u => u.id === app?.id),
+    })),
+  });
+}
+
+/** POST /api/admin/discord/poll-mentions — run the mention poll now. */
+async function handlePollMentions(_req, env, { session }) {
+  if (!session || !isAdminEmail(session.email)) return err(404, 'not_found', 'no such route');
+  const mentions = await import('./mentions.js');
+  return json(await mentions.pollMentions(env));
+}
+
+/**
  * GET /api/me/notifications — a player's OWN preferences.
  *
  * Session-authed and self-scoped: there is no user_id parameter, so this
@@ -1168,6 +1228,8 @@ export const routes = [
   { method: 'PATCH', pattern: '/api/admin/bot', auth: 'required', handle: handleBotSettingWrite },
   { method: 'PATCH', pattern: '/api/admin/bot/prefs', auth: 'required', handle: handleBotPrefWrite },
   { method: 'POST', pattern: '/api/admin/discord/register-commands', auth: 'required', handle: handleRegisterCommands },
+  { method: 'GET',  pattern: '/api/admin/discord/probe-messages',    auth: 'required', handle: handleProbeMessages },
+  { method: 'POST', pattern: '/api/admin/discord/poll-mentions',     auth: 'required', handle: handlePollMentions },
   { method: 'POST', pattern: /^\/api\/admin\/sitrep\/(?<gameId>[^/]+)$/, auth: 'required', handle: handleSitrepNow },
   { method: 'POST', pattern: /^\/api\/admin\/alerts\/(?<gameId>[^/]+)$/, auth: 'required', handle: handleAlertsNow },
   { method: 'POST', pattern: /^\/api\/admin\/senate\/(?<proposalId>[^/]+)\/announce$/, auth: 'required', handle: handleAnnounceProposal },

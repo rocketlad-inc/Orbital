@@ -972,6 +972,16 @@ export default {
         } catch (e) {
           console.error('idle nudge cron failed', e);
         }
+        // Answer anyone who @mentioned the bot since the last minute.
+        // Polled rather than event-driven because a Worker cannot hold a
+        // Discord gateway socket — see mentions.js. Its own catch: a
+        // chat reply failing must never touch the digest or the ticks.
+        try {
+          const mentions = await import('./mentions.js');
+          await mentions.pollMentions(env);
+        } catch (e) {
+          console.error('mention poll failed', e);
+        }
       } catch (e) {
         console.error('daily digest failed', e);
       }

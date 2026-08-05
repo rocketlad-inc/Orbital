@@ -25,6 +25,9 @@ export const DEFAULTS = {
   /** Post a poster to the channel when a real battle resolves. */
   battle_cards_enabled: true,
   dm_relay_enabled: true,
+  /** Answer when someone @mentions the bot in the channel. Polled from
+   *  the cron — see mentions.js for why it can't be event-driven. */
+  mentions_enabled: true,
 };
 
 /** All settings, defaults merged with any stored overrides. */
