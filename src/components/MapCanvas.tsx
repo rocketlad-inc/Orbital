@@ -1173,31 +1173,35 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // and don't stack.
     const formationMap = new Map<string, ShipFormation>();
     {
-      const buckets = new Map<string, Ship[]>();
+      // PASS 1 — group by BODY, not by altitude.
+      //
+      // The old key was `parent|round(sma)`, which put ships at slightly
+      // different parking radii into different buckets. A fleet that
+      // arrived in pieces, or mixed classes with different park heights,
+      // straddles a rounding boundary — and a faction that lands alone in
+      // its bucket falls through to shipLaneOnly: no arc, no drift, no
+      // battle line. That is the third fleet sitting still while the
+      // other two form up (player report, three-way fight at Sol).
+      //
+      // Combat is a property of the BODY, not of an altitude band, so
+      // battle detection and line assignment now run over everything
+      // orbiting the same world. Radial separation is what lane and the
+      // renderer's ranks are for.
+      const byBody = new Map<string, Ship[]>();
       for (const s of gameState.ships) {
         if (s.transit) continue;
         if (s.ownedBy !== 'player' && !visibleShipIds.has(s.id)) continue;
-        // Bucket by parent + coarse orbital radius so two ships intended to
-        // share an orbit cluster together even if their semi-major axes
-        // differ by sub-unit rounding. Use (rp+ra)/2 as the SMA proxy.
-        const sma = ((s.orbit.rp ?? 0) + (s.orbit.ra ?? 0)) / 2;
-        const key = `${s.orbit.parentBodyId}|${Math.round(sma)}`;
-        const list = buckets.get(key) || [];
-        list.push(s);
-        buckets.set(key, list);
+        const arr = byBody.get(s.orbit.parentBodyId) || [];
+        arr.push(s);
+        byBody.set(s.orbit.parentBodyId, arr);
       }
-      for (const list of buckets.values()) {
-        if (list.length < 2) {
-          // Lone ship still gets its lane offset so a freighter parked
-          // over a moon doesn't sit inside the station's ring.
-          if (list.length === 1) formationMap.set(list[0].id, shipLaneOnly(list[0]));
-          continue;
-        }
+
+      for (const atBody of byBody.values()) {
         // Stable order so a ship's slot doesn't jitter frame-to-frame.
-        list.sort((a, b) => (a.id < b.id ? -1 : 1));
+        atBody.sort((a, b) => (a.id < b.id ? -1 : 1));
 
         // BATTLE LINES: when two or more factions with ARMED hulls share
-        // this ring, each faction forms its own line and the lines face
+        // this WORLD, each faction forms its own line and the lines face
         // each other across a no-man's-land gap — instead of everyone
         // interleaving into a blender. Factions with only civilians
         // present (a freighter caught in the crossfire) still get a line
@@ -1213,9 +1217,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // planet blocks any pair more than roughly 90° apart; keeping
         // the whole engagement inside BATTLE_SECTOR preserves line of
         // sight AND frames the entire fight on screen at once.
-        const owners = [...new Set(list.map(s => s.ownedBy))].sort();
+        const owners = [...new Set(atBody.map(s => s.ownedBy))].sort();
         const armedOwners = new Set(
-          list.filter(s => (s.damagePerTick ?? getShipClass(s.class).damagePerTick) > 0)
+          atBody.filter(s => (s.damagePerTick ?? getShipClass(s.class).damagePerTick) > 0)
               .map(s => s.ownedBy));
         const battle = owners.length >= 2 && armedOwners.size >= 2;
 
@@ -1230,10 +1234,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // One wheel direction for the whole ring (lowest-id ship's),
           // so opposing lines hold their facing instead of counter-
           // rotating when fleets inserted from opposite approaches.
-          const arcDir = list[0].orbit.direction ?? 1;
+          const arcDir = atBody[0].orbit.direction ?? 1;
           owners.forEach((owner, k) => {
             const arcCenter = -BATTLE_SECTOR / 2 + spacing * k;
-            const mine = list.filter(s => s.ownedBy === owner);
+            const mine = atBody.filter(s => s.ownedBy === owner);
             mine.forEach((s, i) => {
               formationMap.set(s.id, {
                 index: i, total: mine.length,
@@ -1242,7 +1246,28 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
               });
             });
           });
-        } else {
+          continue;
+        }
+
+        // PASS 2 — peacetime. Sub-bucket by altitude so a station ring
+        // and a parking ring stay separate rings rather than merging
+        // into one crowded circle. Only reached when nobody is fighting
+        // here, so it can't strand a faction out of a battle line.
+        const buckets = new Map<string, Ship[]>();
+        for (const s of atBody) {
+          const sma = ((s.orbit.rp ?? 0) + (s.orbit.ra ?? 0)) / 2;
+          const key = String(Math.round(sma));
+          const list = buckets.get(key) || [];
+          list.push(s);
+          buckets.set(key, list);
+        }
+        for (const list of buckets.values()) {
+          if (list.length === 1) {
+            // Lone ship still gets its lane offset so a freighter parked
+            // over a moon doesn't sit inside the station's ring.
+            formationMap.set(list[0].id, shipLaneOnly(list[0]));
+            continue;
+          }
           list.forEach((s, i) => {
             formationMap.set(s.id, {
               index: i, total: list.length, lane: shipLane(s),
