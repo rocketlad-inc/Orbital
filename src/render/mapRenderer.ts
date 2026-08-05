@@ -2373,9 +2373,29 @@ export function shipLaneOnly(ship: Ship): ShipFormation {
 }
 
 /** How fast a battle line wheels around its planet: one full turn per
- *  ~4 minutes of wall clock. Slow enough to aim at, alive enough to
- *  read as an engagement holding station rather than a screenshot. */
+ *  ~4 minutes of wall clock at a comfortable ring radius. Slow enough to
+ *  aim at, alive enough to read as an engagement holding station rather
+ *  than a screenshot. */
 const BATTLE_LINE_TURN_MS = 240000;
+
+/** Ring radius (world units) at and above which the line turns at the
+ *  full BATTLE_LINE_TURN_MS. Below it the turn is proportionally faster.
+ *
+ *  A fixed period is an ANGULAR rate, so the smaller the ring the less
+ *  screen distance a hull covers per second. At Sol, ships park about 14
+ *  units out; a 4-minute revolution there moves them a couple of pixels
+ *  a second and the fight reads as frozen — the "not moving around their
+ *  orbits" report. Scaling the period with radius keeps the apparent
+ *  motion roughly constant instead of the angular rate. */
+const BATTLE_LINE_REF_RADIUS = 60;
+/** Never slower than this, however tight the ring. */
+const BATTLE_LINE_MIN_TURN_MS = 45000;
+
+/** Minimum gap between hull centres on a battle arc, world units. Below
+ *  this the sprites overlap and the line reads as one blob. */
+const BATTLE_LINE_MIN_SEP = 3.0;
+/** Radial gap between ranks when one arc cannot hold the whole fleet. */
+const BATTLE_LINE_RANK_GAP = 2.6;
 
 /**
  * Draw a ship on its orbit
@@ -2439,13 +2459,40 @@ export function drawShip(
     // its slot within the faction's arc. Radius keeps the ship's own
     // ring (plus its lane), so lines at different altitudes still read.
     const nowM = ctx.nowMs ?? performance.now();
-    const drift = ((nowM % BATTLE_LINE_TURN_MS) / BATTLE_LINE_TURN_MS) * Math.PI * 2 * dir;
+    const r0 = Math.hypot(lx, ly) + (formation.lane ?? 0);
     const width = formation.arcWidth ?? 1.6;
-    const within = formation.total > 1
-      ? (formation.index / (formation.total - 1) - 0.5) * width
+
+    // Turn period scales with ring radius so the line moves at a roughly
+    // constant SCREEN speed. See BATTLE_LINE_REF_RADIUS — a fixed period
+    // makes tight rings (anything parked at a star) look frozen.
+    const turnMs = Math.max(
+      BATTLE_LINE_MIN_TURN_MS,
+      BATTLE_LINE_TURN_MS * Math.min(1, r0 / BATTLE_LINE_REF_RADIUS),
+    );
+    const drift = ((nowM % turnMs) / turnMs) * Math.PI * 2 * dir;
+
+    // RANKS. The arc is an angle, so the hulls it can hold before they
+    // overlap depends on its radius: arcLength = r * width. A twelve-hull
+    // fleet on a tight ring cannot fit in one line, and cramming it there
+    // is what produced the stack at the sun. Overflow moves to an outer
+    // rank instead — a formation with depth rather than a smear.
+    const perRank = Math.max(1, Math.floor((r0 * width) / BATTLE_LINE_MIN_SEP));
+    const rank = Math.floor(formation.index / perRank);
+    const idxInRank = formation.index % perRank;
+    const inThisRank = Math.min(perRank, formation.total - rank * perRank);
+
+    // Spread within the rank. Ranks alternate their sweep direction so
+    // successive ranks do not line up radially into spokes.
+    const sweep = rank % 2 === 0 ? 1 : -1;
+    let within = inThisRank > 1
+      ? ((idxInRank / (inThisRank - 1)) - 0.5) * width * sweep
       : 0;
+    // A lone hull in an overflow rank would sit dead centre, directly
+    // behind the rank in front. Nudge it off the axis.
+    if (inThisRank === 1 && rank > 0) within = (width / 4) * sweep;
+
     const theta = formation.arcCenter + drift + within;
-    const r = Math.hypot(lx, ly) + (formation.lane ?? 0);
+    const r = r0 + rank * BATTLE_LINE_RANK_GAP;
     lx = Math.cos(theta) * r;
     ly = Math.sin(theta) * r;
     // Nose on the orbit tangent — prograde for the ring's direction.
