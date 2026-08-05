@@ -115,14 +115,18 @@ export const ARCHETYPES = {
     build: ['corvette', 'corvette', 'frigate'],
     colonise: false,
     buildEvery: 6,
+    attack: { every: 8, minFleet: 3 },
   },
   // Take ground. The expansion path the economy rework was aimed at.
   expander: {
     name: 'Expander',
     research: ['construction', 'propulsion', 'industry'],
-    build: ['colony', 'freighter'],
+    build: ['colony', 'freighter', 'corvette'],
     colonise: true,
     buildEvery: 10,
+    // Defends what it takes rather than seeking fights: a bigger fleet
+    // required before committing, and less often.
+    attack: { every: 20, minFleet: 6 },
   },
   // Sit on the capital and compound. The control for "is expansion
   // actually necessary, or can you win by doing nothing well?"
@@ -196,6 +200,66 @@ export async function takeTurn(env, { gameId, userId, factionId, doctrine, tick,
       bump(r.ok ? 'build_ok' : `build_rej_${r.data?.error?.code ?? r.status}`);
     } else {
       bump('build_no_yard');
+    }
+  }
+
+  // --- war: send armed hulls at someone else's world ----------------------
+  //
+  // Combat in Orbital is positional and automatic: hostile forces sharing
+  // a body exchange fire during the tick. So "attacking" is just moving
+  // armed ships onto an enemy holding — there is no attack order to
+  // issue, which is why this is a transfer and not a new verb.
+  //
+  // Until now no bot did this, so every warship ever built sat in orbit
+  // and military spend was pure cost. Any read of Rusher before this
+  // point was measuring a doctrine that had been denied its win
+  // condition.
+  if (doctrine.attack && tick % doctrine.attack.every === 0) {
+    // Only commit with a real fleet. Trickling single corvettes into a
+    // defended orbit feeds kills to the defender and would make
+    // aggression look far worse than it is.
+    const armed = (await DB
+      .prepare(
+        `SELECT s.id, b.orbit_radius
+           FROM game_ships s JOIN game_bodies b ON b.id = s.parent_body_id
+          WHERE s.game_id = ? AND s.owner_faction_id = ? AND s.hp > 0
+            AND s.ship_class IN ('corvette','frigate','destroyer','capital')
+            AND NOT EXISTS (SELECT 1 FROM game_ship_nodes n
+                             WHERE n.ship_id = s.id AND n.status = 'in_transit')`,
+      ).bind(gameId, factionId).all()).results ?? [];
+
+    if (armed.length >= doctrine.attack.minFleet) {
+      // Nearest enemy holding by orbit radius. Settlements count as
+      // targets too — taking a defended world is the point, not chasing
+      // empty rock.
+      const target = await DB
+        .prepare(
+          `SELECT b.id, b.orbit_radius
+             FROM game_bodies b
+            WHERE b.game_id = ? AND b.owner_faction_id IS NOT NULL
+              AND b.owner_faction_id != ? AND b.destroyed_at_tick IS NULL
+            ORDER BY ABS(COALESCE(b.orbit_radius,0) - ?) LIMIT 1`,
+        ).bind(gameId, factionId, armed[0].orbit_radius ?? 0).first();
+
+      if (target) {
+        // Send the whole fleet at once. Staggered arrivals get defeated
+        // in detail, and a bot that loses every war for a reason the
+        // rules did not impose is a bot that lies about the rules.
+        for (const ship of armed) {
+          const r = await act(env, R.transfer(), {
+            gameId, userId, params: { shipId: ship.id },
+            body: {
+              target_body_id: target.id,
+              scheduled_t: tick,
+              arrival_t: tick + transitTicks(ship.orbit_radius, target.orbit_radius),
+              replace: true,
+            },
+          });
+          bump(r.ok ? 'attack_ok' : `attack_rej_${r.data?.error?.code ?? r.status}`);
+        }
+      } else {
+        bump('attack_no_target');
+      }
     }
   }
 

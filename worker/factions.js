@@ -408,11 +408,44 @@ export async function recomputeBodyOwnership(db, gameId, bodyId) {
   return newOwner;
 }
 
+/**
+ * Smallest body anyone may call home: planets and BIG moons only.
+ *
+ * The old rule was "terrestrial or moon", which reads as reasonable and
+ * is not. It let capitals land on 1.0-radius moons — Nereid, Proteus,
+ * Charon, Deimos — and 100 simulated games (sim/) put the resulting
+ * economic spread at 9.4x between the best capital and the worst:
+ *
+ *     titan   9870        umbriel  4820
+ *     mars    6636        charon   2184
+ *     earth   6530        deimos   1712
+ *     ...                 nereid   1049
+ *
+ * Every body below this floor sat in the bottom half. That is not a
+ * difficulty setting, it is a different game handed out at random before
+ * anyone has made a decision.
+ *
+ * 1.5 is where the catalog has a natural gap: Luna, Europa, Titania,
+ * Oberon and Triton sit at exactly 1.5, and the next size down is 1.0.
+ * Gas and ice giants are excluded automatically — they are neither
+ * 'terrestrial' nor 'moon', and a city cannot be founded on one anyway.
+ */
+const MIN_CAPITAL_RADIUS = 1.5;
+
+/** Planets and big moons. The one definition of "somewhere you can
+ *  reasonably be asked to start", used by the lobby menu AND by the
+ *  fallback assignment so the two can never disagree. */
+function isCapitalWorthy(b) {
+  return (b.type === 'terrestrial' || b.type === 'moon')
+    && (b.radius ?? 0) >= MIN_CAPITAL_RADIUS;
+}
+
 // Subset of BODY_CATALOG that players may pick as their starting capital
-// in the lobby. Sticking to terrestrials + larger named moons keeps the
-// menu manageable and avoids highly-asymmetric starts on tiny asteroids.
+// in the lobby. A lobby pick IS a spawn, so it obeys the same floor as
+// the automatic assignment — otherwise the guarantee leaks through the
+// one path a player controls.
 export const STARTING_BODY_OPTIONS = BODY_CATALOG
-  .filter(b => b.type === 'terrestrial' || b.type === 'moon')
+  .filter(isCapitalWorthy)
   .map(b => ({
     id: b.id,
     name: b.name,
@@ -739,9 +772,11 @@ export async function seedGameWorld(env, gameId) {
   });
   // Second pass: anyone without a choice gets a FAIR fallback capital
   // (spawn-fairness rules, DESIGN-identity-economy.md §1.5):
-  //   1. Starting-body pool only (terrestrial/moon) — no asteroid capitals.
-  //      (A playtest game once handed a faction "Vagrant", a 0.5-radius
-  //      eccentric rogue asteroid, as its homeworld.)
+  //   1. Planets and big moons only (isCapitalWorthy) — no asteroid and
+  //      no small-moon capitals. A playtest game once handed a faction
+  //      "Vagrant", a 0.5-radius eccentric rogue asteroid, as its
+  //      homeworld; 100 simulated games later showed the 1.0-radius moons
+  //      were nearly as bad, so the floor moved up to 1.5.
   //   2. science >= 2 — with specialized yields a science-dead start
   //      can never climb the tech tree.
   //   3. Prefer a region (top-level parent grouping) no other capital
@@ -755,20 +790,21 @@ export async function seedGameWorld(env, gameId) {
   };
   const usedRegions = new Set([...claimed].map(regionOf));
   const fairPool = shuffled.filter(b =>
-    !claimed.has(b.id) &&
-    (b.type === 'terrestrial' || b.type === 'moon') &&
-    (b.yield.science ?? 0) >= 2,
+    !claimed.has(b.id) && isCapitalWorthy(b) && (b.yield.science ?? 0) >= 2,
   );
   factionRows.forEach(f => {
     if (!f.capital_template_id) {
       const pick =
         fairPool.find(b => !claimed.has(b.id) && !usedRegions.has(regionOf(b.id))) ||
         fairPool.find(b => !claimed.has(b.id)) ||
-        // Last resort still never leaves the lobby's terrestrial+moon
-        // pool — falling back to "any body" is what produced the
-        // Vagrant asteroid capital in the first place. Only the
-        // science>=2 floor is relaxed here.
-        shuffled.find(b => !claimed.has(b.id) && STARTING_BODY_IDS.has(b.id));
+        // Last resort relaxes the science floor but NEVER the size floor.
+        // Ten bodies clear radius>=1.5 AND science>=2, and fourteen clear
+        // the size floor alone, against a hard cap of 8 players — so this
+        // has headroom. Dropping to a small moon to seat a ninth player
+        // would hand that player a materially worse game, which is the
+        // whole thing this rule exists to prevent. Better to fail loudly
+        // below than to seat someone on a rock.
+        shuffled.find(b => !claimed.has(b.id) && isCapitalWorthy(b));
       // Defensive: STARTING_BODY_OPTIONS is far larger than max_players
       // (8), so this can only trip if the catalog is edited down.
       if (!pick) {

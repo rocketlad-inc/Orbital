@@ -3386,7 +3386,18 @@ export class Room {
                   (id, game_id, tick_number, kind, actor_faction_id, body_id, ship_id, payload, visibility, created_at_ms)
                  VALUES (?, ?, ?, 'ship_damaged', ?, ?, ?, ?, 'public', ?)`,
               )
-              .bind(entryId, gameId, tick, worst.ownerFid, worst.bodyId, worst.shipId, payload, now)
+              // Date.now() inline, NOT `now`. The nearest `now` in scope is
+              // declared further down this method (the ship_destroyed
+              // block at ~3552), so this line threw ReferenceError on
+              // every single combat tick — silently, because the catch
+              // below swallows it. Result: chronicle_entries has never
+              // held a ship_damaged row. Prod bore this out — 187
+              // ship_destroyed rows and zero ship_damaged — which means
+              // the damage FX (render/pendingFx.ts) and its flavor text
+              // have never fired for anyone. Found by the headless sim,
+              // the first thing ever to make bots shoot at each other.
+              .bind(entryId, gameId, tick, worst.ownerFid, worst.bodyId, worst.shipId,
+                    payload, Date.now())
               .run();
           }
         } catch (e) {

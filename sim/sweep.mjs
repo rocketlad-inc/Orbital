@@ -77,7 +77,47 @@ async function main() {
       }
       if (best) wins.set(best.doctrine, (wins.get(best.doctrine) ?? 0) + 1);
     }
-    console.log(`--- by doctrine (${SEEDS} games, ${TICKS} ticks) ---`);
+    // --- the actual win condition -------------------------------------------
+    // Everything else in this file is a proxy. This is the real thing:
+    // first to 200 hulls AND 10k of every resource.
+    const won = new Map();
+    const winTicks = [];
+    let decided = 0;
+    for (const r of perSeed) {
+      if (!r.winner) continue;
+      decided += 1;
+      winTicks.push(r.winner.tick);
+      const w = r.factions.find(f => f.id === r.winner.factionId);
+      const d = w?.doctrine ?? 'unknown';
+      won.set(d, (won.get(d) ?? 0) + 1);
+    }
+    console.log(`--- VICTORY (200 ships + 10k of each resource) ---`);
+    console.log(`  games decided: ${decided}/${SEEDS}`);
+    if (decided) {
+      const wt = stats(winTicks);
+      console.log(`  win tick: median ${wt.median}, range ${wt.min}-${wt.max}`);
+      for (const d of DOCTRINES) {
+        const name = ARCHETYPES[d].name;
+        const n = won.get(name) ?? 0;
+        console.log(`  ${name.padEnd(12)} ${String(n).padStart(3)} wins  ${(n / SEEDS * 100).toFixed(0)}%`);
+      }
+    } else {
+      console.log(`  NOBODY reached it. That is a finding about the CONDITION,`);
+      console.log(`  not about the doctrines. Which half was the wall:`);
+      const allShips = [], allRes = [];
+      for (const r of perSeed) {
+        for (const f of r.factions) {
+          allShips.push(f.ships ?? 0);
+          allRes.push(Math.min(f.metal ?? 0, f.gold ?? 0, f.science ?? 0));
+        }
+      }
+      const sh = stats(allShips), re = stats(allRes);
+      console.log(`    ships    peak ${sh.max} of ${ARCHETYPES ? 200 : 200} needed  (mean ${sh.mean.toFixed(1)})`);
+      console.log(`    weakest resource  peak ${Math.round(re.max)} of 10000 needed  (mean ${Math.round(re.mean)})`);
+      console.log(`  (the binding half is whichever peak sits furthest below its target)`);
+    }
+
+    console.log(`\n--- by doctrine (${SEEDS} games, ${TICKS} ticks) ---`);
     console.log(`  ${'doctrine'.padEnd(12)} ${'wealth'.padStart(8)} ${'bodies'.padStart(7)} ${'ships'.padStart(6)} ${'top-econ'.padStart(9)}`);
     for (const d of DOCTRINES) {
       const name = ARCHETYPES[d].name;

@@ -31,6 +31,20 @@ const TICKS = Number(process.argv[2] ?? 200);
 const PLAYERS = Number(process.argv[3] ?? 4);
 const SEED = process.argv[4] ?? 'sim-seed-0001';
 
+/**
+ * Victory: first to 200 living hulls AND 10,000 of every resource.
+ *
+ * Both conditions at once, deliberately — either alone is reachable by
+ * a specialist, and the pair forces an empire to be broad. Fuel is not
+ * counted: the economy rework retired it ("Fuel was removed from the
+ * game economy", actions.js), so requiring 10k of a dead currency would
+ * make the condition unreachable by accident rather than by design.
+ */
+export const VICTORY_SHIPS = 200;
+export const VICTORY_RESOURCE = 10000;
+/** Ticks between victory checks. See the note at the call site. */
+const VICTORY_POLL = 10;
+
 // ---------------------------------------------------------------------------
 // Runtime stubs
 // ---------------------------------------------------------------------------
@@ -185,8 +199,10 @@ export async function runGame({ ticks = 200, players = 4, seed = 'sim-seed-0001'
   }));
   const tally = {};
   let midpoint = null;
+  let winner = null;
 
   const tickTimes = [];
+  let ticksPlayed = TICKS;
   for (let tick = 1; tick <= TICKS; tick++) {
     const t = Date.now();
     // Orders BEFORE the tick resolves, which is the real sequence: a
@@ -206,6 +222,25 @@ export async function runGame({ ticks = 200, players = 4, seed = 'sim-seed-0001'
     tickTimes.push(Date.now() - t);
     await DB.prepare('UPDATE games SET current_tick = ? WHERE id = ?').bind(tick, roomId).run();
 
+    // Victory check. Polled every VICTORY_POLL ticks rather than every
+    // tick because it is an aggregate over ships and the answer cannot
+    // change quickly at these rates — a fleet does not go from 190 to 200
+    // hulls inside ten ticks. Sampling costs one query per ten ticks
+    // instead of one per tick, and the reported win tick is accurate to
+    // the poll interval, which is stated rather than hidden.
+    if (!winner && tick % VICTORY_POLL === 0) {
+      const done = await DB.prepare(
+        `SELECT f.id, f.name,
+                (SELECT COUNT(*) FROM game_ships s
+                  WHERE s.owner_faction_id = f.id AND s.hp > 0) ships
+           FROM game_factions f
+          WHERE f.game_id = ? AND f.status = 'active'
+            AND f.metal >= ? AND f.gold >= ? AND f.science >= ?`,
+      ).bind(roomId, VICTORY_RESOURCE, VICTORY_RESOURCE, VICTORY_RESOURCE).all();
+      const champ = (done.results ?? []).find(r => (r.ships ?? 0) >= VICTORY_SHIPS);
+      if (champ) winner = { factionId: champ.id, name: champ.name, tick, ships: champ.ships };
+    }
+
     // Halfway snapshot. One extra query per game buys the snowball
     // question: does a lead at the midpoint predict the finish? A game
     // where it always does has no comeback; one where it never does has
@@ -218,6 +253,9 @@ export async function runGame({ ticks = 200, players = 4, seed = 'sim-seed-0001'
       ).bind(roomId).all()).results;
     }
     if (!quiet && tick % 50 === 0) process.stdout.write(`  tick ${tick}\r`);
+    // Once the condition is met the match is decided; simulating the
+    // remainder costs time and teaches nothing.
+    if (winner) { ticksPlayed = tick; break; }
   }
 
   // ---- what came out ------------------------------------------------------
@@ -283,8 +321,8 @@ export async function runGame({ ticks = 200, players = 4, seed = 'sim-seed-0001'
   }));
 
   return {
-    seed: SEED, ticks: TICKS, factions: facsOut, chronicle: chron,
-    wall, avgTick: avg, broadcasts: broadcasts.length, tally,
+    seed: SEED, ticks: TICKS, ticksPlayed, winner, factions: facsOut,
+    chronicle: chron, wall, avgTick: avg, broadcasts: broadcasts.length, tally,
   };
 }
 
