@@ -255,6 +255,9 @@ export function Editor() {
               readOnly={readOnly}
               spawnRadiusFloor={Number(values.min_capital_radius ?? 1.5)}
               spawnScienceFloor={Number(values.min_capital_science ?? 2)}
+              systemScale={Number(values.system_scale ?? 1)}
+              bodyScale={Number(values.body_scale ?? 1)}
+              onScale={(id, v) => setKnob(id, v)}
             />
           )}
 

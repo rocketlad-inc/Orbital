@@ -749,16 +749,34 @@ export async function seedGameWorld(env, gameId) {
     const conf = await gc.cfg(env, gameId);
     spawnFloorRadius = conf.min_capital_radius ?? MIN_CAPITAL_RADIUS;
     spawnFloorScience = conf.min_capital_science ?? 2;
-    const bodyEdits = conf.bodies;
-    if (bodyEdits && Object.keys(bodyEdits).length) {
+    const bodyEdits = conf.bodies ?? {};
+    // Global multipliers. ORDER MATTERS: per-body edits are expressed in
+    // the shipped coordinate space, then the global scales multiply
+    // everything uniformly. So "drag Earth to 900" and "spread the system
+    // by 2" compose to 1800 rather than fighting each other, and the
+    // scales keep meaning the same thing however much hand-editing has
+    // happened.
+    const sysScale = conf.system_scale ?? 1;
+    const bodyScale = conf.body_scale ?? 1;
+    const anyEdit = Object.keys(bodyEdits).length > 0 || sysScale !== 1 || bodyScale !== 1;
+
+    if (anyEdit) {
       CATALOG = BODY_CATALOG.map((body) => {
-        const e = bodyEdits[body.id];
-        if (!e) return body;
+        const e = bodyEdits[body.id] ?? {};
+        const orbit = e.orbit_radius ?? body.orbit_radius;
         return {
           ...body,
-          orbit_radius: e.orbit_radius ?? body.orbit_radius,
-          radius: e.radius ?? body.radius,
-          soi: e.soi ?? body.soi,
+          // System scale spreads PLANETS only. A moon's orbit_radius is
+          // measured from its planet, so stretching it too would walk
+          // moons out of their parent's sphere of influence and strand
+          // them — the map would look fine and the game would not work.
+          orbit_radius: (body.parent && body.parent !== 'sol')
+            ? orbit
+            : (orbit == null ? orbit : orbit * sysScale),
+          // Size and capture radius scale together, so a bigger world
+          // still holds ships at a proportional distance.
+          radius: (e.radius ?? body.radius) * bodyScale,
+          soi: (e.soi ?? body.soi) == null ? body.soi : (e.soi ?? body.soi) * bodyScale,
           yield: {
             metal:   e.yield_metal   ?? body.yield.metal,
             gold:    e.yield_gold    ?? body.yield.gold,

@@ -50,7 +50,7 @@ const btn: React.CSSProperties = {
 
 export function MapEditor({
   catalog, fields, edits, onChange, onResetBody, onResetAll, readOnly,
-  spawnRadiusFloor, spawnScienceFloor,
+  spawnRadiusFloor, spawnScienceFloor, systemScale, bodyScale, onScale,
 }: {
   catalog: CatalogBody[];
   fields: BodyField[];
@@ -61,6 +61,9 @@ export function MapEditor({
   readOnly: boolean;
   spawnRadiusFloor: number;
   spawnScienceFloor: number;
+  systemScale: number;
+  bodyScale: number;
+  onScale: (id: 'system_scale' | 'body_scale', v: number) => void;
 }) {
   const [sel, setSel] = useState<string | null>(null);
   const [drag, setDrag] = useState<string | null>(null);
@@ -118,13 +121,17 @@ export function MapEditor({
     for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
     return (h % 3600) / 3600 * Math.PI * 2;
   };
-  const dotR = (b: CatalogBody) => Math.max(2.5, Math.min(16, Math.sqrt(val(b, 'radius')) * 4));
+  /** Effective radius = per-body edit, then the global planetoid scale.
+   *  Same order the seeder uses, so the map is not lying about the game. */
+  const effRadius = useCallback(
+    (b: CatalogBody) => val(b, 'radius') * bodyScale, [val, bodyScale]);
+  const dotR = (b: CatalogBody) => Math.max(2.5, Math.min(16, Math.sqrt(effRadius(b)) * 4));
 
   const eligible = useCallback((b: CatalogBody) =>
     (b.type === 'terrestrial' || b.type === 'moon')
-    && val(b, 'radius') >= spawnRadiusFloor
+    && effRadius(b) >= spawnRadiusFloor
     && val(b, 'yield_science') >= spawnScienceFloor,
-  [val, spawnRadiusFloor, spawnScienceFloor]);
+  [val, effRadius, spawnRadiusFloor, spawnScienceFloor]);
 
   /** Screen point -> viewBox coords -> world coords (undo pan/zoom). */
   const toWorld = (clientX: number, clientY: number) => {
@@ -218,6 +225,13 @@ export function MapEditor({
   const selBody = catalog.find(b => b.id === sel) ?? null;
   const editedIds = Object.keys(edits);
 
+  // How many worlds can still be a homeworld. Scaling planetoids down is
+  // the fastest way to silently strand the seeder — it throws when the
+  // pool cannot seat everyone, and finding that out at game creation is
+  // far worse than seeing the number fall while you drag it.
+  const capitalPool = useMemo(
+    () => catalog.filter(b => eligible(b)).length, [catalog, eligible]);
+
   const listed = useMemo(() => {
     const q = query.trim().toLowerCase();
     return catalog
@@ -242,6 +256,29 @@ export function MapEditor({
             title="Log keeps every orbit clickable; linear shows true relative distance">
             {logScale ? 'Log scale' : 'Linear scale'}
           </button>
+          <span style={{ width: 1, height: 18, background: 'rgba(120,140,160,.3)', margin: '0 2px' }} />
+          <label style={{ ...dim, display: 'flex', alignItems: 'center', gap: 4 }}
+            title="Multiplies every planet orbit. Moons stay put relative to their planet.">
+            system ×
+            <input type="number" value={systemScale} disabled={readOnly}
+              min={0.1} max={10} step={0.05}
+              onChange={e => onScale('system_scale', Number(e.target.value))}
+              style={{ width: 58, padding: '2px 5px', borderRadius: 4,
+                background: 'rgba(10,16,24,.7)', color: systemScale !== 1 ? '#ffb84d' : '#e7eef6',
+                border: `1px solid ${systemScale !== 1 ? '#ffb84d' : 'rgba(120,140,160,.35)'}`,
+                fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: 11 }} />
+          </label>
+          <label style={{ ...dim, display: 'flex', alignItems: 'center', gap: 4 }}
+            title="Multiplies every body radius and sphere of influence. Watch the capital floor.">
+            planetoids ×
+            <input type="number" value={bodyScale} disabled={readOnly}
+              min={0.1} max={10} step={0.05}
+              onChange={e => onScale('body_scale', Number(e.target.value))}
+              style={{ width: 58, padding: '2px 5px', borderRadius: 4,
+                background: 'rgba(10,16,24,.7)', color: bodyScale !== 1 ? '#ffb84d' : '#e7eef6',
+                border: `1px solid ${bodyScale !== 1 ? '#ffb84d' : 'rgba(120,140,160,.35)'}`,
+                fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: 11 }} />
+          </label>
           {editedIds.length > 0 && !readOnly && (
             <button style={{ ...btn, borderColor: '#ffb84d', color: '#ffb84d' }}
               onClick={() => { if (window.confirm(`Revert all ${editedIds.length} edited bodies to shipped values?`)) onResetAll(); }}>
@@ -327,7 +364,14 @@ export function MapEditor({
           )}
         </svg>
 
-        <div style={{ ...dim, marginTop: 6 }}>
+        <div style={{ fontSize: 11.5, marginTop: 6,
+          color: capitalPool < 8 ? '#ff9d5c' : '#6ee7b7' }}>
+          {capitalPool} world{capitalPool === 1 ? '' : 's'} can be a starting capital
+          {capitalPool < 8 && ' — below the 8-player maximum, so a full lobby would fail to start'}
+          {systemScale !== 1 && ` · orbits ×${systemScale}`}
+          {bodyScale !== 1 && ` · bodies ×${bodyScale}`}
+        </div>
+        <div style={{ ...dim, marginTop: 4 }}>
           {readOnly ? 'Read-only — clone this config to edit. ' : 'Drag a world to move it · scroll to zoom · drag background to pan · arrow keys nudge (shift = ×10) · Esc deselects. '}
           <span style={{ color: '#6ee7b7' }}>green</span> = can be a capital ·{' '}
           <span style={{ color: '#ffb84d' }}>amber</span> = edited
@@ -417,6 +461,15 @@ export function MapEditor({
                     </div>
                     {/* Always show what shipped, so a change is legible as a
                         CHANGE rather than just a number sitting in a box. */}
+                    {/* What the game will actually seed, once the global
+                        multipliers are applied. Without this the inspector
+                        would show 372 for a world that seeds at 744. */}
+                    {((f.id === 'orbit_radius' && systemScale !== 1 && selBody.parent === 'sol')
+                      || ((f.id === 'radius' || f.id === 'soi') && bodyScale !== 1)) && (
+                      <div style={{ fontSize: 10.5, color: '#4ecdc4', marginTop: 1 }}>
+                        seeds at {Math.round(v * (f.id === 'orbit_radius' ? systemScale : bodyScale) * 100) / 100}
+                      </div>
+                    )}
                     {isEdited && (
                       <div style={{ fontSize: 10.5, color: '#ffb84d', marginTop: 1 }}>
                         was {base}

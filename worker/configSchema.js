@@ -35,6 +35,7 @@ export const GROUPS = [
   { id: 'combat', label: 'Combat', blurb: 'How often shots are exchanged and how hard they land.' },
   { id: 'research', label: 'Research', blurb: 'Tech cost curve and ceiling.' },
   { id: 'victory', label: 'Victory', blurb: 'What it takes to actually win.' },
+  { id: 'map', label: 'Map Scale', blurb: 'Two global multipliers over the whole solar system. Also editable on the Map tab.' },
   { id: 'spawn', label: 'Spawn Rules', blurb: 'Who starts where. The 100-game sweep put best-vs-worst capital at 9.4x.' },
 ];
 
@@ -190,6 +191,31 @@ export const SCHEMA = [
     id: 'domination_fraction', group: 'victory', type: 'number',
     label: 'Map share for domination victory', def: 0.6, min: 0.1, max: 1, step: 0.05,
     help: 'Fraction of bodies one empire must hold to win outright.',
+  },
+
+  // ---- map ---------------------------------------------------------------
+  //
+  // Two global multipliers, deliberately knobs rather than a bulk edit
+  // that rewrites 45 bodies. One value stays one value: the shipped
+  // catalogue keeps flowing through, per-body edits still compose on top,
+  // and a later retune of Jupiter is not frozen out by a config carrying
+  // its own copy of the solar system.
+  {
+    id: 'system_scale', group: 'map', type: 'number',
+    label: 'System scale (orbit spread)', def: 1, min: 0.1, max: 10, step: 0.05,
+    danger: true,
+    help: 'Multiplies every PLANET orbit. 2 doubles the distance between worlds and so '
+      + 'roughly doubles travel times — the strongest single lever on game pace. Moon orbits '
+      + 'are left alone on purpose: they are measured from their planet, and stretching them '
+      + 'would push moons outside their parent\'s sphere of influence.',
+  },
+  {
+    id: 'body_scale', group: 'map', type: 'number',
+    label: 'Planetoid scale (body size)', def: 1, min: 0.1, max: 10, step: 0.05,
+    danger: true,
+    help: 'Multiplies every body radius and sphere of influence together, so capture ranges '
+      + 'stay proportional to the worlds they belong to. Watch the capital floor: at 0.5 most '
+      + 'moons drop under it and the spawn pool collapses. The map shows this live.',
   },
 
   // ---- spawn -------------------------------------------------------------
