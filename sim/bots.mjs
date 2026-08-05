@@ -40,6 +40,7 @@ const R = {
   settlement: () => route('POST', 'settlement$'),
   research: () => route('POST', 'research$'),
   transfer: () => route('POST', 'transfer$'),
+  buildings: () => route('POST', 'buildings$'),
 };
 
 /**
@@ -111,8 +112,11 @@ export const ARCHETYPES = {
   // Hulls first, worry later. Tests whether military tempo is affordable.
   rusher: {
     name: 'Rusher',
-    research: ['weapons', 'construction', 'armor'],   // construction 3 -> frigate
+    // industry last, but present: without it a Rusher can never build a
+    // forge or a mint and pays fleet upkeep out of bare planetary yield.
+    research: ['weapons', 'construction', 'armor', 'industry'],
     build: ['corvette', 'corvette', 'frigate'],
+    buildings: ['forge', 'mint'],
     colonise: false,
     buildEvery: 6,
     attack: { every: 8, minFleet: 3 },
@@ -122,6 +126,7 @@ export const ARCHETYPES = {
     name: 'Expander',
     research: ['construction', 'propulsion', 'industry'],
     build: ['colony', 'freighter', 'corvette'],
+    buildings: ['mint', 'forge', 'lab'],
     colonise: true,
     buildEvery: 10,
     // Defends what it takes rather than seeking fights: a bigger fleet
@@ -132,18 +137,20 @@ export const ARCHETYPES = {
   // actually necessary, or can you win by doing nothing well?"
   economist: {
     name: 'Economist',
-    research: ['propulsion', 'industry', 'construction'],   // propulsion 1 -> freighter
+    research: ['industry', 'propulsion', 'construction'],  // industry 3 -> mint
     build: ['freighter'],
+    buildings: ['mint', 'forge', 'lab'],
     colonise: false,
     buildEvery: 14,
   },
   // Straight up the tech tree. Tests whether research outruns economy.
   technocrat: {
     name: 'Technocrat',
-    research: ['sensors', 'industry', 'weapons'],
+    research: ['industry', 'sensors', 'weapons'],
     build: [],
+    buildings: ['lab', 'mint'],
     colonise: false,
-    buildEvery: 0,
+    buildEvery: 12,
   },
 };
 
@@ -200,6 +207,43 @@ export async function takeTurn(env, { gameId, userId, factionId, doctrine, tick,
       bump(r.ok ? 'build_ok' : `build_rej_${r.data?.error?.code ?? r.status}`);
     } else {
       bump('build_no_yard');
+    }
+  }
+
+  // --- infrastructure: the compounding half of the economy ----------------
+  //
+  // Yield buildings multiply a settlement's output: forge x1.25 metal per
+  // level, mint x1.25 gold, lab x1.25 science, all compounding as
+  // 1.25^level (room.js FORGE/MINT/LAB_PER_LEVEL). A city with three mint
+  // levels earns roughly double the credits of a bare one.
+  //
+  // Bots did not build ANY of these until now, and that omission is
+  // exactly why the first combat sweeps read "gold peaks at 2688 against
+  // a 10k target, the credit economy is broken". Those empires had no
+  // credit economy to speak of — they were paying fleet upkeep out of raw
+  // planetary yield with zero infrastructure behind it. That was a
+  // finding about the bots, reported as a finding about the game.
+  //
+  // Gates (researchUnlocks.js): lab industry 1, forge industry 2,
+  // mint industry 3 — so a doctrine that never researches industry can
+  // never compound at all.
+  if (doctrine.buildings?.length && tick % (doctrine.buildEvery || 10) === 3) {
+    const city = await DB
+      .prepare(
+        `SELECT id FROM game_settlements
+          WHERE game_id = ? AND owner_faction_id = ? AND type = 'city' AND hp > 0
+          ORDER BY id LIMIT 1`,
+      ).bind(gameId, factionId).first();
+    if (city) {
+      // Cycle the priority list so one expensive building can't starve
+      // the others forever.
+      const kind = doctrine.buildings[
+        Math.floor(tick / (doctrine.buildEvery || 10)) % doctrine.buildings.length
+      ];
+      const r = await act(env, R.buildings(), {
+        gameId, userId, params: { settlementId: city.id }, body: { kind },
+      });
+      bump(r.ok ? `bld_${kind}_ok` : `bld_${kind}_rej_${r.data?.error?.code ?? r.status}`);
     }
   }
 
