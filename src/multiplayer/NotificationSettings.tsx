@@ -23,8 +23,14 @@ type Payload = {
 
 /** Which categories are worth a warning when switched off. Losing a
  *  city because you muted the one alert that would have warned you is a
- *  bad experience we can cheaply prevent. */
-const HIGH_STAKES = new Set(['urgent']);
+ *  bad experience we can cheaply prevent.
+ *
+ *  This used to point at 'urgent'. That category was removed for
+ *  over-firing, and the facts it carried — settlements under fire,
+ *  inbound hostile fleets — moved into the daily report. So the warning
+ *  moved with them: the digest is now the only thing that tells you a
+ *  city is burning. */
+const HIGH_STAKES = new Set(['digest']);
 
 export function NotificationSettings() {
   const [data, setData] = useState<Payload | null>(null);
@@ -78,7 +84,8 @@ export function NotificationSettings() {
                     <div style={{ fontSize: 12.5, color: '#cdd9e4' }}>{label}</div>
                     {warn && (
                       <div style={{ fontSize: 11, color: '#ffca28', marginTop: 2 }}>
-                        You won't be warned about cities under fire or large fleets inbound.
+                        Nothing will warn you about cities under fire or fleets inbound —
+                        the daily report is the only alert that carries them.
                       </div>
                     )}
                   </div>
@@ -100,8 +107,9 @@ export function NotificationSettings() {
           </div>
 
           <div style={{ ...sub, marginTop: 12 }}>
-            Urgent alerts arrive as soon as they happen. Everything else is
-            gathered into your daily situation report.
+            Only deadlines interrupt you — a vote about to close, unpaid upkeep.
+            Everything else, fighting and inbound fleets included, is gathered
+            into your daily situation report.
           </div>
         </>
       )}

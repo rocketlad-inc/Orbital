@@ -21,18 +21,25 @@
 
 const DISCORD_API = 'https://discord.com/api/v10';
 
+// The 'urgent' category was removed after it over-fired (see alerts.js).
+// It is deliberately absent here, which retires its toggle from /notify
+// and the settings panel — a switch that controls nothing is worse than
+// no switch. Old notification_log rows still carry the string; nothing
+// reads CATEGORIES to render history, so they remain intact.
 export const CATEGORIES = {
-  // Listed first because it is the one category worth interrupting a
-  // meal for: a city being shelled, or a fleet large enough to take a
-  // world already under way toward one of yours.
-  urgent: 'Cities under fire and major fleets inbound',
   dm: 'Messages from other factions',
-  combat: 'Attacks on your ships and settlements',
   senate: 'Senate bills and closing votes',
   economy: 'Upkeep arrears and build problems',
-  digest: 'Your daily situation report',
+  // Carries the fighting and the inbound fleets now that urgent is gone,
+  // so this is the one nobody should mute blind — the panel says so.
+  digest: 'Your daily situation report — combat, inbound fleets, votes',
   nudge: 'Reminders when you have been away',
 };
+
+// 'combat' went the same way and for the same reason: combat alerts were
+// folded into the daily report a while back, leaving a toggle with no
+// producer behind it. A player switching it ON and receiving nothing is
+// a worse failure than not offering the switch.
 
 function botFetch(env, method, path, body) {
   return fetch(`${DISCORD_API}${path}`, {

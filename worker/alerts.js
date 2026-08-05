@@ -1,27 +1,26 @@
 // ============================================================================
 // alerts.js — the notifications that can't wait for the 6pm briefing.
 //
-// The situation report is a scheduled summary. These are interrupts: your
-// city is being shelled, a vote closes before you'll next look, your
-// fleet is fighting at half damage because upkeep went unpaid. They fire
-// from the tick loop, so they arrive while the thing is still true.
+// The situation report is a scheduled summary. These are interrupts: a
+// vote closes before you'll next look, your fleet is fighting at half
+// damage because upkeep went unpaid. They fire from the tick loop, so
+// they arrive while the thing is still true.
 //
-// Every one is dedupe-keyed on the EVENT, not the moment. "Combat at
-// Oberon on tick 340" can be evaluated sixty times by sixty cron ticks
-// and still send exactly once — which is what lets these run from a hot
-// loop without carefully tracking what's already been said.
+// The bar is deliberately high. Anything that stays true for many ticks
+// belongs in the 6pm report, not here — the urgent category was removed
+// for exactly that reason (see below). What survives is time-critical
+// AND short-lived: a deadline, and a debt with a fixed daily reminder.
+//
+// Every one is dedupe-keyed on the EVENT, not the moment. "Bill 41
+// closes" can be evaluated sixty times by sixty cron ticks and still
+// send exactly once — which is what lets these run from a hot loop
+// without carefully tracking what's already been said. A key that
+// buckets on TIME rather than identity re-sends for as long as the
+// situation lasts; that is the trap the urgent alerts fell into.
 //
 // Called from resolveTick with its own try/catch: an alert failing must
 // never cost a player their turn.
 // ============================================================================
-
-/** A fleet of at least this many hostile hulls, already under way toward
- *  something you hold, is a strategic event rather than a skirmish. */
-const URGENT_FLEET_SIZE = 5;
-/** How often the same urgent situation may re-alert, in ticks. A city
- *  under sustained bombardment shouldn't ping every hour, but it should
- *  ping more than once a day. */
-const URGENT_REPEAT_TICKS = 4;
 
 /** Warn about a vote this many ticks before it closes. */
 const VOTE_WARN_TICKS = 2;
@@ -49,117 +48,33 @@ export async function runTickAlerts(env, gameId, tick) {
   // narrative instead of eight interruptions. What stays here is
   // genuinely time-critical: a vote that will CLOSE before the next
   // briefing, and a debt that silently weakens every battle.
-  await urgentAlerts(env, notify, gameId, gameName, tick);
+  //
+  // The URGENT category (city under fire, 5+ hostiles inbound) used to
+  // fire from here too and has been removed for over-firing — see the
+  // note below the imports.
   await arrearsAlerts(env, notify, gameId, gameName, tick);
   await voteClosingAlerts(env, notify, gameId, gameName, tick);
 }
 
 // ---------------------------------------------------------------------------
-// URGENT — the two things that outrank "wait for the 6pm briefing".
+// REMOVED: urgent alerts (city taking damage, 5+ hostile ships inbound).
 //
-// Both are chosen because they are IRREVERSIBLE or nearly so: a razed
-// city doesn't come back, and a fleet of five-plus hulls arriving
-// unopposed usually takes whatever it was aimed at. Ordinary ship
-// skirmishes stay in the daily report, where Lorne rightly put them.
-// ---------------------------------------------------------------------------
-
-async function urgentAlerts(env, notify, gameId, gameName, tick) {
-  // ---- a settlement is actually TAKING DAMAGE ----------------------------
-  // last_damaged_tick, NOT last_combat_tick. The latter records when a
-  // settlement FIRED — migration 0044 says so explicitly — so a station
-  // successfully defending itself at full health stamps it every tick.
-  // The first cut used it and told Lorne "UrANUS Station is under fire,
-  // structure at 100%", which is the station winning. A false alarm on
-  // the one category meant to be trustworthy is worse than no alarm:
-  // it teaches players that red means nothing.
-  const cities = (await env.DB
-    .prepare(
-      `SELECT st.id, st.name, b.name AS body, f.user_id, st.hp, st.hp_max
-         FROM game_settlements st
-         JOIN game_factions f ON f.id = st.owner_faction_id
-         JOIN game_bodies b ON b.id = st.body_id
-        WHERE st.game_id = ? AND st.last_damaged_tick >= ?
-          AND f.user_id IS NOT NULL AND f.status = 'active' AND st.hp > 0`,
-    )
-    .bind(gameId, tick - 1).all()).results ?? [];
-
-  for (const c of cities) {
-    const pct = c.hp_max ? Math.round((c.hp / c.hp_max) * 100) : null;
-    await notify.sendDm(env, {
-      userId: c.user_id,
-      gameId,
-      category: 'urgent',
-      dedupeKey: `urgent:city:${c.id}:${Math.floor(tick / URGENT_REPEAT_TICKS)}`,
-      embed: {
-        title: '🔥 A city of yours is taking damage',
-        description: [
-          `**${c.name}** on **${c.body}** is losing structure.`,
-          pct != null ? `Down to **${pct}%**.` : null,
-          'A razed settlement does not come back.',
-        ].filter(Boolean).join('\n'),
-        color: 0xff3b30,
-        footer: { text: `Orbital · ${gameName} · T+${tick}` },
-      },
-    });
-  }
-
-  // ---- a serious fleet is inbound ---------------------------------------
-  // Same ownership and peace rules as the daily report's inbound section,
-  // but only fires above the size threshold — a lone scout is not an
-  // emergency, and treating it as one is how a player learns to ignore
-  // the red ones.
-  const waves = (await env.DB
-    .prepare(
-      `SELECT b.id AS body_id, b.name AS body, ef.name AS attacker,
-              f.user_id, COUNT(*) AS n
-         FROM game_ship_nodes n2
-         JOIN game_ships sh ON sh.id = n2.ship_id
-         JOIN game_factions ef ON ef.id = sh.owner_faction_id
-         JOIN game_bodies b ON b.id = n2.target_body_id
-         JOIN game_factions f ON f.game_id = ?1
-        WHERE n2.game_id = ?1 AND n2.status = 'in_transit' AND sh.hp > 0
-          AND f.user_id IS NOT NULL AND f.status = 'active'
-          AND sh.owner_faction_id != f.id
-          AND (
-            EXISTS (SELECT 1 FROM game_settlements st
-                     WHERE st.body_id = b.id AND st.owner_faction_id = f.id)
-            OR b.owner_faction_id = f.id
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM treaties t
-              JOIN treaty_signatories s1 ON s1.treaty_id = t.id AND s1.faction_id = f.id
-              JOIN treaty_signatories s2 ON s2.treaty_id = t.id AND s2.faction_id = sh.owner_faction_id
-             WHERE t.game_id = ?1 AND t.status = 'active' AND t.broken_at_tick IS NULL
-               AND t.kind IN ('nap','defense_pact')
-               AND s1.signed_at_tick IS NOT NULL AND s2.signed_at_tick IS NOT NULL
-          )
-        GROUP BY b.id, ef.id, f.id
-        HAVING COUNT(*) >= ?2`,
-    )
-    .bind(gameId, URGENT_FLEET_SIZE).all()).results ?? [];
-
-  for (const w of waves) {
-    await notify.sendDm(env, {
-      userId: w.user_id,
-      gameId,
-      category: 'urgent',
-      dedupeKey: `urgent:wave:${w.body_id}:${Math.floor(tick / URGENT_REPEAT_TICKS)}`,
-      embed: {
-        title: '🚨 Major fleet inbound',
-        description: [
-          `**${w.n} hostile ships** are under way to **${w.body}**.`,
-          `Flying colours of **${w.attacker}**.`,
-          'Reinforce or evacuate while there is still time.',
-        ].join('\n'),
-        color: 0xff3b30,
-        footer: { text: `Orbital · ${gameName} · T+${tick}` },
-      },
-    });
-  }
-}
-
-// ---------------------------------------------------------------------------
-
+// They over-fired, and the reason is structural rather than a tuning
+// miss. Both were dedupe-keyed on a 4-tick BUCKET, not on the event, so
+// they re-sent for as long as the situation lasted: a siege runs for
+// dozens of ticks and a fleet can be in transit for twenty, so one
+// inbound wave produced a DM every four hours until it landed. A player
+// under real pressure — exactly the person these were for — got the most
+// noise. That is how a channel gets muted.
+//
+// Both facts still reach players, in the place where a day of pressure
+// reads as one story instead of six interruptions: the 6pm situation
+// report carries settlements under fire and inbound hostile fleets.
+//
+// If these come back, the fix is not a longer bucket. It is a dedupe key
+// tied to the ENGAGEMENT or the FLEET (first sighting of this wave at
+// this body), so a sustained event alerts once and a genuinely new one
+// still gets through.
 // ---------------------------------------------------------------------------
 
 async function arrearsAlerts(env, notify, gameId, gameName, tick) {
