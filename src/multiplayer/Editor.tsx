@@ -102,6 +102,18 @@ export function Editor() {
     setDirty(true);
   };
 
+  /** Drop a body's overrides entirely, so it seeds from the shipped
+   *  catalogue again. Deleting the key rather than writing the shipped
+   *  numbers back matters: an override equal to today's default would
+   *  still pin that body if the catalogue changed later. */
+  const resetBody = (bodyId: string) => {
+    setBodyEdits(prev => {
+      const next = { ...prev }; delete next[bodyId]; return next;
+    });
+    setDirty(true);
+  };
+  const resetAllBodies = () => { setBodyEdits({}); setDirty(true); };
+
   const save = async () => {
     if (!openId) return;
     setBusy(true);
@@ -238,6 +250,8 @@ export function Editor() {
               fields={bodyFields}
               edits={bodyEdits}
               onChange={setBody}
+              onResetBody={resetBody}
+              onResetAll={resetAllBodies}
               readOnly={readOnly}
               spawnRadiusFloor={Number(values.min_capital_radius ?? 1.5)}
               spawnScienceFloor={Number(values.min_capital_science ?? 2)}
