@@ -18,6 +18,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from './api';
+import { MapEditor, CatalogBody, BodyField } from './MapEditor';
 
 type Knob = {
   id: string; group: string; label: string; help?: string;
@@ -47,12 +48,19 @@ export function Editor() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  // The map lives beside the knobs: same draft, same save, its own tab.
+  const [catalog, setCatalog] = useState<CatalogBody[]>([]);
+  const [bodyFields, setBodyFields] = useState<BodyField[]>([]);
+  const [bodyEdits, setBodyEdits] = useState<Record<string, Record<string, number>>>({});
 
   const loadCatalogue = useCallback(async () => {
-    const r = await apiFetch<{ groups: Group[]; schema: Knob[]; defaults: Record<string, number | boolean> }>(
-      '/api/admin/config/schema');
+    const r = await apiFetch<{
+      groups: Group[]; schema: Knob[]; defaults: Record<string, number | boolean>;
+      catalog: CatalogBody[]; bodyFields: BodyField[];
+    }>('/api/admin/config/schema');
     if (r.ok) {
       setSchema(r.data.schema); setGroups(r.data.groups); setDefaults(r.data.defaults);
+      setCatalog(r.data.catalog ?? []); setBodyFields(r.data.bodyFields ?? []);
       if (r.data.groups[0]) setTab(r.data.groups[0].id);
     }
   }, []);
@@ -65,12 +73,16 @@ export function Editor() {
   useEffect(() => { loadCatalogue(); loadList(); }, [loadCatalogue, loadList]);
 
   const open = async (id: string) => {
-    const r = await apiFetch<{ config: { overrides: Record<string, number | boolean> } }>(
+    const r = await apiFetch<{ config: { overrides: Record<string, unknown> } }>(
       `/api/admin/config/${id}`);
     if (!r.ok) { setMsg('Could not open that config.'); return; }
-    // Start from defaults, lay the sparse overrides on top. The editor
-    // always shows a COMPLETE picture even though storage is sparse.
-    setValues({ ...defaults, ...r.data.config.overrides });
+    // Split the tabular map edits out of the flat knobs, then start from
+    // defaults and lay the sparse overrides on top. The editor always
+    // shows a COMPLETE picture even though storage is sparse.
+    const { bodies, ...flat } = r.data.config.overrides as
+      { bodies?: Record<string, Record<string, number>> } & Record<string, number | boolean>;
+    setValues({ ...defaults, ...flat });
+    setBodyEdits(bodies ?? {});
     setOpenId(id); setDirty(false); setMsg(null);
   };
 
@@ -85,11 +97,16 @@ export function Editor() {
     setValues(prev => ({ ...prev, [id]: v })); setDirty(true);
   };
 
+  const setBody = (bodyId: string, field: string, v: number) => {
+    setBodyEdits(prev => ({ ...prev, [bodyId]: { ...(prev[bodyId] ?? {}), [field]: v } }));
+    setDirty(true);
+  };
+
   const save = async () => {
     if (!openId) return;
     setBusy(true);
     const r = await apiFetch<{ changed: number }>(`/api/admin/config/${openId}`, {
-      method: 'PATCH', body: JSON.stringify({ values }),
+      method: 'PATCH', body: JSON.stringify({ values, bodies: bodyEdits }),
     });
     setBusy(false);
     if (r.ok) { setDirty(false); setMsg(`Saved — ${r.data.changed} value(s) differ from default.`); loadList(); }
@@ -193,6 +210,12 @@ export function Editor() {
 
           {/* group tabs */}
           <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', margin: '12px 0 4px' }}>
+            <button onClick={() => setTab('__map__')} className="mp-btn mp-btn--ghost"
+              style={{
+                fontSize: 11,
+                borderColor: tab === '__map__' ? '#4ecdc4' : 'rgba(120,140,160,.35)',
+                color: tab === '__map__' ? '#4ecdc4' : '#8a9fb3',
+              }}>Map</button>
             {groups.map(g => (
               <button key={g.id} onClick={() => setTab(g.id)} className="mp-btn mp-btn--ghost"
                 style={{
@@ -203,11 +226,26 @@ export function Editor() {
             ))}
           </div>
           <div style={{ ...dim, marginBottom: 10 }}>
-            {groups.find(g => g.id === tab)?.blurb}
+            {tab === '__map__'
+              ? 'Move worlds, resize them, retune what they produce. Spawn eligibility follows '
+                + 'the size and science floors on the Spawn Rules tab, so the green rings update as you change them.'
+              : groups.find(g => g.id === tab)?.blurb}
           </div>
 
+          {tab === '__map__' && (
+            <MapEditor
+              catalog={catalog}
+              fields={bodyFields}
+              edits={bodyEdits}
+              onChange={setBody}
+              readOnly={readOnly}
+              spawnRadiusFloor={Number(values.min_capital_radius ?? 1.5)}
+              spawnScienceFloor={Number(values.min_capital_science ?? 2)}
+            />
+          )}
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {inGroup.map(k => {
+            {tab !== '__map__' && inGroup.map(k => {
               const val = values[k.id] ?? k.def;
               const isChanged = val !== defaults[k.id];
               return (

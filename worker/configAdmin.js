@@ -21,7 +21,8 @@
 //     this is the gate.
 // ============================================================================
 
-import { SCHEMA, GROUPS, defaults, validateAll } from './configSchema.js';
+import { SCHEMA, GROUPS, BODY_FIELDS, defaults, validateAll, validateBodies } from './configSchema.js';
+import { CATALOG_FOR_EDITOR } from './factions.js';
 import { invalidate } from './gameConfig.js';
 import { isAdminEmail } from './analytics.js';
 
@@ -42,7 +43,10 @@ function newId() {
  *  appears in the UI with no client change. */
 async function handleSchema(_req, _env, ctx) {
   if (!admin(ctx)) return err(404, 'not_found', 'no such route');
-  return json({ groups: GROUPS, schema: SCHEMA, defaults: defaults() });
+  return json({
+    groups: GROUPS, schema: SCHEMA, defaults: defaults(),
+    bodyFields: BODY_FIELDS, catalog: CATALOG_FOR_EDITOR,
+  });
 }
 
 /** GET /api/admin/config — every config, newest first. */
@@ -131,6 +135,17 @@ async function handleUpdate(req, env, ctx) {
     }
     const def = defaults();
     for (const [k, v] of Object.entries(clean)) if (v !== def[k]) patch[k] = v;
+  }
+
+  // Map edits. Stored sparse per body per field, for the same reason the
+  // knobs are: a config carrying a full copy of the solar system would
+  // never see a later change to the shipped catalogue.
+  if (body.bodies && typeof body.bodies === 'object') {
+    const { clean, errors } = validateBodies(body.bodies);
+    if (Object.keys(errors).length) {
+      return json({ error: { code: 'invalid_bodies', message: 'some body edits were out of range' }, errors }, 400);
+    }
+    if (Object.keys(clean).length) patch.bodies = clean;
   }
 
   const now = Date.now();

@@ -435,9 +435,9 @@ const MIN_CAPITAL_RADIUS = 1.5;
 /** Planets and big moons. The one definition of "somewhere you can
  *  reasonably be asked to start", used by the lobby menu AND by the
  *  fallback assignment so the two can never disagree. */
-function isCapitalWorthy(b) {
+function isCapitalWorthy(b, floor = MIN_CAPITAL_RADIUS) {
   return (b.type === 'terrestrial' || b.type === 'moon')
-    && (b.radius ?? 0) >= MIN_CAPITAL_RADIUS;
+    && (b.radius ?? 0) >= floor;
 }
 
 // Subset of BODY_CATALOG that players may pick as their starting capital
@@ -453,6 +453,21 @@ export const STARTING_BODY_OPTIONS = BODY_CATALOG
     parent: b.parent,
     yield: b.yield,
   }));
+
+/**
+ * The shipped solar system, flattened for the map editor.
+ *
+ * Exported rather than re-declared client-side so the editor draws the
+ * SAME catalogue the seeder builds from. A second copy in TypeScript
+ * would drift the first time a body was retuned, and the editor would
+ * quietly be editing a map that no longer exists.
+ */
+export const CATALOG_FOR_EDITOR = BODY_CATALOG.map(b => ({
+  id: b.id, name: b.name, type: b.type, parent: b.parent,
+  orbit_radius: b.orbit_radius, radius: b.radius, soi: b.soi,
+  yield_metal: b.yield.metal, yield_gold: b.yield.gold,
+  yield_science: b.yield.science, yield_fuel: b.yield.fuel,
+}));
 
 const STARTING_BODY_IDS = new Set(STARTING_BODY_OPTIONS.map(b => b.id));
 export function isValidStartingBody(id) {
@@ -597,6 +612,9 @@ function categorizeBodyForSecret(b) {
  *  secondary worlds). Returns a Map<templateId, kind>. */
 function pickSecretPlacements(rand, ownership) {
   const pool = { 'inner': [], 'belt': [], 'outer': [], 'moon-inner': [], 'moon-outer': [] };
+  // Shipped catalogue, deliberately: secret placement only needs body
+  // identity and category, and this helper has no game in scope to look
+  // an edited catalogue up from.
   for (const b of BODY_CATALOG) {
     if (ownership.has(b.id)) continue;
     const cat = categorizeBodyForSecret(b);
@@ -719,7 +737,43 @@ export async function seedGameWorld(env, gameId) {
   }
 
   // Eligible worlds = everything but the star.
-  const claimable = BODY_CATALOG.filter(b => b.type !== 'star');
+  // Map edits from the admin Editor. A config may move a world, resize
+  // it, or retune its yields; those overrides are applied to a COPY of
+  // the catalogue so the module-level constant stays the shipped truth
+  // and one game's edits can never leak into another's.
+  let CATALOG = BODY_CATALOG;
+  let spawnFloorRadius = MIN_CAPITAL_RADIUS;
+  let spawnFloorScience = 2;
+  try {
+    const gc = await import('./gameConfig.js');
+    const conf = await gc.cfg(env, gameId);
+    spawnFloorRadius = conf.min_capital_radius ?? MIN_CAPITAL_RADIUS;
+    spawnFloorScience = conf.min_capital_science ?? 2;
+    const bodyEdits = conf.bodies;
+    if (bodyEdits && Object.keys(bodyEdits).length) {
+      CATALOG = BODY_CATALOG.map((body) => {
+        const e = bodyEdits[body.id];
+        if (!e) return body;
+        return {
+          ...body,
+          orbit_radius: e.orbit_radius ?? body.orbit_radius,
+          radius: e.radius ?? body.radius,
+          soi: e.soi ?? body.soi,
+          yield: {
+            metal:   e.yield_metal   ?? body.yield.metal,
+            gold:    e.yield_gold    ?? body.yield.gold,
+            science: e.yield_science ?? body.yield.science,
+            fuel:    e.yield_fuel    ?? body.yield.fuel,
+          },
+        };
+      });
+    }
+  } catch (e) {
+    // Shipped catalogue is always a correct answer.
+    console.error('body overrides failed, using shipped catalogue', e);
+  }
+
+  const claimable = CATALOG.filter(b => b.type !== 'star');
   const needed = memberRows.length * WORLDS_PER_PLAYER;
   if (claimable.length < needed) {
     throw new Error(
@@ -782,15 +836,16 @@ export async function seedGameWorld(env, gameId) {
   //   3. Prefer a region (top-level parent grouping) no other capital
   //      occupies, so two players don't spawn as next-door moons.
   const regionOf = (tplId) => {
-    let cur = BODY_CATALOG.find(b => b.id === tplId);
+    let cur = CATALOG.find(b => b.id === tplId);
     while (cur && cur.parent && cur.parent !== 'sol') {
-      cur = BODY_CATALOG.find(b => b.id === cur.parent);
+      cur = CATALOG.find(b => b.id === cur.parent);
     }
     return cur ? cur.id : tplId;
   };
   const usedRegions = new Set([...claimed].map(regionOf));
   const fairPool = shuffled.filter(b =>
-    !claimed.has(b.id) && isCapitalWorthy(b) && (b.yield.science ?? 0) >= 2,
+    !claimed.has(b.id) && isCapitalWorthy(b, spawnFloorRadius)
+      && (b.yield.science ?? 0) >= spawnFloorScience,
   );
   factionRows.forEach(f => {
     if (!f.capital_template_id) {
@@ -804,7 +859,7 @@ export async function seedGameWorld(env, gameId) {
         // would hand that player a materially worse game, which is the
         // whole thing this rule exists to prevent. Better to fail loudly
         // below than to seat someone on a rock.
-        shuffled.find(b => !claimed.has(b.id) && isCapitalWorthy(b));
+        shuffled.find(b => !claimed.has(b.id) && isCapitalWorthy(b, spawnFloorRadius));
       // Defensive: STARTING_BODY_OPTIONS is far larger than max_players
       // (8), so this can only trip if the catalog is edited down.
       if (!pick) {
@@ -894,8 +949,10 @@ export async function seedGameWorld(env, gameId) {
   // the same layout. Only un-owned bodies get secrets.
   const secretPlacements = pickSecretPlacements(rand, ownership);
 
-  // 2) game_bodies — catalog order preserved so parents land before children.
-  for (const b of BODY_CATALOG) {
+  // 2) game_bodies — catalog order preserved so parents land before
+  //    children. CATALOG, not BODY_CATALOG: this is where the Editor's
+  //    map edits become the actual solar system for this game.
+  for (const b of CATALOG) {
     const own = ownership.get(b.id);
     const isCapital = own ? own.isCapital : false;
     const devLevel = own ? (isCapital ? HOME_DEVELOPMENT_LEVEL : SECONDARY_DEVELOPMENT_LEVEL) : 0;

@@ -22,7 +22,7 @@
 // config system.
 // ============================================================================
 
-import { defaults, validateAll } from './configSchema.js';
+import { defaults, validateAll, validateBodies } from './configSchema.js';
 
 const TTL_MS = 30_000;
 const cache = new Map();   // gameId -> { at, value }
@@ -69,8 +69,14 @@ export async function cfg(env, gameId) {
     // Re-validate on READ as well as write. A row could predate a bounds
     // change, or have been edited straight in D1; either way an
     // out-of-range number should not reach combat maths.
-    const { clean } = validateAll(overrides);
+    const { bodies, ...flat } = overrides;
+    const { clean } = validateAll(flat);
     Object.assign(base, clean);
+    // Map edits live under their own key — tabular, not a knob. Empty
+    // when untouched so the seeder can skip the whole copy.
+    base.bodies = bodies ? validateBodies(bodies).clean : {};
+  } else {
+    base.bodies = {};
   }
 
   cache.set(key, { at: Date.now(), value: base });

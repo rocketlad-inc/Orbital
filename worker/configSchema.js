@@ -209,6 +209,76 @@ export const SCHEMA = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// Bodies
+//
+// The map is not a list of knobs. 45 worlds x 7 editable fields would be
+// 315 entries in SCHEMA, which would drown the tabs and read as noise.
+// It is TABULAR data, so it gets its own shape: overrides.bodies is a
+// sparse map of templateId -> { field: value }, and only the fields a
+// human actually moved are stored.
+//
+// Sparseness matters more here than anywhere else. If the editor wrote
+// all 45 bodies back on every save, a later change to the shipped catalog
+// — a new moon, a retuned yield — would be invisible to every existing
+// config, because each one would be carrying a full frozen copy of the
+// old solar system.
+// ---------------------------------------------------------------------------
+
+export const BODY_FIELDS = [
+  {
+    id: 'orbit_radius', label: 'Orbit radius', type: 'number', min: 5, max: 20000, step: 1,
+    help: 'Distance from the star. Drives travel time, which body neighbours which, '
+      + 'and belt grouping — the sim clusters rubble within 1.25x of its neighbour.',
+  },
+  {
+    id: 'radius', label: 'Body size', type: 'number', min: 0.1, max: 30, step: 0.1,
+    help: 'Physical size. Also decides capital eligibility: anything below the spawn '
+      + 'floor (default 1.5) can never be a homeworld.',
+  },
+  { id: 'yield_metal', label: 'Metal / tick', type: 'int', min: 0, max: 100, step: 1 },
+  { id: 'yield_gold', label: 'Credits / tick', type: 'int', min: 0, max: 100, step: 1 },
+  {
+    id: 'yield_science', label: 'Science / tick', type: 'int', min: 0, max: 100, step: 1,
+    help: 'Also gates capitals: a world below the spawn science floor is skipped '
+      + 'when assigning homeworlds, because a science-dead start cannot climb the tree.',
+  },
+  { id: 'yield_fuel', label: 'Fuel / tick', type: 'int', min: 0, max: 100, step: 1,
+    help: 'Fuel was retired from the economy; kept editable so the column is not a lie.' },
+  {
+    id: 'soi', label: 'Sphere of influence', type: 'number', min: 0, max: 500, step: 1,
+    help: 'Capture radius for ships. Too small and moons become unreachable; too large '
+      + 'and neighbouring bodies fight over the same space.',
+  },
+];
+
+export const BODY_FIELD_BY_ID = Object.fromEntries(BODY_FIELDS.map(f => [f.id, f]));
+
+/** Validate one body override map. Same total-rejection rule as knobs. */
+export function validateBodies(bodies) {
+  const clean = {};
+  const errors = {};
+  for (const [tpl, fields] of Object.entries(bodies ?? {})) {
+    if (typeof tpl !== 'string' || !/^[a-z0-9_]{1,40}$/.test(tpl)) {
+      errors[tpl] = 'bad_template_id';
+      continue;
+    }
+    const out = {};
+    for (const [f, raw] of Object.entries(fields ?? {})) {
+      const def = BODY_FIELD_BY_ID[f];
+      if (!def) { errors[`${tpl}.${f}`] = 'unknown_field'; continue; }
+      const n = Number(raw);
+      if (!Number.isFinite(n)) { errors[`${tpl}.${f}`] = 'not_a_number'; continue; }
+      if (def.type === 'int' && !Number.isInteger(n)) { errors[`${tpl}.${f}`] = 'must_be_integer'; continue; }
+      if (def.min != null && n < def.min) { errors[`${tpl}.${f}`] = `below_min_${def.min}`; continue; }
+      if (def.max != null && n > def.max) { errors[`${tpl}.${f}`] = `above_max_${def.max}`; continue; }
+      out[f] = n;
+    }
+    if (Object.keys(out).length) clean[tpl] = out;
+  }
+  return { clean, errors };
+}
+
 /** id -> entry, for validation and lookup. */
 export const BY_ID = Object.fromEntries(SCHEMA.map(s => [s.id, s]));
 
