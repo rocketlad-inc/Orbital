@@ -2310,6 +2310,48 @@ const lastDrawnShipWorldPos = new Map<string, { x: number; y: number }>();
 export function drawnShipWorldPos(shipId: string): { x: number; y: number } | undefined {
   return lastDrawnShipWorldPos.get(shipId);
 }
+// ---- departure glide -------------------------------------------------
+//
+// A ship used to SNAP onto its interplanetary arc the instant the burn
+// went live: one frame parked on its orbit ring, the next frame already
+// out on the trajectory. Render-only fix — for the first moment of a
+// transit the drawn position eases from wherever the ship was last
+// drawn (its orbit) onto the true trajectory position, so it reads as
+// leaving orbit rather than cutting to it. The authoritative position
+// is untouched; this only moves pixels.
+const DEPARTURE_GLIDE_MS = 1300;
+const departureGlide = new Map<string, { ms: number; x: number; y: number }>();
+
+/** Ease the drawn position out of orbit for the first DEPARTURE_GLIDE_MS
+ *  of a transit. Seeds from lastDrawnShipWorldPos, which on the first
+ *  in-transit frame still holds the ship's ORBITAL position. */
+function departureBlend(
+  shipId: string,
+  target: { x: number; y: number },
+  nowMs: number,
+): { x: number; y: number } {
+  let g = departureGlide.get(shipId);
+  if (!g) {
+    const from = lastDrawnShipWorldPos.get(shipId);
+    // No prior draw (ship scrolled into view already flying) = no glide.
+    if (!from) { departureGlide.set(shipId, { ms: 0, x: target.x, y: target.y }); return target; }
+    g = { ms: nowMs, x: from.x, y: from.y };
+    departureGlide.set(shipId, g);
+  }
+  if (g.ms === 0) return target;
+  const k = (nowMs - g.ms) / DEPARTURE_GLIDE_MS;
+  if (k >= 1) return target;
+  const e = 1 - Math.pow(1 - Math.max(0, k), 3);   // ease-out cubic
+  return { x: g.x + (target.x - g.x) * e, y: g.y + (target.y - g.y) * e };
+}
+
+/** Forget a ship's glide so a LATER departure animates again. Called
+ *  from the parked-ship draw path. */
+function clearDepartureGlide(shipId: string): void {
+  if (departureGlide.size > 2000) departureGlide.clear();
+  else departureGlide.delete(shipId);
+}
+
 function recordDrawnShipWorldPos(shipId: string, x: number, y: number): void {
   if (lastDrawnShipWorldPos.size > 2000) lastDrawnShipWorldPos.clear();
   const e = lastDrawnShipWorldPos.get(shipId);
@@ -2429,6 +2471,9 @@ export function drawShip(
   const canvasPos = worldToCanvas(worldX, worldY, ctx);
   // Death FX (wrecks, destruction flash) spawn where the hull was DRAWN.
   recordDrawnShipWorldPos(ship.id, worldX, worldY);
+  // Parked again (arrived, or a burn was cancelled) — forget the glide so
+  // the NEXT departure eases out of orbit too instead of snapping.
+  clearDepartureGlide(ship.id);
 
   // Off-screen cull. A 229-ship game draws every parked hull every
   // frame even when the camera is zoomed onto one moon; a hull 100px+
@@ -3550,9 +3595,11 @@ function drawTorchTransitShip(
   // sample times, leaving the ship visibly off the polyline mid-segment.
   // Falls back to the stored pos when no samples were provided (e.g. an
   // old caller hasn't been threaded yet).
-  const lerpedPos = trajectorySamples && trajectorySamples.length > 0
+  const truePos = trajectorySamples && trajectorySamples.length > 0
     ? torchPositionFromSamples(trajectorySamples, ctx.t)
     : { x: ship.transit.pos.x, y: ship.transit.pos.y };
+  // Leave orbit, don't cut to the arc — see departureBlend.
+  const lerpedPos = departureBlend(ship.id, truePos, ctx.nowMs ?? performance.now());
   const canvasPos = worldToCanvas(lerpedPos.x, lerpedPos.y, ctx);
   recordDrawnShipWorldPos(ship.id, lerpedPos.x, lerpedPos.y);
   const shipColorValue = shipColor(ship, ctx.factions);
