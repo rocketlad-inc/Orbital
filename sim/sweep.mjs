@@ -1,0 +1,101 @@
+// ============================================================================
+// sweep.mjs — the Monte Carlo layer.
+//
+// One game tells you what happened. A sweep tells you what TENDS to
+// happen, which is the only thing balance work can act on.
+//
+// This first sweep deliberately runs empires that issue NO ORDERS. That
+// sounds useless and isn't: it isolates the one variable the game decides
+// for you rather than one you play. Every faction gets the same rules and
+// the same tick count, so any spread in the outcome is attributable to
+// the STARTING POSITION the seed dealt them — the thing the fair-spawn
+// work was meant to flatten.
+//
+// It is a floor, not a verdict. A start that is poor for a passive empire
+// may be strong for an aggressive one, and nothing here can see that.
+// Scripted archetypes are what turn this into a real balance instrument;
+// this establishes the baseline they get measured against.
+//
+// Usage:  node sim/sweep.mjs [seeds] [ticks]
+// ============================================================================
+
+import { runGame } from './headless.mjs';
+
+const SEEDS = Number(process.argv[2] ?? 20);
+const TICKS = Number(process.argv[3] ?? 200);
+
+/** Total wealth, weighting the three currencies equally. Crude on
+ *  purpose: the moment you weight them you are encoding a strategy
+ *  opinion into the measurement, and this pass is meant to be
+ *  strategy-free. */
+const wealth = (f) => Math.round((f.metal ?? 0) + (f.gold ?? 0) + (f.science ?? 0));
+
+function stats(xs) {
+  const n = xs.length;
+  const mean = xs.reduce((a, b) => a + b, 0) / n;
+  const sd = Math.sqrt(xs.reduce((a, b) => a + (b - mean) ** 2, 0) / n);
+  const sorted = [...xs].sort((a, b) => a - b);
+  return { n, mean, sd, min: sorted[0], max: sorted[n - 1], median: sorted[Math.floor(n / 2)] };
+}
+
+async function main() {
+  console.log(`sweep: ${SEEDS} seeds x ${TICKS} ticks, passive empires\n`);
+  const t0 = Date.now();
+
+  const perSeed = [];
+  for (let i = 0; i < SEEDS; i++) {
+    const seed = `sweep-${String(i).padStart(4, '0')}`;
+    const r = await runGame({ ticks: TICKS, players: 4, seed, quiet: true });
+    perSeed.push(r);
+    process.stdout.write(`  ${i + 1}/${SEEDS}\r`);
+  }
+
+  // --- spread WITHIN a game: how unequal is a typical match? --------------
+  // The honest question for spawn fairness is not "is slot 2 lucky" (slots
+  // are shuffled) but "how far apart are the best and worst starts in the
+  // same game". A game where the leader ends 3x the laggard on economy
+  // alone, with nobody having played, is a spawn problem.
+  const ratios = [];
+  const gaps = [];
+  for (const r of perSeed) {
+    const w = r.factions.map(wealth).sort((a, b) => b - a);
+    ratios.push(w[0] / Math.max(1, w[w.length - 1]));
+    gaps.push(w[0] - w[w.length - 1]);
+  }
+  const rs = stats(ratios);
+  const gs = stats(gaps);
+
+  console.log(`--- inequality within a game (passive, ${TICKS} ticks) ---`);
+  console.log(`  best:worst wealth ratio   mean ${rs.mean.toFixed(2)}x   median ${rs.median.toFixed(2)}x   `
+    + `range ${rs.min.toFixed(2)}-${rs.max.toFixed(2)}x`);
+  console.log(`  absolute gap              mean ${Math.round(gs.mean)}   max ${Math.round(gs.max)}`);
+
+  // --- bankruptcy: the arrears signal from the single-game run ------------
+  let brokeGames = 0, brokeFactions = 0;
+  for (const r of perSeed) {
+    const broke = r.factions.filter(f => (f.gold ?? 0) <= 0).length;
+    if (broke) brokeGames += 1;
+    brokeFactions += broke;
+  }
+  console.log(`\n--- credit bankruptcy while passive ---`);
+  console.log(`  games with >=1 broke faction: ${brokeGames}/${SEEDS}`);
+  console.log(`  factions at 0 credits:        ${brokeFactions}/${SEEDS * 4}`);
+
+  // --- what the tick loop actually did ------------------------------------
+  const kinds = new Map();
+  for (const r of perSeed) {
+    for (const c of r.chronicle) kinds.set(c.kind, (kinds.get(c.kind) ?? 0) + c.n);
+  }
+  console.log(`\n--- chronicle across all runs ---`);
+  for (const [k, n] of [...kinds].sort((a, b) => b[1] - a[1])) {
+    console.log(`  ${String(n).padStart(5)}  ${k}`);
+  }
+
+  const wall = Date.now() - t0;
+  console.log(`\n--- cost ---`);
+  console.log(`  ${SEEDS} games in ${(wall / 1000).toFixed(1)}s `
+    + `(${(wall / SEEDS).toFixed(0)} ms/game)`);
+  console.log(`  extrapolated 1000 games: ${((wall / SEEDS) * 1000 / 1000 / 60).toFixed(1)} min single-threaded`);
+}
+
+main().catch((e) => { console.error('SWEEP FAILED:', e.message); process.exit(1); });
