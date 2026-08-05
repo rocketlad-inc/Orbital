@@ -2397,6 +2397,25 @@ const BATTLE_LINE_MIN_SEP = 3.0;
 /** Radial gap between ranks when one arc cannot hold the whole fleet. */
 const BATTLE_LINE_RANK_GAP = 2.6;
 
+// FORMATIONS SHOULD NOT BE PERFECT.
+//
+// Exact ranks at exact angles with exact headings read as a parade, not
+// a battle — and the standoff maths made it worse, because when the ring
+// expands every hull in a fleet gets the SAME computed radius and the
+// per-ship lane jitter that used to scatter them is washed out entirely.
+//
+// These put the scatter back. All three are derived from the ship id, so
+// a hull keeps its own offset every frame: the fleet looks handmade
+// rather than shimmering.
+//
+/** Radial scatter, world units peak-to-peak. */
+const BATTLE_LINE_JITTER_R = 1.7;
+/** Angular scatter as a FRACTION of the gap between neighbours, so hulls
+ *  wander within their slot without swapping places. */
+const BATTLE_LINE_JITTER_A = 0.42;
+/** Heading scatter, radians peak-to-peak — noses off-parallel. */
+const BATTLE_LINE_JITTER_H = 0.22;
+
 /** Ranks the line is willing to form BEFORE standing off. Two reads as
  *  a formation with depth; expanding the ring earlier than that would
  *  move fights that already looked right. */
@@ -2522,12 +2541,24 @@ export function drawShip(
     // behind the rank in front. Nudge it off the axis.
     if (inThisRank === 1 && rank > 0) within = (width / 4) * sweep;
 
-    const theta = formation.arcCenter + drift + within;
-    const r = r0 + rank * BATTLE_LINE_RANK_GAP;
+    // Per-hull scatter. Three independent slices of the id hash so the
+    // radial, angular and heading offsets don't correlate into a visible
+    // pattern. Angular jitter is scaled by the gap between neighbours,
+    // so a tight rank wanders less than a loose one and hulls stay in
+    // their own slots instead of trading places.
+    const jh = hashStr(ship.id);
+    const step = inThisRank > 1 ? width / (inThisRank - 1) : width;
+    const jitterA = ((((jh >>> 7) % 997) / 997) - 0.5) * step * BATTLE_LINE_JITTER_A;
+    const jitterR = ((((jh >>> 3) % 991) / 991) - 0.5) * BATTLE_LINE_JITTER_R;
+    const jitterH = ((((jh >>> 13) % 983) / 983) - 0.5) * BATTLE_LINE_JITTER_H;
+
+    const theta = formation.arcCenter + drift + within + jitterA;
+    const r = Math.max(1, r0 + rank * BATTLE_LINE_RANK_GAP + jitterR);
     lx = Math.cos(theta) * r;
     ly = Math.sin(theta) * r;
-    // Nose on the orbit tangent — prograde for the ring's direction.
-    heading = theta + (Math.PI / 2) * dir;
+    // Nose on the orbit tangent — prograde for the ring's direction,
+    // plus a little off-parallel so the line isn't drawn with a ruler.
+    heading = theta + (Math.PI / 2) * dir + jitterH;
   } else {
     // Normal ring — apply the radial lane offset by scaling the local
     // vector outward; heading stays on the true orbital tangent.
