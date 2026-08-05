@@ -99,11 +99,19 @@ async function act(env, r, { gameId, userId, params = {}, body = {} }) {
 // archetype be a dozen lines rather than a new bot.
 // ---------------------------------------------------------------------------
 
+// A doctrine MUST research the gate for every hull it wants to build.
+// The first run ignored this and the results were quietly worthless:
+// hull.frigate needs construction 3 and hull.freighter needs propulsion 1
+// (worker/researchUnlocks.js), so Rusher never built a frigate and
+// Economist — whose only hull was the freighter — never built ANYTHING.
+// Economist was therefore an identical twin of Technocrat wearing 3500
+// rejected build calls, and their near-identical scores were an artifact
+// rather than a finding. Corvette and colony are ungated.
 export const ARCHETYPES = {
   // Hulls first, worry later. Tests whether military tempo is affordable.
   rusher: {
     name: 'Rusher',
-    research: ['weapons', 'propulsion', 'armor'],
+    research: ['weapons', 'construction', 'armor'],   // construction 3 -> frigate
     build: ['corvette', 'corvette', 'frigate'],
     colonise: false,
     buildEvery: 6,
@@ -120,7 +128,7 @@ export const ARCHETYPES = {
   // actually necessary, or can you win by doing nothing well?"
   economist: {
     name: 'Economist',
-    research: ['industry', 'construction', 'sensors'],
+    research: ['propulsion', 'industry', 'construction'],   // propulsion 1 -> freighter
     build: ['freighter'],
     colonise: false,
     buildEvery: 14,
@@ -148,7 +156,14 @@ export const ARCHETYPES = {
  */
 export async function takeTurn(env, { gameId, userId, factionId, doctrine, tick, tally }) {
   const DB = env.DB;
-  const bump = (k) => { tally[k] = (tally[k] ?? 0) + 1; };
+  // Attribute every outcome to the DOCTRINE, not just the run. A global
+  // "520 insufficient_resources" says the economy is tight; the same
+  // number split by doctrine says WHICH strategy it is tight for, which
+  // is the difference between an observation and a lead.
+  const bump = (k) => {
+    const key = `${doctrine.name}:${k}`;
+    tally[key] = (tally[key] ?? 0) + 1;
+  };
 
   // --- research: keep something always in progress ------------------------
   // Cheap to check, and an idle research slot is pure waste — the passive

@@ -184,6 +184,7 @@ export async function runGame({ ticks = 200, players = 4, seed = 'sim-seed-0001'
     doctrine: names.length ? BOTS.ARCHETYPES[names[(i + doctrineOffset) % names.length]] : null,
   }));
   const tally = {};
+  let midpoint = null;
 
   const tickTimes = [];
   for (let tick = 1; tick <= TICKS; tick++) {
@@ -204,6 +205,18 @@ export async function runGame({ ticks = 200, players = 4, seed = 'sim-seed-0001'
     await room.resolveTick(roomId, tick);
     tickTimes.push(Date.now() - t);
     await DB.prepare('UPDATE games SET current_tick = ? WHERE id = ?').bind(tick, roomId).run();
+
+    // Halfway snapshot. One extra query per game buys the snowball
+    // question: does a lead at the midpoint predict the finish? A game
+    // where it always does has no comeback; one where it never does has
+    // no consequence to the first half.
+    if (tick === Math.floor(TICKS / 2)) {
+      midpoint = (await DB.prepare(
+        `SELECT id, metal, gold, science,
+                (SELECT COUNT(*) FROM game_bodies b WHERE b.owner_faction_id = f.id) bodies
+           FROM game_factions f WHERE f.game_id = ?`,
+      ).bind(roomId).all()).results;
+    }
     if (!quiet && tick % 50 === 0) process.stdout.write(`  tick ${tick}\r`);
   }
 
@@ -238,9 +251,36 @@ export async function runGame({ ticks = 200, players = 4, seed = 'sim-seed-0001'
     log(`  broadcasts emitted: ${broadcasts.length}`);
   }
 
-  // Attach each seat's doctrine so a sweep can attribute outcomes.
+  // Attach each seat's doctrine so a sweep can attribute outcomes, plus
+  // the two things that explain an outcome: where it started, and how far
+  // up the tree it got.
   const bySeat = new Map(seats.map(s2 => [s2.factionId, s2.doctrine?.name ?? null]));
-  const facsOut = facs.map(f => ({ ...f, doctrine: bySeat.get(f.id) ?? null }));
+
+  // Capital template ('earth', 'mars', ...) rather than the game-scoped
+  // id, so spawn quality can be pooled ACROSS games.
+  const capitals = new Map((await DB.prepare(
+    `SELECT f.id, b.template_id FROM game_factions f
+       JOIN game_bodies b ON b.id = f.capital_body_id WHERE f.game_id = ?`,
+  ).bind(roomId).all()).results.map(r => [r.id, r.template_id]));
+
+  const techs = new Map((await DB.prepare(
+    `SELECT faction_id, SUM(level) lv, COUNT(*) tracks
+       FROM faction_techs WHERE game_id = ? GROUP BY faction_id`,
+  ).bind(roomId).all()).results.map(r => [r.faction_id, r]));
+
+  const mid = new Map((midpoint ?? []).map(m => [m.id, m]));
+
+  const facsOut = facs.map(f => ({
+    ...f,
+    doctrine: bySeat.get(f.id) ?? null,
+    capital: capitals.get(f.id) ?? null,
+    techLevels: techs.get(f.id)?.lv ?? 0,
+    midWealth: (() => {
+      const m = mid.get(f.id);
+      return m ? (m.metal ?? 0) + (m.gold ?? 0) + (m.science ?? 0) : null;
+    })(),
+    midBodies: mid.get(f.id)?.bodies ?? null,
+  }));
 
   return {
     seed: SEED, ticks: TICKS, factions: facsOut, chronicle: chron,

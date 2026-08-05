@@ -92,6 +92,79 @@ async function main() {
     }
     console.log('  (top-econ = share of games this doctrine ended richest; NOT a win condition)');
 
+    // --- spread, not just centre ------------------------------------------
+    // A mean hides whether a doctrine is reliable or a lottery. Two
+    // strategies averaging the same wealth are not equivalent if one has
+    // half the variance — that is the difference between a solid opening
+    // and a gamble, and players feel it long before they can name it.
+    console.log(`\n--- consistency (same games) ---`);
+    console.log(`  ${'doctrine'.padEnd(12)} ${'mean'.padStart(7)} ${'sd'.padStart(7)} ${'min'.padStart(7)} ${'max'.padStart(7)}  spread`);
+    for (const d of DOCTRINES) {
+      const name = ARCHETYPES[d].name;
+      const fs = byDoc.get(name) ?? [];
+      if (!fs.length) continue;
+      const w = stats(fs.map(wealth));
+      console.log(`  ${name.padEnd(12)} ${Math.round(w.mean).toString().padStart(7)} `
+        + `${Math.round(w.sd).toString().padStart(7)} ${Math.round(w.min).toString().padStart(7)} `
+        + `${Math.round(w.max).toString().padStart(7)}  ${(w.sd / Math.max(1, w.mean)).toFixed(2)}`);
+    }
+    console.log('  (spread = sd/mean; higher means the doctrine is a gamble)');
+
+    // --- tech pace ---------------------------------------------------------
+    console.log(`\n--- research reached (total levels across tracks) ---`);
+    for (const d of DOCTRINES) {
+      const name = ARCHETYPES[d].name;
+      const fs = byDoc.get(name) ?? [];
+      if (!fs.length) continue;
+      const t = stats(fs.map(f => f.techLevels ?? 0));
+      console.log(`  ${name.padEnd(12)} mean ${t.mean.toFixed(1).padStart(5)}  range ${t.min}-${t.max}`);
+    }
+
+    // --- snowball ----------------------------------------------------------
+    // Does leading at halftime mean winning? Reported as the share of
+    // games where the midpoint leader also finished first. 25% is pure
+    // chance with four players; 100% means the second half is decorative.
+    let leadHeld = 0, comparable = 0;
+    for (const r of perSeed) {
+      const withMid = r.factions.filter(f => f.midWealth != null);
+      if (withMid.length < 2) continue;
+      comparable += 1;
+      const midLeader = withMid.reduce((a, b) => (b.midWealth > a.midWealth ? b : a));
+      const endLeader = r.factions.reduce((a, b) => (wealth(b) > wealth(a) ? b : a));
+      if (midLeader.id === endLeader.id) leadHeld += 1;
+    }
+    if (comparable) {
+      console.log(`\n--- snowball ---`);
+      console.log(`  midpoint leader also finished first: ${leadHeld}/${comparable} `
+        + `(${(leadHeld / comparable * 100).toFixed(0)}%, chance = 25%)`);
+    }
+
+    // --- spawn quality -----------------------------------------------------
+    // Pooled across games by capital TEMPLATE, so "is Earth a better
+    // start than Mars" gets an answer independent of who drew it.
+    const byCapital = new Map();
+    for (const r of perSeed) {
+      for (const f of r.factions) {
+        if (!f.capital) continue;
+        const arr = byCapital.get(f.capital) ?? [];
+        arr.push(wealth(f));
+        byCapital.set(f.capital, arr);
+      }
+    }
+    const capRows = [...byCapital.entries()]
+      .filter(([, xs]) => xs.length >= 3)
+      .map(([cap, xs]) => ({ cap, ...stats(xs) }))
+      .sort((a, b) => b.mean - a.mean);
+    if (capRows.length) {
+      console.log(`\n--- spawn quality by capital (n>=3) ---`);
+      for (const c of capRows) {
+        console.log(`  ${c.cap.padEnd(12)} mean ${Math.round(c.mean).toString().padStart(6)}  n=${c.n}`);
+      }
+      const best = capRows[0], worst = capRows[capRows.length - 1];
+      console.log(`  best/worst capital: ${(best.mean / Math.max(1, worst.mean)).toFixed(2)}x `
+        + `(${best.cap} vs ${worst.cap})`);
+    }
+
     // What the bots tried and were refused. A doctrine that spends the
     // game being told "insufficient metal" is a doctrine the economy
     // does not currently support — that is a balance finding, not a bug.
@@ -99,9 +172,21 @@ async function main() {
     for (const r of perSeed) {
       for (const [k, v] of Object.entries(r.tally ?? {})) tally[k] = (tally[k] ?? 0) + v;
     }
-    console.log(`\n--- bot actions across all runs ---`);
-    for (const [k, v] of Object.entries(tally).sort((a, b) => b[1] - a[1]).slice(0, 12)) {
-      console.log(`  ${String(v).padStart(6)}  ${k}`);
+    // Split by doctrine: WHICH strategy the economy is refusing is a
+    // lead; a global total is only an observation.
+    console.log(`\n--- what each doctrine tried, and was told ---`);
+    for (const d of DOCTRINES) {
+      const name = ARCHETYPES[d].name;
+      const mine = Object.entries(tally)
+        .filter(([k]) => k.startsWith(`${name}:`))
+        .map(([k, v]) => [k.slice(name.length + 1), v])
+        .sort((a, b) => b[1] - a[1]);
+      if (!mine.length) continue;
+      const ok = mine.filter(([k]) => k.endsWith('_ok')).reduce((a, [, v]) => a + v, 0);
+      const rej = mine.filter(([k]) => k.includes('_rej_')).reduce((a, [, v]) => a + v, 0);
+      const pct = ok + rej ? ((rej / (ok + rej)) * 100).toFixed(0) : '0';
+      console.log(`  ${name} — ${ok} accepted, ${rej} refused (${pct}% refused)`);
+      for (const [k, v] of mine.slice(0, 4)) console.log(`      ${String(v).padStart(5)}  ${k}`);
     }
   }
 
