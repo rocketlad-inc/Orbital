@@ -39,6 +39,7 @@ import {
   sanitizeParts, computeDesignStats, partsCost, countPart,
   detonatorDamage, detonatorDisclosure, SERVER_HULL_BASE, PART_GLYPH,
   damageProfile, refitFee, PART_STACK_ESCALATION, reductionPct, reductionLadder,
+  hitChanceOf, SERVER_HULL_BASE as HULL_BASE, travelMultiplierOf,
 } from '../game/shipParts';
 import {
   ShipIcon, ShipIconVariant, ALL_VARIANTS, ICON_VARIANT_NAMES, DEFAULT_SHIP_ICONS,
@@ -538,6 +539,16 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
         <span className="sd-stat__value"><Delta from={base.damagePerTick} to={stats.damagePerTick} /></span>
       </div>
       <div className="sd-stat">
+        <span className="sd-stat__label">Speed</span>
+        <span className="sd-stat__value"><Delta from={base.speed} to={stats.speed} /></span>
+      </div>
+      <div className="sd-stat">
+        <span className="sd-stat__label">Travel time</span>
+        <span className="sd-stat__value">
+          {travelMultiplierOf(stats.speed).toFixed(2)}x
+        </span>
+      </div>
+      <div className="sd-stat">
         <span className="sd-stat__label">Damage type</span>
         <span className="sd-stat__value">{dmgTypeLabel}</span>
       </div>
@@ -945,6 +956,30 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
               {selected && !draftMatchesSelected && <span className="sd-side__dirty"> · unsaved</span>}
             </div>
             <div className="sd-side__stats">{statRows}</div>
+            {/* COMBAT V2's core rule, live. A player fitting an engine watches
+                these numbers move and learns the whole system without reading
+                a word of documentation — which matters because animations are
+                unchanged, so a hit and a miss look identical on the map. This
+                is the only place the rule is stated. */}
+            <div className="sd-hit">
+              <div className="sd-hit__title">Chance to hit, per tick</div>
+              <div className="sd-hit__row">
+                {(['corvette', 'frigate', 'destroyer'] as ShipClassName[]).map(t => {
+                  const p = hitChanceOf(stats.speed, HULL_BASE[t].speed);
+                  return (
+                    <div key={t} className="sd-hit__cell" title={`vs a bare ${t} (speed ${HULL_BASE[t].speed})`}>
+                      <span className="sd-hit__glyph">{t === 'corvette' ? '▹' : t === 'frigate' ? '▰' : '▮'}</span>
+                      <span className="sd-hit__pct">{(100 * p).toFixed(0)}%</span>
+                      <span className="sd-hit__lbl">{t.slice(0, 3).toUpperCase()}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="sd-hit__foot">
+                Faster hulls are harder to hit. Engines raise speed, which lifts
+                every number here and shortens the trip.
+              </div>
+            </div>
             {outgoingHint && <div className="sd-hint sd-hint--matchup">{outgoingHint}</div>}
             <div className="sd-hint sd-hint--matchup">{incomingHint}</div>
             <div className="sd-hint">

@@ -14,11 +14,18 @@ export interface ShipClassDef {
   hp: number;           // hit points
   pdcRating: number;    // point-defense coverage (0-1), reduces incoming damage
   range: number;        // engagement range in world units (0 = no combat capability)
-  damagePerTick: number; // damage dealt per COMBAT_DAMAGE_INTERVAL ticks during engagement
+  damagePerTick: number; // damage dealt per TICK while engaged (COMBAT V2)
 
   // Movement
   fuelCapacity: number;
-  speedModifier: number; // multiplier on transfer time (lower = faster)
+  /** COMBAT V2 legacy. Travel time now derives from `speed` — see
+   *  combatSpeedOf / travelMultiplierOf below. Kept only so older callers
+   *  compile; it is defined as 0.50/speed so the two cannot disagree. */
+  speedModifier: number;
+  /** COMBAT V2. 0-1 mobility. Drives BOTH the hit roll
+   *  (p = atk^2/(atk^2+def^2)) and travel time. Mirrors
+   *  worker/factions.js SHIP_COMBAT_STATS.speed — KEEP IN SYNC. */
+  speed: number;
 
   // Cargo
   cargoCapacity: number; // cargo slots (0 for combat ships)
@@ -45,7 +52,8 @@ const CORVETTE: ShipClassDef = {
   hp: 40,
   pdcRating: 0.2,
   range: 8,
-  damagePerTick: 5,
+  damagePerTick: 3.75,
+  speed: 0.85,
   fuelCapacity: 80,
   speedModifier: 0.7,
   cargoCapacity: 0,
@@ -68,7 +76,8 @@ const FRIGATE: ShipClassDef = {
   hp: 100,
   pdcRating: 0.4,
   range: 14,
-  damagePerTick: 10,
+  damagePerTick: 20.25,
+  speed: 0.50,
   fuelCapacity: 120,
   speedModifier: 1.0,
   cargoCapacity: 0,
@@ -88,10 +97,11 @@ const DESTROYER: ShipClassDef = {
   displayName: 'Destroyer',
   description: 'Heavy warship. Devastating firepower, slow.',
   firepower: 35,
-  hp: 200,
+  hp: 400,
   pdcRating: 0.6,
   range: 22,
-  damagePerTick: 18,
+  damagePerTick: 45,
+  speed: 0.30,
   fuelCapacity: 150,
   speedModifier: 1.4,
   cargoCapacity: 0,
@@ -115,6 +125,7 @@ const FREIGHTER: ShipClassDef = {
   pdcRating: 0.1,
   range: 0,
   damagePerTick: 0,
+  speed: 0.55,
   fuelCapacity: 100,
   speedModifier: 1.3,
   cargoCapacity: 50,
@@ -141,6 +152,7 @@ const COLONY: ShipClassDef = {
   pdcRating: 0,
   range: 0,
   damagePerTick: 0,
+  speed: 0.55,
   fuelCapacity: 60,
   speedModifier: 1.6,
   cargoCapacity: 0,

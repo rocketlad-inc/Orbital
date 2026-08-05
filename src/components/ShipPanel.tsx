@@ -14,6 +14,7 @@ import {
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { markNodeCancelPending, unmarkNodeCancelPending } from '../multiplayer/pendingNodeCancels';
 import { humanizeMpError } from '../multiplayer/errorMessages';
+import { combatSpeedOf } from '../game/shipParts';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { EditableName } from './EditableName';
 import { ShipIcon } from './ShipIcons';
@@ -1382,9 +1383,15 @@ export const ShipPanel: React.FC = () => {
               </div>
               <div className="stat-row">
                 <span className="label">CADENCE</span>
-                {/* SP + MP now both gate combat at AUTO_COMBAT_INTERVAL=3
-                    ticks per ship. Single label; no MP branch needed. */}
-                <span className="value">every 3 ticks</span>
+                {/* COMBAT V2: every hull fires every tick. Whether it lands
+                    is the speed roll, which is the row below. */}
+                <span className="value">every tick</span>
+              </div>
+              <div className="stat-row">
+                <span className="label">SPEED</span>
+                <span className="value" title="Drives both how fast this ship arrives and how hard it is to hit.">
+                  {combatSpeedOf(ship.class as ShipClassName, ship.parts).toFixed(2)}
+                </span>
               </div>
               {/* Engagement blurb tracks the current STANCE — the fixed
                   "auto-fires at any hostile" copy contradicted a ship set

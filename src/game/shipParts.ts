@@ -128,7 +128,7 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   engine: {
     id: 'engine',
     name: 'Booster Engine',
-    blurb: '−15% travel time per engine (multiplicative).',
+    blurb: '+speed per engine: arrives sooner AND harder to hit. Caps out.',
     cost: { ore: 2, credits: 6 },
     allowedOn: ['corvette', 'frigate', 'destroyer', 'freighter'],
     techTrack: 'propulsion',
@@ -407,6 +407,7 @@ export function computeDesignStats(
 ): {
   hp: number;
   damagePerTick: number;
+  speed: number;
   travelTimeMult: number;
   /** Hull + parts, in client resource names. */
   totalCost: { ore: number; credits: number };
@@ -441,6 +442,9 @@ export function computeDesignStats(
   return {
     hp: Math.round(base.hp * (1 + hpBonus)),
     damagePerTick: Math.round(base.damagePerTick * (1 + dmgBonus) * 10) / 10,
+    // COMBAT V2: the designer quotes speed live so a player watching the
+    // number move while fitting an engine learns the rule for free.
+    speed: Math.round(combatSpeedOf(shipClass, parts) * 1000) / 1000,
     travelTimeMult: engineTravelMultiplier(parts, propulsionLvl),
     totalCost: { ore: def.cost.ore + pc.ore, credits: def.cost.credits + pc.credits },
   };
@@ -448,13 +452,60 @@ export function computeDesignStats(
 
 /** Server-authoritative hull combat bases (worker/factions.js
  *  SHIP_COMBAT_STATS). KEEP IN SYNC. */
-export const SERVER_HULL_BASE: Record<ShipClassName, { hp: number; damagePerTick: number }> = {
-  corvette: { hp: 40, damagePerTick: 5 },
-  frigate: { hp: 100, damagePerTick: 10 },
-  destroyer: { hp: 200, damagePerTick: 18 },
-  freighter: { hp: 60, damagePerTick: 0 },
-  colony: { hp: 60, damagePerTick: 0 },
+export const SERVER_HULL_BASE: Record<
+  ShipClassName,
+  { hp: number; damagePerTick: number; speed: number }
+> = {
+  corvette: { hp: 40, damagePerTick: 3.75, speed: 0.85 },
+  frigate: { hp: 100, damagePerTick: 20.25, speed: 0.50 },
+  destroyer: { hp: 400, damagePerTick: 45, speed: 0.30 },
+  freighter: { hp: 60, damagePerTick: 0, speed: 0.55 },
+  colony: { hp: 60, damagePerTick: 0, speed: 0.55 },
 };
+
+/** Reference hull for travel normalisation — a frigate's trip is unchanged
+ *  by COMBAT V2 and everything else moves relative to it. */
+export const FRIGATE_SPEED = 0.50;
+/** One engine's speed multiplier — the reciprocal of the -15% travel time
+ *  the part already shipped with, so engine behaviour is preserved. */
+export const ENGINE_SPEED_MUL = 1 / 0.85;
+/** Ceiling on speed, for BOTH the hit roll and travel. Written as 1/0.85 so a
+ *  fully-engined corvette (0.85 * (1/0.85)^2) lands exactly on it rather than
+ *  being clipped a hair short and looking like a wasted slot. */
+export const SPEED_CAP = 1 / 0.85;
+
+/** COMBAT V2 speed for a hull + loadout. Mirrors worker/shipDesigns.js
+ *  shipSpeed — KEEP IN SYNC. Tech is deliberately excluded: Propulsion
+ *  raises the per-engine travel step elsewhere. */
+export function combatSpeedOf(shipClass: ShipClassName, parts: readonly string[] | undefined): number {
+  const base = SERVER_HULL_BASE[shipClass]?.speed ?? FRIGATE_SPEED;
+  return Math.min(SPEED_CAP, base * Math.pow(ENGINE_SPEED_MUL, countPart(parts, 'engine')));
+}
+
+/** Chance `attacker` lands a shot on `defender`, both as 0-1 speeds.
+ *  Symmetric; mirrors are always 50%; never 0 or 1. */
+export function hitChanceOf(atkSpeed: number, defSpeed: number): number {
+  const a = atkSpeed * atkSpeed;
+  const d = defSpeed * defSpeed;
+  return a + d <= 0 ? 0.5 : a / (a + d);
+}
+
+/**
+ * Travel-time multiplier for a speed, normalised so a frigate is unchanged.
+ *
+ * Callers that want ACCELERATION must square the ratio instead: trip time is
+ * brachistochrone T = 2*sqrt(d/a), so a linear speed ratio needs a squared
+ * accel ratio. Getting this wrong makes a corvette 23% faster instead of 41%
+ * and nobody can see why.
+ */
+export function travelMultiplierOf(speed: number): number {
+  return FRIGATE_SPEED / Math.max(0.01, speed);
+}
+/** Acceleration multiplier that realises travelMultiplierOf under T=2*sqrt(d/a). */
+export function travelAccelMultiplierOf(speed: number): number {
+  const r = Math.max(0.01, speed) / FRIGATE_SPEED;
+  return r * r;
+}
 
 /** Blast damage: 50% of max HP per detonator, Weapons tech at half rate. */
 export function detonatorDamage(hpMax: number, detonatorCount: number, weaponsLvl: number = 0): number {

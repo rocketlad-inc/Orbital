@@ -15,6 +15,7 @@ import {
 import { openShipDesigner } from './ShipDesigner';
 import {
   sanitizeParts, partsCost, computeDesignStats, loadoutSummary, ShipPartId, SERVER_HULL_BASE,
+  combatSpeedOf,
 } from '../game/shipParts';
 import { deliveredHullHp } from '../game/combat';
 import { randomShipName } from '../game/shipNames';
@@ -695,7 +696,10 @@ export const BuildPanel: React.FC = () => {
                 )}
               </div>
               <div className="class-stats">
-                <span className="stat">FP:{designStats ? designStats.damagePerTick : def.firepower}</span>
+                <span className="stat">FP:{designStats ? designStats.damagePerTick : SERVER_HULL_BASE[cls].damagePerTick}</span>
+                <span className="stat" title="Speed: how fast it arrives, and how hard it is to hit.">
+                  SPD:{combatSpeedOf(cls, designParts).toFixed(2)}
+                </span>
                 <span className="stat" title={hpTitle(cls, designStats)}>
                   HP:{deliveredHp(cls, designStats)}
                 </span>
@@ -920,7 +924,10 @@ export const BuildPanel: React.FC = () => {
                     </span>
                   </div>
                   <div className="class-stats">
-                    <span className="stat">FP:{dstats ? dstats.damagePerTick : def.firepower}</span>
+                    <span className="stat">FP:{dstats ? dstats.damagePerTick : SERVER_HULL_BASE[row.shipClass].damagePerTick}</span>
+                    <span className="stat" title="Speed: how fast it arrives, and how hard it is to hit.">
+                      SPD:{combatSpeedOf(row.shipClass, row.parts).toFixed(2)}
+                    </span>
                     <span className="stat" title={hpTitle(row.shipClass, dstats)}>
                       HP:{deliveredHp(row.shipClass, dstats)}
                     </span>

@@ -150,8 +150,8 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
     costScaling: 1.6,
     baseBuildTicks: 30,
     buildTimeScaling: 1.3,
-    description: '+4 damage/tick to hostile ships in range, per level.',
-    combatBoost: { damagePerLevel: 4 },
+    description: '+20 damage per level to hostile ships in range, every tick.',
+    combatBoost: { damagePerLevel: 20 },   // matches worker/room.js STATION_DMG_PER_WEAPONS_LEVEL
   },
   shipyard: {
     displayName: 'Shipyard',

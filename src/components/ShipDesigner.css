@@ -583,3 +583,40 @@ html[data-mobile-shell] .sd-drawer__body { grid-template-columns: 1fr; }
   0%, 100% { opacity: 0.65; }
   50%      { opacity: 1; }
 }
+
+/* ---- COMBAT V2 live hit matrix (sidebar) -------------------------- */
+.sd-hit {
+  margin: 10px 0 8px;
+  padding: 9px 10px 8px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(120, 220, 255, 0.22);
+  border-radius: 6px;
+}
+.sd-hit__title {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #7fe3ff;
+  margin-bottom: 7px;
+}
+.sd-hit__row { display: flex; gap: 6px; }
+.sd-hit__cell {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 5px 2px 4px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+}
+.sd-hit__glyph { font-size: 11px; color: #8ea2b4; line-height: 1; }
+.sd-hit__pct {
+  font-size: 15px;
+  font-weight: 600;
+  color: #eaf6ff;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.sd-hit__lbl { font-size: 8px; letter-spacing: 0.1em; color: #6c7c8c; }
+.sd-hit__foot { margin-top: 6px; font-size: 10px; line-height: 1.45; color: #8ea2b4; }

@@ -30,7 +30,7 @@ import {
 } from '../game/dysonSphere';
 import { tickMaintenance } from '../game/maintenance';
 import { TechId, TECH_DEFS, TECH_MAX_LEVEL, MAX_SCIENCE_PER_TICK, engineGModifier } from '../game/techs';
-import { engineAccelMultiplier } from '../game/shipParts';
+import { engineAccelMultiplier, travelAccelMultiplierOf, combatSpeedOf } from '../game/shipParts';
 import { runFactionAI, shouldRunAI } from '../game/factionAI';
 import type { AIActivityEntry } from '../types';
 import { useTurnBasedSettings } from './turnBasedSettings';
@@ -144,7 +144,13 @@ function applyAIIntent(
         // engine part (x Propulsion tech), realized as an accel boost
         // under T = 2*sqrt(d/a). SP ships never carry parts, so this is
         // the identity (x1) for the frozen single-player sim.
-        * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0);
+        * engineAccelMultiplier(ship.parts, tech?.levels?.propulsion ?? 0)
+        // COMBAT V2: hull class now changes travel too — a corvette really
+        // is faster than a destroyer, which was never true before (the old
+        // per-class speedModifier was read by nothing). SQUARED because trip
+        // time is 2*sqrt(d/a): a linear speed ratio needs a squared accel
+        // ratio, or a corvette comes out 23% faster instead of 41%.
+        * travelAccelMultiplierOf(combatSpeedOf(ship.class as any, ship.parts));
 
       // Ship's launch state: world position + world velocity from the
       // ship's current orbit. orbitWorldVelocity sums the parent body's
@@ -964,7 +970,12 @@ export function GameContextProvider({
         const launchVel = orbitWorldVelocity(ship.orbit, newTime, prev.bodies);
         const plan = planTorchTransfer(
           { pos: launchPos, vel: launchVel },
-          targetBodyId, accel, accel, newTime, prev.bodies,
+          targetBodyId,
+          // same per-class factor as the primary path — without it a ship's
+          // queued legs quote a different speed than its first one.
+          accel * travelAccelMultiplierOf(combatSpeedOf(ship.class as any, ship.parts)),
+          accel * travelAccelMultiplierOf(combatSpeedOf(ship.class as any, ship.parts)),
+          newTime, prev.bodies,
         );
         if (!plan) return null;
         return {
