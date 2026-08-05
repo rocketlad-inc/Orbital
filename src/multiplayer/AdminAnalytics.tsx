@@ -86,7 +86,12 @@ type GameAnalytics = {
     faction_id: string; tech_id: string; level: number; status: string;
     started_at_tick: number | null; completed_at_tick: number | null;
   }>;
-  combat: { losses: FactionCount[]; kills: FactionCount[]; settlements_lost: FactionCount[] };
+  combat: {
+    losses: FactionCount[]; kills: FactionCount[]; settlements_lost: FactionCount[];
+    /** COMBAT V2 telemetry (migration 0063). Absent on games that have not
+     *  ticked since the table landed. */
+    tally?: CombatTallyRow[];
+  };
   shipClasses: {
     alive: Array<{ ship_class: string; n: number }>;
     lost: Array<{ ship_class: string | null; n: number }>;
@@ -99,6 +104,31 @@ type GameAnalytics = {
 };
 
 const METRICS = ['metal', 'fuel', 'gold', 'science', 'ships', 'settlements'] as const;
+
+/** One (attacker class -> target class) pairing's running totals. */
+interface CombatTallyRow {
+  attacker_class: string;
+  target_class: string;
+  volleys: number;
+  hits: number;
+  damage: number;
+  kills: number;
+}
+
+/** Speeds the server fights with — worker/factions.js SHIP_COMBAT_STATS.speed
+ *  plus SETTLEMENT_SPEED. Used ONLY to draw the predicted hit chance beside
+ *  the observed one, so a drift between model and reality is visible rather
+ *  than inferred. KEEP IN SYNC. */
+const V2_SPEED: Record<string, number> = {
+  corvette: 0.85, frigate: 0.50, destroyer: 0.30,
+  freighter: 0.55, colony: 0.55, settlement: 0.30, station: 0.30,
+};
+const CLASS_ORDER = ['corvette', 'frigate', 'destroyer', 'freighter', 'colony', 'station', 'settlement'];
+const predictedHit = (atk: string, def: string): number | null => {
+  const a = V2_SPEED[atk], d = V2_SPEED[def];
+  if (a == null || d == null) return null;
+  return (a * a) / (a * a + d * d);
+};
 type Metric = typeof METRICS[number];
 
 // Event kinds are normalized route strings ("POST bodies/build") -
@@ -586,6 +616,11 @@ function GameDetail({
       </section>
 
       <section>
+        <div className="aa-section-title">COMBAT V2 — THE EXCHANGE</div>
+        <CombatV2Panel data={data} />
+      </section>
+
+      <section>
         <div className="aa-section-title">SHIP CLASSES · BUILT VS LOST</div>
         <ShipClassBars data={data} />
       </section>
@@ -903,6 +938,142 @@ function CombatLedger({ data }: { data: GameAnalytics }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * COMBAT V2 telemetry. The balance work behind the rework measured volleys,
+ * hits, damage and kills per matchup across ~990k simulated battles; this is
+ * the same view on real games.
+ *
+ * The headline column is OBSERVED vs PREDICTED hit rate. The model claims a
+ * corvette hits a destroyer 88.9% of the time — this is where that claim
+ * either holds up or does not. A pairing that drifts wide of prediction with
+ * a healthy sample size is either a bug in the roll or a stat that moved
+ * without the table being updated.
+ */
+function CombatV2Panel({ data }: { data: GameAnalytics }) {
+  const rows = data.combat.tally ?? [];
+  if (rows.length === 0) {
+    return (
+      <div className="aa-empty">
+        No shot data yet — the tally starts filling on the next tick with combat in it.
+      </div>
+    );
+  }
+
+  const totalVolleys = rows.reduce((a, r) => a + r.volleys, 0);
+  const totalHits = rows.reduce((a, r) => a + r.hits, 0);
+  const totalDamage = rows.reduce((a, r) => a + r.damage, 0);
+
+  // per attacker class
+  const byAttacker = new Map<string, { volleys: number; hits: number; damage: number; kills: number }>();
+  for (const r of rows) {
+    let e = byAttacker.get(r.attacker_class);
+    if (!e) { e = { volleys: 0, hits: 0, damage: 0, kills: 0 }; byAttacker.set(r.attacker_class, e); }
+    e.volleys += r.volleys; e.hits += r.hits; e.damage += r.damage; e.kills += r.kills;
+  }
+  const attackers = CLASS_ORDER.filter(c => byAttacker.has(c));
+  const defenders = CLASS_ORDER.filter(c => rows.some(r => r.target_class === c));
+  const cell = (a: string, d: string) => rows.find(r => r.attacker_class === a && r.target_class === d);
+
+  // A pairing is only worth judging once it has enough shots to mean anything.
+  const MIN_SAMPLE = 40;
+
+  return (
+    <div className="aa-v2">
+      <div className="aa-v2__top">
+        <div className="aa-v2__stat">
+          <span className="aa-v2__num">{totalVolleys.toLocaleString()}</span>
+          <span className="aa-v2__lbl">shots fired</span>
+        </div>
+        <div className="aa-v2__stat">
+          <span className="aa-v2__num">
+            {totalVolleys ? ((100 * totalHits) / totalVolleys).toFixed(1) : '0'}%
+          </span>
+          <span className="aa-v2__lbl">landed</span>
+        </div>
+        <div className="aa-v2__stat">
+          <span className="aa-v2__num">{Math.round(totalDamage).toLocaleString()}</span>
+          <span className="aa-v2__lbl">damage dealt</span>
+        </div>
+        <div className="aa-v2__stat">
+          <span className="aa-v2__num">
+            {totalHits ? Math.round(totalDamage / totalHits) : 0}
+          </span>
+          <span className="aa-v2__lbl">per hit</span>
+        </div>
+      </div>
+
+      <div className="aa-v2__sub">Observed hit rate vs the model's prediction</div>
+      <div className="aa-v2__scroll">
+        <table className="aa-v2__matrix">
+          <thead>
+            <tr>
+              <th />
+              {defenders.map(d => <th key={d}>vs {d.slice(0, 4)}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {attackers.map(a => (
+              <tr key={a}>
+                <th>{a}</th>
+                {defenders.map(d => {
+                  const c = cell(a, d);
+                  if (!c || c.volleys === 0) return <td key={d} className="aa-v2__na">—</td>;
+                  const obs = c.hits / c.volleys;
+                  const pred = predictedHit(a, d);
+                  const thin = c.volleys < MIN_SAMPLE;
+                  const drift = pred == null ? 0 : (obs - pred) * 100;
+                  const off = !thin && Math.abs(drift) > 8;
+                  return (
+                    <td key={d} className={off ? 'aa-v2__off' : undefined}
+                        title={`${c.volleys} shots, ${c.hits} hits, ${Math.round(c.damage)} damage, ${c.kills} kills`}>
+                      <span className="aa-v2__obs">{(100 * obs).toFixed(0)}%</span>
+                      {pred != null && (
+                        <span className={thin ? 'aa-v2__pred aa-v2__thin' : 'aa-v2__pred'}>
+                          {thin ? `n=${c.volleys}` : `pred ${(100 * pred).toFixed(0)}%`}
+                        </span>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="aa-v2__sub">Per class</div>
+      <div className="aa-v2__scroll">
+        <table className="aa-v2__matrix aa-v2__perclass">
+          <thead>
+            <tr><th>class</th><th>shots</th><th>hit%</th><th>damage</th><th>dmg/shot</th><th>kills</th></tr>
+          </thead>
+          <tbody>
+            {attackers.map(a => {
+              const e = byAttacker.get(a)!;
+              return (
+                <tr key={a}>
+                  <th>{a}</th>
+                  <td>{e.volleys.toLocaleString()}</td>
+                  <td>{e.volleys ? ((100 * e.hits) / e.volleys).toFixed(1) : '0'}%</td>
+                  <td>{Math.round(e.damage).toLocaleString()}</td>
+                  <td>{e.volleys ? (e.damage / e.volleys).toFixed(1) : '0'}</td>
+                  <td>{e.kills}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="aa-v2__foot">
+        Kills credit every class that landed on a hull the tick it died — damage
+        resolves simultaneously, so there is no single killing blow. Pairings
+        under {MIN_SAMPLE} shots show their sample size instead of a verdict.
+        A cell more than 8 points off prediction is flagged.
+      </div>
     </div>
   );
 }

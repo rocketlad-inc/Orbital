@@ -2157,6 +2157,43 @@ export class Room {
       t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
+    // COMBAT V2 TELEMETRY. Every balance number in DESIGN-combat-v2.md came
+    // from shot-level data the live game never recorded. Accumulate it here
+    // per tick, flush once at the end of the pass (migration 0063).
+    //
+    // In-memory Map keyed "attacker>target" so the whole tick is one batched
+    // write of at most ~36 rows rather than a statement per shot.
+    const combatTally = new Map();
+    /** targetId -> Set of attacker classes that LANDED on it this tick.
+     *  Damage resolves simultaneously, so there is no single killing blow;
+     *  this is what lets a kill be credited to everyone who was shooting. */
+    const hitBy = new Map();
+    const tallyShot = (attackerClass, targetClass, landed, dmg, targetId) => {
+      const k = `${attackerClass}>${targetClass}`;
+      let e = combatTally.get(k);
+      if (!e) { e = { volleys: 0, hits: 0, damage: 0, kills: 0 }; combatTally.set(k, e); }
+      e.volleys++;
+      if (landed) {
+        e.hits++;
+        e.damage += dmg;
+        if (targetId) {
+          let set = hitBy.get(targetId);
+          if (!set) { set = new Set(); hitBy.set(targetId, set); }
+          set.add(attackerClass);
+        }
+      }
+      return e;
+    };
+    /** Credit a kill to every class that landed on this hull this tick. */
+    const tallyKill = (targetId, targetClass) => {
+      const set = hitBy.get(targetId);
+      if (!set) return;
+      for (const cls of set) {
+        const e = combatTally.get(`${cls}>${targetClass}`);
+        if (e) e.kills++;
+      }
+    };
+
     /** Speed of any combatant. Settlements are not ships but they shoot and
      *  are shot at, so they answer on the same scale. */
     const speedOfShip = (sh) => shipSpeed(sh.ship_class, sh._parts);
@@ -2510,7 +2547,9 @@ export class Room {
         // The roll. A miss still costs the volley — the shot happened, it
         // just did not land.
         const defSpeed = isShipTier ? speedOfShip(target) : speedOfSettlement();
+        const targetClassLabel = isShipTier ? target.ship_class : 'settlement';
         if (rollFor(attacker.id, tick) >= hitChance(atkSpeed, defSpeed)) {
+          tallyShot(attacker.ship_class, targetClassLabel, false, 0, target.id);
           // Still counts as "fired" for the FX layer: animations are
           // unchanged, so a miss looks exactly like a hit on the map.
           firedShipIds.add(attacker.id);
@@ -2524,11 +2563,14 @@ export class Room {
           // in full — there is no longer a free class-based reduction.
           const mit = Math.max(MITIGATION_FLOOR,
             defenseMitigation(target._parts, atkProfile));
-          addDamage(target.id, attacker.owner_faction_id, attacker.id, attackPower * mit * warAuthMul);
+          const dealt = attackPower * mit * warAuthMul;
+          tallyShot(attacker.ship_class, targetClassLabel, true, dealt, target.id);
+          addDamage(target.id, attacker.owner_faction_id, attacker.id, dealt);
         } else {
           // Bombardment — settlements carry no shield/armor parts yet, and
           // their PDC (city 0.3 / station 0.5) went with the rest of the
           // system, so a bombarding volley now lands in full.
+          tallyShot(attacker.ship_class, 'settlement', true, attackPower * warAuthMul, target.id);
           addSettlementDamage(target.id, attacker.owner_faction_id, attackPower * warAuthMul);
         }
         firedShipIds.add(attacker.id);
@@ -2580,13 +2622,16 @@ export class Room {
         // Seeded on the settlement id so a station's roll is as reproducible
         // as a ship's.
         if (rollFor(st.id, tick) >= hitChance(speedOfSettlement(), speedOfShip(target))) {
+          tallyShot('station', target.ship_class, false, 0, target.id);
           firedSettlementIds.add(st.id);
           firedSettlementTargets.set(st.id, target.id);
           continue;
         }
         const mit = Math.max(MITIGATION_FLOOR,
           defenseMitigation(target._parts, KINETIC));
-        addDamage(target.id, st.owner_faction_id, null, power * mit * warAuthMul);
+        const stnDealt = power * mit * warAuthMul;
+        tallyShot('station', target.ship_class, true, stnDealt, target.id);
+        addDamage(target.id, st.owner_faction_id, null, stnDealt);
         firedSettlementIds.add(st.id);
         firedSettlementTargets.set(st.id, target.id);
       }
@@ -3338,6 +3383,36 @@ export class Room {
       // end (a destroyer cleaning up a squad shouldn't take N round-
       // trips). Map: killerShipId -> { addedRank, newHistoryRecords[] }
       const veteranAwards = new Map();
+      // COMBAT V2 telemetry flush. Runs after damage resolution so kills are
+      // already credited. At most ~36 rows (6 attacker classes x 6 target
+      // classes), so the whole tick is one batch regardless of fleet size.
+      if (combatTally.size > 0) {
+        try {
+          const tallyStmts = [];
+          for (const [key, e] of combatTally) {
+            const [atkCls, tgtCls] = key.split('>');
+            tallyStmts.push(
+              this.env.DB.prepare(
+                `INSERT INTO game_combat_tally
+                   (game_id, attacker_class, target_class, volleys, hits, damage, kills)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(game_id, attacker_class, target_class) DO UPDATE SET
+                   volleys = volleys + excluded.volleys,
+                   hits    = hits    + excluded.hits,
+                   damage  = damage  + excluded.damage,
+                   kills   = kills   + excluded.kills`,
+              ).bind(gameId, atkCls, tgtCls, e.volleys, e.hits, e.damage, e.kills),
+            );
+          }
+          await this.env.DB.batch(tallyStmts);
+        } catch (e) {
+          // Telemetry must never cost a tick. A missing table (migration not
+          // yet applied on this isolate) or a write failure is logged and
+          // dropped, not thrown.
+          console.error('combat tally flush failed', e);
+        }
+      }
+
       // Hulls that took fire and LIVED. Destruction is chronicled; being
       // shot was not, so a player watching the log saw nothing until a
       // ship actually died — no warning, which is exactly how you lose a
@@ -3353,6 +3428,7 @@ export class Room {
             .prepare("UPDATE game_ships SET hp = 0, status = 'destroyed', destroyed_at_tick = ? WHERE id = ?")
             .bind(tick, shipId)
             .run();
+          tallyKill(shipId, cur.ship_class);
           losses.push(shipId);
           lostShipRows.push(cur);
           const kf = topAttacker(shipId);

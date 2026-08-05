@@ -426,10 +426,31 @@ async function handleGameAnalytics(req, env, { session, params }) {
     )
     .bind(gameId)
     .all();
+  // COMBAT V2 telemetry (migration 0063). The exchange, not just the
+  // outcome: volleys, hits, damage and kills per attacker-class ->
+  // target-class pairing. This is what makes the model checkable against a
+  // real game — the predicted hit matrix is a claim, and this is the
+  // evidence. Tolerates a missing table so an un-migrated isolate degrades
+  // to "no data" rather than 500ing the whole analytics page.
+  let tally = [];
+  try {
+    const t = await env.DB
+      .prepare(
+        `SELECT attacker_class, target_class, volleys, hits, damage, kills
+           FROM game_combat_tally WHERE game_id = ?`,
+      )
+      .bind(gameId)
+      .all();
+    tally = t.results ?? [];
+  } catch (e) {
+    console.error('combat tally read failed (table may not exist yet)', e);
+  }
+
   const combat = {
     losses: losses.results ?? [],
     kills: kills.results ?? [],
     settlements_lost: razed.results ?? [],
+    tally,
   };
 
   // --- Ship class popularity: what people build (alive) and what dies

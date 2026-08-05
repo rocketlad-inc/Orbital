@@ -272,3 +272,30 @@
   .aa-strip { grid-template-columns: minmax(80px, 110px) 1fr auto; }
   .aa-heatgrid__cell { width: 12px; height: 12px; }
 }
+
+/* ---- COMBAT V2 telemetry panel ------------------------------------ */
+.aa-v2__top { display: flex; gap: 1px; background: #1b2836; border: 1px solid #1b2836;
+              border-radius: 5px; overflow: hidden; margin-bottom: 12px; }
+.aa-v2__stat { flex: 1; background: #0d1520; padding: 9px 10px 8px; }
+.aa-v2__num { display: block; font-size: 19px; font-weight: 600; color: #e6edf4;
+              font-variant-numeric: tabular-nums; line-height: 1.1; }
+.aa-v2__lbl { display: block; font-size: 9px; letter-spacing: 0.11em;
+              text-transform: uppercase; color: #6c7c8c; margin-top: 4px; }
+.aa-v2__sub { font-size: 9.5px; letter-spacing: 0.13em; text-transform: uppercase;
+              color: #7fa0bb; margin: 14px 0 6px; }
+.aa-v2__scroll { overflow-x: auto; }
+.aa-v2__matrix { border-collapse: collapse; width: 100%; font-size: 11px;
+                 font-variant-numeric: tabular-nums; }
+.aa-v2__matrix th { font-weight: 500; color: #7d8b99; text-align: left;
+                    padding: 5px 8px; font-size: 10px; white-space: nowrap; }
+.aa-v2__matrix thead th { color: #5f6f7e; border-bottom: 1px solid #1b2836; }
+.aa-v2__matrix td { padding: 5px 8px; text-align: right; color: #cfdae4;
+                    border-bottom: 1px solid rgba(27,40,54,0.6); white-space: nowrap; }
+.aa-v2__obs { display: block; font-size: 13px; color: #e6edf4; }
+.aa-v2__pred { display: block; font-size: 9px; color: #5f6f7e; margin-top: 1px; }
+.aa-v2__thin { color: #8a6a3a; }
+.aa-v2__na { color: #3d4a56; text-align: center; }
+.aa-v2__off { background: rgba(255, 120, 90, 0.13); }
+.aa-v2__off .aa-v2__obs { color: #ff9b7a; }
+.aa-v2__perclass td { text-align: right; }
+.aa-v2__foot { font-size: 10px; line-height: 1.5; color: #6c7c8c; margin-top: 10px; }
