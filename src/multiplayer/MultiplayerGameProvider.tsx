@@ -718,6 +718,8 @@ function nodeToClient(
     radial: n.dv_radial,
     normal: n.dv_normal,
     status: clientStatus,
+    // The distinction clientStatus throws away: has the server burned yet?
+    departed: n.status === 'in_transit',
     label: targetLocal ? `→ ${targetLocal}` : undefined,
     // Expose target body as a structured field so UI gates ("freighter
     // en route to here?", trade route filters) don't have to parse the

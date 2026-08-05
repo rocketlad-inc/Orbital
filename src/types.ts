@@ -32,6 +32,12 @@ export interface ManeuverNode {
   radial: number;                      // radial component of burn
   normal: number;                      // normal component of burn
   status: 'planned' | 'committed' | 'executed';
+  /** MP only. True once the SERVER has actually fired the burn
+   *  (node status 'in_transit'). `status` collapses in_transit into
+   *  'committed' so existing UI keeps rendering the arc, which left no
+   *  way to tell "ordered, still parked" from "already gone" — and
+   *  therefore no way to know whether a recall could still work. */
+  departed?: boolean;
   label?: string;                      // human-readable burn label
 
   // Predicted outcome after burn

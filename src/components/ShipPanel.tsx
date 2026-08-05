@@ -38,6 +38,7 @@ export const ShipPanel: React.FC = () => {
     gameState, uiState, deselectShip, setGameState,
     deleteManeuverNode, setTargetSelectionMode,
     launchTorchTransfer, enqueueTorchTransfer, queueTorchTour, planTorchPreview, cancelTorchPreview,
+    recallLaunch,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
     createTradeRoute, cancelTradeRoute, renameShip,
   } = useGameContext();
@@ -58,6 +59,9 @@ export const ShipPanel: React.FC = () => {
   // like it worked but the next /state poll silently rewinds the
   // optimistic local state.
   const [transferError, setTransferError] = useState<string | null>(null);
+  // Recall-in-flight guard. Declared with the other hooks (this component
+  // has early returns further down, so it cannot live beside its usage).
+  const [recalling, setRecalling] = useState(false);
   // Auto-explore (corvettes): how far the survey ranges, and the
   // result line after one is dispatched.
   const [exploreScope, setExploreScope] = useState<ExploreScope>('system');
@@ -424,6 +428,29 @@ export const ShipPanel: React.FC = () => {
     : ship.plannedTransit
       ? ship.plannedTransit.arriveTick - gameState.currentTick
       : null;
+
+  // RECALL WINDOW. The client paints a launch onto its arc immediately,
+  // but the server holds the node as 'committed' and only burns it at the
+  // top of the next tick — 30s to a full hour depending on the game. That
+  // window is real; it was just invisible, so nobody knew a launch could
+  // still be called back. Offer it while the node has not departed.
+  const pendingNode = isOwn
+    ? ship.orders.find(o => o.type === 'transfer'
+        && o.status === 'committed' && o.departed !== true)
+    : undefined;
+  const canRecall = !!(pendingNode && mpActions && ship.transit);
+
+  const doRecall = async () => {
+    if (!pendingNode || !mpActions) return;
+    setRecalling(true);
+    const res = await mpActions.cancelNode(pendingNode.id);
+    setRecalling(false);
+    // Only drop the local arc once the SERVER agrees the burn is off.
+    // Clearing optimistically on a failed cancel would show the ship
+    // parked while it was actually still flying.
+    if (res.ok) recallLaunch(ship.id);
+    else setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
+  };
 
   // Queue (torch chained legs).
   const queuedTransits = ship.queuedTransits || [];
@@ -1130,6 +1157,25 @@ export const ShipPanel: React.FC = () => {
               <div className="stat-row">
                 <span className="label">STATUS</span>
                 <span className="value">TRANSFER PLANNED</span>
+              </div>
+            )}
+            {canRecall && (
+              <div className="stat-row">
+                <span className="label">LAUNCH</span>
+                <button
+                  onClick={doRecall}
+                  disabled={recalling}
+                  title="The burn fires at the top of the next tick — until then this ship can still be called back."
+                  style={{
+                    background: 'rgba(255,184,77,0.14)',
+                    border: '1px solid rgba(255,184,77,0.55)',
+                    color: '#ffb84d', borderRadius: 4, cursor: 'pointer',
+                    font: 'inherit', fontSize: 10, letterSpacing: '0.08em',
+                    padding: '2px 8px',
+                  }}
+                >
+                  {recalling ? 'RECALLING…' : '⟲ RECALL LAUNCH'}
+                </button>
               </div>
             )}
           </div>

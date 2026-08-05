@@ -369,6 +369,8 @@ interface GameContextType {
 
   /** Clear a ship's plannedTransit preview without launching. */
   cancelTorchPreview: (shipId: string) => void;
+  /** Undo a launch the server has not burned yet (MP). */
+  recallLaunch: (shipId: string) => void;
 
   // Ship building
   buildShip: (
@@ -2205,6 +2207,36 @@ export function GameContextProvider({
     }));
   }, []);
 
+  /**
+   * Recall a launch the SERVER has not fired yet.
+   *
+   * The client paints a departing ship onto its trajectory the instant
+   * the order is posted, but the server holds the node as 'committed'
+   * and only burns it at the top of the next tick — up to an hour later
+   * on a slow game. That window was real and completely invisible: the
+   * ship LOOKED gone, so nobody knew it could still be called back.
+   *
+   * This clears the optimistic transit locally; the caller cancels the
+   * server node. The next /state poll restores the ship's true parked
+   * orbit, which the server never actually left.
+   */
+  const recallLaunch = useCallback((shipId: string) => {
+    setGameStateInternal(prev => ({
+      ...prev,
+      ships: prev.ships.map(s =>
+        s.id === shipId
+          ? {
+              ...s,
+              transit: undefined,
+              plannedTransit: undefined,
+              queuedTransits: [],
+              orders: s.orders.filter(o => o.type !== 'transfer'),
+            }
+          : s,
+      ),
+    }));
+  }, []);
+
   // ---- Ship Building ----
   const buildShip = useCallback((
     bodyId: string,
@@ -3008,6 +3040,7 @@ export function GameContextProvider({
     toggleShipSelection, setShipSelection, clearShipSelection,
     addManeuverNode, commitManeuverNode, deleteManeuverNode,
     launchTorchTransfer, enqueueTorchTransfer, queueTorchTour, planTorchPreview, cancelTorchPreview,
+    recallLaunch,
     buildShip, cancelBuild, renameShip,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
     deploySettlement, damageSettlement, renameSettlement, buildCollector,
