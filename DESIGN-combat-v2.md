@@ -43,6 +43,9 @@ value spread **1.38× → 1.30×**.
 - **Settlements: speed 0.10.** They are slow, and they are hit accordingly.
 - **Civilians slightly faster than a frigate**: freighter and colony **0.55**.
 - **All existing ships migrate** to the new system.
+- **The 1.176 cap applies to travel as well as combat.** One speed, one ceiling.
+- **Combat animations are unchanged.** Ships appear to fire continuously for the
+  whole engagement; we do not draw per-shot hits and misses.
 
 | | Corvette | Frigate | Destroyer | Freighter | Colony | Settlement |
 |---|---|---|---|---|---|---|
@@ -95,19 +98,62 @@ finally explains *why* it works.
 
 ## Still open
 
-### R1. Does the speed cap apply to travel, or only to combat?
+### R0. Fleets will arrive in pieces — this is the big one
 
-The 1.176 cap exists to stop an engine/propulsion arms race in the hit formula.
-If it also caps travel, **Propulsion tech stops improving travel** past a point —
-a regression from today, where it keeps helping forever.
+**Fleets are not a movement unit.** `propagateTransferToFleet`
+(`ShipPanel.tsx:141`) plans each member independently from its own orbit, and
+`fleetSpeedModifier` (`fleet.ts:34`) — the function that would hold them
+together — **has no callers**. Today that is harmless: every hull shares one
+acceleration, so a fleet lands together.
 
-Note the hit formula `a^2/(a^2+d^2)` already saturates on its own; it can never
-reach 100%. So the cap may be unnecessary. Options: cap both (simple, nerfs late
-travel), cap neither (re-opens the arms race I measured earlier), or **derive two
-values from one base — capped for the hit roll, uncapped for travel**. The last
-is my recommendation and costs one line.
+Under per-class speed, one order to one target produces:
 
-### R2. Station return fire is now nearly useless
+| class | arrives | behind the corvette |
+|---|---|---|
+| Corvette | 24 ticks | — |
+| Frigate | 40 ticks | 16 ticks |
+| Destroyer | 67 ticks | **43 ticks** |
+
+At 7.5 min/tick that is **5.4 hours** of the corvette sitting alone at a hostile
+world; at 1 hr/tick it is **43 hours**. It arrives first, fights at peer-targeting
+odds without support, and is dead long before the heavies make orbit. Combined
+arms stops working the day this ships.
+
+Three ways out:
+
+- **Wire up `fleetSpeedModifier`** — a fleet travels at its slowest member and
+  arrives together. The function exists and was clearly written for this; it just
+  needs the transfer planner to quote one shared arrival for the whole group.
+  Applies to shift-click groups too, which are not formal fleets.
+- **Let it stagger** and call it logistics. Defensible, brutal, and a much bigger
+  design change than the combat rework itself.
+- **Only per-class speed when solo.** Inconsistent; hard to explain.
+
+Recommend the first. Note this also changes what a *fleet* is for — currently
+fleets are a captain/aura construct, and this would make them the primary
+movement tool.
+
+### R1. RESOLVED — cap applies to travel. Here is the bill.
+
+| class | base | engines to reach the cap | slots | wasted slots |
+|---|---|---|---|---|
+| **Corvette** | 0.85 | **1** | 2 | **1** |
+| Frigate | 0.50 | 5 | 4 | 0 |
+| Destroyer | 0.30 | 8 | 6 | 0 |
+| Freighter | 0.55 | 4 | 1 | 0 |
+
+**A corvette caps on its first engine.** Its second engine slot does nothing for
+travel *or* combat, and Propulsion tech does nothing for a corvette at all —
+tech raises the per-engine step, so it only reaches the same ceiling sooner. At
+Propulsion 10 a frigate caps at 3 engines and a destroyer at 4, so both start
+wasting slots too.
+
+This is a dead-end the tech tree does not warn about. Options: let it stand and
+**say so in the engine blurb and the Propulsion description**, or raise the cap
+per class so every hull can spend all its slots. Either is fine — silently
+selling a corvette player a second engine is not.
+
+### R2. Station return fire is now nearly useless *(still open)*
 
 Settlements sit at 0.10, so a station shooting a **corvette** (0.85) hits
 `0.01/(0.01+0.7225)` = **1.4%**. Stations become decorative. Either station guns
@@ -142,13 +188,46 @@ number than anything I modelled. Worth one sanity pass before ship.
 so a detonator destroyer doubles in blast. Detonators were **excluded from every
 simulation** as a distorting mechanic. This is now a live balance question.
 
+### R8. With animations unchanged, the mechanic is invisible in the fight
+
+Keeping continuous-fire FX is the right call for the map's calm — but it means a
+destroyer hitting a corvette **11%** of the time looks exactly like one hitting
+90%: firing the whole engagement, HP dropping slowly. Nothing on screen says
+"missing".
+
+That makes the designer's hit matrix **load-bearing**: it becomes the only place
+in the product where hit chance is legible. If it ships late or ships weak, the
+first playtest report will be "destroyers do no damage, combat is broken" — and
+they will be describing correct behaviour.
+
+Cheapest mitigation that does not touch the animation: put the live exchange odds
+in the Ship Panel when a ship is at a contested body (UX 3 below), so the number
+is one click from the fight.
+
 ### R7. Cadence-derived constants
 
 Firing every tick instead of every third invalidates several tuned numbers:
 `COMBAT_RECENT_TICKS` (= interval x 2) in `systemGrouping.ts:310` and
-`useSituationItems.ts:278`; the settlement repair grace, justified in
-`room.js:2892` as ">= the combat cadence (3)"; and the tracer budget in
-`combatFx.ts:131`, which now sees 3x the shots with most of them missing.
+`useSituationItems.ts:278`; and the settlement repair grace, justified in
+`room.js:2892` as ">= the combat cadence (3)" — with cadence 1 that reasoning no
+longer holds and the value must be re-derived. (The tracer budget is moot now
+that animations are unchanged.)
+
+### R9. Auto-retreat interacts badly with slow hulls
+
+`room.js:3671` auto-retreats a damaged ship to the nearest shipyard and skips any
+ship that already has a committed node. A destroyer now limps home **67% slower**
+while still being shot at — and because peer targeting sends the enemy's heavies
+after it, the class most likely to trigger retreat is the one least able to
+complete it. Worth re-checking the threshold at the new speeds.
+
+### R10. The simulation never modelled travel
+
+Every number in this document comes from battles where both fleets were fully
+present at tick 0. With staggered arrival (R0) real engagements are piecemeal,
+which favours the defender and whoever brought the faster hulls. If R0 is solved
+by syncing fleets the sim stays representative; if we let fleets stagger, the
+balance work needs redoing against arrival order.
 
 ## What has to change
 
