@@ -236,6 +236,28 @@ export function computeShipStats(shipClass, parts, techLevels = {}) {
 }
 
 /**
+ * COMBAT V2 speed for a hull + loadout. Cheap enough to call per ship per
+ * tick — computeShipStats does hp/damage work the combat loop does not need.
+ *
+ * Deliberately independent of tech: Propulsion raises the per-engine TRAVEL
+ * step elsewhere, and folding it in here too would double-count it into the
+ * hit roll.
+ */
+export function shipSpeed(shipClass, parts) {
+  const base = SHIP_COMBAT_STATS[shipClass]?.speed ?? 0.5;
+  return Math.min(SPEED_CAP, base * Math.pow(ENGINE_SPEED_MUL, countPart(parts, 'engine')));
+}
+
+/** Hit chance: p = atk^2 / (atk^2 + def^2). Symmetric, mirrors are always
+ *  50%, and it can never reach 0 or 1 — there are no guaranteed shots and
+ *  no untouchable hulls. */
+export function hitChance(atkSpeed, defSpeed) {
+  const a = atkSpeed * atkSpeed;
+  const d = defSpeed * defSpeed;
+  return a + d <= 0 ? 0.5 : a / (a + d);
+}
+
+/**
  * Fraction of a loadout's weapon output per damage type. No weapon
  * mounts (bare hull / freighter / defensive-only) => 100% kinetic, the
  * neutral default so undesigned ships behave exactly as before.

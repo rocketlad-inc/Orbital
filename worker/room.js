@@ -1,6 +1,7 @@
 import { resolveSenate, getActiveSliders, hasActiveSanction } from './senate.js';
-import { recomputeBodyOwnership } from './factions.js';
+import { recomputeBodyOwnership, SETTLEMENT_SPEED } from './factions.js';
 import { parsePartsJson, computeShipStats, countPart, detonatorDamage,
+         shipSpeed, hitChance,
          damageProfile, defenseMitigation, MITIGATION_FLOOR, refitFee } from './shipDesigns.js';
 import { ensureCaptains, resolveCaptainOnDeath, parseTraits, traitMul, ensureCaptainFloor } from './captains.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
@@ -2097,11 +2098,10 @@ export class Room {
       s._traits = parseTraits(s.captain_traits);
     }
 
-    // Combat cadence — every N ticks per ship, matching the SP
-    // constant AUTO_COMBAT_INTERVAL in src/game/combat.ts. Pulled into
-    // a server constant rather than imported because the worker is a
-    // separate Cloudflare bundle that doesn't share the React build
-    // tree. Keep in sync if SP's interval changes.
+    // (The old per-ship cadence gate lived here. COMBAT V2 fires every tick
+    // and rolls to hit instead — see the block below. src/game/combat.ts still
+    // carries AUTO_COMBAT_INTERVAL for the frozen single-player sim, which is
+    // now deliberately a different game.)
     // --- Flag-trait aura (DESIGN-fleets.md P2) ---
     // Members of a LED fleet get the flag captain's trait at HALF
     // strength — 1 + (mul-1)/2 — stacking with their own captain's
@@ -2135,7 +2135,32 @@ export class Room {
     } catch (e) { console.error('fleet aura build failed', e); }
     const auraMul = (shipId, k) => fleetAura.get(shipId)?.[k] ?? 1;
 
-    const AUTO_COMBAT_INTERVAL = 3;
+    // COMBAT V2 (DESIGN-combat-v2.md). AUTO_COMBAT_INTERVAL is retired: every
+    // armed hull fires EVERY tick and rolls to hit on relative speed.
+    //
+    // The roll is the first randomness in the tick, so it must be reproducible
+    // — a replay, a re-run of a dropped alarm, and every client have to agree.
+    // Seeded from (tick, attacker id) only: no Math.random, no ordering
+    // dependence, no state carried between ticks.
+    const hashStr = (str) => {
+      let h = 2166136261;
+      for (let i = 0; i < str.length; i++) {
+        h ^= str.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      return h >>> 0;
+    };
+    const rollFor = (attackerId, atTick) => {
+      let a = (hashStr(attackerId) ^ Math.imul(atTick + 1, 2654435761)) >>> 0;
+      a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    /** Speed of any combatant. Settlements are not ships but they shoot and
+     *  are shot at, so they answer on the same scale. */
+    const speedOfShip = (sh) => shipSpeed(sh.ship_class, sh._parts);
+    const speedOfSettlement = () => SETTLEMENT_SPEED;
 
     // --- Canonical combat constants, mirrored from the client (the
     //     authoritative combat spec — src/game/shipClasses.ts +
@@ -2404,13 +2429,8 @@ export class Room {
         const stance = effectiveStance(attacker);
         // hold-fire: never shoots, no matter what.
         if (stance === 'hold') continue;
-        // Cadence gate — only fire if AUTO_COMBAT_INTERVAL ticks have
-        // passed since this ship's last volley. NULL last_combat_tick
-        // (never fired) reads as -Infinity, so a fresh ship can fire
-        // immediately. Matches the SP loop's lastCombatTick check in
-        // src/game/combat.ts:134.
-        const lastFired = attacker.last_combat_tick ?? -Infinity;
-        if (tick - lastFired < AUTO_COMBAT_INTERVAL) continue;
+        // COMBAT V2: no cadence gate. Every armed hull fires every tick;
+        // whether it CONNECTS is the speed roll below.
         // Only engage factions we're at war with (no peace pact).
         // Defensive stance additionally requires the target's faction to be
         // an active aggressor at this body (see aggressorsAtBody above).
@@ -2446,11 +2466,23 @@ export class Room {
           : softSettlements;
         if (tier.length === 0) continue;
         const isShipTier = tier === armedShips || tier === civilianShips;
-        // Stable order, then round-robin pick. Sorting by id keeps every
-        // volley deterministic; (shooterIdx + tick) spreads a fleet's fire
-        // across the tier AND rotates the pairings volley to volley.
-        tier.sort((a, b) => (a.id < b.id ? -1 : 1));
-        const target = tier[(shooterIdx + tick) % tier.length];
+        // COMBAT V2 — PEER TARGETING. Tier priority is unchanged (everything
+        // in orbit still dies before a settlement is touched); what changes is
+        // the pick WITHIN the tier: engage whoever is closest to your own
+        // speed. Corvettes tangle with corvettes, destroyers slug it out with
+        // destroyers, and most shots in the game are fired at an even 50%.
+        //
+        // Without this, every gun points at the slowest thing present and
+        // capital ships become unplayable.
+        tier.sort((a, b) => (a.id < b.id ? -1 : 1));   // deterministic tie-break
+        const atkSpeed = speedOfShip(attacker);
+        let target = tier[0];
+        let bestGap = Infinity;
+        for (const cand of tier) {
+          const candSpeed = isShipTier ? speedOfShip(cand) : speedOfSettlement();
+          const gap = Math.abs(atkSpeed - candSpeed);
+          if (gap < bestGap) { bestGap = gap; target = cand; }
+        }
         shooterIdx++;
 
         // Damage math: full attacker power into the target's TYPED
@@ -2475,6 +2507,16 @@ export class Room {
         // Senate war authorization: damage TO a faction the senate has
         // formally declared war on is doubled.
         const warAuthMul = (await sanctioned(target.owner_faction_id, 'war_authorization')) ? 2 : 1;
+        // The roll. A miss still costs the volley — the shot happened, it
+        // just did not land.
+        const defSpeed = isShipTier ? speedOfShip(target) : speedOfSettlement();
+        if (rollFor(attacker.id, tick) >= hitChance(atkSpeed, defSpeed)) {
+          // Still counts as "fired" for the FX layer: animations are
+          // unchanged, so a miss looks exactly like a hit on the map.
+          firedShipIds.add(attacker.id);
+          firedShipTargets.set(attacker.id, target.id);
+          continue;
+        }
         if (isShipTier) {
           // Typed mitigation only, floored so a stacked hull is brutal
           // but never immune (85% cap). Shields cut kinetic, armor cuts
@@ -2515,8 +2557,9 @@ export class Room {
         const weaponsLvl = weaponsLevelOf(st);
         if (weaponsLvl < 1) continue;                      // no guns until Weapons built
         const base = STATION_DMG_PER_WEAPONS_LEVEL * weaponsLvl;
-        const lastFired = st.last_combat_tick ?? -Infinity;
-        if (tick - lastFired < AUTO_COMBAT_INTERVAL) continue;
+        // COMBAT V2: stations fire every tick like everything else, and roll
+        // on SETTLEMENT_SPEED — a station is mechanically a destroyer that
+        // cannot move. The 8 -> 20 damage bump above pays for the roll.
         const shipTargets = ships.filter(t =>
           t.owner_faction_id !== st.owner_faction_id
           && !peace.has(pairKey(st.owner_faction_id, t.owner_faction_id))
@@ -2534,6 +2577,13 @@ export class Room {
         const KINETIC = { kinetic: 1, energy: 0 };
         const power = base * kineticMulOf(st.owner_faction_id) * combatDamageMult;
         const warAuthMul = (await sanctioned(target.owner_faction_id, 'war_authorization')) ? 2 : 1;
+        // Seeded on the settlement id so a station's roll is as reproducible
+        // as a ship's.
+        if (rollFor(st.id, tick) >= hitChance(speedOfSettlement(), speedOfShip(target))) {
+          firedSettlementIds.add(st.id);
+          firedSettlementTargets.set(st.id, target.id);
+          continue;
+        }
         const mit = Math.max(MITIGATION_FLOOR,
           defenseMitigation(target._parts, KINETIC));
         addDamage(target.id, st.owner_faction_id, null, power * mit * warAuthMul);
@@ -2894,7 +2944,9 @@ export class Room {
     // damage within REPAIR_GRACE_TICKS regenerates toward max HP, so a
     // base mends between raids with no build action. "Under attack" =
     // damaged within the grace window (last_damaged_tick, migration
-    // 0044); grace ≥ the combat cadence (AUTO_COMBAT_INTERVAL = 3) so a
+    // 0044). The old justification was "grace >= the combat cadence (3)";
+    // under COMBAT V2 the cadence is 1, so the grace is now a pure design
+    // choice about how fast a base mends between raids, not a derived value. A
     // settlement under sustained bombardment never heals mid-siege. Heal
     // scales with max HP (~6%/tick, min 3) so a big city and a small
     // station both mend at a sensible pace. Runs AFTER combat resolution
