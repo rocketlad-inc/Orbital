@@ -1131,6 +1131,116 @@ function drawRingArcs(
 }
 
 /** Terrestrial / moon / dwarf / asteroid: atmosphere glow + sphere shading. */
+/**
+ * Which "someone was here first" mark a body has earned, if any.
+ *
+ * A discovery used to fire one purple bloom and then leave no trace —
+ * a week later nothing on the map remembered that a world had been
+ * found rather than settled. These marks are permanent: they read at a
+ * glance and they survive the moment.
+ *
+ *   'city'     ancient_city / free_collector — the free settlement was
+ *              already standing when you got there, so its cluster wears
+ *              a ring of broken monoliths.
+ *   'databank' ancient_databank — a free tech level with no physical
+ *              home anywhere in the game until now. Gets an obelisk.
+ */
+export function ancientOriginOf(body: Body): 'city' | 'databank' | null {
+  if (!body.secret?.revealed) return null;
+  const k = body.secret.kind;
+  if (k === 'ancient_city' || k === 'free_collector') return 'city';
+  if (k === 'ancient_databank') return 'databank';
+  return null;
+}
+
+/** Ancient-relic palette — deliberately NOT a faction colour, so a
+ *  relic never reads as ownership. Cold jade against the warm faction
+ *  hues already on the map. */
+const RELIC_COLOR = '#5fd3b2';
+
+/**
+ * Databank obelisk — a monolith standing on the moon that taught you
+ * something. Small, dark, with a lit seam that breathes; sized in screen
+ * space so it stays legible without dominating the host body.
+ */
+function drawDatabankRelic(
+  body: Body,
+  canvasPos: { x: number; y: number },
+  radius: number,
+  ctx: RenderContext,
+) {
+  const g = ctx.ctx;
+  const now = ctx.nowMs ?? 0;
+  const breathe = 0.55 + 0.45 * Math.sin(now / 1100);
+  // Stand it off the limb so it never sits on top of the disc.
+  const h = Math.max(7, Math.min(radius * 0.9, 22));
+  const w = h * 0.34;
+  const ox = canvasPos.x + radius * 0.72;
+  const oy = canvasPos.y - radius * 0.72;
+
+  g.save();
+  // Ground glow so the obelisk reads even against a bright surface.
+  const glow = g.createRadialGradient(ox, oy, 0, ox, oy, h * 1.5);
+  glow.addColorStop(0, withOpacity(RELIC_COLOR, 0.3 * breathe));
+  glow.addColorStop(1, withOpacity(RELIC_COLOR, 0));
+  g.fillStyle = glow;
+  g.beginPath();
+  g.arc(ox, oy, h * 1.5, 0, Math.PI * 2);
+  g.fill();
+
+  // The slab: a tapered dark monolith.
+  g.fillStyle = 'rgba(14, 26, 30, 0.92)';
+  g.strokeStyle = withOpacity(RELIC_COLOR, 0.75);
+  g.lineWidth = 1;
+  g.beginPath();
+  g.moveTo(ox - w / 2, oy + h / 2);
+  g.lineTo(ox - w * 0.36, oy - h / 2);
+  g.lineTo(ox + w * 0.36, oy - h / 2);
+  g.lineTo(ox + w / 2, oy + h / 2);
+  g.closePath();
+  g.fill();
+  g.stroke();
+
+  // Lit seam down the face — the "still powered" tell.
+  g.strokeStyle = withOpacity(RELIC_COLOR, 0.55 + 0.45 * breathe);
+  g.lineWidth = Math.max(1, w * 0.18);
+  g.beginPath();
+  g.moveTo(ox, oy - h * 0.34);
+  g.lineTo(ox, oy + h * 0.3);
+  g.stroke();
+  g.restore();
+}
+
+/**
+ * Ruins ring — broken monolith stubs around an ancient settlement's
+ * cluster. Drawn in the cluster's rotated frame (surface "up" is +Y
+ * out), so the stubs stand on the ground beside the modern buildings.
+ */
+export function drawAncientRuins(g: CanvasRenderingContext2D, nowMs: number): void {
+  const breathe = 0.5 + 0.5 * Math.sin(nowMs / 1400);
+  g.save();
+  // Six stubs at fixed angles — deterministic so a replay looks the same.
+  const STUBS = [-26, -17, -8, 8, 17, 26];
+  for (let i = 0; i < STUBS.length; i++) {
+    const x = STUBS[i];
+    const h = 4 + (i % 3) * 2.5;          // ragged, varied heights
+    const w = 2.2;
+    g.fillStyle = 'rgba(18, 34, 34, 0.85)';
+    g.strokeStyle = withOpacity(RELIC_COLOR, 0.5);
+    g.lineWidth = 0.8;
+    g.beginPath();
+    g.rect(x - w / 2, -h, w, h);
+    g.fill();
+    g.stroke();
+    // Every other stub keeps a lit cap — the ruins are not fully dead.
+    if (i % 2 === 0) {
+      g.fillStyle = withOpacity(RELIC_COLOR, 0.5 + 0.4 * breathe);
+      g.fillRect(x - w / 2, -h - 1, w, 1.2);
+    }
+  }
+  g.restore();
+}
+
 /** A body whose revealed secret turns it into a gate rather than a world.
  *  Both kinds swallow every ship that arrives, so neither can be settled,
  *  garrisoned or built on — they are doors, not destinations. */
@@ -1894,6 +2004,12 @@ export function drawBody(
   // next?" question reads at a glance. Owned bodies already get
   // their owner ring; gas giants / stars / ice giants / black holes
   // get nothing because cities don't fit on them anyway.
+  // A databank moon keeps its obelisk forever — the one discovery whose
+  // reward (a free tech level) otherwise left no mark anywhere on the map.
+  if (ancientOriginOf(body) === 'databank') {
+    drawDatabankRelic(body, canvasPos, radius, ctx);
+  }
+
   // ...except on a gate, where "you could settle here" is a lie: every
   // ship that arrives is warped straight back out.
   if (!body.ownedBy && canHostCity(body) && !isRevealedWarpGate(body)) {
@@ -3779,6 +3895,9 @@ export function drawCity(
     ctx.ctx.translate(canvasPos.x, canvasPos.y);
     ctx.ctx.rotate(angle + Math.PI / 2);
     drawCityCluster(ctx.ctx, settlement, color);
+    // This colony was already standing when someone found it — ring the
+    // modern cluster with what's left of whoever built it first.
+    if (ancientOriginOf(body) === 'city') drawAncientRuins(ctx.ctx, ctx.nowMs ?? 0);
     ctx.ctx.restore();
 
     // HP bar + selection ring stay in screen space, floated outward
@@ -3830,6 +3949,18 @@ export function drawCity(
     ctx.ctx.beginPath();
     ctx.ctx.rect(tipX - size / 2 - 1.2, tipY - size / 2 - 1.2, size + 2.4, size + 2.4);
     ctx.ctx.stroke();
+  }
+
+  // Map zoom: a jade ring around the marker so an ancient site is
+  // distinguishable from a settlement you founded yourself.
+  if (ancientOriginOf(body) === 'city' && size >= 3) {
+    ctx.ctx.strokeStyle = withOpacity(RELIC_COLOR, 0.8);
+    ctx.ctx.lineWidth = 1;
+    ctx.ctx.setLineDash([1.6, 1.6]);
+    ctx.ctx.beginPath();
+    ctx.ctx.arc(tipX, tipY, size * 1.35, 0, Math.PI * 2);
+    ctx.ctx.stroke();
+    ctx.ctx.setLineDash([]);
   }
 
   // HP bar if damaged

@@ -1198,12 +1198,58 @@ const DISCOVERY_CAP = 12;
  *  which previously played no effect at all. */
 const FIREWORK_COLOR = '#ffd27a';
 
+/**
+ * Every discovery used to fire the SAME purple bloom, so a free
+ * destroyer and a free tech level were visually identical. Each kind now
+ * gets its own colour, glyph and flourish on top of the shared
+ * halo-and-rings machinery.
+ */
+export type DiscoveryVariant =
+  | 'discovery' | 'firework'
+  | 'cache' | 'databank' | 'warship' | 'city' | 'stargate';
+
+interface VariantSpec {
+  color: string;
+  glyph: string;
+  /** Extra flourish drawn between the rings and the glyph. */
+  flourish?: 'sparks' | 'coins' | 'data' | 'hull' | 'windows' | 'spinup';
+}
+
+const VARIANTS: Record<DiscoveryVariant, VariantSpec> = {
+  discovery: { color: DISCOVERY_COLOR, glyph: '✦' },
+  firework:  { color: FIREWORK_COLOR,  glyph: '✦', flourish: 'sparks' },
+  // Gold spilling outward — the cache is pure treasure.
+  cache:     { color: '#ffc94d', glyph: '◈', flourish: 'coins' },
+  // Cyan characters streaming UP out of the moon: something was read.
+  databank:  { color: '#67e8f9', glyph: '⌘', flourish: 'data' },
+  // Cold steel and a hard ring — a hull, not a gift.
+  warship:   { color: '#cbd5e1', glyph: '▰', flourish: 'hull' },
+  // Warm windows igniting in sequence: the lights came back on.
+  city:      { color: '#ffd9a0', glyph: '⌂', flourish: 'windows' },
+  // The ring powering up, contracting inward to ignition.
+  stargate:  { color: '#7fe3ff', glyph: '◎', flourish: 'spinup' },
+};
+
+/** Map a revealed secret kind to its bloom variant. Unknown kinds fall
+ *  back to the original generic purple find. */
+export function discoveryVariantForSecret(kind: string | undefined): DiscoveryVariant {
+  switch (kind) {
+    case 'resource_cache':    return 'cache';
+    case 'ancient_databank':  return 'databank';
+    case 'derelict_warship':  return 'warship';
+    case 'ancient_city':
+    case 'free_collector':    return 'city';
+    case 'portal_to_sun':
+    case 'warp_gate':         return 'stargate';
+    default:                  return 'discovery';
+  }
+}
+
 interface DiscoveryBloom {
   entryId: string;
   bodyId: string;
   startMs: number;
-  /** 'discovery' = purple ✦ find; 'firework' = gold celebration burst. */
-  variant: 'discovery' | 'firework';
+  variant: DiscoveryVariant;
 }
 
 const discoveryBlooms: DiscoveryBloom[] = [];
@@ -1219,7 +1265,7 @@ const seenDiscoveryIds = new Set<string>();
 export function spawnDiscoveryBloom(
   entryId: string,
   bodyId: string,
-  variant: 'discovery' | 'firework' = 'discovery',
+  variant: DiscoveryVariant = 'discovery',
 ): void {
   if (seenDiscoveryIds.has(entryId)) return;
   if (seenDiscoveryIds.size > 2000) seenDiscoveryIds.clear();
@@ -1260,8 +1306,9 @@ export function drawDiscoveryBlooms(rc: RenderContext, nowMs: number): void {
 
     // Soft halo — a filled disc that swells then fades, giving the body
     // a moment of glow rather than a hard flash.
-    const isFirework = bloom.variant === 'firework';
-    const color = isFirework ? FIREWORK_COLOR : DISCOVERY_COLOR;
+    const spec = VARIANTS[bloom.variant] ?? VARIANTS.discovery;
+    const color = spec.color;
+    const isFirework = spec.flourish === 'sparks';
 
     const haloR = 14 + 26 * easeOut;
     const halo = c.createRadialGradient(cp.x, cp.y, 0, cp.x, cp.y, haloR);
@@ -1307,7 +1354,93 @@ export function drawDiscoveryBlooms(rc: RenderContext, nowMs: number): void {
       c.lineCap = 'butt';
     }
 
-    // The ✦ glyph: rises a few px and scales up while fading — the
+    // ---- per-kind flourishes -------------------------------------
+    // All are deterministic (fixed angles / indices, no RNG) so a
+    // replayed scene draws identically.
+    if (spec.flourish === 'coins') {
+      // Treasure spilling: discs arc outward and settle, warm gold.
+      const N = 9;
+      for (let i = 0; i < N; i++) {
+        const a = (i / N) * Math.PI * 2 + 0.4;
+        const reach = 16 + 34 * easeOut;
+        const drop = 10 * k * k;                       // they fall as they fly
+        const r = 2.4 - 1.1 * k;
+        c.fillStyle = withOpacity(color, 0.95 * fade);
+        c.beginPath();
+        c.arc(cp.x + Math.cos(a) * reach, cp.y + Math.sin(a) * reach + drop,
+              Math.max(0.4, r), 0, Math.PI * 2);
+        c.fill();
+      }
+    } else if (spec.flourish === 'data') {
+      // Characters streaming upward — something was READ off this rock.
+      const N = 7;
+      c.font = '9px ui-monospace, monospace';
+      c.textAlign = 'center';
+      for (let i = 0; i < N; i++) {
+        const lane = (i - (N - 1) / 2) * 7;
+        const stagger = (i % 3) * 0.18;
+        const kk = Math.max(0, Math.min(1, k * 1.3 - stagger));
+        if (kk <= 0) continue;
+        c.fillStyle = withOpacity(color, 0.9 * (1 - kk));
+        c.fillText(i % 2 ? '1' : '0', cp.x + lane, cp.y + 10 - 46 * kk);
+      }
+    } else if (spec.flourish === 'hull') {
+      // A hard, fast metallic ring — salvage, not celebration.
+      const rk = Math.min(1, k * 1.8);
+      c.strokeStyle = withOpacity(color, 0.85 * (1 - rk));
+      c.lineWidth = 3 * (1 - rk) + 0.5;
+      c.beginPath();
+      c.arc(cp.x, cp.y, 8 + 46 * rk, 0, Math.PI * 2);
+      c.stroke();
+      // Hull silhouette: a blunt wedge that flashes then goes dark.
+      const hk = Math.max(0, 1 - k * 2.4);
+      if (hk > 0) {
+        c.fillStyle = withOpacity(color, 0.55 * hk);
+        c.beginPath();
+        c.moveTo(cp.x + 15, cp.y);
+        c.lineTo(cp.x - 9, cp.y + 7);
+        c.lineTo(cp.x - 5, cp.y);
+        c.lineTo(cp.x - 9, cp.y - 7);
+        c.closePath();
+        c.fill();
+      }
+    } else if (spec.flourish === 'windows') {
+      // Lights coming on, one row at a time.
+      const COLS = 7;
+      for (let i = 0; i < COLS; i++) {
+        const lit = k * 1.5 > (i / COLS);
+        if (!lit) continue;
+        const x = cp.x + (i - (COLS - 1) / 2) * 6;
+        for (let row = 0; row < 2; row++) {
+          const y = cp.y + 4 - row * 6;
+          c.fillStyle = withOpacity(color, 0.9 * fade);
+          c.fillRect(x - 1.6, y - 1.6, 3.2, 3.2);
+        }
+      }
+    } else if (spec.flourish === 'spinup') {
+      // The gate powering up: a ring contracting inward to ignition,
+      // plus four pylon ticks spinning to speed.
+      const rk = Math.min(1, k * 1.4);
+      c.strokeStyle = withOpacity(color, 0.85 * (1 - rk));
+      c.lineWidth = 2;
+      c.beginPath();
+      c.arc(cp.x, cp.y, 54 - 34 * rk, 0, Math.PI * 2);
+      c.stroke();
+      const spin = k * Math.PI * 4;
+      c.lineCap = 'round';
+      for (let i = 0; i < 4; i++) {
+        const a = spin + (i * Math.PI) / 2;
+        c.strokeStyle = withOpacity(color, 0.9 * fade);
+        c.lineWidth = 2;
+        c.beginPath();
+        c.moveTo(cp.x + Math.cos(a) * 16, cp.y + Math.sin(a) * 16);
+        c.lineTo(cp.x + Math.cos(a) * 26, cp.y + Math.sin(a) * 26);
+        c.stroke();
+      }
+      c.lineCap = 'butt';
+    }
+
+    // The glyph: rises a few px and scales up while fading — the
     // signature "something was found here" mark, same as the log icon.
     const gy = cp.y - 4 - 14 * easeOut;
     const scale = 0.8 + 0.9 * easeOut;
@@ -1319,7 +1452,7 @@ export function drawDiscoveryBlooms(rc: RenderContext, nowMs: number): void {
     c.font = `${Math.round(16 * scale)}px sans-serif`;
     c.textAlign = 'center';
     c.textBaseline = 'middle';
-    c.fillText(isFirework ? '✧' : '✦', cp.x, gy);
+    c.fillText(isFirework ? '✧' : spec.glyph, cp.x, gy);
     c.restore();
   }
   if (opened) c.restore();

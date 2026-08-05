@@ -61,6 +61,7 @@ import {
   drawArrivalFlashes,
   enqueueDetonation,
   spawnDiscoveryBloom,
+  discoveryVariantForSecret,
   drawDiscoveryBlooms,
   diedByChronicle,
 } from '../render/combatFx';
@@ -1741,8 +1742,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         }
         if (fx.kind === 'discovery') {
           // Blooms at the body; re-located each frame so it rides the
-          // body's orbit rather than a fixed canvas point.
-          if (fx.bodyId) spawnDiscoveryBloom(fx.id, fx.bodyId);
+          // body's orbit rather than a fixed canvas point. The VARIANT
+          // comes off the body's revealed secret, so a cache spills gold
+          // and a databank streams data instead of every find playing
+          // the same purple flare.
+          if (fx.bodyId) {
+            const hit = gameState.bodies.find(b => b.id === fx.bodyId);
+            spawnDiscoveryBloom(
+              fx.id, fx.bodyId,
+              discoveryVariantForSecret(hit?.secret?.kind),
+            );
+          }
           return;
         }
         if (fx.kind === 'damage') {
