@@ -2381,19 +2381,24 @@ const BATTLE_LINE_TURN_MS = 240000;
 /** Ring radius (world units) at and above which the line turns at the
  *  full BATTLE_LINE_TURN_MS. Below it the turn is proportionally faster.
  *
+ *  Because the period scales with radius, this sets a constant APPARENT
+ *  speed of 2*pi*REF/TURN — about 1.0 world units a second at 40. It was
+ *  60, which read as hurried once standoff had also pushed the rings
+ *  outward.
+ *
  *  A fixed period is an ANGULAR rate, so the smaller the ring the less
  *  screen distance a hull covers per second. At Sol, ships park about 14
  *  units out; a 4-minute revolution there moves them a couple of pixels
  *  a second and the fight reads as frozen — the "not moving around their
  *  orbits" report. Scaling the period with radius keeps the apparent
  *  motion roughly constant instead of the angular rate. */
-const BATTLE_LINE_REF_RADIUS = 60;
+const BATTLE_LINE_REF_RADIUS = 40;
 /** Never slower than this, however tight the ring. */
 const BATTLE_LINE_MIN_TURN_MS = 45000;
 
 /** Minimum gap between hull centres on a battle arc, world units. Below
  *  this the sprites overlap and the line reads as one blob. */
-const BATTLE_LINE_MIN_SEP = 3.0;
+const BATTLE_LINE_MIN_SEP = 2.4;
 /** Radial gap between ranks when one arc cannot hold the whole fleet. */
 const BATTLE_LINE_RANK_GAP = 2.6;
 
@@ -2416,16 +2421,19 @@ const BATTLE_LINE_JITTER_A = 0.42;
 /** Heading scatter, radians peak-to-peak — noses off-parallel. */
 const BATTLE_LINE_JITTER_H = 0.22;
 
-/** Ranks the line is willing to form BEFORE standing off. Two reads as
- *  a formation with depth; expanding the ring earlier than that would
- *  move fights that already looked right. */
-const BATTLE_LINE_TARGET_RANKS = 2;
+/** Ranks the line is willing to form BEFORE standing off.
+ *
+ *  DEPTH IS CHEAPER THAN DISTANCE. Standing off to fit a fleet on one
+ *  long arc pushed engagements to 3x their parking radius, which put
+ *  them near neighbouring orbits and — because apparent speed is held
+ *  constant across radius — made them look like they were racing. Three
+ *  ranks keeps the fight sitting on the world it is being fought over. */
+const BATTLE_LINE_TARGET_RANKS = 3;
 
-/** How far past its parking radius an engagement ring may stand off to
- *  make room for the line. 3x keeps the fight recognisably in orbit —
- *  beyond that the fleet reads as parked in deep space rather than
- *  fighting over the world underneath it. */
-const BATTLE_LINE_MAX_STANDOFF = 3;
+/** Hard ceiling on standoff. 1.5x keeps a fight visually attached to its
+ *  planet instead of drifting into the next orbit over; anything beyond
+ *  that is handled by adding ranks. */
+const BATTLE_LINE_MAX_STANDOFF = 1.5;
 
 /**
  * Draw a ship on its orbit
