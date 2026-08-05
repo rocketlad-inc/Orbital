@@ -53,6 +53,76 @@ function page(title, body, ok = true) {
 }
 
 /**
+ * The end of the OAuth chain, with the DM question attached.
+ *
+ * Linking is now permission to VOTE from Discord, not permission to
+ * message someone. This page poses the same choice /link does, in the
+ * same words, so a player gets one consistent question whichever way
+ * they came in — and neither path DMs them before they answer.
+ *
+ * Deliberately no auto-redirect: a page that bounces away before the
+ * question is answered would be a silent "no", and the player would
+ * never learn the feature existed.
+ */
+function consentPage(username) {
+  return new Response(
+    `<!doctype html><html><head><meta charset="utf-8"><title>Discord connected</title>
+     <style>
+       body{background:#070b12;color:#e7eef6;font:16px/1.6 ui-sans-serif,system-ui,sans-serif;
+            display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px}
+       .card{max-width:460px;padding:28px 30px;border:1px solid #2b8f88;border-radius:12px;background:#0c121b}
+       h1{font-size:19px;margin:0 0 6px;color:#4ecdc4}
+       p{color:#93a3b8;margin:0 0 14px}
+       .opt{border:1px solid rgba(120,140,160,.3);border-radius:9px;padding:12px 14px;margin-bottom:10px}
+       .opt b{color:#cdd9e4;display:block;margin-bottom:3px}
+       .opt span{font-size:13.5px;color:#8a9fb3}
+       button{width:100%;padding:11px;border-radius:8px;font:600 14px/1 inherit;cursor:pointer;
+              border:1px solid #2b8f88;background:#12303a;color:#4ecdc4;margin-top:8px}
+       button.ghost{border-color:rgba(120,140,160,.35);background:transparent;color:#93a3b8}
+       button:disabled{opacity:.5;cursor:default}
+       a{color:#4ecdc4}
+       #done{display:none;color:#cdd9e4}
+     </style></head><body><div class="card">
+     <h1>Discord connected</h1>
+     <p>Linked as <b style="color:#cdd9e4">${username}</b>. You can vote on Senate bills from
+     the channel either way — one more question:</p>
+     <div id="ask">
+       <div class="opt"><b>📬 Send me direct messages</b><span>Your 6pm situation report,
+         a nudge when a vote is closing without you, and messages from other factions.</span>
+         <button onclick="pick(true)">Yes, DM me</button></div>
+       <div class="opt"><b>🔕 Server only</b><span>Nothing in your inbox. Senate cards, the
+         Orbital Herald and every slash command still work exactly the same.</span>
+         <button class="ghost" onclick="pick(false)">Server only</button></div>
+     </div>
+     <div id="done"></div>
+     <p style="margin-top:16px"><a href="/">Return to Orbital</a></p>
+     </div>
+     <script>
+       async function pick(consent){
+         document.querySelectorAll('button').forEach(function(b){b.disabled=true});
+         var msg;
+         try{
+           var r = await fetch('/api/me/dm-consent',{
+             method:'POST', headers:{'content-type':'application/json'},
+             credentials:'same-origin', body:JSON.stringify({consent:consent})});
+           var d = await r.json();
+           if(!consent) msg='🔕 <b>Server only.</b> Nothing will reach your inbox. You can change this any time in the Notifications panel.';
+           else if(d.dm_ok) msg='📬 <b>DMs on.</b> A welcome message is waiting in your Discord inbox.';
+           else msg='⚠️ You are opted in, but Discord <b>blocked the test message</b>. Right-click the server icon &rarr; Privacy Settings &rarr; enable Direct Messages. Everything still reaches you in the channel meanwhile.';
+         }catch(e){
+           msg='Could not save that. Set it in-game under Notifications.';
+         }
+         document.getElementById('ask').style.display='none';
+         var el=document.getElementById('done');
+         el.innerHTML=msg; el.style.display='block';
+       }
+     </script>
+     </body></html>`,
+    { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } },
+  );
+}
+
+/**
  * GET /api/discord/oauth/start — session-authed. Mints a state token and
  * bounces the player to Discord.
  */
@@ -148,9 +218,9 @@ export async function handleOauthCallback(req, env, { url }) {
       .prepare('UPDATE users SET discord_id = ?, discord_username = ? WHERE id = ?')
       .bind(me.id, me.username ?? null, userId).run();
 
-    return page('Discord connected',
-      `You're linked as <b>${(me.username ?? 'your account').replace(/[<>&]/g, '')}</b>. ` +
-      'Senate votes, alerts and trade offers will reach you there.');
+    // Linked, but not yet permitted to DM them — same rule as /link.
+    // This page asks before anything reaches their inbox.
+    return consentPage((me.username ?? 'your account').replace(/[<>&]/g, ''));
   } catch (e) {
     console.error('oauth callback failed', e);
     return page('Something went wrong', 'Please try again.', false);

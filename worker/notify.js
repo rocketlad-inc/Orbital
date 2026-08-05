@@ -61,6 +61,52 @@ async function openDmChannel(env, discordId) {
   return ch?.id ?? null;
 }
 
+// ---------------------------------------------------------------------------
+// Consent — the gate above the per-category prefs.
+//
+// Categories answer "which DMs do I want". This answers the question that
+// comes first: "do I want DMs at all". A player links Discord to vote on
+// senate cards; treating that as permission to message them is us
+// deciding for them. Some want the server posts and nothing else, and
+// they are right to.
+//
+// NULL = never asked (no DMs), 1 = yes, 0 = server only. Migration 0059.
+// ---------------------------------------------------------------------------
+
+/** Has this user said yes to DMs? Unasked and declined both mean no. */
+export async function hasDmConsent(env, userId) {
+  try {
+    const row = await env.DB
+      .prepare('SELECT dm_consent FROM users WHERE id = ?').bind(userId).first();
+    return row?.dm_consent === 1;
+  } catch {
+    // Fail CLOSED, unlike categoryEnabled below. A pref lookup failing
+    // should not silence an alert someone asked for; a consent lookup
+    // failing must not message someone who never did.
+    return false;
+  }
+}
+
+/** Record an answer. `consent` true = DM me, false = server only. */
+export async function setDmConsent(env, userId, consent) {
+  await env.DB
+    .prepare('UPDATE users SET dm_consent = ?, dm_consent_ms = ? WHERE id = ?')
+    .bind(consent ? 1 : 0, Date.now(), userId)
+    .run();
+}
+
+/** null = never answered, true/false = their answer. */
+export async function dmConsentState(env, userId) {
+  try {
+    const row = await env.DB
+      .prepare('SELECT dm_consent FROM users WHERE id = ?').bind(userId).first();
+    if (row?.dm_consent == null) return null;
+    return row.dm_consent === 1;
+  } catch {
+    return null;
+  }
+}
+
 /** Has this user switched the category off? Absent row = enabled. */
 async function categoryEnabled(env, userId, category) {
   try {
@@ -93,6 +139,14 @@ export async function sendDm(env, opts) {
       .prepare('SELECT discord_id FROM users WHERE id = ?')
       .bind(userId).first();
     if (!user?.discord_id) return { sent: false, reason: 'not_linked' };
+
+    // Consent first, and BEFORE the dedupe claim below. Checking it after
+    // would burn the dedupe key on a message that was never sent, so the
+    // moment the player opted in they'd be permanently silenced about
+    // that exact event.
+    if (!(await hasDmConsent(env, userId))) {
+      return { sent: false, reason: 'no_dm_consent' };
+    }
 
     if (!(await categoryEnabled(env, userId, category))) {
       return { sent: false, reason: 'opted_out' };
@@ -171,7 +225,11 @@ export async function getPrefs(env, userId) {
     const rows = (await env.DB
       .prepare('SELECT category, enabled FROM notification_prefs WHERE user_id = ?')
       .bind(userId).all()).results ?? [];
-    for (const r of rows) out[r.category] = !!r.enabled;
+    // Ignore rows for RETIRED categories. Deleting a category doesn't
+    // delete the rows players already saved against it, and echoing
+    // 'urgent'/'combat' back out would resurrect them in any surface
+    // that renders prefs directly — the admin grid does.
+    for (const r of rows) if (r.category in out) out[r.category] = !!r.enabled;
   } catch { /* defaults */ }
   return out;
 }

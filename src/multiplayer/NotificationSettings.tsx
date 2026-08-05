@@ -19,6 +19,8 @@ type Payload = {
   discord_username: string | null;
   categories: Record<string, string>;
   prefs: Prefs;
+  /** null = linked but never answered the DM question. */
+  dm_consent: boolean | null;
 };
 
 /** Which categories are worth a warning when switched off. Losing a
@@ -36,6 +38,7 @@ export function NotificationSettings() {
   const [data, setData] = useState<Payload | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [dmBlocked, setDmBlocked] = useState(false);
 
   const load = useCallback(async () => {
     const res = await apiFetch<Payload>('/api/me/notifications');
@@ -55,6 +58,21 @@ export function NotificationSettings() {
     else setErr('That change did not save. Try again.');
   };
 
+  // Answering the master question. On "yes" the server sends a welcome DM
+  // and tells us whether it landed — Discord blocks server-member DMs by
+  // default for many accounts, and if we didn't surface that the player
+  // would sit opted-in and silent, concluding the bot is broken.
+  const answerConsent = async (consent: boolean) => {
+    setBusy('consent');
+    const res = await apiFetch<{ dm_consent: boolean; dm_ok: boolean | null }>(
+      '/api/me/dm-consent', { method: 'POST', body: JSON.stringify({ consent }) },
+    );
+    setBusy(null);
+    if (!res.ok) { setErr('That change did not save. Try again.'); return; }
+    setDmBlocked(consent && res.data.dm_ok === false);
+    setData(d => (d ? { ...d, dm_consent: res.data.dm_consent } : d));
+  };
+
   if (err) return <div style={sub}>{err}</div>;
   if (!data) return <div style={sub}>Loading…</div>;
 
@@ -67,12 +85,60 @@ export function NotificationSettings() {
           Link your Discord account above to receive alerts. Once linked, you
           choose what reaches you here.
         </div>
+      ) : data.dm_consent == null ? (
+        // Linked but never asked. Pose the question rather than assuming
+        // either answer — linking is permission to vote from Discord, not
+        // permission to message someone.
+        <div style={{
+          border: '1px solid rgba(96,130,160,.3)', borderRadius: 8, padding: '12px 14px',
+        }}>
+          <div style={{ fontSize: 12.5, color: '#cdd9e4', marginBottom: 8 }}>
+            Do you want Orbital to send you direct messages?
+          </div>
+          <div style={{ ...sub, marginBottom: 10 }}>
+            Senate cards, the Orbital Herald and slash commands reach you in the server
+            either way. This is only about your inbox.
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button" onClick={() => answerConsent(true)} disabled={busy === 'consent'}
+              style={{ ...pill, borderColor: '#4ecdc4', color: '#4ecdc4', padding: '6px 12px' }}
+            >📬 Yes, DM me</button>
+            <button
+              type="button" onClick={() => answerConsent(false)} disabled={busy === 'consent'}
+              style={{ ...pill, padding: '6px 12px' }}
+            >🔕 Server only</button>
+          </div>
+        </div>
+      ) : data.dm_consent === false ? (
+        <div>
+          <div style={{ fontSize: 12.5, color: '#cdd9e4' }}>🔕 Server only</div>
+          <div style={{ ...sub, marginTop: 4, marginBottom: 10 }}>
+            Nothing reaches your inbox. Senate cards, the Herald and every slash command
+            still work in the server.
+          </div>
+          <button
+            type="button" onClick={() => answerConsent(true)} disabled={busy === 'consent'}
+            style={{ ...pill, borderColor: '#4ecdc4', color: '#4ecdc4', padding: '6px 12px' }}
+          >Turn direct messages on</button>
+        </div>
       ) : (
         <>
           <div style={{ ...sub, marginBottom: 10 }}>
             Sent to <b style={{ color: '#cdd9e4' }}>{data.discord_username ?? 'your Discord'}</b>.
             You can also change these with <code style={code}>/notify</code> in Discord.
           </div>
+
+          {dmBlocked && (
+            <div style={{
+              fontSize: 11.5, color: '#ffca28', marginBottom: 10, lineHeight: 1.5,
+              border: '1px solid rgba(255,202,40,.3)', borderRadius: 6, padding: '8px 10px',
+            }}>
+              Discord blocked our test message. Right-click the server icon →
+              <b> Privacy Settings</b> → enable <b>Direct Messages</b>, or none of this
+              will reach you.
+            </div>
+          )}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
             {Object.entries(data.categories).map(([key, label]) => {
@@ -105,6 +171,11 @@ export function NotificationSettings() {
               );
             })}
           </div>
+
+          <button
+            type="button" onClick={() => answerConsent(false)} disabled={busy === 'consent'}
+            style={{ ...pill, marginTop: 10, padding: '6px 12px' }}
+          >🔕 Stop all direct messages</button>
 
           <div style={{ ...sub, marginTop: 12 }}>
             Only deadlines interrupt you — a vote about to close, unpaid upkeep.

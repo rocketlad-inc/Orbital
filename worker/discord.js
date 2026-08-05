@@ -494,7 +494,114 @@ async function handleSlashCommand(env, interaction) {
     console.error('discord link failed', e);
     return ephemeral('Something went wrong linking your account. Try a fresh code.');
   }
-  return ephemeral('✅ Linked! You can now vote in Senate polls straight from Discord.');
+  // Linked — but NOT yet permitted to DM them. Ask, here, before anything
+  // lands in their inbox. The buttons are the whole point: a "reply YES"
+  // instruction gets ignored and we'd be left guessing.
+  return json({
+    type: 4,
+    data: {
+      flags: FLAG_EPHEMERAL,
+      embeds: [dmConsentEmbed()],
+      components: dmConsentButtons(),
+    },
+  });
+}
+
+/**
+ * The consent ask, shared by /link and the in-app OAuth return so both
+ * paths pose the same question in the same words.
+ *
+ * It states what each choice costs, because the failure mode here is a
+ * player declining out of vagueness and then wondering why the game never
+ * tells them anything. "Server only" is a real, supported answer — not a
+ * booby prize — and the copy says so.
+ */
+export function dmConsentEmbed() {
+  return {
+    title: '✅ Linked — do you want direct messages?',
+    description: [
+      'You can now vote on Senate bills straight from the channel. That works either way.',
+      '',
+      '**📬 Yes, DM me** — the daily situation report at 6pm Eastern, a nudge when a vote '
+        + 'is about to close without you, and messages other factions send you in-game.',
+      '',
+      '**🔕 Server only** — nothing in your inbox, ever. Senate cards, the Orbital Herald '
+        + 'and every slash command still work exactly the same.',
+      '',
+      '_You can change this any time with_ `/notify` _or in-game under Notifications._',
+    ].join('\n'),
+    color: POLITICS_COLOR,
+  };
+}
+
+export function dmConsentButtons() {
+  return [{
+    type: 1,
+    components: [
+      { type: 2, style: 3, label: 'Yes, DM me', emoji: { name: '📬' }, custom_id: 'dmconsent:yes' },
+      { type: 2, style: 2, label: 'Server only', emoji: { name: '🔕' }, custom_id: 'dmconsent:no' },
+    ],
+  }];
+}
+
+/**
+ * Handle a click on either consent button.
+ *
+ * On "yes" we immediately send the welcome DM — not as a flourish, but as
+ * a LIVE TEST. Discord privacy settings block DMs from server members by
+ * default for a lot of people, and the failure is silent: we'd mark them
+ * opted in and every report after that would vanish. Better to find out
+ * in the same second they said yes, while they're still looking, and tell
+ * them exactly which setting to change.
+ */
+async function handleDmConsentButton(env, interaction, choice) {
+  const du = discordUserOf(interaction);
+  if (!du?.id) return json({ type: 7, data: { content: 'Could not read your Discord identity.', embeds: [], components: [] } });
+
+  const row = await env.DB
+    .prepare('SELECT id FROM users WHERE discord_id = ?').bind(du.id).first();
+  if (!row) {
+    return json({ type: 7, data: { content: 'That link expired — generate a fresh code in-game.', embeds: [], components: [] } });
+  }
+
+  const notify = await import('./notify.js');
+  await notify.setDmConsent(env, row.id, choice === 'yes');
+
+  if (choice !== 'yes') {
+    return json({ type: 7, data: {
+      content: '🔕 **Server only.** Nothing will reach your inbox. Senate cards, the Herald '
+        + 'and slash commands all still work — and `/notify` flips this back whenever you like.',
+      embeds: [], components: [],
+    } });
+  }
+
+  const res = await notify.sendDm(env, {
+    userId: row.id,
+    category: 'digest',
+    embed: {
+      title: '📬 You are set up',
+      description: [
+        'This is the channel your Orbital briefings will arrive on.',
+        '',
+        '• **6pm Eastern** — your daily situation report: fighting, inbound fleets, bills awaiting your vote.',
+        '• **Deadlines** — a vote about to close without you, or unpaid fleet upkeep.',
+        '• **Diplomacy** — messages and trade offers from other factions.',
+        '',
+        'Use `/notify` to turn any of it off.',
+      ].join('\n'),
+      color: POLITICS_COLOR,
+    },
+  });
+
+  // The honest failure path. Naming the exact Discord setting is the
+  // difference between a fixable problem and a player concluding the bot
+  // is broken.
+  const content = res.sent
+    ? '📬 **DMs on.** Check your inbox — a welcome message is waiting. `/notify` changes this any time.'
+    : '⚠️ You are opted in, but Discord **blocked the test message**. Open this server → '
+      + 'right-click its icon → *Privacy Settings* → enable **Direct Messages**, then run '
+      + '`/notify` to re-test. Until then everything still reaches you in the channel.';
+  return json({ type: 7, data: { content, embeds: [], components: [] } });
 }
 
 /**
@@ -514,9 +621,34 @@ async function handleNotifyCommand(env, interaction) {
     return ephemeral('Link your account first: in-game Senate panel → Link Discord, then `/link <code>` here.');
   }
 
+  // Never answered the master question — ask it instead of showing a
+  // category list that would do nothing. Common for anyone who dismissed
+  // the ephemeral prompt after /link.
+  const consent = await notify.dmConsentState(env, linked.id);
+  if (consent == null) {
+    return json({
+      type: R_MESSAGE,
+      data: { flags: FLAG_EPHEMERAL, embeds: [dmConsentEmbed()], components: dmConsentButtons() },
+    });
+  }
+
   const opts = interaction.data?.options ?? [];
   const category = opts.find(o => o.name === 'category')?.value;
   const stateRaw = opts.find(o => o.name === 'state')?.value;
+
+  // `/notify category:all state:on` is the natural way to say "actually,
+  // do DM me" — honour it as a consent answer rather than flipping
+  // categories that the master gate still blocks.
+  if (category === 'all' && String(stateRaw) === 'on' && consent === false) {
+    await notify.setDmConsent(env, linked.id, true);
+    return ephemeral('📬 **DMs back on.** Use `/notify` again to fine-tune which ones.');
+  }
+  if (consent === false) {
+    return ephemeral(
+      '🔕 You are set to **server only** — no direct messages. '
+      + 'Turn them on with `/notify category:all state:on`, or in-game under Notifications.',
+    );
+  }
 
   if (category && stateRaw) {
     const on = String(stateRaw) === 'on';
@@ -538,6 +670,11 @@ async function handleNotifyCommand(env, interaction) {
 async function handleComponent(env, interaction) {
   const customId = interaction.data?.custom_id ?? '';
   const parts = customId.split(':');
+
+  // dmconsent:<yes|no> — the ask posted right after /link.
+  if (parts[0] === 'dmconsent') {
+    return handleDmConsentButton(env, interaction, parts[1]);
+  }
 
   // orb:t:<gameId>:<tradeId>:<accept|decline>
   // Reuses trades.js's real handlers rather than reimplementing them —
@@ -806,7 +943,52 @@ async function handleMyNotifications(_req, env, { session }) {
     discord_username: user?.discord_username ?? null,
     categories: notify.CATEGORIES,
     prefs: await notify.getPrefs(env, session.user_id),
+    // null = linked but never answered the DM question. The panel shows
+    // the ask rather than a toggle in that state, so a player who skipped
+    // it in Discord still gets a clear yes/no in front of them.
+    dm_consent: await notify.dmConsentState(env, session.user_id),
   });
+}
+
+/**
+ * POST /api/me/dm-consent — answer the "do you want DMs" question.
+ *
+ * Shared by the OAuth return page and the in-game Notifications panel so
+ * every path records the same thing. On yes it sends the welcome DM and
+ * reports whether it actually landed: Discord blocks server-member DMs
+ * by default for a lot of accounts, and that failure is silent — the
+ * player would be marked opted in and simply never hear anything.
+ */
+async function handleDmConsentWrite(req, env, { session }) {
+  if (!session) return err(401, 'unauthenticated', 'sign in required');
+  const notify = await import('./notify.js');
+  let body;
+  try { body = await req.json(); } catch { return err(400, 'bad_request', 'invalid json'); }
+  const consent = !!body.consent;
+  await notify.setDmConsent(env, session.user_id, consent);
+
+  let dmOk = null;
+  if (consent) {
+    const res = await notify.sendDm(env, {
+      userId: session.user_id,
+      category: 'digest',
+      embed: {
+        title: '📬 You are set up',
+        description: [
+          'This is the channel your Orbital briefings will arrive on.',
+          '',
+          '• **6pm Eastern** — your daily situation report.',
+          '• **Deadlines** — a vote closing without you, or unpaid upkeep.',
+          '• **Diplomacy** — messages and trade offers from other factions.',
+          '',
+          'Use `/notify` in Discord, or this panel, to turn any of it off.',
+        ].join('\n'),
+        color: POLITICS_COLOR,
+      },
+    });
+    dmOk = res.sent;
+  }
+  return json({ ok: true, dm_consent: consent, dm_ok: dmOk });
 }
 
 /** PATCH /api/me/notifications — change one of your own categories. */
@@ -981,6 +1163,7 @@ async function handleAnnounceProposal(_req, env, { session, params }) {
 export const routes = [
   { method: 'GET',   pattern: '/api/me/notifications', auth: 'required', handle: handleMyNotifications },
   { method: 'PATCH', pattern: '/api/me/notifications', auth: 'required', handle: handleMyNotificationsWrite },
+  { method: 'POST',  pattern: '/api/me/dm-consent',   auth: 'required', handle: handleDmConsentWrite },
   { method: 'GET',   pattern: '/api/admin/bot', auth: 'required', handle: handleBotOverview },
   { method: 'PATCH', pattern: '/api/admin/bot', auth: 'required', handle: handleBotSettingWrite },
   { method: 'PATCH', pattern: '/api/admin/bot/prefs', auth: 'required', handle: handleBotPrefWrite },
