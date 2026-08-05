@@ -40,7 +40,8 @@ value spread **1.38× → 1.30×**.
 - **One speed stat, and it drives travel too.** Engines are engines: they raise
   speed, speed makes you both harder to hit and faster to arrive. Speed is not a
   combat stat that happens to live on a hull — it is *the* mobility stat.
-- **Settlements: speed 0.15.** Slow, and hit accordingly (97% by a corvette).
+- **Settlements: speed 0.30**, matched to the destroyer, and **20 damage per
+  Weapons level** (was 8). A station is mechanically a destroyer that cannot move.
 - **Civilians slightly faster than a frigate**: freighter and colony **0.55**.
 - **All existing ships migrate** to the new system.
 - **The 1.176 cap applies to travel as well as combat.** One speed, one ceiling.
@@ -49,11 +50,10 @@ value spread **1.38× → 1.30×**.
 
 | | Corvette | Frigate | Destroyer | Freighter | Colony | Settlement |
 |---|---|---|---|---|---|---|
-| Speed | 0.85 | 0.50 | 0.30 | 0.55 | 0.55 | 0.15 |
+| Speed | 0.85 | 0.50 | 0.30 | 0.55 | 0.55 | **0.30** |
 
-Hit chances against a settlement: corvette **97.0%**, frigate 91.7%, destroyer
-80.0%. A base barely dodges, which is the intent — but see R2, because the same
-number also governs whether a station can shoot *back*.
+Hit chances against a settlement: corvette **88.9%**, frigate 73.5%, destroyer
+50.0% — and the station rolls back on exactly those terms.
 
 ---
 
@@ -153,25 +153,30 @@ Nothing is wasted and no warning copy is needed. The one real consequence
 stands: **Propulsion tech cannot lift a maxed corvette past the cap**, so the
 engine and Propulsion blurbs should mention a ceiling exists.
 
-### R2. Stations: 0.15 is right for being hit, wrong for shooting
+### R2. RESOLVED — a station is a destroyer that cannot move
 
-At 0.15 a station shooting a **corvette** hits **3.0%** (frigate 8.3%, destroyer
-20.0%). A Weapons-3 station lands 0.7 damage per tick on a corvette. Station
-defence is decorative.
+Speed **0.30**, damage **20 per Weapons level**, rolling to hit and being rolled
+against like any hull. Assumes stations also move to **every-tick** fire; if they
+kept the 3-tick cadence every number below divides by three and stations end up
+*weaker* than today.
 
-The stat is doing two jobs. **Evasion 0.15 is correct** — a base should be easy
-to hit. Reusing it for the *gunnery* roll is what breaks it: an emplacement has
-fire control and unlimited power, it does not need to match a corvette's agility
-to land a shot.
+| station fire | hit% | L1 (20) | L2 (40) | L3 (60) |
+|---|---|---|---|---|
+| vs corvette | 11.1% | 2.2 | 4.4 | 6.6 |
+| vs frigate | 26.5% | 5.3 | 10.6 | 15.9 |
+| vs destroyer | 50.0% | 10.0 | 20.0 | **30.0** |
 
-**Recommendation — change nothing about stations at all.** Keep their existing
-3-tick cadence and keep them always hitting; let 0.15 govern only how easily
-they are hit. That preserves `STATION_DMG_PER_WEAPONS_LEVEL` tuning exactly,
-needs no rebalance, and reads cleanly: *emplacements cycle slowly but never
-miss.*
+An L3 station lands 30/tick on a destroyer where a destroyer lands 22.5 — **a
+fortified world out-guns the ship sent to take it**, which is the right shape.
 
-The alternative — every-tick fire with a separate gunnery speed of 0.50 — gives
-25.7 / 50 / 73.5% and about 1.5x today's station DPS, so it needs retuning.
+Against today (8/level, every 3 ticks, always hits) this is a clean **2x** at
+every level. That is a buff to fortification, not a restoration — worth knowing
+it is a real change in the defensive meta, not a neutral port.
+
+Unrelated bug found on the way: the client says **"+4 damage/tick per level"**
+(`settlements.ts` `combatBoost.damagePerLevel: 4`) while the server used 8. The
+player-facing number has been wrong by half for a long time and is now wrong by
+five times. Fix it with the rest.
 
 ### R3. Faster civilians is an economy change, not a combat one
 

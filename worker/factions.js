@@ -559,10 +559,10 @@ export const ENGINE_SPEED_MUL = 1 / 0.85;
 export const SPEED_CAP = 1 / 0.85;
 
 /** Settlements are not ships but they are shot at, so they need a speed.
- *  0.15 = easy to hit (a corvette lands 97%). Station return fire does NOT
- *  roll against this — emplacements keep their own cadence and always
- *  hit; see DESIGN-combat-v2.md R2. */
-export const SETTLEMENT_SPEED = 0.15;
+ *  Matched to the destroyer (0.30): a station is mechanically a destroyer
+ *  that cannot move — it rolls to hit and is rolled against on the same
+ *  terms. See DESIGN-combat-v2.md R2. */
+export const SETTLEMENT_SPEED = 0.30;
 
 // Starting kit for research-gated games: ONE corvette and ONE colony
 // ship. Everything else — frigates, destroyers, freighters, stations,

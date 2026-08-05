@@ -2162,7 +2162,12 @@ export class Room {
     // Return-fire: CITIES never shoot (civilian). STATIONS shoot only once
     // a Weapons module is built, with damage scaling by its level — an
     // unarmed station is a soft target. No flat "just for existing" base.
-    const STATION_DMG_PER_WEAPONS_LEVEL = 8;                  // L1=8, L2=16, … Ln=8n
+    // COMBAT V2: 8 -> 20 per level. Stations kept their 3-tick cadence while
+    // ships moved to every tick, which would have cut their relative worth to
+    // a third without anyone editing a number. 20 + the hit roll lands them at
+    // ~2x today's effective DPS — a deliberate buff to fortification, not a
+    // restoration. See DESIGN-combat-v2.md R2.
+    const STATION_DMG_PER_WEAPONS_LEVEL = 20;                 // L1=20, L2=40, … Ln=20n
 
     // Per-faction tech multipliers for this tick (one indexed query,
     // bucketed). perLevel values mirror src/game/techs.ts TECH_DEFS.
