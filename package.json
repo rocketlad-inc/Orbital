@@ -16,6 +16,9 @@
     "test": "react-scripts test",
     "eject": "react-scripts eject",
     "worker:dev": "wrangler dev",
+    "sim": "node sim/headless.mjs",
+    "sim:sweep": "node sim/sweep.mjs",
+    "sim:passive": "node sim/sweep.mjs 30 300 passive",
     "db:migrate:local": "wrangler d1 migrations apply orbital --local",
     "db:migrate:remote": "wrangler d1 migrations apply orbital"
   },
