@@ -1377,15 +1377,13 @@ export const ShipPanel: React.FC = () => {
               <div className="section-title">COMBAT</div>
               <div className="stat-row">
                 <span className="label">DAMAGE</span>
-                {/* Server-authoritative per-volley damage when present
-                    (weapon parts + Weapons tech, stamped at build). */}
-                <span className="value">{ship.damagePerTick ?? shipClass.damagePerTick}/volley</span>
-              </div>
-              <div className="stat-row">
-                <span className="label">CADENCE</span>
-                {/* COMBAT V2: every hull fires every tick. Whether it lands
-                    is the speed roll, which is the row below. */}
-                <span className="value">every tick</span>
+                {/* Server-authoritative damage when present (weapon parts +
+                    Weapons tech, stamped at build).
+                    COMBAT V2 dropped the CADENCE row: every hull now fires
+                    every tick, so the line said the same thing on every ship
+                    and carried no information. "/tick" replaces "/volley" so
+                    the rate stays legible without it. */}
+                <span className="value">{ship.damagePerTick ?? shipClass.damagePerTick}/tick</span>
               </div>
               <div className="stat-row">
                 <span className="label">SPEED</span>
