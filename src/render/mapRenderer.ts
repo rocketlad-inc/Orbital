@@ -2397,6 +2397,17 @@ const BATTLE_LINE_MIN_SEP = 3.0;
 /** Radial gap between ranks when one arc cannot hold the whole fleet. */
 const BATTLE_LINE_RANK_GAP = 2.6;
 
+/** Ranks the line is willing to form BEFORE standing off. Two reads as
+ *  a formation with depth; expanding the ring earlier than that would
+ *  move fights that already looked right. */
+const BATTLE_LINE_TARGET_RANKS = 2;
+
+/** How far past its parking radius an engagement ring may stand off to
+ *  make room for the line. 3x keeps the fight recognisably in orbit —
+ *  beyond that the fleet reads as parked in deep space rather than
+ *  fighting over the world underneath it. */
+const BATTLE_LINE_MAX_STANDOFF = 3;
+
 /**
  * Draw a ship on its orbit
  */
@@ -2459,8 +2470,28 @@ export function drawShip(
     // its slot within the faction's arc. Radius keeps the ship's own
     // ring (plus its lane), so lines at different altitudes still read.
     const nowM = ctx.nowMs ?? performance.now();
-    const r0 = Math.hypot(lx, ly) + (formation.lane ?? 0);
+    const parkR = Math.hypot(lx, ly) + (formation.lane ?? 0);
     const width = formation.arcWidth ?? 1.6;
+
+    // STAND OFF FAR ENOUGH TO FORM A LINE.
+    //
+    // An arc's capacity is its LENGTH (r * width), not its angle. With
+    // three factions the sector splits into ~0.41 rad each, and at a
+    // star's tight parking radius (~14) that arc holds a single hull —
+    // so a ten-ship fleet stacked into ten radial ranks and read as a
+    // column pointing away from the sun rather than a battle line.
+    //
+    // So the engagement ring expands until the arc can actually hold the
+    // fleet. It only ever grows, and only when the hulls do not fit, so
+    // fights that already looked right are untouched. The cap keeps the
+    // formation recognisably in orbit rather than parked in deep space.
+    // ceil, not a plain divide: capacity is floor(r*width / SEP), so
+    // asking for 1.5 hulls per rank still floors to 1 and the fleet
+    // stacks anyway. The 1.05 clears that rounding boundary instead of
+    // landing exactly on it.
+    const perRankWanted = Math.ceil(formation.total / BATTLE_LINE_TARGET_RANKS);
+    const needR = (perRankWanted * BATTLE_LINE_MIN_SEP * 1.05) / Math.max(0.05, width);
+    const r0 = Math.min(Math.max(parkR, needR), parkR * BATTLE_LINE_MAX_STANDOFF);
 
     // Turn period scales with ring radius so the line moves at a roughly
     // constant SCREEN speed. See BATTLE_LINE_REF_RADIUS — a fixed period
