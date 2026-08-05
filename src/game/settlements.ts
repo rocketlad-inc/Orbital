@@ -253,7 +253,10 @@ export const SETTLEMENT_DEFS: Record<SettlementType, {
   pdcRating: number;      // 0-1, reduces incoming damage
 }> = {
   city: {
-    maxHp: 200,
+    // Mirrors city_base_hp in worker/configSchema.js (tripled 100 -> 300).
+    // NOTE: this table read 200 while the server founded cities at 100 —
+    // a pre-existing mismatch, now aligned on the server's number.
+    maxHp: 300,
     cost: { fuel: 0, ore: 50, credits: 40 },
     displayName: 'City',
     range: 8,        // ground-based PDC, short range
@@ -261,7 +264,8 @@ export const SETTLEMENT_DEFS: Record<SettlementType, {
     pdcRating: 0.3,
   },
   station: {
-    maxHp: 100,
+    // Mirrors station_base_hp in worker/configSchema.js (tripled 60 -> 180).
+    maxHp: 180,
     cost: { fuel: 0, ore: 30, credits: 60 },
     displayName: 'Station',
     range: 12,       // orbital weapons platform, medium range

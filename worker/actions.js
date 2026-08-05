@@ -954,7 +954,17 @@ async function handleDeploySettlement(req, env, ctx) {
     : (type === 'city' ? 'New City' : 'Station');
 
   const id = `${bodyId}:${type[0]}${Date.now().toString(36)}`;
-  const hp = type === 'city' ? 100 : 60;
+  // Base structure from the game's config (admin Editor), not a literal,
+  // so it can be retuned without a deploy. Falls back to the shipped
+  // values if the lookup fails — see gameConfig.js.
+  let hpCfg = { city_base_hp: 300, station_base_hp: 180 };
+  try {
+    const gc = await import('./gameConfig.js');
+    hpCfg = await gc.cfg(env, gameId);
+  } catch (e) {
+    console.error('settlement hp config lookup failed, using shipped values', e);
+  }
+  const hp = type === 'city' ? hpCfg.city_base_hp : hpCfg.station_base_hp;
 
   // Geometry: cities pick a random surface angle. Stations get a tight
   // circular orbit just above body.radius.

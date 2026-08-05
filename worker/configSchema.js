@@ -152,6 +152,19 @@ export const SCHEMA = [
     help: 'Hull repaired per tick for ships docked at a friendly station.',
   },
   {
+    id: 'city_base_hp', group: 'combat', type: 'int',
+    label: 'City base HP', def: 300, min: 1, max: 100000, step: 10,
+    help: 'Structure a new city is founded with, and what a starting capital gets. '
+      + 'Tripled from 100: settlements were falling faster than a defender could respond '
+      + 'at an hour per tick.',
+  },
+  {
+    id: 'station_base_hp', group: 'combat', type: 'int',
+    label: 'Station base HP', def: 180, min: 1, max: 100000, step: 10,
+    help: 'Structure a new station is deployed with. Tripled from 60, keeping the '
+      + 'city:station ratio at 5:3 so stations stay the softer target.',
+  },
+  {
     id: 'repair_grace_ticks', group: 'combat', type: 'int',
     label: 'Ticks after combat before repair resumes', def: 3, min: 0, max: 50, step: 1,
   },

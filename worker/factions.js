@@ -508,7 +508,10 @@ const SECONDARY_DEVELOPMENT_LEVEL = 2;  // unused now that WORLDS_PER_PLAYER = 1
 const WORLDS_PER_PLAYER = 1;
 const COMBAT_SHIPS_PER_WORLD = 2;
 const CARGO_SHIPS_PER_WORLD = 1;
-const STARTER_CITY_HP = 100;
+/** Fallback only. seedGameWorld resolves this from the game's config
+ *  (city_base_hp) so a capital and a founded city always agree; this
+ *  value is what a lookup failure falls back to. Tripled from 100. */
+const STARTER_CITY_HP = 300;
 
 // Starter fleet template. ship_class is a free-form TEXT column in the
 // schema; the canonical class names are corvette/frigate/destroyer/
@@ -774,11 +777,13 @@ export async function seedGameWorld(env, gameId) {
   // and one game's edits can never leak into another's.
   let CATALOG = BODY_CATALOG;
   let spawnFloorRadius = MIN_CAPITAL_RADIUS;
+  let capitalCityHp = STARTER_CITY_HP;
   let spawnFloorScience = 2;
   try {
     const gc = await import('./gameConfig.js');
     const conf = await gc.cfg(env, gameId);
     spawnFloorRadius = conf.min_capital_radius ?? MIN_CAPITAL_RADIUS;
+    capitalCityHp = conf.city_base_hp ?? STARTER_CITY_HP;
     spawnFloorScience = conf.min_capital_science ?? 2;
     const bodyEdits = conf.bodies ?? {};
     // Global multipliers. ORDER MATTERS: per-body edits are expressed in
@@ -1670,7 +1675,7 @@ export async function seedLateFaction(env, gameId, userId, chosenTemplateId, ide
                1, ?)`,
     ).bind(
       cityId, gameId, bodyRowId, factionId, `${name} Capital`,
-      STARTER_CITY_HP, STARTER_CITY_HP,
+      capitalCityHp, capitalCityHp,
       0, tick, tick, tick, tick,
     ),
   );
