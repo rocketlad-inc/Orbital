@@ -35,58 +35,120 @@ value spread **1.38× → 1.30×**.
 
 ---
 
-## Open questions — MUST be answered before coding
+## Decisions — locked 2026-08-05
 
-These three are genuinely undecided. The simulation only ever modelled armed
-ships fighting armed ships, so it never had to answer any of them.
+- **One speed stat, and it drives travel too.** Engines are engines: they raise
+  speed, speed makes you both harder to hit and faster to arrive. Speed is not a
+  combat stat that happens to live on a hull — it is *the* mobility stat.
+- **Settlements: speed 0.10.** They are slow, and they are hit accordingly.
+- **Civilians slightly faster than a frigate**: freighter and colony **0.55**.
+- **All existing ships migrate** to the new system.
 
-### Q1. What is a settlement's speed?
+| | Corvette | Frigate | Destroyer | Freighter | Colony | Settlement |
+|---|---|---|---|---|---|---|
+| Speed | 0.85 | 0.50 | 0.30 | 0.55 | 0.55 | 0.10 |
 
-Hit chance is speed-based, and a city cannot dodge. Three sites are affected:
-ship→settlement bombardment (`room.js` ~2477), station return fire (~2530), and
-the settlement's own survivability.
-
-- **Option A — bombardment always hits** (no roll). A planet is a stationary
-  target; the roll only exists to model evasion. Simplest, one branch, and it
-  keeps sieges decisive. Station return fire would also always hit.
-- **Option B — give settlements a speed** (~0.10). Ships hit them 88–99%, and
-  station guns hit a corvette 1.4% — which effectively disarms stations.
-- **Recommendation: A.** Option B silently guts station defence.
-
-### Q2. What speed do freighters and colony ships have?
-
-Both have `damagePerTick: 0` — they are targets, never attackers. They need a
-speed so they can be *shot at*. Their travel `speedModifier` is 1.3 / 1.6
-(slower than a frigate's 1.0), so on the combat scale roughly **0.40 / 0.30**.
-Note this makes a colony ship exactly as hard to hit as a destroyer, which is
-probably wrong — a fat colony hull should be the easiest target on the field.
-Suggest **freighter 0.40, colony 0.25**.
-
-### Q3. Do existing ships get restatted?
-
-Live right now: **207 destroyers**, 63 frigates, 19 corvettes, 32 freighters,
-4 colony ships. Destroyers are 64% of all combat hulls — a legacy of the PDC era
-that ended yesterday.
-
-Their stats are **stamped at build time** (`game_ships.hp_max`,
-`damage_per_tick`), so nothing changes for them unless we migrate. Live
-`hp_max` ranges 340–592 for destroyers (base 200 + fitted armor).
-
-- **Restat** (recommended): one migration recomputing every active hull through
-  `computeShipStats` with the new bases. A destroyer at 340 becomes 540. Keeps
-  one consistent rule across the fleet.
-- **Don't restat**: two generations of ships coexist under one rule set, and a
-  destroyer built yesterday is permanently worse than one built tomorrow. This
-  is the option that generates bug reports.
-
-### Q4 (process). Flag or cutover?
-
-Seven live games. A per-game `combat_model` column mirroring `gating_enabled`
-would let new games opt in — but it doubles the combat code path and we'd carry
-both forever. A clean cutover plus an announcement is simpler, and the players
-have already seen and liked the pitch. **Recommend cutover.**
+Resulting hit chances against a settlement: corvette **98.6%**, frigate 96.2%,
+destroyer 90.0%. A base cannot dodge, which is the intent — but see R1 below,
+because station return fire now inherits the mirror of that.
 
 ---
+
+## What unifying speed actually costs
+
+**Today, hull class does not affect travel at all.** Travel acceleration is
+`faction engine_g x propulsion tech x engine parts` (`gameContext:142`). The
+per-class `speedModifier` (0.7 / 1.0 / 1.4 / 1.3 / 1.6) is read by exactly one
+function, `fleetSpeedModifier`, **which nothing calls**. A corvette and a
+destroyer arrive at the same time.
+
+So "speed affects travel" is not a tweak — it is a new behaviour, and it changes
+strategic pacing as much as the combat rules do.
+
+Normalising so the **frigate is unchanged** (`travelMult = 0.50 / speed`):
+
+| class | speed | travel | a 40-tick trip becomes |
+|---|---|---|---|
+| Corvette | 0.85 | **41% faster** | 24 ticks |
+| Frigate | 0.50 | unchanged | 40 ticks |
+| Destroyer | 0.30 | **67% slower** | 67 ticks |
+| Freighter / Colony | 0.55 | 9% faster | 36 ticks |
+
+Two consequences worth being deliberate about:
+
+1. **Destroyers get slow.** 67% longer to reposition, on top of being the class
+   everything else out-runs in a fight. That is a coherent identity (a slow
+   heavy that dominates where it stands) but it is a second nerf landing on the
+   class that is 64% of the live fleet.
+2. **The maths needs care.** Trip time is brachistochrone, `T = 2*sqrt(d/a)`, so
+   travel time scales with `1/sqrt(accel)`. To get a *linear* speed ratio the
+   acceleration must scale as **speed squared** (corvette accel x2.89,
+   destroyer x0.36). Scale accel linearly by mistake and a corvette is only 23%
+   faster instead of 41% — it will feel sluggish and nobody will know why.
+
+**Engines still work exactly as they do today.** One engine is `x1/0.85` speed,
+which under `travelMult = 0.50/speed` is precisely the `x0.85` travel multiplier
+already shipped. The unification preserves the existing engine behaviour and
+finally explains *why* it works.
+
+---
+
+## Still open
+
+### R1. Does the speed cap apply to travel, or only to combat?
+
+The 1.176 cap exists to stop an engine/propulsion arms race in the hit formula.
+If it also caps travel, **Propulsion tech stops improving travel** past a point —
+a regression from today, where it keeps helping forever.
+
+Note the hit formula `a^2/(a^2+d^2)` already saturates on its own; it can never
+reach 100%. So the cap may be unnecessary. Options: cap both (simple, nerfs late
+travel), cap neither (re-opens the arms race I measured earlier), or **derive two
+values from one base — capped for the hit roll, uncapped for travel**. The last
+is my recommendation and costs one line.
+
+### R2. Station return fire is now nearly useless
+
+Settlements sit at 0.10, so a station shooting a **corvette** (0.85) hits
+`0.01/(0.01+0.7225)` = **1.4%**. Stations become decorative. Either station guns
+ignore the speed roll (they are emplacements, not dogfighters), or they get their
+own much higher "gunnery" speed for the attack roll while keeping 0.10 for being
+hit. This needs a decision before ships start ignoring defended worlds.
+
+### R3. Faster civilians is an economy change, not a combat one
+
+Freighters go from `speedModifier` 1.3 to effectively 0.91 — and 124 ships are in
+flight right now with 1 299 legs already executed. Faster trade means more income
+per hour across every live game. Colony ships likewise expand faster. Neither was
+in the combat simulation.
+
+### R4. In-flight ships have a stale arrival time
+
+124 nodes are `in_transit` and 4 are `committed`. `arrival_at_tick` was computed
+under the old accel. The migration must either leave live legs alone (simplest;
+they land on the old schedule) or recompute every one. Leaving them is fine and
+self-healing within one trip.
+
+### R5. Multipliers the simulation never included
+
+Damage now stacks rank (+1%/kill), Gunner captain (+10%), fleet aura, arrears
+(-25%), and senate war authorization (**x2**) on top of a destroyer that went
+18 -> 45. A ranked Gunner destroyer under war authorization is a very different
+number than anything I modelled. Worth one sanity pass before ship.
+
+### R6. Detonators scale with hull HP
+
+`detonatorDamage = hp_max x 0.50 x count`. Destroyer `hp_max` doubles 200 -> 400,
+so a detonator destroyer doubles in blast. Detonators were **excluded from every
+simulation** as a distorting mechanic. This is now a live balance question.
+
+### R7. Cadence-derived constants
+
+Firing every tick instead of every third invalidates several tuned numbers:
+`COMBAT_RECENT_TICKS` (= interval x 2) in `systemGrouping.ts:310` and
+`useSituationItems.ts:278`; the settlement repair grace, justified in
+`room.js:2892` as ">= the combat cadence (3)"; and the tracer budget in
+`combatFx.ts:131`, which now sees 3x the shots with most of them missing.
 
 ## What has to change
 
@@ -101,6 +163,16 @@ have already seen and liked the pitch. **Recommend cutover.**
 | `worker/room.js:~2455` | Add the hit roll before damage. Needs a **deterministic** PRNG seeded per (tick, attacker) — the tick must replay identically across clients and re-runs. |
 | `worker/room.js:2477, 2530` | Settlement bombardment + station return fire per **Q1**. |
 | `worker/room.js:~2892` | Repair grace was justified as "≥ the combat cadence (3)". With cadence 1 the comment is wrong and the value should be re-derived. |
+
+### Travel — newly in scope now that speed drives it
+
+| File | Change |
+|---|---|
+| `src/state/gameContext.tsx:142` | `engineAccel` gains a per-class factor. Must be **speed²** relative to the frigate, not speed (brachistochrone). |
+| `src/state/gameContext.tsx:965,1963` | The other two `planTorchTransfer` call sites take the same factor, or a corvette's queued legs disagree with its first one. |
+| `worker/room.js:1740,1951` | Server-side autopilot legs (trade + AI) build their own nodes; they must use the same factor or freighters desync from the client's quoted ETA. |
+| `src/game/shipClasses.ts:21` | `speedModifier` becomes derived from the new speed rather than a second, contradictory source of truth. Delete it or define it as `0.50/speed`. |
+| `src/game/fleet.ts:34` | `fleetSpeedModifier` currently has **no callers**. Either wire it up (a fleet moves at its slowest hull) or delete it — leaving it is how the next person gets misled. |
 
 **No schema change is needed for speed** — it is computed from class + `parts_json`,
 both already present. Only the Q3 restat needs a migration.
