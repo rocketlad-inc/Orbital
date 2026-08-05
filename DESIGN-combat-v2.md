@@ -40,7 +40,7 @@ value spread **1.38× → 1.30×**.
 - **One speed stat, and it drives travel too.** Engines are engines: they raise
   speed, speed makes you both harder to hit and faster to arrive. Speed is not a
   combat stat that happens to live on a hull — it is *the* mobility stat.
-- **Settlements: speed 0.10.** They are slow, and they are hit accordingly.
+- **Settlements: speed 0.15.** Slow, and hit accordingly (97% by a corvette).
 - **Civilians slightly faster than a frigate**: freighter and colony **0.55**.
 - **All existing ships migrate** to the new system.
 - **The 1.176 cap applies to travel as well as combat.** One speed, one ceiling.
@@ -49,11 +49,11 @@ value spread **1.38× → 1.30×**.
 
 | | Corvette | Frigate | Destroyer | Freighter | Colony | Settlement |
 |---|---|---|---|---|---|---|
-| Speed | 0.85 | 0.50 | 0.30 | 0.55 | 0.55 | 0.10 |
+| Speed | 0.85 | 0.50 | 0.30 | 0.55 | 0.55 | 0.15 |
 
-Resulting hit chances against a settlement: corvette **98.6%**, frigate 96.2%,
-destroyer 90.0%. A base cannot dodge, which is the intent — but see R1 below,
-because station return fire now inherits the mirror of that.
+Hit chances against a settlement: corvette **97.0%**, frigate 91.7%, destroyer
+80.0%. A base barely dodges, which is the intent — but see R2, because the same
+number also governs whether a station can shoot *back*.
 
 ---
 
@@ -133,33 +133,45 @@ Recommend the first. Note this also changes what a *fleet* is for — currently
 fleets are a captain/aura construct, and this would make them the primary
 movement tool.
 
-### R1. RESOLVED — cap applies to travel. Here is the bill.
+### R1. RESOLVED — cap applies to travel, and it costs almost nothing
 
-| class | base | engines to reach the cap | slots | wasted slots |
-|---|---|---|---|---|
-| **Corvette** | 0.85 | **1** | 2 | **1** |
-| Frigate | 0.50 | 5 | 4 | 0 |
-| Destroyer | 0.30 | 8 | 6 | 0 |
-| Freighter | 0.55 | 4 | 1 | 0 |
+I first reported that a corvette wastes its second engine. **That was wrong** —
+an artifact of writing the cap as the rounded `1.176` when a fully-engined
+corvette is `0.85 x (1/0.85)^2 = 1.176471`. The literal clipped it by 0.04% and
+made the slot look dead.
 
-**A corvette caps on its first engine.** Its second engine slot does nothing for
-travel *or* combat, and Propulsion tech does nothing for a corvette at all —
-tech raises the per-engine step, so it only reaches the same ceiling sooner. At
-Propulsion 10 a frigate caps at 3 engines and a destroyer at 4, so both start
-wasting slots too.
+Written as `1/0.85`, every engine earns its place:
 
-This is a dead-end the tech tree does not warn about. Options: let it stand and
-**say so in the engine blurb and the Propulsion description**, or raise the cap
-per class so every hull can spend all its slots. Either is fine — silently
-selling a corvette player a second engine is not.
+| class | bare | +1 | +2 | +4 | +6 |
+|---|---|---|---|---|---|
+| Corvette | 0.85 | 1.000 | **1.176** (cap) | – | – |
+| Frigate | 0.50 | 0.588 | 0.692 | 0.958 | – |
+| Destroyer | 0.30 | 0.353 | 0.415 | 0.574 | 0.795 |
 
-### R2. Station return fire is now nearly useless *(still open)*
+Only the corvette reaches the ceiling at all, and exactly on its last slot.
+Nothing is wasted and no warning copy is needed. The one real consequence
+stands: **Propulsion tech cannot lift a maxed corvette past the cap**, so the
+engine and Propulsion blurbs should mention a ceiling exists.
 
-Settlements sit at 0.10, so a station shooting a **corvette** (0.85) hits
-`0.01/(0.01+0.7225)` = **1.4%**. Stations become decorative. Either station guns
-ignore the speed roll (they are emplacements, not dogfighters), or they get their
-own much higher "gunnery" speed for the attack roll while keeping 0.10 for being
-hit. This needs a decision before ships start ignoring defended worlds.
+### R2. Stations: 0.15 is right for being hit, wrong for shooting
+
+At 0.15 a station shooting a **corvette** hits **3.0%** (frigate 8.3%, destroyer
+20.0%). A Weapons-3 station lands 0.7 damage per tick on a corvette. Station
+defence is decorative.
+
+The stat is doing two jobs. **Evasion 0.15 is correct** — a base should be easy
+to hit. Reusing it for the *gunnery* roll is what breaks it: an emplacement has
+fire control and unlimited power, it does not need to match a corvette's agility
+to land a shot.
+
+**Recommendation — change nothing about stations at all.** Keep their existing
+3-tick cadence and keep them always hitting; let 0.15 govern only how easily
+they are hit. That preserves `STATION_DMG_PER_WEAPONS_LEVEL` tuning exactly,
+needs no rebalance, and reads cleanly: *emplacements cycle slowly but never
+miss.*
+
+The alternative — every-tick fire with a separate gunnery speed of 0.50 — gives
+25.7 / 50 / 73.5% and about 1.5x today's station DPS, so it needs retuning.
 
 ### R3. Faster civilians is an economy change, not a combat one
 
@@ -188,21 +200,31 @@ number than anything I modelled. Worth one sanity pass before ship.
 so a detonator destroyer doubles in blast. Detonators were **excluded from every
 simulation** as a distorting mechanic. This is now a live balance question.
 
-### R8. With animations unchanged, the mechanic is invisible in the fight
+### R8. REVISED — a destroyer is a sniper, not a dud
 
-Keeping continuous-fire FX is the right call for the map's calm — but it means a
-destroyer hitting a corvette **11%** of the time looks exactly like one hitting
-90%: firing the whole engagement, HP dropping slowly. Nothing on screen says
-"missing".
+I argued that an 11% hit rate with unchanged animations would read as broken.
+Lorne pushed back and he is right; I was reasoning about a player watching a
+single tick rather than one reading a day's digest.
 
-That makes the designer's hit matrix **load-bearing**: it becomes the only place
-in the product where hit chance is legible. If it ships late or ships weak, the
-first playtest report will be "destroyers do no damage, combat is broken" — and
-they will be describing correct behaviour.
+**A destroyer shot is a one-shot kill.** 45 damage against a 40 HP corvette
+deletes it outright; a shielded corvette (54) survives on 9 HP, and dies to any
+destroyer carrying one weapon mount (63).
 
-Cheapest mitigation that does not touch the animation: put the live exchange odds
-in the Ship Panel when a ship is at a contested body (UX 3 below), so the number
-is one click from the fight.
+So 11.1% is not "does nothing" — it is an 11.1% chance per tick to **erase** a
+corvette:
+
+| tick length | destroyer kills/day | wait between hits |
+|---|---|---|
+| 30 s | 320 | 5 min |
+| 7.5 min | 21 | 1.1 hr |
+| 1 hr | **2.7** | 9 hr |
+
+At the slow cadences that is a dramatic, memorable beat, which is the intended
+feel. Keeping the animations unchanged is fine.
+
+What survives from the original concern is much smaller: the **hit matrix in the
+designer is still the only place the rule is stated**, so it should ship with the
+rest rather than after. It is a good affordance, not a rescue.
 
 ### R7. Cadence-derived constants
 
@@ -213,13 +235,13 @@ Firing every tick instead of every third invalidates several tuned numbers:
 longer holds and the value must be re-derived. (The tracer budget is moot now
 that animations are unchanged.)
 
-### R9. Auto-retreat interacts badly with slow hulls
+### R9. VOID — retreating ships are already safe
 
-`room.js:3671` auto-retreats a damaged ship to the nearest shipyard and skips any
-ship that already has a committed node. A destroyer now limps home **67% slower**
-while still being shot at — and because peer targeting sends the enemy's heavies
-after it, the class most likely to trigger retreat is the one least able to
-complete it. Worth re-checking the threshold at the new speeds.
+I had this wrong. `room.js:2276` pulls every `in_transit` ship out of the combat
+bucket before grouping by body (past bug report: *"Osprey at 1% HP, damaged in
+transit"*). A retreating hull is untouchable the moment its burn fires, whatever
+its speed. The only residual is that a destroyer is out of action 67% longer
+getting home — inconvenient, not dangerous.
 
 ### R10. The simulation never modelled travel
 

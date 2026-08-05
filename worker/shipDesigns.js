@@ -8,7 +8,7 @@
 //
 // Server naming: metal/gold columns (client calls them ore/credits).
 
-import { SHIP_COMBAT_STATS } from './factions.js';
+import { SHIP_COMBAT_STATS, ENGINE_SPEED_MUL, SPEED_CAP } from './factions.js';
 
 /** Part slots per hull. Freighter's single slot is engine/shield only
  *  (no weapon, no detonator — it's a hauler, not a fireship). Colony
@@ -218,9 +218,20 @@ export function computeShipStats(shipClass, parts, techLevels = {}) {
     (1 + ARMOR_TECH_PER_LVL * shieldsLvl) * nShields
     + (1 + ARMOR_TECH_PER_LVL * armorLvl) * nArmor
   );
+  // COMBAT V2: speed rides the hull and its engines. Propulsion tech is
+  // deliberately NOT applied here — it raises the per-engine travel step
+  // elsewhere, and folding it in again would double-count. The cap binds
+  // for both the hit roll and travel (DESIGN-combat-v2.md R1).
+  const nEngines = countPart(parts, 'engine');
+  const speed = Math.min(
+    SPEED_CAP,
+    (base.speed ?? 0.5) * Math.pow(ENGINE_SPEED_MUL, nEngines),
+  );
+
   return {
     hp: Math.round(base.hp * (1 + hpBonus)),
     damage_per_tick: Math.round(base.damage_per_tick * (1 + dmgBonus) * 10) / 10,
+    speed: Math.round(speed * 1000) / 1000,
   };
 }
 

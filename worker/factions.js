@@ -525,13 +525,44 @@ const STARTER_CITY_HP = 100;
 // damaged with zero combat" bug). Frigate 80 -> 100 and freighter 30 ->
 // 60 to match client. See migrations/0033_align_ship_hp_with_client.sql
 // for the existing-fleet heal + cap bump.
+//
+// COMBAT V2 (DESIGN-combat-v2.md). `speed` is a 0-1 mobility stat and it is
+// the SAME number for two jobs: hit chance is
+//   p = atkSpeed^2 / (atkSpeed^2 + defSpeed^2)
+// and travel acceleration scales with (speed / FRIGATE_SPEED)^2 — squared
+// because trip time is brachistochrone T = 2*sqrt(d/a), so a linear speed
+// ratio needs a squared accel ratio. Engines raise speed x1/0.85 each,
+// capped at SPEED_CAP for both jobs.
 export const SHIP_COMBAT_STATS = {
-  corvette:  { hp: 40,  damage_per_tick: 5 },
-  frigate:   { hp: 100, damage_per_tick: 10 },
-  destroyer: { hp: 200, damage_per_tick: 18 },
-  freighter: { hp: 60,  damage_per_tick: 0 },
-  colony:    { hp: 60,  damage_per_tick: 0 },
+  corvette:  { hp: 40,  damage_per_tick: 3.75,  speed: 0.85 },
+  frigate:   { hp: 100, damage_per_tick: 20.25, speed: 0.50 },
+  destroyer: { hp: 400, damage_per_tick: 45,    speed: 0.30 },
+  freighter: { hp: 60,  damage_per_tick: 0,     speed: 0.55 },
+  colony:    { hp: 60,  damage_per_tick: 0,     speed: 0.55 },
 };
+
+/** Reference hull. Travel time is normalised on the frigate, so a frigate's
+ *  trip is unchanged by the v2 rework and every other hull moves relative
+ *  to it. */
+export const FRIGATE_SPEED = 0.50;
+
+/** One engine's speed multiplier (the reciprocal of the -15% travel time
+ *  the part already shipped with, so engine behaviour is preserved). */
+export const ENGINE_SPEED_MUL = 1 / 0.85;
+
+/** Ceiling on speed, for BOTH the hit roll and travel.
+ *
+ *  Written as 1/0.85 rather than 1.176 ON PURPOSE. A fully-engined corvette
+ *  is 0.85 x (1/0.85)^2 = 1.176471, so a literal 1.176 clipped it and made
+ *  the second engine look like a wasted slot. It is not: 0.85 -> 1.000 ->
+ *  1.176 and every engine earns its place. */
+export const SPEED_CAP = 1 / 0.85;
+
+/** Settlements are not ships but they are shot at, so they need a speed.
+ *  0.15 = easy to hit (a corvette lands 97%). Station return fire does NOT
+ *  roll against this — emplacements keep their own cadence and always
+ *  hit; see DESIGN-combat-v2.md R2. */
+export const SETTLEMENT_SPEED = 0.15;
 
 // Starting kit for research-gated games: ONE corvette and ONE colony
 // ship. Everything else — frigates, destroyers, freighters, stations,
