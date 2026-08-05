@@ -1408,7 +1408,12 @@ export const ShipPanel: React.FC = () => {
                 }}
               >
                 {currentStance === 'attack'
-                  ? 'Auto-fires at any hostile sharing this body.'
+                  ? (mpActions && ship.ownedBy === 'player'
+                    // The priority cards render right under this line, so
+                    // the copy can point at them. Rival ships (no cards
+                    // shown) keep a self-contained version.
+                    ? 'Fires once per tick according to the target priority below.'
+                    : 'Fires once per tick at any hostile sharing this body.')
                   : currentStance === 'defensive'
                     ? 'Returns fire only — engages hostiles that attack here.'
                     : 'Holding fire — will not engage, even under attack.'}
