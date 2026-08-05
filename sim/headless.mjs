@@ -24,6 +24,7 @@
 
 import { pathToFileURL } from 'node:url';
 import { SimD1 } from './d1.mjs';
+import * as BOTS from './bots.mjs';
 import { MIGRATIONS } from '../worker/_migrations_bundle.js';
 
 const TICKS = Number(process.argv[2] ?? 200);
@@ -74,7 +75,7 @@ function makeState(broadcasts) {
  * other — which matters more than it sounds: a shared DB would let one
  * game's chronicle rows leak into another's statistics.
  */
-export async function runGame({ ticks = 200, players = 4, seed = 'sim-seed-0001', quiet = false } = {}) {
+export async function runGame({ ticks = 200, players = 4, seed = 'sim-seed-0001', quiet = false, doctrines = null, doctrineOffset = 0 } = {}) {
   const TICKS = ticks, PLAYERS = players, SEED = seed;
   const log = quiet ? () => {} : (...a) => console.log(...a);
   const t0 = Date.now();
@@ -168,9 +169,38 @@ export async function runGame({ ticks = 200, players = 4, seed = 'sim-seed-0001'
   const room = new Room(makeState(broadcasts), env);
   room.broadcast = (msg) => { broadcasts.push(msg); };
 
+  // Assign a doctrine to each seat. Rotating by index rather than at
+  // random keeps a seed fully reproducible, and rotating the OFFSET
+  // across seeds stops any archetype from being permanently welded to a
+  // spawn — otherwise a sweep would measure "is slot 0 good" instead of
+  // "is rushing good".
+  const seatFactions = (await DB.prepare(
+    'SELECT id, user_id, slot FROM game_factions WHERE game_id = ? ORDER BY slot',
+  ).bind(roomId).all()).results;
+  const names = doctrines ?? [];
+  const seats = seatFactions.map((f, i) => ({
+    factionId: f.id,
+    userId: f.user_id,
+    doctrine: names.length ? BOTS.ARCHETYPES[names[(i + doctrineOffset) % names.length]] : null,
+  }));
+  const tally = {};
+
   const tickTimes = [];
   for (let tick = 1; tick <= TICKS; tick++) {
     const t = Date.now();
+    // Orders BEFORE the tick resolves, which is the real sequence: a
+    // player queues during the hour, the tick executes at the end of it.
+    for (const s of seats) {
+      if (!s.doctrine) continue;
+      try {
+        await BOTS.takeTurn(env, {
+          gameId: roomId, userId: s.userId, factionId: s.factionId,
+          doctrine: s.doctrine, tick, tally,
+        });
+      } catch (e) {
+        tally[`bot_threw_${e.message.slice(0, 40)}`] = (tally[`bot_threw_${e.message.slice(0, 40)}`] ?? 0) + 1;
+      }
+    }
     await room.resolveTick(roomId, tick);
     tickTimes.push(Date.now() - t);
     await DB.prepare('UPDATE games SET current_tick = ? WHERE id = ?').bind(tick, roomId).run();
@@ -179,7 +209,7 @@ export async function runGame({ ticks = 200, players = 4, seed = 'sim-seed-0001'
 
   // ---- what came out ------------------------------------------------------
   const facs = (await DB.prepare(
-    `SELECT name, metal, gold, science, fuel,
+    `SELECT f.id, name, metal, gold, science, fuel,
             (SELECT COUNT(*) FROM game_ships s WHERE s.owner_faction_id = f.id AND s.hp > 0) ships,
             (SELECT COUNT(*) FROM game_bodies b WHERE b.owner_faction_id = f.id) bodies
        FROM game_factions f WHERE f.game_id = ? ORDER BY f.slot`,
@@ -208,7 +238,14 @@ export async function runGame({ ticks = 200, players = 4, seed = 'sim-seed-0001'
     log(`  broadcasts emitted: ${broadcasts.length}`);
   }
 
-  return { seed: SEED, ticks: TICKS, factions: facs, chronicle: chron, wall, avgTick: avg, broadcasts: broadcasts.length };
+  // Attach each seat's doctrine so a sweep can attribute outcomes.
+  const bySeat = new Map(seats.map(s2 => [s2.factionId, s2.doctrine?.name ?? null]));
+  const facsOut = facs.map(f => ({ ...f, doctrine: bySeat.get(f.id) ?? null }));
+
+  return {
+    seed: SEED, ticks: TICKS, factions: facsOut, chronicle: chron,
+    wall, avgTick: avg, broadcasts: broadcasts.length, tally,
+  };
 }
 
 async function main() {

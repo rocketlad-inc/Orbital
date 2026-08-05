@@ -20,9 +20,14 @@
 // ============================================================================
 
 import { runGame } from './headless.mjs';
+import { ARCHETYPES } from './bots.mjs';
 
 const SEEDS = Number(process.argv[2] ?? 20);
 const TICKS = Number(process.argv[3] ?? 200);
+/** "passive" reproduces the original baseline; otherwise every archetype
+ *  plays, rotated across seats so no doctrine is welded to a spawn. */
+const MODE = process.argv[4] ?? 'bots';
+const DOCTRINES = MODE === 'passive' ? null : Object.keys(ARCHETYPES);
 
 /** Total wealth, weighting the three currencies equally. Crude on
  *  purpose: the moment you weight them you are encoding a strategy
@@ -39,15 +44,65 @@ function stats(xs) {
 }
 
 async function main() {
-  console.log(`sweep: ${SEEDS} seeds x ${TICKS} ticks, passive empires\n`);
+  console.log(`sweep: ${SEEDS} seeds x ${TICKS} ticks, ${MODE === 'passive' ? 'passive empires' : DOCTRINES.join(' / ')}\n`);
   const t0 = Date.now();
 
   const perSeed = [];
   for (let i = 0; i < SEEDS; i++) {
     const seed = `sweep-${String(i).padStart(4, '0')}`;
-    const r = await runGame({ ticks: TICKS, players: 4, seed, quiet: true });
+    const r = await runGame({
+      ticks: TICKS, players: 4, seed, quiet: true,
+      doctrines: DOCTRINES,
+      // Rotate which seat gets which doctrine, so across the sweep every
+      // archetype plays every spawn. Without this the sweep measures
+      // "was slot 0 lucky" and calls it a balance result.
+      doctrineOffset: i,
+    });
     perSeed.push(r);
     process.stdout.write(`  ${i + 1}/${SEEDS}\r`);
+  }
+
+  // --- per-archetype outcomes ---------------------------------------------
+  if (DOCTRINES) {
+    const byDoc = new Map();
+    let wins = new Map();
+    for (const r of perSeed) {
+      let best = null;
+      for (const f of r.factions) {
+        if (!f.doctrine) continue;
+        const arr = byDoc.get(f.doctrine) ?? [];
+        arr.push(f);
+        byDoc.set(f.doctrine, arr);
+        if (!best || wealth(f) > wealth(best)) best = f;
+      }
+      if (best) wins.set(best.doctrine, (wins.get(best.doctrine) ?? 0) + 1);
+    }
+    console.log(`--- by doctrine (${SEEDS} games, ${TICKS} ticks) ---`);
+    console.log(`  ${'doctrine'.padEnd(12)} ${'wealth'.padStart(8)} ${'bodies'.padStart(7)} ${'ships'.padStart(6)} ${'top-econ'.padStart(9)}`);
+    for (const d of DOCTRINES) {
+      const name = ARCHETYPES[d].name;
+      const fs = byDoc.get(name) ?? [];
+      if (!fs.length) continue;
+      const w = stats(fs.map(wealth));
+      const b = stats(fs.map(f => f.bodies ?? 0));
+      const s = stats(fs.map(f => f.ships ?? 0));
+      const win = ((wins.get(name) ?? 0) / SEEDS * 100).toFixed(0);
+      console.log(`  ${name.padEnd(12)} ${Math.round(w.mean).toString().padStart(8)} `
+        + `${b.mean.toFixed(1).padStart(7)} ${s.mean.toFixed(1).padStart(6)} ${(win + '%').padStart(9)}`);
+    }
+    console.log('  (top-econ = share of games this doctrine ended richest; NOT a win condition)');
+
+    // What the bots tried and were refused. A doctrine that spends the
+    // game being told "insufficient metal" is a doctrine the economy
+    // does not currently support — that is a balance finding, not a bug.
+    const tally = {};
+    for (const r of perSeed) {
+      for (const [k, v] of Object.entries(r.tally ?? {})) tally[k] = (tally[k] ?? 0) + v;
+    }
+    console.log(`\n--- bot actions across all runs ---`);
+    for (const [k, v] of Object.entries(tally).sort((a, b) => b[1] - a[1]).slice(0, 12)) {
+      console.log(`  ${String(v).padStart(6)}  ${k}`);
+    }
   }
 
   // --- spread WITHIN a game: how unequal is a typical match? --------------
@@ -65,7 +120,8 @@ async function main() {
   const rs = stats(ratios);
   const gs = stats(gaps);
 
-  console.log(`--- inequality within a game (passive, ${TICKS} ticks) ---`);
+  console.log(`
+--- inequality within a game (${MODE}, ${TICKS} ticks) ---`);
   console.log(`  best:worst wealth ratio   mean ${rs.mean.toFixed(2)}x   median ${rs.median.toFixed(2)}x   `
     + `range ${rs.min.toFixed(2)}-${rs.max.toFixed(2)}x`);
   console.log(`  absolute gap              mean ${Math.round(gs.mean)}   max ${Math.round(gs.max)}`);
@@ -77,7 +133,7 @@ async function main() {
     if (broke) brokeGames += 1;
     brokeFactions += broke;
   }
-  console.log(`\n--- credit bankruptcy while passive ---`);
+  console.log(`\n--- credit bankruptcy (${MODE}) ---`);
   console.log(`  games with >=1 broke faction: ${brokeGames}/${SEEDS}`);
   console.log(`  factions at 0 credits:        ${brokeFactions}/${SEEDS * 4}`);
 
