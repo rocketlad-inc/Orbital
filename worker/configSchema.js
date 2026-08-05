@@ -1,0 +1,250 @@
+// ============================================================================
+// configSchema.js — every tunable in the game, declared once.
+//
+// THIS FILE IS THE PRODUCT. The Editor page has no hand-written form
+// controls; it renders itself from this array. Adding a new knob is a
+// single entry here — a label, a default, bounds — and it appears in the
+// admin UI, validates on write, and resolves at runtime, with no React
+// touched and nobody needing me to wire it.
+//
+// That is the whole design goal: coverage should grow by DECLARATION,
+// not by engineering.
+//
+// RULES FOR AN ENTRY
+//   id       stable key. Renaming one orphans saved drafts, so don't.
+//   group    which tab it lands under in the editor.
+//   label    what a human calls it.
+//   help     why you would touch it, and what breaks if you overdo it.
+//   type     'number' | 'int' | 'bool' | 'enum'
+//   def      the value the game shipped with. MUST match the constant it
+//            replaces, or publishing an untouched draft silently rebalances
+//            the game.
+//   min/max  hard bounds. Enforced server-side on save, not just in the UI.
+//   step     UI granularity only.
+//   danger   true = shown with a warning; these can break a live economy.
+//
+// Every `def` below was read out of the source it replaces rather than
+// remembered. If you change the constant in code, change it here too —
+// or better, delete the constant and read the config.
+// ============================================================================
+
+export const GROUPS = [
+  { id: 'yields', label: 'Yields & Growth', blurb: 'What worlds produce, and how fast settlements grow.' },
+  { id: 'buildings', label: 'Buildings', blurb: 'Cost and effect of the compounding structures.' },
+  { id: 'fleet', label: 'Fleet & Upkeep', blurb: 'What ships cost to own. Sim runs show this is what bankrupts empires.' },
+  { id: 'combat', label: 'Combat', blurb: 'How often shots are exchanged and how hard they land.' },
+  { id: 'research', label: 'Research', blurb: 'Tech cost curve and ceiling.' },
+  { id: 'victory', label: 'Victory', blurb: 'What it takes to actually win.' },
+  { id: 'spawn', label: 'Spawn Rules', blurb: 'Who starts where. The 100-game sweep put best-vs-worst capital at 9.4x.' },
+];
+
+export const SCHEMA = [
+  // ---- yields ------------------------------------------------------------
+  {
+    id: 'yield_mult_per_pop', group: 'yields', type: 'number',
+    label: 'Yield bonus per population', def: 0.1, min: 0, max: 1, step: 0.01,
+    help: 'Each point of settlement population multiplies output by this much. '
+      + 'Compounds with buildings, so small changes here move the whole late game.',
+  },
+  {
+    id: 'pop_growth_interval', group: 'yields', type: 'int',
+    label: 'Ticks per population growth', def: 20, min: 1, max: 200, step: 1,
+    help: 'Lower grows empires faster. This is the main lever on overall game pace.',
+  },
+  {
+    id: 'pop_max', group: 'yields', type: 'int',
+    label: 'Maximum population', def: 10, min: 1, max: 50, step: 1,
+    help: 'Population ceiling per settlement. Raising it raises the economic ceiling sharply, '
+      + 'because the pop bonus is multiplicative.',
+  },
+  {
+    id: 'no_collector_pool_fraction', group: 'yields', type: 'number',
+    label: 'Uncollected yield to faction pool', def: 0.10, min: 0, max: 1, step: 0.01,
+    help: 'Share of a settlement\'s output that reaches the empire when no collector is assigned. '
+      + 'The remainder stays as local stockpile.',
+  },
+
+  // ---- buildings ---------------------------------------------------------
+  {
+    id: 'forge_per_level', group: 'buildings', type: 'number',
+    label: 'Forge: metal bonus per level', def: 0.25, min: 0, max: 2, step: 0.05,
+    help: 'Compounds as (1 + x)^level. At 0.25 a three-level forge nearly doubles metal.',
+  },
+  {
+    id: 'mint_per_level', group: 'buildings', type: 'number',
+    label: 'Mint: credit bonus per level', def: 0.25, min: 0, max: 2, step: 0.05,
+    help: 'Compounds as (1 + x)^level. Sim games that built mints reached 100k+ credits; '
+      + 'ones that did not could not cover fleet upkeep at all.',
+  },
+  {
+    id: 'lab_per_level', group: 'buildings', type: 'number',
+    label: 'Lab: science bonus per level', def: 0.25, min: 0, max: 2, step: 0.05,
+    help: 'Compounds as (1 + x)^level. Held at parity with forge and mint by the economy rework; '
+      + 'breaking parity is what left science 2.5x behind before.',
+  },
+  {
+    id: 'building_cost_scaling', group: 'buildings', type: 'number',
+    label: 'Cost growth per building level', def: 1.6, min: 1, max: 4, step: 0.05,
+    help: 'Each level costs this multiple of the last. Below ~1.3 compounding runs away; '
+      + 'above ~2.5 nobody builds past level two.',
+  },
+  {
+    id: 'building_time_scaling', group: 'buildings', type: 'number',
+    label: 'Build time growth per level', def: 1.3, min: 1, max: 3, step: 0.05,
+    help: 'Same idea as cost scaling, applied to construction ticks.',
+  },
+
+  // ---- fleet -------------------------------------------------------------
+  {
+    id: 'upkeep_corvette_gold', group: 'fleet', type: 'number',
+    label: 'Corvette upkeep (credits/tick)', def: 0.25, min: 0, max: 20, step: 0.05,
+    help: 'Cheapest hull. In sim runs a corvette swarm was the fastest route to insolvency.',
+  },
+  {
+    id: 'upkeep_frigate_gold', group: 'fleet', type: 'number',
+    label: 'Frigate upkeep (credits/tick)', def: 0.5, min: 0, max: 20, step: 0.05,
+  },
+  {
+    id: 'upkeep_frigate_metal', group: 'fleet', type: 'number',
+    label: 'Frigate upkeep (metal/tick)', def: 0.5, min: 0, max: 20, step: 0.05,
+  },
+  {
+    id: 'upkeep_destroyer_gold', group: 'fleet', type: 'number',
+    label: 'Destroyer upkeep (credits/tick)', def: 1, min: 0, max: 20, step: 0.05,
+  },
+  {
+    id: 'upkeep_destroyer_metal', group: 'fleet', type: 'number',
+    label: 'Destroyer upkeep (metal/tick)', def: 1, min: 0, max: 20, step: 0.05,
+  },
+  {
+    id: 'upkeep_freighter_gold', group: 'fleet', type: 'number',
+    label: 'Freighter upkeep (credits/tick)', def: 1, min: 0, max: 20, step: 0.05,
+  },
+  {
+    id: 'arrears_damage_mult', group: 'fleet', type: 'number',
+    label: 'Damage multiplier while in arrears', def: 0.75, min: 0.1, max: 1, step: 0.05,
+    danger: true,
+    help: 'Unpaid fleets fight at this fraction of normal damage. 100/100 sim games ended with '
+      + 'at least one bankrupt empire, so this penalty currently applies a lot.',
+  },
+  {
+    id: 'cargo_cap', group: 'fleet', type: 'int',
+    label: 'Freighter cargo capacity', def: 500, min: 1, max: 100000, step: 10,
+  },
+
+  // ---- combat ------------------------------------------------------------
+  {
+    id: 'auto_combat_interval', group: 'combat', type: 'int',
+    label: 'Ticks between automatic exchanges', def: 3, min: 1, max: 50, step: 1,
+    danger: true,
+    help: 'How often co-located hostiles trade fire. Lowering it makes wars resolve much faster '
+      + 'and sharply favours whoever has the bigger fleet on arrival.',
+  },
+  {
+    id: 'station_dmg_per_weapons_level', group: 'combat', type: 'number',
+    label: 'Station damage per weapons level', def: 8, min: 0, max: 100, step: 1,
+    help: 'Defensive output of a station per level of its weapons building.',
+  },
+  {
+    id: 'repair_station', group: 'combat', type: 'number',
+    label: 'Station repair (HP/tick)', def: 2, min: 0, max: 100, step: 0.5,
+    help: 'Hull repaired per tick for ships docked at a friendly station.',
+  },
+  {
+    id: 'repair_grace_ticks', group: 'combat', type: 'int',
+    label: 'Ticks after combat before repair resumes', def: 3, min: 0, max: 50, step: 1,
+  },
+
+  // ---- research ----------------------------------------------------------
+  {
+    id: 'research_base_cost', group: 'research', type: 'number',
+    label: 'Base research cost', def: 15, min: 1, max: 1000, step: 1,
+    help: 'Science for the first level of any track.',
+  },
+  {
+    id: 'research_cost_scaling', group: 'research', type: 'number',
+    label: 'Research cost growth per level', def: 1.72, min: 1, max: 4, step: 0.01,
+    danger: true,
+    help: 'Each level costs this multiple of the last. The single biggest lever on how long '
+      + 'a match runs before the tech tree is exhausted.',
+  },
+  {
+    id: 'tech_max_level', group: 'research', type: 'int',
+    label: 'Maximum tech level', def: 10, min: 1, max: 50, step: 1,
+  },
+
+  // ---- victory -----------------------------------------------------------
+  {
+    id: 'victory_ships', group: 'victory', type: 'int',
+    label: 'Ships required to win', def: 200, min: 1, max: 5000, step: 10,
+    help: 'Living hulls needed for the industrial victory. Sim empires peaked around 143 over '
+      + '1500 ticks, so 200 is reachable but demanding.',
+  },
+  {
+    id: 'victory_resource', group: 'victory', type: 'int',
+    label: 'Each resource required to win', def: 10000, min: 1, max: 1000000, step: 500,
+    help: 'Metal, credits AND science must each reach this. Fuel is excluded — it was retired '
+      + 'from the economy and requiring it would make victory unreachable by accident.',
+  },
+  {
+    id: 'domination_fraction', group: 'victory', type: 'number',
+    label: 'Map share for domination victory', def: 0.6, min: 0.1, max: 1, step: 0.05,
+    help: 'Fraction of bodies one empire must hold to win outright.',
+  },
+
+  // ---- spawn -------------------------------------------------------------
+  {
+    id: 'min_capital_radius', group: 'spawn', type: 'number',
+    label: 'Smallest body that can be a capital', def: 1.5, min: 0.1, max: 10, step: 0.1,
+    danger: true,
+    help: 'Planets and moons at or above this radius only. At 1.5 the pool is 14 bodies. '
+      + 'Dropping to 1.0 re-admits Nereid, Proteus, Charon and Deimos, which measured in the '
+      + 'bottom half of every sweep — best-vs-worst capital was 9.4x before this floor existed.',
+  },
+  {
+    id: 'min_capital_science', group: 'spawn', type: 'int',
+    label: 'Minimum science yield for a capital', def: 2, min: 0, max: 10, step: 1,
+    help: 'A science-dead homeworld can never climb the tech tree. Relaxed automatically if too '
+      + 'few bodies qualify for the player count — the size floor never is.',
+  },
+];
+
+/** id -> entry, for validation and lookup. */
+export const BY_ID = Object.fromEntries(SCHEMA.map(s => [s.id, s]));
+
+/** The shipped game, as a plain object. This is what a game runs with when
+ *  no config has ever been published. */
+export function defaults() {
+  const out = {};
+  for (const s of SCHEMA) out[s.id] = s.def;
+  return out;
+}
+
+/**
+ * Coerce and bound-check one value. Returns {ok, value} or {ok:false,
+ * reason}. Enforced on WRITE, server-side — a bad number reaching the tick
+ * loop is far more expensive than a rejected form submission.
+ */
+export function validate(id, raw) {
+  const s = BY_ID[id];
+  if (!s) return { ok: false, reason: 'unknown_key' };
+  if (s.type === 'bool') return { ok: true, value: !!raw };
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return { ok: false, reason: 'not_a_number' };
+  if (s.type === 'int' && !Number.isInteger(n)) return { ok: false, reason: 'must_be_integer' };
+  if (s.min != null && n < s.min) return { ok: false, reason: `below_min_${s.min}` };
+  if (s.max != null && n > s.max) return { ok: false, reason: `above_max_${s.max}` };
+  return { ok: true, value: n };
+}
+
+/** Validate a whole override object, dropping nothing silently. */
+export function validateAll(obj) {
+  const clean = {};
+  const errors = {};
+  for (const [k, v] of Object.entries(obj ?? {})) {
+    const r = validate(k, v);
+    if (r.ok) clean[k] = r.value;
+    else errors[k] = r.reason;
+  }
+  return { clean, errors };
+}

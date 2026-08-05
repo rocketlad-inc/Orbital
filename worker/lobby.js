@@ -353,15 +353,27 @@ async function handleStart(_req, env, ctx) {
   const map_seed = b64url(crypto.getRandomValues(new Uint8Array(16)));
   const now = Date.now();
 
+  // Pin the balance config at creation. A game keeps whatever was
+  // published the moment it started, so publishing a change later cannot
+  // rewrite the rules of a match already under way. null = shipped
+  // defaults, which is what every game before the Editor existed used.
+  let configId = null;
+  try {
+    const gc = await import('./gameConfig.js');
+    configId = await gc.publishedConfigId(env);
+  } catch (e) {
+    console.error('config pin failed, using shipped defaults', e);
+  }
+
   // games.total_tick_target is NOT NULL DEFAULT 42 in the schema; we leave
   // the column to the default rather than carry a value through the app.
   await env.DB.batch([
     env.DB
       .prepare(
-        `INSERT INTO games (id, status, map_seed, current_tick, tick_interval_ms, created_at, started_at)
-         VALUES (?, 'setup', ?, 0, ?, ?, ?)`,
+        `INSERT INTO games (id, status, map_seed, current_tick, tick_interval_ms, created_at, started_at, config_id)
+         VALUES (?, 'setup', ?, 0, ?, ?, ?, ?)`,
       )
-      .bind(roomId, map_seed, tick_interval_ms, now, now),
+      .bind(roomId, map_seed, tick_interval_ms, now, now, configId),
     env.DB
       .prepare("UPDATE rooms SET status = 'in_progress', updated_at = ? WHERE id = ?")
       .bind(now, roomId),

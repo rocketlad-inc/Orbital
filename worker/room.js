@@ -3,6 +3,7 @@ import { recomputeBodyOwnership } from './factions.js';
 import { parsePartsJson, computeShipStats, countPart, detonatorDamage,
          damageProfile, defenseMitigation, MITIGATION_FLOOR, refitFee } from './shipDesigns.js';
 import { ensureCaptains, resolveCaptainOnDeath, parseTraits, traitMul, ensureCaptainFloor } from './captains.js';
+import { cfg as loadGameConfig } from './gameConfig.js';
 
 // The six tech tracks. Single source of truth for the science-victory
 // check AND the random-tech grant, so those two can't silently disagree
@@ -699,6 +700,13 @@ export class Room {
   }
 
   async resolveTick(gameId, tick) {
+    // Tunables for THIS game, resolved once. Every knob below reads from
+    // here instead of a hardcoded literal, so the admin Editor can change
+    // balance without a deploy. A game is pinned to the config it was
+    // created with, so a publish never rewrites a match in flight.
+    // Falls back to shipped defaults on any error — see gameConfig.js.
+    const CFG = await loadGameConfig(this.env, gameId);
+
     // Captains — lazy backfill + attach-on-build (spec §2.2). Runs first
     // so every ship entering combat this tick already has its officer.
     // Covers EVERY faction (rival aces must not be stealth-nerfed) and
@@ -2911,14 +2919,14 @@ export class Room {
     }
 
     // Yield multipliers — kept in sync with src/game/settlements.ts.
-    const YIELD_MULT_PER_POP = 0.1;
-    const FORGE_PER_LEVEL = 0.25;
-    const MINT_PER_LEVEL  = 0.25;
-    const LAB_PER_LEVEL   = 0.25; // parity with forge/mint (economy rework §1.2)
+    const YIELD_MULT_PER_POP = CFG.yield_mult_per_pop;
+    const FORGE_PER_LEVEL = CFG.forge_per_level;
+    const MINT_PER_LEVEL  = CFG.mint_per_level;
+    const LAB_PER_LEVEL   = CFG.lab_per_level; // parity with forge/mint (economy rework §1.2)
     const TYPE_MUL_CITY    = { fuel: 1.0, metal: 1.2, gold: 1.0, science: 0.8 };
     const TYPE_MUL_STATION = { fuel: 1.1, metal: 0.8, gold: 1.0, science: 1.4 };
-    const NO_COLLECTOR_POOL_FRACTION = 0.10;       // 10% to faction pool
-    const NO_COLLECTOR_STOCK_FRACTION = 0.90;       // 90% to local stockpile
+    const NO_COLLECTOR_POOL_FRACTION = CFG.no_collector_pool_fraction;       // 10% to faction pool
+    const NO_COLLECTOR_STOCK_FRACTION = 1 - CFG.no_collector_pool_fraction;       // 90% to local stockpile
 
     // Aggregate per-faction pool deltas; apply per-(body,faction)
     // stockpile deltas individually. Wrapped: yield distribution must
@@ -3123,11 +3131,11 @@ export class Room {
       // 2026-08-02 rebalance: frigate 1/1 → 0.5/0.5, destroyer 2/2 → 1/1
       // (first playtest read the original bill as too steep).
       const UPKEEP = {
-        corvette:  { gold: 0.25, metal: 0 },
-        frigate:   { gold: 0.5,  metal: 0.5 },
-        destroyer: { gold: 1,    metal: 1 },
-        freighter: { gold: 1,    metal: 0 },
-        colony:    { gold: 0,    metal: 0 },
+        corvette:  { gold: CFG.upkeep_corvette_gold,  metal: 0 },
+        frigate:   { gold: CFG.upkeep_frigate_gold,   metal: CFG.upkeep_frigate_metal },
+        destroyer: { gold: CFG.upkeep_destroyer_gold, metal: CFG.upkeep_destroyer_metal },
+        freighter: { gold: CFG.upkeep_freighter_gold, metal: 0 },
+        colony:    { gold: 0, metal: 0 },
       };
       const round3 = (n) => Math.round(n * 1000) / 1000;
       const fleetCounts = (await this.env.DB
@@ -4003,13 +4011,13 @@ export class Room {
     // "pick your next project" moment (and the Situation Report can nag
     // with "No research project"). Science with no project simply banks.
     try {
-      const TECH_MAX_LEVEL = 10;
+      const TECH_MAX_LEVEL = CFG.tech_max_level;
       // UNIFIED curve — must match src/game/techs.ts and worker/actions.js
       // exactly (15 × (level+1)^1.72). The old per-track curves left stale
       // here made the drain complete at a HIGHER cost than the client bar
       // showed, so research looked done then hung. Keep all three in sync.
-      const RESEARCH_BASE_COST = 15;
-      const RESEARCH_COST_SCALING = 1.72;
+      const RESEARCH_BASE_COST = CFG.research_base_cost;
+      const RESEARCH_COST_SCALING = CFG.research_cost_scaling;
       const TECH_DEFS = {
         weapons:      { baseCost: RESEARCH_BASE_COST, costScaling: RESEARCH_COST_SCALING },
         armor:        { baseCost: RESEARCH_BASE_COST, costScaling: RESEARCH_COST_SCALING },
