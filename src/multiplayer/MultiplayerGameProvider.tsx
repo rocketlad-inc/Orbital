@@ -74,7 +74,14 @@ interface ServerState {
     resources: { metal: number; fuel: number; gold: number; science: number };
     /** Fleet upkeep (§1): per-tick maintenance bill (senate multiplier
      *  included) + standing debt. Absent on a pre-0054 worker. */
-    upkeep?: { gold: number; metal: number; multiplier: number };
+    upkeep?: {
+      gold: number; metal: number; multiplier: number;
+      by_class?: Array<{
+        ship_class: string; count: number;
+        gold_each: number; metal_each: number; gold: number; metal: number;
+      }>;
+      arrears_damage_mult?: number;
+    };
     arrears?: { gold: number; metal: number };
     tech_levels?: Record<string, number>;
     /** Active physical trade-delivery legs involving me (either side).
@@ -1644,6 +1651,12 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       credits: srv.me.upkeep.gold,
       ore: srv.me.upkeep.metal,
       multiplier: srv.me.upkeep.multiplier,
+      byClass: (srv.me.upkeep.by_class ?? []).map(b => ({
+        shipClass: b.ship_class, count: b.count,
+        creditsEach: b.gold_each, oreEach: b.metal_each,
+        credits: b.gold, ore: b.metal,
+      })),
+      arrearsDamageMult: srv.me.upkeep.arrears_damage_mult,
     } : undefined,
     fleetArrears: srv.me.arrears ? {
       credits: srv.me.arrears.gold,

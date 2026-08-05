@@ -34,6 +34,82 @@ type Filter = 'all' | 'player' | 'enemy' | 'captains';
 // Outliner renders identical headers and identical status chips. They were
 // duplicated here, and the copies had already diverged.
 
+/**
+ * What the fleet costs to keep, per tick, and where the bill comes from.
+ *
+ * This exists because of a measured problem, not a hunch: 100 simulated
+ * games ended with a bankrupt empire in EVERY one, and 58% of factions
+ * hit zero credits. Upkeep is the quiet thing that decides those games,
+ * and until now the only place a player saw it was a single net number
+ * in the top bar — by which point they had already built the ships.
+ *
+ * Every figure is server-computed (worker/state.js). The rates are
+ * editable in the admin Editor, so a client-side copy of the table would
+ * quote a price the tick no longer charges.
+ */
+const FleetUpkeepLine: React.FC = () => {
+  const { gameState } = useGameContext();
+  const [open, setOpen] = useState(false);
+  const up = gameState.fleetUpkeep;
+  const arrears = gameState.fleetArrears;
+  if (!up) return null;
+
+  const inDebt = !!arrears && (arrears.credits > 0 || arrears.ore > 0);
+  const rows = up.byClass ?? [];
+  const fmt = (n: number) => (Math.round(n * 100) / 100).toString();
+  // The senate can scale the whole bill; say so rather than leaving the
+  // player to wonder why the arithmetic does not add up.
+  const mult = up.multiplier ?? 1;
+
+  return (
+    <div className="fleet-header__counts" style={{ display: 'block', marginTop: 2 }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        title="Per-tick fleet maintenance. Click for the breakdown by ship class."
+        style={{
+          background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+          font: 'inherit', color: inDebt ? '#ff6b6b' : 'inherit', textAlign: 'left',
+        }}
+      >
+        <span aria-hidden>{inDebt ? '💸' : '🛠'}</span>{' '}
+        Upkeep {fmt(up.credits)}C{up.ore > 0 ? ` · ${fmt(up.ore)}M` : ''} / tick
+        {mult !== 1 && <span style={{ opacity: 0.75 }}> (senate ×{mult})</span>}
+        {rows.length > 0 && <span style={{ opacity: 0.6 }}> {open ? '▾' : '▸'}</span>}
+      </button>
+
+      {inDebt && (
+        <div style={{ color: '#ff6b6b', fontSize: 11, marginTop: 1 }}>
+          Unpaid: {fmt(arrears!.credits)}C
+          {arrears!.ore > 0 ? ` · ${fmt(arrears!.ore)}M` : ''} — ships fight at{' '}
+          {Math.round((up.arrearsDamageMult ?? 0.75) * 100)}% damage until it clears.
+        </div>
+      )}
+
+      {open && rows.length > 0 && (
+        <table style={{ fontSize: 11, marginTop: 4, borderCollapse: 'collapse', width: '100%' }}>
+          <tbody>
+            {rows.map(r => (
+              <tr key={r.shipClass}>
+                <td style={{ padding: '1px 6px 1px 0', textTransform: 'capitalize' }}>
+                  {r.count}× {r.shipClass}
+                </td>
+                <td style={{ padding: '1px 6px 1px 0', opacity: 0.65 }}>
+                  @ {fmt(r.creditsEach)}C{r.oreEach > 0 ? `+${fmt(r.oreEach)}M` : ''}
+                </td>
+                <td style={{ padding: '1px 0', textAlign: 'right' }}>
+                  {fmt(r.credits)}C{r.ore > 0 ? ` · ${fmt(r.ore)}M` : ''}
+                </td>
+              </tr>
+            ))}
+            {/* Colony hulls are free; showing a 0 row for them is noise,
+                so the server omits any class with no cost. */}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+};
+
 export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const {
     gameState, selectShip, focusBody, uiState,
@@ -891,6 +967,7 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
               <span className="fleet-header__transit-chip">In transit: {inTransit.length}</span>
             )}
           </div>
+          <FleetUpkeepLine />
         </div>
         {/* One-shot repair dispatch (MP only): every damaged parked hull
             that ISN'T already sitting at a friendly station gets a

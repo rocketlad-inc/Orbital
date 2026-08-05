@@ -676,7 +676,19 @@ export interface GameState {
   /** Fleet upkeep (DESIGN-fleet-economy §1, MP only): the player's
    *  per-tick maintenance bill (senate multiplier folded in server-side).
    *  TopBar shows NET income = delivered − upkeep. Undefined in SP. */
-  fleetUpkeep?: { credits: number; ore: number; multiplier: number };
+  fleetUpkeep?: {
+    credits: number; ore: number; multiplier: number;
+    /** Per-class breakdown, server-computed. Not mirrored client-side:
+     *  the rates are editable in the admin Editor, so a local copy would
+     *  quote a price the tick no longer charges. */
+    byClass?: Array<{
+      shipClass: string; count: number;
+      creditsEach: number; oreEach: number;
+      credits: number; ore: number;
+    }>;
+    /** Damage multiplier applied while in arrears (config-driven). */
+    arrearsDamageMult?: number;
+  };
   /** Standing upkeep debt. Any positive value = the whole fleet fights
    *  at −25% damage until income clears it. Undefined/zeros in SP. */
   fleetArrears?: { credits: number; ore: number };

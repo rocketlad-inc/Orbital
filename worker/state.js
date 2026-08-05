@@ -1,6 +1,7 @@
 import { hasFeature } from './researchUnlocks.js';
 import { getActiveSliders } from './senate.js';
 import { voteWeights } from './systems.js';
+import { cfg as loadGameConfig } from './gameConfig.js';
 
 // GET /api/games/:gameId/state — full renderer snapshot.
 //
@@ -1159,12 +1160,18 @@ const tradeRoutesP = env.DB
   // table IN SYNC with worker/room.js upkeep pass + src/game/shipClasses.ts.
   let upkeep = { gold: 0, metal: 0, multiplier: 1 };
   try {
+    // Rates come from the game's CONFIG, not a literal. room.js bills the
+    // fleet from the same source; a hardcoded copy here meant the Editor
+    // could change a rate and leave the UI quoting the old price while
+    // the tick charged the new one — the player sees a number that is
+    // simply wrong about their own economy.
+    const ucfg = await loadGameConfig(env, gameId);
     const UPKEEP = {
-      corvette:  { gold: 0.25, metal: 0 },
-      frigate:   { gold: 0.5,  metal: 0.5 },
-      destroyer: { gold: 1,    metal: 1 },
-      freighter: { gold: 1,    metal: 0 },
-      colony:    { gold: 0,    metal: 0 },
+      corvette:  { gold: ucfg.upkeep_corvette_gold,  metal: 0 },
+      frigate:   { gold: ucfg.upkeep_frigate_gold,   metal: ucfg.upkeep_frigate_metal },
+      destroyer: { gold: ucfg.upkeep_destroyer_gold, metal: ucfg.upkeep_destroyer_metal },
+      freighter: { gold: ucfg.upkeep_freighter_gold, metal: 0 },
+      colony:    { gold: 0, metal: 0 },
     };
     const counts = (await env.DB
       .prepare(
@@ -1181,14 +1188,32 @@ const tradeRoutesP = env.DB
       if (Number.isFinite(v) && v >= 0) mult = v;
     } catch { /* default */ }
     let g = 0, m = 0;
+    const round3 = (n) => Math.round(n * 1000) / 1000;
+    // Per-class breakdown, so the fleet panel can show WHERE the bill
+    // comes from rather than only its total. Sent from here rather than
+    // mirrored client-side for the same reason the rates are: a fourth
+    // copy of this table would be a fourth thing to drift.
+    const byClass = [];
     for (const row of counts) {
       const u = UPKEEP[row.ship_class];
       if (!u) continue;
       g += u.gold * row.n;
       m += u.metal * row.n;
+      byClass.push({
+        ship_class: row.ship_class,
+        count: row.n,
+        gold_each: u.gold,
+        metal_each: u.metal,
+        gold: round3(u.gold * row.n * mult),
+        metal: round3(u.metal * row.n * mult),
+      });
     }
-    const round3 = (n) => Math.round(n * 1000) / 1000;
-    upkeep = { gold: round3(g * mult), metal: round3(m * mult), multiplier: mult };
+    byClass.sort((x, y) => (y.gold + y.metal) - (x.gold + x.metal));
+    upkeep = {
+      gold: round3(g * mult), metal: round3(m * mult), multiplier: mult,
+      by_class: byClass,
+      arrears_damage_mult: ucfg.arrears_damage_mult,
+    };
   } catch { /* leave zeros */ }
 
   // Ship designs — the caller's design library (ship designer §2).
