@@ -34,6 +34,7 @@ import { deriveSecondary } from '../game/colorUtils';
 import { getBodyFlavor } from '../game/bodyFlavor';
 import { Body, BuildingKind, Settlement, SettlementType } from '../types';
 import { bodyPosition } from '../physics/orbitalMechanics';
+import { isRevealedWarpGate } from '../render/mapRenderer';
 import {
   menuScaleFor, menuCameraOffset, menuOpacity, zOf,
   S1X_FRAC, S1Y_FRAC, Z1_FRAC,
@@ -158,6 +159,11 @@ export const WorldMenuOverlay: React.FC = () => {
     // — and the WmDysonCard in the top panel is finally reachable in
     // the default UI. Only lagrange markers stay unclickable.
     if (!b || b.type === 'lagrange') return;
+    // A revealed warp gate is a door, not a world — every ship that
+    // arrives is warped out next tick, so SURFACE/ORBIT build columns
+    // would be offering something that can never happen. WarpGateCard
+    // renders instead (mounted alongside this overlay in App.tsx).
+    if (isRevealedWarpGate(b)) return;
     if (openId !== sel) {
       if (!openId) {
         camSnapshotRef.current = {

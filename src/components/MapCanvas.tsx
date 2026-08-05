@@ -44,10 +44,11 @@ import {
   shipLane,
   shipLaneOnly,
   drawnShipWorldPos,
+  isRevealedWarpGate,
 } from '../render/mapRenderer';
 import { computeSystemRegions } from '../render/systemRegions';
 import { BUILDING_DEFS, buildingLevel } from '../game/settlements';
-import { BuildingKind, Ship } from '../types';
+import { Body as GameBody, BuildingKind, Ship } from '../types';
 import {
   spawnTracer,
   drawTracers,
@@ -176,6 +177,17 @@ interface MapCanvasProps {
   height?: number;
 }
 
+
+/** Drawn radius of a body in canvas px, accounting for the warp-gate
+ *  sprite that replaces a revealed gate's disc (mapRenderer
+ *  drawWarpGateBody). Used for hit-testing so the click target and the
+ *  visible art agree. */
+function gateAwareRadius(body: GameBody, scale: number): number {
+  const r = body.radius! * scale;
+  return isRevealedWarpGate(body)
+    ? Math.max(10, Math.min(Math.max(3, r) * 1.6, 48))
+    : r;
+}
 
 export const MapCanvas: React.FC<MapCanvasProps> = ({
   width = typeof window !== 'undefined' ? window.innerWidth : 1280,
@@ -2196,7 +2208,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
 
       for (const body of gameState.bodies) {
         const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, renderTick());
-        const clickRadius = Math.max(8, body.radius! * camera.scale + 5) + TOUCH_HIT_PADDING;
+        // A revealed gate draws far bigger than the rock it replaced, so
+        // the hit target follows the RING — otherwise you'd be aiming at a
+        // 3px moon inside a 40px sprite. Mirrors drawWarpGateBody's R.
+        const clickRadius = Math.max(8, gateAwareRadius(body, camera.scale) + 5) + TOUCH_HIT_PADDING;
         if (Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < clickRadius) {
           // Shift+click a world while a group is selected = "everyone go
           // there". Handled by the group bar (which owns the transfer
@@ -2281,7 +2296,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       if (!canvasRef.current) return;
       for (const body of gameState.bodies) {
         const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, renderTick());
-        const clickRadius = Math.max(8, body.radius! * camera.scale + 5) + TOUCH_HIT_PADDING;
+        // A revealed gate draws far bigger than the rock it replaced, so
+        // the hit target follows the RING — otherwise you'd be aiming at a
+        // 3px moon inside a 40px sprite. Mirrors drawWarpGateBody's R.
+        const clickRadius = Math.max(8, gateAwareRadius(body, camera.scale) + 5) + TOUCH_HIT_PADDING;
         if (Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < clickRadius) {
           focusBody(body.id);
           return;

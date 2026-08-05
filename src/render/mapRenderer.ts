@@ -1131,6 +1131,92 @@ function drawRingArcs(
 }
 
 /** Terrestrial / moon / dwarf / asteroid: atmosphere glow + sphere shading. */
+/** A body whose revealed secret turns it into a gate rather than a world.
+ *  Both kinds swallow every ship that arrives, so neither can be settled,
+ *  garrisoned or built on — they are doors, not destinations. */
+export function isRevealedWarpGate(body: Body): boolean {
+  const k = body.secret?.kind;
+  return !!body.secret?.revealed && (k === 'portal_to_sun' || k === 'warp_gate');
+}
+
+/**
+ * Warp gate — drawn INSTEAD of the host body's disc once the secret is out.
+ *
+ * The affordance problem this solves: a revealed portal kept the moon
+ * sprite it was hiding under, so the single most consequential object on
+ * the map looked like any other 4px rock. It now reads as built hardware
+ * — a ring on pylons around a lit throat — and it is deliberately drawn
+ * LARGER than the host body so it stands out at map zoom.
+ */
+function drawWarpGateBody(
+  body: Body,
+  canvasPos: { x: number; y: number },
+  radius: number,
+  ctx: RenderContext,
+) {
+  const g = ctx.ctx;
+  // Mostly SCREEN-space, only loosely tied to the host body: a gate must
+  // be obvious when its moon is a 3px dot, and must not balloon when you
+  // zoom in (scaling straight off the body radius put the bloom at 600px
+  // wide at world-menu zoom). Floor keeps it findable, cap keeps it sane.
+  const R = Math.max(10, Math.min(radius * 1.6, 48));
+  const now = ctx.nowMs ?? 0;
+  const spin = (now / 5200) % (Math.PI * 2);
+  const pulse = 0.5 + 0.5 * Math.sin(now / 900);
+
+  g.save();
+
+  // Outer bloom — the giveaway at low zoom.
+  const bloom = g.createRadialGradient(
+    canvasPos.x, canvasPos.y, R * 0.55,
+    canvasPos.x, canvasPos.y, R * 2.4,
+  );
+  bloom.addColorStop(0, `rgba(120, 220, 255, ${0.16 + 0.06 * pulse})`);
+  bloom.addColorStop(1, 'rgba(90, 140, 255, 0)');
+  g.fillStyle = bloom;
+  g.beginPath();
+  g.arc(canvasPos.x, canvasPos.y, R * 2.4, 0, Math.PI * 2);
+  g.fill();
+
+  // The throat: a lit aperture you can read as "somewhere else".
+  const throat = g.createRadialGradient(
+    canvasPos.x, canvasPos.y, 0,
+    canvasPos.x, canvasPos.y, R * 0.82,
+  );
+  throat.addColorStop(0, `rgba(226, 248, 255, ${0.85 * (0.7 + 0.3 * pulse)})`);
+  throat.addColorStop(0.45, 'rgba(86, 190, 240, 0.55)');
+  throat.addColorStop(1, 'rgba(24, 40, 96, 0.9)');
+  g.fillStyle = throat;
+  g.beginPath();
+  g.arc(canvasPos.x, canvasPos.y, R * 0.82, 0, Math.PI * 2);
+  g.fill();
+
+  // Structural ring.
+  g.strokeStyle = 'rgba(196, 226, 246, 0.9)';
+  g.lineWidth = Math.max(1.5, R * 0.16);
+  g.beginPath();
+  g.arc(canvasPos.x, canvasPos.y, R, 0, Math.PI * 2);
+  g.stroke();
+  g.strokeStyle = `rgba(140, 235, 255, ${0.5 + 0.4 * pulse})`;
+  g.lineWidth = Math.max(1, R * 0.07);
+  g.beginPath();
+  g.arc(canvasPos.x, canvasPos.y, R * 0.9, 0, Math.PI * 2);
+  g.stroke();
+
+  // Four pylons on a slow spin — the "this was built" cue.
+  g.strokeStyle = 'rgba(210, 232, 248, 0.75)';
+  g.lineWidth = Math.max(1, R * 0.11);
+  for (let i = 0; i < 4; i++) {
+    const a = spin + (i * Math.PI) / 2;
+    g.beginPath();
+    g.moveTo(canvasPos.x + Math.cos(a) * R * 0.95, canvasPos.y + Math.sin(a) * R * 0.95);
+    g.lineTo(canvasPos.x + Math.cos(a) * R * 1.28, canvasPos.y + Math.sin(a) * R * 1.28);
+    g.stroke();
+  }
+
+  g.restore();
+}
+
 function drawPlanetBody(
   body: Body,
   canvasPos: { x: number; y: number },
@@ -1781,7 +1867,12 @@ export function drawBody(
   const canvasPos = worldToCanvas(pos.x, pos.y, ctx);
   const radius = Math.max(3, body.radius * ctx.camera.scale);
 
-  if (body.type === 'star') {
+  // A revealed gate REPLACES its host body's sprite. The moon it was
+  // buried under is gone as far as the map is concerned — what's there
+  // now is the door.
+  if (isRevealedWarpGate(body)) {
+    drawWarpGateBody(body, canvasPos, radius, ctx);
+  } else if (body.type === 'star') {
     drawStarBody(body, canvasPos, radius, ctx);
     // Dyson Sphere lattice — the win-condition megaproject finally has
     // a face on the map. Segments of the sun-cage light up with real
@@ -1803,7 +1894,9 @@ export function drawBody(
   // next?" question reads at a glance. Owned bodies already get
   // their owner ring; gas giants / stars / ice giants / black holes
   // get nothing because cities don't fit on them anyway.
-  if (!body.ownedBy && canHostCity(body)) {
+  // ...except on a gate, where "you could settle here" is a lie: every
+  // ship that arrives is warped straight back out.
+  if (!body.ownedBy && canHostCity(body) && !isRevealedWarpGate(body)) {
     const ringR = radius + 4;
     ctx.ctx.save();
     ctx.ctx.strokeStyle = 'rgba(110, 231, 183, 0.45)';
