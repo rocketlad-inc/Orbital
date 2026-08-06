@@ -19,10 +19,9 @@ type Tab = 'my' | 'browse' | 'create' | 'code' | 'admin' | 'bot' | 'editor';
 
 interface Props {
   onEnterRoom: (roomId: string) => void;
-  onExit: () => void;
 }
 
-export function MultiplayerLobby({ onEnterRoom, onExit }: Props) {
+export function MultiplayerLobby({ onEnterRoom }: Props) {
   const { user, signOut } = useAuth();
   const [tab, setTab] = useState<Tab>('my');
   const [myRooms, setMyRooms] = useState<RoomSummary[] | null>(null);
@@ -57,7 +56,9 @@ export function MultiplayerLobby({ onEnterRoom, onExit }: Props) {
         </div>
         <div className="mp-lobby__user">
           <span className="mp-lobby__user-name">{user?.display_name || user?.email}</span>
-          <button className="mp-lobby__user-btn" onClick={onExit}>← Menu</button>
+          {/* No "← Menu": the mode picker it went back to is gone (it was
+              a one-destination menu in front of this screen). The lobby
+              IS the top level now, so Sign out is the only way up. */}
           <button className="mp-lobby__user-btn" onClick={signOut}>Sign out</button>
         </div>
       </header>

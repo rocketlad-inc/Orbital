@@ -37,7 +37,6 @@ import { UXGallery } from './components/UXGallery';
 import { ShipIconGalleryPage } from './components/ShipIconGalleryPage';
 import { PhysicsSandbox } from './physicsSandbox/PhysicsSandbox';
 import { TorchSandbox } from './torchSandbox/TorchSandbox';
-import { ModePicker, GameMode } from './ModePicker';
 import { MultiplayerShell } from './multiplayer/MultiplayerShell';
 import { WorldMenuOverlay, WorldMenuToggle, worldMenuPref } from './multiplayer/WorldMenuOverlay';
 import { WarpGateCard } from './multiplayer/WarpGateCard';
@@ -61,6 +60,12 @@ import './styles/mobile.css';
 // it's what makes a phone/tablet OS (e.g. a Fold's wide inner screen) get
 // the mobile shell even though no media query can detect it.
 import './styles/shellJs.css';
+
+/** Which engine the session is in. 'singleplayer' is unreachable — SP
+ *  entry is retired — but the union survives because SinglePlayerView is
+ *  still in the tree. Lived in ModePicker.tsx until that screen was
+ *  deleted (it was a one-destination menu in front of the lobby). */
+export type GameMode = 'singleplayer' | 'multiplayer';
 
 const MODE_STORAGE_KEY = 'orbital.last_mode';
 
@@ -381,7 +386,8 @@ function AppShell() {
   // Host id of the selected room, so the in-game side-menu can render
   // an admin-only Settings section (force tick, etc.).
   const [roomHostId, setRoomHostId] = useState<string | null>(null);
-  const [activeRooms, setActiveRooms] = useState<RoomSummary[] | null>(null);
+  // (activeRooms state retired with the mode picker — the rooms fetch
+  //  below still runs, but only the priority/auto-jump logic reads it.)
   const [showAuth, setShowAuth] = useState(false);
   const [showTunables, setShowTunables] = useState(false);
   const [showUX, setShowUX] = useState(false);
@@ -392,21 +398,16 @@ function AppShell() {
     typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('icons'),
   );
 
-  // When the user authenticates, fetch any rooms they're already a member of
-  // so the mode picker can offer a "resume" shortcut.
+  // When the user authenticates, fetch any rooms they're already a member
+  // of so we can jump straight back into a pinned or lone active game.
   useEffect(() => {
-    if (!user) {
-      setActiveRooms(null);
-      return;
-    }
+    if (!user) return;
     logger.setSession({ playerName: user.display_name || user.email });
     let cancelled = false;
     (async () => {
       const res = await apiFetch<{ rooms: RoomSummary[] }>('/api/users/me/rooms');
       if (cancelled) return;
       if (res.ok) {
-        setActiveRooms(res.data.rooms);
-
         // Sanity-check the localStorage room id against actual membership.
         // If selectedRoomId points at a room that's no longer in /me/rooms
         // (kicked, deleted by host, account swapped), clear it before any
@@ -456,36 +457,19 @@ function AppShell() {
           setMode('multiplayer');
           return;
         }
-      } else {
-        setActiveRooms([]);
       }
-
-      // No active in-progress game — restore the user's last picked mode so
-      // they don't see the picker every load.
-      if (mode === null) {
-        const remembered = localStorage.getItem(MODE_STORAGE_KEY);
-        // 'singleplayer' is no longer restorable — SP entry is retired.
-        // A stale stored value from an old session falls through to the
-        // picker (which now only offers multiplayer) instead of dropping
-        // the player into the deprecated engine.
-        if (remembered === 'multiplayer') {
-          setMode(remembered);
-        }
-      }
+      // No pinned or lone active game — fall through to the lobby, which
+      // is what mode === null renders now that the picker is gone.
     })();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
-  const handlePickMode = (m: GameMode) => {
-    setMode(m);
-    localStorage.setItem(MODE_STORAGE_KEY, m);
-    logger.setSession({ mode: m });
-    logger.info('SYSTEM', `Mode selected: ${m}`);
-  };
+  // handlePickMode retired with the mode picker — nothing asks the
+  // player to choose a mode any more.
 
   const handleExitMode = () => {
-    logger.info('SYSTEM', 'Exiting mode → mode picker');
+    logger.info('SYSTEM', 'Exiting mode → lobby');
     logger.setSession({ mode: 'unknown', roomId: null, gameId: null });
     setMode(null);
     setGuestMode(false);
@@ -685,15 +669,11 @@ function AppShell() {
     return <SinglePlayerView onExit={handleExitMode} />;
   }
 
-  if (mode === null) {
-    return (
-      <ModePicker
-        activeRooms={activeRooms ?? []}
-        onPick={handlePickMode}
-      />
-    );
-  }
-
+  // The mode picker is GONE. Once single-player entry was retired every
+  // button on it — both RESUME rows and the one NEW GAME card — called
+  // onPick('multiplayer'), so it was a menu with a single destination
+  // sitting in front of the lobby, which already lists My Games / Browse
+  // / Create. mode === null now falls through to the multiplayer path.
   if (mode === 'singleplayer') {
     return <SinglePlayerView onExit={handleExitMode} />;
   }
@@ -701,10 +681,7 @@ function AppShell() {
   // multiplayer — lobby first, then in-room shell
   if (!selectedRoomId) {
     return (
-      <MultiplayerLobby
-        onEnterRoom={handleEnterRoom}
-        onExit={handleExitMode}
-      />
+      <MultiplayerLobby onEnterRoom={handleEnterRoom} />
     );
   }
 
