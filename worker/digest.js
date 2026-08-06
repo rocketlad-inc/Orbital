@@ -27,6 +27,7 @@
 // ============================================================
 
 import { renderStripPng, STRIP_PUBLIC_URL } from './heraldStrip.js';
+import { activeSanctions } from './senate.js';
 
 /** Publish hour, in US Eastern local time (noon). Checked via Intl
  *  against the America/New_York zone so it stays at local noon across
@@ -1557,7 +1558,43 @@ function fieldFromStories(title, stories, used) {
  *  renders as before, grouped by section. Returns null when the day
  *  was entirely uneventful (no stories + no trades) so we skip the
  *  post rather than spam "nothing happened". */
-function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator) {
+/**
+ * Sanctions currently IN FORCE, as a standing field with a countdown.
+ *
+ * Not a story: every other section is built from chronicle events ("the
+ * Senate passed X"), which fire once and never mention the thing again.
+ * A sanction is a STATE that persists for days of real time, and the
+ * question players actually have — "how much longer does this last?" —
+ * had no answer anywhere in the game. So the Herald re-states it every
+ * edition with the remaining ticks, and it simply disappears from the
+ * paper when it lapses.
+ */
+function sanctionsField(sanctions, factionNames) {
+  if (!sanctions || sanctions.length === 0) return null;
+  const LABEL = {
+    war_authorization:   n => `⚔️ **War Authorization** on ${n} — all damage dealt to them is doubled`,
+    trade_embargo:       n => `🚫 **Trade Embargo** on ${n} — deliveries blocked`,
+    production_sanction: n => `🏭 **Production Sanction** on ${n} — yields halved`,
+  };
+  const lines = [];
+  // Soonest to lapse first: that is the one with a decision attached.
+  for (const sx of [...sanctions].sort((a, b) => a.ticks_left - b.ticks_left)) {
+    const fmt = LABEL[sx.kind];
+    if (!fmt) continue;
+    const who = factionNames.get(sx.target_faction_id) ?? 'an unnamed power';
+    const t = sx.ticks_left;
+    const clock = t <= 0 ? 'lapses this tick'
+      : t === 1 ? '**1 tick** remaining'
+      : `**${t} ticks** remaining`;
+    lines.push(`${fmt(b(who))} · ${clock}`);
+  }
+  if (lines.length === 0) return null;
+  let value = lines.join('\n');
+  if (value.length > 1020) value = value.slice(0, 1017) + '…';
+  return { name: '⚖️  Sanctions in force', value };
+}
+
+function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, sanctions = []) {
   const used = new Map(); // bank-name -> Set(indices used this edition)
 
   const captainFate = buildCaptainFateMap(rows);
@@ -1592,7 +1629,12 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator) 
     }
   }
 
-  if (!topStory && tradesDelta <= 0) return null;
+  // A sanction in force is news even on an otherwise quiet day — it is
+  // the whole reason this feature exists ("how much longer does the 2x
+  // damage last?"). Without this the countdown would vanish on exactly
+  // the slow days when a player most wants to check it.
+  const sf = sanctionsField(sanctions, factionNames);
+  if (!topStory && tradesDelta <= 0 && !sf) return null;
 
   // Pull the headline story out of its section so it isn't repeated
   // in the body — it's already "above the fold" in the description.
@@ -1605,6 +1647,10 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator) 
     const field = fieldFromStories(SECTION_META[key].title, sections[key], used);
     if (field) fields.push(field);
   }
+
+  // Standing state, not events — appended after the story sections so
+  // the paper reads news-first, then "still in force".
+  if (sf) fields.push(sf);
 
   if (tradesDelta > 0) {
     fields.push({ name: '📦  Trade ledger', value: pickTemplate('trade_ledger', TRADE_LEDGER, used)({ count: tradesDelta }) });
@@ -1710,7 +1756,8 @@ export async function runDigestForGame(env, game, { force = false } = {}) {
     .first())?.n ?? 0;
   const tradesDelta = Math.max(0, tradesNow - (state?.trades_snapshot ?? tradesNow));
 
-  let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, tradesDelta, locator);
+  const sanctions = await activeSanctions(env, game.id, game.current_tick ?? 0);
+  let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, tradesDelta, locator, sanctions);
 
   // Forced editions always publish — a quiet day (no stories, no
   // trades) still gets a headline-styled "all quiet" bulletin so the
@@ -1827,7 +1874,8 @@ export async function composeHeraldForGame(env, game, lookbackMs = 24 * 60 * 60 
 
   // No trades-delta bookkeeping here — that snapshot belongs to the
   // Discord edition's incremental state and must not be disturbed.
-  let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, 0, locator);
+  const sanctions = await activeSanctions(env, game.id, game.current_tick ?? 0);
+  let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, 0, locator, sanctions);
   if (!embed) {
     const used = new Map();
     embed = {

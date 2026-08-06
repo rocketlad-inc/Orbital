@@ -1,5 +1,5 @@
 import { hasFeature } from './researchUnlocks.js';
-import { getActiveSliders } from './senate.js';
+import { getActiveSliders, activeSanctions } from './senate.js';
 import { voteWeights } from './systems.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
 
@@ -1222,6 +1222,11 @@ const tradeRoutesP = env.DB
     };
   } catch { /* leave zeros */ }
 
+  // Senate sanctions in force this tick. Cheap (one indexed read) and
+  // internally non-throwing, so it rides the normal /state poll rather
+  // than needing its own fetch.
+  const sanctions = await activeSanctions(env, gameId, game.current_tick ?? 0);
+
   // Ship designs — the caller's design library (ship designer §2).
   // Small table (≤12 per class), so shipping it with every /state poll
   // keeps the designer + BuildPanel in sync without a separate fetch.
@@ -1309,6 +1314,11 @@ const tradeRoutesP = env.DB
         gold: Number(me.arrears_gold ?? 0),
         metal: Number(me.arrears_metal ?? 0),
       },
+      // Senate sanctions in force RIGHT NOW, game-wide, each with the
+      // ticks remaining. The client needs the whole list (not just the
+      // caller's) so it can say both "2x damage against YOU for 6 more
+      // ticks" and "the embargo you voted on has 3 ticks left".
+      sanctions,
       research: {
         tech_id: me.research_tech_id,
         progress: me.research_progress,

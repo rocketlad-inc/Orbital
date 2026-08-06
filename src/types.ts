@@ -725,6 +725,21 @@ export interface GameState {
   /** Standing upkeep debt. Any positive value = the whole fleet fights
    *  at −25% damage until income clears it. Undefined/zeros in SP. */
   fleetArrears?: { credits: number; ore: number };
+  /**
+   * Senate sanctions in force this tick, game-wide.
+   *
+   * MP only. `ticksLeft` is computed SERVER-side against the
+   * authoritative tick — do not recompute it from currentTick, which
+   * lags by however stale the last poll is and would make the countdown
+   * jitter. Empty array when nothing is in force.
+   */
+  senateSanctions?: Array<{
+    /** 'war_authorization' | 'trade_embargo' | 'production_sanction' */
+    kind: string;
+    targetFactionId: string;
+    untilTick: number;
+    ticksLeft: number;
+  }>;
   /** Fog-FREE political claims: bodyId -> owning faction for every live
    *  settlement in the game. This is what region ownership shading reads
    *  — political borders are common knowledge even when the settlements

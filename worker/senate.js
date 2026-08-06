@@ -422,6 +422,48 @@ async function listActiveEffectRows(env, gameId, currentTick) {
  * Cheap: single indexed query (idx_senate_effects_target). Safe to call
  * once per tick per relevant entity.
  */
+/**
+ * Every ongoing sanction currently in force, with the tick it lapses.
+ *
+ * Exists because a sanction was INVISIBLE to the player: /state carried
+ * no sanction data at all, so a faction taking double damage under a War
+ * Authorization had no way to see it was happening, let alone how much
+ * longer it lasted. The only surface was the senate's resolved-bill list
+ * (last 10), which showed an absolute "active until tick N" and then
+ * scrolled away entirely.
+ *
+ * Returns rows, not booleans — the caller needs `ticks_left` to count
+ * down. hasActiveSanction stays the hot-path predicate; this is the
+ * once-per-/state read.
+ */
+export async function activeSanctions(env, gameId, currentTick) {
+  try {
+    const rows = (await env.DB
+      .prepare(
+        `SELECT effect_kind, target_faction_id, active_from_tick, active_until_tick
+           FROM senate_effects
+          WHERE game_id = ?
+            AND effect_kind != 'slider'
+            AND active_from_tick <= ?
+            AND active_until_tick > ?
+          ORDER BY active_until_tick ASC`,
+      )
+      .bind(gameId, currentTick, currentTick)
+      .all()).results ?? [];
+    return rows.map(r => ({
+      kind: r.effect_kind,
+      target_faction_id: r.target_faction_id,
+      until_tick: r.active_until_tick,
+      ticks_left: Math.max(0, Number(r.active_until_tick) - currentTick),
+    }));
+  } catch (e) {
+    // Same defensive posture as hasActiveSanction: a senate read must
+    // never take down the /state call that embeds it.
+    console.error('activeSanctions query failed', e);
+    return [];
+  }
+}
+
 export async function hasActiveSanction(env, gameId, currentTick, factionId, effectKind) {
   if (!factionId || !effectKind) return false;
   // Defensive: sanctions are an optional overlay queried from the

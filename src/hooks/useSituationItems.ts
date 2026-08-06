@@ -138,7 +138,10 @@ export type SituationCategory =
   | 'fleet_arrears' // MP — upkeep unpaid, whole fleet at −25% damage
   | 'dyson_project' // YOUR Dyson Sphere — progress / stalled / under attack
   | 'dyson_threat' // a RIVAL's Dyson Sphere is rising — stop it or lose
-  | 'domination_watch'; // someone is closing on the 60%-of-worlds win
+  | 'domination_watch' // someone is closing on the 60%-of-worlds win
+  // --- senate sanctions in force, with a clock ---
+  | 'sanction_on_me'  // a senate sanction is being applied TO you
+  | 'sanction_window'; // a sanction on a RIVAL you can exploit before it lapses
 
 export type SituationTier = 'now' | 'decision' | 'opportunity';
 
@@ -198,6 +201,11 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
   dyson_threat:   'decision',
   // Promotes itself to NOW when a rival is within 5 points of the line.
   domination_watch: 'decision',
+  // A sanction aimed at YOU is happening every tick until it lapses —
+  // same shape of fact as arrears, so the same tier. The mirror case (a
+  // sanction on a rival) is a timed OPENING, not an emergency.
+  sanction_on_me: 'now',
+  sanction_window: 'opportunity',
 };
 
 export interface SituationItem {
@@ -251,6 +259,8 @@ export const CATEGORY_LABEL: Record<SituationCategory, string> = {
   dyson_project:   'Dyson Sphere',
   dyson_threat:    'Rival megaproject',
   domination_watch: 'Domination race',
+  sanction_on_me:  'Senate sanctions against you',
+  sanction_window: 'Sanction windows',
 };
 
 // ------------------------------------------------------------
@@ -518,6 +528,71 @@ export function useSituationItems(
         severity: 'danger',
         sortKey: 0,
         focus: { kind: 'panel', panel: 'fleet' },
+      });
+    }
+
+    // --- Senate sanctions in force, WITH A CLOCK.
+    //
+    // These were completely invisible: /state carried no sanction data,
+    // so a faction taking double damage under a War Authorization had no
+    // way to know it was happening. The only surface was the senate's
+    // last-10 resolved-bill list, showing an absolute "active until tick
+    // N" that then scrolled away.
+    //
+    // ticksLeft comes from the SERVER (computed against the authoritative
+    // tick). Recomputing it from `tick` here would drift by however stale
+    // the poll is and make the countdown jitter.
+    for (const sx of gameState.senateSanctions ?? []) {
+      if (sx.ticksLeft <= 0) continue;
+      const t = `${sx.ticksLeft} tick${sx.ticksLeft === 1 ? '' : 's'}`;
+      const mine = sx.targetFactionId === factionId;
+      const who = factionName(gameState, sx.targetFactionId);
+      // Sorting by ticksLeft puts the sanction about to LAPSE at the top:
+      // that's the one with a decision attached (press now, or don't).
+      const sortKey = sx.ticksLeft;
+
+      if (mine) {
+        const copy: Record<string, { title: string; sub: string }> = {
+          war_authorization: {
+            title: 'War Authorization against you — all damage you take is DOUBLED',
+            sub: `Lapses in ${t}. Peace pacts were broken when it passed.`,
+          },
+          trade_embargo: {
+            title: 'Trade embargo against you — deliveries are blocked',
+            sub: `Lapses in ${t}. Freighters en route will not land cargo.`,
+          },
+          production_sanction: {
+            title: 'Production sanction against you — settlement yields halved',
+            sub: `Lapses in ${t}.`,
+          },
+        };
+        const c = copy[sx.kind];
+        if (!c) continue;   // unknown kind: silent rather than shouting a raw id
+        push({
+          id: `sanction_on_me:${sx.kind}`,
+          category: 'sanction_on_me',
+          title: c.title,
+          subtitle: c.sub,
+          severity: 'danger',
+          sortKey,
+          focus: { kind: 'panel', panel: 'senate' },
+        });
+        continue;
+      }
+
+      // Aimed at someone else. Only the war authorization is actionable
+      // for the viewer — it means YOUR fire lands double on them, and it
+      // expires. An embargo or production sanction on a rival is news,
+      // not a window, so it stays out of the player's action list.
+      if (sx.kind !== 'war_authorization') continue;
+      push({
+        id: `sanction_window:${sx.targetFactionId}`,
+        category: 'sanction_window',
+        title: `Strike window: double damage to ${who}`,
+        subtitle: `War Authorization lapses in ${t}.`,
+        severity: 'warn',
+        sortKey,
+        focus: { kind: 'panel', panel: 'senate' },
       });
     }
 

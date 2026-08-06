@@ -83,6 +83,14 @@ interface ServerState {
       arrears_damage_mult?: number;
     };
     arrears?: { gold: number; metal: number };
+    /** Senate sanctions in force this tick, game-wide, each with the
+     *  ticks remaining before it lapses. */
+    sanctions?: Array<{
+      kind: string;
+      target_faction_id: string;
+      until_tick: number;
+      ticks_left: number;
+    }>;
     tech_levels?: Record<string, number>;
     /** Active physical trade-delivery legs involving me (either side).
      *  Drives the ShipPanel "hauling" badge + Trades panel status. */
@@ -1687,6 +1695,15 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       credits: srv.me.arrears.gold,
       ore: srv.me.arrears.metal,
     } : undefined,
+    // Passed through as-is (server already computed ticks_left against
+    // the authoritative tick — recomputing client-side would drift by
+    // however stale the poll is).
+    senateSanctions: (srv.me.sanctions ?? []).map(x => ({
+      kind: x.kind,
+      targetFactionId: x.target_faction_id,
+      untilTick: x.until_tick,
+      ticksLeft: x.ticks_left,
+    })),
     factionTech: { [PLAYER_TOKEN]: playerTech },
     gatingEnabled: (srv.game.gating_enabled ?? 0) === 1,
     settlementClaims: (srv.settlement_claims ?? []).map(c => ({
