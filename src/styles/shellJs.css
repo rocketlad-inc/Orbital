@@ -39,6 +39,14 @@
   display: none;
 }
 
+/* ---- mirrored from components/GroupSelectionPanel.css ---- */
+/* @media (pointer: coarse) and (hover: none) */
+:root[data-mobile-shell] .gsp-drop {
+  opacity: 1;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
 /* ---- mirrored from components/Outliner.css ---- */
 /* @media (max-width: 1023px), (pointer: coarse) and (hover: none) and (max-width: 1399px) */
 :root[data-mobile-shell] .outliner.outliner--collapsed {

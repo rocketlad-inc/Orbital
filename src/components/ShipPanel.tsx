@@ -29,6 +29,7 @@ import {
 } from '../state/mockGameState';
 import { makeSystemRootOf, systemLabel } from '../game/systemGrouping';
 import { BottomSheet } from './BottomSheet';
+import { useGroupOwnsCardSlot } from './GroupSelectionPanel';
 import './ShipPanel.css';
 
 // Order-independent key for a parts loadout, so two designs with the same
@@ -51,6 +52,7 @@ export const ShipPanel: React.FC = () => {
   // addition to mutating local state (so the UI feels responsive while
   // waiting for the next /state poll to reconcile).
   const mpActions = useMultiplayerActions();
+  const groupOwnsSlot = useGroupOwnsCardSlot();
   const isMobile = useIsMobile();
   const deployGate = useFeatureGate();
 
@@ -174,6 +176,11 @@ export const ShipPanel: React.FC = () => {
     return () => window.removeEventListener('orbital-transfer-confirm', handleTransferConfirmEvent);
   }, [handleTransferConfirmEvent]);
 
+  // GroupSelectionPanel takes the ship-card slot when 2+ live hulls are
+  // selected — the group is what you're commanding, and showing whichever
+  // single ship you last clicked contradicted the action bar. Same live
+  // resolution both sides, so the slot can never end up empty.
+  if (groupOwnsSlot) return null;
   if (!ship) return null;
 
   const handleTransferManeuver = (targetBodyId: string) => {

@@ -3,6 +3,7 @@ import { GameContextProvider, useGameContext } from './state/gameContext';
 import { useAutosave } from './state/useAutosave';
 import { MapCanvas } from './components/MapCanvas';
 import { ShipPanel } from './components/ShipPanel';
+import { GroupSelectionPanel } from './components/GroupSelectionPanel';
 import { BodyInspector } from './components/BodyInspector';
 import { TopBar, PanelId } from './components/TopBar';
 import { Outliner } from './components/Outliner';
@@ -225,7 +226,14 @@ function GameUI({
           dock sit free on the right edge without tracking Outliner
           width. ShipPanel is always mounted — its own internal logic
           returns null when no ship is selected. */}
+      {/* The ship-card slot holds ONE of two things. With a group
+          selected (2+ live hulls) the GroupSelectionPanel lists what
+          you're commanding — previously the rail showed whichever single
+          ship you last clicked, which disagreed with the "9 selected"
+          action bar at the bottom of the screen. Below two, it returns
+          null and ShipPanel has the slot as before. */}
       <div className="left-rail">
+        <GroupSelectionPanel />
         <ShipPanel />
         <Outliner />
       </div>
