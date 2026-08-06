@@ -316,6 +316,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   const prevTransitIdsRef = useRef<Set<string> | null>(null);
   const prevSettlementIdsRef = useRef<Map<string, { x: number; y: number; bodyId: string }>>(new Map());
   const destructionFlashesRef = useRef<Map<string, { pos: { x: number; y: number }; startMs: number; baseRadius?: number; id?: string }>>(new Map());
+  /** Ship ids whose death already flashed at the hull via the list-diff
+   *  path — consulted by the queued chronicle FX so the same kill never
+   *  booms twice (once at the ship, later again from the queue). */
+  const listDiffFlashedShipsRef = useRef<Set<string>>(new Set());
   // Last-rendered CANVAS position of every in-transit ship, populated by
   // the render loop and consumed by the click hit-test. The visual ship
   // sits on a polyline lerp (drawTorchTransitShip's lerpedPos) while
@@ -625,6 +629,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           // wrong side of the planet reads as a bug (QA finding).
           const drawnPos = drawnShipWorldPos(id) ?? pos;
           destructionFlashesRef.current.set(id, { pos: drawnPos, startMs: nowMs, baseRadius: 12, id });
+          // Remember we played this kill AT THE HULL, so the queued
+          // chronicle twin of the same death doesn't boom again later.
+          listDiffFlashedShipsRef.current.add(id);
+          if (listDiffFlashedShipsRef.current.size > 2000) listDiffFlashedShipsRef.current.clear();
           // Leave a wreck at the kill site — the battle scars the map
           // for a few minutes instead of vanishing with the flash.
           spawnWreck(id, drawnPos, 12, nowMs, nowTick);
@@ -1740,17 +1748,44 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       nowMs,
       (fx) => {
         if (renderContext.camera.scale < PENDING_FX_MIN_SCALE) return null;
-        // Prefer the ship (most specific); a destroyed ship is gone, so
-        // fall back to the body it died at — which is why the queue
-        // carries both anchors.
+        // Prefer the ship (most specific): live position first, then the
+        // spot the renderer last DREW it (survives death/fog-out, and
+        // includes battle-line placement).
         let world: { x: number; y: number } | null = null;
+        const shipEvent = !!fx.shipId;
         if (fx.shipId) {
           const sh = gameState.ships.find(s => s.id === fx.shipId);
           if (sh) world = shipWorldPosition(sh, nowTick, gameState.bodies);
+          if (!world) world = drawnShipWorldPos(fx.shipId) ?? null;
+        }
+        if (!world && shipEvent && fx.kind === 'damage') {
+          // A HIT on a hull this client has never rendered (a fogged
+          // rival brawl — chronicle rows are public). A boom with no
+          // visible target is exactly the "random explosion" bug; the
+          // event log still carries the line. Never play it.
+          return 'skip';
         }
         if (!world && fx.bodyId) {
           const b = gameState.bodies.find(x => x.id === fx.bodyId);
-          if (b) world = bodyPosition(b, nowTick, gameState.bodies);
+          if (b) {
+            const bp = bodyPosition(b, nowTick, gameState.bodies);
+            if (shipEvent) {
+              // A ship died here but we never saw the hull. Place the
+              // boom ON THE PARKING RING (radius + 2 — where ships
+              // actually orbit), at an angle hashed from the entry id so
+              // it's stable across frames. Dead center read as the WORLD
+              // exploding.
+              let h = 0;
+              for (let ci = 0; ci < fx.id.length; ci++) h = (h * 31 + fx.id.charCodeAt(ci)) | 0;
+              const ang = (h >>> 0) % 628 / 100;
+              const ringR = (b.radius ?? 4) + 2;
+              world = { x: bp.x + Math.cos(ang) * ringR, y: bp.y + Math.sin(ang) * ringR };
+            } else {
+              // Settlement/impact/discovery events genuinely belong to
+              // the body itself.
+              world = bp;
+            }
+          }
         }
         if (!world) return null;
         const cp = worldToCanvas(world.x, world.y, renderContext);
@@ -1794,6 +1829,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         }
         // destruction / impact both read as an explosion; impacts are
         // bigger because a whole rock hit the surface.
+        // A kill the player already WATCHED (list-diff flashed it at the
+        // hull) must not boom a second time from the chronicle queue —
+        // that double-tap was half the "random explosions" report.
+        if (fx.shipId && listDiffFlashedShipsRef.current.has(fx.shipId)) return;
         const world = canvasToWorld(pos.x, pos.y, renderContext);
         destructionFlashesRef.current.set(fx.id, {
           pos: world,

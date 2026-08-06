@@ -139,14 +139,17 @@ export function ingestChronicleFx(gameId: string, entries: ChronicleFxSource[]):
  * Fire at most one queued effect per STAGGER_MS, and only ones the
  * player can actually see.
  *
- * @param locate  resolve an entry to a canvas position, or null when it
- *                isn't visible (off-screen, too far zoomed out, or the
- *                anchor no longer exists). Caller owns that policy.
+ * @param locate  resolve an entry to a canvas position; null when it
+ *                isn't visible YET (off-screen, too far zoomed out) —
+ *                the entry keeps waiting; or 'skip' when it should never
+ *                play at all (e.g. a hit on a ship this client has never
+ *                seen — a boom with no visible target reads as a bug).
+ *                'skip' consumes the entry silently. Caller owns policy.
  * @param fire    actually spawn the effect at the given position.
  */
 export function drainVisibleFx(
   nowMs: number,
-  locate: (fx: PendingFx) => { x: number; y: number } | null,
+  locate: (fx: PendingFx) => { x: number; y: number } | null | 'skip',
   fire: (fx: PendingFx, pos: { x: number; y: number }) => void,
 ): void {
   if (pending.length === 0) return;
@@ -162,6 +165,15 @@ export function drainVisibleFx(
       return;
     }
     const pos = locate(fx);
+    if (pos === 'skip') {
+      // Never playable — consume without a visual and without burning
+      // this stagger window on nothing.
+      pending.splice(i, 1);
+      played.add(fx.id);
+      persistPlayed();
+      i--;
+      continue;
+    }
     if (!pos) continue; // not watchable yet — keep waiting
     pending.splice(i, 1);
     played.add(fx.id);
