@@ -445,7 +445,11 @@ function isCapitalWorthy(b, floor = MIN_CAPITAL_RADIUS) {
 // the automatic assignment — otherwise the guarantee leaks through the
 // one path a player controls.
 export const STARTING_BODY_OPTIONS = BODY_CATALOG
-  .filter(isCapitalWorthy)
+  // NOT .filter(isCapitalWorthy): filter passes (element, INDEX) and the
+  // index lands in isCapitalWorthy's `floor` parameter, silently raising
+  // the radius bar per position — which shrank the lobby menu to
+  // Mercury/Venus/Earth and hid the rest of the system.
+  .filter(b => isCapitalWorthy(b))
   .map(b => ({
     id: b.id,
     name: b.name,
