@@ -5,7 +5,7 @@ import { TargetPriorityCards, autoTargetOrderFor } from './TargetPriorityCards';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { maintenanceRatesForShip } from '../game/maintenance';
 import { nearestShipyardBodyId, isDamagedShip } from '../game/repair';
-import { effectiveShipMaxHp } from '../game/combat';
+import { effectiveShipMaxHp, shipWorldPosition } from '../game/combat';
 import { traitSummary, rankTier, AVATAR_IDS } from '../game/captains';
 import { CaptainAvatar } from './CaptainAvatar';
 import {
@@ -43,6 +43,7 @@ export const ShipPanel: React.FC = () => {
     recallLaunch,
     createFleet, disbandFleet, removeFromFleet, addToFleet,
     createTradeRoute, cancelTradeRoute, renameShip,
+    focusBody, updateCamera,
   } = useGameContext();
 
   // In multiplayer this is non-null and we post intent to the server in
@@ -688,6 +689,35 @@ export const ShipPanel: React.FC = () => {
             </button>
             <button className="maneuver-btn" onClick={() => setTransferModalOpen(true)}>
               CHOOSE FROM LIST
+            </button>
+            {/* LOCATE — put the camera where this hull actually is.
+                Two different moves, because a ship has two states:
+
+                PARKED: focus its parent body. Focus mode is what draws
+                the local SOI and keeps the camera glued as the body
+                orbits, so a parked ship stays on screen instead of
+                sliding off over the next few ticks.
+
+                IN TRANSIT: there is no parent body to focus, so pan to
+                the ship's own coordinates and CLEAR focus. Note this
+                deliberately differs from the fleet list, which jumps to
+                a transiting ship's DESTINATION — reasonable for "where
+                is it headed", wrong for a button that says Locate. */}
+            <button
+              className="maneuver-btn"
+              onClick={() => {
+                if (ship.transit) {
+                  const pos = shipWorldPosition(ship, gameState.currentTick, gameState.bodies);
+                  if (pos) updateCamera({ x: pos.x, y: pos.y, focusedBodyId: undefined });
+                } else if (ship.orbit?.parentBodyId) {
+                  focusBody(ship.orbit.parentBodyId);
+                }
+              }}
+              title={ship.transit
+                ? 'Centre the map on this ship in flight'
+                : 'Focus the world this ship is orbiting'}
+            >
+              LOCATE
             </button>
           </div>
 

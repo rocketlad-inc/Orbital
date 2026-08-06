@@ -102,6 +102,17 @@ export interface BuildingDef {
   baseBuildTicks: number;
   buildTimeScaling: number; // ticks = baseBuildTicks × buildTimeScaling^currentLevel
   description: string;
+  /**
+   * Four-or-five word answer to "what does this do", sized to fit on a
+   * build button. `description` is prose for a tooltip; this is the line
+   * a player reads while deciding.
+   *
+   * DECLARED rather than derived from the boost descriptors below,
+   * because two kinds have no descriptor to derive from (shields,
+   * trajectory_thrusters) and because yieldBoost.resource is 'ore' —
+   * inference would print "+25% ore" on a UI that says METAL everywhere.
+   */
+  effectShort: string;
   // Effect descriptors — consumed by yield / combat / shipyard hooks.
   yieldBoost?: { resource: 'ore' | 'credits' | 'science'; perLevel: number };
   combatBoost?: { damagePerLevel: number };
@@ -126,6 +137,7 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
     description: 'Orbital shields: a second health bar that REGENERATES. '
       + 'Absorbs incoming fire before structure, +120 pool per level. '
       + 'Structure never comes back — this does.',
+    effectShort: '+120 shield pool / level',
   },
   forge: {
     displayName: 'Forge',
@@ -135,6 +147,7 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
     baseBuildTicks: 20,
     buildTimeScaling: 1.3,
     description: '+25% metal output per level. Reinvests metal to compound this city\'s metal yield.',
+    effectShort: '+25% metal / level',
     yieldBoost: { resource: 'ore', perLevel: 0.25 },
   },
   mint: {
@@ -145,6 +158,7 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
     baseBuildTicks: 20,
     buildTimeScaling: 1.3,
     description: '+25% credits output per level. Reinvests credits to compound this city\'s coinage yield.',
+    effectShort: '+25% credits / level',
     yieldBoost: { resource: 'credits', perLevel: 0.25 },
   },
   lab: {
@@ -155,6 +169,7 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
     baseBuildTicks: 20,
     buildTimeScaling: 1.3,
     description: '+25% science output per level. Stations make the best hosts — orbital platforms already run hotter labs.',
+    effectShort: '+25% science / level',
     yieldBoost: { resource: 'science', perLevel: 0.25 },
   },
   weapons: {
@@ -165,6 +180,7 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
     baseBuildTicks: 30,
     buildTimeScaling: 1.3,
     description: '+20 damage per level to hostile ships in range, every tick.',
+    effectShort: '+20 damage / level',
     combatBoost: { damagePerLevel: 20 },   // matches worker/room.js STATION_DMG_PER_WEAPONS_LEVEL
   },
   shipyard: {
@@ -175,6 +191,7 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
     baseBuildTicks: 40,
     buildTimeScaling: 1.3,
     description: '+1 simultaneous ship-build slot at this body, per level.',
+    effectShort: '+1 build slot / level',
     shipyardBoost: { slotsPerLevel: 1 },
   },
   // Trajectory Control Thrusters — asteroid-only doomsday weapon.
@@ -197,6 +214,7 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
     baseBuildTicks: 40,
     buildTimeScaling: 1,
     description: 'Anchor industrial-scale thrust packages to this rock. Unlocks the RAM action — target another body and crash this asteroid into it.',
+    effectShort: 'Unlocks the RAM action',
   },
 };
 

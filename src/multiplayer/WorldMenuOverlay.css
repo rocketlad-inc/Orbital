@@ -151,8 +151,14 @@
 }
 .wm-col-label b { color: #4ecdc4; font-weight: 400; }
 .wm-bbtn {
+  /* 54px, not 40: the third line (.wm-bbtn-fx, "what does this do")
+     needs the room. BTN_H in WorldMenuOverlay.tsx MUST match this — the
+     leader-line anchors are computed from it, so a mismatch detaches
+     every line from its button. justify-content centres the two-line
+     FOUND buttons in the same box so they don't sit top-heavy. */
   display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
-  height: 40px; width: 100%; text-align: left;
+  justify-content: center;
+  height: 54px; width: 100%; text-align: left;
   background: rgba(10, 15, 22, 0.92);
   border: 1px solid #2a3d50; border-radius: 5px;
   padding: 4px 8px;
@@ -166,6 +172,15 @@
   font-size: 8.5px; color: #6b8195;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
 }
+/* What the building actually does. Dimmer than the cost/level line so
+   the scan order stays NAME -> STATUS -> EFFECT, and clipped rather
+   than wrapped so one long string can never change the button height
+   and desync the leader-line maths. */
+.wm-bbtn-fx {
+  font-size: 8px; color: #55708a; font-style: italic;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+}
+.wm-bbtn:hover:not(:disabled) .wm-bbtn-fx { color: #8aa4bd; }
 .wm-bbtn.built .wm-bbtn-st { color: #ffb84d; }
 /* Build progress: amber underline that runs left→right along the bottom
    edge of the button while an upgrade is in flight. `.queued` also tints
@@ -319,7 +334,8 @@
   position: absolute; left: 8px; right: 8px;
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
 }
-.wm-mrow .wm-bbtn { height: 40px; align-items: center; text-align: center; padding: 4px 4px; }
+.wm-mrow .wm-bbtn { height: 54px; align-items: center; text-align: center; padding: 4px 4px; }
+.wm-mrow .wm-bbtn-fx { font-size: 7.5px; }
 .wm-mrow .wm-bbtn-nm { font-size: 9px; }
 .wm-mrow .wm-bbtn-st { font-size: 8px; }
 

@@ -25,7 +25,7 @@ import { useFeatureGate } from '../hooks/useFeatureGate';
 import { BUILDING_FEATURE } from '../game/researchUnlocks';
 import { BUILDABLE_CLASSES, getShipClass } from '../game/shipClasses';
 import { RESOURCE_LETTER_COLORS } from '../game/resourceColors';
-import { shipyardSlotsAtBody, canHostCity, canHostStation, suggestSettlementName } from '../game/settlements';
+import { shipyardSlotsAtBody, canHostCity, canHostStation, suggestSettlementName, BUILDING_DEFS } from '../game/settlements';
 import { EditableName } from '../components/EditableName';
 import { RushControl } from '../components/BuildPanel';
 import { humanizeMpError } from './errorMessages';
@@ -399,7 +399,10 @@ export const WorldMenuOverlay: React.FC = () => {
   // Chrome geometry — build columns hover just off the limb; the
   // station rig floats above the orbit column.
   const railW = mobile ? 0 : 296, dockW = mobile ? 0 : 60;
-  const COL_W = 168, BTN_H = 40;
+  // BTN_H MUST equal .wm-bbtn height in WorldMenuOverlay.css (54px). The
+  // leader-line anchors below derive from it; if they drift the lines
+  // point at empty space between buttons.
+  const COL_W = 168, BTN_H = 54;
   const leftColX = Math.max(railW + 10, cx - cr - COL_W - 26);
   // Column stack height: label (18) + up to 4 buttons (40 + 9 gap).
   const COL_MAX_H = 18 + 4 * (BTN_H + 9);
@@ -455,11 +458,17 @@ export const WorldMenuOverlay: React.FC = () => {
         className={`wm-bbtn ${st.state === 'ready' && st.level > 0 ? 'built' : ''} ${st.state === 'queued' ? 'queued' : ''}`}
         data-testid={`wm-build-${kind}`}
         disabled={disabled}
-        title={lockObj ? `${lockObj.label} — ${lockObj.text}` : undefined}
+        // Full prose on hover; the short effect line below is always
+        // visible, because hover does not exist on touch and the effect
+        // is the thing you need in order to choose.
+        title={lockObj
+          ? `${lockObj.label} — ${lockObj.text}\n\n${BUILDING_DEFS[kind].description}`
+          : BUILDING_DEFS[kind].description}
         onClick={() => queueBuild(kind, host)}
       >
         <span className="wm-bbtn-nm">{kind.toUpperCase()}</span>
         <span className="wm-bbtn-st">{lockShort ?? st.text}</span>
+        <span className="wm-bbtn-fx">{BUILDING_DEFS[kind].effectShort}</span>
         {progress !== null && (
           <span className="wm-bbtn-bar">
             <i style={{ width: `${(progress * 100).toFixed(1)}%` }} />
