@@ -140,14 +140,17 @@ function titleCase(s) {
  *  every casualty/ship/settlement list). Now rotates like everything
  *  else. Each entry takes the remainder count and returns the full
  *  trailing clause, including its own leading punctuation. */
+// `n` can legitimately be 1 (three names, max 2 shown), so anything
+// that says "others" has to agree in number — "and 1 others unlisted"
+// was reaching real editions.
 const NAME_LIST_MORE_TAIL = [
   n => `, and ${n} more`,
   n => `, plus ${n} more`,
-  n => `, and ${n} others`,
+  n => `, and ${n} ${plural(n, 'other')}`,
   n => `, with ${n} more besides`,
   n => `, among ${n} more unnamed`,
   n => ` — and ${n} more after that`,
-  n => `, and ${n} others unlisted`,
+  n => `, and ${n} ${plural(n, 'other')} unlisted`,
   n => `, plus ${n} not named here`,
 ];
 
@@ -449,22 +452,69 @@ const BATTLE_NARROW_HEADLINE = [
 ];
 
 const BATTLE_CHAOS = [
-  c => `${c.bodyLoc} descended into chaos as ${numWord(c.sides.length)} factions clashed at once. Casualties: ${c.sideList}.`,
+  c => `${c.bodyLoc} descended into chaos as ${numWord(c.partyCount)} factions clashed at once. Casualties: ${c.sideList}.`,
   c => `A free-for-all erupted at ${c.bodyLoc} — ${c.sideList}.`,
-  c => `No fewer than ${numWord(c.sides.length)} powers traded fire over ${c.bodyLoc} today: ${c.sideList}.`,
-  c => `The battle of ${c.bodyLoc} drew in ${numWord(c.sides.length)} factions before it was over: ${c.sideList}.`,
-  c => `Nobody thought to call a truce at ${c.bodyLoc} — ${numWord(c.sides.length)} factions went in, and only wreckage came out: ${c.sideList}.`,
-  c => `${c.bodyLoc} turned into a shooting gallery with ${numWord(c.sides.length)} sides trading fire at once: ${c.sideList}.`,
-  c => `Total confusion reigned at ${c.bodyLoc} as ${numWord(c.sides.length)} powers collided: ${c.sideList}.`,
-  c => `When the smoke cleared over ${c.bodyLoc}, ${numWord(c.sides.length)} factions were counting losses: ${c.sideList}.`,
+  c => `No fewer than ${numWord(c.partyCount)} powers traded fire over ${c.bodyLoc} today: ${c.sideList}.`,
+  c => `The battle of ${c.bodyLoc} drew in ${numWord(c.partyCount)} factions before it was over: ${c.sideList}.`,
+  c => `Nobody thought to call a truce at ${c.bodyLoc} — ${numWord(c.partyCount)} factions went in, and only wreckage came out: ${c.sideList}.`,
+  c => `${c.bodyLoc} turned into a shooting gallery with ${numWord(c.partyCount)} sides trading fire at once: ${c.sideList}.`,
+  c => `Total confusion reigned at ${c.bodyLoc} as ${numWord(c.partyCount)} powers collided: ${c.sideList}.`,
+  c => `When the smoke cleared over ${c.bodyLoc}, ${numWord(c.partyCount)} factions were counting losses: ${c.sideList}.`,
+];
+
+// --- GANG-UP: two or more powers on one victim -------------------------
+//
+// The dominant endgame shape, and previously unwritable. One victim with
+// two credited killers used to fail the `killerSet.size === 1` test and
+// fall through to the ATTACKER-UNKNOWN bank — the paper reported a
+// coordinated execution as an unsolved mystery. `attackers` is the
+// formatted list; `tollClause` is empty when the victim never landed a
+// hit, which is itself the story.
+const BATTLE_GANG_UP = [
+  c => `${c.attackers} fell on ${b(c.victim)} together at ${c.bodyLoc} — ${numWord(c.victimCount)} ${shipsWord(c.victimCount)} lost${c.namesClause}${c.tollClause}.`,
+  c => `It took ${numWord(c.attackerCount)} of them: ${c.attackers} converged on ${b(c.victim)} at ${c.bodyLoc}, leaving ${numWord(c.victimCount)} ${shipsWord(c.victimCount)} in pieces${c.tollClause}.`,
+  c => `${b(c.victim)} was caught between ${c.attackers} at ${c.bodyLoc}. ${numWord(c.victimCount)} ${shipsWord(c.victimCount)} did not survive the crossfire${c.tollClause}.`,
+  c => `A coordinated kill at ${c.bodyLoc}: ${c.attackers} split ${numWord(c.victimCount)} ${b(c.victim)} ${shipsWord(c.victimCount)} between them${c.tollClause}.`,
+  c => `No allies came for ${b(c.victim)} at ${c.bodyLoc} — ${c.attackers} took ${numWord(c.victimCount)} ${shipsWord(c.victimCount)} apart at their leisure${c.namesClause}${c.tollClause}.`,
+  c => `${c.attackers} arrived at ${c.bodyLoc} from different vectors and left with the same result: ${numWord(c.victimCount)} ${b(c.victim)} ${shipsWord(c.victimCount)} destroyed${c.tollClause}.`,
+];
+
+const BATTLE_GANG_UP_HEADLINE = [
+  c => `${c.victim.toUpperCase()} SURROUNDED AT ${c.body.toUpperCase()}`,
+  c => `${numWord(c.attackerCount).toUpperCase()} AGAINST ONE AT ${c.body.toUpperCase()}`,
+  c => `THEY CAME FOR ${c.victim.toUpperCase()} TOGETHER`,
+  c => `${c.body.toUpperCase()}: A COORDINATED KILL`,
+  c => `NO ALLIES CAME: ${c.victim.toUpperCase()} CUT DOWN AT ${c.body.toUpperCase()}`,
+  c => `${c.victim.toUpperCase()} CAUGHT IN THE CROSSFIRE AT ${c.body.toUpperCase()}`,
+];
+
+// --- MELEE ROUT: 3+ powers in, one of them annihilated -----------------
+//
+// The multi-faction branch used to have no ratio logic at all, so a
+// 15-1-1 slaughter read as "total confusion reigned". It wasn't
+// confusion; one side was executed while the others traded scratches.
+const BATTLE_MELEE_ROUT = [
+  c => `${numWord(c.partyCount)} powers met at ${c.bodyLoc} and only ${b(c.worst)} paid for it — ${numWord(c.worstCount)} ${shipsWord(c.worstCount)} lost against ${numWord(c.othersCount)} for everyone else combined.`,
+  c => `It was billed as a ${numWord(c.partyCount)}-way battle at ${c.bodyLoc}. It ended as an execution: ${c.sideList}.`,
+  c => `${b(c.worst)} walked into ${numWord(c.partyCount)}-sided fighting at ${c.bodyLoc} and absorbed almost all of it: ${numWord(c.worstCount)} ${shipsWord(c.worstCount)} lost against ${numWord(c.othersCount)} for everyone else combined.`,
+  c => `The melee at ${c.bodyLoc} had ${numWord(c.partyCount)} sides and one loser: ${c.sideList}.`,
+  c => `Whatever ${b(c.worst)} expected at ${c.bodyLoc}, it wasn't this — ${c.sideList}.`,
+];
+
+const BATTLE_MELEE_ROUT_HEADLINE = [
+  c => `${c.worst.toUpperCase()} GUTTED IN ${c.body.toUpperCase()} MELEE`,
+  c => `${numWord(c.partyCount).toUpperCase()} SIDES, ONE LOSER: ${c.body.toUpperCase()}`,
+  c => `${c.body.toUpperCase()}: NOT A BATTLE, AN EXECUTION`,
+  c => `${c.worst.toUpperCase()} ABSORBS THE WHOLE WAR AT ${c.body.toUpperCase()}`,
+  c => `ONE-WAY MELEE AT ${c.body.toUpperCase()}`,
 ];
 
 const BATTLE_CHAOS_HEADLINE = [
-  c => `CHAOS AT ${c.body.toUpperCase()}: ${numWord(c.sides.length).toUpperCase()}-WAY BATTLE ERUPTS`,
+  c => `CHAOS AT ${c.body.toUpperCase()}: ${numWord(c.partyCount).toUpperCase()}-WAY BATTLE ERUPTS`,
   c => `FREE-FOR-ALL AT ${c.body.toUpperCase()} LEAVES WRECKAGE ACROSS THE SYSTEM`,
   c => `${c.body.toUpperCase()} DESCENDS INTO CHAOS`,
   c => `EVERYONE'S AT WAR: MELEE ENGULFS ${c.body.toUpperCase()}`,
-  c => `${numWord(c.sides.length).toUpperCase()}-SIDED BATTLE ROYALE AT ${c.body.toUpperCase()}`,
+  c => `${numWord(c.partyCount).toUpperCase()}-SIDED BATTLE ROYALE AT ${c.body.toUpperCase()}`,
   c => `${c.body.toUpperCase()} TURNS INTO A SHOOTING GALLERY`,
   c => `ANARCHY AT ${c.body.toUpperCase()}`,
   c => `${c.body.toUpperCase()}: WHEN EVERYONE SHOWED UP TO FIGHT`,
@@ -1030,6 +1080,35 @@ function buildBattleStories(rows, used, locator, captainFate) {
         loser: owner, winner, body: locBody.name, bodyLoc: locBody.full, count: bucket.count,
         namesClause: names ? `, including ${names}` : '',
       };
+
+      // TWO OR MORE credited killers, one victim: a gang-up, not a
+      // mystery. This used to fail `killerSet.size === 1`, fall through
+      // to `winner = null`, and print the ATTACKER-UNKNOWN bank — the
+      // paper announced "the attacker's identity remains a mystery"
+      // while holding both attackers' names. It is also the single most
+      // common endgame shape, so it is worth its own voice.
+      if (killerSet.size > 1) {
+        const attackerNames = [...killerSet];
+        const gangCtx = {
+          ...ctx,
+          victim: owner,
+          victimCount: bucket.count,
+          attackerCount: attackerNames.length,
+          attackers: attackerNames.map(b).join(attackerNames.length === 2 ? ' and ' : ', ')
+            .replace(/, ([^,]+)$/, ', and $1'),
+          // The victim is the ONLY faction losing hulls here, so they
+          // landed nothing — say so, because "and took none of them with
+          // it" is the difference between a battle and a killing.
+          tollClause: ', and not one of them was taken down in return',
+        };
+        let gangExtra = settlementLossClause(bucket.settlementNames, bucket.settlementPop, used);
+        stories.push(mkStory(
+          BATTLE_BASE_WEIGHT + BATTLE_PER_CASUALTY * bucket.count,
+          used, 'battle_gang_up', BATTLE_GANG_UP,
+          'battle_gang_up_hl', BATTLE_GANG_UP_HEADLINE, gangCtx, gangExtra,
+        ));
+        continue;
+      }
       let extra = settlementLossClause(bucket.settlementNames, bucket.settlementPop, used);
       // Only for a single named ship — a multi-ship loss already gets
       // its gravity from the casualty count + ship-name list, and
@@ -1104,14 +1183,45 @@ function buildBattleStories(rows, used, locator, captainFate) {
         }
       }
     } else {
-      // 3+ factions, or an asymmetric shape — describe as chaos.
+      // 3+ factions, or an asymmetric shape.
       const sides = victims
         .map(v => ({ faction: v, count: cluster.losses.get(v).count }))
         .sort((a, c) => c.count - a.count);
       const sideList = sides.map(s => `${b(s.faction)} lost ${numWord(s.count)}`).join('; ');
       const total = sides.reduce((s, x) => s + x.count, 0);
       const weight = BATTLE_BASE_WEIGHT + BATTLE_PER_CASUALTY * total;
-      stories.push(mkStory(weight, used, 'battle_chaos', BATTLE_CHAOS, 'battle_chaos_hl', BATTLE_CHAOS_HEADLINE, { body: locBody.name, bodyLoc: locBody.full, sides, sideList }));
+
+      // PARTICIPANTS, not victims. `sides` only lists factions that LOST
+      // hulls, so a power that won cleanly was invisible: a three-way
+      // where two sides bled printed "two factions went in", and the
+      // headline bank rendered the oxymoron "TWO-SIDED BATTLE ROYALE".
+      // Anyone credited with a kill was there, whether or not it cost
+      // them anything.
+      const partySet = new Set([...victims, ...killerSet]);
+      const partyCount = partySet.size;
+      // Winners are otherwise unnamed in the casualty list — say who
+      // walked away clean, because that IS the outcome of the battle.
+      const unscathed = [...killerSet].filter(k => !cluster.losses.has(k));
+      const cleanClause = unscathed.length
+        ? ` ${unscathed.map(b).join(' and ')} came through without a scratch.`
+        : '';
+
+      const worst = sides[0];
+      const othersCount = total - worst.count;
+      const ctx = {
+        body: locBody.name, bodyLoc: locBody.full,
+        sides, sideList, partyCount,
+        worst: worst.faction, worstCount: worst.count, othersCount,
+      };
+
+      // Ratio logic, which this branch never had: one faction absorbing
+      // the overwhelming majority of a multi-sided fight is a rout, not
+      // "total confusion". Same threshold the 2-faction branch uses.
+      const lopsided = othersCount === 0
+        || worst.count / Math.max(1, othersCount) >= BATTLE_DECISIVE_RATIO;
+      stories.push(lopsided
+        ? mkStory(weight, used, 'battle_melee_rout', BATTLE_MELEE_ROUT, 'battle_melee_rout_hl', BATTLE_MELEE_ROUT_HEADLINE, ctx, cleanClause)
+        : mkStory(weight, used, 'battle_chaos', BATTLE_CHAOS, 'battle_chaos_hl', BATTLE_CHAOS_HEADLINE, ctx, cleanClause));
     }
   }
 
