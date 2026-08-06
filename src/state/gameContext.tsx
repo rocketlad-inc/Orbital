@@ -6,6 +6,7 @@ import { GameState, ManeuverNode, CameraState, MapUIState, Ship, Body, BuildOrde
 // driven). The fallback empty state below is only hit if neither prop is
 // passed, which would be a programming error rather than a play state.
 import { createCircularOrbit, bodyWorldVelocity, orbitWorldPos, orbitWorldVelocity } from '../physics/orbitalMechanics';
+import { releaseFocusPosition } from '../game/cameraFocus';
 import {
   planTorchTransfer, stepTorchShip,
   DEFAULT_ENGINE_G, fromG,
@@ -1704,11 +1705,30 @@ export function GameContextProvider({
         }));
       }
     } else {
-      setCameraInternal(prev => ({
-        ...prev, focusedBodyId: undefined, x: 0, y: 0, scale: DEFAULT_CAMERA_SCALE, zoomLevel: 1,
-      }));
+      // RELEASING focus must not move the camera.
+      //
+      // While focused, x/y are pinned to (0, 0) — the renderer ignores
+      // them and centres on the focused body instead. World origin is
+      // the SUN, so clearing focus while leaving x/y at 0 teleported the
+      // player to Sol from wherever they were. Double-clicking empty
+      // space does exactly that (handleFocusAt falls through to
+      // focusBody(undefined) when the click hits no body), which is why
+      // a stray double-click anywhere on the map threw you at the star.
+      //
+      // Fix here rather than at the call sites: FOUR of them had already
+      // hand-rolled this same compensation (MapCanvas mousedown, the
+      // touch hook's getReleaseFocusPos, ShipPanel LOCATE, the world
+      // menu's close), each re-deriving the focused body's position
+      // before dropping the flag. Any caller that forgot got the Sun.
+      setCameraInternal(prev => {
+        const { x, y } = releaseFocusPosition(prev, gameState.bodies, gameState.currentTick);
+        return {
+          ...prev, focusedBodyId: undefined, x, y,
+          scale: DEFAULT_CAMERA_SCALE, zoomLevel: 1,
+        };
+      });
     }
-  }, [gameState.bodies]);
+  }, [gameState.bodies, gameState.currentTick]);
 
   // Playtester feedback: uncommitted transfer previews persisted
   // across context switches — players would plan a transfer, click
