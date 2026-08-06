@@ -45,6 +45,21 @@ function factionPrimary(rc: RenderContext, ownerId: string): string {
   return ownerId === 'player' ? COLORS.neutral : COLORS.danger;
 }
 
+/**
+ * MUST match the off-screen cull in mapRenderer's drawShip (`const m =
+ * 100`). That cull skips the icon AND deletes the hitbox for any hull
+ * more than this far outside the viewport; this module has to agree
+ * about what "off screen" means, or it draws fire for hulls the ship
+ * layer declined to render.
+ */
+const FX_OFFSCREEN_MARGIN = 100;
+
+function offScreen(p: { x: number; y: number }, rc: RenderContext): boolean {
+  const m = FX_OFFSCREEN_MARGIN;
+  return p.x < -m || p.y < -m
+    || p.x > rc.canvas.width + m || p.y > rc.canvas.height + m;
+}
+
 /** Canvas position of a ship for FX endpoints — the point the hull is
  *  ACTUALLY drawn at this frame, so tracers start/land on the moving
  *  sprite rather than a stale orbital point.
@@ -393,6 +408,10 @@ export function drawTracers(
       ? shipCanvasPos(to.ship, rc, transitCanvasPos)
       : settlementCanvasPos(to.stl!, rc);
     if (!fp || !tpNow) continue;
+    // Same rule as the sustained-fire pass: no shot without a visible
+    // shooter. These one-shot tracers come from server damage events, so
+    // they fire regardless of where the camera happens to be.
+    if (offScreen(fp, rc)) continue;
     // Lead the aim by the target's motion over the shot's remaining life,
     // so the impact dot lands ON the moving hull instead of trailing it.
     // Settlements move slowly enough (surface point / station orbit)
@@ -636,6 +655,19 @@ export function drawEngagementFire(
       ? shipCanvasPos(tShip, rc, transitCanvasPos)
       : settlementCanvasPos(tStl!, rc);
     if (!fp || !tpNow) continue;
+    // The SHOOTER must be on screen. drawShip culls any hull more than
+    // FX_OFFSCREEN_MARGIN px outside the viewport and deletes its
+    // hitbox, but shipCanvasPos falls back to recomputing the orbital
+    // point — so a culled hull still fired, and the bolt streaked in
+    // from past the edge with nothing at its origin. Zoomed onto Sol
+    // that is most of the fleet at once: a screen full of fire from
+    // ships you cannot see (live report).
+    //
+    // Only the shooter is gated. A visible ship firing at something
+    // beyond the edge reads correctly — the beam leaves frame, which is
+    // what shooting at range looks like. It is the ORIGIN that has to
+    // exist for the shot to make sense.
+    if (offScreen(fp, rc)) continue;
     // Planet in the way → hold fire this pass (never shoot THROUGH it).
     if (occludedByBody(fp, tpNow, shooter.bodyId, rc)) continue;
 
