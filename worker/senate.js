@@ -32,22 +32,19 @@ export { WEIGHT_RULE };
 //
 // A slider law is either GENERAL (applies to every faction) or TARGETED
 // (applies to exactly one, overriding the general value for them alone).
-// Not every knob can be meaningfully aimed: the tick clock is one clock
-// for the whole match, so "slow time down, but only for Lorne" has no
-// coherent meaning. Those stay perFaction:false and the server rejects a
-// target on them rather than writing a row that quietly does nothing.
+// Not every knob can be meaningfully aimed. A match-wide knob (one that
+// describes the match itself rather than a faction's situation) sets
+// perFaction:false, and the server rejects a target on it rather than
+// writing a row that quietly does nothing. Every slider currently in the
+// catalog IS aimable; the flag exists so the next match-wide one cannot
+// be aimed by accident.
+// Tick Interval Multiplier was removed 2026-08-06 (Lorne: "that's not a
+// real thing to vote on"). It was also never consumed by anything — no
+// code read tick_interval_multiplier, so a passed bill changed nothing.
+// Zero proposals in prod history had ever selected it. Legacy rows, if
+// any ever appear, fall out on their own: the resolver only applies
+// slider ids present in SLIDER_BY_ID.
 const SLIDER_CATALOG = [
-  {
-    id: 'tick_interval_multiplier',
-    label: 'Tick Interval Multiplier',
-    description: 'Multiplies the next-tick interval. Lower = the war runs hot; higher = a slow, careful campaign.',
-    default: 1.0,
-    min: 0.5,
-    max: 2.0,
-    step: 0.05,
-    // One clock for the whole match — cannot be aimed at one faction.
-    perFaction: false,
-  },
   {
     id: 'ship_build_cost_multiplier',
     label: 'Ship Build Cost Multiplier',
@@ -100,7 +97,8 @@ const SLIDER_CATALOG = [
   {
     id: 'combat_damage_multiplier',
     label: 'Combat Damage Multiplier',
-    description: 'Reserved for the combat system. Recorded so future engagements honor the law.',
+    description: 'Scales the damage a faction DEALS in every engagement. Aimed at one faction it is '
+      + 'a disarmament order: their guns hit softer, everyone else fires as normal.',
     default: 1.0,
     min: 0.5,
     max: 2.0,
@@ -110,7 +108,8 @@ const SLIDER_CATALOG = [
   {
     id: 'trade_tariff_pct',
     label: 'Trade Tariff (%)',
-    description: 'Passive tax on inter-faction trade. Reserved for the trade system; recorded for activation.',
+    description: 'Skims a percentage off what a faction RECEIVES in trade. Snapshotted per delivery '
+      + 'when the deal is struck, so a later law cannot re-price cargo already in flight.',
     default: 0,
     min: 0,
     max: 50,

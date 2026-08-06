@@ -403,9 +403,9 @@ export function SenatePanel({ gameId }: { gameId: string }) {
                     historical behaviour of every slider law. A named
                     faction makes it apply to them ALONE, overriding the
                     general law for them and leaving everyone else on it.
-                    Match-wide knobs (per_faction false — the tick clock)
-                    hide this entirely rather than offering a choice the
-                    server will reject. */}
+                    Match-wide knobs (per_faction false) hide this
+                    entirely rather than offering a choice the server
+                    will reject. */}
                 {selectedSlider.per_faction !== false && (
                   <>
                     <label className="mp-label">Applies to</label>
