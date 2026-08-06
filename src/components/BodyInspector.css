@@ -148,7 +148,16 @@
    useIsMobile() is true, which now includes touch devices wider than 768px
    (a foldable's ~1092px inner screen). Without it those cards stay
    absolutely positioned INSIDE the scrolling sheet — a broken layout. */
-@media (max-width: 768px), (pointer: coarse) and (hover: none) and (max-width: 1399px) {
+/* 1023, not 768: MOBILE_BREAKPOINT_PX is 1024 and the JS test is `< 1024`,
+   so the CSS twin is `max-width: 1023px` — every other shell block in the
+   codebase uses exactly that. (1024 here would hand a 1024px-wide viewport
+   mobile CSS and desktop JS: the same bug, one pixel wide.) This block used
+   to switch at 768. Anything 769-1023px wide therefore got the
+   mobile SHELL from JS and the desktop world menu from CSS — both drawn at
+   once. That is a second, independent cause of the same split-brain bug as
+   the missing data-mobile-shell mirror, and it needs no OS clause to fire:
+   plenty of tablets sit in that band. */
+@media (max-width: 1023px), (pointer: coarse) and (hover: none) and (max-width: 1399px) {
   .body-focus {
     position: static;
     inset: auto;
