@@ -27,6 +27,7 @@ import {
   BINARY_SYSTEM_BODY_IDS,
   BLACK_HOLE_SYSTEM_BODY_IDS,
 } from '../state/mockGameState';
+import { makeSystemRootOf, systemLabel } from '../game/systemGrouping';
 import { BottomSheet } from './BottomSheet';
 import './ShipPanel.css';
 
@@ -1555,37 +1556,39 @@ interface TransferTargetPickerProps {
   onClose: () => void;
 }
 
-/** Group label + ordering for the picker. `farSystem: true` flags the
- *  group as collapsible in the UI — Centauri and Cygnus X live behind
- *  a "show" toggle by default so the Sol-system picker isn't dominated
- *  by 15+ exotic destinations the player won't pick most matches. */
-function groupOf(
+/**
+ * Group label + ordering for the picker.
+ *
+ * Grouping comes from systemGrouping.ts — the SAME model the senate
+ * counts vote weight with and the outliner sorts by. This used to be a
+ * private taxonomy here, and it was wrong twice over:
+ *
+ *   1. It mixed two different ideas. Sun-orbiters were bucketed by TYPE
+ *      ("Gas giants", "Ice giants") while moons were bucketed by SYSTEM
+ *      ("Jupiter system"), so Jupiter sat in one group and the Galileans
+ *      in another. Asking for a moon of Jupiter meant knowing Jupiter
+ *      was filed under its composition.
+ *   2. Its asteroid-belt test was `orbitRadius < 500`, written before
+ *      SYSTEM_SCALE=2 doubled every heliocentric orbit (worker/factions.js).
+ *      Ceres sits at 360×2=720, so the belt bucket became UNREACHABLE and
+ *      every main-belt rock — Ceres, Vesta, Pallas, Juno, Hygiea — was
+ *      labelled "Kuiper belt". findBelts() clusters on a RATIO instead,
+ *      so it cannot rot the same way when the map is rescaled.
+ *
+ * `farSystem: true` flags the group as collapsible — Centauri and Cygnus
+ * X live behind a toggle so the Sol picker isn't dominated by 15+ exotic
+ * destinations. They stay hand-folded here on purpose: each is one
+ * DESTINATION in the player's head regardless of its internal
+ * parent-child structure (Prismara orbits Crimson but belongs in the
+ * Centauri bucket, not a "Crimson System" of its own).
+ */
+function pickerGroupOf(
   body: import('../types').Body,
-  bodies: import('../types').Body[],
-): { key: string; label: string; order: number; farSystem?: boolean } {
-  // Far systems get folded into one group each regardless of their
-  // own internal parent-child structure (Prismara orbits Crimson but
-  // belongs in the Centauri bucket, not its own "Crimson system"
-  // sub-group). High order so they sort to the bottom of the list.
-  if (BINARY_SYSTEM_BODY_IDS.has(body.id)) {
-    return { key: 'centauri', label: 'Centauri system', order: 20, farSystem: true };
-  }
-  if (BLACK_HOLE_SYSTEM_BODY_IDS.has(body.id)) {
-    return { key: 'cygnus', label: 'Cygnus X system', order: 21, farSystem: true };
-  }
-  if (!body.parent || body.parent === 'sol') {
-    // Categorize sun-orbiters by type for legibility.
-    if (body.type === 'terrestrial') return { key: 'inner', label: 'Inner system', order: 1 };
-    if (body.type === 'dwarf' && body.orbitRadius < 500) return { key: 'belt', label: 'Asteroid belt', order: 2 };
-    if (body.type === 'gas_giant') return { key: 'gas', label: 'Gas giants', order: 3 };
-    if (body.type === 'ice_giant') return { key: 'ice', label: 'Ice giants', order: 4 };
-    if (body.type === 'dwarf') return { key: 'kuiper', label: 'Kuiper belt', order: 5 };
-    return { key: 'other', label: 'Other', order: 99 };
-  }
-  // Moons: group by parent body's name.
-  const parent = bodies.find(b => b.id === body.parent);
-  const pName = parent?.name ?? body.parent;
-  return { key: `moons-${body.parent}`, label: `${pName} system`, order: 10 };
+  rootOf: (bodyId: string) => string,
+): { key: string; farSystem?: boolean } {
+  if (BINARY_SYSTEM_BODY_IDS.has(body.id)) return { key: 'centauri', farSystem: true };
+  if (BLACK_HOLE_SYSTEM_BODY_IDS.has(body.id)) return { key: 'cygnus', farSystem: true };
+  return { key: rootOf(body.id) };
 }
 
 const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
@@ -1625,19 +1628,47 @@ const TransferTargetPicker: React.FC<TransferTargetPickerProps> = ({
     });
   }, [bodies, excludeBodyId, query]);
 
+  // Built once per body list, not per body: makeSystemRootOf computes
+  // belt clustering up front and memoizes the parent walk internally.
+  const rootOf = useMemo(() => makeSystemRootOf(bodies), [bodies]);
+
   const groups = useMemo(() => {
+    const byId = new Map(bodies.map(b => [b.id, b]));
     const map = new Map<string, { label: string; order: number; farSystem?: boolean; bodies: import('../types').Body[] }>();
     for (const b of visible) {
-      const g = groupOf(b, bodies);
-      if (!map.has(g.key)) map.set(g.key, { label: g.label, order: g.order, farSystem: g.farSystem, bodies: [] });
+      const g = pickerGroupOf(b, rootOf);
+      if (!map.has(g.key)) {
+        // Far systems keep their hand-written names; everything else is
+        // named by systemLabel, which already knows that a bare rock is
+        // "Midas" and only a body with satellites earns "… System".
+        const label = g.key === 'centauri' ? 'Centauri system'
+          : g.key === 'cygnus' ? 'Cygnus X system'
+          : systemLabel(bodies, g.key);
+        map.set(g.key, { label, order: 0, farSystem: g.farSystem, bodies: [] });
+      }
       map.get(g.key)!.bodies.push(b);
     }
-    // Sort body lists by name; groups by .order then label.
-    for (const v of map.values()) v.bodies.sort((a, b) => a.name.localeCompare(b.name));
+    // Order Sol groups by distance from the sun, so the list reads
+    // outward — Core, Earth, Mars, the Belt, Jupiter … Kuiper. That is
+    // the map players already have in their heads, and it beats an
+    // arbitrary hand-assigned rank that has to be renumbered whenever a
+    // group is added.
+    //
+    // Two shapes of key: a REAL body (jupiter → use its own orbit) and a
+    // SYNTHETIC root (the Core, and each belt — no body carries that id,
+    // so fall back to the median orbit of its members).
+    for (const [key, v] of map.entries()) {
+      v.bodies.sort((a, b) => a.name.localeCompare(b.name));
+      if (v.farSystem) { v.order = key === 'centauri' ? 1e9 : 1e9 + 1; continue; }
+      const root = byId.get(key);
+      if (root) { v.order = root.orbitRadius ?? 0; continue; }
+      const radii = v.bodies.map(b => b.orbitRadius ?? 0).sort((a, b) => a - b);
+      v.order = radii[Math.floor(radii.length / 2)] ?? 0;
+    }
     return Array.from(map.entries())
       .map(([key, v]) => ({ key, ...v }))
       .sort((a, b) => a.order - b.order || a.label.localeCompare(b.label));
-  }, [visible, bodies]);
+  }, [visible, bodies, rootOf]);
 
   // Active-query auto-expand: when the player is searching, any
   // far-system group that has matches gets opened so the matches are
