@@ -113,13 +113,12 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
   // costs the resource it PRODUCES, so compounding is self-limiting. The
   // old cross-feed (forge cost credits, mint cost metal) was a closed
   // positive-feedback loop that left science 2.5x behind by endgame.
-  // Mirrors BUILDING_DEFS.shields in worker/actions.js. Costs metal AND
-  // credits: it is the one building that buys pure survivability, and
-  // pricing it in a single resource would let whichever economy is
-  // strongest turtle for free.
+  // Mirrors BUILDING_DEFS.shields in worker/actions.js. Cities only:
+  // ground is what you protect, orbit is what you contest. Costs metal
+  // AND credits so the strongest single economy cannot turtle for free.
   shields: {
     displayName: 'Shields',
-    hostType: 'any',
+    hostType: 'city',
     baseCost: { fuel: 0, ore: 45, credits: 45 },
     costScaling: 1.7,
     baseBuildTicks: 35,

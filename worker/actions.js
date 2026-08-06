@@ -1641,12 +1641,15 @@ const BUILDING_DEFS = {
   mint:     { hostType: 'city',    base: { fuel: 0, metal: 0,  gold: 40 }, costScaling: 1.6, baseTicks: 20, timeScaling: 1.3 },
   lab:      { hostType: 'any',     base: { fuel: 0, metal: 0,  gold: 40 }, costScaling: 1.6, baseTicks: 20, timeScaling: 1.3 },
   weapons:  { hostType: 'station', base: { fuel: 0, metal: 30, gold: 20 }, costScaling: 1.6, baseTicks: 30, timeScaling: 1.3 },
-  // ORBITAL SHIELDS. Costs metal AND credits: it is the one building that
-  // buys pure survivability, and pricing it in a single resource would let
-  // whichever economy is strongest turtle for free. hostType 'any' so a
-  // station can screen itself too — an orbital platform with no shield and
-  // no surface to hide on is the softest thing on the board.
-  shields:  { hostType: 'any',     base: { fuel: 0, metal: 45, gold: 45 }, costScaling: 1.7, baseTicks: 35, timeScaling: 1.35 },
+  // ORBITAL SHIELDS — cities only. Costs metal AND credits: it is the one
+  // building that buys pure survivability, and pricing it in a single
+  // resource would let whichever economy is strongest turtle for free.
+  //
+  // 'city' rather than 'any' is a deliberate design line: a shielded
+  // station would let a player fortify orbit itself, and the whole point
+  // of stations is that they are the exposed half of a holding. Ground is
+  // what you protect; orbit is what you contest.
+  shields:  { hostType: 'city',    base: { fuel: 0, metal: 45, gold: 45 }, costScaling: 1.7, baseTicks: 35, timeScaling: 1.35 },
   shipyard: { hostType: 'station', base: { fuel: 0, metal: 50, gold: 30 }, costScaling: 1.7, baseTicks: 40, timeScaling: 1.3 },
   // Trajectory Control Thrusters — asteroid-weapon enabler. Mirrors
   // src/game/settlements.ts BUILDING_DEFS. hostBodyType restricts the

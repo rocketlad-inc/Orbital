@@ -1251,7 +1251,11 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
 // progress bar with cancel.
 // ============================================================
 
-const CITY_BUILDINGS: BuildingKind[] = ['forge', 'mint', 'lab'];
+// NOTE: this list — not BUILDING_DEFS — is what decides which cards a
+// player sees. A building can exist server-side, be costed, be gated and
+// be fully wired, and still be unbuildable because it is missing here.
+// Orbital Shields shipped that way for exactly one commit.
+const CITY_BUILDINGS: BuildingKind[] = ['forge', 'mint', 'lab', 'shields'];
 // Labs host on stations too (economy rework §1.3): stations carry the
 // ×1.4 science type-multiplier, so they're the natural research site.
 const STATION_BUILDINGS: BuildingKind[] = ['weapons', 'shipyard', 'lab'];
