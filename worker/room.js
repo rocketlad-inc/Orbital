@@ -1,4 +1,4 @@
-import { resolveSenate, getActiveSliders, hasActiveSanction } from './senate.js';
+import { resolveSenate, getSliderResolver, hasActiveSanction } from './senate.js';
 import { recomputeBodyOwnership, SETTLEMENT_SPEED } from './factions.js';
 import { parsePartsJson, computeShipStats, countPart, detonatorDamage,
          shipSpeed, hitChance,
@@ -1563,18 +1563,29 @@ export class Room {
     // sources. Empty on a harvest failure → research simply pauses.
     const scienceIncomeByFaction = new Map();
 
-    let senateSliders = {};
-    try { senateSliders = await getActiveSliders(this.env, gameId, tick); }
-    catch (e) { console.error('getActiveSliders failed', e); }
-    const combatDamageMult = Number(senateSliders.combat_damage_multiplier ?? 1);
+    // Slider laws for this tick. ONE query, then O(1) per faction —
+    // slider laws can now name a target, so "the" effective value is no
+    // longer a single number for the whole match: it depends on who is
+    // being charged. sliderFor(factionId) layers any law aimed at that
+    // faction over the general law.
+    //
+    // sliderFor(null) is the general law, used where no faction is in
+    // scope. That is the old behaviour exactly, so any site not yet
+    // faction-aware keeps working and simply ignores targeting.
+    let sliderFor = () => ({});
+    try { sliderFor = await getSliderResolver(this.env, gameId, tick); }
+    catch (e) { console.error('getSliderResolver failed', e); }
+    // Per-faction accessors. Each is a function now, not a scalar: a
+    // captured constant here would silently re-globalize the law.
+    const combatDamageMultOf = (fid) => Number(sliderFor(fid).combat_damage_multiplier ?? 1);
     // Senate yield sliders, applied to every settlement at distribution
     // time. The fuel one is kept ONLY so a law passed before fuel was
     // retired still resolves instead of throwing; nothing spends fuel any
     // more. Metal, credits and science are the live levers.
-    const fuelYieldMult = Number(senateSliders.fuel_yield_multiplier ?? 1);
-    const metalYieldMult = Number(senateSliders.metal_yield_multiplier ?? 1);
-    const goldYieldMult = Number(senateSliders.gold_yield_multiplier ?? 1);
-    const scienceYieldMult = Number(senateSliders.science_yield_multiplier ?? 1);
+    const fuelYieldMultOf = (fid) => Number(sliderFor(fid).fuel_yield_multiplier ?? 1);
+    const metalYieldMultOf = (fid) => Number(sliderFor(fid).metal_yield_multiplier ?? 1);
+    const goldYieldMultOf = (fid) => Number(sliderFor(fid).gold_yield_multiplier ?? 1);
+    const scienceYieldMultOf = (fid) => Number(sliderFor(fid).science_yield_multiplier ?? 1);
 
     // Senate sanction cache for this tick. Used by trade routes
     // (trade_embargo), combat damage (war_authorization), and body
@@ -2589,7 +2600,7 @@ export class Room {
         const atkProfile = damageProfile(attacker._parts);
         const attackPower =
           attacker.damage_per_tick * attackerWeaponMul(attacker.owner_faction_id, atkProfile)
-          * rankMul * combatDamageMult
+          * rankMul * combatDamageMultOf(attacker.owner_faction_id)
           // Unpaid fleet (§1 arrears): −25% damage until the debt clears.
           * arrearsMulOf(attacker.owner_faction_id)
           // Gunner captain (spec §3): +10% damage, multiplicative.
@@ -2672,7 +2683,7 @@ export class Room {
         // Settlement guns fire kinetic, so a target's shields cut them
         // and armor does nothing — same counter-matrix as ship kinetic.
         const KINETIC = { kinetic: 1, energy: 0 };
-        const power = base * kineticMulOf(st.owner_faction_id) * combatDamageMult;
+        const power = base * kineticMulOf(st.owner_faction_id) * combatDamageMultOf(st.owner_faction_id);
         const warAuthMul = (await sanctioned(target.owner_faction_id, 'war_authorization')) ? 2 : 1;
         // Seeded on the settlement id so a station's roll is as reproducible
         // as a ship's.
@@ -3231,10 +3242,10 @@ export class Room {
           // Senate yield sliders ride at the END of each chain, so a law
           // scales the finished number rather than fighting the building
           // multipliers for position.
-          fuel:    Number(s.yield_fuel    ?? 0) * popMul * tm.fuel              * prodMul * indMul * fuelYieldMult,
-          metal:   Number(s.yield_metal   ?? 0) * popMul * tm.metal   * forgeMul * prodMul * indMul * metalYieldMult,
-          gold:    Number(s.yield_gold    ?? 0) * popMul * tm.gold    * mintMul  * prodMul * indMul * goldYieldMult,
-          science: Number(s.yield_science ?? 0) * popMul * tm.science * labMul   * prodMul * indMul * scienceYieldMult,
+          fuel:    Number(s.yield_fuel    ?? 0) * popMul * tm.fuel              * prodMul * indMul * fuelYieldMultOf(s.fid),
+          metal:   Number(s.yield_metal   ?? 0) * popMul * tm.metal   * forgeMul * prodMul * indMul * metalYieldMultOf(s.fid),
+          gold:    Number(s.yield_gold    ?? 0) * popMul * tm.gold    * mintMul  * prodMul * indMul * goldYieldMultOf(s.fid),
+          science: Number(s.yield_science ?? 0) * popMul * tm.science * labMul   * prodMul * indMul * scienceYieldMultOf(s.fid),
         };
 
         // Collector status is now per (body, faction) group — see
@@ -3358,7 +3369,8 @@ export class Room {
     // in the upkeep_carry_* columns until a whole unit is due, so pools
     // stay integers and a lone corvette bills 1 gold every 4th tick.
     try {
-      const upkeepMult = Number(senateSliders.fleet_upkeep_multiplier ?? 1);
+      // Resolved per faction inside the ledger loop below — an upkeep law
+      // can now name one target, so there is no single match-wide value.
       // KEEP IN SYNC with SHIP_UPKEEP in src/game/shipClasses.ts.
       // 2026-08-02 rebalance: frigate 1/1 → 0.5/0.5, destroyer 2/2 → 1/1
       // (first playtest read the original bill as too steep).
@@ -3399,6 +3411,7 @@ export class Room {
         .bind(gameId)
         .all()).results ?? [];
       for (const f of ledger) {
+        const upkeepMult = Number(sliderFor(f.id).fleet_upkeep_multiplier ?? 1);
         const owed = owedByFaction.get(f.id) ?? { gold: 0, metal: 0 };
         const prevArrears = Number(f.arrears_gold ?? 0) + Number(f.arrears_metal ?? 0);
         // Slider at 0 = upkeep suspended: nothing bills, and any standing

@@ -369,7 +369,8 @@ async function handleRushBuild(req, env, ctx) {
   const orderPartsCost = partsCost(orderParts);
   let costMult = 1;
   try {
-    const sliders = await getActiveSliders(env, gameId, tick);
+    // Per-faction: a slider law aimed at me.id overrides the general one.
+    const sliders = await getActiveSliders(env, gameId, tick, me.id);
     const b = Number(sliders.ship_build_cost_multiplier);
     if (Number.isFinite(b) && b > 0) costMult *= b;
     const r = Number(sliders.rush_cost_multiplier);
@@ -693,7 +694,8 @@ async function handleQueueBuild(req, env, ctx) {
     const tickRow = await env.DB
       .prepare('SELECT current_tick FROM games WHERE id = ?')
       .bind(gameId).first();
-    const sliders = await getActiveSliders(env, gameId, tickRow?.current_tick ?? 0);
+    // Per-faction: a build-cost law aimed at me.id overrides the general one.
+    const sliders = await getActiveSliders(env, gameId, tickRow?.current_tick ?? 0, me.id);
     const v = Number(sliders.ship_build_cost_multiplier);
     if (Number.isFinite(v) && v > 0) buildCostMult = v;
   } catch { /* default */ }

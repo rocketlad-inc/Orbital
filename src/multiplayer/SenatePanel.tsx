@@ -146,6 +146,11 @@ export function SenatePanel({ gameId }: { gameId: string }) {
   const [sliderId, setSliderId] = useState<string>('');
   const [target, setTarget] = useState<number>(1);
   const [targetFactionId, setTargetFactionId] = useState<string>('');
+  // Kept SEPARATE from targetFactionId. That one is a required choice for
+  // sanctions and clears to "— choose —"; this one is optional and empty
+  // means "everyone", which is a valid submission. Sharing one field
+  // would make an un-chosen sanction and a general law indistinguishable.
+  const [sliderTargetId, setSliderTargetId] = useState<string>('');
   const [title, setTitle] = useState('');
   const [summary, setSummary] = useState('');
   const [debateTicks, setDebateTicks] = useState<number>(DEBATE_DEFAULT);
@@ -250,6 +255,9 @@ export function SenatePanel({ gameId }: { gameId: string }) {
       if (!selectedSlider) { setError('Pick a slider.'); return; }
       body.slider_id = selectedSlider.id;
       body.target_value = target;
+      // Omitted entirely when empty: the server reads a missing/blank
+      // target_faction_id as "general law", which is the default.
+      if (sliderTargetId) body.target_faction_id = sliderTargetId;
     } else if (kind === 'chancellor_vote') {
       if (!targetFactionId) { setError('Pick a candidate.'); return; }
       // The chancellor bill is ONE-SHOT per faction: a failed bid burns
@@ -286,7 +294,7 @@ export function SenatePanel({ gameId }: { gameId: string }) {
     setBusy(false);
     if (!res.ok) { setError(res.error?.message ?? 'Could not propose'); return; }
     setTitle(''); setSummary('');
-    setTargetFactionId('');
+    setTargetFactionId(''); setSliderTargetId('');
     setDebateTicks(DEBATE_DEFAULT); setVoteTicks(VOTE_DEFAULT);
     refresh();
   }
@@ -390,6 +398,41 @@ export function SenatePanel({ gameId }: { gameId: string }) {
                   value={target}
                   onChange={(e) => setTarget(parseFloat(e.target.value))}
                 />
+
+                {/* Who the law binds. "Everyone" is the default and the
+                    historical behaviour of every slider law. A named
+                    faction makes it apply to them ALONE, overriding the
+                    general law for them and leaving everyone else on it.
+                    Match-wide knobs (per_faction false — the tick clock)
+                    hide this entirely rather than offering a choice the
+                    server will reject. */}
+                {selectedSlider.per_faction !== false && (
+                  <>
+                    <label className="mp-label">Applies to</label>
+                    <select
+                      className="mp-select"
+                      value={sliderTargetId}
+                      onChange={(e) => setSliderTargetId(e.target.value)}
+                    >
+                      <option value="">Everyone (general law)</option>
+                      {factions.map(f => (
+                        <option key={f.id} value={f.id}>
+                          {f.name}{f.id === myFactionId ? ' (you)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <div style={{ fontSize: 11, color: 'var(--mp-fg-dim)', marginTop: 4 }}>
+                      {sliderTargetId
+                        ? `Binds ${factions.find(f => f.id === sliderTargetId)?.name ?? 'them'} alone`
+                          + ` at ${fmtNum(target)}. Everyone else stays on the general law`
+                          + ` (${fmtNum(selectedSlider.general_value ?? selectedSlider.default)}).`
+                          + (sliderTargetId === myFactionId
+                            ? ' You are naming yourself — the floor still has to vote for it.'
+                            : '')
+                        : 'Binds every faction, including you.'}
+                    </div>
+                  </>
+                )}
               </>
             )}
           </>
@@ -633,8 +676,14 @@ function ProposalEffectLine({
   );
 
   if (k === 'slider_law' && p.payload?.slider_id) {
+    // Who it binds is the most consequential thing about a slider law now
+    // that it can be aimed, so it goes in the same sentence as the value
+    // rather than a separate chip someone can miss while voting.
     return wrap(<>
       Sets <strong>{p.payload.slider_id}</strong> to <strong>{fmtNum(p.payload.target_value)}</strong>
+      {targetName
+        ? <> for <strong>{targetName}</strong> only — everyone else keeps the general law</>
+        : <> for <strong>every faction</strong></>}
     </>);
   }
   if (!targetName) return null;

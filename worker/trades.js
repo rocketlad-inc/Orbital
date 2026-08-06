@@ -15,7 +15,7 @@
 //
 // Resource payload uses server faction columns: metal, fuel, gold, science.
 
-import { getActiveSliders } from './senate.js';
+import { getActiveSliders, getSliderResolver } from './senate.js';
 import {
   factionTechLevels, gatingEnabled, hasFeature, lockedError,
 } from './researchUnlocks.js';
@@ -442,10 +442,15 @@ export async function handleAccept(req, env, { session, params }) {
   // treasury to bank it, the resources are simply skimmed off the
   // transaction. Defaults to 0% so an un-legislated game behaves as
   // before this slider was wired.
-  let tariffPct = 0;
+  // Resolved PER RECIPIENT, because the skim is receive-side: a tariff
+  // law aimed at one faction taxes what that faction receives, and
+  // leaves the other side of the same deal untouched. Falls back to a
+  // flat 0% resolver on any senate error, exactly as before.
+  let tariffFor = () => 0;
   try {
-    const sliders = await getActiveSliders(env, gameId, tick);
-    tariffPct = Math.max(0, Math.min(100, Number(sliders.trade_tariff_pct ?? 0)));
+    const resolve = await getSliderResolver(env, gameId, tick);
+    tariffFor = (factionId) => Math.max(0, Math.min(100,
+      Number(resolve(factionId).trade_tariff_pct ?? 0)));
   } catch { /* leave at 0 */ }
   // (Applied as a receive-side skim at delivery time, from the snapshot
   // stored on each leg — see the delivery credit in room.js.)
@@ -486,7 +491,7 @@ export async function handleAccept(req, env, { session, params }) {
         .bind(
           newId(), gameId, tradeId, leg.sender, leg.recipient,
           amounts.metal, amounts.fuel, amounts.gold, amounts.science,
-          Math.round(tariffPct), tick,
+          Math.round(tariffFor(leg.recipient)), tick,
         ),
     );
   }

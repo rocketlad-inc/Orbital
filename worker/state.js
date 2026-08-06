@@ -1187,7 +1187,9 @@ const tradeRoutesP = env.DB
       .all()).results ?? [];
     let mult = 1;
     try {
-      const sliders = await getActiveSliders(env, gameId, game.current_tick ?? 0);
+      // me.id: an upkeep law aimed at this player is the bill THEY pay,
+      // so the quoted number must resolve for them, not for the floor.
+      const sliders = await getActiveSliders(env, gameId, game.current_tick ?? 0, me.id);
       const v = Number(sliders.fleet_upkeep_multiplier);
       if (Number.isFinite(v) && v >= 0) mult = v;
     } catch { /* default */ }

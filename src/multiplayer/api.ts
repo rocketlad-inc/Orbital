@@ -231,8 +231,18 @@ export type SenateSlider = {
   default: number;
   step: number;
   /** Current effective value after applying any active senate_effects
-   *  row. Server emits this as `effective_value`. */
+   *  row — resolved FOR THE CALLER, so a law aimed at you is the number
+   *  you actually pay. Server emits this as `effective_value`. */
   effective_value: number;
+  /** The law binding everyone, ignoring any law aimed at the caller.
+   *  Differs from effective_value only when you personally are targeted.
+   *  Optional: an older server omits it. */
+  general_value?: number;
+  /** True when a law names the caller specifically. */
+  targeted_at_me?: boolean;
+  /** Can this slider be aimed at one faction? False for match-wide knobs
+   *  like the tick clock. Optional; treat missing as true. */
+  per_faction?: boolean;
 };
 
 export type SenateVoteTotals = {

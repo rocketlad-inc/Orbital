@@ -28,6 +28,14 @@ import { voteWeights, weightBreakdown, WEIGHT_RULE } from './systems.js';
 
 export { WEIGHT_RULE };
 
+// `perFaction` decides whether a law may name a target.
+//
+// A slider law is either GENERAL (applies to every faction) or TARGETED
+// (applies to exactly one, overriding the general value for them alone).
+// Not every knob can be meaningfully aimed: the tick clock is one clock
+// for the whole match, so "slow time down, but only for Lorne" has no
+// coherent meaning. Those stay perFaction:false and the server rejects a
+// target on them rather than writing a row that quietly does nothing.
 const SLIDER_CATALOG = [
   {
     id: 'tick_interval_multiplier',
@@ -37,6 +45,8 @@ const SLIDER_CATALOG = [
     min: 0.5,
     max: 2.0,
     step: 0.05,
+    // One clock for the whole match — cannot be aimed at one faction.
+    perFaction: false,
   },
   {
     id: 'ship_build_cost_multiplier',
@@ -46,6 +56,7 @@ const SLIDER_CATALOG = [
     min: 0.5,
     max: 1.5,
     step: 0.05,
+    perFaction: true,
   },
   // Fuel Yield Multiplier used to sit here. Fuel was retired from the
   // economy (see actions.js: "Fuel was removed from the game economy"),
@@ -61,6 +72,7 @@ const SLIDER_CATALOG = [
     min: 0.5,
     max: 2.0,
     step: 0.05,
+    perFaction: true,
   },
   {
     id: 'gold_yield_multiplier',
@@ -72,6 +84,7 @@ const SLIDER_CATALOG = [
     min: 0.5,
     max: 2.0,
     step: 0.05,
+    perFaction: true,
   },
   {
     id: 'science_yield_multiplier',
@@ -82,6 +95,7 @@ const SLIDER_CATALOG = [
     min: 0.5,
     max: 2.0,
     step: 0.05,
+    perFaction: true,
   },
   {
     id: 'combat_damage_multiplier',
@@ -91,6 +105,7 @@ const SLIDER_CATALOG = [
     min: 0.5,
     max: 2.0,
     step: 0.05,
+    perFaction: true,
   },
   {
     id: 'trade_tariff_pct',
@@ -100,6 +115,7 @@ const SLIDER_CATALOG = [
     min: 0,
     max: 50,
     step: 1,
+    perFaction: true,
   },
   {
     id: 'fleet_upkeep_multiplier',
@@ -109,6 +125,7 @@ const SLIDER_CATALOG = [
     min: 0,
     max: 2.0,
     step: 0.05,
+    perFaction: true,
   },
   {
     id: 'rush_cost_multiplier',
@@ -118,6 +135,7 @@ const SLIDER_CATALOG = [
     min: 0.5,
     max: 3.0,
     step: 0.05,
+    perFaction: true,
   },
 ];
 
@@ -298,30 +316,87 @@ export async function voteWeightDetail(env, gameId, factionId) {
  * (active_from_tick <= currentTick < active_until_tick), falling back
  * to the catalog default if none exists.
  */
-export async function getActiveSliders(env, gameId, currentTick) {
-  // Filter by effect_kind='slider' so the targeted-sanction rows
-  // (trade_embargo, war_authorization, production_sanction — which keep
-  // slider_id NULL) don't accidentally short-circuit through the SLIDER_BY_ID
-  // gate below if anything ever wrote a stray non-null slider_id on them.
-  const rows = await env.DB
-    .prepare(
-      `SELECT slider_id, value, active_from_tick, active_until_tick, created_at_ms
-         FROM senate_effects
-        WHERE game_id = ?
-          AND effect_kind = 'slider'
-          AND active_from_tick <= ?
-          AND active_until_tick > ?`,
-    )
-    .bind(gameId, currentTick, currentTick)
-    .all();
-  const out = {};
-  for (const s of SLIDER_CATALOG) out[s.id] = s.default;
-  // sort by created_at_ms ascending so later rows overwrite earlier ones
-  const sorted = (rows.results ?? []).slice().sort((a, b) => a.created_at_ms - b.created_at_ms);
-  for (const r of sorted) {
-    if (SLIDER_BY_ID[r.slider_id]) out[r.slider_id] = r.value;
+export async function getActiveSliders(env, gameId, currentTick, factionId = null) {
+  const resolve = await getSliderResolver(env, gameId, currentTick);
+  return resolve(factionId);
+}
+
+/**
+ * One query, then O(1) per faction — for the tick loop, which needs
+ * effective values for many factions in the same step and must not fire
+ * a query per settlement.
+ *
+ * Returns `resolve(factionId)`: pass a faction to get the values that
+ * apply TO THAT FACTION; pass null/undefined for the general law only.
+ *
+ * Resolution order, weakest to strongest:
+ *   1. catalog default
+ *   2. GENERAL laws (target_faction_id IS NULL), oldest to newest
+ *   3. TARGETED laws aimed at this faction, oldest to newest
+ *
+ * A targeted law OVERRIDES the general one rather than multiplying with
+ * it. Stacking would make the senate's output hard to predict from the
+ * floor — with an override, "Lorne pays 1.5×" means Lorne pays 1.5×, no
+ * matter what else is on the books.
+ *
+ * Passing no faction deliberately yields general-only. Every call site
+ * that cannot name a faction therefore behaves exactly as it did before
+ * targeting existed, instead of silently picking up someone else's law.
+ */
+export async function getSliderResolver(env, gameId, currentTick) {
+  const base = {};
+  for (const s of SLIDER_CATALOG) base[s.id] = s.default;
+
+  let rows = [];
+  try {
+    // Filter by effect_kind='slider' so the targeted-sanction rows
+    // (trade_embargo, war_authorization, production_sanction — which keep
+    // slider_id '') don't short-circuit through the SLIDER_BY_ID gate.
+    const res = await env.DB
+      .prepare(
+        `SELECT slider_id, value, target_faction_id, created_at_ms
+           FROM senate_effects
+          WHERE game_id = ?
+            AND effect_kind = 'slider'
+            AND active_from_tick <= ?
+            AND active_until_tick > ?`,
+      )
+      .bind(gameId, currentTick, currentTick)
+      .all();
+    rows = res.results ?? [];
+  } catch (e) {
+    // Same defensive posture as hasActiveSanction: a senate read must
+    // never take down the economy pass that calls it.
+    console.error('getSliderResolver query failed (using defaults)', e);
+    return () => ({ ...base });
   }
-  return out;
+
+  // created_at_ms ascending so later rows overwrite earlier ones.
+  const sorted = rows.slice().sort((a, b) => a.created_at_ms - b.created_at_ms);
+  const general = {};
+  const targeted = new Map();          // factionId -> { sliderId: value }
+  for (const r of sorted) {
+    if (!SLIDER_BY_ID[r.slider_id]) continue;
+    if (r.target_faction_id) {
+      const m = targeted.get(r.target_faction_id) ?? {};
+      m[r.slider_id] = r.value;
+      targeted.set(r.target_faction_id, m);
+    } else {
+      general[r.slider_id] = r.value;
+    }
+  }
+
+  const generalView = { ...base, ...general };
+  const cache = new Map();
+  return (factionId) => {
+    if (!factionId) return generalView;
+    const hit = cache.get(factionId);
+    if (hit) return hit;
+    const mine = targeted.get(factionId);
+    const view = mine ? { ...generalView, ...mine } : generalView;
+    cache.set(factionId, view);
+    return view;
+  };
 }
 
 async function listActiveEffectRows(env, gameId, currentTick) {
@@ -435,7 +510,14 @@ async function handleListSliders(_req, env, { params, session }) {
   const { gameId } = params;
   const ctx = await loadGameAndFaction(env, gameId, session);
   if (ctx.error) return ctx.error;
-  const effective = await getActiveSliders(env, gameId, ctx.game.current_tick);
+  // Two views. `effective_value` is what applies to the CALLER — a law
+  // aimed at them is the number they actually pay, so that is the one
+  // their panel must lead with. `general_value` is the floor's law, kept
+  // alongside so the UI can show "1.5x (general 1.0x)" and make it
+  // obvious when you personally are being singled out.
+  const resolve = await getSliderResolver(env, gameId, ctx.game.current_tick);
+  const mine = resolve(ctx.faction?.id ?? null);
+  const general = resolve(null);
   const effects = await listActiveEffectRows(env, gameId, ctx.game.current_tick);
   return json({
     current_tick: ctx.game.current_tick,
@@ -447,7 +529,10 @@ async function handleListSliders(_req, env, { params, session }) {
       min: s.min,
       max: s.max,
       step: s.step,
-      effective_value: effective[s.id],
+      per_faction: s.perFaction !== false,
+      effective_value: mine[s.id],
+      general_value: general[s.id],
+      targeted_at_me: mine[s.id] !== general[s.id],
     })),
     active_effects: effects,
   });
@@ -604,9 +689,37 @@ async function buildBillPayload(env, gameId, proposerFactionId, kind, body) {
     const v = Number(body.target_value);
     if (!Number.isFinite(v)) return { error: err(400, 'bad_request', 'target_value must be a number') };
     if (v < slider.min || v > slider.max) return { error: err(400, 'bad_request', `target_value out of range [${slider.min}, ${slider.max}]`) };
+
+    // Optional target. Absent/empty => a GENERAL law binding everyone,
+    // which is the whole prior behaviour of this bill kind.
+    const aimedAt = typeof body.target_faction_id === 'string' && body.target_faction_id
+      ? body.target_faction_id
+      : null;
+    if (!aimedAt) {
+      return {
+        data: { slider_id: body.slider_id, target_value: v, target_faction_id: null },
+        broadcast: { slider_id: body.slider_id, target_value: v, target_faction_id: null },
+      };
+    }
+    if (slider.perFaction === false) {
+      return { error: err(400, 'not_targetable', `${slider.label} applies to the whole match and cannot target one faction`) };
+    }
+    // Self-targeting is ALLOWED here, unlike the sanction kinds. A
+    // sanction aimed at yourself is theatre; a slider law aimed at
+    // yourself is a bid for privilege ("grant us 1.5x metal") or a
+    // concession offered in a negotiation. Either way the floor still
+    // has to vote for it, so it is a political move, not an exploit.
+    const target = await env.DB
+      .prepare('SELECT id, name FROM game_factions WHERE id = ? AND game_id = ? AND status = ?')
+      .bind(aimedAt, gameId, 'active')
+      .first();
+    if (!target) return { error: err(404, 'not_found', 'target faction not found / not active') };
     return {
-      data: { slider_id: body.slider_id, target_value: v },
-      broadcast: { slider_id: body.slider_id, target_value: v },
+      data: { slider_id: body.slider_id, target_value: v, target_faction_id: aimedAt },
+      broadcast: {
+        slider_id: body.slider_id, target_value: v,
+        target_faction_id: aimedAt, target_faction_name: target.name,
+      },
     };
   }
 
@@ -834,15 +947,19 @@ async function applyBillEffects(env, gameId, tick, proposal, payload, effectUnti
   if (kind === 'slider_law') {
     if (!payload.slider_id || !SLIDER_BY_ID[payload.slider_id]) return null;
     const effectId = newId("eff");
+    // target_faction_id NULL = general law. A non-null target makes this
+    // row apply to that faction alone; getSliderResolver layers it over
+    // the general value for them and leaves everyone else untouched.
+    const aimedAt = payload.target_faction_id || null;
     await env.DB
       .prepare(
         "INSERT INTO senate_effects " +
         "(id, game_id, slider_id, value, effect_kind, target_faction_id, proposal_id, active_from_tick, active_until_tick, created_at_tick, created_at_ms) " +
-        "VALUES (?, ?, ?, ?, 'slider', NULL, ?, ?, ?, ?, ?)"
+        "VALUES (?, ?, ?, ?, 'slider', ?, ?, ?, ?, ?, ?)"
       )
-      .bind(effectId, gameId, payload.slider_id, Number(payload.target_value), proposal.id, tick, effectUntil, tick, now)
+      .bind(effectId, gameId, payload.slider_id, Number(payload.target_value), aimedAt, proposal.id, tick, effectUntil, tick, now)
       .run();
-    return null;
+    return aimedAt ? { target_faction_id: aimedAt } : null;
   }
 
   if (ONGOING_EFFECT_KINDS.has(kind)) {
