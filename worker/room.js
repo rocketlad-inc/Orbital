@@ -1509,6 +1509,10 @@ export class Room {
     // wiped, yields halved, asteroid destroyed) atomically per body.
     try {
       await this.resolveAsteroidImpacts(gameId, tick);
+      // Shields AFTER combat: the volley above spends the pool, this
+      // refills what survived. Running it first would hand the defender a
+      // tick of regen they had not earned yet.
+      await this.resolveShields(gameId, tick, CFG);
     } catch (e) {
       console.error('resolveAsteroidImpacts failed', e);
     }
@@ -2427,7 +2431,8 @@ export class Room {
     const livingSettlements = (await this.env.DB
       .prepare(
         `SELECT id, name, body_id, owner_faction_id, type, hp, hp_max,
-                buildings_json, last_combat_tick, population
+                buildings_json, last_combat_tick, population,
+                shield_hp, shield_hp_max, shield_down_tick
            FROM game_settlements
           WHERE game_id = ? AND destroyed_at_tick IS NULL`,
       )
@@ -2733,10 +2738,29 @@ export class Room {
       // Damage was accrued per-attacker in the ship volley loop above
       // (which already applies stance gating — see settlementTargets).
       const entry = settlementDamage.get(s.id);
-      const incoming = entry?.total ?? 0;
+      const rawIncoming = entry?.total ?? 0;
       const fired = firedSettlementIds.has(s.id);
-      if (incoming <= 0 && !fired) continue;   // untouched this tick
+      if (rawIncoming <= 0 && !fired) continue;   // untouched this tick
+
+      // ORBITAL SHIELDS absorb first. The pool regenerates and structure
+      // does not, which is the whole point: a raid should cost a defender
+      // time, not a permanent amputation. Overflow past the shield spills
+      // into structure in the SAME tick — a big enough volley still gets
+      // through, so shields raise the bar rather than making a world
+      // immortal.
+      let shieldHp = Number(s.shield_hp ?? 0);
+      let shieldDownTick = s.shield_down_tick ?? null;
+      let absorbed = 0;
+      if (rawIncoming > 0 && shieldHp > 0) {
+        absorbed = Math.min(shieldHp, rawIncoming);
+        shieldHp -= absorbed;
+        // Stamp the collapse so the regen grace period starts from the
+        // moment it broke, not from the last time anyone shot at it.
+        if (shieldHp <= 0) shieldDownTick = tick;
+      }
+      const incoming = rawIncoming - absorbed;
       const newHp = Math.max(0, s.hp - incoming);
+      const shieldChanged = absorbed > 0;
       if (incoming > 0 && newHp <= 0) {
         await this.env.DB
           .prepare('UPDATE game_settlements SET hp = 0, destroyed_at_tick = ?, last_combat_tick = ? WHERE id = ?')
@@ -2755,9 +2779,28 @@ export class Room {
         // COALESCE(NULL, …) preserves the old stamp on fire-only ticks.
         // (last_combat_tick must NOT double as this stamp: it gates the
         // return-fire cadence — see the note in worker/state.js.)
+        // last_damaged_tick stamps when the SHIELD takes a hit too: from
+        // the defender's side they are under fire either way, and the
+        // urgent-alert logic keys off this. A shield quietly eating a
+        // bombardment while the city reports "not damaged" would be a
+        // worse lie than the 100%-HP false alarm this stamp replaced.
+        const tookAnything = rawIncoming > 0;
         await this.env.DB
-          .prepare('UPDATE game_settlements SET hp = ?, last_combat_tick = ?, last_damaged_tick = COALESCE(?, last_damaged_tick), last_target_id = COALESCE(?, last_target_id) WHERE id = ?')
-          .bind(newHp, fired ? tick : (s.last_combat_tick ?? tick), incoming > 0 ? tick : null, firedSettlementTargets.get(s.id) ?? null, s.id)
+          .prepare(
+            `UPDATE game_settlements
+                SET hp = ?, last_combat_tick = ?,
+                    last_damaged_tick = COALESCE(?, last_damaged_tick),
+                    last_target_id = COALESCE(?, last_target_id),
+                    shield_hp = ?, shield_down_tick = ?
+              WHERE id = ?`,
+          )
+          .bind(
+            newHp, fired ? tick : (s.last_combat_tick ?? tick),
+            tookAnything ? tick : null,
+            firedSettlementTargets.get(s.id) ?? null,
+            shieldChanged ? shieldHp : Number(s.shield_hp ?? 0),
+            shieldDownTick, s.id,
+          )
           .run();
       }
     }
@@ -4514,6 +4557,77 @@ export class Room {
    * nothing else happens. Lets a player who built TT but doesn't want
    * to use it as a weapon dispose of the rock pacifically.
    */
+  /**
+   * ORBITAL SHIELD upkeep, once per tick.
+   *
+   * Does two jobs that have to happen together:
+   *
+   *  1. RECONCILE THE CAP. shield_hp_max is derived from the shields
+   *     building level, but the level changes when construction finishes
+   *     and nothing else recomputes it. Doing it here means a freshly
+   *     completed shield starts filling on the next tick without the
+   *     build-completion path needing to know shields exist. It also
+   *     handles the cap going DOWN — a razed and rebuilt settlement, or a
+   *     config change to shield_hp_per_level — by clamping current to max.
+   *
+   *  2. REGENERATE. Up to the cap, and NOT during the grace period after
+   *     a collapse. Without that grace a shield that just broke would
+   *     soak the very next volley and no bombardment could ever finish
+   *     the job; with it, breaking a shield buys the attacker a real
+   *     window.
+   *
+   * Runs on ALL living settlements including ones with no shield, because
+   * job 1 is what gives a newly built shield its pool in the first place.
+   * Cheap: one read, and writes only where something actually changed.
+   */
+  async resolveShields(gameId, tick, CFG) {
+    const perLevel = Number(CFG.shield_hp_per_level ?? 0);
+    const regen = Number(CFG.shield_regen_per_tick ?? 0);
+    const grace = Number(CFG.shield_down_grace_ticks ?? 0);
+
+    const rows = (await this.env.DB
+      .prepare(
+        `SELECT id, buildings_json, shield_hp, shield_hp_max, shield_down_tick,
+                last_damaged_tick
+           FROM game_settlements
+          WHERE game_id = ? AND destroyed_at_tick IS NULL`,
+      ).bind(gameId).all()).results ?? [];
+
+    const stmts = [];
+    for (const r of rows) {
+      let level = 0;
+      try {
+        const b = r.buildings_json ? JSON.parse(r.buildings_json) : null;
+        level = Number(b?.shields ?? 0) || 0;
+      } catch { level = 0; }
+
+      const max = Math.max(0, level * perLevel);
+      let hp = Math.min(Number(r.shield_hp ?? 0), max);
+      let downTick = r.shield_down_tick ?? null;
+
+      // A shield that has recovered clears its collapse stamp, so the
+      // next break starts a fresh grace window rather than inheriting a
+      // stale one from an old fight.
+      if (hp >= max && max > 0) downTick = null;
+
+      const inGrace = downTick != null && (tick - downTick) < grace;
+      if (max > 0 && hp < max && !inGrace) {
+        hp = Math.min(max, hp + regen);
+        if (hp >= max) downTick = null;
+      }
+
+      const capChanged = Math.abs(max - Number(r.shield_hp_max ?? 0)) > 1e-9;
+      const hpChanged = Math.abs(hp - Number(r.shield_hp ?? 0)) > 1e-9;
+      const stampChanged = (downTick ?? null) !== (r.shield_down_tick ?? null);
+      if (!capChanged && !hpChanged && !stampChanged) continue;
+
+      stmts.push(this.env.DB
+        .prepare('UPDATE game_settlements SET shield_hp = ?, shield_hp_max = ?, shield_down_tick = ? WHERE id = ?')
+        .bind(hp, max, downTick, r.id));
+    }
+    if (stmts.length) await this.env.DB.batch(stmts);
+  }
+
   async resolveAsteroidImpacts(gameId, tick) {
     const now = Date.now();
     const arrivals = (await this.env.DB

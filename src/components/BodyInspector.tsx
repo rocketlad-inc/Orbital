@@ -981,9 +981,42 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
               </div>
               <div className="settlement-stats">
                 <span>HP {Math.round(s.hp)}/{s.maxHp}</span>
+                {/* Orbital shields sit BEFORE structure in the damage
+                    order, so they read before it here too. Hidden
+                    entirely when no generator is built — an empty 0/0
+                    bar on every unshielded settlement would be noise on
+                    the majority of the map. */}
+                {(s.shieldHpMax ?? 0) > 0 && (
+                  <span
+                    style={{ color: '#6fd3ff' }}
+                    title={`Orbital shields absorb damage before structure and regenerate. `
+                      + `Structure does not.`}
+                  >
+                    ⬡ {Math.round(s.shieldHp ?? 0)}/{Math.round(s.shieldHpMax ?? 0)}
+                  </span>
+                )}
                 <span>POP {s.population}</span>
                 <span className="yield">{yieldStr || '–'}/harvest</span>
               </div>
+              {/* Two-part bar: shield above structure, so a defender can
+                  see at a glance which pool is being eaten. The shield
+                  track dims to nothing when down, which is the moment
+                  that matters. */}
+              {(s.shieldHpMax ?? 0) > 0 && (
+                <div style={{ display: 'flex', gap: 3, marginTop: 3 }}>
+                  <div style={{
+                    flex: 1, height: 3, borderRadius: 2,
+                    background: 'rgba(111,211,255,.15)', overflow: 'hidden',
+                  }}>
+                    <div style={{
+                      width: `${Math.max(0, Math.min(100,
+                        ((s.shieldHp ?? 0) / Math.max(1, s.shieldHpMax ?? 1)) * 100))}%`,
+                      height: '100%', background: '#6fd3ff',
+                      transition: 'width .3s ease',
+                    }} />
+                  </div>
+                </div>
+              )}
               {/* Per-settlement LOCAL row removed — the top card now
                   surfaces a body-level LOCAL total (sum across city +
                   station). Stockpile is still drained per-settlement

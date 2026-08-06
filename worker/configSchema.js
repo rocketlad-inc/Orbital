@@ -165,6 +165,27 @@ export const SCHEMA = [
       + 'city:station ratio at 5:3 so stations stay the softer target.',
   },
   {
+    id: 'shield_hp_per_level', group: 'combat', type: 'int',
+    label: 'Shield HP per level', def: 120, min: 0, max: 100000, step: 10,
+    help: 'Orbital shield pool = this x building level, so level 3 is 360 on top of the '
+      + '300 structure a city has. Shields absorb damage first and regenerate; structure '
+      + 'does neither. This is the main dial on how survivable a defended world is.',
+  },
+  {
+    id: 'shield_regen_per_tick', group: 'combat', type: 'number',
+    label: 'Shield regen per tick', def: 6, min: 0, max: 1000, step: 1,
+    help: 'Pool recovered each tick, up to the maximum. At 6/tick a level-3 shield refills '
+      + 'in about an hour of game time — long enough that a raid still costs the defender '
+      + 'something, short enough that they are not permanently crippled.',
+  },
+  {
+    id: 'shield_down_grace_ticks', group: 'combat', type: 'int',
+    label: 'Ticks before a collapsed shield regenerates', def: 5, min: 0, max: 200, step: 1,
+    help: 'After the pool hits zero it stays down this long before recovering. Without it a '
+      + 'shield that just broke would soak the very next volley, and no bombardment could '
+      + 'ever break through.',
+  },
+  {
     id: 'repair_grace_ticks', group: 'combat', type: 'int',
     label: 'Ticks after combat before repair resumes', def: 3, min: 0, max: 50, step: 1,
   },

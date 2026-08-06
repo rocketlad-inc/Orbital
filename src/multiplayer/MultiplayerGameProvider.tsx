@@ -235,6 +235,8 @@ interface ServerState {
     name: string;
     hp: number;
     hp_max: number;
+    shield_hp?: number;
+    shield_hp_max?: number;
     population: number;
     surface_angle: number | null;
     orbit_rp: number | null;
@@ -654,6 +656,9 @@ function settlementToClient(
     bodyId: localBodyId,
     ownedBy: s.owner_faction_id,
     hp: s.hp,
+    // Orbital shields — the regenerating bar in FRONT of structure.
+    shieldHp: s.shield_hp ?? 0,
+    shieldHpMax: s.shield_hp_max ?? 0,
     maxHp: s.hp_max,
     population: s.population,
     // Stamped when the settlement returns fire; drives the Situation

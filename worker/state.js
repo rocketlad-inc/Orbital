@@ -853,6 +853,10 @@ const settlementsP = env.DB
        )
        SELECT id, body_id, owner_faction_id, type, name,
               hp, hp_max, population,
+              -- Orbital shields: a second, REGENERATING bar in front of
+              -- structure. Shipped raw so the client can draw the pool
+              -- and its fraction without knowing the per-level maths.
+              shield_hp, shield_hp_max,
               surface_angle, orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch,
               stockpile_metal, stockpile_fuel, stockpile_gold, stockpile_science,
               created_at_tick, last_growth_tick, last_harvest_tick,

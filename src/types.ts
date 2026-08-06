@@ -594,6 +594,11 @@ export interface Settlement {
    *  shipyard. Effects compound additively per level via the helpers
    *  in src/game/settlements.ts — see BUILDING_DEFS for the catalog. */
   buildings?: Partial<Record<BuildingKind, number>>;
+  /** Orbital shield pool — absorbs damage BEFORE hp and regenerates.
+   *  Server-authoritative (worker/room.js resolveShields); 0/0 means no
+   *  shield generator has been built. */
+  shieldHp?: number;
+  shieldHpMax?: number;
   /** Single in-flight building upgrade for this settlement. Only one
    *  at a time per settlement — finish or cancel before queueing
    *  another. Cleared by the per-tick completion loop in
@@ -611,7 +616,12 @@ export type BuildingKind =
   // bodies (type='asteroid'). When present, the asteroid's owning
   // faction can target another body and crash this one into it via
   // the RAM action. Single-level, present/absent.
-  | 'trajectory_thrusters';
+  | 'trajectory_thrusters'
+  // Orbital Shields — a REGENERATING pool in front of structure. Unlocked
+  // by Armor 3 ("Hardened Settlements"). Buildable on cities and stations
+  // both: an orbital platform with no shield and no surface to hide on is
+  // the softest thing on the board.
+  | 'shields';
 
 /**
  * One in-flight upgrade at a settlement. The "ship build queue"

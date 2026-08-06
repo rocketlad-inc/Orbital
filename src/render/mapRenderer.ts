@@ -4377,6 +4377,67 @@ export function drawStation(
 /**
  * Dispatch by settlement type
  */
+/**
+ * ORBITAL SHIELD BUBBLE.
+ *
+ * Drawn around the BODY rather than the settlement sprite, for two
+ * reasons: a shield is the thing standing between an attacker and the
+ * whole world, and a city sprite sits ON the surface at some angle — a
+ * bubble hugging it would read as a local dome over one building rather
+ * than cover for the planet.
+ *
+ * Intensity tracks the remaining fraction, so a shield being ground down
+ * visibly fades. It vanishes at zero rather than drawing an empty ring:
+ * "the shield is down" has to be legible instantly from the overworld,
+ * and an outline that persists at 0% is the single most misleading thing
+ * this could draw.
+ *
+ * Skipped below a few pixels of body radius — at system zoom the bubble
+ * would be a smudge over a dot, and the LOD contract already says that
+ * band belongs to territory colour, not per-settlement detail.
+ */
+function drawShieldBubble(
+  settlement: Settlement,
+  body: Body,
+  ctx: RenderContext,
+) {
+  const max = settlement.shieldHpMax ?? 0;
+  const hp = settlement.shieldHp ?? 0;
+  if (max <= 0 || hp <= 0) return;
+
+  const bp = bodyPosition(body, ctx.t, ctx.bodies);
+  const pos = worldToCanvas(bp.x, bp.y, ctx);
+  const bodyR = body.radius * ctx.camera.scale;
+  if (bodyR < 4) return;
+
+  const frac = Math.max(0, Math.min(1, hp / max));
+  const r = bodyR * 1.32 + 3;
+  const c = ctx.ctx;
+
+  c.save();
+  // A slow shimmer so a live shield reads as powered rather than painted.
+  // Deterministic on wall clock, not per-frame random, so it pulses
+  // instead of flickering.
+  const t = (ctx.nowMs ?? performance.now()) / 1000;
+  const pulse = 0.82 + 0.18 * Math.sin(t * 1.6);
+
+  const grad = c.createRadialGradient(pos.x, pos.y, bodyR * 0.9, pos.x, pos.y, r);
+  grad.addColorStop(0, 'rgba(111,211,255,0)');
+  grad.addColorStop(0.82, `rgba(111,211,255,${0.10 * frac * pulse})`);
+  grad.addColorStop(1, `rgba(111,211,255,${0.30 * frac * pulse})`);
+  c.fillStyle = grad;
+  c.beginPath();
+  c.arc(pos.x, pos.y, r, 0, Math.PI * 2);
+  c.fill();
+
+  c.strokeStyle = `rgba(150,225,255,${0.55 * frac * pulse})`;
+  c.lineWidth = 1.2;
+  c.beginPath();
+  c.arc(pos.x, pos.y, r, 0, Math.PI * 2);
+  c.stroke();
+  c.restore();
+}
+
 export function drawSettlement(
   settlement: Settlement,
   body: Body,
@@ -4384,6 +4445,9 @@ export function drawSettlement(
   ctx: RenderContext,
   isSelected: boolean = false,
 ) {
+  // Bubble UNDER the sprite: the settlement should read as being inside
+  // its shield, not behind a pane of glass.
+  drawShieldBubble(settlement, body, ctx);
   if (settlement.type === 'city') {
     drawCity(settlement, body, factions, ctx, isSelected);
   } else {
