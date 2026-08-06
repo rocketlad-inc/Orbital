@@ -2,10 +2,11 @@
 // Ship repair helpers — the client half of the repair loop.
 //
 // Server rules (worker/room.js, maintenance pass): a hull parked at a
-// body with a friendly STATION heals REPAIR_STATION (2) HP/tick, up to
-// its rank/armor-buffed cap; Damage Control (armor 5) adds a trickle
-// anywhere. The auto-retreat standing order routes hulls to the nearest
-// friendly body whose station has a SHIPYARD (a proper dry dock).
+// body with a friendly STATION heals 2 HP/tick plus 5 per SHIPYARD level
+// on that station, up to its rank/armor-buffed cap; Damage Control
+// (armor 5) adds a trickle anywhere. The auto-retreat standing order
+// routes hulls to the nearest friendly body whose station has a SHIPYARD
+// (a proper dry dock) — which is now also where repair is fastest.
 //
 // These helpers mirror that server-side "nearest shipyard" choice so
 // the one-shot "Send to shipyard" buttons (ShipPanel, FleetPanel) pick

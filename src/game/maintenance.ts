@@ -4,17 +4,25 @@
 
 import { Ship, Body, Settlement } from '../types';
 import { getShipClass, ShipClassName } from './shipClasses';
+import { buildingLevel } from './settlements';
 import { rankHpMul } from './techs';
 
 /** Cities no longer repair hulls — repair is station-only (the
  *  orbital dry dock). Kept at 0 so any stray reference is inert. */
 export const REPAIR_PER_TICK_CITY = 0;
 
-/** HP restored per tick when orbiting an owned body with a STATION.
- *  Stations are the sole repair source now — a docked ship is patched
- *  up by station crews/auto-fabbers. Bumped 1 -> 2 to match the old
- *  lone-city heal now that cities don't contribute. */
+/** HP restored per tick by a bare STATION with no shipyard on it.
+ *  Stations are the sole repair source — a docked ship is patched up by
+ *  station crews/auto-fabbers. Mirrors REPAIR_STATION_BASE in
+ *  worker/room.js. */
 export const REPAIR_PER_TICK_STATION = 2;
+
+/** Extra HP/tick per SHIPYARD level on the station (Lorne). The flat +2
+ *  was set when hulls topped out near 200 HP; combat v2 destroyers start
+ *  at 1184 base before defense tech multiplies it, so a wrecked hull took
+ *  hundreds of ticks to come back. Mirrors REPAIR_PER_YARD_LEVEL in
+ *  worker/room.js — KEEP IN SYNC. */
+export const REPAIR_PER_TICK_PER_YARD_LEVEL = 5;
 
 /** Base fuel restored per tick when orbiting an owned body (no settlement) */
 export const REFUEL_PER_TICK_BASE = 1;
@@ -80,7 +88,10 @@ export function maintenanceRatesForShip(
     } else if (st.type === 'station') {
       hasStation = true;
       refuelRate += REFUEL_PER_TICK_STATION;
-      repairRate += REPAIR_PER_TICK_STATION;
+      // Bare dry dock, plus the shipyard's contribution — the yard is
+      // what turns a mooring point into a repair facility.
+      repairRate += REPAIR_PER_TICK_STATION
+        + REPAIR_PER_TICK_PER_YARD_LEVEL * buildingLevel(st, 'shipyard');
     }
   }
   return { repairRate, refuelRate, hasCity, hasStation };

@@ -2940,11 +2940,23 @@ export class Room {
     //
     //      Skipped for ships in transit (they're not orbiting any body's
     //      infrastructure).
-    // Station is now the SOLE repair source (cities don't heal hulls),
-    // so its repair rate is bumped 1 -> 2 to roughly match the old
-    // lone-city heal — a station is a proper dry dock. REPAIR_CITY is
-    // retained but unused so the diff stays readable; remove later.
+    // Station is the SOLE repair source (cities don't heal hulls).
+    //
+    // Repair now scales with the station's SHIPYARD level — +5 HP/tick
+    // per level (Lorne). The old flat +2 was set when hulls topped out
+    // around 200 HP; combat v2 put destroyers at 1184 base and defense
+    // tech multiplies that (a real hull seen at 367/1660), so a wreck
+    // needed ~650 ticks — most of a month at 1h/tick — to come back.
+    // Tying the rate to the yard also makes the building mean something
+    // past unlocking construction: a level-6 yard heals 30/tick and
+    // turns that same wreck around in ~43.
     const REPAIR_CITY = 0;
+    const REPAIR_PER_YARD_LEVEL = 5;
+    /** A station with no shipyard is still a dry dock, just a bare one. */
+    const REPAIR_STATION_BASE = 2;
+    /** Kept for the armor-5 Damage Control trickle, which is a faction
+     *  buff rather than infrastructure and shouldn't scale with a yard
+     *  the ship isn't parked at. */
     const REPAIR_STATION = 2;
     const REFUEL_BASE = 1;
     const REFUEL_STATION = 2;
@@ -2981,7 +2993,7 @@ export class Room {
     const settlementsByBody = new Map();
     const allSettlements = (await this.env.DB
       .prepare(
-        `SELECT id, body_id, owner_faction_id, type
+        `SELECT id, body_id, owner_faction_id, type, buildings_json
            FROM game_settlements
           WHERE game_id = ? AND destroyed_at_tick IS NULL`,
       )
@@ -3003,7 +3015,14 @@ export class Room {
       let refuelRate = ship.body_owner === ship.owner_faction_id ? REFUEL_BASE : 0;
       for (const st of localStations) {
         if (st.type === 'station') {
-          repairRate += REPAIR_STATION;
+          // Bare station repairs at the old flat rate; every shipyard
+          // level on it adds REPAIR_PER_YARD_LEVEL on top.
+          let yardLvl = 0;
+          if (st.buildings_json) {
+            try { yardLvl = Number(JSON.parse(st.buildings_json)?.shipyard ?? 0) || 0; }
+            catch { yardLvl = 0; }
+          }
+          repairRate += REPAIR_STATION_BASE + REPAIR_PER_YARD_LEVEL * yardLvl;
           refuelRate += REFUEL_STATION;
         }
       }

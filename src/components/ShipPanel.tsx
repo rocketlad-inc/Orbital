@@ -1111,8 +1111,18 @@ export const ShipPanel: React.FC = () => {
               <span className="value" style={{ color: currentHp < maxHp * 0.3 ? '#ff5e5e' : undefined }}>
                 {currentHp.toFixed(0)}/{Math.round(maxHp)}
                 {maintenance.repairRate > 0 && !hpAtMax && (
-                  <span style={{ color: '#4ecdc4', marginLeft: 6, fontSize: '9px' }}>
+                  // Rate scales with the station's shipyard level (+5/level
+                  // on top of the bare dock's +2), so the ETA is worth
+                  // spelling out — "+32/t" alone doesn't answer "when is
+                  // this hull fit to fight again".
+                  <span
+                    style={{ color: '#4ecdc4', marginLeft: 6, fontSize: '9px' }}
+                    title={`Repairing at ${maintenance.repairRate} HP/tick — full in ~${Math.ceil((maxHp - currentHp) / maintenance.repairRate)} ticks. A bigger shipyard on the station repairs faster (+5/tick per level).`}
+                  >
                     +{maintenance.repairRate}/t
+                    <span style={{ color: '#7a8a9a', marginLeft: 4 }}>
+                      · ~{Math.ceil((maxHp - currentHp) / maintenance.repairRate)}t to full
+                    </span>
                   </span>
                 )}
               </span>
