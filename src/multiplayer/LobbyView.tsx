@@ -3,6 +3,7 @@ import { apiFetch, RoomSnapshot, RoomSummary } from './api';
 import { useAuth } from './AuthContext';
 import { LobbyMapPreview } from './LobbyMapPreview';
 import { colorDistance, COLOR_MIN_DISTANCE, deriveSecondary } from '../game/colorUtils';
+import { RESOURCE_LETTER_COLORS } from '../game/resourceColors';
 
 /** A pre-game lobby chat line, as broadcast by the room WebSocket
  *  (`{ type: 'chat', from, text, at }`). `key` is assigned client-side
@@ -441,11 +442,11 @@ function RoomDetail({
                     <div className="lobby-body-card__name">{b.name}</div>
                     <div className="lobby-body-card__sub">{b.type}</div>
                     <div className="lobby-body-card__yields">
-                      {b.yield.metal > 0 && <span>M{b.yield.metal}</span>}
-                      {b.yield.fuel > 0 && <span>F{b.yield.fuel}</span>}
+                      {b.yield.metal > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.M }}>M{b.yield.metal}</span>}
+                      {b.yield.fuel > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.F }}>F{b.yield.fuel}</span>}
                       {/* C = credits (server field is still 'gold') */}
-                      {b.yield.gold > 0 && <span>C{b.yield.gold}</span>}
-                      {b.yield.science > 0 && <span>S{b.yield.science}</span>}
+                      {b.yield.gold > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.C }}>C{b.yield.gold}</span>}
+                      {b.yield.science > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.S }}>S{b.yield.science}</span>}
                     </div>
                     {isMine && <div className="lobby-body-card__tag">✓ chosen</div>}
                   </button>

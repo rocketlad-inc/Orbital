@@ -24,6 +24,7 @@ import {
 import { bodyPosition } from '../physics/orbitalMechanics';
 import { computeVisibility } from '../game/visibility';
 import { EditableName } from './EditableName';
+import { RESOURCE_COLORS } from '../game/resourceColors';
 import './BodyInspector.css';
 
 /** Per-Δv METAL cost when an asteroid is rammed via Trajectory Control
@@ -440,13 +441,16 @@ export const BodyInspector: React.FC = () => {
               {(hasStockpile || hasLocalFlow) && (
                 <div style={{ fontSize: 13, color: '#a8b8c8', marginBottom: 2 }}>
                   <span style={{ color: '#7a8a9a', letterSpacing: '0.08em' }}>LOCAL: </span>
-                  {Math.round(localStockO)}M {Math.round(localStockC)}C {Math.round(localStockS)}S
-                  {localStockS > 0 ? ` ${Math.round(localStockS)}S` : ''}
+                  {/* Canonical resource tints (resourceColors.ts). This also
+                      drops an old dup: science used to print twice. */}
+                  <span style={{ color: RESOURCE_COLORS.metal }}>{Math.round(localStockO)}M</span>{' '}
+                  <span style={{ color: RESOURCE_COLORS.credits }}>{Math.round(localStockC)}C</span>{' '}
+                  <span style={{ color: RESOURCE_COLORS.science }}>{Math.round(localStockS)}S</span>
                   {hasLocalFlow && (
                     <span style={{ color: '#7a8a9a', marginLeft: 8 }}>
                       ({/* per-tick LOCAL fill rate */}
-                      {localPerTickO > 0.01 && `+${fmt(localPerTickO)}M `}
-                      {localPerTickC > 0.01 && `+${fmt(localPerTickC)}C`}
+                      {localPerTickO > 0.01 && <span style={{ color: RESOURCE_COLORS.metal }}>+{fmt(localPerTickO)}M </span>}
+                      {localPerTickC > 0.01 && <span style={{ color: RESOURCE_COLORS.credits }}>+{fmt(localPerTickC)}C</span>}
                       <span style={{ color: '#7a8a9a' }}>/tick</span>)
                     </span>
                   )}

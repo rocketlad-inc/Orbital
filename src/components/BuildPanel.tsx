@@ -22,6 +22,7 @@ import { randomShipName } from '../game/shipNames';
 import type { BuildListEntry, ShipDesign } from '../types';
 import { HULL_FEATURE } from '../game/researchUnlocks';
 import { useFeatureGate } from '../hooks/useFeatureGate';
+import { RESOURCE_COLORS } from '../game/resourceColors';
 import './BuildPanel.css';
 
 export const BuildPanel: React.FC = () => {
@@ -1008,9 +1009,9 @@ export const BuildPanel: React.FC = () => {
       )}
 
       <div className="resources-bar">
-        <span className="resource">FUEL: {Math.round(playerRes.fuel)}</span>
-        <span className="resource">METAL: {Math.round(playerRes.ore)}</span>
-        <span className="resource">CR: {Math.round(playerRes.credits)}</span>
+        <span className="resource" style={{ color: RESOURCE_COLORS.fuel }}>FUEL: {Math.round(playerRes.fuel)}</span>
+        <span className="resource" style={{ color: RESOURCE_COLORS.metal }}>METAL: {Math.round(playerRes.ore)}</span>
+        <span className="resource" style={{ color: RESOURCE_COLORS.credits }}>CR: {Math.round(playerRes.credits)}</span>
       </div>
     </div>
   );

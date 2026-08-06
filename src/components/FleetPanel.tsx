@@ -11,6 +11,7 @@ import { effectiveShipMaxHp } from '../game/combat';
 import type { Ship, Captain, TargetPriorityKey } from '../types';
 import { TARGET_PRIORITY_DEFAULT } from '../types';
 import { TargetPriorityCards } from './TargetPriorityCards';
+import { RESOURCE_COLORS } from '../game/resourceColors';
 import { rankTier, traitSummary, AVATAR_IDS } from '../game/captains';
 import { CaptainAvatar } from './CaptainAvatar';
 import { EditableName } from './EditableName';
@@ -74,7 +75,10 @@ const FleetUpkeepLine: React.FC = () => {
         }}
       >
         <span aria-hidden>{inDebt ? '💸' : '🛠'}</span>{' '}
-        Upkeep {fmt(up.credits)}C{up.ore > 0 ? ` · ${fmt(up.ore)}M` : ''} / tick
+        {/* Resource tints defer to the red arrears state — debt must
+            stay unmissable, so segments only tint when solvent. */}
+        Upkeep <span style={inDebt ? undefined : { color: RESOURCE_COLORS.credits }}>{fmt(up.credits)}C</span>
+        {up.ore > 0 && <> · <span style={inDebt ? undefined : { color: RESOURCE_COLORS.metal }}>{fmt(up.ore)}M</span></>} / tick
         {mult !== 1 && <span style={{ opacity: 0.75 }}> (senate ×{mult})</span>}
         {rows.length > 0 && <span style={{ opacity: 0.6 }}> {open ? '▾' : '▸'}</span>}
       </button>

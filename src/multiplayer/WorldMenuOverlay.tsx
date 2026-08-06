@@ -24,6 +24,7 @@ import { useMultiplayerActions } from './MultiplayerActionsContext';
 import { useFeatureGate } from '../hooks/useFeatureGate';
 import { BUILDING_FEATURE } from '../game/researchUnlocks';
 import { BUILDABLE_CLASSES, getShipClass } from '../game/shipClasses';
+import { RESOURCE_LETTER_COLORS } from '../game/resourceColors';
 import { shipyardSlotsAtBody, canHostCity, canHostStation, suggestSettlementName } from '../game/settlements';
 import { EditableName } from '../components/EditableName';
 import { RushControl } from '../components/BuildPanel';
@@ -605,15 +606,29 @@ export const WorldMenuOverlay: React.FC = () => {
           <span className="wm-label">Output /t</span>
           <div className="wm-yields">
             {yieldChips.map(([k, v]) => (
-              <span className="wm-yield" key={k}><i>{k}</i>{Math.round(v * 10) / 10}</span>
+              // Chip tinted with the canonical resource color so F/M/C/S
+              // reads the same here as on the top bar.
+              <span
+                className="wm-yield" key={k}
+                style={{ color: RESOURCE_LETTER_COLORS[k as 'F' | 'M' | 'C' | 'S'] }}
+              >{/* letter inherits the tint (CSS dims it grey otherwise) */}
+                <i style={{ color: 'inherit', opacity: 0.75 }}>{k}</i>
+                {Math.round(v * 10) / 10}</span>
             ))}
           </div>
           <div className="wm-stock">
             <span className="wm-label">Stockpile</span>{' '}
             {/* Round, not floor: floor turns fp residue like 0.9999 into
                 0 when the true stock is 1. Whole numbers everywhere. */}
-            F{Math.round(readout.stockpile.fuel)} · M{Math.round(readout.stockpile.ore)} ·
-            C{Math.round(readout.stockpile.credits)} · S{Math.round(readout.stockpile.science)}
+            {([
+              ['F', readout.stockpile.fuel], ['M', readout.stockpile.ore],
+              ['C', readout.stockpile.credits], ['S', readout.stockpile.science],
+            ] as Array<['F' | 'M' | 'C' | 'S', number]>).map(([k, v], i) => (
+              <React.Fragment key={k}>
+                {i > 0 && ' · '}
+                <span style={{ color: RESOURCE_LETTER_COLORS[k] }}>{k}{Math.round(v)}</span>
+              </React.Fragment>
+            ))}
           </div>
         </div>
         {isMine && (myCity || myStation) && (() => {
