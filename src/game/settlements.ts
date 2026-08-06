@@ -296,8 +296,8 @@ export const SETTLEMENT_DEFS: Record<SettlementType, {
     pdcRating: 0.3,
   },
   station: {
-    // Mirrors station_base_hp in worker/configSchema.js (tripled 60 -> 180).
-    maxHp: 180,
+    // Mirrors station_base_hp in worker/configSchema.js (60 -> 180 -> 400).
+    maxHp: 400,
     cost: { fuel: 0, ore: 30, credits: 60 },
     displayName: 'Station',
     range: 12,       // orbital weapons platform, medium range

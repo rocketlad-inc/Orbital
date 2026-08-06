@@ -959,7 +959,7 @@ async function handleDeploySettlement(req, env, ctx) {
   // Base structure from the game's config (admin Editor), not a literal,
   // so it can be retuned without a deploy. Falls back to the shipped
   // values if the lookup fails — see gameConfig.js.
-  let hpCfg = { city_base_hp: 300, station_base_hp: 180 };
+  let hpCfg = { city_base_hp: 300, station_base_hp: 400 };
   try {
     const gc = await import('./gameConfig.js');
     hpCfg = await gc.cfg(env, gameId);

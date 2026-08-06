@@ -160,9 +160,11 @@ export const SCHEMA = [
   },
   {
     id: 'station_base_hp', group: 'combat', type: 'int',
-    label: 'Station base HP', def: 180, min: 1, max: 100000, step: 10,
-    help: 'Structure a new station is deployed with. Tripled from 60, keeping the '
-      + 'city:station ratio at 5:3 so stations stay the softer target.',
+    label: 'Station base HP', def: 400, min: 1, max: 100000, step: 10,
+    help: 'Structure a new station is deployed with. 60 -> 180 -> 400: at combat v2 '
+      + 'damage a fitted destroyer hits for ~135, so 180 was under two volleys. '
+      + '400 buys a defender three, and puts stations ABOVE cities (300) — an '
+      + 'orbital weapons platform should outlast a surface settlement.',
   },
   {
     id: 'shield_hp_per_level', group: 'combat', type: 'int',
