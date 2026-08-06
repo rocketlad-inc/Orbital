@@ -8,13 +8,9 @@ import './Landing.css';
 interface LandingProps {
   /** Triggered by the Login button or any CTA. Reveals the auth overlay. */
   onSignIn: () => void;
-  /** Open the playtest-knobs sandbox. */
-  onShowTunables?: () => void;
-  /** Open the player-UX exploration gallery. */
-  onShowUX?: () => void;
 }
 
-export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onShowUX }) => {
+export const Landing: React.FC<LandingProps> = ({ onSignIn }) => {
   const starfieldRef = useRef<HTMLCanvasElement>(null);
 
   // Draw a procedural starfield as a backdrop, redraw on resize.
@@ -94,16 +90,7 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn, onShowTunables, onSh
           <span className="brand-text">ORBITAL</span>
         </div>
         <div className="landing-nav-actions">
-          {onShowUX && (
-            <button className="landing-nav-link" onClick={onShowUX}>
-              UX LAB
-            </button>
-          )}
-          {onShowTunables && (
-            <button className="landing-nav-link" onClick={onShowTunables}>
-              TUNABLES
-            </button>
-          )}
+          {/* UX LAB / TUNABLES links removed with their pages. */}
           <button className="landing-login-btn" onClick={onSignIn}>
             LOGIN
           </button>

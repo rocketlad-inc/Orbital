@@ -32,8 +32,6 @@ import { TutorialOverlay } from './components/TutorialOverlay';
 import { TutorialPromptModal } from './components/TutorialPromptModal';
 import { AuthOverlay } from './multiplayer/AuthOverlay';
 import { Landing } from './components/Landing';
-import { TunablesPage } from './components/TunablesPage';
-import { UXGallery } from './components/UXGallery';
 import { ShipIconGalleryPage } from './components/ShipIconGalleryPage';
 import { PhysicsSandbox } from './physicsSandbox/PhysicsSandbox';
 import { TorchSandbox } from './torchSandbox/TorchSandbox';
@@ -389,8 +387,6 @@ function AppShell() {
   // (activeRooms state retired with the mode picker — the rooms fetch
   //  below still runs, but only the priority/auto-jump logic reads it.)
   const [showAuth, setShowAuth] = useState(false);
-  const [showTunables, setShowTunables] = useState(false);
-  const [showUX, setShowUX] = useState(false);
   // Ship icon gallery — reachable at ?icons. Standalone preview page
   // for picking which D/E/F candidates to keep before the dropdown
   // wires up at ship construction.
@@ -644,23 +640,11 @@ function AppShell() {
   }
 
   // Unauthenticated: show landing first, then auth overlay (guest path
-  // retired — accounts only).
-  // The Tunables sandbox and UX Lab are reachable from the landing nav and bypass auth.
+  // retired — accounts only). The Tunables sandbox and UX Lab used to
+  // hang off the landing nav as auth-bypass routes; both are deleted.
   if (!user && !guestMode) {
-    if (showTunables) {
-      return <TunablesPage onBack={() => setShowTunables(false)} />;
-    }
-    if (showUX) {
-      return <UXGallery onBack={() => setShowUX(false)} />;
-    }
     if (!showAuth) {
-      return (
-        <Landing
-          onSignIn={() => setShowAuth(true)}
-          onShowTunables={() => setShowTunables(true)}
-          onShowUX={() => setShowUX(true)}
-        />
-      );
+      return <Landing onSignIn={() => setShowAuth(true)} />;
     }
     return <AuthOverlay />;
   }
