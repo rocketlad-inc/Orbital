@@ -1567,11 +1567,14 @@ export class Room {
     try { senateSliders = await getActiveSliders(this.env, gameId, tick); }
     catch (e) { console.error('getActiveSliders failed', e); }
     const combatDamageMult = Number(senateSliders.combat_damage_multiplier ?? 1);
-    // Senate fuel-yield slider: applied to every settlement's fuel
-    // yield at distribution time (see ~line 1760). Previously declared
-    // in the catalog but no consumer read it, so passing "Fuel Yield 1.5"
-    // was a vote with no consequence — wire it here.
+    // Senate yield sliders, applied to every settlement at distribution
+    // time. The fuel one is kept ONLY so a law passed before fuel was
+    // retired still resolves instead of throwing; nothing spends fuel any
+    // more. Metal, credits and science are the live levers.
     const fuelYieldMult = Number(senateSliders.fuel_yield_multiplier ?? 1);
+    const metalYieldMult = Number(senateSliders.metal_yield_multiplier ?? 1);
+    const goldYieldMult = Number(senateSliders.gold_yield_multiplier ?? 1);
+    const scienceYieldMult = Number(senateSliders.science_yield_multiplier ?? 1);
 
     // Senate sanction cache for this tick. Used by trade routes
     // (trade_embargo), combat damage (war_authorization), and body
@@ -3149,13 +3152,13 @@ export class Room {
         // reverted to base the moment /state reconciled.
         const indMul = industryMulOf(s.fid);
         const yieldFull = {
-          // Senate fuel-yield slider: applied here (only fuel) so a
-          // global "Fuel Yield 1.5×" law actually does something. The
-          // slider was previously declared in the catalog and never read.
+          // Senate yield sliders ride at the END of each chain, so a law
+          // scales the finished number rather than fighting the building
+          // multipliers for position.
           fuel:    Number(s.yield_fuel    ?? 0) * popMul * tm.fuel              * prodMul * indMul * fuelYieldMult,
-          metal:   Number(s.yield_metal   ?? 0) * popMul * tm.metal   * forgeMul * prodMul * indMul,
-          gold:    Number(s.yield_gold    ?? 0) * popMul * tm.gold    * mintMul  * prodMul * indMul,
-          science: Number(s.yield_science ?? 0) * popMul * tm.science * labMul   * prodMul * indMul,
+          metal:   Number(s.yield_metal   ?? 0) * popMul * tm.metal   * forgeMul * prodMul * indMul * metalYieldMult,
+          gold:    Number(s.yield_gold    ?? 0) * popMul * tm.gold    * mintMul  * prodMul * indMul * goldYieldMult,
+          science: Number(s.yield_science ?? 0) * popMul * tm.science * labMul   * prodMul * indMul * scienceYieldMult,
         };
 
         // Collector status is now per (body, faction) group — see

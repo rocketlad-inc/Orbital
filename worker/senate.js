@@ -47,10 +47,37 @@ const SLIDER_CATALOG = [
     max: 1.5,
     step: 0.05,
   },
+  // Fuel Yield Multiplier used to sit here. Fuel was retired from the
+  // economy (see actions.js: "Fuel was removed from the game economy"),
+  // so the senate could pass a law about a resource nobody spends while
+  // having no lever at all over the two everybody fights for. Replaced
+  // with the three that are actually in the game.
   {
-    id: 'fuel_yield_multiplier',
-    label: 'Fuel Yield Multiplier',
-    description: 'Per-tick fuel production from every body is multiplied by this value.',
+    id: 'metal_yield_multiplier',
+    label: 'Metal Yield Multiplier',
+    description: 'Per-tick metal production from every settlement is multiplied by this value. '
+      + 'Applies to everyone, including whoever proposed it.',
+    default: 1.0,
+    min: 0.5,
+    max: 2.0,
+    step: 0.05,
+  },
+  {
+    id: 'gold_yield_multiplier',
+    label: 'Credit Yield Multiplier',
+    description: 'Per-tick credit production from every settlement is multiplied by this value. '
+      + 'Fleet upkeep is paid in credits, so this is the closest thing the senate has to a '
+      + 'lever on how big a navy the whole system can afford.',
+    default: 1.0,
+    min: 0.5,
+    max: 2.0,
+    step: 0.05,
+  },
+  {
+    id: 'science_yield_multiplier',
+    label: 'Science Yield Multiplier',
+    description: 'Per-tick science production from every settlement is multiplied by this value. '
+      + 'Raising it shortens the whole game; the tech tree is what ends it.',
     default: 1.0,
     min: 0.5,
     max: 2.0,
