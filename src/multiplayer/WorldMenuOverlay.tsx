@@ -854,6 +854,11 @@ export const WorldMenuOverlay: React.FC = () => {
             <svg className="wm-lines" width={vw} height={vh} aria-hidden="true">
               {cols.surface.map((k, i) => {
                 const from = btnAnchor(leftColX, i + 1, 'right'); // +1: label row
+                // Shields has no limb structure to point at — it's the
+                // dome over the whole settlement, drawn by the closeup
+                // pass. Without this it would fall back to frac 0 and
+                // aim into the gap between MINT and LAB.
+                if (k === 'shields') return null;
                 const to = partPos(PART_FRACS[k] ?? 0);
                 if (to.y > vh - 40) return null;
                 const mx = (from.x + to.x) / 2;

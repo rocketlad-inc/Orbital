@@ -121,8 +121,11 @@ describe('A · camera & zoom math', () => {
 // ---------- F · build & gating rules ----------
 describe('F · build rules', () => {
   test('F1 [P0]: surface column only on city-capable bodies', () => {
-    expect(columnsFor(EARTH).surface).toEqual(['forge', 'mint', 'lab']);
+    // shields joined the surface column 2026-08-05 — a city-only
+    // building, so a no-surface world must NOT offer it.
+    expect(columnsFor(EARTH).surface).toEqual(['forge', 'mint', 'lab', 'shields']);
     expect(columnsFor(SATURN).surface).toEqual([]);
+    expect(columnsFor(SATURN).orbit).not.toContain('shields');
   });
 
   test('F2 [P0]: lab (hostType any) is buildable on EVERY station', () => {

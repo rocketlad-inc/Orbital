@@ -227,6 +227,84 @@ function drawHpTag(
  * The close-up pass. Call right after the body layer; a no-op below
  * z≈0 (map view) so the map renders untouched until the dive begins.
  */
+/**
+ * Orbital shields — a dome arcing over the framed city limb.
+ *
+ * Deliberately NOT a limb building like forge/mint/lab. Those occupy one
+ * slot on the surface and get a leader line pointing at them; a shield
+ * covers the whole settlement, so it reads as a canopy over everything
+ * instead of a structure standing among the towers. That's also why
+ * WorldMenuOverlay skips its leader line — there is nothing to point at.
+ *
+ * The dome's HEIGHT encodes capacity (building level) and its OPACITY
+ * encodes charge. A level-3 shield sitting at 10% draws tall and faint:
+ * you can see at a glance that the player invested and that the
+ * investment is currently spent. Height alone would hide the damage;
+ * opacity alone would make a big shield and a small one look identical.
+ */
+function drawShieldDome(
+  g: CanvasRenderingContext2D,
+  c: { x: number; y: number; r: number },
+  city: Settlement,
+  t: number,
+  alpha: number,
+): void {
+  const max = city.shieldHpMax ?? 0;
+  if (max <= 0) return;                 // never built, or razed
+  const cur = Math.max(0, city.shieldHp ?? 0);
+  const frac = clamp01(cur / max);
+  if (frac <= 0.005) return;            // collapsed: the canopy is gone
+
+  // Capacity → height. SHIELD_HP_PER_LEVEL is 120, so this reads level
+  // back off the pool rather than re-parsing buildings_json.
+  const level = Math.max(1, Math.round(max / 120));
+  const lift = c.r * (0.11 + Math.min(3, level) * 0.035);
+  const rr = c.r + lift;
+  // Span the framed limb plus a margin, so the dome visibly encloses the
+  // outermost towers instead of clipping them.
+  const a0 = arcAngle(-1.12), a1 = arcAngle(1.12);
+
+  // Slow breathing shimmer — alive, but never distracting. Reduced-motion
+  // pins it flat.
+  const pulse = prefersReducedMotion() ? 1 : 0.88 + 0.12 * Math.sin(t * 0.0014);
+  const a = alpha * (0.20 + 0.55 * frac) * pulse;
+
+  g.save();
+  const grad = g.createRadialGradient(c.x, c.y, c.r * 0.94, c.x, c.y, rr);
+  grad.addColorStop(0, 'rgba(120, 210, 255, 0)');
+  grad.addColorStop(0.72, `rgba(120, 210, 255, ${(a * 0.30).toFixed(3)})`);
+  grad.addColorStop(1, `rgba(150, 230, 255, ${(a * 0.10).toFixed(3)})`);
+  g.beginPath();
+  g.arc(c.x, c.y, rr, a0, a1);
+  g.arc(c.x, c.y, c.r * 0.94, a1, a0, true);
+  g.closePath();
+  g.fillStyle = grad;
+  g.fill();
+
+  // Bright leading edge — the surface the shots actually stop against.
+  g.beginPath();
+  g.arc(c.x, c.y, rr, a0, a1);
+  g.strokeStyle = `rgba(170, 235, 255, ${a.toFixed(3)})`;
+  g.lineWidth = Math.max(1, c.r * 0.006);
+  g.stroke();
+
+  // Hex facets, brightest where the shield is healthy. They thin out as
+  // the pool drains, so a failing shield looks structurally sparse and
+  // not merely dim.
+  const ribs = 5 + Math.min(3, level) * 2;
+  g.strokeStyle = `rgba(150, 225, 255, ${(a * 0.28).toFixed(3)})`;
+  g.lineWidth = Math.max(0.5, c.r * 0.0025);
+  for (let i = 1; i < ribs; i++) {
+    if (i / ribs > frac + 0.15) continue;
+    const ang = a0 + (a1 - a0) * (i / ribs);
+    g.beginPath();
+    g.moveTo(c.x + Math.cos(ang) * c.r * 0.96, c.y + Math.sin(ang) * c.r * 0.96);
+    g.lineTo(c.x + Math.cos(ang) * rr, c.y + Math.sin(ang) * rr);
+    g.stroke();
+  }
+  g.restore();
+}
+
 export function drawWorldMenuCloseup(
   rc: RenderContext,
   settlements: Settlement[],
@@ -283,6 +361,7 @@ export function drawWorldMenuCloseup(
       drawBuilding(rc.ctx, kind, buildingLevel(city, kind), c, PART_FRACS[kind], p1, p2, alpha);
     }
     if (city.hasCollector) drawBuilding(rc.ctx, 'collector', 1, c, PART_FRACS.collector, p1, p2, alpha);
+    drawShieldDome(rc.ctx, c, city, rc.t, alpha);
     drawHpTag(rc.ctx, c, city.name, city.hp, city.maxHp, alpha);
     drawFire(rc.ctx, c, city.hp / Math.max(1, city.maxHp), rc.t, alpha);
   }

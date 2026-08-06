@@ -18,15 +18,32 @@ import {
 /** The build columns the menu shows. Lab is hostType 'any' in
  *  BUILDING_DEFS — on a surface-capable world it lives in the SURFACE
  *  column (city socket); on a no-surface world (gas giant, star) it
- *  migrates to the ORBIT column so the capability is never lost. */
+ *  migrates to the ORBIT column so the capability is never lost.
+ *
+ *  THIS is the list that decides what a multiplayer player can build.
+ *  Not BUILDING_DEFS, and not BodyInspector's CITY_BUILDINGS — that
+ *  component only renders when isMultiplayer is false or the world-menu
+ *  kill-switch is off, so in practice nobody sees it. A building can be
+ *  fully wired server-side, costed, gated, migrated and tested, and
+ *  still be unbuildable because it is missing from this array. Orbital
+ *  Shields shipped that way twice: once missing from CITY_BUILDINGS,
+ *  and once "fixed" by adding it there instead of here.
+ *
+ *  Surface holds at most 4 entries — WorldMenuOverlay's COL_MAX_H
+ *  budgets the column at 4 buttons. A 5th needs that constant raised. */
 export function columnsFor(body: Pick<Body, 'type'>): {
   surface: BuildingKind[];
   orbit: BuildingKind[];
 } {
   if (canHostCity(body as Body)) {
     // lab is hostType 'any' server-side — stations research too.
-    return { surface: ['forge', 'mint', 'lab'], orbit: ['weapons', 'shipyard', 'lab'] };
+    return {
+      surface: ['forge', 'mint', 'lab', 'shields'],
+      orbit: ['weapons', 'shipyard', 'lab'],
+    };
   }
+  // No surface: shields go with it. The pool protects a city's
+  // structure, and a body that can't host a city has none to protect.
   return { surface: [], orbit: ['weapons', 'shipyard', 'lab'] };
 }
 

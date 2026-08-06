@@ -179,6 +179,12 @@ export const BUILDING_FEATURE: Partial<Record<string, FeatureId>> = {
   lab: 'building.lab',
   shipyard: 'building.shipyard',
   weapons: 'building.weapons',
+  // Must mirror worker/researchUnlocks.js BUILDING_FEATURE exactly. A
+  // kind missing here reads as UNGATED on the client — the build button
+  // renders live and enabled, the player spends the click, and the
+  // server rejects it against its own map. Silent failure, not a lock.
+  shields: 'building.shields',
+  armor: 'building.armor',
   trajectory_thrusters: 'building.thrusters',
 };
 
