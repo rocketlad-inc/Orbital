@@ -184,7 +184,11 @@ export const BUILDING_FEATURE: Partial<Record<string, FeatureId>> = {
   // renders live and enabled, the player spends the click, and the
   // server rejects it against its own map. Silent failure, not a lock.
   shields: 'building.shields',
-  armor: 'building.armor',
+  // NOT mirroring the server's `armor: 'building.armor'` entry: 'armor'
+  // is a research TRACK, not a BuildingKind, so that row is vestigial on
+  // both sides. Copying it here would be actively harmful — there is no
+  // 'building.armor' row in RESEARCH_UNLOCKS, and requirementFor() miss
+  // means lockReason() returns null, i.e. UNLOCKED.
   trajectory_thrusters: 'building.thrusters',
 };
 

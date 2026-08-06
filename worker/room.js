@@ -1509,10 +1509,6 @@ export class Room {
     // wiped, yields halved, asteroid destroyed) atomically per body.
     try {
       await this.resolveAsteroidImpacts(gameId, tick);
-      // Shields AFTER combat: the volley above spends the pool, this
-      // refills what survived. Running it first would hand the defender a
-      // tick of regen they had not earned yet.
-      await this.resolveShields(gameId, tick, CFG);
     } catch (e) {
       console.error('resolveAsteroidImpacts failed', e);
     }
@@ -2924,6 +2920,24 @@ export class Room {
           }
         } catch (e) { console.error('build-cancel on settlement loss failed', e); }
       }
+    }
+
+    // 3.42 Orbital shield regen. Must run AFTER §3.4 above, which is
+    //      where incoming damage actually spends the pool: this refills
+    //      what survived the volley. It previously sat up at §2c-pre,
+    //      ~1200 lines earlier, so every shielded city was topped up
+    //      immediately BEFORE being shot — handing the defender a tick of
+    //      regen they had not earned and making the effective pool
+    //      (stored + regen) against every volley.
+    //
+    //      Its own try/catch, not shared with the asteroid-impact pass it
+    //      used to ride along with: an impact throwing must not silently
+    //      stop shield regen game-wide, and the error must be logged
+    //      under its own name.
+    try {
+      await this.resolveShields(gameId, tick, CFG);
+    } catch (e) {
+      console.error('resolveShields failed', e);
     }
 
     // 3.45 Ship maintenance — heal + refuel at friendly infrastructure.

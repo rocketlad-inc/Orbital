@@ -66,7 +66,11 @@ import { isDiscoveryAcked } from '../game/discoveryAck';
 // Building kinds each settlement type can host (mirrors BuildPanel /
 // the map's world-overlay chips). Used to ask "is there anything here I
 // could afford to build?" before listing an idle settlement.
-const CITY_BUILDINGS: BuildingKind[] = ['forge', 'mint', 'lab'];
+// KEEP IN SYNC with columnsFor() in game/worldMenu/buildRules.ts — that
+// list is what a player can actually build. A kind missing here makes a
+// settlement read as "nothing to build" and get nudged as idle when it
+// still has an upgrade available.
+const CITY_BUILDINGS: BuildingKind[] = ['forge', 'mint', 'lab', 'shields'];
 const STATION_BUILDINGS: BuildingKind[] = ['weapons', 'lab', 'shipyard'];
 
 /** Cheapest hull anyone can lay down — the floor for "can I build a
