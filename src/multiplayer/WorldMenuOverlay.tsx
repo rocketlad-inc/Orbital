@@ -517,8 +517,10 @@ export const WorldMenuOverlay: React.FC = () => {
     ? cols.orbit.map(k => buildBtn(k, myStation, 'orbit'))
     : (body && canHostStation(body) ? [foundBtn('station')] : []);
 
+  // No F chip: fuel is dead (DESIGN-identity-economy.md §1.1). The DB
+  // column still exists, but a permanent 0 on every world is noise.
   const yieldChips: Array<[string, number]> = [
-    ['F', readout.yields.fuel], ['M', readout.yields.ore],
+    ['M', readout.yields.ore],
     ['C', readout.yields.credits], ['S', readout.yields.science],
   ];
 
@@ -621,9 +623,9 @@ export const WorldMenuOverlay: React.FC = () => {
             {/* Round, not floor: floor turns fp residue like 0.9999 into
                 0 when the true stock is 1. Whole numbers everywhere. */}
             {([
-              ['F', readout.stockpile.fuel], ['M', readout.stockpile.ore],
+              ['M', readout.stockpile.ore],
               ['C', readout.stockpile.credits], ['S', readout.stockpile.science],
-            ] as Array<['F' | 'M' | 'C' | 'S', number]>).map(([k, v], i) => (
+            ] as Array<['M' | 'C' | 'S', number]>).map(([k, v], i) => (
               <React.Fragment key={k}>
                 {i > 0 && ' · '}
                 <span style={{ color: RESOURCE_LETTER_COLORS[k] }}>{k}{Math.round(v)}</span>

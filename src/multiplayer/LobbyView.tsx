@@ -443,7 +443,7 @@ function RoomDetail({
                     <div className="lobby-body-card__sub">{b.type}</div>
                     <div className="lobby-body-card__yields">
                       {b.yield.metal > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.M }}>M{b.yield.metal}</span>}
-                      {b.yield.fuel > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.F }}>F{b.yield.fuel}</span>}
+                      {/* no F — fuel is dead (DESIGN-identity-economy.md §1.1) */}
                       {/* C = credits (server field is still 'gold') */}
                       {b.yield.gold > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.C }}>C{b.yield.gold}</span>}
                       {b.yield.science > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.S }}>S{b.yield.science}</span>}
@@ -1005,11 +1005,11 @@ function StartingBodyPicker({
                 {opt.type}{opt.parent && opt.parent !== 'sol' ? ` · ${opt.parent}` : ''}
               </div>
               <div className="lobby-body-card__yields">
-                {opt.yield.metal > 0 && <span>M{opt.yield.metal}</span>}
-                {opt.yield.fuel > 0 && <span>F{opt.yield.fuel}</span>}
+                {opt.yield.metal > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.M }}>M{opt.yield.metal}</span>}
+                {/* no F — fuel is dead (DESIGN-identity-economy.md §1.1) */}
                 {/* C = credits (server field is still 'gold') */}
-                {opt.yield.gold > 0 && <span>C{opt.yield.gold}</span>}
-                {opt.yield.science > 0 && <span>S{opt.yield.science}</span>}
+                {opt.yield.gold > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.C }}>C{opt.yield.gold}</span>}
+                {opt.yield.science > 0 && <span style={{ color: RESOURCE_LETTER_COLORS.S }}>S{opt.yield.science}</span>}
               </div>
               {isMine && <div className="lobby-body-card__tag">✓ yours</div>}
               {isTaken && <div className="lobby-body-card__tag is-taken">{ownerName}</div>}

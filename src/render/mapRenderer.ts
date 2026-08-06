@@ -1265,11 +1265,13 @@ function drawWarpGateBody(
   ctx: RenderContext,
 ) {
   const g = ctx.ctx;
-  // Mostly SCREEN-space, only loosely tied to the host body: a gate must
-  // be obvious when its moon is a 3px dot, and must not balloon when you
-  // zoom in (scaling straight off the body radius put the bloom at 600px
-  // wide at world-menu zoom). Floor keeps it findable, cap keeps it sane.
-  const R = Math.max(10, Math.min(radius * 1.6, 48));
+  // Scales WITH zoom like every other body — the old 10..48px screen
+  // clamp made the gate tower over Earth at system zoom and freeze while
+  // planets kept growing close-up. It keeps a 1.6x edge over the host
+  // moon so it still reads as the bigger thing, a floor twice the body
+  // dot floor so it stays findable, and a high cap only to stop the
+  // bloom (R * 2.4) from swallowing the world menu.
+  const R = Math.max(6, Math.min(radius * 1.6, 110));
   const now = ctx.nowMs ?? 0;
   const spin = (now / 5200) % (Math.PI * 2);
   const pulse = 0.5 + 0.5 * Math.sin(now / 900);

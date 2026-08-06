@@ -1793,12 +1793,14 @@ const DysonSphereProgress: React.FC = () => {
   const isMine = dyson.controllerFactionId === 'player';
   const pct = dyson.maxHp > 0 ? (dyson.hp / dyson.maxHp) * 100 : 0;
 
+  // No Fuel row: fuel is dead (§1.1) and DYSON_TARGET.fuel MUST be 0, so
+  // the row could only ever read "0/0". The filter keeps it out even if a
+  // legacy game row carries residue.
   const rows: Array<{ label: string; acc: number; tgt: number; color: string }> = [
-    { label: 'Fuel',    acc: dyson.accumulated.fuel,    tgt: dyson.target.fuel,    color: '#ffb84d' },
-    { label: 'Metal',   acc: dyson.accumulated.ore,     tgt: dyson.target.ore,     color: '#a0a0a0' },
-    { label: 'Credits', acc: dyson.accumulated.credits, tgt: dyson.target.credits, color: '#ffd700' },
-    { label: 'Science', acc: dyson.accumulated.science, tgt: dyson.target.science, color: '#6ee7b7' },
-  ];
+    { label: 'Metal',   acc: dyson.accumulated.ore,     tgt: dyson.target.ore,     color: RESOURCE_COLORS.metal },
+    { label: 'Credits', acc: dyson.accumulated.credits, tgt: dyson.target.credits, color: RESOURCE_COLORS.credits },
+    { label: 'Science', acc: dyson.accumulated.science, tgt: dyson.target.science, color: RESOURCE_COLORS.science },
+  ].filter(r => r.tgt > 0);
 
   return (
     <div className="settlements-section" data-tutorial-id="dyson-sphere-section" style={{ marginTop: 12 }}>

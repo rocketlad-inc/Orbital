@@ -905,13 +905,11 @@ export const BuildPanel: React.FC = () => {
               const rowCostCredits = def.cost.credits + pc.credits;
               const dstats = row.parts.length > 0
                 ? computeDesignStats(row.shipClass, row.parts, techLevels) : null;
-              const shortFuel = Math.max(0, def.cost.fuel - playerRes.fuel - localStock.fuel);
               const shortOre = Math.max(0, rowCostOre - playerRes.ore - localStock.ore);
               const shortCredits = Math.max(0, rowCostCredits - playerRes.credits - localStock.credits);
-              const canAfford = shortFuel === 0 && shortOre === 0 && shortCredits === 0;
+              const canAfford = shortOre === 0 && shortCredits === 0;
               const qty = getRowQty(row.key);
               const shortBits: string[] = [];
-              if (shortFuel > 0) shortBits.push(`+${shortFuel} fuel`);
               if (shortOre > 0) shortBits.push(`+${shortOre} metal`);
               if (shortCredits > 0) shortBits.push(`+${shortCredits} cr`);
               const shortLabel = shortBits.length > 0 ? `Need ${shortBits.join(', ')}` : '';
@@ -940,9 +938,7 @@ export const BuildPanel: React.FC = () => {
                     {def.cargoCapacity > 0 && <span className="stat">CG:{def.cargoCapacity}</span>}
                   </div>
                   <div className="class-cost" title={shortLabel || undefined}>
-                    {def.cost.fuel > 0 && (
-                      <span className="cost-fuel" style={shortFuel > 0 ? { color: '#ff5e5e', fontWeight: 700 } : undefined}>{def.cost.fuel}F</span>
-                    )}
+                    {/* no fuel cost span — fuel is dead (§1.1) */}
                     <span className="cost-metal" style={shortOre > 0 ? { color: '#ff5e5e', fontWeight: 700 } : undefined}>{rowCostOre}M</span>
                     <span className="cost-money" style={shortCredits > 0 ? { color: '#ff5e5e', fontWeight: 700 } : undefined}>{rowCostCredits}C</span>
                   </div>
@@ -1009,7 +1005,7 @@ export const BuildPanel: React.FC = () => {
       )}
 
       <div className="resources-bar">
-        <span className="resource" style={{ color: RESOURCE_COLORS.fuel }}>FUEL: {Math.round(playerRes.fuel)}</span>
+        {/* No FUEL span — fuel is dead (DESIGN-identity-economy.md §1.1). */}
         <span className="resource" style={{ color: RESOURCE_COLORS.metal }}>METAL: {Math.round(playerRes.ore)}</span>
         <span className="resource" style={{ color: RESOURCE_COLORS.credits }}>CR: {Math.round(playerRes.credits)}</span>
       </div>
