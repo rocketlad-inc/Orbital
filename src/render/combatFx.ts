@@ -330,6 +330,14 @@ function takeEngaged(
  * engaged fleets within line of sight of each other in the first place.
  */
 const OCCLUSION_CORE = 0.55;
+// Stars draw their disc at 0.85x physical radius (drawStarBody's size
+// budget) — the shared 0.55 was tuned to the OLD sun face and would now
+// let bolts cut visibly across the grown disc. 0.8 keeps shots grazing
+// the limb while blocking anything through the face: park-ring chords
+// between ships 90 degrees apart pass at 12 x cos45 = 8.49 units, just
+// clear of 10 x 0.8 = 8.0, so Sol brawls stay lively (the failure mode
+// that forced 0.55 for planets in the first place).
+const OCCLUSION_CORE_STAR = 0.8;
 function occludedByBody(
   fp: { x: number; y: number },
   tp: { x: number; y: number },
@@ -341,7 +349,8 @@ function occludedByBody(
   if (!body) return false;
   const bp = bodyPosition(body, rc.t, rc.bodies);
   const c = worldToCanvas(bp.x, bp.y, rc);
-  const r = Math.max(3, body.radius * rc.camera.scale) * OCCLUSION_CORE;
+  const r = Math.max(3, body.radius * rc.camera.scale)
+    * (body.type === 'star' ? OCCLUSION_CORE_STAR : OCCLUSION_CORE);
   const dx = tp.x - fp.x;
   const dy = tp.y - fp.y;
   const len2 = dx * dx + dy * dy;

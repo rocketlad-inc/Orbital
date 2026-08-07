@@ -904,52 +904,197 @@ function getCoronaLayers(coreR: number): [HTMLCanvasElement, HTMLCanvasElement] 
   return layers;
 }
 
-/** Sun: shimmering two-layer corona, hot core. */
-function drawStarBody(
+/** Sun: shimmering two-layer corona, hot core.
+ *  Exported for the render harness (scratchpad sun check) — the map
+ *  itself still reaches it only through drawBody. */
+export function drawStarBody(
   body: Body,
   canvasPos: { x: number; y: number },
   radius: number,
   ctx: RenderContext,
 ) {
-  // Sol's physical radius (10) is huge vs planets (2-3), and things
-  // orbit it tightly: ships at body.radius + 4 = 14, stations at
-  // body.radius + 3 = 13. At full size the sun's disk + corona swallowed
-  // them. The fix draws the ENTIRE sun (core + all corona) at coreR =
-  // 0.55× its physical radius, so the whole footprint ends at
-  // ~0.55×1.7 = 0.94× the physical radius (≈ 9.4 for Sol) — comfortably
-  // INSIDE the 13-unit station orbit. That gives an orbiting station the
-  // same clear black-space gap it has around a small planet, instead of
-  // sitting embedded in the glow. Zoom-invariant.
-  const coreR = radius * 0.55;
+  // Size budget (per Lorne: "it's the sun after all" — the old 0.55×
+  // disc left a dead band of black between the sun and everything that
+  // rings it). Sol's neighbours are TIGHT: ships park at 12 units,
+  // stations at 13, the Dyson lattice draws at 14.5. The disc now ends
+  // at 0.85× the physical radius (8.5 units) and the corona is tucked
+  // in to die by ~1.23×coreR (≈10.5), so the glow kisses the park ring
+  // instead of swallowing it. Flares (below) transiently lick past
+  // that; steady-state light does not. Zoom-invariant.
+  const coreR = radius * 0.85;
+  const c = ctx.ctx;
+  const nowMs = ctx.nowMs ?? performance.now();
 
-  // Shimmering corona — two cached gradient layers counter-rotating
-  // at slightly different slow rates, composited additively. The
-  // layers' painted extent (0.85 × half-size ≈ 1.7 × coreR) matches
-  // the old static glow's outer edge, so stations orbiting at
-  // body.radius + 3 keep their clear black-space gap.
+  // Shimmering corona — two cached gradient layers counter-rotating,
+  // composited additively. Same painted canvases as before, drawn at
+  // 2.9×coreR instead of 4×, which pulls their painted extent from
+  // 1.7×coreR down to ~1.23×coreR: the corona band got proportionally
+  // thinner as the disc grew, keeping the TOTAL footprint inside the
+  // 12-unit ship ring.
   const layers = getCoronaLayers(coreR);
   if (layers) {
-    const s = coreR * 4;
-    const c = ctx.ctx;
+    // 3.2x measured (pixel harness): glow ~0.03 lum at 1.09x disc,
+    // fading to zero by ~1.36x coreR = 231px at scale 20 — a soft skirt
+    // filling most of the band up to the 240px ship ring without
+    // touching it.
+    const s = coreR * 3.2;
     c.save();
     c.globalCompositeOperation = 'lighter';
     c.translate(canvasPos.x, canvasPos.y);
-    c.rotate(ctx.t * 0.001);
+    c.rotate(nowMs * 0.00002);
     c.drawImage(layers[0], -s / 2, -s / 2, s, s);
-    c.rotate(-ctx.t * 0.001 + ctx.t * -0.0016);
+    c.rotate(nowMs * -0.000034);
     c.drawImage(layers[1], -s / 2, -s / 2, s, s);
     c.restore();
   }
 
+  // Solar flares — limb prominences. Seeded per time-slot so every
+  // client shows the same eruption at the same wall-clock moment with
+  // no per-frame allocation: each slot picks an angle, an arc loop
+  // grows out of the limb, holds, and collapses over FLARE_MS. Two
+  // slots run half a phase apart so the sun is rarely completely calm
+  // but never bristling. Drawn UNDER the disc so the root of the loop
+  // disappears into the limb rather than floating on the face.
+  if (coreR >= 14) {
+    const FLARE_MS = 6400;
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.translate(canvasPos.x, canvasPos.y);
+    for (let slot = 0; slot < 2; slot++) {
+      const phase = (nowMs + slot * FLARE_MS * 0.5) % FLARE_MS;
+      const k = phase / FLARE_MS;                        // 0..1 through life
+      const seed = Math.floor((nowMs + slot * FLARE_MS * 0.5) / FLARE_MS) * 2 + slot;
+      const rnd = (n: number) => {
+        // tiny LCG on the slot seed — deterministic across clients
+        let h = (seed * 374761393 + n * 668265263) >>> 0;
+        h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
+        return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+      };
+      // Not every slot erupts — a third of them stay quiet, so flares
+      // read as events rather than a permanent hairdo.
+      if (rnd(9) < 0.33) continue;
+      const env = Math.sin(Math.PI * Math.min(1, Math.max(0, k)));  // grow→peak→fade
+      if (env < 0.05) continue;
+      const th = rnd(1) * Math.PI * 2;
+      const spread = 0.10 + rnd(2) * 0.10;               // half-width of the loop's feet
+      const reach = coreR * (0.16 + rnd(3) * 0.20) * env; // how far it licks out
+      const ax = Math.cos(th - spread) * coreR * 0.99, ay = Math.sin(th - spread) * coreR * 0.99;
+      const bx = Math.cos(th + spread) * coreR * 0.99, by = Math.sin(th + spread) * coreR * 0.99;
+      const mx = Math.cos(th) * (coreR + reach), my = Math.sin(th) * (coreR + reach);
+      c.strokeStyle = `rgba(255, 190, 90, ${(0.55 * env).toFixed(3)})`;
+      c.lineWidth = Math.max(1, coreR * 0.045);
+      c.lineCap = 'round';
+      c.beginPath();
+      c.moveTo(ax, ay);
+      c.quadraticCurveTo(mx * 1.06, my * 1.06, bx, by);
+      c.stroke();
+      c.strokeStyle = `rgba(255, 240, 200, ${(0.7 * env).toFixed(3)})`;
+      c.lineWidth = Math.max(0.5, coreR * 0.018);
+      c.beginPath();
+      c.moveTo(ax, ay);
+      c.quadraticCurveTo(mx * 1.06, my * 1.06, bx, by);
+      c.stroke();
+    }
+    c.restore();
+  }
+
   // Hot core
-  const core = ctx.ctx.createRadialGradient(canvasPos.x, canvasPos.y, 0, canvasPos.x, canvasPos.y, coreR);
+  const core = c.createRadialGradient(canvasPos.x, canvasPos.y, 0, canvasPos.x, canvasPos.y, coreR);
   core.addColorStop(0, '#fff8e0');
   core.addColorStop(0.55, '#ffd180');
   core.addColorStop(1, body.color || '#ffa940');
-  ctx.ctx.fillStyle = core;
-  ctx.ctx.beginPath();
-  ctx.ctx.arc(canvasPos.x, canvasPos.y, coreR, 0, Math.PI * 2);
-  ctx.ctx.fill();
+  c.fillStyle = core;
+  c.beginPath();
+  c.arc(canvasPos.x, canvasPos.y, coreR, 0, Math.PI * 2);
+  c.fill();
+
+  // Roiling surface — a cached mottle layer rotated slowly against a
+  // counter-rotating copy of itself, clipped to the disc. Two drawImage
+  // calls per frame, no repaints (same cache discipline as the corona —
+  // this renderer has had a 14fps report; nothing here allocates).
+  // Skipped when the sun is small on screen: sub-14px discs just shimmer.
+  if (coreR >= 14) {
+    const mottle = getSunMottleLayer(coreR);
+    if (mottle) {
+      const s = coreR * 2.15;
+      c.save();
+      c.beginPath();
+      c.arc(canvasPos.x, canvasPos.y, coreR * 0.985, 0, Math.PI * 2);
+      c.clip();
+      c.translate(canvasPos.x, canvasPos.y);
+      c.globalAlpha = 0.62;
+      c.rotate(nowMs * 0.000013);
+      c.drawImage(mottle, -s / 2, -s / 2, s, s);
+      c.globalAlpha = 0.48;
+      c.rotate(nowMs * -0.000021);
+      c.drawImage(mottle, -s / 2, -s / 2, s, s);
+      c.restore();
+    }
+
+    // Sunspots — dark umbra/penumbra pairs drifting with the rotation.
+    // Deterministic per index; they migrate slowly and breathe in size,
+    // so the face is never the same two sessions running.
+    c.save();
+    c.translate(canvasPos.x, canvasPos.y);
+    for (let i = 0; i < 4; i++) {
+      const g1 = ((i * 2654435761) >>> 0) / 4294967296;
+      const g2 = ((i * 1597334677 + 99) >>> 0) / 4294967296;
+      const ang = g1 * Math.PI * 2 + nowMs * 0.0000042;   // slow solar rotation
+      const rad = coreR * (0.30 + g2 * 0.45);
+      const breathe = 0.8 + 0.2 * Math.sin(nowMs * 0.00019 + i * 2.1);
+      const spotR = coreR * (0.05 + g2 * 0.05) * breathe;
+      const sx = Math.cos(ang) * rad, sy = Math.sin(ang) * rad;
+      c.fillStyle = 'rgba(140, 60, 10, 0.30)';            // penumbra
+      c.beginPath(); c.arc(sx, sy, spotR * 1.9, 0, Math.PI * 2); c.fill();
+      c.fillStyle = 'rgba(70, 25, 5, 0.42)';              // umbra
+      c.beginPath(); c.arc(sx, sy, spotR, 0, Math.PI * 2); c.fill();
+    }
+    c.restore();
+  }
+}
+
+/** Cached granulation texture for the sun's face — irregular brighter
+ *  cells over the base gradient, painted ONCE per size bucket. Rotating
+ *  two offset copies of one static texture against each other is what
+ *  sells "roiling" without per-frame noise generation. */
+const sunMottleCache = new Map<number, HTMLCanvasElement>();
+function getSunMottleLayer(coreR: number): HTMLCanvasElement | null {
+  let size = 64;
+  while (size < coreR * 2.2 && size < 1024) size *= 2;
+  const hit = sunMottleCache.get(size);
+  if (hit !== undefined) return hit;
+  if (typeof document === 'undefined') return null;
+  const cv = document.createElement('canvas');
+  cv.width = size; cv.height = size;
+  const g = cv.getContext('2d');
+  if (!g) return null;
+  // Deterministic blob field — same LCG family as the flare seeds.
+  let h = 88172645;
+  const rnd = () => {
+    h = (Math.imul(h, 1103515245) + 12345) >>> 0;
+    return h / 4294967296;
+  };
+  const R = size / 2;
+  for (let i = 0; i < 46; i++) {
+    const a = rnd() * Math.PI * 2;
+    const d = Math.sqrt(rnd()) * R * 0.92;
+    const x = R + Math.cos(a) * d, y = R + Math.sin(a) * d;
+    const r = R * (0.05 + rnd() * 0.12);
+    const bright = rnd() > 0.45;
+    const grad = g.createRadialGradient(x, y, 0, x, y, r);
+    grad.addColorStop(0, bright
+      ? `rgba(255, 236, 180, ${0.10 + rnd() * 0.10})`
+      : `rgba(200, 90, 20, ${0.08 + rnd() * 0.08})`);
+    grad.addColorStop(1, 'rgba(255, 200, 110, 0)');
+    g.fillStyle = grad;
+    g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+  }
+  sunMottleCache.set(size, cv);
+  if (sunMottleCache.size > 4) {
+    const oldest = sunMottleCache.keys().next().value;
+    if (oldest !== undefined) sunMottleCache.delete(oldest);
+  }
+  return cv;
 }
 
 /** Black hole: dark event horizon + bright orange/red accretion disk.
