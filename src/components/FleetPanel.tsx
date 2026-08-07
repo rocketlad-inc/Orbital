@@ -575,50 +575,46 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                 title="This ship flies uncommanded — no trait bonus, no rank growth. Click to assign a captain."
               >NO CAPTAIN</button>
               {capPickFor === ship.id && (() => {
-                // The WHOLE active roster, not just the unposted. First
-                // live game had 10 serving / 0 in the bank, and a picker
-                // filtered to the bank announced "empty" under a full
-                // roster (Lorne). Poaching a serving captain is a real
-                // move — the same assignCaptain call the bank's REASSIGN
-                // uses — it just leaves their old hull uncommanded, so
-                // the row says who they'd abandon.
-                const bySort = (a: Captain, b: Captain) =>
-                  b.rank - a.rank || b.traits.length - a.traits.length;
+                // Bank captains only. Serving captains are BUSY (per
+                // Lorne) — poaching them here would just move the hole
+                // to another hull. The empty state must tell the truth
+                // though: "empty" under a 10-serving roster read as a
+                // bug, so it now says where everyone is.
                 const roster = (gameState.captains ?? []).filter(c => c.status === 'active');
-                const avail = roster.filter(c => !c.shipId).sort(bySort);
-                const serving = roster.filter(c => c.shipId && c.shipId !== ship.id).sort(bySort);
-                const tailOf = (id: string) => id.slice(id.indexOf(':') + 1);
-                const postedTo = (id: string) =>
-                  gameState.ships.find(x => x.id === id || tailOf(x.id) === tailOf(id))?.name ?? 'another ship';
-                const capRow = (c: Captain, from: string | null) => (
-                  <button
-                    key={c.id}
-                    className="fleet-capmenu__row"
-                    disabled={capBusy}
-                    onClick={() => { setCapPickFor(null); doCap(mpActions.assignCaptain(c.id, ship.id)); }}
-                    title={traitSummary(c.traits) || undefined}
-                  >
-                    <CaptainAvatar avatarId={c.avatarId} size={20} />
-                    <span className="fleet-capmenu__name">
-                      {c.name}
-                      {c.benchedAtTick != null && <em className="fleet-capmenu__swap"> ⏸</em>}
-                      {from && <em className="fleet-capmenu__swap"> from: {from}</em>}
-                    </span>
-                    <span className={`fleet-xp__tier fleet-xp__tier--${rankTier(c.rank).toLowerCase()}`}>
-                      {rankTier(c.rank)}
-                    </span>
-                  </button>
-                );
+                const bank = roster
+                  .filter(c => !c.shipId)
+                  // Best material first: rank, then whoever has traits.
+                  .sort((a, b) => b.rank - a.rank || b.traits.length - a.traits.length);
                 return (
                   <>
                     <div className="fleet-capmenu__backdrop"
                          onClick={(e) => { e.stopPropagation(); setCapPickFor(null); }} />
                     <div className="fleet-capmenu fleet-capmenu--left" role="menu"
                          onClick={(e) => e.stopPropagation()}>
-                      {avail.map(c => capRow(c, null))}
-                      {serving.map(c => capRow(c, postedTo(c.shipId!)))}
-                      {avail.length === 0 && serving.length === 0 && (
-                        <div className="fleet-capmenu__empty">No captains yet — recruit one below.</div>
+                      {bank.map(c => (
+                        <button
+                          key={c.id}
+                          className="fleet-capmenu__row"
+                          disabled={capBusy}
+                          onClick={() => { setCapPickFor(null); doCap(mpActions.assignCaptain(c.id, ship.id)); }}
+                          title={traitSummary(c.traits) || undefined}
+                        >
+                          <CaptainAvatar avatarId={c.avatarId} size={20} />
+                          <span className="fleet-capmenu__name">
+                            {c.name}
+                            {c.benchedAtTick != null && <em className="fleet-capmenu__swap"> ⏸</em>}
+                          </span>
+                          <span className={`fleet-xp__tier fleet-xp__tier--${rankTier(c.rank).toLowerCase()}`}>
+                            {rankTier(c.rank)}
+                          </span>
+                        </button>
+                      ))}
+                      {bank.length === 0 && (
+                        <div className="fleet-capmenu__empty">
+                          {roster.length > 0
+                            ? `All ${roster.length} captains are serving — recruit another below.`
+                            : 'No captains yet — recruit one below.'}
+                        </div>
                       )}
                       <button
                         className="fleet-capmenu__row fleet-capmenu__row--foot"
@@ -679,10 +675,13 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
     // view / id form drifted) say something human instead of leaking
     // "s10_0_u8za4" into the UI, which is what this fix was for.
     const tail = (id: string) => id.slice(id.indexOf(':') + 1);
+    const shipOf = (id: string | null): Ship | null => {
+      if (!id) return null;
+      return myShips.find(s => s.id === id) ?? myShips.find(s => tail(s.id) === tail(id)) ?? null;
+    };
     const shipName = (id: string | null): string | null => {
       if (!id) return null;
-      const hit = myShips.find(s => s.id === id) ?? myShips.find(s => tail(s.id) === tail(id));
-      return hit?.name ?? 'on assignment';
+      return shipOf(id)?.name ?? 'on assignment';
     };
 
     const row = (c: Captain) => {
@@ -747,11 +746,20 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
             </span>
           ) : (
             <div className="fleet-capcard__rail">
-              {aboard && (
-                <span className="fleet-capcard__posting" title="Current posting">
-                  ⚓ {aboard}
-                </span>
-              )}
+              {aboard && (() => {
+                // The captain's SHIP, drawn as itself (class + chosen
+                // iconVariant) — the anchor glyph said "posted
+                // somewhere"; the icon says posted on WHAT. Anchor
+                // survives only for unresolvable hulls (on assignment).
+                const postedShip = shipOf(c.shipId);
+                return (
+                  <span className="fleet-capcard__posting" title="Current posting">
+                    {postedShip
+                      ? <ShipIcon shipClass={postedShip.class as ShipClassName} variant={postedShip.iconVariant} size={14} />
+                      : '⚓'} {aboard}
+                  </span>
+                );
+              })()}
               {/* Distinguishes "held back on purpose" from "in the bank
                   and awaiting a posting" — only the latter gets picked up
                   by the server's auto-assign pass (migration 0051). */}
