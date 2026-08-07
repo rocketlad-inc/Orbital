@@ -184,7 +184,7 @@ export const GroupSelectionPanel: React.FC = () => {
               title={`${def.displayName} — ${status.title}`}
             >
               <span className="outliner__ship-class">
-                <ShipIcon shipClass={ship.class as ShipClassName} size={20} />
+                <ShipIcon shipClass={ship.class as ShipClassName} variant={ship.iconVariant} size={20} />
               </span>
               <span className="outliner__ship-name">{ship.name}</span>
               <span

@@ -443,7 +443,7 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                         onClick={(e) => { e.stopPropagation(); handleShipClick(ship.id); }}
                       >
                         <span className="outliner__ship-class" title={def.displayName}>
-                          <ShipIcon shipClass={ship.class as ShipClassName} size={22} />
+                          <ShipIcon shipClass={ship.class as ShipClassName} variant={ship.iconVariant} size={22} />
                         </span>
                         <span className="outliner__ship-name">{ship.name}</span>
                         {/* Status is a flex SIBLING of the name, not nested
@@ -489,7 +489,7 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                   onClick={() => handleShipClick(ship.id)}
                 >
                   <span className="outliner__ship-class" title={def.displayName}>
-                    <ShipIcon shipClass={ship.class as ShipClassName} size={22} />
+                    <ShipIcon shipClass={ship.class as ShipClassName} variant={ship.iconVariant} size={22} />
                   </span>
                   <span className="outliner__ship-name">
                     {ship.name} → {target?.name || '?'} T-{Math.max(0, eta).toFixed(0)}
