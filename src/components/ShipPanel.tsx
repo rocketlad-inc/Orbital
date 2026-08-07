@@ -6,6 +6,7 @@ import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { maintenanceRatesForShip } from '../game/maintenance';
 import { nearestShipyardBodyId, isDamagedShip } from '../game/repair';
 import { effectiveShipMaxHp, shipWorldPosition, attackerDamageFactors } from '../game/combat';
+import { predictTarget, SETTLEMENT_COMBAT_SPEED } from '../game/targeting';
 import { traitSummary, rankTier, AVATAR_IDS } from '../game/captains';
 import { CaptainAvatar } from './CaptainAvatar';
 import {
@@ -2119,18 +2120,61 @@ const ShipCaptainCard: React.FC<{
  */
 const CurrentTargetRow: React.FC<{ ship: Ship }> = ({ ship }) => {
   const { gameState } = useGameContext();
-  const targetId = ship.lastTargetId;
-  if (!targetId) return null;
-
-  // Settlements are combatants too, so the stamped id can be either.
-  const tShip = gameState.ships.find(s => s.id === targetId);
-  const tStl = tShip ? undefined : gameState.settlements.find(s => s.id === targetId);
-  // Target is dead or out of sensor range — say nothing rather than
-  // rendering odds against a ghost.
-  if (!tShip && !tStl) return null;
-
   const baseDamage = ship.damagePerTick ?? getShipClass(ship.class as ShipClassName).damagePerTick;
   if (baseDamage <= 0) return null;   // freighters/colony ships never engage
+
+  // The server stamps last_target_id only when a hull actually FIRES, so
+  // a ship that just arrived in a brawl has none. Falling back to a
+  // prediction means the section always answers "who am I shooting" —
+  // rendering nothing mid-battle read as a bug.
+  const stampedId = ship.lastTargetId;
+  const stampedShip = stampedId ? gameState.ships.find(s => s.id === stampedId) : undefined;
+  const stampedStl = stampedId && !stampedShip
+    ? gameState.settlements.find(s => s.id === stampedId)
+    : undefined;
+
+  const predicted = (!stampedShip && !stampedStl)
+    ? predictTarget({
+      attacker: ship,
+      ships: gameState.ships,
+      settlements: gameState.settlements,
+      pactPairs: gameState.pactPairs,
+      damagePerTick: baseDamage,
+    })
+    : null;
+
+  const tShip = stampedShip ?? (predicted?.target?.kind === 'ship' ? predicted.target.ship : undefined);
+  const tStl = stampedStl ?? (predicted?.target?.kind === 'settlement' ? predicted.target.settlement : undefined);
+  /** True when we're showing what it WILL shoot, not what it did. */
+  const isPrediction = !stampedShip && !stampedStl;
+
+  // Nothing to shoot — say WHY instead of vanishing, but only while the
+  // hull is somewhere a fight could happen. A ship parked alone in a
+  // quiet orbit doesn't need a combat readout at all.
+  if (!tShip && !tStl) {
+    const reason = predicted?.reason;
+    if (reason === 'hold') {
+      return (
+        <div className="sp-target sp-target--idle">
+          <div className="sp-target__head"><span className="sp-target__title">NO TARGET</span></div>
+          <div className="sp-target__foot">
+            Standing order is HOLD FIRE — this hull will not engage, even under attack.
+          </div>
+        </div>
+      );
+    }
+    if (reason === 'in-transit') {
+      return (
+        <div className="sp-target sp-target--idle">
+          <div className="sp-target__head"><span className="sp-target__title">NO TARGET</span></div>
+          <div className="sp-target__foot">
+            Under burn — ships in transit neither fire nor take fire.
+          </div>
+        </div>
+      );
+    }
+    return null;   // parked, nothing hostile here: no readout needed
+  }
 
   // Live multipliers. Only computable for OUR ships: a rival's tech,
   // upkeep ledger and captain roster are intel we don't hold, so their
@@ -2177,7 +2221,7 @@ const CurrentTargetRow: React.FC<{ ship: Ship }> = ({ ship }) => {
   // (SETTLEMENT_SPEED in worker/factions.js).
   const targetSpeed = tShip
     ? combatSpeedOf(tShip.class as ShipClassName, tShip.parts)
-    : 0.30;
+    : SETTLEMENT_COMBAT_SPEED;
   const odds = hitChanceOf(mySpeed, targetSpeed);
 
   // Settlements carry no shield/armor parts, so bombardment lands in
@@ -2199,9 +2243,11 @@ const CurrentTargetRow: React.FC<{ ship: Ship }> = ({ ship }) => {
   const ttk = perTick > 0 ? Math.ceil(targetHp / perTick) : Infinity;
 
   return (
-    <div className="sp-target">
+    <div className={`sp-target${isPrediction ? ' sp-target--next' : ''}`}>
       <div className="sp-target__head">
-        <span className="sp-target__title">CURRENT TARGET</span>
+        <span className="sp-target__title">
+          {isPrediction ? 'NEXT TARGET' : 'CURRENT TARGET'}
+        </span>
         <span className="sp-target__kind">{kindLabel}</span>
       </div>
       <div className="sp-target__name">{name}</div>
@@ -2242,6 +2288,7 @@ const CurrentTargetRow: React.FC<{ ship: Ship }> = ({ ship }) => {
         </div>
       )}
       <div className="sp-target__foot">
+        {isPrediction && 'Hasn’t fired yet — this is who it picks on the next volley. '}
         {Number.isFinite(ttk)
           ? `${Math.round(targetHp)} HP left — about ${ttk} tick${ttk === 1 ? '' : 's'} at this rate, alone.`
           : `${Math.round(targetHp)} HP left.`}
