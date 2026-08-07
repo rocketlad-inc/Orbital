@@ -481,17 +481,38 @@ function mapServerFleets(srv: unknown, ships: Ship[], callerFactionId: string): 
   });
 }
 
+/** Stable 32-bit hash of a string — used only to derive a cosmetic,
+ *  deterministic angle, so every client agrees on where a hull sits. */
+function idPhase(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) { h ^= id.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return ((h >>> 0) % 100000) / 100000 * Math.PI * 2;
+}
+
 function shipToClient(s: ServerState['ships'][number], muOfParent: number): Ship {
   // Period from Kepler's 3rd law: T = 2π √(a³ / μ)
   const a = (s.orbit_rp + s.orbit_ra) / 2;
   const period = muOfParent > 0
     ? 2 * Math.PI * Math.sqrt((a * a * a) / muOfParent)
     : 0;
+  // NO ORBITAL MOTION (parent mu = 0, i.e. Sol). trueAnomalyAt then
+  // places the hull at a STATIC angle and fans the ring by orbit_epoch,
+  // on the stated assumption that epoch "is distinct per ship". It is
+  // not: epoch is stamped on ARRIVAL, so a fleet that arrives together
+  // shares one epoch and every hull in it lands on the identical angle,
+  // drawn exactly on top of its neighbours. Live game: 94 ships at Sol
+  // across 24 distinct epochs — roughly four hulls per point. You see
+  // one ship and four of them fire, which reads as invisible attackers.
+  //
+  // Give each hull its own stable phase instead. Cosmetic only (server
+  // combat is body-scoped, not positional) and deterministic from the
+  // id, so every client draws the same ring.
+  const M0 = period > 0 ? s.orbit_m0 : s.orbit_m0 + idPhase(s.id);
   const orbit: OrbitElements = {
     rp: s.orbit_rp,
     ra: s.orbit_ra,
     omega: s.orbit_omega,
-    M0: s.orbit_m0,
+    M0,
     epoch: s.orbit_epoch,
     direction: s.orbit_direction,
     period,

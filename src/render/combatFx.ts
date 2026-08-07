@@ -651,7 +651,9 @@ export function drawEngagementFire(
     const fp = shooter.ship
       ? shipCanvasPos(shooter.ship, rc, transitCanvasPos)
       : settlementCanvasPos(shooter.stl!, rc);
-    const tpNow = tShip
+    // `let`: the occlusion pass below may re-aim at a target that is
+    // actually in line of sight.
+    let tpNow = tShip
       ? shipCanvasPos(tShip, rc, transitCanvasPos)
       : settlementCanvasPos(tStl!, rc);
     if (!fp || !tpNow) continue;
@@ -668,8 +670,43 @@ export function drawEngagementFire(
     // what shooting at range looks like. It is the ORIGIN that has to
     // exist for the shot to make sense.
     if (offScreen(fp, rc)) continue;
-    // Planet in the way → hold fire this pass (never shoot THROUGH it).
-    if (occludedByBody(fp, tpNow, shooter.bodyId, rc)) continue;
+
+    // Body in the way. Never shoot THROUGH it — but do not hold fire
+    // either: pick another hostile that IS in line of sight.
+    //
+    // Holding fire was fine around a planet and disastrous around a
+    // star. Sol has radius 10 and ships park at rp 12-20, so the
+    // occlusion disc (radius x 0.55) blots out most of the ring: any
+    // pair separated by more than ~125 degrees is blocked, which is
+    // ~70% of random pairings at r=12 and ~82% at r=20. With 94 hulls
+    // ringing Sol in the live game, most of the fleet simply never fired
+    // — reported as "some real ships aren't firing at all".
+    //
+    // Re-targeting is also the more honest picture: a gunner with a star
+    // between it and its assigned target shoots at something it can
+    // actually see.
+    if (occludedByBody(fp, tpNow, shooter.bodyId, rc)) {
+      let alt: Ship | null = null;
+      let altPos: { x: number; y: number } | null = null;
+      let altArmed = false;
+      for (const s of ships) {
+        if (s.id === shooter.id || s.transit) continue;
+        if (s.orbit.parentBodyId !== shooter.bodyId) continue;
+        if (s.ownedBy === shooter.ownedBy) continue;
+        if (atPeace(peace, s.ownedBy, shooter.ownedBy)) continue;
+        const armed = shipIsArmed(s);
+        // Same tier rule as the primary pick: a settlement never fires
+        // on a non-combatant, and an armed target outranks a civilian.
+        if (!shooter.ship && !armed) continue;
+        if (alt && altArmed && !armed) continue;
+        const p = shipCanvasPos(s, rc, transitCanvasPos);
+        if (!p || occludedByBody(fp, p, shooter.bodyId, rc)) continue;
+        alt = s; altPos = p; altArmed = armed;
+        if (armed) break;                 // best tier found, stop looking
+      }
+      if (!alt || !altPos) continue;      // genuinely nothing in sight
+      tShip = alt; tStl = null; tpNow = altPos;
+    }
 
     if (!opened) {
       c.save();
