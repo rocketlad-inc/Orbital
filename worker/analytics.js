@@ -436,7 +436,8 @@ async function handleGameAnalytics(req, env, { session, params }) {
   try {
     const t = await env.DB
       .prepare(
-        `SELECT attacker_class, target_class, volleys, hits, damage, kills
+        `SELECT attacker_class, target_class, volleys, hits, damage, kills,
+                damage_raw, overkill
            FROM game_combat_tally WHERE game_id = ?`,
       )
       .bind(gameId)
@@ -446,11 +447,251 @@ async function handleGameAnalytics(req, env, { session, params }) {
     console.error('combat tally read failed (table may not exist yet)', e);
   }
 
+  // ---- Second-wave combat analytics (migration 0069) -------------------
+  // Every block below is independently wrapped, so one missing table
+  // degrades a single panel instead of the whole page.
+
+  /** Per-hull records — the only source that can NAME a ship, so it
+   *  powers both the MVP awards and the loadout analysis. */
+  let shipStats = [];
+  try {
+    const r = await env.DB
+      .prepare(
+        `SELECT ss.ship_id, ss.ship_name, ss.ship_class, ss.faction_id,
+                ss.shots, ss.hits, ss.shots_taken, ss.hits_taken,
+                ss.damage_dealt, ss.damage_taken, ss.damage_absorbed,
+                ss.kills, ss.overkill, ss.low_hp_kills,
+                CASE WHEN s.id IS NULL OR s.status <> 'active' THEN 0 ELSE 1 END AS alive
+           FROM game_ship_stats ss
+           LEFT JOIN game_ships s ON s.id = ss.ship_id
+          WHERE ss.game_id = ?`,
+      )
+      .bind(gameId)
+      .all();
+    shipStats = r.results ?? [];
+  } catch (e) {
+    console.error('ship stats read failed (table may not exist yet)', e);
+  }
+
+  /** Repair vs destruction — is the fleet healing faster than it dies? */
+  const economy = { hp_repaired: 0, hp_destroyed: 0 };
+  try {
+    const r = await env.DB
+      .prepare('SELECT stat, value FROM game_combat_stats WHERE game_id = ?')
+      .bind(gameId)
+      .all();
+    for (const row of r.results ?? []) economy[row.stat] = row.value;
+  } catch (e) {
+    console.error('combat stats read failed (table may not exist yet)', e);
+  }
+
+  /** Captain survival. The rescue roll is the whole retention story now
+   *  that veterancy is captain-only — a lost ace is unrecoverable. */
+  let captains = { lost: 0, rescued: 0, active: 0, banked: 0, top_rank: 0, avg_rank: 0 };
+  try {
+    const c = await env.DB
+      .prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM chronicle_entries
+             WHERE game_id = ?1 AND kind = 'captain_lost')     AS lost,
+           (SELECT COUNT(*) FROM chronicle_entries
+             WHERE game_id = ?1 AND kind = 'captain_rescued')  AS rescued,
+           (SELECT COUNT(*) FROM game_captains
+             WHERE game_id = ?1 AND status = 'active')         AS active,
+           (SELECT COUNT(*) FROM game_captains
+             WHERE game_id = ?1 AND status = 'active' AND ship_id IS NULL) AS banked,
+           (SELECT COALESCE(MAX(rank), 0) FROM game_captains
+             WHERE game_id = ?1 AND status = 'active')         AS top_rank,
+           (SELECT COALESCE(AVG(rank), 0) FROM game_captains
+             WHERE game_id = ?1 AND status = 'active')         AS avg_rank`,
+      )
+      .bind(gameId)
+      .first();
+    if (c) captains = c;
+  } catch (e) {
+    console.error('captain analytics read failed', e);
+  }
+
+  /** Auto-retreat: how often it fires, and whether it actually saves the
+   *  hull. A retreat followed by death means the threshold was set too
+   *  late to matter. */
+  let retreats = { fired: 0, saved: 0 };
+  try {
+    const r = await env.DB
+      .prepare(
+        `SELECT COUNT(*) AS fired,
+                SUM(CASE WHEN s.status = 'active' THEN 1 ELSE 0 END) AS saved
+           FROM chronicle_entries ce
+           LEFT JOIN game_ships s ON s.id = ce.ship_id
+          WHERE ce.game_id = ? AND ce.kind = 'ship_retreated'`,
+      )
+      .bind(gameId)
+      .first();
+    if (r) retreats = { fired: r.fired ?? 0, saved: r.saved ?? 0 };
+  } catch (e) {
+    console.error('retreat analytics read failed', e);
+  }
+
+  /** Detonators: a hull spent for damage. Worth it, or a trap? */
+  let detonations = { count: 0, damage: 0, kills: 0 };
+  try {
+    const d = await env.DB
+      .prepare(
+        `SELECT COUNT(*) AS count,
+                COALESCE(SUM(CAST(json_extract(payload,'$.damage') AS REAL)), 0) AS damage,
+                COALESCE(SUM(CAST(json_extract(payload,'$.destroyed') AS INTEGER)), 0) AS kills
+           FROM chronicle_entries
+          WHERE game_id = ? AND kind = 'ship_detonated'`,
+      )
+      .bind(gameId)
+      .first();
+    if (d) detonations = d;
+  } catch (e) {
+    console.error('detonation analytics read failed', e);
+  }
+
+  /** Target-priority adoption — does anyone actually override AUTO? */
+  let priority = { armed: 0, custom: 0 };
+  try {
+    const p = await env.DB
+      .prepare(
+        `SELECT COUNT(*) AS armed,
+                SUM(CASE WHEN target_priority IS NOT NULL THEN 1 ELSE 0 END) AS custom
+           FROM game_ships
+          WHERE game_id = ? AND status = 'active' AND damage_per_tick > 0`,
+      )
+      .bind(gameId)
+      .first();
+    if (p) priority = { armed: p.armed ?? 0, custom: p.custom ?? 0 };
+  } catch (e) {
+    console.error('priority adoption read failed', e);
+  }
+
+  /** Battles: cluster combat events by BODY, grouping ticks that are
+   *  close together into one engagement. Answers "how long does a fight
+   *  actually last" — the live check on the pacing the whole combat model
+   *  was tuned around. */
+  let battles = { count: 0, avg_ticks: 0, longest: 0, avg_deaths: 0, decisive: 0 };
+  try {
+    const rows = (await env.DB
+      .prepare(
+        `SELECT body_id, tick_number, kind
+           FROM chronicle_entries
+          WHERE game_id = ? AND kind IN ('ship_damaged','ship_destroyed','settlement_destroyed')
+            AND body_id IS NOT NULL
+          ORDER BY body_id, tick_number`,
+      )
+      .bind(gameId)
+      .all()).results ?? [];
+    // A lull longer than this ends the engagement. Combat fires EVERY
+    // tick while hostiles share an orbit, so a longer gap means somebody
+    // left or died.
+    const BATTLE_GAP = 3;
+    const byBody = new Map();
+    for (const r of rows) {
+      if (!byBody.has(r.body_id)) byBody.set(r.body_id, []);
+      byBody.get(r.body_id).push(r);
+    }
+    const lengths = [];
+    const deaths = [];
+    let decisive = 0;
+    for (const evs of byBody.values()) {
+      let start = null;
+      let last = null;
+      let dead = 0;
+      const close = () => {
+        if (start === null) return;
+        lengths.push(last - start + 1);
+        deaths.push(dead);
+        if (dead > 0) decisive++;
+        start = null;
+        dead = 0;
+      };
+      for (const e of evs) {
+        if (start === null) start = e.tick_number;
+        else if (e.tick_number - last > BATTLE_GAP) { close(); start = e.tick_number; }
+        last = e.tick_number;
+        if (e.kind !== 'ship_damaged') dead++;
+      }
+      close();
+    }
+    if (lengths.length > 0) {
+      battles = {
+        count: lengths.length,
+        avg_ticks: lengths.reduce((a, b) => a + b, 0) / lengths.length,
+        longest: Math.max(...lengths),
+        avg_deaths: deaths.reduce((a, b) => a + b, 0) / deaths.length,
+        decisive,
+      };
+    }
+  } catch (e) {
+    console.error('battle clustering failed', e);
+  }
+
+  /** Loadout effectiveness. Deaths carry the hull's parts (added with
+   *  0069), so we can ask which fits actually die, read against what is
+   *  still flying. Pre-0069 rows carry no parts and are SKIPPED rather
+   *  than counted as bare hulls, which would flatter the empty loadout. */
+  let loadouts = [];
+  try {
+    const norm = (parts) => {
+      const counts = {};
+      for (const part of parts ?? []) counts[part] = (counts[part] ?? 0) + 1;
+      const keys = Object.keys(counts).sort();
+      return keys.length === 0 ? 'bare hull' : keys.map(k => k + ' x' + counts[k]).join(' + ');
+    };
+    const agg = new Map();
+    const bump = (cls, key, field) => {
+      const k = cls + '|' + key;
+      let e = agg.get(k);
+      if (!e) { e = { ship_class: cls, loadout: key, alive: 0, lost: 0 }; agg.set(k, e); }
+      e[field]++;
+    };
+    const aliveRows = (await env.DB
+      .prepare(
+        `SELECT ship_class, parts_json FROM game_ships
+          WHERE game_id = ? AND status = 'active'`,
+      )
+      .bind(gameId).all()).results ?? [];
+    for (const r of aliveRows) {
+      let parts = [];
+      try { parts = JSON.parse(r.parts_json || '[]'); } catch { parts = []; }
+      bump(r.ship_class, norm(parts), 'alive');
+    }
+    const deadRows = (await env.DB
+      .prepare(
+        `SELECT json_extract(payload,'$.ship_class') AS ship_class,
+                json_extract(payload,'$.parts')      AS parts
+           FROM chronicle_entries
+          WHERE game_id = ? AND kind = 'ship_destroyed'`,
+      )
+      .bind(gameId).all()).results ?? [];
+    for (const r of deadRows) {
+      if (r.parts === null || r.parts === undefined) continue;   // pre-0069 row
+      let parts = [];
+      try { parts = JSON.parse(r.parts) ?? []; } catch { continue; }
+      bump(r.ship_class ?? 'unknown', norm(parts), 'lost');
+    }
+    loadouts = [...agg.values()]
+      .sort((a, b) => (b.alive + b.lost) - (a.alive + a.lost))
+      .slice(0, 24);
+  } catch (e) {
+    console.error('loadout analytics failed', e);
+  }
+
   const combat = {
     losses: losses.results ?? [],
     kills: kills.results ?? [],
     settlements_lost: razed.results ?? [],
     tally,
+    ship_stats: shipStats,
+    economy,
+    captains,
+    retreats,
+    detonations,
+    priority,
+    battles,
+    loadouts,
   };
 
   // --- Ship class popularity: what people build (alive) and what dies

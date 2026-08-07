@@ -299,3 +299,58 @@
 .aa-v2__off .aa-v2__obs { color: #ff9b7a; }
 .aa-v2__perclass td { text-align: right; }
 .aa-v2__foot { font-size: 10px; line-height: 1.5; color: #6c7c8c; margin-top: 10px; }
+
+/* ---- MVP awards ---------------------------------------------------- */
+.aa-awards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+}
+.aa-award {
+  background: linear-gradient(180deg, #101a26 0%, #0b131d 100%);
+  border: 1px solid #1e2d3f;
+  border-top: 2px solid #ffb84d;
+  border-radius: 4px;
+  padding: 8px 10px 7px;
+}
+.aa-award__title {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.14em; color: #ffb84d;
+}
+.aa-award__name {
+  font-size: 14px; font-weight: 600; color: #e6edf4; margin-top: 3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.aa-award__meta {
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: 8px; margin-top: 2px;
+}
+.aa-award__cls { font-size: 9px; letter-spacing: 0.1em; color: #6c7c8c; text-transform: uppercase; }
+.aa-award__val { font-size: 11px; color: #7fd0ff; font-variant-numeric: tabular-nums; }
+.aa-award__blurb { font-size: 9px; color: #5f6f7e; margin-top: 5px; line-height: 1.4; }
+
+/* ---- Deep-dive stat grid ------------------------------------------- */
+.aa-dd-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 8px;
+}
+.aa-dd {
+  background: #0d1520;
+  border: 1px solid #1b2836;
+  border-left: 3px solid #2a3d50;
+  border-radius: 4px;
+  padding: 8px 10px 7px;
+}
+.aa-dd--good { border-left-color: #6ee7b7; }
+.aa-dd--warn { border-left-color: #ff8a5c; }
+.aa-dd__val {
+  font-size: 20px; font-weight: 600; color: #e6edf4; line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+}
+.aa-dd--good .aa-dd__val { color: #6ee7b7; }
+.aa-dd--warn .aa-dd__val { color: #ff8a5c; }
+.aa-dd__label {
+  font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+  color: #7fa0bb; margin-top: 4px;
+}
+.aa-dd__note { font-size: 9.5px; line-height: 1.45; color: #6c7c8c; margin-top: 5px; }

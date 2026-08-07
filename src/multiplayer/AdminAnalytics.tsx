@@ -91,6 +91,22 @@ type GameAnalytics = {
     /** COMBAT V2 telemetry (migration 0063). Absent on games that have not
      *  ticked since the table landed. */
     tally?: CombatTallyRow[];
+    /** Second wave (migration 0069). Each field is independently
+     *  best-effort server-side, so any of them may be missing. */
+    ship_stats?: ShipStatRow[];
+    economy?: { hp_repaired: number; hp_destroyed: number };
+    captains?: {
+      lost: number; rescued: number; active: number;
+      banked: number; top_rank: number; avg_rank: number;
+    };
+    retreats?: { fired: number; saved: number };
+    detonations?: { count: number; damage: number; kills: number };
+    priority?: { armed: number; custom: number };
+    battles?: {
+      count: number; avg_ticks: number; longest: number;
+      avg_deaths: number; decisive: number;
+    };
+    loadouts?: Array<{ ship_class: string; loadout: string; alive: number; lost: number }>;
   };
   shipClasses: {
     alive: Array<{ ship_class: string; n: number }>;
@@ -113,6 +129,32 @@ interface CombatTallyRow {
   hits: number;
   damage: number;
   kills: number;
+  /** Pre-mitigation damage fired (0069). damage_raw - damage is what the
+   *  target's shields/armor absorbed. */
+  damage_raw?: number;
+  /** Damage landed on a hull that died the same tick (0069). */
+  overkill?: number;
+}
+
+/** Per-hull lifetime combat record (migration 0069) — the only source
+ *  that can name a specific ship, which is what the awards need. */
+interface ShipStatRow {
+  ship_id: string;
+  ship_name: string | null;
+  ship_class: string | null;
+  faction_id: string | null;
+  shots: number;
+  hits: number;
+  shots_taken: number;
+  hits_taken: number;
+  damage_dealt: number;
+  damage_taken: number;
+  damage_absorbed: number;
+  kills: number;
+  overkill: number;
+  low_hp_kills: number;
+  /** 1 while the hull is still flying; the record outlives the ship. */
+  alive: number;
 }
 
 /** Speeds the server fights with — worker/factions.js SHIP_COMBAT_STATS.speed
@@ -621,6 +663,21 @@ function GameDetail({
       </section>
 
       <section>
+        <div className="aa-section-title">MVP AWARDS</div>
+        <CombatAwards data={data} />
+      </section>
+
+      <section>
+        <div className="aa-section-title">COMBAT DEEP DIVE</div>
+        <CombatDeepDive data={data} />
+      </section>
+
+      <section>
+        <div className="aa-section-title">LOADOUTS · ALIVE VS LOST</div>
+        <LoadoutTable data={data} />
+      </section>
+
+      <section>
         <div className="aa-section-title">SHIP CLASSES · BUILT VS LOST</div>
         <ShipClassBars data={data} />
       </section>
@@ -1074,6 +1131,207 @@ function CombatV2Panel({ data }: { data: GameAnalytics }) {
         under {MIN_SAMPLE} shots show their sample size instead of a verdict.
         A cell more than 8 points off prediction is flagged.
       </div>
+    </div>
+  );
+}
+
+/**
+ * MVP AWARDS — the battle's named performers.
+ *
+ * Per-class tallies can tell you a destroyer is efficient; only the
+ * per-hull record (migration 0069) can tell you WHICH destroyer, and a
+ * name is what players actually remember. Each award states its own
+ * criterion, because an unexplained superlative invites arguments about
+ * what it measured.
+ *
+ * Minimum samples exist so a hull that fired twice and got lucky doesn't
+ * outrank one that fought all game.
+ */
+function CombatAwards({ data }: { data: GameAnalytics }) {
+  const rows = data.combat.ship_stats ?? [];
+  if (rows.length === 0) {
+    return <div className="aa-empty">No per-ship records yet — awards fill in as hulls fight.</div>;
+  }
+
+  const label = (r: ShipStatRow) =>
+    `${r.ship_name ?? 'Unnamed'}${r.alive ? '' : ' †'}`;
+  const sub = (r: ShipStatRow) => r.ship_class ?? 'ship';
+
+  type Award = {
+    key: string; title: string; blurb: string;
+    winner?: ShipStatRow; value: string;
+  };
+  const best = (
+    pool: ShipStatRow[],
+    score: (r: ShipStatRow) => number,
+  ): ShipStatRow | undefined => {
+    let top: ShipStatRow | undefined;
+    let topScore = -Infinity;
+    for (const r of pool) {
+      const v = score(r);
+      if (v > topScore) { topScore = v; top = r; }
+    }
+    return topScore > 0 ? top : undefined;
+  };
+
+  const MIN_SHOTS = 20;
+  const shooters = rows.filter(r => r.shots >= MIN_SHOTS);
+  const targets = rows.filter(r => r.shots_taken >= MIN_SHOTS);
+
+  const ace = best(rows, r => r.kills);
+  const breaker = best(rows, r => r.damage_dealt);
+  const anvil = best(rows.filter(r => r.alive === 1), r => r.damage_taken);
+  const untouchable = targets.length
+    ? targets.reduce((a, b) =>
+      (a.hits_taken / a.shots_taken) <= (b.hits_taken / b.shots_taken) ? a : b)
+    : undefined;
+  const executioner = best(shooters.filter(r => r.kills > 0), r => r.kills / Math.max(1, r.hits));
+  const sponge = best(rows, r => r.damage_absorbed);
+  const lastStand = best(rows, r => r.low_hp_kills);
+  const wasteful = best(shooters, r => r.overkill);
+
+  const awards: Award[] = [
+    { key: 'ace', title: 'ACE', blurb: 'most kills',
+      winner: ace, value: ace ? `${ace.kills} kills` : '—' },
+    { key: 'breaker', title: 'SHIPBREAKER', blurb: 'most damage dealt',
+      winner: breaker, value: breaker ? `${Math.round(breaker.damage_dealt).toLocaleString()} dmg` : '—' },
+    { key: 'anvil', title: 'ANVIL', blurb: 'most damage survived',
+      winner: anvil, value: anvil ? `${Math.round(anvil.damage_taken).toLocaleString()} taken` : '—' },
+    { key: 'untouchable', title: 'UNTOUCHABLE', blurb: `hardest to hit (min ${MIN_SHOTS} shots at it)`,
+      winner: untouchable,
+      value: untouchable
+        ? `${Math.round(100 * untouchable.hits_taken / untouchable.shots_taken)}% hit`
+        : '—' },
+    { key: 'executioner', title: 'EXECUTIONER', blurb: 'most kills per landed hit',
+      winner: executioner,
+      value: executioner
+        ? `${(executioner.kills / Math.max(1, executioner.hits)).toFixed(2)} per hit`
+        : '—' },
+    { key: 'sponge', title: 'BULWARK', blurb: 'most damage soaked by its parts',
+      winner: sponge, value: sponge ? `${Math.round(sponge.damage_absorbed).toLocaleString()} absorbed` : '—' },
+    { key: 'laststand', title: 'LAST STAND', blurb: 'kills landed below 25% HP',
+      winner: lastStand, value: lastStand ? `${lastStand.low_hp_kills} kills` : '—' },
+    { key: 'wasteful', title: 'TRIGGER HAPPY', blurb: 'most damage wasted on already-dead hulls',
+      winner: wasteful, value: wasteful ? `${Math.round(wasteful.overkill).toLocaleString()} wasted` : '—' },
+  ];
+
+  return (
+    <>
+      <div className="aa-awards">
+        {awards.filter(a => a.winner).map(a => (
+          <div className="aa-award" key={a.key}>
+            <div className="aa-award__title">{a.title}</div>
+            <div className="aa-award__name">{label(a.winner!)}</div>
+            <div className="aa-award__meta">
+              <span className="aa-award__cls">{sub(a.winner!)}</span>
+              <span className="aa-award__val">{a.value}</span>
+            </div>
+            <div className="aa-award__blurb">{a.blurb}</div>
+          </div>
+        ))}
+      </div>
+      <div className="aa-v2__foot">
+        † hull destroyed — the record outlives the ship. Awards read every
+        hull that has ever fired or been fired on in this game.
+      </div>
+    </>
+  );
+}
+
+/** The questions the tally can answer beyond the hit matrix: what
+ *  defences are worth, what is wasted, and how fights actually run. */
+function CombatDeepDive({ data }: { data: GameAnalytics }) {
+  const tally = data.combat.tally ?? [];
+  const battles = data.combat.battles;
+  const econ = data.combat.economy;
+  const caps = data.combat.captains;
+  const ret = data.combat.retreats;
+  const det = data.combat.detonations;
+  const pri = data.combat.priority;
+
+  const rawTotal = tally.reduce((a, r) => a + (r.damage_raw ?? 0), 0);
+  const landed = tally.reduce((a, r) => a + r.damage, 0);
+  const absorbed = Math.max(0, rawTotal - landed);
+  const absorbedPct = rawTotal > 0 ? (100 * absorbed) / rawTotal : 0;
+  const overkill = tally.reduce((a, r) => a + (r.overkill ?? 0), 0);
+  const overkillPct = landed > 0 ? (100 * overkill) / landed : 0;
+
+  const repaired = econ?.hp_repaired ?? 0;
+  const destroyed = econ?.hp_destroyed ?? 0;
+  const healRatio = destroyed > 0 ? repaired / destroyed : 0;
+
+  const rescuePct = caps && (caps.lost + caps.rescued) > 0
+    ? (100 * caps.rescued) / (caps.lost + caps.rescued)
+    : 0;
+  const retreatPct = ret && ret.fired > 0 ? (100 * ret.saved) / ret.fired : 0;
+  const customPct = pri && pri.armed > 0 ? (100 * pri.custom) / pri.armed : 0;
+
+  const stat = (
+    label: string, value: string, note: string, tone?: 'good' | 'warn',
+  ) => (
+    <div className={`aa-dd${tone ? ` aa-dd--${tone}` : ''}`} key={label}>
+      <div className="aa-dd__val">{value}</div>
+      <div className="aa-dd__label">{label}</div>
+      <div className="aa-dd__note">{note}</div>
+    </div>
+  );
+
+  return (
+    <div className="aa-dd-grid">
+      {stat('ABSORBED BY DEFENCES', `${absorbedPct.toFixed(0)}%`,
+        `${Math.round(absorbed).toLocaleString()} of ${Math.round(rawTotal).toLocaleString()} fired never landed. This is what shields and armor are buying.`,
+        absorbedPct >= 20 ? 'good' : undefined)}
+      {stat('OVERKILL', `${overkillPct.toFixed(0)}%`,
+        `${Math.round(overkill).toLocaleString()} damage landed on hulls already dead that tick. Simultaneous resolution makes some waste unavoidable.`,
+        overkillPct >= 25 ? 'warn' : undefined)}
+      {stat('REPAIR vs DESTRUCTION', healRatio > 0 ? `${healRatio.toFixed(2)}×` : '—',
+        `${Math.round(repaired).toLocaleString()} HP repaired against ${Math.round(destroyed).toLocaleString()} destroyed. Above 1.0 means yards outpace the guns.`,
+        healRatio >= 1 ? 'warn' : undefined)}
+      {battles && stat('BATTLE LENGTH', battles.count ? `${battles.avg_ticks.toFixed(1)}t` : '—',
+        `${battles.count} engagements, longest ${battles.longest} ticks, ${battles.avg_deaths.toFixed(1)} deaths each. ${battles.decisive} ended in a kill.`)}
+      {caps && stat('CAPTAIN RESCUE RATE', `${rescuePct.toFixed(0)}%`,
+        `${caps.rescued} recovered, ${caps.lost} lost for good. ${caps.active} active (${caps.banked} benched), top rank ${caps.top_rank}.`,
+        rescuePct < 30 ? 'warn' : undefined)}
+      {ret && stat('RETREAT SURVIVAL', ret.fired ? `${retreatPct.toFixed(0)}%` : '—',
+        `${ret.saved} of ${ret.fired} auto-retreating hulls are still alive. Near 100% means the threshold is generous.`)}
+      {det && stat('DETONATIONS', `${det.count}`,
+        `${Math.round(det.damage).toLocaleString()} damage, ${det.kills} hulls destroyed — ${det.count ? (det.kills / det.count).toFixed(2) : '0'} kills per hull spent.`)}
+      {pri && stat('CUSTOM TARGETING', `${customPct.toFixed(0)}%`,
+        `${pri.custom} of ${pri.armed} armed hulls override AUTO. Low adoption means the cards are not earning their complexity.`)}
+    </div>
+  );
+}
+
+/** Which fits actually survive. Alive vs lost per (class, loadout). */
+function LoadoutTable({ data }: { data: GameAnalytics }) {
+  const rows = data.combat.loadouts ?? [];
+  if (rows.length === 0) {
+    return <div className="aa-empty">No loadout data yet — deaths recorded before this shipped carry no parts.</div>;
+  }
+  return (
+    <div className="aa-v2__scroll">
+      <table className="aa-v2__matrix aa-v2__perclass">
+        <thead>
+          <tr><th>class</th><th>loadout</th><th>alive</th><th>lost</th><th>survival</th></tr>
+        </thead>
+        <tbody>
+          {rows.map(r => {
+            const total = r.alive + r.lost;
+            const surv = total > 0 ? (100 * r.alive) / total : 0;
+            return (
+              <tr key={`${r.ship_class}|${r.loadout}`}>
+                <th>{r.ship_class}</th>
+                <th style={{ fontWeight: 400, color: '#9fb4c6' }}>{r.loadout}</th>
+                <td>{r.alive}</td>
+                <td>{r.lost}</td>
+                <td className={surv < 40 && total >= 4 ? 'aa-v2__off' : undefined}>
+                  {total >= 4 ? `${surv.toFixed(0)}%` : `n=${total}`}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
