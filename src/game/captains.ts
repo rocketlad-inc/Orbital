@@ -13,10 +13,14 @@ export interface CaptainTraitDef {
   /** Client-applied multipliers (subset of the server's). */
   hpMul?: number;
   accelMul?: number;
+  dmgMul?: number;
 }
 
 export const CAPTAIN_TRAITS: Record<string, CaptainTraitDef> = {
-  gunner:        { name: 'Gunner',        icon: '🎯', blurb: '+10% weapon damage' },
+  // dmgMul mirrors the server's traitMul(_,'dmgMul') in worker/room.js.
+  // It was blurb-only until the ship card started quoting real expected
+  // damage — the number silently omitted the Gunner bonus.
+  gunner:        { name: 'Gunner',        icon: '🎯', blurb: '+10% weapon damage', dmgMul: 1.10 },
   bulwark:       { name: 'Bulwark',       icon: '🛡', blurb: '+10% max hull', hpMul: 1.10 },
   wrench:        { name: 'Wrench',        icon: '🔧', blurb: '+50% repair rate' },
   voidrunner:    { name: 'Voidrunner',    icon: '💨', blurb: '+10% engine acceleration', accelMul: 1.10 },
@@ -39,7 +43,7 @@ export function rankTier(rank: number): string {
 }
 
 /** Multiplier over a trait-id list for a client-applied effect key. */
-export function traitMul(traits: string[] | undefined, key: 'hpMul' | 'accelMul'): number {
+export function traitMul(traits: string[] | undefined, key: 'hpMul' | 'accelMul' | 'dmgMul'): number {
   let m = 1;
   for (const t of traits ?? []) {
     const v = CAPTAIN_TRAITS[t]?.[key];

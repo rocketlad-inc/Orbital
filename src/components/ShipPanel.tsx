@@ -5,7 +5,7 @@ import { TargetPriorityCards, autoTargetOrderFor } from './TargetPriorityCards';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { maintenanceRatesForShip } from '../game/maintenance';
 import { nearestShipyardBodyId, isDamagedShip } from '../game/repair';
-import { effectiveShipMaxHp, shipWorldPosition } from '../game/combat';
+import { effectiveShipMaxHp, shipWorldPosition, attackerDamageFactors } from '../game/combat';
 import { traitSummary, rankTier, AVATAR_IDS } from '../game/captains';
 import { CaptainAvatar } from './CaptainAvatar';
 import {
@@ -2129,8 +2129,48 @@ const CurrentTargetRow: React.FC<{ ship: Ship }> = ({ ship }) => {
   // rendering odds against a ghost.
   if (!tShip && !tStl) return null;
 
-  const myDamage = ship.damagePerTick ?? getShipClass(ship.class as ShipClassName).damagePerTick;
-  if (myDamage <= 0) return null;   // freighters/colony ships never engage
+  const baseDamage = ship.damagePerTick ?? getShipClass(ship.class as ShipClassName).damagePerTick;
+  if (baseDamage <= 0) return null;   // freighters/colony ships never engage
+
+  // Live multipliers. Only computable for OUR ships: a rival's tech,
+  // upkeep ledger and captain roster are intel we don't hold, so their
+  // card shows the stamped figure rather than a confident wrong number.
+  const isMine = ship.ownedBy === 'player';
+  const myFleet = isMine
+    ? gameState.fleets.find(f => f.shipIds.includes(ship.id))
+    : undefined;
+  // The flagship's own captain already applies at full strength; an
+  // aura on itself would double-dip the same trait.
+  const flagShipId = myFleet?.flagCaptainId
+    ? gameState.ships.find(s => s.captainId === myFleet.flagCaptainId)?.id
+    : undefined;
+  const flagTraits = myFleet && flagShipId !== ship.id
+    ? myFleet.flagCaptainTraits
+    : undefined;
+  const arrears = gameState.fleetArrears;
+  const inArrears = !!arrears && ((arrears.credits ?? 0) > 0 || (arrears.ore ?? 0) > 0);
+  // Senate war authorization doubles damage dealt TO the sanctioned
+  // faction. Target ownedBy is a raw faction id for every rival (only
+  // OUR ships get rewritten to 'player'), so a direct compare is right
+  // for every case that can actually occur — you never shoot yourself.
+  const targetFaction = tShip?.ownedBy ?? tStl?.ownedBy;
+  const warAuthorized = (gameState.senateSanctions ?? []).some(
+    s => s.kind === 'war_authorization' && s.targetFactionId === targetFaction,
+  );
+
+  const profileForTech = damageProfile(ship.parts);
+  const { total: bonusMul, factors } = isMine
+    ? attackerDamageFactors({
+      rank: ship.rank,
+      captainTraits: ship.captainTraits,
+      flagTraits,
+      profile: profileForTech,
+      tech: gameState.factionTech[ship.ownedBy],
+      inArrears,
+      warAuthorized,
+    })
+    : { total: 1, factors: [] };
+  const myDamage = baseDamage * bonusMul;
 
   const mySpeed = combatSpeedOf(ship.class as ShipClassName, ship.parts);
   // A settlement is mechanically a destroyer that cannot move
@@ -2172,7 +2212,7 @@ const CurrentTargetRow: React.FC<{ ship: Ship }> = ({ ship }) => {
         </span>
         <span className="sp-target__k">PER HIT</span>
         <span className="sp-target__v" title={mit < 1
-          ? `${myDamage.toFixed(1)} base, cut to ${Math.round(100 * mit)}% by the target's defensive parts.`
+          ? `${myDamage.toFixed(1)} after bonuses, cut to ${Math.round(100 * mit)}% by the target's defensive parts.`
           : 'The target carries nothing that counters this weapon type.'}>
           {perHit.toFixed(1)}
           {mit < 1 && <span className="sp-target__dim"> ({Math.round(100 * mit)}%)</span>}
@@ -2182,11 +2222,30 @@ const CurrentTargetRow: React.FC<{ ship: Ship }> = ({ ship }) => {
           {perTick.toFixed(1)}<span className="sp-target__dim">/tick</span>
         </span>
       </div>
+      {/* Show the work: every live multiplier folded into the numbers
+          above, so a player can see WHY their frigate is hitting for
+          more than its stat line — and spot an arrears penalty they
+          didn't know they were paying. */}
+      {factors.length > 0 && (
+        <div className="sp-target__bonus">
+          <span className="sp-target__bonus-lead">
+            {baseDamage.toFixed(1)} base ×{bonusMul.toFixed(2)}
+          </span>
+          {factors.map(f => (
+            <span
+              key={f.label}
+              className={`sp-target__chip${f.mul < 1 ? ' sp-target__chip--bad' : ''}`}
+            >
+              {f.label} ×{f.mul.toFixed(2)}
+            </span>
+          ))}
+        </div>
+      )}
       <div className="sp-target__foot">
         {Number.isFinite(ttk)
           ? `${Math.round(targetHp)} HP left — about ${ttk} tick${ttk === 1 ? '' : 's'} at this rate, alone.`
           : `${Math.round(targetHp)} HP left.`}
-        {' '}Rank, captain and war bonuses land on top.
+        {!isMine && ' Rival bonuses are intel we don’t hold — base damage only.'}
       </div>
     </div>
   );

@@ -871,3 +871,37 @@
   color: #6c7c8c;
   font-style: italic;
 }
+
+/* Bonus breakdown — the multiplier chain behind the numbers above. */
+.sp-target__bonus {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 5px;
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px solid rgba(255, 94, 94, 0.16);
+}
+.sp-target__bonus-lead {
+  font-size: 8.5px;
+  color: #7a8a9a;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  margin-right: 2px;
+}
+.sp-target__chip {
+  font-size: 8px;
+  line-height: 1.5;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(110, 231, 183, 0.12);
+  border: 1px solid rgba(110, 231, 183, 0.3);
+  color: #6ee7b7;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.sp-target__chip--bad {
+  background: rgba(255, 94, 94, 0.12);
+  border-color: rgba(255, 94, 94, 0.38);
+  color: #ff8a8a;
+}

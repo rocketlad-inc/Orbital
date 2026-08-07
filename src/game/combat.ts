@@ -9,6 +9,71 @@ import { SETTLEMENT_DEFS, BUILDING_DEFS, buildingLevel } from './settlements';
 import { rankDamageMul, rankHpMul, hpModifier } from './techs';
 import { traitMul as captainTraitMul } from './captains';
 
+/** One named factor in an attacker's live damage chain. */
+export interface DamageFactor {
+  label: string;
+  mul: number;
+}
+
+/**
+ * Every live multiplier the tick stacks on a hull's stamped
+ * damage_per_tick, mirroring the attackPower expression in
+ * worker/room.js — KEEP IN SYNC.
+ *
+ * The stamped damage is only the starting point: weapons tech, the
+ * captain's rank, a Gunner trait, the flag captain's halved aura, unpaid
+ * upkeep and a senate war authorization all multiply on top, and the
+ * result routinely differs from the stamped figure by 2x or more. Any UI
+ * quoting "expected damage" has to apply the same chain or it quietly
+ * disagrees with the combat log.
+ *
+ * Returns the factors that actually APPLY (mul !== 1) so callers can
+ * show their work, plus the product.
+ *
+ * NOT modelled: the senate's combat_damage_multiplier slider, which the
+ * client is never sent. Callers should treat the result as complete for
+ * every ordinary game and note the slider only if it ever ships to the
+ * client.
+ */
+export function attackerDamageFactors(opts: {
+  rank?: number;
+  captainTraits?: string[];
+  /** Flag captain of the ship's fleet, when it isn't the flagship. */
+  flagTraits?: string[];
+  /** Weapon mix, from damageProfile(parts). */
+  profile: { kinetic: number; energy: number };
+  tech: FactionTechStateBase | undefined;
+  /** True when the owner's fleet upkeep is in arrears. */
+  inArrears?: boolean;
+  /** True when the senate has authorized war on the TARGET's faction. */
+  warAuthorized?: boolean;
+}): { total: number; factors: DamageFactor[] } {
+  const factors: DamageFactor[] = [];
+  const push = (label: string, mul: number) => {
+    if (Math.abs(mul - 1) > 1e-9) factors.push({ label, mul });
+  };
+
+  // Weapons tech, blended by what this hull fires. Energy rides the
+  // higher of energy_weapons/weapons, matching energyMulOf.
+  const levels = (opts.tech?.levels ?? {}) as Record<string, number>;
+  const wLvl = Number(levels.weapons ?? 0);
+  const eLvl = Math.max(Number(levels.energy_weapons ?? 0), wLvl);
+  const techMul = opts.profile.kinetic * (1 + 0.10 * wLvl)
+    + opts.profile.energy * (1 + 0.10 * eLvl);
+  push('Weapons tech', techMul);
+
+  push('Rank', rankDamageMul(opts.rank));
+  push('Captain', captainTraitMul(opts.captainTraits, 'dmgMul'));
+  // Flag aura is HALF strength and never applies to the flagship — the
+  // caller decides that by passing flagTraits only for members.
+  const flagFull = captainTraitMul(opts.flagTraits, 'dmgMul');
+  push('Flag aura', 1 + (flagFull - 1) / 2);
+  if (opts.inArrears) push('Unpaid fleet', 0.75);
+  if (opts.warAuthorized) push('War authorization', 2);
+
+  return { total: factors.reduce((m, f) => m * f.mul, 1), factors };
+}
+
 /**
  * HP the yard will actually DELIVER for a fresh hull of a given design.
  *
