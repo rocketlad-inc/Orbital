@@ -732,6 +732,14 @@
 /* Where the hull is — the fact the old text-only options couldn't say.
    Dimmed so the scan order stays NAME then place. */
 .fleet-capmenu__where { flex: 0 0 auto; color: #7f93a6; font-size: 9px; }
+/* Ship-row variant: the NO CAPTAIN chip sits at the row's LEFT edge, so
+   its menu anchors left or it would hang off the panel. */
+.fleet-capmenu--left { left: 0; right: auto; }
+.fleet-capmenu__empty { padding: 6px 8px; color: #7f93a6; font-size: 9px; font-style: italic; }
+/* Footer actions (recruit / open bank) — separated from the roster so
+   the list reads people first, plumbing second. */
+.fleet-capmenu__row--foot { border-top: 1px solid #22303e; border-radius: 0; color: #8aa0b4; font-size: 9px; }
+.fleet-capmenu__row--foot:hover { color: #d6e2ec; }
 
 /* ---- Sticky bottom action bar (the ONE selection surface) ---- */
 

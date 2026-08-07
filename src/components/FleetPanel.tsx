@@ -134,6 +134,14 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const [capEditId, setCapEditId] = useState<string | null>(null);
   const [capBusy, setCapBusy] = useState(false);
   const [capMsg, setCapMsg] = useState<string | null>(null);
+  // Shared by the Captain Bank AND the ship-row NO CAPTAIN menu — both
+  // submit assignCaptain and need the same busy guard + rejection text.
+  const doCap = (p: Promise<{ ok: boolean; error?: string }>) => {
+    setCapBusy(true);
+    p.then(res => { setCapBusy(false); setCapMsg(res.ok ? null : (res.error ?? 'Rejected')); });
+  };
+  // Which ship's NO CAPTAIN picker is open.
+  const [capPickFor, setCapPickFor] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [collapsedSystems, setCollapsedSystems] = useState<Set<string>>(new Set());
   // Bulk-select set: ship ids the player has checked for a bulk
@@ -556,13 +564,67 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           <div className="fleet-xp">
             {tierBits}
             {/* Same chip language as the ROOKIE/REGULAR tier badge next
-                to it — "UNASSIGNED" in a mismatched mini-button read as
-                debug output, and didn't say WHAT was unassigned. */}
-            <button
-              className="fleet-xp__tier fleet-xp__tier--none"
-              onClick={(e) => { e.stopPropagation(); setFilter('captains'); }}
-              title="This ship flies uncommanded — no trait bonus, no rank growth. Click to open the Captain Bank."
-            >NO CAPTAIN</button>
+                to it. Click opens the bank's AVAILABLE captains right
+                here — the fix used to be a round-trip (chip -> captains
+                tab -> find this ship in a dropdown -> assign); now it is
+                one click on the hull that has the problem. */}
+            <span className="fleet-capmenu__wrap">
+              <button
+                className="fleet-xp__tier fleet-xp__tier--none"
+                onClick={(e) => { e.stopPropagation(); setCapPickFor(capPickFor === ship.id ? null : ship.id); }}
+                title="This ship flies uncommanded — no trait bonus, no rank growth. Click to assign a captain."
+              >NO CAPTAIN</button>
+              {capPickFor === ship.id && (() => {
+                const bank = (gameState.captains ?? [])
+                  .filter(c => c.status === 'active' && !c.shipId)
+                  // Best material first: rank, then whoever has traits.
+                  .sort((a, b) => b.rank - a.rank || b.traits.length - a.traits.length);
+                return (
+                  <>
+                    <div className="fleet-capmenu__backdrop"
+                         onClick={(e) => { e.stopPropagation(); setCapPickFor(null); }} />
+                    <div className="fleet-capmenu fleet-capmenu--left" role="menu"
+                         onClick={(e) => e.stopPropagation()}>
+                      {bank.map(c => (
+                        <button
+                          key={c.id}
+                          className="fleet-capmenu__row"
+                          disabled={capBusy}
+                          onClick={() => { setCapPickFor(null); doCap(mpActions.assignCaptain(c.id, ship.id)); }}
+                          title={traitSummary(c.traits) || undefined}
+                        >
+                          <CaptainAvatar avatarId={c.avatarId} size={20} />
+                          <span className="fleet-capmenu__name">
+                            {c.name}
+                            {c.benchedAtTick != null && <em className="fleet-capmenu__swap"> ⏸</em>}
+                          </span>
+                          <span className={`fleet-xp__tier fleet-xp__tier--${rankTier(c.rank).toLowerCase()}`}>
+                            {rankTier(c.rank)}
+                          </span>
+                        </button>
+                      ))}
+                      {bank.length === 0 && (
+                        <div className="fleet-capmenu__empty">Bank is empty.</div>
+                      )}
+                      <button
+                        className="fleet-capmenu__row fleet-capmenu__row--foot"
+                        disabled={capBusy}
+                        onClick={() => { setCapPickFor(null); doCap(mpActions.createCaptain()); }}
+                        title="Recruit a fresh captain into the bank; assign them from here once they arrive"
+                      >
+                        <span className="fleet-capmenu__name">+ Recruit · 50M+100C</span>
+                      </button>
+                      <button
+                        className="fleet-capmenu__row fleet-capmenu__row--foot"
+                        onClick={() => { setCapPickFor(null); setFilter('captains'); }}
+                      >
+                        <span className="fleet-capmenu__name">Open Captain Bank →</span>
+                      </button>
+                    </div>
+                  </>
+                );
+              })()}
+            </span>
           </div>
         );
       }
@@ -607,11 +669,6 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
       if (!id) return null;
       const hit = myShips.find(s => s.id === id) ?? myShips.find(s => tail(s.id) === tail(id));
       return hit?.name ?? 'on assignment';
-    };
-
-    const doCap = (p: Promise<{ ok: boolean; error?: string }>) => {
-      setCapBusy(true);
-      p.then(res => { setCapBusy(false); setCapMsg(res.ok ? null : (res.error ?? 'Rejected')); });
     };
 
     const row = (c: Captain) => {
