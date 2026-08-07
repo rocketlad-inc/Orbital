@@ -215,14 +215,20 @@ export const EventLog: React.FC = () => {
     if (!f) return null;
     if (f.kind === 'ship') {
       const ship = gameState.ships.find(s => s.id === f.shipId);
-      if (!ship) return null;
-      return () => {
-        selectShip(ship.id);
-        if (ship.orbit?.parentBodyId) focusBody(ship.orbit.parentBodyId);
-        close();
-      };
+      if (ship) {
+        return () => {
+          selectShip(ship.id);
+          if (ship.orbit?.parentBodyId) focusBody(ship.orbit.parentBodyId);
+          close();
+        };
+      }
+      // Ship is gone — the usual case for a destruction event. Fall
+      // through to the body it happened at rather than hiding the
+      // button on the rows people most want to look at.
     }
-    const body = gameState.bodies.find(b => b.id === f.bodyId);
+    const bodyId = f.bodyId;
+    if (!bodyId) return null;
+    const body = gameState.bodies.find(b => b.id === bodyId);
     if (!body) return null;
     return () => {
       selectBody(body.id);
@@ -462,6 +468,11 @@ export const EventLog: React.FC = () => {
                   const { icon, color, label } = logEntryIcon(entry);
                   const isNew = i >= clampedLastRead;
                   const isOpen = expanded.has(i);
+                  // Resolved up here (not just inside the expanded body)
+                  // so the jump is reachable straight from the collapsed
+                  // row — "where did that happen" shouldn't cost a click
+                  // of expanding first.
+                  const jump = resolveFocus(focuses?.[i]);
                   return (
                     <div
                       key={i}
@@ -472,32 +483,48 @@ export const EventLog: React.FC = () => {
                       }
                       style={{ borderLeftColor: color } as React.CSSProperties}
                     >
-                      <button
-                        type="button"
-                        className="event-log__row__headline"
-                        onClick={() => toggleExpand(i)}
-                        title={isOpen ? 'Collapse' : 'Expand'}
-                      >
-                        {/* Category kicker — colored per category so the
-                            log is scannable by type at a glance. */}
-                        <span className="event-log__row__kicker" style={{ color }}>
-                          {label}
-                        </span>
-                        <span className="event-log__row__headline-main">
-                          <span
-                            className="event-log__icon"
+                      {/* Headline + jump sit side by side. They must be
+                          SIBLINGS, not nested — a button inside a button
+                          is invalid HTML and the inner one swallows the
+                          outer's clicks unpredictably. */}
+                      <div className="event-log__row__top">
+                        <button
+                          type="button"
+                          className="event-log__row__headline"
+                          onClick={() => toggleExpand(i)}
+                          title={isOpen ? 'Collapse' : 'Expand'}
+                        >
+                          {/* Category kicker — colored per category so the
+                              log is scannable by type at a glance. */}
+                          <span className="event-log__row__kicker" style={{ color }}>
+                            {label}
+                          </span>
+                          <span className="event-log__row__headline-main">
+                            <span
+                              className="event-log__icon"
+                              style={{ color }}
+                              aria-hidden="true"
+                            >{icon}</span>
+                            <span className="event-log__text">{tint(entry)}</span>
+                            <span
+                              className="event-log__chevron"
+                              aria-hidden="true"
+                            >{isOpen ? '▾' : '▸'}</span>
+                          </span>
+                        </button>
+                        {jump && (
+                          <button
+                            type="button"
+                            className="event-log__row__jump"
                             style={{ color }}
-                            aria-hidden="true"
-                          >{icon}</span>
-                          <span className="event-log__text">{tint(entry)}</span>
-                          <span
-                            className="event-log__chevron"
-                            aria-hidden="true"
-                          >{isOpen ? '▾' : '▸'}</span>
-                        </span>
-                      </button>
+                            onClick={jump}
+                            title="Take me there — center the camera on this location"
+                            aria-label="Take me there"
+                          >◎</button>
+                        )}
+                      </div>
                       {isOpen && (() => {
-                        const onFocus = resolveFocus(focuses?.[i]);
+                        const onFocus = jump;
                         const meta = metas?.[i] ?? null;
                         const flavorText = flavors?.[i] ?? entry;
                         const isEditing = editingIndex === i;

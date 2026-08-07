@@ -1517,9 +1517,16 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
   // (`<gameId>:mars`) but bodyToClient/shipToClient strip that prefix, so
   // a raw anchor never matched anything on the client — the focus button
   // silently did nothing in MP, and pending-FX anchors couldn't resolve.
+  // Both anchors ride along when the row has both: the ship is the
+  // precise target, the body is the fallback for when that ship no
+  // longer exists (every destruction event, i.e. the rows players most
+  // want to jump to).
   const chronicleFocus: (ChronicleFocus | null)[] = orderedEvents.map(ev => {
-    if (ev.ship_id) return { kind: 'ship', shipId: stripGameId(ev.ship_id) ?? ev.ship_id };
-    if (ev.body_id) return { kind: 'body', bodyId: stripGameId(ev.body_id) ?? ev.body_id };
+    const bodyId = ev.body_id ? (stripGameId(ev.body_id) ?? ev.body_id) : undefined;
+    if (ev.ship_id) {
+      return { kind: 'ship', shipId: stripGameId(ev.ship_id) ?? ev.ship_id, bodyId };
+    }
+    if (bodyId) return { kind: 'body', bodyId };
     return null;
   });
 

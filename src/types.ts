@@ -674,10 +674,16 @@ export interface FactionTechStateBase {
 }
 
 /** Where an EventLog row's "take me there" button should send the
- *  camera. Resolved from the chronicle event's body_id / ship_id. */
+ *  camera. Resolved from the chronicle event's body_id / ship_id.
+ *
+ *  The ship variant carries the event's body id TOO. The most-reported
+ *  events are deaths, and a dead ship is gone from client state — with
+ *  only a shipId to go on, "take me there" silently hid itself on
+ *  exactly the rows players most want to jump to. The body is where it
+ *  happened, and it still exists. */
 export type ChronicleFocus =
   | { kind: 'body'; bodyId: string }
-  | { kind: 'ship'; shipId: string };
+  | { kind: 'ship'; shipId: string; bodyId?: string };
 
 /** Edit state for an EventLog row's player-authored flavor (Phase 3). */
 export interface ChronicleEditMeta {

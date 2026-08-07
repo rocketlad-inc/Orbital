@@ -25,6 +25,7 @@ import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { logUiEvent } from '../multiplayer/telemetry';
 import { enqueueDetonation, spawnDiscoveryBloom } from '../render/combatFx';
+import type { ChronicleFocus } from '../types';
 // (MOON_ORBIT_MIN_PARENT_PX no longer imported — the recap frames by
 //  content extent now, not by the moon-ring LOD gate. See the zoom block.)
 
@@ -70,7 +71,7 @@ interface Scene { bodyId?: string; shipId?: string; fx?: 'boom' | 'bloom' | 'spa
  *  'Lorneland'. */
 function resolveSceneBody(
   line: string,
-  f: { kind: 'body'; bodyId: string } | { kind: 'ship'; shipId: string } | null | undefined,
+  f: ChronicleFocus | null | undefined,
   ships: { id: string; orbit?: { parentBodyId?: string } }[],
   bodies: { id: string; name: string }[],
 ): string | undefined {
@@ -78,6 +79,10 @@ function resolveSceneBody(
   if (f?.kind === 'ship') {
     const sh = ships.find(x => x.id === f.shipId);
     if (sh?.orbit?.parentBodyId) return sh.orbit.parentBodyId;
+    // Ship is gone (every destruction recap) — the event's own body is
+    // the scene. Beats the name-scrape below, which misfires on any
+    // line mentioning a body that isn't where it happened.
+    if (f.bodyId) return f.bodyId;
   }
   let best: { id: string; len: number } | null = null;
   for (const b of bodies) {
