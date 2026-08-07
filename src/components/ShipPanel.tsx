@@ -1294,6 +1294,7 @@ export const ShipPanel: React.FC = () => {
               rank={ship.rank ?? 0}
               history={ship.combatHistory ?? []}
               bodies={gameState.bodies}
+              hasCaptain={!!ship.captainId}
             />
           )}
 
@@ -2302,7 +2303,10 @@ const ShipCombatRecord: React.FC<{
   rank: number;
   history: import('../types').ShipKillRecord[];
   bodies: Body[];
-}> = ({ rank, history, bodies }) => {
+  /** Veterancy is captain-only — an uncrewed hull banks nothing, and
+   *  the record should say so rather than looking merely empty. */
+  hasCaptain?: boolean;
+}> = ({ rank, history, bodies, hasCaptain }) => {
   const [expanded, setExpanded] = useState(false);
   const kills = history.length;
   const dmgBonus = rank;     // each rank = +1%
@@ -2329,6 +2333,16 @@ const ShipCombatRecord: React.FC<{
           <span className="value" style={{ color: '#ffb84d' }}>
             +{dmgBonus}% DMG · +{hpBonus}% HP
           </span>
+        </div>
+      )}
+      {/* The record belongs to the OFFICER. Without one, kills are still
+          chronicled but bank no veterancy — say it here so an empty
+          record on a ship that has clearly been fighting doesn't read
+          as a bug. */}
+      {!hasCaptain && (
+        <div style={{ marginTop: 4, fontSize: 9, color: '#7a8a9a', fontStyle: 'italic' }}>
+          Kills are credited to the captain. With no officer aboard this hull
+          banks nothing — assign one from the Fleet panel.
         </div>
       )}
       {expanded && kills > 0 && (

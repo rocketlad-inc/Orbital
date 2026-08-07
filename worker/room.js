@@ -993,29 +993,19 @@ export class Room {
         : `${b.ship_class.charAt(0).toUpperCase()}${b.ship_class.slice(1)} ` +
           `T${tick}-${String(Math.floor(Math.random() * 900) + 100)}`;
 
-      // Veteran Yards (weapons 5, project_intel_gating): new hulls launch
-      // with a QUARTER of the faction's average fleet rank instead of raw
-      // rank 0. Ungated (grandfathered) games get it for free, matching
-      // how every other research gate behaves there. Build completions
-      // are rare, so the two extra point queries per hull are cheap.
-      let spawnRank = 0;
-      try {
-        const gRow = await this.env.DB
-          .prepare('SELECT gating_enabled FROM games WHERE id = ?')
-          .bind(gameId).first();
-        const wRow = await this.env.DB
-          .prepare(`SELECT level FROM faction_techs
-                     WHERE game_id = ? AND faction_id = ? AND tech_id = 'weapons'`)
-          .bind(gameId, b.faction_id).first();
-        const veteranYards = (gRow?.gating_enabled ?? 0) !== 1 || Number(wRow?.level ?? 0) >= 5;
-        if (veteranYards) {
-          const avgRow = await this.env.DB
-            .prepare(`SELECT AVG(rank) AS r FROM game_ships
-                       WHERE game_id = ? AND owner_faction_id = ? AND status = 'active'`)
-            .bind(gameId, b.faction_id).first();
-          spawnRank = Math.max(0, Math.floor(Number(avgRow?.r ?? 0) / 4));
-        }
-      } catch (e) { console.error('veteran yards rank calc failed', e); }
+      // Veteran Yards (weapons 5) used to launch new hulls carrying a
+      // QUARTER of the faction's average fleet rank. That is hull-carried
+      // veterancy by another name, and veterancy is now CAPTAIN-ONLY, so
+      // the perk is retired: every hull rolls out at rank 0 and earns
+      // nothing until an officer boards it.
+      //
+      // It also read AVG(rank) FROM game_ships, a column migration 0068
+      // zeroes — so the bonus was about to silently evaluate to 0 anyway.
+      // FOLLOW-UP for whoever owns the research tree: Weapons 5 now has
+      // no shipyard effect. Re-pointing it at captains (a free ranked
+      // officer with each hull, say) is new design, not a mechanical
+      // translation, so it is deliberately not invented here.
+      const spawnRank = 0;
 
       // Launch at the EFFECTIVE ceiling, not the bare baked hull.
       // hp_max is stored as the build-time base; the live ceiling is
@@ -2092,7 +2082,11 @@ export class Room {
     const allShips = (await this.env.DB
       .prepare(
         `SELECT s.id, s.owner_faction_id, s.parent_body_id, s.hp, s.hp_max, s.damage_per_tick,
-                COALESCE(c.rank, s.rank) AS rank, s.ship_class, s.name, s.last_combat_tick,
+                -- Veterancy is CAPTAIN-ONLY. This used to COALESCE onto
+                -- s.rank, which resurrected a hull's legacy record the
+                -- moment its captain was unassigned. An uncrewed hull is
+                -- rank 0, full stop.
+                COALESCE(c.rank, 0) AS rank, s.ship_class, s.name, s.last_combat_tick,
                 s.stance, s.retreat_hp_pct, s.detonate_hp_pct, s.parts_json,
                 s.target_priority,
                 s.captain_id, s.fleet_id, c.traits_json AS captain_traits, c.name AS captain_name
@@ -2998,7 +2992,9 @@ export class Room {
     const maintShips = (await this.env.DB
       .prepare(
         `SELECT s.id, s.owner_faction_id, s.parent_body_id, s.hp, s.hp_max,
-                s.fuel, s.fuel_max, COALESCE(c.rank, s.rank) AS rank,
+                -- Captain-only veterancy: rank raises the repair ceiling
+                -- (+1%/rank), and an uncrewed hull earns none.
+                s.fuel, s.fuel_max, COALESCE(c.rank, 0) AS rank,
                 c.traits_json AS captain_traits,
                 b.owner_faction_id AS body_owner,
                 (SELECT 1 FROM game_ship_nodes n
@@ -3690,16 +3686,24 @@ export class Room {
         }
       }
 
-      // Flush veteran awards — rank + history now belong to the CAPTAIN
-      // (spec §2), so a survivor carries his record into the next hull.
-      // The killer's current rank comes from the allShips snapshot (which
-      // already COALESCEs captain rank); history is re-read from the
-      // captain row since the snapshot no longer carries it. Legacy
-      // fallback (no captain yet) writes the old ship columns unchanged.
+      // Flush veteran awards — veterancy is CAPTAIN-ONLY (Lorne: "I don't
+      // want hulls to carry veterancy anymore. Captains only. If a hull
+      // makes a kill with no captain, it gets no credit").
+      //
+      // The legacy fallback that wrote game_ships.rank for an uncrewed
+      // hull is gone. It wasn't merely redundant: reads used
+      // COALESCE(c.rank, s.rank), which only falls through on NULL, so a
+      // fresh captain's rank of 0 SHADOWED whatever the bare hull had
+      // earned — six live destroyers silently lost up to 6% damage and
+      // 6% HP the moment an officer came aboard. With one owner there is
+      // nothing to shadow.
       const KILL_HISTORY_CAP = 20;
       for (const [killerShipId, award] of veteranAwards) {
         const killer = allShips.find(s => s.id === killerShipId);
         if (!killer) continue;
+        // No officer aboard, no credit. The kill still happened and is
+        // still chronicled — nobody's record grows from it.
+        if (!killer.captain_id) continue;
         const newRank = (killer.rank ?? 0) + award.addedRank;
         const applyHistory = (raw) => {
           let history = [];
@@ -3711,23 +3715,13 @@ export class Room {
           }
           return JSON.stringify([...history, ...award.newRecords].slice(-KILL_HISTORY_CAP));
         };
-        if (killer.captain_id) {
-          const cap = await this.env.DB
-            .prepare('SELECT combat_history FROM game_captains WHERE id = ?')
-            .bind(killer.captain_id).first();
-          await this.env.DB
-            .prepare('UPDATE game_captains SET rank = ?, combat_history = ? WHERE id = ?')
-            .bind(newRank, applyHistory(cap?.combat_history), killer.captain_id)
-            .run();
-        } else {
-          const shipRow = await this.env.DB
-            .prepare('SELECT combat_history FROM game_ships WHERE id = ?')
-            .bind(killerShipId).first();
-          await this.env.DB
-            .prepare('UPDATE game_ships SET rank = ?, combat_history = ? WHERE id = ?')
-            .bind(newRank, applyHistory(shipRow?.combat_history), killerShipId)
-            .run();
-        }
+        const cap = await this.env.DB
+          .prepare('SELECT combat_history FROM game_captains WHERE id = ?')
+          .bind(killer.captain_id).first();
+        await this.env.DB
+          .prepare('UPDATE game_captains SET rank = ?, combat_history = ? WHERE id = ?')
+          .bind(newRank, applyHistory(cap?.combat_history), killer.captain_id)
+          .run();
       }
 
       // Piracy: any destroyed freighter on an active trade route hands

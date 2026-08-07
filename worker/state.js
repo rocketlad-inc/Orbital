@@ -669,8 +669,11 @@ const shipsP = env.DB
               s.fuel, s.fuel_max, s.hp, s.hp_max, s.damage_per_tick,
               -- Rank belongs to the captain now (spec §2); COALESCE keeps
               -- the field name so older clients keep working unchanged.
-              COALESCE(c.rank, s.rank) AS rank,
-              COALESCE(c.combat_history, s.combat_history) AS combat_history,
+              -- Veterancy is CAPTAIN-ONLY (no hull-carried record), so
+              -- an uncrewed hull reports rank 0 and an empty history
+              -- rather than falling back to its legacy columns.
+              COALESCE(c.rank, 0) AS rank,
+              CASE WHEN s.captain_id IS NULL THEN NULL ELSE c.combat_history END AS combat_history,
               s.trades_completed,
               s.status, s.built_at_tick, s.last_combat_tick, s.last_damaged_tick,
               -- Who this ship engaged on its last volley (round-robin

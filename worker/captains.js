@@ -108,15 +108,21 @@ export function rollCaptain(gameId, factionId, tick, existingNames, seedIdx) {
 
 /**
  * Lazy backfill + attach-on-build (spec §2.2, §5.4). Any active ship with
- * no captain gets one: the LONGEST-WAITING unassigned bank captain of its
- * faction if available, else a fresh roll INHERITING the ship's legacy
- * rank/combat_history (so live games keep veterancy — and it runs for
- * EVERY faction, or rival aces would be stealth-nerfed to rank 0).
+ * no captain gets the LONGEST-WAITING unassigned bank captain of its
+ * faction, if the faction has one. If the bank is empty the hull sails
+ * UNCAPTAINED — captains are a finite resource (STARTING_CAPTAINS +
+ * recruits), and an uncaptained hull now banks no veterancy at all.
+ *
+ * The old fresh-roll branch that inherited the ship's legacy
+ * rank/combat_history is gone twice over: it stopped minting captains
+ * when they became finite, and veterancy is captain-only as of migration
+ * 0068, so there is no hull record left to inherit.
+ *
  * Idempotent; no-ops once every ship is captained.
  */
 export async function ensureCaptains(db, gameId, tick) {
   const orphans = (await db
-    .prepare(`SELECT id, owner_faction_id, rank, combat_history FROM game_ships
+    .prepare(`SELECT id, owner_faction_id FROM game_ships
                WHERE game_id = ? AND status = 'active' AND captain_id IS NULL
                  -- One captain per fleet: members surrendered theirs on
                  -- joining; auto-assign must not re-captain them. The
