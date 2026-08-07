@@ -575,36 +575,50 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                 title="This ship flies uncommanded — no trait bonus, no rank growth. Click to assign a captain."
               >NO CAPTAIN</button>
               {capPickFor === ship.id && (() => {
-                const bank = (gameState.captains ?? [])
-                  .filter(c => c.status === 'active' && !c.shipId)
-                  // Best material first: rank, then whoever has traits.
-                  .sort((a, b) => b.rank - a.rank || b.traits.length - a.traits.length);
+                // The WHOLE active roster, not just the unposted. First
+                // live game had 10 serving / 0 in the bank, and a picker
+                // filtered to the bank announced "empty" under a full
+                // roster (Lorne). Poaching a serving captain is a real
+                // move — the same assignCaptain call the bank's REASSIGN
+                // uses — it just leaves their old hull uncommanded, so
+                // the row says who they'd abandon.
+                const bySort = (a: Captain, b: Captain) =>
+                  b.rank - a.rank || b.traits.length - a.traits.length;
+                const roster = (gameState.captains ?? []).filter(c => c.status === 'active');
+                const avail = roster.filter(c => !c.shipId).sort(bySort);
+                const serving = roster.filter(c => c.shipId && c.shipId !== ship.id).sort(bySort);
+                const tailOf = (id: string) => id.slice(id.indexOf(':') + 1);
+                const postedTo = (id: string) =>
+                  gameState.ships.find(x => x.id === id || tailOf(x.id) === tailOf(id))?.name ?? 'another ship';
+                const capRow = (c: Captain, from: string | null) => (
+                  <button
+                    key={c.id}
+                    className="fleet-capmenu__row"
+                    disabled={capBusy}
+                    onClick={() => { setCapPickFor(null); doCap(mpActions.assignCaptain(c.id, ship.id)); }}
+                    title={traitSummary(c.traits) || undefined}
+                  >
+                    <CaptainAvatar avatarId={c.avatarId} size={20} />
+                    <span className="fleet-capmenu__name">
+                      {c.name}
+                      {c.benchedAtTick != null && <em className="fleet-capmenu__swap"> ⏸</em>}
+                      {from && <em className="fleet-capmenu__swap"> from: {from}</em>}
+                    </span>
+                    <span className={`fleet-xp__tier fleet-xp__tier--${rankTier(c.rank).toLowerCase()}`}>
+                      {rankTier(c.rank)}
+                    </span>
+                  </button>
+                );
                 return (
                   <>
                     <div className="fleet-capmenu__backdrop"
                          onClick={(e) => { e.stopPropagation(); setCapPickFor(null); }} />
                     <div className="fleet-capmenu fleet-capmenu--left" role="menu"
                          onClick={(e) => e.stopPropagation()}>
-                      {bank.map(c => (
-                        <button
-                          key={c.id}
-                          className="fleet-capmenu__row"
-                          disabled={capBusy}
-                          onClick={() => { setCapPickFor(null); doCap(mpActions.assignCaptain(c.id, ship.id)); }}
-                          title={traitSummary(c.traits) || undefined}
-                        >
-                          <CaptainAvatar avatarId={c.avatarId} size={20} />
-                          <span className="fleet-capmenu__name">
-                            {c.name}
-                            {c.benchedAtTick != null && <em className="fleet-capmenu__swap"> ⏸</em>}
-                          </span>
-                          <span className={`fleet-xp__tier fleet-xp__tier--${rankTier(c.rank).toLowerCase()}`}>
-                            {rankTier(c.rank)}
-                          </span>
-                        </button>
-                      ))}
-                      {bank.length === 0 && (
-                        <div className="fleet-capmenu__empty">Bank is empty.</div>
+                      {avail.map(c => capRow(c, null))}
+                      {serving.map(c => capRow(c, postedTo(c.shipId!)))}
+                      {avail.length === 0 && serving.length === 0 && (
+                        <div className="fleet-capmenu__empty">No captains yet — recruit one below.</div>
                       )}
                       <button
                         className="fleet-capmenu__row fleet-capmenu__row--foot"

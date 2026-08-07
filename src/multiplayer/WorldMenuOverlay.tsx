@@ -880,15 +880,26 @@ export const WorldMenuOverlay: React.FC = () => {
       )}
 
       {/* ===== fleet box — compact, per the sketch: slots + queue on the
-           left, ship grid + DESIGN on the right. Not full-width. ===== */}
-      <WmFleet
-        bodyId={body.id}
-        mobile={mobile}
-        isMine={isMine}
-        hasStation={!!myStation}
-        railW={railW}
-        onErr={setErrMsg}
-      />
+           left, ship grid + DESIGN on the right. Not full-width.
+
+           ONLY where the player has a settlement (per Lorne). On a body
+           you haven't settled — a rival capital, an empty rock — the box
+           rendered a full grid of hull cards, all dead, over "no station
+           yet": a build menu for a yard that doesn't exist. Reported
+           from a rival's Dyson site at Sol, where it read as noise over
+           the thing being scouted. The FOUND CITY / BUILD STATION
+           affordances live in the columns and are untouched — settling
+           is still how you earn this box. */}
+      {(myCity || myStation) && (
+        <WmFleet
+          bodyId={body.id}
+          mobile={mobile}
+          isMine={isMine}
+          hasStation={!!myStation}
+          railW={railW}
+          onErr={setErrMsg}
+        />
+      )}
     </div>
   );
 };
