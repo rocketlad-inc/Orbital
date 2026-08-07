@@ -2216,7 +2216,7 @@ export class Room {
       const k = `${attackerClass}>${targetClass}`;
       let e = combatTally.get(k);
       if (!e) {
-        e = { volleys: 0, hits: 0, damage: 0, kills: 0, damageRaw: 0, overkill: 0 };
+        e = { volleys: 0, hits: 0, damage: 0, kills: 0, damageRaw: 0, absorbed: 0, overkill: 0 };
         combatTally.set(k, e);
       }
       e.volleys++;
@@ -2229,6 +2229,10 @@ export class Room {
         e.hits++;
         e.damage += dmg;
         e.damageRaw += (raw ?? dmg);
+        // Own accumulator, NOT raw - damage: `damage` carries history
+        // from 0063 while raw starts at 0069, so the subtraction would
+        // span two epochs (migration 0070).
+        e.absorbed += Math.max(0, (raw ?? dmg) - dmg);
         if (aStat) { aStat.hits++; aStat.dealt += dmg; }
         if (tStat) {
           tStat.hitsTaken++;
@@ -3771,17 +3775,18 @@ export class Room {
               this.env.DB.prepare(
                 `INSERT INTO game_combat_tally
                    (game_id, attacker_class, target_class, volleys, hits, damage, kills,
-                    damage_raw, overkill)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    damage_raw, damage_absorbed, overkill)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(game_id, attacker_class, target_class) DO UPDATE SET
-                   volleys    = volleys    + excluded.volleys,
-                   hits       = hits       + excluded.hits,
-                   damage     = damage     + excluded.damage,
-                   kills      = kills      + excluded.kills,
-                   damage_raw = damage_raw + excluded.damage_raw,
-                   overkill   = overkill   + excluded.overkill`,
+                   volleys         = volleys         + excluded.volleys,
+                   hits            = hits            + excluded.hits,
+                   damage          = damage          + excluded.damage,
+                   kills           = kills           + excluded.kills,
+                   damage_raw      = damage_raw      + excluded.damage_raw,
+                   damage_absorbed = damage_absorbed + excluded.damage_absorbed,
+                   overkill        = overkill        + excluded.overkill`,
               ).bind(gameId, atkCls, tgtCls, e.volleys, e.hits, e.damage, e.kills,
-                     e.damageRaw, e.overkill),
+                     e.damageRaw, e.absorbed, e.overkill),
             );
           }
           for (const [shipId, st] of shipStats) {

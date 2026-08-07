@@ -1,0 +1,21 @@
+-- 0070_tally_absorbed.sql
+--
+-- Fixes a same-day flaw in 0069.
+--
+-- 0069 added damage_raw (pre-mitigation) intending "absorbed by
+-- defences" to be derived as damage_raw - damage. That is invalid:
+-- `damage` is CUMULATIVE from migration 0063 while `damage_raw` starts
+-- accumulating at 0069, so the subtraction spans two epochs and goes
+-- deeply negative. Prod showed it immediately — destroyer->destroyer
+-- read 210,267 damage against 4,032 raw, i.e. "absorbed -206,235".
+--
+-- Absorption gets its own accumulator instead. damage_absorbed and
+-- damage_raw share an epoch (both start here at zero), so
+-- absorbed / raw is a true percentage from the first tick onward, and
+-- the historical `damage` column stays untouched for the panels that
+-- legitimately want all-time totals.
+--
+-- game_ship_stats needed no equivalent fix: that table is new in 0069,
+-- so every column on it already shares one epoch.
+
+ALTER TABLE game_combat_tally ADD COLUMN damage_absorbed REAL NOT NULL DEFAULT 0;

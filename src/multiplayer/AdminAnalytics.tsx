@@ -129,9 +129,13 @@ interface CombatTallyRow {
   hits: number;
   damage: number;
   kills: number;
-  /** Pre-mitigation damage fired (0069). damage_raw - damage is what the
-   *  target's shields/armor absorbed. */
+  /** Pre-mitigation damage fired (0069). */
   damage_raw?: number;
+  /** Damage the target's shields/armor soaked (0070). Its OWN counter,
+   *  not damage_raw - damage: `damage` carries history from 0063 while
+   *  the two newer columns start at 0069/0070, so only these share an
+   *  epoch and only their ratio is a true percentage. */
+  damage_absorbed?: number;
   /** Damage landed on a hull that died the same tick (0069). */
   overkill?: number;
 }
@@ -1249,12 +1253,16 @@ function CombatDeepDive({ data }: { data: GameAnalytics }) {
   const det = data.combat.detonations;
   const pri = data.combat.priority;
 
+  // Absorbed and raw share an epoch (0069/0070); `damage` does not, so
+  // the absorbed percentage is computed against raw alone. Overkill is
+  // likewise measured against post-0069 damage, approximated by
+  // raw - absorbed rather than the all-time `damage` column.
   const rawTotal = tally.reduce((a, r) => a + (r.damage_raw ?? 0), 0);
-  const landed = tally.reduce((a, r) => a + r.damage, 0);
-  const absorbed = Math.max(0, rawTotal - landed);
+  const absorbed = tally.reduce((a, r) => a + (r.damage_absorbed ?? 0), 0);
+  const landedRecent = Math.max(0, rawTotal - absorbed);
   const absorbedPct = rawTotal > 0 ? (100 * absorbed) / rawTotal : 0;
   const overkill = tally.reduce((a, r) => a + (r.overkill ?? 0), 0);
-  const overkillPct = landed > 0 ? (100 * overkill) / landed : 0;
+  const overkillPct = landedRecent > 0 ? (100 * overkill) / landedRecent : 0;
 
   const repaired = econ?.hp_repaired ?? 0;
   const destroyed = econ?.hp_destroyed ?? 0;

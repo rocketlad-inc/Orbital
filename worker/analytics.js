@@ -437,7 +437,7 @@ async function handleGameAnalytics(req, env, { session, params }) {
     const t = await env.DB
       .prepare(
         `SELECT attacker_class, target_class, volleys, hits, damage, kills,
-                damage_raw, overkill
+                damage_raw, damage_absorbed, overkill
            FROM game_combat_tally WHERE game_id = ?`,
       )
       .bind(gameId)
