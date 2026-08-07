@@ -165,6 +165,11 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
   const [bulkPriorityOrder, setBulkPriorityOrder] =
     useState<TargetPriorityKey[]>(TARGET_PRIORITY_DEFAULT);
   const [ordersNotice, setOrdersNotice] = useState<string | null>(null);
+  // Which captain's assign menu is open (captain id). The native <select>
+  // this replaces couldn't render ship icons or locations — options are
+  // text-only — and picking a posting is exactly the decision where
+  // "which hull, WHERE" matters.
+  const [assignOpenFor, setAssignOpenFor] = useState<string | null>(null);
 
   const bodyById = useMemo(
     () => new Map(gameState.bodies.map(b => [b.id, b])),
@@ -550,12 +555,14 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
         return (
           <div className="fleet-xp">
             {tierBits}
+            {/* Same chip language as the ROOKIE/REGULAR tier badge next
+                to it — "UNASSIGNED" in a mismatched mini-button read as
+                debug output, and didn't say WHAT was unassigned. */}
             <button
-              className="fleet-mini-btn"
-              style={{ fontSize: 8, marginLeft: 4 }}
+              className="fleet-xp__tier fleet-xp__tier--none"
               onClick={(e) => { e.stopPropagation(); setFilter('captains'); }}
-              title="No captain assigned — open the captain bank"
-            >UNASSIGNED</button>
+              title="This ship flies uncommanded — no trait bonus, no rank growth. Click to open the Captain Bank."
+            >NO CAPTAIN</button>
           </div>
         );
       }
@@ -684,25 +691,57 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
                 </span>
               )}
               {mpActions && (
-                <select
-                  className="fleet-capcard__assign"
-                  value=""
-                  disabled={capBusy}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    if (v === '__bench') doCap(mpActions.assignCaptain(c.id, null));
-                    else if (v) doCap(mpActions.assignCaptain(c.id, v));
-                  }}
-                  title="Assign this captain to a ship (any sitting captain returns to the bank)"
-                >
-                  <option value="">{aboard ? 'REASSIGN…' : 'ASSIGN…'}</option>
-                  {aboard && <option value="__bench">→ To the bank</option>}
-                  {myShips.filter(s => s.id !== c.shipId).map(s => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}{s.captainName ? ` (swap: ${s.captainName})` : ''}
-                    </option>
-                  ))}
-                </select>
+                <span className="fleet-capmenu__wrap">
+                  <button
+                    className="fleet-capcard__assign"
+                    disabled={capBusy}
+                    onClick={() => setAssignOpenFor(assignOpenFor === c.id ? null : c.id)}
+                    title="Assign this captain to a ship (any sitting captain returns to the bank)"
+                  >{aboard ? 'REASSIGN…' : 'ASSIGN…'} ▾</button>
+                  {assignOpenFor === c.id && (
+                    <>
+                      {/* click-away backdrop — cheaper and more reliable
+                          than onBlur relatedTarget gymnastics */}
+                      <div className="fleet-capmenu__backdrop" onClick={() => setAssignOpenFor(null)} />
+                      <div className="fleet-capmenu" role="menu">
+                        {aboard && (
+                          <button
+                            className="fleet-capmenu__row"
+                            onClick={() => { setAssignOpenFor(null); doCap(mpActions.assignCaptain(c.id, null)); }}
+                          >
+                            <span className="fleet-capmenu__name">→ To the bank</span>
+                          </button>
+                        )}
+                        {/* Captainless hulls first — they are the natural
+                            postings; swaps are the exception. */}
+                        {myShips
+                          .filter(s => s.id !== c.shipId)
+                          .sort((a, b) =>
+                            Number(!!a.captainName) - Number(!!b.captainName)
+                            || a.name.localeCompare(b.name))
+                          .map(s => {
+                            const where = s.transit
+                              ? `→ ${bodyById.get(s.transit.currentTransfer?.targetBodyId ?? '')?.name ?? 'in transit'}`
+                              : bodyById.get(s.orbit.parentBodyId)?.name ?? '—';
+                            return (
+                              <button
+                                key={s.id}
+                                className="fleet-capmenu__row"
+                                onClick={() => { setAssignOpenFor(null); doCap(mpActions.assignCaptain(c.id, s.id)); }}
+                              >
+                                <ShipIcon shipClass={s.class as ShipClassName} variant={s.iconVariant} size={16} />
+                                <span className="fleet-capmenu__name">
+                                  {s.name}
+                                  {s.captainName && <em className="fleet-capmenu__swap"> swap: {s.captainName}</em>}
+                                </span>
+                                <span className="fleet-capmenu__where">{where}</span>
+                              </button>
+                            );
+                          })}
+                      </div>
+                    </>
+                  )}
+                </span>
               )}
             </div>
           )}

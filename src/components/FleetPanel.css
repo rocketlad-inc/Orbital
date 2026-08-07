@@ -703,7 +703,35 @@
   padding: 5px 4px;
   min-height: 28px;
   max-width: 110px;
+  cursor: pointer;
 }
+.fleet-capcard__assign:hover:not(:disabled) { border-color: #4ecdc4; }
+
+/* Assign menu — replaces the native <select>, which cannot render ship
+   icons or a location column. Anchored to the trigger; the backdrop
+   under it closes on any outside click. */
+.fleet-capmenu__wrap { position: relative; display: inline-block; }
+.fleet-capmenu__backdrop { position: fixed; inset: 0; z-index: 39; }
+.fleet-capmenu {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 40;
+  min-width: 220px; max-height: 260px; overflow-y: auto;
+  background: rgba(10, 14, 20, 0.98);
+  border: 1px solid #2a3d50; border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  display: flex; flex-direction: column; padding: 3px;
+}
+.fleet-capmenu__row {
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px 8px; border: none; border-radius: 4px;
+  background: transparent; color: #d6e2ec;
+  font-family: inherit; font-size: 10px; text-align: left; cursor: pointer;
+}
+.fleet-capmenu__row:hover { background: rgba(78, 205, 196, 0.10); }
+.fleet-capmenu__name { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fleet-capmenu__swap { color: #ffb84d; font-style: normal; font-size: 9px; }
+/* Where the hull is — the fact the old text-only options couldn't say.
+   Dimmed so the scan order stays NAME then place. */
+.fleet-capmenu__where { flex: 0 0 auto; color: #7f93a6; font-size: 9px; }
 
 /* ---- Sticky bottom action bar (the ONE selection surface) ---- */
 
