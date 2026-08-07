@@ -25,6 +25,25 @@ import { TARGET_PRIORITY_DEFAULT } from '../types';
 import { hitChanceOf } from '../game/shipParts';
 import './TargetPriorityCards.css';
 
+/** Categories the player may NOT rank. Settlements are pinned to the
+ *  bottom (Lorne: "too OP to walk right up and blow away someone's
+ *  cities") — you have to beat the fleet before you can touch what it
+ *  defends. Enforced independently in worker/room.js (the combat loop
+ *  skips the entry wherever it sits) and normalized in the orders API;
+ *  this constant only drives the UI's lock. */
+const PINNED_LAST: ReadonlySet<TargetPriorityKey> = new Set<TargetPriorityKey>(['settlement']);
+
+/** The order with every pinned category forced to the bottom. Applied to
+ *  whatever comes back from the server too, so a legacy row that ranked
+ *  settlements first still renders them locked at the end. */
+function withPinned(order: TargetPriorityKey[]): TargetPriorityKey[] {
+  return [...order.filter(k => !PINNED_LAST.has(k)), ...order.filter(k => PINNED_LAST.has(k))];
+}
+
+/** How many cards from the bottom are frozen — the drag/nudge clamp. */
+const MOVABLE_COUNT = (order: TargetPriorityKey[]) =>
+  order.filter(k => !PINNED_LAST.has(k)).length;
+
 const CATEGORY_META: Record<TargetPriorityKey, { label: string; sub: string; glyph: string }> = {
   corvette:   { label: 'CORVETTES',   sub: 'fast screens',          glyph: '▸' },
   frigate:    { label: 'FRIGATES',    sub: 'line warships',         glyph: '▶' },
@@ -87,7 +106,12 @@ export const TargetPriorityCards: React.FC<TargetPriorityCardsProps> = ({
   value, onChange, disabled, note, autoOrder, ownSpeed,
 }) => {
   const auto = value == null;
-  const order = value ?? autoOrder ?? TARGET_PRIORITY_DEFAULT;
+  // withPinned is belt and braces: autoTargetOrderFor and the default
+  // already end in 'settlement', but a stored row from before the pin
+  // could rank it anywhere.
+  const order = withPinned(value ?? autoOrder ?? TARGET_PRIORITY_DEFAULT);
+  /** Index one past the last card the player may move into or out of. */
+  const movable = MOVABLE_COUNT(order);
 
   // Drag state. dragIdx = which card is lifted; dy = raw pointer delta;
   // overIdx = the slot the card would land in if dropped now.
@@ -100,20 +124,24 @@ export const TargetPriorityCards: React.FC<TargetPriorityCardsProps> = ({
   const dragOrder = useRef<TargetPriorityKey[]>(order);
 
   const commit = (from: number, to: number) => {
+    // A pinned card can neither be moved nor displaced.
+    if (from >= movable || to >= movable) return;
     if (from === to) {
       // A no-move drop on an AUTO list is still an opt-in to custom —
       // the player grabbed a card, they meant to take manual control.
-      if (auto) onChange([...dragOrder.current]);
+      if (auto) onChange(withPinned([...dragOrder.current]));
       return;
     }
     const next = [...dragOrder.current];
     const [moved] = next.splice(from, 1);
     next.splice(to, 0, moved);
-    onChange(next);
+    onChange(withPinned(next));
   };
 
   const onPointerDown = (idx: number) => (e: React.PointerEvent) => {
     if (disabled) return;
+    if (idx >= movable) return;   // locked card — never lifts
+
     // Nudge buttons handle their own clicks — don't lift the card under them.
     if ((e.target as HTMLElement).closest('.tpc-nudge')) return;
     e.preventDefault();
@@ -129,8 +157,10 @@ export const TargetPriorityCards: React.FC<TargetPriorityCardsProps> = ({
     if (dragIdx !== idx) return;
     const delta = e.clientY - startY.current;
     setDy(delta);
+    // Clamp to the movable region so a card can't be dragged past the
+    // pinned tail — the preview stops dead at the lock line.
     const proposed = Math.min(
-      order.length - 1,
+      movable - 1,
       Math.max(0, idx + Math.round(delta / CARD_STRIDE)),
     );
     setOverIdx(proposed);
@@ -149,7 +179,7 @@ export const TargetPriorityCards: React.FC<TargetPriorityCardsProps> = ({
   const nudge = (idx: number, dir: -1 | 1) => {
     if (disabled) return;
     const to = idx + dir;
-    if (to < 0 || to >= order.length) return;
+    if (to < 0 || to >= movable) return;   // can't nudge into the pinned tail
     dragOrder.current = order;
     commit(idx, to);
   };
@@ -177,6 +207,7 @@ export const TargetPriorityCards: React.FC<TargetPriorityCardsProps> = ({
         {order.map((key, idx) => {
           const meta = CATEGORY_META[key];
           const dragging = dragIdx === idx;
+          const locked = idx >= movable;
           // Where this card should SIT right now: its own slot, shifted
           // one stride when the lifted card's proposed slot displaces it.
           let slot = idx;
@@ -191,8 +222,11 @@ export const TargetPriorityCards: React.FC<TargetPriorityCardsProps> = ({
           return (
             <div
               key={key}
-              className={`tpc-card${dragging ? ' tpc-card--drag' : ''}`}
+              className={`tpc-card${dragging ? ' tpc-card--drag' : ''}${locked ? ' tpc-card--locked' : ''}`}
               style={{ transform: `translateY(${y}px)` }}
+              title={locked
+                ? 'Always engaged last — a fleet has to be beaten before what it defends can be shot at.'
+                : undefined}
               onPointerDown={onPointerDown(idx)}
               onPointerMove={onPointerMove(idx)}
               onPointerUp={onPointerUp(idx)}
@@ -201,8 +235,13 @@ export const TargetPriorityCards: React.FC<TargetPriorityCardsProps> = ({
               <span className="tpc-rank">{shownRank}</span>
               <span className="tpc-glyph">{meta.glyph}</span>
               <span className="tpc-labels">
-                <span className="tpc-label">{meta.label}</span>
-                <span className="tpc-sub">{meta.sub}</span>
+                <span className="tpc-label">
+                  {meta.label}
+                  {locked && <span className="tpc-lock" aria-hidden="true">🔒</span>}
+                </span>
+                <span className="tpc-sub">
+                  {locked ? 'always last — clear the fleet first' : meta.sub}
+                </span>
               </span>
               {ownSpeed !== undefined && (
                 <span
@@ -213,18 +252,23 @@ export const TargetPriorityCards: React.FC<TargetPriorityCardsProps> = ({
                   <span className="tpc-hit__sub">to hit</span>
                 </span>
               )}
-              <span className="tpc-nudges">
-                <button
-                  className="tpc-nudge" disabled={disabled || idx === 0}
-                  onClick={() => nudge(idx, -1)} title="Raise priority"
-                  aria-label={`Raise ${meta.label} priority`}
-                >▲</button>
-                <button
-                  className="tpc-nudge" disabled={disabled || idx === order.length - 1}
-                  onClick={() => nudge(idx, 1)} title="Lower priority"
-                  aria-label={`Lower ${meta.label} priority`}
-                >▼</button>
-              </span>
+              {/* Locked cards render no nudges at all — a disabled pair
+                  still reads as "maybe later"; absence reads as "not a
+                  thing you rank". */}
+              {!locked && (
+                <span className="tpc-nudges">
+                  <button
+                    className="tpc-nudge" disabled={disabled || idx === 0}
+                    onClick={() => nudge(idx, -1)} title="Raise priority"
+                    aria-label={`Raise ${meta.label} priority`}
+                  >▲</button>
+                  <button
+                    className="tpc-nudge" disabled={disabled || idx === movable - 1}
+                    onClick={() => nudge(idx, 1)} title="Lower priority"
+                    aria-label={`Lower ${meta.label} priority`}
+                  >▼</button>
+                </span>
+              )}
             </div>
           );
         })}
@@ -235,6 +279,8 @@ export const TargetPriorityCards: React.FC<TargetPriorityCardsProps> = ({
             ? 'Auto: this ship’s actual order — closest speed first, slower before faster. Drag to override.'
             : 'Auto: closest speed first, slower before faster — drag to override.')
           : 'Engages the first ranked category present. Within a rank: closest speed.'}
+        {' '}Settlements are always last: clear the defending fleet before
+        you can bombard.
       </div>
     </div>
   );

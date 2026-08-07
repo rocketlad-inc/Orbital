@@ -2526,26 +2526,27 @@ export class Room {
           if (t.type === 'station' && weaponsLevelOf(t) >= 1) armedStations.push(t);
           else softSettlements.push(t);
         }
-        // Player-set priority (migration 0064) overrides the ladder: walk
-        // the ranked categories and engage the first one with a live
-        // hostile. Putting 'settlement' above warships is legal — that's
-        // the raider doctrine the control exists for. Auto (NULL) keeps
-        // the ladder above.
+        // Player-set priority (migration 0064) reorders the SHIP
+        // categories. Settlements are PINNED LAST and cannot be promoted
+        // (Lorne: "too OP to walk right up and blow away someone's
+        // cities") — a raider must clear the defending fleet before it
+        // can touch what the fleet is defending. The 'settlement' entry
+        // is skipped wherever it sits in the stored list, so a legacy row
+        // that ranked it first (or a forged request) is inert rather than
+        // rejected. Auto (NULL) keeps the ladder below.
         let tier;
         if (attacker._targetPriority) {
           tier = [];
           for (const cat of attacker._targetPriority) {
+            if (cat === 'settlement') continue;   // pinned last, see below
             if (cat === 'civilian') tier = civilianShips;
-            else if (cat === 'settlement') {
-              // Preserve the ladder's sub-order inside the category:
-              // armed stations are the threat, they die first.
-              tier = armedStations.length ? armedStations : softSettlements;
-            } else tier = armedShips.filter(t => t.ship_class === cat);
+            else tier = armedShips.filter(t => t.ship_class === cat);
             if (tier.length > 0) break;
           }
-          // Ranked list exhausted with hostiles still present (e.g. an
-          // armed freighter would never match a class key) — fall back to
-          // the ladder rather than standing idle in a fight.
+          // No ranked SHIP category present — only now may settlements be
+          // engaged, in the ladder's own sub-order (armed stations are the
+          // threat, they die first). This is also the fallback for a list
+          // that can't match (e.g. an armed freighter matches no class key).
           if (tier.length === 0) {
             tier = armedShips.length ? armedShips
               : civilianShips.length ? civilianShips

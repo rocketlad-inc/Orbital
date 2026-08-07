@@ -151,3 +151,32 @@
   color: #5f7890;
   text-transform: uppercase;
 }
+
+/* ---- Pinned card (settlements) ------------------------------------
+   Not a disabled control — a structural rule. Reads as bolted down:
+   no grab cursor, a hatched edge, dimmer chrome, and a lock glyph. It
+   still shows its rank and hit chance, because both are still true. */
+.tpc-card--locked {
+  cursor: not-allowed;
+  background: repeating-linear-gradient(
+    -45deg,
+    #0e1622 0px, #0e1622 6px,
+    #121b28 6px, #121b28 12px
+  );
+  border-color: #1d2a3a;
+  border-style: dashed;
+  opacity: 0.82;
+}
+/* The auto-ladder dimming shouldn't double up on an already-dim card,
+   and hovering a locked card must not imply it's live. */
+.tpc--auto .tpc-card--locked,
+.tpc--auto .tpc-card--locked:hover { opacity: 0.82; }
+.tpc-card--locked .tpc-rank { color: #4a5a6a; }
+.tpc-card--locked .tpc-label { color: #7d8b99; }
+.tpc-card--locked .tpc-sub { color: #5f6f7e; font-style: italic; }
+.tpc-lock {
+  margin-left: 5px;
+  font-size: 8px;
+  opacity: 0.75;
+  vertical-align: 1px;
+}

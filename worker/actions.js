@@ -2494,7 +2494,15 @@ async function handleSetShipOrders(req, env, ctx) {
       return err(400, 'bad_request',
         `target_priority must be null or a permutation of ${TARGET_PRIORITY_KEYS.join(', ')}`);
     }
-    priorityJson = JSON.stringify(p);
+    // Settlements are PINNED LAST — a fleet has to be beaten before what
+    // it defends can be shot at. Normalized rather than rejected: the UI
+    // already locks the card, so a payload with it elsewhere is a stale
+    // client or a forged request, and silently sorting it is friendlier
+    // than a 400 the player can't act on. The combat loop enforces this
+    // independently (room.js), so this is defence in depth, not the
+    // only guard.
+    const pinned = [...p.filter(k => k !== 'settlement'), 'settlement'];
+    priorityJson = JSON.stringify(pinned);
   }
 
   // Ownership check for EVERY ship — all-or-nothing.
