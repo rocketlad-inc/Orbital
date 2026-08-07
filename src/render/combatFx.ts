@@ -54,6 +54,25 @@ function factionPrimary(rc: RenderContext, ownerId: string): string {
  */
 const FX_OFFSCREEN_MARGIN = 100;
 
+/**
+ * A PARKED hull with no recorded hitbox was not drawn this frame. When
+ * other hulls at the same body WERE drawn, that is a per-ship skip (cull,
+ * death, future LOD rules) — such a hull must neither fire nor be fired
+ * at, or bolts anchor to empty space. When NO hull at the body has a
+ * hitbox the whole stack is in cluster-badge mode, and recomputing ring
+ * positions around the badge is the long-standing intended fallback.
+ */
+function undrawnParked(ship: Ship, rc: RenderContext, ships: Ship[]): boolean {
+  if (ship.transit) return false;
+  if (rc.shipHitboxes?.has(ship.id)) return false;
+  for (const o of ships) {
+    if (o.id === ship.id || o.transit) continue;
+    if (o.orbit.parentBodyId !== ship.orbit.parentBodyId) continue;
+    if (rc.shipHitboxes?.has(o.id)) return true;   // neighbours drawn, this one skipped
+  }
+  return false;                                     // badge mode: recompute allowed
+}
+
 function offScreen(p: { x: number; y: number }, rc: RenderContext): boolean {
   const m = FX_OFFSCREEN_MARGIN;
   return p.x < -m || p.y < -m
@@ -412,6 +431,8 @@ export function drawTracers(
     // shooter. These one-shot tracers come from server damage events, so
     // they fire regardless of where the camera happens to be.
     if (offScreen(fp, rc)) continue;
+    if (from.ship && undrawnParked(from.ship, rc, ships)) continue;
+    if (to.ship && undrawnParked(to.ship, rc, ships)) continue;
     // Lead the aim by the target's motion over the shot's remaining life,
     // so the impact dot lands ON the moving hull instead of trailing it.
     // Settlements move slowly enough (surface point / station orbit)
@@ -546,6 +567,12 @@ export function drawEngagementFire(
     if (fired === undefined) continue;
     if (currentTick - fired > ENGAGED_WINDOW_TICKS) continue;
     if (s.transit) continue;
+    // DEAD hulls do not fire. A ship destroyed mid-tick lingers in the
+    // client list until the next /state poll reconciles, and its
+    // lastCombatTick is by definition current — without this check the
+    // corpse keeps shooting from a sprite the renderer no longer draws.
+    // (Settlements always had the hp gate; ships did not.)
+    if ((s.hp ?? 0) <= 0) continue;
     const at = s.orbit.parentBodyId;
     // A hull can trade fire with hostile ships OR bombard a hostile
     // settlement, so either presence keeps it engaged.
@@ -594,8 +621,14 @@ export function drawEngagementFire(
     let tStl: Settlement | null = null;
     const stampedId = shooter.ship?.lastTargetId ?? shooter.stl?.lastTargetId;
     if (stampedId) {
+      // (s.hp ?? 0) > 0: the round-robin concentrates fire, so the tick a
+      // hull dies it is THE stamped target of most of the enemy fleet —
+      // live case at Sol: 51 shooters stamped on one destroyed destroyer.
+      // Until /state reconciles, every one of them aimed at a corpse the
+      // renderer no longer draws: bolts converging on empty space.
       const sHit = ships.find(s =>
         s.id === stampedId && !s.transit
+        && (s.hp ?? 0) > 0
         && s.orbit.parentBodyId === shooter.bodyId
         && s.ownedBy !== shooter.ownedBy
         && !atPeace(peace, s.ownedBy, shooter.ownedBy));
@@ -616,6 +649,7 @@ export function drawEngagementFire(
       let bestArmed = false;
       for (const s of ships) {
         if (s.id === shooter.id || s.transit) continue;
+        if ((s.hp ?? 0) <= 0) continue;      // dead: see stamp lookup above
         if (s.orbit.parentBodyId !== shooter.bodyId) continue;
         if (s.ownedBy === shooter.ownedBy) continue;
         if (atPeace(peace, s.ownedBy, shooter.ownedBy)) continue;
@@ -670,6 +704,9 @@ export function drawEngagementFire(
     // what shooting at range looks like. It is the ORIGIN that has to
     // exist for the shot to make sense.
     if (offScreen(fp, rc)) continue;
+    // Undrawn shooter: the ship layer skipped this hull while drawing its
+    // neighbours — nothing on screen for the bolt to leave from.
+    if (shooter.ship && undrawnParked(shooter.ship, rc, ships)) continue;
 
     // Body in the way. Never shoot THROUGH it — but do not hold fire
     // either: pick another hostile that IS in line of sight.
@@ -685,12 +722,14 @@ export function drawEngagementFire(
     // Re-targeting is also the more honest picture: a gunner with a star
     // between it and its assigned target shoots at something it can
     // actually see.
-    if (occludedByBody(fp, tpNow, shooter.bodyId, rc)) {
+    if ((tShip && undrawnParked(tShip, rc, ships))
+        || occludedByBody(fp, tpNow, shooter.bodyId, rc)) {
       let alt: Ship | null = null;
       let altPos: { x: number; y: number } | null = null;
       let altArmed = false;
       for (const s of ships) {
         if (s.id === shooter.id || s.transit) continue;
+        if ((s.hp ?? 0) <= 0) continue;      // dead: see stamp lookup above
         if (s.orbit.parentBodyId !== shooter.bodyId) continue;
         if (s.ownedBy === shooter.ownedBy) continue;
         if (atPeace(peace, s.ownedBy, shooter.ownedBy)) continue;
@@ -699,6 +738,7 @@ export function drawEngagementFire(
         // on a non-combatant, and an armed target outranks a civilian.
         if (!shooter.ship && !armed) continue;
         if (alt && altArmed && !armed) continue;
+        if (undrawnParked(s, rc, ships)) continue;
         const p = shipCanvasPos(s, rc, transitCanvasPos);
         if (!p || occludedByBody(fp, p, shooter.bodyId, rc)) continue;
         alt = s; altPos = p; altArmed = armed;
