@@ -52,7 +52,9 @@ const CORVETTE: ShipClassDef = {
   hp: 40,
   pdcRating: 0.2,
   range: 8,
-  damagePerTick: 3.75,
+  // 3.75 -> 7: corvettes were losing badly to destroyers in live play
+  // (see migration 0071). Mirrors SHIP_COMBAT_STATS in worker/factions.js.
+  damagePerTick: 7,
   speed: 0.85,
   fuelCapacity: 80,
   speedModifier: 0.7,

@@ -550,7 +550,10 @@ const STARTER_CITY_HP = 300;
 // ratio needs a squared accel ratio. Engines raise speed x1/0.85 each,
 // capped at SPEED_CAP for both jobs.
 export const SHIP_COMBAT_STATS = {
-  corvette:  { hp: 40,  damage_per_tick: 3.75,  speed: 0.85 },
+  // 3.75 -> 7 (Lorne). Live telemetry put the corvette at 0.70 combat
+  // power per credit against the destroyer's 9.44, needing ~79 hulls to
+  // trade evenly with one. See migration 0071.
+  corvette:  { hp: 40,  damage_per_tick: 7,     speed: 0.85 },
   frigate:   { hp: 100, damage_per_tick: 20.25, speed: 0.50 },
   destroyer: { hp: 400, damage_per_tick: 45,    speed: 0.30 },
   freighter: { hp: 60,  damage_per_tick: 0,     speed: 0.55 },
