@@ -11,6 +11,7 @@ import { CaptainAvatar } from './CaptainAvatar';
 import {
   ShipPartId, SHIP_PART_DEFS, countPart, detonatorDamage, detonatorDisclosure,
   PART_GLYPH, SHIP_SLOT_COUNTS, ALL_PART_IDS, sanitizeParts,
+  hitChanceOf, damageProfile, defenseMitigation, MITIGATION_FLOOR,
 } from '../game/shipParts';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
 import { markNodeCancelPending, unmarkNodeCancelPending } from '../multiplayer/pendingNodeCancels';
@@ -1466,6 +1467,10 @@ export const ShipPanel: React.FC = () => {
                     ? 'Returns fire only — engages hostiles that attack here.'
                     : 'Holding fire — will not engage, even under attack.'}
               </div>
+              {/* Who this hull is actually shooting, resolved from the
+                  server's stamped engagement. The priority cards say what
+                  it WOULD pick; this says what it DID. */}
+              <CurrentTargetRow ship={ship} />
               {/* Target priority (migration 0064): ranked drag cards.
                   MP + own ship only — rivals' doctrine is their business
                   and SP's frozen sim doesn't read the column. */}
@@ -2087,6 +2092,101 @@ const ShipCaptainCard: React.FC<{
             </select>
           )}
         </div>
+      </div>
+    </div>
+  );
+};
+
+/**
+ * CURRENT TARGET — who this hull is actually shooting.
+ *
+ * The priority cards above say what the ship WOULD pick; this says what
+ * the server actually stamped on its last volley (last_target_id, the
+ * same field the map's tracer aims at), so the two can be compared when
+ * a doctrine doesn't do what the player expected.
+ *
+ * Odds and damage are computed with the same formulas the tick runs:
+ * hitChanceOf on the two combat speeds, and the attacker's damage
+ * through the target's TYPED mitigation (shields cut kinetic, armor cuts
+ * energy), floored exactly as room.js floors it. Expected/tick folds the
+ * hit chance in — the honest number for "how long until that thing
+ * dies", which is the question the section exists to answer.
+ *
+ * Deliberately NOT modelled here: rank, captain traits, flag auras,
+ * arrears, and senate war authorization. Those are multipliers the tick
+ * applies on top, so the figure is a floor, and the footnote says so
+ * rather than quoting a number that quietly disagrees with the log.
+ */
+const CurrentTargetRow: React.FC<{ ship: Ship }> = ({ ship }) => {
+  const { gameState } = useGameContext();
+  const targetId = ship.lastTargetId;
+  if (!targetId) return null;
+
+  // Settlements are combatants too, so the stamped id can be either.
+  const tShip = gameState.ships.find(s => s.id === targetId);
+  const tStl = tShip ? undefined : gameState.settlements.find(s => s.id === targetId);
+  // Target is dead or out of sensor range — say nothing rather than
+  // rendering odds against a ghost.
+  if (!tShip && !tStl) return null;
+
+  const myDamage = ship.damagePerTick ?? getShipClass(ship.class as ShipClassName).damagePerTick;
+  if (myDamage <= 0) return null;   // freighters/colony ships never engage
+
+  const mySpeed = combatSpeedOf(ship.class as ShipClassName, ship.parts);
+  // A settlement is mechanically a destroyer that cannot move
+  // (SETTLEMENT_SPEED in worker/factions.js).
+  const targetSpeed = tShip
+    ? combatSpeedOf(tShip.class as ShipClassName, tShip.parts)
+    : 0.30;
+  const odds = hitChanceOf(mySpeed, targetSpeed);
+
+  // Settlements carry no shield/armor parts, so bombardment lands in
+  // full — matching the room.js bombardment branch.
+  const profile = damageProfile(ship.parts);
+  const mit = tShip
+    ? Math.max(MITIGATION_FLOOR, defenseMitigation(tShip.parts, profile))
+    : 1;
+  const perHit = myDamage * mit;
+  const perTick = perHit * odds;
+
+  const name = tShip?.name ?? tStl?.name ?? 'Unknown';
+  const kindLabel = tShip
+    ? getShipClass(tShip.class as ShipClassName).displayName.toUpperCase()
+    : (tStl?.type === 'station' ? 'STATION' : 'CITY');
+  const targetHp = tShip?.hp ?? tStl?.hp ?? 0;
+  // Ticks to kill at the expected rate — the "so what" of the numbers
+  // above. Only shown when this hull alone could actually finish it.
+  const ttk = perTick > 0 ? Math.ceil(targetHp / perTick) : Infinity;
+
+  return (
+    <div className="sp-target">
+      <div className="sp-target__head">
+        <span className="sp-target__title">CURRENT TARGET</span>
+        <span className="sp-target__kind">{kindLabel}</span>
+      </div>
+      <div className="sp-target__name">{name}</div>
+      <div className="sp-target__grid">
+        <span className="sp-target__k">ODDS TO HIT</span>
+        <span className="sp-target__v" title={`This ship's speed ${mySpeed.toFixed(2)} against the target's ${targetSpeed.toFixed(2)}.`}>
+          {Math.round(100 * odds)}%
+        </span>
+        <span className="sp-target__k">PER HIT</span>
+        <span className="sp-target__v" title={mit < 1
+          ? `${myDamage.toFixed(1)} base, cut to ${Math.round(100 * mit)}% by the target's defensive parts.`
+          : 'The target carries nothing that counters this weapon type.'}>
+          {perHit.toFixed(1)}
+          {mit < 1 && <span className="sp-target__dim"> ({Math.round(100 * mit)}%)</span>}
+        </span>
+        <span className="sp-target__k">EXPECTED</span>
+        <span className="sp-target__v sp-target__v--hero" title="Damage per hit times the chance of landing it — the real rate this target is losing hull.">
+          {perTick.toFixed(1)}<span className="sp-target__dim">/tick</span>
+        </span>
+      </div>
+      <div className="sp-target__foot">
+        {Number.isFinite(ttk)
+          ? `${Math.round(targetHp)} HP left — about ${ttk} tick${ttk === 1 ? '' : 's'} at this rate, alone.`
+          : `${Math.round(targetHp)} HP left.`}
+        {' '}Rank, captain and war bonuses land on top.
       </div>
     </div>
   );
