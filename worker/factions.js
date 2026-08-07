@@ -113,23 +113,32 @@ const BODY_CATALOG = [
     yield: { metal: 5, fuel: 0, gold: 3, science: 0 } },
 
   // ---- rogue asteroids (settable; can host Trajectory Control Thrusters) ----
+  //
+  // ROGUE = FAST. Every period below is HALF the Kepler-consistent value
+  // for its orbit radius, so these rocks sweep past at 2x the speed of a
+  // planet at the same distance (Lorne). Motion is driven purely by
+  // orbit_period — client bodyPosition, the server's intercept solver
+  // (room.js), and the Kepler path for the eccentric Kuiper trio all read
+  // the same field — so halving it is the whole change. It also makes
+  // them genuinely hard to catch, which is the point of a body you have
+  // to chase down and claim.
   // Three belt-class entries interspersed with the existing dwarfs, plus
   // three Kuiper-class with long elliptical paths. Rich in metal + credits
   // to reward the early grab; sparse on fuel/science so they don't strictly
   // dominate planet/moon real estate.
   { id: 'midas', name: 'Midas', type: 'asteroid', parent: 'sol',
     radius: 0.6, soi: 2, mu: 0.04,
-    orbit_radius: 345, orbit_period: 525, angle0: 0.4,
+    orbit_radius: 345, orbit_period: 262.5, angle0: 0.4,
     color: '#c8a872',
     yield: { metal: 7, fuel: 0, gold: 5, science: 0 } },
   { id: 'styx_rock', name: 'Styx', type: 'asteroid', parent: 'sol',
     radius: 0.6, soi: 2, mu: 0.04,
-    orbit_radius: 370, orbit_period: 584, angle0: 3.0,
+    orbit_radius: 370, orbit_period: 292, angle0: 3.0,
     color: '#7a6858',
     yield: { metal: 8, fuel: 0, gold: 3, science: 0 } },
   { id: 'iron_anna', name: 'Iron Anna', type: 'asteroid', parent: 'sol',
     radius: 0.7, soi: 2, mu: 0.05,
-    orbit_radius: 390, orbit_period: 632, angle0: 5.1,
+    orbit_radius: 390, orbit_period: 316, angle0: 5.1,
     color: '#9a7a5a',
     yield: { metal: 9, fuel: 0, gold: 2, science: 0 } },
   // Kuiper-class — eccentric. rp brings them through inner system on
@@ -137,19 +146,19 @@ const BODY_CATALOG = [
   // game_bodies.orbit_rp/ra/omega/m0 so bodyPosition uses Kepler.
   { id: 'black_sky', name: 'Black Sky', type: 'asteroid', parent: 'sol',
     radius: 0.5, soi: 2, mu: 0.03,
-    orbit_radius: 1100, orbit_period: 2960, angle0: 0,
+    orbit_radius: 1100, orbit_period: 1480, angle0: 0,
     orbit_rp: 200, orbit_ra: 2000, orbit_omega: 0.4, orbit_m0: 1.2,
     color: '#3a3030',
     yield: { metal: 3, fuel: 0, gold: 6, science: 1 } },
   { id: 'vagrant', name: 'Vagrant', type: 'asteroid', parent: 'sol',
     radius: 0.5, soi: 2, mu: 0.03,
-    orbit_radius: 1450, orbit_period: 4470, angle0: 0,
+    orbit_radius: 1450, orbit_period: 2235, angle0: 0,
     orbit_rp: 250, orbit_ra: 2650, orbit_omega: 2.1, orbit_m0: 4.7,
     color: '#5a4838',
     yield: { metal: 2, fuel: 0, gold: 7, science: 1 } },
   { id: 'augustin', name: 'Augustín', type: 'asteroid', parent: 'sol',
     radius: 0.5, soi: 2, mu: 0.03,
-    orbit_radius: 1900, orbit_period: 6660, angle0: 0,
+    orbit_radius: 1900, orbit_period: 3330, angle0: 0,
     orbit_rp: 300, orbit_ra: 3500, orbit_omega: 4.6, orbit_m0: 3.1,
     color: '#6a5040',
     yield: { metal: 2, fuel: 0, gold: 6, science: 2 } },
