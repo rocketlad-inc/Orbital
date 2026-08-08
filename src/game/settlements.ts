@@ -130,8 +130,11 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
   shields: {
     displayName: 'Shields',
     hostType: 'city',
-    baseCost: { fuel: 0, ore: 45, credits: 45 },
-    costScaling: 1.7,
+    // Mirrors worker/actions.js exactly — a drifted copy here quotes a
+    // price the server will not honour. 2026-08-07: tripled + curve to
+    // x2.0/level (L1 135+135, L2 270+270, L3 540+540).
+    baseCost: { fuel: 0, ore: 135, credits: 135 },
+    costScaling: 2.0,
     baseBuildTicks: 35,
     buildTimeScaling: 1.35,
     description: 'Orbital shields: a second health bar that REGENERATES. '

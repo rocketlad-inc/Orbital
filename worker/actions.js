@@ -1651,7 +1651,10 @@ const BUILDING_DEFS = {
   // station would let a player fortify orbit itself, and the whole point
   // of stations is that they are the exposed half of a holding. Ground is
   // what you protect; orbit is what you contest.
-  shields:  { hostType: 'city',    base: { fuel: 0, metal: 45, gold: 45 }, costScaling: 1.7, baseTicks: 35, timeScaling: 1.35 },
+  // 2026-08-07 (Lorne): tripled base + steeper curve (1.7 -> 2.0). At
+  // 45/45 x1.7 a max-shield turtle was cheaper than one destroyer; a
+  // defence that strong has to cost like the fleet it replaces.
+  shields:  { hostType: 'city',    base: { fuel: 0, metal: 135, gold: 135 }, costScaling: 2.0, baseTicks: 35, timeScaling: 1.35 },
   shipyard: { hostType: 'station', base: { fuel: 0, metal: 50, gold: 30 }, costScaling: 1.7, baseTicks: 40, timeScaling: 1.3 },
   // Trajectory Control Thrusters — asteroid-weapon enabler. Mirrors
   // src/game/settlements.ts BUILDING_DEFS. hostBodyType restricts the
