@@ -517,7 +517,7 @@ export async function loadProposalTotals(env, proposalId) {
   return tot;
 }
 
-function shapeProposal(row, totals, callerVote) {
+function shapeProposal(row, totals, callerVote, ballots) {
   let payload = {};
   try { payload = JSON.parse(row.payload || '{}'); } catch { payload = {}; }
   return {
@@ -538,11 +538,24 @@ function shapeProposal(row, totals, callerVote) {
     vote_ticks:   effectiveVoteTicks(row),
     totals,
     caller_vote: callerVote ?? null,
+    // Who has voted, and how. The turnout readout and the blocking-
+    // coalition builder both need per-faction ballots, not just the
+    // aggregate — "who is still out" is the actionable half.
+    ballots: ballots ?? [],
   };
+}
+
+async function loadBallots(env, proposalId) {
+  const rows = await env.DB
+    .prepare('SELECT faction_id, vote, weight FROM senate_votes WHERE proposal_id = ?')
+    .bind(proposalId)
+    .all();
+  return rows.results ?? [];
 }
 
 async function shapeOne(env, row, callerFactionId) {
   const totals = await loadProposalTotals(env, row.id);
+  const ballots = await loadBallots(env, row.id);
   let callerVote = null;
   if (callerFactionId) {
     const v = await env.DB
@@ -551,7 +564,7 @@ async function shapeOne(env, row, callerFactionId) {
       .first();
     callerVote = v?.vote ?? null;
   }
-  return shapeProposal(row, totals, callerVote);
+  return shapeProposal(row, totals, callerVote, ballots);
 }
 
 // ---------- handlers ----------

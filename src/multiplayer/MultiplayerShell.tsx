@@ -78,6 +78,10 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
     try { window.dispatchEvent(new CustomEvent('dockrail:set', { detail: { active: next ? null : 'multiplayer' } })); } catch {}
   };
   const [tab, setTab] = useState<Tab>('lobby');
+  /** Cross-tab request to open a DM. The Senate's blocking-coalition
+   *  builder names the factions you need; this carries you to them. The
+   *  nonce lets the same faction be requested twice in a row. */
+  const [commsFocus, setCommsFocus] = useState<{ id: string; nonce: number } | null>(null);
   const [gameId, setGameId] = useState<string | null>(null);
   // Host-only mid-game invite: the room's invite code stays valid after
   // start, so the host can pull a latecomer into an unclaimed world.
@@ -535,9 +539,18 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
                 <CommsPanel
                   gameId={gameId}
                   onUnreadDelta={(d) => setUnreadMessages((n) => Math.max(0, n + d))}
+                  focusFaction={commsFocus}
                 />
               )}
-              {tab === 'senate'  && gameId && <SenatePanel  gameId={gameId} />}
+              {tab === 'senate'  && gameId && (
+                <SenatePanel
+                  gameId={gameId}
+                  onMessageFaction={(fid) => {
+                    setCommsFocus((prev) => ({ id: fid, nonce: (prev?.nonce ?? 0) + 1 }));
+                    setTab('comms');
+                  }}
+                />
+              )}
               {tab === 'trades'  && gameId && <TradesPanel  gameId={gameId} />}
             </div>
           </>

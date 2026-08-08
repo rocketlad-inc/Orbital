@@ -84,13 +84,24 @@ interface Props {
   /** Lets the shell badge react instantly when we mark messages
    *  read, instead of waiting for the next /unread-count poll. */
   onUnreadDelta?: (delta: number) => void;
+  /** Another tab asked us to open a specific DM — the Senate's blocking-
+   *  coalition builder does this, so "who to call" and "calling them"
+   *  are one click apart. The nonce makes a repeat request for the same
+   *  faction re-focus instead of being swallowed as an unchanged prop. */
+  focusFaction?: { id: string; nonce: number } | null;
 }
 
-export function CommsPanel({ gameId, onUnreadDelta }: Props) {
+export function CommsPanel({ gameId, onUnreadDelta, focusFaction }: Props) {
   const [factions, setFactions] = useState<Faction[]>([]);
   const [me, setMe] = useState<MyFaction | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [channel, setChannel] = useState<ChannelId>('public');
+  // Honour a focus request from another tab. Depends on the nonce, not
+  // the object, so a second request for the same faction still fires.
+  useEffect(() => {
+    if (focusFaction) setChannel({ kind: 'dm', factionId: focusFaction.id });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusFaction?.nonce, focusFaction?.id]);
   /** Chat reads downward, so the useful end is the BOTTOM. Jump there
    *  whenever the channel changes or new messages land. */
   const logRef = React.useRef<HTMLDivElement | null>(null);
@@ -327,19 +338,32 @@ export function CommsPanel({ gameId, onUnreadDelta }: Props) {
           maxLength={4000}
           value={body}
           onChange={(e) => setBody(e.target.value)}
+          // Enter sends, Shift+Enter breaks the line — the convention
+          // every chat client shares. Without it the only way to send is
+          // to leave the keyboard for the button, which is why threads
+          // here read like telegrams.
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              void send(e);
+            }
+          }}
           placeholder={
             typeof channel === 'string'
               ? 'Message to all players…'
               : `Private message to ${channelLabel(channel)}…`
           }
         />
-        <button
-          className="mp-submit"
-          type="submit"
-          style={{ marginTop: 6, borderColor: channelColor(channel) }}
-        >
-          {typeof channel === 'string' ? 'Send to PUBLIC' : `Send DM to ${channelLabel(channel)}`}
-        </button>
+        <div className="mp-crow">
+          <button
+            className="mp-submit"
+            type="submit"
+            style={{ borderColor: channelColor(channel) }}
+          >
+            {typeof channel === 'string' ? 'Send to PUBLIC' : `Send DM to ${channelLabel(channel)}`}
+          </button>
+          <span className="mp-crow__hint">⏎ send · ⇧⏎ newline</span>
+        </div>
         <div className="mp-error">{error || ''}</div>
       </form>
     </div>

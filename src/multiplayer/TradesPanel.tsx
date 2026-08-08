@@ -421,36 +421,30 @@ function TradeCard({
   const otherParty = isMineOutgoing ? responder : proposer;
 
   return (
-    <div
-      style={{
-        border: '1px solid #2a3d50',
-        background: 'rgba(78, 205, 196, 0.05)',
-        borderRadius: 3,
-        padding: 8,
-      }}
-    >
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, alignItems: 'center' }}>
-        <div style={{ fontSize: 10, color: '#b8c8d6' }}>
-          {isMineOutgoing ? 'To' : 'From'}{' '}
-          <span style={{ color: otherParty?.color ?? '#d8e4ee', fontWeight: 600 }}>
-            {otherParty?.name ?? 'unknown'}
-          </span>
-        </div>
+    <div className="tp-row">
+      {/* ONE LINE, not a three-column grid. "You give / ⇄ / You receive"
+          spent a third of a 376px sidebar on an arrow and stacked each
+          side's resources vertically, so a two-resource swap ran five
+          lines tall. The deal reads as a sentence instead. */}
+      <div className="tp-row__t">
+        <span className="tp-row__dot" style={{ background: otherParty?.color ?? '#8aa0b4' }} />
+        <span className="tp-row__nm" style={{ color: otherParty?.color ?? 'var(--mp-fg)' }}>
+          {otherParty?.name ?? 'unknown'}
+        </span>
         {showStatus && (
-          <span style={{
-            fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase',
-            color: statusColor(trade.status), border: `1px solid ${statusColor(trade.status)}`,
-            padding: '1px 6px', borderRadius: 8,
-          }}>
+          <span
+            className="tp-pill"
+            style={{ color: statusColor(trade.status), borderColor: statusColor(trade.status) }}
+          >
             {trade.status}
           </span>
         )}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 8, alignItems: 'center' }}>
-        <Side label="You give" bundle={youGive} pacts={youGivePacts} align="left" />
-        <div style={{ color: '#b8c8d6', fontSize: 14 }}>⇄</div>
-        <Side label="You receive" bundle={theyGive} pacts={theyGivePacts} align="right" />
+      <div className="tp-row__d">
+        <BundleLine label="They send" bundle={theyGive} pacts={theyGivePacts} />
+        <span className="tp-row__sep"> · </span>
+        <BundleLine label="you send" bundle={youGive} pacts={youGivePacts} />
       </div>
 
       {trade.note && (
@@ -661,42 +655,51 @@ function AssignShipmentForm({
   );
 }
 
-function Side({
-  label, bundle, pacts, align,
+/**
+ * One half of a deal, inline: "They send 4.0k credits, 2 Non-Aggression".
+ *
+ * Resource colours are the same ones the rest of the game uses, so metal
+ * reads as metal without a legend.
+ */
+function BundleLine({
+  label, bundle, pacts,
 }: {
   label: string;
   bundle: ResourceBundle;
   pacts: PactKind[];
-  align: 'left' | 'right';
 }) {
-  const keys = (Object.keys(bundle) as Array<keyof ResourceBundle>).filter((k) => bundle[k] > 0);
-  const empty = keys.length === 0 && pacts.length === 0;
+  const parts: React.ReactNode[] = [];
+  (Object.keys(RESOURCE_LABELS) as (keyof ResourceBundle)[]).forEach((k) => {
+    const v = bundle[k];
+    if (!v) return;
+    parts.push(
+      <span key={k} style={{ color: RESOURCE_COLORS[k] }}>
+        {fmtAmount(v)} {RESOURCE_LABELS[k].toLowerCase()}
+      </span>,
+    );
+  });
+  for (const pk of pacts ?? []) {
+    parts.push(<span key={`p:${pk}`} style={{ color: '#4ecdc4' }}>{PACT_LABELS[pk]}</span>);
+  }
   return (
-    <div style={{ textAlign: align }}>
-      <div style={{
-        fontSize: 8, color: '#b8c8d6', letterSpacing: '0.08em',
-        textTransform: 'uppercase', marginBottom: 2,
-      }}>
-        {label}
-      </div>
-      {empty ? (
-        <div style={{ fontSize: 10, color: '#b8c8d6', fontStyle: 'italic' }}>nothing</div>
-      ) : (
-        <>
-          {keys.map((k) => (
-            <div key={k} style={{ fontSize: 11, color: RESOURCE_COLORS[k], lineHeight: '14px' }}>
-              {bundle[k]} {RESOURCE_LABELS[k]}
-            </div>
-          ))}
-          {pacts.map((p) => (
-            <div key={p} style={{ fontSize: 10, color: '#4ecdc4', lineHeight: '14px' }}>
-              ✦ {PACT_LABELS[p]}
-            </div>
-          ))}
-        </>
-      )}
-    </div>
+    <>
+      <span className="tp-row__lbl">{label} </span>
+      {parts.length === 0
+        ? <span className="tp-row__nil">nothing</span>
+        : parts.map((el, i) => (
+          <React.Fragment key={i}>{i > 0 ? ', ' : ''}{el}</React.Fragment>
+        ))}
+    </>
   );
+}
+
+/** 4000 -> "4.0k". Trade amounts run to five digits and the sidebar is
+ *  376px wide. */
+function fmtAmount(n: number): string {
+  const v = Math.round(n);
+  if (Math.abs(v) >= 10000) return `${(v / 1000).toFixed(0)}k`;
+  if (Math.abs(v) >= 1000) return `${(v / 1000).toFixed(1)}k`;
+  return String(v);
 }
 
 function PactsList({
@@ -709,38 +712,36 @@ function PactsList({
     return <div className="mp-empty" style={{ textAlign: 'center', padding: 16, color: '#b8c8d6' }}>No active pacts.</div>;
   }
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <>
       {pacts.map((p) => (
-        <div
-          key={p.id}
-          style={{
-            border: '1px solid #4ecdc4',
-            background: 'rgba(78, 205, 196, 0.08)',
-            borderRadius: 3,
-            padding: 8,
-          }}
-        >
-          <div style={{ fontSize: 11, fontWeight: 600, color: '#4ecdc4', marginBottom: 4 }}>
-            {PACT_LABELS[p.kind]}
+        <div key={p.id} className="tp-row is-pact">
+          <div className="tp-row__t">
+            <span className="tp-row__dot" style={{ background: '#4ecdc4' }} />
+            <span className="tp-row__nm" style={{ color: '#4ecdc4' }}>
+              {PACT_LABELS[p.kind]}
+            </span>
+            <span className="tp-pill" style={{ color: '#4ecdc4', borderColor: '#4ecdc4' }}>
+              in force
+            </span>
           </div>
-          <div style={{ fontSize: 10, color: '#a8b8c8' }}>
+          <div className="tp-row__d">
             with{' '}
             {p.counterparty_faction_ids.map((id, i) => {
               const f = factionsById.get(id);
               return (
-                <span key={id} style={{ color: f?.color ?? '#d8e4ee', fontWeight: 500 }}>
+                <span key={id} style={{ color: f?.color ?? 'var(--mp-fg)' }}>
                   {f?.name ?? id}{i < p.counterparty_faction_ids.length - 1 ? ', ' : ''}
                 </span>
               );
             })}
-          </div>
-          <div style={{ fontSize: 9, color: '#b8c8d6', marginTop: 2 }}>
-            Signed T+{p.signed_at_tick}
-            {p.expires_at_tick != null && ` · expires T+${p.expires_at_tick}`}
+            <span className="tp-row__when">
+              {' '}· signed T+{p.signed_at_tick}
+              {p.expires_at_tick != null && ` · expires T+${p.expires_at_tick}`}
+            </span>
           </div>
         </div>
       ))}
-    </div>
+    </>
   );
 }
 

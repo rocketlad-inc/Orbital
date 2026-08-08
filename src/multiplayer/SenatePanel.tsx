@@ -129,7 +129,14 @@ const STATUS_LABEL: Record<SenateProposal['status'], string> = {
   withdrawn: 'WITHDRAWN',
 };
 
-export function SenatePanel({ gameId }: { gameId: string }) {
+export function SenatePanel({
+  gameId, onMessageFaction,
+}: {
+  gameId: string;
+  /** Jump to Comms with this faction's DM channel open. The coalition
+   *  builder tells you who to call; this is the calling. */
+  onMessageFaction?: (factionId: string) => void;
+}) {
   useEffect(() => { logUiEvent(gameId, 'senate'); }, [gameId]);
   const [sliders, setSliders] = useState<SenateSlider[]>([]);
   const [currentTick, setCurrentTick] = useState<number>(0);
@@ -139,12 +146,21 @@ export function SenatePanel({ gameId }: { gameId: string }) {
   const [busy, setBusy] = useState(false);
   const [myFactionId, setMyFactionId] = useState<string | null>(null);
   const [weight, setWeight] = useState<WeightDetail | null>(null);
+  const [voting, setVoting] = useState<string | null>(null);
   /** Total weight in the chamber — the denominator every turnout and
    *  coalition number is measured against. */
   const chamberWeight = useMemo(
     () => factions.reduce((n, f) => n + voteWeightOf(f), 0),
     [factions],
   );
+  /** Ballots already cast on the bill currently open for voting — drives
+   *  the outlined "hasn't voted" seats. Null when nothing is on the
+   *  floor, so the seat map falls back to plain colours. */
+  const floorBallotIds = useMemo(() => {
+    const live = proposals.find(p => p.status === 'voting');
+    if (!live) return null;
+    return new Set((live.ballots ?? []).map(b => b.faction_id));
+  }, [proposals]);
   const [myTech, setMyTech] = useState<{ levels: Record<string, number>; gating: boolean }>(
     { levels: {}, gating: false },
   );
@@ -330,12 +346,19 @@ export function SenatePanel({ gameId }: { gameId: string }) {
 
   async function castVote(proposalId: string, vote: 'yea' | 'nay' | 'abstain') {
     setError(null);
-    const res = await apiFetch(`/api/games/${gameId}/senate/proposals/${proposalId}/vote`, {
-      method: 'POST',
-      body: JSON.stringify({ vote }),
-    });
-    if (!res.ok) setError(res.error?.message ?? 'Vote failed');
-    refresh();
+    // The buttons sit on the card and the list refreshes underneath them,
+    // so without a lock an impatient double-click fires two ballots.
+    setVoting(proposalId);
+    try {
+      const res = await apiFetch(`/api/games/${gameId}/senate/proposals/${proposalId}/vote`, {
+        method: 'POST',
+        body: JSON.stringify({ vote }),
+      });
+      if (!res.ok) setError(res.error?.message ?? 'Vote failed');
+      refresh();
+    } finally {
+      setVoting(null);
+    }
   }
 
   async function withdraw(proposalId: string) {
@@ -382,9 +405,17 @@ export function SenatePanel({ gameId }: { gameId: string }) {
         currentTick={currentTick}
         factionsById={factionsById}
         chamber={chamberWeight}
+        myFactionId={myFactionId}
+        onVote={(id, v) => { void castVote(id, v); }}
+        busy={voting}
+        onMessageFaction={onMessageFaction}
       />
       <WeightCard detail={weight} />
-      <Chamber factions={factions} myFactionId={myFactionId} />
+      <Chamber
+        factions={factions}
+        myFactionId={myFactionId}
+        votedIds={floorBallotIds}
+      />
       <div className="mp-section-title">Propose a bill</div>
       <form onSubmit={propose}>
         <label className="mp-label">Kind</label>
@@ -804,54 +835,235 @@ function voteWeightOf(f: Faction): number {
  * voting.
  */
 function ActionableBills({
-  proposals, currentTick, factionsById, chamber,
+  proposals, currentTick, factionsById, chamber, myFactionId, onVote, busy,
+  onMessageFaction,
 }: {
   proposals: SenateProposal[];
   currentTick: number;
   factionsById: Map<string, Faction>;
   chamber: number;
+  myFactionId: string | null;
+  onVote: (id: string, vote: 'yea' | 'nay' | 'abstain') => void;
+  busy: string | null;
+  onMessageFaction?: (factionId: string) => void;
 }) {
   const open = proposals.filter(p => p.status === 'voting');
   if (open.length === 0) return null;
   return (
-    <>
-      <div className="mp-section-title">Needs your vote</div>
-      {open.map(p => {
-        const proposer = p.proposer_faction_id ? factionsById.get(p.proposer_faction_id) : null;
-        const yea = p.totals?.yea?.weight ?? 0;
-        const nay = p.totals?.nay?.weight ?? 0;
-        const abstain = p.totals?.abstain?.weight ?? 0;
-        const cast = yea + nay + abstain;
-        const uncast = Math.max(0, chamber - cast);
-        const closes = Math.max(0, p.vote_closes_at_tick - currentTick);
-        return (
-          <div key={p.id} className="sp-urgent">
-            <div className="sp-urgent__t">
-              <span className="sp-urgent__n">{p.title}</span>
-              <span className="sp-urgent__c">
-                closes in {closes} tick{closes === 1 ? '' : 's'}
-              </span>
-            </div>
-            <div className="sp-urgent__m">
-              {p.kind === 'chancellor_vote'
-                ? 'Chancellor vote — if it passes, they win the game'
-                : p.kind.replace(/_/g, ' ')}
-              {proposer ? ` · ${proposer.name}` : ''}
-            </div>
-            {/* Turnout, not just the tally. With no quorum the bill is
-                decided by whoever shows up, so the UNCAST share is the
-                number that tells you whether you can still stop it. */}
-            <div className="sp-turnout">
-              <b>{cast} of {chamber} cast.</b>{' '}
-              {uncast > 0
-                ? `${uncast} still out. A tie fails the bill, so ${yea} nay blocks it.`
-                : 'Every seat has voted.'}
-            </div>
-            <div className="sp-urgent__go">Cast your vote on the bill below ↓</div>
-          </div>
-        );
-      })}
-    </>
+    <section className="sp-sect">
+      <div className="sp-sect__h"><span className="sp-lbl">Needs your vote</span></div>
+      {open.map(p => (
+        <VoteCard
+          key={p.id}
+          p={p}
+          currentTick={currentTick}
+          factionsById={factionsById}
+          chamber={chamber}
+          myFactionId={myFactionId}
+          onVote={onVote}
+          busy={busy}
+          onMessageFaction={onMessageFaction}
+        />
+      ))}
+    </section>
+  );
+}
+
+/**
+ * A bill you can still act on.
+ *
+ * The vote buttons live ON the card. A chancellor bill is a win condition
+ * with no quorum — it passes on more yea than nay among ballots actually
+ * cast — so the distance between reading it and voting on it should be
+ * zero. The tally is a proportional bar rather than three numbers because
+ * "is this close?" is the question, and a bar answers it without
+ * arithmetic.
+ */
+function VoteCard({
+  p, currentTick, factionsById, chamber, myFactionId, onVote, busy,
+  onMessageFaction,
+}: {
+  p: SenateProposal;
+  currentTick: number;
+  factionsById: Map<string, Faction>;
+  chamber: number;
+  myFactionId: string | null;
+  onVote: (id: string, vote: 'yea' | 'nay' | 'abstain') => void;
+  busy: string | null;
+  onMessageFaction?: (factionId: string) => void;
+}) {
+  const proposer = p.proposer_faction_id ? factionsById.get(p.proposer_faction_id) : null;
+  const yea = p.totals?.yea?.weight ?? 0;
+  const nay = p.totals?.nay?.weight ?? 0;
+  const abs = p.totals?.abstain?.weight ?? 0;
+  const cast = yea + nay + abs;
+  const uncast = Math.max(0, chamber - cast);
+  const closes = Math.max(0, p.vote_closes_at_tick - currentTick);
+  const my = p.caller_vote;
+  const isChancellor = p.kind === 'chancellor_vote';
+  // Widths measure share of the WHOLE chamber, not of votes cast, so the
+  // uncast block stays visible. A bar that renormalises as people vote
+  // hides the fact that most of the senate hasn't shown up.
+  const denom = Math.max(1, chamber);
+  const pct = (n: number) => (n / denom) * 100;
+  return (
+    <div className={`sp-vc${isChancellor ? ' is-chancellor' : ''}`}>
+      <div className="sp-vc__t">
+        <span className="sp-vc__n">{p.title}</span>
+        <span className="sp-vc__s">closes in {closes}t</span>
+      </div>
+      <div className="sp-vc__m">
+        {isChancellor
+          ? <>Chancellor vote · {proposer?.name ?? 'unknown'} · <b>if it passes, they win</b></>
+          : <>{p.kind.replace(/_/g, ' ')}{proposer ? ` · ${proposer.name}` : ''}</>}
+      </div>
+      <div className="sp-tally">
+        {yea > 0 && <div style={{ width: `${pct(yea)}%`, background: '#6ee7b7' }}>YEA {yea}</div>}
+        {nay > 0 && <div style={{ width: `${pct(nay)}%`, background: '#ff6b6b' }}>NAY {nay}</div>}
+        {abs > 0 && <div style={{ width: `${pct(abs)}%`, background: '#8a9fb3' }}>ABS {abs}</div>}
+        {uncast > 0 && <div className="none" style={{ width: `${pct(uncast)}%` }}>{uncast} uncast</div>}
+      </div>
+      <div className="sp-tally__cap">share of the {chamber}-vote chamber</div>
+      {/* Turnout, not just the tally. With no quorum the bill is decided
+          by whoever shows up, so the uncast share is the number that says
+          whether you can still change the outcome. */}
+      <div className="sp-turnout">
+        <b>Turnout {cast} of {chamber}.</b>{' '}
+        A bill needs more yea than nay among votes cast — a tie kills it.
+        {' '}{yea > 0 ? `${yea} nay blocks this outright.` : 'Nobody has voted yea yet.'}
+      </div>
+      <div className="sp-votebtns">
+        <button
+          className={`sp-vb sp-vb--yea${my === 'yea' ? ' is-cast' : ''}`}
+          disabled={busy === p.id}
+          onClick={() => onVote(p.id, 'yea')}
+        >
+          Yea{my === 'yea' ? ' ✓' : ''}
+        </button>
+        <button
+          className={`sp-vb sp-vb--nay${my === 'nay' ? ' is-cast' : ''}`}
+          disabled={busy === p.id}
+          onClick={() => onVote(p.id, 'nay')}
+        >
+          Nay{my === 'nay' ? ' ✓' : ''}
+        </button>
+        <button
+          className={`sp-vb sp-vb--abs${my === 'abstain' ? ' is-cast' : ''}`}
+          disabled={busy === p.id}
+          onClick={() => onVote(p.id, 'abstain')}
+        >
+          Abstain{my === 'abstain' ? ' ✓' : ''}
+        </button>
+      </div>
+      <BlockingCoalition
+        p={p}
+        factionsById={factionsById}
+        myFactionId={myFactionId}
+        onMessageFaction={onMessageFaction}
+      />
+    </div>
+  );
+}
+
+/**
+ * How to stop a bill that is currently winning.
+ *
+ * This is the one piece of senate maths nobody does in their head, and
+ * the reason The Friendly Zone ended 7-2 with five factions asleep: the
+ * losing side never worked out that it only needed two of them. The
+ * builder adds uncommitted factions heaviest-first and says, at each
+ * step, whether the running nay total is enough YET.
+ *
+ * A tie FAILS the bill, so matching the yea weight is sufficient —
+ * exceeding it is not required. Getting that backwards costs a game.
+ */
+function BlockingCoalition({
+  p, factionsById, myFactionId, onMessageFaction,
+}: {
+  p: SenateProposal;
+  factionsById: Map<string, Faction>;
+  myFactionId: string | null;
+  onMessageFaction?: (factionId: string) => void;
+}) {
+  const yea = p.totals?.yea?.weight ?? 0;
+  const nay = p.totals?.nay?.weight ?? 0;
+  const ballots = p.ballots ?? [];
+  // Already blocked, or nothing to block: no advice needed.
+  if (yea === 0 || nay >= yea) return null;
+
+  const votedIds = new Set(ballots.map(b => b.faction_id));
+  const iVotedNay = ballots.some(b => b.faction_id === myFactionId && b.vote === 'nay');
+
+  // Everyone still uncommitted, heaviest first — the shortest path to a
+  // block is the fewest phone calls.
+  const available = [...factionsById.values()]
+    .filter(f => f.status !== 'eliminated')
+    .filter(f => !votedIds.has(f.id))
+    .map(f => ({ f, w: voteWeightOf(f) }))
+    // Heaviest first — the shortest path to a block is the fewest phone
+    // calls — but YOU always lead, because your own vote costs no
+    // diplomacy and every other row is contingent on it.
+    .sort((a, b) => {
+      if (a.f.id === myFactionId) return -1;
+      if (b.f.id === myFactionId) return 1;
+      return b.w - a.w;
+    });
+  if (available.length === 0) return null;
+
+  const rows: { key: string; label: string; weight: number; readout: string; good: boolean; msg: boolean }[] = [];
+  let running = nay;
+  let blocked = false;
+  for (const { f, w } of available) {
+    const mine = f.id === myFactionId;
+    running += w;
+    const nowBlocked = running >= yea;
+    const readout = running > yea
+      ? `${running} nay beats ${yea} — clean block`
+      : running === yea
+        ? `${running} nay ties ${yea} — BLOCKED ✓`
+        : `${running} nay vs ${yea} — still passes`;
+    rows.push({
+      key: f.id,
+      label: mine ? 'You' : f.name,
+      weight: w,
+      readout,
+      good: nowBlocked,
+      // No point offering to message yourself, and none once you're there.
+      msg: !mine,
+    });
+    if (nowBlocked) { blocked = true; break; }
+  }
+
+  return (
+    <div className="sp-coal">
+      <div className="sp-coal__h">
+        {blocked ? 'How to block this' : 'Not enough votes to block'}
+      </div>
+      {!iVotedNay && myFactionId && (
+        <div className="sp-coal__pre">Assumes you vote nay.</div>
+      )}
+      {rows.map((r, i) => (
+        <div key={r.key} className={`sp-coalrow${r.good ? ' is-good' : ''}`}>
+          <span className="sp-coalrow__n">
+            {i === 0 ? '' : '+ '}{r.label} <span className="sp-coalrow__w">({r.weight})</span>
+          </span>
+          {r.msg && onMessageFaction && (
+            <button
+              className="sp-coalrow__msg"
+              onClick={() => onMessageFaction(r.key)}
+              title={`Open a private channel with ${r.label}`}
+            >
+              Message
+            </button>
+          )}
+          <span className="sp-coalrow__r">{r.readout}</span>
+        </div>
+      ))}
+      <div className="sp-note">
+        A tie fails the bill, so <b>matching</b> their weight is enough — you
+        do not need to exceed it.
+      </div>
+    </div>
   );
 }
 
@@ -862,7 +1074,16 @@ function ActionableBills({
  * doesn't show which pairings clear a majority. Seats do — a bloc is
  * visible as a bloc.
  */
-function Chamber({ factions, myFactionId }: { factions: Faction[]; myFactionId: string | null }) {
+function Chamber({
+  factions, myFactionId, votedIds,
+}: {
+  factions: Faction[];
+  myFactionId: string | null;
+  /** Factions that have cast a ballot on the bill currently on the floor.
+   *  Everyone else gets an outlined seat — those are the ones still worth
+   *  a message. */
+  votedIds: Set<string> | null;
+}) {
   const seated = factions
     .filter(f => f.status !== 'eliminated')
     .map(f => ({ f, w: voteWeightOf(f) }))
@@ -881,9 +1102,13 @@ function Chamber({ factions, myFactionId }: { factions: Faction[]; myFactionId: 
           Array.from({ length: w }, (_, i) => (
             <span
               key={`${f.id}:${i}`}
-              className={`sp-seat${f.id === myFactionId ? ' is-you' : ''}`}
-              style={{ background: f.color, color: readableInk(f.color) }}
-              title={`${f.name} — ${w} vote${w === 1 ? '' : 's'}`}
+              className={`sp-seat${f.id === myFactionId ? ' is-you' : ''}`
+                + (votedIds && !votedIds.has(f.id) ? ' is-novote' : '')}
+              style={votedIds && !votedIds.has(f.id)
+                ? { color: f.color }
+                : { background: f.color, color: readableInk(f.color) }}
+              title={`${f.name} — ${w} vote${w === 1 ? '' : 's'}`
+                + (votedIds && !votedIds.has(f.id) ? ' — has not voted' : '')}
             >
               {initials(f.name)}
             </span>
@@ -898,6 +1123,9 @@ function Chamber({ factions, myFactionId }: { factions: Faction[]; myFactionId: 
         ))}
       </div>
       <div className="sp-note">
+        {votedIds
+          ? 'Outlined seats have not voted on the bill above. '
+          : ''}
         A bill passes on more yea than nay among votes CAST — a tie kills it,
         and there is no quorum.
       </div>

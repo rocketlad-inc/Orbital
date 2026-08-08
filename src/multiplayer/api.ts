@@ -301,6 +301,8 @@ export type SenateProposal = {
   vote_ticks: number;
   totals: SenateVoteTotals;
   caller_vote: 'yea' | 'nay' | 'abstain' | null;
+  /** Per-faction ballots. Senate votes are public record. */
+  ballots?: { faction_id: string; vote: 'yea' | 'nay' | 'abstain'; weight: number }[];
 };
 
 // ============================================================
