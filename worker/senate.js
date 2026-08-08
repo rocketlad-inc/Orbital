@@ -25,6 +25,9 @@ import {
   factionTechLevels, gatingEnabled, hasFeature, lockedError,
 } from './researchUnlocks.js';
 import { voteWeights, weightBreakdown, WEIGHT_RULE } from './systems.js';
+import {
+  ensureTerm, currentTerm, termTicksFor, shapeTerm, remainingInCycle,
+} from './senateTerms.js';
 
 export { WEIGHT_RULE };
 
@@ -212,6 +215,35 @@ const PROD_SANCTION_MULTIPLIER     = 0.5;   // half yield while active
  *  faction. Capped by what the target actually has — they don't go
  *  negative; the transfer is shrunk proportionally if they can't pay. */
 const REPARATIONS_PER_FACTION = 200;
+
+/**
+ * Debate/vote windows for a bill that must finish inside its term.
+ *
+ * Pure so it can be tested directly (sim/senateTerms.mjs) — the
+ * arithmetic here decides whether a bill can outlive the term that
+ * spawned it, and "off by one tick" is invisible until a chairman
+ * silently steals part of their successor's term.
+ *
+ * Returns { ok: false, roomLeft, needed } when the term is too short,
+ * else { ok: true, debateTicks, voteTicks, voteOpens, voteCloses }.
+ * INVARIANT when ok: voteCloses <= termEndTick.
+ */
+export function billWindow(termEndTick, proposedAt, wantDebate, wantVote) {
+  const roomLeft = termEndTick - proposedAt;
+  const needed = MIN_WINDOW_TICKS * 2;
+  if (roomLeft < needed) return { ok: false, roomLeft, needed };
+
+  const debateTicks = clampInt(
+    wantDebate, MIN_WINDOW_TICKS, Math.min(DEBATE_MAX_TICKS, roomLeft - MIN_WINDOW_TICKS),
+    Math.max(DEBATE_TICKS, MIN_WINDOW_TICKS),
+  );
+  const voteTicks = clampInt(
+    wantVote, MIN_WINDOW_TICKS, Math.min(VOTE_MAX_TICKS, roomLeft - debateTicks),
+    Math.max(VOTE_TICKS, MIN_WINDOW_TICKS),
+  );
+  const voteOpens = proposedAt + debateTicks;
+  return { ok: true, debateTicks, voteTicks, voteOpens, voteCloses: voteOpens + voteTicks };
+}
 
 function clampInt(v, min, max, fallback) {
   const n = Math.floor(Number(v));
@@ -517,7 +549,81 @@ export async function loadProposalTotals(env, proposalId) {
   return tot;
 }
 
-function shapeProposal(row, totals, callerVote, ballots) {
+// ============================================================
+// QUORUM (Lorne): at least half the players must engage with a bill for
+// it to pass. Abstain counts — "present and neutral" is engagement, and
+// without it a player who wants a bill to proceed but has no opinion has
+// no way to help it over the line.
+//
+// THE DENOMINATOR IS SEATED PLAYERS, NOT SEATS. Measured before building
+// this: six of the eight live games have zero or one player seen in the
+// past week. Counting abandoned seats would mean only ONE active game
+// could ever pass another bill — a quorum rule that treats ghosts as
+// opposition doesn't raise the bar, it locks the door. A member on leave
+// doesn't count against quorum in any real chamber either.
+//
+// This is also strictly LESS gameable than counting raw seats: going
+// quiet to shrink the denominator also removes you as a voter, so it
+// buys nothing that simply not voting didn't already buy.
+// ============================================================
+
+/** How long since a player's last session touch before their seat stops
+ *  counting toward quorum. Expressed in TICKS of this game's cadence
+ *  (two terms' worth) so a slow game doesn't unseat people who are
+ *  merely asleep, with a wall-clock floor for very fast cadences. */
+const SEATED_TERMS = 2;
+const SEATED_FLOOR_MS = 48 * 60 * 60 * 1000;
+
+/** Absolute floor on quorum. Without it, a game where everyone has
+ *  drifted away has a quorum of zero and bills pass on NOBODY's vote —
+ *  strictly worse than the pre-quorum behaviour. A senate of one is not
+ *  a senate. */
+const MIN_QUORUM = 2;
+
+/**
+ * Seats that still have a human behind them, and the resulting quorum.
+ *
+ * Returns { seated, quorum, total } — `total` is every active faction,
+ * kept for display so players can see the difference between "empty
+ * chair" and "present but silent".
+ */
+export async function quorumFor(env, gameId, termTicks = 24) {
+  const game = await env.DB
+    .prepare('SELECT tick_interval_ms FROM games WHERE id = ?')
+    .bind(gameId)
+    .first();
+  const tickMs = Number(game?.tick_interval_ms) || 3600000;
+  const windowMs = Math.max(SEATED_TERMS * termTicks * tickMs, SEATED_FLOOR_MS);
+  const cutoff = Date.now() - windowMs;
+
+  const rows = (await env.DB
+    .prepare(
+      `SELECT f.id,
+              (SELECT MAX(s.last_seen_at) FROM sessions s WHERE s.user_id = f.user_id) AS last_seen
+         FROM game_factions f
+        WHERE f.game_id = ? AND f.status = 'active'`,
+    )
+    .bind(gameId)
+    .all()).results ?? [];
+
+  const seatedIds = rows
+    .filter(r => r.last_seen != null && Number(r.last_seen) >= cutoff)
+    .map(r => r.id);
+
+  return {
+    total: rows.length,
+    seated: seatedIds.length,
+    seated_ids: seatedIds,
+    quorum: Math.max(MIN_QUORUM, Math.ceil(seatedIds.length / 2)),
+  };
+}
+
+/** Engagement headcount for a bill: every faction that cast ANYTHING. */
+export function votesCastCount(totals) {
+  return (totals?.yea?.count ?? 0) + (totals?.nay?.count ?? 0) + (totals?.abstain?.count ?? 0);
+}
+
+function shapeProposal(row, totals, callerVote, ballots, quorum = null) {
   let payload = {};
   try { payload = JSON.parse(row.payload || '{}'); } catch { payload = {}; }
   return {
@@ -542,6 +648,16 @@ function shapeProposal(row, totals, callerVote, ballots) {
     // coalition builder both need per-faction ballots, not just the
     // aggregate — "who is still out" is the actionable half.
     ballots: ballots ?? [],
+    // Quorum context travels WITH the bill so the client can render
+    // "Quorum 3 of 4" live rather than discovering at resolution that a
+    // bill everyone thought was winning died for lack of a room.
+    quorum: quorum ? {
+      required: quorum.quorum,
+      cast: votesCastCount(totals),
+      seated: quorum.seated,
+      total: quorum.total,
+      met: votesCastCount(totals) >= quorum.quorum,
+    } : null,
   };
 }
 
@@ -553,7 +669,7 @@ async function loadBallots(env, proposalId) {
   return rows.results ?? [];
 }
 
-async function shapeOne(env, row, callerFactionId) {
+async function shapeOne(env, row, callerFactionId, quorum = null) {
   const totals = await loadProposalTotals(env, row.id);
   const ballots = await loadBallots(env, row.id);
   let callerVote = null;
@@ -564,7 +680,7 @@ async function shapeOne(env, row, callerFactionId) {
       .first();
     callerVote = v?.vote ?? null;
   }
-  return shapeProposal(row, totals, callerVote, ballots);
+  return shapeProposal(row, totals, callerVote, ballots, quorum);
 }
 
 // ---------- handlers ----------
@@ -620,17 +736,55 @@ async function handleCreateProposal(req, env, { params, session }) {
   const kind = typeof body.kind === 'string' ? body.kind : 'slider_law';
   if (!BILL_KINDS.has(kind)) return err(400, 'bad_request', `unknown bill kind '${kind}'`);
 
+  // ---- THE GAVEL ------------------------------------------------------
+  // Only the sitting chairman sets the agenda. Everything below (floor
+  // clear, bill fits the term) hangs off the term, so resolve it first.
+  const term = await currentTerm(env, gameId, ctx.game.current_tick);
+  if (!term) {
+    return err(409, 'no_session', 'the senate is not in session');
+  }
+  if (term.faction_id !== ctx.faction.id) {
+    const chair = await env.DB
+      .prepare('SELECT name FROM game_factions WHERE id = ?')
+      .bind(term.faction_id).first();
+    return err(
+      403, 'not_chairman',
+      `only the chairman may put a bill on the floor — ${chair?.name ?? 'another faction'} holds the gavel until tick ${term.end_tick}`,
+    );
+  }
+
+  // ONE BILL AT A TIME, game-wide. The old rule was one per FACTION,
+  // which meant nothing once only one faction can propose; this is the
+  // rule that actually shapes a term into a budget. It also guarantees
+  // the floor is clear at handover, because a bill can never outlive the
+  // term that spawned it (see the fit check below).
+  const onFloor = await env.DB
+    .prepare(`SELECT id, title FROM senate_proposals WHERE game_id = ? AND status IN ('debating','voting') LIMIT 1`)
+    .bind(gameId)
+    .first();
+  if (onFloor) {
+    return err(409, 'floor_busy', `the floor is occupied by "${onFloor.title}" — one bill at a time`);
+  }
+
   // Research gate. VOTING is deliberately never gated — a new player is
   // part of the senate from tick one and can always weigh in on someone
-  // else's bill. What research buys is the right to SET the agenda:
-  // Society 5 to put any bill on the floor, Society 6 for the Chancellor
-  // election specifically, since that bill can end the game.
+  // else's bill.
+  //
+  // RE-POINTED (Sean/Lorne): slider laws are now free to any chairman.
+  // Requiring Industry 5 to say ANYTHING left the early senate dead for
+  // everyone, and with the gavel already rationing who may speak, a
+  // research gate on top of it was rationing twice. Industry 5 stops
+  // meaning "may I speak" and starts meaning "may I punish".
   if (await gatingEnabled(env, gameId)) {
-    const levels = await factionTechLevels(env, gameId, ctx.faction.id);
-    const needed = kind === 'chancellor_vote' ? 'senate.chancellor' : 'senate.propose';
-    if (!hasFeature(needed, levels, true)) {
-      const e = lockedError(needed);
-      return err(403, e.code, e.message);
+    const needed = kind === 'chancellor_vote' ? 'senate.chancellor'
+                 : kind === 'slider_law'      ? null
+                 : 'senate.propose';
+    if (needed) {
+      const levels = await factionTechLevels(env, gameId, ctx.faction.id);
+      if (!hasFeature(needed, levels, true)) {
+        const e = lockedError(needed);
+        return err(403, e.code, e.message);
+      }
     }
   }
 
@@ -641,14 +795,6 @@ async function handleCreateProposal(req, env, { params, session }) {
   if (typeof summary !== 'string' || summary.trim().length < 1 || summary.length > 500) {
     return err(400, 'bad_request', 'summary must be 1-500 chars');
   }
-
-  // 1-active-proposal-per-faction cooldown (any kind, any status that's
-  // still resolving) — keeps a single faction from spamming the docket.
-  const active = await env.DB
-    .prepare(`SELECT id FROM senate_proposals WHERE game_id = ? AND proposer_faction_id = ? AND status IN ('debating','voting') LIMIT 1`)
-    .bind(gameId, ctx.faction.id)
-    .first();
-  if (active) return err(429, 'cooldown', 'your faction already has an active proposal');
 
   // Per-faction lifetime gate for one-shot kinds (e.g. chancellor_vote).
   // Withdrawn proposals don't count — the player can re-aim. Resolved
@@ -678,19 +824,33 @@ async function handleCreateProposal(req, env, { params, session }) {
   // floor on every cadence, so they are raised to it rather than used
   // verbatim — a client that sends nothing gets the minimum, not a
   // rubber stamp.
-  const debateTicks = clampInt(
-    body.debate_ticks, MIN_WINDOW_TICKS, DEBATE_MAX_TICKS,
-    Math.max(DEBATE_TICKS, MIN_WINDOW_TICKS),
+  const proposedAt = ctx.game.current_tick;
+
+  // THE BILL MUST FIT INSIDE THE TERM.
+  //
+  // Without this, a chairman proposing near the end of their term leaves
+  // a bill occupying the floor well into the NEXT chairman's term — and
+  // since only one bill runs at a time, the successor inherits a
+  // shortened term through no fault of their own. Requiring the bill to
+  // resolve before the term ends removes that entirely: no bill ever
+  // crosses a handover, so the floor is always clean when the gavel
+  // moves.
+  //
+  // It also turns window length into a real decision. A 24-tick term
+  // fits exactly two minimum-length bills; spend a longer debate on the
+  // first and you have spent the second.
+  const win = billWindow(
+    Number(term.end_tick), proposedAt, body.debate_ticks, body.vote_ticks,
   );
-  const voteTicks = clampInt(
-    body.vote_ticks, MIN_WINDOW_TICKS, VOTE_MAX_TICKS,
-    Math.max(VOTE_TICKS, MIN_WINDOW_TICKS),
-  );
+  if (!win.ok) {
+    return err(
+      409, 'term_too_short',
+      `only ${win.roomLeft} ticks left in your term — a bill needs at least ${win.needed}`,
+    );
+  }
+  const { debateTicks, voteTicks, voteOpens, voteCloses } = win;
 
   const id = newId('prop');
-  const proposedAt = ctx.game.current_tick;
-  const voteOpens  = proposedAt + debateTicks;
-  const voteCloses = voteOpens + voteTicks;
 
   await env.DB
     .prepare(
@@ -707,8 +867,32 @@ async function handleCreateProposal(req, env, { params, session }) {
     )
     .run();
 
+  // The proposer votes for their own bill, automatically.
+  //
+  // You obviously support the thing you just filed, and under quorum
+  // that first vote is worth more than a formality: five of the eleven
+  // bills ever proposed drew ZERO votes, two of them from proposers who
+  // never voted on their own motion. This guarantees every bill starts
+  // one vote toward the room it needs.
+  //
+  // Not final — the vote is a normal senate_votes row, so the proposer
+  // can switch to abstain (or nay, if they change their mind mid-debate)
+  // through the usual endpoint while the window is open.
+  try {
+    const weight = await voteWeightFor(env, gameId, ctx.faction.id);
+    await env.DB
+      .prepare(`INSERT INTO senate_votes (proposal_id, faction_id, vote, weight, cast_at_tick)
+                VALUES (?, ?, 'yea', ?, ?)`)
+      .bind(id, ctx.faction.id, weight, proposedAt)
+      .run();
+  } catch (e) {
+    // A failed auto-vote must not cost the player their bill — they can
+    // always cast it by hand.
+    console.error('proposer auto-vote failed', e, { proposalId: id });
+  }
+
   const row = await env.DB.prepare('SELECT * FROM senate_proposals WHERE id = ?').bind(id).first();
-  const shaped = await shapeOne(env, row, ctx.faction.id);
+  const shaped = await shapeOne(env, row, ctx.faction.id, await quorumFor(env, gameId, await termTicksFor(env, gameId)));
 
   // Announce the bill to Discord straight away so the debate window has
   // somewhere to happen. Fully isolated: a Discord outage, a missing
@@ -850,9 +1034,53 @@ async function handleListProposals(req, env, { url, params, session }) {
     rows = [...(active.results ?? []), ...(resolved.results ?? [])];
   }
 
+  // One quorum + term read for the whole list. Both are properties of the
+  // game at this tick, so shaping each bill against its own lookup would
+  // be N round-trips for one answer.
+  const termTicks = await termTicksFor(env, gameId);
+  const quorum = await quorumFor(env, gameId, termTicks);
+  const term = await currentTerm(env, gameId, ctx.game.current_tick);
+
   const out = [];
-  for (const r of rows) out.push(await shapeOne(env, r, ctx.faction.id));
-  return json({ current_tick: ctx.game.current_tick, proposals: out });
+  for (const r of rows) out.push(await shapeOne(env, r, ctx.faction.id, quorum));
+
+  // Session context: who holds the gavel, how long they have, and
+  // whether THIS caller may put something up right now. The client needs
+  // a reason string, not just a boolean — "you can't propose" with no
+  // explanation reads as a bug.
+  const floorBusy = rows.some(r => r.status === 'debating' || r.status === 'voting');
+  const roomLeft = term ? Number(term.end_tick) - ctx.game.current_tick : 0;
+  const isChair = !!term && term.faction_id === ctx.faction.id;
+  let cannotProposeReason = null;
+  if (!term) cannotProposeReason = 'The senate is not in session.';
+  else if (!isChair) cannotProposeReason = 'You do not hold the gavel.';
+  else if (floorBusy) cannotProposeReason = 'A bill is already on the floor.';
+  else if (roomLeft < MIN_WINDOW_TICKS * 2) {
+    cannotProposeReason = `Only ${roomLeft} ticks left in your term — a bill needs ${MIN_WINDOW_TICKS * 2}.`;
+  }
+
+  return json({
+    current_tick: ctx.game.current_tick,
+    proposals: out,
+    session: {
+      term: shapeTerm(term, ctx.game.current_tick),
+      term_ticks: termTicks,
+      is_chairman: isChair,
+      can_propose: isChair && !floorBusy && roomLeft >= MIN_WINDOW_TICKS * 2,
+      cannot_propose_reason: cannotProposeReason,
+      floor_busy: floorBusy,
+      // Who is still waiting for a turn this cycle. Unordered on purpose:
+      // the draw is random within a cycle, so showing a queue would
+      // promise an order that doesn't exist.
+      awaiting_turn: term ? await remainingInCycle(env, gameId, Number(term.bag_cycle)) : [],
+      quorum: {
+        required: quorum.quorum,
+        seated: quorum.seated,
+        total: quorum.total,
+        seated_ids: quorum.seated_ids,
+      },
+    },
+  });
 }
 
 async function handleGetProposal(_req, env, { params, session }) {
@@ -866,7 +1094,10 @@ async function handleGetProposal(_req, env, { params, session }) {
     .first();
   if (!row) return err(404, 'not_found', 'proposal not found');
 
-  const shaped = await shapeOne(env, row, ctx.faction.id);
+  const shaped = await shapeOne(
+    env, row, ctx.faction.id,
+    await quorumFor(env, gameId, await termTicksFor(env, gameId)),
+  );
   const votes = await env.DB
     .prepare(
       `SELECT sv.faction_id, sv.vote, sv.weight, sv.cast_at_tick, gf.name AS faction_name, gf.color AS faction_color
@@ -1177,6 +1408,57 @@ async function applyBillEffects(env, gameId, tick, proposal, payload, effectUnti
  *          cost, combat damage) see them on the same tick they ratify.
  */
 export async function resolveSenate(env, gameId, tick) {
+  // Phase -1: seat a chairman. Runs before anything else so a game that
+  // has never had a term gets one on the first tick after this ships,
+  // and so an eliminated chairman is replaced before the proposal
+  // handler can consult the term. Isolated: a rotation failure must not
+  // stop bills already on the floor from resolving.
+  let term = null;
+  try {
+    term = await ensureTerm(env, gameId, tick);
+    // A term whose start IS this tick was just opened, so announce it.
+    // Comparing start_tick beats having ensureTerm return a flag: this
+    // stays correct even when the rotation ran inside a catch-up loop or
+    // a retried tick.
+    if (term && Number(term.start_tick) === tick) {
+      const chair = await env.DB
+        .prepare('SELECT name FROM game_factions WHERE id = ?')
+        .bind(term.faction_id).first();
+      await env.DB
+        .prepare(
+          `INSERT INTO chronicle_entries
+             (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
+           VALUES (?, ?, ?, 'senate_term', ?, ?, 'public', ?)`,
+        )
+        .bind(
+          newId('chr'), gameId, tick, term.faction_id,
+          JSON.stringify({
+            faction_name: chair?.name ?? null,
+            term_index: Number(term.term_index),
+            bag_cycle: Number(term.bag_cycle),
+            start_tick: Number(term.start_tick),
+            end_tick: Number(term.end_tick),
+          }),
+          Date.now(),
+        ).run();
+      try {
+        const stub = env.ROOM.get(env.ROOM.idFromName(gameId));
+        await stub.fetch('https://room/notify', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            kind: 'senate', event: 'term',
+            chairman_faction_id: term.faction_id,
+            chairman_name: chair?.name ?? null,
+            end_tick: Number(term.end_tick),
+          }),
+        });
+      } catch { /* best-effort */ }
+    }
+  } catch (e) {
+    console.error('resolveSenate: term rotation failed', e);
+  }
+
   // Phase 0: rescue any proposal stuck in 'debating' past its FULL
   // window (vote_closes_at_tick already elapsed). This handles
   // proposals that survived a code/schema gap where Phase 1 never
@@ -1236,10 +1518,29 @@ export async function resolveSenate(env, gameId, tick) {
   // can choose how long its sanction bites without changing the slider_law
   // legacy of 7-tick windows.
   let resolved = 0;
+  // One quorum reading for the whole batch — seated-ness is a property of
+  // the game at this tick, not of an individual bill, and re-querying per
+  // bill could give two bills resolving on the same tick different bars.
+  let quorumCtx = null;
+  if (toResolve.length > 0) {
+    try {
+      quorumCtx = await quorumFor(env, gameId, await termTicksFor(env, gameId));
+    } catch (e) {
+      console.error('resolveSenate: quorum lookup failed', e);
+    }
+  }
   for (const p of toResolve) {
     try {
       const totals = await loadProposalTotals(env, p.id);
-      const passed = totals.yea.weight > totals.nay.weight;
+      // QUORUM: at least half the SEATED players must have engaged.
+      // A quorum failure is indistinguishable from a defeat in outcome
+      // (the bill fails either way) but is recorded separately in the
+      // chronicle, because "nobody showed up" and "the room said no" are
+      // very different pieces of political news.
+      const cast = votesCastCount(totals);
+      const required = quorumCtx?.quorum ?? 0;
+      const quorumMet = cast >= required;
+      const passed = quorumMet && totals.yea.weight > totals.nay.weight;
       const status = passed ? "passed" : "failed";
       const effectTicks = EFFECT_TICKS_BY_KIND[p.kind] ?? EFFECT_TICKS;
       const effectUntil = passed && ONGOING_EFFECT_KINDS.has(p.kind) ? tick + effectTicks
@@ -1270,6 +1571,14 @@ export async function resolveSenate(env, gameId, tick) {
             bill_kind: p.kind,
             payload,
             outcome: status,
+            // Distinguishes "voted down" from "nobody came". The Herald
+            // reads this to write the right sentence, and it's the
+            // signal we'll watch to decide whether the quorum bar is set
+            // too high for real tables.
+            failed_quorum: !quorumMet,
+            quorum_required: required,
+            quorum_cast: cast,
+            quorum_seated: quorumCtx?.seated ?? null,
             yea_weight: totals.yea.weight,
             nay_weight: totals.nay.weight,
             abstain_weight: totals.abstain.weight,

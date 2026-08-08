@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { apiFetch, Faction, SenateProposal, SenateSlider } from './api';
+import { apiFetch, Faction, SenateProposal, SenateSession, SenateSlider } from './api';
 import { logUiEvent } from './telemetry';
 import { DiscordLink } from './DiscordLink';
 import { hasFeature, requirementFor } from '../game/researchUnlocks';
@@ -127,6 +127,73 @@ function WeightCard({ detail }: { detail: WeightDetail | null }) {
   );
 }
 
+/**
+ * Who holds the gavel and how long they have.
+ *
+ * Deliberately does NOT draw its own roster: <Chamber> already renders
+ * one, weighted by votes, and it now carries the seated/absent state
+ * too. Two rosters on one tab would be two places to look for the same
+ * answer, and they would inevitably disagree.
+ */
+function SessionCard({ session, factions, myFactionId }: {
+  session: SenateSession | null;
+  factions: Faction[];
+  myFactionId: string | null;
+}) {
+  // Defensive against a version skew during rollout: for ~40s after a
+  // deploy a new bundle can be talking to the old worker, which returns
+  // no session at all — and a half-populated one is just as possible if
+  // this ever ships ahead of a server field.
+  if (!session?.quorum) return null;
+  const byId = new Map(factions.map(f => [f.id, f]));
+  const term = session.term;
+  const chair = term ? byId.get(term.faction_id) : null;
+  const waitingCount = (session.awaiting_turn ?? []).length;
+  const iAmWaiting = !!myFactionId && (session.awaiting_turn ?? []).includes(myFactionId);
+
+  return (
+    <div style={{
+      border: '1px solid var(--mp-border)', borderRadius: 4,
+      padding: '8px 10px', marginBottom: 10,
+      background: session.is_chairman ? 'rgba(110,231,183,0.07)' : 'rgba(255,255,255,0.03)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+        <span>🔨</span>
+        {term && chair ? (
+          <>
+            <span className="mp-swatch" style={{ background: chair.color }} />
+            <strong>{session.is_chairman ? 'You hold the gavel' : `${chair.name} holds the gavel`}</strong>
+          </>
+        ) : (
+          <strong>The senate is not in session</strong>
+        )}
+      </div>
+      {term && (
+        <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginTop: 3 }}>
+          Term {term.term_index + 1} · {term.ticks_remaining} of {session.term_ticks} ticks left
+          {session.floor_busy && ' · a bill is on the floor'}
+        </div>
+      )}
+      {session.is_chairman && session.can_propose && (
+        <div style={{ fontSize: 10, color: '#6ee7b7', marginTop: 3 }}>
+          Yours to set the agenda — bills must finish before your term ends.
+        </div>
+      )}
+
+      {/* Where you sit in the rotation. Not a queue — the draw is random
+          within a cycle — so this says "still to come", not "you're
+          next", which would be a promise the bag doesn't make. */}
+      {!session.is_chairman && term && (
+        <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginTop: 3 }}>
+          {iAmWaiting
+            ? `You are among ${waitingCount} yet to hold the gavel this round.`
+            : 'You have already held the gavel this round.'}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const STATUS_LABEL: Record<SenateProposal['status'], string> = {
   debating:  'DEBATING',
   voting:    'VOTING NOW',
@@ -151,6 +218,7 @@ export function SenatePanel({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [myFactionId, setMyFactionId] = useState<string | null>(null);
+  const [session, setSession] = useState<SenateSession | null>(null);
   const [weight, setWeight] = useState<WeightDetail | null>(null);
   const [voting, setVoting] = useState<string | null>(null);
   /** Total weight in the chamber — the denominator every turnout and
@@ -192,12 +260,20 @@ export function SenatePanel({
   const [debateTicks, setDebateTicks] = useState<number>(1);
   const [voteTicks, setVoteTicks] = useState<number>(1);
 
-  // Proposing a bill is research-gated (worker/senate.js): any bill needs
-  // 'senate.propose' (Industry 5); the Chancellor-election kind needs
-  // 'senate.chancellor' (Industry 6). VOTING is never gated. The required
-  // feature depends on the selected kind, so this recomputes with it.
+  // Research gate, MIRRORED from worker/senate.js. Slider laws are
+  // ungated — the gavel already rations who may speak, and gating on top
+  // of it rationed twice and left the early senate dead. Sanctions need
+  // 'senate.propose' (Industry 5); the Chancellor election needs
+  // 'senate.chancellor' (Industry 6). VOTING is never gated.
+  //
+  // KEEP IN SYNC with the server. A client that offers a bill the server
+  // rejects reads as a broken button, and one that hides a bill the
+  // server would allow silently removes a move from the game.
   const proposeLock = useMemo(() => {
-    const feat = kind === 'chancellor_vote' ? 'senate.chancellor' : 'senate.propose';
+    const feat = kind === 'chancellor_vote' ? 'senate.chancellor'
+               : kind === 'slider_law'      ? null
+               : 'senate.propose';
+    if (!feat) return null;
     if (hasFeature(feat, myTech.levels, myTech.gating)) return null;
     const req = requirementFor(feat);
     if (!req) return null;
@@ -211,7 +287,7 @@ export function SenatePanel({
         sliders: SenateSlider[]; current_tick: number;
         min_window_ticks?: number; debate_max_ticks?: number; vote_max_ticks?: number;
       }>(`/api/games/${gameId}/senate/sliders`),
-      apiFetch<{ proposals: SenateProposal[] }>(`/api/games/${gameId}/senate/proposals`),
+      apiFetch<{ proposals: SenateProposal[]; session?: SenateSession }>(`/api/games/${gameId}/senate/proposals`),
       apiFetch<{ factions: Faction[] }>(`/api/games/${gameId}/factions`),
       apiFetch<WeightDetail>(`/api/games/${gameId}/senate/weight`),
     ]);
@@ -234,7 +310,10 @@ export function SenatePanel({
         setTarget(sRes.data.sliders[0].default);
       }
     }
-    if (pRes.ok) setProposals(pRes.data.proposals);
+    if (pRes.ok) {
+      setProposals(pRes.data.proposals);
+      setSession(pRes.data.session ?? null);
+    }
     if (fRes.ok) setFactions(fRes.data.factions);
     if (wRes.ok) setWeight(wRes.data);
   }, [gameId, sliderId]);
@@ -424,6 +503,15 @@ export function SenatePanel({
   );
   return (
     <div>
+      {/* Whose floor it is comes FIRST — above even the votable bills.
+          Every other control on this tab is conditioned on it: whether
+          the propose form is live, how long the current agenda-setter
+          has, and who is in the room to make quorum. */}
+      <SessionCard
+        session={session}
+        factions={factions}
+        myFactionId={myFactionId}
+      />
       {/* ORDER IS THE POINT. A bill you can still vote on outranks the
           standings, the compose form and the integration settings — it is
           the only thing here with a deadline. Discord moves to the foot of
@@ -466,6 +554,8 @@ export function SenatePanel({
         factions={factions}
         myFactionId={myFactionId}
         votedIds={floorBallotIds}
+        seatedIds={session?.quorum ? new Set(session.quorum.seated_ids ?? []) : null}
+        quorum={session?.quorum ?? null}
       />
 
       {/* Composing is rare; reading is constant. The form starts folded
@@ -638,6 +728,15 @@ export function SenatePanel({
         <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginTop: 4 }}>
           Voting opens at tick {currentTick + debateTicks} · closes at tick {currentTick + debateTicks + voteTicks}
         </div>
+        {/* The server clamps windows to fit the term. Say so here rather
+            than letting a chairman pick 48 ticks of debate and receive
+            something shorter with no explanation. */}
+        {session?.term && currentTick + debateTicks + voteTicks > session.term.end_tick && (
+          <div style={{ fontSize: 10, color: '#ffb84d', marginTop: 3 }}>
+            That runs past your term (ends at tick {session.term.end_tick}) — the windows will be
+            shortened to fit. A bill can't outlive the term that filed it.
+          </div>
+        )}
 
         {proposeLock && (
           <div style={{
@@ -651,14 +750,32 @@ export function SenatePanel({
               : ' You can still vote on other factions’ bills now.'}
           </div>
         )}
+        {/* The gavel gate is separate from the research gate and reported
+            separately: "you haven't researched this" and "it isn't your
+            turn" are different problems with different fixes, and
+            collapsing them into one disabled button would tell a player
+            to go do research when all they need to do is wait. */}
+        {session && !session.can_propose && session.cannot_propose_reason && (
+          <div style={{
+            marginTop: 10, fontSize: 11, lineHeight: 1.45, color: 'var(--mp-fg-dim)',
+            border: '1px solid var(--mp-border)', borderRadius: 4,
+            background: 'rgba(255,255,255,0.03)', padding: '8px 10px',
+          }}>
+            🔨 {session.cannot_propose_reason}
+          </div>
+        )}
         <button
           className="mp-submit"
           type="submit"
           style={{ marginTop: 10 }}
-          disabled={busy || !!proposeLock}
-          title={proposeLock ? `${proposeLock.label} — ${proposeLock.text}` : undefined}
+          disabled={busy || !!proposeLock || (!!session && !session.can_propose)}
+          title={proposeLock ? `${proposeLock.label} — ${proposeLock.text}`
+               : session?.cannot_propose_reason ?? undefined}
         >
-          {busy ? 'Submitting…' : proposeLock ? '🔒 Proposal locked' : 'Submit proposal'}
+          {busy ? 'Submitting…'
+            : proposeLock ? '🔒 Proposal locked'
+            : (session && !session.can_propose) ? '🔨 Not your floor'
+            : 'Submit proposal'}
         </button>
       </form>
       </div>
@@ -754,7 +871,7 @@ export function SenatePanel({
               {(BILL_KIND_LABELS[p.kind as BillKind] ?? p.kind).split(' (')[0]}
             </div>
 
-            <VoteBar totals={p.totals} />
+            <VoteBar totals={p.totals} quorum={p.quorum} />
 
             {inVoting && (
               <div className="mp-vote-row">
@@ -862,16 +979,39 @@ function ProposalEffectLine({
 // faction + 1 per system controlled), not headcount. Count is shown
 // alongside so it's clear how many factions a weight represents —
 // without it, "Yea 18" reads as eighteen voters.
-function VoteBar({ totals }: { totals: SenateProposal['totals'] }) {
+function VoteBar({ totals, quorum }: {
+  totals: SenateProposal['totals'];
+  quorum?: SenateProposal['quorum'];
+}) {
   const yeaW     = totals?.yea?.weight     ?? 0;
   const nayW     = totals?.nay?.weight     ?? 0;
   const abstainW = totals?.abstain?.weight ?? 0;
   const total = yeaW + nayW + abstainW;
 
+  // Quorum has to be visible DURING the vote. A bill that looks like it
+  // is winning and then dies for want of a room reads as a bug unless
+  // the shortfall was on screen the whole time.
+  const quorumLine = quorum ? (
+    <div style={{
+      fontSize: 10, marginTop: 4,
+      color: quorum.met ? '#6ee7b7' : '#ffb84d',
+    }}>
+      {quorum.met
+        ? `✓ Quorum met — ${quorum.cast} voted, ${quorum.required} needed`
+        : `⚠ Needs quorum — ${quorum.cast} of ${quorum.required} voted`}
+      {quorum.seated !== quorum.total && (
+        <span style={{ color: 'var(--mp-fg-dim)' }}>
+          {' '}({quorum.seated} of {quorum.total} seats active)
+        </span>
+      )}
+    </div>
+  ) : null;
+
   if (total === 0) {
     return (
       <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginTop: 4 }}>
         No votes cast yet.
+        {quorumLine}
       </div>
     );
   }
@@ -900,6 +1040,7 @@ function VoteBar({ totals }: { totals: SenateProposal['totals'] }) {
         Nay {nayW} ({totals.nay.count}) ·
         Abstain {abstainW} ({totals.abstain.count})
       </div>
+      {quorumLine}
     </div>
   );
 }
@@ -1159,7 +1300,7 @@ function BlockingCoalition({
  * visible as a bloc.
  */
 function Chamber({
-  factions, myFactionId, votedIds,
+  factions, myFactionId, votedIds, seatedIds, quorum,
 }: {
   factions: Faction[];
   myFactionId: string | null;
@@ -1167,6 +1308,13 @@ function Chamber({
    *  Everyone else gets an outlined seat — those are the ones still worth
    *  a message. */
   votedIds: Set<string> | null;
+  /** Factions with a live session. These are the ONLY ones that count
+   *  toward quorum, so an empty chair has to look different from a
+   *  present-but-silent one — otherwise a player staring at a bill that
+   *  can't reach quorum has no way to tell whether chasing votes would
+   *  help or the empire in question was abandoned weeks ago. */
+  seatedIds: Set<string> | null;
+  quorum: { required: number; seated: number; total: number } | null;
 }) {
   const seated = factions
     .filter(f => f.status !== 'eliminated')
@@ -1180,24 +1328,36 @@ function Chamber({
     <>
       <div className="sp-sect__h" style={{ marginTop: 14 }}>
         <span className="sp-lbl">The chamber</span>
-        <span className="sp-lbl">{total} votes</span>
+        <span className="sp-lbl">
+          {quorum ? `quorum ${quorum.required} of ${quorum.seated} active` : `${total} votes`}
+        </span>
       </div>
       <div className="sp-seats">
-        {seated.flatMap(({ f, w }) =>
-          Array.from({ length: w }, (_, i) => (
+        {seated.flatMap(({ f, w }) => {
+          const absent = !!seatedIds && !seatedIds.has(f.id);
+          const noVote = !!votedIds && !votedIds.has(f.id);
+          return Array.from({ length: w }, (_, i) => (
             <span
               key={`${f.id}:${i}`}
               className={`sp-seat${f.id === myFactionId ? ' is-you' : ''}`
-                + (votedIds && !votedIds.has(f.id) ? ' is-novote' : '')}
-              style={votedIds && !votedIds.has(f.id)
-                ? { color: f.color }
-                : { background: f.color, color: readableInk(f.color) }}
+                + (noVote ? ' is-novote' : '')}
+              // An abandoned seat is faded on top of whatever else it is.
+              // Deliberately NOT a third colour: it's a dimension, not a
+              // category — an empty chair can also be an un-voted one.
+              style={{
+                ...(noVote
+                  ? { color: f.color }
+                  : { background: f.color, color: readableInk(f.color) }),
+                ...(absent ? { opacity: 0.3 } : null),
+              }}
               title={`${f.name} — ${w} vote${w === 1 ? '' : 's'}`
-                + (votedIds && !votedIds.has(f.id) ? ' — has not voted' : '')}
+                + (absent ? ' — no recent activity, does not count toward quorum'
+                          : noVote ? ' — has not voted' : '')}
             >
               {initials(f.name)}
             </span>
-          )))}
+          ));
+        })}
       </div>
       <div className="sp-legend">
         {seated.map(({ f, w }) => (
@@ -1208,9 +1368,16 @@ function Chamber({
         ))}
       </div>
       <div className="sp-note">
-        {votedIds
-          ? 'Outlined seats have not voted. Dormant factions keep their seat while alive.'
-          : `${total} votes in the chamber. Dormant factions keep their seat while alive.`}
+        {/* The old copy said dormant factions "keep their seat while
+            alive". That stopped being true when quorum shipped: they
+            keep the seat, but they no longer count toward the room a
+            bill needs. Saying otherwise would have players chasing
+            votes from empires nobody is playing. */}
+        {votedIds ? 'Outlined seats have not voted. ' : `${total} votes in the chamber. `}
+        {quorum && quorum.seated < quorum.total
+          ? `Faded seats have gone quiet — ${quorum.total - quorum.seated} of ${quorum.total} `
+            + 'are not counted toward quorum.'
+          : 'A bill needs ' + (quorum?.required ?? 0) + ' factions to vote before the tally counts.'}
       </div>
     </>
   );

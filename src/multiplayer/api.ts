@@ -303,6 +303,41 @@ export type SenateProposal = {
   caller_vote: 'yea' | 'nay' | 'abstain' | null;
   /** Per-faction ballots. Senate votes are public record. */
   ballots?: { faction_id: string; vote: 'yea' | 'nay' | 'abstain'; weight: number }[];
+  /** Quorum context as of the read. A bill needs `cast >= required`
+   *  engagements — yea, nay, OR abstain — before the tally is even
+   *  consulted. Null only on a pre-quorum worker. */
+  quorum?: {
+    required: number;
+    cast: number;
+    /** Players with a live session; the quorum denominator. */
+    seated: number;
+    /** Every active faction, empty chairs included. */
+    total: number;
+    met: boolean;
+  } | null;
+};
+
+/** Who holds the gavel and whether the caller may legislate right now. */
+export type SenateSession = {
+  term: {
+    id: string;
+    faction_id: string;
+    term_index: number;
+    bag_cycle: number;
+    start_tick: number;
+    end_tick: number;
+    ticks_remaining: number;
+  } | null;
+  term_ticks: number;
+  is_chairman: boolean;
+  can_propose: boolean;
+  /** Human-readable why-not. Present whenever can_propose is false. */
+  cannot_propose_reason: string | null;
+  floor_busy: boolean;
+  /** Factions yet to hold the gavel this cycle. Unordered — the draw is
+   *  random within a cycle, so this is "still waiting", not a queue. */
+  awaiting_turn: string[];
+  quorum: { required: number; seated: number; total: number; seated_ids: string[] };
 };
 
 // ============================================================
