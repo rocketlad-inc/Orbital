@@ -1,0 +1,23 @@
+-- 0072_archive_games.sql
+--
+-- ARCHIVE for finished games (Lorne): take a completed match out of My
+-- Games and file it under Past Games, without losing anything.
+--
+-- PER-MEMBER, not per-room. A finished game is finished for everyone,
+-- but "my games" is one player's list and tidying it is their call — a
+-- host archiving a match should not clear it off four other people's
+-- screens. The flag therefore lives on room_members, keyed by the user
+-- who set it.
+--
+-- NOTHING IS DELETED. This is a view filter and only a view filter: the
+-- room, the game row, chronicle_entries, the combat tally, per-ship
+-- stats and every analytics table are untouched, so an archived match
+-- still appears in Analytics and can be restored to the active list at
+-- any time. That is the whole point of archiving rather than deleting
+-- (rooms already have a DELETE, and it is destructive).
+--
+-- NULL = live in My Games. A timestamp = archived, and worth storing as
+-- a timestamp rather than a boolean so Past Games can sort by when the
+-- player filed it away.
+
+ALTER TABLE room_members ADD COLUMN archived_at_ms INTEGER;

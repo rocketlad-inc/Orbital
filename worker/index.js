@@ -509,7 +509,12 @@ async function handleListMyRooms(_req, env, session) {
               r.invite_code,
               (r.password_hash IS NOT NULL) AS has_password,
               (SELECT COUNT(*) FROM room_members m2 WHERE m2.room_id = r.id) AS member_count,
-              g.id AS game_id, g.status AS game_status
+              g.id AS game_id, g.status AS game_status,
+              -- Per-member archive flag (migration 0072). NULL = live in
+              -- My Games; a timestamp files it under Past Games. Both
+              -- lists come from this one query so the client can split
+              -- them without a second round trip.
+              rm.archived_at_ms
        FROM room_members rm
        JOIN rooms r ON r.id = rm.room_id
        JOIN users u ON u.id = r.host_id
@@ -575,6 +580,34 @@ async function handleCreateRoom(req, env, session) {
       has_password: !!passwordHash,
     },
   }, { status: 201 });
+}
+
+// POST /api/rooms/:roomId/archive  body: { archived: boolean }
+//
+// Files a game under Past Games, or restores it. PER-MEMBER (migration
+// 0072): it only touches the caller's own room_members row, so archiving
+// a match you're done with never removes it from anyone else's list.
+//
+// Deliberately NON-destructive and available on any membership, not just
+// finished games — a player who has quietly abandoned a stalled match
+// should be able to tidy it away too. Everything analytics reads (the
+// game row, chronicle, tally, per-ship stats) is untouched, which is the
+// whole difference between this and DELETE /api/rooms/:id.
+async function handleArchiveRoom(req, env, session, roomId) {
+  const body = await readJson(req);
+  const archived = body?.archived !== false;   // default true
+  const res = await env.DB
+    .prepare(
+      `UPDATE room_members SET archived_at_ms = ?
+        WHERE room_id = ? AND user_id = ?`,
+    )
+    .bind(archived ? Date.now() : null, roomId, session.user_id)
+    .run();
+  // No membership row = not this player's game to file away.
+  if ((res.meta?.changes ?? 0) === 0) {
+    return err(404, 'not_found', 'you are not a member of that room');
+  }
+  return json({ ok: true, archived });
 }
 
 // DELETE /api/rooms/:roomId — only the host can delete a room. Cascades
@@ -1108,6 +1141,11 @@ export default {
 
       const joinMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)\/join$/);
       if (joinMatch && req.method === 'POST') return handleJoinRoom(req, env, session, joinMatch[1]);
+
+      const archiveMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)\/archive$/);
+      if (archiveMatch && req.method === 'POST') {
+        return handleArchiveRoom(req, env, session, archiveMatch[1]);
+      }
 
       const snapMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)$/);
       if (snapMatch && req.method === 'GET') return handleRoomSnapshot(req, env, session, snapMatch[1]);

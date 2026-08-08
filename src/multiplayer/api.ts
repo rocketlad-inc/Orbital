@@ -126,6 +126,10 @@ export type RoomSummary = {
   tick_interval_ms?: number;
   game_id?: string | null;
   game_status?: string | null;
+  /** Per-member archive stamp (migration 0072). NULL/absent = shows in
+   *  My Games; a timestamp files it under Past Games. Archiving is a
+   *  view filter only — nothing is deleted and analytics still see it. */
+  archived_at_ms?: number | null;
 };
 
 export type RoomMember = {

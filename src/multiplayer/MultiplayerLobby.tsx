@@ -15,7 +15,7 @@ import { Editor } from './Editor';
 // in the room-detail view. The lobby itself never knows about ticks or
 // game state — it's just the discovery / setup phase.
 
-type Tab = 'my' | 'browse' | 'create' | 'code' | 'admin' | 'bot' | 'editor';
+type Tab = 'my' | 'past' | 'browse' | 'create' | 'code' | 'admin' | 'bot' | 'editor';
 
 interface Props {
   onEnterRoom: (roomId: string) => void;
@@ -25,6 +25,11 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
   const { user, signOut } = useAuth();
   const [tab, setTab] = useState<Tab>('my');
   const [myRooms, setMyRooms] = useState<RoomSummary[] | null>(null);
+  // Archived memberships (migration 0072) are the SAME payload, split
+  // here rather than fetched twice — /me/rooms returns archived_at_ms
+  // on every row.
+  const liveRooms = myRooms === null ? null : myRooms.filter(r => !r.archived_at_ms);
+  const pastRooms = myRooms === null ? null : myRooms.filter(r => !!r.archived_at_ms);
 
   const refreshMyRooms = useCallback(async () => {
     const res = await apiFetch<{ rooms: RoomSummary[] }>('/api/users/me/rooms');
@@ -41,7 +46,10 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
   // Default to "Browse" if user has no joined rooms — a cleaner first-time
   // experience than landing on an empty list.
   useEffect(() => {
-    if (myRooms !== null && myRooms.length === 0 && tab === 'my') {
+    // Land on Browse only when there is nothing LIVE to show. A player
+    // whose games are all archived should still get a useful first
+    // screen rather than an empty My Games.
+    if (myRooms !== null && myRooms.filter(r => !r.archived_at_ms).length === 0 && tab === 'my') {
       setTab('browse');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -66,10 +74,18 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
       <nav className="mp-lobby__tabs">
         <TabButton active={tab === 'my'} onClick={() => setTab('my')}>
           My Games
-          {myRooms && myRooms.length > 0 && (
-            <span className="mp-lobby__tab-badge">{myRooms.length}</span>
+          {/* Counts LIVE games only — an archived match is filed under
+              Past Games and shouldn't inflate this badge. */}
+          {liveRooms && liveRooms.length > 0 && (
+            <span className="mp-lobby__tab-badge">{liveRooms.length}</span>
           )}
         </TabButton>
+        {pastRooms && pastRooms.length > 0 && (
+          <TabButton active={tab === 'past'} onClick={() => setTab('past')}>
+            Past Games
+            <span className="mp-lobby__tab-badge">{pastRooms.length}</span>
+          </TabButton>
+        )}
         <TabButton active={tab === 'browse'} onClick={() => setTab('browse')}>Browse</TabButton>
         <TabButton active={tab === 'create'} onClick={() => setTab('create')}>Create Room</TabButton>
         <TabButton active={tab === 'code'} onClick={() => setTab('code')}>Join by Code</TabButton>
@@ -90,10 +106,19 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
       <main className="mp-lobby__main">
         {tab === 'my'     && (
           <MyGamesPanel
-            rooms={myRooms}
+            rooms={liveRooms}
             onEnter={onEnterRoom}
             onChanged={refreshMyRooms}
             myUserId={user?.id}
+          />
+        )}
+        {tab === 'past'   && (
+          <MyGamesPanel
+            rooms={pastRooms}
+            onEnter={onEnterRoom}
+            onChanged={refreshMyRooms}
+            myUserId={user?.id}
+            archiveView
           />
         )}
         {tab === 'browse' && <BrowsePanel onEnter={onEnterRoom} />}
@@ -131,12 +156,16 @@ function TabButton({
 const PRIORITY_ROOM_KEY = 'orbital.priority_room';
 
 function MyGamesPanel({
-  rooms, onEnter, onChanged, myUserId,
+  rooms, onEnter, onChanged, myUserId, archiveView,
 }: {
   rooms: RoomSummary[] | null;
   onEnter: (id: string) => void;
   onChanged: () => void;
   myUserId?: string;
+  /** Renders the Past Games view: RESTORE instead of ARCHIVE, and an
+   *  empty state that explains the shelf rather than telling the player
+   *  to go join something. */
+  archiveView?: boolean;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -160,7 +189,12 @@ function MyGamesPanel({
     return <div className="mp-lobby__loading">Loading…</div>;
   }
   if (rooms.length === 0) {
-    return (
+    return archiveView ? (
+      <EmptyState
+        title="Nothing archived"
+        hint="Finished a game? Archive it from My Games to file it here. Archiving only tidies your list — the game and its analytics are kept."
+      />
+    ) : (
       <EmptyState
         title="You haven't joined any games yet"
         hint="Browse open rooms, create your own, or paste an invite code from a friend."
@@ -172,7 +206,12 @@ function MyGamesPanel({
   // refetched yet (or if there's some caching layer that returns stale).
   const visibleRooms = rooms.filter(r => !locallyDeleted.has(r.id));
   if (visibleRooms.length === 0) {
-    return (
+    return archiveView ? (
+      <EmptyState
+        title="Nothing archived"
+        hint="Finished a game? Archive it from My Games to file it here."
+      />
+    ) : (
       <EmptyState
         title="You haven't joined any games yet"
         hint="Browse open rooms, create your own, or paste an invite code from a friend."
@@ -184,6 +223,31 @@ function MyGamesPanel({
       r.game_status === 'active' ? 0 : r.game_status ? 1 : 2;
     return score(a) - score(b);
   });
+
+  // Archive / restore. Per-member and non-destructive: the room, the
+  // game and every analytics table stay exactly as they are, so a
+  // finished match can be filed away without losing its record — and
+  // pulled back out if it turns out not to be finished after all.
+  async function setArchived(r: RoomSummary, archived: boolean) {
+    setError(null);
+    setBusyId(r.id);
+    const res = await apiFetch(`/api/rooms/${r.id}/archive`, {
+      method: 'POST',
+      body: JSON.stringify({ archived }),
+    });
+    setBusyId(null);
+    if (!res.ok) {
+      setError(res.error?.message ?? (archived ? 'Could not archive' : 'Could not restore'));
+      return;
+    }
+    // A pinned game that has been shelved must not keep auto-launching
+    // past the lobby — same reasoning as the delete path below.
+    if (archived && priorityId === r.id) {
+      setPriorityId(null);
+      localStorage.removeItem(PRIORITY_ROOM_KEY);
+    }
+    onChanged();
+  }
 
   async function deleteRoom(r: RoomSummary) {
     if (!window.confirm(`Delete room "${r.name}"? This permanently removes the room and any game in it.`)) return;
@@ -239,6 +303,20 @@ function MyGamesPanel({
                 }
               >
                 {isPriority ? '★' : '☆'}
+              </button>
+              {/* Archive / restore. Available to every MEMBER, not just
+                  the host — the list being tidied is your own. Sits
+                  before Delete so the reversible action is the one
+                  nearest to hand. */}
+              <button
+                className="mp-room-card__archive"
+                onClick={(e) => { e.stopPropagation(); setArchived(r, !archiveView); }}
+                disabled={busyId === r.id}
+                title={archiveView
+                  ? 'Restore to My Games'
+                  : 'Archive — files this under Past Games. Nothing is deleted; the game and its analytics are kept.'}
+              >
+                {busyId === r.id ? '…' : (archiveView ? '↩' : '🗄')}
               </button>
               {iAmHost && (
                 <button
