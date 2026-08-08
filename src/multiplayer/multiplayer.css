@@ -362,21 +362,33 @@
    Selecting a tab filters the message log + auto-targets the compose
    form. Unread badge on each tab so the player can tell at a glance
    which conversations have new content. */
+.mp-chanwrap { position: relative; flex: 0 0 auto; }
+/* Fade at the right edge: the rail scrolls, and the fade is what says so. */
+.mp-chanwrap::after {
+  content: '';
+  position: absolute;
+  right: 0; top: 0; bottom: 8px;
+  width: 28px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, #0a0e14);
+}
 .mp-channel-rail {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+  gap: 5px;
+  overflow-x: auto;
   padding: 4px 0 8px;
-  margin-bottom: 4px;
-  border-bottom: 1px solid var(--mp-border);
-  flex-shrink: 0;
+  scrollbar-width: thin;
 }
+.mp-channel-rail::-webkit-scrollbar { height: 5px; }
+.mp-channel-rail::-webkit-scrollbar-thumb { background: #22344a; border-radius: 3px; }
 .mp-channel-tab {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 8px;
-  background: rgba(10, 14, 20, 0.55);
+  min-height: 28px;
+  padding: 4px 10px;
+  background: transparent;
   border: 1px solid var(--mp-border);
   border-radius: 12px;
   color: var(--mp-fg-dim);
@@ -391,7 +403,7 @@
   color: var(--mp-fg);
 }
 .mp-channel-tab.is-active {
-  background: rgba(78, 205, 196, 0.12);
+  background: rgba(255, 184, 77, 0.1);
   color: var(--mp-accent);
   border-color: var(--mp-accent);
 }
@@ -2150,3 +2162,98 @@
   color: var(--mp-fg-dim);
   white-space: nowrap;
 }
+
+/* Unread marker: an amber dot. The number lives on the COMMS tab badge. */
+.mp-channel-tab__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--mp-accent);
+  flex: 0 0 auto;
+}
+
+/* Compose block, mockup layout: room label, textarea, send + hint. */
+.mp-compose {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--mp-border);
+  padding-top: 10px;
+  margin-top: 4px;
+}
+.mp-compose__lbl {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mp-fg-dim);
+  margin-bottom: 5px;
+}
+
+/* ------------------------------------------- senate: mockup structure */
+.sp-empty {
+  font-size: 11px;
+  color: var(--mp-fg-dim);
+  opacity: 0.75;
+  padding: 11px 0;
+  text-align: center;
+  line-height: 1.5;
+}
+/* Folded drawers for the rare actions: composing and history. The
+   propose summary is amber (it's an action); history is quiet. */
+.sp-disc { margin-top: 14px; }
+.sp-disc summary {
+  list-style: none;
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mp-accent);
+  border: 1px solid rgba(255, 184, 77, 0.45);
+  border-radius: 4px;
+  padding: 10px 11px;
+  background: rgba(255, 184, 77, 0.07);
+}
+.sp-disc summary::-webkit-details-marker { display: none; }
+.sp-disc summary:focus-visible { outline: 2px solid var(--mp-accent); outline-offset: 2px; }
+.sp-disc[open] summary { border-radius: 4px 4px 0 0; }
+.sp-disc.is-quiet summary {
+  color: var(--mp-fg-dim);
+  border-color: var(--mp-border);
+  background: transparent;
+}
+.sp-disc__body {
+  border: 1px solid var(--mp-border);
+  border-top: 0;
+  border-radius: 0 0 4px 4px;
+  padding: 11px;
+}
+
+/* Resolved bills, one line each: title left, verdict right. */
+.sp-histrow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 10.5px;
+  color: var(--mp-fg-dim);
+  padding: 7px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.sp-histrow:last-of-type { border-bottom: 0; }
+.sp-histrow__t {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sp-histrow__r {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+}
+.sp-histrow__r.is-passed { color: #6ee7b7; }
+.sp-histrow__r.is-failed { color: #ff6b6b; }
+.sp-histrow__r.is-withdrawn { color: var(--mp-fg-dim); opacity: 0.7; }

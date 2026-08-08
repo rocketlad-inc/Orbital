@@ -81,19 +81,24 @@ function WeightCard({ detail }: { detail: WeightDetail | null }) {
   const near = detail.contesting.filter(s => s.need <= 1);
   return (
     <div style={{
-      border: '1px solid rgba(96,130,160,.3)', borderRadius: 6,
-      padding: '10px 12px', marginBottom: 12,
+      border: '1px solid var(--mp-border)', borderRadius: 5,
+      padding: 11, marginBottom: 14, marginTop: 14,
+      display: 'flex', alignItems: 'flex-start', gap: 12,
+      background: 'rgba(255, 255, 255, 0.02)',
     }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-        <span style={{ fontSize: 22, color: '#4ecdc4', fontWeight: 700 }}>★ {detail.weight}</span>
-        <span style={{ fontSize: 11, color: 'var(--mp-fg-dim)' }}>
-          your vote weight
-        </span>
+      {/* Mockup layout: the number is the headline, the prose is the
+          caption. */}
+      <span style={{ fontSize: 26, color: '#6ee7b7', lineHeight: 1.1, flex: '0 0 auto' }}>
+        ★{detail.weight}
+      </span>
+      <div style={{ minWidth: 0 }}>
+      <div style={{ fontSize: 11, color: 'var(--mp-fg)', fontWeight: 600 }}>
+        Your vote weight
       </div>
-      <div style={{ fontSize: 11, color: 'var(--mp-fg-dim)', marginTop: 6, lineHeight: 1.55 }}>
+      <div style={{ fontSize: 10.5, color: 'var(--mp-fg-dim)', marginTop: 3, lineHeight: 1.55 }}>
         {detail.rule}
       </div>
-      <div style={{ fontSize: 11, marginTop: 8, lineHeight: 1.6 }}>
+      <div style={{ fontSize: 10.5, marginTop: 6, lineHeight: 1.6 }}>
         <span style={{ color: 'var(--mp-fg-dim)' }}>Base {detail.base}</span>
         {detail.controlled.length > 0 ? (
           <>
@@ -112,11 +117,12 @@ function WeightCard({ detail }: { detail: WeightDetail | null }) {
         )}
       </div>
       {near.length > 0 && (
-        <div style={{ fontSize: 11, color: '#ffb84d', marginTop: 6, lineHeight: 1.6 }}>
+        <div style={{ fontSize: 10.5, color: '#ffb84d', marginTop: 6, lineHeight: 1.6 }}>
           One more body would win you{' '}
           {near.map(s => s.label).join(', ')}.
         </div>
       )}
+      </div>
     </div>
   );
 }
@@ -394,6 +400,28 @@ export function SenatePanel({
     });
   }, [proposals]);
 
+  /** The three buckets the tab renders, mockup order. */
+  const openBills = useMemo(
+    () => sortedProposals.filter(p => p.status === 'voting'),
+    [sortedProposals],
+  );
+  const floorBills = useMemo(
+    () => sortedProposals.filter(p => p.status === 'debating'),
+    [sortedProposals],
+  );
+  const resolvedBills = useMemo(
+    () => sortedProposals.filter(
+      p => p.status === 'passed' || p.status === 'failed' || p.status === 'withdrawn',
+    ),
+    [sortedProposals],
+  );
+  /** Sliders sitting away from their default are laws someone passed. */
+  const lawsInForce = useMemo(
+    () => sliders
+      .filter(sl => Math.abs(sl.effective_value - sl.default) > 1e-9)
+      .map(sl => `${sl.label} ${fmtNum(sl.effective_value)}`),
+    [sliders],
+  );
   return (
     <div>
       {/* ORDER IS THE POINT. A bill you can still vote on outranks the
@@ -408,15 +436,43 @@ export function SenatePanel({
         myFactionId={myFactionId}
         onVote={(id, v) => { void castVote(id, v); }}
         busy={voting}
-        onMessageFaction={onMessageFaction}
       />
+      {error && <div className="mp-error" style={{ marginBottom: 10 }}>{error}</div>}
+
+      {/* THE FLOOR — bills still in debate. Votable bills live above;
+          settled ones fold away below. */}
+      <section className="sp-sect">
+        <div className="sp-sect__h"><span className="sp-lbl">The floor</span></div>
+        {floorBills.length === 0 && (
+          <div className="sp-empty">No bill on the floor. Propose one below.</div>
+        )}
+        {floorBills.map((p) => renderFloorBill(p))}
+      </section>
+
+      {/* Blocking coalition — its own section, per the mockup: it is
+          advice about the chamber, not part of the ballot. */}
+      {openBills.map(p => (
+        <BlockingCoalition
+          key={p.id}
+          p={p}
+          factionsById={factionsById}
+          myFactionId={myFactionId}
+          onMessageFaction={onMessageFaction}
+        />
+      ))}
+
       <WeightCard detail={weight} />
       <Chamber
         factions={factions}
         myFactionId={myFactionId}
         votedIds={floorBallotIds}
       />
-      <div className="mp-section-title">Propose a bill</div>
+
+      {/* Composing is rare; reading is constant. The form starts folded
+          so the tab opens on the state of the senate, not on paperwork. */}
+      <details className="sp-disc">
+      <summary>＋ Propose a bill</summary>
+      <div className="sp-disc__body">
       <form onSubmit={propose}>
         <label className="mp-label">Kind</label>
         <select
@@ -604,17 +660,56 @@ export function SenatePanel({
         >
           {busy ? 'Submitting…' : proposeLock ? '🔒 Proposal locked' : 'Submit proposal'}
         </button>
-        {error && <div className="mp-error" style={{ marginTop: 6 }}>{error}</div>}
       </form>
-
-      <div className="mp-section-title" style={{ marginTop: 16 }}>
-        Proposals · tick {currentTick}
       </div>
-      {sortedProposals.length === 0 && (
-        <div className="mp-empty">No proposals on the floor.</div>
-      )}
-      {sortedProposals.map((p) => {
-        const proposer = p.proposer_faction_id ? factionsById.get(p.proposer_faction_id) : null;
+      </details>
+
+      {/* Settled business, one line each. It is a record, not a decision,
+          and it grows without bound. */}
+      <details className="sp-disc is-quiet">
+        <summary>Resolved bills · {resolvedBills.length}</summary>
+        <div className="sp-disc__body">
+          {resolvedBills.length === 0 && (
+            <div className="sp-empty">Nothing has come to a vote yet.</div>
+          )}
+          {resolvedBills.map((p) => {
+            const yea = p.totals?.yea?.weight ?? 0;
+            const nay = p.totals?.nay?.weight ?? 0;
+            const verdict = p.status === 'passed'
+              ? `PASSED ${yea}–${nay}`
+              : p.status === 'failed'
+                ? `FAILED ${yea}–${nay}`
+                : 'WITHDRAWN';
+            return (
+              <div key={p.id} className="sp-histrow" title={p.summary || undefined}>
+                <span className="sp-histrow__t">{p.title}</span>
+                <span className={`sp-histrow__r is-${p.status}`}>
+                  {verdict}{p.resolved_at_tick != null ? ` · T+${p.resolved_at_tick}` : ''}
+                </span>
+              </div>
+            );
+          })}
+          {lawsInForce.length > 0 && (
+            <div className="sp-note" style={{ marginTop: 8 }}>
+              Slider laws currently in force: {lawsInForce.join(', ')}.
+            </div>
+          )}
+        </div>
+      </details>
+
+      {/* Integration settings live at the foot of the tab: configuration,
+          not play. */}
+      <div className="sp-foot">
+        <DiscordLink />
+      </div>
+    </div>
+  );
+
+  /** One bill in debate. Everything the old flat list showed except the
+   *  ballot row — a debating bill can take early votes, and those still
+   *  work through the buttons that appear when it reaches the floor. */
+  function renderFloorBill(p: SenateProposal) {
+    const proposer = p.proposer_faction_id ? factionsById.get(p.proposer_faction_id) : null;
         const inVoting = p.status === 'voting';
         const ticksUntilOpen  = Math.max(0, p.vote_opens_at_tick  - currentTick);
         const ticksUntilClose = Math.max(0, p.vote_closes_at_tick - currentTick);
@@ -708,15 +803,7 @@ export function SenatePanel({
             )}
           </div>
         );
-      })}
-
-      {/* Integration settings live at the foot of the tab: configuration,
-          not play. */}
-      <div className="sp-foot">
-        <DiscordLink />
-      </div>
-    </div>
-  );
+  }
 }
 
 // Tidy number formatter — 1.0 → "1", 1.25 → "1.25", 0.8 → "0.8".
@@ -836,7 +923,6 @@ function voteWeightOf(f: Faction): number {
  */
 function ActionableBills({
   proposals, currentTick, factionsById, chamber, myFactionId, onVote, busy,
-  onMessageFaction,
 }: {
   proposals: SenateProposal[];
   currentTick: number;
@@ -845,24 +931,28 @@ function ActionableBills({
   myFactionId: string | null;
   onVote: (id: string, vote: 'yea' | 'nay' | 'abstain') => void;
   busy: string | null;
-  onMessageFaction?: (factionId: string) => void;
 }) {
   const open = proposals.filter(p => p.status === 'voting');
   if (open.length === 0) return null;
+  // The deadline lives in the section header, where the mockup put it —
+  // red, because it is the only clock on the tab that runs out.
+  const soonest = Math.min(...open.map(p => Math.max(0, p.vote_closes_at_tick - currentTick)));
   return (
     <section className="sp-sect">
-      <div className="sp-sect__h"><span className="sp-lbl">Needs your vote</span></div>
+      <div className="sp-sect__h">
+        <span className="sp-lbl">Needs your vote</span>
+        <span className="sp-lbl" style={{ color: '#ff6b6b' }}>
+          closes in {soonest} tick{soonest === 1 ? '' : 's'}
+        </span>
+      </div>
       {open.map(p => (
         <VoteCard
           key={p.id}
           p={p}
-          currentTick={currentTick}
           factionsById={factionsById}
           chamber={chamber}
-          myFactionId={myFactionId}
           onVote={onVote}
           busy={busy}
-          onMessageFaction={onMessageFaction}
         />
       ))}
     </section>
@@ -880,17 +970,13 @@ function ActionableBills({
  * arithmetic.
  */
 function VoteCard({
-  p, currentTick, factionsById, chamber, myFactionId, onVote, busy,
-  onMessageFaction,
+  p, factionsById, chamber, onVote, busy,
 }: {
   p: SenateProposal;
-  currentTick: number;
   factionsById: Map<string, Faction>;
   chamber: number;
-  myFactionId: string | null;
   onVote: (id: string, vote: 'yea' | 'nay' | 'abstain') => void;
   busy: string | null;
-  onMessageFaction?: (factionId: string) => void;
 }) {
   const proposer = p.proposer_faction_id ? factionsById.get(p.proposer_faction_id) : null;
   const yea = p.totals?.yea?.weight ?? 0;
@@ -898,7 +984,6 @@ function VoteCard({
   const abs = p.totals?.abstain?.weight ?? 0;
   const cast = yea + nay + abs;
   const uncast = Math.max(0, chamber - cast);
-  const closes = Math.max(0, p.vote_closes_at_tick - currentTick);
   const my = p.caller_vote;
   const isChancellor = p.kind === 'chancellor_vote';
   // Widths measure share of the WHOLE chamber, not of votes cast, so the
@@ -910,7 +995,7 @@ function VoteCard({
     <div className={`sp-vc${isChancellor ? ' is-chancellor' : ''}`}>
       <div className="sp-vc__t">
         <span className="sp-vc__n">{p.title}</span>
-        <span className="sp-vc__s">closes in {closes}t</span>
+        <span className="sp-vc__s">Voting</span>
       </div>
       <div className="sp-vc__m">
         {isChancellor
@@ -955,12 +1040,6 @@ function VoteCard({
           Abstain{my === 'abstain' ? ' ✓' : ''}
         </button>
       </div>
-      <BlockingCoalition
-        p={p}
-        factionsById={factionsById}
-        myFactionId={myFactionId}
-        onMessageFaction={onMessageFaction}
-      />
     </div>
   );
 }
@@ -1035,9 +1114,13 @@ function BlockingCoalition({
   }
 
   return (
-    <div className="sp-coal">
+    <section className="sp-sect">
+      <div className="sp-sect__h"><span className="sp-lbl">Blocking coalition</span></div>
+      <div className="sp-coal">
       <div className="sp-coal__h">
-        {blocked ? 'How to block this' : 'Not enough votes to block'}
+        {blocked
+          ? `How to stop “${p.title}”`
+          : 'Not enough uncommitted votes to block'}
       </div>
       {!iVotedNay && myFactionId && (
         <div className="sp-coal__pre">Assumes you vote nay.</div>
@@ -1063,7 +1146,8 @@ function BlockingCoalition({
         A tie fails the bill, so <b>matching</b> their weight is enough — you
         do not need to exceed it.
       </div>
-    </div>
+      </div>
+    </section>
   );
 }
 
@@ -1094,8 +1178,9 @@ function Chamber({
     name.replace(/[^A-Za-z0-9 ]/g, '').trim().slice(0, 2).toUpperCase() || '??';
   return (
     <>
-      <div className="mp-section-title" style={{ marginTop: 14 }}>
-        The chamber · {total} votes
+      <div className="sp-sect__h" style={{ marginTop: 14 }}>
+        <span className="sp-lbl">The chamber</span>
+        <span className="sp-lbl">{total} votes</span>
       </div>
       <div className="sp-seats">
         {seated.flatMap(({ f, w }) =>
@@ -1124,10 +1209,8 @@ function Chamber({
       </div>
       <div className="sp-note">
         {votedIds
-          ? 'Outlined seats have not voted on the bill above. '
-          : ''}
-        A bill passes on more yea than nay among votes CAST — a tie kills it,
-        and there is no quorum.
+          ? 'Outlined seats have not voted. Dormant factions keep their seat while alive.'
+          : `${total} votes in the chamber. Dormant factions keep their seat while alive.`}
       </div>
     </>
   );

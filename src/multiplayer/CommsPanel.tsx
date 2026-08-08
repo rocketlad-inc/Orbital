@@ -245,7 +245,10 @@ export function CommsPanel({ gameId, onUnreadDelta, focusFaction }: Props) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* Channel rail */}
+      {/* Channel rail: one scrolling line with a fade at the right edge,
+          per the mockup — seven wrapped pills ate a third of the panel
+          before the first message. */}
+      <div className="mp-chanwrap">
       <div className="mp-channel-rail">
         <ChannelTab
           active={channel === 'public'}
@@ -268,6 +271,7 @@ export function CommsPanel({ gameId, onUnreadDelta, focusFaction }: Props) {
             />
           );
         })}
+      </div>
       </div>
 
       <div className="mp-log" ref={logRef}>
@@ -329,11 +333,16 @@ export function CommsPanel({ gameId, onUnreadDelta, focusFaction }: Props) {
         })}
       </div>
 
-      <div className="mp-section-title" style={{ borderTop: '1px solid var(--mp-border)', paddingTop: 8, marginTop: 4 }}>
-        {typeof channel === 'string' ? 'Compose public message' : `Reply to ${channelLabel(channel)}`}
-      </div>
-      <form onSubmit={send}>
+      <form onSubmit={send} className="mp-compose">
+        {/* The label names the room; the button just sends. "Send to
+            PUBLIC" repeated the label in shouting case on every channel. */}
+        <label className="mp-compose__lbl" htmlFor="mp-compose-input">
+          {typeof channel === 'string'
+            ? 'Public channel'
+            : <>Private · <span style={{ color: channelColor(channel) }}>{channelLabel(channel)}</span></>}
+        </label>
         <textarea
+          id="mp-compose-input"
           className="mp-textarea"
           maxLength={4000}
           value={body}
@@ -358,9 +367,9 @@ export function CommsPanel({ gameId, onUnreadDelta, focusFaction }: Props) {
           <button
             className="mp-submit"
             type="submit"
-            style={{ borderColor: channelColor(channel) }}
+            style={{ borderColor: channelColor(channel), flex: '0 0 auto', width: 'auto', padding: '6px 22px' }}
           >
-            {typeof channel === 'string' ? 'Send to PUBLIC' : `Send DM to ${channelLabel(channel)}`}
+            Send
           </button>
           <span className="mp-crow__hint">⏎ send · ⇧⏎ newline</span>
         </div>
@@ -383,10 +392,23 @@ const ChannelTab: React.FC<ChannelTabProps> = ({ active, label, color, unread, o
     type="button"
     className={`mp-channel-tab ${active ? 'is-active' : ''}`}
     onClick={onClick}
-    style={active ? { borderColor: color, color } : undefined}
+    // Active is ALWAYS amber (mockup): state lives on the pill, identity
+    // stays on the swatch dot. Tinting the pill per faction made the
+    // active state invisible for factions whose colour sits near the
+    // border grey.
+    aria-pressed={active}
   >
     <span className="mp-channel-tab__swatch" style={{ background: color }} />
     <span className="mp-channel-tab__label">{label}</span>
-    {unread > 0 && <span className="mp-channel-tab__badge">{unread}</span>}
+    {/* A dot, not a number. The rail answers "is there anything new
+        HERE" — the count lives on the shell's COMMS tab badge. */}
+    {unread > 0 && (
+      <span
+        className="mp-channel-tab__dot"
+        role="img"
+        aria-label={`${unread} unread`}
+        title={`${unread} unread`}
+      />
+    )}
   </button>
 );
