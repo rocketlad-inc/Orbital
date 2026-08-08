@@ -118,6 +118,57 @@ async function resolveChannelId(env) {
   }
 }
 
+// ---------- who is this channel actually FOR ----------
+//
+// The channel is GLOBAL (one server, one room), but games are not: sim
+// runs, load tests and QA rooms tick away in prod alongside the real
+// match. Every one of them was posting its senate cards to the same
+// channel — and a 30s-tick sim seats a new chairman every 12 minutes,
+// which is exactly the "bot announces the Senate leader every few
+// minutes" report.
+//
+// The rule that fixes it without a schema change or brittle name
+// matching: a game only earns a channel post if at least one of its
+// seated players has a linked Discord account. Nobody from Discord is
+// in a sim game, so sim games go quiet; the real match is unaffected.
+// Per-person DMs are unaffected either way — they already only reach
+// linked users.
+const audienceCache = new Map();     // gameId -> boolean (per isolate)
+
+export async function gameHasDiscordAudience(env, gameId) {
+  if (!gameId) return true;          // channel-wide posts with no game
+  if (audienceCache.has(gameId)) return audienceCache.get(gameId);
+  let has = false;
+  try {
+    const row = await env.DB
+      .prepare(
+        `SELECT 1 AS x
+           FROM game_factions f
+           JOIN users u ON u.id = f.user_id
+          WHERE f.game_id = ? AND u.discord_id IS NOT NULL
+          LIMIT 1`,
+      )
+      .bind(gameId)
+      .first();
+    has = !!row;
+  } catch (e) {
+    // On a DB hiccup, fail OPEN: a real game going quiet is worse than
+    // a stray sim post.
+    console.error('gameHasDiscordAudience failed', e);
+    has = true;
+  }
+  if (audienceCache.size > 200) audienceCache.clear();
+  audienceCache.set(gameId, has);
+  return has;
+}
+
+/** The channel a given GAME may post to — null when that game has no
+ *  Discord audience. Every room-level publisher goes through this. */
+async function channelForGame(env, gameId) {
+  if (!(await gameHasDiscordAudience(env, gameId))) return null;
+  return resolveChannelId(env);
+}
+
 // ---------- message building ----------
 
 const KIND_LABELS = {
@@ -298,7 +349,7 @@ async function senateCardsEnabled(env) {
 export async function publishSenateVoteOpen(env, gameId, row) {
   if (!env.DISCORD_BOT_TOKEN) return { posted: false, reason: 'no_bot_token' };
   if (!(await senateCardsEnabled(env))) return { posted: false, reason: 'disabled' };
-  const channelId = await resolveChannelId(env);
+  const channelId = await channelForGame(env, gameId);
   if (!channelId) return { posted: false, reason: 'no_channel' };
 
   const totals = await loadProposalTotals(env, row.id);
@@ -336,7 +387,7 @@ export async function publishSenateVoteOpen(env, gameId, row) {
 export async function publishSenateProposed(env, gameId, row, proposerName) {
   if (!env.DISCORD_BOT_TOKEN) return { posted: false, reason: 'no_bot_token' };
   if (!(await senateCardsEnabled(env))) return { posted: false, reason: 'disabled' };
-  const channelId = await resolveChannelId(env);
+  const channelId = await channelForGame(env, gameId);
   if (!channelId) return { posted: false, reason: 'no_channel' };
 
   const payload = buildDebateMessage(
@@ -371,8 +422,8 @@ export async function publishChairmanSeated(env, gameId, term, chairName) {
 
   const result = { posted: false, dmed: false };
 
-  // 1) The room's announcement.
-  const channelId = await resolveChannelId(env);
+  // 1) The room's announcement — only for a game Discord actually plays.
+  const channelId = await channelForGame(env, gameId);
   if (channelId) {
     const res = await botFetch(env, 'POST', `/channels/${channelId}/messages`, {
       embeds: [{
@@ -428,9 +479,11 @@ export async function publishChairmanSeated(env, gameId, term, chairName) {
 
 /** Post a plain embed to the shared channel. Used by battle cards and
  *  anything else that belongs to the room rather than a person. */
-export async function postChannelEmbed(env, embed) {
+export async function postChannelEmbed(env, embed, gameId = null) {
   if (!env.DISCORD_BOT_TOKEN) return { posted: false, reason: 'no_bot_token' };
-  const channelId = await resolveChannelId(env);
+  // Pass a gameId and the post is audience-gated like the senate cards;
+  // omit it for genuinely channel-wide messages.
+  const channelId = gameId ? await channelForGame(env, gameId) : await resolveChannelId(env);
   if (!channelId) return { posted: false, reason: 'no_channel' };
   const res = await botFetch(env, 'POST', `/channels/${channelId}/messages`, { embeds: [embed] });
   if (!res.ok) {

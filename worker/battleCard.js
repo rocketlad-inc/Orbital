@@ -247,6 +247,6 @@ export async function publishBattles(env, gameId, tick) {
       color: 0xff5e3a,
       image: { url },
       footer: { text: `Orbital · ${data.gameName} · T+${tick}` },
-    });
+    }, gameId);
   }
 }

@@ -1916,6 +1916,20 @@ export async function runDigestForGame(env, game, { force = false, final = false
   const webhook = env.DISCORD_DIGEST_WEBHOOK;
   if (!webhook) return { posted: false, events: 0, reason: 'webhook_not_configured' };
 
+  // Sim / load-test / QA rooms tick away in prod alongside the real
+  // match, and every one of them was filing editions to the same
+  // channel. No Discord-linked player in the game means no audience for
+  // an edition about it. A FORCED run (the host's "Publish Herald Now")
+  // still publishes — a human explicitly asked for that one.
+  if (!force) {
+    try {
+      const discord = await import('./discord.js');
+      if (!(await discord.gameHasDiscordAudience(env, game.id))) {
+        return { posted: false, events: 0, reason: 'no_discord_audience' };
+      }
+    } catch { /* fail open — a real edition matters more */ }
+  }
+
   const now = Date.now();
   const state = await env.DB
     .prepare('SELECT last_digest_ms, last_entry_ms, trades_snapshot FROM digest_state WHERE game_id = ?')
