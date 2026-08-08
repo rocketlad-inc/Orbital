@@ -386,7 +386,7 @@ interface GameContextType {
     name: string,
     // Type-only widening for the G/H/I icon expansion (MP feature) —
     // SP behavior is untouched; the variant is stored verbatim.
-    iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S',
+    iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S',
   ) => boolean;
   cancelBuild: (buildOrderId: string) => void;
   /** Rename one of the player's ships. Trims + length-caps (1..32).
@@ -2278,7 +2278,7 @@ export function GameContextProvider({
     name: string,
     // Type-only widening for the G/H/I icon expansion (MP feature) —
     // SP behavior is untouched; the variant is stored verbatim.
-    iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S',
+    iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S',
   ): boolean => {
     const classDef = SHIP_CLASSES[shipClass];
     if (!classDef) {

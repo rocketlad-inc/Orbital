@@ -38,7 +38,7 @@ export interface BuildIntent {
   shipName?: string;
   /** Player's picked icon variant from the BuildPanel dropdown.
    *  Server validates 'A'..'F'; undefined/null = class default. */
-  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I';
+  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S';
   /** Curated build list: the SPECIFIC design this build-list row builds
    *  (server snapshots its parts). Omit for a bare hull. */
   designId?: string;
@@ -160,7 +160,7 @@ export interface SaveTemplateIntent {
   shipClass: 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
   name: string;
   parts: string[];
-  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I';
+  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S';
 }
 
 export interface CreateDesignIntent {
@@ -169,14 +169,14 @@ export interface CreateDesignIntent {
   shipClass: 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
   name: string;
   parts: string[];
-  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I';
+  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S';
   setActive?: boolean;
 }
 
 export interface UpdateDesignPatch {
   name?: string;
   parts?: string[];
-  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | null;
+  iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | null;
   isActive?: boolean;
 }
 

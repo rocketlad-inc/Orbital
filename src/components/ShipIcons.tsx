@@ -9,9 +9,15 @@ import { lighten, darken } from '../render/colors';
 
 // A/B/C — the original three; D/E/F — the first expansion; G/H/I — the
 // 2026-08 expansion (more icon options, DESIGN-fleet-economy follow-up).
-// The picker dropdown at ship construction lets the player override the
-// default per-build. Server validators accept /^[A-I]$/ — keep in sync.
-export type ShipIconVariant = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I';
+// J–S — the PREMIUM lines (Commander's Commission, one per letter
+// across every class: Specter, Talon, Corsair, Aurora, Bastion, Mirage,
+// Tempest, Sovereign, Drake, Eclipse). The picker dropdown at ship
+// construction lets the player override the default per-build. Server
+// validators accept /^[A-S]$/ with J–S requiring the cosmetics
+// entitlement — keep in sync with worker/store.js.
+export type ShipIconVariant =
+  | 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I'
+  | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S';
 export type ShipIconClass = 'corvette' | 'frigate' | 'destroyer' | 'freighter' | 'colony';
 
 interface IconProps {
@@ -809,30 +815,558 @@ export const ColonyA: React.FC<IconProps> = (p) => (
   </SVG>
 );
 
+
+// ============================================================
+// PREMIUM LINES (J–S) — Commander's Commission content.
+//
+// Ten named lines, each rendered once per class, so the set sells as a
+// fleet livery collection: buy the Commission, fly the Eclipse line
+// end to end. Same geometry contract as the free set — face +x,
+// midline y=16, nose ≈x=29, bell ≈x=4, hull is the FIRST child and a
+// single closed path (the shading clip depends on it).
+//
+//   J Specter   — faceted stealth chines, no curves anywhere
+//   K Talon     — forward-swept claws
+//   L Corsair   — raked blades, keel sail
+//   M Aurora    — smooth teardrop curves
+//   N Bastion   — slab armor, notched
+//   O Mirage    — twin-boom split hull
+//   P Tempest   — storm-swept, jagged trailing edge
+//   Q Sovereign — regal spine, crown crest
+//   R Drake     — beaked head, beast wings
+//   S Eclipse   — crescent hull around a core
+// ============================================================
+
+// ----- corvette, premium -----
+
+/** Corvette J (Specter): chined stealth dart */
+export const CorvetteJ: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M4 15 L12 12.5 L27 14 L30.5 16 L27 18 L12 19.5 L4 17 Z" />
+    <path d="M6 16 L27 16" />
+    <path d="M12 12.5 L15 9.5 L18 13" />
+  </SVG>
+);
+
+/** Corvette K (Talon): twin-claw interceptor */
+export const CorvetteK: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M5 16 L14 13 L24 13.5 L28 16 L24 18.5 L14 19 Z" />
+    <path d="M24 13.5 L31 10.5 L26.5 15" />
+    <path d="M24 18.5 L31 21.5 L26.5 17" />
+    <circle cx="18" cy="16" r="1.1" fill="currentColor" stroke="none" />
+  </SVG>
+);
+
+/** Corvette L (Corsair): raked blade with keel sail */
+export const CorvetteL: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M6 14 L26 12.5 L30 16 L22 19 L6 18 Z" />
+    <path d="M13 18.5 L11 25 L17 19" />
+    <path d="M18 12.8 L20 8 L23 12.4" />
+  </SVG>
+);
+
+/** Corvette M (Aurora): smooth teardrop racer */
+export const CorvetteM: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M5 16 Q10 11.5 19 12 Q27 12.5 30 16 Q27 19.5 19 20 Q10 20.5 5 16 Z" />
+    <path d="M11 14 Q19 12.8 26 15" fill="none" />
+    <circle cx="23" cy="16" r="1.3" fill="currentColor" stroke="none" />
+  </SVG>
+);
+
+/** Corvette N (Bastion): armored slab gunboat */
+export const CorvetteN: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M5 13.5 L22 13 L26 14.5 L29 16 L26 17.5 L22 19 L5 18.5 Z" />
+    <path d="M9 13.2 L9 18.8 M14 13.1 L14 18.9" />
+    <path d="M26 14.5 L31 14.5" />
+  </SVG>
+);
+
+/** Corvette O (Mirage): twin-boom splitter */
+export const CorvetteO: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M5 12.5 L24 12.5 L29 16 L24 19.5 L5 19.5 L9 16 Z" />
+    <path d="M9 16 L24 16" />
+    <path d="M5 12.5 L2.5 11.5 M5 19.5 L2.5 20.5" />
+  </SVG>
+);
+
+/** Corvette P (Tempest): storm-swept dart */
+export const CorvetteP: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M4 17 L9 14 L7.5 12 L15 12.5 L30 16 L15 19.5 L7.5 20 L9 18 Z" />
+    <path d="M12 14 L22 15.4" />
+    <path d="M12 18 L22 16.6" />
+  </SVG>
+);
+
+/** Corvette Q (Sovereign): crested royal courier */
+export const CorvetteQ: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M5 15 L24 13.5 L29.5 16 L24 18.5 L5 17 Z" />
+    <path d="M12 13.8 L12 10 L14.5 12 L17 9.5 L19.5 12 L22 10 L22 13.9" />
+    <circle cx="26" cy="16" r="1" fill="currentColor" stroke="none" />
+  </SVG>
+);
+
+/** Corvette R (Drake): beaked raptor */
+export const CorvetteR: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M6 16 L13 13 L23 13 L27 14.5 L31 16 L27 17.5 L23 19 L13 19 Z" />
+    <path d="M15 13 L20 6.5 L22.5 12.5" />
+    <path d="M15 19 L20 25.5 L22.5 19.5" />
+    <circle cx="26.5" cy="15.2" r="0.9" fill="currentColor" stroke="none" />
+  </SVG>
+);
+
+/** Corvette S (Eclipse): crescent blade */
+export const CorvetteS: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M8 16 Q8 10 15 8.5 Q11.5 12 11.5 16 Q11.5 20 15 23.5 Q8 22 8 16 Z" />
+    <path d="M14 16 L28 14.5 L31 16 L28 17.5 Z" />
+    <circle cx="20" cy="16" r="1.2" fill="currentColor" stroke="none" />
+  </SVG>
+);
+
+// ----- frigate, premium -----
+
+/** Frigate J (Specter): faceted arrow wing */
+export const FrigateJ: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M4 16 L10 11 L24 12.5 L30 16 L24 19.5 L10 21 Z" />
+    <path d="M10 11 L14 6.5 L17 12" />
+    <path d="M8 16 L26 16" />
+  </SVG>
+);
+
+/** Frigate K (Talon): pincer prow warship */
+export const FrigateK: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M5 16 L11 12 L22 12 L26 16 L22 20 L11 20 Z" />
+    <path d="M22 12 L30 8.5 L25.5 14.5" />
+    <path d="M22 20 L30 23.5 L25.5 17.5" />
+    <circle cx="16" cy="16" r="1.8" />
+  </SVG>
+);
+
+/** Frigate L (Corsair): raked cutlass with battle sails */
+export const FrigateL: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M5 14.5 L27 12 L30.5 16 L21 20 L5 18.5 Z" />
+    <path d="M13 13.4 L15.5 6.5 L19 12.8" />
+    <path d="M13 18.8 L11 26 L17.5 19.6" />
+  </SVG>
+);
+
+/** Frigate M (Aurora): flowing manta glider */
+export const FrigateM: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M5 16 Q12 9 21 11.5 Q28 13 30 16 Q28 19 21 20.5 Q12 23 5 16 Z" />
+    <path d="M12 13 Q20 11.5 27 15" fill="none" />
+    <circle cx="22" cy="16" r="1.6" fill="currentColor" stroke="none" />
+  </SVG>
+);
+
+/** Frigate N (Bastion): flying rampart */
+export const FrigateN: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M4 13 L9 11.5 L23 11.5 L26 13 L29.5 16 L26 19 L23 20.5 L9 20.5 L4 19 Z" />
+    <path d="M9 11.5 L9 20.5 M14 11.5 L14 20.5 M19 11.5 L19 20.5" />
+    <path d="M26 13 L26 19" />
+  </SVG>
+);
+
+/** Frigate O (Mirage): split catamaran cruiser */
+export const FrigateO: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M5 11.5 L23 11.5 L29 16 L23 20.5 L5 20.5 L10 16 Z" />
+    <path d="M10 16 L23 16" />
+    <path d="M14 11.5 L14 8 L20 8 L20 11.6" />
+  </SVG>
+);
+
+/** Frigate P (Tempest): storm-wing escort */
+export const FrigateP: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M4 18 L8 15 L6 11 L16 12 L30 16 L16 20.5 L6 21 L8 18 Z" />
+    <path d="M14 12.2 L18 8 L21 13.3" />
+    <path d="M11 16 L24 16" />
+  </SVG>
+);
+
+/** Frigate Q (Sovereign): crowned command frigate */
+export const FrigateQ: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M4 15 L25 13 L30 16 L25 19 L4 17 Z" />
+    <path d="M11 13.5 L11 9 L14 11 L16.5 8 L19 11 L22 9 L22 13.3" />
+    <circle cx="26.5" cy="16" r="1.2" />
+    <path d="M4 15 L1.5 13.5 M4 17 L1.5 18.5" />
+  </SVG>
+);
+
+/** Frigate R (Drake): winged wyvern */
+export const FrigateR: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M5 16 L12 12.5 L22 12.5 L27 14 L31 16 L27 18 L22 19.5 L12 19.5 Z" />
+    <path d="M14 12.5 L17 4.5 L21.5 11.5 L25 7.5 L25.5 13" />
+    <path d="M14 19.5 L17 27.5 L21.5 20.5" />
+  </SVG>
+);
+
+/** Frigate S (Eclipse): annular ring frigate */
+export const FrigateS: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M7 16 Q7 9.5 14.5 8 Q11 11.5 11 16 Q11 20.5 14.5 24 Q7 22.5 7 16 Z" />
+    <circle cx="16" cy="16" r="3" />
+    <path d="M19 16 L29 14.5 L31 16 L29 17.5 Z" fill="currentColor" />
+  </SVG>
+);
+
+// ----- destroyer, premium -----
+
+/** Destroyer J (Specter): stealth wedge fortress */
+export const DestroyerJ: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M3 16 L8 11 L20 9.5 L27 12 L30.5 16 L27 20 L20 22.5 L8 21 Z" />
+    <path d="M8 11 L8 21 M15 10 L15 22" />
+    <path d="M20 9.5 L20 22.5" />
+  </SVG>
+);
+
+/** Destroyer K (Talon): triple-claw ram */
+export const DestroyerK: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M4 16 L9 11 L21 11 L25 13 L28 16 L25 19 L21 21 L9 21 Z" />
+    <path d="M25 13 L31.5 9 L27 15" />
+    <path d="M28 16 L31.5 16" />
+    <path d="M25 19 L31.5 23 L27 17" />
+  </SVG>
+);
+
+/** Destroyer L (Corsair): raked man-o-war */
+export const DestroyerL: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M4 13.5 L28 11 L31 16 L22 21 L4 19.5 Z" />
+    <path d="M10 12.8 L13 4.5 L17.5 12.2" />
+    <path d="M18 12 L21 6 L24.5 11.5" />
+    <path d="M10 19.9 L8 27 L15 20.4" />
+  </SVG>
+);
+
+/** Destroyer M (Aurora): sweeping leviathan curve */
+export const DestroyerM: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M4 16 Q9 9 19 9.5 Q28 10.5 30.5 16 Q28 21.5 19 22.5 Q9 23 4 16 Z" />
+    <path d="M9 12.5 Q19 9.8 27 13.5" fill="none" />
+    <circle cx="21" cy="16" r="2.2" />
+    <circle cx="13" cy="16" r="1.4" fill="currentColor" stroke="none" />
+  </SVG>
+);
+
+/** Destroyer N (Bastion): mobile citadel wall */
+export const DestroyerN: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M3.5 12 L8 10 L24 10 L28 12 L30.5 16 L28 20 L24 22 L8 22 L3.5 20 Z" />
+    <path d="M8 10 L8 22 M13 10 L13 22 M18 10 L18 22 M23 10 L23 22" />
+    <path d="M11 10 L11 7 L15 7 L15 10 M19 22 L19 25 L23 25 L23 22" />
+  </SVG>
+);
+
+/** Destroyer O (Mirage): twin-hull battlecarrier */
+export const DestroyerO: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M4 10.5 L24 10.5 L30 16 L24 21.5 L4 21.5 L10 16 Z" />
+    <path d="M10 16 L24 16" />
+    <path d="M8 10.5 L8 6.5 L14 6.5 L14 10.6" />
+    <path d="M8 21.5 L8 25.5 L14 25.5 L14 21.4" />
+  </SVG>
+);
+
+/** Destroyer P (Tempest): thunderhead assault ship */
+export const DestroyerP: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M3 18.5 L8 15 L5.5 10.5 L17 11 L30.5 16 L17 21.5 L5.5 22 L8 18.5 Z" />
+    <path d="M13 12.5 L17 7 L20.5 12.8" />
+    <path d="M12 16 L25 16" />
+    <path d="M14 19.5 L18 24.8 L21.5 19.2" />
+  </SVG>
+);
+
+/** Destroyer Q (Sovereign): the crown capital */
+export const DestroyerQ: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M3.5 14.5 L26 12 L30.5 16 L26 20 L3.5 17.5 Z" />
+    <path d="M10 13 L10 7.5 L13.5 10 L16.5 6.5 L19.5 10 L23 7.5 L23 12.6" />
+    <circle cx="27" cy="16" r="1.4" />
+    <path d="M3.5 14.5 L1 13 M3.5 17.5 L1 19" />
+  </SVG>
+);
+
+/** Destroyer R (Drake): the great wyrm */
+export const DestroyerR: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M4 16 L10 12 L20 11.5 L26 13 L31 16 L26 19 L20 20.5 L10 20 Z" />
+    <path d="M12 12 L15 3.5 L20 10.5 L24 5.5 L25 12.5" />
+    <path d="M12 20 L15 28.5 L20 21.5" />
+    <circle cx="27.5" cy="15" r="1" fill="currentColor" stroke="none" />
+  </SVG>
+);
+
+/** Destroyer S (Eclipse): ringed void bastion */
+export const DestroyerS: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M6 16 Q6 8 15 6.5 Q10.5 11 10.5 16 Q10.5 21 15 25.5 Q6 24 6 16 Z" />
+    <circle cx="17" cy="16" r="4" />
+    <circle cx="17" cy="16" r="1.5" fill="currentColor" stroke="none" />
+    <path d="M21 15 L29 13.5 L31.5 16 L29 18.5 L21 17 Z" fill="currentColor" />
+  </SVG>
+);
+
+// ----- freighter, premium -----
+
+/** Freighter J (Specter): blockade runner */
+export const FreighterJ: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M4 14 L10 11.5 L24 11.5 L28.5 16 L24 20.5 L10 20.5 L4 18 Z" />
+    <path d="M11 11.5 L11 20.5 M16 11.5 L16 20.5 M21 11.5 L21 20.5" />
+    <path d="M6 16 L26 16" />
+  </SVG>
+);
+
+/** Freighter K (Talon): grapple hauler */
+export const FreighterK: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M4 13 L20 13 L24 14.5 L27 16 L24 17.5 L20 19 L4 19 Z" />
+    <path d="M24 14 L30 11 L26.5 15.3" />
+    <path d="M24 18 L30 21 L26.5 16.7" />
+    <path d="M8 13 L8 19 M14 13 L14 19" />
+  </SVG>
+);
+
+/** Freighter L (Corsair): smuggler's sloop */
+export const FreighterL: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M5 14 L25 12.5 L29.5 16 L22 19.5 L5 18.5 Z" />
+    <path d="M12 13.2 L14 8 L17.5 12.8" />
+    <rect x="7" y="14.8" width="3.4" height="2.6" />
+    <rect x="12" y="15" width="3.4" height="2.6" />
+  </SVG>
+);
+
+/** Freighter M (Aurora): pearl courier */
+export const FreighterM: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M5 16 Q9 11 17 11 Q26 11 29.5 16 Q26 21 17 21 Q9 21 5 16 Z" />
+    <circle cx="13" cy="16" r="1.8" />
+    <circle cx="19" cy="16" r="1.8" />
+    <circle cx="25" cy="16" r="1.2" fill="currentColor" stroke="none" />
+  </SVG>
+);
+
+/** Freighter N (Bastion): armored bullion barge */
+export const FreighterN: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M4 12.5 L26 12.5 L29 16 L26 19.5 L4 19.5 Z" />
+    <path d="M8 12.5 L8 19.5 M13 12.5 L13 19.5 M18 12.5 L18 19.5 M23 12.5 L23 19.5" />
+    <path d="M6 10.5 L24 10.5" />
+  </SVG>
+);
+
+/** Freighter O (Mirage): twin-pod tanker */
+export const FreighterO: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M5 11 L23 11 L28 16 L23 21 L5 21 L9.5 16 Z" />
+    <path d="M9.5 16 L23 16" />
+    <circle cx="14" cy="13.4" r="1.3" />
+    <circle cx="14" cy="18.6" r="1.3" />
+  </SVG>
+);
+
+/** Freighter P (Tempest): storm chaser express */
+export const FreighterP: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M4 17.5 L8 15 L6.5 12 L18 12.5 L29 16 L18 19.5 L6.5 20 L8 17.5 Z" />
+    <rect x="10" y="14" width="4" height="4" />
+    <rect x="16" y="14.3" width="4" height="3.4" />
+  </SVG>
+);
+
+/** Freighter Q (Sovereign): the royal galleon */
+export const FreighterQ: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M4.5 14 L25 13 L29.5 16 L25 19 L4.5 18 Z" />
+    <path d="M10 13.4 L10 9.5 L12.5 11 L14.5 9 L16.5 11 L19 9.5 L19 13.2" />
+    <rect x="8" y="14.6" width="3.6" height="2.8" />
+    <rect x="14" y="14.8" width="3.6" height="2.6" />
+  </SVG>
+);
+
+/** Freighter R (Drake): pack mule wyvern */
+export const FreighterR: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M5 16 L11 13 L22 12.5 L27 14 L30 16 L27 18 L22 19.5 L11 19 Z" />
+    <path d="M13 13 L16 7.5 L20 12.2" />
+    <path d="M13 19 L16 24.5 L20 19.8" />
+    <rect x="8" y="14.6" width="3.2" height="2.8" />
+  </SVG>
+);
+
+/** Freighter S (Eclipse): ring carrier */
+export const FreighterS: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M7.5 16 Q7.5 10 14 8.8 Q11 12 11 16 Q11 20 14 23.2 Q7.5 22 7.5 16 Z" />
+    <circle cx="16.5" cy="16" r="3.4" />
+    <path d="M20 16 L28 15 L30 16 L28 17 Z" fill="currentColor" />
+    <circle cx="16.5" cy="16" r="1.2" fill="currentColor" stroke="none" />
+  </SVG>
+);
+
+// ----- colony, premium (the free set is one Ark for all nine slots;
+// premium colonists finally get a fleet of their own) -----
+
+/** Colony J (Specter): shadow ark */
+export const ColonyJ: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M4 16 L9 12 L22 11.5 L27.5 16 L22 20.5 L9 20 Z" />
+    <path d="M11 12 L11 20 M17 11.7 L17 20.3" />
+    <circle cx="22" cy="16" r="2" />
+  </SVG>
+);
+
+/** Colony K (Talon): claw-anchor settler */
+export const ColonyK: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M5 16 L12 12.5 L22 12.5 L26 16 L22 19.5 L12 19.5 Z" />
+    <path d="M22 13 L28.5 10 L24.5 15" />
+    <path d="M22 19 L28.5 22 L24.5 17" />
+    <circle cx="15" cy="16" r="2.2" />
+  </SVG>
+);
+
+/** Colony L (Corsair): freebooter's home */
+export const ColonyL: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M5 14.5 L24 13 L28.5 16 L21 19.5 L5 18 Z" />
+    <path d="M11 13.6 L13 8.5 L16.5 13.2" />
+    <circle cx="18" cy="16" r="1.8" />
+  </SVG>
+);
+
+/** Colony M (Aurora): seedpod haven */
+export const ColonyM: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M5 16 Q9 10.5 17 10.5 Q25.5 10.5 29 16 Q25.5 21.5 17 21.5 Q9 21.5 5 16 Z" />
+    <circle cx="14" cy="16" r="2.4" />
+    <circle cx="21" cy="16" r="1.6" />
+    <circle cx="25.5" cy="16" r="0.9" fill="currentColor" stroke="none" />
+  </SVG>
+);
+
+/** Colony N (Bastion): fortress ark */
+export const ColonyN: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M4 12.5 L24 12.5 L28 16 L24 19.5 L4 19.5 Z" />
+    <path d="M8 12.5 L8 19.5 M13 12.5 L13 19.5 M18 12.5 L18 19.5" />
+    <path d="M9 12.5 Q9 8.5 13 8.5 Q17 8.5 17 12.5" />
+  </SVG>
+);
+
+/** Colony O (Mirage): twin-habitat ring */
+export const ColonyO: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M5 11.5 L22 11.5 L27 16 L22 20.5 L5 20.5 L9 16 Z" />
+    <path d="M9 16 L22 16" />
+    <circle cx="15" cy="13.6" r="1.4" />
+    <circle cx="15" cy="18.4" r="1.4" />
+  </SVG>
+);
+
+/** Colony P (Tempest): storm-running pioneer */
+export const ColonyP: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M4 17.5 L8 15 L6.5 12 L17 12 L28.5 16 L17 20 L6.5 20 L8 17.5 Z" />
+    <circle cx="14" cy="16" r="2.2" />
+    <circle cx="20" cy="16" r="1.4" />
+  </SVG>
+);
+
+/** Colony Q (Sovereign): the chartered ark-royal */
+export const ColonyQ: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M4.5 14.5 L24 13 L28.5 16 L24 19 L4.5 17.5 Z" />
+    <path d="M10 13.4 L10 9.5 L12.5 11 L14.5 8.5 L16.5 11 L19 9.5 L19 13.2" />
+    <circle cx="22" cy="16" r="1.6" />
+  </SVG>
+);
+
+/** Colony R (Drake): the brood carrier */
+export const ColonyR: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M5 16 L11 12.5 L21 12 L26 14 L29.5 16 L26 18 L21 20 L11 19.5 Z" />
+    <path d="M13 12.5 L16 6.5 L20 11.8" />
+    <path d="M13 19.5 L16 25.5 L20 20.2" />
+    <circle cx="17" cy="16" r="1.8" />
+  </SVG>
+);
+
+/** Colony S (Eclipse): the last-light ark */
+export const ColonyS: React.FC<IconProps> = (p) => (
+  <SVG {...p}>
+    <path d="M7 16 Q7 9.5 14 8 Q10.5 11.5 10.5 16 Q10.5 20.5 14 24 Q7 22.5 7 16 Z" />
+    <circle cx="17" cy="16" r="3.6" />
+    <circle cx="17" cy="16" r="1.6" fill="currentColor" stroke="none" />
+    <path d="M21 15.4 L28 14.5 L30 16 L28 17.5 L21 16.6 Z" fill="currentColor" />
+  </SVG>
+);
+
 // ============================================================
 // Selector — render any (class, variant) combination
 // ============================================================
 
 const REGISTRY: Record<ShipIconClass, Record<ShipIconVariant, React.FC<IconProps>>> = {
-  corvette:  { A: CorvetteA,  B: CorvetteB,  C: CorvetteC,  D: CorvetteD,  E: CorvetteE,  F: CorvetteF,  G: CorvetteG,  H: CorvetteH,  I: CorvetteI  },
-  frigate:   { A: FrigateA,   B: FrigateB,   C: FrigateC,   D: FrigateD,   E: FrigateE,   F: FrigateF,   G: FrigateG,   H: FrigateH,   I: FrigateI   },
-  destroyer: { A: DestroyerA, B: DestroyerB, C: DestroyerC, D: DestroyerD, E: DestroyerE, F: DestroyerF, G: DestroyerG, H: DestroyerH, I: DestroyerI },
-  freighter: { A: FreighterA, B: FreighterB, C: FreighterC, D: FreighterD, E: FreighterE, F: FreighterF, G: FreighterG, H: FreighterH, I: FreighterI },
-  colony:    { A: ColonyA,    B: ColonyA,    C: ColonyA,    D: ColonyA,    E: ColonyA,    F: ColonyA,    G: ColonyA,    H: ColonyA,    I: ColonyA    },
+  corvette:  { A: CorvetteA,  B: CorvetteB,  C: CorvetteC,  D: CorvetteD,  E: CorvetteE,  F: CorvetteF,  G: CorvetteG,  H: CorvetteH,  I: CorvetteI,
+               J: CorvetteJ,  K: CorvetteK,  L: CorvetteL,  M: CorvetteM,  N: CorvetteN,  O: CorvetteO,  P: CorvetteP,  Q: CorvetteQ,  R: CorvetteR,  S: CorvetteS },
+  frigate:   { A: FrigateA,   B: FrigateB,   C: FrigateC,   D: FrigateD,   E: FrigateE,   F: FrigateF,   G: FrigateG,   H: FrigateH,   I: FrigateI,
+               J: FrigateJ,   K: FrigateK,   L: FrigateL,   M: FrigateM,   N: FrigateN,   O: FrigateO,   P: FrigateP,   Q: FrigateQ,   R: FrigateR,   S: FrigateS },
+  destroyer: { A: DestroyerA, B: DestroyerB, C: DestroyerC, D: DestroyerD, E: DestroyerE, F: DestroyerF, G: DestroyerG, H: DestroyerH, I: DestroyerI,
+               J: DestroyerJ, K: DestroyerK, L: DestroyerL, M: DestroyerM, N: DestroyerN, O: DestroyerO, P: DestroyerP, Q: DestroyerQ, R: DestroyerR, S: DestroyerS },
+  freighter: { A: FreighterA, B: FreighterB, C: FreighterC, D: FreighterD, E: FreighterE, F: FreighterF, G: FreighterG, H: FreighterH, I: FreighterI,
+               J: FreighterJ, K: FreighterK, L: FreighterL, M: FreighterM, N: FreighterN, O: FreighterO, P: FreighterP, Q: FreighterQ, R: FreighterR, S: FreighterS },
+  colony:    { A: ColonyA,    B: ColonyA,    C: ColonyA,    D: ColonyA,    E: ColonyA,    F: ColonyA,    G: ColonyA,    H: ColonyA,    I: ColonyA,
+               J: ColonyJ,    K: ColonyK,    L: ColonyL,    M: ColonyM,    N: ColonyN,    O: ColonyO,    P: ColonyP,    Q: ColonyQ,    R: ColonyR,    S: ColonyS },
 };
 
 /** Human-readable names for each variant, surfaced in the picker
  *  dropdown and the ?icons gallery. */
 export const ICON_VARIANT_NAMES: Record<ShipIconClass, Record<ShipIconVariant, string>> = {
-  corvette:  { A: 'Dart',      B: 'Delta',     C: 'Gunship',     D: 'Needle',     E: 'Dart-Fin',   F: 'Raptor',   G: 'Viper',    H: 'Scythe',    I: 'Wasp'      },
-  frigate:   { A: 'Cruciform', B: 'Diamond',   C: 'Triple-Turret', D: 'Starship', E: 'Hawk',       F: 'Carrier',  G: 'Trident',  H: 'Manta',     I: 'Lance'     },
-  destroyer: { A: 'Hexagon',   B: 'Wedge',     C: 'Capital',     D: 'Dreadnought', E: 'Railgun',   F: 'Broadside', G: 'Citadel', H: 'Hammer',    I: 'Leviathan' },
-  freighter: { A: 'Containers', B: 'Tug',      C: 'Bulk',        D: 'Tanker',     E: 'Ring',       F: 'Barge',    G: 'Clipper',  H: 'Gantry',    I: 'Hive'      },
-  colony:    { A: 'Ark',       B: 'Ark',       C: 'Ark',         D: 'Ark',        E: 'Ark',        F: 'Ark',      G: 'Ark',      H: 'Ark',       I: 'Ark'       },
+  corvette:  { A: 'Dart',      B: 'Delta',     C: 'Gunship',     D: 'Needle',     E: 'Dart-Fin',   F: 'Raptor',   G: 'Viper',    H: 'Scythe',    I: 'Wasp',
+               J: 'Specter',   K: 'Talon',     L: 'Corsair',     M: 'Aurora',     N: 'Bastion',    O: 'Mirage',   P: 'Tempest',  Q: 'Sovereign', R: 'Drake', S: 'Eclipse' },
+  frigate:   { A: 'Cruciform', B: 'Diamond',   C: 'Triple-Turret', D: 'Starship', E: 'Hawk',       F: 'Carrier',  G: 'Trident',  H: 'Manta',     I: 'Lance',
+               J: 'Specter',   K: 'Talon',     L: 'Corsair',     M: 'Aurora',     N: 'Bastion',    O: 'Mirage',   P: 'Tempest',  Q: 'Sovereign', R: 'Drake', S: 'Eclipse' },
+  destroyer: { A: 'Hexagon',   B: 'Wedge',     C: 'Capital',     D: 'Dreadnought', E: 'Railgun',   F: 'Broadside', G: 'Citadel', H: 'Hammer',    I: 'Leviathan',
+               J: 'Specter',   K: 'Talon',     L: 'Corsair',     M: 'Aurora',     N: 'Bastion',    O: 'Mirage',   P: 'Tempest',  Q: 'Sovereign', R: 'Drake', S: 'Eclipse' },
+  freighter: { A: 'Containers', B: 'Tug',      C: 'Bulk',        D: 'Tanker',     E: 'Ring',       F: 'Barge',    G: 'Clipper',  H: 'Gantry',    I: 'Hive',
+               J: 'Specter',   K: 'Talon',     L: 'Corsair',     M: 'Aurora',     N: 'Bastion',    O: 'Mirage',   P: 'Tempest',  Q: 'Sovereign', R: 'Drake', S: 'Eclipse' },
+  colony:    { A: 'Ark',       B: 'Ark',       C: 'Ark',         D: 'Ark',        E: 'Ark',        F: 'Ark',      G: 'Ark',      H: 'Ark',       I: 'Ark',
+               J: 'Specter',   K: 'Talon',     L: 'Corsair',     M: 'Aurora',     N: 'Bastion',    O: 'Mirage',   P: 'Tempest',  Q: 'Sovereign', R: 'Drake', S: 'Eclipse' },
 };
 
 /** Every variant id, ordered for the gallery + picker. */
-export const ALL_VARIANTS: ShipIconVariant[] = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'];
+export const ALL_VARIANTS: ShipIconVariant[] = [
+  'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I',
+  'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S',
+];
+
+/** The Commission's letters. UI gates pickers on this + is_premium; the
+ *  SERVER re-checks the entitlement on every save (worker/store.js
+ *  validateIconVariant) — this set is a mirror for rendering locks,
+ *  never the enforcement. */
+export const PREMIUM_VARIANTS: ReadonlySet<ShipIconVariant> = new Set<ShipIconVariant>([
+  'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S',
+]);
 
 /** Player-chosen default icon variant per class. */
 export const DEFAULT_SHIP_ICONS: Record<ShipIconClass, ShipIconVariant> = {
