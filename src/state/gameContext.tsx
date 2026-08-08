@@ -386,7 +386,7 @@ interface GameContextType {
     name: string,
     // Type-only widening for the G/H/I icon expansion (MP feature) —
     // SP behavior is untouched; the variant is stored verbatim.
-    iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I',
+    iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S',
   ) => boolean;
   cancelBuild: (buildOrderId: string) => void;
   /** Rename one of the player's ships. Trims + length-caps (1..32).
@@ -1151,7 +1151,10 @@ export function GameContextProvider({
     // Per-tick freighter delivery. Run even if HP just dropped — a
     // surviving sphere keeps building. Uses the post-combat ship +
     // pool snapshot so destroyed freighters don't contribute.
-    if (updatedDyson) {
+    // controllerFactionId went nullable for MP king-of-the-hill (an
+    // abandoned sphere has no controller); the SP sim never abandons,
+    // so a null here simply skips delivery.
+    if (updatedDyson && updatedDyson.controllerFactionId) {
       const pool = factionPools[updatedDyson.controllerFactionId];
       const result = tickDysonDelivery(updatedDyson, updatedShips, pool);
       if (result.contributionThisTick > 0 && pool) {
@@ -2275,7 +2278,7 @@ export function GameContextProvider({
     name: string,
     // Type-only widening for the G/H/I icon expansion (MP feature) —
     // SP behavior is untouched; the variant is stored verbatim.
-    iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I',
+    iconVariant?: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J' | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S',
   ): boolean => {
     const classDef = SHIP_CLASSES[shipClass];
     if (!classDef) {
@@ -2612,11 +2615,16 @@ export function GameContextProvider({
       const destCollector = prev.settlements.find(
         s => s.bodyId === destBodyId && s.ownedBy === 'player' && s.hasCollector,
       );
+      // Dyson supply run: dest is Sol and the player controls the
+      // sphere. No collector needed at dest — the sphere is the
+      // delivery target; the server enforces the same rule.
+      const isDysonRun = destBodyId === 'sol'
+        && prev.dysonSphere?.controllerFactionId === 'player';
       if (!originSettlement) {
         logger.warn('ACTION', 'createTradeRoute: origin has no player settlement', { originBodyId });
         return prev;
       }
-      if (!destCollector) {
+      if (!destCollector && !isDysonRun) {
         logger.warn('ACTION', 'createTradeRoute: dest has no player collector', { destBodyId });
         return prev;
       }

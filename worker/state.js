@@ -1244,8 +1244,8 @@ const tradeRoutesP = env.DB
   // been laid. Null until the first `initiate` POST per match. See
   // migration 0018 + worker/room.js tickDysonSphere for the per-tick
   // delivery + damage logic.
-  const dysonSphere = game.dyson_controller_faction_id ? {
-    controllerFactionId: game.dyson_controller_faction_id,
+  const dysonSphere = (game.dyson_controller_faction_id || (game.dyson_max_hp ?? 0) > 0) ? {
+    controllerFactionId: game.dyson_controller_faction_id ?? null,
     foundationSettlementId: game.dyson_foundation_settlement_id,
     startedAtTick: game.dyson_started_at_tick,
     accumulated: {

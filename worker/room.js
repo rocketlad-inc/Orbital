@@ -1781,6 +1781,140 @@ export class Room {
             .run();
         };
 
+        // DYSON SUPPLY RUN: dest is Sol itself. These routes feed the
+        // sphere, and they load from the faction POOL rather than the
+        // origin stockpile — collectors put 100% of yield into the pool,
+        // so their stockpiles are permanently empty and a stockpile
+        // pickup would haul nothing forever. The collector is the
+        // loading dock; the pool is what's on the dock.
+        const isDysonRun = r.dest_body_id === `${gameId}:sol`;
+        if (isDysonRun) {
+          const dg = await this.env.DB
+            .prepare(
+              `SELECT dyson_controller_faction_id AS ctrl,
+                      dyson_acc_ore, dyson_acc_credits, dyson_acc_science,
+                      dyson_target_ore, dyson_target_credits, dyson_target_science
+                 FROM games WHERE id = ?`,
+            )
+            .bind(gameId)
+            .first();
+          // The sphere changed hands (or fell) since this route was laid:
+          // its purpose is gone. Dump any cargo home and retire the route
+          // rather than delivering into a rival's wonder.
+          if (dg?.ctrl !== r.owner_faction_id) {
+            if (cargoTotal > 0) {
+              await this.env.DB
+                .prepare(
+                  `UPDATE game_factions
+                      SET fuel = fuel + ?, metal = metal + ?,
+                          gold = gold + ?, science = science + ?
+                    WHERE id = ?`,
+                )
+                .bind(cargoFuel, cargoMetal, cargoGold, cargoScience, r.owner_faction_id)
+                .run();
+            }
+            await this.env.DB
+              .prepare(`UPDATE game_trade_routes SET cancelled_at_tick = ?, cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0 WHERE id = ?`)
+              .bind(tick, r.id)
+              .run();
+            continue;
+          }
+
+          const need = {
+            m:  Math.max(0, (dg.dyson_target_ore     ?? 0) - (dg.dyson_acc_ore     ?? 0)),
+            g:  Math.max(0, (dg.dyson_target_credits ?? 0) - (dg.dyson_acc_credits ?? 0)),
+            sc: Math.max(0, (dg.dyson_target_science ?? 0) - (dg.dyson_acc_science ?? 0)),
+          };
+
+          if (here === r.origin_body_id && cargoTotal < 1) {
+            // LOAD at the collector: draw from the pool, capped by hold,
+            // pool balance, and what the sphere still needs per
+            // component (another freighter may land first — delivery
+            // clamps again and refunds any overflow to the pool).
+            const pool = await this.env.DB
+              .prepare('SELECT metal, gold, science FROM game_factions WHERE id = ?')
+              .bind(r.owner_faction_id)
+              .first();
+            const HOLD = Math.round(CARGO_CAP * traitMul(parseTraits(ship.captain_traits), 'cargoMul'));
+            const cm  = Math.max(0, Math.min(HOLD, Number(pool?.metal   ?? 0), need.m));
+            const cg  = Math.max(0, Math.min(HOLD, Number(pool?.gold    ?? 0), need.g));
+            const csc = Math.max(0, Math.min(HOLD, Number(pool?.science ?? 0), need.sc));
+            if (cm + cg + csc > 0) {
+              await this.env.DB
+                .prepare(
+                  `UPDATE game_factions
+                      SET metal = metal - ?, gold = gold - ?, science = science - ?
+                    WHERE id = ?`,
+                )
+                .bind(cm, cg, csc, r.owner_faction_id)
+                .run();
+            }
+            // Cycle even with an empty pool so the route retries.
+            await this.env.DB
+              .prepare(
+                `UPDATE game_trade_routes
+                    SET cargo_fuel = 0, cargo_metal = ?, cargo_gold = ?, cargo_science = ?,
+                        status = 'outbound'
+                  WHERE id = ?`,
+              )
+              .bind(cm, cg, csc, r.id)
+              .run();
+            await planLeg(r.dest_body_id);
+            continue;
+          }
+
+          if (here === r.dest_body_id) {
+            // DELIVER into the sphere, clamped by remaining need per
+            // component; anything the lattice can't take goes back to
+            // the pool instead of vanishing.
+            const addM  = Math.max(0, Math.min(cargoMetal,   need.m));
+            const addG  = Math.max(0, Math.min(cargoGold,    need.g));
+            const addSc = Math.max(0, Math.min(cargoScience, need.sc));
+            const backM  = cargoMetal   - addM;
+            const backG  = cargoGold    - addG;
+            const backSc = cargoScience - addSc;
+            const batch = [];
+            if (addM + addG + addSc > 0) {
+              batch.push(this.env.DB
+                .prepare(
+                  `UPDATE games
+                      SET dyson_acc_ore     = dyson_acc_ore     + ?,
+                          dyson_acc_credits = dyson_acc_credits + ?,
+                          dyson_acc_science = dyson_acc_science + ?
+                    WHERE id = ?`,
+                )
+                .bind(addM, addG, addSc, gameId));
+            }
+            if (cargoFuel + backM + backG + backSc > 0) {
+              batch.push(this.env.DB
+                .prepare(
+                  `UPDATE game_factions
+                      SET fuel = fuel + ?, metal = metal + ?,
+                          gold = gold + ?, science = science + ?
+                    WHERE id = ?`,
+                )
+                .bind(cargoFuel, backM, backG, backSc, r.owner_faction_id));
+            }
+            batch.push(this.env.DB
+              .prepare(
+                `UPDATE game_trade_routes
+                    SET cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0,
+                        status = 'returning'
+                  WHERE id = ?`,
+              )
+              .bind(r.id));
+            await this.env.DB.batch(batch);
+            await planLeg(r.origin_body_id);
+            continue;
+          }
+
+          // Off both endpoints (player flew it somewhere): nudge home.
+          if (here !== r.origin_body_id && here !== r.dest_body_id) {
+            await planLeg(cargoTotal > 0 ? r.dest_body_id : r.origin_body_id);
+          }
+          continue;
+        }
+
         if (here === r.origin_body_id && cargoTotal < 1) {
           // PICKUP: vacuum from settlement stockpiles at origin.
           const stocks = (await this.env.DB
@@ -5471,17 +5605,27 @@ export class Room {
     }
 
     if (collapse) {
-      // Persist the fall of the wonder BEFORE wiping the columns — the
-      // websocket broadcast below is transient; this is the record.
-      // acc is UNSCALED on both collapse paths (the ratio-scaling else
-      // only runs on survivable damage), so the accumulator total IS the
-      // full progress lost — adding damageTaken again double-counted it
-      // (QA: a 500-progress sphere killed by 600 damage reported 1100).
-      const lostProgress = acc.fuel + acc.ore + acc.credits + acc.science;
+      // KING OF THE HILL (Sean's rule): the fall of the builder is not
+      // the fall of the sphere. Progress and targets stay on the games
+      // row; only the controller and their foundation are cleared, and
+      // whoever lays the next foundation at Sol RESUMES the build.
+      //
+      // The two collapse causes differ in what survives: 'damaged to
+      // collapse' means bombardment ground the accumulator to zero, so
+      // there is nothing left to inherit; 'foundation destroyed' leaves
+      // the lattice orbiting uncontrolled, at whatever progress it had.
+      if (collapseReason === 'damaged to collapse') {
+        acc = { fuel: 0, ore: 0, credits: 0, science: 0 };
+      }
+      const kept = acc.fuel + acc.ore + acc.credits + acc.science;
+      const priorProgress = (game.dyson_acc_fuel ?? 0) + (game.dyson_acc_ore ?? 0)
+        + (game.dyson_acc_credits ?? 0) + (game.dyson_acc_science ?? 0);
       await dysonChronicle('dyson_collapsed', 'dyc', {
         reason: collapseReason,
-        progress_lost: Math.round(lostProgress),
+        progress_lost: Math.round(Math.max(0, priorProgress - kept)),
+        progress_kept: Math.round(kept),
         max_hp: Math.round(maxHp),
+        pct: maxHp > 0 ? Math.round((kept / maxHp) * 100) : 0,
       });
       await this.env.DB
         .prepare(
@@ -5489,103 +5633,29 @@ export class Room {
               dyson_controller_faction_id = NULL,
               dyson_foundation_settlement_id = NULL,
               dyson_started_at_tick = NULL,
-              dyson_acc_fuel = 0, dyson_acc_ore = 0,
-              dyson_acc_credits = 0, dyson_acc_science = 0,
-              dyson_target_fuel = 0, dyson_target_ore = 0,
-              dyson_target_credits = 0, dyson_target_science = 0,
-              dyson_hp = 0, dyson_max_hp = 0,
+              dyson_acc_fuel = ?, dyson_acc_ore = ?,
+              dyson_acc_credits = ?, dyson_acc_science = ?,
+              dyson_hp = ?,
               dyson_station_last_hp = NULL
             WHERE id = ?`,
         )
-        .bind(gameId)
+        .bind(acc.fuel, acc.ore, acc.credits, acc.science, kept, gameId)
         .run();
-      this.broadcast({ type: 'dyson_collapsed', tick, reason: collapseReason });
+      this.broadcast({ type: 'dyson_collapsed', tick, reason: collapseReason, progress_kept: kept });
       return;
     }
 
-    // 3: delivery. Count parked freighters at Sol owned by ctrl.
-    // PARKED means parked: parent_body_id is a stale snapshot for the
-    // whole duration of a transit (the departure pass leaves it on the
-    // origin body so the canvas can animate the arc), so a freighter
-    // that undocked 50 ticks ago still read as "at Sol" and kept
-    // pumping (QA). Exclude anything with a live transfer node — the
-    // design intent is that feeding the sphere TIES THE SHIP UP, and
-    // the world-menu supply readout already counts it this way.
-    const freighters = (await this.env.DB
-      .prepare(
-        `SELECT id FROM game_ships s
-            WHERE s.game_id = ?
-              AND s.owner_faction_id = ?
-              AND s.ship_class = 'freighter'
-              AND s.status = 'active'
-              AND s.parent_body_id = ?
-              AND NOT EXISTS (
-                SELECT 1 FROM game_ship_nodes n
-                 WHERE n.ship_id = s.id AND n.status IN ('committed', 'in_transit')
-              )`,
-      )
-      .bind(gameId, ctrl, `${gameId}:sol`)
-      .all()).results ?? [];
-    const n = freighters.length;
-    if (n === 0) {
-      // Just refresh hp from accumulated + persist station-HP snapshot
-      // for next tick's damage delta.
-      await this.env.DB
-        .prepare(
-          `UPDATE games SET dyson_hp = ?,
-              dyson_acc_fuel = ?, dyson_acc_ore = ?,
-              dyson_acc_credits = ?, dyson_acc_science = ?,
-              dyson_station_last_hp = ?
-            WHERE id = ?`,
-        )
-        .bind(hp, acc.fuel, acc.ore, acc.credits, acc.science, stationHpForNextTick, gameId)
-        .run();
-      return;
-    }
-
-    // Get controller's pool.
-    const faction = await this.env.DB
-      .prepare('SELECT fuel, metal, gold, science FROM game_factions WHERE id = ?')
-      .bind(ctrl)
-      .first();
-    if (!faction) return;
-
-    const PER = { fuel: 5, ore: 10, credits: 10, science: 5 };
-    const want = {
-      fuel:    PER.fuel    * n,
-      ore:     PER.ore     * n,
-      credits: PER.credits * n,
-      science: PER.science * n,
-    };
-    // Server uses 'metal' / 'gold' column names for ore / credits.
-    const move = {
-      fuel:    Math.max(0, Math.min(want.fuel,    faction.fuel    ?? 0, target.fuel    - acc.fuel)),
-      ore:     Math.max(0, Math.min(want.ore,     faction.metal   ?? 0, target.ore     - acc.ore)),
-      credits: Math.max(0, Math.min(want.credits, faction.gold    ?? 0, target.credits - acc.credits)),
-      science: Math.max(0, Math.min(want.science, faction.science ?? 0, target.science - acc.science)),
-    };
-    const contribution = move.fuel + move.ore + move.credits + move.science;
-    if (contribution === 0) {
-      // No pool / no remaining target — still persist the accumulator
-      // (damage may have scaled it down) + station-HP snapshot.
-      await this.env.DB
-        .prepare(
-          `UPDATE games SET dyson_hp = ?,
-              dyson_acc_fuel = ?, dyson_acc_ore = ?,
-              dyson_acc_credits = ?, dyson_acc_science = ?,
-              dyson_station_last_hp = ?
-            WHERE id = ?`,
-        )
-        .bind(hp, acc.fuel, acc.ore, acc.credits, acc.science, stationHpForNextTick, gameId)
-        .run();
-      return;
-    }
-
-    const hpBefore = hp;
-    acc.fuel    += move.fuel;
-    acc.ore     += move.ore;
-    acc.credits += move.credits;
-    acc.science += move.science;
+    // 3: reconcile. Parked freighters NO LONGER PUMP — the sphere is
+    // fed by dyson supply routes (trade routes with dest = Sol), which
+    // load from the pool at a collector and physically haul the cargo
+    // here. Those deliveries land in the trade-route pass EARLIER this
+    // tick, writing dyson_acc_* directly; freighters on the line are
+    // raidable the whole way, which is the tension the design wants.
+    //
+    // This step recomputes hp from the (possibly damage-scaled,
+    // possibly delivery-bumped) accumulator, announces any quarter
+    // milestone the deliveries crossed, and persists the snapshot.
+    const hpStored = game.dyson_hp ?? 0;
     hp = Math.min(maxHp, acc.fuel + acc.ore + acc.credits + acc.science);
 
     // Construction milestones — one public beat per quarter crossed
@@ -5593,10 +5663,10 @@ export class Room {
     // checkVictory, so 100% isn't duplicated here. If damage knocks
     // progress back below a line, re-crossing it re-announces — that's
     // the drama working as intended (tick-scoped ids keep it deduped).
-    if (maxHp > 0) {
+    if (maxHp > 0 && hp > hpStored) {
       for (const pct of [25, 50, 75]) {
         const line = (maxHp * pct) / 100;
-        if (hpBefore < line && hp >= line) {
+        if (hpStored < line && hp >= line) {
           await dysonChronicle('dyson_milestone', `dym${pct}`, {
             pct,
             hp: Math.round(hp),
@@ -5606,25 +5676,16 @@ export class Room {
       }
     }
 
-    await this.env.DB.batch([
-      this.env.DB
-        .prepare(
-          `UPDATE games SET
-              dyson_acc_fuel = ?, dyson_acc_ore = ?,
-              dyson_acc_credits = ?, dyson_acc_science = ?,
-              dyson_hp = ?,
-              dyson_station_last_hp = ? WHERE id = ?`,
-        )
-        .bind(acc.fuel, acc.ore, acc.credits, acc.science, hp, stationHpForNextTick, gameId),
-      this.env.DB
-        .prepare(
-          `UPDATE game_factions SET
-              fuel = fuel - ?, metal = metal - ?,
-              gold = gold - ?, science = science - ?
-            WHERE id = ?`,
-        )
-        .bind(move.fuel, move.ore, move.credits, move.science, ctrl),
-    ]);
+    await this.env.DB
+      .prepare(
+        `UPDATE games SET dyson_hp = ?,
+            dyson_acc_fuel = ?, dyson_acc_ore = ?,
+            dyson_acc_credits = ?, dyson_acc_science = ?,
+            dyson_station_last_hp = ?
+          WHERE id = ?`,
+      )
+      .bind(hp, acc.fuel, acc.ore, acc.credits, acc.science, stationHpForNextTick, gameId)
+      .run();
   }
 
   /**

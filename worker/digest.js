@@ -1604,13 +1604,29 @@ const DYSON_DAMAGED_HEADLINE = [
   () => 'THE SPHERE BLEEDS',
   () => 'FIRE AT THE FOUNDATION',
 ];
+// King of the hill: a knocked-off builder leaves the lattice BEHIND.
+// The collapse story now has two shapes — annihilation (progress ground
+// to zero) and abandonment (the shell survives, claimable by anyone).
 const DYSON_COLLAPSED = [
-  (c) => `The **Dyson Sphere is gone.** ${c.reason === 'foundation destroyed' ? 'Its foundation station was blown out of Sol orbit' : 'Sustained bombardment finally broke the lattice'}, and with it **${c.faction}**'s bid to end the war by engineering. Every unit of progress — **${c.lost}** in all — is dust in the solar wind.`,
-  (c) => `It fell. **${c.faction}**'s sun-cage collapsed ${c.reason === 'foundation destroyed' ? 'when its foundation was destroyed' : 'under sustained attack'} — **${c.lost}** units of the grandest project in history, erased in a single stroke. The Sol slot stands open for whoever dares next.`,
+  (c) => c.kept > 0
+    ? `**${c.faction}** has been thrown off the **Dyson Sphere.** ${c.reason === 'foundation destroyed' ? 'Their foundation station was blown out of Sol orbit' : 'Bombardment broke their hold'} — but the lattice itself survives at **${c.pct}%**, orbiting unclaimed. The first faction to lay a new foundation at Sol inherits every rivet of it.`
+    : `The **Dyson Sphere is gone.** ${c.reason === 'foundation destroyed' ? 'Its foundation station was blown out of Sol orbit' : 'Sustained bombardment finally broke the lattice'}, and with it **${c.faction}**'s bid to end the war by engineering. Every unit of progress — **${c.lost}** in all — is dust in the solar wind.`,
+  (c) => c.kept > 0
+    ? `The king is off the hill: **${c.faction}** lost the sun-cage ${c.reason === 'foundation destroyed' ? 'when its foundation was destroyed' : 'under sustained attack'}. **${c.kept}** units of construction still hang there at **${c.pct}%** — abandoned, intact, and very much up for grabs.`
+    : `It fell. **${c.faction}**'s sun-cage collapsed ${c.reason === 'foundation destroyed' ? 'when its foundation was destroyed' : 'under sustained attack'} — **${c.lost}** units of the grandest project in history, erased in a single stroke. The Sol slot stands open for whoever dares next.`,
 ];
 const DYSON_COLLAPSED_HEADLINE = [
-  () => 'THE SPHERE HAS FALLEN',
-  () => 'A SUN UNCAGED',
+  (c) => c.kept > 0 ? 'THE SPHERE STANDS MASTERLESS' : 'THE SPHERE HAS FALLEN',
+  (c) => c.kept > 0 ? 'KING OFF THE HILL' : 'A SUN UNCAGED',
+];
+
+const DYSON_CLAIMED = [
+  (c) => `**${c.faction}** has seized the abandoned **Dyson Sphere** — a new foundation at Sol, and **${c.pct}%** of someone else's life's work now counts toward THEIR victory. Construction resumes where it stopped.`,
+  (c) => `The sun-cage has a new keeper: **${c.faction}** claimed the derelict sphere at **${c.pct}%** complete. Everything the last builder hauled up the gravity well now belongs to the new flag.`,
+];
+const DYSON_CLAIMED_HEADLINE = [
+  (c) => `${c.faction.toUpperCase()} TAKES THE HILL`,
+  () => 'A DERELICT SUN-CAGE, CLAIMED',
 ];
 
 /** Dyson battle beats — damage + collapse — for the BATTLES section. */
@@ -1626,7 +1642,13 @@ function buildDysonBattleStories(rows, used, factionNames) {
       const weight = 450 + Math.min(200, (p.damage ?? 0) / 10);
       stories.push(mkStory(weight, used, 'dyson_damaged', DYSON_DAMAGED, 'dyson_damaged_hl', DYSON_DAMAGED_HEADLINE, ctx));
     } else if (row.kind === 'dyson_collapsed') {
-      const ctx = { faction, reason: p.reason ?? '', lost: p.progress_lost ?? 0 };
+      const ctx = {
+        faction,
+        reason: p.reason ?? '',
+        lost: p.progress_lost ?? 0,
+        kept: p.progress_kept ?? 0,
+        pct: p.pct ?? 0,
+      };
       // Just under a victory (1000) — losing the wonder IS the story.
       stories.push(mkStory(850, used, 'dyson_collapsed', DYSON_COLLAPSED, 'dyson_collapsed_hl', DYSON_COLLAPSED_HEADLINE, ctx));
     }
@@ -1643,6 +1665,9 @@ function buildDysonHistoryStories(rows, used, factionNames) {
     const faction = p.faction_name ?? factionNames.get(row.actor_faction_id) ?? 'A faction';
     if (row.kind === 'dyson_initiated') {
       stories.push(mkStory(500, used, 'dyson_initiated', DYSON_INITIATED, 'dyson_initiated_hl', DYSON_INITIATED_HEADLINE, { faction }));
+    } else if (row.kind === 'dyson_claimed') {
+      // Seizing a half-built wonder outranks breaking ground on one.
+      stories.push(mkStory(600, used, 'dyson_claimed', DYSON_CLAIMED, 'dyson_claimed_hl', DYSON_CLAIMED_HEADLINE, { faction, pct: p.pct ?? 0 }));
     } else if (row.kind === 'dyson_milestone') {
       // Later milestones are bigger news — 75% outranks a treaty broken.
       stories.push(mkStory(250 + (p.pct ?? 0) * 2, used, 'dyson_milestone', DYSON_MILESTONE, 'dyson_milestone_hl', DYSON_MILESTONE_HEADLINE, { faction, pct: p.pct ?? 0 }));

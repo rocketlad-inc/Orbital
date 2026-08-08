@@ -1121,13 +1121,13 @@ const WmDysonCard: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const dyson = gameState.dysonSphere;
 
-  if (dyson) {
+  if (dyson && dyson.controllerFactionId) {
     const isMine = dyson.controllerFactionId === 'player';
     const controller = gameState.factions.find(f => f.id === dyson.controllerFactionId);
     const pct = dyson.maxHp > 0 ? (dyson.hp / dyson.maxHp) * 100 : 0;
-    const pumps = gameState.ships.filter(s =>
-      s.ownedBy === 'player' && s.class === 'freighter' && !s.transit
-      && s.orbit.parentBodyId === 'sol').length;
+    // Freighters no longer pump by parking — the sphere is fed by
+    // supply ROUTES (collector → Sol), raidable the whole way.
+    const supplyRoutes = (gameState.tradeRoutes ?? []).filter(r => r.destBodyId === 'sol').length;
     return (
       <div className="wm-dyson" data-testid="wm-dyson" data-tutorial-id="dyson-sphere-section">
         <div className="wm-dyson-head">
@@ -1143,29 +1143,51 @@ const WmDysonCard: React.FC = () => {
           {Math.round(dyson.hp).toLocaleString()} / {dyson.maxHp.toLocaleString()} · {pct.toFixed(1)}%
         </div>
         {isMine && (
-          <div className="wm-dyson-supply" title={`Each of your freighters parked at Sol delivers ${DYSON_PUMP.ore} metal + ${DYSON_PUMP.credits} credits + ${DYSON_PUMP.science} science per tick from your resource POOL into the sphere. Collectors and trade routes keep the pool filled — the freighters here are the pump.`}>
-            {pumps > 0
-              ? <>□ {pumps} freighter{pumps === 1 ? '' : 's'} pumping ≈{pumps * DYSON_PUMP.ore}M {pumps * DYSON_PUMP.credits}C {pumps * DYSON_PUMP.science}S /t from your pool</>
-              : <span style={{ color: '#ffb84d' }}>⚠ No freighters at Sol — construction is stalled. Park freighters here to pump your pool into the sphere.</span>}
+          <div className="wm-dyson-supply" title="The sphere is built from cargo physically hauled here. Set a freighter's trade route from one of your collectors to the Dyson Sphere — it loads metal, credits and science from your pool at the collector and delivers on arrival. Freighters on the line can be raided; escort what you can't afford to lose.">
+            {supplyRoutes > 0
+              ? <>⇢ {supplyRoutes} supply route{supplyRoutes === 1 ? '' : 's'} hauling to the sphere</>
+              : <span style={{ color: '#ffb84d' }}>⚠ No supply routes — construction is stalled. Give a freighter a route from a collector to the Dyson Sphere.</span>}
           </div>
         )}
       </div>
     );
   }
 
-  // No sphere yet — the slot is open. Show initiate affordances.
+  // No controller — the slot is open. Two flavours: a virgin slot, or
+  // an ABANDONED sphere whose progress survives for whoever claims it
+  // (king of the hill: kicking the builder off doesn't reset the build).
+  const derelict = dyson && !dyson.controllerFactionId && dyson.maxHp > 0 ? dyson : null;
+  const derelictPct = derelict ? (derelict.hp / Math.max(1, derelict.maxHp)) * 100 : 0;
   const myStations = gameState.settlements.filter(s =>
     s.ownedBy === 'player' && s.type === 'station' && s.bodyId === 'sol');
   const lock = gate.lockReason('dyson');
   return (
     <div className="wm-dyson" data-testid="wm-dyson" data-tutorial-id="dyson-sphere-section">
       <div className="wm-dyson-head">
-        <span className="wm-dyson-title">☀ DYSON SPHERE · slot open</span>
+        <span className="wm-dyson-title">
+          {derelict ? '☀ DYSON SPHERE · ABANDONED' : '☀ DYSON SPHERE · slot open'}
+        </span>
+        {derelict && (
+          <span className="wm-dyson-owner" style={{ color: '#ffb84d' }}>
+            {derelictPct.toFixed(1)}% BUILT · UNCLAIMED
+          </span>
+        )}
       </div>
+      {derelict && (
+        <div className="wm-dyson-bar">
+          <i style={{ width: `${Math.min(100, derelictPct)}%`, opacity: 0.6 }} />
+        </div>
+      )}
       <div className="wm-dyson-meta">
-        Lay the foundation at a Sol station, then park freighters here to
-        deliver 15K metal · 15K credits · 10K science. Completion wins the
-        match. Destroying the foundation destroys ALL progress.
+        {derelict
+          ? <>The previous builder was thrown off — their progress survives.
+              Lay a foundation at a Sol station to CLAIM the sphere and resume
+              construction at {derelictPct.toFixed(0)}%. Supply it by freighter
+              routes from your collectors.</>
+          : <>Lay the foundation at a Sol station, then run freighter routes
+              from your collectors to deliver 15K metal · 15K credits · 10K
+              science. Completion wins the match. Lose the foundation and the
+              sphere stands abandoned — first claimant resumes your work.</>}
       </div>
       {lock ? (
         <div className="wm-dyson-meta" style={{ color: '#8aa0b4' }}>🔒 {lock.label} — {lock.text}</div>
@@ -1188,8 +1210,10 @@ const WmDysonCard: React.FC = () => {
                 if (!res.ok) setErr(humanizeMpError(res.code, res.error ?? 'Initiate rejected.', 'build'));
               });
             }}
-            title={`Lay the Dyson Sphere foundation on ${s.name}. One per game — losing the station collapses the whole project.`}
-          >◆ INITIATE AT {s.name.toUpperCase()}</button>
+            title={derelict
+              ? `Claim the abandoned sphere from ${s.name} — construction resumes at ${derelictPct.toFixed(0)}%, and completing it wins YOU the game.`
+              : `Lay the Dyson Sphere foundation on ${s.name}. One sphere per game — lose the station and the sphere stands abandoned for anyone to claim.`}
+          >{derelict ? `◆ CLAIM AT ${s.name.toUpperCase()}` : `◆ INITIATE AT ${s.name.toUpperCase()}`}</button>
         ))
       )}
       {err && (

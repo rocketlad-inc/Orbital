@@ -1339,6 +1339,7 @@ export const ShipPanel: React.FC = () => {
               tradeRoutes={gameState.tradeRoutes ?? []}
               bodies={gameState.bodies}
               settlements={gameState.settlements}
+              canSupplyDyson={gameState.dysonSphere?.controllerFactionId === 'player'}
               onCreate={(originBodyId, destBodyId) => {
                 // Optimistic local create + MP server post. In SP the
                 // local mutation is the source of truth; in MP it
@@ -2552,9 +2553,12 @@ const TradeRouteSection: React.FC<{
   tradeRoutes: TradeRoute[];
   bodies: Body[];
   settlements: Settlement[];
+  /** True when the player controls the Dyson Sphere — unlocks Sol as a
+   *  route destination (the supply line that actually builds it). */
+  canSupplyDyson?: boolean;
   onCreate: (originBodyId: string, destBodyId: string) => boolean;
   onCancel: (routeId: string) => void;
-}> = ({ ship, tradeRoutes, bodies, settlements, onCreate, onCancel }) => {
+}> = ({ ship, tradeRoutes, bodies, settlements, canSupplyDyson, onCreate, onCancel }) => {
   const route = tradeRoutes.find(r => r.shipId === ship.id);
   const [picking, setPicking] = useState(false);
   const [originId, setOriginId] = useState<string>('');
@@ -2562,9 +2566,16 @@ const TradeRouteSection: React.FC<{
 
   // Eligible origins = any body where the player owns a settlement
   // (collector not required — you can pick up from any settlement,
-  // it just needs to have stockpile).
+  // it just needs to have stockpile). A DYSON run is stricter: it loads
+  // the faction pool at a collector, so only collector bodies qualify.
   const originBodies = useMemo(() => {
     const ids = new Set(settlements.filter(s => s.ownedBy === 'player').map(s => s.bodyId));
+    return bodies.filter(b => ids.has(b.id));
+  }, [bodies, settlements]);
+  const collectorBodies = useMemo(() => {
+    const ids = new Set(
+      settlements.filter(s => s.ownedBy === 'player' && s.hasCollector).map(s => s.bodyId),
+    );
     return bodies.filter(b => ids.has(b.id));
   }, [bodies, settlements]);
 
@@ -2640,10 +2651,17 @@ const TradeRouteSection: React.FC<{
             }}
           >
             <option value="">— pick origin —</option>
-            {originBodies.map(b => (
+            {(destId === 'sol' ? collectorBodies : originBodies).map(b => (
               <option key={b.id} value={b.id}>{b.name}</option>
             ))}
           </select>
+          {destId === 'sol' && (
+            <div style={{ fontSize: 10, color: '#8aa0b4', lineHeight: 1.5 }}>
+              Dyson supply loads metal, credits and science from your POOL at
+              the collector, then hauls it to the sphere. The freighter can be
+              raided the whole way.
+            </div>
+          )}
           <label style={{ fontSize: 10, color: '#b8c8d6', letterSpacing: '0.08em' }}>
             DEST (collector)
           </label>
@@ -2661,6 +2679,9 @@ const TradeRouteSection: React.FC<{
               }}
             >
               <option value="">— pick collector —</option>
+              {canSupplyDyson && (
+                <option value="sol">☀ Dyson Sphere (Sol)</option>
+              )}
               {destBodies.map(b => (
                 <option key={b.id} value={b.id}>{b.name}</option>
               ))}

@@ -1984,12 +1984,34 @@ async function handleCreateTradeRoute(req, env, ctx) {
     .first();
   if (!origin) return err(409, 'no_origin_settlement', 'origin body has no player settlement to pick up from');
 
-  // Dest must have a player-owned settlement with has_collector = 1.
-  const destC = await env.DB
-    .prepare('SELECT 1 AS x FROM game_settlements WHERE game_id = ? AND body_id = ? AND owner_faction_id = ? AND has_collector = 1 AND destroyed_at_tick IS NULL')
-    .bind(gameId, destBodyId, me.id)
-    .first();
-  if (!destC) return err(409, 'no_dest_collector', 'destination body has no player collector to deliver to');
+  if (destBodyId === `${gameId}:sol`) {
+    // DYSON SUPPLY RUN. The sphere is fed by freighters physically
+    // hauling from a collector to Sol — parked ships no longer pump.
+    // Only the controller may run the line, and the origin must be a
+    // collector: that is the loading dock where the faction pool is
+    // physically accessible.
+    const g = await env.DB
+      .prepare('SELECT dyson_controller_faction_id FROM games WHERE id = ?')
+      .bind(gameId)
+      .first();
+    if (g?.dyson_controller_faction_id !== me.id) {
+      return err(409, 'not_controller', 'only the Dyson Sphere controller can run supply routes to Sol');
+    }
+    const originC = await env.DB
+      .prepare('SELECT 1 AS x FROM game_settlements WHERE game_id = ? AND body_id = ? AND owner_faction_id = ? AND has_collector = 1 AND destroyed_at_tick IS NULL')
+      .bind(gameId, originBodyId, me.id)
+      .first();
+    if (!originC) {
+      return err(409, 'origin_not_collector', 'Dyson supply must load at one of your collectors');
+    }
+  } else {
+    // Dest must have a player-owned settlement with has_collector = 1.
+    const destC = await env.DB
+      .prepare('SELECT 1 AS x FROM game_settlements WHERE game_id = ? AND body_id = ? AND owner_faction_id = ? AND has_collector = 1 AND destroyed_at_tick IS NULL')
+      .bind(gameId, destBodyId, me.id)
+      .first();
+    if (!destC) return err(409, 'no_dest_collector', 'destination body has no player collector to deliver to');
+  }
 
   // Drop any prior active route for this ship (UI lets the player
   // replace; the UNIQUE INDEX would 409 otherwise).
@@ -2101,14 +2123,25 @@ async function handleInitiateDyson(req, env, ctx) {
   const dysonGate = await requireFeature(env, gameId, me.id, 'dyson');
   if (dysonGate) return dysonGate;
 
-  // Slot check — only one sphere per match.
+  // Slot check — only one sphere per match, but the slot REOPENS when
+  // the incumbent's foundation is destroyed. King of the hill (Sean's
+  // rule): progress survives the change of hands, and the next claimant
+  // RESUMES construction instead of starting over.
   const game = await env.DB
-    .prepare('SELECT dyson_controller_faction_id FROM games WHERE id = ?')
+    .prepare(
+      `SELECT dyson_controller_faction_id, dyson_max_hp,
+              dyson_acc_fuel, dyson_acc_ore, dyson_acc_credits, dyson_acc_science
+         FROM games WHERE id = ?`,
+    )
     .bind(gameId)
     .first();
   if (game?.dyson_controller_faction_id) {
     return err(409, 'slot_taken', 'a Dyson Sphere is already under construction this match');
   }
+  const priorMax = game?.dyson_max_hp ?? 0;
+  const priorAcc = (game?.dyson_acc_fuel ?? 0) + (game?.dyson_acc_ore ?? 0)
+    + (game?.dyson_acc_credits ?? 0) + (game?.dyson_acc_science ?? 0);
+  const resuming = priorMax > 0;
 
   // Settlement validity.
   const station = await env.DB
@@ -2139,24 +2172,41 @@ async function handleInitiateDyson(req, env, ctx) {
   // get a 201 while one silently overwrote the other. The guard makes
   // SQLite pick exactly one winner; the loser gets the same 409 the
   // pre-check would have given it.
-  const claim = await env.DB
-    .prepare(
-      `UPDATE games SET
-         dyson_controller_faction_id = ?,
-         dyson_foundation_settlement_id = ?,
-         dyson_started_at_tick = ?,
-         dyson_acc_fuel = 0, dyson_acc_ore = 0, dyson_acc_credits = 0, dyson_acc_science = 0,
-         dyson_target_fuel = ?, dyson_target_ore = ?, dyson_target_credits = ?, dyson_target_science = ?,
-         dyson_hp = 0, dyson_max_hp = ?
-       WHERE id = ? AND dyson_controller_faction_id IS NULL`,
-    )
-    .bind(
-      me.id, stationId, tick,
-      DYSON_TARGET.fuel, DYSON_TARGET.ore, DYSON_TARGET.credits, DYSON_TARGET.science,
-      DYSON_MAX_HP,
-      gameId,
-    )
-    .run();
+  // Two write shapes, same race guard. RESUME keeps the accumulated
+  // progress and the stored targets exactly as the fallen builder left
+  // them — that inheritance is the whole point of king-of-the-hill.
+  // FRESH seeds from config as before. Both refuse to fire if someone
+  // else claimed between the read above and this write.
+  const claim = resuming
+    ? await env.DB
+      .prepare(
+        `UPDATE games SET
+           dyson_controller_faction_id = ?,
+           dyson_foundation_settlement_id = ?,
+           dyson_started_at_tick = ?,
+           dyson_station_last_hp = NULL
+         WHERE id = ? AND dyson_controller_faction_id IS NULL`,
+      )
+      .bind(me.id, stationId, tick, gameId)
+      .run()
+    : await env.DB
+      .prepare(
+        `UPDATE games SET
+           dyson_controller_faction_id = ?,
+           dyson_foundation_settlement_id = ?,
+           dyson_started_at_tick = ?,
+           dyson_acc_fuel = 0, dyson_acc_ore = 0, dyson_acc_credits = 0, dyson_acc_science = 0,
+           dyson_target_fuel = ?, dyson_target_ore = ?, dyson_target_credits = ?, dyson_target_science = ?,
+           dyson_hp = 0, dyson_max_hp = ?
+         WHERE id = ? AND dyson_controller_faction_id IS NULL`,
+      )
+      .bind(
+        me.id, stationId, tick,
+        DYSON_TARGET.fuel, DYSON_TARGET.ore, DYSON_TARGET.credits, DYSON_TARGET.science,
+        DYSON_MAX_HP,
+        gameId,
+      )
+      .run();
   if (!claim.meta?.changes) {
     return err(409, 'slot_taken', 'a Dyson Sphere is already under construction this match');
   }
@@ -2172,14 +2222,25 @@ async function handleInitiateDyson(req, env, ctx) {
     // in the same tick is legitimate, and a bare game+tick key made the
     // second insert a swallowed PK violation — the headline story of the
     // edition, silently dropped.
+    // A resume is a different story from a groundbreaking: the claimant
+    // seized someone else's half-built wonder.
+    const kind = resuming ? 'dyson_claimed' : 'dyson_initiated';
+    const payload = resuming
+      ? {
+        faction_name: fac?.name ?? null,
+        inherited_progress: Math.round(priorAcc),
+        max_hp: Math.round(priorMax),
+        pct: priorMax > 0 ? Math.round((priorAcc / priorMax) * 100) : 0,
+      }
+      : { faction_name: fac?.name ?? null, target_total: DYSON_MAX_HP };
     await env.DB
       .prepare(
         `INSERT OR IGNORE INTO chronicle_entries
           (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
-         VALUES (?, ?, ?, 'dyson_initiated', ?, ?, ?, 'public', ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'public', ?)`,
       )
-      .bind(`c_dyi_${stationId}_${tick}`, gameId, tick, me.id, `${gameId}:sol`,
-            JSON.stringify({ faction_name: fac?.name ?? null, target_total: DYSON_MAX_HP }),
+      .bind(`c_dyi_${stationId}_${tick}`, gameId, tick, kind, me.id, `${gameId}:sol`,
+            JSON.stringify(payload),
             Date.now())
       .run();
   } catch (e) { console.error('dyson_initiated chronicle insert failed', e); }
