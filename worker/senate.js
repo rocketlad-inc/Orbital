@@ -550,71 +550,48 @@ export async function loadProposalTotals(env, proposalId) {
 }
 
 // ============================================================
-// QUORUM (Lorne): at least half the players must engage with a bill for
-// it to pass. Abstain counts — "present and neutral" is engagement, and
-// without it a player who wants a bill to proceed but has no opinion has
-// no way to help it over the line.
+// QUORUM (Lorne): a MAJORITY of the players in the game must engage with
+// a bill before it can pass. Abstain counts — "present and neutral" is
+// engagement, and without it a player who wants a bill to proceed but
+// has no opinion has no way to help it over the line.
 //
-// THE DENOMINATOR IS SEATED PLAYERS, NOT SEATS. Measured before building
-// this: six of the eight live games have zero or one player seen in the
-// past week. Counting abandoned seats would mean only ONE active game
-// could ever pass another bill — a quorum rule that treats ghosts as
-// opposition doesn't raise the bar, it locks the door. A member on leave
-// doesn't count against quorum in any real chamber either.
+// THE DENOMINATOR IS EVERY LIVING FACTION. Eliminated factions are out —
+// they have no seat and no vote — but an idle player still holds theirs.
 //
-// This is also strictly LESS gameable than counting raw seats: going
-// quiet to shrink the denominator also removes you as a voter, so it
-// buys nothing that simply not voting didn't already buy.
+// An earlier build shrank the denominator to players with a recent
+// session, on the reasoning that six of the eight live games have zero
+// or one player seen in a week and would otherwise be unable to pass
+// anything ever again. Lorne overruled it: a seat in the chamber belongs
+// to the empire, not to whether its owner logged in this week, and a
+// senate that quietly stops counting absent members is not one players
+// can reason about. The consequence is real and accepted — an abandoned
+// game's senate stops legislating, which is arguably the correct
+// description of an abandoned game.
+//
+// MAJORITY, not half: floor(n/2) + 1. For odd counts these agree (7 -> 4
+// either way); for even ones majority is the stricter reading and the
+// one the rule is stated in (4 players -> 3, not 2).
 // ============================================================
 
-/** How long since a player's last session touch before their seat stops
- *  counting toward quorum. Expressed in TICKS of this game's cadence
- *  (two terms' worth) so a slow game doesn't unseat people who are
- *  merely asleep, with a wall-clock floor for very fast cadences. */
-const SEATED_TERMS = 2;
-const SEATED_FLOOR_MS = 48 * 60 * 60 * 1000;
-
-/** Absolute floor on quorum. Without it, a game where everyone has
- *  drifted away has a quorum of zero and bills pass on NOBODY's vote —
- *  strictly worse than the pre-quorum behaviour. A senate of one is not
- *  a senate. */
-const MIN_QUORUM = 2;
-
 /**
- * Seats that still have a human behind them, and the resulting quorum.
+ * The vote bar for this game: how many factions must engage.
  *
- * Returns { seated, quorum, total } — `total` is every active faction,
- * kept for display so players can see the difference between "empty
- * chair" and "present but silent".
+ * Returns { eligible, quorum } — `eligible` is every non-eliminated
+ * faction, which is both the denominator and what the client shows.
  */
-export async function quorumFor(env, gameId, termTicks = 24) {
-  const game = await env.DB
-    .prepare('SELECT tick_interval_ms FROM games WHERE id = ?')
-    .bind(gameId)
-    .first();
-  const tickMs = Number(game?.tick_interval_ms) || 3600000;
-  const windowMs = Math.max(SEATED_TERMS * termTicks * tickMs, SEATED_FLOOR_MS);
-  const cutoff = Date.now() - windowMs;
-
+export async function quorumFor(env, gameId) {
   const rows = (await env.DB
-    .prepare(
-      `SELECT f.id,
-              (SELECT MAX(s.last_seen_at) FROM sessions s WHERE s.user_id = f.user_id) AS last_seen
-         FROM game_factions f
-        WHERE f.game_id = ? AND f.status = 'active'`,
-    )
+    .prepare(`SELECT id FROM game_factions WHERE game_id = ? AND status = 'active'`)
     .bind(gameId)
     .all()).results ?? [];
 
-  const seatedIds = rows
-    .filter(r => r.last_seen != null && Number(r.last_seen) >= cutoff)
-    .map(r => r.id);
-
+  const eligible = rows.length;
   return {
-    total: rows.length,
-    seated: seatedIds.length,
-    seated_ids: seatedIds,
-    quorum: Math.max(MIN_QUORUM, Math.ceil(seatedIds.length / 2)),
+    eligible,
+    eligible_ids: rows.map(r => r.id),
+    // eligible 0 gives a quorum of 1, which nothing can meet — the safe
+    // direction for a game with no living factions.
+    quorum: Math.floor(eligible / 2) + 1,
   };
 }
 
@@ -654,8 +631,7 @@ function shapeProposal(row, totals, callerVote, ballots, quorum = null) {
     quorum: quorum ? {
       required: quorum.quorum,
       cast: votesCastCount(totals),
-      seated: quorum.seated,
-      total: quorum.total,
+      eligible: quorum.eligible,
       met: votesCastCount(totals) >= quorum.quorum,
     } : null,
   };
@@ -892,7 +868,7 @@ async function handleCreateProposal(req, env, { params, session }) {
   }
 
   const row = await env.DB.prepare('SELECT * FROM senate_proposals WHERE id = ?').bind(id).first();
-  const shaped = await shapeOne(env, row, ctx.faction.id, await quorumFor(env, gameId, await termTicksFor(env, gameId)));
+  const shaped = await shapeOne(env, row, ctx.faction.id, await quorumFor(env, gameId));
 
   // Announce the bill to Discord straight away so the debate window has
   // somewhere to happen. Fully isolated: a Discord outage, a missing
@@ -1038,7 +1014,7 @@ async function handleListProposals(req, env, { url, params, session }) {
   // game at this tick, so shaping each bill against its own lookup would
   // be N round-trips for one answer.
   const termTicks = await termTicksFor(env, gameId);
-  const quorum = await quorumFor(env, gameId, termTicks);
+  const quorum = await quorumFor(env, gameId);
   const term = await currentTerm(env, gameId, ctx.game.current_tick);
 
   const out = [];
@@ -1075,9 +1051,8 @@ async function handleListProposals(req, env, { url, params, session }) {
       awaiting_turn: term ? await remainingInCycle(env, gameId, Number(term.bag_cycle)) : [],
       quorum: {
         required: quorum.quorum,
-        seated: quorum.seated,
-        total: quorum.total,
-        seated_ids: quorum.seated_ids,
+        eligible: quorum.eligible,
+        eligible_ids: quorum.eligible_ids,
       },
     },
   });
@@ -1096,7 +1071,7 @@ async function handleGetProposal(_req, env, { params, session }) {
 
   const shaped = await shapeOne(
     env, row, ctx.faction.id,
-    await quorumFor(env, gameId, await termTicksFor(env, gameId)),
+    await quorumFor(env, gameId),
   );
   const votes = await env.DB
     .prepare(
@@ -1454,6 +1429,16 @@ export async function resolveSenate(env, gameId, tick) {
           }),
         });
       } catch { /* best-effort */ }
+
+      // Announce to the channel + DM the new chairman. Isolated on its
+      // own: a Discord failure must not prevent the term from being
+      // seated, and the term is already committed above.
+      try {
+        const discord = await import('./discord.js');
+        await discord.publishChairmanSeated(env, gameId, term, chair?.name ?? 'A faction');
+      } catch (e) {
+        console.error('publishChairmanSeated failed', e, { termId: term.id });
+      }
     }
   } catch (e) {
     console.error('resolveSenate: term rotation failed', e);
@@ -1524,7 +1509,7 @@ export async function resolveSenate(env, gameId, tick) {
   let quorumCtx = null;
   if (toResolve.length > 0) {
     try {
-      quorumCtx = await quorumFor(env, gameId, await termTicksFor(env, gameId));
+      quorumCtx = await quorumFor(env, gameId);
     } catch (e) {
       console.error('resolveSenate: quorum lookup failed', e);
     }
@@ -1578,7 +1563,7 @@ export async function resolveSenate(env, gameId, tick) {
             failed_quorum: !quorumMet,
             quorum_required: required,
             quorum_cast: cast,
-            quorum_seated: quorumCtx?.seated ?? null,
+            quorum_eligible: quorumCtx?.eligible ?? null,
             yea_weight: totals.yea.weight,
             nay_weight: totals.nay.weight,
             abstain_weight: totals.abstain.weight,

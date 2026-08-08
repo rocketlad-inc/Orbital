@@ -57,7 +57,11 @@ async function seed(players, gameId = 'gsen', tickMs = 3600000) {
   return { env, DB, gameId, factionIds };
 }
 
-/** Mark every player as recently seen so they count toward quorum. */
+/** Write a session row per player, `agoMs` in the past.
+ *
+ *  Sessions do NOT affect quorum — that is exactly what this now exists
+ *  to prove. Kept so the tests can assert the bar stays put whether
+ *  everyone is fresh, stale, or has never logged in at all. */
 async function seatEveryone(DB, gameId, agoMs = 0) {
   const users = ((await DB.prepare(
     `SELECT user_id FROM game_factions WHERE game_id = ?`).bind(gameId).all()).results ?? []);
@@ -199,40 +203,51 @@ async function terms(DB, gameId) {
 }
 
 // ============================================================
-// 5. QUORUM — the denominator is SEATED players, not seats.
+// 5. QUORUM — a MAJORITY of the living factions in the game.
+//
+//    Idleness is irrelevant (Lorne): a seat belongs to the empire, not
+//    to whether its owner logged in this week. Only ELIMINATION removes
+//    one. An earlier build shrank the denominator to recently-seen
+//    players; these tests are what pin the rule down so that cannot
+//    quietly creep back.
 // ============================================================
 {
   const { env, DB, gameId } = await seed(7, 'gquor');
-  let q = await quorumFor(env, gameId, TERM);
-  check('nobody seen -> seated 0, quorum floors at 2',
-    q.seated === 0 && q.quorum === 2 && q.total === 7,
-    JSON.stringify(q));
+  let q = await quorumFor(env, gameId);
+  check('7 living factions -> quorum 4', q.eligible === 7 && q.quorum === 4, JSON.stringify(q));
 
-  await seatEveryone(DB, gameId, 0);
-  q = await quorumFor(env, gameId, TERM);
-  check('all 7 seated -> quorum 4', q.seated === 7 && q.quorum === 4, JSON.stringify(q));
+  // The rule that changed. Nobody has a session at all here, and the
+  // bar must NOT move for it.
+  const { env: e2, DB: d2, gameId: g2 } = await seed(7, 'gidle');
+  const q2 = await quorumFor(e2, g2);
+  check('idle players still count toward quorum',
+    q2.eligible === 7 && q2.quorum === 4, JSON.stringify(q2));
 
-  // Stale sessions must not seat anyone. Window is max(2 terms, 48h);
-  // at 1h/tick that's 48h, so 30 days ago is comfortably outside.
-  const { env: e2, DB: d2, gameId: g2 } = await seed(7, 'gstale');
+  // ...and a month-old session is still just an idle player.
   await seatEveryone(d2, g2, 30 * 24 * 3600 * 1000);
-  const q2 = await quorumFor(e2, g2, TERM);
-  check('month-old sessions do not seat anyone',
-    q2.seated === 0 && q2.total === 7, JSON.stringify(q2));
+  const q2b = await quorumFor(e2, g2);
+  check('a stale session changes nothing',
+    q2b.eligible === 7 && q2b.quorum === 4, JSON.stringify(q2b));
 
-  // 4 of 7 present -> quorum 2. The bar tracks the room, not the roster:
-  // this is the whole reason six live games would otherwise be frozen.
-  const { env: e3, DB: d3, gameId: g3 } = await seed(7, 'gpart');
-  const users = ((await d3.prepare(
-    `SELECT user_id FROM game_factions WHERE game_id = ? ORDER BY slot`).bind(g3).all()).results ?? []);
-  for (let i = 0; i < 4; i++) {
-    await d3.prepare(`INSERT INTO sessions (token,user_id,created_at,expires_at,last_seen_at)
-                      VALUES (?,?,?,?,?)`)
-      .bind(`sp${i}`, users[i].user_id, 0, 0, Date.now()).run();
-  }
-  const q3 = await quorumFor(e3, g3, TERM);
-  check('4 of 7 present -> quorum 2 (not 4)',
-    q3.seated === 4 && q3.quorum === 2, JSON.stringify(q3));
+  // Elimination is the ONLY thing that shrinks the chamber.
+  const facs = ((await DB.prepare(
+    `SELECT id FROM game_factions WHERE game_id = ? ORDER BY slot`).bind(gameId).all()).results ?? [])
+    .map(r => r.id);
+  await DB.prepare(`UPDATE game_factions SET status = 'eliminated' WHERE id IN (?, ?, ?)`)
+    .bind(facs[4], facs[5], facs[6]).run();
+  q = await quorumFor(env, gameId);
+  check('eliminating 3 of 7 drops the bar to 3 of 4',
+    q.eligible === 4 && q.quorum === 3, JSON.stringify(q));
+
+  // MAJORITY, not half: an even chamber needs more than a tie's worth.
+  const { env: e4, gameId: g4 } = await seed(4, 'geven');
+  const q4 = await quorumFor(e4, g4);
+  check('4 factions -> quorum 3 (majority, not half)',
+    q4.eligible === 4 && q4.quorum === 3, JSON.stringify(q4));
+
+  const { env: e5, gameId: g5 } = await seed(2, 'gduo');
+  const q5 = await quorumFor(e5, g5);
+  check('2 factions -> both must vote', q5.eligible === 2 && q5.quorum === 2, JSON.stringify(q5));
 }
 
 // ============================================================
@@ -240,8 +255,9 @@ async function terms(DB, gameId) {
 //    when the tally is unanimous in favour.
 // ============================================================
 {
+  // 7 living factions -> quorum 4. No session setup needed: idleness
+  // does not enter into it.
   const { env, DB, gameId } = await seed(7, 'gres');
-  await seatEveryone(DB, gameId, 0);                     // quorum = 4
   const facs = ((await DB.prepare(
     `SELECT id FROM game_factions WHERE game_id = ? ORDER BY slot`).bind(gameId).all()).results ?? [])
     .map(r => r.id);

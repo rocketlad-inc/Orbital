@@ -349,6 +349,83 @@ export async function publishSenateProposed(env, gameId, row, proposerName) {
   return { posted: true };
 }
 
+/**
+ * Announce a new chairman: one post to the shared channel, one DM to the
+ * player who just picked up the gavel.
+ *
+ * The DM is the important half. There is no forfeit rule — a chairman
+ * who doesn't notice their term burns all of it, and the agenda goes
+ * unset for the whole window. Four of seven players in the completed
+ * game never proposed anything, so "didn't notice" is the expected
+ * failure, not a rare one. The channel post is for everyone else, who
+ * mostly need to know who to lobby.
+ *
+ * Fully isolated by the caller: this runs inside resolveSenate's term
+ * block, and a Discord outage must never stall a tick.
+ */
+export async function publishChairmanSeated(env, gameId, term, chairName) {
+  if (!env.DISCORD_BOT_TOKEN) return { posted: false, reason: 'no_bot_token' };
+  const name = await gameName(env, gameId);
+  const termNo = Number(term.term_index) + 1;
+  const span = Number(term.end_tick) - Number(term.start_tick);
+
+  const result = { posted: false, dmed: false };
+
+  // 1) The room's announcement.
+  const channelId = await resolveChannelId(env);
+  if (channelId) {
+    const res = await botFetch(env, 'POST', `/channels/${channelId}/messages`, {
+      embeds: [{
+        title: `🔨 ${chairName} takes the Senate chair`,
+        description:
+          `**Term ${termNo}** runs until tick **${term.end_tick}** (${span} ticks).\n\n`
+          + `Only the chairman can put a bill on the floor, one at a time, and a bill has to `
+          + `finish before the term ends — so anything you want debated this term, say now.`,
+        color: 0xffb84d,
+        footer: { text: name ? `${name} · Senate` : 'Senate' },
+      }],
+    });
+    result.posted = res.ok;
+    if (!res.ok) {
+      console.error(`chairman announce failed ${res.status}`, await res.text().catch(() => ''));
+    }
+  } else {
+    result.reason = 'no_channel';
+  }
+
+  // 2) The chairman's own nudge. Uses the senate category — this is
+  // squarely "a senate thing that needs your attention", which is what
+  // that toggle promises. dedupeKey is the term id, so a retried tick
+  // or a resumed alarm can never double-DM.
+  try {
+    const notify = await import('./notify.js');
+    const userId = await notify.userIdForFaction(env, term.faction_id);
+    if (userId) {
+      const dm = await notify.sendDm(env, {
+        userId,
+        gameId,
+        category: 'senate',
+        dedupeKey: `chair:${term.id}`,
+        embed: {
+          title: '🔨 You hold the Senate gavel',
+          description:
+            `You preside over **term ${termNo}** until tick **${term.end_tick}** — ${span} ticks.\n\n`
+            + `You are the only faction that can propose right now. One bill runs at a time and each `
+            + `must resolve before your term ends, so a long debate window costs you a second bill.\n\n`
+            + `**Nothing carries over.** Whatever you don't put on the floor this term goes unproposed.`,
+          color: 0x6ee7b7,
+          footer: { text: name ? `${name} · Senate` : 'Senate' },
+        },
+      });
+      result.dmed = dm.sent;
+      if (!dm.sent) result.dmReason = dm.reason;
+    }
+  } catch (e) {
+    console.error('chairman DM failed', e);
+  }
+  return result;
+}
+
 /** Post a plain embed to the shared channel. Used by battle cards and
  *  anything else that belongs to the room rather than a person. */
 export async function postChannelEmbed(env, embed) {

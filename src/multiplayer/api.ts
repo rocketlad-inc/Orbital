@@ -309,10 +309,9 @@ export type SenateProposal = {
   quorum?: {
     required: number;
     cast: number;
-    /** Players with a live session; the quorum denominator. */
-    seated: number;
-    /** Every active faction, empty chairs included. */
-    total: number;
+    /** Every non-eliminated faction — the quorum denominator. Idle
+     *  players still hold their seat; only elimination removes one. */
+    eligible: number;
     met: boolean;
   } | null;
 };
@@ -337,7 +336,7 @@ export type SenateSession = {
   /** Factions yet to hold the gavel this cycle. Unordered — the draw is
    *  random within a cycle, so this is "still waiting", not a queue. */
   awaiting_turn: string[];
-  quorum: { required: number; seated: number; total: number; seated_ids: string[] };
+  quorum: { required: number; eligible: number; eligible_ids: string[] };
 };
 
 // ============================================================

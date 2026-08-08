@@ -116,6 +116,116 @@ await shape('lopsided melee is a rout, not total confusion',
     'names the gutted faction': has(F.C),
   });
 
+
+// ------------------------------------------------------------
+// Senate prose (chairman terms + quorum failures).
+//
+// The quorum case is the one that needed a test. A bill that dies for
+// want of attendance is NOT a defeat, but it lands on the same
+// `outcome: 'failed'` field as one — so before the split, every
+// quorum death printed "lawmakers weren't convinced" and "couldn't
+// find the votes it needed" about a vote that was never held. That is
+// a Herald stating something false about the game.
+// ------------------------------------------------------------
+
+/** Herald over arbitrary chronicle rows: [kind, actorKey, payload]. */
+async function heraldRows(rows) {
+  const DB = new SimD1(':memory:');
+  DB.applyMigrations(MIGRATIONS);
+  const G = 'g2';
+  await DB.prepare(`INSERT INTO users (id,email,display_name,password_hash,created_at)
+                    VALUES ('u1','t@t','T','x',0)`).run();
+  await DB.prepare(`INSERT INTO rooms (id,name,host_id,created_at,updated_at)
+                    VALUES (?, 'r','u1',0,0)`).bind(G).run();
+  await DB.prepare(`INSERT INTO games (id,status,map_seed,current_tick,created_at)
+                    VALUES (?, 'active','s',400,0)`).bind(G).run();
+  let slot = 0;
+  for (const k of Object.keys(F)) {
+    await DB.prepare(`INSERT INTO game_factions (id,game_id,slot,name,color,status,joined_at)
+                      VALUES (?,?,?,?,'#fff','active',0)`).bind(`f_${k}`, G, slot++, F[k]).run();
+  }
+  let n = 0;
+  const now = Date.now();
+  for (const [kind, actor, payload] of rows) {
+    await DB.prepare(
+      `INSERT INTO chronicle_entries
+         (id,game_id,tick_number,kind,actor_faction_id,payload,visibility,created_at_ms)
+       VALUES (?,?,400,?,?,?, 'public', ?)`)
+      .bind(`s${n++}`, G, kind, `f_${actor}`, JSON.stringify(payload), now - 1000).run();
+  }
+  const h = await composeHeraldForGame({ DB }, { id: G, name: 'Endgame', current_tick: 400 });
+  return [h.title, h.description, ...h.fields.map(f => f.value)].join('\n');
+}
+
+async function shapeRows(label, rows, checks) {
+  for (let run = 0; run < RUNS; run++) {
+    const text = await heraldRows(rows);
+    for (const [what, ok] of Object.entries(checks)) {
+      if (!ok(text)) {
+        failures.push(`${label} :: ${what} -- ${text.split('\n').slice(0, 3).join(' | ')}`);
+        return;
+      }
+    }
+  }
+  console.log(`PASS  ${label}`);
+}
+
+/** Phrases that assert the chamber WEIGHED a bill. All of them are lies
+ *  about a motion that never reached a tally. */
+const DEBATE_CLAIMS = [
+  "weren't convinced", 'votes it needed', 'votes down', 'rejected',
+  'fails to carry', 'gavel falls against',
+];
+
+// TWO rows per shape, deliberately. composeEmbed promotes the single
+// most newsworthy story to the headline and removes it from its section,
+// so a one-row fixture only ever exercises the HEADLINE bank and leaves
+// the narrative bank — the longer, more error-prone one — untested. The
+// first version of these tests did exactly that and reported a failure
+// against an empty body.
+await shapeRows('a quorum failure never reads as a lost debate',
+  [['senate_vote', 'A', {
+    title: 'Mining Levy', bill_kind: 'slider_law', outcome: 'failed',
+    failed_quorum: true, quorum_required: 4, quorum_cast: 2,
+    yea_weight: 6, nay_weight: 0, abstain_weight: 0,
+  }], ['senate_vote', 'C', {
+    title: 'Orbital Tariff', bill_kind: 'slider_law', outcome: 'failed',
+    failed_quorum: true, quorum_required: 4, quorum_cast: 1,
+    yea_weight: 3, nay_weight: 0, abstain_weight: 0,
+  }]], {
+    'never claims the chamber rejected it':
+      (t) => !DEBATE_CLAIMS.some(c => t.toLowerCase().includes(c.toLowerCase())),
+    'says quorum or attendance':
+      (t) => /quorum|attendance|empty|deserted|absentee|benches|too thin|turn(ed)? up|answered|unread|procedurally/i.test(t),
+    'names the bill': has('Mining Levy'),
+  });
+
+await shapeRows('CONTROL an ordinary defeat still reads as a defeat',
+  [['senate_vote', 'A', {
+    title: 'Mining Levy', bill_kind: 'slider_law', outcome: 'failed',
+    failed_quorum: false, quorum_required: 2, quorum_cast: 3,
+    yea_weight: 2, nay_weight: 9, abstain_weight: 0,
+  }]], {
+    'does not blame attendance':
+      (t) => !/no quorum|empty benches|deserted|absentee/i.test(t),
+    'names the bill': has('Mining Levy'),
+  });
+
+await shapeRows('a seated chairman is named with the term deadline',
+  [['senate_term', 'B', {
+    faction_name: F.B, term_index: 2, bag_cycle: 0,
+    start_tick: 48, end_tick: 72,
+  }], ['senate_term', 'A', {
+    faction_name: F.A, term_index: 3, bag_cycle: 0,
+    start_tick: 72, end_tick: 96,
+  }]], {
+    'names a chairman': (t) => t.includes(F.B) || t.includes(F.A),
+    // The deadline is the only actionable fact in a term announcement —
+    // "who presides" without "until when" gives a reader nothing to do.
+    'carries a deadline or a span': (t) => /\b(72|96|24|twenty-four)\b/.test(t),
+    'does not invent a bill title': (t) => !/"\s*"/.test(t),
+  });
+
 // --- controls: paths that must NOT have changed ------------------------
 
 await shape('CONTROL a genuinely unknown attacker credits nobody',

@@ -820,6 +820,7 @@ function classifyChronicleEvent(kind: string): { category: LogCategory; level: L
     case 'trade_delivered':
     case 'treaty_signed':
     case 'senate_vote':
+    case 'senate_term':
     case 'victory':
       return { category: 'SYSTEM', level: 'INFO' };
     default:
@@ -1392,6 +1393,18 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
           : '';
         const verb = outcome === 'passed' ? 'PASSED' : outcome === 'failed' ? 'FAILED' : outcome.toUpperCase();
         return `${t}  ⚖ Senate: “${title}”${kindBit} ${verb}${tally}`;
+      }
+
+      if (ev.kind === 'senate_term') {
+        // A term handover is a schedule announcement, so it leads with
+        // the DEADLINE, not the ceremony: what a player needs from this
+        // line is "how long until the floor changes hands", which is the
+        // only number here they can act on.
+        const who = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
+        const n = Number(parsed.term_index ?? 0) + 1;
+        const until = Number(parsed.end_tick ?? 0);
+        const span = until - Number(parsed.start_tick ?? 0);
+        return `${t}  🔨 Senate: ${who} takes the chair for term ${n} — holds the floor ${span} ticks, until T+${until}`;
       }
 
       if (ev.kind === 'tech_advanced') {

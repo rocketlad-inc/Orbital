@@ -558,7 +558,6 @@ export function SenatePanel({
         factions={factions}
         myFactionId={myFactionId}
         votedIds={floorBallotIds}
-        seatedIds={session?.quorum ? new Set(session.quorum.seated_ids ?? []) : null}
         quorum={session?.quorum ?? null}
       />
 
@@ -1010,11 +1009,9 @@ function VoteBar({ totals, quorum }: {
       {quorum.met
         ? `✓ Quorum met — ${quorum.cast} voted, ${quorum.required} needed`
         : `⚠ Needs quorum — ${quorum.cast} of ${quorum.required} voted`}
-      {quorum.seated !== quorum.total && (
-        <span style={{ color: 'var(--mp-fg-dim)' }}>
-          {' '}({quorum.seated} of {quorum.total} seats active)
-        </span>
-      )}
+      <span style={{ color: 'var(--mp-fg-dim)' }}>
+        {' '}(majority of {quorum.eligible} living factions)
+      </span>
     </div>
   ) : null;
 
@@ -1311,7 +1308,7 @@ function BlockingCoalition({
  * visible as a bloc.
  */
 function Chamber({
-  factions, myFactionId, votedIds, seatedIds, quorum,
+  factions, myFactionId, votedIds, quorum,
 }: {
   factions: Faction[];
   myFactionId: string | null;
@@ -1319,13 +1316,11 @@ function Chamber({
    *  Everyone else gets an outlined seat — those are the ones still worth
    *  a message. */
   votedIds: Set<string> | null;
-  /** Factions with a live session. These are the ONLY ones that count
-   *  toward quorum, so an empty chair has to look different from a
-   *  present-but-silent one — otherwise a player staring at a bill that
-   *  can't reach quorum has no way to tell whether chasing votes would
-   *  help or the empire in question was abandoned weeks ago. */
-  seatedIds: Set<string> | null;
-  quorum: { required: number; seated: number; total: number } | null;
+  /** Quorum bar for this game. Every living faction counts toward the
+   *  denominator — an idle player keeps their seat, so there is no
+   *  "present vs absent" distinction to draw here. Only elimination
+   *  removes a seat, and eliminated factions are already filtered out. */
+  quorum: { required: number; eligible: number } | null;
 }) {
   const seated = factions
     .filter(f => f.status !== 'eliminated')
@@ -1340,30 +1335,22 @@ function Chamber({
       <div className="sp-sect__h" style={{ marginTop: 14 }}>
         <span className="sp-lbl">The chamber</span>
         <span className="sp-lbl">
-          {quorum ? `quorum ${quorum.required} of ${quorum.seated} active` : `${total} votes`}
+          {quorum ? `quorum ${quorum.required} of ${quorum.eligible}` : `${total} votes`}
         </span>
       </div>
       <div className="sp-seats">
         {seated.flatMap(({ f, w }) => {
-          const absent = !!seatedIds && !seatedIds.has(f.id);
           const noVote = !!votedIds && !votedIds.has(f.id);
           return Array.from({ length: w }, (_, i) => (
             <span
               key={`${f.id}:${i}`}
               className={`sp-seat${f.id === myFactionId ? ' is-you' : ''}`
                 + (noVote ? ' is-novote' : '')}
-              // An abandoned seat is faded on top of whatever else it is.
-              // Deliberately NOT a third colour: it's a dimension, not a
-              // category — an empty chair can also be an un-voted one.
-              style={{
-                ...(noVote
-                  ? { color: f.color }
-                  : { background: f.color, color: readableInk(f.color) }),
-                ...(absent ? { opacity: 0.3 } : null),
-              }}
+              style={noVote
+                ? { color: f.color }
+                : { background: f.color, color: readableInk(f.color) }}
               title={`${f.name} — ${w} vote${w === 1 ? '' : 's'}`
-                + (absent ? ' — no recent activity, does not count toward quorum'
-                          : noVote ? ' — has not voted' : '')}
+                + (noVote ? ' — has not voted' : '')}
             >
               {initials(f.name)}
             </span>
@@ -1379,16 +1366,11 @@ function Chamber({
         ))}
       </div>
       <div className="sp-note">
-        {/* The old copy said dormant factions "keep their seat while
-            alive". That stopped being true when quorum shipped: they
-            keep the seat, but they no longer count toward the room a
-            bill needs. Saying otherwise would have players chasing
-            votes from empires nobody is playing. */}
         {votedIds ? 'Outlined seats have not voted. ' : `${total} votes in the chamber. `}
-        {quorum && quorum.seated < quorum.total
-          ? `Faded seats have gone quiet — ${quorum.total - quorum.seated} of ${quorum.total} `
-            + 'are not counted toward quorum.'
-          : 'A bill needs ' + (quorum?.required ?? 0) + ' factions to vote before the tally counts.'}
+        {quorum
+          ? `A bill needs ${quorum.required} of the ${quorum.eligible} living factions to vote `
+            + '— yea, nay, or abstain — before the tally counts. Dormant factions keep their seat.'
+          : 'Dormant factions keep their seat while alive.'}
       </div>
     </>
   );

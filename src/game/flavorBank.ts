@@ -154,6 +154,22 @@ export const FLAVOR_BANK: Record<string, string[]> = {
     "“{voteTitle}” {voteOutcome} after a final round of floor speeches.",
     "Order restored, the chamber recorded that “{voteTitle}” {voteOutcome}.",
   ],
+  // The gavel changing hands. Two things have to survive the prose: WHO
+  // holds it, and that it is TEMPORARY — the whole tension of a term is
+  // that agenda control expires. Variants that read as a coronation
+  // rather than a rotation were cut.
+  chairman_seated: [
+    "The gavel passes to {actor}. Until T+{termEnd}, the agenda is theirs to set.",
+    "{actor} takes the chair for term {termNumber}. The floor is theirs for {termSpan} ticks — no longer.",
+    "Lots were drawn. {actor} presides, and the chamber's business is whatever {actor} says it is until T+{termEnd}.",
+    "{actor} assumes the chair. Delegations that wanted something on the docket this term are already in the corridor.",
+    "The rotation lands on {actor}, who now holds the only seat that can call a vote. Term {termNumber} begins.",
+    "By the draw, {actor} presides over term {termNumber}. {termSpan} ticks to spend, and no way to bank them.",
+    "The chair falls to {actor}. Whatever they fail to put on the floor this term dies unproposed.",
+    "{actor} was seated as chairman. Petitioners have {termSpan} ticks to be persuasive.",
+    "Term {termNumber} opens with {actor} holding the gavel — an office that expires at T+{termEnd}, as they all do.",
+    "{actor} presides. The chamber's power to legislate is, for now, one faction's to schedule.",
+  ],
   tech_advanced: [
     "{actor}'s labs pushed {techName} to {techLevel} this cycle. The breakthrough holds under review.",
     "Field trials confirm it: {actor} now operates {techName} at {techLevel}.",

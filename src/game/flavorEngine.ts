@@ -76,6 +76,7 @@ const KIND_MAP: Record<string, string> = {
   treaty_broken:        'pact_broken',
   asteroid_impact:      'asteroid_impact',
   senate_vote:          'vote_resolved',
+  senate_term:          'chairman_seated',
   tech_advanced:        'tech_advanced',
   victory:              'victory',
   // No banks wired for these server kinds yet (or the server doesn't
@@ -353,6 +354,28 @@ function resolveVars(ev: FlavorEvent, ctx: FlavorContext): Record<string, string
         actor: facName(actorFac),
         voteTitle: str('title'),
         voteOutcome: outcome,
+        tick,
+      };
+    }
+    case 'senate_term': {
+      // faction_name is carried in the payload because a term outlives
+      // nothing — but the actor lookup can still miss for a faction the
+      // caller cannot see, and a chairman announcement with no name is
+      // worse than none.
+      // num() returns a STRING (every flavor var is a string), so the
+      // arithmetic here reads the raw payload instead of round-tripping
+      // through it. term_index is 0-based on the wire and 1-based in
+      // prose — nobody says "term zero".
+      const rawStart = p.start_tick;
+      const rawEnd = p.end_tick;
+      const rawIdx = p.term_index;
+      const span = (typeof rawStart === 'number' && typeof rawEnd === 'number')
+        ? rawEnd - rawStart : undefined;
+      return {
+        actor: facName(actorFac, p.faction_name as string | undefined),
+        termNumber: typeof rawIdx === 'number' ? String(rawIdx + 1) : undefined,
+        termEnd: num('end_tick'),
+        termSpan: span != null ? String(span) : undefined,
         tick,
       };
     }

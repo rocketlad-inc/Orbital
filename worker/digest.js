@@ -865,6 +865,50 @@ const SENATE_FAILED = [
   c => `"${c.title}" couldn't find the votes it needed.`,
 ];
 
+// A bill that dies for want of a quorum did NOT lose a debate, and the
+// SENATE_FAILED prose ("lawmakers weren't convinced", "couldn't find the
+// votes it needed") would be a straight falsehood about it — the votes
+// were never cast at all. Separate bank, separate blame: the story is
+// the empty chamber, not the motion.
+const SENATE_NO_QUORUM = [
+  c => `"${c.title}" died without a quorum — only ${numWord(c.cast)} of the ${numWord(c.required)} delegations required even turned up to vote.`,
+  c => `The chamber could not muster a quorum for "${c.title}". ${b(c.actor)}'s motion lapsed unread.`,
+  c => `Benches sat empty as "${c.title}" came to a vote. ${numWord(c.cast)} delegations answered; ${numWord(c.required)} were needed.`,
+  c => `No quorum, no law: "${c.title}" fell for want of attendance, not argument.`,
+  c => `${b(c.actor)} brought "${c.title}" to the floor and found the floor deserted. The motion dies procedurally.`,
+  c => `"${c.title}" never reached a tally — the assembly was short of the ${numWord(c.required)} delegations a vote requires.`,
+];
+
+const SENATE_NO_QUORUM_HEADLINE = [
+  c => `"${c.title.toUpperCase()}" DIES ON EMPTY BENCHES`,
+  c => `NO QUORUM: "${c.title.toUpperCase()}" LAPSES`,
+  c => `CHAMBER TOO THIN TO VOTE ON "${c.title.toUpperCase()}"`,
+  c => `ABSENTEEISM KILLS "${c.title.toUpperCase()}"`,
+];
+
+// The gavel changing hands. Written to carry the DEADLINE, because that
+// is the only actionable fact in it — a term is agenda control with an
+// expiry, and a reader's question is "how long do I have to lobby them".
+const SENATE_CHAIR = [
+  c => `${b(c.actor)} has taken the Senate chair for term ${c.termNumber}, holding the floor until tick ${c.termEnd}.`,
+  c => `The gavel passes to ${b(c.actor)}. For the next ${numWord(c.termSpan)} ticks, the Senate's agenda is theirs alone to set.`,
+  c => `Lots drawn, ${b(c.actor)} presides. Delegations with business before the chamber have until tick ${c.termEnd} to make their case.`,
+  // Every template in this bank carries the deadline or the span. That
+  // is not stylistic: a term announcement without "until when" gives the
+  // reader nothing they can act on, and two variants here originally
+  // shipped without one until sim/heraldShapes.mjs caught them.
+  c => `${b(c.actor)} assumes the chair. No other delegation may table a bill before tick ${c.termEnd}.`,
+  c => `Term ${c.termNumber} opens under ${b(c.actor)}, who holds the sole power to call a vote for ${numWord(c.termSpan)} ticks.`,
+  c => `The rotation falls to ${b(c.actor)}, whose ${numWord(c.termSpan)}-tick term ends at ${c.termEnd}. Whatever they decline to put on the floor goes unproposed.`,
+];
+
+const SENATE_CHAIR_HEADLINE = [
+  c => `${c.actor.toUpperCase()} TAKES THE SENATE CHAIR`,
+  c => `THE GAVEL PASSES TO ${c.actor.toUpperCase()}`,
+  c => `${c.actor.toUpperCase()} TO SET THE AGENDA THIS TERM`,
+  c => `TERM ${c.termNumber}: ${c.actor.toUpperCase()} PRESIDES`,
+];
+
 const SENATE_FAILED_HEADLINE = [
   c => `SENATE REJECTS "${c.title.toUpperCase()}"`,
   c => `LAWMAKERS BLOCK "${c.title.toUpperCase()}"`,
@@ -1430,12 +1474,39 @@ function buildPoliticsStories(rows, used, factionNames) {
     } else if (row.kind === 'senate_vote') {
       // Title-cased for display only — player-typed titles otherwise sit
       // lowercase/shouty next to properly-cased faction/body names.
-      const ctx = { title: titleCase(p.title ?? 'a motion'), actor: nameOf(row.actor_faction_id) };
+      const ctx = {
+        title: titleCase(p.title ?? 'a motion'),
+        actor: nameOf(row.actor_faction_id),
+        cast: Number(p.quorum_cast ?? 0),
+        required: Number(p.quorum_required ?? 0),
+      };
       if (p.outcome === 'passed') {
         stories.push(mkStory(120, used, 'senate_passed', SENATE_PASSED, 'senate_passed_hl', SENATE_PASSED_HEADLINE, ctx));
+      } else if (p.failed_quorum) {
+        // Ranked ABOVE an ordinary defeat. A chamber that cannot fill
+        // its own benches is a bigger story than a motion losing a
+        // vote, and it is the one piece of news that might actually
+        // change reader behaviour — the fix is to show up.
+        stories.push(mkStory(200, used, 'senate_no_quorum', SENATE_NO_QUORUM, 'senate_no_quorum_hl', SENATE_NO_QUORUM_HEADLINE, ctx));
       } else {
         stories.push(mkStory(120, used, 'senate_failed', SENATE_FAILED, 'senate_failed_hl', SENATE_FAILED_HEADLINE, ctx));
       }
+    } else if (row.kind === 'senate_term') {
+      const start = Number(p.start_tick ?? 0);
+      const end = Number(p.end_tick ?? 0);
+      const ctx = {
+        // nameOf() substitutes 'an unnamed faction' rather than returning
+        // null, so a ?? chain behind it would never fire. Check the
+        // faction map directly and fall back to the name the chronicle
+        // captured at seating time.
+        actor: factionNames.get(row.actor_faction_id) ?? p.faction_name ?? 'a delegation',
+        termNumber: Number(p.term_index ?? 0) + 1,
+        termEnd: end,
+        termSpan: Math.max(0, end - start),
+      };
+      // Below a resolved bill: who holds the gavel matters less than
+      // what the chamber actually did with it.
+      stories.push(mkStory(100, used, 'senate_chair', SENATE_CHAIR, 'senate_chair_hl', SENATE_CHAIR_HEADLINE, ctx));
     }
   }
   return stories;
