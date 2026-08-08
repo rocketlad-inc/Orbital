@@ -252,6 +252,31 @@ function MyGamesPanel({
     onChanged();
   }
 
+  // Publish a FINISHED game's final Herald edition from the lobby.
+  //
+  // The host control for this lives in the in-game side menu, which a
+  // completed match cannot reach: the GAME OVER overlay covers the top
+  // bar, so the only door to the button is shut exactly when a final
+  // edition is the thing you want (Lorne: "I can't access that anymore").
+  // Same host-only endpoint; the server publishes the full unpublished
+  // window for a completed game rather than the rolling 12h one.
+  async function publishFinalHerald(r: RoomSummary) {
+    setError(null);
+    setBusyId(r.id);
+    const res = await apiFetch<{ posted: boolean; events: number; reason?: string }>(
+      `/api/games/${r.game_id}/admin/digest-now`,
+      { method: 'POST' },
+    );
+    setBusyId(null);
+    if (!res.ok) {
+      setError(res.error?.message ?? 'Could not publish the Herald');
+      return;
+    }
+    setError(res.data.posted
+      ? `Herald published — ${res.data.events} event${res.data.events === 1 ? '' : 's'}.`
+      : `Not posted — ${res.data.reason ?? 'unknown'}`);
+  }
+
   async function deleteRoom(r: RoomSummary) {
     if (!window.confirm(`Delete room "${r.name}"? This permanently removes the room and any game in it.`)) return;
     setError(null);
@@ -321,6 +346,18 @@ function MyGamesPanel({
               >
                 {busyId === r.id ? '…' : (archiveView ? '↩' : '🗄')}
               </button>
+              {/* Finished games only — a live game still has the in-game
+                  button, and an un-started room has nothing to report. */}
+              {iAmHost && r.game_id && r.game_status === 'completed' && (
+                <button
+                  className="mp-room-card__herald"
+                  onClick={(e) => { e.stopPropagation(); publishFinalHerald(r); }}
+                  disabled={busyId === r.id}
+                  title="Publish this finished match's final Orbital Herald edition to Discord"
+                >
+                  {busyId === r.id ? '…' : '🗞'}
+                </button>
+              )}
               {iAmHost && (
                 <button
                   className="mp-room-card__delete"

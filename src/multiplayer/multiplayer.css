@@ -1514,6 +1514,27 @@
 }
 .mp-room-card__archive:disabled { opacity: 0.5; cursor: default; }
 
+/* Publish the final Herald — host-only, finished games only. Shares the
+   archive button's footprint so the row stays even, tinted the Herald's
+   cyan rather than the archive amber so the two don't read as the same
+   kind of action. */
+.mp-room-card__herald {
+  background: transparent;
+  border: 1px solid #2a3d50;
+  color: #7a8a9a;
+  border-radius: 4px;
+  width: 26px; height: 26px;
+  font-size: 12px; line-height: 1;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.mp-room-card__herald:hover:not(:disabled) {
+  color: #4ecdc4;
+  border-color: #4ecdc4;
+  background: rgba(78, 205, 196, 0.08);
+}
+.mp-room-card__herald:disabled { opacity: 0.5; cursor: default; }
+
 /* ---- Profile / career / friends (migration 0073) -------------------- */
 .pp { padding: 4px 2px 24px; max-width: 860px; }
 .pp-section { margin-bottom: 22px; }
