@@ -150,12 +150,28 @@ const DEBATE_TICKS = 2;
 const VOTE_TICKS = 1;
 const EFFECT_TICKS = 7;
 
-// Per-proposal duration ranges. Loose enough for real deliberation
-// (e.g. a full day at 1h ticks for debate) but bounded so a single
-// proposer can't park a slider effect forever by setting the vote
-// window absurdly long.
-const DEBATE_MIN = 1, DEBATE_MAX = 48;
-const VOTE_MIN   = 1, VOTE_MAX   = 24;
+// Per-proposal duration ranges, in TICKS but floored in REAL TIME.
+//
+// Debate and voting each get at least six hours of wall clock (Lorne).
+// A tick-count floor cannot express that: live games run ticks from 30
+// seconds to 60 minutes, so "2 ticks" is a one-minute rubber stamp in
+// one game and two hours in another. Every player deserves a night's
+// sleep before a bill that can END THE GAME resolves — the chancellor
+// vote is a win condition and it should not be possible to slip one
+// past a table that happened to be offline.
+//
+// The MAX stays generous but is always at least the floor, so a fast-tick
+// game can't end up with min > max and a clamp that throws.
+const MIN_WINDOW_MS = 6 * 60 * 60 * 1000;   // six hours, each phase
+const DEBATE_MAX_TICKS = 48;
+const VOTE_MAX_TICKS   = 24;
+
+/** Ticks that cover MIN_WINDOW_MS at this game's cadence, at least 1. */
+export function minWindowTicks(tickIntervalMs) {
+  const ms = Number(tickIntervalMs);
+  if (!Number.isFinite(ms) || ms <= 0) return 1;   // malformed row: don't block the senate
+  return Math.max(1, Math.ceil(MIN_WINDOW_MS / ms));
+}
 
 // ============================================================
 // Bill kinds
@@ -245,7 +261,10 @@ function newId(prefix) {
 
 async function loadGameAndFaction(env, gameId, session) {
   const game = await env.DB
-    .prepare('SELECT g.id, g.current_tick, g.status, r.host_id FROM games g JOIN rooms r ON r.id = g.id WHERE g.id = ?')
+    // tick_interval_ms drives the 6-hour debate/vote floor: ticks are
+    // 30s in one live game and 60min in another, so a fixed tick count
+    // would mean six hours here and fifteen minutes there.
+    .prepare('SELECT g.id, g.current_tick, g.status, g.tick_interval_ms, r.host_id FROM games g JOIN rooms r ON r.id = g.id WHERE g.id = ?')
     .bind(gameId)
     .first();
   if (!game) return { error: err(404, 'not_found', 'game not found') };
@@ -562,6 +581,13 @@ async function handleListSliders(_req, env, { params, session }) {
   const effects = await listActiveEffectRows(env, gameId, ctx.game.current_tick);
   return json({
     current_tick: ctx.game.current_tick,
+    // The six-hour debate/vote floor in THIS game's ticks. Sent rather
+    // than hardcoded client-side: it depends on tick_interval_ms, which
+    // varies 30s..60min across live games, and a second copy of the rule
+    // is the thing that drifts.
+    min_window_ticks: minWindowTicks(ctx.game.tick_interval_ms),
+    debate_max_ticks: Math.max(DEBATE_MAX_TICKS, minWindowTicks(ctx.game.tick_interval_ms)),
+    vote_max_ticks: Math.max(VOTE_MAX_TICKS, minWindowTicks(ctx.game.tick_interval_ms)),
     sliders: SLIDER_CATALOG.map((s) => ({
       id: s.id,
       label: s.label,
@@ -646,10 +672,16 @@ async function handleCreateProposal(req, env, { params, session }) {
   const payload = await buildBillPayload(env, gameId, ctx.faction.id, kind, body);
   if (payload.error) return payload.error;
 
-  // Per-proposal durations. Defaults match the legacy constants so a
-  // client that doesn't send these fields gets the old behaviour.
-  const debateTicks = clampInt(body.debate_ticks, DEBATE_MIN, DEBATE_MAX, DEBATE_TICKS);
-  const voteTicks   = clampInt(body.vote_ticks,   VOTE_MIN,   VOTE_MAX,   VOTE_TICKS);
+  // Per-proposal durations, floored at six real hours for THIS game's
+  // tick cadence. The old defaults (2 debate / 1 vote) are below the
+  // floor on every cadence, so they are raised to it rather than used
+  // verbatim — a client that sends nothing gets the minimum, not a
+  // rubber stamp.
+  const floorTicks = minWindowTicks(ctx.game.tick_interval_ms);
+  const debateMax = Math.max(DEBATE_MAX_TICKS, floorTicks);
+  const voteMax   = Math.max(VOTE_MAX_TICKS,   floorTicks);
+  const debateTicks = clampInt(body.debate_ticks, floorTicks, debateMax, Math.max(DEBATE_TICKS, floorTicks));
+  const voteTicks   = clampInt(body.vote_ticks,   floorTicks, voteMax,   Math.max(VOTE_TICKS,   floorTicks));
 
   const id = newId('prop');
   const proposedAt = ctx.game.current_tick;

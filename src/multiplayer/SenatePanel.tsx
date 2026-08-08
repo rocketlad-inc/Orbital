@@ -5,11 +5,13 @@ import { DiscordLink } from './DiscordLink';
 import { hasFeature, requirementFor } from '../game/researchUnlocks';
 import { TECH_DEFS } from '../game/techs';
 
-// Per-proposal duration bounds — mirror worker/senate.js
-// DEBATE_MIN/MAX + VOTE_MIN/MAX so the input gates match server-side
-// validation (server clamps + rejects out-of-range).
-const DEBATE_MIN = 1, DEBATE_MAX = 48, DEBATE_DEFAULT = 2;
-const VOTE_MIN   = 1, VOTE_MAX   = 24, VOTE_DEFAULT   = 1;
+// Per-proposal duration bounds. The MINIMUM is six real hours for each
+// phase, which in ticks depends on the game's cadence — so the server
+// sends it (min_window_ticks) rather than the client keeping a second
+// copy of the rule. These are only the fallbacks used before the first
+// /senate/sliders response lands; the server clamps regardless.
+const DEBATE_MAX_FALLBACK = 48;
+const VOTE_MAX_FALLBACK   = 24;
 
 /** Bill kinds the server accepts. Slider law is the legacy default.
  *  Targeted sanctions plus the Chancellor election bill all carry a
@@ -153,8 +155,14 @@ export function SenatePanel({ gameId }: { gameId: string }) {
   const [sliderTargetId, setSliderTargetId] = useState<string>('');
   const [title, setTitle] = useState('');
   const [summary, setSummary] = useState('');
-  const [debateTicks, setDebateTicks] = useState<number>(DEBATE_DEFAULT);
-  const [voteTicks, setVoteTicks] = useState<number>(VOTE_DEFAULT);
+  // Seeded at 1 and raised to the server's six-hour floor as soon as the
+  // first sliders response lands (see refresh()). Starting AT a guessed
+  // floor would show a number that's wrong for this game's cadence.
+  const [minWindow, setMinWindow] = useState<number>(1);
+  const [debateMax, setDebateMax] = useState<number>(DEBATE_MAX_FALLBACK);
+  const [voteMax, setVoteMax] = useState<number>(VOTE_MAX_FALLBACK);
+  const [debateTicks, setDebateTicks] = useState<number>(1);
+  const [voteTicks, setVoteTicks] = useState<number>(1);
 
   // Proposing a bill is research-gated (worker/senate.js): any bill needs
   // 'senate.propose' (Industry 5); the Chancellor-election kind needs
@@ -171,7 +179,10 @@ export function SenatePanel({ gameId }: { gameId: string }) {
 
   const refresh = useCallback(async () => {
     const [sRes, pRes, fRes, wRes] = await Promise.all([
-      apiFetch<{ sliders: SenateSlider[]; current_tick: number }>(`/api/games/${gameId}/senate/sliders`),
+      apiFetch<{
+        sliders: SenateSlider[]; current_tick: number;
+        min_window_ticks?: number; debate_max_ticks?: number; vote_max_ticks?: number;
+      }>(`/api/games/${gameId}/senate/sliders`),
       apiFetch<{ proposals: SenateProposal[] }>(`/api/games/${gameId}/senate/proposals`),
       apiFetch<{ factions: Faction[] }>(`/api/games/${gameId}/factions`),
       apiFetch<WeightDetail>(`/api/games/${gameId}/senate/weight`),
@@ -179,6 +190,17 @@ export function SenatePanel({ gameId }: { gameId: string }) {
     if (sRes.ok) {
       setSliders(sRes.data.sliders);
       setCurrentTick(sRes.data.current_tick);
+      // Adopt the server's six-hour floor, and pull the current inputs up
+      // to it so the composer can't sit on a value the server will
+      // silently raise.
+      const floor = sRes.data.min_window_ticks;
+      if (typeof floor === 'number' && floor > 0) {
+        setMinWindow(floor);
+        setDebateMax(sRes.data.debate_max_ticks ?? Math.max(DEBATE_MAX_FALLBACK, floor));
+        setVoteMax(sRes.data.vote_max_ticks ?? Math.max(VOTE_MAX_FALLBACK, floor));
+        setDebateTicks((d) => Math.max(d, floor));
+        setVoteTicks((v) => Math.max(v, floor));
+      }
       if (!sliderId && sRes.data.sliders.length) {
         setSliderId(sRes.data.sliders[0].id);
         setTarget(sRes.data.sliders[0].default);
@@ -295,7 +317,8 @@ export function SenatePanel({ gameId }: { gameId: string }) {
     if (!res.ok) { setError(res.error?.message ?? 'Could not propose'); return; }
     setTitle(''); setSummary('');
     setTargetFactionId(''); setSliderTargetId('');
-    setDebateTicks(DEBATE_DEFAULT); setVoteTicks(VOTE_DEFAULT);
+    // Reset to the floor, not to a legacy default below it.
+    setDebateTicks(minWindow); setVoteTicks(minWindow);
     refresh();
   }
 
@@ -485,27 +508,27 @@ export function SenatePanel({ gameId }: { gameId: string }) {
 
         <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
           <div style={{ flex: 1 }}>
-            <label className="mp-label">Debate ticks ({DEBATE_MIN}–{DEBATE_MAX})</label>
+            <label className="mp-label">Debate ticks ({minWindow}–{debateMax})</label>
             <input
               className="mp-input"
               type="number"
               inputMode="numeric"
-              min={DEBATE_MIN}
-              max={DEBATE_MAX}
+              min={minWindow}
+              max={debateMax}
               value={debateTicks}
-              onChange={(e) => setDebateTicks(parseInt(e.target.value, 10) || DEBATE_DEFAULT)}
+              onChange={(e) => setDebateTicks(Math.max(minWindow, parseInt(e.target.value, 10) || minWindow))}
             />
           </div>
           <div style={{ flex: 1 }}>
-            <label className="mp-label">Vote ticks ({VOTE_MIN}–{VOTE_MAX})</label>
+            <label className="mp-label">Vote ticks ({minWindow}–{voteMax})</label>
             <input
               className="mp-input"
               type="number"
               inputMode="numeric"
-              min={VOTE_MIN}
-              max={VOTE_MAX}
+              min={minWindow}
+              max={voteMax}
               value={voteTicks}
-              onChange={(e) => setVoteTicks(parseInt(e.target.value, 10) || VOTE_DEFAULT)}
+              onChange={(e) => setVoteTicks(Math.max(minWindow, parseInt(e.target.value, 10) || minWindow))}
             />
           </div>
         </div>
