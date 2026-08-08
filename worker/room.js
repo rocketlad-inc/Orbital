@@ -4721,6 +4721,17 @@ export class Room {
           winner_faction_id: resolution.winnerFactionId,
           victory_type: resolution.victoryType,
         });
+        // Publish the final Herald NOW. The daily sweep would eventually
+        // catch it (see maybeRunDailyDigest's completed-game clause), but
+        // "eventually" is up to 24h and the end of a match is the one
+        // story that has to land while people are watching. Non-throwing;
+        // the win is already recorded above.
+        try {
+          const { publishFinalEdition } = await import('./digest.js');
+          await publishFinalEdition(this.env, gameId);
+        } catch (e) {
+          console.error('final edition (objective victory) failed', e);
+        }
       }
     } catch (e) {
       // Never let a victory-check bug block the rest of the tick.

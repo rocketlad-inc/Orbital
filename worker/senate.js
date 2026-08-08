@@ -1137,6 +1137,15 @@ async function applyBillEffects(env, gameId, tick, proposal, payload, effectUnti
         JSON.stringify({ victoryType: 'chancellor', detail: `${cand.name} elected Supreme Chancellor by senate vote` }),
         completedAt,
       ).run();
+    // Announce the win NOW rather than waiting for tomorrow's Herald.
+    // Non-throwing by construction; the match is already recorded as won
+    // above, so a Discord failure cannot undo the victory.
+    try {
+      const { publishFinalEdition } = await import('./digest.js');
+      await publishFinalEdition(env, gameId);
+    } catch (e) {
+      console.error('final edition (chancellor) failed', e);
+    }
     return { winner_faction_id: candidate, victory_type: 'chancellor' };
   }
 

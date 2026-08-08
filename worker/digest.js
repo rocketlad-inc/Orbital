@@ -2008,6 +2008,38 @@ export async function composeHeraldForGame(env, game, lookbackMs = 24 * 60 * 60 
  * Entry point — called from the every-minute cron. Cheap early-outs:
  * no webhook secret, wrong hour, or already digested recently.
  */
+/**
+ * Publish a game's FINAL edition immediately, the moment it is won.
+ *
+ * The daily-sweep fix above guarantees the victory edition eventually
+ * posts, but "eventually" is up to 24h — and the end of a match is the
+ * one story nobody wants to read tomorrow. This runs the same Herald
+ * with force:true (12h trailing window, skips the once-a-day interval
+ * guard), so the win posts as the headline while people are still
+ * looking at it.
+ *
+ * Safe to call twice: runDigestForGame advances last_entry_ms, so the
+ * cron sweep's EXISTS clause then finds nothing left to publish.
+ *
+ * NEVER throws. It is called from the tick's victory path, and a Discord
+ * outage must not stop a game from being marked won.
+ */
+export async function publishFinalEdition(env, gameId) {
+  try {
+    if (!env.DISCORD_DIGEST_WEBHOOK) return;
+    const game = await env.DB
+      .prepare(`SELECT g.id, g.current_tick, r.name
+                  FROM games g JOIN rooms r ON r.id = g.id
+                 WHERE g.id = ?`)
+      .bind(gameId)
+      .first();
+    if (!game) return;
+    await runDigestForGame(env, game, { force: true });
+  } catch (e) {
+    console.error('publishFinalEdition failed', e);
+  }
+}
+
 export async function maybeRunDailyDigest(env) {
   const webhook = env.DISCORD_DIGEST_WEBHOOK;
   if (!webhook) return;                              // feature off
@@ -2023,10 +2055,32 @@ export async function maybeRunDailyDigest(env) {
     if (!isEasternDigestHour(now)) return;            // settings unavailable
   }
 
+  // Active games, PLUS any completed game still holding unpublished
+  // entries.
+  //
+  // `status = 'active'` alone orphaned every game's final edition. A
+  // victory flips status to 'completed' in the same tick it is written
+  // to the chronicle, so the batch containing the win — and, for a
+  // chancellor victory, the senate vote that caused it — could never be
+  // selected again. Live case: game FY2Ab2s47dsP ended at T+441 with 148
+  // unpublished entries including its `victory` row; the Herald had run
+  // 13h earlier and simply never came back for them. The most important
+  // edition of a match was the one guaranteed to be lost.
+  //
+  // The EXISTS clause self-terminates: runDigestForGame advances
+  // last_entry_ms whether or not it posts, so a completed game yields
+  // exactly one final edition and is never selected again.
   const games = (await env.DB
     .prepare(`SELECT g.id, g.current_tick, r.name
-                FROM games g JOIN rooms r ON r.id = g.id
-               WHERE g.status = 'active'`)
+                FROM games g
+                JOIN rooms r ON r.id = g.id
+                LEFT JOIN digest_state d ON d.game_id = g.id
+               WHERE g.status = 'active'
+                  OR (g.status = 'completed'
+                      AND EXISTS (SELECT 1 FROM chronicle_entries c
+                                   WHERE c.game_id = g.id
+                                     AND c.visibility = 'public'
+                                     AND c.created_at_ms > COALESCE(d.last_entry_ms, 0)))`)
     .all()).results ?? [];
 
   for (const game of games) {
