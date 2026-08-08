@@ -286,7 +286,7 @@ function newId(prefix) {
 
 async function loadGameAndFaction(env, gameId, session) {
   const game = await env.DB
-    .prepare('SELECT g.id, g.current_tick, g.status, r.host_id FROM games g JOIN rooms r ON r.id = g.id WHERE g.id = ?')
+    .prepare('SELECT g.id, g.current_tick, g.status, g.tick_interval_ms, r.host_id FROM games g JOIN rooms r ON r.id = g.id WHERE g.id = ?')
     .bind(gameId)
     .first();
   if (!game) return { error: err(404, 'not_found', 'game not found') };
@@ -1037,6 +1037,10 @@ async function handleListProposals(req, env, { url, params, session }) {
 
   return json({
     current_tick: ctx.game.current_tick,
+    // Rides along so deadlines can speak wall-clock: "closes in 6 ticks"
+    // is arithmetic homework at 1 tick = 1 hour and simply wrong across
+    // games with different tick rates.
+    tick_interval_ms: ctx.game.tick_interval_ms ?? null,
     proposals: out,
     session: {
       term: shapeTerm(term, ctx.game.current_tick),

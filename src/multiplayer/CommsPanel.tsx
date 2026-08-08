@@ -106,6 +106,25 @@ export function CommsPanel({ gameId, onUnreadDelta, focusFaction }: Props) {
    *  whenever the channel changes or new messages land. */
   const logRef = React.useRef<HTMLDivElement | null>(null);
   const [body, setBody] = useState('');
+  /** One draft per channel. Half-write a DM, click over to PUBLIC to
+   *  check something, and a shared compose box silently re-aims your
+   *  half-written private message at everyone. */
+  const draftsRef = useRef<Map<string, string>>(new Map());
+  const prevChannelRef = useRef<string>(channelKey('public'));
+  useEffect(() => {
+    const nowKey = channelKey(channel);
+    const prevKey = prevChannelRef.current;
+    if (nowKey !== prevKey) {
+      // setBody below is intentionally NOT in this effect's deps: we
+      // want the body as of the moment of switching, held in the ref
+      // pattern via the functional update.
+      setBody((current) => {
+        draftsRef.current.set(prevKey, current);
+        return draftsRef.current.get(nowKey) ?? '';
+      });
+      prevChannelRef.current = nowKey;
+    }
+  }, [channel]);
   const [error, setError] = useState<string | null>(null);
   // Tracks messageIds we've already fired the /read POST for this
   // session so we don't spam the server every poll cycle.
@@ -223,6 +242,7 @@ export function CommsPanel({ gameId, onUnreadDelta, focusFaction }: Props) {
       body: JSON.stringify(payload),
     });
     if (!res.ok) { setError(res.error?.message ?? 'Send failed'); return; }
+    draftsRef.current.delete(channelKey(channel));
     setBody('');
     refresh();
   }

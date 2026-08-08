@@ -181,9 +181,10 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
     return () => { cancelled = true; clearInterval(id); };
   }, [initialRoomId, gameId]);
   const [incomingTradeCount, setIncomingTradeCount] = useState(0);
-  // Mirror pattern for senate: count of active proposals the caller
-  // hasn't voted on. Bumped by WS 'senate.proposed' broadcasts and
-  // cleared when the player opens the Senate tab.
+  // Senate badge: bills OPEN FOR VOTING that the caller has not cast a
+  // ballot on. Polled from the proposals list (caller_vote is per-caller
+  // there), so it clears when you VOTE, not when you merely look — a
+  // badge you can dismiss by glancing at it is a badge that lies.
   const [incomingProposalCount, setIncomingProposalCount] = useState(0);
   const [unreadMessages, setUnreadMessages] = useState(0);
 
@@ -229,18 +230,45 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
     const api = tradesApi(gameId);
     let cancelled = false;
     const tick = async () => {
-      const res = await api.list('open');
+      // Unscoped list: the badge owes the player BOTH kinds of pending
+      // action — offers awaiting an answer AND accepted legs still
+      // missing a freighter. An unassigned leg is invisible until you
+      // open the tab otherwise, and nothing ships while it waits.
+      const res = await api.list();
       if (cancelled || !res.ok) return;
-      // Use any here because we don't have callerFactionId in scope; the
-      // server returns it but we just count where status='open' and the
-      // caller is the responder. The server scopes the list to caller, so
-      // any 'open' entries where proposer !== caller are incoming.
       const callerFactionId = (res.data as any).caller_faction_id;
       // Remember who we are so the WS handler can tell our own outgoing
       // proposals apart from genuinely incoming ones.
       if (callerFactionId) myFactionIdRef.current = callerFactionId;
-      setIncomingTradeCount(
-        res.data.trades.filter((t) => t.responder_faction_id === callerFactionId).length,
+      const incoming = res.data.trades.filter(
+        (t) => t.status === 'open' && t.responder_faction_id === callerFactionId,
+      ).length;
+      const unassigned = res.data.trades
+        .filter((t) => t.status === 'accepted')
+        .reduce((n, t) => n + (t.deliveries ?? []).filter(
+          (d) => d.sender_faction_id === callerFactionId && d.status === 'unassigned',
+        ).length, 0);
+      setIncomingTradeCount(incoming + unassigned);
+    };
+    tick();
+    const id = setInterval(tick, 10_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [gameId]);
+
+  // Poll the senate for bills awaiting the caller's ballot.
+  useEffect(() => {
+    if (!gameId) {
+      setIncomingProposalCount(0);
+      return;
+    }
+    let cancelled = false;
+    const tick = async () => {
+      const res = await apiFetch<{ proposals: Array<{ status: string; caller_vote: string | null }> }>(
+        `/api/games/${gameId}/senate/proposals`,
+      );
+      if (cancelled || !res.ok) return;
+      setIncomingProposalCount(
+        (res.data.proposals ?? []).filter(p => p.status === 'voting' && !p.caller_vote).length,
       );
     };
     tick();
@@ -356,14 +384,12 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
               const title = (typeof m.title === 'string' && m.title) ? m.title : 'A new proposal';
               const from  = proposer ? ` from ${proposer}` : '';
               pushToast('senate', `${title}${from}`);
-              setIncomingProposalCount((n) => n + 1);
             }
           } else if (m.event === 'resolved') {
             const opened = Number(m.opened ?? 0);
             const resolved = Number(m.resolved ?? 0);
             if (opened > 0) {
               pushToast('senate', `${opened} proposal${opened > 1 ? 's' : ''} now open for voting`);
-              setIncomingProposalCount((n) => n + opened);
             }
             if (resolved > 0) {
               pushToast('senate', `${resolved} proposal${resolved > 1 ? 's' : ''} resolved`);
@@ -493,20 +519,15 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
               <button
                 className={tab === 'senate' ? 'active' : ''}
                 disabled={!gameId}
-                onClick={() => {
-                  if (!gameId) return;
-                  setTab('senate');
-                  // Opening the Senate tab is acknowledging the queue.
-                  setIncomingProposalCount(0);
-                }}
+                onClick={() => gameId && setTab('senate')}
                 title={incomingProposalCount > 0
-                  ? `${incomingProposalCount} new proposal${incomingProposalCount > 1 ? 's' : ''} — vote now`
+                  ? `${incomingProposalCount} bill${incomingProposalCount > 1 ? 's' : ''} need${incomingProposalCount > 1 ? '' : 's'} your vote`
                   : 'Senate'}
               >
                 Senate{incomingProposalCount > 0 && (
                   <span style={{
                     marginLeft: 4, padding: '0 5px', fontSize: 9,
-                    background: '#ffb84d', color: '#0a0e14', borderRadius: 8,
+                    background: '#ff6b6b', color: '#0a0e14', borderRadius: 8,
                     fontWeight: 700,
                   }}>{incomingProposalCount}</span>
                 )}
@@ -515,7 +536,9 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
                 className={tab === 'trades' ? 'active' : ''}
                 disabled={!gameId}
                 onClick={() => gameId && setTab('trades')}
-                title={incomingTradeCount > 0 ? `${incomingTradeCount} incoming offer${incomingTradeCount > 1 ? 's' : ''}` : 'Trades'}
+                title={incomingTradeCount > 0
+                  ? `${incomingTradeCount} trade action${incomingTradeCount > 1 ? 's' : ''} pending — offers or unassigned freighters`
+                  : 'Trades'}
               >
                 Trades{incomingTradeCount > 0 && (
                   <span style={{

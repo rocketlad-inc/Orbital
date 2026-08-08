@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { apiFetch, Faction, SenateProposal, SenateSession, SenateSlider } from './api';
+import { apiFetch, fmtTicksReal, realSuffix, Faction, SenateProposal, SenateSession, SenateSlider } from './api';
 import { logUiEvent } from './telemetry';
 import { DiscordLink } from './DiscordLink';
 import { hasFeature, requirementFor } from '../game/researchUnlocks';
@@ -135,10 +135,11 @@ function WeightCard({ detail }: { detail: WeightDetail | null }) {
  * too. Two rosters on one tab would be two places to look for the same
  * answer, and they would inevitably disagree.
  */
-function SessionCard({ session, factions, myFactionId }: {
+function SessionCard({ session, factions, myFactionId, tickMs }: {
   session: SenateSession | null;
   factions: Faction[];
   myFactionId: string | null;
+  tickMs: number | null;
 }) {
   // Defensive against a version skew during rollout: for ~40s after a
   // deploy a new bundle can be talking to the old worker, which returns
@@ -170,7 +171,7 @@ function SessionCard({ session, factions, myFactionId }: {
       </div>
       {term && (
         <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginTop: 3 }}>
-          Term {term.term_index + 1} · {term.ticks_remaining} of {session.term_ticks} ticks left
+          Term {term.term_index + 1} · {term.ticks_remaining} of {session.term_ticks} ticks left{realSuffix(term.ticks_remaining, tickMs)}
           {session.floor_busy && ' · a bill is on the floor'}
         </div>
       )}
@@ -219,6 +220,8 @@ export function SenatePanel({
   const [busy, setBusy] = useState(false);
   const [myFactionId, setMyFactionId] = useState<string | null>(null);
   const [session, setSession] = useState<SenateSession | null>(null);
+  /** Wall-clock length of one tick, from the server. Null until known. */
+  const [tickMs, setTickMs] = useState<number | null>(null);
   const [weight, setWeight] = useState<WeightDetail | null>(null);
   const [voting, setVoting] = useState<string | null>(null);
   /** Total weight in the chamber — the denominator every turnout and
@@ -287,7 +290,7 @@ export function SenatePanel({
         sliders: SenateSlider[]; current_tick: number;
         min_window_ticks?: number; debate_max_ticks?: number; vote_max_ticks?: number;
       }>(`/api/games/${gameId}/senate/sliders`),
-      apiFetch<{ proposals: SenateProposal[]; session?: SenateSession }>(`/api/games/${gameId}/senate/proposals`),
+      apiFetch<{ proposals: SenateProposal[]; session?: SenateSession; tick_interval_ms?: number | null }>(`/api/games/${gameId}/senate/proposals`),
       apiFetch<{ factions: Faction[] }>(`/api/games/${gameId}/factions`),
       apiFetch<WeightDetail>(`/api/games/${gameId}/senate/weight`),
     ]);
@@ -313,6 +316,7 @@ export function SenatePanel({
     if (pRes.ok) {
       setProposals(pRes.data.proposals);
       setSession(pRes.data.session ?? null);
+      setTickMs(pRes.data.tick_interval_ms ?? null);
     }
     if (fRes.ok) setFactions(fRes.data.factions);
     if (wRes.ok) setWeight(wRes.data);
@@ -511,6 +515,7 @@ export function SenatePanel({
         session={session}
         factions={factions}
         myFactionId={myFactionId}
+        tickMs={tickMs}
       />
       {/* ORDER IS THE POINT. A bill you can still vote on outranks the
           standings, the compose form and the integration settings — it is
@@ -524,6 +529,7 @@ export function SenatePanel({
         myFactionId={myFactionId}
         onVote={(id, v) => { void castVote(id, v); }}
         busy={voting}
+        tickMs={tickMs}
       />
       {error && <div className="mp-error" style={{ marginBottom: 10 }}>{error}</div>}
 
@@ -807,13 +813,40 @@ export function SenatePanel({
               : p.status === 'failed'
                 ? `FAILED ${yea}–${nay}`
                 : 'WITHDRAWN';
+            // "Who voted no on my bill" is a question a player literally
+            // typed into chat. The ballots are public record — put them
+            // one click away instead of zero clicks from nowhere.
+            const ballots = p.ballots ?? [];
+            const votedIds = new Set(ballots.map(b => b.faction_id));
+            const absent = p.status === 'withdrawn' ? [] : factions.filter(f => !votedIds.has(f.id));
             return (
-              <div key={p.id} className="sp-histrow" title={p.summary || undefined}>
-                <span className="sp-histrow__t">{p.title}</span>
-                <span className={`sp-histrow__r is-${p.status}`}>
-                  {verdict}{p.resolved_at_tick != null ? ` · T+${p.resolved_at_tick}` : ''}
-                </span>
-              </div>
+              <details key={p.id} className="sp-roll" >
+                <summary className="sp-histrow" title={p.summary || undefined}>
+                  <span className="sp-histrow__t">{p.title}</span>
+                  <span className={`sp-histrow__r is-${p.status}`}>
+                    {verdict}{p.resolved_at_tick != null ? ` · T+${p.resolved_at_tick}` : ''}
+                  </span>
+                </summary>
+                {p.status !== 'withdrawn' && (
+                  <div className="sp-roll__body">
+                    {ballots.map(b => {
+                      const f = factionsById.get(b.faction_id);
+                      return (
+                        <span key={b.faction_id} className={`sp-roll__chip is-${b.vote}`}>
+                          <span className="sp-roll__dot" style={{ background: f?.color ?? '#8aa0b4' }} />
+                          {f?.name ?? '???'} · {b.vote} ({b.weight})
+                        </span>
+                      );
+                    })}
+                    {absent.map(f => (
+                      <span key={f.id} className="sp-roll__chip is-absent">
+                        <span className="sp-roll__dot" style={{ background: f.color }} />
+                        {f.name} · never voted
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </details>
             );
           })}
           {lawsInForce.length > 0 && (
@@ -901,7 +934,7 @@ export function SenatePanel({
             )}
             {p.status === 'debating' && (
               <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginTop: 4, fontStyle: 'italic' }}>
-                Voting opens in {ticksUntilOpen} tick{ticksUntilOpen === 1 ? '' : 's'}.
+                Voting opens in {fmtTicksReal(ticksUntilOpen, tickMs)}.
                 {my && <> Your early vote: <strong>{my}</strong></>}
               </div>
             )}
@@ -1072,6 +1105,7 @@ function voteWeightOf(f: Faction): number {
  */
 function ActionableBills({
   proposals, currentTick, factionsById, chamber, myFactionId, onVote, busy,
+  tickMs,
 }: {
   proposals: SenateProposal[];
   currentTick: number;
@@ -1080,6 +1114,7 @@ function ActionableBills({
   myFactionId: string | null;
   onVote: (id: string, vote: 'yea' | 'nay' | 'abstain') => void;
   busy: string | null;
+  tickMs: number | null;
 }) {
   const open = proposals.filter(p => p.status === 'voting');
   if (open.length === 0) return null;
@@ -1091,7 +1126,7 @@ function ActionableBills({
       <div className="sp-sect__h">
         <span className="sp-lbl">Needs your vote</span>
         <span className="sp-lbl" style={{ color: '#ff6b6b' }}>
-          closes in {soonest} tick{soonest === 1 ? '' : 's'}
+          closes in {fmtTicksReal(soonest, tickMs)}
         </span>
       </div>
       {open.map(p => (

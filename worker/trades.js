@@ -58,7 +58,7 @@ async function callerFaction(env, gameId, userId) {
 
 async function loadGame(env, gameId) {
   return env.DB
-    .prepare('SELECT id, current_tick, status FROM games WHERE id = ?')
+    .prepare('SELECT id, current_tick, status, tick_interval_ms FROM games WHERE id = ?')
     .bind(gameId)
     .first();
 }
@@ -387,6 +387,8 @@ async function handleList(req, env, { url, session, params }) {
       deliveries: deliveriesByTrade.get(r.id) ?? [],
     })),
     caller_faction_id: caller.id,
+    current_tick: game.current_tick ?? 0,
+    tick_interval_ms: game.tick_interval_ms ?? null,
   });
 }
 

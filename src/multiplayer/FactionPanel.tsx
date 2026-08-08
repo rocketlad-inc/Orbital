@@ -191,6 +191,7 @@ export function FactionPanel({ gameId }: { gameId: string }) {
             <div
               className="fp-terr__tick"
               style={{ left: `${(100 * dominationTarget) / bodiesTotal}%` }}
+              title={`Domination: ${dominationTarget} worlds ends the game`}
             />
           </div>
           <div className="fp-terrfoot">

@@ -1717,6 +1717,19 @@ async function handlePatchMyFaction(req, env, ctx) {
   if (body.color !== undefined) {
     const hex = normalizeHex(body.color);
     if (!hex) return errResponse(400, 'bad_request', 'color must be a 6-digit hex');
+    // Same distance rule as the lobby. This endpoint was the one door
+    // with no check — which is how two live factions ended up flying
+    // identical rose (#ec407a) and the seat map, legend, territory bar
+    // and chat all lost an identity at once.
+    const others = (await env.DB
+      .prepare('SELECT color FROM game_factions WHERE game_id = ? AND id != ? AND color IS NOT NULL')
+      .bind(gameId, factionId)
+      .all()).results ?? [];
+    for (const o of others) {
+      if (colorDistanceHex(hex, o.color) < COLOR_MIN_DISTANCE) {
+        return errResponse(409, 'color_taken', "too close to another faction's color");
+      }
+    }
     updates.push('color = ?');
     binds.push(hex);
   }

@@ -301,6 +301,7 @@ export type SenateProposal = {
   vote_ticks: number;
   totals: SenateVoteTotals;
   caller_vote: 'yea' | 'nay' | 'abstain' | null;
+  // (list response also carries tick_interval_ms at the top level)
   /** Per-faction ballots. Senate votes are public record. */
   ballots?: { faction_id: string; vote: 'yea' | 'nay' | 'abstain'; weight: number }[];
   /** Quorum context as of the read. A bill needs `cast >= required`
@@ -483,4 +484,32 @@ export function tradesApi(gameId: string) {
       );
     },
   };
+}
+
+/**
+ * "6 ticks · ~6h" — a tick count with its wall-clock meaning attached.
+ *
+ * Players think in hours; the game thinks in ticks; and tick length is
+ * per-game config, so neither side can be hardcoded into the other.
+ * Without tickMs (old server, loading) it degrades to plain ticks.
+ */
+/** Just the wall-clock part, parenthesised: " (~6h)", or '' unknown. */
+export function realSuffix(ticks: number, tickMs?: number | null): string {
+  const full = fmtTicksReal(ticks, tickMs);
+  const i = full.indexOf('· ');
+  return i === -1 ? '' : ` (${full.slice(i + 2)})`;
+}
+
+export function fmtTicksReal(ticks: number, tickMs?: number | null): string {
+  const base = `${ticks} tick${ticks === 1 ? '' : 's'}`;
+  if (!tickMs || tickMs <= 0 || ticks <= 0) return base;
+  const ms = ticks * tickMs;
+  const mins = ms / 60_000;
+  const hours = ms / 3_600_000;
+  const human = mins < 60
+    ? `~${Math.max(1, Math.round(mins))}m`
+    : hours < 48
+      ? `~${Math.round(hours)}h`
+      : `~${Math.round(hours / 24)}d`;
+  return `${base} · ${human}`;
 }

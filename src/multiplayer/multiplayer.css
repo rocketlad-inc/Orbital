@@ -2257,3 +2257,43 @@
 .sp-histrow__r.is-passed { color: #6ee7b7; }
 .sp-histrow__r.is-failed { color: #ff6b6b; }
 .sp-histrow__r.is-withdrawn { color: var(--mp-fg-dim); opacity: 0.7; }
+
+/* ------------------------------------------- one header voice, four tabs
+   FACTION, SENATE and TRADES each grew a section-label class with its
+   own size and tracking. Declared LAST so these win the cascade at equal
+   specificity: one voice, and future drift lands here to be seen. */
+.fp-lbl, .sp-lbl, .tp-sec__t {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mp-fg-dim);
+}
+
+/* Roll-call: who voted what on a settled bill, one click deep. */
+.sp-roll summary { list-style: none; cursor: pointer; }
+.sp-roll summary::-webkit-details-marker { display: none; }
+.sp-roll summary:focus-visible { outline: 1px solid var(--mp-accent); outline-offset: 2px; }
+.sp-roll[open] summary .sp-histrow__t { color: var(--mp-fg); }
+.sp-roll__body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 4px 0 8px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.sp-roll__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  color: var(--mp-fg-dim);
+}
+.sp-roll__dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
+.sp-roll__chip.is-yea { color: #6ee7b7; }
+.sp-roll__chip.is-nay { color: #ff6b6b; }
+.sp-roll__chip.is-abstain { color: #8a9fb3; }
+.sp-roll__chip.is-absent { opacity: 0.6; }
