@@ -59,9 +59,14 @@ const GLYPHS: Record<EmblemId, (p: GlyphProps) => React.ReactElement> = {
     <path d="M3 24h26l2-15-8 6-6-11-6 11-8-6z" />, title),
   shield: ({ title }) => wrap(
     <path d="M16 2 4 7v10c0 7 5 11 12 13 7-2 12-6 12-13V7z" />, title),
+  // Spear and Tower are the only two tall-narrow silhouettes, so they
+  // are drawn wider than their real proportions would suggest: measured
+  // in the browser, the natural versions came out 10 and 12 units across
+  // against a 32 grid, which at a 12px chip is under 4 real pixels of
+  // ink. Verticality still reads; anorexic verticality reads as nothing.
   spear: ({ title }) => wrap(<>
-    <polygon points="16,1 21,11 16,9 11,11" />
-    <rect x="14.5" y="9" width="3" height="22" />
+    <polygon points="16,1 23,12 16,9.5 9,12" />
+    <rect x="13.5" y="9" width="5" height="22" />
   </>, title),
   trident: ({ title }) => wrap(<>
     <rect x="14.5" y="6" width="3" height="25" />
@@ -119,7 +124,7 @@ const GLYPHS: Record<EmblemId, (p: GlyphProps) => React.ReactElement> = {
   mountain: ({ title }) => wrap(
     <path d="M2 28 12 8l6 10 4-6 8 16z" />, title),
   tower: ({ title }) => wrap(
-    <path d="M10 4h12v5l-2 2v20h-8V11l-2-2z" />, title),
+    <path d="M8 3h16v6l-3 3v19h-10V12L8 9z" />, title),
   pyramid: ({ title }) => wrap(<>
     <path d="M16 3 31 29H1z" />
     <path d="M16 3v26H1z" fill="#000" opacity="0.3" />

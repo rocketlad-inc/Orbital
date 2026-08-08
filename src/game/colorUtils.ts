@@ -65,20 +65,42 @@ export function colorDistance(a: string, b: string): number {
  *  sync with COLOR_MIN_DISTANCE in worker/lobby.js. */
 export const COLOR_MIN_DISTANCE = 90;
 
+/** Ink candidates for an emblem. Not pure black/white: a hard #000 on a
+ *  mid tone reads as a hole, and these two sit against the app's dark
+ *  chrome without glaring. */
+const EMBLEM_INK_LIGHT = '#f2f6fa';
+const EMBLEM_INK_DARK = '#12181f';
+
+/** WCAG relative luminance. Note this is NOT the Rec. 601 luma
+ *  deriveSecondary uses — 601 is a perceptual brightness approximation
+ *  from analogue video, and it disagrees with measured contrast on
+ *  saturated colours. */
+function relLuminance([r, g, b]: [number, number, number]): number {
+  const f = (c: number) => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+}
+
 /**
  * Ink to stamp an emblem in so it stays readable ON a faction's primary.
  *
- * The palette spans #ffca28 (bright amber) to #8d6e63 (dark brown), so a
- * fixed white or black emblem vanishes at one end or the other. Same
- * Rec. 601 luminance split deriveSecondary uses, so the two agree about
- * which colours count as "light".
+ * Picks whichever candidate MEASURES higher contrast rather than
+ * splitting on a brightness threshold. A threshold gets saturated
+ * mid-tones wrong: rose (#ec407a) sits at 0.44 Rec.601 luma, so a
+ * "dark → use white ink" rule chose white and scored 3.47:1, while dark
+ * ink on the same swatch scores 4.76:1. Measuring both and taking the
+ * better one has no such blind spot, and costs one extra multiply.
  */
 export function emblemInk(hex: string): string {
   const rgb = parseHex(hex);
-  if (!rgb) return '#ffffff';
-  const [r, g, b] = rgb;
-  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-  // Not pure black/white: a hard #000 on a mid tone reads as a hole, and
-  // these two sit against the app's dark chrome without glaring.
-  return lum > 0.55 ? '#12181f' : '#f2f6fa';
+  if (!rgb) return EMBLEM_INK_LIGHT;
+  const bg = relLuminance(rgb);
+  const ratio = (ink: string) => {
+    const l = relLuminance(parseHex(ink)!);
+    return (Math.max(l, bg) + 0.05) / (Math.min(l, bg) + 0.05);
+  };
+  return ratio(EMBLEM_INK_DARK) > ratio(EMBLEM_INK_LIGHT)
+    ? EMBLEM_INK_DARK : EMBLEM_INK_LIGHT;
 }
