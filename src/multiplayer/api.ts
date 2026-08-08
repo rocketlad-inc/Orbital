@@ -197,6 +197,12 @@ export type Faction = {
    *  lock); undefined = ungated game / own faction. You always see your own. */
   income?: { metal: number; fuel: number; gold: number; science: number } | null;
   ship_count?: number | null;
+  /** Worlds held, and the map total. NOT intel-gated — political borders
+   *  are already public, and this is the domination win condition, so
+   *  hiding a rival's progress would make the race unreadable. Counted
+   *  from the same game_bodies.owner_faction_id the victory check uses. */
+  bodies_owned?: number;
+  bodies_total?: number;
   /** Rival tech levels, present only with Research Intel; null when gated. */
   tech_levels?: Record<string, number> | null;
 };

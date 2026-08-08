@@ -1295,9 +1295,10 @@ async function handleListFactions(_req, env, ctx) {
   // tech levels need Research Intel (sensors 6). You always see your OWN.
   // A gated-out field is sent as null so the client shows a lock chip
   // (distinct from a real 0). Ungated games keep everything open.
-  const [income, shipCounts] = await Promise.all([
+  const [income, shipCounts, bodyCounts] = await Promise.all([
     computePoolIncomePerFaction(env, gameId),
     countActiveShipsPerFaction(env, gameId),
+    countOwnedBodiesPerFaction(env, gameId),
   ]);
   const meRow = await env.DB
     .prepare('SELECT id FROM game_factions WHERE game_id = ? AND user_id = ?')
@@ -1330,12 +1331,48 @@ async function handleListFactions(_req, env, ctx) {
     const fullCount = shipCounts.get(f.id) ?? 0;
     f.income = (mine || seeEconomy) ? fullIncome : null;
     f.ship_count = (mine || seeCensus) ? fullCount : null;
+    // Worlds held. NOT intel-gated, unlike fleet census and economy:
+    // political borders are already public (the map paints them for
+    // everyone via settlement_claims), and this is a WIN CONDITION —
+    // hiding how close a rival is to domination would make the race
+    // unreadable. Sourced from the same game_bodies.owner_faction_id the
+    // victory check counts, so the panel can never disagree with it.
+    f.bodies_owned = bodyCounts.owned.get(f.id) ?? 0;
+    f.bodies_total = bodyCounts.total;
     // tech_levels only attached for rivals when Research Intel is up
     // (own tech comes from /me); null elsewhere so the panel can gate.
     if (!mine) f.tech_levels = seeResearch ? (techByFaction.get(f.id) ?? {}) : null;
   }
 
   return jsonResponse({ factions });
+}
+
+/**
+ * Bodies held per faction, plus the map total.
+ *
+ * Mirrors the domination victory check in worker/room.js EXACTLY — every
+ * non-destroyed body, keyed on game_bodies.owner_faction_id, which is the
+ * claim recomputeBodyOwnership maintains. Any other definition (counting
+ * settlements, or bodies with a city) would produce a number that looks
+ * authoritative and quietly fails to predict the win.
+ */
+async function countOwnedBodiesPerFaction(env, gameId) {
+  const rows = (await env.DB
+    .prepare(
+      `SELECT owner_faction_id AS fid, COUNT(*) AS n
+         FROM game_bodies
+        WHERE game_id = ? AND destroyed_at_tick IS NULL
+        GROUP BY owner_faction_id`,
+    )
+    .bind(gameId)
+    .all()).results ?? [];
+  const owned = new Map();
+  let total = 0;
+  for (const r of rows) {
+    total += Number(r.n ?? 0);
+    if (r.fid) owned.set(r.fid, Number(r.n ?? 0));
+  }
+  return { owned, total };
 }
 
 /** Active (undestroyed) ship count per faction. */

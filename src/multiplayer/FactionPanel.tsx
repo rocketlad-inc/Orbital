@@ -65,6 +65,40 @@ const Locked = ({ tip }: { tip: string }) => (
   <span title={tip} style={{ opacity: 0.7, color: '#ffb84d' }}>🔒</span>
 );
 
+/** Fraction of all worlds one empire must hold to win outright.
+ *  Mirrors DOMINATION_FRACTION in worker/room.js — KEEP IN SYNC. */
+const DOMINATION_FRACTION = 0.6;
+
+/**
+ * Worlds held, shown against the domination threshold.
+ *
+ * A bare "12 worlds" doesn't answer the question players actually have,
+ * which is "how close is this empire to winning". The share does, so the
+ * count leads with it and tints as the threshold approaches.
+ */
+function WorldsHeld({ f }: { f: Faction }) {
+  const owned = f.bodies_owned ?? 0;
+  const total = f.bodies_total ?? 0;
+  if (total <= 0) return null;
+  const share = owned / total;
+  const needed = Math.floor(total * DOMINATION_FRACTION) + 1;
+  // Amber inside striking distance, red once domination is one push
+  // away — the same escalation the runaway-leader warning uses.
+  const near = share >= DOMINATION_FRACTION * 0.75;
+  const critical = share >= DOMINATION_FRACTION;
+  const color = critical ? '#ff5e5e' : near ? '#ffb84d' : undefined;
+  return (
+    <span
+      title={`Holds ${owned} of ${total} worlds (${Math.round(100 * share)}%). `
+        + `Domination victory at ${Math.round(100 * DOMINATION_FRACTION)}% — ${needed} worlds.`}
+      style={{ fontVariantNumeric: 'tabular-nums', color, fontWeight: critical ? 700 : undefined }}
+    >
+      ◍ {owned} {owned === 1 ? 'world' : 'worlds'}
+      <span style={{ opacity: 0.6 }}> ({Math.round(100 * share)}%)</span>
+    </span>
+  );
+}
+
 function ScoreboardStats({ f }: { f: Faction }) {
   const income = f.income;
   // null = intel-gated (show a lock). undefined = ungated/own (show data).
@@ -90,6 +124,11 @@ function ScoreboardStats({ f }: { f: Faction }) {
             ? <Locked tip="Fleet Census — research Sensors 3 to see rival ship counts" />
             : `${f.ship_count ?? 0} ${(f.ship_count ?? 0) === 1 ? 'ship' : 'ships'}`}
         </span>
+        <span style={{ opacity: 0.4 }}>·</span>
+        {/* Worlds held — the domination win condition, so it is never
+            intel-gated and leads with how close this empire is to the
+            60% threshold rather than a bare count. */}
+        <WorldsHeld f={f} />
         <span style={{ opacity: 0.4 }}>·</span>
         {economyLocked ? (
           <span><Locked tip="Economic Intel — research Sensors 4 to see rival income" /> income</span>
