@@ -758,6 +758,7 @@ async function handleRoomConnect(req, env, session, roomId) {
 //
 // Modules registered below. New social features (factions, lobby controls,
 // messaging, senate) should be added as imports here.
+import * as accounts from './accounts.js';
 import * as lobby   from './lobby.js';
 import * as factions from './factions.js';
 import * as messages from './messages.js';
@@ -1132,6 +1133,34 @@ export default {
       if (req.method === 'POST' && url.pathname === '/api/rooms') return handleCreateRoom(req, env, session);
       if (req.method === 'POST' && url.pathname === '/api/rooms/join-by-code') return handleJoinByCode(req, env, session);
       if (req.method === 'GET'  && url.pathname === '/api/users/me/rooms') return handleListMyRooms(req, env, session);
+
+      // ---- account: rename, career profile, friends (migration 0073) ----
+      // json/err/readJson are passed in rather than imported because they
+      // are module-private helpers here; accounts.js stays free of any
+      // dependency back on index.js.
+      if (req.method === 'PATCH' && url.pathname === '/api/users/me') {
+        return accounts.handleRenameUser(req, env, session, json, err, readJson);
+      }
+      if (req.method === 'GET' && url.pathname === '/api/users/me/profile') {
+        return accounts.handleMyProfile(req, env, session, json);
+      }
+      if (req.method === 'GET' && url.pathname === '/api/users/search') {
+        return accounts.handleSearchUsers(req, env, session, json, err);
+      }
+      if (url.pathname === '/api/users/me/friends') {
+        if (req.method === 'GET')  return accounts.handleListFriends(req, env, session, json);
+        if (req.method === 'POST') return accounts.handleAddFriend(req, env, session, json, err, readJson);
+      }
+      {
+        const acc = url.pathname.match(/^\/api\/users\/me\/friends\/([^/]+)\/accept$/);
+        if (acc && req.method === 'POST') {
+          return accounts.handleAcceptFriend(req, env, session, acc[1], json, err);
+        }
+        const del = url.pathname.match(/^\/api\/users\/me\/friends\/([^/]+)$/);
+        if (del && req.method === 'DELETE') {
+          return accounts.handleRemoveFriend(req, env, session, del[1], json);
+        }
+      }
       if (req.method === 'GET'  && url.pathname === '/api/users/me/ship-templates') return handleListShipTemplates(req, env, session);
       if (req.method === 'POST' && url.pathname === '/api/users/me/ship-templates') return handleCreateShipTemplate(req, env, session);
       {

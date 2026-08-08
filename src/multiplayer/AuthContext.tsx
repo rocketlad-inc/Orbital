@@ -13,6 +13,10 @@ interface AuthContextValue {
   /** Exchange a Google ID token (JWT from GIS) for an Orbital session. */
   signInWithGoogle: (idToken: string) => Promise<string | null>;
   signOut: () => Promise<void>;
+  /** Re-read /api/auth/me. Needed after a profile edit (rename) so the
+   *  lobby header and every row showing the display name update without
+   *  a reload — otherwise two different names sit on screen at once. */
+  refresh: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -69,13 +73,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return res.error?.message ?? 'Google sign-in failed';
   }, []);
 
+  const refresh = useCallback(async () => {
+    const res = await apiFetch<{ user: User }>('/api/auth/me');
+    if (res.ok) setUser(res.data.user);
+  }, []);
+
   const signOut = useCallback(async () => {
     await apiFetch('/api/auth/logout', { method: 'POST' });
     setUser(null);
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, googleClientId, signIn, signUp, signInWithGoogle, signOut }}>
+    <AuthContext.Provider value={{ user, loading, googleClientId, signIn, signUp, signInWithGoogle, signOut, refresh }}>
       {children}
     </AuthContext.Provider>
   );

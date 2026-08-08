@@ -4,6 +4,7 @@ import { useAuth } from './AuthContext';
 import { AdminAnalytics } from './AdminAnalytics';
 import { BotControl } from './BotControl';
 import { Editor } from './Editor';
+import { ProfilePanel } from './ProfilePanel';
 
 // Full-screen pre-game lobby. The player picks one of four sections:
 //   - My Games   : resume rooms they've already joined
@@ -15,7 +16,7 @@ import { Editor } from './Editor';
 // in the room-detail view. The lobby itself never knows about ticks or
 // game state — it's just the discovery / setup phase.
 
-type Tab = 'my' | 'past' | 'browse' | 'create' | 'code' | 'admin' | 'bot' | 'editor';
+type Tab = 'my' | 'past' | 'browse' | 'create' | 'code' | 'profile' | 'admin' | 'bot' | 'editor';
 
 interface Props {
   onEnterRoom: (roomId: string) => void;
@@ -89,6 +90,7 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
         <TabButton active={tab === 'browse'} onClick={() => setTab('browse')}>Browse</TabButton>
         <TabButton active={tab === 'create'} onClick={() => setTab('create')}>Create Room</TabButton>
         <TabButton active={tab === 'code'} onClick={() => setTab('code')}>Join by Code</TabButton>
+        <TabButton active={tab === 'profile'} onClick={() => setTab('profile')}>Profile</TabButton>
         {/* Live-ops dashboard — rendered only for the allow-listed
             admin account. The flag is display-only; every /api/admin
             route re-checks the email server-side. */}
@@ -124,6 +126,7 @@ export function MultiplayerLobby({ onEnterRoom }: Props) {
         {tab === 'browse' && <BrowsePanel onEnter={onEnterRoom} />}
         {tab === 'create' && <CreatePanel onCreated={onEnterRoom} />}
         {tab === 'code'   && <JoinByCodePanel onJoined={onEnterRoom} />}
+        {tab === 'profile' && <ProfilePanel onEnterRoom={onEnterRoom} />}
         {tab === 'admin' && user?.is_admin && <AdminAnalytics onEnterRoom={onEnterRoom} />}
         {tab === 'bot' && user?.is_admin && <BotControl />}
         {tab === 'editor' && user?.is_admin && <Editor />}
