@@ -532,7 +532,11 @@ export function SenatePanel({
       <section className="sp-sect">
         <div className="sp-sect__h"><span className="sp-lbl">The floor</span></div>
         {floorBills.length === 0 && (
-          <div className="sp-empty">No bill on the floor. Propose one below.</div>
+          <div className="sp-empty">
+            {session?.is_chairman === true
+              ? 'No bill on the floor. Propose one below.'
+              : 'No bill on the floor. The chairman sets the agenda.'}
+          </div>
         )}
         {floorBills.map((p) => renderFloorBill(p))}
       </section>
@@ -558,8 +562,14 @@ export function SenatePanel({
         quorum={session?.quorum ?? null}
       />
 
-      {/* Composing is rare; reading is constant. The form starts folded
-          so the tab opens on the state of the senate, not on paperwork. */}
+      {/* Chairman-only, and hidden rather than disabled: a form every
+          non-chairman can open but never submit is an invitation to
+          draft a bill and lose it to a 403. The SessionCard above
+          already tells everyone else whose floor it is and where they
+          sit in the rotation. Strict === true: while the session is
+          still loading nobody sees the drawer, and the server's
+          not_chairman gate stays the real authority. */}
+      {session?.is_chairman === true && (
       <details className="sp-disc">
       <summary>＋ Propose a bill</summary>
       <div className="sp-disc__body">
@@ -780,6 +790,7 @@ export function SenatePanel({
       </form>
       </div>
       </details>
+      )}
 
       {/* Settled business, one line each. It is a record, not a decision,
           and it grows without bound. */}
