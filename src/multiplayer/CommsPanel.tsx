@@ -27,6 +27,34 @@ import { apiFetch, Faction, Message, MyFaction } from './api';
 
 type ChannelId = 'public' | { kind: 'dm'; factionId: string };
 
+/** Consecutive messages from one sender on one day collapse under a
+ *  single header, and each day gets a divider. Without this a thread
+ *  where somebody sent ":P" three times renders three name+timestamp
+ *  headers for three characters of content. */
+interface MsgGroup<T> { dayKey: string; dayLabel: string; senderId: string; items: T[] }
+
+function groupMessages<T extends { claimed_sender_faction_id: string; sent_at_ms: number }>(
+  msgs: T[],
+): MsgGroup<T>[] {
+  const out: MsgGroup<T>[] = [];
+  for (const m of msgs) {
+    const d = new Date(m.sent_at_ms);
+    const dayKey = d.toDateString();
+    const last = out[out.length - 1];
+    if (last && last.dayKey === dayKey && last.senderId === m.claimed_sender_faction_id) {
+      last.items.push(m);
+      continue;
+    }
+    out.push({
+      dayKey,
+      dayLabel: d.toLocaleDateString([], { month: 'short', day: 'numeric' }),
+      senderId: m.claimed_sender_faction_id,
+      items: [m],
+    });
+  }
+  return out;
+}
+
 function channelKey(ch: ChannelId): string {
   return typeof ch === 'string' ? ch : `dm:${ch.factionId}`;
 }
@@ -63,6 +91,9 @@ export function CommsPanel({ gameId, onUnreadDelta }: Props) {
   const [me, setMe] = useState<MyFaction | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [channel, setChannel] = useState<ChannelId>('public');
+  /** Chat reads downward, so the useful end is the BOTTOM. Jump there
+   *  whenever the channel changes or new messages land. */
+  const logRef = React.useRef<HTMLDivElement | null>(null);
   const [body, setBody] = useState('');
   const [error, setError] = useState<string | null>(null);
   // Tracks messageIds we've already fired the /read POST for this
@@ -136,7 +167,13 @@ export function CommsPanel({ gameId, onUnreadDelta }: Props) {
   }, [messagesByChannel, me]);
 
   const visibleMessages = useMemo(() => {
-    return messagesByChannel.get(channelKey(channel)) ?? [];
+    // OLDEST FIRST. The server returns newest-first (it pages from the
+    // top), which is backwards for a chat log — every messaging app on
+    // earth reads down to the newest and pins the scroll to the bottom.
+    // Sorting here rather than trusting the endpoint keeps the panel
+    // correct whichever order the API returns.
+    const list = messagesByChannel.get(channelKey(channel)) ?? [];
+    return [...list].sort((a, b) => a.sent_at_ms - b.sent_at_ms);
   }, [messagesByChannel, channel]);
 
   // Mark visible unread messages as read on the server. Fires once
@@ -179,6 +216,11 @@ export function CommsPanel({ gameId, onUnreadDelta }: Props) {
     refresh();
   }
 
+  React.useEffect(() => {
+    const el = logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [channel, visibleMessages.length]);
+
   const channelLabel = (ch: ChannelId): string => {
     if (typeof ch === 'string') return 'PUBLIC';
     const f = factionsById.get(ch.factionId);
@@ -217,7 +259,7 @@ export function CommsPanel({ gameId, onUnreadDelta }: Props) {
         })}
       </div>
 
-      <div className="mp-log">
+      <div className="mp-log" ref={logRef}>
         {visibleMessages.length === 0 && (
           <div className="mp-empty">
             {typeof channel === 'string'
@@ -225,74 +267,53 @@ export function CommsPanel({ gameId, onUnreadDelta }: Props) {
               : `No messages with ${channelLabel(channel)} yet.`}
           </div>
         )}
-        {visibleMessages.map((m) => {
-          const sender = factionsById.get(m.claimed_sender_faction_id);
-          const isGroup = m.scope === 'group';
-          const isMine = m.claimed_sender_faction_id === me?.id;
-          // For a group message, list the OTHER recipients (excluding
-          // both me and whichever faction owns this channel) so the
-          // bare "[group]" tag actually tells the player who else got
-          // it. If we're in the Confederacy channel and MCRN group-
-          // sent to me + Confederacy + Belt, this renders as
-          //   "MCRN [also to: Belt]"
-          // making it obvious the cabal extends past the current DM.
-          let groupNote: string | null = null;
-          if (isGroup && m.recipient_faction_ids) {
-            const others = m.recipient_faction_ids
-              .filter((fid) => fid !== me?.id)
-              .filter((fid) => typeof channel === 'string' || fid !== channel.factionId)
-              .map((fid) => factionsById.get(fid)?.name ?? '???');
-            if (isMine) {
-              // For my own outgoing group message, ALL non-me
-              // recipients are "also to" (the channel's faction is
-              // the primary, the rest are co-recipients).
-              groupNote = `also to: ${others.join(', ')}`;
-            } else if (others.length > 0) {
-              groupNote = `also to: ${others.join(', ')}`;
-            } else {
-              // Group message with only two participants (me + sender)
-              // — semantically identical to a DM, no extra label needed.
-              groupNote = null;
-            }
-          }
+        {groupMessages(visibleMessages).map((g, gi, all) => {
+          const sender = factionsById.get(g.senderId);
+          const isMine = g.senderId === me?.id;
+          const first = g.items[0];
+          const showDay = gi === 0 || all[gi - 1].dayKey !== g.dayKey;
           return (
-            <div key={m.id} className="mp-chat-line">
-              <span className="who" style={{ color: sender?.color ?? 'var(--mp-accent)' }}>
-                {isMine ? 'You' : sender?.name ?? 'unknown'}
-                {groupNote && (
-                  <span
-                    title="Group message — went to more than just this DM thread."
-                    style={{
-                      marginLeft: 6,
-                      padding: '0 5px',
-                      fontSize: 10,
-                      fontWeight: 400,
-                      letterSpacing: '0.04em',
-                      background: 'rgba(255, 184, 77, 0.12)',
-                      border: '1px solid rgba(255, 184, 77, 0.55)',
-                      borderRadius: 8,
-                      color: '#ffb84d',
-                      verticalAlign: 'baseline',
-                    }}
-                  >
-                    {groupNote}
+            <React.Fragment key={`${g.dayKey}:${g.senderId}:${first.id}`}>
+              {showDay && <div className="mp-daysep">{g.dayLabel}</div>}
+              <div className={`mp-msggrp${isMine ? ' is-mine' : ''}`}>
+                <div className="mp-msggrp__h">
+                  <span className="mp-msggrp__who" style={{ color: sender?.color ?? 'var(--mp-accent)' }}>
+                    {isMine ? 'You' : sender?.name ?? 'unknown'}
                   </span>
-                )}
-              </span>
-              <span
-                title={new Date(m.sent_at_ms).toLocaleString()}
-                style={{
-                  marginLeft: 6,
-                  fontSize: 10,
-                  color: 'var(--mp-fg-dim)',
-                  letterSpacing: '0.02em',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {formatChatTime(m.sent_at_ms)}
-              </span>
-              <span>{m.body}</span>
-            </div>
+                  <span
+                    className="mp-msggrp__t"
+                    title={new Date(first.sent_at_ms).toLocaleString()}
+                  >
+                    {formatChatTime(first.sent_at_ms)}
+                  </span>
+                </div>
+                {g.items.map((m) => {
+                  // Group messages can reach beyond this thread; name the
+                  // extra recipients so "[group]" isn't a dead end.
+                  let groupNote: string | null = null;
+                  if (m.scope === 'group' && m.recipient_faction_ids) {
+                    const others = m.recipient_faction_ids
+                      .filter((fid) => fid !== me?.id)
+                      .filter((fid) => typeof channel === 'string' || fid !== channel.factionId)
+                      .map((fid) => factionsById.get(fid)?.name ?? '???');
+                    if (others.length > 0) groupNote = `also to: ${others.join(', ')}`;
+                  }
+                  return (
+                    <div key={m.id} className="mp-bubble">
+                      {m.body}
+                      {groupNote && (
+                        <span
+                          className="mp-bubble__grp"
+                          title="Group message — went to more than just this thread."
+                        >
+                          {groupNote}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </React.Fragment>
           );
         })}
       </div>

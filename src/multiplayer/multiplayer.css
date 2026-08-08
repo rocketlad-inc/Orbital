@@ -1736,3 +1736,184 @@
   background: var(--mp-bg, #0a0e14); padding: 2px 5px; border-radius: 2px;
 }
 .fp-vt__n { font-size: 10px; color: #6f8093; margin-top: 4px; line-height: 1.45; }
+
+/* ---- Comms: day separators, sender grouping, pinned compose ----------
+   The old log rendered name / timestamp / body as three inline spans, so
+   the timestamp butted straight into the message ("11:24 PMWho voted no")
+   and every repeat message from one sender re-printed the header. */
+.mp-daysep {
+  display: flex; align-items: center; gap: 9px;
+  font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: #6f8093; margin: 10px 0 6px;
+}
+.mp-daysep::before, .mp-daysep::after {
+  content: ''; flex: 1; height: 1px; background: var(--mp-border);
+}
+.mp-msggrp { margin-bottom: 9px; }
+.mp-msggrp__h { display: flex; align-items: baseline; gap: 8px; margin-bottom: 3px; }
+.mp-msggrp__who { font-size: 12px; }
+.mp-msggrp__t { font-family: var(--font-data); font-size: 10px; color: #6f8093; }
+.mp-bubble {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--mp-border);
+  border-radius: 4px;
+  padding: 7px 10px;
+  font-size: 12.5px; line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.mp-bubble + .mp-bubble { margin-top: 3px; }
+.mp-msggrp.is-mine .mp-bubble {
+  background: rgba(255, 184, 77, 0.08);
+  border-color: rgba(255, 184, 77, 0.3);
+}
+.mp-bubble__grp {
+  display: block; margin-top: 4px;
+  font-size: 10px; color: #ffb84d;
+}
+
+/* ---------------------------------------------------------------- senate
+   A bill with a deadline outranks everything else on the tab, so it gets
+   the only saturated treatment here. Everything below it stays quiet. */
+.sp-urgent {
+  border: 1px solid rgba(255, 176, 32, 0.42);
+  border-left: 3px solid #ffb020;
+  background: rgba(255, 176, 32, 0.07);
+  border-radius: 3px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.sp-urgent__t {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.sp-urgent__n {
+  font-family: var(--font-display);
+  font-size: 13px;
+  color: var(--mp-fg);
+}
+.sp-urgent__c {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: #ffb020;
+  white-space: nowrap;
+}
+.sp-urgent__m {
+  font-size: 11px;
+  color: var(--mp-fg-dim);
+  margin-top: 2px;
+  text-transform: capitalize;
+}
+/* Turnout, not just the tally: with no quorum, the uncast share is the
+   number that says whether you can still change the outcome. */
+.sp-turnout {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--mp-fg-dim);
+  margin-top: 6px;
+}
+.sp-turnout b { color: var(--mp-fg); font-weight: 600; }
+.sp-urgent__go {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--mp-fg-dim);
+  margin-top: 6px;
+}
+
+/* Seats. A bloc should read as a bloc without adding up a column. */
+.sp-seats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin: 6px 0 8px;
+}
+.sp-seat {
+  width: 26px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 2px;
+  font-family: var(--font-data);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+.sp-seat.is-you { outline: 1.5px solid var(--mp-fg); outline-offset: 1px; }
+.sp-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  color: var(--mp-fg-dim);
+}
+.sp-lgi { display: inline-flex; align-items: center; gap: 5px; }
+.sp-lgi__dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.sp-note {
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--mp-fg-dim);
+  opacity: 0.8;
+  margin-top: 8px;
+}
+.sp-foot {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--mp-border);
+}
+
+/* ---------------------------------------------------------------- trades
+   One scroll, five bands. The count in the header is the point: a zero
+   is information, and an unopened tab is not. */
+.tp-sec { margin-bottom: 14px; }
+.tp-sec__h {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--mp-border);
+  margin-bottom: 8px;
+}
+.tp-sec__h.is-foldable { cursor: pointer; user-select: none; }
+.tp-sec__h.is-foldable:hover .tp-sec__t { color: var(--mp-fg); }
+.tp-sec__h:focus-visible { outline: 1px solid var(--mp-accent); outline-offset: 2px; }
+.tp-sec__caret { font-size: 9px; color: var(--mp-fg-dim); line-height: 1; }
+.tp-sec__t {
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mp-fg-dim);
+}
+.tp-sec__n {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--mp-fg);
+}
+.tp-sec.is-urgent .tp-sec__t,
+.tp-sec.is-urgent .tp-sec__n { color: #ffb020; }
+.tp-sec.is-urgent .tp-sec__h { border-bottom-color: rgba(255, 176, 32, 0.4); }
+.tp-sec__badge {
+  margin-left: auto;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  color: #ffb020;
+  white-space: nowrap;
+}
+/* An empty band costs one dim line, not a padded box. */
+.tp-sec__empty {
+  font-size: 11px;
+  color: var(--mp-fg-dim);
+  opacity: 0.7;
+  padding: 2px 0 0;
+}

@@ -139,6 +139,12 @@ export function SenatePanel({ gameId }: { gameId: string }) {
   const [busy, setBusy] = useState(false);
   const [myFactionId, setMyFactionId] = useState<string | null>(null);
   const [weight, setWeight] = useState<WeightDetail | null>(null);
+  /** Total weight in the chamber — the denominator every turnout and
+   *  coalition number is measured against. */
+  const chamberWeight = useMemo(
+    () => factions.reduce((n, f) => n + voteWeightOf(f), 0),
+    [factions],
+  );
   const [myTech, setMyTech] = useState<{ levels: Record<string, number>; gating: boolean }>(
     { levels: {}, gating: false },
   );
@@ -367,8 +373,18 @@ export function SenatePanel({ gameId }: { gameId: string }) {
 
   return (
     <div>
-      <DiscordLink />
+      {/* ORDER IS THE POINT. A bill you can still vote on outranks the
+          standings, the compose form and the integration settings — it is
+          the only thing here with a deadline. Discord moves to the foot of
+          the tab for the same reason: it is configuration, not play. */}
+      <ActionableBills
+        proposals={sortedProposals}
+        currentTick={currentTick}
+        factionsById={factionsById}
+        chamber={chamberWeight}
+      />
       <WeightCard detail={weight} />
+      <Chamber factions={factions} myFactionId={myFactionId} />
       <div className="mp-section-title">Propose a bill</div>
       <form onSubmit={propose}>
         <label className="mp-label">Kind</label>
@@ -662,6 +678,12 @@ export function SenatePanel({ gameId }: { gameId: string }) {
           </div>
         );
       })}
+
+      {/* Integration settings live at the foot of the tab: configuration,
+          not play. */}
+      <div className="sp-foot">
+        <DiscordLink />
+      </div>
     </div>
   );
 }
@@ -762,4 +784,135 @@ function VoteBar({ totals }: { totals: SenateProposal['totals'] }) {
       </div>
     </div>
   );
+}
+
+/** Live senate weight for a faction. `senate_weight` is vestigial — the
+ *  chamber recomputes at cast time and never writes it back — so prefer
+ *  the computed value the factions endpoint sends. */
+function voteWeightOf(f: Faction): number {
+  return (f as unknown as { vote_weight?: number }).vote_weight
+    ?? f.senate_weight ?? 1;
+}
+
+/**
+ * Bills that still need something from YOU, hoisted above everything else.
+ *
+ * A chancellor bill is a win condition with no quorum: it passes on more
+ * yea than nay among ballots actually cast. Burying it under the compose
+ * form is how a table sleeps through the end of its own game — which is
+ * exactly how The Friendly Zone ended, 7-2, with five factions never
+ * voting.
+ */
+function ActionableBills({
+  proposals, currentTick, factionsById, chamber,
+}: {
+  proposals: SenateProposal[];
+  currentTick: number;
+  factionsById: Map<string, Faction>;
+  chamber: number;
+}) {
+  const open = proposals.filter(p => p.status === 'voting');
+  if (open.length === 0) return null;
+  return (
+    <>
+      <div className="mp-section-title">Needs your vote</div>
+      {open.map(p => {
+        const proposer = p.proposer_faction_id ? factionsById.get(p.proposer_faction_id) : null;
+        const yea = p.totals?.yea?.weight ?? 0;
+        const nay = p.totals?.nay?.weight ?? 0;
+        const abstain = p.totals?.abstain?.weight ?? 0;
+        const cast = yea + nay + abstain;
+        const uncast = Math.max(0, chamber - cast);
+        const closes = Math.max(0, p.vote_closes_at_tick - currentTick);
+        return (
+          <div key={p.id} className="sp-urgent">
+            <div className="sp-urgent__t">
+              <span className="sp-urgent__n">{p.title}</span>
+              <span className="sp-urgent__c">
+                closes in {closes} tick{closes === 1 ? '' : 's'}
+              </span>
+            </div>
+            <div className="sp-urgent__m">
+              {p.kind === 'chancellor_vote'
+                ? 'Chancellor vote — if it passes, they win the game'
+                : p.kind.replace(/_/g, ' ')}
+              {proposer ? ` · ${proposer.name}` : ''}
+            </div>
+            {/* Turnout, not just the tally. With no quorum the bill is
+                decided by whoever shows up, so the UNCAST share is the
+                number that tells you whether you can still stop it. */}
+            <div className="sp-turnout">
+              <b>{cast} of {chamber} cast.</b>{' '}
+              {uncast > 0
+                ? `${uncast} still out. A tie fails the bill, so ${yea} nay blocks it.`
+                : 'Every seat has voted.'}
+            </div>
+            <div className="sp-urgent__go">Cast your vote on the bill below ↓</div>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+/**
+ * The chamber, drawn as seats.
+ *
+ * Vote weight is the chancellor win condition, and a column of numbers
+ * doesn't show which pairings clear a majority. Seats do — a bloc is
+ * visible as a bloc.
+ */
+function Chamber({ factions, myFactionId }: { factions: Faction[]; myFactionId: string | null }) {
+  const seated = factions
+    .filter(f => f.status !== 'eliminated')
+    .map(f => ({ f, w: voteWeightOf(f) }))
+    .sort((a, b) => b.w - a.w);
+  const total = seated.reduce((n, x) => n + x.w, 0);
+  if (total <= 0) return null;
+  const initials = (name: string) =>
+    name.replace(/[^A-Za-z0-9 ]/g, '').trim().slice(0, 2).toUpperCase() || '??';
+  return (
+    <>
+      <div className="mp-section-title" style={{ marginTop: 14 }}>
+        The chamber · {total} votes
+      </div>
+      <div className="sp-seats">
+        {seated.flatMap(({ f, w }) =>
+          Array.from({ length: w }, (_, i) => (
+            <span
+              key={`${f.id}:${i}`}
+              className={`sp-seat${f.id === myFactionId ? ' is-you' : ''}`}
+              style={{ background: f.color, color: readableInk(f.color) }}
+              title={`${f.name} — ${w} vote${w === 1 ? '' : 's'}`}
+            >
+              {initials(f.name)}
+            </span>
+          )))}
+      </div>
+      <div className="sp-legend">
+        {seated.map(({ f, w }) => (
+          <span key={f.id} className="sp-lgi" title={f.name}>
+            <span className="sp-lgi__dot" style={{ background: f.color }} />
+            {initials(f.name)} {w}
+          </span>
+        ))}
+      </div>
+      <div className="sp-note">
+        A bill passes on more yea than nay among votes CAST — a tie kills it,
+        and there is no quorum.
+      </div>
+    </>
+  );
+}
+
+/** Black or white ink, whichever reads on this faction colour. Faction
+ *  colours run from near-white to deep purple, so a fixed ink is
+ *  unreadable at one end. */
+function readableInk(hex: string): string {
+  const h = (hex || '#888').replace('#', '');
+  const parts = h.length === 3
+    ? h.split('').map(c => parseInt(c + c, 16))
+    : [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16));
+  const [r, g, b] = parts.map(v => (Number.isFinite(v) ? v : 136));
+  return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#0a0f16' : '#ffffff';
 }

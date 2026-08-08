@@ -27,7 +27,6 @@ import { TradeComposer } from './TradeComposer';
 import { hasFeature, requirementFor } from '../game/researchUnlocks';
 import { TECH_DEFS } from '../game/techs';
 
-type Tab = 'incoming' | 'outgoing' | 'shipments' | 'pacts' | 'history';
 
 /** A delivery leg still doing something (or waiting for someone). */
 function legActive(d: TradeDelivery): boolean {
@@ -55,7 +54,6 @@ export function TradesPanel({ gameId }: { gameId: string }) {
   const [factions, setFactions] = useState<Faction[]>([]);
   const [trades, setTrades] = useState<TradeOffer[]>([]);
   const [pacts, setPacts] = useState<Pact[]>([]);
-  const [tab, setTab] = useState<Tab>('incoming');
   const [error, setError] = useState<string | null>(null);
   const [composerMode, setComposerMode] = useState<
     | { kind: 'new' }
@@ -153,24 +151,11 @@ export function TradesPanel({ gameId }: { gameId: string }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
-        <TabButton active={tab === 'incoming'} onClick={() => setTab('incoming')} count={incoming.length}>
-          Incoming
-        </TabButton>
-        <TabButton active={tab === 'outgoing'} onClick={() => setTab('outgoing')} count={outgoing.length}>
-          Outgoing
-        </TabButton>
-        <TabButton active={tab === 'shipments'} onClick={() => setTab('shipments')} count={myUnassigned || shipments.length}>
-          Shipments
-        </TabButton>
-        <TabButton active={tab === 'pacts'} onClick={() => setTab('pacts')} count={pacts.length}>
-          Pacts
-        </TabButton>
-        <TabButton active={tab === 'history'} onClick={() => setTab('history')}>
-          History
-        </TabButton>
-      </div>
-
+      {/* NO SUB-TABS. Trade state is one story told in five parts, and
+          hiding four of them behind tabs is why offers expire unread:
+          nothing on screen tells you the other drawers have anything in
+          them. One scroll, ordered by who owes whom — what THEY need
+          from you, then what YOU owe, then what's merely in flight. */}
       <button
         className="mp-btn mp-btn--primary"
         style={{ marginBottom: 8, width: '100%' }}
@@ -186,12 +171,19 @@ export function TradesPanel({ gameId }: { gameId: string }) {
       )}
 
       <div style={{ flex: 1, overflow: 'auto' }}>
-        {tab === 'incoming' && (
+        {/* Offers awaiting YOUR answer come first — they're the only
+            thing here that goes stale if ignored. */}
+        <TradeSection
+          title="Awaiting your answer"
+          count={incoming.length}
+          tone={incoming.length > 0 ? 'urgent' : undefined}
+          empty="Nobody has offered you a deal."
+        >
           <TradeList
             trades={incoming}
             me={me}
             factionsById={factionsById}
-            emptyText="No incoming offers."
+            emptyText=""
             actions={(trade) => (
               <>
                 <button
@@ -219,13 +211,46 @@ export function TradesPanel({ gameId }: { gameId: string }) {
               </>
             )}
           />
-        )}
-        {tab === 'outgoing' && (
+        </TradeSection>
+
+        {/* Then cargo in motion — and specifically legs of it that are
+            sitting in a warehouse because you never named a freighter. */}
+        <TradeSection
+          title="Shipments in motion"
+          count={shipments.length}
+          badge={myUnassigned > 0
+            ? `${myUnassigned} leg${myUnassigned === 1 ? '' : 's'} need a freighter`
+            : undefined}
+          tone={myUnassigned > 0 ? 'urgent' : undefined}
+          empty="Nothing in transit."
+        >
+          <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginBottom: 8, lineHeight: 1.5 }}>
+            Accepted deals ship physically: each side loads its goods onto a
+            freighter at one of its <b>collectors</b>, and the cargo lands in
+            the other side's collector pool on arrival. Freighters can be
+            raided — escort what you can't afford to lose.
+          </div>
+          <TradeList
+            trades={shipments}
+            me={me}
+            factionsById={factionsById}
+            emptyText=""
+            gameId={gameId}
+            api={api}
+            onChanged={refresh}
+          />
+        </TradeSection>
+
+        <TradeSection
+          title="Your offers out"
+          count={outgoing.length}
+          empty="You have no offers on the table."
+        >
           <TradeList
             trades={outgoing}
             me={me}
             factionsById={factionsById}
-            emptyText="No outgoing offers."
+            emptyText=""
             actions={(trade) => (
               <button
                 className="mp-btn"
@@ -237,40 +262,34 @@ export function TradesPanel({ gameId }: { gameId: string }) {
               </button>
             )}
           />
-        )}
-        {tab === 'shipments' && (
-          <>
-            <div style={{ fontSize: 10, color: '#8aa0b4', marginBottom: 8, lineHeight: 1.5 }}>
-              Accepted deals ship physically: each side loads its goods onto a
-              freighter at one of its <b>collectors</b>, and the cargo lands in
-              the other side's collector pool on arrival. Freighters can be
-              raided — escort what you can't afford to lose.
-            </div>
-            <TradeList
-              trades={shipments}
-              me={me}
-              factionsById={factionsById}
-              emptyText="No shipments in motion. Accepted deals appear here until every freighter lands."
-              gameId={gameId}
-              api={api}
-              onChanged={refresh}
-            />
-          </>
-        )}
-        {tab === 'pacts' && (
+        </TradeSection>
+
+        <TradeSection
+          title="Standing pacts"
+          count={pacts.length}
+          empty="No pacts in force."
+        >
           <PactsList pacts={pacts} factionsById={factionsById} />
-        )}
-        {tab === 'history' && (
+        </TradeSection>
+
+        {/* Settled business folds away: it's a record, not a decision,
+            and it grows without bound. */}
+        <TradeSection
+          title="Settled"
+          count={history.length}
+          collapsible
+          empty="No resolved trades yet."
+        >
           <TradeList
             trades={history}
             me={me}
             factionsById={factionsById}
-            emptyText="No resolved trades yet."
+            emptyText=""
             showStatus
             api={api}
             onChanged={refresh}
           />
-        )}
+        </TradeSection>
       </div>
 
       {composerMode && me && (
@@ -292,34 +311,52 @@ export function TradesPanel({ gameId }: { gameId: string }) {
 
 // ----------------------------------------------------------------
 
-function TabButton({
-  active, count, onClick, children,
+/**
+ * One band of the trade ledger.
+ *
+ * Every section shows its count even when it's zero, because the count IS
+ * the information: "Awaiting your answer 0" is a state worth reading, and
+ * a tab you never opened is not. Empty sections collapse to a single dim
+ * line rather than a padded box, so five of them cost five lines.
+ */
+function TradeSection({
+  title, count, badge, tone, empty, collapsible, children,
 }: {
-  active: boolean;
-  count?: number;
-  onClick: () => void;
+  title: string;
+  count: number;
+  badge?: string;
+  tone?: 'urgent';
+  empty: string;
+  collapsible?: boolean;
   children: React.ReactNode;
 }) {
+  // Settled business starts folded; anything actionable starts open.
+  const [open, setOpen] = useState(!collapsible);
+  const isEmpty = count === 0;
+  const foldable = collapsible && !isEmpty;
   return (
-    <button
-      onClick={onClick}
-      className={`mp-tab ${active ? 'active' : ''}`}
-      style={{
-        flex: 1,
-        padding: '6px 8px',
-        background: active ? 'rgba(78, 205, 196, 0.2)' : 'transparent',
-        border: '1px solid ' + (active ? '#4ecdc4' : '#2a3d50'),
-        color: active ? '#4ecdc4' : '#a8b8c8',
-        fontFamily: 'inherit',
-        fontSize: 10,
-        letterSpacing: '0.05em',
-        textTransform: 'uppercase',
-        cursor: 'pointer',
-        borderRadius: 2,
-      }}
-    >
-      {children}{count != null && count > 0 ? ` (${count})` : ''}
-    </button>
+    <section className={`tp-sec${tone === 'urgent' ? ' is-urgent' : ''}`}>
+      <div
+        className={`tp-sec__h${foldable ? ' is-foldable' : ''}`}
+        onClick={foldable ? () => setOpen((v) => !v) : undefined}
+        role={foldable ? 'button' : undefined}
+        tabIndex={foldable ? 0 : undefined}
+        onKeyDown={foldable
+          ? (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen((v) => !v); }
+          }
+          : undefined}
+        aria-expanded={foldable ? open : undefined}
+      >
+        {foldable && <span className="tp-sec__caret">{open ? '▾' : '▸'}</span>}
+        <span className="tp-sec__t">{title}</span>
+        <span className="tp-sec__n">{count}</span>
+        {badge && <span className="tp-sec__badge">{badge}</span>}
+      </div>
+      {isEmpty
+        ? <div className="tp-sec__empty">{empty}</div>
+        : open && <div className="tp-sec__body">{children}</div>}
+    </section>
   );
 }
 
@@ -336,8 +373,12 @@ function TradeList({
   api?: ReturnType<typeof tradesApi>;
   onChanged?: () => void;
 }) {
+  // The section header owns the empty state now; an empty list here just
+  // renders nothing rather than a second, redundant "nothing to see".
   if (!trades.length) {
-    return <div className="mp-empty" style={{ textAlign: 'center', padding: 16, color: '#b8c8d6' }}>{emptyText}</div>;
+    return emptyText
+      ? <div className="mp-empty" style={{ textAlign: 'center', padding: 16, color: '#b8c8d6' }}>{emptyText}</div>
+      : null;
   }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
