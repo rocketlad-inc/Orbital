@@ -1416,17 +1416,19 @@ async function handleListFactions(_req, env, ctx) {
   const seeEconomy = canSee('intel.economy');
   const seeResearch = canSee('intel.research');
 
-  // Research Intel: rivals' tech levels. Loaded once, grouped by faction.
-  let techByFaction = null;
-  if (seeResearch) {
-    const trows = (await env.DB
-      .prepare('SELECT faction_id, tech_id, level FROM faction_techs WHERE game_id = ?')
-      .bind(gameId).all()).results ?? [];
-    techByFaction = new Map();
-    for (const r of trows) {
-      if (!techByFaction.has(r.faction_id)) techByFaction.set(r.faction_id, {});
-      techByFaction.get(r.faction_id)[r.tech_id] = r.level;
-    }
+  // Tech levels, grouped by faction. Loaded unconditionally: the caller
+  // ALWAYS sees their own levels (they're yours — there is nothing to
+  // gate), and the drawer showing Income/Tech/Status for rivals but
+  // Income/Status for you made your own row look like a duplicate of the
+  // stockpile columns. Rivals' levels still hide behind Research Intel
+  // at attach time below.
+  const trows = (await env.DB
+    .prepare('SELECT faction_id, tech_id, level FROM faction_techs WHERE game_id = ?')
+    .bind(gameId).all()).results ?? [];
+  const techByFaction = new Map();
+  for (const r of trows) {
+    if (!techByFaction.has(r.faction_id)) techByFaction.set(r.faction_id, {});
+    techByFaction.get(r.faction_id)[r.tech_id] = r.level;
   }
 
   for (const f of factions) {
@@ -1458,9 +1460,8 @@ async function handleListFactions(_req, env, ctx) {
     // no seat" rule lives in voteWeightFor (worker/senate.js) and a
     // second copy in the UI would be the thing that drifts.
     f.vote_weight = f.status === 'active' ? f.systems_owned + 1 : 0;
-    // tech_levels only attached for rivals when Research Intel is up
-    // (own tech comes from /me); null elsewhere so the panel can gate.
-    if (!mine) f.tech_levels = seeResearch ? (techByFaction.get(f.id) ?? {}) : null;
+    // Own tech is never gated; rivals' needs Research Intel (Sensors 6).
+    f.tech_levels = (mine || seeResearch) ? (techByFaction.get(f.id) ?? {}) : null;
   }
 
   // Dyson Sphere progress rides along so the FACTION panel can show all

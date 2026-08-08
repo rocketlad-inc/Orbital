@@ -29,6 +29,16 @@ const STATUS_LABEL = {
   self: '',
 } as const;
 
+/** The drawer's long-form of the relation chip: the chip abbreviates,
+ *  the drawer speaks in sentences. */
+const RELATION_TEXT: Record<keyof typeof STATUS_LABEL, string> = {
+  defense_pact: 'allied with you',
+  nap: 'at peace with you',
+  intel_share: 'sharing intel with you',
+  war: 'at war with you',
+  self: '',
+};
+
 const STATUS_COLOR: Record<keyof typeof STATUS_LABEL, string> = {
   defense_pact: '#6ee7b7',   // friendly green — full alliance
   nap: '#67e8f9',            // cool cyan — peace but not allied
@@ -275,20 +285,19 @@ export function FactionPanel({ gameId }: { gameId: string }) {
                         ? <span className="fp-lock" title="Economic Intel — research Sensors 4">🔒 Sensors 4</span>
                         : <IncomeChips income={f.income ?? { metal: 0, fuel: 0, gold: 0, science: 0 }} />}
                     </div>
-                    {!mine && (
-                      <div className="fp-kv">
-                        <span className="fp-k">Tech</span>
-                        {f.tech_levels
-                          ? <TechPips levels={f.tech_levels} />
-                          : <span className="fp-lock" title="Research Intel — research Sensors 6">🔒 Sensors 6</span>}
-                      </div>
-                    )}
+                    <div className="fp-kv">
+                      <span className="fp-k">Tech</span>
+                      {f.tech_levels
+                        ? <TechPips levels={f.tech_levels} />
+                        : <span className="fp-lock" title="Research Intel — research Sensors 6">🔒 Sensors 6</span>}
+                    </div>
                     <div className="fp-kv">
                       <span className="fp-k">Status</span>
                       <span>
                         {eliminated ? 'Eliminated — holds no seat'
                           : dormant ? 'Dormant, but alive — still holds its senate seat'
-                          : 'Active'}
+                          : mine ? 'Active'
+                          : `Active · ${RELATION_TEXT[statusKey]}`}
                       </span>
                     </div>
                     {factionPacts.map(pct => (
@@ -410,7 +419,11 @@ type FactionIncome = NonNullable<Faction['income']>;
 
 function IncomeChips({ income }: { income: FactionIncome }) {
   const chips = INCOME_TINT_KEYS
-    .map(([k, suffix, tint]) => ({ v: income[k] ?? 0, suffix, tint }))
+    // Whole numbers. "+27.4M" under a "9.2k" stockpile column reads as
+    // 27.4 MILLION — the decimal makes the M parse as magnitude instead
+    // of metal. Rounded, coloured, and "/tick" spelled out, it parses as
+    // a rate line the way the mockup's did.
+    .map(([k, suffix, tint]) => ({ v: Math.round(income[k] ?? 0), suffix, tint }))
     .filter(c => c.v > 0);
   if (chips.length === 0) return <span className="fp-dim">no income</span>;
   return (
@@ -418,7 +431,7 @@ function IncomeChips({ income }: { income: FactionIncome }) {
       {chips.map(c => (
         <span key={c.suffix} style={{ color: c.tint }}>+{c.v}{c.suffix}</span>
       ))}
-      <span className="fp-dim">/t</span>
+      <span className="fp-dim">/tick</span>
     </span>
   );
 }
@@ -430,12 +443,17 @@ function TechPips({ levels }: { levels: Record<string, number> }) {
     ['weapons', 'W'], ['armor', 'A'], ['propulsion', 'P'],
     ['construction', 'C'], ['industry', 'I'], ['sensors', 'S'],
   ];
-  const title = tracks.map(([k, a]) => `${a}${levels[k] ?? 0}`).join(' ');
+  const readout = tracks.map(([k, a]) => `${a}${levels[k] ?? 0}`).join(' ');
   return (
-    <span className="fp-pips" title={title}>
-      {tracks.map(([k]) => (
-        <i key={k} style={{ height: `${2 + 1.2 * Math.min(10, levels[k] ?? 0)}px` }} />
-      ))}
+    <span className="fp-pips-wrap">
+      <span className="fp-pips" aria-hidden="true">
+        {tracks.map(([k]) => (
+          <i key={k} style={{ height: `${2 + 1.2 * Math.min(10, levels[k] ?? 0)}px` }} />
+        ))}
+      </span>
+      {/* The letters are the data; the pips are the shape. The mockup
+          showed both, and a tooltip is not a place to keep data. */}
+      <span className="fp-pips__txt">{readout}</span>
     </span>
   );
 }
