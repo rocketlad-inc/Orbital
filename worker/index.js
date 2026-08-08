@@ -344,6 +344,11 @@ async function handleMe(req, env) {
     // tab. Every /api/admin route re-checks the email server-side, so a
     // spoofed flag shows an empty tab, not data.
     is_admin: analytics.isAdminEmail(session.email),
+    // Same trust model as is_admin: the client uses this to unlock
+    // premium cosmetics in pickers, but every save path re-checks the
+    // entitlement server-side — a spoofed flag shows options the server
+    // will then refuse to persist.
+    is_premium: await store.hasEntitlement(env, session.user_id),
   } });
 }
 
@@ -771,10 +776,11 @@ import * as discord from './discord.js';
 import * as discordOauth from './discordOauth.js';
 import * as configAdmin from './configAdmin.js';
 import * as analytics from './analytics.js';
+import * as store from './store.js';
 import * as heraldStrip from './heraldStrip.js';
 import * as battleCard from './battleCard.js';
 
-const FEATURE_MODULES = [lobby, factions, messages, senate, trades, state, actions, fleets, discord, discordOauth, analytics, configAdmin];
+const FEATURE_MODULES = [lobby, factions, messages, senate, trades, state, actions, fleets, discord, discordOauth, analytics, configAdmin, store];
 
 function matchPattern(pattern, pathname) {
   if (typeof pattern === 'string') {
@@ -1053,6 +1059,12 @@ export default {
       // cookieless POST 401s before its signature can be checked.
       if (req.method === 'POST' && url.pathname === '/api/discord/interactions') {
         return discord.handleInteractions(req, env);
+      }
+
+      // Stripe webhook — same carve-out, same reason: Stripe's POST is
+      // cookieless and authenticates by HMAC signature inside the handler.
+      if (req.method === 'POST' && url.pathname === '/api/stripe/webhook') {
+        return store.handleStripeWebhook(req, env);
       }
 
       // everything below requires a session

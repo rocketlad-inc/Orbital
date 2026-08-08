@@ -433,6 +433,113 @@ function OverviewView({ data, onOpen }: { data: Overview; onOpen: (id: string) =
           </tbody>
         </table>
       </section>
+
+      <section>
+        <div className="aa-section-title">PREMIUM GRANTS</div>
+        <PremiumGrants />
+      </section>
+    </div>
+  );
+}
+
+/**
+ * The admin override for the Commission: look up an account by email,
+ * grant or revoke the cosmetics entitlement. Support tooling — comps,
+ * refund cleanup, "my little brother bought it on the wrong account".
+ *
+ * Look up FIRST, then act: grant/revoke buttons only appear once the
+ * account is on screen, so the wrong-email failure mode is a harmless
+ * "no account with that email" instead of a grant landing on a stranger.
+ */
+function PremiumGrants() {
+  const [email, setEmail] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [found, setFound] = useState<{
+    email: string;
+    display_name: string;
+    entitlements: { sku: string; source: string; granted_by: string | null; granted_at: number }[];
+  } | null>(null);
+
+  const lookup = async () => {
+    setBusy(true); setNote(null); setFound(null);
+    const res = await apiFetch<{
+      user: { email: string; display_name: string };
+      entitlements: { sku: string; source: string; granted_by: string | null; granted_at: number }[];
+    }>(`/api/admin/entitlements?email=${encodeURIComponent(email.trim())}`);
+    setBusy(false);
+    if (!res.ok) { setNote(res.error?.message ?? 'lookup failed'); return; }
+    setFound({ ...res.data.user, entitlements: res.data.entitlements });
+  };
+
+  const act = async (path: string, verb: string) => {
+    if (!found) return;
+    setBusy(true); setNote(null);
+    const res = await apiFetch<{ ok: boolean }>(path, {
+      method: 'POST',
+      body: JSON.stringify({ email: found.email }),
+    });
+    setBusy(false);
+    if (!res.ok) { setNote(res.error?.message ?? `${verb} failed`); return; }
+    setNote(`${verb} ✓ — ${found.email}`);
+    // Re-run the lookup so the panel shows the post-action truth rather
+    // than an optimistic guess.
+    void lookup();
+  };
+
+  const owns = found?.entitlements.some(e => e.sku === 'cosmetics_v1') ?? false;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 520 }}>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input
+          value={email}
+          onChange={e => setEmail(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') void lookup(); }}
+          placeholder="account email…"
+          style={{
+            flex: 1, background: 'rgba(20, 32, 46, 0.85)',
+            border: '1px solid rgba(96, 130, 160, 0.4)', borderRadius: 6,
+            color: '#cdd9e4', fontSize: 12, padding: '6px 10px', fontFamily: 'inherit',
+          }}
+        />
+        <button className="aa-btn" disabled={busy || !email.trim()} onClick={() => void lookup()}>
+          Look up
+        </button>
+      </div>
+      {found && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+          border: '1px solid rgba(96, 130, 160, 0.3)', borderRadius: 6, padding: '8px 10px',
+        }}>
+          <span style={{ fontSize: 12, color: '#e8eef5' }}>{found.display_name}</span>
+          <span style={{ fontSize: 11, color: '#8a9fb3' }}>{found.email}</span>
+          <span style={{ fontSize: 11, color: owns ? '#6ee7b7' : '#8a9fb3' }}>
+            {owns
+              ? `PREMIUM (${found.entitlements.find(e => e.sku === 'cosmetics_v1')?.source})`
+              : 'no premium'}
+          </span>
+          {owns ? (
+            <button
+              className="aa-btn"
+              style={{ marginLeft: 'auto', borderColor: 'rgba(255, 94, 94, 0.5)', color: '#ff5e5e' }}
+              disabled={busy}
+              onClick={() => void act('/api/admin/entitlements/revoke', 'Revoked')}
+            >
+              Revoke
+            </button>
+          ) : (
+            <button
+              className="aa-btn aa-btn--primary"
+              disabled={busy}
+              onClick={() => void act('/api/admin/entitlements', 'Granted')}
+            >
+              Grant premium
+            </button>
+          )}
+        </div>
+      )}
+      {note && <div style={{ fontSize: 11, color: '#8a9fb3' }}>{note}</div>}
     </div>
   );
 }
