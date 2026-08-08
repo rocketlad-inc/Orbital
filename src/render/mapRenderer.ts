@@ -4546,6 +4546,16 @@ function drawShieldBubble(
   body: Body,
   ctx: RenderContext,
 ) {
+  // World menu open → the closeup pass (worldMenuCloseup.drawShieldDome)
+  // IS the shield's representation, arcing over the city skyline. This
+  // map-layer bubble kept drawing underneath it, blown up by the menu's
+  // giant framing into a second glassy band across the planet's face
+  // (Lorne: "our orbital shield is duplicating"). drawCity/drawStation
+  // got this exact guard when the menu shipped; the bubble was added
+  // later, one call ABOVE them in drawSettlement, and missed it. Same
+  // any-menu-open rule as those two — sibling bodies' bubbles would
+  // clutter the menu sky just like their diamonds did.
+  if (getWorldMenuOpenBodyId() !== null) return;
   const max = settlement.shieldHpMax ?? 0;
   const hp = settlement.shieldHp ?? 0;
   if (max <= 0 || hp <= 0) return;
