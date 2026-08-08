@@ -1525,15 +1525,19 @@ async function handleDigestNow(req, env, ctx) {
   }
 
   const game = await env.DB
-    .prepare('SELECT id, current_tick FROM games WHERE id = ?')
+    .prepare('SELECT id, current_tick, status FROM games WHERE id = ?')
     .bind(gameId)
     .first();
   if (!game) return err(404, 'not_found', 'game not found');
 
+  // A finished game publishes its FINAL edition: everything still
+  // unpublished, not the button's usual rolling 12h window (which would
+  // quietly drop the earlier part of the match's last day). Live games
+  // keep the trailing window so the button always shows recent news.
   const result = await runDigestForGame(
     env,
     { id: game.id, current_tick: game.current_tick, name: room.name },
-    { force: true },
+    game.status === 'completed' ? { final: true } : { force: true },
   );
   if (result.reason === 'webhook_not_configured') {
     return err(409, 'webhook_not_configured', 'DISCORD_DIGEST_WEBHOOK secret is not set on the worker');

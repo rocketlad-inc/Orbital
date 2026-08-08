@@ -1816,7 +1816,7 @@ function collectBodyIds(rows) {
  *   when it's clicked or how recently a digest last ran.
  * @returns {posted: boolean, events: number, reason?: string}
  */
-export async function runDigestForGame(env, game, { force = false } = {}) {
+export async function runDigestForGame(env, game, { force = false, final = false } = {}) {
   const webhook = env.DISCORD_DIGEST_WEBHOOK;
   if (!webhook) return { posted: false, events: 0, reason: 'webhook_not_configured' };
 
@@ -1826,16 +1826,24 @@ export async function runDigestForGame(env, game, { force = false } = {}) {
     .bind(game.id)
     .first();
   const lastDigestMs = state?.last_digest_ms ?? 0;
-  if (!force && now - lastDigestMs < MIN_INTERVAL_MS) {
+  if (!force && !final && now - lastDigestMs < MIN_INTERVAL_MS) {
     return { posted: false, events: 0, reason: 'already_ran_today' };
   }
 
   // Forced (button) editions: always the trailing 12h from right now.
   // Scheduled (cron) editions: incremental — since the last edition's
   // high-water mark, falling back to a 24h lookback on the very first run.
-  const sinceMs = force
-    ? now - FORCE_LOOKBACK_MS
-    : (state?.last_entry_ms || (now - FIRST_RUN_LOOKBACK_MS));
+  // FINAL editions publish EVERYTHING still unpublished, and skip the
+  // once-a-day guard. A match ends once, so its last edition cannot use
+  // the forced button's rolling 12h window — measured on the real case:
+  // a forced publish would have carried the victory but silently dropped
+  // 11.5h of the game's final day, and two hours later would have
+  // dropped the victory too. Incremental window, no interval guard.
+  const sinceMs = final
+    ? (state?.last_entry_ms || (now - FIRST_RUN_LOOKBACK_MS))
+    : force
+      ? now - FORCE_LOOKBACK_MS
+      : (state?.last_entry_ms || (now - FIRST_RUN_LOOKBACK_MS));
 
   // Public entries only — the digest goes to a shared channel, so
   // faction-scoped intel (visibility = JSON array) must not leak.
@@ -1872,7 +1880,7 @@ export async function runDigestForGame(env, game, { force = false } = {}) {
   // Forced editions always publish — a quiet day (no stories, no
   // trades) still gets a headline-styled "all quiet" bulletin so the
   // host's test button visibly works.
-  if (!embed && force) {
+  if (!embed && (force || final)) {
     const used = new Map();
     embed = {
       title: pickTemplate('quiet_hl', QUIET_DAY_HEADLINE, used)(),
@@ -2034,7 +2042,7 @@ export async function publishFinalEdition(env, gameId) {
       .bind(gameId)
       .first();
     if (!game) return;
-    await runDigestForGame(env, game, { force: true });
+    await runDigestForGame(env, game, { final: true });
   } catch (e) {
     console.error('publishFinalEdition failed', e);
   }
