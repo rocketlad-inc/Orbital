@@ -20,10 +20,26 @@ export const EMBLEM_IDS = [
   'helix', 'leaf', 'wave', 'mountain', 'tower', 'pyramid',
 ];
 
-const EMBLEM_SET = new Set(EMBLEM_IDS);
+// Premium wing (Commander's Commission, mirror of PREMIUM_EMBLEM_IDS in
+// src/game/emblems.ts). NOT in EMBLEM_IDS: defaultEmblemFor and the
+// client fallback walk that array, and neither a default nor a fallback
+// may ever hand paid content to a free account. Validation accepts
+// both; the entitlement check at the save sites decides who may KEEP a
+// premium pick.
+export const PREMIUM_EMBLEM_IDS = [
+  'dragon', 'kraken', 'galaxy', 'nova', 'raven',
+  'serpent', 'swords', 'atom', 'hourglass', 'compass',
+];
+
+const PREMIUM_EMBLEM_SET = new Set(PREMIUM_EMBLEM_IDS);
+const EMBLEM_SET = new Set([...EMBLEM_IDS, ...PREMIUM_EMBLEM_IDS]);
 
 export function isEmblemId(v) {
   return typeof v === 'string' && EMBLEM_SET.has(v);
+}
+
+export function isPremiumEmblem(v) {
+  return typeof v === 'string' && PREMIUM_EMBLEM_SET.has(v);
 }
 
 /** Normalise an incoming pick: a known id, or null. Anything else is a

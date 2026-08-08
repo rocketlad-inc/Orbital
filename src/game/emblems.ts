@@ -21,7 +21,11 @@ export type EmblemId =
   | 'anchor' | 'comet' | 'crown' | 'eye' | 'gear' | 'hammer'
   | 'helix' | 'key' | 'leaf' | 'moon' | 'mountain' | 'orbit'
   | 'phoenix' | 'pyramid' | 'ring' | 'shield' | 'skull' | 'spear'
-  | 'star' | 'sun' | 'tower' | 'trident' | 'wave' | 'wolf';
+  | 'star' | 'sun' | 'tower' | 'trident' | 'wave' | 'wolf'
+  // Premium wing (Commander's Commission). Same permanence rule as the
+  // free two dozen: a stored 'dragon' draws a dragon forever.
+  | 'dragon' | 'kraken' | 'galaxy' | 'nova' | 'raven'
+  | 'serpent' | 'swords' | 'atom' | 'hourglass' | 'compass';
 
 /** Catalog order — drives the picker grid and the default rotation.
  *  24 entries against a max_players cap of 8 means uniqueness is always
@@ -33,6 +37,17 @@ export const EMBLEM_IDS: EmblemId[] = [
   'helix', 'leaf', 'wave', 'mountain', 'tower', 'pyramid',
 ];
 
+/** The Commission's emblems. NOT in EMBLEM_IDS: the default rotation
+ *  and the deterministic fallback both walk that array, and a default
+ *  must never hand out (or a fallback silently draw) paid content on a
+ *  free account. Validation accepts both lists; rotation only the free
+ *  one. UI locks gate on this + is_premium; the SERVER re-checks the
+ *  entitlement on every save. */
+export const PREMIUM_EMBLEM_IDS: EmblemId[] = [
+  'dragon', 'kraken', 'galaxy', 'nova', 'raven',
+  'serpent', 'swords', 'atom', 'hourglass', 'compass',
+];
+
 /** Human labels for tooltips and the Herald's prose. */
 export const EMBLEM_NAMES: Record<EmblemId, string> = {
   star: 'Star', sun: 'Sun', moon: 'Crescent', comet: 'Comet',
@@ -41,9 +56,12 @@ export const EMBLEM_NAMES: Record<EmblemId, string> = {
   skull: 'Skull', wolf: 'Wolf', phoenix: 'Phoenix', eye: 'Eye',
   key: 'Key', gear: 'Gear', helix: 'Helix', leaf: 'Leaf',
   wave: 'Wave', mountain: 'Mountain', tower: 'Tower', pyramid: 'Pyramid',
+  dragon: 'Dragon', kraken: 'Kraken', galaxy: 'Galaxy', nova: 'Nova',
+  raven: 'Raven', serpent: 'Serpent', swords: 'Crossed Swords',
+  atom: 'Atom', hourglass: 'Hourglass', compass: 'Compass Rose',
 };
 
-const EMBLEM_SET = new Set<string>(EMBLEM_IDS);
+const EMBLEM_SET = new Set<string>([...EMBLEM_IDS, ...PREMIUM_EMBLEM_IDS]);
 
 export function isEmblemId(v: unknown): v is EmblemId {
   return typeof v === 'string' && EMBLEM_SET.has(v);

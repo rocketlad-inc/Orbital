@@ -129,6 +129,104 @@ const GLYPHS: Record<EmblemId, (p: GlyphProps) => React.ReactElement> = {
     <path d="M16 3 31 29H1z" />
     <path d="M16 3v26H1z" fill="#000" opacity="0.3" />
   </>, title),
+
+  // ----- premium wing (Commander's Commission) -----
+  // Same rules as the free set: solid silhouettes, legible at 12px.
+
+  dragon: ({ title }) => wrap(<>
+    {/* Head + jaw facing right, swept wing above, coiled tail below. */}
+    <path d="M6 22 Q3 16 8 11 Q14 5 22 8 L29 11 L22 12.5 L26 16 L19 15.5 Q21 20 16 23 Q11 26 6 22z" />
+    <path d="M10 8 L14 2 L17 7z" />
+    <circle cx="23" cy="10" r="1" fill="#000" opacity="0.35" />
+  </>, title),
+
+  kraken: ({ title }) => wrap(<>
+    {/* Dome head over four splayed tentacles. */}
+    <path d="M8 13 Q8 4 16 4 Q24 4 24 13 L24 16 L8 16z" />
+    <path d="M9 16 Q7 22 3 24 Q8 25 11 21z" />
+    <path d="M13 16 Q12 24 9 29 Q14 27 15.5 20z" />
+    <path d="M19 16 Q20 24 23 29 Q18 27 16.5 20z" />
+    <path d="M23 16 Q25 22 29 24 Q24 25 21 21z" />
+    <circle cx="12.5" cy="11" r="1.4" fill="#000" opacity="0.35" />
+    <circle cx="19.5" cy="11" r="1.4" fill="#000" opacity="0.35" />
+  </>, title),
+
+  galaxy: ({ title }) => wrap(<>
+    {/* Two-arm spiral around a core. */}
+    <circle cx="16" cy="16" r="4" />
+    <path d="M16 12 Q26 10 28 18 Q30 8 20 5 Q17 4 16 12z" />
+    <path d="M16 20 Q6 22 4 14 Q2 24 12 27 Q15 28 16 20z" />
+  </>, title),
+
+  nova: ({ title }) => wrap(<>
+    {/* Eight-point burst with a hollow shockwave ring. */}
+    <path d="M16 1 L18.5 12 L16 9 L13.5 12z" />
+    <path d="M16 31 L13.5 20 L16 23 L18.5 20z" />
+    <path d="M1 16 L12 13.5 L9 16 L12 18.5z" />
+    <path d="M31 16 L20 18.5 L23 16 L20 13.5z" />
+    <path d="M5.4 5.4 L13 10 L10 10 L10 13z" />
+    <path d="M26.6 26.6 L19 22 L22 22 L22 19z" />
+    <path d="M26.6 5.4 L22 13 L22 10 L19 10z" />
+    <path d="M5.4 26.6 L10 19 L10 22 L13 22z" />
+    <circle cx="16" cy="16" r="4.5" fill="none" stroke="currentColor" strokeWidth="2.2" />
+  </>, title),
+
+  raven: ({ title }) => wrap(<>
+    {/* Perched profile, beak right, tail sweeping left-down. */}
+    <path d="M9 25 Q6 14 12 9 Q18 4 24 8 L29 10 L24 11.5 Q25 16 21 20 L19 28 L16 27 L17 22 Q13 25 9 25z" />
+    <path d="M9 25 L2 29 L10 27.5z" />
+    <circle cx="23" cy="9.5" r="0.9" fill="#000" opacity="0.35" />
+  </>, title),
+
+  serpent: ({ title }) => wrap(<>
+    {/* S-coil with a wedge head striking right. */}
+    <path d="M7 27 Q2 22 7 18 Q12 14 9 10 Q7 6 12 4 Q10 8 14 10 Q19 13 14 18 Q9 23 13 26 Q10 28 7 27z" />
+    <path d="M13 26 Q18 28 22 25 Q27 21 24 16 L30 13 L22 12 Q16 12 18 18 Q19 22 15 23z" />
+    <circle cx="25" cy="14" r="0.9" fill="#000" opacity="0.35" />
+  </>, title),
+
+  swords: ({ title }) => wrap(<>
+    {/* Two crossed blades, points up-out, guards near the base. */}
+    <path d="M5 4 L20.5 22.5 L18 25 L2.5 6.5 L2.5 4z" />
+    <path d="M27 4 L11.5 22.5 L14 25 L29.5 6.5 L29.5 4z" />
+    <path d="M8.5 21 L11 18.5 L13.5 21 L11 23.5z" />
+    <path d="M23.5 21 L21 18.5 L18.5 21 L21 23.5z" />
+    <rect x="9" y="24" width="4" height="6" rx="1" transform="rotate(45 11 27)" />
+    <rect x="19" y="24" width="4" height="6" rx="1" transform="rotate(-45 21 27)" />
+  </>, title),
+
+  atom: ({ title }) => wrap(<>
+    <circle cx="16" cy="16" r="3.5" />
+    <ellipse cx="16" cy="16" rx="14" ry="5.5" fill="none"
+      stroke="currentColor" strokeWidth="2.2" />
+    <ellipse cx="16" cy="16" rx="14" ry="5.5" fill="none"
+      stroke="currentColor" strokeWidth="2.2" transform="rotate(60 16 16)" />
+    <ellipse cx="16" cy="16" rx="14" ry="5.5" fill="none"
+      stroke="currentColor" strokeWidth="2.2" transform="rotate(-60 16 16)" />
+  </>, title),
+
+  hourglass: ({ title }) => wrap(<>
+    {/* Frame + pinched glass, sand pooled in both bulbs. */}
+    <rect x="6" y="2" width="20" height="3.5" rx="1" />
+    <rect x="6" y="26.5" width="20" height="3.5" rx="1" />
+    <path d="M8 5.5 L24 5.5 Q24 12 18.5 16 Q24 20 24 26.5 L8 26.5 Q8 20 13.5 16 Q8 12 8 5.5z"
+      fill="none" stroke="currentColor" strokeWidth="2.2" />
+    <path d="M11 8 L21 8 Q20 12 16 14.5 Q12 12 11 8z" />
+    <path d="M16 19 Q20 21.5 21 25 L11 25 Q12 21.5 16 19z" />
+  </>, title),
+
+  compass: ({ title }) => wrap(<>
+    {/* Compass rose: long N-S-E-W points over short diagonals. */}
+    <path d="M13 13 L6 6 L13 9z" opacity="0.55" />
+    <path d="M19 13 L26 6 L19 9z" opacity="0.55" />
+    <path d="M13 19 L6 26 L13 23z" opacity="0.55" />
+    <path d="M19 19 L26 26 L19 23z" opacity="0.55" />
+    <path d="M16 0.5 L19 13 L16 11 L13 13z" />
+    <path d="M16 31.5 L13 19 L16 21 L19 19z" />
+    <path d="M0.5 16 L13 13 L11 16 L13 19z" />
+    <path d="M31.5 16 L19 19 L21 16 L19 13z" />
+    <circle cx="16" cy="16" r="3" />
+  </>, title),
 };
 
 export interface FactionEmblemProps {
