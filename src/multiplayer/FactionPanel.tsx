@@ -99,6 +99,40 @@ function WorldsHeld({ f }: { f: Faction }) {
   );
 }
 
+/**
+ * Systems controlled, and the senate vote it buys.
+ *
+ * Worlds answer "how much do they hold"; systems answer "how much of the
+ * chamber do they own", and the two come apart badly — five worlds
+ * scattered across five systems you don't lead is 0 extra votes, while
+ * five in one system is 1. Showing the derived VOTE is the point: it is
+ * the chancellor win condition, and players were reading territory as a
+ * proxy for it.
+ */
+function SystemsHeld({ f }: { f: Faction }) {
+  const owned = f.systems_owned ?? 0;
+  const total = f.systems_total ?? 0;
+  if (total <= 0) return null;
+  // Server-computed (factions.js) so the "eliminated holds no seat" rule
+  // isn't duplicated here; fall back to the plain formula only if an
+  // older server didn't send it.
+  const weight = f.vote_weight ?? owned + 1;
+  return (
+    <span
+      title={`Controls ${owned} of ${total} systems — senate vote weight ${weight} `
+        + `(1 seat + 1 per system).${(f.systems_open ?? 0) > 0
+          ? ` ${f.systems_open} still unclaimed or deadlocked.` : ''} `
+        + 'You control a system by owning more of its bodies than anyone else; '
+        + 'a tie is contested and worth nothing to anyone.'}
+      style={{ fontVariantNumeric: 'tabular-nums' }}
+    >
+      {/* No weight repeated here — the ★ badge in the header carries it. */}
+      ◉ {owned} {owned === 1 ? 'system' : 'systems'}
+      <span style={{ opacity: 0.6 }}> of {total}</span>
+    </span>
+  );
+}
+
 function ScoreboardStats({ f }: { f: Faction }) {
   const income = f.income;
   // null = intel-gated (show a lock). undefined = ungated/own (show data).
@@ -129,6 +163,11 @@ function ScoreboardStats({ f }: { f: Faction }) {
             intel-gated and leads with how close this empire is to the
             60% threshold rather than a bare count. */}
         <WorldsHeld f={f} />
+        <span style={{ opacity: 0.4 }}>·</span>
+        {/* Systems — the senate's currency. Sits next to worlds because
+            the two diverge: territory spread thin across systems you
+            don't lead buys no votes at all. */}
+        <SystemsHeld f={f} />
         <span style={{ opacity: 0.4 }}>·</span>
         {economyLocked ? (
           <span><Locked tip="Economic Intel — research Sensors 4 to see rival income" /> income</span>
@@ -302,7 +341,14 @@ export function FactionPanel({ gameId }: { gameId: string }) {
                     + 'and count for nobody.'
                   }
                 >
-                  ★ {f.senate_weight}
+                  {/* vote_weight is computed live from systems controlled.
+                      game_factions.senate_weight is a VESTIGIAL column —
+                      the senate recomputes weight at cast time and never
+                      writes it back, so it sits at 1 for every faction
+                      forever. This badge was showing that 1 while the
+                      tooltip described the real rule, so an empire with 13
+                      votes read as having 1. */}
+                  ★ {f.vote_weight ?? f.senate_weight}
                 </span>
               </div>
               {!eliminated && (

@@ -203,6 +203,15 @@ export type Faction = {
    *  from the same game_bodies.owner_faction_id the victory check uses. */
   bodies_owned?: number;
   bodies_total?: number;
+  /** Systems controlled — the SENATE vote driver (weight = 1 + systems),
+   *  computed with the same grouping and plurality rule the chamber uses.
+   *  systems_open counts what is still unowned or deadlocked. */
+  systems_owned?: number;
+  systems_total?: number;
+  systems_open?: number;
+  /** Senate vote weight (1 seat + 1 per system, 0 if eliminated).
+   *  Computed server-side so the "no seat when dead" rule has one home. */
+  vote_weight?: number;
   /** Rival tech levels, present only with Research Intel; null when gated. */
   tech_levels?: Record<string, number> | null;
 };

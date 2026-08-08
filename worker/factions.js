@@ -1,3 +1,4 @@
+import { summarizeSystems } from './systems.js';
 import { DEFAULT_LOADOUTS } from './shipDesigns.js';
 import { gatingEnabled, factionTechLevels, hasFeature } from './researchUnlocks.js';
 // ============================================================================
@@ -1295,10 +1296,11 @@ async function handleListFactions(_req, env, ctx) {
   // tech levels need Research Intel (sensors 6). You always see your OWN.
   // A gated-out field is sent as null so the client shows a lock chip
   // (distinct from a real 0). Ungated games keep everything open.
-  const [income, shipCounts, bodyCounts] = await Promise.all([
+  const [income, shipCounts, bodyCounts, systemCounts] = await Promise.all([
     computePoolIncomePerFaction(env, gameId),
     countActiveShipsPerFaction(env, gameId),
     countOwnedBodiesPerFaction(env, gameId),
+    countSystemsPerFaction(env, gameId),
   ]);
   const meRow = await env.DB
     .prepare('SELECT id FROM game_factions WHERE game_id = ? AND user_id = ?')
@@ -1339,6 +1341,17 @@ async function handleListFactions(_req, env, ctx) {
     // victory check counts, so the panel can never disagree with it.
     f.bodies_owned = bodyCounts.owned.get(f.id) ?? 0;
     f.bodies_total = bodyCounts.total;
+    // Systems drive SENATE vote weight (1 seat + 1 per system), which is
+    // the chancellor win condition — public for the same reason worlds
+    // are. systems_open is what is still unclaimed or deadlocked, so a
+    // player can see how much of the chamber is still winnable.
+    f.systems_owned = systemCounts.held.get(f.id) ?? 0;
+    f.systems_total = systemCounts.total;
+    f.systems_open = systemCounts.unowned + systemCounts.contested;
+    // Weight computed HERE, not on the client: the "a dead empire holds
+    // no seat" rule lives in voteWeightFor (worker/senate.js) and a
+    // second copy in the UI would be the thing that drifts.
+    f.vote_weight = f.status === 'active' ? f.systems_owned + 1 : 0;
     // tech_levels only attached for rivals when Research Intel is up
     // (own tech comes from /me); null elsewhere so the panel can gate.
     if (!mine) f.tech_levels = seeResearch ? (techByFaction.get(f.id) ?? {}) : null;
@@ -1373,6 +1386,46 @@ async function countOwnedBodiesPerFaction(env, gameId) {
     if (r.fid) owned.set(r.fid, Number(r.n ?? 0));
   }
   return { owned, total };
+}
+
+/**
+ * SYSTEMS controlled per faction, plus how many exist and how many are
+ * up for grabs.
+ *
+ * Uses summarizeSystems() from systems.js — the SAME grouping and
+ * plurality rule the senate uses to compute vote weight — so the number
+ * on the faction card is literally the number that decides the chamber.
+ * You control a system by owning strictly more of its bodies than anyone
+ * else; a tie leaves it contested and worth nothing to anyone.
+ *
+ * This is why the card carries systems alongside worlds: five worlds
+ * scattered across five systems you don't lead is worth ZERO votes,
+ * while five worlds concentrated in one is worth one. Territory alone
+ * doesn't tell a player which of those they have.
+ */
+async function countSystemsPerFaction(env, gameId) {
+  const bodies = (await env.DB
+    .prepare(
+      // Same column set as the senate's bodiesForWeight: orbit geometry
+      // feeds the belt clustering, without which every rock is a system.
+      `SELECT id, template_id, name, type, parent_body_id,
+              orbit_period, orbit_radius, orbit_rp, orbit_ra,
+              owner_faction_id
+         FROM game_bodies
+        WHERE game_id = ? AND destroyed_at_tick IS NULL`,
+    )
+    .bind(gameId)
+    .all()).results ?? [];
+  const systems = summarizeSystems(bodies);
+  const held = new Map();
+  let contested = 0;
+  let unowned = 0;
+  for (const sys of systems) {
+    if (sys.contested) { contested++; continue; }
+    if (!sys.controller) { unowned++; continue; }
+    held.set(sys.controller, (held.get(sys.controller) ?? 0) + 1);
+  }
+  return { held, total: systems.length, contested, unowned };
 }
 
 /** Active (undestroyed) ship count per faction. */
