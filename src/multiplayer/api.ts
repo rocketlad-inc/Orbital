@@ -218,6 +218,12 @@ export type Faction = {
   /** Senate vote weight (1 seat + 1 per system, 0 if eliminated).
    *  Computed server-side so the "no seat when dead" rule has one home. */
   vote_weight?: number;
+  /** Stockpiles. NULL when the caller lacks Economic Intel (Sensors 4)
+   *  on this faction — the same gate income uses, so a rival is either
+   *  economically legible or not, never half. */
+  metal?: number | null;
+  gold?: number | null;
+  science?: number | null;
   /** Rival tech levels, present only with Research Intel; null when gated. */
   tech_levels?: Record<string, number> | null;
 };

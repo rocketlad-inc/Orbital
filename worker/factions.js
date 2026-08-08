@@ -1378,7 +1378,11 @@ async function handleListFactions(_req, env, ctx) {
   const rows = await env.DB
     .prepare(
       `SELECT id, user_id, slot, name, color, color2, emblem, status, capital_body_id,
-              senate_weight, reputation
+              senate_weight, reputation,
+              -- Stockpiles ride along so the standings ledger can show
+              -- them; they are STRIPPED below for any faction the caller
+              -- lacks Economic Intel on, exactly like income.
+              metal, gold, science
          FROM game_factions
         WHERE game_id = ?
         ORDER BY slot ASC`,
@@ -1430,6 +1434,10 @@ async function handleListFactions(_req, env, ctx) {
     const fullIncome = income.get(f.id) ?? { metal: 0, fuel: 0, gold: 0, science: 0 };
     const fullCount = shipCounts.get(f.id) ?? 0;
     f.income = (mine || seeEconomy) ? fullIncome : null;
+    // Stockpiles are the same class of secret as income — one Sensors
+    // gate covers both, so a rival is either an open book economically
+    // or a closed one, never half.
+    if (!mine && !seeEconomy) { f.metal = null; f.gold = null; f.science = null; }
     f.ship_count = (mine || seeCensus) ? fullCount : null;
     // Worlds held. NOT intel-gated, unlike fleet census and economy:
     // political borders are already public (the map paints them for
@@ -1455,7 +1463,25 @@ async function handleListFactions(_req, env, ctx) {
     if (!mine) f.tech_levels = seeResearch ? (techByFaction.get(f.id) ?? {}) : null;
   }
 
-  return jsonResponse({ factions });
+  // Dyson Sphere progress rides along so the FACTION panel can show all
+  // THREE victory paths in one place. It is public by the same argument
+  // as territory: a megaproject that ends the match outright must not be
+  // something you only discover by flying to Sol. Best-effort — a
+  // pre-Phase-B game has no columns and simply omits the track.
+  let dyson = null;
+  try {
+    const d = await env.DB
+      .prepare(`SELECT dyson_controller_faction_id AS controller,
+                       dyson_hp AS hp, dyson_max_hp AS max_hp
+                  FROM games WHERE id = ?`)
+      .bind(gameId)
+      .first();
+    if (d && (d.max_hp ?? 0) > 0) {
+      dyson = { controller: d.controller ?? null, hp: d.hp ?? 0, max_hp: d.max_hp };
+    }
+  } catch { /* column absent on legacy games — omit the track */ }
+
+  return jsonResponse({ factions, dyson });
 }
 
 /**

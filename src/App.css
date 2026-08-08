@@ -6,6 +6,16 @@
      face across the entire project. */
   --font-body: 'Audiowide', 'Orbitron', 'Eurostile', system-ui, sans-serif;
   --font-display: var(--font-body);
+  /* DATA face. Audiowide carries no `tnum` table, so
+     `font-variant-numeric: tabular-nums` is silently inert on it and
+     equal-length numbers render at unequal widths — which kills the
+     "longer string = bigger number" cue a right-aligned column runs on.
+     Chivo Mono is monospaced, so the property is structural rather than
+     an OpenType feature that may or may not exist.
+     Use it ONLY for figures in aligned columns. Every label, name,
+     heading and control stays on --font-display; the game's character
+     lives in one face. */
+  --font-data: 'Chivo Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
   /* Top-bar height. Single source of truth: the bar uses it, and every
      panel that anchors below the bar offsets from it (calc(var + gap)).
      48px is the floor that still contains the 44px touch targets. */

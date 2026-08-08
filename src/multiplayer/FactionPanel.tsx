@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch, Faction, MyFaction, Pact, PACT_LABELS, PactKind, tradesApi } from './api';
-import { displayResource } from '../game/formatResources';
 import { FlagChip } from '../components/FactionEmblem';
 
 // The local twoToneChip helper is gone — FlagChip in
@@ -39,162 +38,6 @@ const STATUS_COLOR: Record<keyof typeof STATUS_LABEL, string> = {
 };
 
 // Per-resource tint for the income line — subtle, decoration only.
-const INCOME_TINT: Record<'metal' | 'fuel' | 'gold' | 'science', string> = {
-  metal: '#c9d4de',
-  fuel: '#ffb84d',
-  gold: '#ffd166',
-  science: '#67e8f9',
-};
-
-/** Compact scoreboard line: active ship count + POOL income/tick. Shared
- *  by the "Your empire" header and every diplomacy row so a rival's
- *  economy + fleet read at a glance (full open scoreboard). Income chips
- *  hide any resource at 0 — so once fuel is retired empire-wide the fuel
- *  chip simply stops appearing. */
-const TECH_ABBR: Array<[string, string]> = [
-  ['weapons', 'W'], ['armor', 'A'], ['propulsion', 'P'],
-  ['construction', 'C'], ['industry', 'I'], ['sensors', 'S'],
-];
-const Locked = ({ tip }: { tip: string }) => (
-  <span title={tip} style={{ opacity: 0.7, color: '#ffb84d' }}>🔒</span>
-);
-
-/** Fraction of all worlds one empire must hold to win outright.
- *  Mirrors DOMINATION_FRACTION in worker/room.js — KEEP IN SYNC. */
-const DOMINATION_FRACTION = 0.6;
-
-/**
- * Worlds held, shown against the domination threshold.
- *
- * A bare "12 worlds" doesn't answer the question players actually have,
- * which is "how close is this empire to winning". The share does, so the
- * count leads with it and tints as the threshold approaches.
- */
-function WorldsHeld({ f }: { f: Faction }) {
-  const owned = f.bodies_owned ?? 0;
-  const total = f.bodies_total ?? 0;
-  if (total <= 0) return null;
-  const share = owned / total;
-  const needed = Math.floor(total * DOMINATION_FRACTION) + 1;
-  // Amber inside striking distance, red once domination is one push
-  // away — the same escalation the runaway-leader warning uses.
-  const near = share >= DOMINATION_FRACTION * 0.75;
-  const critical = share >= DOMINATION_FRACTION;
-  const color = critical ? '#ff5e5e' : near ? '#ffb84d' : undefined;
-  return (
-    <span
-      title={`Holds ${owned} of ${total} worlds (${Math.round(100 * share)}%). `
-        + `Domination victory at ${Math.round(100 * DOMINATION_FRACTION)}% — ${needed} worlds.`}
-      style={{ fontVariantNumeric: 'tabular-nums', color, fontWeight: critical ? 700 : undefined }}
-    >
-      ◍ {owned} {owned === 1 ? 'world' : 'worlds'}
-      <span style={{ opacity: 0.6 }}> ({Math.round(100 * share)}%)</span>
-    </span>
-  );
-}
-
-/**
- * Systems controlled, and the senate vote it buys.
- *
- * Worlds answer "how much do they hold"; systems answer "how much of the
- * chamber do they own", and the two come apart badly — five worlds
- * scattered across five systems you don't lead is 0 extra votes, while
- * five in one system is 1. Showing the derived VOTE is the point: it is
- * the chancellor win condition, and players were reading territory as a
- * proxy for it.
- */
-function SystemsHeld({ f }: { f: Faction }) {
-  const owned = f.systems_owned ?? 0;
-  const total = f.systems_total ?? 0;
-  if (total <= 0) return null;
-  // Server-computed (factions.js) so the "eliminated holds no seat" rule
-  // isn't duplicated here; fall back to the plain formula only if an
-  // older server didn't send it.
-  const weight = f.vote_weight ?? owned + 1;
-  return (
-    <span
-      title={`Controls ${owned} of ${total} systems — senate vote weight ${weight} `
-        + `(1 seat + 1 per system).${(f.systems_open ?? 0) > 0
-          ? ` ${f.systems_open} still unclaimed or deadlocked.` : ''} `
-        + 'You control a system by owning more of its bodies than anyone else; '
-        + 'a tie is contested and worth nothing to anyone.'}
-      style={{ fontVariantNumeric: 'tabular-nums' }}
-    >
-      {/* No weight repeated here — the ★ badge in the header carries it. */}
-      ◉ {owned} {owned === 1 ? 'system' : 'systems'}
-      <span style={{ opacity: 0.6 }}> of {total}</span>
-    </span>
-  );
-}
-
-function ScoreboardStats({ f }: { f: Faction }) {
-  const income = f.income;
-  // null = intel-gated (show a lock). undefined = ungated/own (show data).
-  const censusLocked = f.ship_count === null;
-  const economyLocked = income === null;
-  const chips = income
-    ? (['metal', 'fuel', 'gold', 'science'] as const)
-        .map((k) => ({ k, v: income[k] ?? 0 }))
-        .filter((c) => c.v > 0)
-    : [];
-  const researchIntel = f.tech_levels; // present only with Research Intel
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-      <div
-        className="mp-scoreboard"
-        style={{
-          display: 'flex', alignItems: 'center', flexWrap: 'wrap',
-          gap: 8, fontSize: 11, color: 'var(--mp-fg-dim)',
-        }}
-      >
-        <span title="Active ships" style={{ fontVariantNumeric: 'tabular-nums' }}>
-          ⬡ {censusLocked
-            ? <Locked tip="Fleet Census — research Sensors 3 to see rival ship counts" />
-            : `${f.ship_count ?? 0} ${(f.ship_count ?? 0) === 1 ? 'ship' : 'ships'}`}
-        </span>
-        <span style={{ opacity: 0.4 }}>·</span>
-        {/* Worlds held — the domination win condition, so it is never
-            intel-gated and leads with how close this empire is to the
-            60% threshold rather than a bare count. */}
-        <WorldsHeld f={f} />
-        <span style={{ opacity: 0.4 }}>·</span>
-        {/* Systems — the senate's currency. Sits next to worlds because
-            the two diverge: territory spread thin across systems you
-            don't lead buys no votes at all. */}
-        <SystemsHeld f={f} />
-        <span style={{ opacity: 0.4 }}>·</span>
-        {economyLocked ? (
-          <span><Locked tip="Economic Intel — research Sensors 4 to see rival income" /> income</span>
-        ) : chips.length === 0 ? (
-          <span style={{ opacity: 0.6 }}>no income</span>
-        ) : (
-          <span
-            title="Pool income per tick (before senate effects)"
-            style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap', fontVariantNumeric: 'tabular-nums' }}
-          >
-            {chips.map((c) => (
-              <span key={c.k} style={{ color: INCOME_TINT[c.k] }}>
-                +{c.v}{c.k === 'metal' ? 'M' : c.k === 'fuel' ? 'F' : c.k === 'gold' ? 'C' : 'S'}
-              </span>
-            ))}
-            <span style={{ opacity: 0.6 }}>/t</span>
-          </span>
-        )}
-      </div>
-      {researchIntel && (
-        <div
-          title="Research Intel — rival tech levels"
-          style={{ display: 'flex', gap: 7, fontSize: 10, color: 'var(--mp-fg-dim)', fontVariantNumeric: 'tabular-nums' }}
-        >
-          <span style={{ opacity: 0.6 }}>🔬</span>
-          {TECH_ABBR.map(([key, abbr]) => (
-            <span key={key}>{abbr}{researchIntel[key] ?? 0}</span>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 export function FactionPanel({ gameId }: { gameId: string }) {
   const [me, setMe] = useState<MyFaction | null>(null);
@@ -202,17 +45,27 @@ export function FactionPanel({ gameId }: { gameId: string }) {
   const [pacts, setPacts] = useState<Pact[]>([]);
   const [breaking, setBreaking] = useState<string | null>(null);
   const [breakError, setBreakError] = useState<string | null>(null);
+  /** Dyson progress rides on the factions payload so all three victory
+   *  paths render from one fetch. Null on pre-Phase-B games. */
+  const [dyson, setDyson] = useState<DysonProgress | null>(null);
+  /** Which faction rows have their detail drawer open. */
+  const [openRows, setOpenRows] = useState<Set<string>>(new Set());
+  const toggleRow = (id: string) => setOpenRows(prev => {
+    const next = new Set(prev);
+    if (!next.delete(id)) next.add(id);
+    return next;
+  });
 
   const tradesApiClient = useMemo(() => tradesApi(gameId), [gameId]);
 
   const refresh = useCallback(async () => {
     const [meRes, listRes, pactsRes] = await Promise.all([
       apiFetch<{ faction: MyFaction }>(`/api/games/${gameId}/me`),
-      apiFetch<{ factions: Faction[] }>(`/api/games/${gameId}/factions`),
+      apiFetch<{ factions: Faction[]; dyson?: DysonProgress | null }>(`/api/games/${gameId}/factions`),
       tradesApiClient.listPacts(),
     ]);
     if (meRes.ok) setMe(meRes.data.faction);
-    if (listRes.ok) setRoster(listRes.data.factions);
+    if (listRes.ok) { setRoster(listRes.data.factions); setDyson(listRes.data.dyson ?? null); }
     if (pactsRes.ok) setPacts(pactsRes.data.pacts);
   }, [gameId, tradesApiClient]);
 
@@ -257,146 +110,364 @@ export function FactionPanel({ gameId }: { gameId: string }) {
     }, null);
   };
 
-  const others = roster.filter((f) => f.id !== me.id);
-  // My own scoreboard (income + ship count) lives on the roster entry —
-  // /me doesn't carry it. Fall back to a bare object so the line still
-  // renders before the roster fetch lands.
-  const myScore = roster.find((f) => f.id === me.id) ?? (me as Faction);
+  // Threat order: the faction closest to winning reads first, not the
+  // one that happened to take seat 0. Vote weight is the sort key because
+  // it is the only stat that is itself a win condition.
+  const ranked = [...roster].sort((a, b) => {
+    const w = (weightOf(b) - weightOf(a));
+    if (w !== 0) return w;
+    return (b.bodies_owned ?? 0) - (a.bodies_owned ?? 0);
+  });
+
+  // My own scoreboard lives on the roster entry — /me doesn't carry the
+  // derived fields. Fall back so the tracks render before the roster lands.
+  const myScore = roster.find(f => f.id === me.id) ?? (me as unknown as Faction);
+  const bodiesTotal = roster.find(f => (f.bodies_total ?? 0) > 0)?.bodies_total ?? 0;
+  const systemsTotal = roster.find(f => (f.systems_total ?? 0) > 0)?.systems_total ?? 0;
+  const claimed = roster.reduce((n, f) => n + (f.bodies_owned ?? 0), 0);
+  const unclaimed = Math.max(0, bodiesTotal - claimed);
+  // Domination is STRICTLY more than 60%, so the target is the first
+  // integer above the fraction — 28 of 45, not 27. Mirrors room.js.
+  const dominationTarget = bodiesTotal > 0 ? Math.floor(bodiesTotal * 0.6) + 1 : 0;
+  const chamber = roster.reduce((n, f) => n + weightOf(f), 0);
+
+  const leaderBy = (score: (f: Faction) => number): Faction | null =>
+    ranked.reduce<Faction | null>((best, f) =>
+      (!best || score(f) > score(best)) ? f : best, null);
+  const domLeader = leaderBy(f => f.bodies_owned ?? 0);
+  const senLeader = leaderBy(weightOf);
+  const dysonOwner = dyson?.controller
+    ? roster.find(f => f.id === dyson.controller) ?? null
+    : null;
 
   return (
-    <div>
-      <div className="mp-section-title">Your empire</div>
-      <div className="mp-row" style={{ gap: 8 }}>
-        <FlagChip className="mp-swatch" color={me.color} color2={me.color2}
-                  emblem={me.emblem} fallbackKey={me.id} size={20} />
-        <strong style={{ fontSize: 13 }}>{me.name}</strong>
-      </div>
-      <div className="mp-resource-grid">
-        {/* All three go through displayResource: the pools drift
-            fractional (research drain + treaty payouts subtract floats),
-            and science was rendering as 181.9399999999999. Same helper the
-            top-bar pills use, so the two can't show different numbers for
-            the same resource. */}
-        <div className="mp-resource-tile"><div className="label">Metal</div><div className="value">{displayResource(me.metal)}</div></div>
-        {/* Fuel tile removed — fuel left the economy (§1.1). Legacy
-            stockpiles still exist on old factions but earn nothing and
-            buy nothing, so showing them was pure confusion. */}
-        <div className="mp-resource-tile"><div className="label">Credits</div><div className="value">{displayResource(me.gold)}</div></div>
-        <div className="mp-resource-tile"><div className="label">Science</div><div className="value">{displayResource(me.science)}</div></div>
-      </div>
-      <div style={{ marginTop: 6 }}>
-        <ScoreboardStats f={myScore} />
-      </div>
-
-      <div className="mp-section-title" style={{ marginTop: 12 }}>Diplomacy</div>
-      {others.length === 0 ? (
-        <div className="mp-empty">No other factions yet.</div>
-      ) : (
-        others.map((f) => {
-          const eliminated = f.status === 'eliminated';
-          const top = topPactKind(f.id);
-          const factionPacts = pactsByFaction.get(f.id) ?? [];
-          const statusKey: keyof typeof STATUS_LABEL = eliminated
-            ? 'self'
-            : top ?? 'war';
-          return (
-            <div
-              key={f.id}
-              className="mp-presence-row"
-              style={{ flexWrap: 'wrap', borderBottom: '1px solid var(--mp-border)', padding: '6px 0' }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
-                <FlagChip className="mp-swatch" color={f.color} color2={f.color2}
-                          emblem={f.emblem} fallbackKey={f.id} />
-                <span style={{
-                  textDecoration: eliminated ? 'line-through' : 'none',
-                  flex: 1,
-                }}>
-                  {f.name}
-                </span>
-                {!eliminated && (
-                  <span style={{
-                    fontFamily: 'var(--font-display)',
-                    fontSize: 11,
-                    letterSpacing: '0.08em',
-                    color: STATUS_COLOR[statusKey],
-                    padding: '2px 8px',
-                    border: `1px solid ${STATUS_COLOR[statusKey]}`,
-                    borderRadius: 2,
-                  }}>
-                    {STATUS_LABEL[statusKey] || 'ELIMINATED'}
-                  </span>
-                )}
-                <span
-                  className="meta"
-                  style={{ color: 'var(--mp-fg-dim)', fontSize: 10 }}
-                  title={
-                    'Senate vote weight: 1 + 1 per system controlled. '
-                    + 'A faction controls a system when it owns more of that '
-                    + "system's bodies than anyone else; ties are contested "
-                    + 'and count for nobody.'
-                  }
+    <div className="fp">
+      {/* ---------- territory: the shape of the game ---------- */}
+      {bodiesTotal > 0 && (
+        <section className="fp-sect">
+          <div className="fp-sect__h">
+            <span className="fp-lbl">Territory</span>
+            <span className="fp-lbl fp-lbl--dim">
+              {bodiesTotal} worlds · {systemsTotal} systems
+            </span>
+          </div>
+          <div className="fp-terrwrap">
+            <div className="fp-terr">
+              {ranked.filter(f => (f.bodies_owned ?? 0) > 0).map(f => {
+                const n = f.bodies_owned ?? 0;
+                const pct = (100 * n) / bodiesTotal;
+                return (
+                  <div
+                    key={f.id}
+                    style={{ width: `${pct}%`, background: f.color }}
+                    title={`${f.name} — ${n} of ${bodiesTotal} worlds`}
+                  >
+                    {pct >= 7 && <span style={{ color: readableOn(f.color) }}>{n}</span>}
+                  </div>
+                );
+              })}
+              {unclaimed > 0 && (
+                <div
+                  className="fp-terr__free"
+                  style={{ width: `${(100 * unclaimed) / bodiesTotal}%` }}
+                  title={`${unclaimed} worlds unclaimed`}
                 >
-                  {/* vote_weight is computed live from systems controlled.
-                      game_factions.senate_weight is a VESTIGIAL column —
-                      the senate recomputes weight at cast time and never
-                      writes it back, so it sits at 1 for every faction
-                      forever. This badge was showing that 1 while the
-                      tooltip described the real rule, so an empire with 13
-                      votes read as having 1. */}
-                  ★ {f.vote_weight ?? f.senate_weight}
-                </span>
-              </div>
-              {!eliminated && (
-                <div style={{ width: '100%', marginTop: 4, marginLeft: 18 }}>
-                  <ScoreboardStats f={f} />
-                </div>
-              )}
-              {factionPacts.length > 0 && (
-                <div style={{
-                  width: '100%', marginTop: 4, marginLeft: 18,
-                  display: 'flex', flexDirection: 'column', gap: 3,
-                }}>
-                  {factionPacts.map(p => (
-                    <div key={p.id} style={{
-                      display: 'flex', alignItems: 'center', gap: 6,
-                      fontSize: 11, color: 'var(--mp-fg-dim)',
-                    }}>
-                      <span style={{ flex: 1 }}>
-                        {PACT_LABELS[p.kind]} · signed T+{p.signed_at_tick}
-                      </span>
-                      <button
-                        onClick={() => handleBreak(p.id)}
-                        disabled={breaking === p.id}
-                        style={{
-                          fontFamily: 'var(--font-display)',
-                          fontSize: 10,
-                          letterSpacing: '0.06em',
-                          background: 'transparent',
-                          color: '#ff5e5e',
-                          border: '1px solid #ff5e5e',
-                          padding: '2px 8px',
-                          borderRadius: 2,
-                          cursor: breaking === p.id ? 'wait' : 'pointer',
-                          opacity: breaking === p.id ? 0.5 : 1,
-                        }}
-                        title="Unilaterally break this pact. Combat resumes on the next tick."
-                      >
-                        {breaking === p.id ? 'BREAKING…' : 'BREAK'}
-                      </button>
-                    </div>
-                  ))}
+                  {unclaimed / bodiesTotal >= 0.14 && <span>{unclaimed} free</span>}
                 </div>
               )}
             </div>
-          );
-        })
+            {/* Domination line. Left as a fraction of the whole bar so it
+                lands on the same scale the segments use. */}
+            <div
+              className="fp-terr__tick"
+              style={{ left: `${(100 * dominationTarget) / bodiesTotal}%` }}
+            />
+          </div>
+          <div className="fp-terrfoot">
+            <span>{claimed} of {bodiesTotal} claimed</span>
+            <span className="fp-terrfoot__mid">{dominationTarget} wins</span>
+            <span>{unclaimed} unclaimed</span>
+          </div>
+        </section>
       )}
+
+      {/* ---------- standings ---------- */}
+      <section className="fp-sect">
+        <div className="fp-sect__h">
+          <span className="fp-lbl">Standings</span>
+          <span className="fp-lbl fp-lbl--dim">tap a row for detail</span>
+        </div>
+        <div role="table" aria-label="Faction standings">
+          <div role="rowgroup">
+            <div className="fp-head" role="row">
+              <span role="columnheader">Mtl</span>
+              <span role="columnheader">Cr</span>
+              <span role="columnheader">Sci</span>
+              <span role="columnheader">Wld</span>
+              <span role="columnheader">Sys</span>
+              <span role="columnheader">Fleet</span>
+            </div>
+          </div>
+          {ranked.map(f => {
+            const mine = f.id === me.id;
+            const eliminated = f.status === 'eliminated';
+            const dormant = !eliminated && (f.bodies_owned ?? 0) === 0
+              && (f.ship_count ?? 0) === 0;
+            const top = topPactKind(f.id);
+            const factionPacts = pactsByFaction.get(f.id) ?? [];
+            const open = openRows.has(f.id);
+            const statusKey: keyof typeof STATUS_LABEL = mine ? 'self' : (top ?? 'war');
+            return (
+              <div
+                key={f.id}
+                role="rowgroup"
+                className={'fp-row'
+                  + (mine ? ' fp-row--you' : '')
+                  + (eliminated ? ' fp-row--out' : '')}
+              >
+                <button
+                  type="button"
+                  className="fp-row__id"
+                  aria-expanded={open}
+                  onClick={() => toggleRow(f.id)}
+                >
+                  <span className="fp-caret" aria-hidden="true">{open ? '▾' : '▸'}</span>
+                  <FlagChip className="mp-swatch" color={f.color} color2={f.color2}
+                    emblem={f.emblem} fallbackKey={f.id} size={16} />
+                  <span className="fp-name" title={f.name}>{f.name}</span>
+                  <span
+                    className="fp-state"
+                    style={{ color: eliminated ? 'var(--mp-fg-dim)' : STATUS_COLOR[statusKey] }}
+                  >
+                    {eliminated ? 'OUT' : dormant ? 'DORMANT' : (mine ? 'YOU' : STATUS_LABEL[statusKey])}
+                  </span>
+                  <span
+                    className="fp-wt"
+                    title={'Senate vote weight: 1 seat + 1 per system controlled. '
+                      + "You control a system by owning more of its bodies than any rival; "
+                      + 'a tie is contested and worth nothing to anyone.'}
+                  >
+                    ★{weightOf(f)}
+                  </span>
+                </button>
+
+                <div className="fp-stats" role="row" aria-label={f.name}>
+                  {/* One gate for all three: null means no Economic Intel. */}
+                  <span role="cell">{f.metal === null
+                    ? <span className="fp-lock" title="Economic Intel — research Sensors 4">🔒</span>
+                    : compact(f.metal)}</span>
+                  <span role="cell">{f.gold === null ? '' : compact(f.gold)}</span>
+                  <span role="cell">{f.science === null ? '' : compact(f.science)}</span>
+                  <span role="cell">{f.bodies_owned ?? 0}</span>
+                  <span role="cell">{f.systems_owned ?? 0}/{systemsTotal || '—'}</span>
+                  <span role="cell">
+                    {f.ship_count === null
+                      ? <span className="fp-lock" title="Fleet Census — research Sensors 3">🔒</span>
+                      : (f.ship_count ?? 0)}
+                  </span>
+                </div>
+
+                {open && (
+                  <div className="fp-drawer">
+                    <div className="fp-kv">
+                      <span className="fp-k">Income</span>
+                      {f.income === null
+                        ? <span className="fp-lock" title="Economic Intel — research Sensors 4">🔒 Sensors 4</span>
+                        : <IncomeChips income={f.income ?? { metal: 0, fuel: 0, gold: 0, science: 0 }} />}
+                    </div>
+                    {!mine && (
+                      <div className="fp-kv">
+                        <span className="fp-k">Tech</span>
+                        {f.tech_levels
+                          ? <TechPips levels={f.tech_levels} />
+                          : <span className="fp-lock" title="Research Intel — research Sensors 6">🔒 Sensors 6</span>}
+                      </div>
+                    )}
+                    <div className="fp-kv">
+                      <span className="fp-k">Status</span>
+                      <span>
+                        {eliminated ? 'Eliminated — holds no seat'
+                          : dormant ? 'Dormant, but alive — still holds its senate seat'
+                          : 'Active'}
+                      </span>
+                    </div>
+                    {factionPacts.map(pct => (
+                      <div key={pct.id} className="fp-pact">
+                        <span>{PACT_LABELS[pct.kind]} · signed T+{pct.signed_at_tick}</span>
+                        <button
+                          onClick={() => handleBreak(pct.id)}
+                          disabled={breaking === pct.id}
+                          title="Unilaterally break this pact. Combat resumes on the next tick."
+                        >
+                          {breaking === pct.id ? 'BREAKING…' : 'BREAK'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div className="fp-foot">
+          ★ = senate vote weight (1 seat + 1 per system).
+        </div>
+      </section>
+
+      {/* ---------- paths to victory ---------- */}
+      <section className="fp-sect">
+        <div className="fp-sect__h"><span className="fp-lbl">Paths to victory</span></div>
+
+        {chamber > 0 && senLeader && (
+          <VictoryTrack
+            label="Chancellor · senate"
+            who={senLeader.name}
+            color={senLeader.color}
+            value={weightOf(senLeader)}
+            target={chamber}
+            readout={`★${weightOf(senLeader)} of ${chamber}`}
+            note="a bill passes on more yea than nay among votes cast — a tie kills it"
+          />
+        )}
+
+        {dyson && dysonOwner && (
+          <VictoryTrack
+            label="Dyson Sphere"
+            who={dysonOwner.name}
+            color={dysonOwner.color}
+            value={dyson.hp}
+            target={dyson.max_hp}
+            readout={`${compact(dyson.hp)} / ${compact(dyson.max_hp)}`}
+            note="completing it ends the match outright"
+          />
+        )}
+
+        {bodiesTotal > 0 && domLeader && (
+          <VictoryTrack
+            label={`Domination · ${dominationTarget} worlds`}
+            who={domLeader.name}
+            color={domLeader.color}
+            value={domLeader.bodies_owned ?? 0}
+            target={dominationTarget}
+            readout={`${domLeader.bodies_owned ?? 0} / ${dominationTarget}`}
+            youAt={bodiesTotal > 0
+              ? (myScore.bodies_owned ?? 0) / dominationTarget
+              : undefined}
+            note={`you hold ${myScore.bodies_owned ?? 0}`}
+          />
+        )}
+      </section>
+
       {breakError && (
         <div className="mp-empty" style={{ color: 'var(--mp-hostile)', marginTop: 6 }}>
           {breakError}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Dyson progress as sent by GET /factions. */
+interface DysonProgress { controller: string | null; hp: number; max_hp: number }
+
+/** Live senate weight. `senate_weight` on the row is VESTIGIAL — the
+ *  senate recomputes at cast time and never writes it back, so it sits at
+ *  1 forever. Prefer the computed value. */
+function weightOf(f: Faction): number {
+  return f.vote_weight ?? f.senate_weight ?? 1;
+}
+
+/** 32790 -> "32.8k". Keeps six columns inside a 376px panel without
+ *  truncating the number that matters. */
+function compact(n: number | null | undefined): string {
+  const v = Math.round(Number(n ?? 0));
+  if (!Number.isFinite(v)) return '0';
+  if (Math.abs(v) >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(v) >= 10_000) return `${Math.round(v / 1000)}k`;
+  if (Math.abs(v) >= 1_000) return `${(v / 1000).toFixed(1)}k`;
+  return String(v);
+}
+
+/** Black or white, whichever reads on this faction's colour. Faction
+ *  colours span white (#f5f5f5) to deep purple, so a fixed label colour
+ *  is unreadable on one end or the other. */
+function readableOn(hex: string): string {
+  const h = (hex || '#888').replace('#', '');
+  const n = h.length === 3
+    ? h.split('').map(c => parseInt(c + c, 16))
+    : [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16));
+  const [r, g, b] = n.map(v => (Number.isFinite(v) ? v : 136));
+  // Rec. 601 luma is good enough for a two-way pick.
+  return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#0a0f16' : '#ffffff';
+}
+
+const INCOME_TINT_KEYS: Array<[keyof FactionIncome, string, string]> = [
+  ['metal', 'M', 'var(--res-metal)'],
+  ['gold', 'C', 'var(--res-credit)'],
+  ['science', 'S', 'var(--res-science)'],
+];
+type FactionIncome = NonNullable<Faction['income']>;
+
+function IncomeChips({ income }: { income: FactionIncome }) {
+  const chips = INCOME_TINT_KEYS
+    .map(([k, suffix, tint]) => ({ v: income[k] ?? 0, suffix, tint }))
+    .filter(c => c.v > 0);
+  if (chips.length === 0) return <span className="fp-dim">no income</span>;
+  return (
+    <span className="fp-income">
+      {chips.map(c => (
+        <span key={c.suffix} style={{ color: c.tint }}>+{c.v}{c.suffix}</span>
+      ))}
+      <span className="fp-dim">/t</span>
+    </span>
+  );
+}
+
+/** Six tracks as bars rather than "W10 A10 P10 C10 I10 S10" — the shape
+ *  reads at a glance and the exact levels stay in the tooltip. */
+function TechPips({ levels }: { levels: Record<string, number> }) {
+  const tracks: Array<[string, string]> = [
+    ['weapons', 'W'], ['armor', 'A'], ['propulsion', 'P'],
+    ['construction', 'C'], ['industry', 'I'], ['sensors', 'S'],
+  ];
+  const title = tracks.map(([k, a]) => `${a}${levels[k] ?? 0}`).join(' ');
+  return (
+    <span className="fp-pips" title={title}>
+      {tracks.map(([k]) => (
+        <i key={k} style={{ height: `${2 + 1.2 * Math.min(10, levels[k] ?? 0)}px` }} />
+      ))}
+    </span>
+  );
+}
+
+/**
+ * One victory path. The readout carries its own background because the
+ * fill grows from the left — without it the number becomes unreadable
+ * exactly as a faction approaches the threshold, which is when it matters.
+ */
+function VictoryTrack({
+  label, who, color, value, target, readout, note, youAt,
+}: {
+  label: string; who: string; color: string;
+  value: number; target: number; readout: string; note: string;
+  /** Your own progress as a 0-1 fraction of the target, if worth marking. */
+  youAt?: number;
+}) {
+  const pct = target > 0 ? Math.min(100, (100 * value) / target) : 0;
+  return (
+    <div className="fp-vt">
+      <div className="fp-vt__h">
+        <span className="fp-vt__t">{label}</span>
+        <span className="fp-vt__who" title={who}>{who}</span>
+      </div>
+      <div className="fp-vt__rail">
+        <div className="fp-vt__seg" style={{ width: `${pct}%`, background: color }} />
+        {youAt !== undefined && youAt > 0 && youAt < 1 && (
+          <div className="fp-vt__you" style={{ left: `${100 * youAt}%` }} />
+        )}
+        <span className="fp-vt__pct">{readout}</span>
+      </div>
+      <div className="fp-vt__n">{note}</div>
     </div>
   );
 }

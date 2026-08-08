@@ -1599,3 +1599,140 @@
 .pp-friend--pending { opacity: 0.75; }
 .pp-friend__name { font-size: 13px; color: var(--mp-fg); flex: 1 1 auto; }
 .pp-friend__meta { font-size: 10px; color: var(--mp-fg-dim); }
+
+/* ============================================================
+   FACTION panel — territory bar, standings ledger, victory tracks.
+
+   Numbers in aligned columns use --font-data (Chivo Mono). Audiowide
+   carries no `tnum` table, so `tabular-nums` is silently inert on it and
+   equal-length numbers render at unequal widths — which destroys the
+   "longer string = bigger number" cue a right-aligned column runs on.
+   Everything else stays on the game face.
+   ============================================================ */
+.fp { display: flex; flex-direction: column; gap: 16px; }
+.fp-sect__h {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 8px; margin-bottom: 7px;
+}
+.fp-lbl {
+  font-size: 10px; letter-spacing: 0.13em; text-transform: uppercase;
+  color: var(--mp-fg-dim);
+}
+.fp-lbl--dim { color: #6f8093; }
+.fp-dim { color: var(--mp-fg-dim); }
+.fp-lock { color: #ffb84d; }
+
+/* ---- territory ---- */
+.fp-terrwrap { position: relative; }
+.fp-terr {
+  height: 24px; display: flex; border-radius: 4px; overflow: hidden;
+  border: 1px solid var(--mp-border);
+}
+.fp-terr > div { height: 100%; position: relative; min-width: 2px; }
+.fp-terr span {
+  position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; font-family: var(--font-data);
+  font-size: 11px; font-weight: 600;
+}
+.fp-terr__free { background: #141f2c; }
+.fp-terr__free span { color: #6f8093; }
+.fp-terr__tick {
+  position: absolute; top: -3px; bottom: -3px; width: 2px;
+  background: #ff5e5e;
+}
+.fp-terrfoot {
+  display: flex; justify-content: space-between; gap: 8px; margin-top: 7px;
+  font-family: var(--font-data); font-size: 10px; color: #6f8093;
+}
+.fp-terrfoot__mid { color: #ff5e5e; }
+
+/* ---- ledger ---- */
+.fp-head, .fp-stats {
+  display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px;
+  padding: 0 6px;
+}
+.fp-head { padding-bottom: 5px; }
+.fp-head span {
+  font-size: 10px; letter-spacing: 0.02em; text-transform: uppercase;
+  color: #6f8093; text-align: right;
+}
+.fp-stats {
+  font-family: var(--font-data); font-size: 11.5px; color: var(--mp-fg);
+  padding-bottom: 8px;
+}
+.fp-stats > span { text-align: right; overflow: hidden; text-overflow: ellipsis; }
+
+.fp-row { border-bottom: 1px solid var(--mp-border); }
+.fp-row--you { background: rgba(255, 184, 77, 0.09); box-shadow: inset 3px 0 0 #ffb84d; }
+.fp-row--out { opacity: 0.62; }
+.fp-row__id {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  background: transparent; border: 0; color: inherit; font: inherit;
+  text-align: left; cursor: pointer; padding: 8px 6px 5px;
+}
+.fp-row__id:focus-visible { outline: 2px solid #ffb84d; outline-offset: -2px; }
+.fp-caret { color: #6f8093; font-size: 11px; width: 12px; flex: 0 0 auto; }
+.fp-name {
+  flex: 1 1 auto; min-width: 0; font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fp-state {
+  flex: 0 0 auto; font-size: 10px; letter-spacing: 0.06em;
+  padding: 1px 5px; border: 1px solid currentColor; border-radius: 2px;
+}
+.fp-wt {
+  flex: 0 0 auto; font-family: var(--font-data); font-size: 11px;
+  color: var(--mp-fg);
+}
+
+.fp-drawer {
+  padding: 2px 8px 10px 24px; display: flex; flex-direction: column; gap: 6px;
+}
+.fp-kv { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--mp-fg-dim); }
+.fp-k { color: #6f8093; min-width: 52px; flex: 0 0 auto; font-size: 10px;
+  letter-spacing: 0.08em; text-transform: uppercase; }
+.fp-income { display: inline-flex; gap: 7px; font-family: var(--font-data); font-size: 11px; }
+.fp-pips { display: inline-flex; gap: 3px; align-items: flex-end; height: 14px; }
+.fp-pips i { display: block; width: 5px; background: #67e8f9; border-radius: 1px; }
+.fp-pact {
+  display: flex; align-items: center; gap: 8px; font-size: 11px;
+  color: var(--mp-fg-dim);
+}
+.fp-pact span { flex: 1 1 auto; }
+.fp-pact button {
+  font-family: var(--font-display); font-size: 10px; letter-spacing: 0.06em;
+  background: transparent; color: #ff5e5e; border: 1px solid #ff5e5e;
+  padding: 3px 9px; border-radius: 2px; cursor: pointer;
+}
+.fp-pact button:disabled { opacity: 0.5; cursor: wait; }
+.fp-foot { margin-top: 8px; font-size: 10px; color: #6f8093; line-height: 1.5; }
+
+/* ---- victory tracks ---- */
+.fp-vt { margin-bottom: 11px; }
+.fp-vt:last-child { margin-bottom: 0; }
+.fp-vt__h { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.fp-vt__t {
+  font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--mp-fg-dim);
+}
+.fp-vt__who {
+  font-size: 11px; color: var(--mp-fg); max-width: 150px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fp-vt__rail {
+  position: relative; height: 17px; margin-top: 5px;
+  background: rgba(255, 255, 255, 0.05); border-radius: 3px; overflow: hidden;
+}
+.fp-vt__seg { position: absolute; top: 0; bottom: 0; left: 0; }
+.fp-vt__you {
+  position: absolute; top: 0; bottom: 0; width: 2px; background: #ffb84d;
+  box-shadow: 0 0 0 1px rgba(10, 15, 22, 0.9);
+}
+/* Backed: the fill grows from the left, so an unbacked label becomes
+   unreadable exactly as a faction nears the threshold. */
+.fp-vt__pct {
+  position: absolute; right: 5px; top: 50%; transform: translateY(-50%);
+  font-family: var(--font-data); font-size: 10px; color: var(--mp-fg);
+  background: var(--mp-bg, #0a0e14); padding: 2px 5px; border-radius: 2px;
+}
+.fp-vt__n { font-size: 10px; color: #6f8093; margin-top: 4px; line-height: 1.45; }
