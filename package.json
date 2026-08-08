@@ -21,7 +21,8 @@
     "sim:passive": "node sim/sweep.mjs 30 300 passive",
     "db:migrate:local": "wrangler d1 migrations apply orbital --local",
     "db:migrate:remote": "wrangler d1 migrations apply orbital",
-    "sim:herald": "node sim/heraldShapes.mjs"
+    "sim:herald": "node sim/heraldShapes.mjs",
+    "sim:colors": "node sim/colorClash.mjs"
   },
   "eslintConfig": {
     "extends": [
