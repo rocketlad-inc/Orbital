@@ -1111,7 +1111,6 @@ const WmFleet: React.FC<{
 //                (delivery = per-freighter drain of the faction POOL;
 //                collectors and trade routes keep the pool filled).
 // ============================================================
-const DYSON_PUMP = { ore: 10, credits: 10, science: 5 };
 
 const WmDysonCard: React.FC = () => {
   const { gameState } = useGameContext();
