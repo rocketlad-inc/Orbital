@@ -1,4 +1,5 @@
 import { getActiveSliders } from './senate.js';
+import { validateIconVariant } from './store.js';
 import { logSpend } from './analytics.js';
 import { recomputeBodyOwnership } from './factions.js';
 import {
@@ -556,9 +557,11 @@ async function handleQueueBuild(req, env, ctx) {
   // clients that don't post the field still work.
   let iconVariant = null;
   if (body.icon_variant !== undefined && body.icon_variant !== null) {
-    if (typeof body.icon_variant !== 'string' || !/^[A-I]$/.test(body.icon_variant)) {
-      return err(400, 'bad_request', 'invalid icon_variant');
-    }
+    // Premium letters (J-S) additionally require the cosmetics
+    // entitlement — checked HERE, not just in the picker UI, because
+    // the picker lock is decoration and this INSERT is the state.
+    const badIcon = await validateIconVariant(env, ctx.session.user_id, body.icon_variant);
+    if (badIcon) return err(badIcon.code === 'premium_required' ? 403 : 400, badIcon.code, badIcon.message);
     iconVariant = body.icon_variant;
   }
   // Optional player-typed custom name. The docstring above promised
@@ -615,7 +618,7 @@ async function handleQueueBuild(req, env, ctx) {
   // Icon fallback chain: explicit BuildPanel pick > design's variant >
   // class default (NULL). The design variant went through the same
   // 'A'..'F' validation at design-save time.
-  if (iconVariant == null && activeDesign?.icon_variant && /^[A-I]$/.test(activeDesign.icon_variant)) {
+  if (iconVariant == null && activeDesign?.icon_variant && /^[A-S]$/.test(activeDesign.icon_variant)) {
     iconVariant = activeDesign.icon_variant;
   }
 
@@ -2825,9 +2828,8 @@ async function handleCreateDesign(req, env, ctx) {
   if (partsGate) return partsGate;
   let iconVariant = null;
   if (body.icon_variant != null) {
-    if (typeof body.icon_variant !== 'string' || !/^[A-I]$/.test(body.icon_variant)) {
-      return err(400, 'bad_request', 'invalid icon_variant');
-    }
+    const badIcon = await validateIconVariant(env, ctx.session.user_id, body.icon_variant);
+    if (badIcon) return err(badIcon.code === 'premium_required' ? 403 : 400, badIcon.code, badIcon.message);
     iconVariant = body.icon_variant;
   }
   const setActive = body.set_active === true;
@@ -2913,10 +2915,10 @@ async function handlePatchDesign(req, env, ctx) {
   let iconVariant = row.icon_variant ?? null;
   if (body.icon_variant !== undefined) {
     if (body.icon_variant === null) iconVariant = null;
-    else if (typeof body.icon_variant === 'string' && /^[A-I]$/.test(body.icon_variant)) {
+    else {
+      const badIcon = await validateIconVariant(env, ctx.session.user_id, body.icon_variant);
+      if (badIcon) return err(badIcon.code === 'premium_required' ? 403 : 400, badIcon.code, badIcon.message);
       iconVariant = body.icon_variant;
-    } else {
-      return err(400, 'bad_request', 'invalid icon_variant');
     }
   }
 

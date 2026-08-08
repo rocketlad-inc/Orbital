@@ -11,7 +11,8 @@
 // `sensor_coverage`, etc. We tolerate the export being missing (no-op import)
 // during early development so the lobby can be exercised standalone.
 import * as factions from './factions.js';
-import { normalizeEmblem } from './emblems.js';
+import { normalizeEmblem, isPremiumEmblem } from './emblems.js';
+import { validateEmblemChoice } from './store.js';
 
 const ROOM_ID_RE = /^[A-Za-z0-9_-]{6,32}$/;
 
@@ -615,6 +616,13 @@ async function handlePatchMe(req, env, ctx) {
   if (body.emblem !== undefined) {
     const emblem = normalizeEmblem(body.emblem);
     if (emblem === undefined) return err(400, 'bad_request', 'unknown emblem');
+    // Premium emblems need the Commission. Checked at the pick, not at
+    // render — everyone SEES a premium flag once it flies; only wearing
+    // it is gated.
+    if (emblem !== null) {
+      const badEmblem = await validateEmblemChoice(env, ctx.session.user_id, emblem, isPremiumEmblem);
+      if (badEmblem) return err(403, badEmblem.code, badEmblem.message);
+    }
     if (emblem === null) {
       sets.push('emblem = NULL');
     } else {

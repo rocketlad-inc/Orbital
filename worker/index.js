@@ -422,9 +422,10 @@ async function handleCreateShipTemplate(req, env, session) {
 
   let iconVariant = null;
   if (body.icon_variant != null) {
-    if (typeof body.icon_variant !== 'string' || !/^[A-I]$/.test(body.icon_variant)) {
-      return err(400, 'bad_request', 'invalid icon_variant');
-    }
+    // Account-level templates carry icon picks across games, so the
+    // entitlement gate applies here exactly as on the in-game paths.
+    const badIcon = await store.validateIconVariant(env, session.user_id, body.icon_variant);
+    if (badIcon) return err(badIcon.code === 'premium_required' ? 403 : 400, badIcon.code, badIcon.message);
     iconVariant = body.icon_variant;
   }
 

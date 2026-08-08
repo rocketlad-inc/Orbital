@@ -48,6 +48,37 @@ export const SKUS = {
   },
 };
 
+// Ship icon variants: A-I free, J-S premium (mirror of PREMIUM_VARIANTS
+// in src/components/ShipIcons.tsx — same keep-in-sync arrangement as
+// emblems). One validator for every save path so the rule can't drift
+// between the build queue, the designer and the account template store.
+const ICON_VARIANT_RE = /^[A-S]$/;
+const PREMIUM_ICON_VARIANTS = new Set(['J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S']);
+
+/**
+ * Validate a player-supplied icon variant. Returns null when acceptable,
+ * else { code, message } for the caller to wrap in its own err() helper
+ * (premium_required should map to 403, the rest to 400). Free letters
+ * never touch the database; premium letters cost one indexed PK lookup.
+ */
+export async function validateIconVariant(env, userId, v) {
+  if (typeof v !== 'string' || !ICON_VARIANT_RE.test(v)) {
+    return { code: 'bad_request', message: 'invalid icon_variant' };
+  }
+  if (PREMIUM_ICON_VARIANTS.has(v) && !(await hasEntitlement(env, userId))) {
+    return { code: 'premium_required', message: 'that icon line needs the Commander\u2019s Commission' };
+  }
+  return null;
+}
+
+/** Same question for a flag emblem pick. */
+export async function validateEmblemChoice(env, userId, emblemId, isPremiumFn) {
+  if (isPremiumFn(emblemId) && !(await hasEntitlement(env, userId))) {
+    return { code: 'premium_required', message: 'that emblem needs the Commander\u2019s Commission' };
+  }
+  return null;
+}
+
 /** The one question the rest of the codebase asks this module. */
 export async function hasEntitlement(env, userId, sku = 'cosmetics_v1') {
   if (!userId) return false;
