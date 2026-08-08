@@ -1,18 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch, Faction, MyFaction, Pact, PACT_LABELS, PactKind, tradesApi } from './api';
-import { deriveSecondary } from '../game/colorUtils';
 import { displayResource } from '../game/formatResources';
+import { FlagChip } from '../components/FactionEmblem';
 
-/** Two-tone (§5) chip: primary square with a secondary corner.
- *  decoration only — meaning must stay in primary. */
-function twoToneChip(color: string, color2?: string | null): React.CSSProperties {
-  const c2 = color2 || deriveSecondary(color);
-  return {
-    // Secondary occupies the bottom-right corner; primary keeps ~75%
-    // of the chip so ownership stays legible at a glance.
-    background: `linear-gradient(135deg, ${color} 0%, ${color} 68%, ${c2} 68%, ${c2} 100%)`,
-  };
-}
+// The local twoToneChip helper is gone — FlagChip in
+// components/FactionEmblem draws the same two-tone field plus the
+// faction's emblem, and LobbyView now shares it, so a player's flag
+// cannot render one way in the lobby and another in the match.
 
 // Highest-tier pact wins for the at-a-glance WAR/ALLIED/NAP label.
 // Ranked by how much it suppresses combat: defense_pact (full coverage)
@@ -273,7 +267,8 @@ export function FactionPanel({ gameId }: { gameId: string }) {
     <div>
       <div className="mp-section-title">Your empire</div>
       <div className="mp-row" style={{ gap: 8 }}>
-        <span className="mp-swatch" style={twoToneChip(me.color, me.color2)} />
+        <FlagChip className="mp-swatch" color={me.color} color2={me.color2}
+                  emblem={me.emblem} fallbackKey={me.id} size={20} />
         <strong style={{ fontSize: 13 }}>{me.name}</strong>
       </div>
       <div className="mp-resource-grid">
@@ -311,7 +306,8 @@ export function FactionPanel({ gameId }: { gameId: string }) {
               style={{ flexWrap: 'wrap', borderBottom: '1px solid var(--mp-border)', padding: '6px 0' }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
-                <span className="mp-swatch" style={twoToneChip(f.color, f.color2)} />
+                <FlagChip className="mp-swatch" color={f.color} color2={f.color2}
+                          emblem={f.emblem} fallbackKey={f.id} />
                 <span style={{
                   textDecoration: eliminated ? 'line-through' : 'none',
                   flex: 1,

@@ -11,6 +11,7 @@
 // `sensor_coverage`, etc. We tolerate the export being missing (no-op import)
 // during early development so the lobby can be exercised standalone.
 import * as factions from './factions.js';
+import { normalizeEmblem } from './emblems.js';
 
 const ROOM_ID_RE = /^[A-Za-z0-9_-]{6,32}$/;
 
@@ -465,7 +466,7 @@ async function handleLobbySnapshot(_req, env, ctx) {
   const memberRows = await env.DB
     .prepare(
       `SELECT rm.user_id, rm.empire_name, rm.bio, rm.chosen_starting_body,
-              rm.color, rm.color2,
+              rm.color, rm.color2, rm.emblem,
               u.display_name
          FROM room_members rm
          JOIN users u ON u.id = rm.user_id
@@ -490,6 +491,9 @@ async function handleLobbySnapshot(_req, env, ctx) {
     // can gray out primaries too close to already-picked ones.
     color: r.color ?? null,
     color2: r.color2 ?? null,
+    // Emblem pref. Exposed so the picker can mark other players' emblems
+    // as taken before the PATCH bounces with 409.
+    emblem: r.emblem ?? null,
   }));
 
   return json({
@@ -600,6 +604,29 @@ async function handlePatchMe(req, env, ctx) {
       args.push(hex2);
     }
   }
+  // Emblem — the shape half of the flag. Unlike colour there is no
+  // "close enough" here: two players either fly the same emblem or they
+  // don't, so the check is exact equality rather than a distance.
+  //
+  // A closed catalog also means an unknown id is a CLIENT BUG, not a
+  // player preference, so it 400s instead of being coerced to something
+  // valid. normalizeEmblem returns null for "clear it" and undefined for
+  // "not a real emblem" — the two cases must not collapse.
+  if (body.emblem !== undefined) {
+    const emblem = normalizeEmblem(body.emblem);
+    if (emblem === undefined) return err(400, 'bad_request', 'unknown emblem');
+    if (emblem === null) {
+      sets.push('emblem = NULL');
+    } else {
+      const takenRow = await env.DB
+        .prepare('SELECT 1 AS x FROM room_members WHERE room_id = ? AND user_id != ? AND emblem = ?')
+        .bind(roomId, ctx.session.user_id, emblem)
+        .first();
+      if (takenRow) return err(409, 'emblem_taken', 'another player already flies that emblem');
+      sets.push('emblem = ?');
+      args.push(emblem);
+    }
+  }
   if (!sets.length) return err(400, 'bad_request', 'nothing to update');
 
   args.push(roomId, ctx.session.user_id);
@@ -650,7 +677,7 @@ async function handlePatchMe(req, env, ctx) {
   }
 
   const row = await env.DB
-    .prepare('SELECT empire_name, bio, chosen_starting_body, color, color2 FROM room_members WHERE room_id = ? AND user_id = ?')
+    .prepare('SELECT empire_name, bio, chosen_starting_body, color, color2, emblem FROM room_members WHERE room_id = ? AND user_id = ?')
     .bind(roomId, ctx.session.user_id)
     .first();
   return json({ identity: row });

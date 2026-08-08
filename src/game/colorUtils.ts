@@ -64,3 +64,21 @@ export function colorDistance(a: string, b: string): number {
 /** Minimum sRGB distance between two players' PRIMARY colors. Keep in
  *  sync with COLOR_MIN_DISTANCE in worker/lobby.js. */
 export const COLOR_MIN_DISTANCE = 90;
+
+/**
+ * Ink to stamp an emblem in so it stays readable ON a faction's primary.
+ *
+ * The palette spans #ffca28 (bright amber) to #8d6e63 (dark brown), so a
+ * fixed white or black emblem vanishes at one end or the other. Same
+ * Rec. 601 luminance split deriveSecondary uses, so the two agree about
+ * which colours count as "light".
+ */
+export function emblemInk(hex: string): string {
+  const rgb = parseHex(hex);
+  if (!rgb) return '#ffffff';
+  const [r, g, b] = rgb;
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  // Not pure black/white: a hard #000 on a mid tone reads as a hole, and
+  // these two sit against the app's dark chrome without glaring.
+  return lum > 0.55 ? '#12181f' : '#f2f6fa';
+}

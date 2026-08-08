@@ -2,7 +2,9 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, RoomSnapshot, RoomSummary } from './api';
 import { useAuth } from './AuthContext';
 import { LobbyMapPreview } from './LobbyMapPreview';
-import { colorDistance, COLOR_MIN_DISTANCE, deriveSecondary } from '../game/colorUtils';
+import { colorDistance, COLOR_MIN_DISTANCE, deriveSecondary, emblemInk } from '../game/colorUtils';
+import { EMBLEM_IDS, EMBLEM_NAMES } from '../game/emblems';
+import { FactionEmblem, FlagChip } from '../components/FactionEmblem';
 import { RESOURCE_LETTER_COLORS } from '../game/resourceColors';
 
 /** A pre-game lobby chat line, as broadcast by the room WebSocket
@@ -15,15 +17,10 @@ interface ChatMsg {
   at: number;
 }
 
-/** Two-tone (§5) chip: primary square with a secondary corner. Mirrors
- *  FactionPanel's twoToneChip exactly so a member's color reads the same
- *  in the lobby as it will in the match. */
-function twoToneChip(color: string, color2?: string | null): React.CSSProperties {
-  const c2 = color2 || deriveSecondary(color);
-  return {
-    background: `linear-gradient(135deg, ${color} 0%, ${color} 68%, ${c2} 68%, ${c2} 100%)`,
-  };
-}
+// The two-tone chip helper that used to live here is now FlagChip in
+// components/FactionEmblem — it carries the emblem too, and one shared
+// component is the only way the lobby and the match can be guaranteed to
+// draw a player's flag identically.
 
 // Two-tone factions (§5): curated swatch grid — a modest 16 colors, not
 // a full wheel. PRIMARY carries all meaning on the map (server enforces
@@ -608,20 +605,28 @@ function RoomDetail({
     refresh();  // pull the authoritative snapshot; reconcile effect clears the override
   };
 
-  // Two-tone (§5): pick a primary or secondary faction color. Same PATCH
-  // /me endpoint as empire_name / chosen_starting_body. The server 409s
-  // ('color_taken') primaries too close to another member's pick.
-  const pickColor = async (field: 'color' | 'color2', value: string | null) => {
+  // Flag: primary/secondary colour and emblem. All three go through the
+  // same PATCH /me endpoint as empire_name / chosen_starting_body.
+  //
+  // Two exclusivity rules, deliberately different:
+  //   color   409 'color_taken'  — too CLOSE to another member's pick
+  //   emblem  409 'emblem_taken' — EXACTLY another member's pick
+  // Colours live on a continuum so "close enough to confuse" is the real
+  // failure; emblems are a closed set where only identity collides.
+  const pickFlag = async (field: 'color' | 'color2' | 'emblem', value: string | null) => {
     setError(null);
     const res = await apiFetch(`/api/lobby/rooms/${roomId}/me`, {
       method: 'PATCH',
       body: JSON.stringify({ [field]: value }),
     });
     if (!res.ok) {
+      const code = res.error?.code;
       setError(
-        res.error?.code === 'color_taken'
+        code === 'color_taken'
           ? "Too close to another player's color — pick something more distinct"
-          : res.error?.message ?? 'Could not save color',
+          : code === 'emblem_taken'
+            ? 'Another player already flies that emblem'
+            : res.error?.message ?? 'Could not save flag',
       );
       return;
     }
@@ -705,10 +710,10 @@ function RoomDetail({
             <span className="mp-saved" style={{ marginLeft: 8 }}>{savedFlash || ''}</span>
           </div>
 
-          <FactionColorPicker
+          <FactionFlagPicker
             snap={snap}
             myUserId={user?.id}
-            onPick={pickColor}
+            onPick={pickFlag}
           />
 
           <StartingBodyPicker
@@ -786,7 +791,10 @@ function RoomDetail({
                 No swatch at all until they've picked (color is null
                 pre-pick) rather than a placeholder grey, since "hasn't
                 chosen yet" is itself useful information here. */}
-            {m.color && <span className="mp-swatch" style={twoToneChip(m.color, m.color2)} />}
+            {m.color && (
+              <FlagChip className="mp-swatch" color={m.color} color2={m.color2}
+                        emblem={m.emblem} fallbackKey={m.userId} />
+            )}
             <span>{m.displayName}{ready && !started ? ' ✓' : ''}</span>
             {isThisHost && <span className="mp-host-tag">host</span>}
             {isHost && !isThisHost && !started && (
@@ -862,16 +870,17 @@ function swatchStyle(c: string, opts: { selected: boolean; taken: boolean }): Re
   };
 }
 
-function FactionColorPicker({
+function FactionFlagPicker({
   snap, myUserId, onPick,
 }: {
   snap: RoomSnapshot;
   myUserId?: string;
-  onPick: (field: 'color' | 'color2', value: string | null) => void;
+  onPick: (field: 'color' | 'color2' | 'emblem', value: string | null) => void;
 }) {
   const me = myUserId ? snap.members.find(m => m.userId === myUserId) : undefined;
   const myColor = me?.color ?? null;
   const myColor2 = me?.color2 ?? null;
+  const myEmblem = me?.emblem ?? null;
 
   // Other members' primaries — used to gray out swatches that are too
   // close (mirrors the server's 409 'color_taken' check so the player
@@ -880,14 +889,24 @@ function FactionColorPicker({
     .filter(m => m.userId !== myUserId && m.color)
     .map(m => ({ color: m.color as string, name: m.empire_name || m.displayName }));
 
+  // Emblems taken by OTHER members. Exact match — a shape is either
+  // yours or theirs, there is no "close enough" the way colour has.
+  const takenEmblems = new Map<string, string>();
+  for (const m of snap.members) {
+    if (m.userId !== myUserId && m.emblem) {
+      takenEmblems.set(m.emblem, m.empire_name || m.displayName);
+    }
+  }
+
   const rowStyle: React.CSSProperties = { display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 };
 
   return (
     <>
-      <div className="mp-section-title" style={{ marginTop: 12 }}>Faction colors</div>
+      <div className="mp-section-title" style={{ marginTop: 12 }}>Faction flag</div>
       <div className="mp-empty" style={{ fontSize: 10, marginBottom: 6, padding: '0 2px' }}>
         Primary marks what you own on the map — it must stay distinct from other
-        players. Secondary is trim only.
+        players. Secondary is trim only. Your emblem is your shorthand across the
+        game, and no two empires may fly the same one.
       </div>
       <label className="mp-label">Primary</label>
       <div style={rowStyle}>
@@ -925,15 +944,58 @@ function FactionColorPicker({
           );
         })}
       </div>
+      <label className="mp-label">Emblem</label>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
+        {EMBLEM_IDS.map(id => {
+          const selected = myEmblem === id;
+          const takenBy = takenEmblems.get(id);
+          const taken = !!takenBy && !selected;
+          return (
+            <button
+              key={id}
+              type="button"
+              disabled={taken}
+              style={{
+                width: 26, height: 26, padding: 3,
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                // The emblem draws in the player's own primary so the grid
+                // previews the finished flag rather than a generic icon
+                // sheet — you are choosing a shape for YOUR colours.
+                color: selected ? '#fff' : (myColor || 'var(--mp-text, #cfd8e3)'),
+                background: selected ? (myColor || '#4ecdc4') : 'transparent',
+                border: selected ? '2px solid #fff' : '1px solid var(--mp-border)',
+                borderRadius: 3,
+                cursor: taken ? 'not-allowed' : 'pointer',
+                opacity: taken ? 0.25 : 1,
+              }}
+              title={taken ? `${takenBy} already flies the ${EMBLEM_NAMES[id]}`
+                : selected ? 'Click to clear' : EMBLEM_NAMES[id]}
+              onClick={() => onPick('emblem', selected ? null : id)}
+            >
+              <FactionEmblem emblem={id} fallbackKey={id} size={18} />
+            </button>
+          );
+        })}
+      </div>
       {myColor && (
         <div className="mp-empty" style={{ fontSize: 10, padding: '0 2px', display: 'flex', alignItems: 'center', gap: 6 }}>
           Preview:
           <span style={{
-            display: 'inline-block', width: 18, height: 18, borderRadius: 3,
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            width: 22, height: 22, borderRadius: 3,
             border: '1px solid var(--mp-border)',
             background: `linear-gradient(135deg, ${myColor} 0%, ${myColor} 68%, ${myColor2 || deriveSecondary(myColor)} 68%)`,
-          }} />
+          }}>
+            {/* Emblem sits ON the flag, in ink chosen for contrast against
+                the primary — the same call the in-game chips make, so what
+                you see here is what the scoreboard shows. */}
+            {myEmblem && (
+              <FactionEmblem emblem={myEmblem} fallbackKey={myUserId ?? 'me'} size={14}
+                             color={emblemInk(myColor)} />
+            )}
+          </span>
           {!myColor2 && <span>(trim auto-derived)</span>}
+          {!myEmblem && <span>(no emblem — one will be assigned)</span>}
         </div>
       )}
     </>

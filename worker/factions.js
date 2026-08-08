@@ -1,6 +1,7 @@
 import { summarizeSystems } from './systems.js';
 import { DEFAULT_LOADOUTS } from './shipDesigns.js';
 import { gatingEnabled, factionTechLevels, hasFeature } from './researchUnlocks.js';
+import { isEmblemId, defaultEmblemFor } from './emblems.js';
 // ============================================================================
 // Faction agent module.
 //
@@ -793,7 +794,7 @@ export async function seedGameWorld(env, gameId) {
   const members = await env.DB
     .prepare(
       `SELECT user_id, joined_at, empire_name, bio, chosen_starting_body,
-              color, color2
+              color, color2, emblem
          FROM room_members
         WHERE room_id = ?
         ORDER BY joined_at ASC, user_id ASC`,
@@ -931,6 +932,17 @@ export async function seedGameWorld(env, gameId) {
     return best ?? FACTION_COLORS[slot % FACTION_COLORS.length];
   };
 
+  // Emblems — the same two-pass shape as colour, and for the same
+  // reason: the collision that shipped came from a DEFAULT landing on
+  // somebody's explicit pick, not from two picks colliding. Reserve
+  // every pick first, then hand out defaults from what's left.
+  //
+  // Simpler than colour in one respect: 24 emblems against a cap of 8
+  // seats means a free one always exists, so this never has to degrade.
+  const takenEmblems = memberRows
+    .map(m => (isEmblemId(m.emblem) ? m.emblem : null))
+    .filter(Boolean);
+
   // Factions: empire_name override (from lobby) wins over the default rotation.
   const factionRows = memberRows.map((m, slot) => {
     const empire = (typeof m.empire_name === 'string' ? m.empire_name.trim() : '') || null;
@@ -949,6 +961,13 @@ export async function seedGameWorld(env, gameId) {
       takenColors.push(color);
     }
     const color2 = normalizeHex(m.color2) || deriveSecondary(color);
+    let emblem;
+    if (isEmblemId(m.emblem)) {
+      emblem = m.emblem;
+    } else {
+      emblem = defaultEmblemFor(slot, takenEmblems);
+      takenEmblems.push(emblem);   // reserve against the next no-picker
+    }
     return {
       id: `${gameId}:f${slot}`,
       slot,
@@ -956,6 +975,7 @@ export async function seedGameWorld(env, gameId) {
       name: empire || FACTION_NAMES[slot % FACTION_NAMES.length],
       color,
       color2,
+      emblem,
       bio: (typeof m.bio === 'string' && m.bio.trim()) ? m.bio.trim() : null,
     };
   });
@@ -1053,16 +1073,16 @@ export async function seedGameWorld(env, gameId) {
     stmts.push(
       env.DB.prepare(
         `INSERT INTO game_factions
-          (id, game_id, user_id, slot, name, color, color2, status, bio,
+          (id, game_id, user_id, slot, name, color, color2, emblem, status, bio,
            capital_body_id, reputation, senate_weight,
            metal, fuel, gold, science,
            research_tech_id, research_progress, joined_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?,
                  ?, 0, 1,
                  ?, ?, ?, ?,
                  NULL, 0, ?)`,
       ).bind(
-        f.id, gameId, f.user_id, f.slot, f.name, f.color, f.color2, f.bio,
+        f.id, gameId, f.user_id, f.slot, f.name, f.color, f.color2, f.emblem, f.bio,
         f.capital_body_id,
         STARTING_RESOURCES.metal, STARTING_RESOURCES.fuel,
         STARTING_RESOURCES.gold, STARTING_RESOURCES.science,
@@ -1357,7 +1377,7 @@ async function handleListFactions(_req, env, ctx) {
 
   const rows = await env.DB
     .prepare(
-      `SELECT id, user_id, slot, name, color, color2, status, capital_body_id,
+      `SELECT id, user_id, slot, name, color, color2, emblem, status, capital_body_id,
               senate_weight, reputation
          FROM game_factions
         WHERE game_id = ?
@@ -1611,7 +1631,7 @@ async function handleMyFaction(_req, env, ctx) {
 
   const row = await env.DB
     .prepare(
-      `SELECT id, game_id, user_id, slot, name, color, color2, status,
+      `SELECT id, game_id, user_id, slot, name, color, color2, emblem, status,
               capital_body_id, reputation, senate_weight,
               metal, fuel, gold, science,
               research_tech_id, research_progress
@@ -1775,7 +1795,7 @@ export async function seedLateFaction(env, gameId, userId, chosenTemplateId, ide
   // Two-tone (§5): honor lobby color prefs when the latecomer set them
   // (room id == game id); else rotation primary + derived secondary.
   const prefRow = await env.DB
-    .prepare('SELECT color, color2 FROM room_members WHERE room_id = ? AND user_id = ?')
+    .prepare('SELECT color, color2, emblem FROM room_members WHERE room_id = ? AND user_id = ?')
     .bind(gameId, userId).first();
   // Late joiner: same two-pass rule as seeding — a default must dodge
   // the colours already on the board, or the newcomer arrives wearing
@@ -1795,22 +1815,55 @@ export async function seedLateFaction(env, gameId, userId, chosenTemplateId, ide
   }
   const color2 = normalizeHex(prefRow?.color2) || deriveSecondary(color);
 
+  // Emblem for the latecomer. Unlike colour, a PICK can lose here: the
+  // lobby's uniqueness check only compares room_members against each
+  // other, and factions that took a DEFAULT emblem at seed time never
+  // wrote one back to room_members. So a latecomer's perfectly legal
+  // lobby pick can still be flying on the board already — check against
+  // what's actually in the game, not what's in the lobby.
+  const usedEmblems = ((await env.DB
+    .prepare('SELECT emblem FROM game_factions WHERE game_id = ? AND emblem IS NOT NULL')
+    .bind(gameId)
+    .all()).results ?? []).map(r => r.emblem);
+  const prefEmblem = isEmblemId(prefRow?.emblem) ? prefRow.emblem : null;
+  const emblem = (prefEmblem && !usedEmblems.includes(prefEmblem))
+    ? prefEmblem
+    : defaultEmblemFor(slot, usedEmblems);
+
+  // Capital city HP. This read used to be missing entirely: the INSERT
+  // below bound `capitalCityHp`, which is a LOCAL of seedGameWorld and
+  // simply does not exist in this function — every late join threw
+  // ReferenceError before touching the database.
+  //
+  // esbuild cannot see it (a free identifier is legal until it runs) and
+  // no test exercised this path, so it sat there. sim/emblemClash.mjs
+  // found it by accident on its first late-join scenario.
+  let capitalCityHp = STARTER_CITY_HP;
+  try {
+    const gc = await import('./gameConfig.js');
+    const conf = await gc.cfg(env, gameId);
+    capitalCityHp = conf.city_base_hp ?? STARTER_CITY_HP;
+  } catch {
+    // Same tolerance seedGameWorld shows: an unreadable config must not
+    // block a player from being seated.
+  }
+
   const stmts = [];
 
   // 1) faction row — same starting resources as the founders.
   stmts.push(
     env.DB.prepare(
       `INSERT INTO game_factions
-        (id, game_id, user_id, slot, name, color, color2, status, bio,
+        (id, game_id, user_id, slot, name, color, color2, emblem, status, bio,
          capital_body_id, reputation, senate_weight,
          metal, fuel, gold, science,
          research_tech_id, research_progress, joined_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?,
                ?, 0, 1,
                ?, ?, ?, ?,
                NULL, 0, ?)`,
     ).bind(
-      factionId, gameId, userId, slot, name, color, color2, bio,
+      factionId, gameId, userId, slot, name, color, color2, emblem, bio,
       bodyRowId,
       STARTING_RESOURCES.metal, STARTING_RESOURCES.fuel,
       STARTING_RESOURCES.gold, STARTING_RESOURCES.science,

@@ -29,6 +29,7 @@ import {
 import { orbitWorldPos, orbitWorldVelocity, bodyWorldVelocity } from '../physics/orbitalMechanics';
 import { engineGModifier } from '../game/techs';
 import { deriveSecondary } from '../game/colorUtils';
+import { resolveEmblem } from '../game/emblems';
 import {
   generateFlavor,
   type FlavorContext, type FlavorFaction, type FlavorBody,
@@ -121,6 +122,8 @@ interface ServerState {
     id: string; slot: number; name: string; color: string;
     /** Two-tone (§5): secondary trim color. Decoration only. */
     color2?: string | null;
+    /** Flag emblem id; null on factions seeded before migration 0074. */
+    emblem?: string | null;
     status: string;
     capital_body_id: string | null;
   }>;
@@ -872,6 +875,16 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     // Legacy games have no color2; derive with the shared fallback so
     // every render surface agrees.
     color2: f.color2 || deriveSecondary(f.color),
+    // Flag emblem, resolved to a CONCRETE id right here — this is the
+    // last place that still holds the faction's original id.
+    //
+    // Downstream, `id` is rewritten to PLAYER_TOKEN for the caller, so a
+    // consumer deriving its own fallback from `id` would key the local
+    // player off 'player' and every rival off 'game:f0'. Two clients
+    // would then draw the SAME legacy faction as two different shapes,
+    // which is precisely the failure an emblem exists to prevent.
+    // Resolving once, here, makes the shape identical for everyone.
+    emblem: resolveEmblem(f.emblem, f.id),
     isPlayer: f.id === callerFactionId,
   }));
 

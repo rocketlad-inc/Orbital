@@ -143,6 +143,9 @@ export type RoomMember = {
   color?: string | null;
   /** Secondary trim color pref — decoration only, free-pick. */
   color2?: string | null;
+  /** Flag emblem pref (an EmblemId). Exclusive: the server 409s
+   *  `emblem_taken` if another member of the room already flies it. */
+  emblem?: string | null;
 };
 
 export type StartingBodyOption = {
@@ -186,6 +189,9 @@ export type Faction = {
   /** Secondary trim color (two-tone, §5) — decoration only. Null on
    *  legacy rows; derive from `color` client-side when absent. */
   color2?: string | null;
+  /** Flag emblem id. Null on factions seeded before migration 0074 —
+   *  render through resolveEmblem() so those still draw something. */
+  emblem?: string | null;
   status: string;
   capital_body_id: string | null;
   senate_weight: number;

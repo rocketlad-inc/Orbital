@@ -22,7 +22,8 @@
     "db:migrate:local": "wrangler d1 migrations apply orbital --local",
     "db:migrate:remote": "wrangler d1 migrations apply orbital",
     "sim:herald": "node sim/heraldShapes.mjs",
-    "sim:colors": "node sim/colorClash.mjs"
+    "sim:colors": "node sim/colorClash.mjs",
+    "sim:emblems": "node sim/emblemClash.mjs"
   },
   "eslintConfig": {
     "extends": [

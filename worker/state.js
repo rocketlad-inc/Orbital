@@ -236,7 +236,7 @@ async function handleGetState(req, env, ctx) {
   // Caller must be a member of the game.
   const me = await env.DB
     .prepare(
-      `SELECT id, slot, name, color, color2, status,
+      `SELECT id, slot, name, color, color2, emblem, status,
               capital_body_id, metal, fuel, gold, science,
               research_tech_id, research_progress, research_queue, reputation, senate_weight,
               build_list_json, arrears_gold, arrears_metal
@@ -300,7 +300,7 @@ const trade_deliveriesP = env.DB
     .all();
 const factionsP = env.DB
     .prepare(
-      `SELECT id, slot, name, color, color2, status, capital_body_id, senate_weight, reputation
+      `SELECT id, slot, name, color, color2, emblem, status, capital_body_id, senate_weight, reputation
          FROM game_factions
         WHERE game_id = ?
         ORDER BY slot ASC`,
@@ -1296,6 +1296,10 @@ const tradeRoutesP = env.DB
       // Two-tone (§5): secondary trim color. Decoration only — meaning
       // must stay in the primary. Null for legacy games (client derives).
       color2: me.color2 ?? null,
+      // Flag emblem. Null on legacy factions seeded before 0074 — the
+      // client resolves those to a deterministic fallback rather than
+      // drawing nothing.
+      emblem: me.emblem ?? null,
       status: me.status,
       // Host flag — the game id IS the room id, so a single lookup
       // tells the client whether this player can edit any event's

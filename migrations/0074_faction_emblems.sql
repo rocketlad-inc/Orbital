@@ -1,0 +1,36 @@
+-- 0074_faction_emblems.sql
+--
+-- FACTION FLAGS (Lorne): the two-tone colour pair becomes a real
+-- heraldic identity by adding an EMBLEM — the Stellaris / KSP move,
+-- where an empire is a shape plus a palette rather than a swatch. The
+-- emblem is meant to work as shorthand for a player anywhere their name
+-- would be too long: scoreboards, senate rolls, member lists.
+--
+-- Two columns, matching how colour already flows:
+--
+--   room_members.emblem   the PRE-GAME preference, set in the lobby
+--                         picker alongside color / color2.
+--   game_factions.emblem  the emblem the faction actually flies,
+--                         resolved at seed time from the preference.
+--
+-- Stored as a short opaque id ('anchor', 'comet', …) rather than an
+-- index, so re-ordering or extending the emblem catalog can never
+-- silently repaint a live faction — the failure mode a numeric index
+-- invites. Unrecognised ids fall back to a deterministic pick at render
+-- time rather than erroring, so a client running an older bundle than
+-- the server still draws SOMETHING for a newly-added emblem.
+--
+-- NOT UNIQUE at the schema level, deliberately. Uniqueness is enforced
+-- per-room in the lobby PATCH and per-game at seeding, the same shape
+-- as colour — and colour just taught us why a DB constraint would be
+-- the wrong tool: the collision that actually shipped came from a
+-- DEFAULT being handed out, not from two players picking the same
+-- thing, and a UNIQUE index would have turned that into a seeding
+-- crash mid-game-start rather than a resolvable assignment.
+--
+-- NULL = no preference yet / legacy row. Every existing member and
+-- faction reads NULL and gets an emblem assigned on the next seed,
+-- so no backfill is required and no game in flight changes.
+
+ALTER TABLE room_members  ADD COLUMN emblem TEXT;
+ALTER TABLE game_factions ADD COLUMN emblem TEXT;

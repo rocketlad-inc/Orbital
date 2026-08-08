@@ -427,6 +427,10 @@ export interface Faction {
    *  meaning must never be encoded solely in the secondary (colorblind
    *  safety). Absent → derive via deriveSecondary(color). */
   color2?: string;
+  /** Flag emblem id (see src/game/emblems.ts). Absent on legacy factions
+   *  and on the single-player model, which never seeds one — render
+   *  through resolveEmblem() so those still draw a stable shape. */
+  emblem?: string | null;
   isPlayer: boolean;
   /** When true, this faction's turn is driven by src/game/factionAI.ts
    *  instead of waiting for player input. Single-player only for v1. */
