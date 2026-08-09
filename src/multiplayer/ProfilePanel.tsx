@@ -12,8 +12,11 @@
 // ============================================================
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { apiFetch } from './api';
+import { apiFetch, startCommissionCheckout } from './api';
 import { useAuth } from './AuthContext';
+import { ShipIcon } from '../components/ShipIcons';
+import { FactionEmblem } from '../components/FactionEmblem';
+import { PREMIUM_EMBLEM_IDS } from '../game/emblems';
 
 interface CareerProfile {
   display_name?: string;
@@ -55,6 +58,39 @@ export function ProfilePanel({ onEnterRoom }: { onEnterRoom?: (id: string) => vo
   const [outgoing, setOutgoing] = useState<FriendRow[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [buying, setBuying] = useState(false);
+
+  // Consume Stripe's ?purchase=success|cancelled return trip. The param
+  // is stripped from the URL immediately so a reload doesn't re-thank
+  // (or re-apologise to) the player. On success the webhook may land a
+  // beat after the redirect, so /me is refreshed twice: once now, once
+  // a few seconds later — is_premium flips whenever the grant lands.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const outcome = q.get('purchase');
+    if (!outcome) return;
+    q.delete('purchase');
+    const rest = q.toString();
+    window.history.replaceState(null, '', `${window.location.pathname}${rest ? `?${rest}` : ''}${window.location.hash}`);
+    if (outcome === 'success') {
+      setNotice('Commission secured — thank you for supporting Orbital. Your premium content is unlocking now.');
+      refresh();
+      const t = setTimeout(() => { refresh(); }, 4000);
+      return () => clearTimeout(t);
+    }
+    if (outcome === 'cancelled') {
+      setNotice('Checkout cancelled — nothing was charged.');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const buy = async () => {
+    setBuying(true); setError(null);
+    const url = await startCommissionCheckout();
+    if (url) { window.location.assign(url); return; }
+    setBuying(false);
+    setError('Could not start checkout — purchases may not be enabled yet. Try again in a minute.');
+  };
 
   const load = useCallback(async () => {
     const p = await apiFetch<{ profile: CareerProfile; history: HistoryRow[] }>('/api/users/me/profile');
@@ -169,6 +205,64 @@ export function ProfilePanel({ onEnterRoom }: { onEnterRoom?: (id: string) => vo
               kinder than a 429 after the player has typed a new name. */}
           {' · '}names can be changed once a day
         </div>
+      </section>
+
+      {/* ---- commission ---- */}
+      <section className="pp-section">
+        <div className="pp-h">COMMISSION</div>
+        {user?.is_premium ? (
+          <>
+            <div className="pp-comm__own">
+              ★ You hold the Commander's Commission — thank you for
+              supporting Orbital.
+            </div>
+            <div className="pp-comm__row" aria-hidden>
+              <ShipIcon shipClass="destroyer" variant="S" size={26} />
+              <ShipIcon shipClass="frigate" variant="R" size={26} />
+              <ShipIcon shipClass="corvette" variant="J" size={26} />
+              <span className="pp-comm__sep" />
+              {PREMIUM_EMBLEM_IDS.slice(0, 5).map(id => (
+                <FactionEmblem key={id} emblem={id} fallbackKey={id} size={18} />
+              ))}
+            </div>
+            <div className="pp-sub">
+              All ten ship lines (J–S, every class) and all ten premium
+              emblems are yours — pick them in the ship designer and the
+              lobby flag section.
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="pp-comm__pitch">
+              Support the game, get more icons, get your Commission!
+            </div>
+            {/* The goods, not a bullet list: three premium hulls and five
+                premium emblems, rendered live. The hull you can see is
+                the ad. */}
+            <div className="pp-comm__row" aria-hidden>
+              <ShipIcon shipClass="destroyer" variant="S" size={26} />
+              <ShipIcon shipClass="frigate" variant="R" size={26} />
+              <ShipIcon shipClass="corvette" variant="J" size={26} />
+              <span className="pp-comm__sep" />
+              {PREMIUM_EMBLEM_IDS.slice(0, 5).map(id => (
+                <FactionEmblem key={id} emblem={id} fallbackKey={id} size={18} />
+              ))}
+              <span className="pp-comm__more">+42 more</span>
+            </div>
+            <div className="pp-sub" style={{ marginBottom: 8 }}>
+              Ten ship lines — Specter through Eclipse, every hull class —
+              plus ten flag emblems. Cosmetic only, yours on every account
+              login, forever.
+            </div>
+            <button
+              className="pp-btn pp-btn--primary"
+              disabled={buying}
+              onClick={() => { void buy(); }}
+            >
+              {buying ? 'Opening checkout…' : 'Get the Commission · $10 one-time'}
+            </button>
+          </>
+        )}
       </section>
 
       {/* ---- career ---- */}

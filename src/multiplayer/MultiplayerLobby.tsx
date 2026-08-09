@@ -24,7 +24,13 @@ interface Props {
 
 export function MultiplayerLobby({ onEnterRoom }: Props) {
   const { user, signOut } = useAuth();
-  const [tab, setTab] = useState<Tab>('my');
+  const [tab, setTab] = useState<Tab>(() => (
+    // Stripe's success/cancel redirect lands on the SPA root with
+    // ?purchase=... — open straight onto the profile tab so the
+    // COMMISSION section (which consumes the param) is on screen,
+    // instead of dumping the buyer on My Games mid-thank-you.
+    new URLSearchParams(window.location.search).has('purchase') ? 'profile' : 'my'
+  ));
   const [myRooms, setMyRooms] = useState<RoomSummary[] | null>(null);
   // Archived memberships (migration 0072) are the SAME payload, split
   // here rather than fetched twice — /me/rooms returns archived_at_ms
