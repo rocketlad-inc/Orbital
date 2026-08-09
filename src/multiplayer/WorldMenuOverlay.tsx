@@ -1178,14 +1178,16 @@ const WmDysonCard: React.FC = () => {
       )}
       <div className="wm-dyson-meta">
         {derelict
-          ? <>The previous builder was thrown off — their progress survives.
-              Lay a foundation at a Sol station to CLAIM the sphere and resume
-              construction at {derelictPct.toFixed(0)}%. Supply it by freighter
-              routes from your collectors.</>
+          ? <>The previous builder was thrown off. Most of their work survives —
+              a fifth of it tore loose when the sphere went masterless. Lay a
+              foundation at a Sol station to CLAIM it and resume construction
+              at {derelictPct.toFixed(0)}%. Supply it by freighter routes from
+              your collectors.</>
           : <>Lay the foundation at a Sol station, then run freighter routes
               from your collectors to deliver 15K metal · 15K credits · 10K
               science. Completion wins the match. Lose the foundation and the
-              sphere stands abandoned — first claimant resumes your work.</>}
+              sphere goes masterless: <b>20% of your progress is destroyed</b>{' '}
+              and the rest is there for whoever claims it first.</>}
       </div>
       {lock ? (
         <div className="wm-dyson-meta" style={{ color: '#8aa0b4' }}>🔒 {lock.label} — {lock.text}</div>
@@ -1210,7 +1212,7 @@ const WmDysonCard: React.FC = () => {
             }}
             title={derelict
               ? `Claim the abandoned sphere from ${s.name} — construction resumes at ${derelictPct.toFixed(0)}%, and completing it wins YOU the game.`
-              : `Lay the Dyson Sphere foundation on ${s.name}. One sphere per game — lose the station and the sphere stands abandoned for anyone to claim.`}
+              : `Lay the Dyson Sphere foundation on ${s.name}. One sphere per game — lose the station and 20% of your progress is destroyed, with the rest left for whoever claims it first.`}
           >{derelict ? `◆ CLAIM AT ${s.name.toUpperCase()}` : `◆ INITIATE AT ${s.name.toUpperCase()}`}</button>
         ))
       )}

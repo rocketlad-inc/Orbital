@@ -22,6 +22,13 @@ const TECH_TRACKS = [
   'weapons', 'armor', 'propulsion', 'construction', 'industry', 'sensors',
 ];
 
+/** Share of Dyson Sphere progress destroyed when its builder is thrown
+ *  off — the toll for losing the hill, paid on top of whatever the
+ *  bombardment itself burned off. Keeps a re-claim from being free for
+ *  the evicted incumbent. Mirrored in the world-menu copy and the
+ *  Herald's collapse prose; change all three together. */
+const DYSON_ABANDON_LOSS = 0.20;
+
 // Room Durable Object. One instance per game room, keyed by room id.
 // Uses the WebSocket Hibernation API so idle rooms cost nothing.
 //
@@ -5616,6 +5623,23 @@ export class Room {
       // the lattice orbiting uncontrolled, at whatever progress it had.
       if (collapseReason === 'damaged to collapse') {
         acc = { fuel: 0, ore: 0, credits: 0, science: 0 };
+      } else {
+        // ABANDONMENT TOLL. Losing the sphere costs a flat share of the
+        // work on top of whatever the bombardment already burned off:
+        // scaffolding drifts, crews evacuate, the half-built lattice
+        // decays before anyone else can take the helm. Without it,
+        // being kicked off is nearly free for the incumbent — they can
+        // simply claim straight back with an insurance station and
+        // resume where they stood, and the whole king-of-the-hill
+        // scrap costs the attacker more than the defender.
+        //
+        // Applied per component so the breakdown stays coherent with
+        // the per-resource targets (the same reason the damage path
+        // scales rather than subtracting from a total).
+        acc.fuel    = Math.floor(acc.fuel    * (1 - DYSON_ABANDON_LOSS));
+        acc.ore     = Math.floor(acc.ore     * (1 - DYSON_ABANDON_LOSS));
+        acc.credits = Math.floor(acc.credits * (1 - DYSON_ABANDON_LOSS));
+        acc.science = Math.floor(acc.science * (1 - DYSON_ABANDON_LOSS));
       }
       const kept = acc.fuel + acc.ore + acc.credits + acc.science;
       const priorProgress = (game.dyson_acc_fuel ?? 0) + (game.dyson_acc_ore ?? 0)
@@ -5624,6 +5648,7 @@ export class Room {
         reason: collapseReason,
         progress_lost: Math.round(Math.max(0, priorProgress - kept)),
         progress_kept: Math.round(kept),
+        abandon_pct: Math.round(DYSON_ABANDON_LOSS * 100),
         max_hp: Math.round(maxHp),
         pct: maxHp > 0 ? Math.round((kept / maxHp) * 100) : 0,
       });

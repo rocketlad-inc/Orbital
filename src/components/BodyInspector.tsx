@@ -1751,9 +1751,9 @@ const DysonSpherePanel: React.FC = () => {
         fontSize: 10, color: '#a8b8c8', marginBottom: 8, lineHeight: 1.5,
       }}>
         The Sol megaproject. Lay the foundation at a Sol-orbit station,
-        then park freighters here to deliver resources every tick.
-        Target: 15K metal · 15K credits · 10K science.
-        Completing it wins the match by Engineering Victory.
+        then run freighter trade routes from your collectors to the sphere
+        to haul the materials in. Target: 15K metal · 15K credits · 10K
+        science. Completing it wins the match by Engineering Victory.
       </div>
 
       {playerStations.length === 0 ? (
@@ -1896,9 +1896,11 @@ const DysonSphereProgress: React.FC = () => {
         <div style={{
           marginTop: 8, fontSize: 9, color: '#a8b8c8', fontStyle: 'italic', lineHeight: 1.4,
         }}>
-          Park more freighters at Sol to speed delivery. Each one drains
-          your pool by 5F · 10M · 10C · 5S per tick. Foundation
-          destruction wipes everything — defend it.
+          Run more supply routes to speed delivery — each freighter loads
+          from your pool at one of your collectors and hauls it here, and
+          can be raided on the way. Lose the foundation and 20% of your
+          progress is destroyed, with the rest left for a rival to claim
+          — defend it.
         </div>
       )}
     </div>

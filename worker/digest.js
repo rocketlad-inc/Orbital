@@ -1609,10 +1609,10 @@ const DYSON_DAMAGED_HEADLINE = [
 // to zero) and abandonment (the shell survives, claimable by anyone).
 const DYSON_COLLAPSED = [
   (c) => c.kept > 0
-    ? `**${c.faction}** has been thrown off the **Dyson Sphere.** ${c.reason === 'foundation destroyed' ? 'Their foundation station was blown out of Sol orbit' : 'Bombardment broke their hold'} — but the lattice itself survives at **${c.pct}%**, orbiting unclaimed. The first faction to lay a new foundation at Sol inherits every rivet of it.`
+    ? `**${c.faction}** has been thrown off the **Dyson Sphere.** ${c.reason === 'foundation destroyed' ? 'Their foundation station was blown out of Sol orbit' : 'Bombardment broke their hold'}, and with no hand on the helm **${c.abandon}%** of the remaining work tore loose — scaffolding adrift, crews gone. What is left hangs at **${c.pct}%**, unclaimed. The first faction to lay a new foundation at Sol inherits all of it.`
     : `The **Dyson Sphere is gone.** ${c.reason === 'foundation destroyed' ? 'Its foundation station was blown out of Sol orbit' : 'Sustained bombardment finally broke the lattice'}, and with it **${c.faction}**'s bid to end the war by engineering. Every unit of progress — **${c.lost}** in all — is dust in the solar wind.`,
   (c) => c.kept > 0
-    ? `The king is off the hill: **${c.faction}** lost the sun-cage ${c.reason === 'foundation destroyed' ? 'when its foundation was destroyed' : 'under sustained attack'}. **${c.kept}** units of construction still hang there at **${c.pct}%** — abandoned, intact, and very much up for grabs.`
+    ? `The king is off the hill: **${c.faction}** lost the sun-cage ${c.reason === 'foundation destroyed' ? 'when its foundation was destroyed' : 'under sustained attack'}, and a masterless lattice does not keep well — **${c.abandon}%** of the surviving construction sheared away in the days after. **${c.kept}** units still hang there at **${c.pct}%**, and every fleet in the system knows the number.`
     : `It fell. **${c.faction}**'s sun-cage collapsed ${c.reason === 'foundation destroyed' ? 'when its foundation was destroyed' : 'under sustained attack'} — **${c.lost}** units of the grandest project in history, erased in a single stroke. The Sol slot stands open for whoever dares next.`,
 ];
 const DYSON_COLLAPSED_HEADLINE = [
@@ -1647,6 +1647,9 @@ function buildDysonBattleStories(rows, used, factionNames) {
         reason: p.reason ?? '',
         lost: p.progress_lost ?? 0,
         kept: p.progress_kept ?? 0,
+        // Older entries predate the abandonment toll; 20 is what the
+        // rule was when it shipped, so back-issues still read sensibly.
+        abandon: p.abandon_pct ?? 20,
         pct: p.pct ?? 0,
       };
       // Just under a victory (1000) — losing the wonder IS the story.
