@@ -7,10 +7,11 @@ import { useGameContext } from '../state/gameContext';
 import { BUILDABLE_CLASSES, SHIP_CLASSES, ShipClassName } from '../game/shipClasses';
 import { shipyardSlotsAtBody } from '../game/settlements';
 import { useMultiplayerActions } from '../multiplayer/MultiplayerActionsContext';
+import { useAuth } from '../multiplayer/AuthContext';
 import { humanizeMpError } from '../multiplayer/errorMessages';
 import {
   ShipIcon, ShipIconVariant, ICON_VARIANT_NAMES,
-  ALL_VARIANTS, DEFAULT_SHIP_ICONS,
+  ALL_VARIANTS, DEFAULT_SHIP_ICONS, PREMIUM_VARIANTS,
 } from './ShipIcons';
 import { openShipDesigner } from './ShipDesigner';
 import {
@@ -43,6 +44,10 @@ export const BuildPanel: React.FC = () => {
   // own selector defaulting to DEFAULT_SHIP_ICONS[class]. Map keyed by
   // class because the player might want, e.g. Corvette Raptor and
   // Frigate Carrier at the same time.
+  // Commission gate for the J-S lines in the icon cycler. UI-only —
+  // the build endpoint re-checks the entitlement.
+  const { user } = useAuth();
+  const isPremium = !!user?.is_premium;
   const [iconChoice, setIconChoice] = useState<Record<ShipClassName, ShipIconVariant>>({
     corvette:  DEFAULT_SHIP_ICONS.corvette,
     frigate:   DEFAULT_SHIP_ICONS.frigate,
@@ -654,8 +659,16 @@ export const BuildPanel: React.FC = () => {
                       className="class-icon"
                       onClick={() => {
                         if (activeDesign) { openShipDesigner(cls); return; }
-                        const cur = ALL_VARIANTS.indexOf(iconChoice[cls]);
-                        const next = ALL_VARIANTS[(cur + 1) % ALL_VARIANTS.length];
+                        // Cycle to the next variant this account may
+                        // actually SAVE: free letters always, J-S only
+                        // with the Commission. Skipping (rather than
+                        // showing a lock mid-cycle) keeps the single-
+                        // click affordance dumb and predictable.
+                        const allowed = isPremium
+                          ? ALL_VARIANTS
+                          : ALL_VARIANTS.filter(v => !PREMIUM_VARIANTS.has(v));
+                        const cur = allowed.indexOf(iconChoice[cls]);
+                        const next = allowed[(cur + 1) % allowed.length];
                         setIconChoice(prev => ({ ...prev, [cls]: next }));
                       }}
                       title={activeDesign

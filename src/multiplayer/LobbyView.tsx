@@ -3,7 +3,8 @@ import { apiFetch, RoomSnapshot, RoomSummary } from './api';
 import { useAuth } from './AuthContext';
 import { LobbyMapPreview } from './LobbyMapPreview';
 import { colorDistance, COLOR_MIN_DISTANCE, deriveSecondary, emblemInk } from '../game/colorUtils';
-import { EMBLEM_IDS, EMBLEM_NAMES } from '../game/emblems';
+import { EMBLEM_IDS, PREMIUM_EMBLEM_IDS, EMBLEM_NAMES } from '../game/emblems';
+import { startCommissionCheckout } from './api';
 import { FactionEmblem, FlagChip } from '../components/FactionEmblem';
 import { RESOURCE_LETTER_COLORS } from '../game/resourceColors';
 
@@ -877,6 +878,10 @@ function FactionFlagPicker({
   myUserId?: string;
   onPick: (field: 'color' | 'color2' | 'emblem', value: string | null) => void;
 }) {
+  // Commission state gates the premium emblem wing below. UI-only — the
+  // lobby endpoint re-checks the entitlement on save.
+  const { user } = useAuth();
+  const isPremium = !!user?.is_premium;
   const me = myUserId ? snap.members.find(m => m.userId === myUserId) : undefined;
   const myColor = me?.color ?? null;
   const myColor2 = me?.color2 ?? null;
@@ -946,15 +951,19 @@ function FactionFlagPicker({
       </div>
       <label className="mp-label">Emblem</label>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
-        {EMBLEM_IDS.map(id => {
+        {[...EMBLEM_IDS, ...PREMIUM_EMBLEM_IDS].map(id => {
           const selected = myEmblem === id;
           const takenBy = takenEmblems.get(id);
+          // Premium emblems render in the grid for everyone — locked, not
+          // hidden. A closet nobody can see sells nothing; a lock you can
+          // hover is the storefront.
+          const locked = !isPremium && (PREMIUM_EMBLEM_IDS as string[]).includes(id);
           const taken = !!takenBy && !selected;
           return (
             <button
               key={id}
               type="button"
-              disabled={taken}
+              disabled={taken || locked}
               style={{
                 width: 26, height: 26, padding: 3,
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -965,10 +974,11 @@ function FactionFlagPicker({
                 background: selected ? (myColor || '#4ecdc4') : 'transparent',
                 border: selected ? '2px solid #fff' : '1px solid var(--mp-border)',
                 borderRadius: 3,
-                cursor: taken ? 'not-allowed' : 'pointer',
-                opacity: taken ? 0.25 : 1,
+                cursor: (taken || locked) ? 'not-allowed' : 'pointer',
+                opacity: taken ? 0.25 : locked ? 0.45 : 1,
               }}
-              title={taken ? `${takenBy} already flies the ${EMBLEM_NAMES[id]}`
+              title={locked ? `${EMBLEM_NAMES[id]} — Commander's Commission emblem`
+                : taken ? `${takenBy} already flies the ${EMBLEM_NAMES[id]}`
                 : selected ? 'Click to clear' : EMBLEM_NAMES[id]}
               onClick={() => onPick('emblem', selected ? null : id)}
             >
@@ -977,6 +987,25 @@ function FactionFlagPicker({
           );
         })}
       </div>
+      {!isPremium && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+          <span style={{ fontSize: 10, color: 'var(--mp-fg-dim, #8aa0b4)' }}>
+            🔒 Dimmed emblems + ship lines J–S are premium.
+          </span>
+          <button
+            type="button"
+            className="mp-btn"
+            style={{ fontSize: 10, padding: '3px 8px' }}
+            onClick={() => {
+              void startCommissionCheckout().then(url => {
+                if (url) window.location.assign(url);
+              });
+            }}
+          >
+            Get the Commission · $10
+          </button>
+        </div>
+      )}
       {myColor && (
         <div className="mp-empty" style={{ fontSize: 10, padding: '0 2px', display: 'flex', alignItems: 'center', gap: 6 }}>
           Preview:

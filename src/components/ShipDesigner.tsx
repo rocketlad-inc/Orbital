@@ -32,6 +32,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { useMultiplayerActions, ServerShipDesign, ServerShipTemplate } from '../multiplayer/MultiplayerActionsContext';
 import { logUiEvent } from '../multiplayer/telemetry';
+import { useAuth } from '../multiplayer/AuthContext';
 import { ShipClassName, SHIP_CLASSES, BUILDABLE_CLASSES, SHIP_UPKEEP } from '../game/shipClasses';
 import { deliveredHullHp } from '../game/combat';
 import {
@@ -42,7 +43,7 @@ import {
   hitChanceOf, SERVER_HULL_BASE as HULL_BASE, travelMultiplierOf,
 } from '../game/shipParts';
 import {
-  ShipIcon, ShipIconVariant, ALL_VARIANTS, ICON_VARIANT_NAMES, DEFAULT_SHIP_ICONS,
+  ShipIcon, ShipIconVariant, ALL_VARIANTS, ICON_VARIANT_NAMES, DEFAULT_SHIP_ICONS, PREMIUM_VARIANTS,
 } from './ShipIcons';
 import type { ShipDesign } from '../types';
 import { PART_FEATURE } from '../game/researchUnlocks';
@@ -144,6 +145,10 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
   const [draftParts, setDraftParts] = useState<ShipPartId[]>([]);
   const [draftIcon, setDraftIcon] = useState<ShipIconVariant | undefined>(undefined);
   const [iconMenuOpen, setIconMenuOpen] = useState(false);
+  // Commission gate for the J-S icon lines. UI-only — the designer save
+  // and the build queue both re-check the entitlement server-side.
+  const { user } = useAuth();
+  const isPremium = !!user?.is_premium;
   const iconDropdownRef = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -797,19 +802,28 @@ export const ShipDesigner: React.FC<ShipDesignerProps> = ({ initialClass, onClos
                   <div className="sd-icon-menu" role="listbox" aria-label="Ship icon">
                     {ALL_VARIANTS.map(v => {
                       const isDefault = v === DEFAULT_SHIP_ICONS[activeClass];
+                      // Premium lines render for everyone — locked, not
+                      // hidden; the hull you can see but not fly is the ad.
+                      const locked = !isPremium && PREMIUM_VARIANTS.has(v);
                       return (
                         <button
                           key={v}
                           type="button"
                           role="option"
                           aria-selected={v === iconVariant}
+                          disabled={locked}
                           className={`sd-icon-option ${v === iconVariant ? 'selected' : ''}`}
-                          onClick={() => { setDraftIcon(v); setIconMenuOpen(false); }}
+                          style={locked ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
+                          title={locked
+                            ? `${ICON_VARIANT_NAMES[activeClass][v]} line — Commander's Commission (unlock in the lobby's flag section)`
+                            : undefined}
+                          onClick={() => { if (!locked) { setDraftIcon(v); setIconMenuOpen(false); } }}
                         >
                           <ShipIcon shipClass={activeClass} variant={v} size={22} />
                           <span>
                             {ICON_VARIANT_NAMES[activeClass][v]}
                             {isDefault && <span className="sd-icon-default"> · default</span>}
+                            {locked && <span aria-hidden> 🔒</span>}
                           </span>
                           {v === iconVariant && <span aria-hidden>✓</span>}
                         </button>

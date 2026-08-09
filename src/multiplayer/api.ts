@@ -111,7 +111,19 @@ export type User = {
   // Server-computed (email allow-list). Drives ONLY whether the client
   // renders the Analytics tab — every /api/admin route re-checks.
   is_admin?: boolean;
+  // Commander's Commission (cosmetics entitlement). Same trust model as
+  // is_admin: unlocks premium pickers in the UI, but every save path
+  // re-checks the entitlement server-side.
+  is_premium?: boolean;
 };
+
+/** Start the Commander's Commission purchase. Resolves to the Stripe
+ *  Checkout URL to navigate to, or null when purchases aren't enabled,
+ *  the account already owns it, or the request failed. */
+export async function startCommissionCheckout(): Promise<string | null> {
+  const res = await apiFetch<{ url: string }>('/api/checkout/cosmetics', { method: 'POST' });
+  return res.ok ? res.data.url : null;
+}
 
 export type RoomSummary = {
   id: string;
