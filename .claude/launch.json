@@ -2,41 +2,79 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "worktree-build",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "serve",
+        "-s",
+        "C:/Users/lcfee/OneDrive/Documents/Claude/Projects/Orbital/.claude/worktrees/upbeat-saha-7ca997/build",
+        "-l",
+        "5060"
+      ],
+      "port": 5060,
+      "autoPort": true
+    },
+    {
       "name": "orbital-frontend",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["serve", "-s", "C:/Users/lcfee/OneDrive/Documents/Claude/Projects/Orbital/build", "-l", "5050"],
+      "runtimeArgs": [
+        "serve",
+        "-s",
+        "C:/Users/lcfee/OneDrive/Documents/Claude/Projects/Orbital/build",
+        "-l",
+        "5050"
+      ],
       "port": 5050,
       "autoPort": true
     },
     {
       "name": "orbital-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["start"],
+      "runtimeArgs": [
+        "start"
+      ],
       "port": 3000,
       "autoPort": true
     },
     {
       "name": "mockup-preview",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["serve", "-l", "5051", "C:/Users/lcfee/AppData/Local/Temp/claude/C--Users-lcfee-OneDrive-Documents-Claude-Projects-Orbital/77d368ea-51ff-4ca8-830a-5f1cfa2bdf55/scratchpad"],
+      "runtimeArgs": [
+        "serve",
+        "-l",
+        "5051",
+        "C:/Users/lcfee/AppData/Local/Temp/claude/C--Users-lcfee-OneDrive-Documents-Claude-Projects-Orbital/77d368ea-51ff-4ca8-830a-5f1cfa2bdf55/scratchpad"
+      ],
       "port": 5051,
       "autoPort": true
     },
     {
       "name": "solar-sailor",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["--prefix", "C:/Users/lcfee/OneDrive/Documents/Claude/Projects/SolarSailor", "vite", "C:/Users/lcfee/OneDrive/Documents/Claude/Projects/SolarSailor", "--port", "5199"],
+      "runtimeArgs": [
+        "--prefix",
+        "C:/Users/lcfee/OneDrive/Documents/Claude/Projects/SolarSailor",
+        "vite",
+        "C:/Users/lcfee/OneDrive/Documents/Claude/Projects/SolarSailor",
+        "--port",
+        "5199"
+      ],
       "port": 5199
     },
     {
       "name": "event-hub",
       "runtimeExecutable": "npx",
       "runtimeArgs": [
-        "--prefix", "C:/Users/lcfee/OneDrive/Documents/Claude/Projects/vendor-volunteer",
-        "wrangler", "dev",
-        "--config", "C:/Users/lcfee/OneDrive/Documents/Claude/Projects/vendor-volunteer/wrangler.jsonc",
-        "--persist-to", "C:/Users/lcfee/OneDrive/Documents/Claude/Projects/vendor-volunteer/.wrangler/state",
-        "--port", "8787"
+        "--prefix",
+        "C:/Users/lcfee/OneDrive/Documents/Claude/Projects/vendor-volunteer",
+        "wrangler",
+        "dev",
+        "--config",
+        "C:/Users/lcfee/OneDrive/Documents/Claude/Projects/vendor-volunteer/wrangler.jsonc",
+        "--persist-to",
+        "C:/Users/lcfee/OneDrive/Documents/Claude/Projects/vendor-volunteer/.wrangler/state",
+        "--port",
+        "8787"
       ],
       "port": 8787
     }
