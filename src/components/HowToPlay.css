@@ -87,7 +87,8 @@
   background: #05080c;
   box-shadow: 0 10px 34px rgba(0, 0, 0, 0.45);
 }
-.htp-shot img {
+.htp-shot img,
+.htp-diagram {
   display: block;
   width: 100%;
   height: auto;
