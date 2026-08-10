@@ -9,13 +9,18 @@
 //   - compounding building yield     (worker/room.js harvest pass)
 // ============================================================
 
-import { partsCost, PART_STACK_ESCALATION, type ShipPartId } from '../shipParts';
+import { partsCost, PART_STACK_ESCALATION, SHIP_PART_DEFS, type ShipPartId } from '../shipParts';
 import { SHIP_CLASSES } from '../shipClasses';
 import { BUILDING_DEFS } from '../settlements';
 
 describe('part stacking escalation', () => {
   test('the first copy is base price', () => {
-    expect(partsCost(['kinetic'])).toEqual({ ore: 6, credits: 2 });
+    // Derived from the def rather than hardcoded: these tests pin the
+    // CURVE, not the price list. Hardcoding turned every deliberate
+    // rebalance into a false failure that taught people to edit the
+    // expectation without reading it.
+    const k = SHIP_PART_DEFS.kinetic.cost;
+    expect(partsCost(['kinetic'])).toEqual({ ore: k.ore, credits: k.credits });
   });
 
   test('each additional copy of the SAME part costs more', () => {
@@ -30,10 +35,12 @@ describe('part stacking escalation', () => {
 
   test('mixed loadouts are NOT penalised — escalation is per part type', () => {
     // One of each: every part is its type's first copy, so base price.
+    const k = SHIP_PART_DEFS.kinetic.cost;
+    const s = SHIP_PART_DEFS.shield.cost;
     const mixed = partsCost(['kinetic', 'shield']);
     expect(mixed).toEqual({
-      ore: 6 + 4,
-      credits: 2 + 4,
+      ore: k.ore + s.ore,
+      credits: k.credits + s.credits,
     });
   });
 
@@ -44,14 +51,71 @@ describe('part stacking escalation', () => {
   });
 
   test('escalation matches the documented constant', () => {
-    // 2nd kinetic = round(6 * E). Guards an accidental constant edit
-    // from silently repricing every design in play.
+    // 2nd kinetic = base + round(base * E). Guards an accidental
+    // constant edit from silently repricing every design in play.
+    const base = SHIP_PART_DEFS.kinetic.cost.ore;
     const two = partsCost(['kinetic', 'kinetic']).ore;
-    expect(two).toBe(6 + Math.round(6 * PART_STACK_ESCALATION));
+    expect(two).toBe(base + Math.round(base * PART_STACK_ESCALATION));
   });
 
   test('empty loadout is free', () => {
     expect(partsCost([])).toEqual({ ore: 0, credits: 0 });
+  });
+});
+
+// ============================================================
+// The client/server mirror. This is the drift the header comment warns
+// about, made into an actual assertion instead of a hope: the price the
+// designer QUOTES comes from src/game/shipParts.ts, the price the server
+// CHARGES comes from worker/shipDesigns.js, and nothing but discipline
+// kept them equal.
+//
+// Read as TEXT rather than imported: the worker is ESM with Cloudflare
+// globals and dragging it into jsdom to compare six numbers is not worth
+// the module plumbing. A regex over a literal table is the cheap,
+// honest tool here — if the table stops being a literal, this fails
+// loudly rather than silently passing, which is the correct direction
+// to break in.
+// ============================================================
+describe('part costs match the worker mirror', () => {
+  const fs = require('fs') as typeof import('fs');
+  const path = require('path') as typeof import('path');
+
+  const source = fs.readFileSync(
+    path.join(__dirname, '../../../worker/shipDesigns.js'),
+    'utf8',
+  );
+
+  const serverCosts: Record<string, { metal: number; gold: number }> = {};
+  const row = /(\w+):\s*\{\s*metal:\s*(\d+),\s*gold:\s*(\d+),/g;
+  let m: RegExpExecArray | null;
+  while ((m = row.exec(source)) !== null) {
+    serverCosts[m[1]] = { metal: Number(m[2]), gold: Number(m[3]) };
+  }
+
+  test('the worker table was actually found', () => {
+    // Guards the regex itself: a refactor that renames the fields would
+    // otherwise make every assertion below vacuously pass.
+    expect(Object.keys(serverCosts).length).toBe(
+      Object.keys(SHIP_PART_DEFS).length,
+    );
+  });
+
+  // A plain loop rather than test.each: this repo has no @types/jest in
+  // the tsconfig scope, so `test` resolves to any and `.each` callback
+  // params land as implicit anys. The cast here keeps `id` properly
+  // typed and each part still gets its own named test.
+  (Object.keys(SHIP_PART_DEFS) as ShipPartId[]).forEach((id) => {
+    test(`${id} costs the same on both sides`, () => {
+      const client = SHIP_PART_DEFS[id].cost;
+      const server = serverCosts[id];
+      expect(server).toBeDefined();
+      // Server columns are metal/gold; the client calls them ore/credits.
+      expect({ ore: server.metal, credits: server.gold }).toEqual({
+        ore: client.ore,
+        credits: client.credits,
+      });
+    });
   });
 });
 

@@ -35,11 +35,37 @@ export const SHIP_SLOT_COUNTS = {
  * against P0 hull costs (corvette 5M/4G … destroyer 20M/17G) so a
  * fully-loaded hull meaningfully exceeds the bare hull price.
  */
+/**
+ * CURRENCY SPLIT (2026-08-09). Metal buys KINETIC + SHIELD; credits buy
+ * ENERGY + ARMOR. The pairing is CROSSED on purpose, and that crossing —
+ * not the 8:1 ratio — is the whole mechanism.
+ *
+ * Read it against COUNTERED_BY below: shield stops kinetic, armor stops
+ * energy. So a one-currency empire ends up holding the defense that is
+ * useless against what its enemy actually shoots. A mono-metal empire
+ * fields kinetic guns and shields; a credit empire shoots energy; and
+ * shields do nothing about energy. You cannot build a complete warship
+ * on a single currency, which makes economic diversity a MILITARY
+ * requirement and gives the trade system a real job.
+ *
+ * The previous 3:1 spread paired metal with kinetic AND armor — same
+ * side, coherent, and completely inert: a mono-metal empire already
+ * carried the right defense against a credit empire, so nobody ever had
+ * to trade.
+ *
+ * 8:1 rather than 1:0 deliberately: the 100-game sim measured a 9.4x
+ * spawn imbalance in starting yields, and at 1:0 that stops being an
+ * economic handicap you can play around and becomes a military one —
+ * a metal-poor spawn simply could not field the energy half of the game.
+ * At 8:1 every design stays buildable on a bad spawn, just expensively.
+ *
+ * KEEP IN SYNC with SHIP_PART_DEFS in src/game/shipParts.ts.
+ */
 export const SHIP_PART_DEFS = {
-  kinetic:   { metal: 6,  gold: 2,  allowed: ['corvette', 'frigate', 'destroyer'], damageType: 'kinetic' },
-  energy:    { metal: 2,  gold: 6,  allowed: ['corvette', 'frigate', 'destroyer'], damageType: 'energy' },
-  shield:    { metal: 4,  gold: 4,  allowed: ['corvette', 'frigate', 'destroyer', 'freighter'] },
-  armor:     { metal: 6,  gold: 2,  allowed: ['corvette', 'frigate', 'destroyer', 'freighter'] },
+  kinetic:   { metal: 8,  gold: 1,  allowed: ['corvette', 'frigate', 'destroyer'], damageType: 'kinetic' },
+  energy:    { metal: 1,  gold: 8,  allowed: ['corvette', 'frigate', 'destroyer'], damageType: 'energy' },
+  shield:    { metal: 8,  gold: 1,  allowed: ['corvette', 'frigate', 'destroyer', 'freighter'] },
+  armor:     { metal: 1,  gold: 8,  allowed: ['corvette', 'frigate', 'destroyer', 'freighter'] },
   engine:    { metal: 2,  gold: 6,  allowed: ['corvette', 'frigate', 'destroyer', 'freighter'] },
   detonator: { metal: 10, gold: 10, allowed: ['corvette', 'frigate', 'destroyer'] },
 };

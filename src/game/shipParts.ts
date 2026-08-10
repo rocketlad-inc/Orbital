@@ -86,12 +86,35 @@ export const DEFAULT_LOADOUTS: Record<ShipClassName, ShipPartId[]> = {
   colony:    [],
 };
 
+/**
+ * CURRENCY SPLIT (2026-08-09). Metal buys KINETIC + SHIELD; credits buy
+ * ENERGY + ARMOR. The pairing is CROSSED on purpose, and that crossing —
+ * not the 8:1 ratio — is the whole mechanism.
+ *
+ * Shield stops kinetic; armor stops energy. So a one-currency empire
+ * ends up holding the defense that is useless against what its enemy
+ * actually shoots: a mono-metal empire fields kinetic guns and shields,
+ * a credit empire shoots energy, and shields do nothing about energy.
+ * You cannot build a complete warship on a single currency, which makes
+ * economic diversity a MILITARY requirement rather than a preference.
+ *
+ * The previous 3:1 spread paired metal with kinetic AND armor — same
+ * side, and therefore inert: a mono-metal empire already carried the
+ * right defense against a credit empire, so nobody ever had to trade.
+ *
+ * 8:1 rather than 1:0 because the sim measured a 9.4x spawn imbalance in
+ * starting yields; at 1:0 a metal-poor spawn simply could not field the
+ * energy half of the game. At 8:1 every design stays buildable, just
+ * expensively.
+ *
+ * KEEP IN SYNC with SHIP_PART_DEFS in worker/shipDesigns.js.
+ */
 export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
   kinetic: {
     id: 'kinetic',
     name: 'Kinetic Mount',
     blurb: '+40% hull base damage, kinetic. Strong against 🪨 armor. Each 🛡 shield cuts damage by 22% (compounding).',
-    cost: { ore: 6, credits: 2 },
+    cost: { ore: 8, credits: 1 },
     allowedOn: ['corvette', 'frigate', 'destroyer'],
     techTrack: 'weapons',
     techNote: 'Kinetic Weapons tech: +10%/lvl to this mount',
@@ -101,7 +124,7 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
     id: 'energy',
     name: 'Energy Mount',
     blurb: '+40% hull base damage, energy. Strong against 🛡 shields. Each 🪨 armor plate cuts damage by 22% (compounding).',
-    cost: { ore: 2, credits: 6 },
+    cost: { ore: 1, credits: 8 },
     allowedOn: ['corvette', 'frigate', 'destroyer'],
     techTrack: 'energy_weapons',
     techNote: 'Energy Weapons tech: +10%/lvl to this mount',
@@ -111,7 +134,7 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
     id: 'shield',
     name: 'Shield Array',
     blurb: '+35% hull base HP. Cuts incoming ⚔ KINETIC by 22% per array, compounding: 22% / 39% / 53% for 1 / 2 / 3. No effect on ⚡ energy.',
-    cost: { ore: 4, credits: 4 },
+    cost: { ore: 8, credits: 1 },
     allowedOn: ['corvette', 'frigate', 'destroyer', 'freighter'],
     techTrack: 'shields',
     techNote: 'Shields tech: +8%/lvl to this array',
@@ -120,7 +143,7 @@ export const SHIP_PART_DEFS: Record<ShipPartId, ShipPartDef> = {
     id: 'armor',
     name: 'Armor Plate',
     blurb: '+35% hull base HP. Cuts incoming ⚡ ENERGY by 22% per plate, compounding: 22% / 39% / 53% for 1 / 2 / 3. No effect on ⚔ kinetic.',
-    cost: { ore: 6, credits: 2 },
+    cost: { ore: 1, credits: 8 },
     allowedOn: ['corvette', 'frigate', 'destroyer', 'freighter'],
     techTrack: 'armor',
     techNote: 'Armor tech: +8%/lvl to this plate',
