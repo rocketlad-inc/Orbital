@@ -589,8 +589,12 @@ export interface IncomePerTick {
   waiting:   { fuel: number; ore: number; credits: number; science: number };
   settlementCount: number;
   collectorCount: number;
-  /** True if the faction has at least one collector. When false the
-   *  HUD switches into "build a collector" warning mode. */
+  /** Settled worlds routing 100% to pool. MP: terraformed worlds
+   *  (DESIGN-terraforming). SP: legacy collector settlements. */
+  terraformedCount: number;
+  /** True if the faction has at least one full-pool dock — a
+   *  terraformed settled world in MP, a collector in SP. When false
+   *  the HUD switches into "get a dock" warning mode. */
   hasCollector: boolean;
 }
 
@@ -606,13 +610,29 @@ export function computeIncomePerTick(
   const zero = () => ({ fuel: 0, ore: 0, credits: 0, science: 0 });
   const out: IncomePerTick = {
     delivered: zero(), local: zero(), waiting: zero(),
-    settlementCount: 0, collectorCount: 0, hasCollector: false,
+    settlementCount: 0, collectorCount: 0, terraformedCount: 0,
+    hasCollector: false,
   };
   const mine = settlements.filter(s => s.ownedBy === factionId);
-  out.hasCollector = mine.some(s => s.hasCollector);
+  // "Full-pool dock" test, matching worker/room.js's harvest pass: in MP
+  // the split keys on the BODY being terraformed (terraformedAtTick is
+  // always present there — null means raw). SP bodies leave the field
+  // undefined and keep the legacy collector rule, so SP math is
+  // untouched.
+  const dockAt = (s: Settlement): boolean => {
+    const b = bodies.find(x => x.id === s.bodyId);
+    if (b && b.terraformedAtTick !== undefined) return b.terraformedAtTick !== null;
+    return !!s.hasCollector;
+  };
+  const seenTf = new Set<string>();
   for (const s of mine) {
     out.settlementCount += 1;
     if (s.hasCollector) out.collectorCount += 1;
+    const dock = dockAt(s);
+    if (dock) {
+      out.hasCollector = true;
+      if (!seenTf.has(s.bodyId)) { seenTf.add(s.bodyId); out.terraformedCount += 1; }
+    }
     const body = bodies.find(b => b.id === s.bodyId);
     if (!body) continue;
     const y = settlementYield(s, body);
@@ -623,8 +643,8 @@ export function computeIncomePerTick(
       science: y.science * yieldMul,
     };
     // Per-tick split mirrors tickSettlements + worker/room.js exactly.
-    const toPool  = s.hasCollector ? 1.0 : NO_COLLECTOR_POOL_FRACTION;
-    const toLocal = s.hasCollector ? 0.0 : NO_COLLECTOR_STOCK_FRACTION;
+    const toPool  = dock ? 1.0 : NO_COLLECTOR_POOL_FRACTION;
+    const toLocal = dock ? 0.0 : NO_COLLECTOR_STOCK_FRACTION;
     out.delivered.fuel    += yieldFull.fuel    * toPool;
     out.delivered.ore     += yieldFull.ore     * toPool;
     out.delivered.credits += yieldFull.credits * toPool;

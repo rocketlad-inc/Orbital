@@ -314,14 +314,6 @@ export interface MultiplayerActions {
    *  removal got rewound by the next /state. */
   cancelNode: (nodeId: string) => Promise<MpActionResult>;
 
-  // --- Collector network ---
-  /** Upgrade a player-owned settlement to a logistics endpoint. Server
-   *  charges COLLECTOR_COST (500 credits) and flips
-   *  has_collector = 1. Without this server hop the local mutation
-   *  would survive ~1.5s before the next /state poll restored
-   *  has_collector=0 and refunded the resources. */
-  buildCollector: (settlementId: string) => Promise<MpActionResult>;
-
   // --- Settlement upgrade buildings (forge/mint/lab/weapons/shipyard) ---
   /** Queue an upgrade. Server charges the current-level cost and writes
    *  building_order_json. Cancelled or completed orders clear that slot. */
@@ -912,22 +904,8 @@ export function MultiplayerActionsProvider({
         error: res.error?.message ?? 'Server rejected the grant.',
       };
     },
-    async buildCollector(settlementId) {
-      const res = await apiFetch<{ ok: boolean }>(
-        `/api/games/${gameId}/settlements/${encodeURIComponent(settlementId)}/collector`,
-        { method: 'POST' },
-      );
-      if (res.ok) {
-        logger.info('ACTION', 'Collector built', { settlement: settlementId });
-        return { ok: true };
-      }
-      console.warn('buildCollector failed', res.error);
-      return {
-        ok: false,
-        code: res.error?.code,
-        error: res.error?.message ?? 'Server rejected the collector build.',
-      };
-    },
+    // buildCollector was deleted with the terraforming rework — the
+    // server endpoint is gone; terraformed status is the loading dock.
     async queueBuilding(settlementId, kind) {
       const res = await apiFetch<{ ok: boolean }>(
         `/api/games/${gameId}/settlements/${encodeURIComponent(settlementId)}/buildings`,

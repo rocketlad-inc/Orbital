@@ -3702,7 +3702,7 @@ export class Room {
     const settlements = (await this.env.DB
       .prepare(
         `SELECT s.id, s.owner_faction_id AS fid, s.body_id, s.type, s.population,
-                s.last_growth_tick, s.has_collector, s.buildings_json,
+                s.last_growth_tick, s.buildings_json,
                 b.terraformed_at_tick,
                 b.yield_metal, b.yield_fuel, b.yield_gold, b.yield_science
            FROM game_settlements s
@@ -3781,21 +3781,17 @@ export class Room {
 
       // Per-body local stockpile pre-pass. Lorne's call: ONE local
       // pool per body, shared between a city and any stations of the
-      // same faction at that body. A collector anywhere in the group
-      // flips the WHOLE group to 100% pool; otherwise the group's
-      // 90% stockpile share gets written to the primary holder
-      // (prefer city → fall back to station). This is what makes a
-      // station's yield reach the city's local pile instead of
-      // stranding in a separate station-only stockpile, and what makes
-      // a collector on a city also collect for the station orbiting it.
-      // Keyed (body, faction) so two factions sharing a body still keep
-      // their stockpiles independent.
+      // same faction at that body. A TERRAFORMED body routes the WHOLE
+      // group's yield 100% to pool; otherwise the group's 90% stockpile
+      // share gets written to the primary holder (prefer city → fall
+      // back to station). This is what makes a station's yield reach
+      // the city's local pile instead of stranding in a separate
+      // station-only stockpile. Keyed (body, faction) so two factions
+      // sharing a body still keep their stockpiles independent.
       const groupKey = (s) => `${s.body_id}|${s.fid}`;
-      const groupHasCollector = new Map();
       const groupPrimary = new Map(); // groupKey -> { id, type }
       for (const s of settlements) {
         const k = groupKey(s);
-        if (s.has_collector) groupHasCollector.set(k, true);
         const cur = groupPrimary.get(k);
         // Prefer 'city' as the stockpile holder. If there's no city
         // (gas-giant cases like clownking's Neptune), the station's own

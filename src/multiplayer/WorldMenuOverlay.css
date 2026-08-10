@@ -76,20 +76,47 @@
 .wm-yield { border: 1px solid #2a3d50; border-radius: 3px; padding: 0 6px; font-size: 10.5px; }
 .wm-yield i { font-style: normal; color: #6b8195; margin-right: 3px; }
 .wm-stock { font-size: 10px; font-variant-numeric: tabular-nums; }
-.wm-collector {
+/* ---- terraform card (replaces the collector button) ---- */
+.wm-terraform {
   align-self: flex-start;
-  display: inline-flex; align-items: center; gap: 7px;
-  background: rgba(78, 205, 196, 0.08);
-  border: 1px solid #4ecdc4; border-radius: 5px;
-  color: #4ecdc4; font-family: inherit; font-size: 10px; font-weight: 700;
-  letter-spacing: 0.12em; text-transform: uppercase;
-  padding: 6px 12px; cursor: pointer;
+  display: flex; flex-direction: column; gap: 4px;
+  background: rgba(120, 160, 200, 0.06);
+  border: 1px solid #2a3d50; border-radius: 5px;
+  color: #a8b8c8; font-size: 10px;
+  padding: 6px 10px; min-width: 180px;
 }
-.wm-collector.built { background: transparent; border-color: #2a3d50; color: #ffb84d; cursor: default; }
-/* Locked until research: muted, greyed, with the lock icon in the label. */
-.wm-collector.locked {
-  background: transparent; border-color: #2a3d50; color: #6b8195; cursor: not-allowed;
+/* Terraformed: a quiet green one-liner — the world just works. */
+.wm-terraform.done {
+  display: inline-flex; flex-direction: row;
+  border-color: #2f6e4f; color: #6ee7b7; font-weight: 700;
+  letter-spacing: 0.12em; min-width: 0;
 }
+/* Window open: payload landed, countdown running. */
+.wm-terraform.working {
+  display: inline-flex; flex-direction: row;
+  border-color: #6a5a2a; color: #ffd27a; font-weight: 700;
+  letter-spacing: 0.08em; min-width: 0;
+}
+.wm-terraform-head {
+  display: flex; justify-content: space-between; gap: 12px;
+  font-weight: 700; letter-spacing: 0.12em; color: #c8b89a;
+}
+.wm-terraform-routes { font-weight: 400; letter-spacing: 0.04em; color: #9fdcff; }
+.wm-terraform-row {
+  display: flex; align-items: center; gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.wm-terraform-row i { font-style: normal; color: #6b8195; width: 10px; }
+.wm-terraform-row span { min-width: 52px; text-align: right; }
+.wm-terraform-bar {
+  flex: 1; height: 5px; border-radius: 3px;
+  background: rgba(255, 255, 255, 0.07); overflow: hidden;
+}
+.wm-terraform-bar b {
+  display: block; height: 100%;
+  background: linear-gradient(90deg, #4ecdc4, #6ee7b7);
+}
+.wm-terraform-hint { color: #ffb84d; line-height: 1.4; }
 .wm-more {
   align-self: flex-end;
   background: rgba(78, 205, 196, 0.08); border: 1px solid #2a3d50; border-radius: 4px;
@@ -309,7 +336,7 @@
 .wm-mobile .wm-top.collapsed .wm-metrics,
 .wm-mobile .wm-top.collapsed .wm-settlements,
 .wm-mobile .wm-top.collapsed .wm-stock,
-.wm-mobile .wm-top.collapsed .wm-collector,
+.wm-mobile .wm-top.collapsed .wm-terraform,
 .wm-mobile .wm-top.collapsed .wm-crumb,
 .wm-mobile .wm-top.collapsed .wm-out .wm-label { display: none; }
 .wm-mobile .wm-top.collapsed .wm-name { font-size: 14px; }

@@ -417,6 +417,21 @@ export const BuildPanel: React.FC = () => {
         </div>
       )}
 
+      {/* LOCAL vs POOL — the local-first spend has always been server
+          truth (settlement stockpiles drain before the faction pool),
+          but was invisible: players thought a raw world's bank was
+          dead money. One line makes the mechanic legible at the exact
+          moment it applies. */}
+      {mpActions && playerRes && (localStock.ore > 0.5 || localStock.credits > 0.5) && (
+        <div
+          className="build-slots__hint"
+          style={{ color: '#9fdcff' }}
+          title="Builds here spend this body's LOCAL stockpile first, then your faction POOL. Raw worlds bank 90% of their yield locally — building ships on-site is how you spend it without hauling."
+        >
+          LOCAL {Math.floor(localStock.ore)}M {Math.floor(localStock.credits)}C · POOL {Math.floor(playerRes.ore)}M {Math.floor(playerRes.credits)}C — local spends first
+        </div>
+      )}
+
       <div className="build-name-row">
         <input
           type="text"

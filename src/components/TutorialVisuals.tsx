@@ -254,6 +254,38 @@ const Expand = () => (
   </Frame>
 );
 
+/** Terraforming: a freighter delivering the payload into a raw world's
+ *  meter — a delivery, not a purchase. */
+const Terraform = () => (
+  <Frame>
+    {/* Terraformed origin — full pool dock */}
+    <g transform="translate(52,52)">
+      <circle r={18} fill="rgba(78,205,196,0.25)" stroke="#4ecdc4" strokeWidth={1.4} />
+      <path d="M-8 2 Q-3 -6 4 -2 Q9 1 7 6 Q0 10 -6 7 Z" fill="rgba(110,231,183,0.5)" />
+      <text y={38} textAnchor="middle" fill="#4ecdc4" fontSize={8.5} letterSpacing={1}>TERRAFORMED</text>
+    </g>
+    {/* Freighter hauling the payload */}
+    <g stroke="#7fd4ff" strokeWidth={1.4} fill="none">
+      <path d="M80 52 h110" strokeDasharray="5 4" />
+    </g>
+    <g transform="translate(138,52)">
+      <rect x={-11} y={-5} width={20} height={10} rx={2} fill="rgba(127,212,255,0.4)" stroke="#7fd4ff" strokeWidth={1.3} />
+      <path d="M-11 -2 L-17 0 L-11 2 Z" fill="#ff9e4a" opacity={0.85} />
+      <text y={20} textAnchor="middle" fill="#7fd4ff" fontSize={8.5} letterSpacing={1}>124M · 124C</text>
+    </g>
+    {/* Raw destination with a filling meter */}
+    <g transform="translate(246,52)">
+      <circle r={18} fill="rgba(139,110,80,0.2)" stroke="#8a765c" strokeWidth={1.2} strokeDasharray="3 3" />
+      <rect x={-20} y={26} width={40} height={5} rx={2.5} fill="rgba(255,255,255,0.08)" />
+      <rect x={-20} y={26} width={22} height={5} rx={2.5} fill="#4ecdc4" />
+      <text y={44} textAnchor="middle" fill="#8fa8bf" fontSize={8.5} letterSpacing={1}>RAW · FILLING</text>
+    </g>
+    <text x={150} y={16} textAnchor="middle" fill="#4ecdc4" fontSize={8.5} letterSpacing={1}>
+      TERRAFORMING IS A DELIVERY, NOT A PURCHASE
+    </text>
+  </Frame>
+);
+
 const VISUALS: Record<TutorialVisualId, React.FC> = {
   victory: Victory,
   'map-controls': MapControls,
@@ -263,6 +295,7 @@ const VISUALS: Record<TutorialVisualId, React.FC> = {
   dyson: Dyson,
   herald: Herald,
   expand: Expand,
+  terraform: Terraform,
 };
 
 export const TutorialVisual: React.FC<{ id: TutorialVisualId }> = ({ id }) => {

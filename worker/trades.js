@@ -1012,7 +1012,7 @@ async function handleDeliveryOptions(req, env, { url, session, params }) {
          FROM game_settlements s
          JOIN game_bodies b ON b.id = s.body_id AND b.game_id = s.game_id
         WHERE s.game_id = ? AND s.owner_faction_id = ?
-          AND s.has_collector = 1 AND s.destroyed_at_tick IS NULL
+          AND b.terraformed_at_tick IS NOT NULL AND s.destroyed_at_tick IS NULL
           AND b.destroyed_at_tick IS NULL`,
     )
     .bind(gameId, delivery.recipient_faction_id)
@@ -1045,9 +1045,11 @@ async function handleDeliveryOptions(req, env, { url, session, params }) {
   const myCollectors = new Set(
     ((await env.DB
       .prepare(
-        `SELECT DISTINCT body_id FROM game_settlements
-          WHERE game_id = ? AND owner_faction_id = ?
-            AND has_collector = 1 AND destroyed_at_tick IS NULL`,
+        `SELECT DISTINCT s.body_id FROM game_settlements s
+           JOIN game_bodies b ON b.id = s.body_id AND b.game_id = s.game_id
+          WHERE s.game_id = ? AND s.owner_faction_id = ?
+            AND b.terraformed_at_tick IS NOT NULL
+            AND s.destroyed_at_tick IS NULL AND b.destroyed_at_tick IS NULL`,
       )
       .bind(gameId, caller.id)
       .all()).results ?? []).map(r => r.body_id),
@@ -1140,13 +1142,15 @@ async function handleAssignDelivery(req, env, { session, params }) {
   // Destination must be a live collector of the RECIPIENT.
   const destOk = await env.DB
     .prepare(
-      `SELECT 1 AS x FROM game_settlements
-        WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
-          AND has_collector = 1 AND destroyed_at_tick IS NULL LIMIT 1`,
+      `SELECT 1 AS x FROM game_settlements s
+         JOIN game_bodies b ON b.id = s.body_id AND b.game_id = s.game_id
+        WHERE s.game_id = ? AND s.body_id = ? AND s.owner_faction_id = ?
+          AND b.terraformed_at_tick IS NOT NULL
+          AND s.destroyed_at_tick IS NULL AND b.destroyed_at_tick IS NULL LIMIT 1`,
     )
     .bind(gameId, destBodyId, delivery.recipient_faction_id)
     .first();
-  if (!destOk) return err(409, 'no_dest_collector', 'the recipient has no collector there');
+  if (!destOk) return err(409, 'no_dest_collector', 'the recipient has no terraformed world there');
 
   // Pickup: the freighter's current body if the sender has a collector
   // on it (instant load next tick), else the sender's capital — which
@@ -1155,9 +1159,11 @@ async function handleAssignDelivery(req, env, { session, params }) {
   let pickupBodyId = null;
   const hereOk = await env.DB
     .prepare(
-      `SELECT 1 AS x FROM game_settlements
-        WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
-          AND has_collector = 1 AND destroyed_at_tick IS NULL LIMIT 1`,
+      `SELECT 1 AS x FROM game_settlements s
+         JOIN game_bodies b ON b.id = s.body_id AND b.game_id = s.game_id
+        WHERE s.game_id = ? AND s.body_id = ? AND s.owner_faction_id = ?
+          AND b.terraformed_at_tick IS NOT NULL
+          AND s.destroyed_at_tick IS NULL AND b.destroyed_at_tick IS NULL LIMIT 1`,
     )
     .bind(gameId, ship.parent_body_id, caller.id)
     .first();
@@ -1169,13 +1175,15 @@ async function handleAssignDelivery(req, env, { session, params }) {
         `SELECT s.body_id,
                 CASE WHEN s.body_id = ? THEN 0 ELSE 1 END AS pref
            FROM game_settlements s
+           JOIN game_bodies b ON b.id = s.body_id AND b.game_id = s.game_id
           WHERE s.game_id = ? AND s.owner_faction_id = ?
-            AND s.has_collector = 1 AND s.destroyed_at_tick IS NULL
+            AND b.terraformed_at_tick IS NOT NULL
+            AND s.destroyed_at_tick IS NULL AND b.destroyed_at_tick IS NULL
           ORDER BY pref LIMIT 1`,
       )
       .bind(caller.capital_body_id, gameId, caller.id)
       .first();
-    if (!anyCollector) return err(409, 'no_pickup_collector', 'you have no collector to load from');
+    if (!anyCollector) return err(409, 'no_pickup_collector', 'you have no terraformed world to load from');
     pickupBodyId = anyCollector.body_id;
   }
 
@@ -1267,7 +1275,7 @@ async function handleAgreementOptions(_req, env, { session, params }) {
          FROM game_settlements s
          JOIN game_bodies b ON b.id = s.body_id AND b.game_id = s.game_id
         WHERE s.game_id = ? AND s.owner_faction_id = ?
-          AND s.has_collector = 1 AND s.destroyed_at_tick IS NULL
+          AND b.terraformed_at_tick IS NOT NULL AND s.destroyed_at_tick IS NULL
           AND b.destroyed_at_tick IS NULL`,
     )
     .bind(gameId, partnerId)
@@ -1295,9 +1303,11 @@ async function handleAgreementOptions(_req, env, { session, params }) {
   const myCollectors = new Set(
     ((await env.DB
       .prepare(
-        `SELECT DISTINCT body_id FROM game_settlements
-          WHERE game_id = ? AND owner_faction_id = ?
-            AND has_collector = 1 AND destroyed_at_tick IS NULL`,
+        `SELECT DISTINCT s.body_id FROM game_settlements s
+           JOIN game_bodies b ON b.id = s.body_id AND b.game_id = s.game_id
+          WHERE s.game_id = ? AND s.owner_faction_id = ?
+            AND b.terraformed_at_tick IS NOT NULL
+            AND s.destroyed_at_tick IS NULL AND b.destroyed_at_tick IS NULL`,
       )
       .bind(gameId, caller.id)
       .all()).results ?? []).map(r => r.body_id),
@@ -1430,20 +1440,24 @@ async function handleCommissionLeg(req, env, { session, params }) {
   // Destination must be a live collector belonging to the PARTNER.
   const destOk = await env.DB
     .prepare(
-      `SELECT 1 AS x FROM game_settlements
-        WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
-          AND has_collector = 1 AND destroyed_at_tick IS NULL LIMIT 1`,
+      `SELECT 1 AS x FROM game_settlements s
+         JOIN game_bodies b ON b.id = s.body_id AND b.game_id = s.game_id
+        WHERE s.game_id = ? AND s.body_id = ? AND s.owner_faction_id = ?
+          AND b.terraformed_at_tick IS NOT NULL
+          AND s.destroyed_at_tick IS NULL AND b.destroyed_at_tick IS NULL LIMIT 1`,
     )
     .bind(gameId, destBodyId, partnerId).first();
-  if (!destOk) return err(409, 'no_dest_collector', 'your partner has no collector there');
+  if (!destOk) return err(409, 'no_dest_collector', 'your partner has no terraformed world there');
 
   // Origin: prefer where the freighter already sits, else the capital.
   let originBodyId = null;
   const hereOk = await env.DB
     .prepare(
-      `SELECT 1 AS x FROM game_settlements
-        WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
-          AND has_collector = 1 AND destroyed_at_tick IS NULL LIMIT 1`,
+      `SELECT 1 AS x FROM game_settlements s
+         JOIN game_bodies b ON b.id = s.body_id AND b.game_id = s.game_id
+        WHERE s.game_id = ? AND s.body_id = ? AND s.owner_faction_id = ?
+          AND b.terraformed_at_tick IS NOT NULL
+          AND s.destroyed_at_tick IS NULL AND b.destroyed_at_tick IS NULL LIMIT 1`,
     )
     .bind(gameId, ship.parent_body_id, caller.id).first();
   if (hereOk) {
@@ -1453,12 +1467,14 @@ async function handleCommissionLeg(req, env, { session, params }) {
       .prepare(
         `SELECT s.body_id, CASE WHEN s.body_id = ? THEN 0 ELSE 1 END AS pref
            FROM game_settlements s
+           JOIN game_bodies b ON b.id = s.body_id AND b.game_id = s.game_id
           WHERE s.game_id = ? AND s.owner_faction_id = ?
-            AND s.has_collector = 1 AND s.destroyed_at_tick IS NULL
+            AND b.terraformed_at_tick IS NOT NULL
+            AND s.destroyed_at_tick IS NULL AND b.destroyed_at_tick IS NULL
           ORDER BY pref LIMIT 1`,
       )
       .bind(caller.capital_body_id, gameId, caller.id).first();
-    if (!anyCollector) return err(409, 'no_pickup_collector', 'you have no collector to load from');
+    if (!anyCollector) return err(409, 'no_pickup_collector', 'you have no terraformed world to load from');
     originBodyId = anyCollector.body_id;
   }
 

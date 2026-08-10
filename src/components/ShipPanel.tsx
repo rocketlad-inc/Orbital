@@ -2567,29 +2567,44 @@ const TradeRouteSection: React.FC<{
   const [originId, setOriginId] = useState<string>('');
   const [destId, setDestId] = useState<string>('');
 
-  // Eligible origins = any body where the player owns a settlement
-  // (collector not required — you can pick up from any settlement,
-  // it just needs to have stockpile). A DYSON run is stricter: it loads
-  // the faction pool at a collector, so only collector bodies qualify.
-  const originBodies = useMemo(() => {
-    const ids = new Set(settlements.filter(s => s.ownedBy === 'player').map(s => s.bodyId));
-    return bodies.filter(b => ids.has(b.id));
-  }, [bodies, settlements]);
-  const collectorBodies = useMemo(() => {
-    const ids = new Set(
-      settlements.filter(s => s.ownedBy === 'player' && s.hasCollector).map(s => s.bodyId),
-    );
-    return bodies.filter(b => ids.has(b.id));
-  }, [bodies, settlements]);
-
-  // Eligible destinations = any body where the player has a collector.
-  // Without one the route's deliveries would have nowhere to land.
-  const destBodies = useMemo(() => {
-    const ids = new Set(
-      settlements.filter(s => s.ownedBy === 'player' && s.hasCollector).map(s => s.bodyId),
-    );
-    return bodies.filter(b => ids.has(b.id));
-  }, [bodies, settlements]);
+  // ROUTE TAXONOMY (DESIGN-terraforming): the destination decides the
+  // route kind, mirroring worker/actions.js handleCreateTradeRoute —
+  //   terraform  dest = a RAW world I control (station claims it)
+  //   logistics  dest = a terraformed world where I live
+  //   dyson      dest = Sol (controller only)
+  // Terraform + dyson runs load the faction POOL, which is only "on the
+  // dock" at terraformed worlds — so those origins filter accordingly.
+  const settledIds = useMemo(
+    () => new Set(settlements.filter(s => s.ownedBy === 'player').map(s => s.bodyId)),
+    [settlements],
+  );
+  const originBodies = useMemo(
+    () => bodies.filter(b => settledIds.has(b.id)),
+    [bodies, settledIds],
+  );
+  const terraformedOrigins = useMemo(
+    () => bodies.filter(b => settledIds.has(b.id) && !isRawWorld(b)),
+    [bodies, settledIds],
+  );
+  // Raw worlds I control that can still take supply (window not open).
+  const rawDests = useMemo(
+    () => bodies.filter(b =>
+      b.ownedBy === 'player'
+      && isRawWorld(b)
+      && b.terraformCompletesAtTick == null
+      && (b.type === 'terrestrial' || b.type === 'moon' || b.type === 'dwarf'),
+    ),
+    [bodies],
+  );
+  // Terraformed worlds where I live — classic stockpile hauling.
+  const logisticsDests = useMemo(
+    () => bodies.filter(b => settledIds.has(b.id) && !isRawWorld(b)),
+    [bodies, settledIds],
+  );
+  const destKind = destId === 'sol' ? 'dyson'
+    : rawDests.some(b => b.id === destId) ? 'terraform'
+    : 'logistics';
+  const anyDest = logisticsDests.length > 0 || rawDests.length > 0 || !!canSupplyDyson;
 
   if (route) {
     const origin = bodies.find(b => b.id === route.originBodyId);
@@ -2602,9 +2617,12 @@ const TradeRouteSection: React.FC<{
       route.cargo.credits > 0 ? `${Math.round(route.cargo.credits)}C` : null,
       route.cargo.science > 0 ? `${Math.round(route.cargo.science)}S` : null,
     ].filter(Boolean).join(' ');
+    const kindLabel = route.kind === 'terraform' ? '◌ TERRAFORM SUPPLY'
+      : route.kind === 'dyson' ? '☀ DYSON SUPPLY'
+      : 'TRADE ROUTE';
     return (
       <div className="maneuver-section">
-        <div className="section-title">TRADE ROUTE</div>
+        <div className="section-title">{kindLabel}</div>
         <div className="order-item status-committed" style={{ flexDirection: 'column', gap: 4 }}>
           <div className="order-info" style={{ width: '100%' }}>
             <div className="order-type">{origin?.name ?? '?'} ↔ {dest?.name ?? '?'}</div>
@@ -2643,34 +2661,12 @@ const TradeRouteSection: React.FC<{
         <div className="section-title">NEW TRADE ROUTE</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '6px 0' }}>
           <label style={{ fontSize: 10, color: '#b8c8d6', letterSpacing: '0.08em' }}>
-            ORIGIN (settlement)
+            DESTINATION (decides the route kind)
           </label>
-          <select
-            value={originId}
-            onChange={(e) => setOriginId(e.target.value)}
-            style={{
-              padding: '4px 6px', background: '#0a1018', border: '1px solid #2a3d50',
-              color: '#d8e4ee', fontFamily: 'inherit', fontSize: 11, borderRadius: 3,
-            }}
-          >
-            <option value="">— pick origin —</option>
-            {(destId === 'sol' ? collectorBodies : originBodies).map(b => (
-              <option key={b.id} value={b.id}>{b.name}</option>
-            ))}
-          </select>
-          {destId === 'sol' && (
-            <div style={{ fontSize: 10, color: '#8aa0b4', lineHeight: 1.5 }}>
-              Dyson supply loads metal, credits and science from your POOL at
-              the collector, then hauls it to the sphere. The freighter can be
-              raided the whole way.
-            </div>
-          )}
-          <label style={{ fontSize: 10, color: '#b8c8d6', letterSpacing: '0.08em' }}>
-            DEST (collector)
-          </label>
-          {destBodies.length === 0 ? (
+          {!anyDest ? (
             <div style={{ fontSize: 10, color: '#ff5e5e' }}>
-              You have no collectors. Build one at a settlement first.
+              No eligible destinations — claim a raw world with a station to
+              terraform it, or settle a terraformed world to haul stockpile.
             </div>
           ) : (
             <select
@@ -2681,15 +2677,60 @@ const TradeRouteSection: React.FC<{
                 color: '#d8e4ee', fontFamily: 'inherit', fontSize: 11, borderRadius: 3,
               }}
             >
-              <option value="">— pick collector —</option>
-              {canSupplyDyson && (
-                <option value="sol">☀ Dyson Sphere (Sol)</option>
+              <option value="">— pick destination —</option>
+              {rawDests.length > 0 && (
+                <optgroup label="TERRAFORM — raw worlds you control">
+                  {rawDests.map(b => (
+                    <option key={b.id} value={b.id}>
+                      ◌ {b.name} ({Math.round(b.terraformAcc?.metal ?? 0)}M · {Math.round(b.terraformAcc?.credits ?? 0)}C delivered)
+                    </option>
+                  ))}
+                </optgroup>
               )}
-              {destBodies.map(b => (
-                <option key={b.id} value={b.id}>{b.name}</option>
-              ))}
+              {logisticsDests.length > 0 && (
+                <optgroup label="LOGISTICS — your terraformed worlds">
+                  {logisticsDests.map(b => (
+                    <option key={b.id} value={b.id}>● {b.name}</option>
+                  ))}
+                </optgroup>
+              )}
+              {canSupplyDyson && (
+                <optgroup label="MEGAPROJECT">
+                  <option value="sol">☀ Dyson Sphere (Sol)</option>
+                </optgroup>
+              )}
             </select>
           )}
+          {destKind === 'terraform' && destId && (
+            <div style={{ fontSize: 10, color: '#8aa0b4', lineHeight: 1.5 }}>
+              Terraform supply loads metal + credits from your POOL at a
+              terraformed world and delivers them into this world's terraform
+              meter. When the payload lands, the transformation begins.
+            </div>
+          )}
+          {destKind === 'dyson' && destId && (
+            <div style={{ fontSize: 10, color: '#8aa0b4', lineHeight: 1.5 }}>
+              Dyson supply loads metal, credits and science from your POOL at
+              a terraformed world, then hauls it to the sphere. The freighter
+              can be raided the whole way.
+            </div>
+          )}
+          <label style={{ fontSize: 10, color: '#b8c8d6', letterSpacing: '0.08em' }}>
+            ORIGIN {destKind === 'logistics' ? '(any settlement of yours)' : '(terraformed world — pool loading dock)'}
+          </label>
+          <select
+            value={originId}
+            onChange={(e) => setOriginId(e.target.value)}
+            style={{
+              padding: '4px 6px', background: '#0a1018', border: '1px solid #2a3d50',
+              color: '#d8e4ee', fontFamily: 'inherit', fontSize: 11, borderRadius: 3,
+            }}
+          >
+            <option value="">— pick origin —</option>
+            {(destKind === 'logistics' ? originBodies : terraformedOrigins).map(b => (
+              <option key={b.id} value={b.id}>{b.name}</option>
+            ))}
+          </select>
           <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
             <button
               className="maneuver-btn"
@@ -2723,14 +2764,14 @@ const TradeRouteSection: React.FC<{
         className="maneuver-btn"
         onClick={() => setPicking(true)}
         style={{ marginTop: 4 }}
-        title="Open a recurring trade route — auto-pilots this freighter to ferry cargo from a settlement to a collector and loop."
-        disabled={destBodies.length === 0}
+        title="Open a recurring route — auto-pilots this freighter to haul stockpile home, feed a terraform meter, or supply the Dyson Sphere."
+        disabled={!anyDest}
       >
         + TRADE ROUTE
       </button>
-      {destBodies.length === 0 && (
+      {!anyDest && (
         <div style={{ fontSize: 9, color: '#b8c8d6', marginTop: 4 }}>
-          Build a collector first.
+          Claim a raw world with a station, or settle a terraformed one.
         </div>
       )}
     </div>

@@ -961,7 +961,7 @@ const shipDesignsP = env.DB
     .all();
 const tradeRoutesP = env.DB
     .prepare(
-      `SELECT id, ship_id, origin_body_id, dest_body_id, status,
+      `SELECT id, ship_id, origin_body_id, dest_body_id, status, kind,
               cargo_fuel, cargo_metal, cargo_gold, cargo_science,
               created_at_tick
          FROM game_trade_routes
@@ -1168,6 +1168,7 @@ const tradeRoutesP = env.DB
   // without duplicating the slider lookup client-side. KEEP the class
   // table IN SYNC with worker/room.js upkeep pass + src/game/shipClasses.ts.
   let upkeep = { gold: 0, metal: 0, multiplier: 1 };
+  let terraform = { cost_metal: 124, cost_credits: 124, duration_ticks: 24 };
   try {
     // Rates come from the game's CONFIG, not a literal. room.js bills the
     // fleet from the same source; a hardcoded copy here meant the Editor
@@ -1224,6 +1225,14 @@ const tradeRoutesP = env.DB
       gold: round3(g * mult), metal: round3(m * mult), multiplier: mult,
       by_class: byClass,
       arrears_damage_mult: ucfg.arrears_damage_mult,
+    };
+    // Terraform targets ride the same config load — the world-menu meter
+    // quotes X/COST, and a hardcoded 124 client-side would lie the moment
+    // a host tunes the lobby setting (same drift bug as upkeep above).
+    terraform = {
+      cost_metal:     Number(ucfg.terraform_cost_metal ?? 124),
+      cost_credits:   Number(ucfg.terraform_cost_credits ?? 124),
+      duration_ticks: Number(ucfg.terraform_duration_ticks ?? 24),
     };
   } catch { /* leave zeros */ }
 
@@ -1319,6 +1328,9 @@ const tradeRoutesP = env.DB
       // multiplier included) and any standing debt. arrears > 0 means the
       // whole fleet is fighting at −25% damage until income clears it.
       upkeep,
+      // Terraform payload targets from game config — the client meter
+      // quotes delivered/target from here, never a hardcoded copy.
+      terraform,
       arrears: {
         gold: Number(me.arrears_gold ?? 0),
         metal: Number(me.arrears_metal ?? 0),

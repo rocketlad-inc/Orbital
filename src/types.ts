@@ -670,8 +670,12 @@ export interface TradeRoute {
   ownedBy: string;          // faction running the route
   shipId: string;           // the freighter assigned (must be ownedBy)
   originBodyId: string;     // settlement we pick up from
-  destBodyId: string;       // collector we drop off at
+  destBodyId: string;       // terraformed world / raw world / Sol we drop off at
   status: 'outbound' | 'returning' | 'paused';
+  /** Route taxonomy (DESIGN-terraforming) — destination decides it:
+   *  logistics hauls stockpile home, terraform feeds a raw world's
+   *  meter, dyson supplies the sphere. Optional: SP routes predate it. */
+  kind?: 'logistics' | 'terraform' | 'dyson';
   /** Cargo currently sitting in the freighter's hold. Captured by the
    *  killer's pool if the freighter dies en route. */
   cargo: { fuel: number; ore: number; credits: number; science: number };
@@ -748,6 +752,10 @@ export interface GameState {
   /** Standing upkeep debt. Any positive value = the whole fleet fights
    *  at −25% damage until income clears it. Undefined/zeros in SP. */
   fleetArrears?: { credits: number; ore: number };
+  /** Terraform payload targets (DESIGN-terraforming, MP only) — from
+   *  game config, host-tunable per lobby. The world-menu meter quotes
+   *  delivered/target from this, never a hardcoded 124. Undefined in SP. */
+  terraformConfig?: { costMetal: number; costCredits: number; durationTicks: number };
   /**
    * Senate sanctions in force this tick, game-wide.
    *

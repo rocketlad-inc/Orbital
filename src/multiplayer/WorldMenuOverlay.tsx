@@ -343,13 +343,6 @@ export const WorldMenuOverlay: React.FC = () => {
     const res = await mpActions?.queueBuilding(settlement.id, kind);
     if (res && !res.ok) setErrMsg(res.error ?? 'Build rejected by server');
   };
-  const deployCollector = async () => {
-    const target = myCity ?? myStation;
-    if (!target || readout?.hasCollector) return;
-    setErrMsg(null);
-    const res = await mpActions?.buildCollector(target.id);
-    if (res && !res.ok) setErrMsg(res.error ?? 'Collector rejected by server');
-  };
   // Rename a settlement (city OR station). Mirrors BodyInspector: apply
   // the optimistic local change, then PATCH the server; re-throw on
   // failure so EditableName drops back into edit mode.
@@ -649,29 +642,9 @@ export const WorldMenuOverlay: React.FC = () => {
             ))}
           </div>
         </div>
-        {isMine && (myCity || myStation) && (() => {
-          // Collectors are research-gated (Propulsion 4). The button used
-          // to look freely available even before research — surface the
-          // requirement instead of letting the click bounce with a 403.
-          const collectorLock = gate.lockReason('collectors');
-          const built = readout.hasCollector;
-          return (
-            <button
-              className={`wm-collector ${built ? 'built' : ''} ${collectorLock ? 'locked' : ''}`}
-              onClick={deployCollector}
-              disabled={built || !!collectorLock}
-              title={collectorLock ? `${collectorLock.label} — ${collectorLock.text}` : undefined}
-              data-testid="wm-collector"
-              data-tutorial-id="collector-button"
-            >
-              {built
-                ? '◉ Collector online'
-                : collectorLock
-                  ? `🔒 Collector · ${collectorLock.text}`
-                  : '▲ Deploy collector'}
-            </button>
-          );
-        })()}
+        {/* Terraform state — replaces the collector button (collectors
+            are dead; terraformed status is the loading dock now). */}
+        <WmTerraformCard body={body} isMine={isMine} />
         {/* Dyson Sphere (Sol only) — the engineering-victory megaproject
             had NO surface in the default world-menu UI; the initiate/
             progress panel lived only in the legacy BodyInspector. */}
@@ -1103,6 +1076,79 @@ const WmFleet: React.FC<{
 };
 
 // ============================================================
+// WmTerraformCard — a body's terraform state in the DEFAULT UI.
+//
+// Replaces the collector button (collectors are dead — terraformed
+// status IS the loading dock now). Three faces:
+//   terraformed → a quiet one-line chip; the world just works.
+//   raw, window open → countdown to the flip (the payload landed).
+//   raw → the delivery meter (X/COST M · Y/COST C), how many terraform
+//         routes are feeding it, and what to do when none are.
+// Targets come from gameState.terraformConfig (host-tunable), never a
+// hardcoded 124.
+// ============================================================
+const WmTerraformCard: React.FC<{ body: Body; isMine: boolean }> = ({ body, isMine }) => {
+  const { gameState } = useGameContext();
+  // Only worlds that could host a city can be terraformed — the card is
+  // noise on gas giants, stars and lagrange points.
+  if (!canHostCity(body)) return null;
+  const cfg = gameState.terraformConfig ?? { costMetal: 124, costCredits: 124, durationTicks: 24 };
+
+  if (!isRawWorld(body)) {
+    return (
+      <div className="wm-terraform done" data-testid="wm-terraform" data-tutorial-id="terraform-section"
+        title="Terraformed: every settlement here routes 100% of its yield to your pool, cities and city-buildings are allowed, and freighters can load pool cargo at the dock.">
+        ● TERRAFORMED
+      </div>
+    );
+  }
+
+  const acc = body.terraformAcc ?? { metal: 0, credits: 0 };
+  const window_ = body.terraformCompletesAtTick;
+  const feeding = (gameState.tradeRoutes ?? [])
+    .filter(r => r.kind === 'terraform' && r.destBodyId === body.id).length;
+
+  if (window_ != null) {
+    const left = Math.max(0, window_ - gameState.currentTick);
+    return (
+      <div className="wm-terraform working" data-testid="wm-terraform" data-tutorial-id="terraform-section"
+        title="The full payload has been delivered — the transformation is running. Nothing can speed it up now; hold the world.">
+        ◌ TERRAFORMING · {left} tick{left === 1 ? '' : 's'} to completion
+      </div>
+    );
+  }
+
+  const mPct = Math.min(100, (acc.metal / Math.max(1, cfg.costMetal)) * 100);
+  const cPct = Math.min(100, (acc.credits / Math.max(1, cfg.costCredits)) * 100);
+  return (
+    <div className="wm-terraform" data-testid="wm-terraform" data-tutorial-id="terraform-section"
+      title={`Raw world — it banks 90% of settlement yield locally and can host stations only. Deliver ${cfg.costMetal} metal + ${cfg.costCredits} credits by freighter supply route to terraform it (${cfg.durationTicks}-tick transformation once the payload lands). Progress is permanent and transfers with the world if it changes hands.`}>
+      <div className="wm-terraform-head">
+        <span>◌ RAW WORLD</span>
+        <span className="wm-terraform-routes">
+          {feeding > 0 ? `⇢ ${feeding} route${feeding === 1 ? '' : 's'} feeding` : 'no supply routes'}
+        </span>
+      </div>
+      <div className="wm-terraform-row">
+        <i>M</i>
+        <div className="wm-terraform-bar"><b style={{ width: `${mPct}%` }} /></div>
+        <span>{Math.round(acc.metal)}/{cfg.costMetal}</span>
+      </div>
+      <div className="wm-terraform-row">
+        <i>C</i>
+        <div className="wm-terraform-bar"><b style={{ width: `${cPct}%` }} /></div>
+        <span>{Math.round(acc.credits)}/{cfg.costCredits}</span>
+      </div>
+      {isMine && feeding === 0 && (
+        <div className="wm-terraform-hint">
+          Select a freighter → TRADE ROUTE → this world to start the payload.
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ============================================================
 // WmDysonCard — the Dyson Sphere's home in the DEFAULT UI.
 //
 // The entire megaproject experience (see the foundation slot, lay it,
@@ -1148,10 +1194,10 @@ const WmDysonCard: React.FC = () => {
           {Math.round(dyson.hp).toLocaleString()} / {dyson.maxHp.toLocaleString()} · {pct.toFixed(1)}%
         </div>
         {isMine && (
-          <div className="wm-dyson-supply" title="The sphere is built from cargo physically hauled here. Set a freighter's trade route from one of your collectors to the Dyson Sphere — it loads metal, credits and science from your pool at the collector and delivers on arrival. Freighters on the line can be raided; escort what you can't afford to lose.">
+          <div className="wm-dyson-supply" title="The sphere is built from cargo physically hauled here. Set a freighter's trade route from one of your terraformed worlds to the Dyson Sphere — it loads metal, credits and science from your pool at the dock and delivers on arrival. Freighters on the line can be raided; escort what you can't afford to lose.">
             {supplyRoutes > 0
               ? <>⇢ {supplyRoutes} supply route{supplyRoutes === 1 ? '' : 's'} hauling to the sphere</>
-              : <span style={{ color: '#ffb84d' }}>⚠ No supply routes — construction is stalled. Give a freighter a route from a collector to the Dyson Sphere.</span>}
+              : <span style={{ color: '#ffb84d' }}>⚠ No supply routes — construction is stalled. Give a freighter a route from a terraformed world to the Dyson Sphere.</span>}
           </div>
         )}
       </div>
@@ -1189,11 +1235,11 @@ const WmDysonCard: React.FC = () => {
               a fifth of it tore loose when the sphere went masterless. Lay a
               foundation at a Sol station to CLAIM it and resume construction
               at {derelictPct.toFixed(0)}%. Supply it by freighter routes from
-              your collectors.</>
+              your terraformed worlds.</>
           : <>Lay the foundation at a Sol station, then run freighter routes
-              from your collectors to deliver 15K metal · 15K credits · 10K
-              science. Completion wins the match. Lose the foundation and the
-              sphere goes masterless: <b>20% of your progress is destroyed</b>{' '}
+              from your terraformed worlds to deliver 15K metal · 15K credits ·
+              10K science. Completion wins the match. Lose the foundation and
+              the sphere goes masterless: <b>20% of your progress is destroyed</b>{' '}
               and the rest is there for whoever claims it first.</>}
       </div>
       {lock ? (

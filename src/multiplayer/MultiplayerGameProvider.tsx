@@ -84,6 +84,9 @@ interface ServerState {
       arrears_damage_mult?: number;
     };
     arrears?: { gold: number; metal: number };
+    /** Terraform payload targets from game config (host-tunable).
+     *  Absent on a pre-terraforming worker. */
+    terraform?: { cost_metal: number; cost_credits: number; duration_ticks: number };
     /** Senate sanctions in force this tick, game-wide, each with the
      *  ticks remaining before it lapses. */
     sanctions?: Array<{
@@ -364,6 +367,7 @@ interface ServerState {
     origin_body_id: string;
     dest_body_id: string;
     status: 'outbound' | 'returning' | 'paused';
+    kind?: 'logistics' | 'terraform' | 'dyson';
     cargo_fuel: number;
     cargo_metal: number;
     cargo_gold: number;
@@ -1673,6 +1677,7 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     originBodyId: stripGameId(r.origin_body_id) ?? r.origin_body_id,
     destBodyId: stripGameId(r.dest_body_id) ?? r.dest_body_id,
     status: r.status,
+    kind: r.kind ?? 'logistics',
     cargo: {
       fuel: r.cargo_fuel,
       ore: r.cargo_metal,       // server metal → client ore
@@ -1793,6 +1798,14 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       credits: srv.me.arrears.gold,
       ore: srv.me.arrears.metal,
     } : undefined,
+    // Terraform payload targets (host-tunable config) — the world-menu
+    // meter quotes delivered/target from here. Defaults match
+    // worker/configSchema.js for a pre-terraforming worker.
+    terraformConfig: {
+      costMetal: srv.me.terraform?.cost_metal ?? 124,
+      costCredits: srv.me.terraform?.cost_credits ?? 124,
+      durationTicks: srv.me.terraform?.duration_ticks ?? 24,
+    },
     // Passed through as-is (server already computed ticks_left against
     // the authoritative tick — recomputing client-side would drift by
     // however stale the poll is).

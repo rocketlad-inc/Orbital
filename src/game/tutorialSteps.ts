@@ -14,7 +14,7 @@
 //      escape hatch so nobody can hard-stuck the tour.
 //
 // Affordability contract: the task arc costs ≤60 metal + ≤16 credits.
-// Fresh factions seed with 100 metal / 50 credits (worker/factions.js
+// Fresh factions seed with 100 metal / 100 credits (worker/factions.js
 // STARTING_RESOURCES), so a first-game player can always complete
 // every task. Replaying players own at least a capital + ships, so
 // the checks complete against whatever they already have.
@@ -61,7 +61,8 @@ export type TutorialCheckId =
 
 /** Inline SVG illustration key (TutorialVisuals.tsx). */
 export type TutorialVisualId =
-  | 'victory' | 'map-controls' | 'economy' | 'upkeep' | 'senate' | 'dyson' | 'herald' | 'expand';
+  | 'victory' | 'map-controls' | 'economy' | 'upkeep' | 'senate' | 'dyson' | 'herald' | 'expand'
+  | 'terraform';
 
 export interface TutorialStep {
   id: string;
@@ -124,12 +125,20 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
     onEnter: 'open-capital-menu',
   },
   {
-    id: 'collector',
-    title: 'The collector is the pipeline',
-    body: 'Income only reaches your treasury through a collector — your capital’s came free. Every settlement you found later needs its own, or its harvest just piles up on-site.',
-    target: 'collector-button',
+    id: 'terraform-status',
+    title: 'Terraformed worlds pay; raw worlds hoard',
+    body: 'Your capital is TERRAFORMED — 100% of its harvest reaches your treasury. Raw worlds bank 90% on-site, host stations only, and won’t take a city until you terraform them.',
+    target: 'terraform-section',
     placement: 'right',
     onEnter: 'open-capital-menu',
+  },
+  {
+    id: 'terraform-how',
+    title: 'Terraforming is a delivery',
+    body: 'Claim a raw world with a station, then give a freighter a TRADE ROUTE to it — it hauls metal + credits into the world’s meter. Full payload → the world transforms, permanently.',
+    target: null,
+    placement: 'center',
+    visual: 'terraform',
   },
   {
     id: 'queue-building',

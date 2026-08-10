@@ -255,6 +255,19 @@ export const TopBar: React.FC<TopBarProps> = ({
             <div className="resource-pill__label">SHIPS</div>
             <div className="resource-pill__value">{playerShips.length}</div>
           </div>
+          {/* Terraformed worlds — the "worlds that matter" economy stat
+              (DESIGN-terraforming): each routes 100% of yield to pool,
+              takes cities, and anchors trade. Hidden when the payload
+              predates terraforming (count 0 with no settlements). */}
+          {income.terraformedCount > 0 && (
+            <div
+              className="resource-pill resource-pill--ships"
+              title={`${income.terraformedCount} terraformed world${income.terraformedCount === 1 ? '' : 's'} — full-rate income, city-capable, and your trade docks. Terraform raw worlds by freighter supply route to grow this.`}
+            >
+              <div className="resource-pill__label">TERRA</div>
+              <div className="resource-pill__value">{income.terraformedCount}</div>
+            </div>
+          )}
           {((gameState.fleetArrears?.credits ?? 0) > 0 || (gameState.fleetArrears?.ore ?? 0) > 0) && (
             // Arrears (§1): the fleet is unpaid and fighting at −25%
             // damage. Red pulsing chip — this is a combat debuff, it
@@ -452,9 +465,9 @@ const ResourcePill: React.FC<{
   const upkeepTip = hasUpkeep ? ` Fleet upkeep −${fmtRate(upkeep)}/t (net ${net < 0 ? '−' : '+'}${fmtRate(Math.abs(net))}/t).` : '';
   let tooltip: string;
   if (hasLocal && !hasCollector) {
-    tooltip = `${label}: ${displayResource(value)} (pool). ${fmtRate(local)}/t banking LOCAL at settlements — spendable on body builds, or send a freighter to vacuum it up. Build a collector for the 10× pump.${upkeepTip}`;
+    tooltip = `${label}: ${displayResource(value)} (pool). ${fmtRate(local)}/t banking LOCAL at raw-world settlements — spendable on body builds, or send a freighter to haul it home. Terraform a world for the full-rate pump.${upkeepTip}`;
   } else if (hasLocal && hasCollector) {
-    tooltip = `${label}: ${displayResource(value)} (pool) — +${fmtRate(rate)}/t delivered, +${fmtRate(local)}/t banking LOCAL at uncollectered settlements.${upkeepTip}`;
+    tooltip = `${label}: ${displayResource(value)} (pool) — +${fmtRate(rate)}/t delivered, +${fmtRate(local)}/t banking LOCAL at raw-world settlements.${upkeepTip}`;
   } else if (hasRate) {
     tooltip = `${label}: ${displayResource(value)} (pool) — gaining +${fmtRate(rate)} per tick.${upkeepTip}`;
   } else {

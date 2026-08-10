@@ -1023,28 +1023,16 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                   surfaces a body-level LOCAL total (sum across city +
                   station). Stockpile is still drained per-settlement
                   internally; this is just a UI consolidation. */}
-              {isMine && !s.hasCollector && (
+              {/* Collector build is SP-ONLY: MP replaced collectors with
+                  terraforming (the server endpoint is deleted — a click
+                  here would 404). SP keeps the legacy flow untouched. */}
+              {isMine && !s.hasCollector && !isMp && (
                 <button
                   data-tutorial-id="collector-button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    // Local optimistic flip first — UI feels instant.
-                    // In MP the server is authoritative for resources;
-                    // post the intent so the next /state poll doesn't
-                    // wipe the local change and refund the player's
-                    // money without delivering the collector.
-                    const localOk = buildCollector(s.id);
-                    if (localOk && mpActions) {
-                      // Surface server rejections so the player learns why
-                      // the collector chip flickered ON then back OFF (e.g.
-                      // server said "insufficient_resources" because a
-                      // concurrent action drained the pool). Reuses
-                      // deployError because both errors live in the same
-                      // SettlementsSection — one chip is enough.
-                      mpActions.buildCollector(s.id).then(res => {
-                        if (!res.ok) setDeployError(humanizeMpError(res.code, res.error, 'deploy'));
-                      });
-                    }
+                    // SP-only: the local state machine owns the flip.
+                    buildCollector(s.id);
                   }}
                   disabled={!canAffordCollector}
                   title={canAffordCollector

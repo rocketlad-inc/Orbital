@@ -115,7 +115,8 @@ export type SituationCategory =
   | 'created'        // Sean #2 — recently built, idle at origin
   | 'idle_shipyard'  // Sean #3 — owned body with no active build
   | 'idle_freighter' // freighter with no transit + no route
-  | 'stranded'       // settlement stockpile piling up, no collector
+  | 'stranded'       // raw-world stockpile piling up, nothing hauling it
+  | 'terraform_stalled' // part-paid terraform meter with no route feeding it
   | 'vote_open'      // MP — senate proposal in voting, not voted on
   | 'incoming_trade' // MP — open trade where caller is responder
   | 'in_combat'      // shooting RIGHT NOW — your hulls/settlements engaged
@@ -166,6 +167,9 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
   idle_shipyard:  'opportunity',
   idle_freighter: 'opportunity',
   stranded:       'opportunity',
+  // Money already sunk into a meter that nothing is filling — that's a
+  // decision (reassign a freighter), not a someday-opportunity.
+  terraform_stalled: 'decision',
   tech_available: 'opportunity',
   // A building slot standing empty wastes the same tick an idle yard
   // does, so it sits in the same tier as one.
@@ -243,6 +247,7 @@ export const CATEGORY_LABEL: Record<SituationCategory, string> = {
   idle_shipyard:   'Planets awaiting construction',
   idle_freighter:  'Idle freighters',
   stranded:        'Stranded stockpiles',
+  terraform_stalled: 'Terraforming stalled',
   tech_available:  'Research idle',
   building_idle:   'Building slots empty',
   building_done:   'Construction complete',
@@ -918,17 +923,21 @@ export function useSituationItems(
     } catch { /* defensive */ }
 
     // ---- 5) Stranded stockpiles (grouped per body) ----
-    // The stockpile model is per-body in the UI (city + station on the
-    // same body share one logical bucket). Group non-collector
-    // settlement stockpiles by body and emit ONE item per body, so a
-    // single planet with both a city + station banking ore doesn't
-    // double-list. v1 rule: skip the "freighter inbound" check; just
-    // gate on stockpile + at-least-one-uncollectered settlement.
+    // Raw worlds bank 90% of yield LOCALLY (terraforming rework) — a
+    // growing pile there is only stranded if nothing is hauling it.
+    // Group per body so a city + station banking together emit ONE row.
     // Threshold = 1 to avoid spamming for tiny dust.
+    const rawBodyIds = new Set(
+      bodies.filter(b => b.terraformedAtTick === null).map(b => b.id),
+    );
+    const haulingFrom = new Set(
+      (gameState.tradeRoutes ?? []).map(r => r.originBodyId),
+    );
     const stockByBody = new Map<string, number>();
     for (const s of gameState.settlements) {
       if (s.ownedBy !== factionId) continue;
-      if (s.hasCollector) continue;
+      if (!rawBodyIds.has(s.bodyId)) continue;   // terraformed = pool-fed, nothing strands
+      if (haulingFrom.has(s.bodyId)) continue;   // a route is already on it
       const stock = s.stockpile;
       const total = (stock?.fuel ?? 0) + (stock?.ore ?? 0) + (stock?.credits ?? 0) + (stock?.science ?? 0);
       if (total < 1) continue;
@@ -940,7 +949,7 @@ export function useSituationItems(
         id: `stranded:body:${bodyId}`,
         category: 'stranded',
         title: `${body?.name ?? '?'} stockpile growing`,
-        subtitle: `${Math.round(total)} units banked — no collector or trade route`,
+        subtitle: `${Math.round(total)} units banked on this raw world — haul it home with a freighter logistics route, or spend it building ships here`,
         focus: { kind: 'body', bodyId },
         severity: 'normal',
         // Biggest pile first among stockpiles, but behind any row with
@@ -950,6 +959,38 @@ export function useSituationItems(
         entity: `body:${bodyId}`,
       });
     }
+
+    // ---- 5b) Terraforming stalled ----
+    // The failure mode players actually hit: metal/credits already sunk
+    // into a raw world's meter, the delivery route since cancelled or
+    // its freighter lost, and NOTHING in the UI saying why the world
+    // never flips. Window-open worlds are excluded — those finish on
+    // their own clock and no route can speed them up.
+    try {
+      const feedingDest = new Set(
+        (gameState.tradeRoutes ?? [])
+          .filter(r => r.kind === 'terraform')
+          .map(r => r.destBodyId),
+      );
+      for (const b of bodies) {
+        if (b.ownedBy !== factionId) continue;
+        if (b.terraformedAtTick !== null) continue;      // raw only (MP: null; SP: undefined skips)
+        if (b.terraformCompletesAtTick != null) continue; // window running — on track
+        const acc = (b.terraformAcc?.metal ?? 0) + (b.terraformAcc?.credits ?? 0);
+        if (acc < 1) continue;                            // nothing sunk yet — not stalled, just unstarted
+        if (feedingDest.has(b.id)) continue;              // a route is feeding it
+        push({
+          id: `terraform_stalled:${b.id}`,
+          category: 'terraform_stalled',
+          title: `${b.name} terraforming stalled`,
+          subtitle: `${Math.round(b.terraformAcc?.metal ?? 0)}M · ${Math.round(b.terraformAcc?.credits ?? 0)}C delivered, but no supply route is feeding the meter`,
+          focus: { kind: 'body', bodyId: b.id },
+          severity: 'normal',
+          sortKey: 5e8 - acc,
+          entity: `body:${b.id}`,
+        });
+      }
+    } catch { /* defensive */ }
 
     // ---- 6) Vote open (MP) ----
     if (mpData?.openVotes) {
