@@ -1987,12 +1987,27 @@ async function handleCreateTradeRoute(req, env, ctx) {
     .first();
   if (!origin) return err(409, 'no_origin_settlement', 'origin body has no player settlement to pick up from');
 
+  // ROUTE TAXONOMY (terraforming rework). The destination decides what
+  // kind of route this is, and each kind has its own legality rules:
+  //
+  //   dyson      dest = Sol.               Controller-only; origin must
+  //                                        be a terraformed world.
+  //   terraform  dest = a RAW world I own. Feeds the terraform meter;
+  //                                        origin must be terraformed.
+  //   logistics  dest = a terraformed      Classic stockpile hauling —
+  //              world where I live.       raw frontier -> the grid.
+  //
+  // "Terraformed" replaced "has a collector" as the loading-dock rule
+  // everywhere: terraformed worlds pay 100% of yield into the pool, so
+  // they are the only places the pool is physically on the dock.
+  let routeKind = 'logistics';
+  const originTf = await env.DB
+    .prepare(`SELECT b.terraformed_at_tick AS tf FROM game_bodies b WHERE b.id = ? AND b.game_id = ?`)
+    .bind(originBodyId, gameId)
+    .first();
+
   if (destBodyId === `${gameId}:sol`) {
-    // DYSON SUPPLY RUN. The sphere is fed by freighters physically
-    // hauling from a collector to Sol — parked ships no longer pump.
-    // Only the controller may run the line, and the origin must be a
-    // collector: that is the loading dock where the faction pool is
-    // physically accessible.
+    routeKind = 'dyson';
     const g = await env.DB
       .prepare('SELECT dyson_controller_faction_id FROM games WHERE id = ?')
       .bind(gameId)
@@ -2000,20 +2015,47 @@ async function handleCreateTradeRoute(req, env, ctx) {
     if (g?.dyson_controller_faction_id !== me.id) {
       return err(409, 'not_controller', 'only the Dyson Sphere controller can run supply routes to Sol');
     }
-    const originC = await env.DB
-      .prepare('SELECT 1 AS x FROM game_settlements WHERE game_id = ? AND body_id = ? AND owner_faction_id = ? AND has_collector = 1 AND destroyed_at_tick IS NULL')
-      .bind(gameId, originBodyId, me.id)
-      .first();
-    if (!originC) {
-      return err(409, 'origin_not_collector', 'Dyson supply must load at one of your collectors');
+    if (originTf?.tf == null) {
+      return err(409, 'origin_not_terraformed', 'Dyson supply must load at one of your terraformed worlds');
     }
   } else {
-    // Dest must have a player-owned settlement with has_collector = 1.
-    const destC = await env.DB
-      .prepare('SELECT 1 AS x FROM game_settlements WHERE game_id = ? AND body_id = ? AND owner_faction_id = ? AND has_collector = 1 AND destroyed_at_tick IS NULL')
-      .bind(gameId, destBodyId, me.id)
+    const destBody = await env.DB
+      .prepare(
+        `SELECT type, owner_faction_id, terraformed_at_tick,
+                terraform_completes_at_tick, secret_kind, secret_revealed
+           FROM game_bodies WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL`,
+      )
+      .bind(destBodyId, gameId)
       .first();
-    if (!destC) return err(409, 'no_dest_collector', 'destination body has no player collector to deliver to');
+    if (!destBody) return err(404, 'not_found', 'destination body not found');
+
+    if (destBody.terraformed_at_tick == null) {
+      // RAW destination => this is a TERRAFORM run.
+      routeKind = 'terraform';
+      if (destBody.owner_faction_id !== me.id) {
+        return err(409, 'not_owner', 'you can only terraform a world you control — claim it with a station first');
+      }
+      if (!['terrestrial', 'moon', 'dwarf'].includes(destBody.type)) {
+        return err(409, 'cannot_terraform', 'only terrestrial worlds, moons and dwarf planets can be terraformed');
+      }
+      // Discovery before terraforming (Lorne): a buried secret must be
+      // dug up before the bulldozers roll. Bodies with no secret pass.
+      if (destBody.secret_kind && !destBody.secret_revealed) {
+        return err(409, 'unscouted', 'this world holds an undiscovered secret — scout it before terraforming');
+      }
+      if (originTf?.tf == null) {
+        return err(409, 'origin_not_terraformed', 'terraform supply must load at one of your terraformed worlds');
+      }
+    } else {
+      // Terraformed destination => classic LOGISTICS. The dest must be a
+      // world where I actually live (contested bodies: settlement
+      // presence is the gate, mirroring ship-build rules).
+      const destMine = await env.DB
+        .prepare('SELECT 1 AS x FROM game_settlements WHERE game_id = ? AND body_id = ? AND owner_faction_id = ? AND destroyed_at_tick IS NULL')
+        .bind(gameId, destBodyId, me.id)
+        .first();
+      if (!destMine) return err(409, 'no_dest_settlement', 'destination is not one of your worlds');
+    }
   }
 
   // Drop any prior active route for this ship (UI lets the player
@@ -2030,15 +2072,15 @@ async function handleCreateTradeRoute(req, env, ctx) {
     .prepare(
       `INSERT INTO game_trade_routes
          (id, game_id, owner_faction_id, ship_id,
-          origin_body_id, dest_body_id, status,
+          origin_body_id, dest_body_id, status, kind,
           cargo_fuel, cargo_metal, cargo_gold, cargo_science,
           created_at_tick)
-       VALUES (?, ?, ?, ?, ?, ?, 'returning', 0, 0, 0, 0, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, 'returning', ?, 0, 0, 0, 0, ?)`,
     )
-    .bind(routeId, gameId, me.id, shipId, originBodyId, destBodyId, tick)
+    .bind(routeId, gameId, me.id, shipId, originBodyId, destBodyId, routeKind, tick)
     .run();
 
-  return json({ ok: true, route: { id: routeId, ship_id: shipId, origin_body_id: originBodyId, dest_body_id: destBodyId } });
+  return json({ ok: true, route: { id: routeId, ship_id: shipId, origin_body_id: originBodyId, dest_body_id: destBodyId, kind: routeKind } });
 }
 
 async function handleCancelTradeRoute(req, env, ctx) {

@@ -1638,7 +1638,7 @@ export class Room {
           // silently turns every agreement leg back into a self-haul
           // route. sim/tradeRoutes.mjs caught exactly that on its first
           // run (loops=0 while everything else "worked").
-          `SELECT id, owner_faction_id, ship_id, origin_body_id, dest_body_id, status,
+          `SELECT id, owner_faction_id, ship_id, origin_body_id, dest_body_id, status, kind,
                   cargo_fuel, cargo_metal, cargo_gold, cargo_science,
                   counterparty_faction_id, agreement_id, tariff_pct,
                   per_run_metal, per_run_fuel, per_run_gold, per_run_science,
@@ -1817,6 +1817,157 @@ export class Room {
             .bind(nodeId, gameId, r.ship_id, seq, targetBodyId, tick, tick + legTicks, tick)
             .run();
         };
+
+        // TERRAFORM SUPPLY RUN: dest is a raw world being terraformed.
+        // Same physical-logistics shape as the dyson branch below — load
+        // metal+credits from the pool at a terraformed origin, haul,
+        // deliver into the BODY's terraform meter. When the meter fills,
+        // the transformation window opens; tickTerraforming flips the
+        // world when it elapses. The meter living on the body is the
+        // king-of-the-hill rule again: conquer mid-terraform and the
+        // progress is simply yours.
+        if (r.kind === 'terraform') {
+          const tb = await this.env.DB
+            .prepare(
+              `SELECT owner_faction_id, terraformed_at_tick,
+                      terraform_acc_metal, terraform_acc_gold,
+                      terraform_completes_at_tick
+                 FROM game_bodies
+                WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL`,
+            )
+            .bind(r.dest_body_id, gameId)
+            .first();
+          const TF_COST_M = Number(CFG.terraform_cost_metal ?? 124);
+          const TF_COST_G = Number(CFG.terraform_cost_credits ?? 124);
+          // Route retires when its job is gone: body destroyed, already
+          // terraformed, payload delivered (window running), or the
+          // world changed hands. Cargo always goes home, never vanishes.
+          const jobDone = !tb
+            || tb.terraformed_at_tick != null
+            || tb.terraform_completes_at_tick != null
+            || tb.owner_faction_id !== r.owner_faction_id;
+          if (jobDone) {
+            if (cargoTotal > 0) {
+              await this.env.DB
+                .prepare(
+                  `UPDATE game_factions
+                      SET fuel = fuel + ?, metal = metal + ?,
+                          gold = gold + ?, science = science + ?
+                    WHERE id = ?`,
+                )
+                .bind(cargoFuel, cargoMetal, cargoGold, cargoScience, r.owner_faction_id)
+                .run();
+            }
+            await this.env.DB
+              .prepare(`UPDATE game_trade_routes SET cancelled_at_tick = ?, cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0 WHERE id = ?`)
+              .bind(tick, r.id)
+              .run();
+            continue;
+          }
+
+          const needM = Math.max(0, TF_COST_M - (tb.terraform_acc_metal ?? 0));
+          const needG = Math.max(0, TF_COST_G - (tb.terraform_acc_gold ?? 0));
+
+          if (here === r.origin_body_id && cargoTotal < 1) {
+            // LOAD from the pool at the terraformed origin, capped by
+            // hold, balance, and remaining need per component.
+            const pool = await this.env.DB
+              .prepare('SELECT metal, gold FROM game_factions WHERE id = ?')
+              .bind(r.owner_faction_id)
+              .first();
+            const HOLD = Math.round(CARGO_CAP * traitMul(parseTraits(ship.captain_traits), 'cargoMul'));
+            const cm = Math.max(0, Math.min(HOLD, Number(pool?.metal ?? 0), needM));
+            const cg = Math.max(0, Math.min(HOLD, Number(pool?.gold  ?? 0), needG));
+            if (cm + cg > 0) {
+              await this.env.DB
+                .prepare('UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ?')
+                .bind(cm, cg, r.owner_faction_id)
+                .run();
+            }
+            await this.env.DB
+              .prepare(
+                `UPDATE game_trade_routes
+                    SET cargo_fuel = 0, cargo_metal = ?, cargo_gold = ?, cargo_science = 0,
+                        status = 'outbound'
+                  WHERE id = ?`,
+              )
+              .bind(cm, cg, r.id)
+              .run();
+            await planLeg(r.dest_body_id);
+            continue;
+          }
+
+          if (here === r.dest_body_id) {
+            // DELIVER into the meter, clamped; overflow home to pool.
+            const addM = Math.max(0, Math.min(cargoMetal, needM));
+            const addG = Math.max(0, Math.min(cargoGold,  needG));
+            const backM = cargoMetal - addM;
+            const backG = cargoGold  - addG;
+            const accM = (tb.terraform_acc_metal ?? 0) + addM;
+            const accG = (tb.terraform_acc_gold  ?? 0) + addG;
+            const full = accM >= TF_COST_M && accG >= TF_COST_G;
+            const duration = Math.max(1, Number(CFG.terraform_duration_ticks ?? 24));
+            const batch = [
+              this.env.DB
+                .prepare(
+                  `UPDATE game_bodies
+                      SET terraform_acc_metal = ?, terraform_acc_gold = ?,
+                          terraform_completes_at_tick = COALESCE(terraform_completes_at_tick, ?)
+                    WHERE id = ? AND game_id = ?`,
+                )
+                .bind(accM, accG, full ? tick + duration : null, r.dest_body_id, gameId),
+              this.env.DB
+                .prepare(
+                  `UPDATE game_trade_routes
+                      SET cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0,
+                          status = 'returning'
+                    WHERE id = ?`,
+                )
+                .bind(r.id),
+            ];
+            if (cargoFuel + backM + backG + cargoScience > 0) {
+              batch.push(this.env.DB
+                .prepare(
+                  `UPDATE game_factions
+                      SET fuel = fuel + ?, metal = metal + ?,
+                          gold = gold + ?, science = science + ?
+                    WHERE id = ?`,
+                )
+                .bind(cargoFuel, backM, backG, cargoScience, r.owner_faction_id));
+            }
+            await this.env.DB.batch(batch);
+            if (full) {
+              // Payload complete — the transformation window opens.
+              // Public: cranes over a world are visible from orbit.
+              try {
+                const fac = await this.env.DB
+                  .prepare('SELECT name FROM game_factions WHERE id = ?')
+                  .bind(r.owner_faction_id).first();
+                const bodyName = await this.env.DB
+                  .prepare('SELECT name FROM game_bodies WHERE id = ?')
+                  .bind(r.dest_body_id).first();
+                await this.env.DB
+                  .prepare(
+                    `INSERT OR IGNORE INTO chronicle_entries
+                      (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+                     VALUES (?, ?, ?, 'terraform_begun', ?, ?, ?, 'public', ?)`,
+                  )
+                  .bind(`c_tfb_${r.dest_body_id}_${tick}`, gameId, tick, r.owner_faction_id,
+                        r.dest_body_id,
+                        JSON.stringify({ faction_name: fac?.name ?? null, body_name: bodyName?.name ?? null, duration }),
+                        Date.now())
+                  .run();
+              } catch (e) { console.error('terraform_begun chronicle failed', e); }
+            }
+            await planLeg(r.origin_body_id);
+            continue;
+          }
+
+          // Loaded => the site, empty => the origin. Unconditional, same
+          // stuck-state lesson as the dyson branch.
+          await planLeg(cargoTotal > 0 ? r.dest_body_id : r.origin_body_id);
+          continue;
+        }
 
         // DYSON SUPPLY RUN: dest is Sol itself. These routes feed the
         // sphere, and they load from the faction POOL rather than the
@@ -5021,6 +5172,7 @@ export class Room {
     // changes are reflected in the sphere's damage.
     try {
       await this.tickDysonSphere(gameId, tick);
+      await this.tickTerraforming(gameId, tick);
     } catch (e) {
       console.error('dyson tick failed', e);
     }
@@ -5940,6 +6092,51 @@ export class Room {
       )
       .bind(hp, acc.fuel, acc.ore, acc.credits, acc.science, stationHpForNextTick, gameId)
       .run();
+  }
+
+  /**
+   * Terraforming completion. A body whose transformation window has
+   * elapsed flips terraformed this tick: 100% pool routing, city rights,
+   * trade-endpoint status — permanently. The window only exists on
+   * bodies whose meter filled (terraform_completes_at_tick is set by the
+   * route delivery), so this scan is almost always empty and cheap.
+   */
+  async tickTerraforming(gameId, tick) {
+    try {
+      const done = (await this.env.DB
+        .prepare(
+          `SELECT b.id, b.name, b.owner_faction_id, f.name AS faction_name
+             FROM game_bodies b
+             LEFT JOIN game_factions f ON f.id = b.owner_faction_id
+            WHERE b.game_id = ? AND b.terraformed_at_tick IS NULL
+              AND b.terraform_completes_at_tick IS NOT NULL
+              AND b.terraform_completes_at_tick <= ?`,
+        )
+        .bind(gameId, tick)
+        .all()).results ?? [];
+      for (const b of done) {
+        await this.env.DB
+          .prepare('UPDATE game_bodies SET terraformed_at_tick = ? WHERE id = ? AND game_id = ?')
+          .bind(tick, b.id, gameId)
+          .run();
+        try {
+          await this.env.DB
+            .prepare(
+              `INSERT OR IGNORE INTO chronicle_entries
+                (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+               VALUES (?, ?, ?, 'terraform_complete', ?, ?, ?, 'public', ?)`,
+            )
+            .bind(`c_tfc_${b.id}_${tick}`, gameId, tick, b.owner_faction_id, b.id,
+                  JSON.stringify({ faction_name: b.faction_name ?? null, body_name: b.name ?? null }),
+                  Date.now())
+            .run();
+        } catch (e) { console.error('terraform_complete chronicle failed', e); }
+        this.broadcast({ type: 'terraform_complete', tick, body_id: b.id, faction_id: b.owner_faction_id });
+      }
+    } catch (e) {
+      // NEVER kill resolveTick — same tolerance as the dyson tick.
+      console.error('terraform tick failed', e);
+    }
   }
 
   /**
