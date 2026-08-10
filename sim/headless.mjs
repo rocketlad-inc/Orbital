@@ -89,7 +89,7 @@ function makeState(broadcasts) {
  * other — which matters more than it sounds: a shared DB would let one
  * game's chronicle rows leak into another's statistics.
  */
-export async function runGame({ ticks = 200, players = 4, seed = 'sim-seed-0001', quiet = false, doctrines = null, doctrineOffset = 0 } = {}) {
+export async function runGame({ ticks = 200, players = 4, seed = 'sim-seed-0001', quiet = false, doctrines = null, doctrineOffset = 0, config = null } = {}) {
   const TICKS = ticks, PLAYERS = players, SEED = seed;
   const log = quiet ? () => {} : (...a) => console.log(...a);
   const t0 = Date.now();
@@ -165,6 +165,36 @@ export async function runGame({ ticks = 200, players = 4, seed = 'sim-seed-0001'
   ).bind(roomId, SEED, 3600000, now, now).run();
   await DB.prepare("UPDATE rooms SET status = 'in_progress', updated_at = ? WHERE id = ?")
     .bind(now, roomId).run();
+
+  // Parameter sweeps live or die on this: a published game_configs row
+  // pinned to the game, so the REAL cfg() path serves the overrides and
+  // the sim measures the same resolution order production uses. Writing
+  // the knobs straight into the tick would be measuring a model.
+  //
+  // invalidate() is not optional. gameConfig memoises for 30s keyed on
+  // gameId AND on '__published__' for the unpinned lookup; a sweep runs
+  // hundreds of games inside that window, so without a flush every game
+  // after the first would silently inherit the first game's config and
+  // the whole sweep would report one data point drawn N times.
+  // ALWAYS flush, config or not. Every sim game reuses the same roomId,
+  // so gameConfig's per-game memo hits across runs inside its 30s TTL —
+  // caught in testing when a no-config run inherited the previous run's
+  // 777-metal purse. An uncleared cache here silently collapses a whole
+  // sweep to one data point sampled N times.
+  {
+    const gc = await import('../worker/gameConfig.js');
+    gc.invalidate();
+  }
+  if (config && Object.keys(config).length > 0) {
+    const cfgId = `cfg_${roomId}`;
+    await DB.prepare(
+      `INSERT INTO game_configs (id, name, status, overrides, created_ms, updated_ms, published_ms)
+       VALUES (?, 'sweep', 'published', ?, ?, ?, ?)`,
+    ).bind(cfgId, JSON.stringify(config), now, now, now).run();
+    await DB.prepare('UPDATE games SET config_id = ? WHERE id = ?').bind(cfgId, roomId).run();
+    const gc = await import('../worker/gameConfig.js');
+    gc.invalidate();
+  }
 
   const factions = await import('../worker/factions.js');
   await factions.seedGameWorld(env, roomId);
@@ -323,6 +353,12 @@ export async function runGame({ ticks = 200, players = 4, seed = 'sim-seed-0001'
   return {
     seed: SEED, ticks: TICKS, ticksPlayed, winner, factions: facsOut,
     chronicle: chron, wall, avgTick: avg, broadcasts: broadcasts.length, tally,
+    // The live handles, so a diagnostic can interrogate the finished
+    // world instead of inferring its state from aggregates. The sweep
+    // ignores these; they cost nothing to hand back and they are the
+    // difference between "expansion looks stalled" and knowing which
+    // gate it stalled at.
+    env, gameId: roomId,
   };
 }
 

@@ -41,6 +41,7 @@ const R = {
   research: () => route('POST', 'research$'),
   transfer: () => route('POST', 'transfer$'),
   buildings: () => route('POST', 'buildings$'),
+  tradeRoute: () => route('POST', 'trade-routes$'),
 };
 
 /**
@@ -131,6 +132,22 @@ export const ARCHETYPES = {
     buildEvery: 10,
     // Defends what it takes rather than seeking fights: a bigger fleet
     // required before committing, and less often.
+    attack: { every: 20, minFleet: 6 },
+  },
+  // Expander, but with a haulage budget. THE CONTROL FOR THE HAULER
+  // FINDING: the first economy sweep put `tfroute_no_hauler` at the top
+  // of every single arm, which could mean "the pipeline needs more
+  // freighter throughput than the economy can fund" (a game problem) or
+  // simply "expander's fixed build rotation under-orders freighters" (a
+  // bot problem). Same doctrine, same research, twice the freighters —
+  // if reach jumps, it was the bot; if it doesn't, it is the game.
+  logistician: {
+    name: 'Logistician',
+    research: ['construction', 'propulsion', 'industry'],
+    build: ['colony', 'freighter', 'freighter', 'freighter'],
+    buildings: ['mint', 'forge', 'lab'],
+    colonise: true,
+    buildEvery: 10,
     attack: { every: 20, minFleet: 6 },
   },
   // Sit on the capital and compound. The control for "is expansion
@@ -307,20 +324,69 @@ export async function takeTurn(env, { gameId, userId, factionId, doctrine, tick,
     }
   }
 
-  // --- expansion: send a colony ship somewhere unclaimed, then settle -----
+  // --- expansion: claim raw, terraform it, then build the city -----------
+  //
+  // TERRAFORMING REWROTE THIS ENTIRELY. The old loop was one move —
+  // park a colony ship on an unclaimed rock and found a city. Under the
+  // hard gate that move is illegal on every raw world in the game, and
+  // the first sweep after the rework proved it: Expander went 94%
+  // refused with 1146 straight `settle_rej_not_terraformed`. A doctrine
+  // that cannot take ground measures nothing, so the sim was reporting
+  // on a game nobody can play.
+  //
+  // The real loop is four moves, and the bot now plays all four in
+  // priority order — most-finished work first, so a world never stalls
+  // one step from paying out:
+  //
+  //   1. terraformed world of mine, no city, colony ship parked -> CITY
+  //   2. unowned terraformable rock, colony ship parked        -> STATION
+  //   3. raw world I hold + idle freighter + terraformed origin -> ROUTE
+  //   4. idle colony ship, nothing to do                        -> fly out
+  //
+  // Note what this costs, because it is the thing the sweep is here to
+  // price: TWO colony ships per finished world (the station consumes one
+  // and the city consumes another — actions.js never lets a city be
+  // built from orbit), plus the terraform payload hauled by freighter.
   if (doctrine.colonise) {
-    // A colony ship already parked on an unowned body is the moment to
-    // plant. Checked first so we never leave one sitting idle.
+    // 1. CITY on a world already terraformed. Highest value: this is the
+    //    move that turns 124 delivered resources into actual yield.
+    const cityReady = await DB
+      .prepare(
+        `SELECT s.id, s.parent_body_id
+           FROM game_ships s JOIN game_bodies b ON b.id = s.parent_body_id
+          WHERE s.game_id = ? AND s.owner_faction_id = ? AND s.ship_class = 'colony'
+            AND s.hp > 0
+            AND b.terraformed_at_tick IS NOT NULL
+            AND b.owner_faction_id = ?
+            AND NOT EXISTS (SELECT 1 FROM game_settlements c
+                             WHERE c.body_id = b.id AND c.type = 'city'
+                               AND c.destroyed_at_tick IS NULL)
+            AND NOT EXISTS (SELECT 1 FROM game_ship_nodes n
+                             WHERE n.ship_id = s.id AND n.status = 'in_transit')
+          LIMIT 1`,
+      ).bind(gameId, factionId, factionId).first();
+
+    if (cityReady) {
+      const r = await act(env, R.settlement(), {
+        gameId, userId, params: { bodyId: cityReady.parent_body_id }, body: { type: 'city' },
+      });
+      bump(r.ok ? 'city_ok' : `city_rej_${r.data?.error?.code ?? r.status}`);
+      return;
+    }
+
+    // 2. STATION to claim a raw world. This is what a colony ship does
+    //    now — it plants the flag that makes the world terraformable at
+    //    all (the route handler requires dest.owner_faction_id === me).
     const parked = await DB
       .prepare(
         `SELECT s.id, s.parent_body_id
            FROM game_ships s JOIN game_bodies b ON b.id = s.parent_body_id
           WHERE s.game_id = ? AND s.owner_faction_id = ? AND s.ship_class = 'colony'
             AND s.hp > 0 AND b.owner_faction_id IS NULL
-            -- Same landability rule as the transfer target. A colony ship
-            -- that ends up over a gas giant would otherwise retry the
-            -- settle every single tick for the rest of the game.
-            AND b.type NOT IN ('star', 'gas-giant', 'ice-giant')
+            AND b.type IN ('terrestrial', 'moon', 'dwarf')
+            AND NOT EXISTS (SELECT 1 FROM game_settlements c
+                             WHERE c.body_id = b.id AND c.type = 'station'
+                               AND c.destroyed_at_tick IS NULL)
             AND NOT EXISTS (SELECT 1 FROM game_ship_nodes n
                              WHERE n.ship_id = s.id AND n.status = 'in_transit')
           LIMIT 1`,
@@ -328,50 +394,100 @@ export async function takeTurn(env, { gameId, userId, factionId, doctrine, tick,
 
     if (parked) {
       const r = await act(env, R.settlement(), {
-        gameId, userId, params: { bodyId: parked.parent_body_id }, body: { type: 'city' },
+        gameId, userId, params: { bodyId: parked.parent_body_id }, body: { type: 'station' },
       });
-      bump(r.ok ? 'settle_ok' : `settle_rej_${r.data?.error?.code ?? r.status}`);
-    } else {
-      // Otherwise push an idle colony ship at the nearest unclaimed rock.
-      // "Nearest" by orbit radius rather than true transfer cost — the
-      // server plans the real trajectory, and a bot picking imperfect
-      // targets is a bot, not a bug.
-      const idle = await DB
+      bump(r.ok ? 'claim_ok' : `claim_rej_${r.data?.error?.code ?? r.status}`);
+      return;
+    }
+
+    // 3. TERRAFORM ROUTE. One idle freighter, one raw world I hold, one
+    //    terraformed world of mine to load from. The secret gate is
+    //    handled for free: a secret fires the first tick any ship parks
+    //    at the body, so the colony ship that claimed it already dug it
+    //    up. Bodies that still read unrevealed are filtered here rather
+    //    than discovered through a wall of `unscouted` rejections.
+    const needsRoute = await DB
+      .prepare(
+        `SELECT b.id
+           FROM game_bodies b
+          WHERE b.game_id = ? AND b.owner_faction_id = ?
+            AND b.terraformed_at_tick IS NULL
+            AND b.destroyed_at_tick IS NULL
+            AND b.type IN ('terrestrial', 'moon', 'dwarf')
+            AND (b.secret_kind IS NULL OR b.secret_revealed = 1)
+            AND NOT EXISTS (SELECT 1 FROM game_trade_routes tr
+                             WHERE tr.dest_body_id = b.id
+                               AND tr.owner_faction_id = ?
+                               AND tr.cancelled_at_tick IS NULL)
+          LIMIT 1`,
+      ).bind(gameId, factionId, factionId).first();
+
+    if (needsRoute) {
+      const origin = await DB
         .prepare(
-          `SELECT s.id, b.orbit_radius
-             FROM game_ships s JOIN game_bodies b ON b.id = s.parent_body_id
-            WHERE s.game_id = ? AND s.owner_faction_id = ? AND s.ship_class = 'colony'
-              AND s.hp > 0
-              AND NOT EXISTS (SELECT 1 FROM game_ship_nodes n
-                               WHERE n.ship_id = s.id AND n.status = 'in_transit')
+          `SELECT b.id FROM game_bodies b
+            WHERE b.game_id = ? AND b.terraformed_at_tick IS NOT NULL
+              AND EXISTS (SELECT 1 FROM game_settlements s
+                           WHERE s.body_id = b.id AND s.owner_faction_id = ?
+                             AND s.destroyed_at_tick IS NULL)
             LIMIT 1`,
         ).bind(gameId, factionId).first();
-      if (idle) {
-        const target = await DB
-          .prepare(
-            // Cities cannot go on a star or a gas/ice giant (actions.js
-            // handleDeploySettlement). Filtering here rather than
-            // discovering it via 200 rejections keeps the bot's refusal
-            // tally meaningful: what is left should be genuine economic
-            // pressure, not the bot repeatedly trying to colonise Jupiter.
-            `SELECT id, orbit_radius FROM game_bodies
-              WHERE game_id = ? AND owner_faction_id IS NULL AND destroyed_at_tick IS NULL
-                AND parent_body_id IS NOT NULL
-                AND type NOT IN ('star', 'gas-giant', 'ice-giant')
-              ORDER BY ABS(COALESCE(orbit_radius,0) - ?) LIMIT 1`,
-          ).bind(gameId, idle.orbit_radius ?? 0).first();
-        if (target) {
-          const r = await act(env, R.transfer(), {
-            gameId, userId, params: { shipId: idle.id },
-            body: {
-              target_body_id: target.id,
-              scheduled_t: tick,
-              arrival_t: tick + transitTicks(idle.orbit_radius, target.orbit_radius),
-              replace: true,
-            },
-          });
-          bump(r.ok ? 'transfer_ok' : `transfer_rej_${r.data?.error?.code ?? r.status}`);
-        }
+      const hauler = await DB
+        .prepare(
+          `SELECT s.id FROM game_ships s
+            WHERE s.game_id = ? AND s.owner_faction_id = ?
+              AND s.ship_class = 'freighter' AND s.hp > 0
+              AND NOT EXISTS (SELECT 1 FROM game_trade_routes tr
+                               WHERE tr.ship_id = s.id AND tr.cancelled_at_tick IS NULL)
+            LIMIT 1`,
+        ).bind(gameId, factionId).first();
+      if (origin && hauler) {
+        const r = await act(env, R.tradeRoute(), {
+          gameId, userId, params: {},
+          body: { ship_id: hauler.id, origin_body_id: origin.id, dest_body_id: needsRoute.id },
+        });
+        bump(r.ok ? 'tfroute_ok' : `tfroute_rej_${r.data?.error?.code ?? r.status}`);
+        return;
+      }
+      // No hauler free is a REAL constraint, not a bug — record it so the
+      // sweep can say whether freighter supply is what gates expansion.
+      bump(origin ? 'tfroute_no_hauler' : 'tfroute_no_origin');
+    }
+
+    // 4. Nothing to finish — push an idle colony ship at the nearest
+    //    unclaimed rock. "Nearest" by orbit radius rather than true
+    //    transfer cost: the server plans the real trajectory, and a bot
+    //    picking imperfect targets is a bot, not a bug.
+    const idle = await DB
+      .prepare(
+        `SELECT s.id, b.orbit_radius
+           FROM game_ships s JOIN game_bodies b ON b.id = s.parent_body_id
+          WHERE s.game_id = ? AND s.owner_faction_id = ? AND s.ship_class = 'colony'
+            AND s.hp > 0
+            AND NOT EXISTS (SELECT 1 FROM game_ship_nodes n
+                             WHERE n.ship_id = s.id AND n.status = 'in_transit')
+          LIMIT 1`,
+      ).bind(gameId, factionId).first();
+    if (idle) {
+      const target = await DB
+        .prepare(
+          `SELECT id, orbit_radius FROM game_bodies
+            WHERE game_id = ? AND owner_faction_id IS NULL AND destroyed_at_tick IS NULL
+              AND parent_body_id IS NOT NULL
+              AND type IN ('terrestrial', 'moon', 'dwarf')
+            ORDER BY ABS(COALESCE(orbit_radius,0) - ?) LIMIT 1`,
+        ).bind(gameId, idle.orbit_radius ?? 0).first();
+      if (target) {
+        const r = await act(env, R.transfer(), {
+          gameId, userId, params: { shipId: idle.id },
+          body: {
+            target_body_id: target.id,
+            scheduled_t: tick,
+            arrival_t: tick + transitTicks(idle.orbit_radius, target.orbit_radius),
+            replace: true,
+          },
+        });
+        bump(r.ok ? 'transfer_ok' : `transfer_rej_${r.data?.error?.code ?? r.status}`);
       }
     }
   }

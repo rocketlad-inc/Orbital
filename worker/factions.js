@@ -824,12 +824,19 @@ export async function seedGameWorld(env, gameId) {
   let spawnFloorRadius = MIN_CAPITAL_RADIUS;
   let capitalCityHp = STARTER_CITY_HP;
   let spawnFloorScience = 2;
+  // The opening purse. Config-driven since the terraforming balance pass —
+  // STARTING_RESOURCES stays as the fallback so a config failure still
+  // deals the shipped hand.
+  let startMetal = STARTING_RESOURCES.metal;
+  let startGold = STARTING_RESOURCES.gold;
   try {
     const gc = await import('./gameConfig.js');
     const conf = await gc.cfg(env, gameId);
     spawnFloorRadius = conf.min_capital_radius ?? MIN_CAPITAL_RADIUS;
     capitalCityHp = conf.city_base_hp ?? STARTER_CITY_HP;
     spawnFloorScience = conf.min_capital_science ?? 2;
+    startMetal = conf.starting_metal ?? STARTING_RESOURCES.metal;
+    startGold = conf.starting_credits ?? STARTING_RESOURCES.gold;
     const bodyEdits = conf.bodies ?? {};
     // Global multipliers. ORDER MATTERS: per-body edits are expressed in
     // the shipped coordinate space, then the global scales multiply
@@ -1093,8 +1100,8 @@ export async function seedGameWorld(env, gameId) {
       ).bind(
         f.id, gameId, f.user_id, f.slot, f.name, f.color, f.color2, f.emblem, f.bio,
         f.capital_body_id,
-        STARTING_RESOURCES.metal, STARTING_RESOURCES.fuel,
-        STARTING_RESOURCES.gold, STARTING_RESOURCES.science,
+        startMetal, STARTING_RESOURCES.fuel,
+        startGold, STARTING_RESOURCES.science,
         now,
       ),
     );

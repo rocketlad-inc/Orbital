@@ -76,6 +76,42 @@ export const SCHEMA = [
     help: 'Ticks the transformation takes once the full payload has been '
       + 'delivered. The world terraforms at the end of the window.',
   },
+
+  {
+    id: 'terraform_cost_growth', group: 'yields', type: 'number',
+    label: 'Terraform cost growth per world', def: 1.0, min: 1, max: 3, step: 0.05,
+    help: 'Multiplier compounding per world you have ALREADY terraformed, so '
+      + 'the Nth terraform costs base x growth^(N-1). 1.0 is flat. Above 1.0 '
+      + 'this is the brake on a runaway leader: the empire with eight worlds '
+      + 'pays more for its ninth than a rival pays for their second.',
+  },
+
+  // ---- starting hand -----------------------------------------------------
+  // These were constants in worker/factions.js until the terraforming
+  // balance pass. They are the single most-adjusted numbers in any 4X and
+  // the sweep needs to vary them, so they belong here where a host (and
+  // the simulator) can reach them.
+  // 200/200 is a MEASURED default, not a guess — sim/economySweep.mjs,
+  // 100 games across ten economies, plus a 100-game control run with a
+  // freighter-heavy doctrine. At the old 100/100 only half of the empires
+  // that committed to expanding ever finished a single terraform inside
+  // 250 ticks; at 200/200 that is 80-90%, the first world lands ~30 ticks
+  // sooner, and — the result worth reading twice — best:worst wealth
+  // inequality FELL from 7.1x to 3.2x. A thin opening does not restrain
+  // the leader, it just adds variance: everyone gambles the same small
+  // purse and the winner is whoever the dice favoured. Fund the opening
+  // and outcomes converge.
+  {
+    id: 'starting_metal', group: 'yields', type: 'int',
+    label: 'Starting metal', def: 200, min: 0, max: 5000, step: 10,
+    help: 'Metal each empire opens with.',
+  },
+  {
+    id: 'starting_credits', group: 'yields', type: 'int',
+    label: 'Starting credits', def: 200, min: 0, max: 5000, step: 10,
+    help: 'Credits each empire opens with. Credits carry fleet upkeep AND the '
+      + 'credit half of every terraform, so this is the tighter of the two.',
+  },
   {
     // id keeps its legacy name — stored game configs reference it.
     id: 'no_collector_pool_fraction', group: 'yields', type: 'number',

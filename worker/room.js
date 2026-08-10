@@ -1837,8 +1837,36 @@ export class Room {
             )
             .bind(r.dest_body_id, gameId)
             .first();
-          const TF_COST_M = Number(CFG.terraform_cost_metal ?? 124);
-          const TF_COST_G = Number(CFG.terraform_cost_credits ?? 124);
+          // ESCALATING COST. The Nth terraform costs base x growth^(N-1),
+          // counted on worlds this faction has ALREADY finished. At the
+          // default growth of 1.0 this is exactly flat and the pow() is a
+          // no-op; above 1.0 it is the brake on a runaway leader, who pays
+          // more for their ninth world than a rival pays for their second.
+          //
+          // Counted from finished worlds only, not from in-flight meters:
+          // otherwise two routes opened the same tick would each inflate
+          // the other's price and the pair would deadlock mid-delivery.
+          // The capital is excluded by construction — it starts terraformed
+          // and is counted, so the first PURCHASED world is already N=2 if
+          // you seeded terraformed worlds. See the sweep for what that
+          // does to the curve.
+          const TF_GROWTH = Number(CFG.terraform_cost_growth ?? 1.0);
+          let tfDone = 0;
+          if (TF_GROWTH > 1.0) {
+            const c = await this.env.DB
+              .prepare(
+                `SELECT COUNT(*) n FROM game_bodies
+                  WHERE game_id = ? AND owner_faction_id = ?
+                    AND terraformed_at_tick IS NOT NULL
+                    AND destroyed_at_tick IS NULL`,
+              )
+              .bind(gameId, r.owner_faction_id)
+              .first();
+            tfDone = Math.max(0, Number(c?.n ?? 0));
+          }
+          const tfMul = TF_GROWTH > 1.0 ? Math.pow(TF_GROWTH, tfDone) : 1;
+          const TF_COST_M = Math.round(Number(CFG.terraform_cost_metal ?? 124) * tfMul);
+          const TF_COST_G = Math.round(Number(CFG.terraform_cost_credits ?? 124) * tfMul);
           // Route retires when its job is gone: body destroyed, already
           // terraformed, payload delivered (window running), or the
           // world changed hands. Cargo always goes home, never vanishes.
