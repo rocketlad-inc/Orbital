@@ -5670,36 +5670,31 @@ export class Room {
               .prepare('UPDATE game_bodies SET owner_faction_id = ? WHERE id = ?')
               .bind(discoverer, body_id),
           );
+          // HARD-GATE INVARIANT (DESIGN-terraforming): a city can only
+          // exist on a terraformed world. The ancients who built this
+          // colony terraformed the place — mark it, or this free city
+          // would be the one illegal city-on-raw-world in the game.
+          stmts.push(
+            this.env.DB
+              .prepare('UPDATE game_bodies SET terraformed_at_tick = COALESCE(terraformed_at_tick, ?) WHERE id = ?')
+              .bind(tick, body_id),
+          );
           chronicleMessage = `${body_name}: DISCOVERY — a long-abandoned colony reactivates under your banner — a free city with a working Lab.`;
           break;
         }
-        case 'free_collector': {
-          const cityId = `${body_id}:cFC${Math.random().toString(36).slice(2, 8)}`;
-          const surfaceAngle = Math.random() * Math.PI * 2;
+        case 'pre_terraformed': {
+          // Terraforming rework: replaces free_collector. Grants
+          // TERRAFORM STATUS ONLY — no free settlement, no ownership
+          // flip. A beachhead, not a gift: whoever claims it with a
+          // station gets a city-capable, full-pool world without paying
+          // the 124/124 payload. Idempotent via COALESCE so a re-reveal
+          // can never move the timestamp.
           stmts.push(
             this.env.DB
-              .prepare(
-                `INSERT INTO game_settlements
-                  (id, game_id, body_id, owner_faction_id, type, name,
-                   hp, hp_max, population,
-                   surface_angle, orbit_rp, orbit_ra, orbit_omega, orbit_m0, orbit_epoch,
-                   created_at_tick, last_growth_tick, last_harvest_tick,
-                   has_collector, collector_built_tick)
-                 VALUES (?, ?, ?, ?, 'city', ?,
-                         100, 100, 2,
-                         ?, NULL, NULL, NULL, NULL, NULL,
-                         ?, ?, ?,
-                         1, ?)`,
-              )
-              .bind(cityId, gameId, body_id, discoverer, `${body_name} Hub`,
-                    surfaceAngle, tick, tick, tick, tick),
+              .prepare('UPDATE game_bodies SET terraformed_at_tick = COALESCE(terraformed_at_tick, ?) WHERE id = ?')
+              .bind(tick, body_id),
           );
-          stmts.push(
-            this.env.DB
-              .prepare('UPDATE game_bodies SET owner_faction_id = ? WHERE id = ?')
-              .bind(discoverer, body_id),
-          );
-          chronicleMessage = `${body_name}: DISCOVERY — a derelict freight hub still pings. Free city + collector — your logistics just widened.`;
+          chronicleMessage = `${body_name}: DISCOVERY — a world the ancients already prepped for life. Terraformed and waiting; claim it and build.`;
           break;
         }
         case 'derelict_warship': {

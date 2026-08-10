@@ -56,6 +56,16 @@ export const SECRET_DEFS: Record<BodySecretKind, SecretDef> = {
     discoveryMessage: 'DISCOVERY: a derelict freight hub still pings. Free city + collector — your logistics just widened.',
     hostCategories: ['moon-outer', 'moon-inner'],
   },
+  // MP-only (terraforming rework): seeded server-side in
+  // worker/factions.js, never by this SP seeder — hostCategories is
+  // empty for the same reason warp_gate's is. Listed so MP inspector /
+  // toast code has a display name for the revealed secret.
+  pre_terraformed: {
+    kind: 'pre_terraformed',
+    displayName: 'Pre-Terraformed World',
+    discoveryMessage: 'DISCOVERY: a world the ancients already prepped for life. Terraformed and waiting; claim it and build.',
+    hostCategories: [],
+  },
   derelict_warship: {
     kind: 'derelict_warship',
     displayName: 'Derelict Warship',
@@ -227,6 +237,12 @@ export function computeSecretReveal(
       patch.spawnSettlement = city;
       break;
     }
+
+    case 'pre_terraformed':
+      // MP-only kind — the server reveal handler (worker/room.js)
+      // grants terraform status there. This SP path never runs (the SP
+      // seeder can't pick it); the case exists for exhaustiveness.
+      break;
 
     case 'derelict_warship':
       patch.spawnShipClass = 'destroyer';

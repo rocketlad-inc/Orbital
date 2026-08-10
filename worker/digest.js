@@ -771,9 +771,15 @@ const DISCOVERY_PAYOFFS = {
     'reactivated a long-abandoned colony — a free city, complete with a working Lab, now flies their banner',
     'breathed life back into a buried settlement; a new city and its Lab are now theirs to keep',
   ],
+  // Legacy kind — kept so chronicles from pre-terraforming games still
+  // render; nothing seeds it anymore.
   free_collector: [
     'revived a derelict freight hub — a free city and collector now widen their logistics network',
     'got an old cargo relay humming again, adding a free city and collector to their holdings',
+  ],
+  pre_terraformed: [
+    'charted a world the ancients already prepped for life — terraformed, empty, and waiting for a flag',
+    'found green under the dust: a fully terraformed world, abandoned before anyone alive could name it',
   ],
   derelict_warship: [
     'salvaged a derelict destroyer drifting in the dark, claiming the hulk for their fleet',

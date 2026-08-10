@@ -640,7 +640,12 @@ function shuffleInPlace(arr, rand) {
 const SECRET_HOST_CATEGORIES = {
   portal_to_sun:    ['outer', 'moon-outer'],
   ancient_city:     ['belt'],
-  free_collector:   ['moon-outer', 'moon-inner'],
+  // pre_terraformed replaced free_collector (terraforming rework): one
+  // world per game the ancients already prepped — terraform status
+  // only, NO free settlement (a beachhead, not a gift). Outer-system
+  // placement keeps it far from every spawn, so reaching it first is
+  // an actual expedition.
+  pre_terraformed:  ['outer', 'moon-outer'],
   derelict_warship: ['belt', 'outer'],
   resource_cache:   ['inner', 'belt'],
   ancient_databank: ['moon-inner', 'moon-outer'],

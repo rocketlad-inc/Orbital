@@ -180,7 +180,8 @@ export type BodySecretKind =
   | 'portal_to_sun'
   | 'warp_gate'
   | 'ancient_city'
-  | 'free_collector'
+  | 'free_collector'    // legacy (SP + pre-terraforming MP games) — MP no longer seeds it
+  | 'pre_terraformed'   // MP only: a world the ancients terraformed — status only, no settlement
   | 'derelict_warship'
   | 'resource_cache'
   | 'ancient_databank';
