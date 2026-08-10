@@ -6,7 +6,7 @@ import { shipDisplayTick } from './tickPhase';
 
 import { Body, Ship, OrbitElements, TrajectoryArc, Settlement, Faction, TorchTransferPlan, BuildOrder, BuildingKind, FactionTechStateBase } from '../types';
 import { effectiveShipMaxHp } from '../game/combat';
-import { getPlanetTexture, getCloudTexture, hashStr, mulberry32 } from './planetTexture';
+import { getPlanetTexture, getTerraformedTexture, getCloudTexture, hashStr, mulberry32 } from './planetTexture';
 import { drawCityCluster, drawStationStructure } from './isoStructures';
 import { flameCount } from '../game/worldMenu/combatDisplay';
 import type { SystemRegion } from './systemRegions';
@@ -1481,16 +1481,28 @@ function drawPlanetBody(
   ctx: RenderContext,
 ) {
   const color = body.color || COLORS.planetDefault;
+  // Terraforming crossfade fraction — 0 for raw (and everything in SP),
+  // partial while the transformation window runs, 1 once flipped.
+  const tfF = terraformFraction(body, ctx.t);
 
-  // Atmosphere glow for terrestrial / ice giant
-  if ((body.type === 'terrestrial' || body.type === 'ice_giant') && radius > 3) {
+  // Atmosphere glow for terrestrial / ice giant — and for any world
+  // growing an atmosphere by terraforming (a moon mid-transformation
+  // visibly hazes over before the surface finishes turning).
+  const tfAtmo = tfF > 0.2 && (body.type === 'moon' || body.type === 'dwarf' || body.type === 'asteroid');
+  if ((body.type === 'terrestrial' || body.type === 'ice_giant' || tfAtmo) && radius > 3) {
     const atmR = radius * 1.35;
     const atm = ctx.ctx.createRadialGradient(
       canvasPos.x, canvasPos.y, radius * 0.95,
       canvasPos.x, canvasPos.y, atmR,
     );
-    atm.addColorStop(0, withOpacity(lighten(color, 1.3), 0.35));
-    atm.addColorStop(1, withOpacity(color, 0));
+    if (tfAtmo) {
+      // New air reads pale blue-green regardless of the rock beneath.
+      atm.addColorStop(0, `rgba(140, 220, 200, ${0.3 * tfF})`);
+      atm.addColorStop(1, 'rgba(140, 220, 200, 0)');
+    } else {
+      atm.addColorStop(0, withOpacity(lighten(color, 1.3), 0.35));
+      atm.addColorStop(1, withOpacity(color, 0));
+    }
     ctx.ctx.fillStyle = atm;
     ctx.ctx.beginPath();
     ctx.ctx.arc(canvasPos.x, canvasPos.y, atmR, 0, Math.PI * 2);
@@ -1502,30 +1514,47 @@ function drawPlanetBody(
   // city lights on the night side of settled worlds. Falls through to
   // the legacy flat-disk path when small or texture unavailable.
   if (radius > 8) {
-    const tex = getPlanetTexture(body);
+    // Terraform crossfade: steady-state (raw OR flipped) is still ONE
+    // cached drawImage; only a world mid-transformation pays for two.
+    const tex = tfF >= 1 ? (getTerraformedTexture(body) ?? getPlanetTexture(body))
+      : getPlanetTexture(body);
     if (tex) {
       const ringed = bodyHasRings(body); // uranus routes through here (ice giant)
       if (ringed) drawRingArcs(body, canvasPos, radius, ctx, 'back');
       // Spin the surface: scroll the texture horizontally under the fixed
       // sun-terminator so the planet reads as rotating on its axis.
-      drawTexturedDisk(ctx.ctx, tex, canvasPos.x, canvasPos.y, radius, surfaceSpinDrift(ctx, body, radius));
+      const drift = surfaceSpinDrift(ctx, body, radius);
+      drawTexturedDisk(ctx.ctx, tex, canvasPos.x, canvasPos.y, radius, drift);
+      if (tfF > 0 && tfF < 1) {
+        const tfTex = getTerraformedTexture(body);
+        if (tfTex) {
+          ctx.ctx.save();
+          ctx.ctx.globalAlpha = tfF;
+          drawTexturedDisk(ctx.ctx, tfTex, canvasPos.x, canvasPos.y, radius, drift);
+          ctx.ctx.restore();
+        }
+      }
       // Drifting cloud deck — separate cached layer, drawn BEFORE the
       // terminator so the night side darkens clouds too. Shears slightly
       // ahead of the surface spin (see drawCloudDeck).
-      drawCloudDeck(ctx, body, canvasPos.x, canvasPos.y, radius);
+      drawCloudDeck(ctx, body, canvasPos.x, canvasPos.y, radius, 1, tfF);
       drawDayNightShading(canvasPos, radius, ctx);
       drawNightLights(body, canvasPos, radius, ctx);
       drawAtmosphereRimLight(body, canvasPos, radius, ctx);
+      drawTerraformBloom(body, canvasPos, radius, ctx);
       if (ringed) drawRingArcs(body, canvasPos, radius, ctx, 'front');
       return;
     }
   }
 
-  // Base disk
-  ctx.ctx.fillStyle = color;
+  // Base disk. Below the textured threshold a terraformed world still
+  // reads at map scale: its disk colour shifts toward living teal-green
+  // by the same fraction the texture would crossfade.
+  ctx.ctx.fillStyle = tfF > 0 ? mixDiskColor(color, tfF) : color;
   ctx.ctx.beginPath();
   ctx.ctx.arc(canvasPos.x, canvasPos.y, radius, 0, Math.PI * 2);
   ctx.ctx.fill();
+  if (tfF > 0) drawTerraformBloom(body, canvasPos, radius, ctx);
 
   // Per-body surface features (continents, ice caps). Drawn before
   // sphere shading so the shading's edge-darkening + highlight unify
@@ -1552,6 +1581,71 @@ function drawPlanetBody(
 // Leaning the surface ~20° gives a 3/4 read instead. Tied to RING_TILT so
 // a ringed giant's bands sit in the same plane as its rings.
 const PLANET_AXIAL_TILT = RING_TILT;
+
+// ------------------------------------------------------------
+// Terraforming visuals (DESIGN-terraforming stage 7).
+// ------------------------------------------------------------
+
+/** Visual mirror of terraform_duration_ticks' default. The crossfade is
+ *  presentation only — the authoritative clock lives on the body row
+ *  (terraform_completes_at_tick), so a host-tuned duration merely makes
+ *  the fade land early/late within the window, never wrong at the ends. */
+const TF_VISUAL_DURATION = 24;
+/** Ticks the one-shot completion bloom lingers after the flip. */
+const TF_BLOOM_TICKS = 2;
+
+/** 0 = raw, 1 = fully terraformed, in-between while the transformation
+ *  window runs. `terraformedAtTick` is null-or-number in MP and
+ *  undefined in SP, so SP always reads 0 here and renders unchanged. */
+function terraformFraction(body: Body, t: number): number {
+  if (body.terraformedAtTick != null) return 1;
+  const at = body.terraformCompletesAtTick;
+  if (at == null) return 0;
+  // Window open: fade in across the window, never fully reaching 1
+  // until the server actually flips the world.
+  return Math.max(0.15, Math.min(0.92, 1 - (at - t) / TF_VISUAL_DURATION));
+}
+
+/** Small-disk terraform tint: blend a body's raw colour toward a
+ *  living ocean-teal. Keeps terraformed worlds legible at map zoom,
+ *  where no texture draws. */
+function mixDiskColor(rawHex: string, f: number): string {
+  const to = { r: 62, g: 126, b: 120 };            // #3e7e78 — sea-and-forest
+  let r = 128, g = 128, bl = 128;
+  if (rawHex.startsWith('#') && (rawHex.length === 7)) {
+    const p = parseInt(rawHex.slice(1), 16);
+    r = (p >> 16) & 255; g = (p >> 8) & 255; bl = p & 255;
+  }
+  const t = 0.6 * f;                                // never fully lose identity
+  return `rgb(${Math.round(r + (to.r - r) * t)}, ${Math.round(g + (to.g - g) * t)}, ${Math.round(bl + (to.b - bl) * t)})`;
+}
+
+/** One-shot completion bloom: a soft emerald halo that swells the
+ *  moment a world flips and fades over the next couple of ticks. */
+function drawTerraformBloom(
+  body: Body,
+  canvasPos: { x: number; y: number },
+  radius: number,
+  ctx: RenderContext,
+) {
+  const at = body.terraformedAtTick;
+  if (at == null || at <= 0) return;              // 0 = seeded terraformed, no fireworks
+  const age = ctx.t - at;
+  if (age < 0 || age > TF_BLOOM_TICKS) return;
+  const k = 1 - age / TF_BLOOM_TICKS;              // 1 → 0 across the bloom
+  const r = radius * (1.25 + 0.55 * (1 - k));      // halo swells as it fades
+  const g = ctx.ctx.createRadialGradient(
+    canvasPos.x, canvasPos.y, radius * 0.9,
+    canvasPos.x, canvasPos.y, r,
+  );
+  g.addColorStop(0, `rgba(110, 231, 183, ${0.38 * k})`);
+  g.addColorStop(0.6, `rgba(110, 231, 183, ${0.18 * k})`);
+  g.addColorStop(1, 'rgba(110, 231, 183, 0)');
+  ctx.ctx.fillStyle = g;
+  ctx.ctx.beginPath();
+  ctx.ctx.arc(canvasPos.x, canvasPos.y, r, 0, Math.PI * 2);
+  ctx.ctx.fill();
+}
 
 function drawTexturedDisk(
   c: CanvasRenderingContext2D,
@@ -1625,14 +1719,19 @@ export function drawCloudDeck(
   y: number,
   radius: number,
   alphaScale = 1,
+  terraformF = 0,
 ) {
   const isTerr = body.type === 'terrestrial';
   const isGas = body.type === 'gas_giant';
   const isIce = body.type === 'ice_giant';
-  if (!isTerr && !isGas && !isIce) return;
+  // Terraforming grows a WEATHER SYSTEM on worlds that never had one:
+  // moons/dwarfs mid-transformation fade a terrestrial-style cloud deck
+  // in with the surface crossfade (same cached texture discipline).
+  const isTfWeather = !isTerr && !isGas && !isIce && terraformF > 0.25;
+  if (!isTerr && !isGas && !isIce && !isTfWeather) return;
   const clouds = getCloudTexture(body);
   if (!clouds) return;
-  const baseAlpha = isGas ? 0.55 : isIce ? 0.38 : 0.45;
+  const baseAlpha = isGas ? 0.55 : isIce ? 0.38 : isTfWeather ? 0.45 * terraformF : 0.45;
   const drift = surfaceSpinDrift(ctx, body, radius) * 1.3;
   ctx.ctx.save();
   ctx.ctx.globalAlpha = baseAlpha * alphaScale;

@@ -17,6 +17,7 @@
 
 import { Body, BuildingKind, Settlement } from '../types';
 import { RenderContext, worldToCanvas, drawCloudDeck } from './mapRenderer';
+import { getTerraformedTexture } from './planetTexture';
 import { bodyPosition } from '../physics/orbitalMechanics';
 import { zOf, clamp01 } from '../game/worldMenu/camera';
 import { hpColor, flameCount } from '../game/worldMenu/combatDisplay';
@@ -99,13 +100,31 @@ function surfaceDetail(rc: RenderContext, body: Body, c: { x: number; y: number;
     g.fillStyle = shade(base, 0.12);
     blob(g, x - r * 0.45, y - r * 0.2, r * 0.22);
   }
+  // Terraformed face (DESIGN-terraforming stage 7): the close-up is
+  // where the change should hit hardest. Overlay the cached terraformed
+  // texture (same seed as the raw art, so silhouettes match) at the
+  // crossfade fraction — full once flipped, partial mid-window — and
+  // give the world its new weather.
+  const tfF = body.terraformedAtTick != null ? 1
+    : body.terraformCompletesAtTick != null ? 0.55 : 0;
+  if (tfF > 0) {
+    const tfTex = getTerraformedTexture(body);
+    if (tfTex) {
+      g.save();
+      g.globalAlpha = alpha * tfF;
+      g.drawImage(tfTex, x - r, y - r, r * 2, r * 2);
+      g.restore();
+    }
+    drawCloudDeck(rc, body, x, y, r, alpha, tfF);
+  }
   // terminator — day/night shading, offset toward lower-right
   g.fillStyle = 'rgba(5,8,14,0.3)';
   g.beginPath(); g.arc(x + r * 0.32, y + r * 0.16, r, 0, Math.PI * 2); g.fill();
   g.restore();
-  // thin atmosphere ring for terrestrials
-  if (body.type === 'terrestrial') {
-    g.save(); g.globalAlpha = alpha * 0.4;
+  // thin atmosphere ring for terrestrials — and for worlds that grew
+  // one by terraforming.
+  if (body.type === 'terrestrial' || tfF > 0.2) {
+    g.save(); g.globalAlpha = alpha * 0.4 * (body.type === 'terrestrial' ? 1 : tfF);
     g.strokeStyle = '#7fd4ff'; g.lineWidth = Math.max(1, r * 0.012);
     g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.stroke(); g.restore();
   }
