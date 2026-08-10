@@ -3725,8 +3725,22 @@ export class Room {
     // Effective yield = base body yield * popMult * typeMult * buildingMults.
     // Buildings: forge boosts metal, mint boosts gold, lab boosts science.
     // Population is still grown by the POP_GROWTH_INTERVAL pass below.
-    const POP_GROWTH_INTERVAL = 20;
-    const POP_MAX = 10;
+    // BOTH OF THESE WERE HARDCODED and shadowed live config knobs — a host
+    // could set pop_max to 50 in the editor and nothing happened, the same
+    // dead-knob class as victory_ships. Now read from config, with the old
+    // constants as the fallback.
+    //
+    // pop_max 0 = UNCAPPED (Lorne): a world you hold keeps growing for as
+    // long as you hold it. Safe to uncap because the yield bonus is LINEAR
+    // in population — popMul = 1 + rate x (pop-1) — so a settlement at pop
+    // 30 earns 3.9x base, not 30x. Growth is one point per interval, so
+    // this is a slow compounding reward for holding ground rather than a
+    // runaway.
+    const POP_GROWTH_INTERVAL = Math.max(1, Number(CFG.pop_growth_interval ?? 20));
+    const POP_MAX_RAW = Number(CFG.pop_max ?? 10);
+    const POP_MAX = (Number.isFinite(POP_MAX_RAW) && POP_MAX_RAW > 0)
+      ? POP_MAX_RAW
+      : Infinity;
     const settlements = (await this.env.DB
       .prepare(
         `SELECT s.id, s.owner_faction_id AS fid, s.body_id, s.type, s.population,

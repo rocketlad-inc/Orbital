@@ -54,9 +54,12 @@ export const SCHEMA = [
   },
   {
     id: 'pop_max', group: 'yields', type: 'int',
-    label: 'Maximum population', def: 10, min: 1, max: 50, step: 1,
-    help: 'Population ceiling per settlement. Raising it raises the economic ceiling sharply, '
-      + 'because the pop bonus is multiplicative.',
+    label: 'Maximum population (0 = uncapped)', def: 0, min: 0, max: 500, step: 1,
+    help: 'Population ceiling per settlement. 0 means no ceiling — a world you '
+      + 'hold keeps growing for as long as you hold it, which is the point: '
+      + 'holding ground should compound. The yield bonus is LINEAR in '
+      + 'population (1 + rate x (pop-1)), not exponential, so uncapping grows '
+      + 'income steadily rather than explosively.',
   },
   {
     id: 'terraform_cost_metal', group: 'yields', type: 'int',
