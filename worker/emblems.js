@@ -18,6 +18,10 @@ export const EMBLEM_IDS = [
   'crown', 'shield', 'spear', 'trident', 'hammer', 'anchor',
   'skull', 'wolf', 'phoenix', 'eye', 'key', 'gear',
   'helix', 'leaf', 'wave', 'mountain', 'tower', 'pyramid',
+  // Double V — the Double Victory campaign's mark. Free, not premium.
+  // Appended rather than inserted: this order IS defaultEmblemFor's
+  // rotation, so a splice would reshuffle every no-picker's emblem.
+  'doublev',
 ];
 
 // Premium wing (Commander's Commission, mirror of PREMIUM_EMBLEM_IDS in
@@ -61,7 +65,7 @@ export function normalizeEmblem(v) {
  * where the DEFAULT fallback handed out a palette entry somebody had
  * explicitly picked, because the uniqueness check only ever compared
  * pick against pick (see sim/colorClash.mjs). Emblems dodge it by
- * construction: 24 ids against a max_players cap of 8 means a free one
+ * construction: 25 ids against a max_players cap of 8 means a free one
  * always exists, so unlike the colour palette this never has to
  * degrade to "closest available".
  */
@@ -71,7 +75,7 @@ export function defaultEmblemFor(slot, taken) {
     const id = EMBLEM_IDS[(slot + i) % EMBLEM_IDS.length];
     if (!used.has(id)) return id;
   }
-  // Unreachable while EMBLEM_IDS.length (24) > max_players (8), but a
+  // Unreachable while EMBLEM_IDS.length (25) > max_players (8), but a
   // silent duplicate beats a crash during game start.
   return EMBLEM_IDS[slot % EMBLEM_IDS.length];
 }

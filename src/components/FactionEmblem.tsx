@@ -1,5 +1,5 @@
 // ============================================================
-// Faction emblem artwork — 24 heraldic shapes on a 32×32 viewBox.
+// Faction emblem artwork — 25 heraldic shapes on a 32×32 viewBox.
 //
 // Same conventions as ShipIcons: pure SVG, no external assets, drawn
 // with `currentColor` so a caller sets the colour once via CSS and the
@@ -226,6 +226,25 @@ const GLYPHS: Record<EmblemId, (p: GlyphProps) => React.ReactElement> = {
     <path d="M0.5 16 L13 13 L11 16 L13 19z" />
     <path d="M31.5 16 L19 19 L21 16 L19 13z" />
     <circle cx="16" cy="16" r="3" />
+  </>, title),
+  // Double V — the Double Victory campaign's mark: two concentric V
+  // bands, the outer enclosing the inner.
+  //
+  // Drawn as two closed BANDS rather than an outline, because this file
+  // is silhouettes: a stroked V vanishes against a same-coloured field,
+  // and the negative space between the two V's is what makes the symbol
+  // read as doubled rather than as a single chevron.
+  //
+  // Three widths had to be balanced against each other on the 32 grid,
+  // because at a 12px chip each is well under one real pixel: the outer
+  // arm (~4.8), the inner arm (~2.9), and — the one that actually
+  // decides whether this reads as DOUBLE — the gap between them (~2.6).
+  // Starve the gap and the two bands merge into a single fat wedge;
+  // starve the inner arm and it disappears. Both are now at or above the
+  // 2.5-unit strokes orbit/ring already rely on.
+  doublev: ({ title }) => wrap(<>
+    <path d="M1 2.5 L16 30 L31 2.5 L25 2.5 L16 19.5 L7 2.5z" />
+    <path d="M10 2.5 L16 15.5 L22 2.5 L18.75 2.5 L16 8.75 L13.25 2.5z" />
   </>, title),
 };
 

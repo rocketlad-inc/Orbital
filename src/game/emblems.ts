@@ -22,19 +22,28 @@ export type EmblemId =
   | 'helix' | 'key' | 'leaf' | 'moon' | 'mountain' | 'orbit'
   | 'phoenix' | 'pyramid' | 'ring' | 'shield' | 'skull' | 'spear'
   | 'star' | 'sun' | 'tower' | 'trident' | 'wave' | 'wolf'
+  // The Double V — the Double Victory campaign's mark (victory abroad
+  // against fascism, victory at home against racism). Deliberately in
+  // the FREE list, never the paid wing.
+  | 'doublev'
   // Premium wing (Commander's Commission). Same permanence rule as the
   // free two dozen: a stored 'dragon' draws a dragon forever.
   | 'dragon' | 'kraken' | 'galaxy' | 'nova' | 'raven'
   | 'serpent' | 'swords' | 'atom' | 'hourglass' | 'compass';
 
 /** Catalog order — drives the picker grid and the default rotation.
- *  24 entries against a max_players cap of 8 means uniqueness is always
- *  satisfiable, unlike the 8-colour palette. */
+ *  25 entries against a max_players cap of 8 means uniqueness is always
+ *  satisfiable, unlike the 8-colour palette.
+ *
+ *  New ids are APPENDED, never inserted: this array's order is the
+ *  default rotation, so splicing one into the middle would silently
+ *  change which emblem every no-picker slot lands on. */
 export const EMBLEM_IDS: EmblemId[] = [
   'star', 'sun', 'moon', 'comet', 'orbit', 'ring',
   'crown', 'shield', 'spear', 'trident', 'hammer', 'anchor',
   'skull', 'wolf', 'phoenix', 'eye', 'key', 'gear',
   'helix', 'leaf', 'wave', 'mountain', 'tower', 'pyramid',
+  'doublev',
 ];
 
 /** The Commission's emblems. NOT in EMBLEM_IDS: the default rotation
@@ -59,6 +68,7 @@ export const EMBLEM_NAMES: Record<EmblemId, string> = {
   dragon: 'Dragon', kraken: 'Kraken', galaxy: 'Galaxy', nova: 'Nova',
   raven: 'Raven', serpent: 'Serpent', swords: 'Crossed Swords',
   atom: 'Atom', hourglass: 'Hourglass', compass: 'Compass Rose',
+  doublev: 'Double V',
 };
 
 const EMBLEM_SET = new Set<string>([...EMBLEM_IDS, ...PREMIUM_EMBLEM_IDS]);
