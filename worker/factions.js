@@ -1586,10 +1586,17 @@ async function countActiveShipsPerFaction(env, gameId) {
  * spendable faction pool each harvest, NOT the local-stockpile share.
  *
  * Mirrors the pool half of the harvest pass in worker/room.js resolveTick
- * (§ "Yield distribution"): yieldFull × collector-group pool fraction,
- * where a collector anywhere in a (body,faction) group flips the whole
- * group to 100% pool, else the group trickles NO_COLLECTOR_POOL_FRACTION
- * (10%). KEEP THESE CONSTANTS IN SYNC with that pass.
+ * (§ "Yield distribution"): yieldFull × the body's pool fraction, where a
+ * TERRAFORMED world pays 100% to pool and a raw one trickles
+ * no_collector_pool_fraction (10% default). KEEP IN SYNC with that pass.
+ *
+ * This used to key on has_collector while the harvest keyed on
+ * terraformed_at_tick — so every world terraformed after migration 0080
+ * (and every city-body the backfill terraformed without a collector)
+ * displayed a tenth of the income it actually paid. Eight bodies in the
+ * live game were already understating when this was caught. The two
+ * calculations must read the SAME column, which is why the fraction now
+ * comes off the body join rather than a settlement flag.
  *
  * Deterministic multipliers (population, city/station type, forge/mint/
  * lab, Industry tech) are included. Transient senate modifiers
@@ -1609,7 +1616,8 @@ async function computePoolIncomePerFaction(env, gameId) {
   const settlements = (await env.DB
     .prepare(
       `SELECT s.owner_faction_id AS fid, s.body_id, s.type, s.population,
-              s.has_collector, s.buildings_json,
+              s.buildings_json,
+              b.terraformed_at_tick,
               b.yield_metal, b.yield_fuel, b.yield_gold, b.yield_science
          FROM game_settlements s
          JOIN game_bodies b ON b.id = s.body_id
@@ -1626,14 +1634,6 @@ async function computePoolIncomePerFaction(env, gameId) {
   const industryMulOf = new Map();
   for (const r of techRows) industryMulOf.set(r.faction_id, 1 + 0.10 * Number(r.level ?? 0));
 
-  // Collector is per (body,faction) group: a collector on any settlement
-  // in the group flips the whole group to 100% pool.
-  const groupKey = (s) => `${s.body_id}|${s.fid}`;
-  const groupHasCollector = new Map();
-  for (const s of settlements) {
-    if (s.has_collector) groupHasCollector.set(groupKey(s), true);
-  }
-
   const perFaction = new Map();
   for (const s of settlements) {
     const tm = s.type === 'city' ? TYPE_MUL_CITY : TYPE_MUL_STATION;
@@ -1644,7 +1644,8 @@ async function computePoolIncomePerFaction(env, gameId) {
     const mintMul  = 1 + Number(bld.mint  ?? 0) * MINT_PER_LEVEL;
     const labMul   = 1 + Number(bld.lab   ?? 0) * LAB_PER_LEVEL;
     const indMul   = industryMulOf.get(s.fid) ?? 1;
-    const poolFraction = groupHasCollector.get(groupKey(s)) === true ? 1.0 : NO_COLLECTOR_POOL_FRACTION;
+    // Same column the harvest pass reads (room.js: `bodyTerraformed`).
+    const poolFraction = s.terraformed_at_tick != null ? 1.0 : NO_COLLECTOR_POOL_FRACTION;
 
     const agg = perFaction.get(s.fid) ?? { metal: 0, fuel: 0, gold: 0, science: 0 };
     agg.metal   += Number(s.yield_metal   ?? 0) * popMul * tm.metal   * forgeMul * indMul * poolFraction;
