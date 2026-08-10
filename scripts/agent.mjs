@@ -110,7 +110,7 @@ async function main() {
 
   const tok = await token();
 
-  const url = methodRaw === 'whoami' ? `${BASE}/api/me` : `${BASE}${pathRaw ?? ''}`;
+  const url = methodRaw === 'whoami' ? `${BASE}/api/auth/me` : `${BASE}${pathRaw ?? ''}`;
   if (methodRaw !== 'whoami' && !pathRaw) {
     die('usage: node scripts/agent.mjs <METHOD> <path> [json]');
   }
