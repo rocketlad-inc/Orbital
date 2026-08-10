@@ -79,19 +79,37 @@ async function mint(key) {
   }
   if (!res.ok) die(`Mint failed: HTTP ${res.status}`);
   const j = await res.json();
-  fs.writeFileSync(CACHE, JSON.stringify({ token: j.token, expires_at: j.expires_at }), 'utf8');
+  const all = readCache();
+  all[HANDLE] = { token: j.token, expires_at: j.expires_at };
+  fs.writeFileSync(CACHE, JSON.stringify(all), 'utf8');
   return j.token;
 }
 
-/** A cached session, if one is present and not near expiry. */
-function cached() {
-  if (!fs.existsSync(CACHE)) return null;
+/**
+ * Cached sessions, KEYED BY HANDLE.
+ *
+ * The cache was a single unkeyed blob, which is fine for one agent and
+ * silently wrong for two: running with ORBITAL_AGENT_HANDLE=rival would
+ * hand back the cached `claude` token, so both "agents" would act as the
+ * same player and a multi-agent test would look like it passed while
+ * testing nothing. Keyed per handle now.
+ */
+function readCache() {
+  if (!fs.existsSync(CACHE)) return {};
   try {
     const j = JSON.parse(fs.readFileSync(CACHE, 'utf8'));
-    // Re-mint inside the last day rather than at the boundary, so a long
-    // task cannot have its session die halfway through.
-    if (j.token && j.expires_at && j.expires_at - Date.now() > 24 * 3600 * 1000) return j.token;
-  } catch { /* corrupt cache — just re-mint */ }
+    // Tolerate the old single-session shape rather than throwing on it.
+    return j && typeof j === 'object' && !j.token ? j : {};
+  } catch { return {}; }
+}
+
+function cached() {
+  const entry = readCache()[HANDLE];
+  // Re-mint inside the last day rather than at the boundary, so a long
+  // task cannot have its session die halfway through.
+  if (entry?.token && entry.expires_at && entry.expires_at - Date.now() > 24 * 3600 * 1000) {
+    return entry.token;
+  }
   return null;
 }
 
