@@ -21,6 +21,7 @@ import {
   Faction,
   MyFaction,
   ResourceBundle,
+  TradeAgreement,
 } from './api';
 import { logUiEvent } from './telemetry';
 import { TradeComposer } from './TradeComposer';
@@ -54,6 +55,7 @@ export function TradesPanel({ gameId }: { gameId: string }) {
   const [factions, setFactions] = useState<Faction[]>([]);
   const [trades, setTrades] = useState<TradeOffer[]>([]);
   const [pacts, setPacts] = useState<Pact[]>([]);
+  const [agreements, setAgreements] = useState<TradeAgreement[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [composerMode, setComposerMode] = useState<
     | { kind: 'new' }
@@ -77,16 +79,18 @@ export function TradesPanel({ gameId }: { gameId: string }) {
   }, [me]);
 
   const refresh = useCallback(async () => {
-    const [meRes, fRes, tRes, pRes] = await Promise.all([
+    const [meRes, fRes, tRes, pRes, aRes] = await Promise.all([
       apiFetch<{ faction: MyFaction }>(`/api/games/${gameId}/me`),
       apiFetch<{ factions: Faction[] }>(`/api/games/${gameId}/factions`),
       api.list(),
       api.listPacts(),
+      api.listAgreements(),
     ]);
     if (meRes.ok) setMe(meRes.data.faction);
     if (fRes.ok) setFactions(fRes.data.factions);
     if (tRes.ok) setTrades(tRes.data.trades);
     if (pRes.ok) setPacts(pRes.data.pacts);
+    if (aRes.ok) setAgreements(aRes.data.agreements);
   }, [gameId, api]);
 
   useEffect(() => {
@@ -239,6 +243,36 @@ export function TradesPanel({ gameId }: { gameId: string }) {
             api={api}
             onChanged={refresh}
           />
+        </TradeSection>
+
+        {/* Standing routes: contracts that repeat until stopped. Sits
+            right after the one-shot shipments because the badge logic is
+            the same story — "your leg needs a freighter" is the one
+            state that goes nowhere without you. */}
+        <TradeSection
+          title="Standing routes"
+          count={agreements.length}
+          badge={(() => {
+            const n = agreements.filter(a =>
+              a.status === 'active'
+              && sendsSomething(a.i_send)
+              && !a.legs.some(l => l.mine)).length;
+            return n > 0 ? `${n} route${n === 1 ? '' : 's'} need a freighter` : undefined;
+          })()}
+          tone={agreements.some(a =>
+            a.status === 'active' && sendsSomething(a.i_send) && !a.legs.some(l => l.mine))
+            ? 'urgent' : undefined}
+          empty="No standing trade routes. Propose one with the Standing route option in a new offer."
+        >
+          {agreements.map(a => (
+            <AgreementCard
+              key={a.id}
+              agreement={a}
+              factionsById={factionsById}
+              api={api}
+              onChanged={refresh}
+            />
+          ))}
         </TradeSection>
 
         <TradeSection
@@ -753,4 +787,211 @@ function statusColor(status: string): string {
     case 'countered': return '#ffb84d';
     default: return '#a8b8c8';
   }
+}
+
+// ============================================================
+// Standing routes
+// ============================================================
+
+function sendsSomething(b: ResourceBundle): boolean {
+  return (b.metal + b.fuel + b.gold + b.science) > 0;
+}
+
+function bundleText(b: ResourceBundle): string {
+  const bits: string[] = [];
+  for (const k of ['metal', 'fuel', 'gold', 'science'] as const) {
+    if (b[k] > 0) bits.push(`${b[k]} ${RESOURCE_LABELS[k].toLowerCase()}`);
+  }
+  return bits.length ? bits.join(' · ') : 'nothing';
+}
+
+const ENDED_REASON_TEXT: Record<string, string> = {
+  cancelled: 'called off',
+  starved: 'ended — a shipment couldn\'t be covered',
+  war: 'ended — you exchanged fire',
+  ship_lost: 'ended — a freighter was destroyed',
+  eliminated: 'ended — a party was eliminated',
+};
+
+function AgreementCard({
+  agreement: a, factionsById, api, onChanged,
+}: {
+  agreement: TradeAgreement;
+  factionsById: Map<string, Faction>;
+  api: ReturnType<typeof tradesApi>;
+  onChanged: () => void;
+}) {
+  const [commissioning, setCommissioning] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const partner = factionsById.get(a.partner_faction_id);
+  const myLeg = a.legs.find(l => l.mine);
+  const theirLeg = a.legs.find(l => !l.mine);
+  const iShip = sendsSomething(a.i_send);
+  const theyShip = sendsSomething(a.i_receive);
+  const needsMe = a.status === 'active' && iShip && !myLeg;
+
+  const cancel = async () => {
+    if (!window.confirm(`End your standing route with ${partner?.name ?? 'this empire'}? Both legs stop.`)) return;
+    setBusy(true); setErr(null);
+    const res = await api.cancelAgreement(a.id);
+    setBusy(false);
+    if (!res.ok) { setErr(res.error?.message ?? 'Cancel failed'); return; }
+    onChanged();
+  };
+
+  return (
+    <div style={{
+      border: '1px solid #2a3d50', borderRadius: 4, padding: 8, marginBottom: 6,
+      fontSize: 10, opacity: a.status === 'ended' ? 0.6 : 1,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ color: a.status === 'active' ? '#6ee7b7' : '#8aa0b4' }}>
+          {a.status === 'active' ? '⟳' : '⏹'}
+        </span>
+        <span style={{ color: '#d8e4ee', flex: 1 }}>
+          Route with <b style={{ color: partner?.color ?? '#d8e4ee' }}>{partner?.name ?? 'unknown'}</b>
+          {a.status === 'ended' && a.ended_reason && (
+            <span style={{ color: '#ff5e5e' }}> — {ENDED_REASON_TEXT[a.ended_reason] ?? a.ended_reason}</span>
+          )}
+        </span>
+        {a.status === 'active' && (
+          <button className="mp-btn" style={{ fontSize: 9, padding: '2px 8px' }}
+            disabled={busy} onClick={cancel}>
+            End route
+          </button>
+        )}
+      </div>
+
+      <div style={{ marginTop: 4, color: '#b8c8d6', lineHeight: 1.6 }}>
+        {iShip && (
+          <div>
+            ▲ You ship <b>{bundleText(a.i_send)}</b> per run
+            {myLeg
+              ? <span style={{ color: '#6ee7b7' }}>
+                  {' '}— running · {myLeg.loops_completed} run{myLeg.loops_completed === 1 ? '' : 's'} completed
+                </span>
+              : a.status === 'active'
+                ? <span style={{ color: '#ffb84d' }}> — needs a freighter; nothing ships until you commission one</span>
+                : null}
+          </div>
+        )}
+        {theyShip && (
+          <div>
+            ▼ They ship <b>{bundleText(a.i_receive)}</b> per run
+            {a.my_tariff_pct > 0 && <span> (you receive −{a.my_tariff_pct}% tariff)</span>}
+            {theirLeg
+              ? <span style={{ color: '#6ee7b7' }}>
+                  {' '}— running · {theirLeg.loops_completed} run{theirLeg.loops_completed === 1 ? '' : 's'} completed
+                </span>
+              : a.status === 'active'
+                ? <span style={{ color: '#8aa0b4' }}> — waiting for {partner?.name ?? 'them'} to commission a freighter</span>
+                : null}
+          </div>
+        )}
+      </div>
+
+      {needsMe && (
+        <button className="mp-btn mp-btn--primary" style={{ fontSize: 9, padding: '2px 8px', marginTop: 6 }}
+          onClick={() => setCommissioning(c => !c)}>
+          {commissioning ? 'Close' : 'Commission freighter'}
+        </button>
+      )}
+      {commissioning && (
+        <CommissionForm
+          agreement={a}
+          api={api}
+          onDone={() => { setCommissioning(false); onChanged(); }}
+        />
+      )}
+      {err && <div className="mp-error" style={{ marginTop: 4 }}>{err}</div>}
+    </div>
+  );
+}
+
+/** Freighter + destination picker for the caller's leg. Same interaction
+ *  as AssignShipmentForm above — players who have shipped a one-off
+ *  already know it — except it happens once per route, not per run. */
+function CommissionForm({
+  agreement, api, onDone,
+}: {
+  agreement: TradeAgreement;
+  api: ReturnType<typeof tradesApi>;
+  onDone: () => void;
+}) {
+  const [opts, setOpts] = useState<{ targets: { body_id: string; body_name: string }[];
+    freighters: { id: string; name: string; body_id: string; at_collector: boolean }[] } | null>(null);
+  const [shipId, setShipId] = useState('');
+  const [destId, setDestId] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let dead = false;
+    api.agreementOptions(agreement.id).then((res) => {
+      if (dead) return;
+      if (!res.ok) { setErr(res.error?.message ?? 'Could not load options'); return; }
+      setOpts(res.data);
+      const atDock = res.data.freighters.find(f => f.at_collector);
+      setShipId((atDock ?? res.data.freighters[0])?.id ?? '');
+      setDestId(res.data.targets[0]?.body_id ?? '');
+    });
+    return () => { dead = true; };
+  }, [api, agreement.id]);
+
+  const submit = async () => {
+    if (!shipId || !destId) return;
+    setBusy(true); setErr(null);
+    const res = await api.commissionLeg(agreement.id, shipId, destId);
+    setBusy(false);
+    if (!res.ok) { setErr(res.error?.message ?? 'Commission failed'); return; }
+    onDone();
+  };
+
+  if (err && !opts) return <div className="mp-error" style={{ marginTop: 4 }}>{err}</div>;
+  if (!opts) return <div style={{ color: '#8aa0b4', marginTop: 4 }}>Loading options…</div>;
+
+  return (
+    <div style={{ marginTop: 6, padding: 6, border: '1px solid #2a3d50', borderRadius: 3, display: 'flex', flexDirection: 'column', gap: 6, fontSize: 10 }}>
+      {opts.freighters.length === 0 ? (
+        <div style={{ color: '#ffb84d' }}>
+          No idle freighter. Build one, or free one up — this route sits
+          idle until a hull is pinned to it.
+        </div>
+      ) : opts.targets.length === 0 ? (
+        <div style={{ color: '#ffb84d' }}>
+          Your partner has no collector to receive at. The route can't run
+          until they build one.
+        </div>
+      ) : (
+        <>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 2, color: '#8aa0b4' }}>
+            FREIGHTER — pinned to this route until it ends
+            <select value={shipId} onChange={(e) => setShipId(e.target.value)}
+              style={{ background: '#0a0e14', color: '#d8e4ee', border: '1px solid #2a3d50', fontFamily: 'inherit', fontSize: 10, padding: 3 }}>
+              {opts.freighters.map(f => (
+                <option key={f.id} value={f.id}>
+                  {f.name}{f.at_collector ? ' · at collector (loads instantly)' : ' · will burn to your collector first'}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 2, color: '#8aa0b4' }}>
+            DELIVER TO
+            <select value={destId} onChange={(e) => setDestId(e.target.value)}
+              style={{ background: '#0a0e14', color: '#d8e4ee', border: '1px solid #2a3d50', fontFamily: 'inherit', fontSize: 10, padding: 3 }}>
+              {opts.targets.map(t => (
+                <option key={t.body_id} value={t.body_id}>{t.body_name}</option>
+              ))}
+            </select>
+          </label>
+          <button className="mp-btn mp-btn--primary" style={{ fontSize: 9, alignSelf: 'flex-start' }}
+            disabled={busy || !shipId || !destId} onClick={submit}>
+            {busy ? 'Starting…' : 'Start the route'}
+          </button>
+        </>
+      )}
+      {err && <div className="mp-error">{err}</div>}
+    </div>
+  );
 }

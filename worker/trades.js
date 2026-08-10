@@ -157,6 +157,9 @@ function tradeRowToJson(row) {
     },
     offer_pacts: offerPacts,
     request_pacts: requestPacts,
+    // Standing-route flag: the resource numbers above are PER-RUN rates,
+    // not a one-shot shipment. Absent/0 on every legacy row.
+    recurring: Number(row.recurring ?? 0) === 1,
     parent_offer_id: row.parent_offer_id,
     note: row.note,
     created_at_tick: row.created_at_tick,
@@ -228,6 +231,18 @@ async function handlePropose(req, env, { session, params }) {
 
   const note = typeof body.note === 'string' ? body.note.slice(0, NOTE_MAX) : null;
 
+  // Standing agreement flag. The resource numbers on a recurring offer
+  // are PER-RUN rates, so the hold-what-you-offer check above reads as
+  // "can cover at least the first run" — later runs are enforced at
+  // pickup time, where a shortfall ends the whole agreement (Lorne).
+  // Pact riders are one-shot by nature (a treaty signs once); mixing
+  // them with a recurring lane muddles what "cancel" would even mean,
+  // so a recurring offer must be resources-only.
+  const recurring = body.recurring === true || body.recurring === 1;
+  if (recurring && (pactCheck.offerPacts.length + pactCheck.requestPacts.length) > 0) {
+    return err(400, 'bad_request', 'a standing trade route cannot carry treaty riders');
+  }
+
   // Optional parent_offer_id (counter-offer linkage). The /counter endpoint is
   // the supported path; we permit parent here too for clients that prefer it.
   let parentOfferId = null;
@@ -249,19 +264,19 @@ async function handlePropose(req, env, { session, params }) {
         offer_metal, offer_fuel, offer_gold, offer_science,
         request_metal, request_fuel, request_gold, request_science,
         offer_pacts, request_pacts,
-        parent_offer_id, note, created_at_tick, created_at_ms)
+        parent_offer_id, note, recurring, created_at_tick, created_at_ms)
        VALUES (?, ?, ?, ?, 'open',
                ?, ?, ?, ?,
                ?, ?, ?, ?,
                ?, ?,
-               ?, ?, ?, ?)`,
+               ?, ?, ?, ?, ?)`,
     )
     .bind(
       id, gameId, proposer.id, responderId,
       res.offer.metal, res.offer.fuel, res.offer.gold, res.offer.science,
       res.request.metal, res.request.fuel, res.request.gold, res.request.science,
       JSON.stringify(pactCheck.offerPacts), JSON.stringify(pactCheck.requestPacts),
-      parentOfferId, note, tick, nowMs,
+      parentOfferId, note, recurring ? 1 : 0, tick, nowMs,
     )
     .run();
 
@@ -473,6 +488,52 @@ export async function handleAccept(req, env, { session, params }) {
     { sender: proposer.id, recipient: responder.id, prefix: 'offer' },
     { sender: responder.id, recipient: proposer.id, prefix: 'request' },
   ];
+
+  // RECURRING (standing agreement) vs ONE-SHOT (delivery).
+  //
+  // A recurring offer reinterprets the very same resource columns as a
+  // PER-RUN rate instead of a single shipment, and strikes an agreement
+  // whose legs are commissioned when each sender nominates a freighter.
+  // Nothing ships until then — an agreement with no assigned ship is a
+  // signed contract with no truck, which is exactly what it looks like
+  // in the Trades panel.
+  const isRecurring = Number(trade.recurring ?? 0) === 1;
+  if (isRecurring) {
+    const amountsFor = (prefix) => {
+      const a = {};
+      for (const k of RESOURCE_KEYS) {
+        a[k] = Math.max(0, Math.floor(Number(trade[`${prefix}_${k}`] ?? 0)));
+      }
+      return a;
+    };
+    const aAmt = amountsFor('offer');     // proposer -> responder
+    const bAmt = amountsFor('request');   // responder -> proposer
+    stmts.push(
+      env.DB
+        .prepare(
+          `INSERT INTO trade_agreements
+             (id, game_id, faction_a_id, faction_b_id, source_offer_id,
+              a_metal, a_fuel, a_gold, a_science,
+              b_metal, b_fuel, b_gold, b_science,
+              a_tariff_pct, b_tariff_pct,
+              status, created_at_tick, created_at_ms)
+           VALUES (?, ?, ?, ?, ?,
+                   ?, ?, ?, ?,
+                   ?, ?, ?, ?,
+                   ?, ?,
+                   'active', ?, ?)`,
+        )
+        .bind(
+          newId(), gameId, proposer.id, responder.id, tradeId,
+          aAmt.metal, aAmt.fuel, aAmt.gold, aAmt.science,
+          bAmt.metal, bAmt.fuel, bAmt.gold, bAmt.science,
+          // Tariff is receive-side: A's rate is what A pays on what it
+          // RECEIVES, i.e. on B's shipments.
+          Math.round(tariffFor(proposer.id)), Math.round(tariffFor(responder.id)),
+          tick, nowMs,
+        ),
+    );
+  } else {
   for (const leg of legs) {
     const amounts = {};
     let total = 0;
@@ -496,6 +557,7 @@ export async function handleAccept(req, env, { session, params }) {
           Math.round(tariffFor(leg.recipient)), tick,
         ),
     );
+  }
   }
 
   // 3. Insert treaties for each pact, with both factions as signatories.
@@ -736,19 +798,24 @@ async function handleCounter(req, env, { session, params }) {
           offer_metal, offer_fuel, offer_gold, offer_science,
           request_metal, request_fuel, request_gold, request_science,
           offer_pacts, request_pacts,
-          parent_offer_id, note, created_at_tick, created_at_ms)
+          parent_offer_id, note, recurring, created_at_tick, created_at_ms)
          VALUES (?, ?, ?, ?, 'open',
                  ?, ?, ?, ?,
                  ?, ?, ?, ?,
                  ?, ?,
-                 ?, ?, ?, ?)`,
+                 ?, ?, ?, ?, ?)`,
       )
       .bind(
         id, gameId, newProposer.id, newResponderId,
         res.offer.metal, res.offer.fuel, res.offer.gold, res.offer.science,
         res.request.metal, res.request.fuel, res.request.gold, res.request.science,
         JSON.stringify(pactCheck.offerPacts), JSON.stringify(pactCheck.requestPacts),
-        tradeId, note, tick, nowMs,
+        // A counter INHERITS the recurring flag — countering a standing
+        // route haggles the rate, it does not silently convert the deal
+        // to a one-shot (or vice versa). Changing the shape is a new
+        // offer, not a counter.
+        tradeId, note, Number(original.recurring ?? 0),
+        tick, nowMs,
       ),
   ]);
 
@@ -1124,7 +1191,351 @@ async function handleAssignDelivery(req, env, { session, params }) {
   return json({ ok: true, pickup_body_id: pickupBodyId, dest_body_id: destBodyId });
 }
 
+// ============================================================
+// STANDING AGREEMENTS
+//
+// An agreement is the contract; a route is one leg of it actually being
+// flown. The two are separate because the contract exists from the
+// moment it is accepted, while a leg cannot exist until its owner names
+// a freighter — game_trade_routes has required origin/dest bodies, and
+// neither is knowable before a ship and a collector are chosen.
+//
+// So the flow is: accept (agreement appears, both sides see the terms)
+// -> commission (each sender picks a freighter, once) -> it runs until
+// something stops it.
+// ============================================================
+
+/** Shape an agreement for the client, from the caller's point of view.
+ *  `mine`/`theirs` spare the UI from working out whether the caller is
+ *  side A or side B on every single render. */
+function agreementRowToJson(row, callerFactionId, legs) {
+  const iAmA = row.faction_a_id === callerFactionId;
+  const mineKey = iAmA ? 'a' : 'b';
+  const theirsKey = iAmA ? 'b' : 'a';
+  const pick = (k) => ({
+    metal: row[`${k}_metal`], fuel: row[`${k}_fuel`],
+    gold: row[`${k}_gold`], science: row[`${k}_science`],
+  });
+  return {
+    id: row.id,
+    game_id: row.game_id,
+    partner_faction_id: iAmA ? row.faction_b_id : row.faction_a_id,
+    i_send: pick(mineKey),
+    i_receive: pick(theirsKey),
+    // Receive-side skim, so the caller's rate applies to what they get.
+    my_tariff_pct: iAmA ? row.a_tariff_pct : row.b_tariff_pct,
+    status: row.status,
+    ended_reason: row.ended_reason ?? null,
+    ended_at_tick: row.ended_at_tick ?? null,
+    created_at_tick: row.created_at_tick,
+    source_offer_id: row.source_offer_id ?? null,
+    legs: (legs ?? []).map(l => ({
+      id: l.id,
+      sender_faction_id: l.owner_faction_id,
+      ship_id: l.ship_id,
+      origin_body_id: l.origin_body_id,
+      dest_body_id: l.dest_body_id,
+      status: l.status,
+      loops_completed: Number(l.loops_completed ?? 0),
+      mine: l.owner_faction_id === callerFactionId,
+    })),
+  };
+}
+
+/** GET /trade-agreements/:agreementId/options — freighter + destination
+ *  choices for commissioning the caller's leg. Same queries as the
+ *  one-shot delivery-options endpoint, keyed off the agreement's partner
+ *  instead of a delivery row's recipient. */
+async function handleAgreementOptions(_req, env, { session, params }) {
+  const { gameId, agreementId } = params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const caller = await callerFaction(env, gameId, session.user_id);
+  if (!caller) return err(403, 'not_a_faction', 'you do not own a faction in this game');
+
+  const ag = await env.DB
+    .prepare(`SELECT * FROM trade_agreements WHERE id = ? AND game_id = ?`)
+    .bind(agreementId, gameId).first();
+  if (!ag) return err(404, 'not_found', 'agreement not found');
+  if (ag.faction_a_id !== caller.id && ag.faction_b_id !== caller.id) {
+    return err(403, 'not_a_party', 'you are not party to that agreement');
+  }
+  const partnerId = ag.faction_a_id === caller.id ? ag.faction_b_id : ag.faction_a_id;
+
+  const targets = (await env.DB
+    .prepare(
+      `SELECT DISTINCT s.body_id, b.name AS body_name
+         FROM game_settlements s
+         JOIN game_bodies b ON b.id = s.body_id AND b.game_id = s.game_id
+        WHERE s.game_id = ? AND s.owner_faction_id = ?
+          AND s.has_collector = 1 AND s.destroyed_at_tick IS NULL
+          AND b.destroyed_at_tick IS NULL`,
+    )
+    .bind(gameId, partnerId)
+    .all()).results ?? [];
+
+  const freighters = (await env.DB
+    .prepare(
+      `SELECT sh.id, sh.name, sh.parent_body_id
+         FROM game_ships sh
+        WHERE sh.game_id = ? AND sh.owner_faction_id = ?
+          AND sh.ship_class = 'freighter' AND sh.status = 'active'
+          AND NOT EXISTS (
+            SELECT 1 FROM game_trade_routes r
+             WHERE r.ship_id = sh.id AND r.cancelled_at_tick IS NULL)
+          AND NOT EXISTS (
+            SELECT 1 FROM trade_deliveries d
+             WHERE d.ship_id = sh.id AND d.resolved_at_tick IS NULL)
+          AND NOT EXISTS (
+            SELECT 1 FROM game_ship_nodes n
+             WHERE n.ship_id = sh.id AND n.status IN ('committed','in_transit'))`,
+    )
+    .bind(gameId, caller.id)
+    .all()).results ?? [];
+
+  const myCollectors = new Set(
+    ((await env.DB
+      .prepare(
+        `SELECT DISTINCT body_id FROM game_settlements
+          WHERE game_id = ? AND owner_faction_id = ?
+            AND has_collector = 1 AND destroyed_at_tick IS NULL`,
+      )
+      .bind(gameId, caller.id)
+      .all()).results ?? []).map(r => r.body_id),
+  );
+
+  return json({
+    targets,
+    freighters: freighters.map(f => ({
+      id: f.id, name: f.name, body_id: f.parent_body_id,
+      at_collector: myCollectors.has(f.parent_body_id),
+    })),
+  });
+}
+
+async function handleListAgreements(req, env, { url, session, params }) {
+  const { gameId } = params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const caller = await callerFaction(env, gameId, session.user_id);
+  if (!caller) return err(403, 'not_a_faction', 'you do not own a faction in this game');
+
+  const includeEnded = url.searchParams.get('include_ended') === '1';
+  const rows = (await env.DB
+    .prepare(
+      `SELECT * FROM trade_agreements
+        WHERE game_id = ? AND (faction_a_id = ? OR faction_b_id = ?)
+          ${includeEnded ? '' : "AND status = 'active'"}
+        ORDER BY created_at_tick DESC`,
+    )
+    .bind(gameId, caller.id, caller.id)
+    .all()).results ?? [];
+  if (rows.length === 0) return json({ agreements: [] });
+
+  // One query for every leg, then bucketed — N agreements must not mean
+  // N round trips on a panel that polls.
+  const legRows = (await env.DB
+    .prepare(
+      `SELECT id, agreement_id, owner_faction_id, ship_id, origin_body_id,
+              dest_body_id, status, loops_completed
+         FROM game_trade_routes
+        WHERE game_id = ? AND agreement_id IS NOT NULL AND cancelled_at_tick IS NULL`,
+    )
+    .bind(gameId)
+    .all()).results ?? [];
+  const byAgreement = new Map();
+  for (const l of legRows) {
+    if (!byAgreement.has(l.agreement_id)) byAgreement.set(l.agreement_id, []);
+    byAgreement.get(l.agreement_id).push(l);
+  }
+
+  return json({
+    agreements: rows.map(r => agreementRowToJson(r, caller.id, byAgreement.get(r.id))),
+  });
+}
+
+/**
+ * Commission the caller's leg: pin a freighter and start the loop.
+ *
+ * Deliberately reuses the pickup/dest rules from handleAssignDelivery
+ * rather than inventing new ones — same collector requirements, same
+ * "is this freighter busy" checks. A player who has assigned a one-shot
+ * shipment already knows this interaction.
+ */
+async function handleCommissionLeg(req, env, { session, params }) {
+  const { gameId, agreementId } = params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const caller = await callerFaction(env, gameId, session.user_id);
+  if (!caller) return err(403, 'not_a_faction', 'you do not own a faction in this game');
+
+  const body = await readJson(req);
+  if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
+  const shipId = String(body.ship_id ?? '');
+  const destBodyId = String(body.dest_body_id ?? '');
+  if (!shipId) return err(400, 'bad_request', 'ship_id required');
+  if (!destBodyId) return err(400, 'bad_request', 'dest_body_id required');
+
+  const ag = await env.DB
+    .prepare(`SELECT * FROM trade_agreements WHERE id = ? AND game_id = ?`)
+    .bind(agreementId, gameId).first();
+  if (!ag) return err(404, 'not_found', 'agreement not found');
+  if (ag.status !== 'active') return err(409, 'ended', 'that agreement has ended');
+  const iAmA = ag.faction_a_id === caller.id;
+  if (!iAmA && ag.faction_b_id !== caller.id) {
+    return err(403, 'not_a_party', 'you are not party to that agreement');
+  }
+  const partnerId = iAmA ? ag.faction_b_id : ag.faction_a_id;
+
+  // What the caller ships per run. A side that ships nothing has no leg
+  // to commission — it only receives.
+  const k = iAmA ? 'a' : 'b';
+  const perRun = {
+    metal: Number(ag[`${k}_metal`] ?? 0), fuel: Number(ag[`${k}_fuel`] ?? 0),
+    gold: Number(ag[`${k}_gold`] ?? 0), science: Number(ag[`${k}_science`] ?? 0),
+  };
+  if (perRun.metal + perRun.fuel + perRun.gold + perRun.science <= 0) {
+    return err(409, 'nothing_to_ship', 'your side of this agreement ships nothing');
+  }
+
+  const existing = await env.DB
+    .prepare(
+      `SELECT id FROM game_trade_routes
+        WHERE agreement_id = ? AND owner_faction_id = ? AND cancelled_at_tick IS NULL`,
+    )
+    .bind(agreementId, caller.id).first();
+  if (existing) return err(409, 'already_running', 'your leg is already running — cancel it to re-crew');
+
+  const ship = await env.DB
+    .prepare(
+      `SELECT id, owner_faction_id, ship_class, status, parent_body_id
+         FROM game_ships WHERE id = ? AND game_id = ?`,
+    )
+    .bind(shipId, gameId).first();
+  if (!ship) return err(404, 'not_found', 'ship not found');
+  if (ship.owner_faction_id !== caller.id) return err(403, 'not_owner', 'not your ship');
+  if (ship.ship_class !== 'freighter') return err(409, 'wrong_class', 'only freighters can haul trade');
+  if (ship.status !== 'active') return err(409, 'ship_dead', 'that freighter is gone');
+
+  const busyRoute = await env.DB
+    .prepare('SELECT 1 AS x FROM game_trade_routes WHERE ship_id = ? AND cancelled_at_tick IS NULL LIMIT 1')
+    .bind(shipId).first();
+  if (busyRoute) return err(409, 'on_route', 'that freighter is already running a route');
+  const busyDelivery = await env.DB
+    .prepare('SELECT 1 AS x FROM trade_deliveries WHERE ship_id = ? AND resolved_at_tick IS NULL LIMIT 1')
+    .bind(shipId).first();
+  if (busyDelivery) return err(409, 'on_delivery', 'that freighter is hauling a one-off shipment');
+  const inFlight = await env.DB
+    .prepare("SELECT 1 AS x FROM game_ship_nodes WHERE ship_id = ? AND status IN ('committed','in_transit') LIMIT 1")
+    .bind(shipId).first();
+  if (inFlight) return err(409, 'in_transit', 'that freighter is mid-burn — wait for it to arrive');
+
+  // Destination must be a live collector belonging to the PARTNER.
+  const destOk = await env.DB
+    .prepare(
+      `SELECT 1 AS x FROM game_settlements
+        WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+          AND has_collector = 1 AND destroyed_at_tick IS NULL LIMIT 1`,
+    )
+    .bind(gameId, destBodyId, partnerId).first();
+  if (!destOk) return err(409, 'no_dest_collector', 'your partner has no collector there');
+
+  // Origin: prefer where the freighter already sits, else the capital.
+  let originBodyId = null;
+  const hereOk = await env.DB
+    .prepare(
+      `SELECT 1 AS x FROM game_settlements
+        WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+          AND has_collector = 1 AND destroyed_at_tick IS NULL LIMIT 1`,
+    )
+    .bind(gameId, ship.parent_body_id, caller.id).first();
+  if (hereOk) {
+    originBodyId = ship.parent_body_id;
+  } else {
+    const anyCollector = await env.DB
+      .prepare(
+        `SELECT s.body_id, CASE WHEN s.body_id = ? THEN 0 ELSE 1 END AS pref
+           FROM game_settlements s
+          WHERE s.game_id = ? AND s.owner_faction_id = ?
+            AND s.has_collector = 1 AND s.destroyed_at_tick IS NULL
+          ORDER BY pref LIMIT 1`,
+      )
+      .bind(caller.capital_body_id, gameId, caller.id).first();
+    if (!anyCollector) return err(409, 'no_pickup_collector', 'you have no collector to load from');
+    originBodyId = anyCollector.body_id;
+  }
+
+  // status 'returning' means "head to origin and load" — the same entry
+  // state a fresh self-haul route uses, so the freighter starts by
+  // going to collect rather than by pretending it is already loaded.
+  const routeId = newId();
+  await env.DB
+    .prepare(
+      `INSERT INTO game_trade_routes
+         (id, game_id, owner_faction_id, ship_id, origin_body_id, dest_body_id,
+          status, counterparty_faction_id, agreement_id, tariff_pct,
+          per_run_metal, per_run_fuel, per_run_gold, per_run_science,
+          created_at_tick)
+       VALUES (?, ?, ?, ?, ?, ?, 'returning', ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      routeId, gameId, caller.id, shipId, originBodyId, destBodyId,
+      partnerId, agreementId,
+      // The tariff on this leg is the RECIPIENT's rate — the partner
+      // pays it on what they receive from us.
+      Math.round(Number(iAmA ? ag.b_tariff_pct : ag.a_tariff_pct) || 0),
+      perRun.metal, perRun.fuel, perRun.gold, perRun.science,
+      (await loadGame(env, gameId))?.current_tick ?? 0,
+    )
+    .run();
+
+  return json({ ok: true, route_id: routeId, origin_body_id: originBodyId, dest_body_id: destBodyId });
+}
+
+/** Either party may call the whole deal off; both legs stop. */
+async function handleCancelAgreement(_req, env, { session, params }) {
+  const { gameId, agreementId } = params;
+  if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
+  const caller = await callerFaction(env, gameId, session.user_id);
+  if (!caller) return err(403, 'not_a_faction', 'you do not own a faction in this game');
+
+  const ag = await env.DB
+    .prepare(`SELECT * FROM trade_agreements WHERE id = ? AND game_id = ?`)
+    .bind(agreementId, gameId).first();
+  if (!ag) return err(404, 'not_found', 'agreement not found');
+  if (ag.faction_a_id !== caller.id && ag.faction_b_id !== caller.id) {
+    return err(403, 'not_a_party', 'you are not party to that agreement');
+  }
+  if (ag.status !== 'active') return json({ ok: true, already_ended: true });
+
+  const tick = (await loadGame(env, gameId))?.current_tick ?? 0;
+  const { endAgreement } = await import('./tradeAgreements.js');
+  await endAgreement(env, gameId, ag, 'cancelled', tick, { byFactionId: caller.id });
+  return json({ ok: true });
+}
+
 export const routes = [
+  {
+    method: 'GET',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/trade-agreements$/,
+    auth: 'required',
+    handle: handleListAgreements,
+  },
+  {
+    method: 'GET',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/trade-agreements\/(?<agreementId>[^/]+)\/options$/,
+    auth: 'required',
+    handle: handleAgreementOptions,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/trade-agreements\/(?<agreementId>[^/]+)\/commission$/,
+    auth: 'required',
+    handle: handleCommissionLeg,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/games\/(?<gameId>[^/]+)\/trade-agreements\/(?<agreementId>[^/]+)\/cancel$/,
+    auth: 'required',
+    handle: handleCancelAgreement,
+  },
   {
     method: 'GET',
     pattern: /^\/api\/games\/(?<gameId>[^/]+)\/trades\/(?<tradeId>[^/]+)\/delivery-options$/,

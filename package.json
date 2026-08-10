@@ -24,6 +24,7 @@
     "sim:herald": "node sim/heraldShapes.mjs",
     "sim:colors": "node sim/colorClash.mjs",
     "sim:emblems": "node sim/emblemClash.mjs",
+    "sim:trade": "node sim/tradeRoutes.mjs",
     "sim:senate": "node sim/senateTerms.mjs"
   },
   "eslintConfig": {

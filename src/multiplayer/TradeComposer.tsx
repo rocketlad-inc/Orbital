@@ -88,6 +88,10 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
   const [note, setNote] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Standing route: same numbers, different meaning — per run instead of
+  // once. A counter inherits the original's shape (the server enforces
+  // this too: countering haggles the rate, it doesn't convert the deal).
+  const [recurring, setRecurring] = useState<boolean>(isCounter ? !!original!.recurring : false);
 
   useEffect(() => {
     // Reset if mode flips
@@ -137,11 +141,17 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
       return;
     }
     setSubmitting(true);
+    if (recurring && (offerPacts.length + requestPacts.length) > 0) {
+      setError('A standing route carries goods only — remove the treaty riders or make it a one-time trade.');
+      setSubmitting(false);
+      return;
+    }
     const payload = {
       offer, request,
       offer_pacts: offerPacts,
       request_pacts: requestPacts,
       note: note.trim() || undefined,
+      recurring: recurring || undefined,
     };
     const res = isCounter
       ? await api.counter(original!.id, payload)
@@ -223,6 +233,42 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
             <div style={{ marginBottom: 12, fontSize: 10, color: '#b8c8d6' }}>
               Replying to{' '}
               <span style={{ color: responderColor, fontWeight: 600 }}>{responderName}</span>
+            </div>
+          )}
+
+          {/* One-time vs standing. A segmented pair, not a checkbox — the
+              choice REINTERPRETS every number below it (shipment vs
+              per-run rate), which is too big a semantic flip to hang off
+              a small square nobody reads. */}
+          <div style={{ display: 'flex', gap: 4, marginBottom: 10 }}>
+            {([['one', 'One-time trade', false], ['route', 'Standing route', true]] as const).map(([key, label, val]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setRecurring(val)}
+                disabled={isCounter}
+                title={isCounter ? 'A counter keeps the original\'s shape — haggle the rate, not the kind' : undefined}
+                style={{
+                  flex: 1, padding: '5px 0', fontSize: 10, cursor: isCounter ? 'default' : 'pointer',
+                  letterSpacing: '0.08em', textTransform: 'uppercase',
+                  background: recurring === val ? 'rgba(110,231,183,0.12)' : 'transparent',
+                  color: recurring === val ? '#6ee7b7' : '#b8c8d6',
+                  border: `1px solid ${recurring === val ? '#6ee7b7' : '#2a3d50'}`,
+                  borderRadius: 3, opacity: isCounter && recurring !== val ? 0.35 : 1,
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {recurring && (
+            <div style={{
+              fontSize: 10, color: '#b8c8d6', marginBottom: 10, lineHeight: 1.5,
+              borderLeft: '2px solid #6ee7b7', paddingLeft: 8,
+            }}>
+              Amounts below ship <b style={{ color: '#6ee7b7' }}>every run</b>, hauled by a freighter
+              each side pins to the lane. It repeats until either of you cancels — or war,
+              a lost freighter, or an empty treasury ends it. Goods only; no treaty riders.
             </div>
           )}
 

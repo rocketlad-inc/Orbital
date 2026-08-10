@@ -1632,8 +1632,17 @@ export class Room {
       const CARGO_CAP = 500;
       const routes = (await this.env.DB
         .prepare(
+          // The agreement columns MUST be selected here: the standing-
+          // route branches gate on r.counterparty_faction_id, and an
+          // unselected column reads as undefined — which is falsy, which
+          // silently turns every agreement leg back into a self-haul
+          // route. sim/tradeRoutes.mjs caught exactly that on its first
+          // run (loops=0 while everything else "worked").
           `SELECT id, owner_faction_id, ship_id, origin_body_id, dest_body_id, status,
-                  cargo_fuel, cargo_metal, cargo_gold, cargo_science
+                  cargo_fuel, cargo_metal, cargo_gold, cargo_science,
+                  counterparty_faction_id, agreement_id, tariff_pct,
+                  per_run_metal, per_run_fuel, per_run_gold, per_run_science,
+                  loops_completed
              FROM game_trade_routes
             WHERE game_id = ? AND cancelled_at_tick IS NULL`,
         )
@@ -1735,6 +1744,27 @@ export class Room {
         // scanning it. Piracy step (below) handles cargo capture if the
         // freighter died this tick.
         if (!ship || ship.status !== 'active') {
+          // An agreement leg's death ends the WHOLE DEAL, both legs,
+          // with notifications (Lorne: "trade ships killed in conflict"
+          // is one of the two things that break a standing route). A
+          // plain self-haul route just cancels quietly as before.
+          if (r.agreement_id) {
+            try {
+              const ta = await import('./tradeAgreements.js');
+              const ag = await this.env.DB
+                .prepare('SELECT * FROM trade_agreements WHERE id = ?')
+                .bind(r.agreement_id).first();
+              if (ag) {
+                await ta.endAgreement(this.env, gameId, ag, 'ship_lost', tick, {
+                  byFactionId: r.owner_faction_id,
+                  detail: 'The freighter flying one of the legs was destroyed.',
+                });
+                continue;   // endAgreement cancelled every leg already
+              }
+            } catch (e) {
+              console.error('trade route: ship-loss agreement end failed', e, { routeId: r.id });
+            }
+          }
           await this.env.DB
             .prepare('UPDATE game_trade_routes SET cancelled_at_tick = ? WHERE id = ?')
             .bind(tick, r.id).run();
@@ -1927,6 +1957,71 @@ export class Room {
           continue;
         }
 
+        // ---- CROSS-FACTION PICKUP (standing agreement leg) ----------
+        //
+        // A self-haul route vacuums whatever its settlements happen to
+        // have. An agreement leg ships a CONTRACTED amount, drawn from
+        // the sender's pool — the same place a one-shot delivery draws
+        // from, so a standing deal and a single shipment cost the sender
+        // the same way.
+        //
+        // Cannot cover it? The whole agreement ends, both legs, right
+        // now (Lorne). Not a skipped run: a partner who cannot pay this
+        // cycle is a partner you should stop shipping to, and silently
+        // idling would leave the other side donating cargo indefinitely.
+        if (r.counterparty_faction_id && here === r.origin_body_id && cargoTotal < 1) {
+          const need = {
+            metal:   Number(r.per_run_metal   ?? 0),
+            fuel:    Number(r.per_run_fuel    ?? 0),
+            gold:    Number(r.per_run_gold    ?? 0),
+            science: Number(r.per_run_science ?? 0),
+          };
+          const pool = await this.env.DB
+            .prepare('SELECT metal, fuel, gold, science FROM game_factions WHERE id = ?')
+            .bind(r.owner_faction_id).first();
+          const short = !pool
+            || Number(pool.metal   ?? 0) < need.metal
+            || Number(pool.fuel    ?? 0) < need.fuel
+            || Number(pool.gold    ?? 0) < need.gold
+            || Number(pool.science ?? 0) < need.science;
+          if (short) {
+            try {
+              const ta = await import('./tradeAgreements.js');
+              const ag = await this.env.DB
+                .prepare('SELECT * FROM trade_agreements WHERE id = ?')
+                .bind(r.agreement_id).first();
+              if (ag) {
+                await ta.endAgreement(this.env, gameId, ag, 'starved', tick, {
+                  byFactionId: r.owner_faction_id,
+                  detail: 'A scheduled shipment could not be covered from the sender\'s stores.',
+                });
+              }
+            } catch (e) {
+              console.error('trade route: starve handling failed', e, { routeId: r.id });
+            }
+            continue;
+          }
+          await this.env.DB
+            .prepare(
+              `UPDATE game_factions
+                  SET metal = metal - ?, fuel = fuel - ?, gold = gold - ?, science = science - ?
+                WHERE id = ?`,
+            )
+            .bind(need.metal, need.fuel, need.gold, need.science, r.owner_faction_id)
+            .run();
+          await this.env.DB
+            .prepare(
+              `UPDATE game_trade_routes
+                  SET cargo_metal = ?, cargo_fuel = ?, cargo_gold = ?, cargo_science = ?,
+                      status = 'outbound'
+                WHERE id = ?`,
+            )
+            .bind(need.metal, need.fuel, need.gold, need.science, r.id)
+            .run();
+          await planLeg(r.dest_body_id);
+          continue;
+        }
+
         if (here === r.origin_body_id && cargoTotal < 1) {
           // PICKUP: vacuum from settlement stockpiles at origin.
           const stocks = (await this.env.DB
@@ -1975,6 +2070,94 @@ export class Room {
             .bind(cf, cm, cg, csci, r.id)
             .run();
           await planLeg(r.dest_body_id);
+          continue;
+        }
+
+        // ---- CROSS-FACTION DELIVERY (standing agreement leg) --------
+        //
+        // Credits the PARTNER, not the owner, minus the tariff that was
+        // snapshotted when the deal was struck. Then turns around and
+        // does it again — that repetition is the whole feature.
+        if (r.counterparty_faction_id && here === r.dest_body_id) {
+          const skim = Math.max(0, Math.min(100, Number(r.tariff_pct ?? 0))) / 100;
+          const net = {
+            metal:   Math.floor(cargoMetal   * (1 - skim)),
+            fuel:    Math.floor(cargoFuel    * (1 - skim)),
+            gold:    Math.floor(cargoGold    * (1 - skim)),
+            science: Math.floor(cargoScience * (1 - skim)),
+          };
+          const shipped = cargoMetal + cargoFuel + cargoGold + cargoScience;
+          if (shipped > 0) {
+            await this.env.DB
+              .prepare(
+                `UPDATE game_factions
+                    SET metal = metal + ?, fuel = fuel + ?, gold = gold + ?, science = science + ?
+                  WHERE id = ?`,
+              )
+              .bind(net.metal, net.fuel, net.gold, net.science, r.counterparty_faction_id)
+              .run();
+            // Delivered science is INCOME this tick, not just bank —
+            // the research drain clamps spend to income, and without
+            // this a trade-fed faction banks science forever without
+            // advancing a tech. Same fix the self-haul branch carries.
+            if (net.science > 0) {
+              scienceIncomeByFaction.set(
+                r.counterparty_faction_id,
+                (scienceIncomeByFaction.get(r.counterparty_faction_id) ?? 0) + net.science,
+              );
+            }
+          }
+          const loops = Number(r.loops_completed ?? 0) + 1;
+          await this.env.DB
+            .prepare(
+              `UPDATE game_trade_routes
+                  SET cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0,
+                      status = 'returning', loops_completed = ?
+                WHERE id = ?`,
+            )
+            .bind(loops, r.id)
+            .run();
+
+          // A LINE IN THE LOG ON EVERY LOOP (Lorne). The point is that a
+          // standing route is automation, and automation that produces
+          // resources invisibly is indistinguishable from a bug — or
+          // from free money nobody is accounting for. Visible to the two
+          // parties ONLY: who trades with whom, and how much, is exactly
+          // the commercial intelligence the Sensors track exists to sell.
+          try {
+            await this.env.DB
+              .prepare(
+                `INSERT INTO chronicle_entries
+                   (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
+                 VALUES (?, ?, ?, 'trade_route_run', ?, ?, ?, ?)`,
+              )
+              .bind(
+                // Deterministic id (route + tick) — the same convention
+                // as fleet_flag_lost above. crypto.randomUUID would work
+                // too, but a stable id means a retried tick writes the
+                // SAME row id and the second insert fails instead of
+                // logging the loop twice.
+                `c_trr_${r.id.slice(-10)}_${tick}`, gameId, tick, r.owner_faction_id,
+                JSON.stringify({
+                  agreement_id: r.agreement_id,
+                  route_id: r.id,
+                  loop: loops,
+                  sender_faction_id: r.owner_faction_id,
+                  recipient_faction_id: r.counterparty_faction_id,
+                  delivered: net,
+                  tariff_pct: Number(r.tariff_pct ?? 0),
+                  // Gross vs net so the skim is legible rather than
+                  // looking like the numbers simply don't add up.
+                  gross: { metal: cargoMetal, fuel: cargoFuel, gold: cargoGold, science: cargoScience },
+                }),
+                JSON.stringify([r.owner_faction_id, r.counterparty_faction_id]),
+                Date.now(),
+              )
+              .run();
+          } catch (e) {
+            console.error('trade route: run log failed', e, { routeId: r.id });
+          }
+          await planLeg(r.origin_body_id);
           continue;
         }
 
@@ -3140,6 +3323,44 @@ export class Room {
           }
         } catch (e) { console.error('build-cancel on settlement loss failed', e); }
       }
+    }
+
+    // 3.41 WAR BREAKS STANDING TRADE (Lorne). "Players go to war" has no
+    // formal declaration in this game — no war flag, only pacts and
+    // their absence — so the honest signal is the one a player would
+    // recognise as war: shots actually exchanged between the pair this
+    // tick. Both damage maps are fully accrued by this point (ships in
+    // hpDeltas, settlements in settlementDamage), and both record WHO
+    // dealt every point, so the pairs fall straight out — no new state,
+    // no separate bookkeeping to drift out of sync with combat itself.
+    //
+    // Runs even when no agreements exist: the query inside no-ops on an
+    // empty table, and gating it on a preflight count would be a second
+    // thing to keep correct.
+    try {
+      const shipOwner = new Map(allShips.map(s => [s.id, s.owner_faction_id]));
+      const settlementOwner = new Map(livingSettlements.map(s => [s.id, s.owner_faction_id]));
+      const warPairs = [];
+      for (const [targetId, entry] of hpDeltas) {
+        const victimFid = shipOwner.get(targetId);
+        if (!victimFid) continue;
+        for (const attackerFid of entry.byFaction.keys()) {
+          if (attackerFid && attackerFid !== victimFid) warPairs.push([attackerFid, victimFid]);
+        }
+      }
+      for (const [sid, entry] of settlementDamage) {
+        const victimFid = settlementOwner.get(sid);
+        if (!victimFid) continue;
+        for (const attackerFid of entry.byFaction.keys()) {
+          if (attackerFid && attackerFid !== victimFid) warPairs.push([attackerFid, victimFid]);
+        }
+      }
+      if (warPairs.length > 0) {
+        const ta = await import('./tradeAgreements.js');
+        await ta.endAgreementsForCombat(this.env, gameId, warPairs, tick);
+      }
+    } catch (e) {
+      console.error('war-breaks-trade check failed', e);
     }
 
     // 3.42 Orbital shield regen. Must run AFTER §3.4 above, which is

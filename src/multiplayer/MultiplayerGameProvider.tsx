@@ -818,11 +818,18 @@ function classifyChronicleEvent(kind: string): { category: LogCategory; level: L
     // rules change. These were falling through to the default.
     case 'trade_accepted':
     case 'trade_delivered':
+    case 'trade_route_run':
     case 'treaty_signed':
     case 'senate_vote':
     case 'senate_term':
     case 'victory':
       return { category: 'SYSTEM', level: 'INFO' };
+    // A standing route dying is a WARN, not an INFO: every reason it can
+    // end (war, piracy, an empty treasury, a partner pulling out) is
+    // something the affected player wants to notice, and one of them —
+    // starvation — is about to repeat for every deal they still have.
+    case 'trade_agreement_ended':
+      return { category: 'THREAT', level: 'WARN' };
     default:
       return { category: 'SIM', level: 'INFO' };
   }
@@ -1414,6 +1421,33 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         const tech = (parsed.tech_id as string) ?? 'research';
         const lvl = parsed.level != null ? ` L${parsed.level}` : '';
         return `${t}  ${who} completed ${tech}${lvl}`;
+      }
+
+      if (ev.kind === 'trade_route_run') {
+        // One line per completed loop (Lorne). The point is auditability:
+        // a standing route is automation, and resources appearing from
+        // automation with no paper trail read as either a bug or free
+        // money. Server-side visibility already scopes this to the two
+        // parties, so writing amounts here leaks nothing to rivals.
+        const bits: string[] = [];
+        const d = (parsed.delivered ?? {}) as Record<string, number>;
+        for (const [k, label] of [['metal', 'M'], ['fuel', 'F'], ['gold', 'C'], ['science', 'S']] as const) {
+          const v = Number(d[k] ?? 0);
+          if (v > 0) bits.push(`${Math.round(v)}${label}`);
+        }
+        const from = nameOfFaction(parsed.sender_faction_id as string | null, undefined);
+        const to = nameOfFaction(parsed.recipient_faction_id as string | null, undefined);
+        const loop = Number(parsed.loop ?? 0);
+        const tariff = Number(parsed.tariff_pct ?? 0);
+        return `${t}  ⟳ Trade route: ${from} → ${to} delivered ${bits.length ? bits.join(' ') : 'nothing'}`
+          + `${tariff > 0 ? ` (−${tariff}% tariff)` : ''} — run #${loop}`;
+      }
+
+      if (ev.kind === 'trade_agreement_ended') {
+        const a = nameOfFaction(parsed.faction_a_id as string | null, parsed.faction_a_name as string | undefined);
+        const b = nameOfFaction(parsed.faction_b_id as string | null, parsed.faction_b_name as string | undefined);
+        const why = (parsed.reason_text as string) ?? 'ended';
+        return `${t}  ⏹ Standing trade between ${a} and ${b} ${why}`;
       }
 
       if (ev.kind === 'trade_delivered') {

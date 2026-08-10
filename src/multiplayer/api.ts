@@ -392,6 +392,9 @@ export type TradeOffer = {
    *  teleport on accept — each giving side ships its goods by freighter,
    *  collector to collector. See TradeDelivery for the lifecycle. */
   deliveries?: TradeDelivery[];
+  /** Standing-route offer: amounts are per-run rates; accept strikes a
+   *  TradeAgreement instead of one-shot deliveries. */
+  recurring?: boolean;
 };
 
 /** One shipping leg of an accepted trade.
@@ -434,6 +437,38 @@ export type ProposeTradeBody = {
   offer_pacts?: PactKind[];
   request_pacts?: PactKind[];
   note?: string;
+  /** Standing trade route: the resource amounts become PER-RUN rates and
+   *  accepting strikes a trade_agreement instead of one-shot deliveries.
+   *  Resources only — the server rejects recurring offers with pacts. */
+  recurring?: boolean;
+};
+
+/** A standing trade agreement, shaped from the CALLER's side (the server
+ *  resolves who is A and who is B so the client never has to). */
+export type TradeAgreement = {
+  id: string;
+  game_id: string;
+  partner_faction_id: string;
+  i_send: ResourceBundle;
+  i_receive: ResourceBundle;
+  /** Receive-side tariff snapshotted when the deal was struck. */
+  my_tariff_pct: number;
+  status: 'active' | 'ended';
+  ended_reason: 'cancelled' | 'starved' | 'war' | 'ship_lost' | 'eliminated' | null;
+  ended_at_tick: number | null;
+  created_at_tick: number;
+  source_offer_id: string | null;
+  legs: Array<{
+    id: string;
+    sender_faction_id: string;
+    ship_id: string | null;
+    origin_body_id: string;
+    dest_body_id: string;
+    status: string;
+    loops_completed: number;
+    /** True when the caller owns this leg (and can commission it). */
+    mine: boolean;
+  }>;
 };
 
 export function emptyBundle(): ResourceBundle {
@@ -488,6 +523,29 @@ export function tradesApi(gameId: string) {
     },
     listPacts() {
       return apiFetch<{ pacts: Pact[]; caller_faction_id: string }>(`/api/games/${gameId}/pacts`);
+    },
+    agreementOptions(agreementId: string) {
+      return apiFetch<{ targets: { body_id: string; body_name: string }[];
+                        freighters: { id: string; name: string; body_id: string; at_collector: boolean }[] }>(
+        `/api/games/${gameId}/trade-agreements/${agreementId}/options`,
+      );
+    },
+    listAgreements(includeEnded = false) {
+      return apiFetch<{ agreements: TradeAgreement[] }>(
+        `/api/games/${gameId}/trade-agreements${includeEnded ? '?include_ended=1' : ''}`,
+      );
+    },
+    commissionLeg(agreementId: string, shipId: string, destBodyId: string) {
+      return apiFetch<{ ok: boolean; route_id: string; origin_body_id: string; dest_body_id: string }>(
+        `/api/games/${gameId}/trade-agreements/${agreementId}/commission`,
+        { method: 'POST', body: JSON.stringify({ ship_id: shipId, dest_body_id: destBodyId }) },
+      );
+    },
+    cancelAgreement(agreementId: string) {
+      return apiFetch<{ ok: boolean }>(
+        `/api/games/${gameId}/trade-agreements/${agreementId}/cancel`,
+        { method: 'POST' },
+      );
     },
     breakTreaty(treatyId: string) {
       return apiFetch<{ ok: true; treaty: { id: string; status: 'broken' } }>(
