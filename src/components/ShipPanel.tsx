@@ -23,7 +23,7 @@ import { EditableName } from './EditableName';
 import { ShipIcon } from './ShipIcons';
 import { DEFAULT_ENGINE_G } from '../physics/torchTransfer';
 import { planExploreTour, type ExploreScope } from '../game/autoExplore';
-import { canHostCity, canHostStation, suggestSettlementName } from '../game/settlements';
+import { canHostCity, canHostStation, isRawWorld, suggestSettlementName } from '../game/settlements';
 import { useFeatureGate } from '../hooks/useFeatureGate';
 import {
   BINARY_SYSTEM_BODY_IDS,
@@ -288,7 +288,10 @@ export const ShipPanel: React.FC = () => {
   const stationHere = !!colonyBody
     && gameState.settlements.some(s => s.bodyId === colonyBody.id && s.type === 'station');
   const stationLock = deployGate.lockReason('settlement.station');
-  const canDeployCity = !!colonyBody && canHostCity(colonyBody) && !cityHere;
+  // Raw worlds take stations only (the terraforming hard gate) — the
+  // city option simply isn't offered, so a colony ship arriving at a
+  // raw world "deploys a station instead" with zero extra UI.
+  const canDeployCity = !!colonyBody && canHostCity(colonyBody) && !cityHere && !isRawWorld(colonyBody);
   const canDeployStation = !!colonyBody && canHostStation(colonyBody) && !stationHere && !stationLock;
   const deployTypes: Array<'city' | 'station'> = [
     ...(canDeployCity ? ['city' as const] : []),

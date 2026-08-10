@@ -316,6 +316,15 @@ export function canHostCity(body: Body): boolean {
   return body.type === 'terrestrial' || body.type === 'moon' || body.type === 'dwarf';
 }
 
+/** THE HARD GATE (DESIGN-terraforming, MP only). A raw world hosts
+ *  stations only — cities require terraforming first. Strict `=== null`
+ *  on purpose: the MP payload always carries terraformedAtTick (null =
+ *  raw), while SP leaves it undefined, so SP bodies are never "raw" and
+ *  SP behavior is untouched. */
+export function isRawWorld(body: Body): boolean {
+  return body.terraformedAtTick === null;
+}
+
 /** Stations can orbit anything — including Sol, which is the
  *  foundation requirement for the Dyson Sphere megaproject (see
  *  src/game/dysonSphere.ts). Stations at Sol get a higher orbit

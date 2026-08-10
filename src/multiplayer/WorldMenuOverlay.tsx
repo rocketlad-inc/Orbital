@@ -25,7 +25,7 @@ import { useFeatureGate } from '../hooks/useFeatureGate';
 import { BUILDING_FEATURE } from '../game/researchUnlocks';
 import { BUILDABLE_CLASSES, getShipClass } from '../game/shipClasses';
 import { RESOURCE_LETTER_COLORS } from '../game/resourceColors';
-import { shipyardSlotsAtBody, canHostCity, canHostStation, suggestSettlementName, BUILDING_DEFS } from '../game/settlements';
+import { shipyardSlotsAtBody, canHostCity, canHostStation, isRawWorld, suggestSettlementName, BUILDING_DEFS } from '../game/settlements';
 import { EditableName } from '../components/EditableName';
 import { RushControl } from '../components/BuildPanel';
 import { humanizeMpError } from './errorMessages';
@@ -481,22 +481,29 @@ export const WorldMenuOverlay: React.FC = () => {
   const foundBtn = (type: SettlementType) => {
     const isCity = type === 'city';
     const own = !!(myCity || myStation);
+    // THE HARD GATE (DESIGN-terraforming): raw worlds host stations
+    // only. The city button stays VISIBLE but disabled with the reason —
+    // hiding it would leave players guessing why this world won't take
+    // a city while the next one will.
+    const raw = isCity && !!body && isRawWorld(body);
     // NOT gated by isMine: founding is the WAY you take ownership of an
     // unclaimed body. The old check kept the button disabled on every
     // unowned body (ownerFactionId === null → isMine === false), which
     // was the "have a colony ship in orbit but Build Station is dead"
     // bug. The colony ship / stationLock / cost checks below are the
     // real gates — mirrors BodyInspector's showCityDeploy/showStationDeploy.
-    const enabled = !(isCity ? false : !!stationLock) && (isCity
+    const enabled = !raw && !(isCity ? false : !!stationLock) && (isCity
       ? !!colonyShipHere
       : (!!colonyShipHere || (own && canAffordStation)));
     const sub = isCity
-      ? (colonyShipHere ? 'consumes colony ship' : 'needs colony ship in orbit')
+      ? (raw ? 'raw world — terraform first'
+        : colonyShipHere ? 'consumes colony ship' : 'needs colony ship in orbit')
       : (stationLock ? stationLock.text
         : colonyShipHere ? 'consumes colony ship'
         : own ? '30M · 20C' : 'needs colony ship in orbit');
     const title = isCity
-      ? (colonyShipHere ? `Found a city — consumes ${colonyShipHere.name}` : 'Requires a Colony Ship in orbit (consumed)')
+      ? (raw ? 'Raw world — run a terraform supply route here first. Stations can be built now.'
+        : colonyShipHere ? `Found a city — consumes ${colonyShipHere.name}` : 'Requires a Colony Ship in orbit (consumed)')
       : (stationLock ? `${stationLock.label} — ${stationLock.text}`
         : colonyShipHere ? `Launch a station — consumes ${colonyShipHere.name}`
         : own ? (canAffordStation ? 'Built from orbit: 30M 20C' : 'Need 30M 20C to build from orbit')

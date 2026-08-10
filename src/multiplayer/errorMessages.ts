@@ -125,6 +125,9 @@ export function humanizeMpError(
     case 'no_surface':
       return 'A city cannot be deployed on this body type — stars, gas giants and ice giants have no surface.';
 
+    case 'not_terraformed':
+      return 'This world is still raw — cities need a terraformed world. Run a freighter supply route here to terraform it, or deploy a Station now.';
+
     case 'no_slots':
       // Shipyards are STATION_BUILDINGS, so "build a Shipyard" is not
       // actionable from a city — the buildings strip there only offers

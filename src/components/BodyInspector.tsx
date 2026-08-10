@@ -8,7 +8,7 @@ import { BuildPanel } from './BuildPanel';
 import { bodyProductionRates } from '../game/economy';
 import { getBodyFlavor } from '../game/bodyFlavor';
 import {
-  canHostCity, canHostStation, SETTLEMENT_DEFS, settlementYield, suggestSettlementName,
+  canHostCity, canHostStation, isRawWorld, SETTLEMENT_DEFS, settlementYield, suggestSettlementName,
   COLLECTOR_COST,
   BUILDING_DEFS, buildingLevel, buildingCostForNextLevel, buildingTimeForNextLevel,
 } from '../game/settlements';
@@ -829,7 +829,9 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
   // and the DEPLOY button should not show — you can't found a second.
   const cityHere = gameState.settlements.some(s => s.bodyId === bodyId && s.type === 'city');
   const stationHere = gameState.settlements.some(s => s.bodyId === bodyId && s.type === 'station');
-  const cityAllowed = canHostCity(body) && !cityHere;
+  // isRawWorld is the MP terraforming hard gate; it's always false in
+  // SP (field undefined there), so this line is inert outside MP.
+  const cityAllowed = canHostCity(body) && !cityHere && !isRawWorld(body);
   const stationAllowed = canHostStation(body) && !stationHere;
   // Per-panel deploy visibility: the cardinal layout renders a CITY
   // section and a STATION section, so each only offers its own deploy.

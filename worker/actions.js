@@ -853,7 +853,7 @@ async function handleDeploySettlement(req, env, ctx) {
   }
 
   const bodyRow = await env.DB
-    .prepare('SELECT id, name, type, radius, owner_faction_id FROM game_bodies WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL')
+    .prepare('SELECT id, name, type, radius, owner_faction_id, terraformed_at_tick FROM game_bodies WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL')
     .bind(bodyId, gameId)
     .first();
   if (!bodyRow) return err(404, 'not_found', 'body not found');
@@ -861,6 +861,15 @@ async function handleDeploySettlement(req, env, ctx) {
   // Surface settlements require a landable surface — no gas giants or the star.
   if (type === 'city' && (bodyRow.type === 'star' || bodyRow.type === 'gas-giant' || bodyRow.type === 'ice-giant')) {
     return err(409, 'no_surface', 'cannot found a city on this body type');
+  }
+
+  // THE HARD GATE (DESIGN-terraforming): cities live on terraformed
+  // worlds only. No soft fallback, no stunted raw-world city — a colony
+  // ship arriving at a raw world deploys a station instead (the client
+  // pre-selects it; this 409 is the backstop for stale/forged clients).
+  if (type === 'city' && bodyRow.terraformed_at_tick == null) {
+    return err(409, 'not_terraformed',
+      'raw world — terraform it before founding a city (deploy a station instead)');
   }
 
   // One city + one station per body — enforce server-side (the client
