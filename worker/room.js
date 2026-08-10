@@ -3552,6 +3552,7 @@ export class Room {
       .prepare(
         `SELECT s.id, s.owner_faction_id AS fid, s.body_id, s.type, s.population,
                 s.last_growth_tick, s.has_collector, s.buildings_json,
+                b.terraformed_at_tick,
                 b.yield_metal, b.yield_fuel, b.yield_gold, b.yield_science
            FROM game_settlements s
            JOIN game_bodies b ON b.id = s.body_id
@@ -3702,9 +3703,11 @@ export class Room {
         // pre-pass above. A city's collector covers any station at the
         // same body, and vice versa.
         const gk = groupKey(s);
-        const groupCollector = groupHasCollector.get(gk) === true;
-        const toPoolFraction  = groupCollector ? 1.0 : NO_COLLECTOR_POOL_FRACTION;
-        const toStockFraction = groupCollector ? 0.0 : NO_COLLECTOR_STOCK_FRACTION;
+        // Terraformed world => 100% to pool. Raw => 10/90 split. The
+        // body row rides in on the settlement join, so no extra query.
+        const bodyTerraformed = s.terraformed_at_tick != null;
+        const toPoolFraction  = bodyTerraformed ? 1.0 : NO_COLLECTOR_POOL_FRACTION;
+        const toStockFraction = bodyTerraformed ? 0.0 : NO_COLLECTOR_STOCK_FRACTION;
 
         const poolDelta = {
           fuel:    yieldFull.fuel    * toPoolFraction,
