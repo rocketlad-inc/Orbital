@@ -30,6 +30,32 @@ const SILENT_GET_PATTERNS: RegExp[] = [
   /\/api\/games\/[^/]+\/messages\/unread-count$/,
 ];
 
+/**
+ * PER-TAB IDENTITY, for agent playtests only.
+ *
+ * A usability test wants four players on four viewports at once. Cookies
+ * are per-origin, not per-tab, so four tabs pointed at the game are all
+ * necessarily the same person — which makes a "four player" browser test
+ * quietly a one-player test. sessionStorage is the one store the platform
+ * scopes to a single tab, so an agent session token parked there lets each
+ * tab be a different empire in the same match.
+ *
+ * NOT AN EXTRA WAY IN. The value has to already be a valid session token,
+ * and the server has always accepted that token as a Bearer (see
+ * currentSession). This only decides which valid credential a tab
+ * presents; it can't manufacture one. Anything able to write here could
+ * already act as the logged-in user.
+ *
+ * Returns null for normal play, so the cookie path below is untouched.
+ */
+function agentToken(): string | null {
+  try {
+    return sessionStorage.getItem('orbital_agent_token') || null;
+  } catch {
+    return null;   // Safari private mode et al. throw on access.
+  }
+}
+
 export async function apiFetch<T = unknown>(
   path: string,
   init: RequestInit = {},
@@ -37,6 +63,13 @@ export async function apiFetch<T = unknown>(
   const headers = new Headers(init.headers);
   if (init.body && !headers.has('content-type')) {
     headers.set('content-type', 'application/json');
+  }
+  // currentSession checks the cookie FIRST and returns on it, so a stale
+  // cookie would silently outrank the token and every tab would snap back
+  // to one identity. Suppress the cookie entirely when impersonating.
+  const agent = agentToken();
+  if (agent && !headers.has('authorization')) {
+    headers.set('authorization', `Bearer ${agent}`);
   }
   const method = (init.method ?? 'GET').toUpperCase();
   const t0 = performance.now();
@@ -49,7 +82,12 @@ export async function apiFetch<T = unknown>(
     // nothing" while six frigates queued server-side). This line makes
     // that entire class of bug impossible from the client side, and it
     // also purges any poisoned entry the moment this bundle loads.
-    res = await fetch(path, { credentials: 'same-origin', cache: 'no-store', ...init, headers });
+    res = await fetch(path, {
+      credentials: agent ? 'omit' : 'same-origin',
+      cache: 'no-store',
+      ...init,
+      headers,
+    });
   } catch (e) {
     logger.error('API', `${method} ${path} — network error`, {
       ms: Math.round(performance.now() - t0),
