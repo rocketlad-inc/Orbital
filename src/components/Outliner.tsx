@@ -390,14 +390,24 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                     <PlanetIcon body={body} size={16} className="outliner__body-icon" />
                     <span className="outliner__body-name">
                       {body.name}{isOwned ? ' ★' : ''}
-                      {/* Terraformed marker — mirrors the world menu's
-                          filled ● for a finished world. Cities allowed,
-                          full yield to the pool. */}
-                      {tf?.state === 'done' && (
+                      {/* Terraform state is shown ONLY when it's
+                          actionable. A "terraformed" badge was tried and
+                          removed: in practice every developed holding is
+                          terraformed (you terraform a world to build on
+                          it), so the badge landed on ~100% of rows and
+                          read as decoration. Live data confirmed it —
+                          12/12 owned worlds terraformed, 0 raw. So:
+                            • terraformed → nothing (the silent default)
+                            • raw + owned + untouched → a dim RAW chip
+                              (this world can't host a city yet)
+                            • terraforming → the progress bar below
+                          The bar completing and vanishing IS the
+                          "it's terraformed now" signal. */}
+                      {isOwned && tf?.state === 'raw' && !tf.started && (
                         <span
-                          className="outliner__terraform-done"
-                          title="Terraformed — cities allowed, 100% of yield to your pool"
-                        >●</span>
+                          className="outliner__terraform-raw"
+                          title="Raw world — stations only. Deliver a terraform payload by freighter to allow cities and full yield."
+                        >RAW</span>
                       )}
                       {/* Terraform progress — a leaf-green bar distinct
                           from the mint ship-build bar. Shown while the
