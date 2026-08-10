@@ -40,3 +40,9 @@ cookie.txt
 judge.txt
 super.txt
 *.cookies
+
+# Agent credentials — NEVER commit. .agent.local holds either the
+# AGENT_KEY minting secret or a session token; .agent.session is the
+# cached session scripts/agent.mjs mints from it.
+.agent.local
+.agent.session
