@@ -188,3 +188,85 @@
   /* Picture always leads on mobile — flip order would bury it. */
   .htp-beat--flip .htp-shot { order: 0; }
 }
+
+/* ============================================================
+   PRINT
+   ============================================================
+   Ctrl-P used to yield a single page holding only whatever was
+   scrolled into view. Two stacked causes, and fixing either one
+   alone still prints nothing useful:
+
+   1. NOTHING TO PAGINATE. The printer paginates the document
+      flow, but this app has none to speak of: App.css pins
+      `html, body { height: 100%; overflow: hidden }` so the
+      in-game canvas can own the viewport, and .landing then
+      carries the whole page inside its own `height: 100vh;
+      overflow-y: auto` scroll box. Overflow inside a scroll
+      container is CLIPPED, not paginated — so the document was
+      exactly one viewport tall and the printer faithfully
+      produced exactly one page.
+
+   2. WHITE INK ON WHITE PAPER. Browsers omit background colours
+      by default, so the dark theme's near-white body text
+      (#d8e4ee on #0a0e14) would have printed invisible even
+      after pagination — a "blank page" bug wearing the same
+      costume as the first one.
+
+   So: release the scroll prisons, then re-ink for paper. */
+@media print {
+  /* 1 — let the document actually flow and paginate. */
+  html, body {
+    height: auto !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+  .landing {
+    height: auto !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+
+  /* 2 — re-ink for paper. Explicit per-element colours because
+     the theme's defaults are all light-on-dark. */
+  .htp, .htp-copy p, .htp-fact span, .htp-lede {
+    color: #16202b !important;
+  }
+  .htp-title, .htp-beat-title, .htp-copy b, .htp-fact strong {
+    color: #000 !important;
+  }
+  .htp-eyebrow, .htp-step { color: #7a5200 !important; }
+
+  /* Screen-only furniture: the fixed starfield would tile across
+     every page, and nav/CTA are controls that do nothing on
+     paper. */
+  .landing-starfield,
+  .landing-nav,
+  .htp-cta { display: none !important; }
+
+  /* 3 — sane pagination. A beat is a picture plus its
+     explanation; splitting one across a fold separates the
+     screenshot from the words describing it. */
+  .htp { max-width: none; padding: 0; }
+  .htp-beat {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    padding: 18px 0;
+    border-top: 1px solid #ccd6e0;
+  }
+  .htp-beat-title, .htp-step {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+  .htp-hero { padding: 0 0 18px; }
+  .htp-shot {
+    border-color: #ccd6e0;
+    box-shadow: none;
+    background: #fff;
+  }
+  /* Cap art height so a tall diagram can't claim a whole sheet
+     and shove its caption onto the next one. */
+  .htp-shot img, .htp-diagram { max-height: 3.2in; object-fit: contain; }
+  .htp-facts { break-inside: avoid; page-break-inside: avoid; }
+
+  @page { margin: 0.6in; }
+}
