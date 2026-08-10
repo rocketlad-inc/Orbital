@@ -493,3 +493,18 @@
   background: #6ee7b7;
   transition: width 240ms ease-out;
 }
+
+/* Terraform progress reuses the build-bar markup but a leaf-green fill,
+   so a world being terraformed never reads as a ship coming off a yard. */
+.outliner__build--terraform .outliner__build-fill {
+  background: #9ccc65;
+}
+
+/* Terraformed marker on the body row — the filled ● the world menu uses
+   for a finished world, in the same leaf-green as the progress bar. */
+.outliner__terraform-done {
+  margin-left: 5px;
+  color: #9ccc65;
+  font-size: 9px;
+  vertical-align: middle;
+}

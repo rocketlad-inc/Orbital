@@ -9,7 +9,8 @@ import type { GameState } from '../types';
 import { getShipClass, ShipClassName } from '../game/shipClasses';
 import { loadoutSummary } from '../game/shipParts';
 import { effectiveShipMaxHp } from '../game/combat';
-import type { Ship } from '../types';
+import { canHostCity } from '../game/settlements';
+import type { Ship, Body } from '../types';
 import { ShipIcon } from './ShipIcons';
 import { PlanetIcon } from './PlanetIcon';
 import { makeSystemRootOf, systemLabel, shipStatus, makeHostilesAtBody, makeArmedHostilesAtBody, makeStationsAtBody, isArmed } from '../game/systemGrouping';
@@ -36,6 +37,7 @@ export const Outliner: React.FC = () => {
       factionTech={gameState.factionTech}
       alliedFactionIds={gameState.alliedFactionIds}
       peaceFactionIds={gameState.peaceFactionIds}
+      terraformConfig={gameState.terraformConfig}
       currentTick={gameState.currentTick}
       uiState={uiState}
       selectShip={selectShip}
@@ -47,6 +49,44 @@ export const Outliner: React.FC = () => {
   );
 };
 
+// Terraform state for a body's outliner row. Mirrors the world-menu
+// card's three states (WorldMenuOverlay TerraformCard) so a world reads
+// the same in both places: raw-and-accumulating, transforming (payload
+// delivered, window running), and terraformed.
+//
+// Returns null for bodies terraforming can't apply to — gas giants,
+// stars, lagrange points (canHostCity gate) — and for SP, where the
+// server never sends the field so terraformedAtTick is undefined (as
+// opposed to null = "raw" in MP). That undefined-vs-null split is the
+// same one isRawWorld() keys on.
+type TerraformView =
+  | { state: 'done' }
+  | { state: 'working'; pct: number; ticksLeft: number }
+  | { state: 'raw'; pct: number; started: boolean };
+
+function terraformView(
+  body: Body,
+  cfg: GameState['terraformConfig'],
+  currentTick: number,
+): TerraformView | null {
+  if (!canHostCity(body) || body.terraformedAtTick === undefined) return null;
+  if (body.terraformedAtTick !== null) return { state: 'done' };
+  const dur = Math.max(1, cfg?.durationTicks ?? 24);
+  if (body.terraformCompletesAtTick != null) {
+    const ticksLeft = Math.max(0, body.terraformCompletesAtTick - currentTick);
+    // Fills as the window elapses. Guard the div so a same-tick window
+    // (dur clamped to 1) can't produce NaN.
+    return { state: 'working', ticksLeft, pct: Math.max(0, Math.min(1, 1 - ticksLeft / dur)) };
+  }
+  const acc = body.terraformAcc ?? { metal: 0, credits: 0 };
+  const costM = Math.max(1, cfg?.costMetal ?? 124);
+  const costC = Math.max(1, cfg?.costCredits ?? 124);
+  // The limiting resource sets the bar — a payload is only as done as its
+  // furthest-behind half, matching the two-bar world-menu card.
+  const pct = Math.max(0, Math.min(1, Math.min(acc.metal / costM, acc.credits / costC)));
+  return { state: 'raw', pct, started: acc.metal > 0 || acc.credits > 0 };
+}
+
 type Ctx = ReturnType<typeof useGameContext>;
 interface OutlinerInnerProps {
   ships: GameState['ships'];
@@ -56,6 +96,7 @@ interface OutlinerInnerProps {
   factionTech: GameState['factionTech'];
   alliedFactionIds: GameState['alliedFactionIds'];
   peaceFactionIds: GameState['peaceFactionIds'];
+  terraformConfig: GameState['terraformConfig'];
   currentTick: number;
   uiState: Ctx['uiState'];
   selectShip: Ctx['selectShip'];
@@ -67,16 +108,16 @@ interface OutlinerInnerProps {
 
 const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
   ships, bodies, settlements, buildOrders, factionTech,
-  alliedFactionIds, peaceFactionIds, currentTick,
+  alliedFactionIds, peaceFactionIds, terraformConfig, currentTick,
   uiState, selectShip, selectBody, focusBody,
   selectSettlement, selectedSettlementId,
 }) => {
   // Facade so the 400 lines below keep reading `gameState.X` verbatim.
   const gameState = React.useMemo(() => ({
     ships, bodies, settlements, buildOrders, factionTech,
-    alliedFactionIds, peaceFactionIds, currentTick,
+    alliedFactionIds, peaceFactionIds, terraformConfig, currentTick,
   }), [ships, bodies, settlements, buildOrders, factionTech,
-       alliedFactionIds, peaceFactionIds, currentTick]) as unknown as GameState;
+       alliedFactionIds, peaceFactionIds, terraformConfig, currentTick]) as unknown as GameState;
   const isMobile = useIsMobile();
   // Default collapsed on mobile so it doesn't eat the whole screen.
   const [collapsed, setCollapsed] = useState<boolean>(() => isMobile);
@@ -335,6 +376,9 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
               // finishes) — fall back to the body row so an in-flight build
               // never silently disappears from the outliner.
               const bodyBuilds = yard ? [] : builds;
+              // Terraform state for this world (null for bodies it can't
+              // apply to, and in SP). Drives the marker + progress bar.
+              const tf = terraformView(body, gameState.terraformConfig, currentTick);
               return (
                 <div className="outliner__group" key={body.id}>
                   <div
@@ -346,6 +390,36 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                     <PlanetIcon body={body} size={16} className="outliner__body-icon" />
                     <span className="outliner__body-name">
                       {body.name}{isOwned ? ' ★' : ''}
+                      {/* Terraformed marker — mirrors the world menu's
+                          filled ● for a finished world. Cities allowed,
+                          full yield to the pool. */}
+                      {tf?.state === 'done' && (
+                        <span
+                          className="outliner__terraform-done"
+                          title="Terraformed — cities allowed, 100% of yield to your pool"
+                        >●</span>
+                      )}
+                      {/* Terraform progress — a leaf-green bar distinct
+                          from the mint ship-build bar. Shown while the
+                          transformation window runs, or while the payload
+                          is still being delivered (but not for a raw world
+                          nobody has started, which would be 0%-bar noise
+                          on every un-terraformed holding). */}
+                      {tf && (tf.state === 'working' || (tf.state === 'raw' && tf.started)) && (
+                        <span className="outliner__build outliner__build--terraform">
+                          <span className="outliner__build-label">
+                            {tf.state === 'working'
+                              ? `Terraforming · ${tf.ticksLeft}t`
+                              : `Terraform · ${Math.round(tf.pct * 100)}%`}
+                          </span>
+                          <span className="outliner__build-bar">
+                            <span
+                              className="outliner__build-fill"
+                              style={{ width: `${Math.round(tf.pct * 100)}%` }}
+                            />
+                          </span>
+                        </span>
+                      )}
                       {bodyBuilds.length > 0 && (
                         <span className="outliner__build">
                           <span className="outliner__build-label">
