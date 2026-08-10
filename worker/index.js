@@ -8,6 +8,9 @@ import {
   sessionCookie,
   clearedCookie,
   readSessionCookie,
+  constantTimeEqual,
+  getOrCreateAgentUser,
+  isValidAgentHandle,
 } from './auth.js';
 import { validateParts, DEFAULT_LOADOUTS } from './shipDesigns.js';
 import { verifyGoogleIdToken } from './google.js';
@@ -219,6 +222,59 @@ async function handleLogin(req, env) {
   );
 }
 
+// POST /api/agent/session — mint a session for one of Lorne's agents.
+//
+// Authenticated by a shared secret (env.AGENT_KEY) in the X-Agent-Key
+// header, NOT a password. It provisions/returns a labelled agent user
+// and hands back a normal session — token in the body (for headless
+// Bearer use) and as a Set-Cookie (for a browser context). From that
+// point the agent is an ordinary authenticated user.
+//
+// SECURITY POSTURE:
+//   * No AGENT_KEY configured -> 404, not 401. The endpoint doesn't
+//     merely reject; it does not appear to exist. Any environment that
+//     hasn't had the secret deliberately set has no agent access at all.
+//   * The key is compared in constant time (constantTimeEqual) to deny
+//     a timing oracle.
+//   * Agent accounts are normal player-tier users — NOT admins. Piloting
+//     games and running sims is player-level; admin analytics stays gated
+//     on the email allow-list, which these accounts are not on.
+//   * Rotating the secret revokes all FUTURE minting instantly; deleting
+//     the agent sessions revokes existing ones. Both are one command.
+async function handleAgentSession(req, env) {
+  // Feature is OFF unless the operator set the secret. 404 keeps it
+  // indistinguishable from an unmapped route to anyone probing.
+  if (!env.AGENT_KEY) return err(404, 'not_found', 'not found');
+
+  const presented = req.headers.get('x-agent-key');
+  if (!presented || !(await constantTimeEqual(presented, env.AGENT_KEY))) {
+    // A wrong (or absent) key gets the SAME 404 as a missing secret —
+    // never confirm "the endpoint exists, your key was just wrong".
+    return err(404, 'not_found', 'not found');
+  }
+
+  const body = await readJson(req);
+  const handle = (body && typeof body.handle === 'string' ? body.handle : '').trim().toLowerCase();
+  if (!isValidAgentHandle(handle)) {
+    return err(400, 'bad_request', 'handle must be a slug: [a-z0-9][a-z0-9_-]{0,30}');
+  }
+
+  const user = await getOrCreateAgentUser(env.DB, handle);
+  await env.DB.prepare('UPDATE users SET last_login_at = ? WHERE id = ?')
+    .bind(Date.now(), user.id).run();
+  const { token, expiresAt } = await createSession(env.DB, user.id, 'agent');
+  return json(
+    {
+      user: { id: user.id, email: user.email, display_name: user.display_name },
+      // Returned in the body precisely because an agent has no cookie
+      // jar: send it back as `Authorization: Bearer <token>`.
+      token,
+      expires_at: expiresAt,
+    },
+    { status: 201, headers: { 'set-cookie': sessionCookie(token, expiresAt) } },
+  );
+}
+
 async function handleGoogleAuth(req, env) {
   const body = await readJson(req);
   if (!body || typeof body.id_token !== 'string') {
@@ -353,7 +409,19 @@ async function handleMe(req, env) {
 }
 
 async function currentSession(req, env) {
-  return lookupSession(env.DB, readSessionCookie(req));
+  // A session token normally rides in the orbital_session cookie. A
+  // headless agent has no cookie jar, so ALSO accept the same token as
+  // `Authorization: Bearer <token>`. This is not a second auth path —
+  // it's the same opaque token through the same lookupSession, just a
+  // different envelope. Browsers never send an Authorization header
+  // here, so this is invisible to normal play.
+  const cookieToken = readSessionCookie(req);
+  if (cookieToken) return lookupSession(env.DB, cookieToken);
+  const auth = req.headers.get('authorization');
+  if (auth && auth.startsWith('Bearer ')) {
+    return lookupSession(env.DB, auth.slice(7).trim());
+  }
+  return null;
 }
 
 // ---------- rooms ----------
@@ -1044,6 +1112,10 @@ export default {
       if (req.method === 'POST' && url.pathname === '/api/auth/signup') return handleSignup(req, env);
       if (req.method === 'POST' && url.pathname === '/api/auth/login') return handleLogin(req, env);
       if (req.method === 'POST' && url.pathname === '/api/auth/google') return handleGoogleAuth(req, env);
+      // Agent access: keyed session-minting for Lorne's automation. Sits
+      // with the unauthenticated routes because it carries its own auth
+      // (X-Agent-Key), and 404s entirely unless env.AGENT_KEY is set.
+      if (req.method === 'POST' && url.pathname === '/api/agent/session') return handleAgentSession(req, env);
       if (req.method === 'POST' && url.pathname === '/api/auth/logout') return handleLogout(req, env);
       if (req.method === 'GET'  && url.pathname === '/api/auth/me') return handleMe(req, env);
       // Public client config: the frontend pulls this at startup to decide
