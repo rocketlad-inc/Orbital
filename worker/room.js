@@ -1915,10 +1915,15 @@ export class Room {
             continue;
           }
 
-          // Off both endpoints (player flew it somewhere): nudge home.
-          if (here !== r.origin_body_id && here !== r.dest_body_id) {
-            await planLeg(cargoTotal > 0 ? r.dest_body_id : r.origin_body_id);
-          }
+          // Any other state: nudge toward where the cargo says to go.
+          // Loaded → the sphere, empty → the collector. UNCONDITIONAL,
+          // not gated on being off both endpoints — a freighter sitting
+          // AT ITS ORIGIN with a full hold (player flew it home mid-run,
+          // or a leg got cancelled) matched no branch here and idled
+          // loaded forever: pickup wants an empty hold and the old
+          // off-course check excluded the origin. Verification catch,
+          // 2026-08-09.
+          await planLeg(cargoTotal > 0 ? r.dest_body_id : r.origin_body_id);
           continue;
         }
 
