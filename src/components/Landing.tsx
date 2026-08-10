@@ -5,18 +5,57 @@
 import React, { useEffect, useRef, useState } from 'react';
 import './Landing.css';
 import { HowToPlay } from './HowToPlay';
+import { Changelog } from './Changelog';
 
 interface LandingProps {
   /** Triggered by the Login button or any CTA. Reveals the auth overlay. */
   onSignIn: () => void;
 }
 
-type LandingTab = 'about' | 'howto';
+type LandingTab = 'about' | 'howto' | 'changelog';
+
+/** Tabs that own a URL, so they can be linked to directly. The changelog
+ *  exists to be pasted into Discord — a tab you can only reach by
+ *  clicking is not shareable, which would defeat the point. The worker
+ *  serves the SPA shell for unknown paths (wrangler.jsonc
+ *  not_found_handling), so /changelog reaches the app and we pick the tab
+ *  back out of the path here. */
+const TAB_PATHS: Record<string, LandingTab> = {
+  '/changelog': 'changelog',
+  '/how-to-play': 'howto',
+};
+const PATH_FOR_TAB: Partial<Record<LandingTab, string>> = {
+  changelog: '/changelog',
+  howto: '/how-to-play',
+};
+
+function tabFromPath(): LandingTab {
+  if (typeof window === 'undefined') return 'about';
+  return TAB_PATHS[window.location.pathname] ?? 'about';
+}
 
 export const Landing: React.FC<LandingProps> = ({ onSignIn }) => {
   const starfieldRef = useRef<HTMLCanvasElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [tab, setTab] = useState<LandingTab>('about');
+  const [tab, setTab] = useState<LandingTab>(tabFromPath);
+
+  // Keep the address bar in step with the tab, so the link a player
+  // copies is the page they are looking at. pushState (not replaceState)
+  // so Back walks the tabs the way people expect.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const want = PATH_FOR_TAB[tab] ?? '/';
+    if (window.location.pathname !== want) {
+      window.history.pushState({ tab }, '', want + window.location.search);
+    }
+  }, [tab]);
+
+  // ...and follow the browser's Back/Forward buttons.
+  useEffect(() => {
+    const onPop = () => setTab(tabFromPath());
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
 
   // Switching tabs scrolls back to the top — otherwise you land
   // mid-page in the new content with no idea where you are. NOTE:
@@ -113,6 +152,12 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn }) => {
           >
             HOW TO PLAY
           </button>
+          <button
+            className={`landing-tab-btn${tab === 'changelog' ? ' is-active' : ''}`}
+            onClick={() => setTab('changelog')}
+          >
+            CHANGELOG
+          </button>
           <button className="landing-login-btn" onClick={onSignIn}>
             LOGIN
           </button>
@@ -120,6 +165,8 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn }) => {
       </header>
 
       {tab === 'howto' && <HowToPlay onSignIn={onSignIn} />}
+
+      {tab === 'changelog' && <Changelog onSignIn={onSignIn} />}
 
       {tab === 'about' && (
         <>

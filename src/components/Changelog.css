@@ -1,0 +1,158 @@
+/* ============================================================
+   Changelog — landing page "CHANGELOG" tab.
+   Inherits the landing palette; sits above the shared starfield.
+   Mirrors HowToPlay's layout metrics so the two tabs feel like one site.
+   ============================================================ */
+
+.cl {
+  position: relative;
+  z-index: 1;
+  max-width: 860px;          /* narrower than HowToPlay — this is prose,
+                                and prose wants a readable measure */
+  margin: 0 auto;
+  padding: 0 24px 64px;
+  color: #d8e4ee;
+}
+
+/* ---- hero ---- */
+.cl-hero {
+  padding: 60px 0 32px;
+  text-align: center;
+}
+.cl-eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.28em;
+  color: #4ecdc4;
+  margin-bottom: 14px;
+}
+.cl-title {
+  font-size: clamp(30px, 5vw, 50px);
+  line-height: 1.1;
+  margin: 0 0 18px;
+  color: #f2f7fb;
+  letter-spacing: -0.01em;
+}
+.cl-lede {
+  font-size: 16px;
+  line-height: 1.65;
+  color: #a8bccd;
+  max-width: 620px;
+  margin: 0 auto;
+}
+
+/* ---- article body ----
+   Everything below styles the imported document, so the selectors are
+   element-based rather than class-based: the source is authored HTML
+   with no classes of its own. */
+.cl-body {
+  margin-top: 40px;
+  font-size: 15.5px;
+  line-height: 1.7;
+  color: #c3d3e0;
+}
+
+.cl-body h2 {
+  font-size: 21px;
+  line-height: 1.3;
+  color: #f2f7fb;
+  margin: 44px 0 14px;
+  padding-top: 22px;
+  border-top: 1px solid rgba(120, 160, 190, 0.18);
+  letter-spacing: -0.005em;
+}
+.cl-body h2:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+.cl-body h3 {
+  font-size: 16px;
+  color: #e2ecf4;
+  margin: 26px 0 10px;
+}
+
+.cl-body p { margin: 0 0 14px; }
+
+.cl-body strong { color: #f2f7fb; font-weight: 600; }
+
+.cl-body ul {
+  margin: 0 0 18px;
+  padding-left: 0;
+  list-style: none;
+}
+.cl-body li {
+  position: relative;
+  padding-left: 20px;
+  margin-bottom: 9px;
+}
+/* Custom marker: a disc sits too heavy against this much prose. */
+.cl-body li::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0.72em;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #4ecdc4;
+  opacity: 0.75;
+}
+
+/* ---- the parts table ----
+   Wrapped so a narrow phone scrolls the TABLE, never the page. */
+.cl-tablewrap {
+  overflow-x: auto;
+  margin: 0 0 20px;
+  -webkit-overflow-scrolling: touch;
+}
+.cl-table {
+  border-collapse: collapse;
+  min-width: 320px;
+  width: 100%;
+  font-size: 14px;
+}
+.cl-table th,
+.cl-table td {
+  text-align: left;
+  padding: 8px 14px 8px 0;
+  border-bottom: 1px solid rgba(120, 160, 190, 0.14);
+  white-space: nowrap;
+}
+.cl-table th {
+  color: #8fa6b8;
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+/* Numbers line up in columns, so give them tabular figures. */
+.cl-table td + td {
+  font-variant-numeric: tabular-nums;
+  color: #e2ecf4;
+}
+
+/* ---- cta ---- */
+.cl-cta {
+  margin-top: 52px;
+  text-align: center;
+}
+.cl-cta-btn {
+  font-family: inherit;
+  font-size: 13px;
+  letter-spacing: 0.16em;
+  padding: 14px 34px;
+  color: #0a1018;
+  background: #4ecdc4;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: filter 120ms ease;
+}
+.cl-cta-btn:hover { filter: brightness(1.08); }
+.cl-cta-btn:focus-visible { outline: 2px solid #f2f7fb; outline-offset: 3px; }
+
+@media (max-width: 640px) {
+  .cl { padding: 0 18px 48px; }
+  .cl-body { font-size: 15px; }
+  .cl-body h2 { font-size: 19px; margin-top: 34px; }
+}
