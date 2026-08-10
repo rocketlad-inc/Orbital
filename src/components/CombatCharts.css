@@ -12,6 +12,21 @@
   margin: 48px 0;
 }
 
+.cc-h2 {
+  /* Own heading rather than borrowing HOW TO PLAY's `.htp-h2`. This
+     component was written for that page and then moved to the changelog;
+     a class that only resolves because some OTHER page imported its
+     stylesheet is a dependency waiting to break the day that page is
+     lazy-loaded or removed. */
+  font-size: 21px;
+  line-height: 1.3;
+  color: #f2f7fb;
+  margin: 0 0 14px;
+  padding-top: 22px;
+  border-top: 1px solid var(--cc-rule);
+  letter-spacing: -0.005em;
+}
+
 .cc-lede {
   font-size: 15.5px;
   line-height: 1.7;

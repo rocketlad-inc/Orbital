@@ -15,6 +15,7 @@
 // ============================================================
 
 import React from 'react';
+import { CombatCharts } from './CombatCharts';
 import './Changelog.css';
 
 interface Props {
@@ -124,6 +125,11 @@ export const Changelog: React.FC<Props> = ({ ctaLabel, onCta }) => (
       // reaches this string.
       dangerouslySetInnerHTML={{ __html: PATCH_NOTES_HTML }}
     />
+
+    {/* The combat rework is the patch note people will argue about, and
+        prose cannot carry a 3x4 matrix. Charts sit after the article so
+        the notes read start to finish first. */}
+    <CombatCharts />
 
     <div className="cl-cta">
       <button className="cl-cta-btn" onClick={onCta}>{ctaLabel}</button>

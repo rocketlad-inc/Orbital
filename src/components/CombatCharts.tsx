@@ -121,7 +121,7 @@ export const CombatCharts: React.FC = () => {
 
   return (
     <section className="cc">
-      <h2 className="htp-h2">The numbers behind a fight</h2>
+      <h2 className="cc-h2">The numbers behind a fight</h2>
       <p className="cc-lede">
         Ships fire every tick. Whether a shot lands is decided by speed alone:
         a fast hull is hard to hit, and it does not matter how big the gun is.
