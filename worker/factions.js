@@ -514,7 +514,11 @@ const FACTION_COLORS = [
 ];
 
 // Fuel is dead (economy rework §1.1) — column kept at 0 for schema compat.
-const STARTING_RESOURCES = { metal: 100, fuel: 0, gold: 50, science: 0 };
+// 100/100 (was 100/50): credits are structurally the tighter currency
+// — per-hull upkeep, the energy/armor side of the parts split, and now
+// the terraform payload all draw on them. An uneven purse made every
+// opening a credit queue.
+const STARTING_RESOURCES = { metal: 100, fuel: 0, gold: 100, science: 0 };
 const HOME_DEVELOPMENT_LEVEL = 3;       // capital
 const SECONDARY_DEVELOPMENT_LEVEL = 2;  // unused now that WORLDS_PER_PLAYER = 1
 // One world per faction (the capital). Each capital gets the starter
@@ -1143,14 +1147,16 @@ export async function seedGameWorld(env, gameId) {
            owner_faction_id, development_level, fortification_level, shipyard_level,
            claimed_at_tick, developed_at_tick,
            secret_kind, secret_revealed, secret_discovered_by_faction_id, secret_discovered_at_tick,
-           orbit_rp, orbit_ra, orbit_omega, orbit_m0)
+           orbit_rp, orbit_ra, orbit_omega, orbit_m0,
+           terraformed_at_tick)
          VALUES (?, ?, ?, ?, ?, ?,
                  ?, ?, ?, ?, ?, ?, ?,
                  ?, ?, ?, ?,
                  ?, ?, ?, ?,
                  ?, ?,
                  ?, 0, NULL, NULL,
-                 ?, ?, ?, ?)`,
+                 ?, ?, ?, ?,
+                 ?)`,
       ).bind(
         bodyRowIdFor(b.id), gameId, b.id, b.name, b.type,
         b.parent ? bodyRowIdFor(b.parent) : null,
@@ -1163,6 +1169,7 @@ export async function seedGameWorld(env, gameId) {
         own ? 0 : null,
         secretKind,
         orbitRp, orbitRa, orbitOmega, orbitM0,
+        (own || b.id === 'earth') ? 0 : null,
       ),
     );
   }

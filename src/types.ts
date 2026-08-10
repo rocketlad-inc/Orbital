@@ -54,6 +54,19 @@ export interface Body {
   id: string;
   name: string;
   type: 'star' | 'black_hole' | 'terrestrial' | 'gas_giant' | 'ice_giant' | 'moon' | 'dwarf' | 'asteroid' | 'lagrange';
+
+  /** Terraforming (MP, migration 0080). A body is RAW until terraformed.
+   *  Terraformed worlds route 100% of settlement yield to the faction
+   *  pool, host cities + city buildings, and serve as trade endpoints.
+   *  Permanent — survives conquest and razing; only an asteroid strike
+   *  clears it. Undefined in SP, where every world behaves as before. */
+  terraformedAtTick?: number | null;
+  /** Delivery meter toward the terraform payload (lives on the body —
+   *  progress transfers with conquest). */
+  terraformAcc?: { metal: number; credits: number };
+  /** Set once the payload is fully delivered: the tick the
+   *  transformation window closes and the world flips terraformed. */
+  terraformCompletesAtTick?: number | null;
   mu?: number;                          // gravitational parameter (per-body override)
 
   // Orbital parameters (if not a star)

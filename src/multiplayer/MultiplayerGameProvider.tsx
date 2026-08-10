@@ -144,6 +144,10 @@ interface ServerState {
     yield_fuel: number;
     yield_gold: number;
     yield_science: number;
+    terraformed_at_tick?: number | null;
+    terraform_acc_metal?: number | null;
+    terraform_acc_gold?: number | null;
+    terraform_completes_at_tick?: number | null;
     owner_faction_id: string | null;
     /** Body secret. Server only ships these fields after reveal —
      *  unrevealed secrets always come back as null/0 here. Migration 0021. */
@@ -448,6 +452,12 @@ function bodyToClient(b: ServerState['bodies'][number]): Body {
       science: b.yield_science,
     },
     ownedBy: b.owner_faction_id ?? undefined,
+    terraformedAtTick: b.terraformed_at_tick ?? null,
+    terraformAcc: {
+      metal: b.terraform_acc_metal ?? 0,
+      credits: b.terraform_acc_gold ?? 0,
+    },
+    terraformCompletesAtTick: b.terraform_completes_at_tick ?? null,
     secret,
     // Eccentric Kepler fields. Pass through nullable — bodyPosition
     // checks "all four present" before switching from the circular

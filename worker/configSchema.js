@@ -59,6 +59,24 @@ export const SCHEMA = [
       + 'because the pop bonus is multiplicative.',
   },
   {
+    id: 'terraform_cost_metal', group: 'yields', type: 'int',
+    label: 'Terraform metal cost', def: 124, min: 0, max: 5000, step: 1,
+    help: 'Metal a terraform supply line must deliver to a raw world before '
+      + 'the transformation window opens.',
+  },
+  {
+    id: 'terraform_cost_credits', group: 'yields', type: 'int',
+    label: 'Terraform credit cost', def: 124, min: 0, max: 5000, step: 1,
+    help: 'Credits a terraform supply line must deliver to a raw world before '
+      + 'the transformation window opens.',
+  },
+  {
+    id: 'terraform_duration_ticks', group: 'yields', type: 'int',
+    label: 'Terraform duration (ticks)', def: 24, min: 1, max: 500, step: 1,
+    help: 'Ticks the transformation takes once the full payload has been '
+      + 'delivered. The world terraforms at the end of the window.',
+  },
+  {
     id: 'no_collector_pool_fraction', group: 'yields', type: 'number',
     label: 'Uncollected yield to faction pool', def: 0.10, min: 0, max: 1, step: 0.01,
     help: 'Share of a settlement\'s output that reaches the empire when no collector is assigned. '

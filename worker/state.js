@@ -606,6 +606,8 @@ __mark('sensors-done');
        SELECT id, template_id, name, type, parent_body_id, radius, soi, mu,
               orbit_radius, orbit_period, angle0, color,
               yield_metal, yield_fuel, yield_gold, yield_science,
+              terraformed_at_tick, terraform_acc_metal, terraform_acc_gold,
+              terraform_completes_at_tick,
               owner_faction_id, development_level, fortification_level, shipyard_level,
               secret_kind, secret_revealed,
               secret_discovered_by_faction_id, secret_discovered_at_tick,
