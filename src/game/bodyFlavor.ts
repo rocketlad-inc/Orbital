@@ -41,7 +41,7 @@ export const BODY_FLAVOR: Record<string, string> = {
 
   mars: "A rusted desert that once ran with rivers, its dry channels and ancient deltas still carved into iron-red rock as if the water left only yesterday. The metal runs rich and the secrets run dark out here — a stargate sleeping under the dust, or a dead warship adrift above it. The first real frontier, close enough to reach and strange enough to be worth the trip.",
 
-  luna: "Earth's silent companion, born from a collision so vast it nearly unmade both worlds, now keeping the same gray face turned homeward for all of time. Little grows from its regolith but metal and quiet, yet old surveys left things in the dust here — a salvaged collector, a databank still patient in the dark. The first stepping-stone off the cradle, and the easiest place to learn what the void costs.",
+  luna: "Earth's silent companion, born from a collision so vast it nearly unmade both worlds, now keeping the same gray face turned homeward for all of time. Little grows from its regolith but metal and quiet, yet old surveys left things in the dust here — abandoned machinery, a databank still patient in the dark. The first stepping-stone off the cradle, and the easiest place to learn what the void costs.",
   phobos: "A blackened potato of a moon, barely eleven miles end to end, falling toward Mars a few inches every century until the tides finally pull it apart into a ring. Its great crater Stickney nearly split it once already; the grooves radiating out are the cracks that didn't finish the job. Too small to hold much and too doomed to hold it long — but it hangs so low over the Martian plains that anything parked here looks straight down a gravity well.",
   deimos: "The smaller and further of Mars's two captured rocks, so faint from the surface it reads as a slow bright star rather than a moon, taking a day and a half to drift across the sky. Dust has smoothed its craters to soft dimples — the one place in the inner system where the ground is genuinely gentle. There is almost nothing here, which is exactly why nobody looks twice at what you leave on it.",
 
@@ -59,7 +59,7 @@ export const BODY_FLAVOR: Record<string, string> = {
   // Jovian system
   jupiter: "The king of worlds — a storm-banded giant so massive it nearly became a second sun, with a single tempest larger than Earth that has raged for centuries. Its winds are pure fuel, drawn from clouds that have no bottom. A stargate could anchor itself in that immense gravity well, or a dead warship could be drifting in its shadow; either way, Jupiter rewards the bold and swallows the careless.",
 
-  io: "The most volcanic world known, kneaded relentlessly by Jupiter's pull until its surface runs with sulfur and molten rock, repaving itself faster than its craters can form. There is fuel in its fury and metal in its restless crust. A hellish, glorious place — and old hands left a collector and a databank somewhere in the fire.",
+  io: "The most volcanic world known, kneaded relentlessly by Jupiter's pull until its surface runs with sulfur and molten rock, repaving itself faster than its craters can form. There is fuel in its fury and metal in its restless crust. A hellish, glorious place — and old hands left machinery and a databank somewhere in the fire.",
 
   europa: "Beneath a fractured shell of ice lies an ocean holding more water than all of Earth's seas, kept liquid by the tides Jupiter never stops working into it. The science here runs deep and strange; whatever was filed into that databank was filed with care. If life were ever found waiting in the dark, it would be in a place exactly like this.",
 
@@ -101,7 +101,7 @@ export const BODY_FLAVOR: Record<string, string> = {
   // Kuiper belt
   pluto: "Demoted from planet to dwarf yet beloved beyond all of them, Pluto wears a frozen heart of nitrogen ice across a face of red-brown haze and pale mountains of solid water. It shares a near-locked dance with its great moon Charon, the two forever turned toward each other. Rich in credits, deep in cold — but never a gateway; whatever sleeps here, it's bound to this system.",
 
-  charon: "Half the size of the world it orbits, locked face-to-face with Pluto in a waltz that keeps each hanging motionless in the other's sky, scarred by a dark red cap of unknown origin at its pole. Metal-rich and quiet. A companion world more than a moon — and old surveys treated it like one, leaving a collector and a databank in its rock.",
+  charon: "Half the size of the world it orbits, locked face-to-face with Pluto in a waltz that keeps each hanging motionless in the other's sky, scarred by a dark red cap of unknown origin at its pole. Metal-rich and quiet. A companion world more than a moon — and old surveys treated it like one, leaving equipment and a databank in its rock.",
 
   haumea: "Spun so fast it has stretched itself into an egg, Haumea whirls through the deep belt trailing a ring and a pair of small moons, its surface a glaze of crystalline ice. Metal-rich and far from anywhere. One of the five worlds that might conceal a warp gate — a door to Centauri or Cygnus, hidden on a world already spinning toward the edge of reason.",
 

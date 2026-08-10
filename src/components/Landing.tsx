@@ -148,10 +148,11 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn }) => {
           </p>
           <p>
             Stake a claim by deploying <strong>cities on planets</strong> and{' '}
-            <strong>stations in orbit</strong>. Both extract the body&rsquo;s
-            yields, then ship them home through your collector network. Upgrade
-            with forges, mints, labs, weapon platforms, and shipyards. Drop a
-            collector or watch your income pile up unused.
+            <strong>stations in orbit</strong>. Raw worlds hoard their harvest
+            on-site &mdash; run freighter supply lines to{' '}
+            <strong>terraform</strong> them, and a living world pays its full
+            yield home, hosts cities, and anchors your trade. Upgrade with
+            forges, mints, labs, weapon platforms, and shipyards.
           </p>
           <p>
             When two factions want the same moon, fleets trade fire one target

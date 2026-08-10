@@ -1405,8 +1405,9 @@ export function useSituationItems(
       for (const r of (gameState.tradeRoutes ?? []) as TradeRoute[]) {
         if (r.ownedBy !== factionId) continue;
         const ship = r.shipId ? byId.get(r.shipId) : undefined;
-        // A route needs its hauler, a settlement to load from, and a
-        // collector to unload into. Losing any of the three leaves the
+        // A route needs its hauler and a settlement of yours at both
+        // ends (a terraform dest is a world you claimed; a dyson dest
+        // is your Sol foundation). Losing any of the three leaves the
         // route on the books doing nothing.
         const hasEnd = (bodyId: string) =>
           gameState.settlements.some(s => s.ownedBy === factionId && s.bodyId === bodyId);

@@ -32,8 +32,8 @@ export type FeatureId =
   | 'part.shield' | 'part.armor'
   | 'building.shields' | 'building.armor'
   | 'damageControl'
-  // — Propulsion —
-  | 'hull.freighter' | 'part.engine' | 'transferLanes' | 'collectors'
+  // — Propulsion — ('collectors' removed with the terraforming rework)
+  | 'hull.freighter' | 'part.engine' | 'transferLanes'
   // — Construction —
   | 'settlement.station' | 'building.shipyard'
   | 'hull.frigate' | 'hull.destroyer'
@@ -101,8 +101,11 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
     label: 'Booster Engine', blurb: 'Speed becomes a fitting choice.' },
   { track: 'propulsion', level: 3, feature: 'transferLanes',
     label: 'Transfer Lanes', blurb: 'Capital-to-capital transits run faster.' },
-  { track: 'propulsion', level: 4, feature: 'collectors',
-    label: 'Collectors', blurb: 'Automated harvest→pool logistics. Before this, hauling is manual.' },
+  // Propulsion 4 is EMPTY: 'collectors' died with the terraforming
+  // rework (terraformed status IS the loading dock now — nothing to
+  // build). Same rule as Defense 4 above: an empty level beats
+  // promising a mechanic that no longer exists. Candidate for a real
+  // reward when one earns its place.
 
   // ── 🔧 CONSTRUCTION ─────────────────────────────────────────
   { track: 'construction', level: 1, feature: 'settlement.station',

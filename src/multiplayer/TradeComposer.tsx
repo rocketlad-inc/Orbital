@@ -349,8 +349,8 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
           <div style={{ marginTop: 10, fontSize: 9, color: '#8aa0b4', lineHeight: 1.5 }}>
             Pacts take effect the moment the deal is accepted. Resources are
             DELIVERED: each side loads its goods onto a freighter at one of
-            its collectors and flies them to the other's — assign ships in
-            the Trades panel's Shipments tab after acceptance.
+            its terraformed worlds and flies them to the other's — assign
+            ships in the Trades panel's Shipments tab after acceptance.
           </div>
         </form>
       </div>

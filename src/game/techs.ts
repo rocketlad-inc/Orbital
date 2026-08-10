@@ -87,7 +87,7 @@ export const TECH_DEFS: Record<TechId, TechDef> = {
   propulsion: {
     id: 'propulsion',
     name: 'Propulsion',
-    description: 'Moving things. Unlocks the freighter and everything it does, then 🔥 booster engines, transfer lanes, and automated collectors.',
+    description: 'Moving things. Unlocks the freighter and everything it does, then 🔥 booster engines and transfer lanes.',
     icon: '🚀',
     perLevel: 0.06,
     effectText: '+6% per 🔥 booster engine',

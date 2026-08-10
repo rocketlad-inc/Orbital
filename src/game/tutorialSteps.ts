@@ -222,7 +222,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'freighters',
     title: 'Freighters do the hauling',
-    body: 'That freighter in your starter fleet earns its keep: set a TRADE ROUTE to shuttle a settlement’s stranded stockpile home, park it at Sol to feed a Dyson Sphere, or use it to deliver trade deals with other players.',
+    body: 'That freighter in your starter fleet earns its keep: set a TRADE ROUTE to haul a raw world’s stockpile home, feed a terraform meter or the Dyson Sphere, or deliver trade deals with other players.',
     target: null,
     placement: 'center',
     visual: 'economy',

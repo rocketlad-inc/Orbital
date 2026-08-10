@@ -1316,8 +1316,8 @@ export const ShipPanel: React.FC = () => {
               haul.gold ? `${haul.gold}C` : null,
               haul.science ? `${haul.science}S` : null,
             ].filter(Boolean).join(' ');
-            const destName = gameState.bodies.find(b => b.id === haul.destBodyId)?.name ?? 'their collector';
-            const pickupName = gameState.bodies.find(b => b.id === haul.pickupBodyId)?.name ?? 'your collector';
+            const destName = gameState.bodies.find(b => b.id === haul.destBodyId)?.name ?? 'their world';
+            const pickupName = gameState.bodies.find(b => b.id === haul.pickupBodyId)?.name ?? 'your world';
             return (
               <div style={{
                 margin: '8px 0', padding: '6px 8px',
@@ -1344,24 +1344,23 @@ export const ShipPanel: React.FC = () => {
               settlements={gameState.settlements}
               canSupplyDyson={gameState.dysonSphere?.controllerFactionId === 'player'}
               onCreate={(originBodyId, destBodyId) => {
-                // Optimistic local create + MP server post. In SP the
-                // local mutation is the source of truth; in MP it
-                // gives the UI an immediate route to render until the
-                // next /state poll (~1.5s) reconciles with the
-                // server's authoritative row.
-                const ok = createTradeRoute(ship.id, originBodyId, destBodyId);
-                if (ok && mpActions) {
-                  // Surface server rejections (route already exists,
-                  // origin not yours, dest not a collector) so the route
-                  // chip doesn't flicker on and silently disappear. The
-                  // 'transfer' domain message is close enough — both
-                  // talk about ship/body presence.
+                if (mpActions) {
+                  // MP: the SERVER owns the route taxonomy (terraform /
+                  // logistics / dyson). The local SP reducer still
+                  // enforces the dead "dest must have a collector" rule
+                  // and rejects every terraform run (raw dest, no
+                  // collector by definition) — so it must not run, let
+                  // alone gate the server post. No optimistic route:
+                  // the /state poll lands the authoritative row in
+                  // ~1.5s, same contract as deploySettlement.
                   setTransferError(null);
                   mpActions.createTradeRoute(ship.id, originBodyId, destBodyId).then(res => {
                     if (!res.ok) setTransferError(humanizeMpError(res.code, res.error, 'transfer'));
                   });
+                  return true;
                 }
-                return ok;
+                // SP: the local mutation is the source of truth.
+                return createTradeRoute(ship.id, originBodyId, destBodyId);
               }}
               onCancel={(routeId) => {
                 cancelTradeRoute(routeId);
@@ -2671,7 +2670,22 @@ const TradeRouteSection: React.FC<{
           ) : (
             <select
               value={destId}
-              onChange={(e) => setDestId(e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value;
+                setDestId(next);
+                // Changing the destination can change the route KIND, and
+                // with it which origins are legal — a logistics origin can
+                // be a raw world, which a terraform/dyson run can't load
+                // at. Clear a now-illegal pick instead of letting the
+                // server 409 it at OPEN ROUTE.
+                const nextKind = next === 'sol' ? 'dyson'
+                  : rawDests.some(b => b.id === next) ? 'terraform'
+                  : 'logistics';
+                if (nextKind !== 'logistics' && originId
+                    && !terraformedOrigins.some(b => b.id === originId)) {
+                  setOriginId('');
+                }
+              }}
               style={{
                 padding: '4px 6px', background: '#0a1018', border: '1px solid #2a3d50',
                 color: '#d8e4ee', fontFamily: 'inherit', fontSize: 11, borderRadius: 3,

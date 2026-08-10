@@ -77,10 +77,12 @@ export const SCHEMA = [
       + 'delivered. The world terraforms at the end of the window.',
   },
   {
+    // id keeps its legacy name — stored game configs reference it.
     id: 'no_collector_pool_fraction', group: 'yields', type: 'number',
-    label: 'Uncollected yield to faction pool', def: 0.10, min: 0, max: 1, step: 0.01,
-    help: 'Share of a settlement\'s output that reaches the empire when no collector is assigned. '
-      + 'The remainder stays as local stockpile.',
+    label: 'Raw-world yield to faction pool', def: 0.10, min: 0, max: 1, step: 0.01,
+    help: 'Share of a settlement\'s output that reaches the empire pool on a RAW '
+      + '(un-terraformed) world. The remainder banks as local stockpile. '
+      + 'Terraformed worlds always pay 100% to pool.',
   },
 
   // ---- buildings ---------------------------------------------------------

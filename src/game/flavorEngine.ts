@@ -91,6 +91,7 @@ const SECRET_NAME: Record<string, string> = {
   warp_gate:        'warp gate',
   ancient_city:     'ancient databank',
   free_collector:   'derelict freight hub',
+  pre_terraformed:  'pre-terraformed world',
   derelict_warship: 'derelict warship',
   resource_cache:   'buried resource cache',
 };

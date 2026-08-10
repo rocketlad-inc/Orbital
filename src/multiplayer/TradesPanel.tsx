@@ -230,8 +230,8 @@ export function TradesPanel({ gameId }: { gameId: string }) {
         >
           <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginBottom: 8, lineHeight: 1.5 }}>
             Accepted deals ship physically: each side loads its goods onto a
-            freighter at one of its <b>collectors</b>, and the cargo lands in
-            the other side's collector pool on arrival. Freighters can be
+            freighter at one of its <b>terraformed worlds</b>, and the cargo
+            lands in the other side's pool on arrival. Freighters can be
             raided — escort what you can't afford to lose.
           </div>
           <TradeList
@@ -528,8 +528,8 @@ function TradeCard({
 // Delivery legs
 
 const LEG_STATUS_TEXT: Record<string, string> = {
-  to_pickup: 'freighter heading to your collector to load',
-  outbound: 'cargo aboard — en route to their collector',
+  to_pickup: 'freighter heading to your dock to load',
+  outbound: 'cargo aboard — en route to their world',
   delivered: 'delivered',
   lost: 'freighter destroyed — cargo lost',
 };
@@ -575,7 +575,7 @@ function DeliveryLegRow({
     : (mine
         ? LEG_STATUS_TEXT[delivery.status] ?? delivery.status
         : delivery.status === 'outbound'
-          ? 'their cargo is aboard — inbound to your collector'
+          ? 'their cargo is aboard — inbound to your world'
           : delivery.status === 'to_pickup'
             ? 'their freighter is heading out to load'
             : LEG_STATUS_TEXT[delivery.status] ?? delivery.status);
@@ -665,13 +665,13 @@ function AssignShipmentForm({
               style={{ background: '#0a0e14', color: '#d8e4ee', border: '1px solid #2a3d50', fontFamily: 'inherit', fontSize: 10, padding: 3 }}>
               {opts.freighters.map(f => (
                 <option key={f.id} value={f.id}>
-                  {f.name}{f.at_collector ? ' · at collector (loads instantly)' : ' · will burn to your collector first'}
+                  {f.name}{f.at_collector ? ' · at the dock (loads instantly)' : ' · will burn to your nearest dock first'}
                 </option>
               ))}
             </select>
           </label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 2, color: '#8aa0b4' }}>
-            DELIVER TO (their collector)
+            DELIVER TO (their terraformed world)
             <select value={destId} onChange={(e) => setDestId(e.target.value)}
               style={{ background: '#0a0e14', color: '#d8e4ee', border: '1px solid #2a3d50', fontFamily: 'inherit', fontSize: 10, padding: 3 }}>
               {opts.targets.map(t => (
@@ -971,7 +971,7 @@ function CommissionForm({
               style={{ background: '#0a0e14', color: '#d8e4ee', border: '1px solid #2a3d50', fontFamily: 'inherit', fontSize: 10, padding: 3 }}>
               {opts.freighters.map(f => (
                 <option key={f.id} value={f.id}>
-                  {f.name}{f.at_collector ? ' · at collector (loads instantly)' : ' · will burn to your collector first'}
+                  {f.name}{f.at_collector ? ' · at the dock (loads instantly)' : ' · will burn to your nearest dock first'}
                 </option>
               ))}
             </select>

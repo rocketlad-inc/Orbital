@@ -128,6 +128,24 @@ export function humanizeMpError(
     case 'not_terraformed':
       return 'This world is still raw — cities need a terraformed world. Run a freighter supply route here to terraform it, or deploy a Station now.';
 
+    // --- Trade-route taxonomy rejections (terraforming rework) ---
+    case 'origin_not_terraformed':
+      return 'Terraform and Dyson runs load your POOL, and the pool is only on the dock at a terraformed world — pick one of those as the origin.';
+    case 'cannot_terraform':
+      return 'Only terrestrial worlds, moons and dwarf planets can be terraformed — gas giants and stars have nothing to work with.';
+    case 'unscouted':
+      return 'This world holds an undiscovered secret. Scout it with a ship before the terraformers move in.';
+    case 'not_controller':
+      return 'Only the Dyson Sphere controller can run supply routes to Sol.';
+    case 'no_dest_settlement':
+      return 'The destination is not one of your worlds — logistics routes deliver to a terraformed world where you have a settlement.';
+    case 'no_origin_settlement':
+      return 'The origin body has no settlement of yours to pick up from.';
+    case 'no_dest_collector':
+      return 'The other side has no terraformed world to receive the delivery.';
+    case 'no_pickup_collector':
+      return 'You have no terraformed world to load from — the pool is only on the dock at terraformed worlds.';
+
     case 'no_slots':
       // Shipyards are STATION_BUILDINGS, so "build a Shipyard" is not
       // actionable from a city — the buildings strip there only offers

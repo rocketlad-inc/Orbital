@@ -25,7 +25,9 @@ export const REQUIREMENTS = {
   'hull.freighter':        { track: 'propulsion', level: 1, label: 'Freighter' },
   'part.engine':           { track: 'propulsion', level: 2, label: 'Booster Engine' },
   'transferLanes':         { track: 'propulsion', level: 3, label: 'Transfer Lanes' },
-  'collectors':            { track: 'propulsion', level: 4, label: 'Collectors' },
+  // 'collectors' (propulsion 4) removed with the terraforming rework —
+  // the endpoint it gated is deleted; Propulsion 4 currently grants no
+  // unlock (same standing as Defense 4 / pdcUpgrade).
   // Construction
   'settlement.station':    { track: 'construction', level: 1, label: 'Orbital Stations' },
   'building.shipyard':     { track: 'construction', level: 2, label: 'Shipyard' },

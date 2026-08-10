@@ -90,7 +90,9 @@ const MapControls = () => (
   </Frame>
 );
 
-/** Economy: settlement → collector → treasury flow. */
+/** Economy: settlement → terraformed world → treasury flow (the
+ *  terraforming rework: terraformed status is the pipeline, not a
+ *  buildable collector). */
 const Economy = () => (
   <Frame>
     <g transform="translate(48,52)">
@@ -103,9 +105,9 @@ const Economy = () => (
       <path d="M186 52 h44 m-6 -4 l6 4 l-6 4" />
     </g>
     <g transform="translate(150,52)">
-      <circle r={15} fill="none" stroke="#4ecdc4" strokeWidth={1.6} />
-      <path d="M-6 5 L0 -7 L6 5 Z" fill="rgba(78,205,196,0.4)" stroke="#4ecdc4" />
-      <text y={33} textAnchor="middle" fill="#4ecdc4" fontSize={8.5} letterSpacing={1}>COLLECTOR</text>
+      <circle r={15} fill="rgba(78,205,196,0.18)" stroke="#4ecdc4" strokeWidth={1.6} />
+      <path d="M-7 2 Q-3 -5 3 -2 Q8 1 6 5 Q0 8 -5 6 Z" fill="rgba(110,231,183,0.55)" />
+      <text y={33} textAnchor="middle" fill="#4ecdc4" fontSize={8.5} letterSpacing={1}>TERRAFORMED</text>
     </g>
     <g transform="translate(252,52)">
       <rect x={-16} y={-11} width={32} height={22} rx={3} fill="rgba(255,184,77,0.15)" stroke="#ffb84d" strokeWidth={1.4} />
