@@ -451,94 +451,178 @@ function OverviewView({ data, onOpen }: { data: Overview; onOpen: (id: string) =
  * account is on screen, so the wrong-email failure mode is a harmless
  * "no account with that email" instead of a grant landing on a stranger.
  */
+type AdminUser = {
+  id: string;
+  email: string;
+  display_name: string;
+  created_at: number;
+  last_login_at: number | null;
+  is_premium: boolean;
+  premium_source: string | null;
+  premium_at: number | null;
+  premium_by: string | null;
+};
+
+const PAGE = 25;
+
+/**
+ * Browse every account, search by name or email, grant/revoke inline.
+ *
+ * This replaced an exact-email lookup box, which assumed you already
+ * knew the address of the person you were looking for. You don't — you
+ * know them as a display name, so the search covers both and an empty
+ * query just lists everyone.
+ */
 function PremiumGrants() {
-  const [email, setEmail] = useState('');
+  const [q, setQ] = useState('');
+  const [premiumOnly, setPremiumOnly] = useState(false);
+  const [rows, setRows] = useState<AdminUser[]>([]);
+  const [total, setTotal] = useState(0);
+  const [premiumTotal, setPremiumTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-  const [found, setFound] = useState<{
-    email: string;
-    display_name: string;
-    entitlements: { sku: string; source: string; granted_by: string | null; granted_at: number }[];
-  } | null>(null);
+  /** Which row has an action in flight — so one grant doesn't grey out
+   *  every button in the list. */
+  const [acting, setActing] = useState<string | null>(null);
 
-  const lookup = async () => {
-    setBusy(true); setNote(null); setFound(null);
+  const load = useCallback(async (search: string, prem: boolean, off: number) => {
+    setBusy(true);
+    const params = new URLSearchParams({ limit: String(PAGE), offset: String(off) });
+    if (search.trim()) params.set('q', search.trim());
+    if (prem) params.set('premium', '1');
     const res = await apiFetch<{
-      user: { email: string; display_name: string };
-      entitlements: { sku: string; source: string; granted_by: string | null; granted_at: number }[];
-    }>(`/api/admin/entitlements?email=${encodeURIComponent(email.trim())}`);
+      users: AdminUser[]; total: number; premium_total: number;
+    }>(`/api/admin/users?${params}`);
     setBusy(false);
-    if (!res.ok) { setNote(res.error?.message ?? 'lookup failed'); return; }
-    setFound({ ...res.data.user, entitlements: res.data.entitlements });
-  };
+    if (!res.ok) { setNote(res.error?.message ?? 'could not load users'); return; }
+    setRows(res.data.users);
+    setTotal(res.data.total);
+    setPremiumTotal(res.data.premium_total);
+  }, []);
 
-  const act = async (path: string, verb: string) => {
-    if (!found) return;
-    setBusy(true); setNote(null);
+  // Debounced search: typing a name shouldn't fire a query per keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => { setOffset(0); void load(q, premiumOnly, 0); }, 220);
+    return () => clearTimeout(t);
+  }, [q, premiumOnly, load]);
+
+  const act = async (u: AdminUser) => {
+    setActing(u.id); setNote(null);
+    const path = u.is_premium
+      ? '/api/admin/entitlements/revoke'
+      : '/api/admin/entitlements';
     const res = await apiFetch<{ ok: boolean }>(path, {
       method: 'POST',
-      body: JSON.stringify({ email: found.email }),
+      body: JSON.stringify({ email: u.email }),
     });
-    setBusy(false);
-    if (!res.ok) { setNote(res.error?.message ?? `${verb} failed`); return; }
-    setNote(`${verb} ✓ — ${found.email}`);
-    // Re-run the lookup so the panel shows the post-action truth rather
-    // than an optimistic guess.
-    void lookup();
+    setActing(null);
+    if (!res.ok) {
+      setNote(res.error?.message ?? 'action failed');
+      return;
+    }
+    setNote(`${u.is_premium ? 'Revoked' : 'Granted'} ✓ — ${u.display_name}`);
+    // Re-read rather than flipping the row optimistically, so the list
+    // shows the server's truth (including who granted it and when).
+    void load(q, premiumOnly, offset);
   };
 
-  const owns = found?.entitlements.some(e => e.sku === 'cosmetics_v1') ?? false;
+  const ago = (ms: number | null) => {
+    if (!ms) return 'never';
+    const d = Math.floor((Date.now() - ms) / 86_400_000);
+    if (d <= 0) return 'today';
+    if (d === 1) return '1d';
+    return `${d}d`;
+  };
+
+  const pageEnd = Math.min(offset + PAGE, total);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 520 }}>
-      <div style={{ display: 'flex', gap: 8 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 620 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <input
-          value={email}
-          onChange={e => setEmail(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') void lookup(); }}
-          placeholder="account email…"
+          value={q}
+          onChange={e => setQ(e.target.value)}
+          placeholder="search name or email — blank lists everyone"
           style={{
             flex: 1, background: 'rgba(20, 32, 46, 0.85)',
             border: '1px solid rgba(96, 130, 160, 0.4)', borderRadius: 6,
             color: '#cdd9e4', fontSize: 12, padding: '6px 10px', fontFamily: 'inherit',
           }}
         />
-        <button className="aa-btn" disabled={busy || !email.trim()} onClick={() => void lookup()}>
-          Look up
-        </button>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#8a9fb3' }}>
+          <input
+            type="checkbox"
+            checked={premiumOnly}
+            onChange={e => setPremiumOnly(e.target.checked)}
+          />
+          premium only
+        </label>
       </div>
-      {found && (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-          border: '1px solid rgba(96, 130, 160, 0.3)', borderRadius: 6, padding: '8px 10px',
-        }}>
-          <span style={{ fontSize: 12, color: '#e8eef5' }}>{found.display_name}</span>
-          <span style={{ fontSize: 11, color: '#8a9fb3' }}>{found.email}</span>
-          <span style={{ fontSize: 11, color: owns ? '#6ee7b7' : '#8a9fb3' }}>
-            {owns
-              ? `PREMIUM (${found.entitlements.find(e => e.sku === 'cosmetics_v1')?.source})`
-              : 'no premium'}
-          </span>
-          {owns ? (
-            <button
-              className="aa-btn"
-              style={{ marginLeft: 'auto', borderColor: 'rgba(255, 94, 94, 0.5)', color: '#ff5e5e' }}
-              disabled={busy}
-              onClick={() => void act('/api/admin/entitlements/revoke', 'Revoked')}
+
+      <div style={{ fontSize: 11, color: '#8a9fb3' }}>
+        {busy ? 'loading…' : total === 0 ? 'no matching accounts' : (
+          <>
+            showing {offset + 1}–{pageEnd} of {total}
+            {' · '}{premiumTotal} premium account{premiumTotal === 1 ? '' : 's'} overall
+          </>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {rows.map(u => (
+          <div
+            key={u.id}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+              border: '1px solid rgba(96, 130, 160, 0.3)', borderRadius: 6,
+              padding: '6px 10px',
+              background: u.is_premium ? 'rgba(110, 231, 183, 0.05)' : undefined,
+            }}
+          >
+            <span style={{ fontSize: 12, color: '#e8eef5', minWidth: 120 }}>{u.display_name}</span>
+            <span style={{ fontSize: 11, color: '#8a9fb3', flex: 1, minWidth: 160 }}>{u.email}</span>
+            <span
+              style={{ fontSize: 10, color: '#6b7d8f' }}
+              title={`joined ${new Date(u.created_at).toLocaleDateString()}`}
             >
-              Revoke
-            </button>
-          ) : (
-            <button
-              className="aa-btn aa-btn--primary"
-              disabled={busy}
-              onClick={() => void act('/api/admin/entitlements', 'Granted')}
+              seen {ago(u.last_login_at)}
+            </span>
+            <span
+              style={{ fontSize: 11, color: u.is_premium ? '#6ee7b7' : '#6b7d8f', minWidth: 92 }}
+              title={u.is_premium && u.premium_by ? `granted by ${u.premium_by}` : undefined}
             >
-              Grant premium
+              {u.is_premium ? `PREMIUM (${u.premium_source})` : '—'}
+            </span>
+            <button
+              className={u.is_premium ? 'aa-btn' : 'aa-btn aa-btn--primary'}
+              style={u.is_premium
+                ? { borderColor: 'rgba(255, 94, 94, 0.5)', color: '#ff5e5e' }
+                : undefined}
+              disabled={acting === u.id}
+              onClick={() => void act(u)}
+            >
+              {acting === u.id ? '…' : u.is_premium ? 'Revoke' : 'Grant'}
             </button>
-          )}
+          </div>
+        ))}
+      </div>
+
+      {total > PAGE && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button
+            className="aa-btn"
+            disabled={busy || offset === 0}
+            onClick={() => { const o = Math.max(0, offset - PAGE); setOffset(o); void load(q, premiumOnly, o); }}
+          >Prev</button>
+          <button
+            className="aa-btn"
+            disabled={busy || pageEnd >= total}
+            onClick={() => { const o = offset + PAGE; setOffset(o); void load(q, premiumOnly, o); }}
+          >Next</button>
         </div>
       )}
+
       {note && <div style={{ fontSize: 11, color: '#8a9fb3' }}>{note}</div>}
     </div>
   );

@@ -328,6 +328,93 @@ async function handleAdminLookup(_req, env, { url, session }) {
   });
 }
 
+/**
+ * Browse/search every account, with premium state attached.
+ *
+ * The entitlement panel could only do an EXACT email lookup, which
+ * assumed the admin already knew the address. In practice you know
+ * someone as "the player called Bungus" — so this searches display name
+ * and email together, and with no query at all just lists everyone.
+ *
+ * Admin-gated through requireAdmin, which 404s rather than 403s: this
+ * returns the email address of every account on the service, and a route
+ * that denies loudly is a route that confirms it exists.
+ */
+async function handleAdminUsers(_req, env, { url, session }) {
+  const denied = requireAdmin(session);
+  if (denied) return denied;
+
+  const raw = (url.searchParams.get('q') ?? '').trim().toLowerCase();
+  // Escape LIKE metacharacters. Without this a search for "%" matches
+  // every account and "_" silently matches any character, which reads as
+  // the filter being broken.
+  const esc = raw.replace(/[\\%_]/g, (m) => `\\${m}`);
+  const like = `%${esc}%`;
+  const hasQ = raw.length > 0 ? 1 : 0;
+  const premiumOnly = url.searchParams.get('premium') === '1' ? 1 : 0;
+
+  const n = (v, dflt, min, max) => {
+    const x = parseInt(v ?? '', 10);
+    return Number.isFinite(x) ? Math.max(min, Math.min(max, x)) : dflt;
+  };
+  const limit = n(url.searchParams.get('limit'), 50, 1, 200);
+  const offset = n(url.searchParams.get('offset'), 0, 0, 1_000_000);
+
+  // One WHERE, used by both the page query and the count, so the total
+  // can never disagree with the rows it claims to be counting.
+  const where = `
+     WHERE (?1 = 0 OR LOWER(u.display_name) LIKE ?2 ESCAPE '\\'
+                   OR LOWER(u.email) LIKE ?2 ESCAPE '\\')
+       AND (?3 = 0 OR e.user_id IS NOT NULL)`;
+  const from = `
+      FROM users u
+      LEFT JOIN user_entitlements e
+        ON e.user_id = u.id AND e.sku = 'cosmetics_v1'`;
+
+  const rows = await env.DB
+    .prepare(
+      `SELECT u.id, u.email, u.display_name, u.created_at, u.last_login_at,
+              e.source AS premium_source, e.granted_at AS premium_at,
+              e.granted_by AS premium_by
+         ${from} ${where}
+        ORDER BY COALESCE(u.last_login_at, u.created_at) DESC
+        LIMIT ?4 OFFSET ?5`,
+    )
+    .bind(hasQ, like, premiumOnly, limit, offset)
+    .all();
+
+  const totals = await env.DB
+    .prepare(`SELECT COUNT(*) AS n ${from} ${where}`)
+    .bind(hasQ, like, premiumOnly)
+    .first();
+
+  // Unfiltered premium headcount, so the panel can show "2 of 50" without
+  // a second round trip when a filter is active.
+  const premiumTotal = await env.DB
+    .prepare(
+      `SELECT COUNT(*) AS n FROM user_entitlements WHERE sku = 'cosmetics_v1'`,
+    )
+    .first();
+
+  return json({
+    users: (rows.results ?? []).map(r => ({
+      id: r.id,
+      email: r.email,
+      display_name: r.display_name,
+      created_at: r.created_at,
+      last_login_at: r.last_login_at ?? null,
+      is_premium: r.premium_source != null,
+      premium_source: r.premium_source ?? null,
+      premium_at: r.premium_at ?? null,
+      premium_by: r.premium_by ?? null,
+    })),
+    total: Number(totals?.n ?? 0),
+    premium_total: Number(premiumTotal?.n ?? 0),
+    limit,
+    offset,
+  });
+}
+
 export const routes = [
   { method: 'POST', pattern: '/api/checkout/cosmetics', auth: 'required', handle: handleCreateCheckout },
   // NOTE: the Stripe webhook is NOT in this table. Feature routes
@@ -335,6 +422,7 @@ export const routes = [
   // carries no cookie — it authenticates by signature instead, so
   // index.js carves it out before the gate, exactly like
   // /api/discord/interactions and for exactly the same reason.
+  { method: 'GET',  pattern: '/api/admin/users', auth: 'required', handle: handleAdminUsers },
   { method: 'GET',  pattern: '/api/admin/entitlements', auth: 'required', handle: handleAdminLookup },
   { method: 'POST', pattern: '/api/admin/entitlements', auth: 'required', handle: handleAdminGrant },
   { method: 'POST', pattern: '/api/admin/entitlements/revoke', auth: 'required', handle: handleAdminRevoke },
