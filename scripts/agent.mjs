@@ -104,13 +104,32 @@ async function token() {
   die('.agent.local has neither AGENT_KEY nor AGENT_TOKEN.');
 }
 
+/**
+ * Undo Git Bash's path mangling.
+ *
+ * MSYS rewrites any argument that looks like a POSIX path into a Windows
+ * one, so `/api/users/me/rooms` arrives as
+ * `C:/Program Files/Git/api/users/me/rooms` and the URL becomes
+ * `https://orbital-empire.comC:/...` — which fails DNS on the nonsense
+ * host `orbital-empire.comc` and reads like a server problem. Rather than
+ * make every caller remember MSYS_NO_PATHCONV=1, recover the real path:
+ * anything from the first `/api/` onward is what was meant.
+ */
+function normalizePath(p) {
+  if (!p) return p;
+  const i = p.indexOf('/api/');
+  if (i > 0) return p.slice(i);              // strip an injected prefix
+  return p.startsWith('/') ? p : `/${p}`;    // tolerate 'api/...' too
+}
+
 async function main() {
   const [, , methodRaw, pathRaw, bodyRaw] = process.argv;
   if (!methodRaw) die('usage: node scripts/agent.mjs <METHOD> <path> [json]  |  whoami');
 
   const tok = await token();
 
-  const url = methodRaw === 'whoami' ? `${BASE}/api/auth/me` : `${BASE}${pathRaw ?? ''}`;
+  const apiPath = normalizePath(pathRaw);
+  const url = methodRaw === 'whoami' ? `${BASE}/api/auth/me` : `${BASE}${apiPath ?? ''}`;
   if (methodRaw !== 'whoami' && !pathRaw) {
     die('usage: node scripts/agent.mjs <METHOD> <path> [json]');
   }
