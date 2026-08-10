@@ -2,16 +2,27 @@
 // Landing - Marketing page shown before sign-in
 // ============================================================
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import './Landing.css';
+import { HowToPlay } from './HowToPlay';
 
 interface LandingProps {
   /** Triggered by the Login button or any CTA. Reveals the auth overlay. */
   onSignIn: () => void;
 }
 
+type LandingTab = 'about' | 'howto';
+
 export const Landing: React.FC<LandingProps> = ({ onSignIn }) => {
   const starfieldRef = useRef<HTMLCanvasElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [tab, setTab] = useState<LandingTab>('about');
+
+  // Switching tabs scrolls back to the top — otherwise you land
+  // mid-page in the new content with no idea where you are. NOTE:
+  // `.landing` is the scroller (overflow-y: auto), not the window, so
+  // window.scrollTo does nothing here.
+  useEffect(() => { scrollRef.current?.scrollTo(0, 0); }, [tab]);
 
   // Draw a procedural starfield as a backdrop, redraw on resize.
   useEffect(() => {
@@ -80,7 +91,7 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn }) => {
   }, []);
 
   return (
-    <div className="landing">
+    <div className="landing" ref={scrollRef}>
       <canvas ref={starfieldRef} className="landing-starfield" />
 
       {/* Top nav */}
@@ -90,13 +101,28 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn }) => {
           <span className="brand-text">ORBITAL</span>
         </div>
         <div className="landing-nav-actions">
-          {/* UX LAB / TUNABLES links removed with their pages. */}
+          <button
+            className={`landing-tab-btn${tab === 'about' ? ' is-active' : ''}`}
+            onClick={() => setTab('about')}
+          >
+            ABOUT
+          </button>
+          <button
+            className={`landing-tab-btn${tab === 'howto' ? ' is-active' : ''}`}
+            onClick={() => setTab('howto')}
+          >
+            HOW TO PLAY
+          </button>
           <button className="landing-login-btn" onClick={onSignIn}>
             LOGIN
           </button>
         </div>
       </header>
 
+      {tab === 'howto' && <HowToPlay onSignIn={onSignIn} />}
+
+      {tab === 'about' && (
+        <>
       {/* Hero */}
       <section className="landing-hero">
         <div className="hero-eyebrow">A REAL-TIME ORBITAL STRATEGY GAME</div>
@@ -259,6 +285,8 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn }) => {
         </button>
         <div className="cta-sub">Free. No download. Runs in your browser. Solo or multiplayer.</div>
       </section>
+        </>
+      )}
 
       <footer className="landing-footer">
         <div className="footer-line">

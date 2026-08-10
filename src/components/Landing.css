@@ -95,6 +95,27 @@
   color: var(--friendly);
 }
 
+/* Tab switcher (ABOUT / HOW TO PLAY). Ghost buttons until active, so
+   the amber LOGIN stays the loudest thing in the nav. */
+.landing-tab-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom-color: transparent;
+  color: var(--fg-dim);
+  padding: 8px 14px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.landing-tab-btn:hover { color: var(--friendly); }
+.landing-tab-btn.is-active {
+  color: var(--friendly);
+  border-bottom-color: var(--friendly);
+}
+
 .landing-login-btn {
   background: transparent;
   border: 1px solid var(--accent);
