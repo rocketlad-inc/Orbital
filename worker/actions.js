@@ -844,11 +844,16 @@ async function handleDeploySettlement(req, env, ctx) {
   if (!body || typeof body !== 'object') return err(400, 'bad_request', 'invalid body');
   const type = body.type;
   if (type !== 'city' && type !== 'station') return err(400, 'bad_request', "type must be 'city' or 'station'");
-  // Cities are the starting move and stay ungated — your colony ship has
-  // to be able to do something on turn one. Orbital stations are
-  // Construction 1, the first thing most players will research.
-  if (type === 'station') {
-    const gate = await requireFeature(env, gameId, me.id, 'settlement.station');
+  // STATIONS are the starting move now and stay ungated — a colony ship
+  // has to be able to do something on turn one, and under the hard city
+  // gate a station is the ONLY thing it can do on a raw world. CITIES
+  // carry Construction 1 instead; they cannot be founded before a world
+  // is terraformed anyway, so the level is nearly free by the time it
+  // binds. (Was the other way round, which silently made all expansion
+  // wait on research — 44-56 `claim_rej_not_researched` per arm in the
+  // economy sweep.)
+  if (type === 'city') {
+    const gate = await requireFeature(env, gameId, me.id, 'settlement.city');
     if (gate) return gate;
   }
 

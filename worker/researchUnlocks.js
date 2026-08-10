@@ -29,7 +29,16 @@ export const REQUIREMENTS = {
   // the endpoint it gated is deleted; Propulsion 4 currently grants no
   // unlock (same standing as Defense 4 / pdcUpgrade).
   // Construction
-  'settlement.station':    { track: 'construction', level: 1, label: 'Orbital Stations' },
+  // GATE SWAP (terraforming balance pass). Stations went from the
+  // advanced move to the FIRST move: under the hard city gate a colony
+  // ship arriving at a raw world can only plant a station, so gating
+  // stations gated all expansion — a fresh empire's colony ship could do
+  // literally nothing until Construction 1 landed. Stations are now
+  // ungated and cities carry the level instead, which costs nearly
+  // nothing in practice: you cannot build a city until a world is
+  // terraformed, and the first terraform does not complete until ~t+70,
+  // by which time Construction 1 is long since researched.
+  'settlement.city':       { track: 'construction', level: 1, label: 'Planetary Cities' },
   'building.shipyard':     { track: 'construction', level: 2, label: 'Shipyard' },
   'hull.frigate':          { track: 'construction', level: 3, label: 'Frigate' },
   'hull.destroyer':        { track: 'construction', level: 4, label: 'Destroyer' },

@@ -360,13 +360,14 @@ export const WorldMenuOverlay: React.FC = () => {
   };
 
   // ---- founding a city / station (MP rules, mirrors BodyInspector) ----
-  // city    : consumes a Colony Ship of yours in orbit.
-  // station : research-gated (settlement.station); then a Colony Ship
-  //           here OR an owned settlement here + 30M/20C.
+  // station : UNGATED — a Colony Ship here, OR an owned settlement here
+  //           + 30M/20C. This is the claim move and must work on turn one.
+  // city    : research-gated (settlement.city, Construction 1) AND the
+  //           world must already be terraformed.
   const colonyShipHere = useMemo(() => gameState.ships.find(s =>
     s.ownedBy === 'player' && !s.transit && s.orbit.parentBodyId === openId && s.class === 'colony',
   ), [gameState.ships, openId]);
-  const stationLock = gate.lockReason('settlement.station');
+  const cityLock = gate.lockReason('settlement.city');
   const mpRes = gameState.resources['player'];
   const canAffordStation = !!mpRes && mpRes.ore >= 30 && mpRes.credits >= 20;
 
@@ -485,20 +486,22 @@ export const WorldMenuOverlay: React.FC = () => {
     // was the "have a colony ship in orbit but Build Station is dead"
     // bug. The colony ship / stationLock / cost checks below are the
     // real gates — mirrors BodyInspector's showCityDeploy/showStationDeploy.
-    const enabled = !raw && !(isCity ? false : !!stationLock) && (isCity
+    // The research lock now sits on the CITY side: stations are the
+    // turn-one claim move and carry no tech requirement.
+    const enabled = !raw && !(isCity ? !!cityLock : false) && (isCity
       ? !!colonyShipHere
       : (!!colonyShipHere || (own && canAffordStation)));
     const sub = isCity
       ? (raw ? 'raw world — terraform first'
+        : cityLock ? cityLock.text
         : colonyShipHere ? 'consumes colony ship' : 'needs colony ship in orbit')
-      : (stationLock ? stationLock.text
-        : colonyShipHere ? 'consumes colony ship'
+      : (colonyShipHere ? 'consumes colony ship'
         : own ? '30M · 20C' : 'needs colony ship in orbit');
     const title = isCity
       ? (raw ? 'Raw world — run a terraform supply route here first. Stations can be built now.'
+        : cityLock ? `${cityLock.label} — ${cityLock.text}`
         : colonyShipHere ? `Found a city — consumes ${colonyShipHere.name}` : 'Requires a Colony Ship in orbit (consumed)')
-      : (stationLock ? `${stationLock.label} — ${stationLock.text}`
-        : colonyShipHere ? `Launch a station — consumes ${colonyShipHere.name}`
+      : (colonyShipHere ? `Launch a station — consumes ${colonyShipHere.name}`
         : own ? (canAffordStation ? 'Built from orbit: 30M 20C' : 'Need 30M 20C to build from orbit')
         : 'Requires a Colony Ship in orbit, or own a settlement here first');
     return (
@@ -511,7 +514,7 @@ export const WorldMenuOverlay: React.FC = () => {
         data-testid={`wm-found-${type}`}
       >
         <span className="wm-bbtn-nm">{isCity ? '▲ FOUND CITY' : '▲ BUILD STATION'}</span>
-        <span className="wm-bbtn-st">{stationLock && !isCity ? `🔒 ${sub}` : sub}</span>
+        <span className="wm-bbtn-st">{cityLock && isCity && !raw ? `🔒 ${sub}` : sub}</span>
       </button>
     );
   };

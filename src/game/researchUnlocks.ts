@@ -35,7 +35,7 @@ export type FeatureId =
   // — Propulsion — ('collectors' removed with the terraforming rework)
   | 'hull.freighter' | 'part.engine' | 'transferLanes'
   // — Construction —
-  | 'settlement.station' | 'building.shipyard'
+  | 'settlement.city' | 'building.shipyard'
   | 'hull.frigate' | 'hull.destroyer'
   | 'building.thrusters' | 'dyson'
   // — Society —
@@ -108,8 +108,8 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
   // reward when one earns its place.
 
   // ── 🔧 CONSTRUCTION ─────────────────────────────────────────
-  { track: 'construction', level: 1, feature: 'settlement.station',
-    label: 'Orbital Stations', blurb: 'Claim a body from orbit. Consumes a colony ship.' },
+  { track: 'construction', level: 1, feature: 'settlement.city',
+    label: 'Planetary Cities', blurb: 'Found cities on terraformed worlds. Stations claim ground without it.' },
   { track: 'construction', level: 2, feature: 'building.shipyard',
     label: 'Shipyard', blurb: 'Parallel build slots. Stop building one ship at a time.' },
   { track: 'construction', level: 3, feature: 'hull.frigate',

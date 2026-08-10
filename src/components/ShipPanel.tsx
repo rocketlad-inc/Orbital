@@ -287,12 +287,15 @@ export const ShipPanel: React.FC = () => {
     && gameState.settlements.some(s => s.bodyId === colonyBody.id && s.type === 'city');
   const stationHere = !!colonyBody
     && gameState.settlements.some(s => s.bodyId === colonyBody.id && s.type === 'station');
-  const stationLock = deployGate.lockReason('settlement.station');
+  // Construction 1 now gates CITIES, not stations — a colony ship must
+  // be able to claim a raw world on turn one.
+  const cityLock = deployGate.lockReason('settlement.city');
   // Raw worlds take stations only (the terraforming hard gate) — the
   // city option simply isn't offered, so a colony ship arriving at a
   // raw world "deploys a station instead" with zero extra UI.
-  const canDeployCity = !!colonyBody && canHostCity(colonyBody) && !cityHere && !isRawWorld(colonyBody);
-  const canDeployStation = !!colonyBody && canHostStation(colonyBody) && !stationHere && !stationLock;
+  const canDeployCity = !!colonyBody && canHostCity(colonyBody) && !cityHere
+    && !isRawWorld(colonyBody) && !cityLock;
+  const canDeployStation = !!colonyBody && canHostStation(colonyBody) && !stationHere;
   const deployTypes: Array<'city' | 'station'> = [
     ...(canDeployCity ? ['city' as const] : []),
     ...(canDeployStation ? ['station' as const] : []),
@@ -805,8 +808,8 @@ export const ShipPanel: React.FC = () => {
                       ? 'Deploy available in orbit of a world'
                       : cityHere && stationHere
                         ? `${colonyBody.name} is already fully settled`
-                        : stationLock && !canDeployCity
-                          ? `🔒 ${stationLock.label} — ${stationLock.text}`
+                        : cityLock && !canDeployCity
+                          ? `🔒 ${cityLock.label} — ${cityLock.text}`
                           : `Nothing left to found at ${colonyBody.name}`}
                 </div>
               )}

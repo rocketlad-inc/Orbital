@@ -837,9 +837,10 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
   // section and a STATION section, so each only offers its own deploy.
   const showCityDeploy = cityAllowed && (!typeFilter || typeFilter === 'city');
   const showStationDeploy = stationAllowed && (!typeFilter || typeFilter === 'station');
-  // Orbital stations are Construction 1. Cities stay ungated — your
-  // starting colony ship has to have something to do on turn one.
-  const stationLock = deployGate.lockReason('settlement.station');
+  // Construction 1 gates CITIES now, not stations. Inverted with the
+  // terraforming hard gate: a colony ship arriving at a raw world can
+  // only plant a station, so gating stations gated all expansion.
+  const cityLock = deployGate.lockReason('settlement.city');
 
   const playerRes = gameState.resources['player'];
   const canAffordCity = playerRes
@@ -1116,11 +1117,13 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
             {showCityDeploy && (
               <button
                 className="deploy-btn"
-                disabled={isMp
+                disabled={!!cityLock || (isMp
                   ? !playerColonyShipHere
-                  : (!canBuildHere || !canAffordCity)}
+                  : (!canBuildHere || !canAffordCity))}
                 onClick={() => handleStartDeploy('city')}
-                title={isMp
+                title={cityLock
+                  ? `${cityLock.label} — ${cityLock.text}`
+                  : isMp
                   ? (playerColonyShipHere
                       ? `Found a city — consumes ${playerColonyShipHere.name} (the Colony Ship in orbit)`
                       : colonyShipEnRoute
@@ -1135,19 +1138,17 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                   )
                 }
               >
-                ■ DEPLOY CITY
+                {cityLock ? `🔒 ${cityLock.text}` : '■ DEPLOY CITY'}
               </button>
             )}
             {showStationDeploy && (
               <button
                 className="deploy-btn"
-                disabled={!!stationLock || (isMp
+                disabled={isMp
                   ? !(playerColonyShipHere || (ownSettlementHere && canAffordMpStation))
-                  : (!canBuildHere || !canAffordStation))}
+                  : (!canBuildHere || !canAffordStation)}
                 onClick={() => handleStartDeploy('station')}
-                title={stationLock
-                  ? `${stationLock.label} — ${stationLock.text}`
-                  : isMp
+                title={isMp
                   ? (playerColonyShipHere
                       ? `Launch a station — consumes ${playerColonyShipHere.name} (the Colony Ship in orbit)`
                       : ownSettlementHere
@@ -1164,7 +1165,7 @@ const SettlementsSection: React.FC<SettlementsSectionProps> = ({ bodyId, typeFil
                   )
                 }
               >
-                {stationLock ? `🔒 ${stationLock.text}` : '◆ DEPLOY STATION'}
+                ◆ DEPLOY STATION
               </button>
             )}
           </div>
