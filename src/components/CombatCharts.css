@@ -1,0 +1,167 @@
+/* ============================================================
+   CombatCharts — reference charts on the HOW TO PLAY page.
+   Dark surface only (#0a0e14); see the component header for why.
+   ============================================================ */
+
+.cc {
+  --cc-ink:      #d8e4ee;
+  --cc-ink-dim:  #8fa6b8;
+  --cc-rule:     rgba(120, 160, 190, 0.18);
+  --cc-teal:     #26a69a;
+  --cc-amber:    #c98500;
+  margin: 48px 0;
+}
+
+.cc-lede {
+  font-size: 15.5px;
+  line-height: 1.7;
+  color: #a8bccd;
+  max-width: 640px;
+  margin: 0 0 28px;
+}
+
+/* ---- figure shell ---- */
+.cc-fig {
+  margin: 0 0 26px;
+  padding: 18px 18px 16px;
+  border: 1px solid var(--cc-rule);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.015);
+}
+.cc-figcap {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 14px;
+}
+.cc-figtitle {
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--cc-ink);
+}
+.cc-figsub {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--cc-ink-dim);
+}
+
+/* ---- matrix ----
+   Wrapped so a phone scrolls the TABLE, never the page. */
+.cc-matrixwrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.cc-matrix {
+  border-collapse: separate;
+  border-spacing: 2px;      /* the 2px surface gap between fills */
+  width: 100%;
+  min-width: 420px;
+}
+.cc-matrix th {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--cc-ink-dim);
+  text-align: left;
+  padding: 4px 6px;
+  white-space: nowrap;
+}
+.cc-matrix thead th { text-align: center; }
+.cc-matrix tbody th { text-align: left; }
+.cc-corner {
+  font-size: 10px !important;
+  letter-spacing: 0.04em !important;
+  color: #6f8093 !important;
+}
+.cc-matrix td { padding: 0; }
+
+.cc-cell {
+  display: block;
+  padding: 12px 8px;
+  border-radius: 4px;       /* rounded data-ends */
+  text-align: center;
+  font-family: var(--font-data, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  cursor: default;
+}
+
+/* ---- bars ---- */
+.cc-grid3 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 14px;
+  margin-bottom: 26px;
+}
+.cc-grid3 .cc-fig { margin: 0; }
+
+.cc-barrow,
+.cc-mitrow {
+  display: grid;
+  grid-template-columns: 68px 1fr 46px;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 8px;
+}
+.cc-barname {
+  font-size: 12px;
+  color: var(--cc-ink-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cc-bartrack {
+  height: 9px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.cc-barfill {
+  height: 100%;
+  background: var(--cc-teal);
+  border-radius: 5px;       /* rounded end, anchored to the baseline */
+}
+.cc-barfill--mit { background: var(--cc-amber); }
+.cc-barval {
+  font-family: var(--font-data, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+  color: var(--cc-ink);
+  text-align: right;
+}
+
+/* ---- counters legend ---- */
+.cc-counters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+  margin-bottom: 16px;
+}
+.cc-counter { display: inline-flex; align-items: center; gap: 8px; }
+.cc-swatch {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+.cc-ctext { font-size: 13px; color: #b9cbda; }
+.cc-ctext b { color: var(--cc-ink); }
+
+.cc-mit { margin-bottom: 4px; }
+
+/* ---- notes ---- */
+.cc-note {
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: #9db2c4;
+  margin: -8px 0 26px;
+  max-width: 620px;
+}
+.cc-note b { color: #e2ecf4; }
+.cc-note--tight { margin: 14px 0 0; }
+
+@media (max-width: 640px) {
+  .cc-barrow, .cc-mitrow { grid-template-columns: 58px 1fr 42px; }
+  .cc-lede { font-size: 15px; }
+}

@@ -13,6 +13,7 @@
 
 import React from 'react';
 import './HowToPlay.css';
+import { CombatCharts } from './CombatCharts';
 
 interface Props {
   onSignIn: () => void;
@@ -353,6 +354,8 @@ export const HowToPlay: React.FC<Props> = ({ onSignIn }) => (
         win outright.
       </p>
     </Beat>
+
+    <CombatCharts />
 
     <section className="htp-quick">
       <h2 className="htp-h2">The short version</h2>
