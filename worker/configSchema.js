@@ -149,6 +149,20 @@ export const SCHEMA = [
       + 'breaking parity is what left science 2.5x behind before.',
   },
   {
+    id: 'ship_cost_mult', group: 'fleet', type: 'number',
+    label: 'Ship price multiplier', def: 1.0, min: 0.1, max: 5, step: 0.05,
+    help: 'Scales hull AND part cost at queue time. The lever for "are '
+      + 'warships worth what they cost" — stacks with the senate build-cost '
+      + 'law and the Construction discount rather than replacing either.',
+  },
+  {
+    id: 'building_cost_mult', group: 'buildings', type: 'number',
+    label: 'Building price multiplier', def: 1.0, min: 0.1, max: 5, step: 0.05,
+    help: 'Scales every building level\'s cost. Buildings are the economy\'s '
+      + 'main sink, so this is the primary dial against treasuries that '
+      + 'balloon with nothing to buy.',
+  },
+  {
     id: 'building_cost_scaling', group: 'buildings', type: 'number',
     label: 'Cost growth per building level', def: 1.6, min: 1, max: 4, step: 0.05,
     help: 'Each level costs this multiple of the last. Below ~1.3 compounding runs away; '

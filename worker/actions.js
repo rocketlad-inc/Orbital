@@ -693,6 +693,15 @@ async function handleQueueBuild(req, env, ctx) {
   // queue time. Default 1.0 (no effect) when no proposal is active.
   // build_ticks is left alone -- balance lever, not the same dial.
   let buildCostMult = 1;
+  // Config price dial, applied BEFORE the senate law and the Construction
+  // discount so those keep behaving as relative modifiers on whatever the
+  // host has set the base price to.
+  try {
+    const gc = await import('./gameConfig.js');
+    const conf = await gc.cfg(env, gameId);
+    const m = Number(conf.ship_cost_mult);
+    if (Number.isFinite(m) && m > 0) buildCostMult = m;
+  } catch { /* shipped price */ }
   try {
     const tickRow = await env.DB
       .prepare('SELECT current_tick FROM games WHERE id = ?')
@@ -700,7 +709,7 @@ async function handleQueueBuild(req, env, ctx) {
     // Per-faction: a build-cost law aimed at me.id overrides the general one.
     const sliders = await getActiveSliders(env, gameId, tickRow?.current_tick ?? 0, me.id);
     const v = Number(sliders.ship_build_cost_multiplier);
-    if (Number.isFinite(v) && v > 0) buildCostMult = v;
+    if (Number.isFinite(v) && v > 0) buildCostMult *= v;
   } catch { /* default */ }
   // Construction tech: −5%/level to build cost, floored at 0.25× (mirrors
   // src/game/techs.ts buildCostModifier, which SP applies in buildShip).
@@ -1673,14 +1682,25 @@ const BUILDING_DEFS = {
   },
 };
 
-function buildingCostAt(kind, level) {
+function buildingCostAt(kind, level, mult = 1) {
   const def = BUILDING_DEFS[kind];
   if (!def) return null;
-  const k = Math.pow(def.costScaling, level);
+  const k = Math.pow(def.costScaling, level) * (mult > 0 ? mult : 1);
   return {
     metal: Math.ceil(def.base.metal * k),
     gold:  Math.ceil(def.base.gold  * k),
   };
+}
+
+/** building_cost_mult, or 1 if config is unreachable. Buildings are the
+ *  economy's main sink, so this is the dial against ballooning treasuries. */
+async function buildingCostMult(env, gameId) {
+  try {
+    const gc = await import('./gameConfig.js');
+    const conf = await gc.cfg(env, gameId);
+    const m = Number(conf.building_cost_mult);
+    return Number.isFinite(m) && m > 0 ? m : 1;
+  } catch { return 1; }
 }
 function buildingTicksAt(kind, level) {
   const def = BUILDING_DEFS[kind];
@@ -1742,7 +1762,7 @@ async function handleQueueBuilding(req, env, ctx) {
     try { buildings = JSON.parse(settlement.buildings_json) ?? {}; } catch { buildings = {}; }
   }
   const currentLevel = Number(buildings[kind] ?? 0);
-  const cost = buildingCostAt(kind, currentLevel);
+  const cost = buildingCostAt(kind, currentLevel, await buildingCostMult(env, gameId));
   const ticks = buildingTicksAt(kind, currentLevel);
 
   if (me.metal < cost.metal || me.gold < cost.gold) {
@@ -1843,7 +1863,8 @@ async function handleCancelBuilding(req, env, ctx) {
   // Refund cost-at-queue-time. Guarded flip (building_order_json still
   // set) + refund-only-if-changed (see handleCancelBuild) so two
   // concurrent cancels can't both refund.
-  const refund = buildingCostAt(order.kind, Math.max(0, (order.target_level ?? 1) - 1));
+  const refund = buildingCostAt(order.kind, Math.max(0, (order.target_level ?? 1) - 1),
+    await buildingCostMult(env, gameId));
   const flip = await env.DB
     .prepare('UPDATE game_settlements SET building_order_json = NULL WHERE id = ? AND building_order_json IS NOT NULL')
     .bind(settlementId)
