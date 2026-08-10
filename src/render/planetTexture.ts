@@ -284,6 +284,89 @@ interface TfPalette {
   landB: string;      // replaces raw land tone B
   lake: string;       // crater floors → water
   capAlpha: number;   // polar-ice presence (tundra worlds cap harder)
+  /** Emissive lava, volcanic worlds only. Painted as a SEPARATE pass
+   *  after the shared geometry (see paintLavaSeams) so it can't disturb
+   *  the rand() stream the continents are built from. */
+  lava?: string;
+  lavaGlow?: string;
+  /** How much of the surface runs molten, 0..1. */
+  lavaAmount?: number;
+}
+
+/** The four faces a terraformed world can wear. */
+type Biome = 'verdant' | 'arid' | 'tundra' | 'volcanic';
+
+/**
+ * What a world BECOMES, decided by what it already IS.
+ *
+ * Terraforming in this game doesn't paste the same garden onto every
+ * rock — it works with the world's existing character, so Io (the most
+ * volcanically violent body in the solar system) comes out a volcano
+ * world and Callisto comes out frozen taiga. Players who know the real
+ * solar system should find the results obvious in hindsight.
+ *
+ * Curated first for bodies with real-world character, then a heuristic
+ * for procedurally-added and far-system worlds.
+ */
+const CURATED_BIOME: Record<string, Biome> = {
+  // Molten: active volcanism or a runaway greenhouse in the raw world.
+  io: 'volcanic',          // 400+ active volcanoes; the obvious one
+  venus: 'volcanic',       // volcanically resurfaced, furnace-hot
+  vesta: 'volcanic',       // differentiated protoplanet, ancient basalt flows
+  // Baked: rock and dust, close to the fire or long since dried out.
+  mercury: 'arid',
+  mars: 'arid',            // the archetypal desert world
+  phobos: 'arid',
+  deimos: 'arid',
+  ceres: 'arid',
+  pallas: 'arid',
+  juno: 'arid',
+  hygiea: 'arid',
+  // Living: worlds with water to work with — Europa's subsurface ocean
+  // is the single best terraforming target in the system.
+  europa: 'verdant',
+  ganymede: 'verdant',     // largest moon, subsurface ocean
+  luna: 'verdant',         // greening the Moon: the oldest dream in the genre
+  // Frozen: far, icy, or cryovolcanic — habitable, but never warm.
+  callisto: 'tundra',
+  titan: 'tundra',         // thick atmosphere already, methane lakes
+  enceladus: 'tundra',
+  triton: 'tundra',
+  rhea: 'tundra', miranda: 'tundra', ariel: 'tundra', umbriel: 'tundra',
+  titania: 'tundra', oberon: 'tundra', nereid: 'tundra', proteus: 'tundra',
+  charon: 'tundra', pluto: 'tundra', eris: 'tundra', sedna: 'tundra',
+  makemake: 'tundra', haumea: 'tundra', quaoar: 'tundra',
+};
+
+/** Rough "how red is this rock" — volcanic and desert worlds skew warm,
+ *  icy ones skew neutral-to-blue. Returns -1..1. */
+function warmth(hex: string): number {
+  if (!hex.startsWith('#') || hex.length !== 7) return 0;
+  const p = parseInt(hex.slice(1), 16);
+  // Red-minus-blue only; green carries no heat signal here.
+  const r = (p >> 16) & 255, b = p & 255;
+  return (r - b) / 255;
+}
+
+function terraformBiome(body: Body): Biome {
+  const curated = CURATED_BIOME[body.id];
+  if (curated) return curated;
+
+  // Procedural / far-system bodies: read their character off the same
+  // properties a player can see. Heat falls off with distance, so orbit
+  // radius is the dominant term; a warm-hued metal-rich rock still has
+  // an internal furnace and can go volcanic anywhere.
+  const rand = mulberry32(hashStr(body.id + ':biome'));
+  const w = warmth(body.color || COLORS.planetDefault);
+  const metal = body.resources?.metal ?? 0;
+  const r = body.orbitRadius ?? 0;
+
+  // Iron-red and metal-rich reads as "still geologically alive".
+  if (w > 0.18 && metal >= 3 && rand() < 0.75) return 'volcanic';
+  if (r < 260) return w > 0.05 ? 'arid' : 'verdant';
+  if (r < 700) return rand() < 0.55 ? 'verdant' : 'arid';
+  if (r < 1400) return rand() < 0.5 ? 'verdant' : 'tundra';
+  return 'tundra';
 }
 
 /** Two-hex blend (t = weight of `b`). Local — colors.ts has no mix. */
@@ -303,38 +386,128 @@ function mixHex(a: string, bcol: string, t: number): string {
  *  into subtly rustier seas than an ash-grey one — the world keeps
  *  its identity through the change. */
 function terraformPalette(body: Body): TfPalette {
-  const rand = mulberry32(hashStr(body.id + ':biome'));
-  type B = 'verdant' | 'arid' | 'tundra';
-  let biome: B;
-  if (body.type === 'terrestrial') {
-    biome = body.orbitRadius < 250 ? (rand() < 0.5 ? 'arid' : 'verdant') : 'tundra';
-  } else if (body.type === 'dwarf') {
-    biome = 'tundra';
-  } else {
-    biome = rand() < 0.35 ? 'verdant' : 'tundra';
-  }
+  const biome = terraformBiome(body);
   const raw = body.color || COLORS.planetDefault;
   const tint = (hex: string) => (raw.startsWith('#') ? mixHex(hex, raw, 0.14) : hex);
-  if (biome === 'arid') {
+
+  // THE FOUR CLASSES MUST READ AS FOUR CLASSES.
+  //
+  // An earlier cut gave all three non-volcanic biomes a deep-blue ocean
+  // and only varied the land, which measured as near-identical: arid
+  // rgb(104,133,110), verdant rgb(73,131,107), tundra rgb(69,114,108).
+  // Three greens is not three worlds.
+  //
+  // The fix doesn't touch geometry (it can't — see paintTexture). It
+  // reassigns what each colour SLOT means per biome. `ocean` is really
+  // "the base the whole disc is flooded with", so a desert floods with
+  // sand and gets rare blue seas in the `lake` slot, while an ice world
+  // floods with pale frost. Same brushstrokes, four completely
+  // different planets.
+  if (biome === 'volcanic') {
+    // Young, fertile and violent: black basalt shelves, steaming dark
+    // water, molten seams still open, and almost no ice.
     return {
-      ocean: tint('#2e6478'), landA: '#8a9a4f', landB: '#6f7a3a',
-      lake: '#3d7d8f', capAlpha: 0.55,
+      ocean: tint('#1b3c44'), landA: '#2b2526', landB: '#46312a',
+      lake: '#8c3a1f', capAlpha: 0.10,
+      lava: '#ff6a1e', lavaGlow: '#ffd08a',
+      lavaAmount: body.id === 'io' ? 1 : 0.7,
+    };
+  }
+  if (biome === 'arid') {
+    // A DESERT world: the disc floods with sand, the "continents"
+    // become dune fields and rock, and water survives only where the
+    // craters were deep enough to hold it.
+    return {
+      ocean: tint('#c9a068'), landA: '#a87844', landB: '#835a31',
+      lake: '#2f7f96', capAlpha: 0.22,
     };
   }
   if (biome === 'tundra') {
-    // Boreal, not beige: the ocean has to read as WATER against grey
-    // regolith and the land as taiga — a grey moon that terraforms
-    // into slightly-different-grey wasn't landing (proof-harness pixel
-    // distance 25; verdant worlds hit 90+).
+    // An ICE world: frost plain rather than ocean, taiga in grey-green
+    // where anything grows, and caps that never retreat.
     return {
-      ocean: tint('#2b5f82'), landA: '#4e7d55', landB: '#7a8f7d',
-      lake: '#3d7ba0', capAlpha: 0.95,
+      ocean: tint('#9fc0d4'), landA: '#5f7d69', landB: '#83998f',
+      lake: '#4b86a8', capAlpha: 1,
     };
   }
+  // Verdant — the Earth-like end of the scale, and the only one that
+  // keeps a true deep-blue ocean.
   return {
-    ocean: tint('#2c5d82'), landA: '#3f8a4f', landB: '#356b3f',
+    ocean: tint('#245a80'), landA: '#3f8a4f', landB: '#2f6238',
     lake: '#3a7ba0', capAlpha: 0.8,
   };
+}
+
+/**
+ * Molten seams and calderas for a volcanic world.
+ *
+ * Runs AFTER the shared geometry from its own seed stream, which is the
+ * whole reason it's a separate pass: the raw and terraformed faces must
+ * make an identical sequence of rand() calls while painting continents,
+ * or the two variants would disagree about where the land is and the
+ * crossfade would visibly slide. Painting lava afterwards can't disturb
+ * that.
+ *
+ * Drawn with 'lighter' compositing so seams read as EMITTING rather than
+ * as orange paint — the glow survives the terminator shading that gets
+ * layered over the disk later.
+ */
+function paintLavaSeams(c: CanvasRenderingContext2D, body: Body, tf: TfPalette) {
+  if (!tf.lava) return;
+  const rand = mulberry32(hashStr(body.id + ':lava'));
+  const amount = tf.lavaAmount ?? 0.7;
+  c.save();
+  c.globalCompositeOperation = 'lighter';
+
+  // Fissure networks: short jagged chains, each wrapped across the seam
+  // so the horizontal spin scroll stays continuous.
+  const seams = Math.round(5 + rand() * 4 * amount);
+  for (let i = 0; i < seams; i++) {
+    const sx = rand() * TEX_SIZE;
+    const sy = TEX_R * 0.35 + rand() * TEX_SIZE * 0.55;
+    const segs = 3 + Math.floor(rand() * 4);
+    const w = (1.6 + rand() * 2.4) * amount;
+    for (const wrap of [-TEX_SIZE, 0, TEX_SIZE]) {
+      let x = sx + wrap, y = sy;
+      c.beginPath();
+      c.moveTo(x, y);
+      for (let s = 0; s < segs; s++) {
+        x += (rand() - 0.45) * TEX_R * 0.30;
+        y += (rand() - 0.5) * TEX_R * 0.16;
+        c.lineTo(x, y);
+      }
+      c.strokeStyle = tf.lava!;
+      c.lineWidth = w;
+      c.lineCap = 'round';
+      c.globalAlpha = 0.85;
+      c.stroke();
+      // Hot core down the middle of the seam.
+      c.strokeStyle = tf.lavaGlow ?? '#ffe0a8';
+      c.lineWidth = w * 0.4;
+      c.globalAlpha = 0.95;
+      c.stroke();
+    }
+  }
+
+  // Calderas: a few glowing pools with soft halos.
+  const pools = Math.round(2 + rand() * 3 * amount);
+  for (let i = 0; i < pools; i++) {
+    const px = rand() * TEX_SIZE;
+    const py = TEX_R * 0.4 + rand() * TEX_SIZE * 0.5;
+    const pr = (TEX_R * 0.05 + rand() * TEX_R * 0.09) * (0.6 + amount * 0.4);
+    for (const wrap of [-TEX_SIZE, 0, TEX_SIZE]) {
+      const g = c.createRadialGradient(px + wrap, py, 0, px + wrap, py, pr * 2.6);
+      g.addColorStop(0, tf.lavaGlow ?? '#ffe0a8');
+      g.addColorStop(0.28, tf.lava!);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      c.globalAlpha = 0.9;
+      c.fillStyle = g;
+      c.beginPath();
+      c.arc(px + wrap, py, pr * 2.6, 0, Math.PI * 2);
+      c.fill();
+    }
+  }
+  c.restore();
 }
 
 function paintTexture(body: Body, variant: TexVariant = 'raw'): HTMLCanvasElement | null {
@@ -374,6 +547,9 @@ function paintTexture(body: Body, variant: TexVariant = 'raw'): HTMLCanvasElemen
     // moons, asteroids, lagrange rocks — cratered regolith
     paintRocky(c, base, rand, tf);
   }
+  // Volcanic worlds get their molten seams last, on a separate seed
+  // stream, so the geometry above stays byte-identical between variants.
+  if (tf?.lava) paintLavaSeams(c, body, tf);
   return off;
 }
 
