@@ -2,6 +2,21 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "orbital-local",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "wrangler",
+        "dev",
+        "--config",
+        "C:/Users/lcfee/OneDrive/Documents/Claude/Projects/Orbital/.claude/worktrees/nice-wing-ab9816/wrangler.jsonc",
+        "--persist-to",
+        "C:/Users/lcfee/OneDrive/Documents/Claude/Projects/Orbital/.claude/worktrees/nice-wing-ab9816/.wrangler/state",
+        "--port",
+        "8788"
+      ],
+      "port": 8788
+    },
+    {
       "name": "orbital-worktree-build",
       "runtimeExecutable": "npx",
       "runtimeArgs": [

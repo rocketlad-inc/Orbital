@@ -11,10 +11,19 @@
 //   - a bold teal ring + "✓ YOU" on the world the local player claimed
 //   - a bold amber ring + player name on worlds others claimed
 //
-// When the local player has claimed a world (focusBodyId), the camera
-// animates to centre + zoom on that world (and its moons), so picking
-// a capital on the panel visibly flies the backdrop in to it. With no
-// claim, it frames the whole inner system.
+// THE CAMERA DOES NOT MOVE WHEN YOU PICK. It used to fly in and zoom
+// to the claimed world (and its moons), which read well once and badly
+// every time after: comparing candidates means seeing where they sit
+// relative to each other, and the fly-in threw that away on every
+// click. Worse, picking also reset the manual zoom/pan, so a player who
+// had deliberately pulled out to compare got yanked back in and had to
+// zoom out again — per playtest feedback, "every time".
+//
+// So the map frames the whole startable system and stays wherever the
+// player put it. Claim state is carried entirely by the overlay rings,
+// which are drawn in SCREEN space at a fixed pixel size and so stay
+// legible at any zoom. Anyone wanting a close look can scroll or drag,
+// and that view now survives the next pick.
 //
 // Purely visual: pointer-events are off so it never intercepts clicks
 // meant for the panel. The card picker (StartingBodyPicker) remains
@@ -77,13 +86,9 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
   const baseCenterRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const maxPanRef = useRef<number>(0);
 
-  // Re-frame (reset manual zoom + pan) whenever the focused planet
-  // changes — picking a new capital snaps back to its default framed
-  // view, from which you can scroll and drag again.
-  useEffect(() => {
-    userZoomRef.current = 1;
-    panRef.current = { x: 0, y: 0 };
-  }, [focusBodyId]);
+  // Deliberately NO re-frame effect on focusBodyId. Picking a capital
+  // used to reset zoom + pan back to a default framing; that is the
+  // thing playtesters had to undo after every single click.
 
   const claimsKey = snap.members
     .map(m => `${m.userId}:${m.chosen_starting_body ?? ''}`)
@@ -110,30 +115,17 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
       fit *= 1.25;
       const fullScale = (Math.min(w, h) * 0.46) / fit;
 
-      const focus = focusBodyId ? BY_ID.get(focusBodyId) : undefined;
-
-      // Default framing scale + camera centre.
-      let center = { x: 0, y: 0 };
-      let frameScale = fullScale;
-      if (focus) {
-        const wp = bodyPosition(focus, 0, SOL_BODIES);
-        center = { x: wp.x, y: wp.y };
-        // Frame the body + its moons. Moon-less world uses its own
-        // radius; a planet with moons frames the widest moon orbit.
-        let moonSpan = focus.radius * 8;
-        for (const b of SOL_BODIES) {
-          if (b.parent === focus.id) moonSpan = Math.max(moonSpan, b.orbitRadius * 1.4);
-        }
-        frameScale = (Math.min(w, h) * 0.40) / Math.max(moonSpan, 1);
-      }
+      // Framing is ALWAYS the whole startable system, regardless of what
+      // the player has claimed. The selection is communicated by the
+      // overlay rings below, not by moving the camera, so that comparing
+      // candidate worlds stays possible at a glance.
+      const center = { x: 0, y: 0 };
+      const frameScale = fullScale;
 
       // Clamp the manual zoom by EFFECTIVE scale, not a fixed multiplier:
       //   - can't pull out past fullScale (the whole startable system)
       //   - can push in to 6× the default frame
-      // Deriving the multiplier bounds from the scales means you can
-      // always scroll all the way out to the system even when the
-      // default frame is a tight moon close-up.
-      const minZoom = (fullScale * 0.92) / frameScale;  // ≤ 1 when focused
+      const minZoom = (fullScale * 0.92) / frameScale;
       const maxZoom = 6;
       userZoomRef.current = Math.max(minZoom, Math.min(maxZoom, userZoomRef.current));
 
@@ -198,10 +190,20 @@ export const LobbyMapPreview: React.FC<Props> = ({ snap, myUserId, focusBodyId }
       }
 
       // Claim overlays.
+      // Everyone ELSE's claim comes from the snapshot; the local
+      // player's comes from focusBodyId, which is the optimistic value
+      // set the instant you click. That matters more now than it used
+      // to: the camera fly-in used to be the immediate feedback that a
+      // click registered, and without it, sourcing your own ring from
+      // the snapshot would leave the map looking inert for a full PATCH
+      // round-trip. Taking it from focusBodyId also means the old ring
+      // can't linger on your previous pick while the server catches up.
       const claimedBy = new Map<string, string>();
       for (const m of snap.members) {
+        if (m.userId === myUserId) continue;
         if (m.chosen_starting_body) claimedBy.set(m.chosen_starting_body, m.userId);
       }
+      if (myUserId && focusBodyId) claimedBy.set(focusBodyId, myUserId);
       const nameOf = (uid: string) =>
         snap.members.find(m => m.userId === uid)?.displayName ?? 'player';
 

@@ -585,7 +585,7 @@ function RoomDetail({
   }
 
   // The local player's claimed capital — drives the backdrop map's
-  // fly-in zoom AND the picker highlight. Prefers the optimistic value
+  // claim ring AND the picker highlight. Prefers the optimistic value
   // (set the instant you click) so both react without waiting on the
   // server round-trip.
   const serverChoice = user?.id
@@ -644,7 +644,9 @@ function RoomDetail({
           so players can see where the starting worlds sit. Only while
           the game hasn't started (a running game draws its own map).
           Purely visual; the card picker in the panel is the claim
-          control. Zooms to the local player's claimed world. */}
+          control. Picking does NOT move the camera — the map keeps the
+          whole-system view (and whatever the player zoomed/panned to)
+          so candidate worlds stay comparable; the claim shows as a ring. */}
       {!started && (
         <LobbyMapPreview snap={snap} myUserId={user?.id} focusBodyId={myChoice} />
       )}
