@@ -50,6 +50,17 @@ const COLOR_MIN_DISTANCE = 90;
 //     design target for a full game.
 //
 // Other intervals stay available for testing or alternative paces:
+//   1s                   — SIM/AGENT ONLY: fastest auto-cadence for
+//                          headless playtests. NOTE the alarm honours it
+//                          only best-effort — CF Durable Object alarms
+//                          aren't precise at 1s and the cron fallback is
+//                          1/min, so real cadence is irregular. For
+//                          deterministic full-speed sims drive the
+//                          force-tick endpoint in a loop instead (an
+//                          agent that hosts its own room may force-tick
+//                          it). This exists so an auto-running game can
+//                          be watched at speed, not for wall-clock
+//                          precision.
 //   30s / 60s            — demo / live testing
 //   5min                 — quick play (Earth-Jupiter ≈ 24h)
 //   7.5min (DEFAULT)     — design pace, 3-week match
@@ -57,6 +68,7 @@ const COLOR_MIN_DISTANCE = 90;
 //   1h / 6h / 12h        — async play at slower paces
 //   24h                  — turn-based "one tick a day"
 const ALLOWED_TICK_INTERVALS = new Set([
+  1_000,
   30_000,
   60_000,
   300_000,

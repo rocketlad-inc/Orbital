@@ -53,6 +53,10 @@ const FACTION_COLOR_CHOICES: string[] = [
 // 7.5 min/tick, which gives an Earth→Jupiter Hohmann transfer of ~1.5
 // real days and a 4000-tick match of ~21 real days (3 weeks).
 const TICK_INTERVAL_OPTIONS: Array<{ label: string; value: number }> = [
+  // Sim/agent cadence. Best-effort only — see the ALLOWED_TICK_INTERVALS
+  // note in worker/lobby.js; for deterministic full-speed runs drive
+  // force-tick in a loop rather than relying on this auto-cadence.
+  { label: '1s (sim · best-effort)', value: 1_000 },
   { label: '30s (rapid demo)',     value: 30_000 },
   { label: '60s (demo)',           value: 60_000 },
   { label: '5min (quick play)',    value: 300_000 },
