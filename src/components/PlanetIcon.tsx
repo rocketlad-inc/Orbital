@@ -13,7 +13,7 @@
 
 import React, { useEffect, useRef } from 'react';
 import type { Body } from '../types';
-import { getPlanetTexture } from '../render/planetTexture';
+import { getPlanetTexture, getTerraformedTexture, terraformFraction } from '../render/planetTexture';
 import { COLORS } from '../render/colors';
 
 interface Props {
@@ -22,10 +22,18 @@ interface Props {
    *  crisp on retina. */
   size?: number;
   className?: string;
+  /** Current tick — only needed to place a world inside its terraform
+   *  crossfade. A terraformed or raw world resolves without it, so this
+   *  stays optional for callers that don't have game state to hand. */
+  currentTick?: number;
 }
 
-export const PlanetIcon: React.FC<Props> = ({ body, size = 16, className }) => {
+export const PlanetIcon: React.FC<Props> = ({ body, size = 16, className, currentTick = 0 }) => {
   const ref = useRef<HTMLCanvasElement>(null);
+  // How terraformed this world should LOOK — the same function the map
+  // and the world-menu closeup call, so a world can't read as a lush
+  // garden in space and a dead rock in the Outliner.
+  const tfF = terraformFraction(body, currentTick);
 
   useEffect(() => {
     const canvas = ref.current;
@@ -44,9 +52,26 @@ export const PlanetIcon: React.FC<Props> = ({ body, size = 16, className }) => {
     c.arc(r, r, r, 0, Math.PI * 2);
     c.clip();
 
-    const tex = getPlanetTexture(body);
+    // Terraform-aware face selection, mirroring the map renderer: a
+    // flipped world draws the terraformed texture outright, and a world
+    // mid-transformation crossfades raw → terraformed so the icon
+    // visibly becomes green as the payload lands. Both faces are painted
+    // from the same seed stream, so continents and craters stay put and
+    // only the surface is reinterpreted.
+    const tex = tfF >= 1
+      ? (getTerraformedTexture(body) ?? getPlanetTexture(body))
+      : getPlanetTexture(body);
     if (tex) {
       c.drawImage(tex, 0, 0, px, px);
+      if (tfF > 0 && tfF < 1) {
+        const tfTex = getTerraformedTexture(body);
+        if (tfTex) {
+          c.save();
+          c.globalAlpha = tfF;
+          c.drawImage(tfTex, 0, 0, px, px);
+          c.restore();
+        }
+      }
     } else {
       // Texture unavailable (SSR / no document, or a body type with no
       // recipe) — fall back to the flat colour the outliner used before
@@ -73,7 +98,7 @@ export const PlanetIcon: React.FC<Props> = ({ body, size = 16, className }) => {
     c.beginPath();
     c.arc(r, r, r - c.lineWidth / 2, 0, Math.PI * 2);
     c.stroke();
-  }, [body, size]);
+  }, [body, size, tfF]);
 
   return (
     <canvas

@@ -6,7 +6,7 @@ import { shipDisplayTick } from './tickPhase';
 
 import { Body, Ship, OrbitElements, TrajectoryArc, Settlement, Faction, TorchTransferPlan, BuildOrder, BuildingKind, FactionTechStateBase } from '../types';
 import { effectiveShipMaxHp } from '../game/combat';
-import { getPlanetTexture, getTerraformedTexture, getCloudTexture, hashStr, mulberry32 } from './planetTexture';
+import { getPlanetTexture, getTerraformedTexture, getCloudTexture, terraformFraction, hashStr, mulberry32 } from './planetTexture';
 import { drawCityCluster, drawStationStructure } from './isoStructures';
 import { flameCount } from '../game/worldMenu/combatDisplay';
 import type { SystemRegion } from './systemRegions';
@@ -1586,25 +1586,18 @@ const PLANET_AXIAL_TILT = RING_TILT;
 // Terraforming visuals (DESIGN-terraforming stage 7).
 // ------------------------------------------------------------
 
-/** Visual mirror of terraform_duration_ticks' default. The crossfade is
- *  presentation only — the authoritative clock lives on the body row
- *  (terraform_completes_at_tick), so a host-tuned duration merely makes
- *  the fade land early/late within the window, never wrong at the ends. */
-const TF_VISUAL_DURATION = 24;
 /** Ticks the one-shot completion bloom lingers after the flip. */
 const TF_BLOOM_TICKS = 2;
 
 /** 0 = raw, 1 = fully terraformed, in-between while the transformation
  *  window runs. `terraformedAtTick` is null-or-number in MP and
- *  undefined in SP, so SP always reads 0 here and renders unchanged. */
-function terraformFraction(body: Body, t: number): number {
-  if (body.terraformedAtTick != null) return 1;
-  const at = body.terraformCompletesAtTick;
-  if (at == null) return 0;
-  // Window open: fade in across the window, never fully reaching 1
-  // until the server actually flips the world.
-  return Math.max(0.15, Math.min(0.92, 1 - (at - t) / TF_VISUAL_DURATION));
-}
+ *  undefined in SP, so SP always reads 0 here and renders unchanged.
+ *  (The rule itself now lives in planetTexture.ts — imported above —
+ *  so the map, the world-menu closeup and the Outliner icon agree.) */
+// terraformFraction moved to planetTexture.ts (imported above) so the
+// map, the world-menu closeup and the Outliner icon all read the same
+// rule — a world must never look terraformed in one panel and raw in
+// another.
 
 /** Small-disk terraform tint: blend a body's raw colour toward a
  *  living ocean-teal. Keeps terraformed worlds legible at map zoom,

@@ -77,6 +77,30 @@ export function getTerraformedTexture(body: Body): HTMLCanvasElement | null {
   return getCachedTexture(body, 'terraformed');
 }
 
+/** How long the raw→terraformed crossfade reads over, in ticks. */
+const TF_VISUAL_DURATION = 24;
+
+/**
+ * How terraformed a body should LOOK right now: 0 = raw, 1 = fully
+ * terraformed, in between = mid-transformation crossfade.
+ *
+ * Lives here rather than in the map renderer because it answers a
+ * texture question — which face to paint and how far to blend — and
+ * because every surface that draws a body needs the same answer. The
+ * map, the world-menu closeup and the Outliner icon all call this, so a
+ * world can never look terraformed in one panel and raw in another.
+ *
+ * Deliberately never returns exactly 1 while the window is open: the
+ * world isn't terraformed until the SERVER flips terraformedAtTick, and
+ * art that finished early would be lying about a gameplay state.
+ */
+export function terraformFraction(body: Body, t: number): number {
+  if (body.terraformedAtTick != null) return 1;
+  const at = body.terraformCompletesAtTick;
+  if (at == null) return 0;
+  return Math.max(0.15, Math.min(0.92, 1 - (at - t) / TF_VISUAL_DURATION));
+}
+
 function getCachedTexture(body: Body, variant: TexVariant): HTMLCanvasElement | null {
   const key = variant === 'raw' ? body.id : body.id + '\u0000tf';
   const hit = cache.get(key);

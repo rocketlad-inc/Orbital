@@ -387,28 +387,18 @@ const OutlinerInner: React.FC<OutlinerInnerProps> = React.memo(({
                   >
                     {/* Same procedural art the map draws, so a body is
                         recognisable here instead of a generic colour dot. */}
-                    <PlanetIcon body={body} size={16} className="outliner__body-icon" />
+                    <PlanetIcon body={body} size={16} className="outliner__body-icon" currentTick={currentTick} />
                     <span className="outliner__body-name">
                       {body.name}{isOwned ? ' ★' : ''}
-                      {/* Terraform state is shown ONLY when it's
-                          actionable. A "terraformed" badge was tried and
-                          removed: in practice every developed holding is
-                          terraformed (you terraform a world to build on
-                          it), so the badge landed on ~100% of rows and
-                          read as decoration. Live data confirmed it —
-                          12/12 owned worlds terraformed, 0 raw. So:
-                            • terraformed → nothing (the silent default)
-                            • raw + owned + untouched → a dim RAW chip
-                              (this world can't host a city yet)
-                            • terraforming → the progress bar below
-                          The bar completing and vanishing IS the
-                          "it's terraformed now" signal. */}
-                      {isOwned && tf?.state === 'raw' && !tf.started && (
-                        <span
-                          className="outliner__terraform-raw"
-                          title="Raw world — stations only. Deliver a terraform payload by freighter to allow cities and full yield."
-                        >RAW</span>
-                      )}
+                      {/* NO terraform badge here, by design (Lorne). The
+                          world's ART carries its terraform state: the
+                          PlanetIcon above draws the terraformed face for
+                          a flipped world and crossfades toward it during
+                          the transformation, exactly as the map does. A
+                          text chip next to a sprite that already shows a
+                          green world is saying the same thing twice.
+                          Progress still gets a bar, because "how far
+                          along" is a number the sprite can't convey. */}
                       {/* Terraform progress — a leaf-green bar distinct
                           from the mint ship-build bar. Shown while the
                           transformation window runs, or while the payload

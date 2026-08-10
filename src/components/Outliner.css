@@ -500,18 +500,7 @@
   background: #9ccc65;
 }
 
-/* Raw-world chip on the body row — an owned world that can't host a
-   city until a terraform payload lands. Dim amber reads as "needs
-   attention", not an error. Deliberately NOT shown on terraformed
-   worlds, which are the developed default and would just be noise. */
-.outliner__terraform-raw {
-  margin-left: 6px;
-  padding: 0 4px;
-  font-size: 8px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  color: #d8b070;
-  background: rgba(216, 176, 112, 0.14);
-  border-radius: 3px;
-  vertical-align: middle;
-}
+/* No terraform text chip: the body icon draws the terraformed face
+   itself (see PlanetIcon), so a label would repeat what the sprite
+   already says. Progress keeps its bar — a percentage is the one thing
+   the art can't convey. */
