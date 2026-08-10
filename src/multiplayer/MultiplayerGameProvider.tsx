@@ -1294,6 +1294,25 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         return `${t}  💥 THE DYSON SPHERE HAS FALLEN — ${reason}; ${lost} units of ${owner}'s progress erased. The Sol slot stands open.`;
       }
 
+      // --------- Terraforming (DESIGN-terraforming) ---------
+      if (ev.kind === 'terraform_begun') {
+        const owner = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
+        const where = (parsed.body_name as string) ?? 'a world';
+        const dur = (parsed.duration as number) ?? 24;
+        return `${t}  ◌ ${owner}'s terraforming payload landed on ${where} — transformation completes in ${dur} ticks`;
+      }
+      if (ev.kind === 'terraform_complete') {
+        const owner = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
+        const where = (parsed.body_name as string) ?? 'a world';
+        return `${t}  🌍 ${where.toUpperCase()} LIVES — ${owner}'s terraforming is complete. Full yield, city rights, trade dock — permanently.`;
+      }
+      if (ev.kind === 'terraform_destroyed') {
+        const owner = nameOfFaction(ev.actor_faction_id, parsed.faction_name as string | undefined);
+        const where = (parsed.body_name as string) ?? 'a living world';
+        const rock = (parsed.asteroid_name as string) ?? 'an asteroid';
+        return `${t}  ☄ ${where.toUpperCase()} IS DEAD — ${owner} drove ${rock} into a living world; its biosphere is gone`;
+      }
+
       if (ev.kind === 'ship_rush_botched') {
         // §3 rush gone wrong — herald fodder. The hull still delivers,
         // just at half health.

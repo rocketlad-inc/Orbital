@@ -1739,6 +1739,68 @@ function buildFleetEconomyStories(rows, used, factionNames, locator) {
 }
 
 // ------------------------------------------------------------
+// Terraforming beats (DESIGN-terraforming stage 8). Three moments:
+// the payload landing (window opens), the world flipping, and the
+// one thing that can ever undo it — an asteroid. The first two are
+// expansion news; the last is an atrocity and reads like one.
+// ------------------------------------------------------------
+
+const TERRAFORM_BEGUN = [
+  (c) => `The last freighter has landed at ${c.bodyName}: **${c.faction}**'s terraforming payload is complete, and the machines are waking. In **${c.duration} ticks** the world turns green — if it still flies their flag when the clock runs out.`,
+  (c) => `**${c.faction}** delivered the final tonnes to **${c.bodyName}** this edition. The transformation window is open; atmosphere processors are spinning up. Whoever holds the world when they finish, keeps it.`,
+];
+const TERRAFORM_BEGUN_HEADLINE = [
+  (c) => `THE MACHINES WAKE ON ${(c.bodyName || '?').toUpperCase()}`,
+  (c) => `${(c.bodyName || '?').toUpperCase()} BEGINS TO TURN`,
+];
+const TERRAFORM_COMPLETE = [
+  (c) => `**${c.bodyName} is alive.** Oceans where there was regolith, weather where there was vacuum — **${c.faction}**'s terraformers have finished their work, permanently. The world now pays full yield to its keeper's coffers, hosts cities, and anchors trade.`,
+  (c) => `Green dawn at **${c.bodyName}**: the transformation is complete and irreversible. **${c.faction}** has added a living world to the map — full income, city rights, and a trade dock, forever.`,
+];
+const TERRAFORM_COMPLETE_HEADLINE = [
+  (c) => `${(c.bodyName || '?').toUpperCase()} LIVES`,
+  (c) => `A NEW WORLD FOR ${(c.faction || '?').toUpperCase()}`,
+];
+const TERRAFORM_DESTROYED = [
+  (c) => `**${c.bodyName} is dead.** The asteroid ${c.asteroidName ? `**${c.asteroidName}** ` : ''}${c.faction ? `driven by **${c.faction}** ` : ''}struck a LIVING world — oceans boiled, atmosphere torn away, a generation of terraforming erased in one strike. The histories will not be kind.`,
+  (c) => `They killed a world today. ${c.faction ? `**${c.faction}**'s ` : 'An '}asteroid ${c.asteroidName ? `— **${c.asteroidName}** — ` : ''}fell on **${c.bodyName}** and took its biosphere with it. What was green is regolith again; nothing short of terraforming it anew will bring it back.`,
+];
+const TERRAFORM_DESTROYED_HEADLINE = [
+  (c) => `${(c.bodyName || 'A WORLD').toUpperCase()} IS DEAD`,
+  () => 'THEY KILLED A LIVING WORLD',
+];
+
+/** Terraform lifecycle beats. begun/complete are expansion news; the
+ *  asteroid beat is filed under battles at near-Dyson-collapse weight —
+ *  killing a living world IS the front page. */
+function buildTerraformStories(rows, used, factionNames) {
+  const colonies = [];
+  const battles = [];
+  for (const row of rows) {
+    const p = safeJson(row.payload);
+    const faction = p.faction_name ?? factionNames.get(row.actor_faction_id) ?? 'A faction';
+    if (row.kind === 'terraform_begun') {
+      colonies.push(mkStory(180, used, 'terraform_begun', TERRAFORM_BEGUN, 'terraform_begun_hl', TERRAFORM_BEGUN_HEADLINE, {
+        faction, bodyName: p.body_name ?? 'a distant world', duration: p.duration ?? 24,
+      }));
+    } else if (row.kind === 'terraform_complete') {
+      // A permanent new living world outranks any routine expansion —
+      // enough to headline a quiet edition.
+      colonies.push(mkStory(400, used, 'terraform_complete', TERRAFORM_COMPLETE, 'terraform_complete_hl', TERRAFORM_COMPLETE_HEADLINE, {
+        faction, bodyName: p.body_name ?? 'a distant world',
+      }));
+    } else if (row.kind === 'terraform_destroyed') {
+      battles.push(mkStory(800, used, 'terraform_destroyed', TERRAFORM_DESTROYED, 'terraform_destroyed_hl', TERRAFORM_DESTROYED_HEADLINE, {
+        faction: row.actor_faction_id ? faction : null,
+        bodyName: p.body_name ?? 'a living world',
+        asteroidName: p.asteroid_name ?? null,
+      }));
+    }
+  }
+  return { colonies, battles };
+}
+
+// ------------------------------------------------------------
 // Embed assembly
 // ------------------------------------------------------------
 
@@ -1813,6 +1875,9 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
   const used = new Map(); // bank-name -> Set(indices used this edition)
 
   const captainFate = buildCaptainFateMap(rows);
+  // Terraform beats split across two columns: begun/complete are
+  // expansion news, the asteroid kill is a battle-page atrocity.
+  const terraform = buildTerraformStories(rows, used, factionNames);
   const sections = {
     // Dyson beats merge into the existing columns: an attack on the
     // sphere IS a battle (and outweighs any ordinary engagement); its
@@ -1823,11 +1888,15 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
     ],
     battles:     [
       ...buildDysonBattleStories(rows, used, factionNames),
+      ...terraform.battles,
       ...buildBattleStories(rows, used, locator, captainFate),
     ],
     politics:    buildPoliticsStories(rows, used, factionNames),
     discoveries: buildDiscoveryStories(rows, used, locator, factionNames),
-    colonies:    buildColonyStories(rows, used, locator),
+    colonies:    [
+      ...terraform.colonies,
+      ...buildColonyStories(rows, used, locator),
+    ],
     trades:      buildTradeStories(rows, used, factionNames),
     industry:    [
       ...buildIndustryStories(rows, used),

@@ -5449,7 +5449,8 @@ export class Room {
         // Look up target name + current yields.
         const target = await this.env.DB
           .prepare(
-            `SELECT name, yield_metal, yield_fuel, yield_gold, yield_science
+            `SELECT name, yield_metal, yield_fuel, yield_gold, yield_science,
+                    terraformed_at_tick
                FROM game_bodies
               WHERE id = ? AND game_id = ?`,
           )
@@ -5524,6 +5525,45 @@ export class Room {
                 Math.floor((target.yield_gold ?? 0) / 2),
                 Math.floor((target.yield_science ?? 0) / 2),
                 targetId,
+              ),
+          );
+        }
+
+        // UN-TERRAFORM (DESIGN-terraforming stage 8). This is the ONLY
+        // code path in the game allowed to clear terraform state —
+        // conquest and razing never touch it; only a dinosaur-killer
+        // does. Any part-filled meter dies with it: the payload was
+        // spent on a biosphere that no longer exists.
+        if (target && target.terraformed_at_tick != null) {
+          stmts.push(
+            this.env.DB
+              .prepare(
+                `UPDATE game_bodies
+                    SET terraformed_at_tick = NULL,
+                        terraform_acc_metal = 0,
+                        terraform_acc_gold = 0,
+                        terraform_completes_at_tick = NULL
+                  WHERE id = ?`,
+              )
+              .bind(targetId),
+          );
+          const tdId = `tfdead_${targetId.slice(-10)}_${Math.random().toString(36).slice(2, 8)}`;
+          stmts.push(
+            this.env.DB
+              .prepare(
+                `INSERT INTO chronicle_entries
+                  (id, game_id, tick_number, kind, actor_faction_id, body_id, target_faction_id, payload, visibility, created_at_ms)
+                 VALUES (?, ?, ?, 'terraform_destroyed', ?, ?, NULL, ?, 'public', ?)`,
+              )
+              .bind(
+                tdId, gameId, tick,
+                a.ram_owned_by_faction_id,
+                targetId,
+                JSON.stringify({
+                  body_name: targetName,
+                  asteroid_name: a.name,
+                }),
+                now,
               ),
           );
         }
