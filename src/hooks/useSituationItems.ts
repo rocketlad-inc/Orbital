@@ -117,6 +117,7 @@ export type SituationCategory =
   | 'idle_freighter' // freighter with no transit + no route
   | 'stranded'       // raw-world stockpile piling up, nothing hauling it
   | 'terraform_stalled' // part-paid terraform meter with no route feeding it
+  | 'terraform_unstarted' // claimed raw world that never had a route at all
   | 'vote_open'      // MP — senate proposal in voting, not voted on
   | 'incoming_trade' // MP — open trade where caller is responder
   | 'in_combat'      // shooting RIGHT NOW — your hulls/settlements engaged
@@ -170,6 +171,10 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
   // Money already sunk into a meter that nothing is filling — that's a
   // decision (reassign a freighter), not a someday-opportunity.
   terraform_stalled: 'decision',
+  // Claimed ground with nothing moving toward it. An opportunity rather
+  // than a decision — nothing is at risk, there is just a world sitting
+  // there paying 10% when it could be paying 100%.
+  terraform_unstarted: 'opportunity',
   tech_available: 'opportunity',
   // A building slot standing empty wastes the same tick an idle yard
   // does, so it sits in the same tier as one.
@@ -248,6 +253,7 @@ export const CATEGORY_LABEL: Record<SituationCategory, string> = {
   idle_freighter:  'Idle freighters',
   stranded:        'Stranded stockpiles',
   terraform_stalled: 'Terraforming stalled',
+  terraform_unstarted: 'Claimed worlds awaiting terraforming',
   tech_available:  'Research idle',
   building_idle:   'Building slots empty',
   building_done:   'Construction complete',
@@ -988,6 +994,59 @@ export function useSituationItems(
           severity: 'normal',
           sortKey: 5e8 - acc,
           entity: `body:${b.id}`,
+        });
+      }
+    } catch { /* defensive */ }
+
+    // ---- 5c) Claimed, but never started ----
+    //
+    // THE STALL THE SIM ACTUALLY MEASURED. 5b above deliberately skips
+    // worlds with nothing sunk yet (`acc < 1`), which means the most
+    // common dead end in 200 simulated games was invisible: an empire
+    // plants a station on a raw world and then never sends anything,
+    // because starting a terraform means noticing you need to dedicate
+    // a freighter to it. `tfroute_no_hauler` was the top blocker in
+    // every single arm of the economy sweep.
+    //
+    // Aggregated to ONE row on purpose. Per-world rows would put five
+    // near-identical entries in the list for an empire mid-expansion,
+    // which is how a situation report teaches people to ignore it. The
+    // count carries the scale; the focus jumps to the best candidate.
+    try {
+      const feeding = new Set(
+        (gameState.tradeRoutes ?? [])
+          .filter(r => r.kind === 'terraform')
+          .map(r => r.destBodyId),
+      );
+      const waiting = bodies.filter(b =>
+        b.ownedBy === factionId
+        && b.terraformedAtTick === null
+        && b.terraformCompletesAtTick == null
+        && ((b.terraformAcc?.metal ?? 0) + (b.terraformAcc?.credits ?? 0)) < 1
+        && !feeding.has(b.id));
+
+      if (waiting.length > 0) {
+        // Whether a hauler is free changes the advice from "build one"
+        // to "assign one", so say which.
+        const freeHaulers = (gameState.ships ?? []).filter(sh =>
+          sh.ownedBy === factionId
+          && sh.class === 'freighter'
+          && !sh.transit
+          && !(gameState.tradeRoutes ?? []).some(r => r.shipId === sh.id)).length;
+        const first = waiting[0];
+        push({
+          id: 'terraform_unstarted',
+          category: 'terraform_unstarted',
+          title: waiting.length === 1
+            ? `${first.name} is claimed but still raw`
+            : `${waiting.length} claimed worlds still raw`,
+          subtitle: freeHaulers > 0
+            ? `${freeHaulers} idle freighter${freeHaulers === 1 ? '' : 's'} — set a terraform route to start the payload`
+            : 'No idle freighter — terraforming needs one dedicated to the run',
+          focus: { kind: 'body', bodyId: first.id },
+          severity: 'normal',
+          sortKey: 4.9e8 - waiting.length,
+          entity: `body:${first.id}`,
         });
       }
     } catch { /* defensive */ }

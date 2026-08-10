@@ -91,24 +91,33 @@ export const SCHEMA = [
   // balance pass. They are the single most-adjusted numbers in any 4X and
   // the sweep needs to vary them, so they belong here where a host (and
   // the simulator) can reach them.
-  // 200/200 is a MEASURED default, not a guess — sim/economySweep.mjs,
+  // 300/300 is a MEASURED default, not a guess — sim/economySweep.mjs,
   // 100 games across ten economies, plus a 100-game control run with a
-  // freighter-heavy doctrine. At the old 100/100 only half of the empires
-  // that committed to expanding ever finished a single terraform inside
-  // 250 ticks; at 200/200 that is 80-90%, the first world lands ~30 ticks
-  // sooner, and — the result worth reading twice — best:worst wealth
-  // inequality FELL from 7.1x to 3.2x. A thin opening does not restrain
-  // the leader, it just adds variance: everyone gambles the same small
-  // purse and the winner is whoever the dice favoured. Fund the opening
-  // and outcomes converge.
+  // freighter-heavy doctrine. Reach is the share of empires that COMMIT
+  // to expanding and actually finish a terraform inside 250 ticks:
+  //
+  //   100/100    50%    first world t+95    best:worst wealth 7.1x
+  //   200/200    80%    first world t+66    3.2x
+  //   300/300   100%    first world t+70    4.0x  (3.8x in the control)
+  //
+  // At the old 100/100 half of the empires that tried to expand never
+  // finished a single world — a coin flip, not a decision. 300 is the
+  // only setting where every committed expander got there in both runs.
+  //
+  // The counter-intuitive column is the third. Funding the opening did
+  // not hand the leader a bigger lead; inequality FELL. A thin purse
+  // does not restrain a runaway, it adds variance — every empire gambles
+  // the same small stake and the winner is whoever the dice favoured.
+  // The 200-vs-300 gap in that column (4.0x vs 3.2x) flipped sign between
+  // the two runs, so treat it as noise; the reach difference did not.
   {
     id: 'starting_metal', group: 'yields', type: 'int',
-    label: 'Starting metal', def: 200, min: 0, max: 5000, step: 10,
+    label: 'Starting metal', def: 300, min: 0, max: 5000, step: 10,
     help: 'Metal each empire opens with.',
   },
   {
     id: 'starting_credits', group: 'yields', type: 'int',
-    label: 'Starting credits', def: 200, min: 0, max: 5000, step: 10,
+    label: 'Starting credits', def: 300, min: 0, max: 5000, step: 10,
     help: 'Credits each empire opens with. Credits carry fleet upkeep AND the '
       + 'credit half of every terraform, so this is the tighter of the two.',
   },
