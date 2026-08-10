@@ -10,6 +10,13 @@ import { Changelog } from './Changelog';
 interface LandingProps {
   /** Triggered by the Login button or any CTA. Reveals the auth overlay. */
   onSignIn: () => void;
+  /** True when a SIGNED-IN player is here for a doc route (/changelog,
+   *  /how-to-play). They already have an account, so the nav must offer a
+   *  way back to their game instead of a Login button that does nothing
+   *  useful. */
+  authed?: boolean;
+  /** Leave the doc route and return to the game. Required when authed. */
+  onExit?: () => void;
 }
 
 type LandingTab = 'about' | 'howto' | 'changelog';
@@ -34,7 +41,7 @@ function tabFromPath(): LandingTab {
   return TAB_PATHS[window.location.pathname] ?? 'about';
 }
 
-export const Landing: React.FC<LandingProps> = ({ onSignIn }) => {
+export const Landing: React.FC<LandingProps> = ({ onSignIn, authed = false, onExit }) => {
   const starfieldRef = useRef<HTMLCanvasElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState<LandingTab>(tabFromPath);
@@ -158,15 +165,26 @@ export const Landing: React.FC<LandingProps> = ({ onSignIn }) => {
           >
             CHANGELOG
           </button>
-          <button className="landing-login-btn" onClick={onSignIn}>
-            LOGIN
-          </button>
+          {authed ? (
+            <button className="landing-login-btn" onClick={onExit}>
+              ← BACK TO GAME
+            </button>
+          ) : (
+            <button className="landing-login-btn" onClick={onSignIn}>
+              LOGIN
+            </button>
+          )}
         </div>
       </header>
 
       {tab === 'howto' && <HowToPlay onSignIn={onSignIn} />}
 
-      {tab === 'changelog' && <Changelog onSignIn={onSignIn} />}
+      {tab === 'changelog' && (
+        <Changelog
+          ctaLabel={authed ? '← BACK TO GAME' : 'PLAY ORBITAL'}
+          onCta={authed ? (onExit ?? onSignIn) : onSignIn}
+        />
+      )}
 
       {tab === 'about' && (
         <>

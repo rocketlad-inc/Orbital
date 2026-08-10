@@ -18,7 +18,11 @@ import React from 'react';
 import './Changelog.css';
 
 interface Props {
-  onSignIn: () => void;
+  /** Foot-of-page call to action. Differs by who is reading: a visitor
+   *  gets "PLAY ORBITAL", a signed-in player gets sent back to their
+   *  game. */
+  ctaLabel: string;
+  onCta: () => void;
 }
 
 /** Patch notes for Game 3, as written. */
@@ -102,7 +106,7 @@ const PATCH_NOTES_HTML = `
 <p>You can rename yourself now. There's a career profile with your win/loss history, friends, a Past Games shelf for finished matches, and faction emblems — pick a flag in the lobby and fly it the whole game. No two factions can share the same one.</p>
 `;
 
-export const Changelog: React.FC<Props> = ({ onSignIn }) => (
+export const Changelog: React.FC<Props> = ({ ctaLabel, onCta }) => (
   <div className="cl">
     <div className="cl-hero">
       <div className="cl-eyebrow">— PATCH NOTES</div>
@@ -122,7 +126,7 @@ export const Changelog: React.FC<Props> = ({ onSignIn }) => (
     />
 
     <div className="cl-cta">
-      <button className="cl-cta-btn" onClick={onSignIn}>PLAY ORBITAL</button>
+      <button className="cl-cta-btn" onClick={onCta}>{ctaLabel}</button>
     </div>
   </div>
 );

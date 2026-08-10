@@ -402,6 +402,25 @@ function AppShell() {
     typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('icons'),
   );
 
+  // DOC ROUTES (/changelog, /how-to-play). These live on the landing page,
+  // which only renders when signed OUT — so a logged-in player following
+  // a Discord link was dropped straight into their game and never saw the
+  // page. They are auth-bypass routes for the same reason ?icons is: the
+  // path is the whole point, and it has to work for whoever clicks it.
+  const [docRoute, setDocRoute] = useState<string | null>(() =>
+    typeof window !== 'undefined'
+      && ['/changelog', '/how-to-play'].includes(window.location.pathname)
+      ? window.location.pathname : null,
+  );
+  useEffect(() => {
+    const onPop = () => {
+      const p = window.location.pathname;
+      setDocRoute(['/changelog', '/how-to-play'].includes(p) ? p : null);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
   // When the user authenticates, fetch any rooms they're already a member
   // of so we can jump straight back into a pinned or lone active game.
   useEffect(() => {
@@ -645,6 +664,25 @@ function AppShell() {
       url.searchParams.delete('icons');
       window.history.replaceState({}, '', url.toString());
     }} />;
+  }
+
+  // Doc routes render for EVERYONE, before the auth branch below.
+  // Landing is reused rather than mounting the article bare: `.landing`
+  // owns the scroll context (global `html, body { overflow: hidden }`
+  // means a bare page cannot scroll at all) and carries the starfield,
+  // the palette variables and the tab nav. Landing reads the path itself,
+  // so it opens the right tab with no extra plumbing.
+  if (docRoute) {
+    return (
+      <Landing
+        onSignIn={() => { setDocRoute(null); setShowAuth(true); }}
+        authed={!!user}
+        onExit={() => {
+          window.history.pushState({}, '', '/');
+          setDocRoute(null);
+        }}
+      />
+    );
   }
 
   // Unauthenticated: show landing first, then auth overlay (guest path
