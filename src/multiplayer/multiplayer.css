@@ -1526,6 +1526,27 @@
 }
 .mp-room-card__archive:disabled { opacity: 0.5; cursor: default; }
 
+/* Restore, in Past Games. Overrides the square 26px footprint because it
+   carries the word RESTORE rather than a glyph — the exit from the
+   archive is the one control here that has to be obvious to somebody who
+   landed in this tab by mistake. Teal rather than the archive's amber so
+   putting a game BACK never looks like the same action as filing it
+   away. */
+.mp-room-card__archive--restore {
+  width: auto;
+  padding: 0 10px;
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  color: #8fa6b8;
+}
+.mp-room-card__archive--restore:hover:not(:disabled) {
+  color: #4ecdc4;
+  border-color: #4ecdc4;
+  background: rgba(78, 205, 196, 0.08);
+}
+
 /* Publish the final Herald — host-only, finished games only. Shares the
    archive button's footprint so the row stays even, tinted the Herald's
    cyan rather than the archive amber so the two don't read as the same

@@ -238,6 +238,22 @@ function MyGamesPanel({
   // finished match can be filed away without losing its record — and
   // pulled back out if it turns out not to be finished after all.
   async function setArchived(r: RoomSummary, archived: boolean) {
+    // Confirm the ARCHIVE direction only. Restore is harmless and
+    // self-evident; making it prompt too would just train people to
+    // click through the prompt that matters.
+    //
+    // A player archived a lobby he was waiting to start, three minutes
+    // before asking the group why the game had "become a past game" —
+    // the card silently vanished from My Games and there was nothing to
+    // say where it went. So the copy answers the three things he had no
+    // way to know: nothing is deleted, only HE is affected, and it is
+    // reversible from a named tab.
+    if (archived && !window.confirm(
+      `Archive "${r.name}"?\n\n`
+      + `It moves to your Past Games tab. Nothing is deleted, and no one `
+      + `else's list changes — this only affects your own view. You can `
+      + `restore it from Past Games at any time.`,
+    )) return;
     setError(null);
     setBusyId(r.id);
     const res = await apiFetch(`/api/rooms/${r.id}/archive`, {
@@ -343,14 +359,20 @@ function MyGamesPanel({
                   before Delete so the reversible action is the one
                   nearest to hand. */}
               <button
-                className="mp-room-card__archive"
+                className={`mp-room-card__archive ${archiveView ? 'mp-room-card__archive--restore' : ''}`}
                 onClick={(e) => { e.stopPropagation(); setArchived(r, !archiveView); }}
                 disabled={busyId === r.id}
                 title={archiveView
-                  ? 'Restore to My Games'
+                  ? 'Restore this game to My Games'
                   : 'Archive — files this under Past Games. Nothing is deleted; the game and its analytics are kept.'}
               >
-                {busyId === r.id ? '…' : (archiveView ? '↩' : '🗄')}
+                {/* Restore carries a WORD, archive stays a glyph. Not
+                    symmetry for its own sake: the way out of the archive
+                    has to be findable by someone who arrived here by
+                    accident and is already confused about what happened,
+                    and a bare '↩' in a row of small icons is not that.
+                    Archive can stay compact because it now prompts. */}
+                {busyId === r.id ? '…' : (archiveView ? 'RESTORE' : '🗄')}
               </button>
               {/* Finished games only — a live game still has the in-game
                   button, and an un-started room has nothing to report. */}
