@@ -396,14 +396,26 @@ async function handleList(req, env, { url, session, params }) {
     }
   }
 
+  // The tick fields were added to this payload without ever loading the
+  // row they come from: `game` was not a binding in this function, so
+  // every GET /trades threw ReferenceError and 500'd. The Trades panel
+  // polls, so one missing SELECT meant a console full of 500s from the
+  // moment a match started. Same shape as the late-join `capitalCityHp`
+  // bug — a name that exists in a NEIGHBOURING function reads fine and
+  // only fails at runtime.
+  const game = await loadGame(env, gameId);
+
   return json({
     trades: rows.map(r => ({
       ...tradeRowToJson(r),
       deliveries: deliveriesByTrade.get(r.id) ?? [],
     })),
     caller_faction_id: caller.id,
-    current_tick: game.current_tick ?? 0,
-    tick_interval_ms: game.tick_interval_ms ?? null,
+    // Optional-chained: a game row can legitimately be absent here (the
+    // caller owns a faction, but the row is gone mid-teardown), and this
+    // endpoint must not 500 over a display field.
+    current_tick: game?.current_tick ?? 0,
+    tick_interval_ms: game?.tick_interval_ms ?? null,
   });
 }
 
