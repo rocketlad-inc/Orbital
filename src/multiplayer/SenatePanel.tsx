@@ -205,12 +205,9 @@ const STATUS_LABEL: Record<SenateProposal['status'], string> = {
 };
 
 export function SenatePanel({
-  gameId, onMessageFaction,
+  gameId,
 }: {
   gameId: string;
-  /** Jump to Comms with this faction's DM channel open. The coalition
-   *  builder tells you who to call; this is the calling. */
-  onMessageFaction?: (factionId: string) => void;
 }) {
   useEffect(() => { logUiEvent(gameId, 'senate'); }, [gameId]);
   const [sliders, setSliders] = useState<SenateSlider[]>([]);
@@ -489,11 +486,10 @@ export function SenatePanel({
     });
   }, [proposals]);
 
-  /** The three buckets the tab renders, mockup order. */
-  const openBills = useMemo(
-    () => sortedProposals.filter(p => p.status === 'voting'),
-    [sortedProposals],
-  );
+  /** The buckets the tab renders, mockup order. ('voting' bills are no
+   *  longer bucketed separately — the blocking-coalition section was the
+   *  only consumer of that list; the ballot itself renders them from
+   *  sortedProposals.) */
   const floorBills = useMemo(
     () => sortedProposals.filter(p => p.status === 'debating'),
     [sortedProposals],
@@ -553,17 +549,14 @@ export function SenatePanel({
         {floorBills.map((p) => renderFloorBill(p))}
       </section>
 
-      {/* Blocking coalition — its own section, per the mockup: it is
-          advice about the chamber, not part of the ballot. */}
-      {openBills.map(p => (
-        <BlockingCoalition
-          key={p.id}
-          p={p}
-          factionsById={factionsById}
-          myFactionId={myFactionId}
-          onMessageFaction={onMessageFaction}
-        />
-      ))}
+      {/* The "blocking coalition" section was removed. It predated
+          quorum and was blind to it: a nay vote increments `cast`, so on
+          a bill that leads the tally but is short of quorum — one that
+          dies on its own — it told you to go recruit nay votes and would
+          carry the bill OVER the quorum line, converting a certain
+          failure into a pass. Advice that loses you the vote is worse
+          than no advice. The vote bar and the split chamber already
+          carry the state. */}
 
       <WeightCard detail={weight} />
       <Chamber
@@ -1234,112 +1227,6 @@ function VoteCard({
   );
 }
 
-/**
- * How to stop a bill that is currently winning.
- *
- * This is the one piece of senate maths nobody does in their head, and
- * the reason The Friendly Zone ended 7-2 with five factions asleep: the
- * losing side never worked out that it only needed two of them. The
- * builder adds uncommitted factions heaviest-first and says, at each
- * step, whether the running nay total is enough YET.
- *
- * A tie FAILS the bill, so matching the yea weight is sufficient —
- * exceeding it is not required. Getting that backwards costs a game.
- */
-function BlockingCoalition({
-  p, factionsById, myFactionId, onMessageFaction,
-}: {
-  p: SenateProposal;
-  factionsById: Map<string, Faction>;
-  myFactionId: string | null;
-  onMessageFaction?: (factionId: string) => void;
-}) {
-  const yea = p.totals?.yea?.weight ?? 0;
-  const nay = p.totals?.nay?.weight ?? 0;
-  const ballots = p.ballots ?? [];
-  // Already blocked, or nothing to block: no advice needed.
-  if (yea === 0 || nay >= yea) return null;
-
-  const votedIds = new Set(ballots.map(b => b.faction_id));
-  const iVotedNay = ballots.some(b => b.faction_id === myFactionId && b.vote === 'nay');
-
-  // Everyone still uncommitted, heaviest first — the shortest path to a
-  // block is the fewest phone calls.
-  const available = [...factionsById.values()]
-    .filter(f => f.status !== 'eliminated')
-    .filter(f => !votedIds.has(f.id))
-    .map(f => ({ f, w: voteWeightOf(f) }))
-    // Heaviest first — the shortest path to a block is the fewest phone
-    // calls — but YOU always lead, because your own vote costs no
-    // diplomacy and every other row is contingent on it.
-    .sort((a, b) => {
-      if (a.f.id === myFactionId) return -1;
-      if (b.f.id === myFactionId) return 1;
-      return b.w - a.w;
-    });
-  if (available.length === 0) return null;
-
-  const rows: { key: string; label: string; weight: number; readout: string; good: boolean; msg: boolean }[] = [];
-  let running = nay;
-  let blocked = false;
-  for (const { f, w } of available) {
-    const mine = f.id === myFactionId;
-    running += w;
-    const nowBlocked = running >= yea;
-    const readout = running > yea
-      ? `${running} nay beats ${yea} — clean block`
-      : running === yea
-        ? `${running} nay ties ${yea} — BLOCKED ✓`
-        : `${running} nay vs ${yea} — still passes`;
-    rows.push({
-      key: f.id,
-      label: mine ? 'You' : f.name,
-      weight: w,
-      readout,
-      good: nowBlocked,
-      // No point offering to message yourself, and none once you're there.
-      msg: !mine,
-    });
-    if (nowBlocked) { blocked = true; break; }
-  }
-
-  return (
-    <section className="sp-sect">
-      <div className="sp-sect__h"><span className="sp-lbl">Blocking coalition</span></div>
-      <div className="sp-coal">
-      <div className="sp-coal__h">
-        {blocked
-          ? `How to stop “${p.title}”`
-          : 'Not enough uncommitted votes to block'}
-      </div>
-      {!iVotedNay && myFactionId && (
-        <div className="sp-coal__pre">Assumes you vote nay.</div>
-      )}
-      {rows.map((r, i) => (
-        <div key={r.key} className={`sp-coalrow${r.good ? ' is-good' : ''}`}>
-          <span className="sp-coalrow__n">
-            {i === 0 ? '' : '+ '}{r.label} <span className="sp-coalrow__w">({r.weight})</span>
-          </span>
-          {r.msg && onMessageFaction && (
-            <button
-              className="sp-coalrow__msg"
-              onClick={() => onMessageFaction(r.key)}
-              title={`Open a private channel with ${r.label}`}
-            >
-              Message
-            </button>
-          )}
-          <span className="sp-coalrow__r">{r.readout}</span>
-        </div>
-      ))}
-      <div className="sp-note">
-        A tie fails the bill, so <b>matching</b> their weight is enough — you
-        do not need to exceed it.
-      </div>
-      </div>
-    </section>
-  );
-}
 
 /**
  * The chamber, drawn as seats.

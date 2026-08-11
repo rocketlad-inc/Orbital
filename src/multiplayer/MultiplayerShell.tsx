@@ -79,10 +79,15 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
     try { window.dispatchEvent(new CustomEvent('dockrail:set', { detail: { active: next ? null : 'multiplayer' } })); } catch {}
   };
   const [tab, setTab] = useState<Tab>('lobby');
-  /** Cross-tab request to open a DM. The Senate's blocking-coalition
-   *  builder names the factions you need; this carries you to them. The
-   *  nonce lets the same faction be requested twice in a row. */
-  const [commsFocus, setCommsFocus] = useState<{ id: string; nonce: number } | null>(null);
+  /** Cross-tab request to open a DM. The nonce lets the same faction be
+   *  requested twice in a row.
+   *
+   *  Currently has NO setter: its only trigger was the Senate's
+   *  blocking-coalition builder, removed with that section. Kept because
+   *  CommsPanel still accepts `focusFaction` and this is the wire it
+   *  arrives on — a future message button re-enables the path by calling
+   *  a setter here, rather than rebuilding the plumbing. */
+  const [commsFocus] = useState<{ id: string; nonce: number } | null>(null);
   const [gameId, setGameId] = useState<string | null>(null);
   // Host-only mid-game invite: the room's invite code stays valid after
   // start, so the host can pull a latecomer into an unclaimed world.
@@ -617,15 +622,13 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
                   focusFaction={commsFocus}
                 />
               )}
-              {tab === 'senate'  && gameId && (
-                <SenatePanel
-                  gameId={gameId}
-                  onMessageFaction={(fid) => {
-                    setCommsFocus((prev) => ({ id: fid, nonce: (prev?.nonce ?? 0) + 1 }));
-                    setTab('comms');
-                  }}
-                />
-              )}
+              {/* onMessageFaction went with the blocking-coalition
+                  section, which was its ONLY consumer — and with it the
+                  only thing in the app that deep-linked to a specific
+                  faction's DM. CommsPanel still accepts `focusFaction`,
+                  so re-wiring it is one prop when something (a message
+                  button on the diplomacy roster, most likely) wants it. */}
+              {tab === 'senate'  && gameId && <SenatePanel gameId={gameId} />}
               {tab === 'trades'  && gameId && <TradesPanel  gameId={gameId} />}
             </div>
           </>
