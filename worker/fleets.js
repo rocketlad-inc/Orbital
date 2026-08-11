@@ -10,6 +10,8 @@
 // decision-tier Situation Report row client-side).
 // ============================================================
 
+import { shipsInCombat } from './captains.js';
+
 const GAME_ID_RE = /^[A-Za-z0-9_-]{6,32}$/;
 const SHIP_ID_RE = /^[A-Za-z0-9_:-]{1,80}$/;
 const FLEET_ID_RE = /^[A-Za-z0-9_:-]{1,80}$/;
@@ -288,6 +290,15 @@ async function handlePatch(req, env, ctx) {
       .first();
     let capId = ship?.captain_id ?? null;
     if (!capId) {
+      // Promotion posts a bank captain onto this hull, so it is a captain
+      // change and answers to the same rule as the assign endpoint —
+      // otherwise "fleet up, then promote" is a clean bypass of it.
+      // Membership was verified above, so the hull is ours to ask about.
+      const hot = await shipsInCombat(env.DB, gameId, [body.flag_ship_id], tick);
+      if (hot.has(body.flag_ship_id)) {
+        return err(409, 'in_combat',
+          'that ship is in combat — promote a captain once the shooting stops');
+      }
       // Members are captainless BY DESIGN (one captain per fleet), so
       // promotion assigns the longest-waiting bank captain to the
       // chosen hull, then raises them to flag.

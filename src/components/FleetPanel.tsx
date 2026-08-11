@@ -1198,6 +1198,13 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
           {repairMsg && (
             <div className="fleet-notice">{repairMsg}</div>
           )}
+          {/* Captain rejections are raised from the NO CAPTAIN chip on the
+              ship cards too, but the notice used to render only inside the
+              Captain Bank — so a refusal here (a hull in combat, an empty
+              bank) failed silently on the tab where it was triggered. */}
+          {capMsg && filter !== 'captains' && (
+            <div className="fleet-notice" onClick={() => setCapMsg(null)}>⚠ {capMsg}</div>
+          )}
 
           {filter === 'captains' ? renderCaptainBank() : ships.length === 0 ? (
             <div className="overview-empty">

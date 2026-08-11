@@ -6,7 +6,8 @@ import {
   validateParts, partsCost, parsePartsJson,
   countPart, detonatorDamage, refitFee, computeShipStats,
 } from './shipDesigns.js';
-import { rollCaptain, resolveCaptainOnDeath, AVATAR_IDS, RECRUIT_COST } from './captains.js';
+import { rollCaptain, resolveCaptainOnDeath, AVATAR_IDS, RECRUIT_COST,
+         shipsInCombat } from './captains.js';
 import { runDigestForGame, composeHeraldForGame } from './digest.js';
 import {
   factionTechLevels, gatingEnabled, hasFeature, lockedError,
@@ -3355,6 +3356,19 @@ async function handleAssignCaptain(req, env, ctx) {
     .prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
   const nowTick = gameRow?.current_tick ?? 0;
 
+  // You cannot change command under fire. Checked on the captain's CURRENT
+  // post first because that hull is definitionally yours — the destination
+  // is checked further down, after ownership, so this never becomes an
+  // oracle for whether some rival hull is in a fight (same fog-of-war
+  // reasoning as the fleet_member peek above).
+  if (got.cap.ship_id) {
+    const hot = await shipsInCombat(env.DB, gameId, [got.cap.ship_id], nowTick);
+    if (hot.has(got.cap.ship_id)) {
+      return err(409, 'in_combat',
+        'this captain is under fire — you cannot relieve them mid-battle');
+    }
+  }
+
   const stmts = [];
   // Detach from current post (if any).
   if (got.cap.ship_id) {
@@ -3365,10 +3379,10 @@ async function handleAssignCaptain(req, env, ctx) {
       .prepare('UPDATE game_captains SET ship_id = NULL, benched_at_tick = ? WHERE id = ?')
       .bind(nowTick, captainId));
     await env.DB.batch(stmts);
-  await logSpend(env, {
-    gameId, factionId: me.id, category: 'captains',
-    metal: RECRUIT_COST.metal, gold: RECRUIT_COST.gold,
-  });
+    // No logSpend here: benching is free. This used to log a full
+    // RECRUIT_COST against the captains budget — and did it through an
+    // unbound `me`, so the throw landed AFTER the batch had committed and
+    // every bench returned a 500 on a change that had already happened.
     return json({ ok: true, captain_id: captainId, ship_id: null });
   }
   if (typeof shipId !== 'string') return err(400, 'bad_request', 'ship_id must be a string or null');
@@ -3378,6 +3392,18 @@ async function handleAssignCaptain(req, env, ctx) {
     .bind(shipId, gameId).first();
   if (!ship) return err(404, 'not_found', 'ship not found');
   if (ship.owner_faction_id !== got.me.id) return err(403, 'not_owner', 'not your ship');
+  // Ownership is settled, so this can't leak a rival's combat state. Blocks
+  // both halves of the swap: posting a captain onto a hull that's taking
+  // fire, and displacing the one already aboard it.
+  {
+    const hot = await shipsInCombat(env.DB, gameId, [shipId], nowTick);
+    if (hot.has(shipId)) {
+      return err(409, 'in_combat',
+        ship.captain_id && ship.captain_id !== captainId
+          ? 'that ship is in combat — its captain stays at their post'
+          : 'that ship is in combat — no one is boarding it mid-battle');
+    }
+  }
   // The target ship's sitting captain (if different) goes to the bank —
   // assignment is a swap-to-bench, never a delete. Stamped as benched
   // for the same reason as an explicit bench: the displacement was a

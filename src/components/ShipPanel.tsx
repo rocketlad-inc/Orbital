@@ -76,6 +76,10 @@ export const ShipPanel: React.FC = () => {
   const [exploreNotice, setExploreNotice] = useState<string | null>(null);
   // Colony ship "deploy settlement" — inline result/rejection line.
   const [deployNotice, setDeployNotice] = useState<string | null>(null);
+  // Captain assign/bench used to fire and forget, so a server refusal —
+  // now including "this hull is in combat" — was invisible from here: the
+  // click just did nothing.
+  const [captainNotice, setCaptainNotice] = useState<string | null>(null);
   const [deployBusy, setDeployBusy] = useState(false);
   // Server-side standing-orders rejection (MP only). Shown inline in the
   // ORDERS section; the next /state poll rewinds the optimistic change.
@@ -1280,12 +1284,32 @@ export const ShipPanel: React.FC = () => {
               captain={(gameState.captains ?? []).find(c => c.id === ship.captainId) ?? null}
               editable={ship.ownedBy === 'player' && !!mpActions}
               bank={(gameState.captains ?? []).filter(c => c.status === 'active' && !c.shipId)}
-              onAssign={(captainId) => { if (mpActions) mpActions.assignCaptain(captainId, ship.id); }}
-              onBench={() => { if (ship.captainId && mpActions) mpActions.assignCaptain(ship.captainId, null); }}
+              onAssign={(captainId) => {
+                if (!mpActions) return;
+                setCaptainNotice(null);
+                void mpActions.assignCaptain(captainId, ship.id).then(res => {
+                  if (!res.ok) setCaptainNotice(humanizeMpError(res.code, res.error ?? 'Server rejected the assignment.', 'orders'));
+                });
+              }}
+              onBench={() => {
+                if (!ship.captainId || !mpActions) return;
+                setCaptainNotice(null);
+                void mpActions.assignCaptain(ship.captainId, null).then(res => {
+                  if (!res.ok) setCaptainNotice(humanizeMpError(res.code, res.error ?? 'Server rejected the change.', 'orders'));
+                });
+              }}
               onRename={(name) => { if (ship.captainId && mpActions) mpActions.updateCaptain(ship.captainId, { name }); }}
               onBio={(bio) => { if (ship.captainId && mpActions) mpActions.updateCaptain(ship.captainId, { bio }); }}
               onAvatar={(avatarId) => { if (ship.captainId && mpActions) mpActions.updateCaptain(ship.captainId, { avatarId }); }}
             />
+          )}
+          {captainNotice && (
+            <div
+              style={{ fontSize: 10, color: '#ffb84d', margin: '4px 0 0', lineHeight: 1.4, cursor: 'pointer' }}
+              onClick={() => setCaptainNotice(null)}
+            >
+              ⚠ {captainNotice}
+            </div>
           )}
 
           {/* Freighters show TRADE LOG (delivery count) instead of

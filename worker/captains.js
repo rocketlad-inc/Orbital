@@ -32,6 +32,45 @@ export const TRAIT_IDS = Object.keys(CAPTAIN_TRAITS);
 export const STARTING_CAPTAINS = 10;
 export const RECRUIT_COST = { metal: 50, gold: 100 };
 
+/** How many ticks a hull stays captain-locked after it last traded fire.
+ *  Matches heraldStrip's COMBAT_WINDOW_TICKS so "in combat" means the
+ *  same span everywhere a player can see it. Combat resolves EVERY tick
+ *  (room.js §3), so a live battle re-stamps continuously and a lull of
+ *  three ticks genuinely is the end of it. */
+export const COMBAT_LOCK_TICKS = 3;
+
+/**
+ * Which of these hulls are actively engaged in combat?
+ *
+ * There is no in_combat column — engagement is derived fresh each tick
+ * from co-location, and all that persists is a pair of stamps:
+ * last_combat_tick ("I fired", migration 0026) and last_damaged_tick
+ * ("I was hit", migration 0044). BOTH are load-bearing here. A freighter,
+ * or anything on Hold Fire, never fires while being shot to pieces — key
+ * off firing alone and the hulls that most need their captain aboard are
+ * exactly the ones left unprotected.
+ *
+ * NULL-safe on purpose: an unstamped hull has never seen combat, and a
+ * bare `COALESCE(x, -1) >= tick - 3` would call every ship in the game
+ * engaged for the first three ticks of a match.
+ *
+ * @returns {Promise<Set<string>>} the subset of shipIds that are engaged
+ */
+export async function shipsInCombat(db, gameId, shipIds, tick) {
+  const ids = [...new Set((shipIds ?? []).filter(id => typeof id === 'string' && id))];
+  if (!ids.length) return new Set();
+  const since = tick - COMBAT_LOCK_TICKS;
+  const marks = ids.map(() => '?').join(',');
+  const rows = await db
+    .prepare(`SELECT id FROM game_ships
+               WHERE game_id = ? AND id IN (${marks})
+                 AND ( (last_combat_tick  IS NOT NULL AND last_combat_tick  >= ?)
+                    OR (last_damaged_tick IS NOT NULL AND last_damaged_tick >= ?) )`)
+    .bind(gameId, ...ids, since, since)
+    .all();
+  return new Set((rows?.results ?? []).map(r => r.id));
+}
+
 /**
  * Bring every faction in the game up to STARTING_CAPTAINS total ACTIVE
  * captains (assigned + bank). New games: seeds the initial ten on the
