@@ -56,12 +56,27 @@ export interface TechDef {
   costScaling: number;
 }
 
-// Unified cost curve: 15 × level^1.72. Deliberately steeper than the old
-// per-track curves AND much cheaper at level 1 — the first unlock should
-// land around turn 5 (tutorial pace) while level 10 stays a real late-game
-// project. L1 15 · L3 100 · L5 267 · L10 ~1130.
-const RESEARCH_BASE_COST = 15;
-const RESEARCH_COST_SCALING = 1.72;
+// Unified cost curve: 15 × level^2.5.
+// L1 15 · L3 234 · L5 839 · L10 4744 · one track to 10 = 16,026.
+//
+// WHY 2.5 AND NOT THE ORIGINAL 1.72. Science income compounds — more
+// worlds, more labs, and the pop/production/industry multipliers stack —
+// while a power curve's growth RATE decays (at 1.72 the step-over-step
+// multiplier fell from 3.33x to 1.20x). Compounding income against a
+// decelerating price meant research got faster as the game went on.
+// Measured on Game 3: by tick 441 all six factions averaged level 7.18 in
+// every track and one had maxed a track, i.e. the tree was spent long
+// before the game was. Since 28 of the 35 unlocks sit at levels 1-5,
+// there was nothing left to choose.
+//
+// 2.5 is calibrated against that real game rather than guessed: the same
+// science those factions actually banked now buys level 4-5 instead of 7,
+// so the last unlocks land near the end and every level stays a decision.
+// Level 1 is deliberately unchanged at 15 — it gates the freighter hull,
+// which the terraforming loop depends on, so making it dearer would
+// throttle the opening rather than the endgame.
+export const RESEARCH_BASE_COST = 15;
+export const RESEARCH_COST_SCALING = 2.5;
 
 export const TECH_DEFS: Record<TechId, TechDef> = {
   weapons: {

@@ -1085,14 +1085,19 @@ async function handleDeploySettlement(req, env, ctx) {
 // Mirror of src/game/techs.ts TECH_DEFS. Server-authoritative so a client
 // can't lie about cost. costForNext(level) = ceil(baseCost * (level+1)^scaling).
 //
-// UNIFIED curve (15 × (level+1)^1.72) — must match src/game/techs.ts
+// UNIFIED curve (15 × (level+1)^2.5) — must match src/game/techs.ts
 // RESEARCH_BASE_COST / RESEARCH_COST_SCALING exactly. The old per-track
 // curves (40/1.7 etc.) were retired client-side but left stale here, so the
 // client bar filled at ~15 sci while the server ground on to ~40 — research
 // looked "finished" then hung until the higher server cost was met. Keep
-// these two tables in lockstep. L1 15 · L3 100 · L5 267 · L10 ~787.
+// these two tables in lockstep. L1 15 · L3 234 · L5 839 · L10 4744.
+//
+// Raised from 1.72 after Game 3: income compounds while a power curve's
+// growth rate decays, so research accelerated instead of holding pace —
+// every faction averaged level 7.18 by tick 441 with the tree fully spent.
+// See the longer note in src/game/techs.ts for the calibration.
 const RESEARCH_BASE_COST = 15;
-const RESEARCH_COST_SCALING = 1.72;
+const RESEARCH_COST_SCALING = 2.5;
 const TECH_DEFS = {
   weapons:      { baseCost: RESEARCH_BASE_COST, costScaling: RESEARCH_COST_SCALING },
   armor:        { baseCost: RESEARCH_BASE_COST, costScaling: RESEARCH_COST_SCALING },

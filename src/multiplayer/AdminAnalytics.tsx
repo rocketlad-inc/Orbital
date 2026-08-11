@@ -13,6 +13,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from './api';
+import { RESEARCH_BASE_COST, RESEARCH_COST_SCALING } from '../game/techs';
 import './AdminAnalytics.css';
 
 type OverviewGame = {
@@ -1057,12 +1058,21 @@ function FactionChip({ id, factions }: { id: string | null; factions: FactionRow
   return <span><span className="aa-dot" style={{ background: f.color }} />{f.name}</span>;
 }
 
-// Research cost curve - MUST mirror worker/room.js TECH_DEFS:
-// stepping to level n costs 15 * n^1.72, so total cost to reach L is the
-// partial sum. This is what makes pace comparable across tech levels.
+// Research cost curve. Stepping to level n costs base * n^scaling, so the
+// total to reach L is the partial sum — that is what makes research pace
+// comparable across tech levels.
+//
+// IMPORTED, not retyped. This used to hardcode `15 * n^1.72`, a third
+// copy of a number that already carries a warning about drifting between
+// the worker and the client. It would not have thrown when the curve was
+// retuned to 2.5; it would have quietly gone on weighting every research
+// speed in the admin analytics against a price nobody pays any more —
+// a wrong metric being the one failure mode a dashboard cannot surface.
 function costToLevel(level: number): number {
   let total = 0;
-  for (let n = 1; n <= level; n++) total += 15 * Math.pow(n, 1.72);
+  for (let n = 1; n <= level; n++) {
+    total += RESEARCH_BASE_COST * Math.pow(n, RESEARCH_COST_SCALING);
+  }
   return total;
 }
 const TRACK_ABBR: Record<string, string> = {
@@ -1097,9 +1107,15 @@ function TechPace({ data }: { data: GameAnalytics }) {
   const tracks = Object.keys(TRACK_ABBR);
   return (
     <div>
+      {/* Both numbers are derived from the live curve constants. Written
+          out by hand they were a caption that would keep claiming the old
+          price after any retune — and a caption is exactly where a stale
+          number goes unnoticed longest. */}
       <div className="aa-axis" style={{ padding: '0 2px 8px', fontSize: 11 }}>
-        Speed is cost-weighted (level n costs 15·n^1.72 science), so one
-        level-8 counts like ~35 level-1s - fair across different tech heights.
+        Speed is cost-weighted (level n costs {RESEARCH_BASE_COST}·n^
+        {RESEARCH_COST_SCALING} science), so one level-8 counts like ~
+        {Math.round(Math.pow(8, RESEARCH_COST_SCALING))} level-1s - fair
+        across different tech heights.
       </div>
       <div className="aa-bars">
         {rows.map(({ f, rate, levels }) => (
