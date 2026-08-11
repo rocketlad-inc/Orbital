@@ -265,9 +265,13 @@ export function CommsPanel({ gameId, onUnreadDelta, focusFaction }: Props) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* Channel rail: one scrolling line with a fade at the right edge,
-          per the mockup — seven wrapped pills ate a third of the panel
-          before the first message. */}
+      {/* Channel rail: a wrapping grid, so EVERY empire is on screen at
+          once. It was a horizontal scroller to save height, but that hid
+          the rail's whole purpose — an empire scrolled out of view could
+          be holding an unread message with no way to know short of
+          swiping the strip. Compact tiles cost about three short rows for
+          eight empires, far less than the wrapped full-width pills that
+          scrolling was introduced to avoid. */}
       <div className="mp-chanwrap">
       <div className="mp-channel-rail">
         <ChannelTab
@@ -420,15 +424,20 @@ const ChannelTab: React.FC<ChannelTabProps> = ({ active, label, color, unread, o
   >
     <span className="mp-channel-tab__swatch" style={{ background: color }} />
     <span className="mp-channel-tab__label">{label}</span>
-    {/* A dot, not a number. The rail answers "is there anything new
-        HERE" — the count lives on the shell's COMMS tab badge. */}
+    {/* A COUNT, not a bare dot.
+        The dot said "something is new here" and nothing more, so with
+        seven empires on the rail the panel could not answer the actual
+        question — WHO wrote to me, and how much is waiting. The shell's
+        COMMS badge held the only number, one level up, where it told you
+        a total and not a sender. */}
     {unread > 0 && (
       <span
-        className="mp-channel-tab__dot"
-        role="img"
-        aria-label={`${unread} unread`}
-        title={`${unread} unread`}
-      />
+        className="mp-channel-tab__badge"
+        aria-label={`${unread} unread from ${label}`}
+        title={`${unread} unread from ${label}`}
+      >
+        {unread > 9 ? '9+' : unread}
+      </span>
     )}
   </button>
 );

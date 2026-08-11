@@ -363,31 +363,31 @@
    form. Unread badge on each tab so the player can tell at a glance
    which conversations have new content. */
 .mp-chanwrap { position: relative; flex: 0 0 auto; }
-/* Fade at the right edge: the rail scrolls, and the fade is what says so. */
-.mp-chanwrap::after {
-  content: '';
-  position: absolute;
-  right: 0; top: 0; bottom: 8px;
-  width: 28px;
-  pointer-events: none;
-  background: linear-gradient(90deg, transparent, #0a0e14);
-}
+
+/* EVERY empire visible at once — no scrolling, no fade.
+   This was a single horizontally-scrolling line, chosen because seven
+   wrapped pills at the old size ate roughly a third of the panel before
+   the first message. But a scroller hides the thing the rail exists for:
+   with an empire off-screen you cannot see that it wrote to you, so
+   finding a new message meant swiping a strip to look for a marker.
+   A grid keeps every empire on screen and costs far less height than
+   wrapped full-width pills did — three columns on a phone puts eight
+   empires in three ~30px rows. */
 .mp-channel-rail {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
   gap: 5px;
-  overflow-x: auto;
   padding: 4px 0 8px;
-  scrollbar-width: thin;
 }
-.mp-channel-rail::-webkit-scrollbar { height: 5px; }
-.mp-channel-rail::-webkit-scrollbar-thumb { background: #22344a; border-radius: 3px; }
 .mp-channel-tab {
-  flex: 0 0 auto;
+  /* min-width:0 lets a long empire name ellipsis inside its grid cell
+     instead of forcing the column wider and breaking the layout. */
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 28px;
-  padding: 4px 10px;
+  min-height: 32px;
+  padding: 4px 8px;
   background: transparent;
   border: 1px solid var(--mp-border);
   border-radius: 12px;
@@ -415,16 +415,25 @@
 }
 .mp-channel-tab__label {
   font-weight: 600;
-  max-width: 110px;
+  /* flex:1 + min-width:0, not a fixed max-width: in a grid cell the
+     label should take the space its column actually has and ellipsis at
+     that point, so the badge stays pinned on the right. */
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Per-empire unread count. Amber, matching the shell's COMMS badge, so
+   the same colour means the same thing at both levels — the shell says
+   "you have mail", this says who from. Deliberately NOT hostile red:
+   an unanswered message is not an attack. */
 .mp-channel-tab__badge {
+  flex: 0 0 auto;
   display: inline-block;
-  min-width: 18px;
-  padding: 0 5px;
-  background: var(--mp-hostile);
+  min-width: 17px;
+  padding: 0 4px;
+  background: var(--mp-accent);
   color: #0a0e14;
   border-radius: 9px;
   font-size: 10px;
@@ -2198,14 +2207,11 @@
   white-space: nowrap;
 }
 
-/* Unread marker: an amber dot. The number lives on the COMMS tab badge. */
-.mp-channel-tab__dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--mp-accent);
-  flex: 0 0 auto;
-}
+/* (The old `.mp-channel-tab__dot` lived here: a bare amber dot that said
+   "something is new" without saying how much. Replaced by
+   `.mp-channel-tab__badge` above, which carries the count. Removed rather
+   than left behind so the next reader doesn't wire a component back to a
+   class the design no longer uses.) */
 
 /* Compose block, mockup layout: room label, textarea, send + hint. */
 .mp-compose {
