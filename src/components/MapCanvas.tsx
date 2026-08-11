@@ -47,6 +47,7 @@ import {
   isRevealedWarpGate,
 } from '../render/mapRenderer';
 import { computeSystemRegions } from '../render/systemRegions';
+import { getEmblemImage } from '../render/emblemCache';
 import { BUILDING_DEFS, buildingLevel } from '../game/settlements';
 import { Body as GameBody, BuildingKind, Ship } from '../types';
 import {
@@ -1564,11 +1565,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // Owner tones for a badge segment — the faction's TWO-tone livery
       // (§5): border in the primary (meaning), count text in a lightened
       // secondary (trim), same fallback rule the combat FX layer uses.
-      const badgeTonesOf = (fid: string): { p: string; s: string } => {
+      const badgeTonesOf = (fid: string): { p: string; s: string; emblem: string | null } => {
         const f = gameState.factions.find(fa => fa.id === fid);
         const p = f?.color ?? (fid === 'player' ? COLORS.neutral : COLORS.danger);
         const s = f?.color2 || deriveSecondary(p);
-        return { p, s };
+        return { p, s, emblem: f?.emblem ?? null };
       };
       // Segment order: the viewer's fleet leads, then everyone else in a
       // stable id order so segments don't reshuffle frame to frame.
@@ -1615,8 +1616,22 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // Total width first, so the whole multi-faction strip is placed
         // as ONE box (placing segments individually would let a second
         // faction's pill land on another body's label).
+        // The "▸" is a generic marker; the faction's EMBLEM in its place
+        // says WHOSE fleet without a click, which is the one thing a
+        // count alone can't tell you on a contested body.
+        //
+        // The mark slot is a FIXED width whether or not the raster has
+        // loaded, and the ▸ fallback is centred inside it. Sizing the
+        // slot to whichever mark happened to be ready measured a 1px
+        // reflow the frame an image landed — invisible on one badge, but
+        // every pill in a multi-faction strip shifts, and this box has
+        // already been reserved with the collision solver at the old
+        // width.
+        const emblemPx = fs;
         let totalW = 0;
-        for (const [, n] of entries) totalW += c2d.measureText(`▸${n}`).width + padX * 2 + gap;
+        for (const [, n] of entries) {
+          totalW += emblemPx + c2d.measureText(String(n)).width + padX * 2 + gap;
+        }
         totalW = Math.max(0, totalW - gap);
         // Pass the visible pill text so an overlap report can say WHAT
         // collided ("▸12 ▸3") instead of only which body it belonged to.
@@ -1627,9 +1642,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         let x = slot.x;
         const anyCtx = c2d as any;
         for (const [fid, n] of entries) {
-          const { p, s } = badgeTonesOf(fid);
-          const label = `▸${n}`;
-          const pillW = c2d.measureText(label).width + padX * 2;
+          const { p, s, emblem } = badgeTonesOf(fid);
+          const count = String(n);
+          const ink = lighten(s, 1.45);
+          // Emblem tinted with the SAME ink as the count, so the pill
+          // reads as one object rather than a coloured sticker beside a
+          // number. Null while the raster loads (or for a faction with
+          // no emblem) — the "▸" fallback keeps the badge complete.
+          const img = getEmblemImage(emblem, p);
+          const pillW = emblemPx + c2d.measureText(count).width + padX * 2;
           c2d.beginPath();
           if (typeof anyCtx.roundRect === 'function') anyCtx.roundRect(x, cy - pillH / 2, pillW, pillH, 5);
           else anyCtx.rect(x, cy - pillH / 2, pillW, pillH);
@@ -1640,8 +1661,15 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           c2d.stroke();
           // Count in the lightened SECONDARY, so the segment carries the
           // faction's full two-tone livery (primary border, trim text).
-          c2d.fillStyle = lighten(s, 1.45);
-          c2d.fillText(label, x + padX, cy + 0.5);
+          c2d.fillStyle = ink;
+          if (img) {
+            c2d.drawImage(img, x + padX, cy - emblemPx / 2, emblemPx, emblemPx);
+          } else {
+            // Centred in the same fixed slot the emblem will occupy.
+            const aw = c2d.measureText('▸').width;
+            c2d.fillText('▸', x + padX + (emblemPx - aw) / 2, cy + 0.5);
+          }
+          c2d.fillText(count, x + padX + emblemPx, cy + 0.5);
           x += pillW + gap;
         }
         c2d.restore();

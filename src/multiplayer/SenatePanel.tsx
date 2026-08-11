@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch, fmtTicksReal, realSuffix, Faction, SenateProposal, SenateSession, SenateSlider } from './api';
 import { logUiEvent } from './telemetry';
 import { DiscordLink } from './DiscordLink';
+import { FactionEmblem } from '../components/FactionEmblem';
 import { hasFeature, requirementFor } from '../game/researchUnlocks';
 import { TECH_DEFS } from '../game/techs';
 
@@ -1387,7 +1388,18 @@ function Chamber({
               title={`${f.name} — ${w} vote${w === 1 ? '' : 's'}`
                 + (noVote ? ' — has not voted' : '')}
             >
-              {initials(f.name)}
+              {/* The faction's EMBLEM, not its initials. Initials were
+                  actively ambiguous here — "Cerean Union" and "Ceres
+                  Compact" are both CE — and this grid is scanned, not
+                  read: you're looking for whether a bloc has the votes,
+                  which is a shape-matching task. A mark repeated once
+                  per vote makes a heavy faction visible as a block. */}
+              <FactionEmblem
+                emblem={f.emblem}
+                fallbackKey={f.id}
+                size={13}
+                color={noVote ? f.color : readableInk(f.color)}
+              />
             </span>
           ));
         })}
@@ -1395,7 +1407,9 @@ function Chamber({
       <div className="sp-legend">
         {seated.map(({ f, w }) => (
           <span key={f.id} className="sp-lgi" title={f.name}>
-            <span className="sp-lgi__dot" style={{ background: f.color }} />
+            {/* The legend is what teaches the mark: emblem next to the
+                name, so the seats above become readable. */}
+            <FactionEmblem emblem={f.emblem} fallbackKey={f.id} size={12} color={f.color} />
             {initials(f.name)} {w}
           </span>
         ))}
