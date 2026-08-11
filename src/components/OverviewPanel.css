@@ -763,3 +763,73 @@ button.fleet-xp__tier--none:hover { border-color: #ffb84d; background: rgba(255,
   font-size: 10px;
   letter-spacing: 0.04em;
 }
+
+/* ============================================================
+   Settlements as cards — matching the Fleet panel, sized to fit.
+
+   Was a 9-column table (name/type/owner/location/HP/pop/yield/
+   stockpile/freighters) inside a scrolling body. Nine columns in a
+   640px panel gave every one of them too little width, the numbers
+   wrapped, and a real empire's holdings ran off the bottom.
+
+   The fix is NOT less data — it is all still here. It is that a
+   settlement summary is narrow, so cards can sit SIDE BY SIDE where
+   Fleet stacks one wide ship line per row. Three columns turn a
+   twelve-row scroll into four short rows.
+   ============================================================ */
+.set-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
+  gap: 6px;
+  padding: 6px 0 2px;
+}
+
+.set-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 1px solid #22303f;
+  border-radius: 6px;
+  background: #0d131c;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s ease, border-color 0.1s ease;
+}
+.set-card:hover { background: rgba(78, 205, 196, 0.06); border-color: #2d4255; }
+.set-card--selected { background: rgba(78, 205, 196, 0.1); border-color: #4ecdc4; }
+.set-card:focus-visible { outline: 2px solid #ffb84d; outline-offset: -2px; }
+
+.set-card__icon {
+  width: 12px; height: 12px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+
+.set-card__body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+
+/* Every line clips rather than wraps: a card that grows to fit a long
+   empire name would break the grid's even rows, which is the whole
+   reason the list fits. */
+.set-card__l1, .set-card__l2, .set-card__l3 {
+  display: flex; align-items: center; gap: 6px;
+  min-width: 0; white-space: nowrap;
+}
+.set-card__name {
+  font-size: 11.5px; font-weight: 600; color: #d8e4ee;
+  overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.set-card__where { font-size: 10px; color: #6f8093; flex-shrink: 0; }
+.set-card__pop, .set-card__frt, .set-card__stock {
+  font-size: 10px; color: #8fa6b8; flex-shrink: 0;
+}
+.set-card__frt { color: #4ecdc4; }
+.set-card__l3 { gap: 7px; }
+
+/* The HP bar sat in its own table column; inside a card it is a full
+   width rule under the numbers, which reads faster anyway. */
+.set-card .status-bar { margin-top: 2px; }

@@ -8,7 +8,12 @@ import React, { useMemo, useState } from 'react';
 import { useGameContext } from '../state/gameContext';
 import { settlementYield, SETTLEMENT_DEFS } from '../game/settlements';
 import { deriveSecondary } from '../game/colorUtils';
+import { makeSystemRootOf, systemLabel as systemLabelOf } from '../game/systemGrouping';
 import './OverviewPanel.css';
+// Borrow the Fleet panel's chrome so the two overview screens read as one
+// family: same scroll shell, same collapsible system headers, same card
+// treatment. Settlements was the odd one out — a 9-column table.
+import './FleetPanel.css';
 
 // Translucent fill from a hex colour, for faction-tinted owner badges.
 function hexToRgba(hex: string, alpha: number): string {
@@ -57,6 +62,36 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
         return a.settlement.name.localeCompare(b.settlement.name);
       });
   }, [gameState.settlements, gameState.bodies, gameState.factions, gameState.ships, filter]);
+
+  // Group the filtered rows by star system, exactly as FleetPanel does —
+  // same helper, so a body files under the same heading in both panels.
+  const systemRootOf = useMemo(() => makeSystemRootOf(gameState.bodies), [gameState.bodies]);
+  const systems = useMemo(() => {
+    const bySystem = new Map<string, typeof rows>();
+    for (const r of rows) {
+      const root = systemRootOf(r.settlement.bodyId);
+      const list = bySystem.get(root) ?? [];
+      list.push(r);
+      bySystem.set(root, list);
+    }
+    return [...bySystem.entries()]
+      .map(([rootId, items]) => ({
+        rootId,
+        label: systemLabelOf(gameState.bodies, rootId),
+        rootBody: gameState.bodies.find(b => b.id === rootId),
+        items,
+      }))
+      .sort((a, b) => (a.rootBody?.orbitRadius ?? 0) - (b.rootBody?.orbitRadius ?? 0));
+  }, [rows, systemRootOf, gameState.bodies]);
+
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const toggleSystem = (rootId: string) => {
+    setCollapsed(prev => {
+      const next = new Set(prev);
+      if (next.has(rootId)) next.delete(rootId); else next.add(rootId);
+      return next;
+    });
+  };
 
   const handleRowClick = (settlementId: string, bodyId: string) => {
     selectSettlement(settlementId);
@@ -176,108 +211,112 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
         ))}
       </div>
 
-      <div className="overview-panel__body">
-        {rows.length === 0 ? (
-          <div className="overview-empty">
-            No settlements match the filter.
-            {filter === 'player' && (
-              <div style={{ marginTop: 8, fontSize: 10 }}>
-                Deploy a city or station from a body's inspector to start a colony.
-              </div>
-            )}
-          </div>
-        ) : (
-          <table className="overview-table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Type</th>
-                <th>Owner</th>
-                <th>Location</th>
-                <th>HP</th>
-                <th className="col-num">Pop</th>
-                <th>Yield / harvest</th>
-                <th>Stockpile</th>
-                <th className="col-num">Freighters</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(({ settlement: s, body, ownerFreighters, yields }) => {
-                const isSelected = selectedSettlementId === s.id;
-                const def = SETTLEMENT_DEFS[s.type];
-                const hasStockpile = s.stockpile.ore > 0 || s.stockpile.credits > 0;
-                return (
-                  <tr
-                    key={s.id}
-                    className={isSelected ? 'selected' : ''}
-                    onClick={() => handleRowClick(s.id, s.bodyId)}
+      {/* CARDS, NOT A TABLE — and laid out to FIT.
+          This was a 9-column table inside a scrolling body: every column
+          fought for width, the numbers wrapped, and any real empire ran
+          off the bottom. Two changes fix both complaints at once.
+          1. Fleet's chrome: the same collapsible per-system headers and
+             the same card treatment, so the two overview panels stop
+             looking like they came from different games.
+          2. A MULTI-COLUMN card grid. Fleet stacks one card per row
+             because a ship line is wide; a settlement summary is narrow,
+             so two or three fit side by side and the whole holding list
+             lands in a third of the height. That is what removes the
+             scrolling — not hiding data, just stopping it queueing in a
+             single file. */}
+      <div className="fleet-scroll">
+        <div className="fleet-scroll__inner">
+          {rows.length === 0 ? (
+            <div className="overview-empty">
+              No settlements match the filter.
+              {filter === 'player' && (
+                <div style={{ marginTop: 8, fontSize: 10 }}>
+                  Deploy a city or station from a body's inspector to start a colony.
+                </div>
+              )}
+            </div>
+          ) : (
+            systems.map(system => {
+              const isCollapsed = collapsed.has(system.rootId);
+              const cities = system.items.filter(r => r.settlement.type === 'city').length;
+              const stations = system.items.length - cities;
+              return (
+                <div className="fleet-sys" key={system.rootId}>
+                  <button
+                    className="fleet-sys__header"
+                    onClick={() => toggleSystem(system.rootId)}
+                    aria-expanded={!isCollapsed}
                   >
-                    <td>
-                      <div className="body-cell">
-                        <span
-                          className="body-cell__icon"
-                          style={{
-                            background: body?.color || '#888',
-                            borderRadius: s.type === 'city' ? '50%' : '2px',
-                          }}
-                        />
-                        <div>
-                          <div className="body-cell__name">{s.name}</div>
-                          <div className="body-cell__type">{def.displayName}</div>
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      <span className={`status-badge status-badge--${s.type === 'city' ? 'building' : 'orbiting'}`}>
-                        {s.type}
-                      </span>
-                    </td>
-                    <td>{ownerBadge(s.ownedBy)}</td>
-                    <td>
-                      <span className="col-muted">
-                        {body?.name || s.bodyId}
-                        {body?.parent && body.parent !== 'sol' ? ` · ${body.parent}` : ''}
-                      </span>
-                    </td>
-                    <td>{renderHpBar(s)}</td>
-                    <td className="col-num">{s.population}</td>
-                    <td>
-                      <div className="prod-rates">
-                        <span className={`prod-rate ${yields.ore > 0 ? 'prod-rate--ore' : 'prod-rate--zero'}`}>
-                          {yields.ore > 0 ? `+${yields.ore.toFixed(1)}` : '—'} metal
-                        </span>
-                        <span className={`prod-rate ${yields.credits > 0 ? 'prod-rate--credits' : 'prod-rate--zero'}`}>
-                          {yields.credits > 0 ? `+${yields.credits.toFixed(1)}` : '—'} CR
-                        </span>
-                      </div>
-                    </td>
-                    <td>
-                      {hasStockpile ? (
-                        <div className="prod-rates">
-                          {s.stockpile.ore > 0 && (
-                            <span className="prod-rate prod-rate--ore">{Math.floor(s.stockpile.ore)}M</span>
-                          )}
-                          {s.stockpile.credits > 0 && (
-                            <span className="prod-rate prod-rate--credits">{Math.floor(s.stockpile.credits)}C</span>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="col-muted">empty</span>
-                      )}
-                    </td>
-                    <td className="col-num">
-                      {ownerFreighters.length > 0 ? (
-                        <span style={{ color: '#4ecdc4' }}>{ownerFreighters.length}</span>
-                      ) : (
-                        <span className="col-muted">0</span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
+                    <span className={`fleet-sys__caret${isCollapsed ? ' fleet-sys__caret--collapsed' : ''}`} aria-hidden>▾</span>
+                    <span className="fleet-sys__dot" style={{ background: system.rootBody?.color || '#888' }} aria-hidden />
+                    <span className="fleet-sys__name">{system.label}</span>
+                    <span className="fleet-sys__meta">
+                      {cities > 0 && `${cities} ${cities === 1 ? 'city' : 'cities'}`}
+                      {cities > 0 && stations > 0 && ' · '}
+                      {stations > 0 && `${stations} station${stations === 1 ? '' : 's'}`}
+                    </span>
+                  </button>
+
+                  {!isCollapsed && (
+                    <div className="set-grid">
+                      {system.items.map(({ settlement: s, body, ownerFreighters, yields }) => {
+                        const isSelected = selectedSettlementId === s.id;
+                        const def = SETTLEMENT_DEFS[s.type];
+                        const hasStock = s.stockpile.ore > 0 || s.stockpile.credits > 0;
+                        return (
+                          <button
+                            key={s.id}
+                            className={`set-card${isSelected ? ' set-card--selected' : ''}`}
+                            onClick={() => handleRowClick(s.id, s.bodyId)}
+                            title={`${s.name} — ${def.displayName} on ${body?.name ?? s.bodyId}`}
+                          >
+                            <span
+                              className="set-card__icon"
+                              style={{
+                                background: body?.color || '#888',
+                                borderRadius: s.type === 'city' ? '50%' : '2px',
+                              }}
+                              aria-hidden
+                            />
+                            <span className="set-card__body">
+                              <span className="set-card__l1">
+                                <span className="set-card__name">{s.name}</span>
+                                <span className="set-card__where">{body?.name ?? s.bodyId}</span>
+                              </span>
+                              <span className="set-card__l2">
+                                {ownerBadge(s.ownedBy)}
+                                <span className="set-card__pop" title="Population">pop {s.population}</span>
+                                {ownerFreighters.length > 0 && (
+                                  <span className="set-card__frt" title="Freighters docked here">
+                                    ⛟{ownerFreighters.length}
+                                  </span>
+                                )}
+                              </span>
+                              <span className="set-card__l3">
+                                <span className={yields.ore > 0 ? 'prod-rate prod-rate--ore' : 'prod-rate prod-rate--zero'}>
+                                  {yields.ore > 0 ? `+${yields.ore.toFixed(1)}M` : '—'}
+                                </span>
+                                <span className={yields.credits > 0 ? 'prod-rate prod-rate--credits' : 'prod-rate prod-rate--zero'}>
+                                  {yields.credits > 0 ? `+${yields.credits.toFixed(1)}C` : '—'}
+                                </span>
+                                <span className="set-card__stock" title="Banked on site">
+                                  {hasStock
+                                    ? `${Math.floor(s.stockpile.ore)}M ${Math.floor(s.stockpile.credits)}C`
+                                    : 'empty'}
+                                </span>
+                              </span>
+                              {renderHpBar(s)}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
       </div>
     </div>
   );
