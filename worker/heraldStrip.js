@@ -25,6 +25,7 @@
 // view here — that would leak their private intel to everyone.
 // ============================================================================
 
+import { EMBLEM_MASK_SIZE, EMBLEM_MASKS, forEachMaskPixel } from './_emblemMasks.js';
 import {
   createSurface, fillRect, fillVGrad, fillRadial, fillCircle, strokeCircle,
   strokeEllipse, drawLine, hatchRect, drawText, textWidth, encodePng, hexToRgb,
@@ -60,7 +61,7 @@ export async function buildTerritoryData(env, gameId) {
 
   const factionRows = (await env.DB
     .prepare(
-      `SELECT id, name, color, color2, status
+      `SELECT id, name, color, color2, status, emblem
          FROM game_factions WHERE game_id = ? ORDER BY slot`,
     )
     .bind(gameId)
@@ -108,7 +109,12 @@ export async function buildTerritoryData(env, gameId) {
 
   const factions = {};
   for (const f of factionRows) {
-    factions[f.id] = { name: f.name, color: f.color, color2: f.color2 || f.color };
+    factions[f.id] = {
+      name: f.name, color: f.color, color2: f.color2 || f.color,
+      // Flag emblem, stamped in place of the empire name on the sector
+      // labels. Null on legacy factions — those keep the name.
+      emblem: f.emblem ?? null,
+    };
   }
 
   const byId = new Map(bodyRows.map(b => [b.id, b]));
@@ -227,6 +233,14 @@ export function renderStripPage(data, opts = {}) {
   // AT that size (device-pixel-ratio buys crispness, never more room).
   const compact = W < 760;
   const payload = JSON.stringify(data).replace(/</g, '\\u003c');
+  // The SAME mask table the PNG stamps from, inlined for the page's
+  // canvas. Shipping one source to both renderers is the point: this
+  // file's own header notes that keeping them identical is what stops
+  // them drifting into different charts, and an emblem that looked one
+  // way here and another in the image would be exactly that drift.
+  // ~2KB of base64, cheaper than a second request.
+  const maskPayload = JSON.stringify({ size: EMBLEM_MASK_SIZE, m: EMBLEM_MASKS })
+    .replace(/</g, '\\u003c');
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>${escapeHtml(data.game.name)} — Territory</title>
 <style>
@@ -238,6 +252,28 @@ export function renderStripPage(data, opts = {}) {
 <canvas id="strip"></canvas>
 <script>
 const D = ${payload};
+const MASKS = ${maskPayload};
+/* Stamp an emblem mask centred on (px,py), scaled to the given css px.
+   Returns false when there is no mask, so the caller falls back to the
+   empire name rather than printing a gap. Mirrors stampEmblem in the
+   PNG renderer - same table, same centring rule.
+   NB: this comment lives INSIDE a template literal, so no backticks. */
+function stampEmblem(c, id, px, py, size, fill){
+  const b64 = id && MASKS.m[id];
+  if(!b64) return false;
+  const N = MASKS.size, bin = atob(b64), s = size / N;
+  const x0 = px - size/2, y0 = py - size/2;
+  c.save(); c.fillStyle = fill;
+  for(let i=0;i<N*N;i++){
+    if((bin.charCodeAt(i>>3) >> (7-(i&7))) & 1){
+      // +0.5 on the span closes the hairline seams that appear between
+      // adjacent 1px cells once they are scaled to a fractional size.
+      c.fillRect(x0 + (i%N)*s, y0 + ((i/N)|0)*s, s+0.5, s+0.5);
+    }
+  }
+  c.restore();
+  return true;
+}
 const W = ${W}, H = ${H}, COMPACT = ${compact};
 
 function hexA(hex,a){
@@ -378,7 +414,14 @@ function drawSector(s, x0, x1, yTop, yBot){
   if(d.contested){ c.fillStyle="rgba(255,194,74,.95)"; c.fillText("CONTESTED",cx,yTop+29); }
   else if(d.owner){
     c.fillStyle=hexA(colOf(d.owner),.95);
-    c.fillText(fitText(c,shortName(nameOf(d.owner)),bandW),cx,yTop+29);
+    // The empire's MARK in place of its name — a narrow sector truncates
+    // a name into uselessness, and the shape is the same one flying on
+    // their territory everywhere else. Falls back to the name whenever
+    // there's no mask, so a sector is never anonymous.
+    var emb = (D.factions[d.owner]||{}).emblem;
+    if(!stampEmblem(c, emb, cx, yTop+25, FS.holder*1.7, hexA(colOf(d.owner),.95))){
+      c.fillText(fitText(c,shortName(nameOf(d.owner)),bandW),cx,yTop+29);
+    }
   } else { c.fillStyle="rgba(95,113,134,.85)"; c.fillText("UNCLAIMED",cx,yTop+29); }
 
   var many=s.bodies.length>1;
@@ -530,6 +573,27 @@ export async function renderStripPng(env, gameId, opts = {}) {
 
   const colOf = (k) => hexToRgb((data.factions[k] || {}).color || '#888888');
   const nameOf = (k) => (data.factions[k] || {}).name || '';
+  const emblemOf = (k) => (data.factions[k] || {}).emblem || null;
+
+  /**
+   * Stamp an emblem mask, CENTRED on (px, py), in device pixels.
+   *
+   * Drawn 1:1 from the 24px mask, which lands at ~12 display px — the
+   * size the emblems were drawn to stay legible at, and close to the
+   * F_HOLDER text it replaces (cell 3 ≈ 21px tall).
+   *
+   * Returns false without drawing anything when there's no mask for the
+   * id, so the caller can fall back to text rather than print a gap.
+   */
+  const stampEmblem = (surface, id, px, py, rgb, alpha) => {
+    if (!id) return false;
+    const N = EMBLEM_MASK_SIZE;
+    const x0 = Math.round(px - N / 2);
+    const y0 = Math.round(py - N / 2);
+    return forEachMaskPixel(id, (mx, my) => {
+      fillRect(surface, x0 + mx, y0 + my, 1, 1, rgb, alpha);
+    });
+  };
 
   const shortName = (n) => String(n || '')
     .replace(/[^\w\s'-]/g, ' ').replace(/\s+/g, ' ').trim()
@@ -648,8 +712,18 @@ export async function renderStripPng(env, gameId, opts = {}) {
       if (d.contested) {
         drawText(s, 'CONTESTED', X(cx), X(yTop + 23), F_HOLDER, [255, 194, 74], 0.95, 'center');
       } else if (d.owner) {
-        drawText(s, fit(shortName(nameOf(d.owner)), F_HOLDER, X(bandW)),
-          X(cx), X(yTop + 23), F_HOLDER, colOf(d.owner), 0.95, 'center');
+        // The empire's MARK, not its name (Lorne). A name has to be
+        // truncated to fit a narrow sector — "CONFEDERACY OF INDEPEN…"
+        // tells you less than a shape does, and the shape is the same
+        // one flying on their territory everywhere else in the game.
+        //
+        // Falls back to the truncated name whenever the emblem can't be
+        // drawn (legacy faction with no emblem, or an id with no baked
+        // mask), so a sector is never left anonymous.
+        if (!stampEmblem(s, emblemOf(d.owner), X(cx), X(yTop + 23), colOf(d.owner), 0.95)) {
+          drawText(s, fit(shortName(nameOf(d.owner)), F_HOLDER, X(bandW)),
+            X(cx), X(yTop + 23), F_HOLDER, colOf(d.owner), 0.95, 'center');
+        }
       } else {
         drawText(s, 'UNCLAIMED', X(cx), X(yTop + 23), F_HOLDER, [95, 113, 134], 0.85, 'center');
       }
