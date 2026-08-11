@@ -1780,10 +1780,19 @@ async function handleQueueBuilding(req, env, ctx) {
   const cost = buildingCostAt(kind, currentLevel, await buildingCostMult(env, gameId));
   const ticks = buildingTicksAt(kind, currentLevel);
 
-  if (me.metal < cost.metal || me.gold < cost.gold) {
-    return err(409, 'insufficient_resources',
-      `need ${cost.metal} ore + ${cost.gold} credits for ${kind} L${currentLevel + 1}`);
-  }
+  // NO POOL-ONLY AFFORDABILITY CHECK HERE.
+  //
+  // There used to be one, and it made the local-first spend below dead
+  // code in the only case it exists for. A station on a raw world banks
+  // 90% of its yield LOCALLY, and the whole point of that stockpile is
+  // that the station can spend it on itself. But this check ran first and
+  // 409'd on the faction pool alone — so a station sitting on 300 ore
+  // could not start a 40-ore building while the pool was empty, and the
+  // "drain the local stockpile before touching the pool" logic forty
+  // lines down never got the chance to run.
+  //
+  // The real check is the LOCAL+pool one at the debit site, which is
+  // where the numbers it validates are actually read.
 
   const game = await env.DB.prepare('SELECT current_tick FROM games WHERE id = ?').bind(gameId).first();
   const startTick = game?.current_tick ?? 0;
@@ -1811,7 +1820,14 @@ async function handleQueueBuilding(req, env, ctx) {
   const localMetal = Number(stockRow?.stockpile_metal ?? 0);
   const localGold  = Number(stockRow?.stockpile_gold  ?? 0);
   if (localMetal + me.metal < cost.metal || localGold + me.gold < cost.gold) {
-    return err(409, 'insufficient_resources', `need ${cost.metal}M ${cost.gold}G (LOCAL+pool)`);
+    // Spell out BOTH purses. This is now the only affordability message
+    // a player can get here, and "need 40M 0G (LOCAL+pool)" doesn't say
+    // which purse fell short — the whole reason a station build can be
+    // affordable in one place and not another.
+    return err(409, 'insufficient_resources',
+      `${kind} L${currentLevel + 1} needs ${cost.metal} ore + ${cost.gold} credits. `
+      + `This station has ${localMetal} ore + ${localGold} credits banked locally; `
+      + `the empire pool has ${Math.max(0, me.metal)} ore + ${Math.max(0, me.gold)} credits.`);
   }
   const takeLocalMetal = Math.min(cost.metal, localMetal);
   const takeLocalGold  = Math.min(cost.gold,  localGold);
