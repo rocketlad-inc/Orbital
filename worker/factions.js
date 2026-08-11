@@ -1198,6 +1198,16 @@ export async function seedGameWorld(env, gameId) {
         own ? 0 : null,
         secretKind,
         orbitRp, orbitRa, orbitOmega, orbitM0,
+        // Capitals start terraformed, and so does EARTH — deliberately.
+        // Earth is an unowned, permanently terraformed inner-system prize
+        // that anyone may colonise from tick 0, skipping the payload, the
+        // freighter and the 24-tick wait. It is NOT the `pre_terraformed`
+        // discovery: that one is outer-system and secret on purpose (see
+        // SECRET_HOST_CATEGORIES), and the two coexist by design.
+        //
+        // Flagged as a bug during a live-game audit precisely because it
+        // contradicts that neighbouring comment and carried no note of
+        // its own. Confirmed intended 2026-08-11 — leave it.
         (own || b.id === 'earth') ? 0 : null,
       ),
     );
