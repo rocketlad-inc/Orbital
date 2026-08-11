@@ -14,6 +14,7 @@ import {
 } from './auth.js';
 import { validateParts, DEFAULT_LOADOUTS } from './shipDesigns.js';
 import { verifyGoogleIdToken } from './google.js';
+import { isAdminSession } from './admins.js';
 import { MIGRATIONS } from './_migrations_bundle.js';
 import { GIT_SHA, BUILT_AT } from './_version.js';
 import { maybeRunDailyDigest } from './digest.js';
@@ -145,6 +146,14 @@ function validateSignup(body) {
   if (!body || typeof body !== 'object') return 'invalid body';
   const { email, password, display_name } = body;
   if (typeof email !== 'string' || !EMAIL_RE.test(email)) return 'invalid email';
+  // Reserved: agent accounts live on agents.orbital.local and are minted
+  // only by the keyed /api/agent/session route. Without this a signup
+  // could SQUAT the address an agent handle resolves to, and the next
+  // agent session for that handle would hand back an account a stranger
+  // controls. It needs the agent key to be reachable at all, so this is
+  // defence in depth rather than the only lock — but the domain is
+  // non-routable and no human has a reason to want it.
+  if (/@agents\.orbital\.local$/i.test(email.trim())) return 'invalid email';
   if (typeof password !== 'string' || password.length < 8) return 'password must be at least 8 characters';
   if (password.length > 200) return 'password too long';
   if (display_name != null && (typeof display_name !== 'string' || display_name.length > 40)) return 'invalid display_name';
@@ -1106,8 +1115,35 @@ export default {
       if (req.method === 'GET' && url.pathname === '/api/_version') {
         return json({ git_sha: GIT_SHA, built_at: BUILT_AT });
       }
-      // one-shot bootstrap (idempotent; no-op once tables exist)
-      if (req.method === 'POST' && url.pathname === '/api/__init') return handleInit(req, env);
+      // One-shot bootstrap (idempotent; no-op once tables exist).
+      //
+      // GATED. This runs DDL and, before the gate, answered any
+      // anonymous caller with the FULL list of applied migration names —
+      // a free map of the schema and its feature history
+      // (0074_faction_emblems, 0080_terraforming, 0052_analytics…), plus
+      // an unauthenticated way to make the database do work on demand.
+      // It cannot inject schema (migrations ship inside the bundle), so
+      // this is reconnaissance and load rather than takeover — but
+      // neither is something a public launch should hand out.
+      //
+      // Two ways through, both deliberate:
+      //   * X-Agent-Key matching AGENT_KEY — the deploy path uses this,
+      //     so applying migrations stays a one-line curl.
+      //   * an admin session — so it can be poked from a browser.
+      // A FRESH database with no AGENT_KEY set still bootstraps, because
+      // otherwise a brand-new deployment could never run its first
+      // migration. That window closes the moment the secret is set.
+      if (req.method === 'POST' && url.pathname === '/api/__init') {
+        const key = req.headers.get('x-agent-key');
+        let allowed = !env.AGENT_KEY;   // unconfigured => first-run bootstrap
+        if (!allowed && key) allowed = await constantTimeEqual(key, env.AGENT_KEY);
+        if (!allowed) {
+          const s = await currentSession(req, env);
+          allowed = isAdminSession(s);
+        }
+        if (!allowed) return err(404, 'not_found', 'not found');
+        return handleInit(req, env);
+      }
       // unauthenticated routes
       if (req.method === 'POST' && url.pathname === '/api/auth/signup') return handleSignup(req, env);
       if (req.method === 'POST' && url.pathname === '/api/auth/login') return handleLogin(req, env);

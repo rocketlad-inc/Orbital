@@ -26,17 +26,15 @@ function err(status, code, message) {
   return json({ error: { code, message } }, { status });
 }
 
-// The allow-list. Deliberately code, not config: adding an admin should
-// be a reviewed commit, and there is exactly one intended member.
-const ADMIN_EMAILS = new Set([
-  'spaceboy1243@gmail.com',  // Lorne's play account ("Rocketlad" — the one he's actually signed in as)
-  'lcfeeser@gmail.com',      // Lorne's infra account
-  'lorne@bigtickets.com',    // Lorne's work account, in case he ever signs up with it
-]);
-
-export function isAdminEmail(email) {
-  return ADMIN_EMAILS.has(String(email ?? '').toLowerCase());
-}
+// The allow-list lives in ONE place (admins.js) and is re-exported here
+// so existing importers of analytics.isAdminEmail keep working. It used
+// to be duplicated in store.js; the failure mode of a duplicated
+// allow-list is not a bug but an admin who is removed from one copy and
+// retains access through the other.
+// Imported (not bare re-exported) because this module also USES it
+// below — `export ... from` creates no local binding.
+import { isAdminEmail } from './admins.js';
+export { isAdminEmail };
 
 // ---------------------------------------------------------------------------
 // QA-account exclusion. Every harness identity lives on one of these

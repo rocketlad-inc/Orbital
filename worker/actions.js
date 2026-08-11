@@ -3310,9 +3310,17 @@ async function handleAssignCaptain(req, env, ctx) {
   // to a fleet member is only legal via the fleet PROMOTE flow (which
   // also raises them to flag).
   if (shipId) {
+    // Scoped to the CALLER's ships on purpose. Unscoped, this peek ran
+    // before the ownership check further down, so a 409 'fleet_member'
+    // vs a fall-through told you whether an arbitrary ship id — including
+    // a rival's, anywhere on the map — was in a fleet. That is a fog-of-war
+    // leak through an error code: no board state is revealed by the UI, but
+    // the API answered the question anyway. Scoping the lookup means a
+    // ship that isn't yours simply isn't found here, and the real 403
+    // below is what you get.
     const tgt = await env.DB
-      .prepare('SELECT fleet_id FROM game_ships WHERE id = ? AND game_id = ?')
-      .bind(shipId, gameId)
+      .prepare('SELECT fleet_id FROM game_ships WHERE id = ? AND game_id = ? AND owner_faction_id = ?')
+      .bind(shipId, gameId, got.me.id)
       .first();
     if (tgt?.fleet_id) {
       return err(409, 'fleet_member',

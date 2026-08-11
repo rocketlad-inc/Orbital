@@ -26,6 +26,8 @@
 // as DISCORD_BOT_TOKEN. The game runs fine unmonetized.
 // ============================================================
 
+import { isAdminSession } from './admins.js';
+
 const enc = new TextEncoder();
 
 function json(data, init = {}) {
@@ -90,15 +92,12 @@ export async function hasEntitlement(env, userId, sku = 'cosmetics_v1') {
 }
 
 // 404, not 403: probing for admin endpoints should learn nothing. Same
-// stance as analytics.js requireAdmin, duplicated because modules are
-// separate bundles by convention here (see emblems.js header).
-const ADMIN_EMAILS = new Set([
-  'spaceboy1243@gmail.com',
-  'lcfeeser@gmail.com',
-  'lorne@bigtickets.com',
-]);
+// stance as analytics.js requireAdmin — and now literally the same list,
+// imported from admins.js. It was duplicated here; a duplicated
+// allow-list fails in the direction that matters, an operator removed
+// from one copy keeping access through the other.
 function requireAdmin(session) {
-  if (!session || !ADMIN_EMAILS.has(String(session.email ?? '').toLowerCase())) {
+  if (!isAdminSession(session)) {
     return err(404, 'not_found', 'no such route');
   }
   return null;
