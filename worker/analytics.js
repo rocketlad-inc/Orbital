@@ -71,9 +71,34 @@ function requireAdmin(session) {
 // "/api/games/Jt4AQbYy7M4l/ships/Jt4:s12/orders" -> "ships/orders".
 // Exported for index.js, which logs at the dispatch choke point.
 // ---------------------------------------------------------------------------
+/**
+ * Endpoints that are MACHINE chatter, not player behaviour.
+ *
+ * `perf` and `perf/session` are the client posting its own frame rate and
+ * latency on a timer — one row per minute of play, per client, whether
+ * the player touches anything or not. They were the second most common
+ * "action" in the entire database (3,424 rows against 993 real builds),
+ * so every feature-usage chart, action total and actions-per-session
+ * average was mostly measuring the metronome rather than the player.
+ *
+ * The perf DATA is still collected — it lives in its own perf_samples /
+ * perf_heartbeats tables and is genuinely useful for finding whose client
+ * runs badly. It just has no business in a table about what people DID.
+ *
+ * `telemetry` is belt-and-braces: the dispatch chokepoint in index.js
+ * already skips that path, so it cannot reach here today. It is listed
+ * because it is the same category of mistake — the UI-telemetry endpoint
+ * writes its own ui/* rows, so counting the POST as well would book every
+ * batch twice, once as itself and once as "a player did something".
+ */
+const NON_ACTION_PATHS = /^perf(\/|$)|^telemetry$/;
+
 export function eventKindFromPath(method, pathname) {
   const m = pathname.match(/^\/api\/games\/[^/]+\/(.+)$/);
   if (!m) return null;
+  // Bail before the id-stripping below so this reads against the raw
+  // suffix ("perf/session"), not the normalized label.
+  if (NON_ACTION_PATHS.test(m[1])) return null;
   const parts = m[1].split('/').filter(seg =>
     // Drop id-looking segments: game-namespaced ids contain ':' (or its
     // %3A encoding); bare row ids are long base64ish tokens. Keep short
@@ -196,9 +221,9 @@ async function handleOverview(req, env, { session }) {
               (SELECT COUNT(*) FROM game_factions f
                 WHERE f.game_id = g.id AND f.status = 'active') AS factions,
               (SELECT MAX(e.created_at_ms) FROM analytics_events e
-                WHERE e.game_id = g.id AND e.kind != 'heartbeat') AS last_action_ms,
+                WHERE e.game_id = g.id AND e.kind != 'heartbeat' AND e.kind NOT LIKE 'POST perf%') AS last_action_ms,
               (SELECT COUNT(*) FROM analytics_events e
-                WHERE e.game_id = g.id AND e.kind != 'heartbeat'
+                WHERE e.game_id = g.id AND e.kind != 'heartbeat' AND e.kind NOT LIKE 'POST perf%'
                   AND e.created_at_ms > ?) AS actions_14d,
               (SELECT MAX(e.created_at_ms) FROM analytics_events e
                 WHERE e.game_id = g.id AND e.kind = 'heartbeat') AS last_heartbeat_ms,
@@ -314,7 +339,7 @@ async function handleOverview(req, env, { session }) {
     .prepare(
       `SELECT kind, COUNT(*) AS total, COUNT(DISTINCT game_id) AS games_used
          FROM analytics_events
-        WHERE kind != 'heartbeat'
+        WHERE kind != 'heartbeat' AND kind NOT LIKE 'POST perf%'
           AND (user_id IS NULL OR user_id NOT IN (${QA_USER_IDS}))
         GROUP BY kind ORDER BY total DESC LIMIT 60`,
     )
@@ -401,7 +426,7 @@ async function handleGameAnalytics(req, env, { session, params }) {
               SUM(created_at_ms > ?) AS last_14d,
               COUNT(DISTINCT user_id) AS distinct_users
          FROM analytics_events
-        WHERE game_id = ? AND kind != 'heartbeat'
+        WHERE game_id = ? AND kind != 'heartbeat' AND kind NOT LIKE 'POST perf%'
         GROUP BY kind
         ORDER BY total DESC`,
     )
@@ -428,7 +453,7 @@ async function handleGameAnalytics(req, env, { session, params }) {
                   AND e.kind = 'heartbeat' AND e.created_at_ms > ?) AS active_days_14d,
               (SELECT COUNT(*) FROM analytics_events e
                 WHERE e.user_id = u.id AND e.game_id = f.game_id
-                  AND e.kind != 'heartbeat' AND e.created_at_ms > ?) AS actions_14d
+                  AND e.kind != 'heartbeat' AND e.kind NOT LIKE 'POST perf%' AND e.created_at_ms > ?) AS actions_14d
          FROM game_factions f JOIN users u ON u.id = f.user_id
         WHERE f.game_id = ? AND ${NOT_QA_USER}
         ORDER BY last_seen_ms DESC`,

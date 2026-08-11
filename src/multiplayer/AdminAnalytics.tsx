@@ -832,17 +832,14 @@ function GameDetail({
         <UsageBars usage={data.usage} />
       </section>
 
-      <section>
-        <div className="aa-section-title">SPEED: CLICK TO SCREEN UPDATE</div>
-        <div className="aa-section-note">Engineering diagnostic, not a player metric. Milliseconds from a tap to the screen changing — high numbers mean the game feels sluggish for that person.</div>
-        <PerfTable rows={data.perf ?? []} />
-      </section>
-
-      <section>
-        <div className="aa-section-title">SPEED: SMOOTHNESS</div>
-        <div className="aa-section-note">Engineering diagnostic. Frames per second while the map animates. Under ~30 looks choppy. This is the “perf session” data — one sample per minute of play.</div>
-        <RenderTable rows={data.render ?? []} />
-      </section>
+      {/* The two client-performance sections (click-to-pixels latency and
+          frame rate) were removed on 2026-08-11. They were engineering
+          diagnostics living in a dashboard about player behaviour, and
+          their events were also the second most common "action" in the
+          database — so they skewed every usage chart while answering a
+          question nobody was asking here. The perf_samples /
+          perf_heartbeats tables and their endpoints are untouched; the
+          data is still there if a slow-client hunt ever needs it. */}
 
       <section>
         <div className="aa-section-title">IS SOMEONE RUNNING AWAY WITH IT?</div>
@@ -1702,118 +1699,7 @@ function Funnels({ usage }: { usage: UsageRow[] }) {
   );
 }
 
-// Frame-rate health per player. fps_low1 (mean of the worst 1% of
-// frames) matters more than the average: a 55fps average with 8fps
-// stutters is what players describe as "animations slowing down".
-// early/late compare the first 5 min of a session against 15+ min in —
-// a big drop, especially alongside a climbing heap, is a LEAK rather
-// than a slow machine, and those need opposite fixes.
-function RenderTable({ rows }: { rows: RenderRow[] }) {
-  if (rows.length === 0) {
-    return <div className="aa-empty">No frame data yet — clients report once a minute of active play.</div>;
-  }
-  return (
-    <div className="aa-scroll-x">
-      <table className="aa-table">
-        <thead>
-          <tr>
-            <th>Player</th><th>beats</th>
-            <th>fps avg</th><th>1% low</th>
-            <th>draw p95</th><th>long frames</th>
-            <th>fps early→late</th><th>heap early→late</th>
-            <th>ships</th><th>device</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(r => {
-            const degraded = r.fps_early > 0 && r.fps_late > 0 && r.fps_late < r.fps_early * 0.75;
-            const leaking = r.heap_early > 0 && r.heap_late > r.heap_early * 1.5;
-            return (
-              <tr key={r.user_id}>
-                <td>{r.display_name}</td>
-                <td>{r.beats}</td>
-                <td style={{ color: r.fps_avg < 30 ? '#ff6b6b' : '#cdd9e4' }}><b>{r.fps_avg}</b></td>
-                <td style={{ color: r.fps_low1 < 15 ? '#ff6b6b' : '#cdd9e4' }}>{r.fps_low1}</td>
-                <td style={{ color: r.draw_p95 > 16 ? '#ff6b6b' : '#cdd9e4' }}>{r.draw_p95} ms</td>
-                <td>{r.long_frames}</td>
-                <td style={{ color: degraded ? '#ff6b6b' : '#cdd9e4' }}>
-                  {r.fps_early || '—'} → {r.fps_late || '—'}{degraded ? ' ⚠' : ''}
-                </td>
-                <td style={{ color: leaking ? '#ff6b6b' : '#8a9fb3' }}>
-                  {r.heap_early ? `${r.heap_early}MB` : '—'} → {r.heap_late ? `${r.heap_late}MB` : '—'}
-                  {leaking ? ' ⚠' : ''}
-                </td>
-                <td>{r.ships}</td>
-                <td style={{ color: '#8a9fb3', fontSize: 11 }} title={r.gpu ?? r.ua}>
-                  {r.gpu && /microsoft basic|swiftshader|llvmpipe|software/i.test(r.gpu) && (
-                    <b style={{ color: '#ff6b6b' }}>⚠ SOFTWARE </b>
-                  )}
-                  {(r.gpu ?? '?').slice(0, 28)}{r.mobile ? ' · mobile' : ''}
-                  {r.cores ? ` · ${r.cores}c` : ''}{r.dpr && r.dpr !== 1 ? ` · ${r.dpr}x` : ''}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
 
-// Per-player click->pixels latency, reported by each client. p95, not
-// average: the occasional 3-second stall is what a player remembers and
-// complains about, and a mean buries it. Device columns are here so a
-// slow report can be correlated with hardware instead of guessed at.
-function PerfTable({ rows }: { rows: PerfRow[] }) {
-  if (rows.length === 0) {
-    return <div className="aa-empty">No samples yet — clients report one per 30s of active play.</div>;
-  }
-  const ms = (v: number, lim: number) => (
-    <span style={{ color: v > lim ? '#ff6b6b' : '#cdd9e4' }}>{v}</span>
-  );
-  const browserOf = (ua: string) => {
-    if (/Edg\//.test(ua)) return 'Edge';
-    if (/OPR\//.test(ua)) return 'Opera';
-    if (/Firefox\//.test(ua)) return 'Firefox';
-    if (/Chrome\//.test(ua)) return 'Chrome';
-    if (/Safari\//.test(ua)) return 'Safari';
-    return '?';
-  };
-  return (
-    <div className="aa-scroll-x">
-      <table className="aa-table">
-        <thead>
-          <tr>
-            <th>Player</th><th>n</th>
-            <th>click→UI p50</th><th>p95</th>
-            <th>map p95</th><th>paint p95</th><th>fetch p50</th>
-            <th>frame</th><th>ships</th><th>device</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(r => (
-            <tr key={r.user_id}>
-              <td>{r.display_name}</td>
-              <td>{r.samples}</td>
-              <td>{ms(r.total_p50, 800)}</td>
-              <td><b>{ms(r.total_p95, 1500)}</b></td>
-              <td>{ms(r.map_p95, 150)}</td>
-              <td>{ms(r.paint_p95, 200)}</td>
-              <td>{ms(r.fetch_p50, 500)}</td>
-              <td>{ms(r.frame_p50, 40)} ms</td>
-              <td>{r.ships}</td>
-              <td style={{ color: '#8a9fb3', fontSize: 11 }}>
-                {browserOf(r.ua)}{r.mobile ? ' · mobile' : ''}
-                {r.cores ? ` · ${r.cores} cores` : ''}
-                {r.mem_gb ? ` · ${r.mem_gb}GB` : ''}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
 
 // ---------- v3 components ----------
 
