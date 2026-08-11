@@ -29,6 +29,13 @@ const TECH_TRACKS = [
  *  Herald's collapse prose; change all three together. */
 const DYSON_ABANDON_LOSS = 0.20;
 
+/** How many pre-game lobby chat lines the room keeps and replays to a
+ *  client that connects (or reconnects after a refresh). Bounded because
+ *  it lives in a single DO storage value: 200 lines at the 500-char cap
+ *  is comfortably inside the per-value limit, while being far more
+ *  backlog than any lobby actually produces before launch. */
+const CHAT_HISTORY_MAX = 200;
+
 // Room Durable Object. One instance per game room, keyed by room id.
 // Uses the WebSocket Hibernation API so idle rooms cost nothing.
 //
@@ -435,6 +442,17 @@ export class Room {
       server.serializeAttachment({ userId, displayName });
       this.state.acceptWebSocket(server);
 
+      // Replay the lobby backlog to THIS socket only (not a broadcast —
+      // everyone else already has these lines). This is what makes a
+      // refresh non-destructive and lets someone who joins late read what
+      // was said before they arrived.
+      const chatLog = (await this.state.storage.get('chatLog')) ?? [];
+      if (chatLog.length) {
+        try {
+          server.send(JSON.stringify({ type: 'chat_history', messages: chatLog }));
+        } catch { /* client vanished mid-handshake; presence below still runs */ }
+      }
+
       this.broadcast({ type: 'presence', members: Object.values(members), connected: this.connectedUserIds(), ready: this.readyMap() });
       return new Response(null, { status: 101, webSocket: client });
     }
@@ -455,12 +473,28 @@ export class Room {
       case 'chat': {
         if (typeof msg.text !== 'string' || !msg.text.trim()) return;
         const text = msg.text.slice(0, 500);
-        this.broadcast({
+        const line = {
           type: 'chat',
           from: { userId: att.userId, displayName: att.displayName },
           text,
           at: Date.now(),
-        });
+        };
+        // PERSIST BEFORE BROADCASTING. This used to be broadcast-only,
+        // which made lobby chat a pure "who happens to be listening right
+        // now" channel: refresh and your own log was gone, and anyone who
+        // joined the lobby thirty seconds later saw an empty box. Players
+        // read that as messages not sending at all — they'd write
+        // something, nobody would answer, because nobody who arrived
+        // afterwards could ever see it.
+        //
+        // Written first so a line can never be shown to a live client and
+        // then be missing from the history a reconnect replays.
+        const log = (await this.state.storage.get('chatLog')) ?? [];
+        log.push(line);
+        // Ring-buffer: a lobby that sits open for hours must not grow a
+        // storage value without bound.
+        await this.state.storage.put('chatLog', log.slice(-CHAT_HISTORY_MAX));
+        this.broadcast(line);
         return;
       }
       case 'ready': {

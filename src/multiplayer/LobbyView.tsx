@@ -190,6 +190,12 @@ function RoomDetail({
   // arrive over the same room WS that carries presence/ready; the server
   // broadcasts each `chat` message back to everyone including the sender,
   // so a sent line simply shows up when its broadcast returns.
+  //
+  // Seeded from a `chat_history` frame the room sends on connect. This
+  // state used to be the ONLY copy that existed anywhere, which meant a
+  // refresh wiped the conversation and anyone joining late saw an empty
+  // box — indistinguishable, from the player's side, from messages never
+  // sending at all.
   const [chatLog, setChatLog] = useState<ChatMsg[]>([]);
   const [chatDraft, setChatDraft] = useState('');
   const chatKeyRef = useRef(0);
@@ -263,6 +269,21 @@ function RoomDetail({
       // refresh — the snapshot is the source of truth for those.
       let m: any;
       try { m = JSON.parse(typeof ev.data === 'string' ? ev.data : ''); } catch { m = null; }
+      // Backlog replayed to us on (re)connect. REPLACES the local log
+      // rather than appending: the server's copy is authoritative and
+      // already contains anything we had, so replacing is also what stops
+      // a reconnect from duplicating every line we'd already rendered.
+      if (m && m.type === 'chat_history' && Array.isArray(m.messages)) {
+        setChatLog(m.messages
+          .filter((h: any) => h && h.from && typeof h.text === 'string')
+          .map((h: any) => ({
+            key: chatKeyRef.current++,
+            from: h.from,
+            text: h.text,
+            at: typeof h.at === 'number' ? h.at : Date.now(),
+          })));
+        return;
+      }
       if (m && m.type === 'chat' && m.from && typeof m.text === 'string') {
         setChatLog((prev) => {
           const next = [...prev, {
