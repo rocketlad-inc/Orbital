@@ -1887,6 +1887,49 @@
   gap: 3px;
   margin: 6px 0 8px;
 }
+
+/* Vote-split chamber. Yea and nay sit side by side so the two blocs can
+   be compared at a glance — the actual question is "is this winning",
+   which one undifferentiated grid could never answer. Abstained and
+   not-voted run full width underneath, because neither took a side and
+   the not-voted rail is the one you read to chase quorum. */
+.sp-side {
+  display: block;
+  margin-bottom: 6px;
+}
+.sp-side--yea,
+.sp-side--nay {
+  display: inline-block;
+  width: calc(50% - 4px);
+  vertical-align: top;
+}
+.sp-side--yea { margin-right: 8px; }
+
+.sp-side__h {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 8.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+.sp-side__n { color: var(--mp-fg-dim); font-weight: 600; }
+.sp-side .sp-seats { margin: 4px 0 0; }
+/* Placeholder for a side nobody has taken yet, so the two columns keep
+   their heights and the layout doesn't jump as votes arrive. */
+.sp-side__empty {
+  font-size: 11px;
+  color: #4a5a68;
+  line-height: 22px;
+}
+
+/* Narrow panel: stacking beats two columns of one seat each. */
+@media (max-width: 420px) {
+  .sp-side--yea,
+  .sp-side--nay { display: block; width: 100%; margin-right: 0; }
+}
 .sp-seat {
   width: 26px;
   height: 22px;

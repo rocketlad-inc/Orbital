@@ -234,10 +234,15 @@ export function SenatePanel({
   /** Ballots already cast on the bill currently open for voting — drives
    *  the outlined "hasn't voted" seats. Null when nothing is on the
    *  floor, so the seat map falls back to plain colours. */
-  const floorBallotIds = useMemo(() => {
+  /** How each faction voted on the bill currently on the floor.
+   *  Null when nothing is being voted on. The DIRECTION matters, not
+   *  just the fact of a ballot — the chamber splits seats by it. */
+  const floorBallots = useMemo(() => {
     const live = proposals.find(p => p.status === 'voting');
     if (!live) return null;
-    return new Set((live.ballots ?? []).map(b => b.faction_id));
+    const m = new Map<string, 'yea' | 'nay' | 'abstain'>();
+    for (const b of live.ballots ?? []) m.set(b.faction_id, b.vote);
+    return m;
   }, [proposals]);
   const [myTech, setMyTech] = useState<{ levels: Record<string, number>; gating: boolean }>(
     { levels: {}, gating: false },
@@ -564,7 +569,7 @@ export function SenatePanel({
       <Chamber
         factions={factions}
         myFactionId={myFactionId}
-        votedIds={floorBallotIds}
+        ballots={floorBallots}
         quorum={session?.quorum ?? null}
       />
 
@@ -1344,14 +1349,14 @@ function BlockingCoalition({
  * visible as a bloc.
  */
 function Chamber({
-  factions, myFactionId, votedIds, quorum,
+  factions, myFactionId, ballots, quorum,
 }: {
   factions: Faction[];
   myFactionId: string | null;
-  /** Factions that have cast a ballot on the bill currently on the floor.
-   *  Everyone else gets an outlined seat — those are the ones still worth
-   *  a message. */
-  votedIds: Set<string> | null;
+  /** How each faction voted on the bill currently on the floor, or null
+   *  when nothing is being voted on. Direction, not just presence — the
+   *  chamber seats a faction on the side it actually chose. */
+  ballots: Map<string, 'yea' | 'nay' | 'abstain'> | null;
   /** Quorum bar for this game. Every living faction counts toward the
    *  denominator — an idle player keeps their seat, so there is no
    *  "present vs absent" distinction to draw here. Only elimination
@@ -1366,6 +1371,53 @@ function Chamber({
   if (total <= 0) return null;
   const initials = (name: string) =>
     name.replace(/[^A-Za-z0-9 ]/g, '').trim().slice(0, 2).toUpperCase() || '??';
+  const weightById = new Map(seated.map(({ f, w }) => [f.id, w]));
+
+  // One seat per VOTE, bucketed by the direction its faction chose.
+  //
+  // With no bill on the floor there are no sides to take, so everything
+  // collapses into a single neutral block — splitting an idle chamber
+  // into three empty columns would invent a distinction that isn't
+  // there. `always` keeps the not-voted group rendered even when empty,
+  // because "nobody is missing" is itself worth seeing while a vote is
+  // live; the yea/nay groups hide when empty rather than print a rail
+  // of dashes.
+  type Seat = { f: Faction; i: number; voted: boolean };
+  const bucket = (pick: (v: string | undefined) => boolean, voted: boolean): Seat[] =>
+    seated.flatMap(({ f, w }) =>
+      pick(ballots?.get(f.id))
+        ? Array.from({ length: w }, (_, i) => ({ f, i, voted }))
+        : []);
+  const weigh = (seats: Seat[]) => seats.length;
+
+  const groups: Array<{
+    key: string; label: string; tint: string; tip: string;
+    seats: Seat[]; weight: number; always: boolean;
+  }> = [];
+  if (!ballots) {
+    const all = bucket(() => true, true);
+    groups.push({
+      key: 'all', label: 'The floor', tint: '#a8b8c8',
+      tip: 'no bill on the floor', seats: all, weight: weigh(all), always: true,
+    });
+  } else {
+    const mk = (key: string, label: string, tint: string, tip: string,
+                pick: (v: string | undefined) => boolean, voted: boolean,
+                always = false) => {
+      const seats = bucket(pick, voted);
+      groups.push({ key, label, tint, tip, seats, weight: weigh(seats), always });
+    };
+    mk('yea', 'Yea', '#6ee7b7', 'voted yea', v => v === 'yea', true);
+    mk('nay', 'Nay', '#ff5e5e', 'voted nay', v => v === 'nay', true);
+    // Abstain and silence share the bottom rail because neither picks a
+    // side — but they are NOT the same thing, so an abstention keeps a
+    // filled seat (it counts toward quorum) while silence stays
+    // outlined (it does not).
+    mk('abstain', 'Abstained', '#c4b5fd', 'abstained — counts toward quorum',
+       v => v === 'abstain', true);
+    mk('novote', 'Not voted', '#8a9fb3', 'has not voted',
+       v => v === undefined, false, true);
+  }
   return (
     <>
       <div className="sp-sect__h" style={{ marginTop: 14 }}>
@@ -1374,36 +1426,52 @@ function Chamber({
           {quorum ? `quorum ${quorum.required} of ${quorum.eligible}` : `${total} votes`}
         </span>
       </div>
-      <div className="sp-seats">
-        {seated.flatMap(({ f, w }) => {
-          const noVote = !!votedIds && !votedIds.has(f.id);
-          return Array.from({ length: w }, (_, i) => (
-            <span
-              key={`${f.id}:${i}`}
-              className={`sp-seat${f.id === myFactionId ? ' is-you' : ''}`
-                + (noVote ? ' is-novote' : '')}
-              style={noVote
-                ? { color: f.color }
-                : { background: f.color, color: readableInk(f.color) }}
-              title={`${f.name} — ${w} vote${w === 1 ? '' : 's'}`
-                + (noVote ? ' — has not voted' : '')}
-            >
-              {/* The faction's EMBLEM, not its initials. Initials were
-                  actively ambiguous here — "Cerean Union" and "Ceres
-                  Compact" are both CE — and this grid is scanned, not
-                  read: you're looking for whether a bloc has the votes,
-                  which is a shape-matching task. A mark repeated once
-                  per vote makes a heavy faction visible as a block. */}
-              <FactionEmblem
-                emblem={f.emblem}
-                fallbackKey={f.id}
-                size={13}
-                color={noVote ? f.color : readableInk(f.color)}
-              />
-            </span>
-          ));
-        })}
-      </div>
+      {/* Seats split by HOW the seat voted, not just whether it did.
+          A single undifferentiated grid could show that a bill had
+          attention but never whether it was winning — the actual
+          question. Yea and nay face each other; everything that is not
+          a side (abstained, or simply silent) sits below, which is also
+          where the seats worth chasing for quorum live. */}
+      {groups.map(g => (
+        (g.seats.length > 0 || g.always) && (
+          <div key={g.key} className={`sp-side sp-side--${g.key}`}>
+            <div className="sp-side__h">
+              <span style={{ color: g.tint }}>{g.label}</span>
+              <span className="sp-side__n">
+                {g.weight}{g.weight === 1 ? ' vote' : ' votes'}
+              </span>
+            </div>
+            <div className="sp-seats">
+              {g.seats.map(({ f, i, voted }) => (
+                <span
+                  key={`${f.id}:${i}`}
+                  className={`sp-seat${f.id === myFactionId ? ' is-you' : ''}`
+                    + (voted ? '' : ' is-novote')}
+                  style={voted
+                    ? { background: f.color, color: readableInk(f.color) }
+                    : { color: f.color }}
+                  title={`${f.name} — ${weightById.get(f.id)} vote`
+                    + (weightById.get(f.id) === 1 ? '' : 's') + ` — ${g.tip}`}
+                >
+                  {/* The faction's EMBLEM, not its initials. Initials
+                      were actively ambiguous here — "Cerean Union" and
+                      "Ceres Compact" are both CE — and this grid is
+                      scanned, not read: you're looking for whether a
+                      bloc has the votes, which is a shape-matching
+                      task. */}
+                  <FactionEmblem
+                    emblem={f.emblem}
+                    fallbackKey={f.id}
+                    size={13}
+                    color={voted ? readableInk(f.color) : f.color}
+                  />
+                </span>
+              ))}
+              {g.seats.length === 0 && <span className="sp-side__empty">—</span>}
+            </div>
+          </div>
+        )
+      ))}
       <div className="sp-legend">
         {seated.map(({ f, w }) => (
           <span key={f.id} className="sp-lgi" title={f.name}>
@@ -1415,7 +1483,7 @@ function Chamber({
         ))}
       </div>
       <div className="sp-note">
-        {votedIds ? 'Outlined seats have not voted. ' : `${total} votes in the chamber. `}
+        {ballots ? 'Outlined seats have not voted. ' : `${total} votes in the chamber. `}
         {quorum
           ? `A bill needs ${quorum.required} of the ${quorum.eligible} living factions to vote `
             + '— yea, nay, or abstain — before the tally counts. Dormant factions keep their seat.'
