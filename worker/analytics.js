@@ -42,7 +42,17 @@ export { isAdminEmail };
 // never do. One predicate, applied to every people-facing query, so a
 // new report can't accidentally count robots as engagement.
 // ---------------------------------------------------------------------------
-const QA_DOMAINS = ['%@example.com', '%@example.test', '%@orbital-test.local'];
+const QA_DOMAINS = [
+  '%@example.com', '%@example.test', '%@orbital-test.local',
+  // Agent players (POST /api/agent/session mints agent+<handle>@this).
+  // They were counted as REAL engagement until 2026-08-11 — one handle
+  // alone had 102 events sitting in the same league as a live playtester,
+  // because this list predates agent access existing at all. A robot in
+  // the denominator is worse than no metric: it moves retention, session
+  // counts and feature adoption in whichever direction the harness
+  // happened to be driving that day.
+  '%@agents.orbital.local',
+];
 // For queries that already join users as `u`.
 const NOT_QA_USER = QA_DOMAINS.map(d => `u.email NOT LIKE '${d}'`).join(' AND ');
 // For event tables with only a user_id: subselect of QA account ids.
