@@ -93,10 +93,14 @@ export const SettlementsPanel: React.FC<SettlementsPanelProps> = ({ onClose }) =
     });
   };
 
+  // Picking a settlement is a navigation, not a selection: it opens the body
+  // inspector, which sits in the same top-left real estate as this list and
+  // would otherwise be buried under it. Close the list on the way out.
   const handleRowClick = (settlementId: string, bodyId: string) => {
     selectSettlement(settlementId);
     selectBody(bodyId);
     focusBody(bodyId);
+    onClose();
   };
 
   // Faction id -> display name + two-tone colour (mirrors FleetPanel and
