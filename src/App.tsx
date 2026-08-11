@@ -169,7 +169,10 @@ function GameUI({
   // and writes to the rolling AUTOSAVE slot every 100 game-ticks. No-op
   // in MP (server is authoritative). Defined here rather than in
   // GameContextProvider so it can be cleanly disabled per-mode.
-  const { gameState } = useGameContext();
+  // uiState here is only for targetSelectionMode: the big overlay panels
+  // below must stand down while the player is picking a target on the map
+  // (see the note at their render site).
+  const { gameState, uiState } = useGameContext();
   useAutosave(gameState, !isMultiplayer);
 
   // World-menu preference (MP only — SP never reads this). Synced to
@@ -257,13 +260,29 @@ function GameUI({
           inside MultiplayerShell for senate/trades/etc. */}
       <SituationPanelBridge onTogglePanel={setActivePanel} />
 
-      {activePanel === 'settlements' && (
+      {/* THE BIG OVERLAY PANELS STAND DOWN WHILE YOU PICK A TARGET.
+          `.overview-panel` is a FIXED 640px-wide, z-110 sheet, and on a
+          1280px screen it covered the left half of the map — measured,
+          only 48% of the canvas could receive a click while Fleet was
+          open. So the usual flow (open Fleet → pick a ship → MOVE TO
+          TARGET → click the destination) failed for any target under the
+          panel: the click landed on the sheet and the map never saw it.
+          The ship panel already did this on mobile, guarded by
+          `isMobile && targetSelectionMode`, on the stated assumption that
+          "Desktop is unaffected — the panel docks to the side and doesn't
+          cover the canvas". That is true of the left rail and false of
+          this one.
+          Hidden rather than made click-through: a transparent-to-clicks
+          sheet still hides the target you are trying to aim at, so you
+          would be clicking blind. `activePanel` is untouched, so the
+          panel returns exactly as it was the moment targeting ends. */}
+      {activePanel === 'settlements' && !uiState.targetSelectionMode && (
         <SettlementsPanel onClose={() => setActivePanel(null)} />
       )}
-      {activePanel === 'fleet' && (
+      {activePanel === 'fleet' && !uiState.targetSelectionMode && (
         <FleetPanel onClose={() => setActivePanel(null)} />
       )}
-      {activePanel === 'research' && (
+      {activePanel === 'research' && !uiState.targetSelectionMode && (
         <TechPanel onClose={() => setActivePanel(null)} />
       )}
       {isMultiplayer && designerState.open && (
