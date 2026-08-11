@@ -505,6 +505,73 @@ export async function activeSanctions(env, gameId, currentTick) {
   }
 }
 
+/**
+ * Every SLIDER law in force right now, shaped for display.
+ *
+ * The companion to activeSanctions(), and it existed nowhere: a passed
+ * slider law wrote its effect row, silently changed the economy, and the
+ * only trace a player could find was one line in the event log that
+ * scrolled away. The senate had no "here is the law of the land" view at
+ * all, so the chamber showed bills being voted on and never what those
+ * votes had actually produced.
+ *
+ * Carries the proposal title so a law reads as the thing people argued
+ * over ("Let's get to work!") rather than as a schema identifier, and
+ * `delta_pct` so the UI doesn't have to know that 0.5 means −50% while
+ * a tariff of 0.5 means half a percentage point.
+ *
+ * Same defensive posture as activeSanctions: never throws.
+ */
+export async function activeLaws(env, gameId, currentTick) {
+  try {
+    const rows = (await env.DB
+      .prepare(
+        `SELECT e.slider_id, e.value, e.target_faction_id, e.proposal_id,
+                e.active_from_tick, e.active_until_tick,
+                p.title AS proposal_title,
+                gf.name AS target_name, gf.color AS target_color, gf.emblem AS target_emblem
+           FROM senate_effects e
+           LEFT JOIN senate_proposals p ON p.id = e.proposal_id
+           LEFT JOIN game_factions gf ON gf.id = e.target_faction_id
+          WHERE e.game_id = ?
+            AND e.effect_kind = 'slider'
+            AND e.active_from_tick <= ?
+            AND e.active_until_tick > ?
+          ORDER BY e.active_until_tick ASC`,
+      )
+      .bind(gameId, currentTick, currentTick)
+      .all()).results ?? [];
+
+    return rows.map((r) => {
+      const def = SLIDER_BY_ID[r.slider_id] ?? null;
+      const value = Number(r.value);
+      // Percentage sliders (the tariff) are already expressed in points;
+      // multiplier sliders need converting from 0.5 to "−50%".
+      const isPct = r.slider_id === 'trade_tariff_pct';
+      return {
+        slider_id: r.slider_id,
+        label: def?.label ?? r.slider_id,
+        description: def?.description ?? null,
+        value,
+        default_value: def?.default ?? null,
+        delta_pct: isPct ? value : Math.round((value - 1) * 100),
+        is_pct: isPct,
+        proposal_id: r.proposal_id,
+        proposal_title: r.proposal_title ?? null,
+        target_faction_id: r.target_faction_id,
+        target_name: r.target_name ?? null,
+        target_color: r.target_color ?? null,
+        target_emblem: r.target_emblem ?? null,
+        until_tick: r.active_until_tick,
+        ticks_left: Math.max(0, Number(r.active_until_tick) - currentTick),
+      };
+    });
+  } catch (e) {
+    console.error('activeLaws query failed', e);
+    return [];
+  }
+}
+
 export async function hasActiveSanction(env, gameId, currentTick, factionId, effectKind) {
   if (!factionId || !effectKind) return false;
   // Defensive: sanctions are an optional overlay queried from the
@@ -1042,6 +1109,10 @@ async function handleListProposals(req, env, { url, params, session }) {
     // games with different tick rates.
     tick_interval_ms: ctx.game.tick_interval_ms ?? null,
     proposals: out,
+    // The law of the land. Rides this call rather than getting its own
+    // fetch: the panel that shows bills is the panel that must show what
+    // past bills DID, and one round trip should answer both.
+    laws: await activeLaws(env, gameId, ctx.game.current_tick),
     session: {
       term: shapeTerm(term, ctx.game.current_tick),
       term_ticks: termTicks,
@@ -1620,6 +1691,35 @@ export async function resolveSenate(env, gameId, tick) {
           Date.now(),
         ).run();
 
+      // Tell the channel how it ended. Until this, Discord narrated a
+      // bill through debate and voting and then said nothing at all —
+      // a law could pass and re-price the whole economy in silence.
+      // Isolated: a Discord outage must not fail a resolution that has
+      // already been written to D1.
+      try {
+        const discord = await import('./discord.js');
+        await discord.publishSenateResolved(env, gameId, p, {
+          passed, quorumMet, cast, required,
+          eligible: quorumCtx?.eligible ?? 0,
+          yea: totals.yea.weight,
+          nay: totals.nay.weight,
+          abstain: totals.abstain.weight,
+          effectUntil, tick,
+        });
+      } catch (e) {
+        console.error('publishSenateResolved failed', e, { proposalId: p.id });
+      }
+      // And strip the buttons off the original vote card. It already
+      // knows to drop them for a non-voting bill; nothing was calling it
+      // on the tick path, so a closed vote kept live-looking Yea/Nay
+      // buttons that silently did nothing.
+      try {
+        const discord = await import('./discord.js');
+        await discord.refreshSenateCard(env, p.id);
+      } catch (e) {
+        console.error('refreshSenateCard (resolution) failed', e, { proposalId: p.id });
+      }
+
       resolved += 1;
     } catch (e) {
       console.error("resolveSenate: proposal resolution failed", e, { proposalId: p.id });
@@ -1682,6 +1782,20 @@ export async function resolveSenate(env, gameId, tick) {
         await env.DB
           .prepare('UPDATE senate_proposals SET expiry_logged_at_tick = ? WHERE id = ?')
           .bind(tick, law.id).run();
+        // Same silence as the resolution card had: Discord watched laws
+        // arrive and never saw one leave.
+        try {
+          const discord = await import('./discord.js');
+          await discord.publishLawExpired(env, gameId, {
+            title: law.title,
+            kind: law.kind,
+            ticksInForce: Math.max(
+              0, Number(law.effect_until_tick) - Number(law.resolved_at_tick ?? law.effect_until_tick),
+            ),
+          });
+        } catch (e) {
+          console.error('publishLawExpired failed', e, { proposalId: law.id });
+        }
         expired += 1;
       } catch (e) {
         console.error('resolveSenate: law expiry announce failed', e, { proposalId: law.id });

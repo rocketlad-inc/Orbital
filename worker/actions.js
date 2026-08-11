@@ -1,4 +1,4 @@
-import { getActiveSliders } from './senate.js';
+import { buildCostFactors } from './buildCost.js';
 import { validateIconVariant } from './store.js';
 import { logSpend } from './analytics.js';
 import { recomputeBodyOwnership } from './factions.js';
@@ -369,22 +369,8 @@ async function handleRushBuild(req, env, ctx) {
   const cost = SHIP_BUILD_COST[order.ship_class];
   const orderParts = parsePartsJson(order.ship_class, order.parts_json);
   const orderPartsCost = partsCost(orderParts);
-  let costMult = 1;
-  try {
-    // Per-faction: a slider law aimed at me.id overrides the general one.
-    const sliders = await getActiveSliders(env, gameId, tick, me.id);
-    const b = Number(sliders.ship_build_cost_multiplier);
-    if (Number.isFinite(b) && b > 0) costMult *= b;
-    const r = Number(sliders.rush_cost_multiplier);
-    if (Number.isFinite(r) && r > 0) costMult *= r;
-  } catch { /* defaults */ }
-  try {
-    const ct = await env.DB
-      .prepare("SELECT level FROM faction_techs WHERE game_id = ? AND faction_id = ? AND tech_id = 'construction'")
-      .bind(gameId, me.id)
-      .first();
-    costMult *= Math.max(0.25, 1 - 0.05 * (ct?.level ?? 0));
-  } catch { /* no discount */ }
+  const rushFactors = await buildCostFactors(env, gameId, me.id, tick);
+  const costMult = rushFactors.mult * rushFactors.rush;
   const rushMetal = Math.ceil(((cost?.metal ?? 0) + orderPartsCost.metal) * costMult);
   const rushGold  = Math.ceil(((cost?.gold  ?? 0) + orderPartsCost.gold)  * costMult);
 
@@ -690,41 +676,16 @@ async function handleQueueBuild(req, env, ctx) {
   // 'no_slots' 409 is gone from the normal flow.
   const startsNow = (inFlight?.c ?? 0) < slots;
 
-  // Senate effect: ship_build_cost_multiplier scales metal + gold at
-  // queue time. Default 1.0 (no effect) when no proposal is active.
-  // build_ticks is left alone -- balance lever, not the same dial.
-  let buildCostMult = 1;
-  // Config price dial, applied BEFORE the senate law and the Construction
-  // discount so those keep behaving as relative modifiers on whatever the
-  // host has set the base price to.
-  try {
-    const gc = await import('./gameConfig.js');
-    const conf = await gc.cfg(env, gameId);
-    const m = Number(conf.ship_cost_mult);
-    if (Number.isFinite(m) && m > 0) buildCostMult = m;
-  } catch { /* shipped price */ }
-  try {
-    const tickRow = await env.DB
-      .prepare('SELECT current_tick FROM games WHERE id = ?')
-      .bind(gameId).first();
-    // Per-faction: a build-cost law aimed at me.id overrides the general one.
-    const sliders = await getActiveSliders(env, gameId, tickRow?.current_tick ?? 0, me.id);
-    const v = Number(sliders.ship_build_cost_multiplier);
-    if (Number.isFinite(v) && v > 0) buildCostMult *= v;
-  } catch { /* default */ }
-  // Construction tech: −5%/level to build cost, floored at 0.25× (mirrors
-  // src/game/techs.ts buildCostModifier, which SP applies in buildShip).
-  // Was ignored server-side, so a construction-teched player paid full
-  // price in MP while SP charged the discount. Stacks with the senate
-  // multiplier.
-  try {
-    const ct = await env.DB
-      .prepare("SELECT level FROM faction_techs WHERE game_id = ? AND faction_id = ? AND tech_id = 'construction'")
-      .bind(gameId, me.id)
-      .first();
-    const lvl = ct?.level ?? 0;
-    buildCostMult *= Math.max(0.25, 1 - 0.05 * lvl);
-  } catch { /* default — no discount */ }
+  // Price dials — host config × senate ship_build_cost_multiplier ×
+  // Construction discount. All three live in buildCost.js so the queue
+  // path, the rush path, and the /state quote the client renders can't
+  // drift apart. build_ticks is left alone: balance lever, not this dial.
+  const tickRow = await env.DB
+    .prepare('SELECT current_tick FROM games WHERE id = ?')
+    .bind(gameId).first();
+  const buildCostMult = (
+    await buildCostFactors(env, gameId, me.id, tickRow?.current_tick ?? 0)
+  ).mult;
 
   // Parts are added to the hull cost at queue time (empty slots are
   // free — the bare hull is the budget option). Both multipliers above

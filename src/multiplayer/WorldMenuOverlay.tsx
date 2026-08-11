@@ -989,6 +989,7 @@ const WmFleet: React.FC<{
               order={o}
               remaining={eta}
               constructionLvl={gameState.factionTech?.player?.levels?.construction ?? 0}
+              buildCost={gameState.buildCost}
             />
           )}
           {isMine && (

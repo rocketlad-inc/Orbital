@@ -95,6 +95,14 @@ interface ServerState {
       until_tick: number;
       ticks_left: number;
     }>;
+    /** Every dial scaling ship prices for me right now. `mult` is the
+     *  product the server actually charges; the parts are broken out so
+     *  the build menu can name WHY a price moved. Absent on a worker
+     *  older than the law-aware build menu — callers must default to 1. */
+    build_cost?: {
+      config: number; law: number; tech: number; rush: number;
+      construction_level: number; mult: number;
+    };
     tech_levels?: Record<string, number>;
     /** Active physical trade-delivery legs involving me (either side).
      *  Drives the ShipPanel "hauling" badge + Trades panel status. */
@@ -1862,6 +1870,17 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       untilTick: x.until_tick,
       ticksLeft: x.ticks_left,
     })),
+    // Ship price dials. Every field defaults to 1 (= "no effect") so a
+    // worker that predates this payload quotes the base price rather than
+    // multiplying by undefined and rendering NaN across the build menu.
+    buildCost: {
+      config: srv.me.build_cost?.config ?? 1,
+      law: srv.me.build_cost?.law ?? 1,
+      tech: srv.me.build_cost?.tech ?? 1,
+      rush: srv.me.build_cost?.rush ?? 1,
+      constructionLevel: srv.me.build_cost?.construction_level ?? 0,
+      mult: srv.me.build_cost?.mult ?? 1,
+    },
     factionTech: { [PLAYER_TOKEN]: playerTech },
     gatingEnabled: (srv.game.gating_enabled ?? 0) === 1,
     settlementClaims: (srv.settlement_claims ?? []).map(c => ({

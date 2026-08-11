@@ -401,6 +401,131 @@ export async function publishSenateProposed(env, gameId, row, proposerName) {
 }
 
 /**
+ * Announce how a vote ENDED.
+ *
+ * Discord used to narrate a bill right up to the moment it mattered and
+ * then go silent: proposed → vote card with buttons → nothing. The vote
+ * card even kept its buttons after the fact. Players who passed a law
+ * had no announcement of it anywhere, and the effect just quietly showed
+ * up in the economy — "no voting ended, law passed announcement" (Lorne,
+ * after a slider law passed unnoticed).
+ *
+ * The three outcomes read very differently and are deliberately NOT
+ * collapsed into pass/fail:
+ *   - ratified   — here is what changed and when it lapses
+ *   - voted down — the room said no
+ *   - no quorum  — nobody showed up, which is a different problem and
+ *                  worth naming so the table can fix it
+ *
+ * Best-effort: called from inside the tick, so it must never throw.
+ */
+export async function publishSenateResolved(env, gameId, row, outcome) {
+  if (!env.DISCORD_BOT_TOKEN) return { posted: false, reason: 'no_bot_token' };
+  if (!(await senateCardsEnabled(env))) return { posted: false, reason: 'disabled' };
+  const channelId = await channelForGame(env, gameId);
+  if (!channelId) return { posted: false, reason: 'no_channel' };
+
+  const {
+    passed, quorumMet, cast, required, eligible,
+    yea, nay, abstain, effectUntil, tick,
+  } = outcome;
+
+  const kindLabel = KIND_LABELS[row.kind] ?? row.kind;
+  const effect = await effectFor(env, gameId, row);
+
+  const parts = [];
+  parts.push(`**Bill:** ${kindLabel}`);
+  if (passed) {
+    // Present tense, not "if this passes" — the thing has happened.
+    if (effect) parts.push(`\n**Now in force**\n${effect}`);
+    if (effectUntil != null) {
+      const left = Math.max(0, Number(effectUntil) - Number(tick));
+      parts.push(`\nLapses at tick **${effectUntil}** — **${left}** ticks from now.`);
+    }
+  } else if (!quorumMet) {
+    parts.push(
+      `\nOnly **${cast}** of **${eligible}** living factions voted; **${required}** were needed.`
+      + ' The bill dies unheard — it was never counted for or against.',
+    );
+  } else {
+    parts.push('\nThe chamber voted it down.');
+  }
+  parts.push(`\n_${WEIGHT_RULE}_`);
+
+  const title = passed
+    ? `✅  Ratified — ${row.title}`
+    : !quorumMet
+      ? `🕳️  Failed for want of quorum — ${row.title}`
+      : `❌  Voted down — ${row.title}`;
+
+  const payload = {
+    embeds: [{
+      title,
+      description: parts.join('\n'),
+      // Green on a pass, red on a defeat: the outcome should be legible
+      // from the channel list without opening the card.
+      color: passed ? 0x2ecc71 : 0xe74c3c,
+      fields: [
+        {
+          name: 'Final tally',
+          value: `Yea **${yea}** · Nay **${nay}** · Abstain **${abstain}**`,
+          inline: false,
+        },
+        {
+          name: 'Quorum',
+          value: quorumMet
+            ? `met — ${cast}/${eligible} voted (${required} needed)`
+            : `NOT met — ${cast}/${eligible} voted (${required} needed)`,
+          inline: false,
+        },
+      ],
+      footer: { text: (await gameName(env, gameId)) ? `Orbital · ${await gameName(env, gameId)}` : 'Orbital' },
+    }],
+  };
+
+  const res = await botFetch(env, 'POST', `/channels/${channelId}/messages`, payload);
+  if (!res.ok) {
+    console.error(`discord senate result post failed: ${res.status} ${await res.text().catch(() => '')}`);
+    return { posted: false, reason: `http_${res.status}` };
+  }
+  return { posted: true };
+}
+
+/**
+ * Announce that a law's window ran out.
+ *
+ * The bookend to publishSenateResolved. resolveSenate already writes a
+ * senate_law_expired chronicle entry precisely because a modifier that
+ * simply stops applying reads as a bug; Discord had no equivalent, so
+ * anyone following the game there saw a law arrive and never leave.
+ */
+export async function publishLawExpired(env, gameId, law) {
+  if (!env.DISCORD_BOT_TOKEN) return { posted: false, reason: 'no_bot_token' };
+  if (!(await senateCardsEnabled(env))) return { posted: false, reason: 'disabled' };
+  const channelId = await channelForGame(env, gameId);
+  if (!channelId) return { posted: false, reason: 'no_channel' };
+
+  const res = await botFetch(env, 'POST', `/channels/${channelId}/messages`, {
+    embeds: [{
+      title: `⌛  Lapsed — ${law.title}`,
+      description: [
+        `**Bill:** ${KIND_LABELS[law.kind] ?? law.kind}`,
+        `\nIts window has closed. Whatever it changed is back to normal${
+          law.ticksInForce ? ` after **${law.ticksInForce}** ticks in force` : ''}.`,
+        '\n_The chamber may pass it again._',
+      ].join('\n'),
+      color: POLITICS_COLOR,
+      footer: { text: 'Orbital' },
+    }],
+  });
+  if (!res.ok) {
+    console.error(`discord law-expiry post failed: ${res.status}`);
+    return { posted: false, reason: `http_${res.status}` };
+  }
+  return { posted: true };
+}
+
+/**
  * Announce a new chairman: one post to the shared channel, one DM to the
  * player who just picked up the gavel.
  *

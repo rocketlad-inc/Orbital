@@ -1,5 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { apiFetch, fmtTicksReal, realSuffix, Faction, SenateProposal, SenateSession, SenateSlider } from './api';
+import {
+  apiFetch, fmtTicksReal, realSuffix,
+  ActiveLaw, Faction, SenateProposal, SenateSession, SenateSlider,
+} from './api';
 import { logUiEvent } from './telemetry';
 import { DiscordLink } from './DiscordLink';
 import { FactionEmblem } from '../components/FactionEmblem';
@@ -196,6 +199,85 @@ function SessionCard({ session, factions, myFactionId, tickMs }: {
   );
 }
 
+/**
+ * The law of the land — every slider law currently in force.
+ *
+ * A passed bill used to leave no standing trace anywhere in the client:
+ * the effect quietly re-priced the economy and the senate went back to
+ * showing only what was being voted on next. Players who passed a
+ * half-price shipbuilding law had no way to confirm it was doing
+ * anything, which reads exactly like a broken feature.
+ *
+ * Renders nothing when no law is in force. That is the common state and
+ * an empty "Laws in force (0)" header would be permanent furniture
+ * announcing an absence.
+ */
+function LawsCard({ laws, tickMs }: { laws: ActiveLaw[]; tickMs: number | null }) {
+  if (laws.length === 0) return null;
+  return (
+    <div style={{
+      border: '1px solid rgba(255,207,112,0.35)', borderRadius: 4,
+      padding: '8px 10px', marginBottom: 10,
+      background: 'rgba(255,207,112,0.06)',
+    }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: '#ffcf70', marginBottom: 6 }}>
+        ⚖ LAW OF THE LAND
+      </div>
+      {laws.map((law) => {
+        // A law that raises a cost and a law that raises a yield are not
+        // the same news, so colour tracks the SIGN and the reader decides
+        // — the panel has no business guessing whether +20% metal yield
+        // is good for the person looking at it.
+        const up = law.delta_pct > 0;
+        const deltaText = law.is_pct
+          ? `${law.value}%`
+          : `${up ? '+' : ''}${law.delta_pct}%`;
+        return (
+          <div
+            key={`${law.slider_id}:${law.proposal_id ?? 'x'}:${law.target_faction_id ?? 'all'}`}
+            style={{
+              display: 'flex', alignItems: 'baseline', gap: 6,
+              fontSize: 11, lineHeight: 1.6,
+            }}
+            title={law.description ?? undefined}
+          >
+            <span style={{ color: 'var(--mp-fg)' }}>{law.label}</span>
+            <strong style={{ color: up ? '#ff8a5c' : '#6ee7b7' }}>
+              {deltaText}
+            </strong>
+            {/* Targeted laws are a different animal from general ones —
+                naming the target is the whole point of passing one. */}
+            {law.target_faction_id && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                <span style={{ color: 'var(--mp-fg-dim)' }}>on</span>
+                <FactionEmblem
+                  emblem={law.target_emblem}
+                  fallbackKey={law.target_faction_id}
+                  size={11}
+                  color={law.target_color ?? '#9fb4c6'}
+                />
+                <span style={{ color: law.target_color ?? 'var(--mp-fg)' }}>
+                  {law.target_name ?? 'a faction'}
+                </span>
+              </span>
+            )}
+            <span style={{ color: 'var(--mp-fg-dim)', marginLeft: 'auto', whiteSpace: 'nowrap' }}>
+              {law.ticks_left}t left{realSuffix(law.ticks_left, tickMs)}
+            </span>
+          </div>
+        );
+      })}
+      {/* The bills these came from, so a law reads as the argument that
+          produced it rather than as a setting somebody changed. */}
+      <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginTop: 5 }}>
+        {laws.some(l => l.proposal_title)
+          ? `From: ${laws.map(l => l.proposal_title).filter(Boolean).join(' · ')}`
+          : 'Passed by this chamber.'}
+      </div>
+    </div>
+  );
+}
+
 const STATUS_LABEL: Record<SenateProposal['status'], string> = {
   debating:  'DEBATING',
   voting:    'VOTING NOW',
@@ -218,6 +300,8 @@ export function SenatePanel({
   const [busy, setBusy] = useState(false);
   const [myFactionId, setMyFactionId] = useState<string | null>(null);
   const [session, setSession] = useState<SenateSession | null>(null);
+  /** Slider laws currently in force. Empty is the normal state. */
+  const [laws, setLaws] = useState<ActiveLaw[]>([]);
   /** Wall-clock length of one tick, from the server. Null until known. */
   const [tickMs, setTickMs] = useState<number | null>(null);
   const [weight, setWeight] = useState<WeightDetail | null>(null);
@@ -293,7 +377,10 @@ export function SenatePanel({
         sliders: SenateSlider[]; current_tick: number;
         min_window_ticks?: number; debate_max_ticks?: number; vote_max_ticks?: number;
       }>(`/api/games/${gameId}/senate/sliders`),
-      apiFetch<{ proposals: SenateProposal[]; session?: SenateSession; tick_interval_ms?: number | null }>(`/api/games/${gameId}/senate/proposals`),
+      apiFetch<{
+        proposals: SenateProposal[]; session?: SenateSession;
+        tick_interval_ms?: number | null; laws?: ActiveLaw[];
+      }>(`/api/games/${gameId}/senate/proposals`),
       apiFetch<{ factions: Faction[] }>(`/api/games/${gameId}/factions`),
       apiFetch<WeightDetail>(`/api/games/${gameId}/senate/weight`),
     ]);
@@ -320,6 +407,7 @@ export function SenatePanel({
       setProposals(pRes.data.proposals);
       setSession(pRes.data.session ?? null);
       setTickMs(pRes.data.tick_interval_ms ?? null);
+      setLaws(pRes.data.laws ?? []);
     }
     if (fRes.ok) setFactions(fRes.data.factions);
     if (wRes.ok) setWeight(wRes.data);
@@ -519,6 +607,12 @@ export function SenatePanel({
         myFactionId={myFactionId}
         tickMs={tickMs}
       />
+      {/* What this chamber has already DONE, directly under who is
+          running it. Sits above the bill list because a law in force is
+          affecting your economy right now, while a bill is only a
+          proposal — and because the composer above it is where you'd go
+          to counter one. Renders nothing when nothing is in force. */}
+      <LawsCard laws={laws} tickMs={tickMs} />
       {/* ORDER IS THE POINT. A bill you can still vote on outranks the
           standings, the compose form and the integration settings — it is
           the only thing here with a deadline. Discord moves to the foot of

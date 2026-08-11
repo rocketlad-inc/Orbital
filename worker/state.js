@@ -1,5 +1,6 @@
 import { hasFeature } from './researchUnlocks.js';
 import { getActiveSliders, activeSanctions } from './senate.js';
+import { buildCostFactors } from './buildCost.js';
 import { voteWeights } from './systems.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
 
@@ -1241,6 +1242,14 @@ const tradeRoutesP = env.DB
   // than needing its own fetch.
   const sanctions = await activeSanctions(env, gameId, game.current_tick ?? 0);
 
+  // What a hull actually costs the caller right now. The build menu used
+  // to render the base price out of src/game/shipClasses.ts and nothing
+  // else, so a passed ship_build_cost_multiplier law halved the charge
+  // while every price on screen stayed put — the senate's economic lever
+  // looked broken to the people who voted for it. Same helper actions.js
+  // charges from, so the quote cannot drift from the bill.
+  const buildCost = await buildCostFactors(env, gameId, me.id, game.current_tick ?? 0);
+
   // Ship designs — the caller's design library (ship designer §2).
   // Small table (≤12 per class), so shipping it with every /state poll
   // keeps the designer + BuildPanel in sync without a separate fetch.
@@ -1340,6 +1349,9 @@ const tradeRoutesP = env.DB
       // caller's) so it can say both "2x damage against YOU for 6 more
       // ticks" and "the embargo you voted on has 3 ticks left".
       sanctions,
+      // Every dial scaling ship prices for the caller, broken out so the
+      // build menu can show the discount AND name its cause.
+      build_cost: buildCost,
       research: {
         tech_id: me.research_tech_id,
         progress: me.research_progress,

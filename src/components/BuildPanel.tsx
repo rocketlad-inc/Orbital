@@ -117,6 +117,24 @@ export const BuildPanel: React.FC = () => {
   const playerRes = gameState.resources['player'];
   if (!playerRes) return null;
 
+  // Price dials (MP). Until this shipped, every number in this menu came
+  // straight out of SHIP_CLASSES, so a passed ship_build_cost_multiplier
+  // law halved what the yard charged while the menu kept quoting full
+  // price — the senate's one economic lever read as broken. `priced()`
+  // reproduces the server's own arithmetic (scale THEN ceil, parts
+  // included) so the row and the invoice agree to the credit.
+  const costMult = gameState.buildCost?.mult ?? 1;
+  const priceLaw = gameState.buildCost?.law ?? 1;
+  const priced = (n: number) => Math.ceil(n * costMult);
+  // Only the LAW gets a callout. The config dial is a lobby setting
+  // nobody thinks of as a change, and the Construction discount is
+  // already legible in the tech tree; the law is the one that moves
+  // under your feet mid-game with no other notice.
+  const lawPct = Math.round(Math.abs(1 - priceLaw) * 100);
+  const lawNote = priceLaw !== 1
+    ? `Senate law: ship costs ${priceLaw < 1 ? `−${lawPct}%` : `+${lawPct}%`}`
+    : '';
+
   const ordersHere = gameState.buildOrders.filter(bo => bo.bodyId === body.id);
   // MP unlimited queue split: 'building' rows occupy slots and show a
   // progress bar; 'waiting' rows sit below with a position number until
@@ -515,6 +533,7 @@ export const BuildPanel: React.FC = () => {
                     order={bo}
                     remaining={remaining}
                     constructionLvl={gameState.factionTech?.player?.levels?.construction ?? 0}
+                    buildCost={gameState.buildCost}
                   />
                 )}
                 <button
@@ -619,8 +638,9 @@ export const BuildPanel: React.FC = () => {
             : undefined;
           const designParts = activeDesign ? sanitizeParts(activeDesign.parts) : [];
           const designCost = partsCost(designParts);
-          const rowCostOre = def.cost.ore + designCost.ore;
-          const rowCostCredits = def.cost.credits + designCost.credits;
+          const rowCostOre = priced(def.cost.ore + designCost.ore);
+          const rowCostCredits = priced(def.cost.credits + designCost.credits);
+          const rowCostFuel = priced(def.cost.fuel);
           const designStats = designParts.length > 0
             ? computeDesignStats(cls, designParts, gameState.factionTech['player']?.levels ?? {})
             : null;
@@ -636,7 +656,7 @@ export const BuildPanel: React.FC = () => {
           const localC = gameState.settlements
             .filter(s => s.ownedBy === 'player' && s.bodyId === body.id)
             .reduce((a, s) => a + s.stockpile.credits, 0);
-          const shortFuel    = Math.max(0, def.cost.fuel  - playerRes.fuel    - localF);
+          const shortFuel    = Math.max(0, rowCostFuel    - playerRes.fuel    - localF);
           const shortOre     = Math.max(0, rowCostOre     - playerRes.ore     - localO);
           const shortCredits = Math.max(0, rowCostCredits - playerRes.credits - localC);
           const canAfford = shortFuel === 0 && shortOre === 0 && shortCredits === 0;
@@ -739,12 +759,15 @@ export const BuildPanel: React.FC = () => {
                 )}
                 {def.cargoCapacity > 0 && <span className="stat">CG:{def.cargoCapacity}</span>}
               </div>
-              <div className="class-cost" title={shortLabel || undefined}>
-                {def.cost.fuel > 0 && (
+              <div
+                className={`class-cost${priceLaw !== 1 ? ' class-cost--lawed' : ''}`}
+                title={[shortLabel, lawNote].filter(Boolean).join(' · ') || undefined}
+              >
+                {rowCostFuel > 0 && (
                   <span
                     className="cost-fuel"
                     style={shortFuel > 0 ? { color: '#ff5e5e', fontWeight: 700 } : undefined}
-                  >{def.cost.fuel}F</span>
+                  >{rowCostFuel}F</span>
                 )}
                 <span
                   className="cost-metal"
@@ -754,6 +777,14 @@ export const BuildPanel: React.FC = () => {
                   className="cost-money"
                   style={shortCredits > 0 ? { color: '#ff5e5e', fontWeight: 700 } : undefined}
                 >{rowCostCredits}C</span>
+                {/* One glyph, not a sentence: the row is already
+                    one line inside the bottom card, and the direction
+                    of the arrow carries the meaning. */}
+                {priceLaw !== 1 && (
+                  <span className="cost-law" title={lawNote}>
+                    {priceLaw < 1 ? '⚖▾' : '⚖▴'}
+                  </span>
+                )}
               </div>
               <button
                 className={`build-btn${recentlyQueued.has(cls) ? ' build-btn--just-queued' : ''}`}
@@ -929,8 +960,8 @@ export const BuildPanel: React.FC = () => {
             {buildRows.map(row => {
               const def = SHIP_CLASSES[row.shipClass];
               const pc = partsCost(row.parts);
-              const rowCostOre = def.cost.ore + pc.ore;
-              const rowCostCredits = def.cost.credits + pc.credits;
+              const rowCostOre = priced(def.cost.ore + pc.ore);
+              const rowCostCredits = priced(def.cost.credits + pc.credits);
               const dstats = row.parts.length > 0
                 ? computeDesignStats(row.shipClass, row.parts, techLevels) : null;
               const shortOre = Math.max(0, rowCostOre - playerRes.ore - localStock.ore);
@@ -965,10 +996,16 @@ export const BuildPanel: React.FC = () => {
                     )}
                     {def.cargoCapacity > 0 && <span className="stat">CG:{def.cargoCapacity}</span>}
                   </div>
-                  <div className="class-cost" title={shortLabel || undefined}>
+                  <div
+                    className={`class-cost${priceLaw !== 1 ? ' class-cost--lawed' : ''}`}
+                    title={[shortLabel, lawNote].filter(Boolean).join(' · ') || undefined}
+                  >
                     {/* no fuel cost span — fuel is dead (§1.1) */}
                     <span className="cost-metal" style={shortOre > 0 ? { color: '#ff5e5e', fontWeight: 700 } : undefined}>{rowCostOre}M</span>
                     <span className="cost-money" style={shortCredits > 0 ? { color: '#ff5e5e', fontWeight: 700 } : undefined}>{rowCostCredits}C</span>
+                    {priceLaw !== 1 && (
+                      <span className="cost-law" title={lawNote}>{priceLaw < 1 ? '⚖▾' : '⚖▴'}</span>
+                    )}
                   </div>
                   <div style={{ display: 'inline-flex', alignItems: 'center', border: '1px solid #2a3d50', borderRadius: 4, marginRight: 4 }}>
                     <button
@@ -1054,7 +1091,11 @@ export const RushControl: React.FC<{
   order: import('../types').BuildOrder;
   remaining: number;
   constructionLvl: number;
-}> = ({ order, remaining, constructionLvl }) => {
+  /** Server's own price breakdown. Optional so the construction-only
+   *  fallback below still covers a client talking to a worker that
+   *  predates the build_cost payload (rollout window). */
+  buildCost?: import('../types').GameState['buildCost'];
+}> = ({ order, remaining, constructionLvl, buildCost }) => {
   const mpActions = useMultiplayerActions();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -1078,13 +1119,18 @@ export const RushControl: React.FC<{
     return () => window.removeEventListener('mousedown', onDown);
   }, [open]);
   if (!mpActions) return null;
-  // Client-side quote: hull + the order's parts snapshot at the same
-  // construction-tech discount the server applies. The senate's
-  // build-cost / rush-cost sliders (default 1.0) aren't in the /state
-  // payload, so this is exact in the common case and marked "≈".
+  // Client-side quote: hull + the order's parts snapshot, scaled by every
+  // dial the server charges through — host config, the senate's
+  // build-cost law, the construction discount, and the senate's separate
+  // rush knob. This used to model the construction discount ONLY and
+  // called itself "≈" to cover the difference; the sliders now ride
+  // along in /state, so the quote is exact whenever the server sent one.
   const def = SHIP_CLASSES[order.shipClass];
   const pc = partsCost(sanitizeParts(order.parts ?? []));
-  const mult = Math.max(0.25, 1 - 0.05 * constructionLvl);
+  const mult = buildCost
+    ? buildCost.mult * buildCost.rush
+    : Math.max(0.25, 1 - 0.05 * constructionLvl);
+  const rushLawed = !!buildCost && (buildCost.law !== 1 || buildCost.rush !== 1);
   const quoteOre = Math.ceil((def.cost.ore + pc.ore) * mult);
   const quoteCr = Math.ceil((def.cost.credits + pc.credits) * mult);
   const newRemaining = Math.max(1, Math.ceil(remaining / 2));
@@ -1122,7 +1168,14 @@ export const RushControl: React.FC<{
           }}
         >
           <div style={{ fontWeight: 700, color: '#ffcf70', marginBottom: 4 }}>⚡ RUSH BUILD</div>
-          <div>Cost: <b>≈{quoteOre}M {quoteCr}C</b> (full ship price)</div>
+          <div>
+            Cost: <b>{buildCost ? '' : '≈'}{quoteOre}M {quoteCr}C</b> (full ship price)
+          </div>
+          {rushLawed && (
+            <div style={{ color: '#ffcf70', marginTop: 2 }}>
+              ⚖ Senate law is setting this price
+            </div>
+          )}
           <div>Delivery: T-{remaining.toFixed(0)} → <b>T-{newRemaining}</b></div>
           <div style={{ color: '#ff8a5c', marginTop: 2 }}>
             25% risk: delivered at <b>half hull</b>{order.botched ? ' (already botched — no further risk)' : ''}

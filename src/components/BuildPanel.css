@@ -327,6 +327,21 @@
   gap: 6px;
 }
 
+/* A senate ship_build_cost_multiplier law is in force: the numbers on
+   this row are NOT the base price. The scales glyph carries the meaning
+   (▾ cheaper / ▴ dearer); the tint is what makes the row read as
+   "something changed" at a glance without reading the mark. */
+.class-cost--lawed .cost-metal,
+.class-cost--lawed .cost-money {
+  color: #ffcf70;
+}
+
+.cost-law {
+  color: #ffcf70;
+  font-size: 9px;
+  cursor: help;
+}
+
 .cost-metal {
   color: #a0a0a0;
   font-size: 9px;

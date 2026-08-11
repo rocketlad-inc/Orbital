@@ -772,6 +772,29 @@ export interface GameState {
     untilTick: number;
     ticksLeft: number;
   }>;
+  /**
+   * What a hull actually costs this player, as a breakdown.
+   *
+   * MP only. `mult` is the product the server charges at queue time; the
+   * parts exist so the build menu can say WHY the price moved — a
+   * `ship_build_cost_multiplier` law used to halve the charge invisibly
+   * because the menu rendered SHIP_CLASSES base prices and nothing else.
+   * Undefined in SP (which applies its own buildCostModifier directly).
+   */
+  buildCost?: {
+    /** Host's ship_cost_mult config dial. */
+    config: number;
+    /** Active senate ship_build_cost_multiplier law, 1 when none. */
+    law: number;
+    /** Construction tech discount, −5%/level floored at 0.25. */
+    tech: number;
+    /** Senate rush_cost_multiplier — applies ONLY to rushing, and is
+     *  therefore deliberately NOT folded into `mult`. */
+    rush: number;
+    constructionLevel: number;
+    /** config × law × tech. */
+    mult: number;
+  };
   /** Fog-FREE political claims: bodyId -> owning faction for every live
    *  settlement in the game. This is what region ownership shading reads
    *  — political borders are common knowledge even when the settlements

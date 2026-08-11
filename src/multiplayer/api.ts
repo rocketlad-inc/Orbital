@@ -391,6 +391,38 @@ export type SenateSession = {
   quorum: { required: number; eligible: number; eligible_ids: string[] };
 };
 
+/**
+ * A slider law currently in force.
+ *
+ * Passed bills used to vanish the moment they resolved: the effect row
+ * changed the economy and the only trace was one event-log line. This is
+ * the standing "law of the land" record the senate shows instead.
+ */
+export type ActiveLaw = {
+  slider_id: string;
+  /** Catalog label ("Ship Build Cost Multiplier"), or the raw id if the
+   *  server is running a catalog this client doesn't know. */
+  label: string;
+  description: string | null;
+  value: number;
+  default_value: number | null;
+  /** Signed percent change from baseline. −50 for a 0.5× multiplier; for
+   *  trade_tariff_pct the value IS already points, so it passes through. */
+  delta_pct: number;
+  is_pct: boolean;
+  proposal_id: string | null;
+  /** The bill's title — what people actually argued over. */
+  proposal_title: string | null;
+  /** Non-null only for a law aimed at one faction. */
+  target_faction_id: string | null;
+  target_name: string | null;
+  target_color: string | null;
+  target_emblem: string | null;
+  until_tick: number;
+  /** Computed server-side against the authoritative tick. */
+  ticks_left: number;
+};
+
 // ============================================================
 // Trades / Diplomacy
 // ============================================================
