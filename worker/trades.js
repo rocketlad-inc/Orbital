@@ -201,12 +201,22 @@ async function handlePropose(req, env, { session, params }) {
   if (!pactCheck.ok) return err(400, 'bad_request', pactCheck.error);
 
   // Resource trading is ungated — swapping metal for fuel is basic
-  // diplomacy and needs to work from tick one. TREATIES are Society 4,
-  // so only an offer that actually carries a pact is checked, and only
-  // the PROPOSER pays the research cost (the responder is agreeing to
-  // something the proposer authored, not authoring it themselves).
-  if ((pactCheck.offerPacts.length + pactCheck.requestPacts.length) > 0
-      && await gatingEnabled(env, gameId)) {
+  // diplomacy and needs to work from tick one. Only the PROPOSER pays
+  // the research cost (the responder is agreeing to something the
+  // proposer authored, not authoring it themselves).
+  //
+  // NON-AGGRESSION IS FREE (Lorne). "Please stop shooting me" is the
+  // most basic diplomatic act there is, and gating it meant two new
+  // players at war had no way to agree to peace until one of them
+  // reached Industry 4 — the research made the game MORE hostile than
+  // the design intends. The pacts that confer an ADVANTAGE still cost
+  // research: a defense pact drags a third party into your war, and
+  // intel-sharing hands over map knowledge the Sensors track sells.
+  const GATED_PACTS = new Set(['defense_pact', 'intel_share']);
+  const gatedRequested =
+    pactCheck.offerPacts.some(p => GATED_PACTS.has(p))
+    || pactCheck.requestPacts.some(p => GATED_PACTS.has(p));
+  if (gatedRequested && await gatingEnabled(env, gameId)) {
     const levels = await factionTechLevels(env, gameId, proposer.id);
     if (!hasFeature('pacts', levels, true)) {
       const e = lockedError('pacts');

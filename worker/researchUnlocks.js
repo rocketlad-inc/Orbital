@@ -48,7 +48,9 @@ export const REQUIREMENTS = {
   'building.lab':          { track: 'industry', level: 1, label: 'Laboratory' },
   'building.forge':        { track: 'industry', level: 2, label: 'Forge' },
   'building.mint':         { track: 'industry', level: 3, label: 'Mint' },
-  'pacts':                 { track: 'industry', level: 4, label: 'Diplomatic Pacts' },
+  // Non-aggression is ungated (see GATED_PACTS in trades.js); this tech
+  // buys the two pacts that confer an advantage.
+  'pacts':                 { track: 'industry', level: 4, label: 'Defense & Intel Pacts' },
   'senate.propose':        { track: 'industry', level: 5, label: 'Senate Proposals' },
   'senate.chancellor':     { track: 'industry', level: 6, label: 'Chancellor Election' },
   // Sensors — intel ladder

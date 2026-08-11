@@ -26,6 +26,16 @@ type Mode =
 type Side = 'offer' | 'request';
 
 const PACT_KINDS_ORDER: PactKind[] = ['nap', 'defense_pact', 'intel_share'];
+
+/** Pact kinds that cost research. NON-AGGRESSION IS FREE from tick one:
+ *  "please stop shooting me" is the most basic diplomatic act there is,
+ *  and gating it left two new players with no way to agree to peace
+ *  until one reached Industry 4. The pacts that confer an ADVANTAGE
+ *  still cost research — a defense pact drags a third party into your
+ *  war, and intel-sharing hands over map knowledge the Sensors track
+ *  sells. Mirror of GATED_PACTS in worker/trades.js, which is
+ *  authoritative and 403s a gated kind regardless of what renders here. */
+const GATED_PACT_KINDS = new Set<PactKind>(['defense_pact', 'intel_share']);
 // Fuel was removed from the economy. The schema column stays so we don't
 // need a migration, but the trade composer no longer offers it as a knob.
 const RESOURCE_KEYS: Array<keyof ResourceBundle> = ['metal', 'gold', 'science'];
@@ -48,11 +58,16 @@ interface TradeComposerProps {
 export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }: TradeComposerProps) {
   const api = useMemo(() => tradesApi(gameId), [gameId]);
 
-  // Pacts (non-aggression / defense / research-sharing) are research-
-  // gated: worker/trades.js rejects an offer carrying a pact unless the
-  // PROPOSER has the 'pacts' feature. The proposer is always the local
-  // player (`me`), so gate the pact toggles here with the same pure
-  // predicate. Resource-only trades stay ungated (server allows them).
+  // NON-AGGRESSION IS FREE; the other two are research-gated. Mirrors
+  // GATED_PACTS in worker/trades.js — "please stop shooting me" is the
+  // most basic diplomatic act there is, while a defense pact drags a
+  // third party into your war and intel-sharing hands over map knowledge
+  // the Sensors track sells.
+  //
+  // `pactLock` is now per-KIND rather than a single lock over the whole
+  // section, so the composer can offer NAP to a brand-new empire while
+  // still showing the other two as locked. Resource-only trades stay
+  // ungated, as before.
   const pactLock = useMemo(() => {
     const enabled = (me.gating_enabled ?? 0) === 1;
     if (hasFeature('pacts', me.tech_levels, enabled)) return null;
@@ -61,6 +76,7 @@ export function TradeComposer({ gameId, me, factions, mode, onClose, onSuccess }
     const track = TECH_DEFS[req.track]?.name ?? req.track;
     return { label: req.label, text: `Unlocks at ${track} ${req.level}` };
   }, [me.tech_levels, me.gating_enabled]);
+
 
   // For counters, role flips: "I" become the proposer of the counter. So
   // "what I give" = the original's "request" (what was being asked of me),
@@ -424,22 +440,28 @@ function ColumnEditor({
         fontSize: 9, color: '#b8c8d6', letterSpacing: '0.1em',
         textTransform: 'uppercase', marginTop: 8, marginBottom: 4,
       }}>
-        Pacts {pactLock && <span style={{ color: '#ffb84d' }}>🔒</span>}
+        Pacts
       </div>
-      {/* Research-locked: show WHEN pacts unlock and disable the toggles
-          (the server would 403 an offer carrying a pact otherwise). */}
+      {/* Only the ADVANTAGE pacts are research-locked; non-aggression is
+          free from tick one, so the banner no longer says "Pacts unlock
+          at…" over a section whose first entry is available right now. */}
       {pactLock && (
         <div style={{
           fontSize: 8.5, lineHeight: 1.4, color: '#ffb84d',
           border: '1px solid rgba(255, 184, 77, 0.4)', borderRadius: 3,
           background: 'rgba(255, 184, 77, 0.06)', padding: '5px 7px', marginBottom: 5,
         }}>
-          🔒 Pacts unlock at <b>{pactLock.text.replace(/^Unlocks at\s*/i, '')}</b>. Resource trades work now.
+          🔒 Defense &amp; intel pacts unlock at <b>{pactLock.text.replace(/^Unlocks at\s*/i, '')}</b>.
+          {' '}Non-aggression and resource trades work now.
         </div>
       )}
       {PACT_KINDS_ORDER.map((p) => {
         const selected = pacts.includes(p);
-        const locked = !!pactLock;
+        // Per-KIND: non-aggression is free, the other two cost research.
+        // Keep GATED_PACT_KINDS in sync with GATED_PACTS in
+        // worker/trades.js — the server is authoritative and will 403 a
+        // gated kind regardless of what this renders.
+        const locked = GATED_PACT_KINDS.has(p) && !!pactLock;
         return (
           <label
             key={p}

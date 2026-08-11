@@ -131,7 +131,10 @@ export const RESEARCH_UNLOCKS: UnlockRow[] = [
   { track: 'industry', level: 3, feature: 'building.mint',
     label: 'Mint', blurb: 'Credit output from your settlements.' },
   { track: 'industry', level: 4, feature: 'pacts',
-    label: 'Diplomatic Pacts', blurb: 'Non-aggression, defense, and intel-sharing treaties.' },
+    // Non-aggression is FREE from tick one, so this no longer claims to
+    // unlock it — a tech that advertises something you already have is
+    // a tech players learn to distrust.
+    label: 'Defense & Intel Pacts', blurb: 'Defense pacts and intel-sharing treaties. Non-aggression is always available.' },
   { track: 'industry', level: 5, feature: 'senate.propose',
     label: 'Senate Proposals', blurb: 'Put bills to the floor. Voting is always open to you.' },
   { track: 'industry', level: 6, feature: 'senate.chancellor',
