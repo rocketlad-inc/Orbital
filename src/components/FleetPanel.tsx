@@ -339,6 +339,11 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
       ? ship.transit.currentTransfer?.targetBodyId
       : ship?.orbit?.parentBodyId;
     if (bodyId) focusBody(bodyId);
+    // Picking a hull is a navigation: it opens the ship panel over this
+    // one. Hand off rather than stacking — unless a bulk selection is
+    // live, in which case the action bar at the bottom is the reason the
+    // panel is open and yanking it out from under you would be worse.
+    if (selectedIds.size === 0) onClose();
   };
 
   const handleBodyClick = (bodyId: string) => {
@@ -640,22 +645,32 @@ export const FleetPanel: React.FC<FleetPanelProps> = ({ onClose }) => {
       }
       return <div className="fleet-xp">{tierBits}</div>;
     }
-    return (
-      <div
-        className="fleet-xp"
-        style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: mpActions && ship.ownedBy === 'player' ? 'pointer' : undefined }}
-        onClick={mpActions && ship.ownedBy === 'player'
-          ? (e) => { e.stopPropagation(); setFilter('captains'); }
-          : undefined}
-        title={traitSummary(ship.captainTraits) || undefined}
-      >
+    // The captain used to be a full-width clickable row at the bottom of
+    // the card, so a click anywhere low on the hull jumped you to the
+    // Captain Bank instead of the ship (playtest). It's a content-sized
+    // chip now — everything beside it falls through to the card.
+    const capBody = (
+      <>
         <CaptainAvatar avatarId={ship.captainAvatar} size={20} />
-        <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.3, minWidth: 0 }}>
-          <span style={{ fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110 }}>
-            {ship.captainName}
-          </span>
-          <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}>{tierBits}</span>
-        </div>
+        <span className="fleet-capchip__text">
+          <span className="fleet-capchip__name">{ship.captainName}</span>
+          <span className="fleet-capchip__tier">{tierBits}</span>
+        </span>
+      </>
+    );
+    const traits = traitSummary(ship.captainTraits) || undefined;
+    return (
+      <div className="fleet-xp">
+        {mpActions && ship.ownedBy === 'player' ? (
+          <button
+            type="button"
+            className="fleet-capchip"
+            onClick={(e) => { e.stopPropagation(); setFilter('captains'); }}
+            title={traits ? `${traits} — open the Captain Bank` : 'Open the Captain Bank'}
+          >{capBody}</button>
+        ) : (
+          <span className="fleet-capchip fleet-capchip--static" title={traits}>{capBody}</span>
+        )}
       </div>
     );
   };

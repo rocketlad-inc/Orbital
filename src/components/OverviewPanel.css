@@ -521,6 +521,48 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Captain chip on a fleet card's third line. Sized to its own content so
+   the rest of the line is dead space that belongs to the card click, not
+   to the Captain Bank. button.<class> pins the metrics against ancestor
+   button rules, same trick as .fleet-xp__tier--none below. */
+.fleet-capchip,
+button.fleet-capchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 1px 4px 1px 1px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  font-family: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+button.fleet-capchip:hover { border-color: #2d4255; background: rgba(78, 205, 196, 0.08); }
+button.fleet-capchip:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 1px; }
+.fleet-capchip--static { cursor: default; }
+
+.fleet-capchip__text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+  min-width: 0;
+}
+.fleet-capchip__name {
+  font-size: 10px;
+  max-width: 110px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fleet-capchip__tier {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
 .fleet-xp__tier {
   font-size: 9px;
   font-weight: 600;
