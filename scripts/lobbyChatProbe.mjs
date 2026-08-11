@@ -41,11 +41,20 @@ const open = (handle, label) => new Promise((resolve, reject) => {
     headers: { authorization: `Bearer ${tokenFor(handle)}` },
   });
   ws.received = [];
+  ws.replayed = [];
   ws.on('message', (raw) => {
     let m; try { m = JSON.parse(raw.toString()); } catch { return; }
     if (m.type === 'chat') {
       ws.received.push(m);
       console.log(`  [${label}] RECEIVED chat from ${m.from?.displayName}: "${m.text}"`);
+    }
+    // The backlog arrives as ONE `chat_history` frame, not as a series of
+    // `chat` frames. Counting only `chat` made this probe blind to the
+    // replay entirely and report "all history lost" against a server that
+    // was in fact replaying it.
+    if (m.type === 'chat_history' && Array.isArray(m.messages)) {
+      ws.replayed.push(...m.messages);
+      console.log(`  [${label}] RECEIVED chat_history — ${m.messages.length} line(s)`);
     }
   });
   ws.on('open', () => resolve(ws));
@@ -77,8 +86,10 @@ a.close();
 await wait(1200);
 const a2 = await open(handleA, `${handleA}#2`);
 await wait(3000);
-const replayed = a2.received.length;
-console.log(`   -> chat lines replayed to the reconnected client: ${replayed}\n`);
+const replayed = a2.replayed.length + a2.received.length;
+const sawOriginal = [...a2.replayed, ...a2.received].some(m => m.text === text);
+console.log(`   -> chat lines replayed to the reconnected client: ${replayed}`);
+console.log(`   -> the line sent in step 1 was among them: ${sawOriginal}\n`);
 
 console.log('RESULT');
 console.log(`  live delivery to other player : ${gotA ? 'WORKS' : 'BROKEN'}`);
