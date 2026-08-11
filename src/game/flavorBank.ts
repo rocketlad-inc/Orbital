@@ -154,6 +154,34 @@ export const FLAVOR_BANK: Record<string, string[]> = {
     "“{voteTitle}” {voteOutcome} after a final round of floor speeches.",
     "Order restored, the chamber recorded that “{voteTitle}” {voteOutcome}.",
   ],
+  // A law reaching the end of its term. NOBODY repeals it — the clock
+  // simply runs out — so every variant has to read as lapsing rather
+  // than as a defeat or a rival striking it down, or players will go
+  // hunting for the enemy who "cancelled" their tariff. {ticksInForce}
+  // is optional, so no line may depend on it to parse.
+  law_expired: [
+    "“{voteTitle}” has lapsed. The clause was temporary; the chamber let it run out.",
+    "The sunset clause on “{voteTitle}” came due. It is no longer law.",
+    "As written, “{voteTitle}” expired today — no vote, no repeal, just the calendar.",
+    "“{voteTitle}” falls out of force. Clerks strike it from the standing rules.",
+    "The term of “{voteTitle}” is served. Its provisions end with this session.",
+    "Quietly, and exactly on schedule, “{voteTitle}” ceased to apply.",
+    "{actor}'s law “{voteTitle}” reached its expiry. The old rules return.",
+    "“{voteTitle}” is spent. What it compelled is once again merely optional.",
+    "The books close on “{voteTitle}”; it governed for {ticksInForce} ticks.",
+    "No hand was raised against “{voteTitle}” — it simply ran out of time.",
+  ],
+  // The safety net catching a bill that never opened for voting. Rare
+  // and slightly embarrassing, so the prose stays plain and factual —
+  // a joke here would land on a player whose proposal just vanished.
+  bill_reaped: [
+    "“{voteTitle}” never reached the floor. The session closed without a vote.",
+    "The motion “{voteTitle}” expired in committee, unvoted.",
+    "{actor}'s bill “{voteTitle}” timed out before debate could open.",
+    "“{voteTitle}” is withdrawn from the docket — its window passed unopened.",
+    "No vote was ever called on “{voteTitle}”. It lapses unresolved.",
+    "The chamber never took up “{voteTitle}”; the clock ran out on it.",
+  ],
   // The gavel changing hands. Two things have to survive the prose: WHO
   // holds it, and that it is TEMPORARY — the whole tension of a term is
   // that agenda control expires. Variants that read as a coronation

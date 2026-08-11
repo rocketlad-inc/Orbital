@@ -830,12 +830,20 @@ function classifyChronicleEvent(kind: string): { category: LogCategory; level: L
       return { category: 'SIM', level: 'INFO' };
     // Governance + diplomacy are SYSTEM, not SIM — a senate result is a
     // rules change. These were falling through to the default.
+    //
+    // senate_law_expired belongs here for the same reason senate_vote
+    // does: a law LAPSING changes the rules exactly as much as one
+    // passing, because the modifier everyone planned around stops
+    // applying. senate_reaped rides along — a bill dying unvoted is
+    // still governance news to whoever proposed it.
     case 'trade_accepted':
     case 'trade_delivered':
     case 'trade_route_run':
     case 'treaty_signed':
     case 'senate_vote':
     case 'senate_term':
+    case 'senate_law_expired':
+    case 'senate_reaped':
     case 'victory':
       return { category: 'SYSTEM', level: 'INFO' };
     // A standing route dying is a WARN, not an INFO: every reason it can
@@ -1433,6 +1441,26 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
           : '';
         const verb = outcome === 'passed' ? 'PASSED' : outcome === 'failed' ? 'FAILED' : outcome.toUpperCase();
         return `${t}  ⚖ Senate: “${title}”${kindBit} ${verb}${tally}`;
+      }
+
+      if (ev.kind === 'senate_law_expired') {
+        // Leads with LAPSED so it can't be misread as a repeal — no one
+        // voted this down, the clause simply ran out. The duration is
+        // included because "how long do these last" is the question a
+        // player asks the moment they see their first one expire.
+        const title = (parsed.title as string) ?? 'a law';
+        const kindBit = parsed.bill_kind
+          ? ` [${String(parsed.bill_kind).replace(/_/g, ' ')}]`
+          : '';
+        const held = Number(parsed.ticks_in_force ?? 0);
+        const heldBit = held > 0 ? ` — stood ${held} ticks` : '';
+        return `${t}  ⌛ Senate: “${title}”${kindBit} LAPSED${heldBit}`;
+      }
+
+      if (ev.kind === 'senate_reaped') {
+        const title = (parsed.title as string) ?? 'a motion';
+        const who = nameOfFaction(ev.actor_faction_id);
+        return `${t}  ⚖ Senate: “${title}” by ${who} expired unvoted — never reached the floor`;
       }
 
       if (ev.kind === 'senate_term') {

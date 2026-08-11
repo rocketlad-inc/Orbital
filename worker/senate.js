@@ -1455,9 +1455,52 @@ export async function resolveSenate(env, gameId, tick) {
   // permanent zombies. Idempotent: it only catches rows whose entire
   // debate+vote schedule has already passed.
   try {
+    // Read the doomed rows BEFORE the flip — D1 has no RETURNING here,
+    // and a bill that dies without a single line in the chronicle just
+    // vanishes from its proposer's point of view. Rare by design (this
+    // is a safety net), but "rare and silent" is the worst combination
+    // to debug from a player report.
+    const reaped = (await env.DB
+      .prepare(
+        `SELECT id, title, kind, proposer_faction_id, proposed_at_tick, vote_closes_at_tick
+           FROM senate_proposals
+          WHERE game_id = ? AND status = 'debating' AND vote_closes_at_tick <= ?`,
+      )
+      .bind(gameId, tick).all()).results ?? [];
+
     await env.DB
       .prepare("UPDATE senate_proposals SET status = 'failed', resolved_at_tick = ? WHERE game_id = ? AND status = 'debating' AND vote_closes_at_tick <= ?")
       .bind(tick, gameId, tick).run();
+
+    for (const z of reaped) {
+      try {
+        await env.DB
+          .prepare(
+            "INSERT INTO chronicle_entries (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms) " +
+            "VALUES (?, ?, ?, 'senate_reaped', ?, ?, 'public', ?)",
+          )
+          .bind(
+            newId("chr"), gameId, tick, z.proposer_faction_id,
+            JSON.stringify({
+              proposal_id: z.id,
+              title: z.title,
+              bill_kind: z.kind,
+              proposed_at_tick: z.proposed_at_tick,
+              vote_closes_at_tick: z.vote_closes_at_tick,
+            }),
+            Date.now(),
+          ).run();
+      } catch (e) {
+        console.error('resolveSenate: reap chronicle failed', e, { proposalId: z.id });
+      }
+    }
+    if (reaped.length > 0) {
+      // Loud on purpose: this net only catches bills that never opened
+      // for voting, which means something upstream skipped Phase 1.
+      console.warn('resolveSenate: reaped proposals that never opened', {
+        gameId, tick, count: reaped.length,
+      });
+    }
   } catch (e) {
     console.error("resolveSenate: zombie reap failed", e);
   }
@@ -1583,7 +1626,72 @@ export async function resolveSenate(env, gameId, tick) {
     }
   }
 
-  if (opened > 0 || resolved > 0) {
+  // Phase 3: LAWS THAT LAPSED.
+  //
+  // Nothing used to mark the end of a law. Its modifier applied for as
+  // long as every read filtered `active_until_tick > tick`, so it simply
+  // stopped matching one tick — no card, no Herald line, nothing in the
+  // chronicle. A tariff that had shaped the economy for its whole run
+  // just stopped, which reads as a bug rather than as the rule expiring.
+  //
+  // Announce-only: the effect was ALREADY inert by virtue of the filter,
+  // so this deliberately writes no game state beyond the stamp. If this
+  // pass ever started clearing effects it would become load-bearing, and
+  // a failure here would silently extend laws forever.
+  //
+  // `<= tick` not `= tick`, because resolveSenate can be handed a
+  // catch-up batch after an idle stretch; the stamp is what keeps it to
+  // one card per law.
+  let expired = 0;
+  try {
+    const lapsed = (await env.DB
+      .prepare(
+        `SELECT id, title, kind, proposer_faction_id, resolved_at_tick, effect_until_tick
+           FROM senate_proposals
+          WHERE game_id = ? AND status = 'passed'
+            AND effect_until_tick IS NOT NULL
+            AND effect_until_tick <= ?
+            AND expiry_logged_at_tick IS NULL`,
+      )
+      .bind(gameId, tick).all()).results ?? [];
+
+    for (const law of lapsed) {
+      try {
+        await env.DB
+          .prepare(
+            "INSERT INTO chronicle_entries (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms) " +
+            "VALUES (?, ?, ?, 'senate_law_expired', ?, ?, 'public', ?)",
+          )
+          .bind(
+            newId("chr"), gameId, tick, law.proposer_faction_id,
+            JSON.stringify({
+              proposal_id: law.id,
+              title: law.title,
+              bill_kind: law.kind,
+              // How long it actually stood, for the Herald's prose and
+              // for judging whether effect windows are tuned sanely.
+              ticks_in_force: Math.max(
+                0, Number(law.effect_until_tick) - Number(law.resolved_at_tick ?? law.effect_until_tick),
+              ),
+              expired_at_tick: Number(law.effect_until_tick),
+            }),
+            Date.now(),
+          ).run();
+        // Stamp AFTER the insert: if the insert throws we retry next
+        // tick rather than marking a card as delivered that never was.
+        await env.DB
+          .prepare('UPDATE senate_proposals SET expiry_logged_at_tick = ? WHERE id = ?')
+          .bind(tick, law.id).run();
+        expired += 1;
+      } catch (e) {
+        console.error('resolveSenate: law expiry announce failed', e, { proposalId: law.id });
+      }
+    }
+  } catch (e) {
+    console.error('resolveSenate: law expiry sweep failed', e);
+  }
+
+  if (opened > 0 || resolved > 0 || expired > 0) {
     try {
       const stub = env.ROOM.get(env.ROOM.idFromName(gameId));
       await stub.fetch("https://room/notify", {

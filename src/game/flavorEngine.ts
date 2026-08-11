@@ -77,6 +77,8 @@ const KIND_MAP: Record<string, string> = {
   asteroid_impact:      'asteroid_impact',
   senate_vote:          'vote_resolved',
   senate_term:          'chairman_seated',
+  senate_law_expired:   'law_expired',
+  senate_reaped:        'bill_reaped',
   tech_advanced:        'tech_advanced',
   victory:              'victory',
   // No banks wired for these server kinds yet (or the server doesn't
@@ -355,6 +357,27 @@ function resolveVars(ev: FlavorEvent, ctx: FlavorContext): Record<string, string
         actor: facName(actorFac),
         voteTitle: str('title'),
         voteOutcome: outcome,
+        tick,
+      };
+    }
+    case 'senate_law_expired': {
+      // The actor is the faction that PROPOSED the law, not one that
+      // acted now — nobody repeals it, the clock simply runs out. The
+      // prose has to carry that or it reads as someone striking it down.
+      const inForce = p.ticks_in_force;
+      return {
+        actor: facName(actorFac),
+        voteTitle: str('title'),
+        ticksInForce: typeof inForce === 'number' ? String(inForce) : undefined,
+        tick,
+      };
+    }
+    case 'senate_reaped': {
+      // A bill that never even opened for voting. Rare — this is the
+      // safety net firing — so the prose stays factual rather than witty.
+      return {
+        actor: facName(actorFac),
+        voteTitle: str('title'),
         tick,
       };
     }
