@@ -1824,10 +1824,14 @@ async function handleQueueBuilding(req, env, ctx) {
     // a player can get here, and "need 40M 0G (LOCAL+pool)" doesn't say
     // which purse fell short — the whole reason a station build can be
     // affordable in one place and not another.
+    // METAL and CREDITS — the names on the HUD. `ore` and `gold` survive
+    // as internal keys (playerResources.ore, cost.gold, the prod-rate CSS
+    // modifier) but were renamed in the fiction months ago, and a 409 is
+    // no place to leak the old vocabulary at a player.
     return err(409, 'insufficient_resources',
-      `${kind} L${currentLevel + 1} needs ${cost.metal} ore + ${cost.gold} credits. `
-      + `This station has ${localMetal} ore + ${localGold} credits banked locally; `
-      + `the empire pool has ${Math.max(0, me.metal)} ore + ${Math.max(0, me.gold)} credits.`);
+      `${kind} L${currentLevel + 1} needs ${cost.metal} metal + ${cost.gold} credits. `
+      + `This station has ${localMetal} metal + ${localGold} credits banked locally; `
+      + `the empire pool has ${Math.max(0, me.metal)} metal + ${Math.max(0, me.gold)} credits.`);
   }
   const takeLocalMetal = Math.min(cost.metal, localMetal);
   const takeLocalGold  = Math.min(cost.gold,  localGold);
