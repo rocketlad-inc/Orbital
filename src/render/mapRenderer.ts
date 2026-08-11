@@ -4466,6 +4466,7 @@ export function drawStation(
     const weaponsLevel = buildingLevel(settlement, 'weapons' as BuildingKind);
     const shipyardLevel = buildingLevel(settlement, 'shipyard' as BuildingKind);
     const labLevel = buildingLevel(settlement, 'lab' as BuildingKind);
+    const thrustersLevel = buildingLevel(settlement, 'trajectory_thrusters' as BuildingKind);
     const nowMForStation = ctx.nowMs ?? performance.now();
     // Earliest-queued first, so a station with two bays (shipyard L5+)
     // shows the ship closest to launch in the primary slot.
@@ -4486,7 +4487,7 @@ export function drawStation(
     // silhouette and its modules are legible as a place, not a marker.
     ctx.ctx.scale(STATION_STRUCTURE_SCALE, STATION_STRUCTURE_SCALE);
     drawStationStructure(ctx.ctx, {
-      weaponsLevel, shipyardLevel, labLevel, builds,
+      weaponsLevel, shipyardLevel, labLevel, thrustersLevel, builds,
       factionColor: color,
       nowMs: nowMForStation,
       buildFlash: {

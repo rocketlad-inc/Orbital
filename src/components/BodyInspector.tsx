@@ -1250,11 +1250,18 @@ const CITY_BUILDINGS: BuildingKind[] = ['forge', 'mint', 'lab', 'shields'];
 // Labs host on stations too (economy rework §1.3): stations carry the
 // ×1.4 science type-multiplier, so they're the natural research site.
 const STATION_BUILDINGS: BuildingKind[] = ['weapons', 'shipyard', 'lab'];
-// Asteroid-only city extension: when the parent body's type is
-// 'asteroid', append trajectory_thrusters to the available city
-// buildings. Kept separate from CITY_BUILDINGS so non-asteroid cities
-// don't see the option.
-const ASTEROID_CITY_EXTRA: BuildingKind[] = ['trajectory_thrusters'];
+// Asteroid-only STATION extension: when the parent body's type is
+// 'asteroid', append trajectory_thrusters to the available station
+// buildings. Kept separate from STATION_BUILDINGS so stations on
+// ordinary worlds don't see the option.
+//
+// This hung off the CITY list until 2026-08-11, which — once the
+// terraforming rework made asteroids un-terraformable and cities
+// terraformed-only — meant the card had no reachable host and the ram
+// weapon could never be built. Exactly the failure the note above
+// warns about, arrived at from the opposite direction: not missing
+// from the list, but attached to a list that could never render.
+const ASTEROID_STATION_EXTRA: BuildingKind[] = ['trajectory_thrusters'];
 
 interface BuildingsStripProps {
   settlement: Settlement;
@@ -1270,8 +1277,8 @@ const BuildingsStrip: React.FC<BuildingsStripProps> = ({
 }) => {
   const gate = useFeatureGate();
   const baseKinds = settlement.type === 'city' ? CITY_BUILDINGS : STATION_BUILDINGS;
-  const kinds: BuildingKind[] = (settlement.type === 'city' && body.type === 'asteroid')
-    ? [...baseKinds, ...ASTEROID_CITY_EXTRA]
+  const kinds: BuildingKind[] = (settlement.type === 'station' && body.type === 'asteroid')
+    ? [...baseKinds, ...ASTEROID_STATION_EXTRA]
     : baseKinds;
   const q = settlement.buildingQueue;
 
@@ -1498,9 +1505,13 @@ const RamControlsSection: React.FC<{ body: Body }> = ({ body }) => {
     // if there's no settlement yet, the first hurdle is parking a
     // freighter and founding a city. If a settlement exists but
     // Thrusters aren't queued, point straight at the building.
+    // "Found a city" was the old instruction and is now impossible
+    // advice: an asteroid cannot be terraformed, and cities only exist
+    // on terraformed worlds. A colony ship drops a STATION here, which
+    // is where the thrusters now mount.
     const hintCopy = mySettlements.length === 0
-      ? 'Park a freighter here, found a city, then queue Trajectory Control Thrusters to weaponize this rock.'
-      : 'Queue Trajectory Control Thrusters at your settlement here to weaponize this rock. (Buildings panel below.)';
+      ? 'Send a colony ship to claim this rock with a station, then queue Trajectory Control Thrusters to weaponize it.'
+      : 'Queue Trajectory Control Thrusters at your station here to weaponize this rock. (Buildings panel below.)';
     return (
       <div style={{
         marginTop: 8, padding: '8px 10px',

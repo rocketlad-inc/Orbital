@@ -1677,8 +1677,18 @@ const BUILDING_DEFS = {
   // src/game/settlements.ts BUILDING_DEFS. hostBodyType restricts the
   // queueBuilding endpoint to rogue-asteroid bodies; without this an
   // unsanctioned POST could light Earth/Mars up with thrusters.
+  //
+  // hostType is 'station', NOT 'city', and the pair is load-bearing.
+  // It was 'city' when cities could be founded anywhere. The
+  // terraforming rework then gated cities on terraformed worlds and
+  // made asteroids un-terraformable, so "a city on an asteroid" became
+  // unsatisfiable and the whole ram weapon was stranded — built,
+  // rendered, and impossible to reach. Zero thrusters and zero rams
+  // exist across every game ever played, which is what that looks like
+  // from the outside. A station is what a colony ship actually drops on
+  // a rock, so this is the socket the weapon always meant.
   trajectory_thrusters: {
-    hostType: 'city',
+    hostType: 'station',
     hostBodyType: 'asteroid',
     base: { fuel: 0, metal: 800, gold: 1200 },
     costScaling: 99,   // single-level — impossibly expensive at L2

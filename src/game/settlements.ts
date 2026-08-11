@@ -206,12 +206,19 @@ export const BUILDING_DEFS: Record<BuildingKind, BuildingDef> = {
   // Gating happens at the UI + server endpoints by host body type
   // (only body.type === 'asteroid' is allowed) rather than in
   // BUILDING_DEFS, since BUILDING_DEFS already keys on settlement
-  // host type. The hostType field stays 'city' because that's where
-  // the building socket lives — but the canConstruct check filters
-  // on the parent body's type.
+  // host type.
+  //
+  // hostType is 'station'. It used to say 'city', from back when a city
+  // could be founded on anything — then the terraforming rework gated
+  // cities on terraformed worlds AND left asteroids un-terraformable,
+  // so "a city on an asteroid" quietly became impossible and took the
+  // entire ram weapon with it. Nothing errored; the option simply never
+  // appeared, and the database agrees: zero thrusters and zero rams in
+  // the whole history of the game. A station is what a colony ship
+  // drops on a rock anyway, so it is the correct socket.
   trajectory_thrusters: {
     displayName: 'Trajectory Control Thrusters',
-    hostType: 'city',
+    hostType: 'station',
     baseCost: { fuel: 0, ore: 800, credits: 1200 },
     costScaling: 99,            // exorbitant — players should never see L2 even theoretically
     baseBuildTicks: 40,

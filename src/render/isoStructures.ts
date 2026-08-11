@@ -767,6 +767,11 @@ export interface StationStructureOpts {
   weaponsLevel: number;
   shipyardLevel: number;
   labLevel: number;
+  /** Trajectory Control Thrusters. Asteroid stations only — the ram
+   *  weapon moved from the city socket to the station socket, since a
+   *  city can never exist on an un-terraformable rock. Without this the
+   *  building could be bought and would render nowhere. */
+  thrustersLevel: number;
   factionColor: string;
   /** Ships currently under construction here, earliest-queued first.
    *  Empty = idle shipyard (frame stays; no hull). */
@@ -866,5 +871,14 @@ export function drawStationStructure(
   }
   if (opts.shipyardLevel > 0) {
     drawShipyardModule(c, opts.shipyardLevel, opts.builds, opts.buildFlash?.shipyard, nowM);
+  }
+  // Thrusters mount BELOW the hub, unlike every other module. The rest
+  // are instruments bolted to booms; these are engines bolted to the
+  // rock, and the whole point is that they push it. Hanging them under
+  // the ring reads as thrust applied to the body rather than one more
+  // dish on a mast, and keeps them clear of the weapons/lab/shipyard
+  // booms above.
+  if (opts.thrustersLevel > 0) {
+    drawThrusters(c, HUB_X - 3, HUB_Y + 20, opts.thrustersLevel);
   }
 }
