@@ -388,7 +388,8 @@ function OverviewView({ data, onOpen }: { data: Overview; onOpen: (id: string) =
   return (
     <div className="aa-root">
       <section>
-        <div className="aa-section-title">LIVE GAMES · {live.length}</div>
+        <div className="aa-section-title">GAMES RUNNING NOW · {live.length}</div>
+        <div className="aa-section-note">Matches in progress. “Active” counts people who have done something recently — a game with players but no activity is stalling.</div>
         <div className="aa-cards">
           {live.map(g => <GameCard key={g.id} g={g} now={now} spark={data.sparks[g.id]} onOpen={onOpen} />)}
           {live.length === 0 && <div className="aa-empty">No active games.</div>}
@@ -396,26 +397,31 @@ function OverviewView({ data, onOpen }: { data: Overview; onOpen: (id: string) =
       </section>
       {done.length > 0 && (
         <section>
-          <div className="aa-section-title">FINISHED · {done.length}</div>
+          <div className="aa-section-title">FINISHED GAMES · {done.length}</div>
+        <div className="aa-section-note">Completed matches, newest first.</div>
           <div className="aa-cards">
             {done.map(g => <GameCard key={g.id} g={g} now={now} onOpen={onOpen} />)}
           </div>
         </section>
       )}
       <section>
-        <div className="aa-section-title">PLAY HOURS · LOCAL TIME · 14D</div>
+        <div className="aa-section-title">WHEN PEOPLE PLAY</div>
+        <div className="aa-section-note">Hour of day in each player’s own timezone, last 14 days. Darker = busier. Use it to pick when a new game should start.</div>
         <HeatGrid grid={data.heat_grid} />
       </section>
       <section>
-        <div className="aa-section-title">CROSS-GAME FEATURE USE</div>
+        <div className="aa-section-title">WHICH FEATURES GET USED</div>
+        <div className="aa-section-note">Every action players took, across all games. Anything near zero is either undiscoverable or not worth keeping.</div>
         <MetaUsage rows={data.usage_global} />
       </section>
       <section>
-        <div className="aa-section-title">NEW-PLAYER RETENTION · 28D COHORT</div>
+        <div className="aa-section-title">DO NEW PLAYERS COME BACK?</div>
+        <div className="aa-section-note">Take everyone who joined in one week; each column is how many were still playing 1, 2 and 4 weeks later.</div>
         <RetentionTable rows={data.retention} now={now} />
       </section>
       <section>
-        <div className="aa-section-title">PLAYERS · LAST 14 DAYS</div>
+        <div className="aa-section-title">WHO IS PLAYING</div>
+        <div className="aa-section-note">One row per account, most recently seen first. Robot and test accounts are excluded.</div>
         <table className="aa-table">
           <thead>
             <tr><th>Player</th><th>Logins</th><th>Time in game</th><th>Δ vs prior wk</th><th>Active days</th><th>Last seen</th></tr>
@@ -436,7 +442,8 @@ function OverviewView({ data, onOpen }: { data: Overview; onOpen: (id: string) =
       </section>
 
       <section>
-        <div className="aa-section-title">PREMIUM GRANTS</div>
+        <div className="aa-section-title">COMMISSION PURCHASES</div>
+        <div className="aa-section-note">Who bought the Commander’s Commission, and when.</div>
         <PremiumGrants />
       </section>
     </div>
@@ -769,7 +776,7 @@ function GameDetail({
 
       <section>
         <div className="aa-section-title">
-          EMPIRE YIELD CURVES
+          EMPIRE INCOME OVER TIME
           <span className="aa-metric-tabs">
             {METRICS.map(m => (
               <button
@@ -780,6 +787,11 @@ function GameDetail({
             ))}
           </span>
         </div>
+        <div className="aa-section-note">
+          Each empire’s income per tick as the match ran. Lines fanning
+          apart early is the runaway problem; lines staying bunched is a
+          close game.
+        </div>
         <div className="aa-metric-tabs" style={{ marginBottom: 8 }}>
           <button className={`aa-chip ${mode === 'stock' ? 'is-active' : ''}`} onClick={() => setMode('stock')}>stockpile</button>
           <button className={`aa-chip ${mode === 'flow' ? 'is-active' : ''}`} onClick={() => setMode('flow')}>per-tick flow</button>
@@ -789,7 +801,8 @@ function GameDetail({
       </section>
 
       <section>
-        <div className="aa-section-title">FACTIONS · NOW</div>
+        <div className="aa-section-title">EMPIRES RIGHT NOW</div>
+        <div className="aa-section-note">Live standings in this match: what each empire owns and is worth.</div>
         <div className="aa-scroll-x">
           <table className="aa-table">
             <thead>
@@ -814,92 +827,110 @@ function GameDetail({
       </section>
 
       <section>
-        <div className="aa-section-title">FEATURE USAGE</div>
+        <div className="aa-section-title">WHAT PLAYERS DID IN THIS GAME</div>
+        <div className="aa-section-note">How many times each action was taken. The shape tells you what this match was actually about.</div>
         <UsageBars usage={data.usage} />
       </section>
 
       <section>
-        <div className="aa-section-title">CLIENT PERFORMANCE · CLICK → PIXELS · 7D</div>
+        <div className="aa-section-title">SPEED: CLICK TO SCREEN UPDATE</div>
+        <div className="aa-section-note">Engineering diagnostic, not a player metric. Milliseconds from a tap to the screen changing — high numbers mean the game feels sluggish for that person.</div>
         <PerfTable rows={data.perf ?? []} />
       </section>
 
       <section>
-        <div className="aa-section-title">ANIMATION / FRAME RATE · 7D</div>
+        <div className="aa-section-title">SPEED: SMOOTHNESS</div>
+        <div className="aa-section-note">Engineering diagnostic. Frames per second while the map animates. Under ~30 looks choppy. This is the “perf session” data — one sample per minute of play.</div>
         <RenderTable rows={data.render ?? []} />
       </section>
 
       <section>
-        <div className="aa-section-title">RUNAWAY-LEADER SCORE · SHARE OF ECONOMY + FLEET</div>
+        <div className="aa-section-title">IS SOMEONE RUNNING AWAY WITH IT?</div>
+        <div className="aa-section-note">The leader’s share of all economy and fleet in the game. Climbing past roughly 40% usually means the match is already decided.</div>
         <RunawayChart data={data} />
       </section>
 
       <section>
-        <div className="aa-section-title">SPEND BY CATEGORY</div>
+        <div className="aa-section-title">WHERE THE MONEY GOES</div>
+        <div className="aa-section-note">Total metal and credits spent on each thing. Shows what players actually invest in versus what you expected.</div>
         <SpendTable data={data} />
       </section>
 
       <section>
-        <div className="aa-section-title">PLAYER ACTIVITY · LAST 14 DAYS</div>
+        <div className="aa-section-title">WHO SHOWED UP, AND HOW OFTEN</div>
+        <div className="aa-section-note">Per player in this match: logins, days active, actions taken and time spent.</div>
         <TimelineStrips data={data} />
       </section>
 
       <section>
-        <div className="aa-section-title">TECH PACE</div>
+        <div className="aa-section-title">RESEARCH SPEED</div>
+        <div className="aa-section-note">How fast each empire climbed the tech tree, weighted by what each level costs.</div>
         <TechPace data={data} />
       </section>
 
       <section>
-        <div className="aa-section-title">COMBAT LEDGER</div>
+        <div className="aa-section-title">WHO FOUGHT WHOM</div>
+        <div className="aa-section-note">Every battle, who won, and what it cost both sides.</div>
         <CombatLedger data={data} />
       </section>
 
       <section>
-        <div className="aa-section-title">COMBAT V2 — THE EXCHANGE</div>
+        <div className="aa-section-title">HOW FIGHTS RESOLVE</div>
+        <div className="aa-section-note">Shots fired, hits landed and damage wasted on already-dying ships. This is where combat balance is judged.</div>
         <CombatV2Panel data={data} />
       </section>
 
       <section>
-        <div className="aa-section-title">MVP AWARDS</div>
+        <div className="aa-section-title">STANDOUT PERFORMANCES</div>
+        <div className="aa-section-note">Individual ships and captains that outperformed — mostly for flavour and Herald stories.</div>
         <CombatAwards data={data} />
       </section>
 
       <section>
-        <div className="aa-section-title">COMBAT DEEP DIVE</div>
+        <div className="aa-section-title">COMBAT DETAIL</div>
+        <div className="aa-section-note">Per-ship breakdown behind the battle summaries above.</div>
         <CombatDeepDive data={data} />
       </section>
 
       <section>
-        <div className="aa-section-title">LOADOUTS · ALIVE VS LOST</div>
+        <div className="aa-section-title">WHICH SHIP BUILDS SURVIVE</div>
+        <div className="aa-section-note">Weapon fits on ships still alive versus ones that died. A fit that only appears in the “lost” column is a trap.</div>
         <LoadoutTable data={data} />
       </section>
 
       <section>
-        <div className="aa-section-title">SHIP CLASSES · BUILT VS LOST</div>
+        <div className="aa-section-title">WHICH HULLS GET BUILT — AND DIE</div>
+        <div className="aa-section-note">Built versus destroyed per hull class. A class nobody builds is mispriced; one that always dies is underpowered.</div>
         <ShipClassBars data={data} />
       </section>
 
       <section>
-        <div className="aa-section-title">SENATE PARTICIPATION</div>
+        <div className="aa-section-title">WHO TURNS UP TO VOTE</div>
+        <div className="aa-section-note">Bills proposed, votes cast, and how often players simply never voted.</div>
         <SenateTable data={data} />
       </section>
 
       <section>
-        <div className="aa-section-title">TRADE &amp; DIPLOMACY</div>
+        <div className="aa-section-title">DEALS BETWEEN PLAYERS</div>
+        <div className="aa-section-note">Offers made, accepted and refused, plus standing trade routes.</div>
         <TradeTable data={data} />
       </section>
 
       <section>
-        <div className="aa-section-title">FEATURE FUNNELS</div>
+        <div className="aa-section-title">OPENED IT VS ACTUALLY USED IT</div>
+        <div className="aa-section-note">How many players opened a menu, and how many then did the thing it exists for. A big gap means the screen is confusing.</div>
         <Funnels usage={data.usage} />
       </section>
 
       <section>
-        <div className="aa-section-title">SESSION DROP-OFF · LAST ACTION BEFORE GOING IDLE</div>
+        <div className="aa-section-title">WHAT THEY WERE DOING WHEN THEY QUIT</div>
+        <div className="aa-section-note">The last thing a player did before going quiet. Repeat offenders are where people give up.</div>
         <Dropoff rows={data.dropoff} />
       </section>
 
       <section>
-        <div className="aa-section-title">PLAYER ENGAGEMENT</div>
+        <div className="aa-section-title">TIME SPENT PER PLAYER</div>
+        <div className="aa-section-note">Total time in game, and how that splits across sessions.</div>
         <table className="aa-table">
           <thead>
             <tr><th>Player</th><th>Faction</th><th>Logins·14d</th><th>Time in game·14d</th><th>Active days</th><th>Actions·14d</th><th>Last seen</th></tr>
