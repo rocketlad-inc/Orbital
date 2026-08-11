@@ -540,6 +540,15 @@ button.fleet-capchip {
   text-align: left;
   cursor: pointer;
 }
+/* The mobile rules give every button a 40px min-height for thumbs. This
+   chip is a label that happens to be clickable, not a primary action —
+   letting it grow would re-inflate the fleet card into the tall target
+   this change exists to remove. (0,3,1) to outrank the shell rule. */
+:root[data-mobile-shell] button.fleet-capchip,
+:root button.fleet-capchip {
+  min-height: 0;
+  font-size: inherit;
+}
 button.fleet-capchip:hover { border-color: #2d4255; background: rgba(78, 205, 196, 0.08); }
 button.fleet-capchip:focus-visible { outline: 2px solid #4ecdc4; outline-offset: 1px; }
 .fleet-capchip--static { cursor: default; }
