@@ -158,7 +158,7 @@ export function humanizeMpError(
 
     // Lobby / designer / orders codes
     case 'color_taken':
-      return 'That color is too close to another player\'s — pick something more distinct.';
+      return 'Another player already flies that exact color — pick a different one.';
     case 'already_cancelled':
       return 'This build was already cancelled.';
     case 'no_detonator':

@@ -189,7 +189,8 @@ export type RoomMember = {
   bio?: string | null;
   chosen_starting_body?: string | null;
   /** Two-tone (§5): primary faction color pref (#rrggbb). Primary carries
-   *  meaning; server rejects picks too close to another member's. */
+   *  meaning; the server rejects only an EXACT duplicate of another
+   *  member's primary (409 color_taken). */
   color?: string | null;
   /** Secondary trim color pref — decoration only, free-pick. */
   color2?: string | null;

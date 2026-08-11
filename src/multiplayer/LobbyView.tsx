@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch, RoomSnapshot, RoomSummary } from './api';
 import { useAuth } from './AuthContext';
 import { LobbyMapPreview } from './LobbyMapPreview';
-import { colorDistance, COLOR_MIN_DISTANCE, deriveSecondary, emblemInk } from '../game/colorUtils';
+import { deriveSecondary, emblemInk } from '../game/colorUtils';
 import { EMBLEM_IDS, PREMIUM_EMBLEM_IDS, EMBLEM_NAMES } from '../game/emblems';
 import { startCommissionCheckout } from './api';
 import { FactionEmblem, FlagChip } from '../components/FactionEmblem';
@@ -649,7 +649,7 @@ function RoomDetail({
       const code = res.error?.code;
       setError(
         code === 'color_taken'
-          ? "Too close to another player's color — pick something more distinct"
+          ? 'Another player already flies that color'
           : code === 'emblem_taken'
             ? 'Another player already flies that emblem'
             : res.error?.message ?? 'Could not save flag',
@@ -936,14 +936,18 @@ function FactionFlagPicker({
     <>
       <div className="mp-section-title" style={{ marginTop: 12 }}>Faction flag</div>
       <div className="mp-empty" style={{ fontSize: 10, marginBottom: 6, padding: '0 2px' }}>
-        Primary marks what you own on the map — it must stay distinct from other
-        players. Secondary is trim only. Your emblem is your shorthand across the
-        game, and no two empires may fly the same one.
+        Primary marks what you own on the map — no two players may fly the same
+        one. Secondary is trim only. Your emblem is your shorthand across the
+        game, and it's exclusive too.
       </div>
       <label className="mp-label">Primary</label>
       <div style={rowStyle}>
         {FACTION_COLOR_CHOICES.map(c => {
-          const clash = otherPrimaries.find(o => colorDistance(c, o.color) < COLOR_MIN_DISTANCE);
+          // Exact match only. This used to grey out anything within 90
+          // sRGB units of a rival's pick, which meant a few seated
+          // players wiped out most of the grid — the rule ran the lobby
+          // out of colours long before the palette did.
+          const clash = otherPrimaries.find(o => o.color.toLowerCase() === c.toLowerCase());
           const selected = myColor === c;
           // Own pick is never "taken" by yourself.
           const taken = !!clash && !selected;
@@ -953,7 +957,7 @@ function FactionFlagPicker({
               type="button"
               disabled={taken}
               style={swatchStyle(c, { selected, taken })}
-              title={taken ? `Too close to ${clash!.name}'s color` : selected ? 'Click to clear' : c}
+              title={taken ? `${clash!.name} already flies this color` : selected ? 'Click to clear' : c}
               onClick={() => onPick('color', selected ? null : c)}
             />
           );

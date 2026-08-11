@@ -33,11 +33,25 @@ function colorDistance(a, b) {
   const db = parseInt(pa.slice(5, 7), 16) - parseInt(pb.slice(5, 7), 16);
   return Math.sqrt(dr * dr + dg * dg + db * db);
 }
-/** Minimum sRGB distance between two members' PRIMARY picks. ~90 of the
- *  441 max keeps blue-vs-teal style collisions out without making the
- *  16-swatch grid feel empty. Keep in sync with COLOR_MIN_DISTANCE in
- *  src/game/colorUtils.ts. */
-const COLOR_MIN_DISTANCE = 90;
+// PRIMARY UNIQUENESS IS EXACT-MATCH ONLY (Lorne).
+//
+// This used to reject any pick within 90 sRGB units of another member's.
+// In practice that ate the grid: each pick knocked out a ball of colour
+// space around it, and with a handful of players seated there was
+// nothing distinct left to choose — the rule ran the lobby out of
+// options long before the palette did.
+//
+// So the bar is now the one players actually asked for: you may not fly
+// the SAME primary as someone else. Near neighbours are allowed and are
+// the picker's problem to make legible, not the server's to forbid.
+//
+// colorDistance is kept — the sim still reports near-identical pairs as
+// information, and it costs nothing to leave a working helper in place.
+const sameColor = (a, b) => {
+  const pa = normalizeHexColor(a);
+  const pb = normalizeHexColor(b);
+  return !!pa && !!pb && pa === pb;
+};
 
 // Whitelist of tick intervals (real-world ms between automatic ticks).
 //
@@ -582,10 +596,9 @@ async function handlePatchMe(req, env, ctx) {
       args.push(body.chosen_starting_body);
     }
   }
-  // Two-tone (§5): primary faction color. Enforced for perceptual
-  // distance against other members' primaries — PRIMARY carries all
-  // meaning on the map, so two near-identical primaries would make
-  // ownership unreadable. Secondary is free-pick (decoration only).
+  // Two-tone (§5): primary faction color. PRIMARY carries all meaning on
+  // the map, so no two members may fly the SAME one — but only the same
+  // one (see sameColor above). Secondary is free-pick (decoration only).
   if (body.color !== undefined) {
     if (body.color === null || body.color === '') {
       sets.push('color = NULL');
@@ -597,8 +610,8 @@ async function handlePatchMe(req, env, ctx) {
         .bind(roomId, ctx.session.user_id)
         .all();
       for (const r of (otherRows.results ?? [])) {
-        if (colorDistance(hex, r.color) < COLOR_MIN_DISTANCE) {
-          return err(409, 'color_taken', 'too close to another player\'s color');
+        if (sameColor(hex, r.color)) {
+          return err(409, 'color_taken', 'another player already flies that color');
         }
       }
       sets.push('color = ?');

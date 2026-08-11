@@ -718,23 +718,17 @@ async function readJson(req) {
 const HEX6 = /^#?[0-9a-fA-F]{6}$/;
 const GAME_ID_RE = /^[A-Za-z0-9_-]{6,32}$/;
 
-/** sRGB distance between two #rrggbb colours. KEEP IN SYNC with
- *  colorDistance in worker/lobby.js and src/game/colorUtils.ts — all
- *  three must agree or the lobby will accept a pick that seeding then
- *  treats as a clash (or vice versa). */
-function colorDistanceHex(a, b) {
-  const pa = String(a || '').trim();
-  const pb = String(b || '').trim();
-  if (pa.length !== 7 || pb.length !== 7) return Infinity;
-  const dr = parseInt(pa.slice(1, 3), 16) - parseInt(pb.slice(1, 3), 16);
-  const dg = parseInt(pa.slice(3, 5), 16) - parseInt(pb.slice(3, 5), 16);
-  const db = parseInt(pa.slice(5, 7), 16) - parseInt(pb.slice(5, 7), 16);
-  return Math.sqrt(dr * dr + dg * dg + db * db);
-}
-
-/** Minimum sRGB distance between two factions' primaries. KEEP IN SYNC
- *  with COLOR_MIN_DISTANCE in worker/lobby.js. */
-const COLOR_MIN_DISTANCE = 90;
+// The 90-unit threshold that used to gate PICKS is gone: primary
+// uniqueness is exact-match only now, so every RULE in this file is a
+// string comparison on the normalised hex. Nothing has to be "kept in
+// sync" across three files any more, which removes the failure mode
+// where the lobby accepted a pick that seeding then treated as a clash.
+//
+// Distance survives in exactly one place, as a soft preference: when
+// handing out a DEFAULT colour we'd rather not park an auto-assigned
+// empire right on top of somebody's deliberate choice. Never blocks
+// anything — see defaultColorFor.
+const DEFAULT_COLOR_COMFORT = 60;
 
 function normalizeHex(s) {
   if (typeof s !== 'string') return null;
@@ -901,51 +895,66 @@ export async function seedGameWorld(env, gameId) {
   // Colours are assigned in TWO passes so a default can never collide
   // with an explicit pick.
   //
-  // The lobby rejects a pick within COLOR_MIN_DISTANCE of another
-  // member's pick — but only pref-vs-pref. A member who never opened the
-  // swatch grid used to fall through to FACTION_COLORS[slot], which is
-  // the SAME palette the grid offers. Player A picks rose (#ec407a),
-  // player B never picks and lands on slot 6, and slot 6 IS rose: two
-  // identical factions, no rule broken. That shipped — a live game ran
-  // with two #ec407a empires.
+  // The bug this prevents: a member who never opened the swatch grid used
+  // to fall through to FACTION_COLORS[slot], which is the SAME palette
+  // the grid offers. Player A picks rose (#ec407a), player B never picks
+  // and lands on slot 6, and slot 6 IS rose: two identical factions, no
+  // rule broken. That shipped — a live game ran with two #ec407a empires.
   //
-  // Pass 1 reserves every explicit pick. Pass 2 walks the palette and
-  // hands each unset member the first colour that is far enough from
-  // everything already reserved, so defaults dodge picks AND each other.
-  const takenColors = memberRows
-    .map(m => normalizeHex(m.color))
-    .filter(Boolean);
-  const farEnough = (hex) => takenColors.every(t => colorDistanceHex(hex, t) >= COLOR_MIN_DISTANCE);
+  // Pass 1 reserves every explicit pick. Pass 2 walks the palette from
+  // the slot's traditional colour and takes the first one nobody holds,
+  // so defaults dodge picks AND each other.
+  //
+  // This got markedly simpler when the rule became exact-match-only. The
+  // old 90-unit version needed a degrade path, because the palette is
+  // curated for looks and three of its own pairs sit closer than 90
+  // (azure/cyan 51, verdant/ferrous 87, ember/rose 75) — so a later slot
+  // could find EVERY entry "too close" and fall through to a duplicate.
+  // Exact uniqueness over 8 palette entries with at most 8 seats is
+  // always satisfiable, so the walk can't fail and there is nothing to
+  // degrade to.
+  // SLOT-INDEXED: index === slot, null where that member hasn't picked.
+  // Deliberately NOT compacted with .filter(Boolean) — the loop below
+  // writes each seat's final colour back at its own index, and a
+  // compacted array would put a picker's colour at the wrong position
+  // and make the "did an earlier seat take this?" prefix check lie.
+  const takenColors = memberRows.map(m => normalizeHex(m.color) || null);
+  const isFree = (hex) => !takenColors.includes(hex);
+  /** sRGB gap to the nearest colour already spoken for. */
+  const gapFromTaken = (hex) => takenColors.reduce((min, t) => {
+    if (!t) return min;
+    const d = Math.hypot(
+      parseInt(hex.slice(1, 3), 16) - parseInt(t.slice(1, 3), 16),
+      parseInt(hex.slice(3, 5), 16) - parseInt(t.slice(3, 5), 16),
+      parseInt(hex.slice(5, 7), 16) - parseInt(t.slice(5, 7), 16),
+    );
+    return Math.min(min, d);
+  }, Infinity);
+
   const defaultColorFor = (slot) => {
-    // Preference 1: a palette entry comfortably clear of everything
-    // taken. Start at the slot's traditional colour so a lobby of
-    // no-pickers keeps the familiar spread, then walk forward.
-    for (let i = 0; i < FACTION_COLORS.length; i++) {
-      const c = FACTION_COLORS[(slot + i) % FACTION_COLORS.length];
-      if (farEnough(c)) return c;
-    }
-    // Preference 2: the palette CANNOT always satisfy preference 1 —
-    // it is curated for looks, not for the lobby's 90-unit rule, and
-    // three of its own pairs sit closer than that (azure/cyan 51,
-    // verdant/ferrous 87, ember/rose 75). So once someone's explicit
-    // pick occupies part of the space, a later slot can find every
-    // entry "too close" and an earlier version of this fell through to
-    // the slot's own colour — handing out the exact duplicate this
-    // function exists to prevent.
+    // Pass 1: walk from the slot's traditional colour and take the first
+    // free one that ALSO isn't a near-twin of something already taken.
     //
-    // Degrade to the most distinct entry still available instead:
-    // maximise the minimum distance to anything taken. That keeps the
-    // hard guarantee players actually asked for (never the SAME colour
-    // twice) even when the soft one (90 apart) is unsatisfiable.
-    let best = null;
-    let bestGap = -1;
+    // This is a PREFERENCE, not the rule. Loosening picks to exact-match
+    // shouldn't make auto-assignment sloppy: without this the sim showed
+    // a player's custom pink (#ee4480) sitting 7 units from a default
+    // (#ec407a) — two empires nobody could tell apart, one of whom never
+    // chose anything. Starting the walk at the slot position keeps the
+    // familiar rotation whenever it's available.
     for (let i = 0; i < FACTION_COLORS.length; i++) {
       const c = FACTION_COLORS[(slot + i) % FACTION_COLORS.length];
-      const gap = takenColors.reduce(
-        (min, t) => Math.min(min, colorDistanceHex(c, t)), Infinity);
-      if (gap > bestGap) { bestGap = gap; best = c; }
+      if (isFree(c) && gapFromTaken(c) >= DEFAULT_COLOR_COMFORT) return c;
     }
-    return best ?? FACTION_COLORS[slot % FACTION_COLORS.length];
+    // Pass 2: comfort is unsatisfiable (a crowded lobby, or picks spread
+    // across the palette) — any free colour will do. Uniqueness is the
+    // rule and it still holds here.
+    for (let i = 0; i < FACTION_COLORS.length; i++) {
+      const c = FACTION_COLORS[(slot + i) % FACTION_COLORS.length];
+      if (isFree(c)) return c;
+    }
+    // Unreachable while FACTION_COLORS.length >= max_players, but a
+    // duplicate beats a crash during game start.
+    return FACTION_COLORS[slot % FACTION_COLORS.length];
   };
 
   // Emblems — the same two-pass shape as colour, and for the same
@@ -967,15 +976,23 @@ export async function seedGameWorld(env, gameId) {
     // Secondary is decoration only — meaning must stay in primary.
     const picked = normalizeHex(m.color);
     let color;
-    if (picked) {
+    // A pick is honoured UNLESS an earlier seat already holds that exact
+    // colour. The lobby prevents two members picking the same primary,
+    // but it can't cover a legacy row written before the rule, a race
+    // between two PATCHes, or a host editing the DB — and the one rule
+    // left standing is "no two factions share a colour", so a duplicate
+    // pick has to resolve rather than sail through. Earlier join order
+    // keeps its choice; the later seat rotates to a free colour.
+    if (picked && !takenColors.slice(0, slot).includes(picked)) {
       color = picked;
     } else {
       color = defaultColorFor(slot);
-      // Reserve it so the NEXT unset member cannot be handed the same
-      // one — without this, two no-pickers whose slots both walk onto
-      // the same free colour would collide with each other.
-      takenColors.push(color);
     }
+    // Record what THIS seat ended up with, at its own index, so later
+    // seats see it. Positional (not push) because takenColors starts as
+    // the full list of picks — pushing would leave a picker's own colour
+    // sitting at the wrong index and make the prefix check above lie.
+    takenColors[slot] = color;
     const color2 = normalizeHex(m.color2) || deriveSecondary(color);
     let emblem;
     if (isEmblemId(m.emblem)) {
@@ -1737,17 +1754,18 @@ async function handlePatchMyFaction(req, env, ctx) {
   if (body.color !== undefined) {
     const hex = normalizeHex(body.color);
     if (!hex) return errResponse(400, 'bad_request', 'color must be a 6-digit hex');
-    // Same distance rule as the lobby. This endpoint was the one door
-    // with no check — which is how two live factions ended up flying
-    // identical rose (#ec407a) and the seat map, legend, territory bar
-    // and chat all lost an identity at once.
+    // Same rule as the lobby: not the SAME colour as a living rival.
+    // This endpoint was the one door with no check at all — which is how
+    // two live factions ended up flying identical rose (#ec407a) and the
+    // seat map, legend, territory bar and chat all lost an identity at
+    // once.
     const others = (await env.DB
       .prepare('SELECT color FROM game_factions WHERE game_id = ? AND id != ? AND color IS NOT NULL')
       .bind(gameId, factionId)
       .all()).results ?? [];
     for (const o of others) {
-      if (colorDistanceHex(hex, o.color) < COLOR_MIN_DISTANCE) {
-        return errResponse(409, 'color_taken', "too close to another faction's color");
+      if (normalizeHex(o.color) === hex) {
+        return errResponse(409, 'color_taken', 'another faction already flies that color');
       }
     }
     updates.push('color = ?');
@@ -1857,20 +1875,23 @@ export async function seedLateFaction(env, gameId, userId, chosenTemplateId, ide
   const prefRow = await env.DB
     .prepare('SELECT color, color2, emblem FROM room_members WHERE room_id = ? AND user_id = ?')
     .bind(gameId, userId).first();
-  // Late joiner: same two-pass rule as seeding — a default must dodge
-  // the colours already on the board, or the newcomer arrives wearing
-  // somebody else's flag.
-  let color = normalizeHex(prefRow?.color);
+  // Late joiner: the newcomer must not arrive wearing somebody else's
+  // flag. Checked against what is actually ON THE BOARD, not against the
+  // lobby — same reasoning as the emblem block below. The lobby only
+  // compares room_members to each other, and factions that took a
+  // DEFAULT colour at seed time never wrote it back there, so a
+  // perfectly legal lobby pick can still be flying in the game already.
+  const usedColors = ((await env.DB
+    .prepare('SELECT color FROM game_factions WHERE game_id = ? AND color IS NOT NULL')
+    .bind(gameId)
+    .all()).results ?? []).map(r => normalizeHex(r.color)).filter(Boolean);
+  const prefColor = normalizeHex(prefRow?.color);
+  let color = (prefColor && !usedColors.includes(prefColor)) ? prefColor : null;
   if (!color) {
-    const existing = (await env.DB
-      .prepare('SELECT color FROM game_factions WHERE game_id = ? AND color IS NOT NULL')
-      .bind(gameId)
-      .all()).results ?? [];
-    const used = existing.map(r => r.color);
     color = FACTION_COLORS[slot % FACTION_COLORS.length];
     for (let i = 0; i < FACTION_COLORS.length; i++) {
       const c = FACTION_COLORS[(slot + i) % FACTION_COLORS.length];
-      if (used.every(u => colorDistanceHex(c, u) >= COLOR_MIN_DISTANCE)) { color = c; break; }
+      if (!usedColors.includes(c)) { color = c; break; }
     }
   }
   const color2 = normalizeHex(prefRow?.color2) || deriveSecondary(color);

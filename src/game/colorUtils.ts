@@ -61,9 +61,15 @@ export function colorDistance(a: string, b: string): number {
   return Math.sqrt(dr * dr + dg * dg + db * db);
 }
 
-/** Minimum sRGB distance between two players' PRIMARY colors. Keep in
- *  sync with COLOR_MIN_DISTANCE in worker/lobby.js. */
-export const COLOR_MIN_DISTANCE = 90;
+// COLOR_MIN_DISTANCE (90) is GONE (Lorne). Primary uniqueness is now
+// exact-match only: two players may not fly the SAME colour, but near
+// neighbours are allowed. The distance rule ate the swatch grid — every
+// pick knocked out a ball of colour space around it, and a few seated
+// players left nothing distinct to choose.
+//
+// colorDistance above is deliberately kept: it's still the right way to
+// ASK how close two colours are (the colour sim reports near-identical
+// pairs as information), it just no longer forbids anything.
 
 /** Ink candidates for an emblem. Not pure black/white: a hard #000 on a
  *  mid tone reads as a hole, and these two sit against the app's dark
