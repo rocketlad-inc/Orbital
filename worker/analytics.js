@@ -74,12 +74,75 @@ export function eventKindFromPath(method, pathname) {
   return `${method} ${kind}`.slice(0, 80);
 }
 
-export async function logEvent(env, { gameId, userId, kind }) {
+/** Cap on a stored payload. Telemetry rows outnumber game rows by an
+ *  order of magnitude, so an unbounded JSON blob per event is how an
+ *  analytics table quietly becomes the biggest thing in the database. */
+const PAYLOAD_MAX = 512;
+
+/**
+ * Structural payload only — NEVER free text a person wrote.
+ *
+ * Message bodies, empire names, bill titles and chat all pass through
+ * this worker, and any of them would be trivial to attach "for context".
+ * A telemetry table that accumulates what players typed to each other is
+ * a liability that no engagement metric justifies, so the allowlist is
+ * enumerated rather than filtered: only keys named here survive, and
+ * every value is coerced to a number, boolean, or short slug.
+ */
+const PAYLOAD_KEYS = new Set([
+  'kind', 'tech', 'level', 'ship_class', 'building', 'body_type',
+  'metal', 'gold', 'science', 'count', 'target_kind', 'route_kind',
+  'settlement_type', 'stance', 'result', 'screen', 'from', 'ms',
+  // Session context. `viewport` is what finally answers "how much of this
+  // game is actually played on a phone" — the question the whole mobile
+  // effort has been guessing at. `tz_offset` is minutes from UTC, kept
+  // because server timestamps are UTC and "do they play in the evening"
+  // is a local-time question; coarse enough to be a timezone, not a
+  // location.
+  'viewport', 'tz_offset', 'is_touch',
+]);
+
+function sanitizePayload(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const out = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (!PAYLOAD_KEYS.has(k)) continue;
+    if (typeof v === 'number' && Number.isFinite(v)) out[k] = Math.round(v);
+    else if (typeof v === 'boolean') out[k] = v;
+    else if (typeof v === 'string' && /^[A-Za-z0-9_.:-]{1,40}$/.test(v)) out[k] = v;
+    // anything else (objects, arrays, prose, long strings) is dropped
+  }
+  const keys = Object.keys(out);
+  if (keys.length === 0) return null;
+  const s = JSON.stringify(out);
+  return s.length > PAYLOAD_MAX ? null : s;
+}
+
+/** Client-generated visit id. Opaque to us, so validate the shape rather
+ *  than trust it — it is a grouping key, never an authorization one. */
+const SESSION_ID_RE = /^[A-Za-z0-9_-]{6,40}$/;
+
+export async function logEvent(env, { gameId, userId, kind, payload, sessionId, dwellMs }) {
   if (!kind) return;
   try {
+    const dwell = Number.isFinite(Number(dwellMs))
+      // Clamp to 6h: a backgrounded tab that reports a three-day dwell
+      // would drag every average it touches.
+      ? Math.max(0, Math.min(6 * 3600 * 1000, Math.round(Number(dwellMs))))
+      : null;
     await env.DB
-      .prepare('INSERT INTO analytics_events (game_id, user_id, kind, created_at_ms) VALUES (?, ?, ?, ?)')
-      .bind(gameId ?? null, userId ?? null, kind, Date.now())
+      .prepare(
+        `INSERT INTO analytics_events
+           (game_id, user_id, kind, payload, session_id, dwell_ms, created_at_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        gameId ?? null, userId ?? null, kind,
+        sanitizePayload(payload),
+        (typeof sessionId === 'string' && SESSION_ID_RE.test(sessionId)) ? sessionId : null,
+        dwell,
+        Date.now(),
+      )
       .run();
   } catch (e) {
     // Telemetry must never fail a player action.
@@ -943,23 +1006,47 @@ async function handleGameAnalytics(req, env, { session, params }) {
   });
 }
 
-// POST /api/games/:gameId/telemetry {kind} - client-side UI events
-// ("opened the fleet menu"), so the dashboard can build funnels the
-// server's mutation log can't see. Kind is whitelisted to a slug and
-// force-prefixed 'ui/' so a client can never spoof server kinds.
+// POST /api/games/:gameId/telemetry
+//   { kind, session_id?, dwell_ms?, payload?, batch?: [...] }
+//
+// Client-side UI events, so the dashboard can see what the server's
+// mutation log cannot: which screens were opened, how long they were
+// read, and in what order inside one visit. Kind is whitelisted to a
+// slug and force-prefixed 'ui/' so a client can never spoof a server
+// kind like 'POST bodies/build' and forge its own action history.
+//
+// Accepts a BATCH because screen-dwell events fire on every close: one
+// request per menu tap would triple this game's request volume for
+// telemetry alone. The client buffers and flushes, so the common case is
+// one request carrying several rows.
 const UI_KIND_RE = /^[a-z0-9][a-z0-9_-]{1,32}$/;
+const BATCH_MAX = 25;
+
 async function handleUiTelemetry(req, env, { session, params }) {
   let body = null;
   try { body = await req.json(); } catch { /* unreadable -> bad_kind below */ }
-  const kind = body && body.kind;
-  if (typeof kind !== 'string' || !UI_KIND_RE.test(kind)) {
+  if (!body || typeof body !== 'object') {
     return err(400, 'bad_kind', 'kind must be a short slug');
   }
-  await logEvent(env, {
-    gameId: params.gameId,
-    userId: session.user_id,
-    kind: `ui/${kind}`,
-  });
+
+  const items = Array.isArray(body.batch) ? body.batch.slice(0, BATCH_MAX) : [body];
+  let accepted = 0;
+  for (const it of items) {
+    const kind = it && it.kind;
+    if (typeof kind !== 'string' || !UI_KIND_RE.test(kind)) continue;
+    await logEvent(env, {
+      gameId: params.gameId,
+      userId: session.user_id,
+      kind: `ui/${kind}`,
+      payload: it.payload,
+      sessionId: it.session_id ?? body.session_id,
+      dwellMs: it.dwell_ms,
+    });
+    accepted += 1;
+  }
+  // A batch of entirely malformed kinds is a client bug worth surfacing;
+  // a batch that was partly good is not worth failing over.
+  if (accepted === 0) return err(400, 'bad_kind', 'kind must be a short slug');
   return new Response(null, { status: 204 });
 }
 

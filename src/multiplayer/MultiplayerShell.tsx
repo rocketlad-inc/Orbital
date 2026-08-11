@@ -6,6 +6,7 @@ import { CommsPanel } from './CommsPanel';
 import { SenatePanel } from './SenatePanel';
 import { TradesPanel } from './TradesPanel';
 import { tradesApi, apiFetch, RoomSnapshot } from './api';
+import { openScreen, logAction } from './telemetry';
 
 // Multiplayer overlay UI mounted alongside the existing single-player React
 // app. The dock exposes a right-side panel with Lobby / Faction / Comms /
@@ -126,6 +127,34 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
   useEffect(() => {
     if (gameId && tab === 'lobby') setTab('faction');
   }, [gameId, tab]);
+
+  // ONE effect instruments EVERY multiplayer menu — open and dwell.
+  //
+  // Coverage was previously hand-placed: a logUiEvent call sitting inside
+  // whichever component someone remembered to edit, which is why exactly
+  // four screens out of a dozen ever reported anything. Hanging it off
+  // the tab state instead means a new tab is measured the day it ships,
+  // with no call to forget, and the cleanup return gives dwell for free.
+  useEffect(() => openScreen(gameId, tab), [gameId, tab]);
+
+  // Session start — fired once per page load, per game. This is the row
+  // that turns a pile of events into a VISIT: everything sharing its
+  // session id belongs to one sitting, so length, actions-per-visit and
+  // time-of-day all fall out of a GROUP BY.
+  //
+  // `viewport` is here because it settles by measurement what proportion
+  // of play is actually on a phone — a question every mobile decision so
+  // far has had to guess at.
+  const sessionLogged = useRef(false);
+  useEffect(() => {
+    if (!gameId || sessionLogged.current) return;
+    sessionLogged.current = true;
+    logAction(gameId, 'session-start', {
+      viewport: `${window.innerWidth}x${window.innerHeight}`,
+      is_touch: (navigator.maxTouchPoints ?? 0) > 0,
+      tz_offset: -new Date().getTimezoneOffset(),
+    });
+  }, [gameId]);
 
   // Pull the room's invite code + host flag once we're in a game, so the
   // host can invite a latecomer mid-match. game.id === room.id here.
