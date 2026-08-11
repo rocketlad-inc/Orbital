@@ -60,3 +60,23 @@ export function traitSummary(traits: string[] | undefined): string {
     .map(d => `${d.icon} ${d.name} — ${d.blurb}`)
     .join(' · ');
 }
+
+/**
+ * The same information, compact enough to sit inside a <select> option.
+ *
+ * Drops the em-dash between name and effect ("💨 Voidrunner +10% engine
+ * acceleration"), because in a dropdown the row is already one item and
+ * the dash just eats width. Returns a plain string with no markup: a
+ * native <option> renders text only, which is the whole constraint.
+ *
+ * Returns '' for an untraited captain rather than a placeholder — the
+ * caller decides how to say "nothing", since "no trait" reads
+ * differently in a list of choices than it does on a card.
+ */
+export function traitBrief(traits: string[] | undefined): string {
+  return (traits ?? [])
+    .map(t => CAPTAIN_TRAITS[t])
+    .filter(Boolean)
+    .map(d => `${d.icon} ${d.name} ${d.blurb}`)
+    .join(' · ');
+}

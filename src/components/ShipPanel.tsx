@@ -7,7 +7,7 @@ import { maintenanceRatesForShip } from '../game/maintenance';
 import { nearestShipyardBodyId, isDamagedShip } from '../game/repair';
 import { effectiveShipMaxHp, shipWorldPosition, attackerDamageFactors } from '../game/combat';
 import { predictTarget, SETTLEMENT_COMBAT_SPEED } from '../game/targeting';
-import { traitSummary, rankTier, AVATAR_IDS } from '../game/captains';
+import { traitSummary, traitBrief, rankTier, AVATAR_IDS } from '../game/captains';
 import { CaptainAvatar } from './CaptainAvatar';
 import {
   ShipPartId, SHIP_PART_DEFS, countPart, detonatorDamage, detonatorDisclosure,
@@ -2092,11 +2092,29 @@ const ShipCaptainCard: React.FC<{
             >
               <option value="">REASSIGN…</option>
               <option value="__bench">→ To the bank</option>
-              {bank.map(c => (
-                <option key={c.id} value={c.id}>
-                  Swap in {c.name}{c.rank > 0 ? ` · ${c.rank} ⚔` : ''}
-                </option>
-              ))}
+              {/* The bonus rides along with the name (player feedback).
+                  Without it the only way to learn what a bank captain
+                  does was to swap them in, read the card, and swap back —
+                  or leave the ship entirely for the captains menu. A
+                  dropdown you have to commit to before it tells you
+                  anything isn't a chooser.
+
+                  Plain text, because a native <option> renders no markup;
+                  `title` carries the fuller phrasing where the browser
+                  shows option tooltips. */}
+              {bank.map(c => {
+                const brief = traitBrief(c.traits);
+                return (
+                  <option
+                    key={c.id}
+                    value={c.id}
+                    title={traitSummary(c.traits) || 'No notable traits'}
+                  >
+                    Swap in {c.name}{c.rank > 0 ? ` · ${c.rank} ⚔` : ''}
+                    {brief ? ` — ${brief}` : ' — no trait'}
+                  </option>
+                );
+              })}
             </select>
           )}
         </div>
