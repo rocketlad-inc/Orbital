@@ -25,7 +25,8 @@
     "sim:colors": "node sim/colorClash.mjs",
     "sim:emblems": "node sim/emblemClash.mjs",
     "sim:trade": "node sim/tradeRoutes.mjs",
-    "sim:senate": "node sim/senateTerms.mjs"
+    "sim:senate": "node sim/senateTerms.mjs",
+    "sim:sitrep": "node sim/sitrepTerraform.mjs"
   },
   "eslintConfig": {
     "extends": [

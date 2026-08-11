@@ -184,6 +184,77 @@ export async function buildSituationReport(env, gameId, userId) {
     fields.push({ name: '✉️ Unread messages', value: `${unread} waiting in the comms panel.` });
   }
 
+  // ---- terraforming: what's close, and what's stuck ----------------------
+  //
+  // The clearest "things that are stuck" case in the game, and until now
+  // completely invisible: a world with a half-delivered payload and no
+  // freighter feeding it will sit at 40% forever, and NOTHING anywhere
+  // tells you. The whole point of this report is to surface exactly that.
+  //
+  // Three states, most urgent first:
+  //   STALLED    progress banked, zero routes feeding — actionable NOW
+  //   FINISHING  payload in, transformation clock running — hold the world
+  //   FEEDING    supply under way — a genuine change, worth one line
+  //
+  // Deliberately silent about raw worlds nobody has STARTED. Those are a
+  // standing opportunity, not news, and listing every un-terraformed rock
+  // you own every single day is exactly the status-dump this report
+  // exists not to be.
+  let tfCostMetal = 124, tfCostCredits = 124;
+  try {
+    const gc = await import('./gameConfig.js');
+    const conf = await gc.cfg(env, gameId);
+    tfCostMetal = Number(conf.terraform_cost_metal ?? 124);
+    tfCostCredits = Number(conf.terraform_cost_credits ?? 124);
+  } catch { /* shipped defaults */ }
+
+  const tfRows = (await env.DB
+    .prepare(
+      `SELECT b.id, b.name,
+              b.terraform_acc_metal  AS accM,
+              b.terraform_acc_gold   AS accC,
+              b.terraform_completes_at_tick AS doneAt,
+              (SELECT COUNT(*) FROM game_trade_routes r
+                WHERE r.game_id = ?1 AND r.kind = 'terraform'
+                  AND r.dest_body_id = b.id AND r.cancelled_at_tick IS NULL) AS feeding
+         FROM game_bodies b
+        WHERE b.game_id = ?1
+          AND b.owner_faction_id = ?2
+          AND b.terraformed_at_tick IS NULL
+          AND b.type IN ('terrestrial','moon','dwarf')`,
+    )
+    .bind(gameId, me.id).all()).results ?? [];
+
+  const finishing = [], stalled = [], feeding = [];
+  for (const r of tfRows) {
+    const accM = Number(r.accM ?? 0), accC = Number(r.accC ?? 0);
+    const started = accM > 0 || accC > 0;
+    if (r.doneAt != null) {
+      finishing.push(`**${r.name}** — green in **${Math.max(0, r.doneAt - tick)}** ticks. Hold it.`);
+      continue;
+    }
+    if (!started) continue;                       // never begun: not news
+    // Percent tracks the LIMITING half, matching the world-menu card —
+    // a payload is only as delivered as its furthest-behind resource.
+    const pct = Math.round(Math.min(accM / Math.max(1, tfCostMetal),
+                                    accC / Math.max(1, tfCostCredits)) * 100);
+    if (Number(r.feeding ?? 0) === 0) {
+      stalled.push(`**${r.name}** — **${pct}%** and STALLED: no freighter is supplying it.`);
+    } else {
+      feeding.push(`**${r.name}** — ${pct}% · ${r.feeding} route${r.feeding === 1 ? '' : 's'} feeding`);
+    }
+  }
+  if (stalled.length || finishing.length || feeding.length) {
+    // A stall is a decision waiting on the player, so it lifts urgency
+    // the same way an unanswered trade offer does. Progress alone does
+    // not — that would make a calm day read as busy.
+    if (stalled.length) urgency = Math.max(urgency, 1);
+    fields.push({
+      name: '🌱 Terraforming',
+      value: [...finishing, ...stalled, ...feeding].join('\n').slice(0, 1000),
+    });
+  }
+
   // ---- construction: finished, and idle yards ----------------------------
   const building = (await env.DB
     .prepare(
