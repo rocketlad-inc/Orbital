@@ -24,9 +24,10 @@ interface ChatMsg {
 // draw a player's flag identically.
 
 // Two-tone factions (§5): curated swatch grid — a modest 16 colors, not
-// a full wheel. PRIMARY carries all meaning on the map (server enforces
-// perceptual distance between members' primaries); SECONDARY is
-// decoration only and free-pick from the same grid.
+// a full wheel. PRIMARY carries all meaning on the map; the server
+// rejects only an EXACT duplicate of another member's primary (the old
+// 90-unit perceptual-distance rule was dropped — it emptied the grid).
+// SECONDARY is decoration only and free-pick from the same grid.
 const FACTION_COLOR_CHOICES: string[] = [
   '#ff7043', // ember
   '#42a5f5', // azure
