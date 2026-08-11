@@ -885,7 +885,34 @@ function RoomDetail({
 // ---------- Faction color picker (two-tone, §5) ----------
 
 /** Shared swatch-button style. */
+/** Grey used to mark a swatch as unavailable. */
+const TAKEN_INK = 'rgba(150, 168, 184, 0.85)';
+
 function swatchStyle(c: string, opts: { selected: boolean; taken: boolean }): React.CSSProperties {
+  // A taken swatch has to stop reading as a COLOUR CHOICE, not merely as
+  // a dimmer one. Fading to 0.25 opacity on a dark panel turned a
+  // disabled orange into what looked like dark orange — reported as
+  // "I just thought they were darker shades". So three cues stack:
+  //   • grayscale, so the hue itself drains away
+  //   • an explicit grey border instead of the usual faint one
+  //   • a diagonal bar, the universal "not available"
+  // A trace of colour survives (grayscale is 0.85, not 1) so you can
+  // still tell WHICH swatch is gone; the tooltip names who holds it.
+  if (opts.taken) {
+    return {
+      width: 24,
+      height: 24,
+      padding: 0,
+      background:
+        `linear-gradient(135deg, transparent 43%, ${TAKEN_INK} 43%, ${TAKEN_INK} 57%, transparent 57%), ${c}`,
+      border: `2px solid ${TAKEN_INK}`,
+      borderRadius: 3,
+      cursor: 'not-allowed',
+      filter: 'grayscale(0.85)',
+      opacity: 0.5,
+      position: 'relative',
+    };
+  }
   return {
     width: 24,
     height: 24,
@@ -893,8 +920,8 @@ function swatchStyle(c: string, opts: { selected: boolean; taken: boolean }): Re
     background: c,
     border: opts.selected ? '2px solid #fff' : '1px solid var(--mp-border)',
     borderRadius: 3,
-    cursor: opts.taken ? 'not-allowed' : 'pointer',
-    opacity: opts.taken ? 0.25 : 1,
+    cursor: 'pointer',
+    opacity: 1,
     position: 'relative',
   };
 }
@@ -1002,12 +1029,23 @@ function FactionFlagPicker({
                 // The emblem draws in the player's own primary so the grid
                 // previews the finished flag rather than a generic icon
                 // sheet — you are choosing a shape for YOUR colours.
-                color: selected ? '#fff' : (myColor || 'var(--mp-text, #cfd8e3)'),
+                // A TAKEN emblem gets the same treatment as a taken
+                // swatch: drained to grey with an explicit grey border,
+                // so it reads as unavailable rather than as a dimmer
+                // shade of your own colour. LOCKED (premium) is
+                // deliberately left tinted and only softened — it's a
+                // storefront, not a refusal, and greying it out would
+                // sell it less.
+                color: selected ? '#fff'
+                  : taken ? TAKEN_INK
+                  : (myColor || 'var(--mp-text, #cfd8e3)'),
                 background: selected ? (myColor || '#4ecdc4') : 'transparent',
-                border: selected ? '2px solid #fff' : '1px solid var(--mp-border)',
+                border: selected ? '2px solid #fff'
+                  : taken ? `1px solid ${TAKEN_INK}`
+                  : '1px solid var(--mp-border)',
                 borderRadius: 3,
                 cursor: (taken || locked) ? 'not-allowed' : 'pointer',
-                opacity: taken ? 0.25 : locked ? 0.45 : 1,
+                opacity: taken ? 0.55 : locked ? 0.45 : 1,
               }}
               title={locked ? `${EMBLEM_NAMES[id]} — Commander's Commission emblem`
                 : taken ? `${takenBy} already flies the ${EMBLEM_NAMES[id]}`
