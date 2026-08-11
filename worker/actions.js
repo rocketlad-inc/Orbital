@@ -2481,7 +2481,15 @@ async function handleRamAsteroid(req, env, ctx) {
     body_id: bodyId,
     target_body_id: targetBodyId,
     arrive_at_tick: arriveTick,
-    fuel_cost: fuelCost,
+    // `fuelCost` here was a ReferenceError: no such binding exists in
+    // this function — it is a local of handleTransfer, several hundred
+    // lines up. Left behind when the ram switched from fuel to metal,
+    // so EVERY ram attempt 500'd on the last line of a handler that had
+    // already charged the metal and written the plan. Nothing caught it
+    // because the feature was simultaneously unreachable, so no request
+    // ever got this far. Found by actually firing one.
+    metal_cost: metalCost,
+    fuel_cost: metalCost,   // legacy field name, for an older bundle
   }, { status: 201 });
 }
 
