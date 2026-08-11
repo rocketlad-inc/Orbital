@@ -7,6 +7,7 @@ import { shipDisplayTick } from './tickPhase';
 import { Body, Ship, OrbitElements, TrajectoryArc, Settlement, Faction, TorchTransferPlan, BuildOrder, BuildingKind, FactionTechStateBase } from '../types';
 import { effectiveShipMaxHp } from '../game/combat';
 import { getPlanetTexture, getTerraformedTexture, getCloudTexture, terraformFraction, hashStr, mulberry32 } from './planetTexture';
+import { getEmblemImage } from './emblemCache';
 import { drawCityCluster, drawStationStructure } from './isoStructures';
 import { flameCount } from '../game/worldMenu/combatDisplay';
 import type { SystemRegion } from './systemRegions';
@@ -5739,6 +5740,20 @@ function drawSystemRegionsInner(
           obstacles,
         });
         obstacles.push(spot.rect);
+        // Faction emblem as a territory watermark, BEHIND the name.
+        //
+        // Anchored to the label rather than floated somewhere on the
+        // band, for two reasons: the label has already been placed by
+        // the collision solver (so the emblem inherits that for free and
+        // can't land on a body or another region's name), and pairing
+        // the mark with the empire name is how you learn which mark
+        // belongs to whom in the first place.
+        if (owned) {
+          drawTerritoryEmblem(
+            (region.ownership as { emblem: string | null }).emblem,
+            color, spot.x, spot.y, subWidth, labelScale, ctx, labelFade, intensity,
+          );
+        }
         drawRegionLabel(
           region, spot.x, spot.y, color, owned, ctx, labelFade, intensity,
           labelScale, showSub, ls.text,
@@ -5759,6 +5774,57 @@ function drawSystemRegionsInner(
 function regionSubText(region: SystemRegion, owned: boolean): string {
   if (owned) return (region.ownership as { factionName: string }).factionName.toUpperCase();
   return region.ownership.kind === 'contested' ? 'CONTESTED' : 'UNCLAIMED';
+}
+
+/**
+ * The owner's emblem, printed large and faint on their territory.
+ *
+ * Deliberately UNOBTRUSIVE (Lorne, "like how Stellaris does"): it sits
+ * behind the region name at low alpha, sized to the band it's on. The
+ * territory wash already says WHERE a faction is; this says WHO without
+ * adding another thing to read.
+ *
+ * Three guards keep it from becoming clutter:
+ *   • it rides `labelFade`, so it appears and leaves with the names
+ *     rather than on its own schedule
+ *   • it scales with the BAND, so a thin ring gets a small mark instead
+ *     of one that overflows onto its neighbours
+ *   • it skips entirely below a floor width, where it would be mush
+ *
+ * Returns silently when the raster isn't ready — the cache fills in on a
+ * later frame and the map redraws continuously anyway.
+ */
+const TERRITORY_EMBLEM_MIN_BAND = 26;
+
+function drawTerritoryEmblem(
+  emblem: string | null,
+  color: string,
+  x: number,
+  y: number,
+  bandWidth: number,
+  labelScale: number,
+  ctx: RenderContext,
+  fade: number,
+  intensity: number,
+) {
+  if (!emblem || fade <= 0) return;
+  if (bandWidth < TERRITORY_EMBLEM_MIN_BAND) return;
+  const img = getEmblemImage(emblem, color);
+  if (!img) return;
+
+  // Sized off the band, capped so a very fat ring doesn't get a
+  // billboard. The label sits on top of this, so it wants to be
+  // comfortably larger than the text block.
+  const size = Math.min(bandWidth * 0.85, 78 * labelScale);
+  if (size < 12) return;
+
+  const c = ctx.ctx;
+  c.save();
+  // Brightens slightly with the wash, exactly as the label ink does, so
+  // it doesn't vanish once the band goes near-solid.
+  c.globalAlpha = c.globalAlpha * fade * lerp(0.13, 0.26, intensity);
+  c.drawImage(img, x - size / 2, y - size / 2, size, size);
+  c.restore();
 }
 
 /** Region name, plus the owner when a single faction holds it all. */

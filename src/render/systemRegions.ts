@@ -64,7 +64,13 @@ const LANE_MAX_FRACTION = 0.12;
 export type RegionOwnership =
   | { kind: 'unowned' }
   | { kind: 'contested'; factionIds: string[] }
-  | { kind: 'exclusive'; factionId: string; color: string; color2: string; factionName: string };
+  | { kind: 'exclusive'; factionId: string; color: string; color2: string; factionName: string;
+      /** Flag emblem id, drawn as a watermark on the territory band.
+       *  Null on legacy factions that predate emblems — the map simply
+       *  omits the watermark rather than inventing one, because a
+       *  fallback shape here would disagree with the deterministic
+       *  fallback every other surface derives from the faction id. */
+      emblem: string | null };
 
 /**
  * Every region is an annulus centred on its star — the orbital band the
@@ -195,6 +201,7 @@ function ownershipOf(
       // Drives the territory border stroke on the map.
       color2: f?.color2 || deriveSecondary(primary),
       factionName: f?.name ?? 'Unknown',
+      emblem: f?.emblem ?? null,
     };
   }
   return { kind: 'contested', factionIds: Array.from(everyone) };

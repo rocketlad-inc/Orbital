@@ -268,6 +268,36 @@ const GLYPHS: Record<EmblemId, (p: GlyphProps) => React.ReactElement> = {
   </>, title),
 };
 
+/**
+ * The bare <svg> for one emblem, sized in pixels and painted in a real
+ * colour — suitable for serialising to a data URL and rasterising onto
+ * the map canvas (see render/emblemCache.ts).
+ *
+ * Built by cloning the glyph's own root element rather than by
+ * refactoring all 24 glyphs into data. That keeps this a pure addition:
+ * every existing surface (lobby picker, flag chips, scoreboard) renders
+ * through exactly the same code it did before, so there is no way for
+ * the map version and the UI version to drift apart or for this to
+ * regress the pickers.
+ *
+ * `style.color` is set as well as `fill` because several glyphs draw
+ * with stroke="currentColor" (orbit, ring, helix, key). Standing alone
+ * in a data URL there is no inherited colour for those to resolve
+ * against, and they would rasterise black.
+ */
+export function emblemSvgElement(
+  id: EmblemId, size: number, color: string,
+): React.ReactElement {
+  const el = GLYPHS[id]({});
+  return React.cloneElement(el as React.ReactElement<Record<string, unknown>>, {
+    width: size,
+    height: size,
+    fill: color,
+    style: { color },
+    xmlns: 'http://www.w3.org/2000/svg',
+  });
+}
+
 export interface FactionEmblemProps {
   /** Stored emblem id. Unknown/absent falls back deterministically. */
   emblem?: string | null;
