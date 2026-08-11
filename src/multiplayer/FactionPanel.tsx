@@ -49,7 +49,20 @@ const STATUS_COLOR: Record<keyof typeof STATUS_LABEL, string> = {
 
 // Per-resource tint for the income line — subtle, decoration only.
 
-export function FactionPanel({ gameId }: { gameId: string }) {
+export function FactionPanel({
+  gameId,
+  onlineUserIds = [],
+}: {
+  gameId: string;
+  /** User ids with a live socket right now, from the shell's room
+   *  WebSocket. Defaults to empty so the panel still renders standalone
+   *  (tests, any future mount that has no socket) — everyone simply
+   *  reads as offline rather than the component throwing. */
+  onlineUserIds?: string[];
+}) {
+  // Set, not .includes() per row: the roster is small today but this is
+  // inside a render that already runs on every poll.
+  const onlineSet = useMemo(() => new Set(onlineUserIds), [onlineUserIds]);
   const [me, setMe] = useState<MyFaction | null>(null);
   const [roster, setRoster] = useState<Faction[]>([]);
   const [pacts, setPacts] = useState<Pact[]>([]);
@@ -243,6 +256,27 @@ export function FactionPanel({ gameId }: { gameId: string }) {
                   onClick={() => toggleRow(f.id)}
                 >
                   <span className="fp-caret" aria-hidden="true">{open ? '▾' : '▸'}</span>
+                  {/* Presence dot. Deliberately NOT shown on eliminated
+                      factions — "OUT and green" is a contradiction, and
+                      whether a knocked-out player still has the tab open
+                      is not information anyone needs. The title carries
+                      the meaning in words so it never depends on colour
+                      alone, which also covers the red/green-blind case
+                      that a two-state dot would otherwise fail. */}
+                  <span
+                    className={'fp-live'
+                      + (onlineSet.has(f.user_id ?? '') ? ' is-online' : '')
+                      // Hidden, not removed: dropping the node would pull
+                      // an eliminated row's flag and name left by the
+                      // dot's width and leave the roster ragged.
+                      + (eliminated ? ' is-na' : '')}
+                    title={eliminated ? undefined : (onlineSet.has(f.user_id ?? '')
+                      ? `${mine ? 'You are' : f.name + ' is'} online now`
+                      : `${mine ? 'You are' : f.name + ' is'} not connected right now`)}
+                    aria-hidden={eliminated ? true : undefined}
+                    aria-label={eliminated ? undefined
+                      : (onlineSet.has(f.user_id ?? '') ? 'online' : 'offline')}
+                  />
                   <FlagChip className="mp-swatch" color={f.color} color2={f.color2}
                     emblem={f.emblem} fallbackKey={f.id} size={16} />
                   <span className="fp-name" title={f.name}>{f.name}</span>

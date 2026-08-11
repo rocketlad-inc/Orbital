@@ -219,6 +219,17 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
   // Each has a unique id so React can key it and a setTimeout dismisses
   // it after a few seconds.
   const [toasts, setToasts] = useState<Array<{ id: string; text: string; kind: 'trade' | 'message' | 'tick' | 'combat' | 'senate' }>>([]);
+  /** User ids with a live socket on this room, from the DO's `presence`
+   *  broadcast. Lifted to the shell rather than fetched by the panel
+   *  because the shell already holds the only in-game room socket —
+   *  a second one per panel would be pure duplication.
+   *
+   *  PRESENTATION ONLY. Nothing may branch a game RULE on this: it is
+   *  "a tab is open", not "this empire is alive", and those two come
+   *  apart constantly (asleep, commuting, second device). Alive vs
+   *  eliminated is faction.status, and that stays the only thing rules
+   *  read. */
+  const [onlineUserIds, setOnlineUserIds] = useState<string[]>([]);
 
   // Poll for incoming trade count so the Trades tab can show a badge
   // even when the user is on a different tab.
@@ -319,6 +330,16 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
     ws.addEventListener('message', (ev) => {
       try {
         const m = JSON.parse(ev.data);
+        // Presence rides the SAME socket as the toast events, keyed on
+        // `type` rather than `kind` — which is why it fell straight
+        // through this handler untouched until now. The DO re-broadcasts
+        // on every connect and disconnect, and sends one to each new
+        // socket on open, so a client that joins late is immediately
+        // correct rather than waiting for someone else to come or go.
+        if (m?.type === 'presence' && Array.isArray(m.connected)) {
+          setOnlineUserIds(m.connected.filter((id: unknown) => typeof id === 'string'));
+          return;
+        }
         if (m?.kind === 'trade') {
           if (m.event === 'proposed') {
             // The 'proposed' broadcast fans out to EVERY socket in the
@@ -557,7 +578,9 @@ export function MultiplayerShell({ children, initialRoomId, onExit, preGame = fa
                   onExitRoom={onExit}
                 />
               )}
-              {tab === 'faction' && gameId && <FactionPanel gameId={gameId} />}
+              {tab === 'faction' && gameId && (
+                <FactionPanel gameId={gameId} onlineUserIds={onlineUserIds} />
+              )}
               {tab === 'comms'   && gameId && (
                 <CommsPanel
                   gameId={gameId}

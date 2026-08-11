@@ -521,7 +521,15 @@ export class Room {
     if (!att) return;
     // Clear ready when the user disconnects — ready is "right now I'm here".
     this.ready.delete(att.userId);
-    this.broadcast({ type: 'presence', members: await this.memberList(), connected: this.connectedUserIds(), ready: this.readyMap() });
+    // Exclude THIS socket: it is still in getWebSockets() during its own
+    // close handler, so counting it would announce the leaver as present.
+    const connected = this.connectedUserIds(ws);
+    this.broadcast({
+      type: 'presence',
+      members: await this.memberList(),
+      connected,
+      ready: this.readyMap(connected),
+    });
   }
 
   async webSocketError(ws) {
@@ -548,17 +556,33 @@ export class Room {
     return Object.values(members);
   }
 
-  connectedUserIds() {
+  /**
+   * User ids with at least one live socket.
+   *
+   * `exclude` MUST be passed from webSocketClose. A closing socket is
+   * still present in getWebSockets() while its close handler runs, so
+   * without this the departure broadcast lists the person who just left
+   * as still connected — and since the next presence frame only goes out
+   * when somebody else joins or leaves, they stay lit indefinitely.
+   * Measured with scripts/presenceProbe.mjs: join moved 1 -> 2 ids,
+   * disconnect stayed at 2.
+   *
+   * Excluding the SOCKET rather than the user id is deliberate: two tabs
+   * are two sockets on one id, and closing one must not report that
+   * player offline while the other is still open.
+   */
+  connectedUserIds(exclude = null) {
     const ids = new Set();
     for (const ws of this.state.getWebSockets()) {
+      if (exclude && ws === exclude) continue;
       const att = ws.deserializeAttachment();
       if (att?.userId) ids.add(att.userId);
     }
     return [...ids];
   }
 
-  readyMap() {
-    const connected = new Set(this.connectedUserIds());
+  readyMap(connectedIds = null) {
+    const connected = new Set(connectedIds ?? this.connectedUserIds());
     const out = {};
     for (const [uid, val] of this.ready) {
       if (connected.has(uid)) out[uid] = !!val;
