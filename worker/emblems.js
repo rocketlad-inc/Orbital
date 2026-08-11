@@ -21,7 +21,7 @@ export const EMBLEM_IDS = [
   // Double V — the Double Victory campaign's mark. Free, not premium.
   // Appended rather than inserted: this order IS defaultEmblemFor's
   // rotation, so a splice would reshuffle every no-picker's emblem.
-  'doublev',
+  'doublev', 'rocket',
 ];
 
 // Premium wing (Commander's Commission, mirror of PREMIUM_EMBLEM_IDS in

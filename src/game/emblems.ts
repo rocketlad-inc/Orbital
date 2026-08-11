@@ -26,6 +26,8 @@ export type EmblemId =
   // against fascism, victory at home against racism). Deliberately in
   // the FREE list, never the paid wing.
   | 'doublev'
+  // Classic rocket — the storybook kind, fins and exhaust. Free.
+  | 'rocket'
   // Premium wing (Commander's Commission). Same permanence rule as the
   // free two dozen: a stored 'dragon' draws a dragon forever.
   | 'dragon' | 'kraken' | 'galaxy' | 'nova' | 'raven'
@@ -43,7 +45,7 @@ export const EMBLEM_IDS: EmblemId[] = [
   'crown', 'shield', 'spear', 'trident', 'hammer', 'anchor',
   'skull', 'wolf', 'phoenix', 'eye', 'key', 'gear',
   'helix', 'leaf', 'wave', 'mountain', 'tower', 'pyramid',
-  'doublev',
+  'doublev', 'rocket',
 ];
 
 /** The Commission's emblems. NOT in EMBLEM_IDS: the default rotation
@@ -68,7 +70,7 @@ export const EMBLEM_NAMES: Record<EmblemId, string> = {
   dragon: 'Dragon', kraken: 'Kraken', galaxy: 'Galaxy', nova: 'Nova',
   raven: 'Raven', serpent: 'Serpent', swords: 'Crossed Swords',
   atom: 'Atom', hourglass: 'Hourglass', compass: 'Compass Rose',
-  doublev: 'Double V',
+  doublev: 'Double V', rocket: 'Rocket',
 };
 
 const EMBLEM_SET = new Set<string>([...EMBLEM_IDS, ...PREMIUM_EMBLEM_IDS]);

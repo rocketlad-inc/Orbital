@@ -242,6 +242,26 @@ const GLYPHS: Record<EmblemId, (p: GlyphProps) => React.ReactElement> = {
   // Starve the gap and the two bands merge into a single fat wedge;
   // starve the inner arm and it disappears. Both are now at or above the
   // 2.5-unit strokes orbit/ring already rely on.
+  // Classic storybook rocket, nose up, exhaust below. Drawn WIDE (12
+  // units of barrel, fins out to 4.5/27.5) for the reason spear and
+  // tower document above: a correctly-proportioned rocket is a sliver
+  // at a 12px chip. The flame is a SEPARATE shape below the fins rather
+  // than interior detail — interior detail disappears at chip size and
+  // the silhouette is all that survives, and a rocket with no visible
+  // exhaust just reads as a bullet.
+  //
+  // The exhaust is three TONGUES, not one teardrop. Rendered side by
+  // side at 128/48/18px, a smooth teardrop reads as a solid tail fin —
+  // it merges with the real fins into one diamond at chip size. The
+  // jagged silhouette is what makes it read as fire, and jaggedness is
+  // the one flame cue that survives being shrunk.
+  rocket: ({ title }) => wrap(<>
+    <path d="M16 1q6 7 6 15v5H10v-5q0-8 6-15z" />
+    <path d="M10 15 4.5 25 10 21.5z" />
+    <path d="M22 15 27.5 25 22 21.5z" />
+    <path d="M11.4 22.6q0.6 3.4 2.2 5.6.5-1.6.6-3.2 1.1 3.4 1.8 6.1.9-2.8 2.1-6.1.2 1.6.6 3.2 1.7-2.2 2.3-5.6z" />
+    <circle cx="16" cy="11" r="2.6" fill="#000" opacity="0.4" />
+  </>, title),
   doublev: ({ title }) => wrap(<>
     <path d="M1 2.5 L16 30 L31 2.5 L25 2.5 L16 19.5 L7 2.5z" />
     <path d="M10 2.5 L16 15.5 L22 2.5 L18.75 2.5 L16 8.75 L13.25 2.5z" />
