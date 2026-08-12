@@ -374,7 +374,7 @@ const BATTLE_ONE_SIDED_KNOWN = [
   c => `A hard day for ${b(c.loser)}: ${b(c.winner)} forces destroyed ${numWord(c.count)} of their ships in the skies over ${c.bodyLoc}${c.namesClause}.`,
   c => `${b(c.winner)} pressed the attack at ${c.bodyLoc}, leaving ${b(c.loser)} with ${numWord(c.count)} fewer ${shipsWord(c.count)} to their name${c.namesClause}.`,
   c => `The wreckage of ${numWord(c.count)} ${b(c.loser)} ${shipsWord(c.count)} now drifts around ${c.bodyLoc} after an engagement with ${b(c.winner)}${c.namesClause}.`,
-  c => `${b(c.loser)} suffered a costly defeat near ${c.bodyLoc}; ${b(c.winner)} accounted for all ${numWord(c.count)} losses${c.namesClause}.`,
+  c => `${b(c.loser)} suffered a costly defeat near ${c.bodyLoc}; ${b(c.winner)} accounted for ${c.count === 1 ? 'the lone loss' : `all ${numWord(c.count)} losses`}${c.namesClause}.`,
   c => `No mercy at ${c.bodyLoc} — ${b(c.winner)} sent ${numWord(c.count)} ${b(c.loser)} ${shipsWord(c.count)} to the void${c.namesClause}.`,
   c => `${b(c.winner)} claimed a decisive victory over ${b(c.loser)} in the skies above ${c.bodyLoc}, downing ${numWord(c.count)} vessel${plural(c.count, '')}${c.namesClause}.`,
   c => `Reports from ${c.bodyLoc} confirm ${b(c.loser)} lost ${numWord(c.count)} ${shipsWord(c.count)} to ${b(c.winner)} in a one-sided clash${c.namesClause}.`,
@@ -855,6 +855,30 @@ const CAPTAIN_RESCUED_CLAUSE = [
   name => ` Sources confirm Captain ${b(name)} came through without a scratch.`,
 ];
 
+/** "…and X came through without a scratch" — the clause naming whoever
+ *  won a multi-sided battle without losing a hull. It was a single
+ *  hardcoded sentence, which made it one of the most-repeated strings
+ *  in the paper: every three-way fight with a clean winner ended on
+ *  the identical eight words. Takes the already-bolded name list and
+ *  the count, so it can agree in number.
+ *  `n` is the number of unscathed FACTIONS, not ships. */
+const UNSCATHED_CLAUSE = [
+  (who, n) => ` ${who} came through without a scratch.`,
+  (who, n) => ` ${who} ${n === 1 ? 'walked' : 'walked'} away untouched.`,
+  (who, n) => ` Not a hull lost on ${who}'s side.`,
+  (who, n) => ` ${who} ${plural(n, 'is', 'are')} not on the casualty list at all.`,
+  (who, n) => ` ${who} finished the day with the same fleet ${plural(n, 'it', 'they')} started it with.`,
+  (who, n) => ` ${who} paid nothing for the privilege.`,
+  (who, n) => ` The butcher's bill skipped ${who} entirely.`,
+  (who, n) => ` ${who} ${plural(n, 'took', 'took')} no losses worth reporting.`,
+  (who, n) => ` No wreckage bore ${who}'s colors.`,
+  (who, n) => ` ${who} came away clean.`,
+  (who, n) => ` Whatever it cost, ${who} did not pay it.`,
+  (who, n) => ` ${who} ${plural(n, 'ends', 'end')} the engagement at full strength.`,
+  (who, n) => ` Salvage crews found nothing of ${who}'s to recover.`,
+  (who, n) => ` ${who} ${plural(n, 'emerged', 'emerged')} without a single hull to replace.`,
+];
+
 // When the captain's fate isn't resolved within THIS digest's window
 // (rescued/lost row fell outside it, or the lookup simply missed) —
 // say only what's certain: someone commanded the ship. No claim about
@@ -1004,7 +1028,7 @@ const INDUSTRY_BUILDINGS_ONLY_HEADLINE = [
 const INDUSTRY_COLLAPSED = [
   c => `Elsewhere in the system, smaller yards stayed busy — ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} upgrade${plural(c.totalBuilds, '')} completed across ${numWord(c.factionCount)} ${plural(c.factionCount, 'faction')}, led by ${b(c.leader)}.`,
   c => `Routine industry across the rest of the system: ${numWord(c.totalShips)} new ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} finished project${plural(c.totalBuilds, '')}, with ${b(c.leader)} out front.`,
-  c => `Minor shipyards kept humming — ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} upgrade${plural(c.totalBuilds, '')} logged among ${numWord(c.factionCount)} smaller powers, ${b(c.leader)} chief among them.`,
+  c => `Minor shipyards kept humming — ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} upgrade${plural(c.totalBuilds, '')} logged among ${numWord(c.factionCount)} smaller ${plural(c.factionCount, 'power')}, ${b(c.leader)} chief among them.`,
   c => `Quiet but steady: ${numWord(c.factionCount)} smaller ${plural(c.factionCount, 'faction')} together finished ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} upgrade${plural(c.totalBuilds, '')}, ${b(c.leader)} leading the pack.`,
   c => `Small yards, steady work: ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} upgrade${plural(c.totalBuilds, '')} across the rest of the field, ${b(c.leader)} ahead of the pack.`,
   c => `The lesser powers weren't idle either — ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} completed project${plural(c.totalBuilds, '')} between them, ${b(c.leader)} in front.`,
@@ -1710,7 +1734,7 @@ const PACT_ONLY_DEAL = [
   c => `The manifest was empty and the protocol folder was not: ${b(c.proposer)} and ${b(c.responder)} now hold ${c.pactList}.`,
   c => `Envoys for ${b(c.proposer)} and ${b(c.responder)} skipped the haggling entirely and went straight to ${c.pactList}.`,
   c => `${b(c.proposer)} asked nothing of ${b(c.responder)}, and ${b(c.responder)} gave nothing back. What they signed instead: ${c.pactList}.`,
-  c => `Terms without tonnage — ${b(c.proposer)} and ${b(c.responder)} concluded ${c.pactList} and adjourned.`,
+  c => `Terms without tonnage: ${b(c.proposer)} and ${b(c.responder)} concluded ${c.pactList}, then adjourned.`,
   c => `A handshake, no hold space: ${c.pactList} now stands between ${b(c.proposer)} and ${b(c.responder)}.`,
   c => `${b(c.proposer)} and ${b(c.responder)} put their names to ${c.pactList}. No resources changed hands, and none were asked for.`,
   c => `The ledgers stayed blank while the diplomats worked: ${b(c.proposer)} and ${b(c.responder)} emerged with ${c.pactList}.`,
@@ -2054,7 +2078,7 @@ function buildBattleStories(rows, used, locator, captainFate) {
       // walked away clean, because that IS the outcome of the battle.
       const unscathed = [...killerSet].filter(k => !cluster.losses.has(k));
       const cleanClause = unscathed.length
-        ? ` ${unscathed.map(b).join(' and ')} came through without a scratch.`
+        ? pickTemplate('unscathed_clause', UNSCATHED_CLAUSE, used)(unscathed.map(b).join(' and '), unscathed.length)
         : '';
 
       const worst = sides[0];
@@ -2219,7 +2243,11 @@ function buildIndustryStories(rows, used) {
     stories.push(mkStory(35, used, 'industry_field', INDUSTRY_FIELD, 'industry_field_hl', INDUSTRY_FIELD_HEADLINE, ctx));
   }
 
-  if (collapsed.length > 0) {
+  // "Filed for the record: zero ships and one completed project among
+  // one lesser power" is not a sentence worth the column inch. Below a
+  // floor the roundup says nothing the reader wanted, so say nothing.
+  const collapsedTotal = collapsed.reduce((s, f) => s + f.total, 0);
+  if (collapsed.length > 0 && collapsedTotal >= 3) {
     collapsed.sort((a, c) => c.total - a.total);
     const totalShips = collapsed.reduce((s, f) => s + f.shipCount, 0);
     const totalBuilds = collapsed.reduce((s, f) => s + f.buildCount, 0);
