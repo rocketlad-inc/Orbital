@@ -2605,13 +2605,19 @@ function buildVoicePool(rows, used, leaders) {
     // officer, one voice, for as long as they keep turning up.
     captainAt.set(
       p.body_name,
-      // Seeded on name AND place. Name alone is only 12-ish officers
-      // hashed into 26 quotes, and the birthday odds duly delivered:
-      // Baltar at Eris and Troi at Sedna drew the identical line, on
-      // the identical ship, two editions apart — which reads as one
-      // officer under two names. The engagement disambiguates them
-      // while keeping a captain's voice stable within any one battle.
-      pickTemplateFor(`${p.captain_name}@${p.body_name}`, CAPTAIN_QUOTE)(p.captain_name, p.ship_name, ` at **${p.body_name}**`),
+      // Drawn from the marching walk, not hashed on the captain's name.
+      //
+      // Hashing gave each officer a permanent voice, which was a nice
+      // property and the wrong trade: a dozen officers hashed into
+      // twenty-six quotes collides by the birthday bound no matter how
+      // the seed is composed, and adding the engagement to it only
+      // moved which pairs collided. Two captains in different factions
+      // delivering an identical two-sentence quote is the defect a
+      // reviewer called the most immersion-breaking in the paper,
+      // because it retroactively turns every other quote into visible
+      // machinery. The walk cannot collide within an edition or
+      // between adjacent ones, which is the guarantee worth having.
+      pickTemplate('captain_quote', CAPTAIN_QUOTE, used)(p.captain_name, p.ship_name, ` at **${p.body_name}**`),
     );
   }
 
