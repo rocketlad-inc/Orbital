@@ -1769,9 +1769,13 @@ async function handlePatchMyFaction(req, env, ctx) {
     // two live factions ended up flying identical rose (#ec407a) and the
     // seat map, legend, territory bar and chat all lost an identity at
     // once.
+    // Excluded by user_id, not faction id: this handler only ever knows
+    // the caller (every other query in it is `game_id = ? AND user_id = ?`).
+    // It used to bind an undefined `factionId`, so the guard threw a
+    // ReferenceError instead of guarding anything.
     const others = (await env.DB
-      .prepare('SELECT color FROM game_factions WHERE game_id = ? AND id != ? AND color IS NOT NULL')
-      .bind(gameId, factionId)
+      .prepare('SELECT color FROM game_factions WHERE game_id = ? AND user_id != ? AND color IS NOT NULL')
+      .bind(gameId, session.user_id)
       .all()).results ?? [];
     for (const o of others) {
       if (normalizeHex(o.color) === hex) {

@@ -131,9 +131,16 @@ async function currentTick(env, gameId) {
  *  Ships joining a fleet surrender their captain back to the bank —
  *  rank intact, ready for reassignment. The flagship is exempt: its
  *  captain IS the fleet captain. */
-async function bankMemberCaptains(env, gameId, shipIds, exceptShipId) {
+async function bankMemberCaptains(env, gameId, shipIds, exceptShipId, tick) {
   const ids = shipIds.filter(id => id !== exceptShipId);
-  if (ids.length === 0) return;
+  if (ids.length === 0) return { ok: true };
+  // Sending a member's captain to the bank IS a captain change, so it
+  // answers to the under-fire rule like the assign endpoint does —
+  // otherwise "form a fleet around the hull that's losing" would be the
+  // way around it. Checked here because this is the one choke point every
+  // path (create, add members) goes through.
+  const hot = await shipsInCombat(env.DB, gameId, ids, tick);
+  if (hot.size > 0) return { ok: false, blocked: [...hot] };
   const ph = ids.map(() => '?').join(',');
   await env.DB.batch([
     env.DB.prepare(
@@ -143,6 +150,15 @@ async function bankMemberCaptains(env, gameId, shipIds, exceptShipId) {
       `UPDATE game_ships SET captain_id = NULL
         WHERE game_id = ? AND id IN (${ph})`).bind(gameId, ...ids),
   ]);
+  return { ok: true };
+}
+
+/** Shared 409 for the two callers above. */
+function inCombatError(blocked) {
+  return err(409, 'in_combat',
+    blocked.length === 1
+      ? 'a ship you are fleeting is in combat — its captain stays at their post until the shooting stops'
+      : `${blocked.length} ships you are fleeting are in combat — their captains stay at their posts until the shooting stops`);
 }
 
 async function handleCreate(req, env, ctx) {
@@ -195,6 +211,13 @@ async function handleCreate(req, env, ctx) {
       .prepare(`UPDATE game_ships SET fleet_id = ? WHERE game_id = ? AND id IN (${placeholders})`)
       .bind(fleetId, gameId, ...loaded.ships.map(s => s.id)),
   );
+  // ONE CAPTAIN PER FLEET. This call belonged here all along — it was
+  // sitting in handlePatch's RENAME branch instead, referencing locals of
+  // THIS function, so forming a fleet left a captain on every member and
+  // renaming one threw. Runs before the batch so a refusal leaves no
+  // half-made fleet behind.
+  const banked = await bankMemberCaptains(env, gameId, loaded.ships.map(s => s.id), flagShipId, tick);
+  if (!banked.ok) return inCombatError(banked.blocked);
   await env.DB.batch(stmts);
 
   // Prior fleets that just lost members may have dropped below 2.
@@ -228,18 +251,23 @@ async function handlePatch(req, env, ctx) {
       .prepare('UPDATE game_fleets SET name = ? WHERE game_id = ? AND id = ?')
       .bind(body.name.trim().slice(0, NAME_MAX), gameId, fleetId)
       .run();
-    await bankMemberCaptains(env, gameId, shipIds, flagShipId);
+    // (No captain work here — renaming a fleet doesn't move anybody. This
+    // branch used to call bankMemberCaptains with handleCreate's locals,
+    // which don't exist in this scope, so every rename 500'd.)
   }
 
   if (Array.isArray(body.add_ship_ids) && body.add_ship_ids.length > 0) {
     const loaded = await loadOwnedShips(env, gameId, me.id, body.add_ship_ids);
     if (loaded.error) return loaded.error;
     const ph = loaded.ships.map(() => '?').join(',');
+    // Bank first: joiners surrender their captains, and if any of them is
+    // under fire the join is refused before it moves anyone.
+    const banked = await bankMemberCaptains(env, gameId, loaded.ships.map(x => x.id), null, tick);
+    if (!banked.ok) return inCombatError(banked.blocked);
     await env.DB
       .prepare(`UPDATE game_ships SET fleet_id = ? WHERE game_id = ? AND id IN (${ph})`)
       .bind(fleetId, gameId, ...loaded.ships.map(s => s.id))
       .run();
-    await bankMemberCaptains(env, gameId, loaded.ships.map(x => x.id), null);
     const priors = [...new Set(loaded.ships.map(s => s.fleet_id).filter(f => f && f !== fleetId))];
     for (const pf of priors) await pruneIfTooSmall(env, gameId, pf);
     // Joiners inherit the fleet's standing orders — take them from the
