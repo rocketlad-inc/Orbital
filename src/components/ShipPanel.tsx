@@ -142,9 +142,20 @@ export const ShipPanel: React.FC = () => {
       // clicks COMMIT to promote it to a live burn (commitTransferLocal).
       const plan = planTorchPreview(ship.id, targetBodyId);
       if (!plan) {
+        // Used to be a console.warn and a bare return — the player
+        // clicked a destination and got NOTHING: no arc, no error, no
+        // rule they could infer. Whatever the cause (no engine accel,
+        // body gone from the list, already there), say so on the panel.
         console.warn('[transfer] planTorchPreview returned null', {
           shipId: ship.id, target: targetBodyId,
         });
+        const targetName = gameState.bodies.find(bd => bd.id === targetBodyId)?.name
+          ?? 'that destination';
+        setTransferError(
+          `Couldn't plot a course to ${targetName}. If this ship is already there, pick somewhere else.`,
+        );
+        setTransferModalOpen(false);
+        setTargetSelectionMode(false);
         return;
       }
 

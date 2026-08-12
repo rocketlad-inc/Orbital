@@ -1939,6 +1939,57 @@ interface GameMeta {
 
 export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Props) {
   const [state, setState] = useState<GameState | null>(null);
+
+  // ============================================================
+  // Carry the STAGED TRANSFER PREVIEW across a server re-apply.
+  //
+  // `ship.plannedTransit` is deliberately client-only: planning a
+  // transfer stages a preview (dashed arc + an armed COMMIT) and posts
+  // NOTHING, so COMMIT is what actually launches. The server therefore
+  // has no idea the plan exists and shipToClient cannot rebuild it.
+  //
+  // But /state is applied by REPLACING gameState wholesale, so every
+  // re-apply silently deleted the preview: the arc vanished, COMMIT
+  // greyed out, MANEUVER NODES went back to "No planned maneuvers", and
+  // it read as "I clicked the destination and it didn't take".
+  //
+  // Why it looked intermittent: between ticks the /state body is
+  // byte-identical and the fingerprint check skips the apply entirely,
+  // so a preview could survive for a while. Then ANY player action
+  // fires the action-refresh event, which nulls the fingerprint to force
+  // a re-apply — and the next poll (≤1.5s) ate the preview. On an
+  // hour-per-tick game that is the difference between "worked" and
+  // "silently did nothing" with no rule a player could infer.
+  //
+  // Dropped, not carried, when the plan is no longer meaningful:
+  //   - the ship is gone from the server list (destroyed/sold)
+  //   - the server now reports it IN TRANSIT (the burn really launched,
+  //     or a different client moved it) — keeping a preview alongside a
+  //     live transit would draw two futures for one hull
+  //   - the plan's arrival is already in the past (stale by a tick)
+  // ============================================================
+  const carryStagedPreviews = useCallback(
+    (prev: GameState | null, next: GameState): GameState => {
+      if (!prev) return next;
+      const staged = new Map(
+        prev.ships
+          .filter(s => s.plannedTransit)
+          .map(s => [s.id, s.plannedTransit!]),
+      );
+      if (staged.size === 0) return next;
+      let carried = 0;
+      const ships = next.ships.map(s => {
+        const plan = staged.get(s.id);
+        if (!plan) return s;
+        if (s.transit) return s;
+        if (plan.arriveTick <= next.currentTick) return s;
+        carried++;
+        return { ...s, plannedTransit: plan };
+      });
+      return carried > 0 ? { ...next, ships } : next;
+    },
+    [],
+  );
   const [meta, setMeta] = useState<GameMeta | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** Set true when the server returns 404. Stops polling + offers an exit. */
@@ -2002,7 +2053,7 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
           next.ships.length ? 0 : 0,
         );
         perf.startHeartbeat();
-        setState(next);
+        setState(prev => carryStagedPreviews(prev, next));
         // Captain debut (DESIGN-captains §5.1): when one of OUR ships
         // appears for the first time with a captain aboard, offer (never
         // block) a rename card via a window event — GameUI mounts the
