@@ -639,6 +639,98 @@ async function handleGetHerald(req, env, ctx) {
 // Validates: caller owns body, faction can pay. (shipyard_level gate was
 // dropped — the column was declared with DEFAULT 0 in 0003_game_state.sql
 // and nothing ever incremented it, so every MP build 409'd.)
+/**
+ * Charge a construction cost across LOCAL settlement stockpiles and then the
+ * faction pool, without ever being able to take resources for an order that
+ * doesn't happen.
+ *
+ * THE BUG THIS EXISTS FOR (Sean, 2026-08-12): "the game rejected my
+ * construction for not having enough resources, but took my resources
+ * anyway." Both build paths checked affordability against `me.metal` — a
+ * snapshot read at the top of the request — and then debited with an
+ * UNGUARDED `SET metal = metal - ?`. Two submits (a double tap, a retry, or
+ * a ship queue racing a building) both passed the same stale check and both
+ * debited, driving the pool NEGATIVE. The next legitimate build then failed
+ * its affordability check for real, so the player saw a rejection with the
+ * resources already gone. The rush path had been written correctly for
+ * exactly this reason, and the tick's upkeep debit was hardened for it too;
+ * construction was the last unguarded spender.
+ *
+ * Every debit here is GUARDED, so it can only apply if the money is actually
+ * there. If any of them misses, the ones that landed are put back and the
+ * caller is told to reject. Refunds are plain credits and cannot fail a
+ * guard, so the unwind always completes.
+ *
+ * CALLERS MUST CREATE THE ORDER ONLY ON `{ ok: true }`. That ordering is the
+ * whole guarantee: charge first, build second — so a rejection can never
+ * leave the player poorer.
+ *
+ * @param drains [{ id, metal, gold }] per-settlement draws, already planned
+ * @returns { ok: true } | { ok: false, reason: 'insufficient_resources' }
+ */
+async function chargeConstruction(env, { factionId, drains = [], poolMetal = 0, poolGold = 0 }) {
+  const applied = [];
+  const unwind = async () => {
+    for (const d of applied) {
+      try {
+        if (d.kind === 'settlement') {
+          await env.DB
+            .prepare(
+              `UPDATE game_settlements
+                  SET stockpile_metal = stockpile_metal + ?,
+                      stockpile_gold  = stockpile_gold  + ?
+                WHERE id = ?`,
+            )
+            .bind(d.metal, d.gold, d.id).run();
+        } else {
+          await env.DB
+            .prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?')
+            .bind(d.metal, d.gold, factionId).run();
+        }
+      } catch (e) {
+        // A failed unwind is the one outcome worse than the original bug, so
+        // it is logged loudly with everything needed to repair it by hand.
+        console.error('chargeConstruction: UNWIND FAILED', e, { factionId, refund: d });
+      }
+    }
+  };
+
+  for (const d of drains) {
+    const m = Number(d.metal ?? 0);
+    const g = Number(d.gold ?? 0);
+    if (m <= 0 && g <= 0) continue;
+    const res = await env.DB
+      .prepare(
+        `UPDATE game_settlements
+            SET stockpile_metal = stockpile_metal - ?,
+                stockpile_gold  = stockpile_gold  - ?
+          WHERE id = ? AND stockpile_metal >= ? AND stockpile_gold >= ?`,
+      )
+      .bind(m, g, d.id, m, g).run();
+    if (!res.meta?.changes) {
+      await unwind();
+      return { ok: false, reason: 'insufficient_resources' };
+    }
+    applied.push({ kind: 'settlement', id: d.id, metal: m, gold: g });
+  }
+
+  if (poolMetal > 0 || poolGold > 0) {
+    const res = await env.DB
+      .prepare(
+        `UPDATE game_factions SET metal = metal - ?, gold = gold - ?
+          WHERE id = ? AND metal >= ? AND gold >= ?`,
+      )
+      .bind(poolMetal, poolGold, factionId, poolMetal, poolGold).run();
+    if (!res.meta?.changes) {
+      await unwind();
+      return { ok: false, reason: 'insufficient_resources' };
+    }
+    applied.push({ kind: 'pool', metal: poolMetal, gold: poolGold });
+  }
+
+  return { ok: true };
+}
+
 async function handleQueueBuild(req, env, ctx) {
   const { gameId, bodyId } = ctx.params;
   if (!GAME_ID_RE.test(gameId)) return err(400, 'bad_request', 'invalid game id');
@@ -878,7 +970,24 @@ async function handleQueueBuild(req, env, ctx) {
 
   const orderId = `${bodyId}:b${Date.now().toString(36)}`;
 
-  const batchStmts = [
+  // CHARGE FIRST, guarded, and only build if the money actually moved. The
+  // affordability check above reads a snapshot; between that read and here,
+  // a second submit or the tick can have spent the same credits. See
+  // chargeConstruction for the report this fixes.
+  const charged = await chargeConstruction(env, {
+    factionId: me.id,
+    drains: settlementDrains,
+    poolMetal: poolDrawMetal,
+    poolGold: poolDrawGold,
+  });
+  if (!charged.ok) {
+    return err(409, 'insufficient_resources',
+      `Couldn't pay for this ship — ${scaledCost.metal} metal + ${scaledCost.gold} credits. `
+      + 'Your balance changed while the order was being placed (another build, or the tick landing). '
+      + 'Nothing was taken; check your purse and try again.');
+  }
+
+  await env.DB.batch([
     env.DB
       .prepare(
         `INSERT INTO game_body_build_queue
@@ -889,31 +998,9 @@ async function handleQueueBuild(req, env, ctx) {
       .bind(orderId, gameId, bodyId, me.id, shipClass, startTick, completeTick, iconVariant, shipName,
             designPartsJson, startsNow ? 'building' : 'waiting', cost.build_ticks, startsNow ? startTick : null,
             chargeJson),
-  ];
-  for (const d of settlementDrains) {
-    batchStmts.push(
-      env.DB
-        .prepare(
-          `UPDATE game_settlements
-              SET stockpile_metal = stockpile_metal - ?,
-                  stockpile_gold  = stockpile_gold  - ?
-            WHERE id = ?`,
-        )
-        .bind(d.metal, d.gold, d.id),
-    );
-  }
-  if (poolDrawMetal > 0 || poolDrawGold > 0) {
-    batchStmts.push(
-      env.DB
-        .prepare('UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ?')
-        .bind(poolDrawMetal, poolDrawGold, me.id),
-    );
-  }
-  batchStmts.push(
     env.DB.prepare('INSERT INTO spend_events (game_id, faction_id, category, metal, gold, created_at_ms) VALUES (?, ?, ?, ?, ?, ?)')
       .bind(gameId, me.id, 'ships', Math.round(cost.metal ?? 0), Math.round(cost.gold ?? 0), Date.now()),
-  );
-  await env.DB.batch(batchStmts);
+  ]);
 
   return json({
     order: {
@@ -1110,12 +1197,22 @@ async function handleDeploySettlement(req, env, ctx) {
             surfaceAngle, rp, rp, tick,
             tick),
   ];
+  // Charged BEFORE the batch and guarded, so a double submit can't deploy
+  // two settlements for one payment (or overdraw the pool and make the NEXT
+  // build report "insufficient" with the credits already gone).
   if (payResourceCost) {
-    deployStmts.push(
-      env.DB
-        .prepare('UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ?')
-        .bind(settleCost.metal, settleCost.gold, me.id),
-    );
+    const paidDeploy = await env.DB
+      .prepare(
+        `UPDATE game_factions SET metal = metal - ?, gold = gold - ?
+          WHERE id = ? AND metal >= ? AND gold >= ?`,
+      )
+      .bind(settleCost.metal, settleCost.gold, me.id, settleCost.metal, settleCost.gold)
+      .run();
+    if (!paidDeploy.meta?.changes) {
+      return err(409, 'insufficient_resources',
+        `deploying costs ${settleCost.metal} metal + ${settleCost.gold} credits — `
+        + 'your balance changed while the request was in flight. Nothing was taken.');
+    }
   }
   if (consumedShip) {
     // The colony ship is spent founding the settlement. Same terminal
@@ -1943,29 +2040,57 @@ async function handleQueueBuilding(req, env, ctx) {
     },
   };
 
-  const batchStmts = [
-    env.DB
-      .prepare(
-        `UPDATE game_settlements
-            SET building_order_json = ?,
-                stockpile_metal = stockpile_metal - ?,
-                stockpile_gold  = stockpile_gold  - ?
-          WHERE id = ?`,
-      )
-      .bind(JSON.stringify(orderWithCharge), takeLocalMetal, takeLocalGold, settlementId),
-  ];
-  if (takePoolMetal > 0 || takePoolGold > 0) {
-    batchStmts.push(
-      env.DB
-        .prepare('UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ?')
-        .bind(takePoolMetal, takePoolGold, me.id),
-    );
+  // CHARGE FIRST, guarded, then record the order — same fix and same reason
+  // as the ship queue (see chargeConstruction). The 'busy' check above reads
+  // a snapshot too, so without the guarded charge a double submit could pay
+  // twice for one upgrade.
+  const chargedB = await chargeConstruction(env, {
+    factionId: me.id,
+    drains: (takeLocalMetal > 0 || takeLocalGold > 0)
+      ? [{ id: settlementId, metal: takeLocalMetal, gold: takeLocalGold }]
+      : [],
+    poolMetal: takePoolMetal,
+    poolGold: takePoolGold,
+  });
+  if (!chargedB.ok) {
+    return err(409, 'insufficient_resources',
+      `Couldn't pay for ${kind} L${currentLevel + 1} — ${cost.metal} metal + ${cost.gold} credits. `
+      + 'Your balance changed while the order was being placed. Nothing was taken.');
   }
-  batchStmts.push(
-    env.DB.prepare('INSERT INTO spend_events (game_id, faction_id, category, metal, gold, created_at_ms) VALUES (?, ?, ?, ?, ?, ?)')
-      .bind(gameId, me.id, 'buildings', Math.round(cost.metal ?? 0), Math.round(cost.gold ?? 0), Date.now()),
-  );
-  await env.DB.batch(batchStmts);
+
+  // Guarded on there being no order yet, so two racing submits can't both
+  // stamp an upgrade. A miss here means the other one won: refund this
+  // charge rather than silently eating it.
+  const stamp = await env.DB
+    .prepare(
+      `UPDATE game_settlements SET building_order_json = ?
+        WHERE id = ? AND building_order_json IS NULL`,
+    )
+    .bind(JSON.stringify(orderWithCharge), settlementId)
+    .run();
+  if (!stamp.meta?.changes) {
+    if (takeLocalMetal > 0 || takeLocalGold > 0) {
+      await env.DB
+        .prepare(
+          `UPDATE game_settlements
+              SET stockpile_metal = stockpile_metal + ?,
+                  stockpile_gold  = stockpile_gold  + ?
+            WHERE id = ?`,
+        )
+        .bind(takeLocalMetal, takeLocalGold, settlementId).run();
+    }
+    if (takePoolMetal > 0 || takePoolGold > 0) {
+      await env.DB
+        .prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?')
+        .bind(takePoolMetal, takePoolGold, me.id).run();
+    }
+    return err(409, 'busy', 'this settlement already has an upgrade in progress');
+  }
+
+  await env.DB
+    .prepare('INSERT INTO spend_events (game_id, faction_id, category, metal, gold, created_at_ms) VALUES (?, ?, ?, ?, ?, ?)')
+    .bind(gameId, me.id, 'buildings', Math.round(cost.metal ?? 0), Math.round(cost.gold ?? 0), Date.now())
+    .run();
 
   return json({ ok: true, order: orderWithCharge, cost });
 }
@@ -2577,8 +2702,10 @@ async function handleRamAsteroid(req, env, ctx) {
   if (acceleration <= 0) return err(400, 'bad_request', 'acceleration must be positive');
   if (metalCost < 0) return err(400, 'bad_request', 'metal_cost must be non-negative');
 
-  // Metal debit. Atomic with the plan write below — if either fails,
-  // the player keeps their metal.
+  // Metal debit, GUARDED and taken here rather than inside the plan batch.
+  // `me.metal` is a snapshot: two racing launches both passed this check and
+  // both debited, which could drive the pool negative and make the next
+  // legitimate spend report "insufficient" with the metal already gone.
   if ((me.metal ?? 0) < metalCost) {
     return err(409, 'insufficient_resources', `need ${metalCost} metal to ram, have ${me.metal ?? 0}`);
   }
@@ -2590,6 +2717,21 @@ async function handleRamAsteroid(req, env, ctx) {
   const nowTick = game?.current_tick ?? 0;
   if (startTick < nowTick - 1) {
     return err(400, 'bad_request', 'start_tick is in the past');
+  }
+
+  // Charge LAST, immediately before the write, and guarded. Position matters
+  // as much as the guard: every `return err` in this handler is above this
+  // line, so there is no path that takes the metal and then rejects.
+  if (metalCost > 0) {
+    const paidRam = await env.DB
+      .prepare('UPDATE game_factions SET metal = metal - ? WHERE id = ? AND metal >= ?')
+      .bind(metalCost, me.id, metalCost)
+      .run();
+    if (!paidRam.meta?.changes) {
+      return err(409, 'insufficient_resources',
+        `need ${metalCost} metal to ram — your balance changed while the request was `
+        + 'in flight. Nothing was taken.');
+    }
   }
 
   await env.DB.batch([
@@ -2614,9 +2756,8 @@ async function handleRamAsteroid(req, env, ctx) {
         interceptPosX, interceptPosY, totalDv, me.id,
         bodyId, gameId,
       ),
-    env.DB
-      .prepare('UPDATE game_factions SET metal = metal - ? WHERE id = ?')
-      .bind(metalCost, me.id),
+    // NOTE: this asteroid-launch debit is charged in the guarded pre-check
+    // above; kept out of the batch so a racing launch can't pay twice.
     // Reputation hit. Asteroid weapons are atrocities — bypass
     // every diplomatic norm, broadcast their threat to everyone in
     // the system, and the launching faction takes the maximum
@@ -3416,9 +3557,14 @@ async function handleCreateCaptain(req, env, ctx) {
 
   // Recruiting costs metal + credits (DESIGN-captains economy update):
   // every faction fields STARTING_CAPTAINS for free via the floor pass;
-  // past that, officers are bought. Checked against the LIVE row and
-  // debited in the same batch as the insert so a double-click can't
-  // recruit two captains for one payment.
+  // past that, officers are bought.
+  //
+  // The old note here claimed that debiting "in the same batch as the insert"
+  // stopped a double-click recruiting two captains for one payment. It does
+  // not: a batch is atomic within ONE request, and a double-click is two
+  // requests with two batches, both of which passed this same stale check.
+  // The charge is now guarded and happens first, so the second request's
+  // debit simply misses and it is rejected having taken nothing.
   if ((me.metal ?? 0) < RECRUIT_COST.metal || (me.gold ?? 0) < RECRUIT_COST.gold) {
     return err(409, 'cannot_afford',
       `recruiting a captain costs ${RECRUIT_COST.metal}M + ${RECRUIT_COST.gold}C`);
@@ -3436,9 +3582,20 @@ async function handleCreateCaptain(req, env, ctx) {
   if (typeof body.name === 'string' && body.name.trim().length > 0) {
     name = body.name.trim().slice(0, 32);
   }
+  const paidCaptain = await env.DB
+    .prepare(
+      `UPDATE game_factions SET metal = metal - ?, gold = gold - ?
+        WHERE id = ? AND metal >= ? AND gold >= ?`,
+    )
+    .bind(RECRUIT_COST.metal, RECRUIT_COST.gold, me.id, RECRUIT_COST.metal, RECRUIT_COST.gold)
+    .run();
+  if (!paidCaptain.meta?.changes) {
+    return err(409, 'cannot_afford',
+      `recruiting a captain costs ${RECRUIT_COST.metal}M + ${RECRUIT_COST.gold}C — `
+      + 'your balance changed while the request was in flight. Nothing was taken.');
+  }
+
   await env.DB.batch([
-    env.DB.prepare('UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ?')
-      .bind(RECRUIT_COST.metal, RECRUIT_COST.gold, me.id),
     env.DB
       .prepare(
         `INSERT INTO game_captains
