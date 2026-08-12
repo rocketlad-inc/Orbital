@@ -441,7 +441,11 @@ const COUNT_WORDS = new Set([
   'zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine',
 ]);
 function precededByCount(soFar) {
-  const m = soFar.match(/(\S+)\s+$/);
+  // The name is usually bolded, so the text immediately before the
+  // match is "three **" — emphasis markers have to come off before
+  // there is any whitespace to anchor on.
+  const t = soFar.replace(/[*_]+$/, '');
+  const m = t.match(/(\S+)\s+$/);
   if (!m) return false;
   const w = m[1].replace(/[*_]/g, '').toLowerCase();
   return /^\d+$/.test(w) || COUNT_WORDS.has(w);
