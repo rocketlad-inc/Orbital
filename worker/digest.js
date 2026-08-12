@@ -821,7 +821,7 @@ const BATTLE_ONE_SIDED_KNOWN = [
   c => `Not one ${b(c.winner)} crew was posted missing at ${c.bodyLoc}, while ${b(c.loser)} counts ${numWord(c.count)} ${shipsWord(c.count)} gone${c.namesClause}.`,
   c => `Fire-control logs held by ${b(c.winner)} run to a few pages. The cost to ${b(c.loser)} at ${c.bodyLoc} runs to ${numWord(c.count)} ${shipsWord(c.count)}${c.namesClause}.`,
   c => `Rarely is a defeat this tidy: ${numWord(c.count)} ${shipsWord(c.count)} of ${b(c.loser)} destroyed at ${c.bodyLoc}, and ${b(c.winner)} back at its moorings at full strength${c.namesClause}.`,
-  c => `Beacons from ${numWord(c.count)} lost ${shipsWord(c.count)} are still transmitting over ${c.bodyLoc}. Every one of them belongs to ${b(c.loser)}; ${b(c.winner)} left the field intact${c.namesClause}.`,
+  c => `Beacons from ${numWord(c.count)} lost ${shipsWord(c.count)} ${plural(c.count, 'is', 'are')} still transmitting over ${c.bodyLoc}. ${plural(c.count, 'It belongs', 'Every one of them belongs')} to ${b(c.loser)}; ${b(c.winner)} left the field intact${c.namesClause}.`,
   c => `Underwriters have opened files on ${numWord(c.count)} ${b(c.loser)} ${shipsWord(c.count)} lost at ${c.bodyLoc}, and none at all for ${b(c.winner)}${c.namesClause}.`,
   c => `Escape pods recovered near ${c.bodyLoc} carried ${b(c.loser)} crews and no others: ${b(c.winner)} lost nothing there, ${b(c.loser)} ${numWord(c.count)} ${shipsWord(c.count)}${c.namesClause}.`,
 ];
