@@ -116,6 +116,22 @@ function formatPopulation(units) {
 function shipsWord(n) { return n === 1 ? 'ship' : 'ships'; }
 function plural(n, word, pluralWord) { return n === 1 ? word : (pluralWord ?? `${word}s`); }
 
+/** "first", "second", … "tenth", then numeric ordinals. Research
+ *  levels top out around ten, so the spelled forms cover the real
+ *  range; the numeric fallback exists so a future rebalance can't
+ *  print "the undefinedth tier". */
+const ORDINAL_WORDS = [
+  'zeroth', 'first', 'second', 'third', 'fourth', 'fifth',
+  'sixth', 'seventh', 'eighth', 'ninth', 'tenth',
+];
+function ordinal(n) {
+  const i = Number(n);
+  if (Number.isInteger(i) && i >= 0 && i < ORDINAL_WORDS.length) return ORDINAL_WORDS[i];
+  const rem100 = i % 100, rem10 = i % 10;
+  if (rem100 >= 11 && rem100 <= 13) return `${i}th`;
+  return `${i}${rem10 === 1 ? 'st' : rem10 === 2 ? 'nd' : rem10 === 3 ? 'rd' : 'th'}`;
+}
+
 /** Bold-wraps a proper noun for narrative body text (factions, body
  *  names). Never used in headline banks — Discord embed TITLES don't
  *  render markdown, so bolding there would show literal asterisks. */
@@ -152,6 +168,37 @@ function titleCase(s) {
 // `n` can legitimately be 1 (three names, max 2 shown), so anything
 // that says "others" has to agree in number — "and 1 others unlisted"
 // was reaching real editions.
+/** Tail for a list of WORLDS attached to a count of SETTLEMENTS. The
+ *  two don't have to match — a faction can put three domes on one moon
+ *  — so this deliberately counts nothing. */
+const WORLD_LIST_VAGUE_TAIL = [
+  () => ' and elsewhere',
+  () => ' among other worlds',
+  () => ' and points beyond',
+  () => ', with more besides',
+  () => ' and further out',
+  () => ' among others',
+  () => ' and elsewhere in the system',
+  () => ', and worlds not listed here',
+];
+
+/** Frames the chronicle's bare victory record as a cited fact rather
+ *  than leaving it standing alone as the entire story. */
+const VICTORY_DETAIL_CLAUSE = [
+  d => `The official record reads: ${d}.`,
+  d => `The registrar's entry is brief — ${d}.`,
+  d => `For the archives: ${d}.`,
+  d => `The declaration, in full: ${d}.`,
+  d => `It is entered in the record as follows — ${d}.`,
+  d => `The formal wording: ${d}.`,
+  d => `Clerks recorded it plainly: ${d}.`,
+  d => `The citation reads ${d}, and there it ends.`,
+  d => `Set down for history: ${d}.`,
+  d => `The ruling, as filed: ${d}.`,
+  d => `The record will show ${d}.`,
+  d => `Written into the archive this hour: ${d}.`,
+];
+
 const NAME_LIST_MORE_TAIL = [
   n => `, and ${n} more`,
   n => `, plus ${n} more`,
@@ -170,16 +217,26 @@ const NAME_LIST_MORE_TAIL = [
  *  cleanly omit the clause. `used` (optional) threads into the same
  *  per-edition "don't repeat a bank" tracking every other phrase bank
  *  uses; omit only for call sites that can't reach it. */
-function nameList(names, max = 2, used = null) {
-  const uniq = [...new Set((names || []).filter(Boolean))];
+function nameList(names, max = 2, used = null, total = null) {
+  const kept = (names || []).filter(Boolean);
+  // De-duplicate for DISPLAY only. Two ships can genuinely carry the
+  // same name, and collapsing them used to silently shrink the tail
+  // count: eighteen hulls built, one name repeated, and the clause read
+  // "18 new ships — Damselfly, Slipstream, plus 15 not named here",
+  // which adds to seventeen. A reader who checks the arithmetic once
+  // and finds it wrong stops trusting every other number on the page,
+  // including the casualty figures. `total` lets a caller that knows
+  // the true count pin the tail to it.
+  const uniq = [...new Set(kept)];
   if (uniq.length === 0) return null;
   const shown = uniq.slice(0, max).map(n => `*${n}*`);
-  if (uniq.length <= max) {
+  const trueTotal = Number.isFinite(total) ? total : kept.length;
+  const remaining = trueTotal - shown.length;
+  if (remaining <= 0) {
     if (shown.length === 1) return shown[0];
     if (shown.length === 2) return `${shown[0]} and ${shown[1]}`;
     return `${shown.slice(0, -1).join(', ')}, and ${shown[shown.length - 1]}`;
   }
-  const remaining = uniq.length - max;
   const tail = used
     ? pickTemplate('name_list_tail', NAME_LIST_MORE_TAIL, used)(remaining)
     : NAME_LIST_MORE_TAIL[0](remaining);
@@ -250,6 +307,191 @@ function pickTemplate(bankName, bank, used) {
 
 function safeJson(s) { try { return JSON.parse(s || '{}') || {}; } catch { return {}; } }
 
+// ------------------------------------------------------------
+// Second-reference short names
+// ------------------------------------------------------------
+
+/** Nouns that mark the "kind of polity" tail of a faction name, so
+ *  "Sun Never Sets On The Solar Empire" can become "the Solar Empire". */
+const ORG_NOUNS = new Set([
+  'empire', 'federation', 'authority', 'republic', 'alliance', 'union',
+  'coalition', 'dominion', 'collective', 'hegemony', 'consortium',
+  'conclave', 'directorate', 'league', 'order', 'syndicate', 'imperium',
+  'commonwealth', 'compact', 'concord', 'assembly', 'council', 'confederacy',
+  'protectorate', 'ascendancy', 'combine', 'company', 'corporation', 'guild',
+  'clan', 'horde', 'swarm', 'covenant', 'accord', 'triumvirate', 'regency',
+]);
+
+/** Derives a newspaper short form for each faction.
+ *
+ *  Players name their factions, and they name them LONG: a real match
+ *  produced "Sun Never Sets On The Solar Empire", which the Herald
+ *  then printed in full on every one of its five mentions in a single
+ *  paragraph — and printed ":) Smiley Face Friends :)'s" as a
+ *  possessive. A reviewer reading ten editions called this the single
+ *  biggest drag on readability in the paper, which is right: it is
+ *  also the one thing a real newspaper never does. Papers spell a name
+ *  out once and use a short form forever after.
+ *
+ *  Candidates are tried in order of how much they read like something
+ *  a subeditor would actually choose, and each is accepted only if it
+ *  is shorter, unclaimed, and unambiguous — no candidate may appear
+ *  inside ANY other faction's full name, or "the Empire" would refer
+ *  to two different powers in the same sentence. A faction with no
+ *  safe short form simply keeps its full name. */
+function buildShortNames(fullNames) {
+  const shorts = new Map();
+  const taken = new Set();
+  const lower = s => s.toLowerCase();
+
+  for (const full of fullNames) {
+    // Strip purely decorative edge tokens (":)" and friends) — that
+    // alone rescues the possessive form.
+    const tokens = full.trim().split(/\s+/);
+    let lo = 0, hi = tokens.length - 1;
+    while (lo <= hi && !/[A-Za-z0-9]/.test(tokens[lo])) lo++;
+    while (hi >= lo && !/[A-Za-z0-9]/.test(tokens[hi])) hi--;
+    const core = tokens.slice(lo, hi + 1).join(' ') || full;
+    const words = core.split(/\s+/);
+    const last = words[words.length - 1] ?? '';
+
+    const candidates = [];
+    // "The Empire of Lorne" -> "Lorne"; "Federation of Atlantis" -> "Atlantis"
+    const ofMatch = core.match(/^(?:The\s+)?.+?\s+of\s+(.+)$/i);
+    if (ofMatch) candidates.push(ofMatch[1]);
+    // "...On The Solar Empire" -> "the Solar Empire"
+    if (words.length > 2 && ORG_NOUNS.has(lower(last))) {
+      candidates.push(`the ${words.slice(-2).join(' ')}`);
+    }
+    // ":) Smiley Face Friends :)" -> "Smiley Face Friends"
+    if (core !== full) candidates.push(core);
+    // "Moose Authority" -> "Moose"
+    if (words.length > 1 && words[0].length >= 4 && lower(words[0]) !== 'the') {
+      candidates.push(words[0]);
+    }
+    // last resort: "Moose Authority" -> "the Authority"
+    if (words.length > 1 && ORG_NOUNS.has(lower(last))) candidates.push(`the ${last}`);
+
+    for (const cand of candidates) {
+      if (!cand || cand.length >= full.length || cand.replace(/^the\s+/i, '').length < 3) continue;
+      const key = lower(cand.replace(/^the\s+/i, ''));
+      if (taken.has(key)) continue;
+      // Ambiguous if it also names, or sits inside, some OTHER faction.
+      if (fullNames.some(o => o !== full && lower(o).includes(key))) continue;
+      shorts.set(full, cand);
+      taken.add(key);
+      break;
+    }
+  }
+  return shorts;
+}
+
+/** True if the text so far ends at a sentence boundary — used so a
+ *  short form beginning "the " gets a capital when it opens a sentence
+ *  ("the Solar Empire held." -> "The Solar Empire held."). Markdown
+ *  emphasis markers are skipped, because the name is usually bolded and
+ *  the asterisks sit between the boundary and the word. */
+function atSentenceStart(soFar) {
+  const t = soFar.replace(/[*_\s]+$/, '');
+  return t === '' || /[.!?:;—\n]$/.test(t);
+}
+
+/** Replaces every occurrence of `needle` in `hay` after the first
+ *  `skip` of them. Plain string scanning — faction names are arbitrary
+ *  player text (":) Smiley Face Friends :)") and would have to be
+ *  escaped to be used as a regex. */
+function replaceAfter(hay, needle, replacement, skip) {
+  if (!needle) return hay;
+  let out = '', from = 0, seen = 0;
+  for (;;) {
+    const at = hay.indexOf(needle, from);
+    if (at === -1) { out += hay.slice(from); return out; }
+    out += hay.slice(from, at);
+    if (seen < skip) {
+      out += needle;
+    } else {
+      out += atSentenceStart(out)
+        ? replacement.charAt(0).toUpperCase() + replacement.slice(1)
+        : replacement;
+    }
+    seen++;
+    from = at + needle.length;
+  }
+}
+
+/** Applies short names across a finished edition, in reading order.
+ *
+ *  Done as a pass over the rendered text rather than inside the banks
+ *  because "is this the first mention?" is only answerable once the
+ *  headline has been chosen and the sections ordered — which happens
+ *  after every template has already run.
+ *
+ *  Headlines take the short form outright: a masthead has never spelled
+ *  out a six-word polity, and the deck underneath carries the full name
+ *  a line later anyway. */
+function applyShortNames(embed, factionNames) {
+  const fulls = [...new Set([...factionNames.values()].filter(Boolean))]
+    // Longest first: "The Empire of Lorne" must be matched and consumed
+    // before a shorter name that happens to sit inside it.
+    .sort((a, z) => z.length - a.length);
+  if (fulls.length === 0) return embed;
+  const shorts = buildShortNames(fulls);
+  if (shorts.size === 0) return embed;
+
+  let title = embed.title ?? '';
+  for (const full of fulls) {
+    const s = shorts.get(full);
+    if (!s) continue;
+    title = replaceAfter(title, full.toUpperCase(), s.replace(/^the\s+/i, '').toUpperCase(), 0);
+  }
+
+  // One shared "already introduced" set across the whole edition, walked
+  // in the order a reader's eye goes: deck first, then each field.
+  const introduced = new Set();
+  const shorten = (text) => {
+    let out = text ?? '';
+    for (const full of fulls) {
+      const s = shorts.get(full);
+      if (!s || !out.includes(full)) continue;
+      const skip = introduced.has(full) ? 0 : 1;
+      out = replaceAfter(out, full, s, skip);
+      introduced.add(full);
+    }
+    return out;
+  };
+
+  const description = shorten(embed.description);
+  const fields = (embed.fields ?? []).map(f => ({ ...f, value: shorten(f.value) }));
+  return { ...embed, title, description, fields };
+}
+
+const SETTLEMENT_LOSS_CLAUSE = [
+  (nameStr, many, popClause) => ` The civil registry lists ${nameStr}${popClause} among the losses.`,
+  (nameStr, many, popClause) => ` ${nameStr}${popClause} ${many ? 'are' : 'is'} gone as well.`,
+  (nameStr, many, popClause) => ` Nothing habitable remains at ${nameStr}${popClause}.`,
+  (nameStr, many, popClause) => ` The fighting also took ${nameStr}${popClause}. No warning was given, and none was possible.`,
+  (nameStr, many, popClause) => ` Add to the ledger ${nameStr}${popClause}, ${many ? 'settlements' : 'a settlement'} of no military value whatsoever.`,
+  (nameStr, many, popClause) => ` ${nameStr}${popClause} ${many ? 'were' : 'was'} struck in the same pass. Evacuation orders went out eleven minutes after the first hit.`,
+  (nameStr, many, popClause) => ` Among the wreckage: ${nameStr}${popClause}, listed in the pre-war surveys as agricultural.`,
+  (nameStr, many, popClause) => ` The same engagement erased ${nameStr}${popClause}.`,
+  (nameStr, many, popClause) => ` Casualty accounting is ongoing at ${nameStr}${popClause}, where the habitat shells failed inside the hour.`,
+  (nameStr, many, popClause) => ` ${nameStr}${popClause} ${many ? 'have' : 'has'} been struck from the settled-worlds index. The paperwork took longer than the bombardment.`,
+  (nameStr, many, popClause) => ` Also destroyed: ${nameStr}${popClause}.`,
+  (nameStr, many, popClause) => ` Survivors from ${nameStr}${popClause} are being counted at the nearest depot, though counted is a generous word for it.`,
+  (nameStr, many, popClause) => ` The dock district at ${nameStr} burned for two days after the last ship left.`,
+  (nameStr, many, popClause) => ` ${nameStr}${popClause} ${many ? 'were' : 'was'} lost with ${many ? 'them' : 'it'} — schools, water plant, the lot.`,
+  (nameStr, many, popClause) => ` No shipyard sat at ${nameStr}. No garrison, no battery, no reason. ${nameStr} is rubble.`,
+  (nameStr, many, popClause) => ` This desk notes, without comment, that ${nameStr}${popClause} ${many ? 'were' : 'was'} inhabited.`,
+  (nameStr, many, popClause) => ` Add ${nameStr}${popClause} to the column that never gets a headline.`,
+  (nameStr, many, popClause) => ` Relief traffic has been diverted toward ${nameStr}${popClause}. It will arrive too late to be relief.`,
+  (nameStr, many, popClause) => ` The ${many ? 'settlements' : 'settlement'} at ${nameStr}${popClause} did not survive the engagement.`,
+  (nameStr, many, popClause) => ` Ministry language for what happened to ${nameStr}${popClause} is "incidental habitation loss."`,
+  (nameStr, many, popClause) => ` ${nameStr} ${many ? 'were' : 'was'} not evacuated. There was no one left in orbit to do the evacuating.`,
+  (nameStr, many, popClause) => ` Refugee columns are moving out of ${nameStr}${popClause} on whatever hulls will take them.`,
+  (nameStr, many, popClause) => ` And ${nameStr}${popClause} — ${many ? 'towns' : 'a town'} that built nothing more dangerous than grain silos — ${many ? 'are' : 'is'} finished.`,
+  (nameStr, many, popClause) => ` The ${many ? 'names' : 'name'} of ${nameStr}${popClause} will appear in no dispatch after this one.`,
+];
+
 /** "was also lost" clause for settlements destroyed alongside ships in
  *  a battle. Folds in total population when we have it — a bare name
  *  ("the settlement Qualor II Depot was also lost") reads as a line
@@ -266,7 +508,7 @@ function settlementLossClause(names, totalPop, used) {
   // only opens ("New City — home to 600,000 was lost") runs the aside
   // straight into the verb with no boundary.
   const popClause = totalPop > 0 ? ` — home to ${formatPopulation(totalPop)} —` : '';
-  return ` The settlement${many ? 's' : ''} ${nameStr}${popClause} ${many ? 'were' : 'was'} also lost in the fighting.`;
+  return pickTemplate('settlement_loss', SETTLEMENT_LOSS_CLAUSE, used)(nameStr, many, popClause);
 }
 
 /** Builds a story object: renders BOTH a body sentence (narrative
@@ -394,6 +636,30 @@ const BATTLE_ONE_SIDED_KNOWN = [
   c => `Nothing was left to negotiate at ${c.bodyLoc} — ${b(c.winner)} erased ${numWord(c.count)} ${b(c.loser)} ${shipsWord(c.count)} outright${c.namesClause}.`,
   c => `Distress calls poured out of ${c.bodyLoc} as ${b(c.winner)} tore through ${numWord(c.count)} ${b(c.loser)} ${shipsWord(c.count)}${c.namesClause}.`,
   c => `${b(c.winner)} needed only one pass over ${c.bodyLoc} to put ${numWord(c.count)} ${b(c.loser)} ${shipsWord(c.count)} out of commission${c.namesClause}.`,
+  c => `${b(c.loser)} came away from ${c.bodyLoc} ${numWord(c.count)} ${shipsWord(c.count)} lighter, and ${b(c.winner)} came away whole${c.namesClause}.`,
+  c => `At ${c.bodyLoc}, the shooting stopped only because there was nothing left of ${b(c.loser)} to shoot at: ${numWord(c.count)} ${shipsWord(c.count)} destroyed, ${b(c.winner)} untouched${c.namesClause}.`,
+  c => `${numWord(c.count)} ${shipsWord(c.count)} flying ${b(c.loser)} colours ${plural(c.count, 'was', 'were')} destroyed at ${c.bodyLoc}. ${b(c.winner)} did not lose a hull${c.namesClause}.`,
+  c => `The ledger from ${c.bodyLoc} reads badly for ${b(c.loser)}: ${numWord(c.count)} ${shipsWord(c.count)} lost, and nothing at all charged against ${b(c.winner)}${c.namesClause}.`,
+  c => `Whatever ${b(c.loser)} meant to accomplish at ${c.bodyLoc}, it ended with ${numWord(c.count)} ${shipsWord(c.count)} burning and ${b(c.winner)} counting no losses${c.namesClause}.`,
+  c => `Tugs were working the debris at ${c.bodyLoc} before the plating had cooled; ${b(c.loser)} is short ${numWord(c.count)} ${shipsWord(c.count)} and ${b(c.winner)} is short nothing${c.namesClause}.`,
+  c => `${b(c.winner)} took the field at ${c.bodyLoc} and did not pay for it — ${numWord(c.count)} ${shipsWord(c.count)} of ${b(c.loser)} destroyed, its own roster unchanged${c.namesClause}.`,
+  c => `A one-sided hour at ${c.bodyLoc} cost ${b(c.loser)} ${numWord(c.count)} ${shipsWord(c.count)} and cost ${b(c.winner)} nothing at all${c.namesClause}.`,
+  c => `The repair bays of ${b(c.winner)} stood empty tonight, while ${b(c.loser)} was writing off ${numWord(c.count)} ${shipsWord(c.count)} lost at ${c.bodyLoc}${c.namesClause}.`,
+  c => `Names were read out across ${b(c.loser)} stations this evening — ${numWord(c.count)} ${shipsWord(c.count)} lost at ${c.bodyLoc}, to a ${b(c.winner)} force that came home entire${c.namesClause}.`,
+  c => `No ${b(c.winner)} hull was lost at ${c.bodyLoc}. The figure given for ${b(c.loser)} is ${numWord(c.count)} ${shipsWord(c.count)}${c.namesClause}.`,
+  c => `Total loss, and quickly. ${b(c.loser)} left ${numWord(c.count)} ${shipsWord(c.count)} at ${c.bodyLoc}; ${b(c.winner)} left with everything it brought${c.namesClause}.`,
+  c => `Command traffic out of ${b(c.loser)} fell silent during the action at ${c.bodyLoc}, which cost it ${numWord(c.count)} ${shipsWord(c.count)} against no loss to ${b(c.winner)}${c.namesClause}.`,
+  c => `${b(c.loser)} will be asked to explain ${c.bodyLoc}: ${numWord(c.count)} ${shipsWord(c.count)} destroyed, and not a scratch on ${b(c.winner)}${c.namesClause}.`,
+  c => `Debris from ${numWord(c.count)} ${b(c.loser)} ${shipsWord(c.count)} drifts over ${c.bodyLoc} tonight. ${b(c.winner)} has nothing to add to the tally${c.namesClause}.`,
+  c => `Fighting at ${c.bodyLoc} ran long enough to destroy ${numWord(c.count)} ${b(c.loser)} ${shipsWord(c.count)} and not long enough for ${b(c.winner)} to lose anything${c.namesClause}.`,
+  c => `${b(c.winner)} went to ${c.bodyLoc} expecting a battle and conducted an execution — ${numWord(c.count)} ${shipsWord(c.count)} of ${b(c.loser)} destroyed, none of its own${c.namesClause}.`,
+  c => `Officers of ${b(c.loser)} are calling the affair at ${c.bodyLoc} a probing action; the probe cost ${numWord(c.count)} ${shipsWord(c.count)}, and ${b(c.winner)} paid nothing to answer it${c.namesClause}.`,
+  c => `Not one ${b(c.winner)} crew was posted missing at ${c.bodyLoc}, while ${b(c.loser)} counts ${numWord(c.count)} ${shipsWord(c.count)} gone${c.namesClause}.`,
+  c => `Fire-control logs held by ${b(c.winner)} run to a few pages. The cost to ${b(c.loser)} at ${c.bodyLoc} runs to ${numWord(c.count)} ${shipsWord(c.count)}${c.namesClause}.`,
+  c => `Rarely is a defeat this tidy: ${numWord(c.count)} ${shipsWord(c.count)} of ${b(c.loser)} destroyed at ${c.bodyLoc}, and ${b(c.winner)} back at its moorings at full strength${c.namesClause}.`,
+  c => `Beacons from ${numWord(c.count)} lost ${shipsWord(c.count)} are still transmitting over ${c.bodyLoc}. Every one of them belongs to ${b(c.loser)}; ${b(c.winner)} left the field intact${c.namesClause}.`,
+  c => `Underwriters have opened files on ${numWord(c.count)} ${b(c.loser)} ${shipsWord(c.count)} lost at ${c.bodyLoc}, and none at all for ${b(c.winner)}${c.namesClause}.`,
+  c => `Escape pods recovered near ${c.bodyLoc} carried ${b(c.loser)} crews and no others: ${b(c.winner)} lost nothing there, ${b(c.loser)} ${numWord(c.count)} ${shipsWord(c.count)}${c.namesClause}.`,
 ];
 
 const BATTLE_ONE_SIDED_KNOWN_HEADLINE = [
@@ -564,6 +830,30 @@ const BATTLE_NARROW = [
   c => `Ships burned on both sides at ${c.bodyLoc} before ${b(c.winner)} pulled ahead, ${numWord(c.loserCount)} to ${numWord(c.winnerCount)}.`,
   c => `Margins don't get much thinner than ${c.bodyLoc}, where ${b(c.winner)} beat ${b(c.loser)} by losing only ${numWord(c.winnerCount)} ${shipsWord(c.winnerCount)} to ${numWord(c.loserCount)}.`,
   c => `Fighting at ${c.bodyLoc} chewed through both fleets before ${b(c.winner)} came out on top, ${numWord(c.winnerCount)} ${shipsWord(c.winnerCount)} lost to claim ${numWord(c.loserCount)}.`,
+  c => `${b(c.winner)} holds ${c.body} tonight, at a cost of ${numWord(c.winnerCount)} ${shipsWord(c.winnerCount)} against the ${numWord(c.loserCount)} lost by ${b(c.loser)}.`,
+  c => `At ${c.bodyLoc}, both sides left wreckage behind: ${numWord(c.loserCount)} ${shipsWord(c.loserCount)} for ${b(c.loser)}, ${numWord(c.winnerCount)} for ${b(c.winner)}.`,
+  c => `${numWord(c.loserCount)} ${shipsWord(c.loserCount)} of ${b(c.loser)} and ${numWord(c.winnerCount)} of ${b(c.winner)} were destroyed at ${c.bodyLoc}; the difference is the whole story.`,
+  c => `The result at ${c.bodyLoc} goes to ${b(c.winner)} on a count of ${numWord(c.loserCount)} to ${numWord(c.winnerCount)} — not a margin anyone will put on a banner.`,
+  c => `${b(c.loser)} lost ${numWord(c.loserCount)} ${shipsWord(c.loserCount)} at ${c.bodyLoc}. ${b(c.winner)} lost ${numWord(c.winnerCount)} and is calling the day its own.`,
+  c => `Salvage tenders from both powers are working the same debris field over ${c.body}, ${numWord(c.loserCount)} ${shipsWord(c.loserCount)} of it belonging to ${b(c.loser)} and ${numWord(c.winnerCount)} to ${b(c.winner)}.`,
+  c => `Hospital berths on either side of ${c.body} are full. ${b(c.winner)} counts ${numWord(c.winnerCount)} ${shipsWord(c.winnerCount)} lost, ${b(c.loser)} ${numWord(c.loserCount)}.`,
+  c => `Victory is the word ${b(c.winner)} is using for ${c.body}; ${numWord(c.winnerCount)} ${shipsWord(c.winnerCount)} of its own did not come back, and ${numWord(c.loserCount)} of ${b(c.loser)} did not either.`,
+  c => `Fighting over ${c.bodyLoc} went on well past the point either fleet could afford, ending with ${b(c.loser)} down ${numWord(c.loserCount)} ${shipsWord(c.loserCount)} and ${b(c.winner)} down ${numWord(c.winnerCount)}.`,
+  c => `Neither ${b(c.winner)} nor ${b(c.loser)} will want to repeat ${c.body}: ${numWord(c.winnerCount)} ${shipsWord(c.winnerCount)} lost by the former, ${numWord(c.loserCount)} by the latter.`,
+  c => `A win of sorts for ${b(c.winner)} at ${c.bodyLoc}, where ${numWord(c.loserCount)} ${b(c.loser)} ${shipsWord(c.loserCount)} and ${numWord(c.winnerCount)} of its own were destroyed.`,
+  c => `The bill for ${b(c.winner)} at ${c.bodyLoc} came to ${numWord(c.winnerCount)} ${shipsWord(c.winnerCount)}; the bill for ${b(c.loser)} came to ${numWord(c.loserCount)}.`,
+  c => `Watch officers on both sides described the action at ${c.body} as confused. ${b(c.loser)} lost ${numWord(c.loserCount)} ${shipsWord(c.loserCount)} in the confusion, ${b(c.winner)} ${numWord(c.winnerCount)}.`,
+  c => `Reactor plumes were still visible from ${c.body} at dawn, marking ${numWord(c.loserCount)} ${shipsWord(c.loserCount)} lost by ${b(c.loser)} and ${numWord(c.winnerCount)} by ${b(c.winner)}.`,
+  c => `Fortune, and not much of it, went to ${b(c.winner)} at ${c.bodyLoc}: ${numWord(c.winnerCount)} ${shipsWord(c.winnerCount)} of its own destroyed against ${numWord(c.loserCount)} of ${b(c.loser)}.`,
+  c => `${b(c.loser)} withdrew from ${c.bodyLoc} in reasonable order, having lost ${numWord(c.loserCount)} ${shipsWord(c.loserCount)} to the ${numWord(c.winnerCount)} it took from ${b(c.winner)}.`,
+  c => `The engagement at ${c.bodyLoc} was settled by a count of ${numWord(c.loserCount)} ${shipsWord(c.loserCount)} to ${numWord(c.winnerCount)}, in favour of ${b(c.winner)}.`,
+  c => `Yards on both sides of the line have work now — ${numWord(c.winnerCount)} ${shipsWord(c.winnerCount)} gone from ${b(c.winner)}, ${numWord(c.loserCount)} from ${b(c.loser)}, all of it at ${c.bodyLoc}.`,
+  c => `Fought down to the last serviceable gun, the action at ${c.body} cost ${b(c.loser)} ${numWord(c.loserCount)} ${shipsWord(c.loserCount)} and ${b(c.winner)} ${numWord(c.winnerCount)}.`,
+  c => `${b(c.winner)} claims ${c.body}, and the claim is not being disputed; ${numWord(c.winnerCount)} ${shipsWord(c.winnerCount)} of its own and ${numWord(c.loserCount)} of ${b(c.loser)} were destroyed proving it.`,
+  c => `Little separated the two fleets at ${c.bodyLoc} except the final count: ${numWord(c.loserCount)} ${shipsWord(c.loserCount)} for ${b(c.loser)}, ${numWord(c.winnerCount)} for ${b(c.winner)}.`,
+  c => `Crews of ${b(c.winner)} are being stood down rather than resupplied after ${c.body}, where ${numWord(c.winnerCount)} ${shipsWord(c.winnerCount)} ${plural(c.winnerCount, 'was', 'were')} lost against ${numWord(c.loserCount)} of ${b(c.loser)}.`,
+  c => `The name ${c.body} will sit badly in both fleets: ${b(c.loser)} lost ${numWord(c.loserCount)} ${shipsWord(c.loserCount)} there, ${b(c.winner)} ${numWord(c.winnerCount)}.`,
+  c => `Deep-space relays carried the tally from ${c.body} before either capital was ready for it — ${numWord(c.loserCount)} ${shipsWord(c.loserCount)} lost by ${b(c.loser)}, ${numWord(c.winnerCount)} by ${b(c.winner)}.`,
 ];
 
 const BATTLE_NARROW_HEADLINE = [
@@ -917,6 +1207,30 @@ const INDUSTRY_BOTH = [
   c => `Engineers and shipwrights alike stayed busy for ${b(c.faction)}, finishing ${numWord(c.buildCount)} project${plural(c.buildCount, '')} and launching ${numWord(c.shipCount)} new ${shipsWord(c.shipCount)}${c.shipNamesClause}.`,
   c => `${b(c.faction)} posted gains on two fronts today — ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} commissioned and ${numWord(c.buildCount)} upgrade${plural(c.buildCount, '')} finished${c.shipNamesClause}.`,
   c => `It was all go for ${b(c.faction)}: ${numWord(c.shipCount)} new ${shipsWord(c.shipCount)} entered service as ${numWord(c.buildCount)} construction project${plural(c.buildCount, '')} closed out${c.shipNamesClause}.`,
+  c => `${b(c.faction)} closed out ${numWord(c.buildCount)} ${plural(c.buildCount, 'project', 'projects')} on the ground and put ${numWord(c.shipCount)} new ${shipsWord(c.shipCount)} in the sky${c.shipNamesClause}.`,
+  c => `Welders and surveyors both earned their pay under ${b(c.faction)} this period: ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} away from dock, ${numWord(c.buildCount)} ${plural(c.buildCount, 'site', 'sites')} handed over.`,
+  c => `Scaffolding came down at ${numWord(c.buildCount)} ${b(c.faction)} ${plural(c.buildCount, 'site', 'sites')} while the yards released ${numWord(c.shipCount)} ${shipsWord(c.shipCount)}${c.shipNamesClause}.`,
+  c => `Two sets of books, one good shift: ${b(c.faction)} records ${numWord(c.buildCount)} ${plural(c.buildCount, 'project', 'projects')} complete and ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} commissioned.`,
+  c => `Under ${b(c.faction)} management, ${numWord(c.buildCount)} ${plural(c.buildCount, 'project', 'projects')} reached completion — and the same window saw ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} accepted into service${c.shipNamesClause}.`,
+  c => `Progress reports from ${b(c.faction)} arrive in duplicate: ${numWord(c.buildCount)} finished ${plural(c.buildCount, 'project', 'projects')} from the construction office, ${numWord(c.shipCount)} new ${shipsWord(c.shipCount)} from the yards.`,
+  c => `The ledger is short and the shift was not: ${numWord(c.buildCount)} ${plural(c.buildCount, 'project', 'projects')} completed for ${b(c.faction)}, ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} added to its register${c.shipNamesClause}.`,
+  c => `${b(c.faction)} spent the period building in two directions at once, finishing ${numWord(c.buildCount)} ${plural(c.buildCount, 'project', 'projects')} and commissioning ${numWord(c.shipCount)} ${shipsWord(c.shipCount)}.`,
+  c => `Cargo manifests, survey stakes, and a fresh set of hull numbers: ${b(c.faction)} completed ${numWord(c.buildCount)} ${plural(c.buildCount, 'project', 'projects')} and sent out ${numWord(c.shipCount)} ${shipsWord(c.shipCount)}${c.shipNamesClause}.`,
+  c => `Somewhere in ${b(c.faction)} territory a foreman is still signing paperwork — ${numWord(c.buildCount)} ${plural(c.buildCount, 'project', 'projects')} finished, ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} released to the fleet.`,
+  c => `${b(c.faction)}'s construction office reported ${numWord(c.buildCount)} ${plural(c.buildCount, 'project', 'projects')} finished; its dockmaster reported ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} cleared for space${c.shipNamesClause}.`,
+  c => `Dust settled over ${numWord(c.buildCount)} completed ${plural(c.buildCount, 'site', 'sites')} in ${b(c.faction)} space, and ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} left dock while it did.`,
+  c => `Add ${numWord(c.buildCount)} finished ${plural(c.buildCount, 'project', 'projects')} to ${b(c.faction)}'s column, then add ${numWord(c.shipCount)} new ${shipsWord(c.shipCount)} beneath it${c.shipNamesClause}.`,
+  c => `Keels were laid and foundations poured in the same week under ${b(c.faction)}: ${numWord(c.buildCount)} ${plural(c.buildCount, 'project', 'projects')} complete, ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} commissioned.`,
+  c => `Finished at last, ${numWord(c.buildCount)} ${b(c.faction)} ${plural(c.buildCount, 'project', 'projects')} came off the works schedule — and ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} came off the slipways${c.shipNamesClause}.`,
+  c => `Ledgers out of ${b(c.faction)} show ${numWord(c.buildCount)} ${plural(c.buildCount, 'project', 'projects')} struck from the works list and ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} entered on the fleet roll.`,
+  c => `Quietly, and without ceremony, ${b(c.faction)} completed ${numWord(c.buildCount)} ${plural(c.buildCount, 'project', 'projects')} and commissioned ${numWord(c.shipCount)} ${shipsWord(c.shipCount)}${c.shipNamesClause}.`,
+  c => `Prefab domes went up at ${numWord(c.buildCount)} ${b(c.faction)} ${plural(c.buildCount, 'site', 'sites')}; ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} went out from its yards.`,
+  c => `Whatever ${b(c.faction)} pays its engineers, it appears to be working: ${numWord(c.buildCount)} ${plural(c.buildCount, 'project', 'projects')} finished and ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} commissioned${c.shipNamesClause}.`,
+  c => `Both halves of ${b(c.faction)}'s industrial base filed returns this period — ${numWord(c.buildCount)} ${plural(c.buildCount, 'project', 'projects')} completed, ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} delivered.`,
+  c => `Reports filed from ${b(c.faction)} work sites confirm ${numWord(c.buildCount)} ${plural(c.buildCount, 'project', 'projects')} finished, with ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} commissioned in the same window${c.shipNamesClause}.`,
+  c => `The hard part of ${b(c.faction)}'s week was apparently getting the paperwork signed: ${numWord(c.buildCount)} ${plural(c.buildCount, 'project', 'projects')} done, ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} away.`,
+  c => `Steel was cut and concrete was poured to equal effect across ${b(c.faction)} holdings, which recorded ${numWord(c.buildCount)} completed ${plural(c.buildCount, 'project', 'projects')} and ${numWord(c.shipCount)} new ${shipsWord(c.shipCount)}${c.shipNamesClause}.`,
+  c => `${b(c.faction)} finished ${numWord(c.buildCount)} ${plural(c.buildCount, 'project', 'projects')} and, before the shift ended, sent ${numWord(c.shipCount)} ${shipsWord(c.shipCount)} out past the marker buoys.`,
 ];
 
 const INDUSTRY_BOTH_HEADLINE = [
@@ -1125,6 +1439,30 @@ const COLONY_FOUNDED = [
   c => `${b(c.faction)} widened its reach with ${numWord(c.count)} new settlement${plural(c.count, '')}${c.entriesClause}.`,
   c => `Registries updated to show ${numWord(c.count)} new settlement${plural(c.count, '')} under ${b(c.faction)}${c.entriesClause}.`,
   c => `${b(c.faction)} isn't slowing down — ${numWord(c.count)} new settlement${plural(c.count, '')} founded${c.entriesClause}.`,
+  c => `${b(c.faction)} put ${numWord(c.count)} new ${plural(c.count, 'settlement', 'settlements')} on the charts${c.entriesClause}.`,
+  c => `Survey stakes first, prefab domes second: ${b(c.faction)} now counts ${numWord(c.count)} more ${plural(c.count, 'holding', 'holdings')}${c.entriesClause}.`,
+  c => `The charts were redrawn again this period, with ${numWord(c.count)} fresh ${plural(c.count, 'settlement', 'settlements')} registered to ${b(c.faction)}${c.entriesClause}.`,
+  c => `Landing craft in ${b(c.faction)} livery unloaded prefab housing for ${numWord(c.count)} new ${plural(c.count, 'colony', 'colonies')}${c.entriesClause}.`,
+  c => `Somewhere cold and airless, ${numWord(c.count)} ${b(c.faction)} ${plural(c.count, 'settlement', 'settlements')} switched on the lights for the first time${c.entriesClause}.`,
+  c => `${b(c.faction)} raised ${numWord(c.count)} new ${plural(c.count, 'settlement', 'settlements')} this period${c.entriesClause}.`,
+  c => `Charter documents were filed for ${numWord(c.count)} ${b(c.faction)} ${plural(c.count, 'colony', 'colonies')}${c.entriesClause}.`,
+  c => `Not content with the ground it held, ${b(c.faction)} took ${numWord(c.count)} ${plural(c.count, 'parcel', 'parcels')} more${c.entriesClause}.`,
+  c => `Survey teams working under ${b(c.faction)} contract handed off ${numWord(c.count)} finished ${plural(c.count, 'site', 'sites')}${c.entriesClause}.`,
+  c => `A quiet period at the frontier office, aside from ${numWord(c.count)} new ${plural(c.count, 'charter', 'charters')} granted to ${b(c.faction)}${c.entriesClause}.`,
+  c => `${b(c.faction)} now flies its colours over ${numWord(c.count)} more ${plural(c.count, 'site', 'sites')}${c.entriesClause}.`,
+  c => `Habitation modules landed and pressurised for ${b(c.faction)}, ${numWord(c.count)} ${plural(c.count, 'settlement', 'settlements')} in all${c.entriesClause}.`,
+  c => `Add ${numWord(c.count)} more ${plural(c.count, 'entry', 'entries')} to ${b(c.faction)}'s column of the colonial register${c.entriesClause}.`,
+  c => `The rock is cold, the air comes bottled, and ${b(c.faction)} has ${numWord(c.count)} new ${plural(c.count, 'settlement', 'settlements')} regardless${c.entriesClause}.`,
+  c => `Officials confirmed ${numWord(c.count)} ${plural(c.count, 'foundation', 'foundations')} laid under the ${b(c.faction)} flag${c.entriesClause}.`,
+  c => `Where there was nothing, ${b(c.faction)} now maintains ${numWord(c.count)} ${plural(c.count, 'settlement', 'settlements')}${c.entriesClause}.`,
+  c => `${b(c.faction)} spent the period putting colonists ashore, ${numWord(c.count)} ${plural(c.count, 'landing', 'landings')} in total${c.entriesClause}.`,
+  c => `Cargo holds emptied into pressure tents: ${numWord(c.count)} new ${b(c.faction)} ${plural(c.count, 'settlement', 'settlements')} are on the books${c.entriesClause}.`,
+  c => `First shipments of ore are already promised from ${numWord(c.count)} newly founded ${b(c.faction)} ${plural(c.count, 'colony', 'colonies')}${c.entriesClause}.`,
+  c => `Nothing dramatic, only ${numWord(c.count)} more ${plural(c.count, 'settlement', 'settlements')} standing to ${b(c.faction)}'s name${c.entriesClause}.`,
+  c => `${b(c.faction)} signed off on ${numWord(c.count)} new ${plural(c.count, 'outpost', 'outposts')}${c.entriesClause}.`,
+  c => `Domes, a water plant, a landing strip scraped flat — the usual list, run through ${numWord(c.count)} ${plural(c.count, 'time', 'times')} for ${b(c.faction)}${c.entriesClause}.`,
+  c => `The colonial registry closed the period ${numWord(c.count)} ${plural(c.count, 'name', 'names')} longer, all of them ${b(c.faction)}'s${c.entriesClause}.`,
+  c => `Settlers went down the ramp under ${b(c.faction)} charter at ${numWord(c.count)} separate ${plural(c.count, 'landing site', 'landing sites')}${c.entriesClause}.`,
 ];
 
 const COLONY_FOUNDED_HEADLINE = [
@@ -1292,6 +1630,30 @@ const TREATY_SIGNED = [
   c => `Officials confirm ${c.pactName} between ${b(c.a)} and ${b(c.b)} takes effect immediately.`,
   c => `${b(c.b)} accepts terms: ${c.pactName} with ${b(c.a)} is now binding.`,
   c => `Long in the drafting, ${c.pactName} between ${b(c.a)} and ${b(c.b)} is finally signed.`,
+  c => `The chamber was half empty when ${b(c.a)} and ${b(c.b)} concluded ${c.pactName} this morning.`,
+  c => `${b(c.a)} and ${b(c.b)} are bound by ${c.pactName} as of today, on terms neither delegation cared to read aloud.`,
+  c => `Terms of ${c.pactName} between ${b(c.a)} and ${b(c.b)} were lodged with the registry before noon and made public an hour after that.`,
+  c => `There is now ${c.pactName} standing between ${b(c.a)} and ${b(c.b)}, which is more than stood there yesterday.`,
+  c => `Two delegations, one long table, ${c.pactName}: ${b(c.a)} and ${b(c.b)} closed the matter without a raised voice.`,
+  c => `Older hands will note that ${b(c.a)} and ${b(c.b)} have stood in this hall before; the paper this time is ${c.pactName}.`,
+  c => `This paper has watched ${c.pactName} outlast the ink, and watched the reverse. ${b(c.a)} and ${b(c.b)} concluded theirs today.`,
+  c => `Whether ${c.pactName} survives contact with the next dispute is a question for ${b(c.a)} and ${b(c.b)}, not for the clerks who filed it.`,
+  c => `Under ${c.pactName} concluded today, ${b(c.a)} and ${b(c.b)} take on obligations that both sides describe as modest.`,
+  c => `Flags of ${b(c.a)} and ${b(c.b)} hung together over the hall while ${c.pactName} was read into the record.`,
+  c => `Observers counted two signatures on ${c.pactName} and not one smile between ${b(c.a)} and ${b(c.b)}.`,
+  c => `${b(c.b)} and ${b(c.a)} — the order of names was argued over longer than the text — are now party to ${c.pactName}.`,
+  c => `A courier carried ${c.pactName} out of the hall before the delegations of ${b(c.a)} and ${b(c.b)} had left their seats.`,
+  c => `Another season, another agreement: ${b(c.a)} and ${b(c.b)} concluded ${c.pactName} today, and the wire will keep the file open.`,
+  c => `Ratification of ${c.pactName} was announced from both capitals within the hour, ${b(c.a)} first and ${b(c.b)} a little after.`,
+  c => `The wording of ${c.pactName} runs to a few paragraphs; the history between ${b(c.a)} and ${b(c.b)} runs considerably longer.`,
+  c => `Nothing in ${c.pactName} obliges ${b(c.a)} or ${b(c.b)} to like one another, and the ceremony reflected as much.`,
+  c => `Merchant houses working the lanes between ${b(c.a)} and ${b(c.b)} will price ${c.pactName} into their manifests by the end of the week.`,
+  c => `Word of ${c.pactName} reached the outer stations by relay, well ahead of any explanation from ${b(c.a)} or ${b(c.b)}.`,
+  c => `${b(c.a)} concluded ${c.pactName} with ${b(c.b)} today. The customary photographs were taken; the customary assurances followed.`,
+  c => `Talks widely expected to collapse produced ${c.pactName} instead, and ${b(c.a)} and ${b(c.b)} both look faintly surprised by it.`,
+  c => `Ink is cheap and fleets are not: a fair summary of ${c.pactName} concluded this week by ${b(c.a)} and ${b(c.b)}.`,
+  c => `For as long as it holds, ${c.pactName} governs relations between ${b(c.a)} and ${b(c.b)}. The clause on notice of withdrawal is very short.`,
+  c => `Staff officers on both sides spent the afternoon reading ${c.pactName} for what it does not say, ${b(c.a)} and ${b(c.b)} alike.`,
 ];
 
 const TREATY_SIGNED_HEADLINE = [
@@ -1694,6 +2056,30 @@ const MORE_INCIDENTS_TAIL = [
   (n, s) => `…the wire carried ${n} more incident${s} than these pages allow.`,
   (n, s) => `…editors trimmed ${n} more incident${s} for lack of column space.`,
   (n, s) => `…${n} more incident${s} remain in the notebook, untold.`,
+  (n, s) => `…and ${n} further incident${s}, held over on the grounds that the paper is only so wide.`,
+  (n, s) => `…the presses were already turning when ${n} more incident${s} came off the wire.`,
+  (n, s) => `…${n} more incident${s} exist. They are not here. The compositor has gone home.`,
+  (n, s) => `…our night editor read ${n} more incident${s} aloud, then put them in a drawer.`,
+  (n, s) => `…${n} additional incident${s}, filed, spiked, and briefly mourned.`,
+  (n, s) => `…there were ${n} more incident${s}; there was not more paper.`,
+  (n, s) => `…a correspondent's ${n} remaining incident${s} arrived eleven minutes after we locked the page.`,
+  (n, s) => `…blame the typesetter, the ink budget, or the ${n} surplus incident${s} that would not fit.`,
+  (n, s) => `…${n} more incident${s} were considered, weighed, and left on the floor.`,
+  (n, s) => `…column inches being finite, ${n} incident${s} will keep until tomorrow.`,
+  (n, s) => `…we have ${n} more incident${s} and, regrettably, an edition that ends here.`,
+  (n, s) => `…a galley proof came back with ${n} incident${s} crossed out in red.`,
+  (n, s) => `…somewhere beneath a fold that never existed lie ${n} further incident${s}.`,
+  (n, s) => `…subscribers wanting the other ${n} incident${s} are invited to imagine them.`,
+  (n, s) => `…${n} incident${s} more, every one of them somebody's bad day, none of them printed.`,
+  (n, s) => `…the wire kept chattering long after we closed: ${n} incident${s} unread until morning.`,
+  (n, s) => `…we ran the important ones, and the other ${n} incident${s} will have to be important tomorrow.`,
+  (n, s) => `…of the ${n} incident${s} still on the spike, this desk expresses no opinion.`,
+  (n, s) => `…a further ${n} incident${s} lost the argument with the advertising department.`,
+  (n, s) => `…paper costs what it costs; ${n} incident${s} therefore go unset.`,
+  (n, s) => `…our copy boy is still holding ${n} incident${s} nobody has time to read.`,
+  (n, s) => `…${n} incident${s} were sacrificed so that this sentence could fit.`,
+  (n, s) => `…for the ${n} incident${s} we left out, our sincere and entirely theoretical apologies.`,
+  (n, s) => `…ink, patience, and page four all ran out at once, taking ${n} incident${s} with them.`,
 ];
 
 // Shared between buildPoliticsStories (treaty_signed) and
@@ -1950,7 +2336,10 @@ function buildBattleStories(rows, used, locator, captainFate) {
       const [owner] = victims;
       const bucket = cluster.losses.get(owner);
       const winner = killerSet.size === 1 ? [...killerSet][0] : null;
-      const names = nameList([...bucket.shipNames], 2, used);
+      // Pin the "…and N more" tail to the real loss count, not to how
+      // many of the dead we happen to have names for — "six wrecks …
+      // including Ricochet, Lynx, plus 2 not named here" adds to four.
+      const names = nameList([...bucket.shipNames], 2, used, bucket.count);
       const ctx = {
         loser: owner, winner, body: locBody.name, bodyLoc: locBody.full, count: bucket.count,
         namesClause: names ? `, including ${names}` : '',
@@ -2037,8 +2426,8 @@ function buildBattleStories(rows, used, locator, captainFate) {
 
       if (ratio < BATTLE_NARROW_RATIO) {
         // Genuinely close — true "no clear victor."
-        const namesA = nameList(bucketA.shipNames, 2, used);
-        const namesB = nameList(bucketB.shipNames, 2, used);
+        const namesA = nameList(bucketA.shipNames, 2, used, countA);
+        const namesB = nameList(bucketB.shipNames, 2, used, countB);
         const ctx = {
           factionA: fa, countA, namesAClause: namesA ? ` (${namesA})` : '',
           factionB: fb, countB, namesBClause: namesB ? ` (${namesB})` : '',
@@ -2280,8 +2669,21 @@ function buildColonyStories(rows, used, locator) {
       const locBody = locate(locator, entries[0].bodyId, entries[0].body);
       entriesClause = ` at ${locBody.full}`;
     } else {
-      const bodyNames = nameList(entries.map(e => e.body), 2, used);
-      entriesClause = bodyNames ? ` at ${bodyNames}` : '';
+      // The list here is of BODIES, but the count in the sentence is of
+      // SETTLEMENTS, and several can share a world — so a numeric tail
+      // ("five new settlements at Oberon, Umbriel, and 2 more") invites
+      // the reader to add four and find five. Dedupe the worlds and use
+      // a tail that counts nothing.
+      const worlds = [...new Set(entries.map(e => e.body).filter(Boolean))];
+      const shown = worlds.slice(0, 2).map(n => `*${n}*`);
+      if (shown.length === 0) {
+        entriesClause = '';
+      } else if (worlds.length <= 2) {
+        entriesClause = ` at ${shown.join(' and ')}`;
+      } else {
+        const tail = pickTemplate('world_list_tail', WORLD_LIST_VAGUE_TAIL, used)();
+        entriesClause = ` at ${shown.join(', ')}${tail}`;
+      }
     }
     const weight = 100 + 5 * entries.length;
     stories.push(mkStory(weight, used, 'colony_founded', COLONY_FOUNDED, 'colony_founded_hl', COLONY_FOUNDED_HEADLINE, { faction, count: entries.length, entriesClause }));
@@ -2330,14 +2732,46 @@ function buildPoliticsStories(rows, used, factionNames) {
   const stories = [];
   const nameOf = (id) => factionNames.get(id) ?? 'an unnamed faction';
 
+  // One agreement, one story.
+  //
+  // A three-part accord is chronicled as three treaty_signed rows, and
+  // the Senate column duly printed three near-identical sentences about
+  // the same handshake — then the trade column printed a fourth naming
+  // all three pacts, and the shipping column printed the cargo twice
+  // more. A reviewer reading ten editions called the section "a
+  // stutter", and the diagnosis was exact: the paper was reporting the
+  // database's row count instead of the world's event.
+  //
+  // Group by unordered faction pair, then tell it once with the pacts
+  // joined. Same for a rupture, which had the same shape in reverse.
+  const pairKey = (x, y) => [x, y].sort().join(' ');
+  const signed = new Map();   // pair -> { a, b, pacts: [] }
+  const broken = new Map();   // pair -> { a, b }
   for (const row of rows) {
     const p = safeJson(row.payload);
+    const key = pairKey(row.actor_faction_id ?? '', row.target_faction_id ?? '');
     if (row.kind === 'treaty_signed') {
-      const ctx = { a: nameOf(row.actor_faction_id), b: nameOf(row.target_faction_id), pactName: PACT_NAMES[p.kind] ?? 'a treaty' };
-      stories.push(mkStory(150, used, 'treaty_signed', TREATY_SIGNED, 'treaty_signed_hl', TREATY_SIGNED_HEADLINE, ctx));
+      let g = signed.get(key);
+      if (!g) { g = { a: nameOf(row.actor_faction_id), b: nameOf(row.target_faction_id), pacts: [] }; signed.set(key, g); }
+      g.pacts.push(PACT_NAMES[p.kind] ?? 'a treaty');
     } else if (row.kind === 'treaty_broken') {
-      const ctx = { a: nameOf(row.actor_faction_id), b: nameOf(row.target_faction_id) };
-      stories.push(mkStory(350, used, 'treaty_broken', TREATY_BROKEN, 'treaty_broken_hl', TREATY_BROKEN_HEADLINE, ctx));
+      if (!broken.has(key)) broken.set(key, { a: nameOf(row.actor_faction_id), b: nameOf(row.target_faction_id) });
+    }
+  }
+  for (const g of signed.values()) {
+    // A pair that signed AND tore up terms in the same window is a
+    // rupture story, not a signing one — don't report both.
+    const ctx = { a: g.a, b: g.b, pactName: joinPacts(g.pacts) || 'a treaty' };
+    stories.push(mkStory(150 + 10 * g.pacts.length, used, 'treaty_signed', TREATY_SIGNED, 'treaty_signed_hl', TREATY_SIGNED_HEADLINE, ctx));
+  }
+  for (const g of broken.values()) {
+    stories.push(mkStory(350, used, 'treaty_broken', TREATY_BROKEN, 'treaty_broken_hl', TREATY_BROKEN_HEADLINE, g));
+  }
+
+  for (const row of rows) {
+    const p = safeJson(row.payload);
+    if (row.kind === 'treaty_signed' || row.kind === 'treaty_broken') {
+      continue;   // handled above, grouped
     } else if (row.kind === 'senate_vote') {
       // Title-cased for display only — player-typed titles otherwise sit
       // lowercase/shouty next to properly-cased faction/body names.
@@ -2439,9 +2873,24 @@ function buildVictoryStories(rows, used, factionNames) {
     if (row.kind === 'victory') {
       const faction = factionNames.get(row.actor_faction_id) ?? 'A faction';
       const ctx = { faction };
-      const text = (typeof p.detail === 'string' && p.detail.length > 0) ? `${p.detail}.` : pickTemplate('victory', VICTORY, used)(ctx);
+      // The chronicle's `detail` is a bare record line ("X elected
+      // Supreme Chancellor by senate vote"), and printing it alone as
+      // the whole story read to a cold reader as a truncated string.
+      // It is a fine SUPPORTING fact, so frame it as one and let the
+      // Herald's own voice carry the announcement.
+      const detail = (typeof p.detail === 'string' ? p.detail.trim().replace(/\.+$/, '') : '');
+      const lead = pickTemplate('victory', VICTORY, used)(ctx);
+      const text = detail
+        ? `${lead} ${pickTemplate('victory_detail', VICTORY_DETAIL_CLAUSE, used)(detail)}`
+        : lead;
       const headline = pickTemplate('victory_hl', VICTORY_HEADLINE, used)(ctx);
-      stories.push({ text, headline, weight: 1000 + Math.random() });
+      // A match ends exactly once. Whatever else happened in the same
+      // window — and the last window of a real game is the bloodiest —
+      // it is not a bigger story than the war ending. The old weight of
+      // 1000 lost the headline to an ordinary endgame melee in a real
+      // edition, so the paper closed a ten-issue war without telling
+      // the reader who won.
+      stories.push({ text, headline, weight: 1_000_000 });
     } else if (row.kind === 'faction_eliminated') {
       const ctx = { faction: factionNames.get(row.actor_faction_id) ?? 'A faction' };
       stories.push(mkStory(900, used, 'elimination', ELIMINATION, 'elimination_hl', ELIMINATION_HEADLINE, ctx));
@@ -3140,7 +3589,7 @@ function fieldFromStories(title, stories, used, { allowTail = true } = {}) {
     const tail = pickTemplate('more_incidents_tail', MORE_INCIDENTS_TAIL, used)(more, s);
     if (value.length + 2 + tail.length <= FIELD_VALUE_LIMIT) value += `\n\n${tail}`;
   }
-  return { name: title, value };
+  return { name: title, value, shownCount: shown.length };
 }
 
 /** Build the embed for one game. Headline-forward: the single
@@ -3181,9 +3630,151 @@ function sanctionsField(sanctions, factionNames) {
     lines.push(`${fmt(b(who))} · ${clock}`);
   }
   if (lines.length === 0) return null;
-  let value = lines.join('\n');
-  if (value.length > 1020) value = value.slice(0, 1017) + '…';
+  const value = clipToSentence(lines.join('\n'), FIELD_VALUE_LIMIT - 4);
   return { name: '⚖️  Sanctions in force', value };
+}
+
+/** Closing editorial line for the edition that carries the victory.
+ *  `who` arrives already bolded. */
+const FINAL_WORD = [
+  who => `The war is over, and ${who} is what remains standing. This desk will file no further editions on it.`,
+  who => `That is the end of it. ${who} holds the system, and the presses go quiet.`,
+  who => `Whatever the settlement costs, ${who} will be the one setting the terms. The Herald closes its file on this war.`,
+  who => `${who} has won. Everything after this is bookkeeping, and other papers can do it.`,
+  who => `The shooting stops here. ${who} takes the system, and the rest take stock.`,
+  who => `An ending, of a kind: ${who} prevails, and the survivors begin counting what it cost them.`,
+  who => `So it falls to ${who}. The Herald thanks its correspondents, several of whom did not come home.`,
+  who => `${who} stands first among the powers, and there is no longer anyone positioned to argue. Final edition.`,
+  who => `The last dispatch of the war: ${who} victorious, the lanes quiet, the yards suddenly without orders.`,
+  who => `History will record ${who}. This paper records the rest — who they beat, and what it took.`,
+];
+
+/**
+ * The final reckoning — a war-total retrospective, printed only in the
+ * edition that carries the victory.
+ *
+ * Same self-imposed rule as the standings box: derived only from the
+ * rows in hand, so a historical preview can never print a number it
+ * has no right to. In the edition that ends a match those rows ARE the
+ * endgame, which is exactly the period a closing summary should cover.
+ */
+function finalReckoningField(rows, factionNames) {
+  const victoryRow = rows.find(r => r.kind === 'victory');
+  if (!victoryRow) return null;
+  const p = safeJson(victoryRow.payload);
+  const winner = factionNames.get(victoryRow.actor_faction_id) ?? 'the victor';
+
+  const VICTORY_KIND = {
+    chancellor: 'election to the Supreme Chancellorship',
+    conquest:   'conquest',
+    dyson:      'completion of the Dyson Sphere',
+    economic:   'economic supremacy',
+    science:    'scientific supremacy',
+  };
+  const how = VICTORY_KIND[p.victoryType] ?? null;
+
+  let hullsLost = 0, worldsRazed = 0;
+  const eliminated = [];
+  for (const row of rows) {
+    if (row.kind === 'ship_destroyed') hullsLost++;
+    else if (row.kind === 'settlement_destroyed') worldsRazed++;
+    else if (row.kind === 'faction_eliminated') {
+      const n = factionNames.get(row.actor_faction_id);
+      if (n) eliminated.push(n);
+    }
+  }
+
+  const lines = [];
+  lines.push(how
+    ? `**${winner}** takes the system by ${how}.`
+    : `**${winner}** takes the system.`);
+  const toll = [];
+  if (hullsLost > 0) toll.push(`**${hullsLost}** ${plural(hullsLost, 'hull', 'hulls')} lost`);
+  if (worldsRazed > 0) toll.push(`**${worldsRazed}** ${plural(worldsRazed, 'settlement', 'settlements')} razed`);
+  if (toll.length) lines.push(`In this final period alone: ${toll.join(', ')}.`);
+  if (eliminated.length) {
+    lines.push(`${plural(eliminated.length, 'Faction', 'Factions')} that did not survive the war: ${eliminated.map(n => `**${n}**`).join(', ')}.`);
+  }
+  lines.push('');
+  lines.push(`*${pickTemplateStatic(FINAL_WORD, `${winner}:${hullsLost}`)(`**${winner}**`)}*`);
+
+  return { name: '🕯️  The final reckoning', value: clipToSentence(lines.join('\n'), FIELD_VALUE_LIMIT - 4) };
+}
+
+/** Deterministic pick for the handful of call sites that sit outside a
+ *  `used` walk — same input, same line, no cross-edition drift. */
+function pickTemplateStatic(bank, seedish) {
+  const s = String(seedish ?? '');
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0;
+  return bank[Math.abs(h) % bank.length];
+}
+
+/**
+ * Standings — "who is actually winning?"
+ *
+ * A reviewer read ten consecutive editions and could not answer that
+ * question at any point, which is a damning thing to say about a
+ * strategy game's newspaper: every battle was reported and the war was
+ * invisible. This is the fix, with one hard constraint — it is derived
+ * ENTIRELY from the same chronicle rows the rest of the edition is
+ * built from.
+ *
+ * That constraint is not laziness. The obvious implementation is to
+ * query live game state, but the Herald also renders historical
+ * editions (an admin previewing T+88 of a finished match), and live
+ * state would print today's standings on a paper dated six weeks ago —
+ * confidently, and wrongly. A net-change box is honest in both cases:
+ * it says what moved DURING this window, which is what a newspaper
+ * reports anyway. "Gained/lost since the last edition" is a real
+ * standings column; "current totals" would have been a lie half the
+ * time it rendered.
+ */
+function standingsField(rows, factionNames) {
+  const stat = new Map();   // faction name -> tallies
+  const touch = (name) => {
+    if (!name) return null;
+    let s = stat.get(name);
+    if (!s) { s = { built: 0, lost: 0, founded: 0, razed: 0 }; stat.set(name, s); }
+    return s;
+  };
+
+  for (const row of rows) {
+    const p = safeJson(row.payload);
+    if (row.kind === 'ship_built') {
+      const s = touch(p.owner_faction_name); if (s) s.built++;
+    } else if (row.kind === 'settlement_built') {
+      const s = touch(p.owner_faction_name); if (s) s.founded++;
+    } else if (row.kind === 'ship_destroyed') {
+      const s = touch(p.owner_faction_name ?? factionNames.get(row.actor_faction_id)); if (s) s.lost++;
+    } else if (row.kind === 'settlement_destroyed') {
+      const s = touch(p.owner_faction_name ?? factionNames.get(row.target_faction_id)); if (s) s.razed++;
+    }
+  }
+  if (stat.size < 2) return null;
+
+  const rank = [...stat.entries()]
+    .map(([name, s]) => ({ name, ...s, net: (s.built - s.lost) + 3 * (s.founded - s.razed) }))
+    // A power with no activity at all this window is not news.
+    .filter(r => r.built || r.lost || r.founded || r.razed)
+    .sort((a, z) => z.net - a.net);
+  if (rank.length < 2) return null;
+
+  const sign = n => (n > 0 ? `+${n}` : String(n));
+  const lines = rank.slice(0, 6).map((r) => {
+    const fleet = r.built - r.lost;
+    const ground = r.founded - r.razed;
+    // An arrow the eye can sort on without reading the numbers.
+    const trend = r.net > 2 ? '▲' : r.net < -2 ? '▼' : '▬';
+    return `${trend} **${r.name}** · fleet ${sign(fleet)} · worlds ${sign(ground)}`;
+  });
+  return {
+    name: '📊  Where things stand',
+    value: clipToSentence(
+      `${lines.join('\n')}\n*Net change this edition — hulls gained less hulls lost, settlements founded less settlements razed.*`,
+      FIELD_VALUE_LIMIT - 4,
+    ),
+  };
 }
 
 // ================================================================
@@ -3341,6 +3932,30 @@ const TECH_ADVANCED = [
   c => `${b(c.faction)}'s ${c.track === 'Construction' ? 'shipyards' : c.track + ' teams'} certified level ${numWord(c.level)} standards.`,
   c => `${c.track === 'Society' ? 'Governance reforms' : c.track + ' research'} pushed ${b(c.faction)} to level ${numWord(c.level)}.`,
   c => `${b(c.faction)}'s ${c.track} program hit level ${numWord(c.level)}${c.level >= 8 ? ', a rare tier for the region' : ''}.`,
+  c => `${b(c.faction)} gunners will meet the next engagement with ${numWord(c.level)} ${plural(c.level, 'generation', 'generations')} of ${c.track} work behind them, and the ships across from them will notice.`,
+  c => `The ${c.track} programme has reached its ${ordinal(c.level)} standard. What that buys, in plain terms, is a shorter argument the next time two fleets meet.`,
+  c => `Fewer surprises. That is the whole of what level ${c.level} ${c.track} means for ${b(c.faction)}, and it is not a small thing.`,
+  c => `A first pass, a tenth pass — the yards of ${b(c.faction)} rarely say which. This one is the ${ordinal(c.level)}, and the hulls coming out of it are not the hulls that went in.`,
+  c => `${b(c.faction)} certified ${c.track} to level ${c.level}. Rivals who mapped the old capabilities are now working from a stale chart.`,
+  c => `Level ${c.level} in ${c.track}. Translated out of the ministry's dialect: the fleet gets somewhere sooner, and arrives in better shape than it used to.`,
+  c => `Observers who track such things put ${b(c.faction)} at the ${ordinal(c.level)} tier of ${c.track} — far enough along that the advantage now shows up in the fighting rather than the filings.`,
+  c => `The ${c.track} board of ${b(c.faction)} has signed off on level ${c.level}. Signing off and surviving contact are different disciplines, and only one of them has been demonstrated.`,
+  c => `Something changed in ${b(c.faction)}'s ${c.track} doctrine this quarter — level ${c.level}, by the official count. Crews will feel it before the analysts explain it.`,
+  c => `${c.track} work at level ${c.level} means ${b(c.faction)} can now attempt things that would have been reckless a year ago. Whether they should is a separate question.`,
+  c => `Level ${c.level} ${c.track}. ${b(c.faction)} did not announce it; the shipping lanes did, by getting faster.`,
+  c => `${b(c.faction)} has ${numWord(c.level)} ${plural(c.level, 'level', 'levels')} of ${c.track} on the books now. The first bought competence. Each one after has bought margin, and margin is what wins long wars.`,
+  c => `Engineering circles report a ${c.track} advance to level ${c.level} within ${b(c.faction)}. The practical effect is that fewer of their ships will die of things that used to kill ships.`,
+  c => `A ${c.track} milestone for ${b(c.faction)}, the ${ordinal(c.level)}. Milestones are markers on a road, and this road leads somewhere the neighbours would rather it did not.`,
+  c => `The machinery of state in ${b(c.faction)} turned over a notch this week — ${c.track}, level ${c.level}. Duller than a battle, and likelier to decide one.`,
+  c => `Level ${c.level} ${c.track} certification. ${b(c.faction)} yards can build what they could not build last season, at scales they could not manage.`,
+  c => `${b(c.faction)} reached the ${ordinal(c.level)} rung of ${c.track}. Sceptics note that no advance has yet stopped a determined broadside; optimists note that this one narrows the odds.`,
+  c => `What ${c.track} at level ${c.level} does for ${b(c.faction)} is buy time — time to see, time to turn, time to decide. Wars are lost by commanders who ran out of all three.`,
+  c => `The ${ordinal(c.level)} standard in ${c.track} is now current across ${b(c.faction)} service. Older designs are not obsolete so much as outvoted.`,
+  c => `Quietly, without ceremony, ${b(c.faction)} moved ${c.track} to level ${c.level}. Ceremony would have told the rivals what they now have to discover the hard way.`,
+  c => `${b(c.faction)}'s ${c.track} sits at ${c.level} of a possible ten. That is the sort of figure that means nothing until the shooting starts and everything afterward.`,
+  c => `Level ${c.level}, ${c.track}. Every such advance is an argument that the next war will be shorter, and ${b(c.faction)} has now made that argument ${numWord(c.level)} ${plural(c.level, 'time', 'times')}.`,
+  c => `The ${c.track} directorate of ${b(c.faction)} reports level ${c.level} attained. Directorates report a great many things; this one will be visible in the wreckage.`,
+  c => `Doctrine follows capability, and capability in ${b(c.faction)}'s ${c.track} now stands at ${numWord(c.level)}. Expect the doctrine to catch up by the next campaign season.`,
 ];
 
 const TECH_ADVANCED_HEADLINE = [
@@ -3455,9 +4070,23 @@ function buildTradeDeliveredStories(rows, used, factionNames, locator) {
     if ((p.science ?? 0) > 0) parts.push(`${numWord(Math.round(p.science))} science`);
     return parts.length ? parts.join(', ') : 'an empty hold';
   };
+  // A delivery whose deal was already reported in this same edition is
+  // the same event told twice — the reader gets "X and Y settled their
+  // trade, 7000 science" and then, three lines later, "Y took delivery
+  // of 7000 science". The deal is the story; the freight arriving is a
+  // footnote to it. Report the arrival only when the deal itself fell
+  // outside this window.
+  const dealtPairs = new Set();
+  for (const row of rows) {
+    if (row.kind !== 'trade_accepted') continue;
+    dealtPairs.add([row.actor_faction_id ?? '', row.target_faction_id ?? ''].sort().join(' '));
+  }
+
   for (const row of rows) {
     if (row.kind !== 'trade_delivered') continue;
     const p = safeJson(row.payload);
+    const pair = [p.sender_faction_id ?? row.actor_faction_id ?? '', p.recipient_faction_id ?? ''].sort().join(' ');
+    if (dealtPairs.has(pair)) continue;
     const loc = locate(locator, row.body_id, p.body_name);
     const ctx = {
       sender: nameOf(p.sender_faction_id ?? row.actor_faction_id),
@@ -3598,30 +4227,54 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
     sections[topSection] = sections[topSection].filter(s => s !== topStory);
   }
 
-  // Ration the "…and N more incidents" tail to the ONE section with
-  // the most left on the cutting-room floor. It's a flourish about the
-  // size of the world; printed seven times an edition it reads as
-  // boilerplate, and a reviewer reading ten editions counted it as the
-  // single most repetitive thing in the paper.
-  const overflowOf = key =>
-    Math.max(0, sections[key].length - MAX_STORIES_PER_SECTION);
-  const tailSection = ['victory', 'battles', 'politics', 'discoveries', 'colonies', 'trades', 'industry']
-    .filter(k => overflowOf(k) >= 2)
-    .sort((a, b) => overflowOf(b) - overflowOf(a))[0] ?? null;
-
+  // The "…and N more incidents" line is a sign-off about the size of
+  // the world beyond the page. Printed on all seven sections it read as
+  // boilerplate; pinned to whichever section overflowed most, it landed
+  // mid-document with three sections still to come, which reads as a
+  // misplaced footer. It is one line, it covers the whole edition, and
+  // it goes at the bottom — so it is totalled across every section and
+  // appended once, to the last field rendered.
+  const SECTION_ORDER = ['victory', 'battles', 'politics', 'discoveries', 'colonies', 'trades', 'industry'];
+  let droppedTotal = 0;
   const fields = [];
-  for (const key of ['victory', 'battles', 'politics', 'discoveries', 'colonies', 'trades', 'industry']) {
-    const field = fieldFromStories(SECTION_META[key].title, sections[key], used,
-      { allowTail: key === tailSection });
-    if (field) fields.push(field);
+  for (const key of SECTION_ORDER) {
+    const field = fieldFromStories(SECTION_META[key].title, sections[key], used, { allowTail: false });
+    if (field) {
+      droppedTotal += Math.max(0, sections[key].length - field.shownCount);
+      fields.push({ name: field.name, value: field.value });
+    }
   }
 
   // Standing state, not events — appended after the story sections so
   // the paper reads news-first, then "still in force".
   if (sf) fields.push(sf);
 
+  // The scoreboard the paper never had. Goes below the news, above the
+  // sign-off — a reader who wants the state of the war can jump to it
+  // without reading four battle reports to infer it.
+  const standings = standingsField(rows, factionNames);
+  if (standings) fields.push(standings);
+
   if (tradesDelta > 0) {
     fields.push({ name: '📦  Trade ledger', value: pickTemplate('trade_ledger', TRADE_LEDGER, used)({ count: tradesDelta }) });
+  }
+
+  // A war that ends gets a last word. Without this the final edition
+  // of a ten-issue run closed on a routine note about an under-plated
+  // destroyer, and a reader who had followed the whole match was left
+  // without an ending — the single biggest complaint an outside reader
+  // levelled at the paper.
+  const closing = finalReckoningField(rows, factionNames);
+  if (closing) fields.push(closing);
+
+  // One sign-off for the whole edition, on the last field, where a
+  // footer belongs.
+  if (droppedTotal >= 2 && fields.length > 0) {
+    const tail = pickTemplate('more_incidents_tail', MORE_INCIDENTS_TAIL, used)(droppedTotal, droppedTotal === 1 ? '' : 's');
+    const last = fields[fields.length - 1];
+    if (last.value.length + 2 + tail.length <= FIELD_VALUE_LIMIT) {
+      last.value += `\n\n${tail}`;
+    }
   }
 
   const masthead = `🗞️ **THE ORBITAL HERALD** · ${gameName} · T+${tick}`;
@@ -3631,14 +4284,17 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
 
   const color = (topSection && SECTION_META[topSection]) ? SECTION_META[topSection].color : SECTION_META.colonies.color;
 
-  return {
+  // Short names are applied LAST, over the finished text: "first
+  // mention" is a property of reading order, which only exists once the
+  // headline has been pulled and the sections laid out.
+  return applyShortNames({
     title,
     description,
     color,
     fields,
     footer: { text: 'Daily digest · The Orbital Herald' },
     timestamp: new Date().toISOString(),
-  };
+  }, factionNames);
 }
 
 // ------------------------------------------------------------
