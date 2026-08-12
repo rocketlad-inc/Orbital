@@ -182,6 +182,30 @@ const WORLD_LIST_VAGUE_TAIL = [
   () => ', and worlds not listed here',
 ];
 
+/** Trailing clause naming some of the destroyed ships.
+ *
+ *  It used to be a bare ", including *X* and *Y*", appended to whatever
+ *  the template happened to end on — and plenty of them end on the
+ *  WINNER: "…and nothing at all charged against Moose Authority,
+ *  including *Constancy* and *Etesian*" reads as a list of Moose's
+ *  losses, which is the exact opposite of the truth. Every variant here
+ *  anchors on a word that can only mean the dead, so the clause stays
+ *  correct no matter which faction the sentence mentioned last. */
+const BATTLE_NAMES_CLAUSE = [
+  n => `, ${n} among the lost`,
+  n => `, ${n} among the dead`,
+  n => `, ${n} among the wrecks`,
+  n => `, ${n} on the casualty list`,
+  n => `, ${n} among those destroyed`,
+  n => `, ${n} named among the losses`,
+  n => `, ${n} confirmed lost`,
+  n => `, ${n} among the hulls that did not return`,
+  n => `, ${n} listed among the destroyed`,
+  n => `, ${n} among the casualties`,
+  n => `, ${n} written off`,
+  n => `, ${n} among the ships lost`,
+];
+
 /** Frames the chronicle's bare victory record as a cited fact rather
  *  than leaving it standing alone as the entire story. */
 const VICTORY_DETAIL_CLAUSE = [
@@ -359,9 +383,16 @@ function buildShortNames(fullNames) {
     // "The Empire of Lorne" -> "Lorne"; "Federation of Atlantis" -> "Atlantis"
     const ofMatch = core.match(/^(?:The\s+)?.+?\s+of\s+(.+)$/i);
     if (ofMatch) candidates.push(ofMatch[1]);
-    // "...On The Solar Empire" -> "the Solar Empire"
+    // "...On The Solar Empire" -> "Solar Empire".
+    //
+    // Deliberately WITHOUT a leading article. Short forms land in
+    // attributive slots the templates build by hand — "${count}
+    // ${faction} ${shipsWord}" — and "the Solar Empire" there produces
+    // "one the Solar Empire ship". A bare name is grammatical in every
+    // position the banks can put it, which is also why wire copy writes
+    // "Empire forces" rather than "the Empire's forces".
     if (words.length > 2 && ORG_NOUNS.has(lower(last))) {
-      candidates.push(`the ${words.slice(-2).join(' ')}`);
+      candidates.push(words.slice(-2).join(' '));
     }
     // ":) Smiley Face Friends :)" -> "Smiley Face Friends"
     if (core !== full) candidates.push(core);
@@ -369,8 +400,8 @@ function buildShortNames(fullNames) {
     if (words.length > 1 && words[0].length >= 4 && lower(words[0]) !== 'the') {
       candidates.push(words[0]);
     }
-    // last resort: "Moose Authority" -> "the Authority"
-    if (words.length > 1 && ORG_NOUNS.has(lower(last))) candidates.push(`the ${last}`);
+    // last resort: "Moose Authority" -> "Authority"
+    if (words.length > 1 && ORG_NOUNS.has(lower(last))) candidates.push(last);
 
     for (const cand of candidates) {
       if (!cand || cand.length >= full.length || cand.replace(/^the\s+/i, '').length < 3) continue;
@@ -453,6 +484,12 @@ function applyShortNames(embed, factionNames) {
     for (const full of fulls) {
       const s = shorts.get(full);
       if (!s || !out.includes(full)) continue;
+      // The POSSESSIVE gets no first-mention grace. ":) Smiley Face
+      // Friends :)'s" is the exact string a reviewer singled out as
+      // unreadable, and a name that already ends in punctuation only
+      // gets worse with an apostrophe-s welded on. Shorten every one.
+      out = replaceAfter(out, `${full}'s`, `${s}'s`, 0);
+      if (!out.includes(full)) { introduced.add(full); continue; }
       const skip = introduced.has(full) ? 0 : 1;
       out = replaceAfter(out, full, s, skip);
       introduced.add(full);
@@ -2342,7 +2379,7 @@ function buildBattleStories(rows, used, locator, captainFate) {
       const names = nameList([...bucket.shipNames], 2, used, bucket.count);
       const ctx = {
         loser: owner, winner, body: locBody.name, bodyLoc: locBody.full, count: bucket.count,
-        namesClause: names ? `, including ${names}` : '',
+        namesClause: names ? pickTemplate('battle_names', BATTLE_NAMES_CLAUSE, used)(names) : '',
       };
 
       // TWO OR MORE credited killers, one victim: a gang-up, not a
