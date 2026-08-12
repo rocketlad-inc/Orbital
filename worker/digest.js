@@ -77,6 +77,15 @@ const BATTLE_NARROW_RATIO = 1.5;
  *  already solved for idle freighters. */
 const INDUSTRY_COLLAPSE_THRESHOLD = 5;
 
+/** How many factions get a full industry paragraph before the rest are
+ *  swept into a single roundup line. The threshold above only filters
+ *  out trivially small producers; in a busy window every surviving
+ *  power clears it, and the section degenerates into one identical
+ *  "N ships and M upgrades" sentence per faction. Two leads plus a
+ *  roundup reads like a page of a newspaper; four leads read like a
+ *  table someone set in prose. */
+const INDUSTRY_MAX_PARAGRAPHS = 2;
+
 // ------------------------------------------------------------
 // Prose helpers
 // ------------------------------------------------------------
@@ -177,20 +186,66 @@ function nameList(names, max = 2, used = null) {
   return `${shown.join(', ')}${tail}`;
 }
 
-/** Picks a template, preferring one not already used this edition
- *  (tracked per bank-name in `used`) so two stories of the same shape
- *  in one report don't read identically. Falls back to a pure random
- *  pick once the bank is exhausted. */
+/** Deterministic PRNG (mulberry32), seeded per edition.
+ *
+ *  Template choice used to be plain Math.random(), which is memoryless
+ *  ACROSS editions: `used` only dedupes within a single paper, so
+ *  nothing stopped six consecutive editions from all opening their
+ *  industry column with "A busy day for X". Read one edition and the
+ *  variety looks fine; read ten in a row — which is exactly what a
+ *  player following a match does — and the paper reads like a dozen
+ *  sentence shapes with the nouns swapped.
+ *
+ *  Seeding from the edition's tick fixes that without persisting any
+ *  cross-run state: each edition gets its own entry point into every
+ *  bank, and re-rendering the same edition is idempotent (which also
+ *  makes the thing reviewable — regenerate and you get the same paper
+ *  back, so a prose change is attributable to the change and not to
+ *  the dice). */
+function makeRng(seed) {
+  let a = (seed >>> 0) || 0x9e3779b9;
+  return function rng() {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function gcd(a, c) { while (c) { const t = c; c = a % c; a = t; } return a; }
+
+/** A step size coprime to the bank length, so `(start + k*stride) % n`
+ *  visits every template exactly once before repeating. Walking by a
+ *  stride rather than sequentially matters because the banks were
+ *  authored in batches — neighbouring entries tend to share a cadence,
+ *  so a sequential walk would make one edition's four industry stories
+ *  all sound like the same writer's run of drafts. */
+function strideFor(n, rng) {
+  if (n < 3) return 1;
+  for (let tries = 0; tries < 12; tries++) {
+    const s = 1 + Math.floor(rng() * (n - 1));
+    if (gcd(s, n) === 1) return s;
+  }
+  return 1;
+}
+
+/** Picks a template, walking each bank in a per-edition scattered
+ *  order so no two stories of the same shape in one paper read alike
+ *  AND consecutive papers don't reuse the same openers. Exhausting a
+ *  bank restarts the walk from a fresh offset rather than replaying
+ *  the order just used. */
 function pickTemplate(bankName, bank, used) {
   if (bank.length === 1) return bank[0];
-  let set = used.get(bankName);
-  if (!set) { set = new Set(); used.set(bankName, set); }
-  if (set.size >= bank.length) set.clear();      // exhausted — recycle
-  for (let tries = 0; tries < 8; tries++) {
-    const i = Math.floor(Math.random() * bank.length);
-    if (!set.has(i)) { set.add(i); return bank[i]; }
+  const rng = used.get('__rng') || Math.random;
+  let cur = used.get(bankName);
+  if (!cur || cur.k >= bank.length) {
+    cur = { start: Math.floor(rng() * bank.length), stride: strideFor(bank.length, rng), k: 0 };
+    used.set(bankName, cur);
   }
-  return bank[Math.floor(Math.random() * bank.length)];
+  const i = (cur.start + cur.k * cur.stride) % bank.length;
+  cur.k += 1;
+  return bank[i];
 }
 
 function safeJson(s) { try { return JSON.parse(s || '{}') || {}; } catch { return {}; } }
@@ -227,7 +282,11 @@ function settlementLossClause(names, totalPop, used) {
 function mkStory(baseWeight, used, narrativeBankName, narrativeBank, headlineBankName, headlineBank, ctx, extra = '') {
   const text = pickTemplate(narrativeBankName, narrativeBank, used)(ctx) + extra;
   const headline = pickTemplate(headlineBankName, headlineBank, used)(ctx);
-  return { text, headline, weight: baseWeight + Math.random() };
+  // Jitter off the same seeded stream as template choice, so an
+  // edition is reproducible end to end — including which story wins
+  // the headline, which is decided by weight.
+  const rng = used.get('__rng') || Math.random;
+  return { text, headline, weight: baseWeight + rng() };
 }
 
 // ------------------------------------------------------------
@@ -984,6 +1043,43 @@ const INDUSTRY_COLLAPSED_HEADLINE = [
   c => `${c.leader.toUpperCase()} OUT FRONT IN A QUIET FIELD`,
 ];
 
+/** The rest of the field: real powers that simply weren't the top two
+ *  producers this edition. Distinct from INDUSTRY_COLLAPSED, which is
+ *  about genuinely small yards — calling a faction that launched
+ *  thirty ships a "minor power" is just wrong, and the reader can see
+ *  the number sitting right there in the sentence. */
+const INDUSTRY_FIELD = [
+  c => `Behind them, ${b(c.leader)} led the rest of the field — ${numWord(c.totalShips)} more ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} further ${plural(c.totalBuilds, 'project')} across ${numWord(c.factionCount)} ${plural(c.factionCount, 'power')}.`,
+  c => `The other ${numWord(c.factionCount)} ${plural(c.factionCount, 'power')} were not idle either: ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')} between them, ${b(c.leader)} out front.`,
+  c => `Elsewhere on the boards, ${b(c.leader)} paced ${numWord(c.factionCount)} other ${plural(c.factionCount, 'power')} to ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} finished ${plural(c.totalBuilds, 'project')}.`,
+  c => `Add ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')} from the remaining ${numWord(c.factionCount)} ${plural(c.factionCount, 'power')}, with ${b(c.leader)} contributing most of it.`,
+  c => `${b(c.leader)} headed the chasing pack — ${numWord(c.factionCount)} ${plural(c.factionCount, 'power')}, ${numWord(c.totalShips)} ${shipsWord(c.totalShips)}, ${numWord(c.totalBuilds)} completed ${plural(c.totalBuilds, 'project')}.`,
+  c => `Further down the register: ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')} spread across ${numWord(c.factionCount)} more ${plural(c.factionCount, 'power')}, ${b(c.leader)} the busiest of them.`,
+  c => `The remaining yards logged ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')} — ${b(c.leader)} accounted for the largest share.`,
+  c => `Not to be discounted: ${numWord(c.factionCount)} other ${plural(c.factionCount, 'power')} put up ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}, led by ${b(c.leader)}.`,
+  c => `${b(c.leader)} topped the balance of the field, which added ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')} to the system's total.`,
+  c => `Everyone else combined — ${numWord(c.factionCount)} ${plural(c.factionCount, 'power')} — managed ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}, ${b(c.leader)} leading.`,
+  c => `Beyond the two front-runners, ${b(c.leader)} was busiest: ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')} across ${numWord(c.factionCount)} ${plural(c.factionCount, 'power')}.`,
+  c => `A respectable showing from the rest of the board — ${numWord(c.totalShips)} ${shipsWord(c.totalShips)}, ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}, ${b(c.leader)} in front of ${numWord(c.factionCount)} ${plural(c.factionCount, 'power')}.`,
+  c => `The rest of the system contributed ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}, most of it under ${b(c.leader)}'s flag.`,
+  c => `Also on the slate: ${numWord(c.factionCount)} ${plural(c.factionCount, 'power')} turning out ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}, ${b(c.leader)} setting the pace.`,
+];
+
+const INDUSTRY_FIELD_HEADLINE = [
+  c => `${c.leader.toUpperCase()} LEADS THE CHASING PACK`,
+  () => 'THE REST OF THE FIELD KEEPS PACE',
+  c => `${c.leader.toUpperCase()} BUSIEST OF THE REST`,
+  () => 'BEHIND THE FRONT-RUNNERS, STEADY OUTPUT',
+  c => `${c.leader.toUpperCase()} TOPS THE BALANCE OF THE BOARD`,
+  () => 'THE OTHER YARDS WERE NOT IDLE',
+  c => `${c.leader.toUpperCase()} HEADS THE REMAINING POWERS`,
+  () => 'FURTHER DOWN THE REGISTER',
+  c => `${c.leader.toUpperCase()} PACES THE ALSO-BUILDING`,
+  () => 'OUTPUT SPREAD ACROSS THE FIELD',
+  c => `${c.leader.toUpperCase()} OUT FRONT BEYOND THE TOP TWO`,
+  () => 'THE BALANCE OF THE BOARD REPORTS IN',
+];
+
 const COLONY_FOUNDED = [
   c => `${b(c.faction)} broke ground on ${numWord(c.count)} new settlement${plural(c.count, '')}${c.entriesClause}.`,
   c => `Expansion continues for ${b(c.faction)} — ${numWord(c.count)} new outpost${plural(c.count, '')} established${c.entriesClause}.`,
@@ -1585,6 +1681,60 @@ const PACT_NAMES = {
   trade_agreement: 'a trade agreement',
 };
 
+/** Oxford-joins a pact list. `join(' and ')` produced "a non-aggression
+ *  pact and a defense pact and a treaty" — three instruments strung
+ *  together with no punctuation, which reads as a parser dumping every
+ *  flag it found rather than a sentence anyone wrote. Also dedupes:
+ *  the payload can carry the same pact kind twice, and "a treaty and a
+ *  treaty" is worse than either. */
+function joinPacts(names) {
+  const uniq = [...new Set(names)];
+  if (uniq.length === 0) return '';
+  if (uniq.length === 1) return uniq[0];
+  if (uniq.length === 2) return `${uniq[0]} and ${uniq[1]}`;
+  return `${uniq.slice(0, -1).join(', ')}, and ${uniq[uniq.length - 1]}`;
+}
+
+/** A "trade" of nothing for nothing is not a trade — it's a diplomatic
+ *  agreement that happens to travel on the trade rail. Rendering it
+ *  through the exchange banks produced lines like "**X** released
+ *  nothing, **Y** released nothing — sealed with a defense pact",
+ *  which a reader can only parse as a bug. These get their own voice:
+ *  the pact IS the story. */
+const PACT_ONLY_DEAL = [
+  c => `No cargo moved, but ${b(c.proposer)} and ${b(c.responder)} left the table bound by ${c.pactList}.`,
+  c => `${b(c.proposer)} and ${b(c.responder)} exchanged no goods today — only signatures, and ${c.pactList} to show for them.`,
+  c => `Nothing crossed the docks between ${b(c.proposer)} and ${b(c.responder)}. Everything crossed the negotiating table: ${c.pactList}.`,
+  c => `A purely diplomatic sitting: ${b(c.proposer)} and ${b(c.responder)} came away with ${c.pactList} and not a gram of freight.`,
+  c => `${b(c.proposer)} and ${b(c.responder)} settled on paper alone — ${c.pactList}, no shipment attached.`,
+  c => `The manifest was empty and the protocol folder was not: ${b(c.proposer)} and ${b(c.responder)} now hold ${c.pactList}.`,
+  c => `Envoys for ${b(c.proposer)} and ${b(c.responder)} skipped the haggling entirely and went straight to ${c.pactList}.`,
+  c => `${b(c.proposer)} asked nothing of ${b(c.responder)}, and ${b(c.responder)} gave nothing back. What they signed instead: ${c.pactList}.`,
+  c => `Terms without tonnage — ${b(c.proposer)} and ${b(c.responder)} concluded ${c.pactList} and adjourned.`,
+  c => `A handshake, no hold space: ${c.pactList} now stands between ${b(c.proposer)} and ${b(c.responder)}.`,
+  c => `${b(c.proposer)} and ${b(c.responder)} put their names to ${c.pactList}. No resources changed hands, and none were asked for.`,
+  c => `The ledgers stayed blank while the diplomats worked: ${b(c.proposer)} and ${b(c.responder)} emerged with ${c.pactList}.`,
+  c => `Whatever ${b(c.proposer)} and ${b(c.responder)} wanted from each other, it wasn't freight — they signed ${c.pactList} and left it there.`,
+  c => `An agreement of intent rather than inventory: ${b(c.proposer)} and ${b(c.responder)} are now party to ${c.pactList}.`,
+  c => `Cargo bays stayed shut. ${b(c.proposer)} and ${b(c.responder)} spent the session on ${c.pactList} instead.`,
+  c => `${b(c.proposer)} and ${b(c.responder)} traded nothing but assurances today, formalized as ${c.pactList}.`,
+];
+
+const PACT_ONLY_DEAL_HEADLINE = [
+  c => `${c.proposer.toUpperCase()} AND ${c.responder.toUpperCase()} SIGN, SHIP NOTHING`,
+  c => `NO CARGO, ONLY SIGNATURES`,
+  c => `${c.proposer.toUpperCase()} AND ${c.responder.toUpperCase()} COME TO TERMS`,
+  c => `PAPER, NOT FREIGHT, AT THE TABLE`,
+  c => `${c.responder.toUpperCase()} JOINS ${c.proposer.toUpperCase()} ON PAPER`,
+  c => `DIPLOMATS WORK, DOCKS STAY QUIET`,
+  c => `AN AGREEMENT WITHOUT A SHIPMENT`,
+  c => `${c.proposer.toUpperCase()} CLOSES A CARGO-FREE DEAL`,
+  c => `TERMS WITHOUT TONNAGE`,
+  c => `${c.proposer.toUpperCase()} AND ${c.responder.toUpperCase()} SETTLE ON PAPER`,
+  c => `EMPTY MANIFEST, FULL PROTOCOL FOLDER`,
+  c => `SIGNATURES EXCHANGED, NOTHING ELSE`,
+];
+
 const TRADE_ACCEPTED = [
   c => `${b(c.proposer)} and ${b(c.responder)} struck a deal — ${c.offerText} for ${c.requestText}${c.pactClause}.`,
   c => `A trade cleared between ${b(c.proposer)} and ${b(c.responder)}: ${c.offerText} changed hands for ${c.requestText}${c.pactClause}.`,
@@ -2016,6 +2166,7 @@ function buildIndustryStories(rows, used) {
   // — otherwise every faction with a single freighter gets a headline
   // slot every single edition, which drowns the section in wallpaper.
   const collapsed = [];
+  const majors = [];
   for (const [faction, bucket] of byFaction) {
     const shipCount = bucket.ships.length;
     const buildCount = bucket.builds.length;
@@ -2025,6 +2176,22 @@ function buildIndustryStories(rows, used) {
       collapsed.push({ faction, shipCount, buildCount, total });
       continue;
     }
+    majors.push({ faction, bucket, shipCount, buildCount, total });
+  }
+
+  // Threshold alone wasn't enough. In a busy window EVERY surviving
+  // power clears it, so the column became one "N ships and M upgrades"
+  // line per faction — four paragraphs of the same sentence with the
+  // nouns swapped, every edition, which a reader of ten editions
+  // correctly called wallpaper. A real paper leads with the biggest
+  // producers and sweeps the rest into a roundup, so: at most two
+  // full paragraphs, everyone else summarized.
+  majors.sort((a, c) => c.total - a.total);
+  const leads = majors.slice(0, INDUSTRY_MAX_PARAGRAPHS);
+  const restOfField = majors.slice(INDUSTRY_MAX_PARAGRAPHS);
+
+  for (const m of leads) {
+    const { faction, bucket, shipCount, buildCount, total } = m;
     const shipNames = nameList(bucket.ships, 2, used);
     const shipNamesClause = shipNames ? ` — ${shipNames}` : '';
     const weight = 40 + 3 * total; // routine news — rarely the headline
@@ -2035,6 +2202,21 @@ function buildIndustryStories(rows, used) {
     } else {
       stories.push(mkStory(weight, used, 'industry_builds', INDUSTRY_BUILDINGS_ONLY, 'industry_builds_hl', INDUSTRY_BUILDINGS_ONLY_HEADLINE, { faction, count: buildCount }));
     }
+  }
+
+  // Real powers that simply weren't the top two — summarized, but NOT
+  // through INDUSTRY_COLLAPSED, whose prose ("minor factions",
+  // "smaller yards") would be a straight falsehood about a power that
+  // just launched thirty ships.
+  if (restOfField.length > 0) {
+    const totalShips = restOfField.reduce((s, f) => s + f.shipCount, 0);
+    const totalBuilds = restOfField.reduce((s, f) => s + f.buildCount, 0);
+    const ctx = {
+      totalShips, totalBuilds,
+      leader: restOfField[0].faction,
+      factionCount: restOfField.length,
+    };
+    stories.push(mkStory(35, used, 'industry_field', INDUSTRY_FIELD, 'industry_field_hl', INDUSTRY_FIELD_HEADLINE, ctx));
   }
 
   if (collapsed.length > 0) {
@@ -2191,15 +2373,28 @@ function buildTradeStories(rows, used, factionNames) {
     if (row.kind !== 'trade_accepted') continue;
     const p = safeJson(row.payload);
     const pacts = Array.isArray(p.pacts) ? p.pacts : [];
-    const pactNames = pacts.map(k => PACT_NAMES[k] ?? 'a treaty');
-    const pactClause = pactNames.length > 0 ? ` — sealed with ${pactNames.join(' and ')}` : '';
+    const pactNames = [...new Set(pacts.map(k => PACT_NAMES[k] ?? 'a treaty'))];
+    const pactList = joinPacts(pactNames);
+    const offerText = fmtBundle(p.offer);
+    const requestText = fmtBundle(p.request);
     const ctx = {
       proposer: nameOf(row.actor_faction_id),
       responder: nameOf(row.target_faction_id),
-      offerText: fmtBundle(p.offer),
-      requestText: fmtBundle(p.request),
-      pactClause,
+      offerText,
+      requestText,
+      pactList,
+      pactClause: pactList ? ` — sealed with ${pactList}` : '',
     };
+
+    // Nothing offered AND nothing requested: the pact is the entire
+    // event, so tell it as one. (Nothing on BOTH sides with no pact
+    // either is a null event — nothing happened, don't print it.)
+    if (offerText === 'nothing' && requestText === 'nothing') {
+      if (pactNames.length === 0) continue;
+      stories.push(mkStory(135, used, 'pact_only_deal', PACT_ONLY_DEAL, 'pact_only_deal_hl', PACT_ONLY_DEAL_HEADLINE, ctx));
+      continue;
+    }
+
     // Routine unless it bundled a pact, same "rarely the headline"
     // register as industry — a pact bundled in makes it a bit more
     // newsworthy without approaching treaty_signed's own weight.
@@ -2507,6 +2702,23 @@ function buildDysonBattleStories(rows, used, factionNames) {
  *  "History in the making" section. */
 function buildDysonHistoryStories(rows, used, factionNames) {
   const stories = [];
+  // A wide edition can span several milestones for the same sphere.
+  // Printing each one turns a single fact into a contradiction — one
+  // real edition reported "25%" and then "50%" in the same column with
+  // nothing to reconcile them, leaving the reader unable to say how
+  // far along the thing actually was. Only the LATEST crossing is news;
+  // the earlier ones are already implied by it.
+  const latestMilestone = new Map();   // faction -> { pct, row }
+  for (const row of rows) {
+    if (row.kind !== 'dyson_milestone') continue;
+    const p = safeJson(row.payload);
+    const faction = p.faction_name ?? factionNames.get(row.actor_faction_id) ?? 'A faction';
+    const pct = Number(p.pct) || 0;
+    const prev = latestMilestone.get(faction);
+    if (!prev || pct >= prev.pct) latestMilestone.set(faction, { pct, row });
+  }
+  const keptMilestoneRows = new Set([...latestMilestone.values()].map(v => v.row));
+
   for (const row of rows) {
     const p = safeJson(row.payload);
     const faction = p.faction_name ?? factionNames.get(row.actor_faction_id) ?? 'A faction';
@@ -2516,6 +2728,7 @@ function buildDysonHistoryStories(rows, used, factionNames) {
       // Seizing a half-built wonder outranks breaking ground on one.
       stories.push(mkStory(600, used, 'dyson_claimed', DYSON_CLAIMED, 'dyson_claimed_hl', DYSON_CLAIMED_HEADLINE, { faction, pct: p.pct ?? 0 }));
     } else if (row.kind === 'dyson_milestone') {
+      if (!keptMilestoneRows.has(row)) continue;
       // Later milestones are bigger news — 75% outranks a treaty broken.
       stories.push(mkStory(250 + (p.pct ?? 0) * 2, used, 'dyson_milestone', DYSON_MILESTONE, 'dyson_milestone_hl', DYSON_MILESTONE_HEADLINE, { faction, pct: p.pct ?? 0 }));
     }
@@ -2848,17 +3061,57 @@ const SECTION_META = {
   victory:     { title: '👑  History in the making', color: 0xffd700 },
 };
 
-function fieldFromStories(title, stories, used) {
+// Discord's hard cap on an embed field value.
+const FIELD_VALUE_LIMIT = 1024;
+// Assembly budget, leaving room for an overflow tail to be appended.
+const FIELD_VALUE_BUDGET = 900;
+
+/** Cuts at the last sentence end inside `limit`, falling back to the
+ *  last word boundary — never mid-word. The old behavior (render
+ *  everything, then `slice(0, 1017) + '…'`) put "…were also l…" into a
+ *  real edition: a guillotined word reads as a broken renderer, which
+ *  costs more credibility than the dropped sentence was worth. */
+function clipToSentence(text, limit) {
+  if (text.length <= limit) return text;
+  const head = text.slice(0, limit - 1);
+  const sentence = Math.max(head.lastIndexOf('. '), head.lastIndexOf('! '), head.lastIndexOf('? '));
+  if (sentence > limit * 0.5) return head.slice(0, sentence + 1);
+  const word = head.lastIndexOf(' ');
+  return `${word > 0 ? head.slice(0, word) : head}…`;
+}
+
+/** Renders one section. Takes whole stories while they fit and lets
+ *  the overflow tail absorb the rest, rather than cutting the last one
+ *  off mid-sentence — a story that never appears is invisible, a story
+ *  chopped in half looks like a bug.
+ *
+ *  `allowTail` is rationed by the caller: the "…and N more incidents"
+ *  device is meant to suggest a world larger than the page, and it
+ *  does that exactly once. Appended to all seven sections of every
+ *  edition it stops reading as a wink and starts reading as the paper
+ *  apologizing for itself. */
+function fieldFromStories(title, stories, used, { allowTail = true } = {}) {
   if (stories.length === 0) return null;
-  const shown = stories.slice(0, MAX_STORIES_PER_SECTION);
+
+  const shown = [];
+  let len = 0;
+  for (const s of stories.slice(0, MAX_STORIES_PER_SECTION)) {
+    const add = (shown.length ? 2 : 0) + s.text.length;
+    if (shown.length > 0 && len + add > FIELD_VALUE_BUDGET) break;
+    shown.push(s);
+    len += add;
+  }
+  // Only reachable when a SINGLE story outruns the whole budget.
+  const texts = shown.map((s, i) =>
+    (i === 0 && shown.length === 1) ? clipToSentence(s.text, FIELD_VALUE_LIMIT - 4) : s.text);
+
+  let value = texts.join('\n\n');
   const more = stories.length - shown.length;
-  let value = shown.map(s => s.text).join('\n\n');
-  if (more > 0) {
+  if (more > 0 && allowTail) {
     const s = more === 1 ? '' : 's';
     const tail = pickTemplate('more_incidents_tail', MORE_INCIDENTS_TAIL, used)(more, s);
-    value += `\n\n${tail}`;
+    if (value.length + 2 + tail.length <= FIELD_VALUE_LIMIT) value += `\n\n${tail}`;
   }
-  if (value.length > 1020) value = value.slice(0, 1017) + '…';
   return { name: title, value };
 }
 
@@ -3248,7 +3501,16 @@ function buildFleetLifecycleStories(rows, used, factionNames) {
 }
 
 function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, sanctions = []) {
-  const used = new Map(); // bank-name -> Set(indices used this edition)
+  // bank-name -> { start, stride, k } walk state, plus the '__rng' the
+  // walks are drawn from. Seeded off the edition's tick (and the game
+  // name, so two matches publishing the same tick don't print the same
+  // sentence shapes) — see makeRng for why this isn't Math.random.
+  const used = new Map();
+  let seed = tick * 2654435761;
+  for (let i = 0; i < String(gameName ?? '').length; i++) {
+    seed = (Math.imul(seed, 31) + String(gameName).charCodeAt(i)) | 0;
+  }
+  used.set('__rng', makeRng(seed));
 
   const captainFate = buildCaptainFateMap(rows);
   // Terraform beats split across two columns: begun/complete are
@@ -3308,9 +3570,21 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
     sections[topSection] = sections[topSection].filter(s => s !== topStory);
   }
 
+  // Ration the "…and N more incidents" tail to the ONE section with
+  // the most left on the cutting-room floor. It's a flourish about the
+  // size of the world; printed seven times an edition it reads as
+  // boilerplate, and a reviewer reading ten editions counted it as the
+  // single most repetitive thing in the paper.
+  const overflowOf = key =>
+    Math.max(0, sections[key].length - MAX_STORIES_PER_SECTION);
+  const tailSection = ['victory', 'battles', 'politics', 'discoveries', 'colonies', 'trades', 'industry']
+    .filter(k => overflowOf(k) >= 2)
+    .sort((a, b) => overflowOf(b) - overflowOf(a))[0] ?? null;
+
   const fields = [];
   for (const key of ['victory', 'battles', 'politics', 'discoveries', 'colonies', 'trades', 'industry']) {
-    const field = fieldFromStories(SECTION_META[key].title, sections[key], used);
+    const field = fieldFromStories(SECTION_META[key].title, sections[key], used,
+      { allowTail: key === tailSection });
     if (field) fields.push(field);
   }
 
