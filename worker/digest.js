@@ -2492,7 +2492,14 @@ function buildVoicePool(rows, used, leaders) {
   // used. Rendering all seven up front burned seven slots of a
   // twelve-entry bank every edition, which is exactly how two editions
   // ended up printing the identical sentence about the same leader.
-  return { captainAt, leaderFor: new Map(leaders ?? []), quotaQuotes: 2, quotaLeader: 1, used };
+  // The no-comment line ran in nine editions out of ten. It is funny
+  // once and a tic by the fourth, and because the paper never quotes a
+  // leader it is nine setups with no punchline. Roughly one edition in
+  // three now, chosen off the same seeded stream so it stays
+  // reproducible.
+  const rng = used.get('__rng') || Math.random;
+  const quotaLeader = rng() < 0.34 ? 1 : 0;
+  return { captainAt, leaderFor: new Map(leaders ?? []), quotaQuotes: 2, quotaLeader, used };
 }
 
 /** Draws at most one captain quote and one leader non-comment for a
@@ -3064,6 +3071,18 @@ function buildPoliticsStories(rows, used, factionNames) {
  *  Herald was the aggregate "Trade ledger" delivery count, which
  *  can't name who traded what with whom. */
 function buildTradeStories(rows, used, factionNames) {
+  // Pacts already carried by the Senate column this edition. A single
+  // accord was being reported as a Senate item, then again as the
+  // "sealed with…" tail of the trade that bundled it, and a third time
+  // as a pact-only deal — three sentences for one handshake, which a
+  // reader called a stutter. The Senate is the right home for a treaty,
+  // so the trade column stops mentioning them.
+  const senatePairs = new Set();
+  for (const row of rows) {
+    if (row.kind !== 'treaty_signed') continue;
+    senatePairs.add([row.actor_faction_id ?? '', row.target_faction_id ?? ''].sort().join(' '));
+  }
+
   const stories = [];
   const nameOf = (id) => factionNames.get(id) ?? 'an unnamed faction';
 
@@ -3077,11 +3096,18 @@ function buildTradeStories(rows, used, factionNames) {
     return parts.length ? parts.join(', ') : 'nothing';
   };
 
+  const toldPairs = new Set();
   for (const row of rows) {
     if (row.kind !== 'trade_accepted') continue;
+    // One deal per pair per edition. The Deals column ran four
+    // paragraphs on what a reader counts as two transactions.
+    const dealKey = [row.actor_faction_id ?? '', row.target_faction_id ?? ''].sort().join(' ');
+    if (toldPairs.has(dealKey)) continue;
+    toldPairs.add(dealKey);
     const p = safeJson(row.payload);
     const pacts = Array.isArray(p.pacts) ? p.pacts : [];
-    const pactNames = [...new Set(pacts.map(k => PACT_NAMES[k] ?? 'a treaty'))];
+    const alreadyInSenate = senatePairs.has([row.actor_faction_id ?? '', row.target_faction_id ?? ''].sort().join(' '));
+    const pactNames = alreadyInSenate ? [] : [...new Set(pacts.map(k => PACT_NAMES[k] ?? 'a treaty'))];
     const pactList = joinPacts(pactNames);
     const offerText = fmtBundle(p.offer);
     const requestText = fmtBundle(p.request);
@@ -3098,7 +3124,7 @@ function buildTradeStories(rows, used, factionNames) {
     // event, so tell it as one. (Nothing on BOTH sides with no pact
     // either is a null event — nothing happened, don't print it.)
     if (offerText === 'nothing' && requestText === 'nothing') {
-      if (pactNames.length === 0) continue;
+      if (pactNames.length === 0) continue;   // nothing traded, nothing new to report
       stories.push(mkStory(135, used, 'pact_only_deal', PACT_ONLY_DEAL, 'pact_only_deal_hl', PACT_ONLY_DEAL_HEADLINE, ctx));
       continue;
     }
@@ -4073,9 +4099,15 @@ function standingsField(rows, factionNames, totals = new Map()) {
     // Totals first, this edition's movement in parentheses. A delta
     // alone answers "who had a good week"; the reader wants "who is
     // winning", and only the running figure answers that.
+    // These are NET figures since the war began, not absolute holdings:
+    // starting fleets and homeworlds predate the chronicle, so nothing
+    // in the record can total them. Signed, and labelled as net, because
+    // a faction that has lost more than it built shows a deficit — which
+    // is true, and is the most interesting number on the row. Printing
+    // it unsigned as "-2 hulls" would read as a fleet of minus two.
     const pos = t
-      ? `${t.worlds} ${plural(t.worlds, 'world')}, ${t.fleet} ${plural(t.fleet, 'hull')} (${sign(ground)} / ${sign(fleet)})`
-      : `fleet ${sign(fleet)} · worlds ${sign(ground)}`;
+      ? `${sign(t.worlds)} ${plural(Math.abs(t.worlds), 'world')} · ${sign(t.fleet)} ${plural(Math.abs(t.fleet), 'hull')} (${sign(ground)} / ${sign(fleet)} this edition)`
+      : `${sign(ground)} ${plural(Math.abs(ground), 'world')} · ${sign(fleet)} ${plural(Math.abs(fleet), 'hull')}`;
     return `${trend} **${i + 1}. ${r.name}** — ${pos}`;
   });
   // The scoreboard and the battle reports are drawn from the same rows,
@@ -4083,8 +4115,8 @@ function standingsField(rows, factionNames, totals = new Map()) {
   // not — so the two legitimately disagree, and a reader who checks
   // finds the paper wrong. Say so, in the paper's own voice, once.
   const footer = totals.size > 0
-    ? '\n*Totals to press time; change this edition in brackets. Figures include actions the wire could not print in full.*'
-    : '\n*Change this edition. Figures include actions the wire could not print in full.*';
+    ? '\n*Net gain since the war began, to press time. Includes actions the wire could not print in full.*'
+    : '\n*Change this edition. Includes actions the wire could not print in full.*';
   return {
     name: '📊  Where things stand',
     value: clipToSentence(lines.join('\n') + footer, FIELD_VALUE_LIMIT - 4),
