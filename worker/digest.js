@@ -3596,16 +3596,27 @@ export async function composeHeraldForGame(env, game, lookbackMs = 24 * 60 * 60 
  * live Discord cadence no matter how often an admin calls it.
  */
 export async function composeHeraldForTickRange(env, game, fromTick, toTick) {
-  const rows = (await env.DB
+  // DESC + re-reverse, not ASC + LIMIT: composeHeraldForGame's 200-row
+  // cap is tuned for its actual live cadence (a ~20-24h rolling window
+  // rarely holds that many events), but an admin-chosen tick range can
+  // legitimately span a chaotic endgame — a 44-tick slice of a real
+  // completed match hit 418 public rows. ORDER BY ... ASC LIMIT 200
+  // silently drops the TAIL of the window, which is exactly where a
+  // victory or elimination row sits. Ordering DESC and reversing after
+  // the fact means truncation (if it ever happens at this raised cap)
+  // drops the OLDEST events instead — the ones least likely to be why
+  // an admin picked this window in the first place.
+  const rowsDesc = (await env.DB
     .prepare(
       `SELECT kind, actor_faction_id, target_faction_id, body_id, payload, created_at_ms, tick_number
          FROM chronicle_entries
         WHERE game_id = ? AND tick_number > ? AND tick_number <= ? AND visibility = 'public'
-        ORDER BY tick_number ASC, id ASC
-        LIMIT 200`,
+        ORDER BY tick_number DESC, id DESC
+        LIMIT 500`,
     )
     .bind(game.id, fromTick, toTick)
     .all()).results ?? [];
+  const rows = rowsDesc.slice().reverse();
 
   const factions = (await env.DB
     .prepare('SELECT id, name FROM game_factions WHERE game_id = ?')
