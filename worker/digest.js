@@ -80,11 +80,13 @@ const INDUSTRY_COLLAPSE_THRESHOLD = 5;
 /** How far each edition advances its cursor into every phrase bank.
  *  Set to the largest number of draws a single edition makes from one
  *  bank, so successive papers read non-overlapping runs. */
-const EDITION_BANK_STRIDE = 6;
+const EDITION_BANK_STRIDE = 12;
 
-/** How many consecutive editions a bank should get through before it is
- *  allowed to repeat itself. A reader following a match sees them in a
- *  row, and that is the run over which repetition is noticed. */
+/** Kept for reference: the run over which a reader notices repetition.
+ *  The stride can no longer be derived from it, because guaranteeing
+ *  ten clean editions would need a step smaller than a busy edition's
+ *  draw count, which breaks the adjacent-edition guarantee that
+ *  actually matters. Adjacent papers never repeat; distant ones may. */
 const EDITIONS_BEFORE_REUSE = 10;
 
 /** Ticks per edition, used only to turn a tick into an edition ordinal
@@ -500,11 +502,16 @@ function pickTemplate(bankName, bank, used) {
     // the same template until the whole bank has been spent — eleven
     // editions for a bank of 44 at four draws. No state is persisted;
     // the ordinal is derived from the tick by the caller.
-    // A bank only has room to march if it is long enough: advancing a
-    // 12-entry bank by four an edition wraps after three papers and
-    // starts colliding again. Step by as much as the bank can afford.
+    // The step has to EXCEED the draws a single edition makes, or a
+    // busy paper walks past its allotted run and into the next
+    // edition's — which is how two consecutive editions opened on the
+    // identical "Total loss, and quickly" lede. Battle stories are
+    // built one per engagement, and a late-war edition has a dozen, so
+    // the step is sized for the worst case rather than the average.
+    // Half the bank is the ceiling: beyond that, consecutive editions
+    // start landing on the same run from the other direction.
     const spin = used.get('__spin') || 0;
-    const step = Math.max(1, Math.min(EDITION_BANK_STRIDE, Math.floor(bank.length / EDITIONS_BEFORE_REUSE)));
+    const step = Math.max(1, Math.min(EDITION_BANK_STRIDE, Math.floor(bank.length / 2)));
     cur = { start: (spin * step + bankOffset(bankName)) % bank.length, stride: 1, k: 0 };
     used.set(bankName, cur);
   }
@@ -2598,7 +2605,13 @@ function buildVoicePool(rows, used, leaders) {
     // officer, one voice, for as long as they keep turning up.
     captainAt.set(
       p.body_name,
-      pickTemplateFor(p.captain_name, CAPTAIN_QUOTE)(p.captain_name, p.ship_name, ` at **${p.body_name}**`),
+      // Seeded on name AND place. Name alone is only 12-ish officers
+      // hashed into 26 quotes, and the birthday odds duly delivered:
+      // Baltar at Eris and Troi at Sedna drew the identical line, on
+      // the identical ship, two editions apart — which reads as one
+      // officer under two names. The engagement disambiguates them
+      // while keeping a captain's voice stable within any one battle.
+      pickTemplateFor(`${p.captain_name}@${p.body_name}`, CAPTAIN_QUOTE)(p.captain_name, p.ship_name, ` at **${p.body_name}**`),
     );
   }
 
