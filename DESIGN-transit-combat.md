@@ -232,6 +232,52 @@ Four things follow, and none of them had to be designed:
   flight, so an escort holds formation, stays in range, and shoots any
   interceptor at exactly the odds it shoots the freighter. No new code.
 
+### Long burns: the ends don't change, only the middle
+
+Titan→Mars, real positions at T+38: **1347 units, 14.25 ticks (~14 hours at an
+hour a tick), peak 189 u/t.** Same one-tick-late pursuer:
+
+| t | leader v | pursuer v | gap | Δv | in range? | corv→frt |
+|---|---|---|---|---|---|---|
+| 2.00 | 53.0 | 26.5 | 39.8 | 26.5 | no | 48.6% |
+| 7.13 *(flip)* | 188.9 | 162.6 | 175.8 | 26.4 | no | 48.7% |
+| 8.00 | 165.8 | 185.6 | **178.7** | **19.8** | no | 53.5% |
+| 13.00 | 33.2 | 59.8 | 46.5 | 26.5 | no | 48.6% |
+| 14.25 | 0.1 *(arrived)* | 26.6 | 13.4 | 26.5 | no | 48.6% |
+| 14.50 | 0.0 | 20.0 | 7.5 | 20.0 | **YES** | 53.4% |
+| 15.25 | 0.0 | 0.1 | 0.0 | 0.1 | **YES** | 70.4% |
+
+The chase gets *worse* with distance, not better — the gap peaks at **179
+units**, 18× a destroyer's range, against 35 on the moon hop. And the cruel
+irony: Δv sits at 26.5 for the entire chase, so the pursuer always has a
+48.6% shot and never once has a target.
+
+Mid-cruise interception is effectively dead at this speed: **8.1%** crossing,
+**2.6%** head-on.
+
+**The important property — the ends are scale-invariant.** The first and last
+tick of *any* brachistochrone are identical, because a tick of constant
+acceleration is a tick of constant acceleration:
+
+> 13.3 units covered, 26.5 u/t, Δv = 26.5, **48.6%** to hit —
+> the same for a 30-unit moon hop and this 1347-unit haul.
+
+Only the untouchable cruise in the middle lengthens. So `V_REF` and the range
+table get tuned **once** and behave identically across a map spanning Charon
+at 6 units to Sedna at 7000. That is a much stronger guarantee than I expected
+this model to give, and it is the reason the numbers can be locked before the
+feature ships.
+
+It also softens the fairness problem I flagged earlier: the vulnerable window
+is **roughly two ticks — one at each end — regardless of trip length.** A
+14-hour haul is not 14 hours of exposure; it is two, with twelve hours of
+untouchable cruise between them. Long hauls are proportionally *safer*.
+
+One consequence for tooling: at 189 u/t a 10-unit range means the engagement
+window is 0.1 of a tick, and an intercept has to be accurate to ~10 units out
+of 1347 — **0.7%**. Trivial for a solver, impossible by hand. This is the
+second independent argument for the rendezvous order below.
+
 ### The consequence worth deciding on
 
 Matched velocity means neither side can disengage. Two hostile ships that
