@@ -937,25 +937,30 @@
    The action was simply off-screen at the exact moment it became the only
    thing the player wanted. Pinning it to the bottom of the scroll area
    fixes it regardless of panel length, scroll position or safe-area inset.
+   NO media query on purpose. There are three competing definitions of
+   "mobile" in this codebase — mobile.css uses (max-width: 1023px) or
+   coarse+hover:none up to 1399px, DockRail.css uses (max-width: 768px),
+   and useIsMobile() is capability-only with no width bound at all. The
+   .bottom-sheet only ever renders when useIsMobile() is true, so scoping
+   to the sheet is exact and can't drift out of sync with whichever
+   breakpoint someone edits next.
    ============================================================ */
-@media (max-width: 768px) {
-  .bottom-sheet__body .commit-all-btn {
-    position: sticky;
-    bottom: 0;
-    z-index: 2;
-    /* Content scrolls UNDER this now, so it needs a real edge. */
-    box-shadow: 0 -8px 12px -6px rgba(0, 0, 0, 0.75),
-                0 0 12px rgba(255, 184, 77, 0.15),
-                inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  }
-  /* The base/hover/active rules all use the `background` SHORTHAND, which
-     resets background-color to transparent — fine when the button sat on
-     the sheet, fatal once text scrolls behind it. Re-assert an opaque base
-     at higher specificity than the pseudo-class rules so the press state
-     can't punch a hole in it either. */
-  .bottom-sheet__body .commit-all-btn,
-  .bottom-sheet__body .commit-all-btn:hover,
-  .bottom-sheet__body .commit-all-btn:active {
-    background-color: #080d15;
-  }
+.bottom-sheet__body .commit-all-btn {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  /* Content scrolls UNDER this now, so it needs a real edge. */
+  box-shadow: 0 -8px 12px -6px rgba(0, 0, 0, 0.75),
+              0 0 12px rgba(255, 184, 77, 0.15),
+              inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+/* The base/hover/active rules all use the `background` SHORTHAND, which
+   resets background-color to transparent — fine when the button sat on
+   the sheet, fatal once text scrolls behind it. Re-assert an opaque base
+   at higher specificity than the pseudo-class rules so the press state
+   can't punch a hole in it either. */
+.bottom-sheet__body .commit-all-btn,
+.bottom-sheet__body .commit-all-btn:hover,
+.bottom-sheet__body .commit-all-btn:active {
+  background-color: #080d15;
 }
