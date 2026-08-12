@@ -210,20 +210,24 @@ function tallyLine(totals) {
  * channel, looking at a card.) Every number here mirrors the constant
  * that actually applies the effect in senate.js/room.js.
  */
-function billEffect(row, sliderById, targetName) {
+function billEffect(row, sliderById, targetName, describe) {
   let payload = {};
   try { payload = JSON.parse(row.payload || '{}'); } catch { /* best effort */ }
   const who = targetName || 'the target';
 
   switch (row.kind) {
     case 'slider_law': {
+      // Was "Sets Ship Build Cost Multiplier to 0.5 for everyone" — a
+      // config diff, not a consequence. said.effect is the same sentence
+      // the in-game senate shows, from the same table.
+      const said = describe?.(payload.slider_id, payload.target_value);
+      const scope = payload.target_faction_id
+        ? `Applies to **${who}** alone; everyone else keeps the current rule.`
+        : 'Applies to **every faction**, including whoever proposed it.';
+      if (said) return [`**${said.name}** — ${said.effect}`, scope].join('\n');
+      // Unknown slider: name the topic rather than leaking a column name.
       const def = sliderById?.[payload.slider_id];
-      const label = def?.label ?? payload.slider_id ?? 'a rule';
-      const val = payload.target_value;
-      return [
-        `Sets **${label}** to **${val}** for everyone.`,
-        def?.description ? `_${def.description}_` : null,
-      ].filter(Boolean).join('\n');
+      return [`Changes **${def?.label ?? 'a rule'}**.`, scope].join('\n');
     }
     case 'trade_embargo':
       return `Blocks **${who}** from all trade routes and deliveries for **14 ticks**.`;
@@ -317,7 +321,7 @@ async function effectFor(env, gameId, row) {
         .prepare('SELECT name FROM game_factions WHERE id = ?')
         .bind(targetId).first())?.name ?? null;
     }
-    return billEffect(row, senate.SLIDER_BY_ID, targetName);
+    return billEffect(row, senate.SLIDER_BY_ID, targetName, senate.describeSlider);
   } catch (e) {
     console.error('billEffect failed', e);
     return null;   // a card without the effect line still beats no card

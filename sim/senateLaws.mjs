@@ -26,7 +26,10 @@
 // ============================================================
 
 import { seedGameWorld } from '../worker/factions.js';
-import { resolveSenate, activeLaws, getActiveSliders } from '../worker/senate.js';
+import {
+  resolveSenate, activeLaws, getActiveSliders,
+  describeSlider, phraseTableFor, SLIDER_CATALOG,
+} from '../worker/senate.js';
 import { buildCostFactors } from '../worker/buildCost.js';
 import { SimD1 } from './d1.mjs';
 import { MIGRATIONS } from '../worker/_migrations_bundle.js';
@@ -132,8 +135,11 @@ async function main() {
   const laws = await activeLaws(env, gameId, 5);
   check('activeLaws reports exactly one law', laws.length === 1, laws.length);
   const law = laws[0] ?? {};
-  check('law carries the catalog label, not the raw id',
-    law.label === 'Ship Build Cost Multiplier', law.label);
+  check('law is NAMED, not described by its knob',
+    law.law_name === 'Cheaper Ships', law.law_name);
+  check('law says what it does in a sentence',
+    law.effect_text === 'Ships cost 50% less to build.', law.effect_text);
+  check('law carries the plain topic', law.label === 'Cost of building ships', law.label);
   check('law reads as −50%', law.delta_pct === -50, law.delta_pct);
   check('law carries the bill title people argued over',
     law.proposal_title === "Let's get to work!", law.proposal_title);
@@ -185,6 +191,91 @@ async function main() {
   const tgt = tLaws.find(l => l.target_faction_id);
   check('targeted law records its target', !!tgt, JSON.stringify(tLaws.map(l => l.slider_id)));
   check('targeted law carries the target name', !!tgt?.target_name, tgt?.target_name);
+
+  // --- 7. plain language, enforced ---
+  //
+  // Reading level is a specification here, not a preference, so it gets
+  // assertions rather than a code review. The failure this guards is a
+  // slow one: someone adds a slider, copies the shape of the entry above
+  // it, forgets the PLAIN_LAW row, and the surface silently falls back
+  // to printing a column name again — which is exactly the defect this
+  // pass existed to remove.
+  const JARGON = [
+    'multiplier', 'modifier', 'slider', 'yield', 'upkeep',
+    'faction_id', 'per-tick', 'scales', '_',
+  ];
+  for (const def of SLIDER_CATALOG) {
+    const lo = describeSlider(def.id, def.min);
+    const hi = describeSlider(def.id, def.max);
+    const mid = describeSlider(def.id, def.default);
+    check(`${def.id}: has plain wording at both ends`, !!lo && !!hi,
+      `${lo ? '' : 'min missing '}${hi ? '' : 'max missing'}`);
+    if (!lo || !hi || !mid) continue;
+
+    // The two directions must be DIFFERENT laws. A single name covering
+    // both ends means the player can't tell from the headline whether
+    // the bill helps or hurts them.
+    check(`${def.id}: the two directions are named differently`,
+      lo.name !== hi.name, `${lo.name} / ${hi.name}`);
+    check(`${def.id}: the default is flagged as doing nothing`,
+      mid.at_default && mid.name === 'No Change', `${mid.name} ${mid.at_default}`);
+
+    for (const [end, said] of [['min', lo], ['max', hi]]) {
+      const text = `${said.name} ${said.effect}`.toLowerCase();
+      const found = JARGON.filter(w => text.includes(w));
+      check(`${def.id} @${end}: no jargon in "${said.name} — ${said.effect}"`,
+        found.length === 0, `contains ${found.join(', ')}`);
+      // A sentence, so it can be dropped into running prose anywhere.
+      check(`${def.id} @${end}: effect is a sentence`,
+        /^[A-Z].*\.$/.test(said.effect), said.effect);
+    }
+
+    // The topic name is what the composer's picker shows. Same rule.
+    const label = def.label.toLowerCase();
+    check(`${def.id}: topic name is plain ("${def.label}")`,
+      !JARGON.some(w => w !== 'yield' && w !== 'upkeep' && label.includes(w)), def.label);
+  }
+
+  // Every step of every slider must have wording — the composer looks
+  // phrases up by value and shows a bare number when the lookup misses.
+  for (const def of SLIDER_CATALOG) {
+    const step = def.step > 0 ? def.step : 1;
+    const steps = Math.round((def.max - def.min) / step);
+    let missing = 0;
+    for (let i = 0; i <= steps; i++) {
+      const v = Math.round((def.min + i * step) * 1000) / 1000;
+      if (!describeSlider(def.id, v)) missing++;
+    }
+    check(`${def.id}: all ${steps + 1} reachable values are worded`,
+      missing === 0, `${missing} missing`);
+  }
+
+  // --- 8. the composer can actually FIND the wording ---
+  //
+  // The phrase table is keyed by value-as-string, and the browser looks
+  // it up from a range input's value. Float steps are the trap: the
+  // server writing "0.7000000000000001" or the client asking for it
+  // means every lookup misses and the composer silently degrades to
+  // "Sets the value to 0.7" — the exact codery phrasing being removed
+  // here, reappearing through a rounding mismatch nobody would notice.
+  //
+  // This reproduces the CLIENT's key expression (lawPhrase in
+  // SenatePanel.tsx) against the SERVER's table for every step a range
+  // input can actually land on.
+  for (const def of SLIDER_CATALOG) {
+    const table = phraseTableFor(def);
+    const step = def.step > 0 ? def.step : 1;
+    const steps = Math.round((def.max - def.min) / step);
+    let miss = 0; let firstMiss = null;
+    for (let i = 0; i <= steps; i++) {
+      // What the browser hands back: min + i*step, unrounded.
+      const fromInput = def.min + i * step;
+      const key = String(Math.round(fromInput * 1000) / 1000);
+      if (!table[key]) { miss++; firstMiss ??= `${fromInput} -> "${key}"`; }
+    }
+    check(`${def.id}: every drag position finds its wording`,
+      miss === 0, `${miss} misses, first ${firstMiss}`);
+  }
 
   console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURE(S)`);
   process.exit(failures === 0 ? 0 : 1);

@@ -325,6 +325,30 @@ export type SenateSlider = {
   /** Can this slider be aimed at one faction? False for match-wide knobs
    *  like the tick clock. Optional; treat missing as true. */
   per_faction?: boolean;
+  /**
+   * Every reachable value, already worded by the server, keyed by the
+   * value as a string ("0.5", "1.25").
+   *
+   * The composer captions a drag by LOOKING UP the phrasing, never by
+   * composing it. The words for a law live in exactly one place
+   * (worker/senate.js PLAIN_LAW) because six surfaces describe laws and
+   * a browser-side copy of the rules is precisely the mirror that has
+   * drifted twice in this codebase. Optional: an older server omits it,
+   * and the composer falls back to showing the raw number.
+   */
+  phrases?: Record<string, LawPhrase>;
+  /** What the rule currently in force means for the caller. */
+  current?: LawPhrase | null;
+};
+
+/** A law's name and its one-sentence consequence, server-worded. */
+export type LawPhrase = {
+  /** "Cheaper Ships" — the law, not the knob. "No Change" at default. */
+  name: string;
+  /** "Ships cost 50% less to build." Always a complete sentence. */
+  effect: string;
+  /** True when this value IS the default, i.e. the bill does nothing. */
+  at_default: boolean;
 };
 
 export type SenateVoteTotals = {
@@ -400,8 +424,12 @@ export type SenateSession = {
  */
 export type ActiveLaw = {
   slider_id: string;
-  /** Catalog label ("Ship Build Cost Multiplier"), or the raw id if the
-   *  server is running a catalog this client doesn't know. */
+  /** The law's name in plain words — "Cheaper Ships", not the knob it
+   *  turns. Server-worded; optional only for an older worker. */
+  law_name?: string;
+  /** One sentence on what it does: "Ships cost 50% less to build." */
+  effect_text?: string | null;
+  /** The TOPIC the law touches ("Cost of building ships"). */
   label: string;
   description: string | null;
   value: number;

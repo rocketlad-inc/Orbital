@@ -78,6 +78,20 @@
 }
 .mp-input:focus, .mp-textarea:focus, .mp-select:focus { outline: none; border-color: var(--mp-accent); }
 .mp-textarea { resize: vertical; min-height: 60px; max-height: 160px; }
+
+/* Drag control for senate bill values. Replaced a bare number box: the
+   number was never the thing the proposer cared about, and a box gives
+   no sense of which direction is which or how far the range goes. The
+   caption under it does the talking, so this stays visually quiet. */
+.mp-range {
+  width: 100%;
+  margin: 6px 0 0;
+  accent-color: var(--mp-accent);
+  background: transparent;
+  cursor: pointer;
+}
+.mp-range:focus { outline: none; }
+.mp-range:focus-visible { outline: 1px solid var(--mp-accent); outline-offset: 3px; }
 .mp-submit {
   width: 100%; margin-top: 16px;
   background: var(--mp-accent); color: var(--mp-bg);

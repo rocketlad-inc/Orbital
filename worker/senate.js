@@ -47,11 +47,111 @@ export { WEIGHT_RULE };
 // Zero proposals in prod history had ever selected it. Legacy rows, if
 // any ever appear, fall out on their own: the resolver only applies
 // slider ids present in SLIDER_BY_ID.
+// ============================================================
+// PLAIN LANGUAGE. Every surface a player reads about a law — the
+// composer, the bill card they vote from, the laws-in-force list, both
+// Discord cards, the Herald — gets its words from HERE and only here.
+//
+// It used to get them from the schema. The bill card literally printed
+// the database column: "Sets ship_build_cost_multiplier to 0.5 for every
+// faction". Even the tidied surfaces said "Ship Build Cost Multiplier
+// −50%", which describes a setting rather than a consequence. Nobody
+// wants a multiplier at 0.5; they want ships to be cheaper. (Lorne:
+// "we are saying set buildcost to .5, not reduce ship construction costs
+// by 50%... no one's going to know what austerity means".)
+//
+// Reading level is the specification, not a nicety: plain nouns, no
+// policy jargon, no game-dev vocabulary, and never the word "multiplier".
+//
+// `lower`/`higher` are LAW NAMES — the same knob is two different laws
+// depending on which way you push it, and naming them separately is what
+// makes the senate read as legislation instead of a settings screen.
+// `say` is the consequence in one sentence.
+//
+// Server-owned on purpose. Six consumers means six chances to drift, and
+// this codebase's recurring defect is exactly that (the emblem tables,
+// the three upkeep tables). The client renders these strings; it never
+// composes its own.
+// "100% more" and "200% more" are arithmetically correct and nobody
+// talks that way. Past a doubling, say it in multiples — "twice as
+// much" is instantly legible where "100% more" makes a reader stop and
+// convert. Returns null below 2x, where percentages read fine.
+const TIMES_WORD = [null, null, 'twice', 'three times', 'four times', 'five times'];
+function timesWord(v) {
+  return Number.isInteger(v) ? (TIMES_WORD[v] ?? `${v} times`) : null;
+}
+
+const PLAIN_LAW = {
+  ship_build_cost_multiplier: {
+    lower: 'Cheaper Ships', higher: 'Pricier Ships',
+    say: (v, pct, x) => (
+      v === 0 ? 'Ships are free to build.'
+        : v < 1 ? `Ships cost ${pct}% less to build.`
+          : x ? `Ships cost ${x} as much to build.`
+            : `Ships cost ${pct}% more to build.`),
+  },
+  metal_yield_multiplier: {
+    lower: 'Less Metal', higher: 'More Metal',
+    say: (v, pct, x) => (
+      v === 0 ? 'Settlements mine no metal at all.'
+        : v < 1 ? `Every settlement mines ${pct}% less metal.`
+          : x ? `Every settlement mines ${x} as much metal.`
+            : `Every settlement mines ${pct}% more metal.`),
+  },
+  gold_yield_multiplier: {
+    lower: 'Fewer Credits', higher: 'More Credits',
+    say: (v, pct, x) => (
+      v === 0 ? 'Settlements earn no credits at all.'
+        : v < 1 ? `Every settlement earns ${pct}% fewer credits.`
+          : x ? `Every settlement earns ${x} as many credits.`
+            : `Every settlement earns ${pct}% more credits.`),
+  },
+  science_yield_multiplier: {
+    lower: 'Slower Research', higher: 'Faster Research',
+    say: (v, pct, x) => (
+      v === 0 ? 'Research stops completely.'
+        : v < 1 ? `Research runs ${pct}% slower.`
+          : x ? `Research runs ${x} as fast.`
+            : `Research runs ${pct}% faster.`),
+  },
+  combat_damage_multiplier: {
+    lower: 'Weaker Guns', higher: 'Stronger Guns',
+    say: (v, pct, x) => (
+      v === 0 ? 'Ships deal no damage at all.'
+        : v < 1 ? `Ships deal ${pct}% less damage.`
+          : x ? `Ships deal ${x} as much damage.`
+            : `Ships deal ${pct}% more damage.`),
+  },
+  trade_tariff_pct: {
+    // The odd one out: already a percentage, and only meaningful upward,
+    // so both names describe the same direction rather than a pair.
+    lower: 'No Trade Tax', higher: 'Trade Tax',
+    say: (v) => (
+      v <= 0 ? 'Trade deliveries arrive whole — no tax.'
+        : `Trade deliveries arrive ${v}% smaller.`),
+  },
+  fleet_upkeep_multiplier: {
+    lower: 'Cheaper Fleets', higher: 'Pricier Fleets',
+    say: (v, pct, x) => (
+      v === 0 ? 'Fleets cost nothing to keep.'
+        : v < 1 ? `Keeping your ships costs ${pct}% less each tick.`
+          : x ? `Keeping your ships costs ${x} as much each tick.`
+            : `Keeping your ships costs ${pct}% more each tick.`),
+  },
+  rush_cost_multiplier: {
+    lower: 'Cheaper Rush Jobs', higher: 'Pricier Rush Jobs',
+    say: (v, pct, x) => (
+      v < 1 ? `Rushing a build costs ${pct}% less.`
+        : x ? `Rushing a build costs ${x} as much.`
+          : `Rushing a build costs ${pct}% more.`),
+  },
+};
+
 const SLIDER_CATALOG = [
   {
     id: 'ship_build_cost_multiplier',
-    label: 'Ship Build Cost Multiplier',
-    description: 'Scales every resource cost in shipyard build queues. Cheap fleets vs. expensive prestige builds.',
+    label: 'Cost of building ships',
+    description: 'How much metal and credits a shipyard charges for a hull.',
     default: 1.0,
     min: 0.5,
     max: 1.5,
@@ -65,9 +165,8 @@ const SLIDER_CATALOG = [
   // with the three that are actually in the game.
   {
     id: 'metal_yield_multiplier',
-    label: 'Metal Yield Multiplier',
-    description: 'Per-tick metal production from every settlement is multiplied by this value. '
-      + 'Applies to everyone, including whoever proposed it.',
+    label: 'Metal from settlements',
+    description: 'How much metal your settlements dig up each tick.',
     default: 1.0,
     min: 0.5,
     max: 2.0,
@@ -76,10 +175,9 @@ const SLIDER_CATALOG = [
   },
   {
     id: 'gold_yield_multiplier',
-    label: 'Credit Yield Multiplier',
-    description: 'Per-tick credit production from every settlement is multiplied by this value. '
-      + 'Fleet upkeep is paid in credits, so this is the closest thing the senate has to a '
-      + 'lever on how big a navy the whole system can afford.',
+    label: 'Credits from settlements',
+    description: 'How many credits your settlements earn each tick. '
+      + 'Ships are paid for in credits, so this decides how big a navy anyone can afford.',
     default: 1.0,
     min: 0.5,
     max: 2.0,
@@ -88,9 +186,9 @@ const SLIDER_CATALOG = [
   },
   {
     id: 'science_yield_multiplier',
-    label: 'Science Yield Multiplier',
-    description: 'Per-tick science production from every settlement is multiplied by this value. '
-      + 'Raising it shortens the whole game; the tech tree is what ends it.',
+    label: 'Research speed',
+    description: 'How fast everyone climbs the tech tree. '
+      + 'Speeding it up makes the whole game shorter — tech is how it ends.',
     default: 1.0,
     min: 0.5,
     max: 2.0,
@@ -99,9 +197,9 @@ const SLIDER_CATALOG = [
   },
   {
     id: 'combat_damage_multiplier',
-    label: 'Combat Damage Multiplier',
-    description: 'Scales the damage a faction DEALS in every engagement. Aimed at one faction it is '
-      + 'a disarmament order: their guns hit softer, everyone else fires as normal.',
+    label: 'Weapon damage',
+    description: 'How hard ships hit when they shoot. '
+      + 'Point it at one player and their guns get weaker while everyone else fires as normal.',
     default: 1.0,
     min: 0.5,
     max: 2.0,
@@ -110,9 +208,10 @@ const SLIDER_CATALOG = [
   },
   {
     id: 'trade_tariff_pct',
-    label: 'Trade Tariff (%)',
-    description: 'Skims a percentage off what a faction RECEIVES in trade. Snapshotted per delivery '
-      + 'when the deal is struck, so a later law cannot re-price cargo already in flight.',
+    label: 'Tax on trade deliveries',
+    description: 'A cut taken out of every trade delivery when it arrives. '
+      + 'The rate is locked in when the deal is struck, so a later law cannot re-tax cargo '
+      + 'already on its way.',
     default: 0,
     min: 0,
     max: 50,
@@ -121,8 +220,9 @@ const SLIDER_CATALOG = [
   },
   {
     id: 'fleet_upkeep_multiplier',
-    label: 'Fleet Upkeep Multiplier',
-    description: 'Scales per-tick fleet maintenance. 0 suspends upkeep entirely; 2 makes standing armies genuinely expensive.',
+    label: 'Cost of keeping ships',
+    description: 'The bill every player pays each tick just for owning a fleet. '
+      + 'Push it to zero and fleets are free to keep; double it and big navies start to hurt.',
     default: 1.0,
     min: 0,
     max: 2.0,
@@ -131,8 +231,9 @@ const SLIDER_CATALOG = [
   },
   {
     id: 'rush_cost_multiplier',
-    label: 'Rush Cost Multiplier',
-    description: 'Scales the price of rushing shipyard orders. High values make patience the law of the land.',
+    label: 'Cost of rushing builds',
+    description: 'What it costs to pay a shipyard to finish early. '
+      + 'Make it expensive enough and everyone has to wait their turn.',
     default: 1.0,
     min: 0.5,
     max: 3.0,
@@ -145,6 +246,78 @@ const SLIDER_BY_ID = Object.fromEntries(SLIDER_CATALOG.map((s) => [s.id, s]));
 /** Exported so the Discord vote card can describe a slider law in
  *  the same words the in-game senate uses. */
 export { SLIDER_BY_ID, SLIDER_CATALOG };
+
+/**
+ * One law, in plain words: what to CALL it and what it DOES.
+ *
+ * The single source for every player-facing description of a slider law.
+ * Returns null for an unknown slider rather than inventing wording — the
+ * caller falls back to the label, which beats printing a column name.
+ *
+ *   describeSlider('ship_build_cost_multiplier', 0.5)
+ *     -> { name: 'Cheaper Ships', effect: 'Ships cost 50% less to build.', … }
+ */
+export function describeSlider(sliderId, value) {
+  const def = SLIDER_BY_ID[sliderId];
+  const plain = PLAIN_LAW[sliderId];
+  if (!def || !plain) return null;
+  const v = Number(value);
+  if (!Number.isFinite(v)) return null;
+
+  const base = Number(def.default);
+  // Percent AWAY FROM the default, which is what a reader cares about —
+  // not the raw multiplier, and not percent of anything absolute.
+  const pct = Math.round(Math.abs(v - base) * 100);
+  const atDefault = Math.abs(v - base) < 1e-9;
+
+  return {
+    slider_id: sliderId,
+    // Topic — what the bill is about, for pickers and headers.
+    topic: def.label,
+    // The law's NAME. At the default there is no law to name, and the
+    // composer uses this to tell a proposer their bill does nothing.
+    name: atDefault ? 'No Change' : (v < base ? plain.lower : plain.higher),
+    // The consequence, one sentence, always ending in a period so it can
+    // be dropped into running prose anywhere.
+    effect: atDefault
+      ? 'Nothing changes — this is already the rule.'
+      : plain.say(v, pct, v > base ? timesWord(v) : null),
+    at_default: atDefault,
+    value: v,
+    // Kept for the few places that still want the bare arithmetic
+    // (the analytics tab, the sim). Not for player-facing copy.
+    delta_pct: def.id === 'trade_tariff_pct' ? v : Math.round((v - base) * 100),
+  };
+}
+
+/**
+ * Every reachable value of a slider, pre-worded.
+ *
+ * Sent with the catalog so the composer can caption a drag in real time
+ * without shipping a second copy of the phrasing rules to the browser.
+ * The alternative — a client-side formatter mirroring PLAIN_LAW — is the
+ * exact pattern that has drifted twice in this codebase already, and the
+ * whole point of this pass is that there is ONE place the words live.
+ *
+ * Small: eight sliders, at most ~50 steps each, all short strings, and
+ * only fetched while the senate tab is actually open.
+ */
+export function phraseTableFor(def) {
+  const out = {};
+  const step = def.step > 0 ? def.step : 1;
+  // Integer loop so 0.05 steps don't accumulate float error into keys
+  // the client can never match on.
+  const steps = Math.round((def.max - def.min) / step);
+  for (let i = 0; i <= steps; i++) {
+    const raw = def.min + i * step;
+    // Round to the step's own precision; 0.7000000000000001 as an object
+    // key would simply never be looked up.
+    const v = Math.round(raw * 1000) / 1000;
+    const d = describeSlider(def.id, v);
+    if (d) out[String(v)] = { name: d.name, effect: d.effect, at_default: d.at_default };
+  }
+  return out;
+}
 
 // Defaults when a proposal doesn't specify per-proposal durations. The
 // new schema's debate_ticks/vote_ticks columns are nullable so legacy
@@ -545,17 +718,20 @@ export async function activeLaws(env, gameId, currentTick) {
     return rows.map((r) => {
       const def = SLIDER_BY_ID[r.slider_id] ?? null;
       const value = Number(r.value);
-      // Percentage sliders (the tariff) are already expressed in points;
-      // multiplier sliders need converting from 0.5 to "−50%".
-      const isPct = r.slider_id === 'trade_tariff_pct';
+      const said = describeSlider(r.slider_id, value);
       return {
         slider_id: r.slider_id,
+        // The law's NAME and what it DOES, in that order — this is what
+        // the laws-in-force list leads with. `label` is the topic, kept
+        // for anything that wants the subject rather than the law.
+        law_name: said?.name ?? def?.label ?? r.slider_id,
+        effect_text: said?.effect ?? null,
         label: def?.label ?? r.slider_id,
         description: def?.description ?? null,
         value,
         default_value: def?.default ?? null,
-        delta_pct: isPct ? value : Math.round((value - 1) * 100),
-        is_pct: isPct,
+        delta_pct: said?.delta_pct ?? 0,
+        is_pct: r.slider_id === 'trade_tariff_pct',
         proposal_id: r.proposal_id,
         proposal_title: r.proposal_title ?? null,
         target_faction_id: r.target_faction_id,
@@ -757,6 +933,11 @@ async function handleListSliders(_req, env, { params, session }) {
       max: s.max,
       step: s.step,
       per_faction: s.perFaction !== false,
+      // Every reachable value, already worded, so the composer can
+      // caption a drag without the browser owning any phrasing rules.
+      phrases: phraseTableFor(s),
+      // What the rule in force right now actually means for the caller.
+      current: describeSlider(s.id, mine[s.id]),
       effective_value: mine[s.id],
       general_value: general[s.id],
       targeted_at_me: mine[s.id] !== general[s.id],

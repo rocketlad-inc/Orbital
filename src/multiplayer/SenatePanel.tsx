@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   apiFetch, fmtTicksReal, realSuffix,
-  ActiveLaw, Faction, SenateProposal, SenateSession, SenateSlider,
+  ActiveLaw, Faction, LawPhrase, SenateProposal, SenateSession, SenateSlider,
 } from './api';
 import { logUiEvent } from './telemetry';
 import { DiscordLink } from './DiscordLink';
@@ -28,13 +28,17 @@ type BillKind =
   | 'reparations'
   | 'chancellor_vote';
 
+// Plain-language menu. These were named after their internals — "Slider
+// Law (global multiplier)", "Production Sanction (½ target yield, 14t)"
+// — which describes the machinery rather than the decision. Each now
+// says what the bill DOES and, where it matters, how long for.
 const BILL_KIND_LABELS: Record<BillKind, string> = {
-  slider_law:          'Slider Law (global multiplier)',
-  trade_embargo:       'Trade Embargo (target loses trade for 14t)',
-  war_authorization:   'War Authorization (2× damage TO target, 21t)',
-  production_sanction: 'Production Sanction (½ target yield, 14t)',
-  reparations:         'Reparations (target pays credits to all)',
-  chancellor_vote:     'Call for Supreme Chancellor (election — game-ending)',
+  slider_law:          'Change a rule for everyone (or for one player)',
+  trade_embargo:       'Cut one player off from trade (14 ticks)',
+  war_authorization:   'Let everyone hit one player twice as hard (21 ticks)',
+  production_sanction: 'Halve one player\'s income (14 ticks)',
+  reparations:         'Make one player pay everyone else',
+  chancellor_vote:     'Vote someone the winner — this ENDS the game',
 };
 
 /** Bill kinds that need a faction id in their payload. Drives the target
@@ -223,30 +227,18 @@ function LawsCard({ laws, tickMs }: { laws: ActiveLaw[]; tickMs: number | null }
       <div style={{ fontSize: 12, fontWeight: 700, color: '#ffcf70', marginBottom: 6 }}>
         ⚖ LAW OF THE LAND
       </div>
-      {laws.map((law) => {
-        // A law that raises a cost and a law that raises a yield are not
-        // the same news, so colour tracks the SIGN and the reader decides
-        // — the panel has no business guessing whether +20% metal yield
-        // is good for the person looking at it.
-        const up = law.delta_pct > 0;
-        const deltaText = law.is_pct
-          ? `${law.value}%`
-          : `${up ? '+' : ''}${law.delta_pct}%`;
-        return (
-          <div
-            key={`${law.slider_id}:${law.proposal_id ?? 'x'}:${law.target_faction_id ?? 'all'}`}
-            style={{
-              display: 'flex', alignItems: 'baseline', gap: 6,
-              fontSize: 11, lineHeight: 1.6,
-            }}
-            title={law.description ?? undefined}
-          >
-            <span style={{ color: 'var(--mp-fg)' }}>{law.label}</span>
-            <strong style={{ color: up ? '#ff8a5c' : '#6ee7b7' }}>
-              {deltaText}
+      {laws.map((law) => (
+        <div
+          key={`${law.slider_id}:${law.proposal_id ?? 'x'}:${law.target_faction_id ?? 'all'}`}
+          style={{ fontSize: 11, lineHeight: 1.5, marginBottom: 7 }}
+        >
+          {/* Line 1: the law's NAME and how long it has left. The name
+              carries the direction ("Cheaper Ships" vs "Pricier Ships"),
+              so no arrow or percentage is needed to read the headline. */}
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+            <strong style={{ color: '#ffcf70' }}>
+              {law.law_name ?? law.label}
             </strong>
-            {/* Targeted laws are a different animal from general ones —
-                naming the target is the whole point of passing one. */}
             {law.target_faction_id && (
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
                 <span style={{ color: 'var(--mp-fg-dim)' }}>on</span>
@@ -262,18 +254,29 @@ function LawsCard({ laws, tickMs }: { laws: ActiveLaw[]; tickMs: number | null }
               </span>
             )}
             <span style={{ color: 'var(--mp-fg-dim)', marginLeft: 'auto', whiteSpace: 'nowrap' }}>
-              {law.ticks_left}t left{realSuffix(law.ticks_left, tickMs)}
+              {law.ticks_left} ticks left{realSuffix(law.ticks_left, tickMs)}
             </span>
           </div>
-        );
-      })}
-      {/* The bills these came from, so a law reads as the argument that
-          produced it rather than as a setting somebody changed. */}
-      <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)', marginTop: 5 }}>
-        {laws.some(l => l.proposal_title)
-          ? `From: ${laws.map(l => l.proposal_title).filter(Boolean).join(' · ')}`
-          : 'Passed by this chamber.'}
-      </div>
+          {/* Line 2: what it actually does, in one sentence, from the
+              server's vocabulary. This is the line that replaced
+              "Ship Build Cost Multiplier −50%". */}
+          <div style={{ color: 'var(--mp-fg)' }}>
+            {law.effect_text
+              ?? `${law.label} is set to ${law.value}.`}
+            {!law.target_faction_id && (
+              <span style={{ color: 'var(--mp-fg-dim)' }}> Applies to everyone.</span>
+            )}
+          </div>
+          {/* Line 3: the bill it came from, so a law reads as the
+              argument that produced it rather than a setting someone
+              changed. Quoted because it's a player's own words. */}
+          {law.proposal_title && (
+            <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)' }}>
+              Passed as “{law.proposal_title}”
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -588,13 +591,6 @@ export function SenatePanel({
     ),
     [sortedProposals],
   );
-  /** Sliders sitting away from their default are laws someone passed. */
-  const lawsInForce = useMemo(
-    () => sliders
-      .filter(sl => Math.abs(sl.effective_value - sl.default) > 1e-9)
-      .map(sl => `${sl.label} ${fmtNum(sl.effective_value)}`),
-    [sliders],
-  );
   return (
     <div>
       {/* Whose floor it is comes FIRST — above even the votable bills.
@@ -688,7 +684,7 @@ export function SenatePanel({
 
         {kind === 'slider_law' && (
           <>
-            <label className="mp-label">Slider</label>
+            <label className="mp-label">What should this law change?</label>
             <select
               className="mp-select"
               value={sliderId}
@@ -699,29 +695,64 @@ export function SenatePanel({
               }}
             >
               {sliders.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.label} (now {fmtNum(s.effective_value)})
-                </option>
+                <option key={s.id} value={s.id}>{s.label}</option>
               ))}
             </select>
             {selectedSlider && (
               <>
                 <div style={{ fontSize: 11, color: 'var(--mp-fg-dim)', marginTop: 4 }}>
                   {selectedSlider.description}
+                  {selectedSlider.current && !selectedSlider.current.at_default && (
+                    <> <span style={{ color: '#ffcf70' }}>
+                      Right now: {selectedSlider.current.effect}
+                    </span></>
+                  )}
                 </div>
-                <label className="mp-label">
-                  Target value (range {selectedSlider.min}–{selectedSlider.max}; default {selectedSlider.default})
-                </label>
+
+                {/* WAS a bare number box labelled "Target value (range
+                    0.5–1.5; default 1)". Nobody proposing a bill thinks
+                    in multipliers — they think "ships should be cheaper"
+                    — and the box told you neither which direction was
+                    which nor what any number would do. A drag with a
+                    live sentence under it keeps every value reachable
+                    while making the consequence impossible to miss. */}
+                <label className="mp-label">How far?</label>
                 <input
-                  className="mp-input"
-                  type="number"
-                  inputMode="decimal"
+                  className="mp-range"
+                  type="range"
                   step={selectedSlider.step || 'any'}
                   min={selectedSlider.min}
                   max={selectedSlider.max}
                   value={target}
+                  style={{ width: '100%' }}
                   onChange={(e) => setTarget(parseFloat(e.target.value))}
                 />
+                {(() => {
+                  const said = lawPhrase(sliders, selectedSlider.id, target);
+                  const nothing = said?.at_default ?? (target === selectedSlider.default);
+                  return (
+                    <div style={{
+                      border: '1px solid var(--mp-border)', borderRadius: 4,
+                      padding: '6px 8px', marginTop: 4,
+                      background: nothing ? 'rgba(255,138,92,0.08)' : 'rgba(110,231,183,0.07)',
+                    }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: nothing ? '#ff8a5c' : '#6ee7b7' }}>
+                        {said?.name ?? fmtNum(target)}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--mp-fg)' }}>
+                        {said?.effect ?? `Sets the value to ${fmtNum(target)}.`}
+                      </div>
+                      {/* A bill at the default passes and does nothing.
+                          Worth saying out loud BEFORE someone spends a
+                          whole term's floor time on it. */}
+                      {nothing && (
+                        <div style={{ fontSize: 10, color: '#ff8a5c', marginTop: 2 }}>
+                          Drag the bar — a bill that changes nothing still uses up your turn.
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* Who the law binds. "Everyone" is the default and the
                     historical behaviour of every slider law. A named
@@ -732,28 +763,27 @@ export function SenatePanel({
                     will reject. */}
                 {selectedSlider.per_faction !== false && (
                   <>
-                    <label className="mp-label">Applies to</label>
+                    <label className="mp-label">Who does it apply to?</label>
                     <select
                       className="mp-select"
                       value={sliderTargetId}
                       onChange={(e) => setSliderTargetId(e.target.value)}
                     >
-                      <option value="">Everyone (general law)</option>
+                      <option value="">Everyone</option>
                       {factions.map(f => (
                         <option key={f.id} value={f.id}>
-                          {f.name}{f.id === myFactionId ? ' (you)' : ''}
+                          Only {f.name}{f.id === myFactionId ? ' (you)' : ''}
                         </option>
                       ))}
                     </select>
                     <div style={{ fontSize: 11, color: 'var(--mp-fg-dim)', marginTop: 4 }}>
                       {sliderTargetId
-                        ? `Binds ${factions.find(f => f.id === sliderTargetId)?.name ?? 'them'} alone`
-                          + ` at ${fmtNum(target)}. Everyone else stays on the general law`
-                          + ` (${fmtNum(selectedSlider.general_value ?? selectedSlider.default)}).`
+                        ? `Only ${factions.find(f => f.id === sliderTargetId)?.name ?? 'they'} feel it.`
+                          + ' Everyone else carries on under the current rule.'
                           + (sliderTargetId === myFactionId
                             ? ' You are naming yourself — the floor still has to vote for it.'
                             : '')
-                        : 'Binds every faction, including you.'}
+                        : 'Everyone feels it, including you.'}
                     </div>
                   </>
                 )}
@@ -942,11 +972,11 @@ export function SenatePanel({
               </details>
             );
           })}
-          {lawsInForce.length > 0 && (
-            <div className="sp-note" style={{ marginTop: 8 }}>
-              Slider laws currently in force: {lawsInForce.join(', ')}.
-            </div>
-          )}
+          {/* A second laws-in-force list used to sit here, phrased as
+              "Ship Build Cost Multiplier 0.5". LawsCard at the top of
+              the tab is the one place that answers this now — two lists
+              of the same laws in two different vocabularies is exactly
+              how a player ends up trusting neither. */}
         </div>
       </details>
 
@@ -994,6 +1024,7 @@ export function SenatePanel({
             <ProposalEffectLine
               proposal={p}
               factionsById={factionsById}
+              sliders={sliders}
             />
             {/* New bill-kind tag — small chip showing what kind of bill
                 this is, since slider-law and a chancellor-vote look very
@@ -1075,9 +1106,12 @@ function fmtNum(n: number | undefined): string {
 function ProposalEffectLine({
   proposal: p,
   factionsById,
+  sliders,
 }: {
   proposal: SenateProposal;
   factionsById: Map<string, Faction>;
+  /** Catalog, for the server's plain wording of a slider law. */
+  sliders: SenateSlider[];
 }) {
   const k = p.kind as BillKind;
   const targetId = p.payload?.target_faction_id || p.payload?.candidate_faction_id;
@@ -1092,23 +1126,47 @@ function ProposalEffectLine({
   );
 
   if (k === 'slider_law' && p.payload?.slider_id) {
-    // Who it binds is the most consequential thing about a slider law now
-    // that it can be aimed, so it goes in the same sentence as the value
-    // rather than a separate chip someone can miss while voting.
+    // This line used to print the DATABASE COLUMN on the card people cast
+    // votes from — "Sets ship_build_cost_multiplier to 0.5 for every
+    // faction". Now it says what the law does, in the server's words.
+    const said = lawPhrase(sliders, p.payload.slider_id, p.payload.target_value);
+    const def = sliders.find(s => s.id === p.payload?.slider_id);
     return wrap(<>
-      Sets <strong>{p.payload.slider_id}</strong> to <strong>{fmtNum(p.payload.target_value)}</strong>
+      <strong style={{ color: 'var(--mp-fg)' }}>{said?.name ?? def?.label ?? 'A rule change'}</strong>
+      {' — '}
+      {said?.effect ?? `${def?.label ?? 'A rule'} changes.`}
       {targetName
-        ? <> for <strong>{targetName}</strong> only — everyone else keeps the general law</>
-        : <> for <strong>every faction</strong></>}
+        ? <> Hits <strong>{targetName}</strong> alone; everyone else keeps the current rule.</>
+        : <> Applies to <strong>everyone</strong>, including whoever proposed it.</>}
     </>);
   }
   if (!targetName) return null;
-  if (k === 'trade_embargo')       return wrap(<>Embargoes <strong>{targetName}</strong> from trade for 14 ticks</>);
-  if (k === 'war_authorization')   return wrap(<>Doubles damage TO <strong>{targetName}</strong> for 21 ticks (peace pacts broken)</>);
-  if (k === 'production_sanction') return wrap(<>Halves <strong>{targetName}</strong>'s yields for 14 ticks</>);
-  if (k === 'reparations')         return wrap(<><strong>{targetName}</strong> pays reparations to every other faction</>);
-  if (k === 'chancellor_vote')     return wrap(<>If passed, <strong>{targetName}</strong> wins the game as Supreme Chancellor</>);
+  if (k === 'trade_embargo')       return wrap(<><strong>{targetName}</strong> can't trade with anyone for 14 ticks</>);
+  if (k === 'war_authorization')   return wrap(<>Everyone hits <strong>{targetName}</strong> twice as hard for 21 ticks, and every peace deal they hold is torn up</>);
+  if (k === 'production_sanction') return wrap(<><strong>{targetName}</strong>'s settlements produce half as much for 14 ticks</>);
+  if (k === 'reparations')         return wrap(<><strong>{targetName}</strong> hands credits to every other player, right away</>);
+  if (k === 'chancellor_vote')     return wrap(<>If this passes, <strong>{targetName}</strong> wins the game</>);
   return null;
+}
+
+/**
+ * The server's wording for one slider value.
+ *
+ * A lookup, not a formatter. Every phrase for every reachable value ships
+ * with the catalog precisely so the browser owns no phrasing rules — the
+ * words for a law live in worker/senate.js and nowhere else. Returns null
+ * when the value isn't in the table (an older server, or a value from
+ * outside the current range), and callers fall back to the topic name.
+ */
+function lawPhrase(
+  sliders: SenateSlider[], sliderId: string, value: unknown,
+): LawPhrase | null {
+  const def = sliders.find(s => s.id === sliderId);
+  const v = Number(value);
+  if (!def?.phrases || !Number.isFinite(v)) return null;
+  // Keys are written by the server at 3dp; match that rounding exactly or
+  // a 0.05-step value arrives as 0.7000000000000001 and never hits.
+  return def.phrases[String(Math.round(v * 1000) / 1000)] ?? null;
 }
 
 // Vote weight bar. Source of truth for ratification is WEIGHT (1 per
