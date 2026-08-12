@@ -2474,13 +2474,11 @@ function buildVoicePool(rows, used, leaders) {
     );
   }
 
-  const leaderFor = new Map();   // faction name -> non-comment clause
-  for (const [faction, leader] of (leaders ?? new Map())) {
-    if (!faction || !leader) continue;
-    leaderFor.set(faction, pickTemplate('leader_no_comment', LEADER_NO_COMMENT, used)(leader, b(faction)));
-  }
-
-  return { captainAt, leaderFor, quotaQuotes: 2, quotaLeader: 1 };
+  // Leader lines are rendered lazily, at the moment one is actually
+  // used. Rendering all seven up front burned seven slots of a
+  // twelve-entry bank every edition, which is exactly how two editions
+  // ended up printing the identical sentence about the same leader.
+  return { captainAt, leaderFor: new Map(leaders ?? []), quotaQuotes: 2, quotaLeader: 1, used };
 }
 
 /** Draws at most one captain quote and one leader non-comment for a
@@ -2498,7 +2496,8 @@ function takeVoices(voices, bodyName, factions) {
   if (voices.quotaLeader > 0) {
     for (const f of factions) {
       if (!f || !voices.leaderFor.has(f)) continue;
-      out += voices.leaderFor.get(f);
+      const leader = voices.leaderFor.get(f);
+      out += pickTemplate('leader_no_comment', LEADER_NO_COMMENT, voices.used)(leader, b(f));
       voices.leaderFor.delete(f);
       voices.quotaLeader -= 1;
       break;
