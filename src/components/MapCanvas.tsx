@@ -305,6 +305,41 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   const camTweenRef = useRef<{ fromX: number; fromY: number; fromScale: number; startMs: number } | null>(null);
   const prevCamSigRef = useRef<{ x: number; y: number; scale: number; focusedBodyId?: string } | null>(null);
   const lastRenderedCamRef = useRef<{ x: number; y: number; scale: number } | null>(null);
+
+  // ============================================================
+  // hitCam — THE camera every hit-test must use.
+  //
+  // Aiming was broken because the map was DRAWN with one camera and
+  // HIT-TESTED with another. Two separate derivations of "where is the
+  // camera really", and they disagreed in three ways:
+  //
+  //   1. WORLD-MENU OFFSET. While the world menu is up, the render path
+  //      treats camera.x/y as an OFFSET from the focused body so the
+  //      body can be parked below the frame (`camX = pos.x + camera.x`,
+  //      upper-limb framing). effectiveCamera() returned a bare
+  //      `pos.x` and dropped the offset, so every hit box sat
+  //      (camera.x, camera.y) × scale away from the sprite it belonged
+  //      to. That is the "hovering the planet does nothing but some
+  //      other patch of screen highlights it" report.
+  //   2. POSITION EASING. focusBody tweens camX/camY over 250ms;
+  //      effectiveCamera jumped straight to the target, so hit boxes
+  //      led the visible bodies for the whole tween.
+  //   3. SCALE EASING. The renderer draws at the eased camScale;
+  //      effectiveCamera used the raw camera.scale, so mid-zoom every
+  //      radius was computed against the wrong pixels-per-unit.
+  //
+  // lastRenderedCamRef is already exactly "the effective camera drawn
+  // last frame", so hit-testing against it is correct by construction
+  // and cannot drift again — there is now ONE derivation, not two.
+  // Returned WITHOUT focusedBodyId on purpose: it is already resolved,
+  // and effectiveCamera must pass it through rather than re-resolve it.
+  //
+  // Fallback is only for the very first frame (nothing rendered yet).
+  // ============================================================
+  const hitCam = useCallback((): { x: number; y: number; scale: number } => (
+    lastRenderedCamRef.current
+    ?? effectiveCamera(camera, gameState.bodies, renderTick())
+  ), [camera, gameState.bodies, renderTick]);
   const directCamInputRef = useRef(false);
   const tweenRafRef = useRef<number | null>(null);
   const renderRef = useRef<() => void>(() => {});
@@ -1899,7 +1934,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // the canvas transform for every subsequent frame.
     drawArrivalFlashes(renderContext, gameState.ships, nowMs);
     try {
-      flushLabels(ctx, camera.scale, ctx.canvas.width, ctx.canvas.height);
+      flushLabels(ctx, renderContext.camera.scale, ctx.canvas.width, ctx.canvas.height);
     } catch (e) {
       console.error('label solver failed', e);
     }
@@ -1928,7 +1963,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
             x = hb.x; y = hb.y; r = hb.r + 4;
           } else {
             const cached = ship.transit ? transitShipCanvasPosRef.current.get(id) : undefined;
-            const p = cached ?? getShipCanvasPos(ship, c.canvas, gameState.bodies, camera, nowTick);
+            // renderContext.camera, NOT the raw camera prop: this is a
+            // DRAW pass, so the ring has to use the same eased/offset
+            // camera the frame is being painted with or it lands away
+            // from the hull it is meant to circle.
+            const p = cached ?? getShipCanvasPos(ship, c.canvas, gameState.bodies, renderContext.camera, nowTick);
             if (!p) continue;
             x = p.x; y = p.y; r = (ship.transit ? 20 : 14) + 4;
           }
@@ -2008,9 +2047,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       const cached = ship.transit ? transitShipCanvasPosRef.current.get(ship.id) : undefined;
       if (cached) return cached;
       if (!canvasRef.current) return null;
-      return getShipCanvasPos(ship, canvasRef.current, gameState.bodies, camera, renderTick());
+      return getShipCanvasPos(ship, canvasRef.current, gameState.bodies, hitCam(), renderTick());
     },
-    [gameState.bodies, camera, renderTick],
+    [gameState.bodies, hitCam, renderTick],
   );
 
   /** Finalize a drag box: every OWN ship whose centre falls inside wins.
@@ -2253,7 +2292,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           x = hb.x; y = hb.y; r = hb.r + pad;
         } else {
           const cached = ship.transit ? transitShipCanvasPosRef.current.get(ship.id) : undefined;
-          const p = cached ?? getShipCanvasPos(ship, canvasRef.current!, gameState.bodies, camera, renderTick());
+          const p = cached ?? getShipCanvasPos(ship, canvasRef.current!, gameState.bodies, hitCam(), renderTick());
           if (!p) continue;
           x = p.x; y = p.y; r = (ship.transit ? 20 : 14) + pad;
         }
@@ -2262,7 +2301,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
       return best;
     },
-    [gameState.ships, gameState.bodies, camera, renderTick],
+    [gameState.ships, gameState.bodies, hitCam, renderTick],
   );
 
   // Shared tap/click logic — called by both the mouse onClick handler and
@@ -2273,19 +2312,30 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       if (!canvasRef.current) return;
 
       if (uiState.targetSelectionMode) {
+        const hc = hitCam();
+        // NEAREST wins, matching the hover highlight exactly — so the
+        // world lit up under the crosshair is the world you get. First
+        // -in-array made a close-orbiting moon unpickable whenever its
+        // planet's padded box happened to cover it.
+        let pickId: string | null = null;
+        let pickDist = Infinity;
         for (const body of gameState.bodies) {
           // Sol is a valid target — see the matching note in the
           // target-highlight render loop above. Removing both gates
           // unblocks pick-via-map for Sol (the panel-driven Dyson
           // transfer already worked via a different code path).
-          const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, renderTick());
-          const clickRadius = Math.max(12, body.radius! * camera.scale + 8) + TOUCH_HIT_PADDING;
-          if (Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < clickRadius) {
-            window.dispatchEvent(new CustomEvent('orbital-transfer-confirm', {
-              detail: { bodyId: body.id },
-            }));
-            return;
+          const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, hc, renderTick());
+          const clickRadius = Math.max(12, body.radius! * hc.scale + 8) + TOUCH_HIT_PADDING;
+          const d = Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y);
+          if (d < clickRadius && d < pickDist) {
+            pickDist = d;
+            pickId = body.id;
           }
+        }
+        if (pickId) {
+          window.dispatchEvent(new CustomEvent('orbital-transfer-confirm', {
+            detail: { bodyId: pickId },
+          }));
         }
         return;
       }
@@ -2308,12 +2358,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         return;
       }
 
+      const hcBody = hitCam();
       for (const body of gameState.bodies) {
-        const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, renderTick());
+        const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, hcBody, renderTick());
         // A revealed gate draws far bigger than the rock it replaced, so
         // the hit target follows the RING — otherwise you'd be aiming at a
         // 3px moon inside a 40px sprite. Mirrors drawWarpGateBody's R.
-        const clickRadius = Math.max(8, gateAwareRadius(body, camera.scale) + 5) + TOUCH_HIT_PADDING;
+        const clickRadius = Math.max(8, gateAwareRadius(body, hcBody.scale) + 5) + TOUCH_HIT_PADDING;
         if (Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < clickRadius) {
           // Shift+click a world while a group is selected = "everyone go
           // there". Handled by the group bar (which owns the transfer
@@ -2340,7 +2391,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       deselectBody();
       clearShipSelection();
     },
-    [gameState, camera, uiState.targetSelectionMode, uiState.selectedShipIds, selectShip, selectBody, deselectShip, deselectBody, renderTick, pickShipAt, toggleShipSelection, clearShipSelection]
+    [gameState, hitCam, uiState.targetSelectionMode, uiState.selectedShipIds, selectShip, selectBody, deselectShip, deselectBody, renderTick, pickShipAt, toggleShipSelection, clearShipSelection]
   );
 
   const handleClick = useCallback(
@@ -2376,18 +2427,31 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // priority over bodies, matching the click order.
       hoveredShipIdRef.current = pickShipAt(canvasX, canvasY, false);
 
+      // Target-mode aiming uses a hit box padded to match the click
+      // test, so the highlight you see IS the thing a click will take.
+      // Plain browsing keeps the tight box (a mouse is precise, and a
+      // fat box pops labels for worlds the cursor isn't over).
+      const hcHover = hitCam();
+      const aiming = uiState.targetSelectionMode;
       let hoveredBodyId: string | null = null;
+      let bestDist = Infinity;
       for (const body of gameState.bodies) {
-        const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, renderTick());
-        const hoverRadius = Math.max(8, body.radius! * camera.scale + 5);
-        if (Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < hoverRadius) {
+        const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, hcHover, renderTick());
+        const hoverRadius = aiming
+          ? Math.max(12, body.radius! * hcHover.scale + 8) + TOUCH_HIT_PADDING
+          : Math.max(8, body.radius! * hcHover.scale + 5);
+        const d = Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y);
+        // NEAREST wins, not first-in-array: a moon tucked inside its
+        // planet's padded box used to be unreachable purely because the
+        // planet came first in gameState.bodies.
+        if (d < hoverRadius && d < bestDist) {
+          bestDist = d;
           hoveredBodyId = body.id;
-          break;
         }
       }
       hoverBody(hoveredBodyId);
     },
-    [gameState, camera, hoverBody, renderTick, pickShipAt]
+    [gameState, hitCam, uiState.targetSelectionMode, hoverBody, renderTick, pickShipAt]
   );
 
   // Shared focus-on-tap logic — called by both onDoubleClick and the
@@ -2396,12 +2460,13 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     (canvasX: number, canvasY: number) => {
       if (uiState.targetSelectionMode) return;
       if (!canvasRef.current) return;
+      const hcBody = hitCam();
       for (const body of gameState.bodies) {
-        const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, camera, renderTick());
+        const bodyPos = getBodyCanvasPos(body, canvasRef.current, gameState.bodies, hcBody, renderTick());
         // A revealed gate draws far bigger than the rock it replaced, so
         // the hit target follows the RING — otherwise you'd be aiming at a
         // 3px moon inside a 40px sprite. Mirrors drawWarpGateBody's R.
-        const clickRadius = Math.max(8, gateAwareRadius(body, camera.scale) + 5) + TOUCH_HIT_PADDING;
+        const clickRadius = Math.max(8, gateAwareRadius(body, hcBody.scale) + 5) + TOUCH_HIT_PADDING;
         if (Math.hypot(canvasX - bodyPos.x, canvasY - bodyPos.y) < clickRadius) {
           focusBody(body.id);
           return;
@@ -2409,7 +2474,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       }
       focusBody(undefined);
     },
-    [gameState, camera, focusBody, uiState.targetSelectionMode, renderTick]
+    [gameState, hitCam, focusBody, uiState.targetSelectionMode, renderTick]
   );
 
   const handleDoubleClick = useCallback(
