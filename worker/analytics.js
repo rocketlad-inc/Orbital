@@ -35,6 +35,7 @@ function err(status, code, message) {
 // below — `export ... from` creates no local binding.
 import { isAdminEmail } from './admins.js';
 export { isAdminEmail };
+import { composeHeraldForTickRange } from './digest.js';
 
 // ---------------------------------------------------------------------------
 // QA-account exclusion. Every harness identity lives on one of these
@@ -361,6 +362,39 @@ async function handleOverview(req, env, { session }) {
 // Everything about one game: faction standings, yield curves, feature
 // usage, and per-player engagement.
 // ---------------------------------------------------------------------------
+/**
+ * Admin Herald preview: render an edition for an arbitrary tick range
+ * of any game, read-only. Built to check the 2026-08 prose-depth pass
+ * against real chronicle data before trusting it — composeHeraldForGame
+ * anchors to wall-clock "now", which finds nothing in a game that
+ * ended months ago; this filters on tick_number instead so a finished
+ * match's full history is previewable in slices.
+ *
+ * GET /api/admin/games/:gameId/herald-preview?from=<tick>&to=<tick>
+ */
+async function handleHeraldPreview(req, env, { session, params, url }) {
+  const gate = requireAdmin(session);
+  if (gate) return gate;
+  const gameId = params.gameId;
+  const game = await env.DB
+    .prepare('SELECT id, current_tick FROM games WHERE id = ?')
+    .bind(gameId)
+    .first();
+  if (!game) return err(404, 'not_found', 'no such game');
+  const room = await env.DB.prepare('SELECT name FROM rooms WHERE id = ?').bind(gameId).first();
+
+  const fromTick = Number(url.searchParams.get('from'));
+  const toTick = Number(url.searchParams.get('to'));
+  if (!Number.isFinite(fromTick) || !Number.isFinite(toTick) || toTick <= fromTick) {
+    return err(400, 'bad_request', 'from/to must be numeric ticks with to > from');
+  }
+
+  const edition = await composeHeraldForTickRange(
+    env, { id: game.id, name: room?.name ?? game.id }, fromTick, toTick,
+  );
+  return json({ edition });
+}
+
 async function handleGameAnalytics(req, env, { session, params }) {
   const gate = requireAdmin(session);
   if (gate) return gate;
@@ -1187,4 +1221,5 @@ export const routes = [
   { method: 'POST', pattern: /^\/api\/games\/(?<gameId>[^/]+)\/telemetry$/, auth: 'required', handle: handleUiTelemetry },
   { method: 'GET', pattern: '/api/admin/overview', auth: 'required', handle: handleOverview },
   { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/analytics$/, auth: 'required', handle: handleGameAnalytics },
+  { method: 'GET', pattern: /^\/api\/admin\/games\/(?<gameId>[^/]+)\/herald-preview$/, auth: 'required', handle: handleHeraldPreview },
 ];

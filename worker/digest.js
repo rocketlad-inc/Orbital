@@ -3583,6 +3583,57 @@ export async function composeHeraldForGame(env, game, lookbackMs = 24 * 60 * 60 
 }
 
 /**
+ * Admin preview: compose a Herald edition from a TICK range rather than
+ * a wall-clock lookback. composeHeraldForGame anchors to Date.now(),
+ * which is exactly wrong for previewing a completed game's history —
+ * "now minus 24h" finds nothing in a match that ended months ago.
+ * Chronicle rows carry tick_number directly (indexed), so this filters
+ * on that instead and otherwise reuses composeEmbed byte for byte —
+ * whatever this renders is provably what the real edition would have
+ * looked like at that point in the game.
+ *
+ * Read-only: never touches digest_state, so it cannot disturb the
+ * live Discord cadence no matter how often an admin calls it.
+ */
+export async function composeHeraldForTickRange(env, game, fromTick, toTick) {
+  const rows = (await env.DB
+    .prepare(
+      `SELECT kind, actor_faction_id, target_faction_id, body_id, payload, created_at_ms, tick_number
+         FROM chronicle_entries
+        WHERE game_id = ? AND tick_number > ? AND tick_number <= ? AND visibility = 'public'
+        ORDER BY tick_number ASC, id ASC
+        LIMIT 200`,
+    )
+    .bind(game.id, fromTick, toTick)
+    .all()).results ?? [];
+
+  const factions = (await env.DB
+    .prepare('SELECT id, name FROM game_factions WHERE game_id = ?')
+    .bind(game.id)
+    .all()).results ?? [];
+  const factionNames = new Map(factions.map(f => [f.id, f.name]));
+  const locator = await buildBodyLocator(env, game.id, collectBodyIds(rows));
+
+  let embed = composeEmbed(game.name ?? game.id, toTick, rows, factionNames, 0, locator, []);
+  if (!embed) {
+    const used = new Map();
+    embed = {
+      title: pickTemplate('quiet_hl', QUIET_DAY_HEADLINE, used)(),
+      description: `🗞️ **THE ORBITAL HERALD** · ${game.name ?? game.id} · T+${toTick}\n\n${pickTemplate('quiet_body', QUIET_DAY_BODY, used)()}`,
+      fields: [],
+    };
+  }
+  return {
+    title: embed.title ?? '',
+    description: embed.description ?? '',
+    fields: (embed.fields ?? []).map(f => ({ name: f.name, value: f.value })),
+    from_tick: fromTick,
+    to_tick: toTick,
+    row_count: rows.length,
+  };
+}
+
+/**
  * Entry point — called from the every-minute cron. Cheap early-outs:
  * no webhook secret, wrong hour, or already digested recently.
  */
