@@ -366,6 +366,15 @@ interface ServerState {
   /** Curated build list (migration 0045) — the caller's ordered loadout
    *  entries. Each is { design_id } or { bare_class }. */
   build_list?: Array<{ design_id?: string; bare_class?: string }>;
+  /** Non-default laws in force on the caller, pre-worded server-side. */
+  active_laws?: Array<{
+    slider_id: string;
+    topic: string;
+    name: string;
+    effect: string;
+    value: number;
+    until_tick: number;
+  }>;
   /** Senate slider laws in force on the caller, resolved server-side. */
   active_sliders?: {
     metal_yield_multiplier: number;
@@ -1930,6 +1939,14 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     settlementClaims: (srv.settlement_claims ?? []).map(c => ({
       bodyId: stripGameId(c.body_id) ?? c.body_id,
       ownedBy: c.owner_faction_id === callerFactionId ? PLAYER_TOKEN : c.owner_faction_id,
+    })),
+    activeLaws: (srv.active_laws ?? []).map(l => ({
+      sliderId: l.slider_id,
+      topic: l.topic,
+      name: l.name,
+      effect: l.effect,
+      value: l.value,
+      untilTick: l.until_tick,
     })),
     activeSliders: srv.active_sliders ? {
       metalYieldMultiplier: srv.active_sliders.metal_yield_multiplier,

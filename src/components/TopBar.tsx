@@ -361,6 +361,45 @@ export const TopBar: React.FC<TopBarProps> = ({
         </button>
       </div>
 
+      {/* LAWS IN FORCE — right of the tick. The senate's whole point is
+          that it changes the numbers everyone plays by, and until now
+          nothing outside the Senate tab said a law existed: a passed bill
+          silently retuned the economy and the player's only clue was that
+          their income didn't match their mental model. Wording comes
+          pre-rendered from the server (describeSlider) — do NOT re-phrase
+          it here; that mirror has drifted twice before.
+          Empty renders nothing, so a lawless game keeps the old bar. */}
+      {(gameState.activeLaws?.length ?? 0) > 0 && (
+        <div className="top-bar__laws" data-testid="topbar-laws">
+          <div className="laws-chip__label">
+            {gameState.activeLaws!.length === 1 ? 'LAW IN FORCE' : `LAWS IN FORCE · ${gameState.activeLaws!.length}`}
+          </div>
+          <div className="laws-chip__list">
+            {gameState.activeLaws!.slice(0, 2).map(l => {
+              const left = Math.max(0, Math.ceil(l.untilTick - gameState.currentTick));
+              return (
+                <div
+                  key={l.sliderId}
+                  className="laws-chip__row"
+                  // Full sentence + topic on hover; the row itself is
+                  // clipped to keep the bar's height fixed.
+                  title={`${l.topic}: ${l.effect} Lapses at T+${Math.round(l.untilTick)}.`}
+                >
+                  <b>{l.name}</b>
+                  <span className="laws-chip__effect">{l.effect.replace(/\.$/, '')}</span>
+                  <span className="laws-chip__ttl">{left}t</span>
+                </div>
+              );
+            })}
+            {gameState.activeLaws!.length > 2 && (
+              <div className="laws-chip__row laws-chip__more">
+                +{gameState.activeLaws!.length - 2} more in the Senate
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="top-bar__time">
         <div className={`time-display${tickCountdownLabel != null ? ' time-display--ticking' : ''}`}>
           <div className="time-display__label">TICK</div>

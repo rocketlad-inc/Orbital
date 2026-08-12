@@ -818,6 +818,22 @@ export interface GameState {
    *  undefined in SP, where every reader falls back to neutral. Without
    *  this the client quoted economy rates the tick then contradicted, and
    *  passed laws looked inert. */
+  /** Non-default senate laws in force on the viewing faction, already
+   *  worded by the server (describeSlider is the single source of that
+   *  copy — never re-phrase these client-side). Soonest to lapse first.
+   *  MP only. */
+  activeLaws?: {
+    sliderId: string;
+    /** What the law is about, e.g. "Research speed". */
+    topic: string;
+    /** The law's name, e.g. "Faster Research". */
+    name: string;
+    /** One sentence of consequence, e.g. "Research runs 2x as fast." */
+    effect: string;
+    value: number;
+    /** Tick the law lapses on. */
+    untilTick: number;
+  }[];
   activeSliders?: {
     metalYieldMultiplier: number;
     goldYieldMultiplier: number;

@@ -191,6 +191,68 @@
   border-right: 1px solid #2a3d50;
 }
 
+/* ===== Laws in force =====
+   Violet, matching the senate's colour everywhere else, so it reads as
+   "someone legislated this at you" rather than as another economy stat.
+   Shrinkable and clipped: the bar's height must not move, and on a
+   narrow window this is the first thing that should give way. */
+.top-bar__laws {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+  max-width: 320px;
+  padding: 0 12px;
+  border-right: 1px solid #2a3d50;
+  overflow: hidden;
+}
+.laws-chip__label {
+  font-size: 8px;
+  letter-spacing: 0.18em;
+  color: #a99cf0;
+  white-space: nowrap;
+}
+.laws-chip__list { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.laws-chip__row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: 10px;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+/* The NAME may ellipsize but must never be squeezed out of existence —
+   it is the part that identifies the law. */
+.laws-chip__row b {
+  color: #c4b5fd;
+  font-weight: 700;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.laws-chip__effect {
+  color: #8fa8bf;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+/* Ticks remaining. Amber because it's a deadline, not a value. */
+.laws-chip__ttl { color: #ffb84d; flex: 0 0 auto; font-size: 9px; }
+.laws-chip__more { color: #6b8195; font-size: 9px; }
+
+/* Phones: the effect sentence is the first casualty — the law's NAME and
+   how long it has left are what fit and what matter at a glance. */
+@media (max-width: 720px) {
+  /* min-width floor: this chip is the most shrinkable thing in the bar,
+     so without one the flex row squeezes it to a few pixels and the law
+     silently disappears — worse than not shipping it. */
+  .top-bar__laws { flex: 0 1 auto; min-width: 104px; max-width: 150px; padding: 0 8px; }
+  .laws-chip__effect { display: none; }
+}
+
 .time-display {
   display: flex;
   flex-direction: column;

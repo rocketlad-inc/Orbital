@@ -1,5 +1,5 @@
 import { hasFeature } from './researchUnlocks.js';
-import { getActiveSliders, activeSanctions } from './senate.js';
+import { getActiveSliders, activeSanctions, activeLawsFor } from './senate.js';
 import { buildCostFactors } from './buildCost.js';
 import { voteWeights } from './systems.js';
 import { cfg as loadGameConfig } from './gameConfig.js';
@@ -1004,6 +1004,15 @@ const tradeRoutesP = env.DB
     };
   } catch { /* leave null — client falls back to neutral 1x */ }
 
+  // The same laws, in plain words, for the top-bar readout. Rendered
+  // server-side through describeSlider: that is the ONE place the wording
+  // lives, and its own comment warns that a client-side mirror is the
+  // pattern which has drifted twice here already.
+  let activeLaws = [];
+  try {
+    activeLaws = await activeLawsFor(env, gameId, game.current_tick ?? 0, me.id);
+  } catch { /* readout just stays empty */ }
+
   // ---- Accepted trade deals still waiting on MY freighter -------------
   //
   // Accepting a deal does NOT move goods: each side has to put a hauler
@@ -1451,6 +1460,9 @@ const tradeRoutesP = env.DB
     // Slider laws in force on the caller, so the client can quote rates
     // that match what the tick will actually credit.
     active_sliders: activeSliders,
+    // Non-default laws in force on the caller, pre-worded, soonest to
+    // lapse first.
+    active_laws: activeLaws,
     trade_routes: tradeRoutes,
     // Accepted deals with no hauler of mine on them yet. Only the goods
     // *I* owe per run — the panel owns the full ledger.

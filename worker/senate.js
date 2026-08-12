@@ -612,6 +612,73 @@ export async function getSliderResolver(env, gameId, currentTick) {
   };
 }
 
+/**
+ * The laws actually BITING a faction right now, in plain words.
+ *
+ * getSliderResolver answers "what number applies"; this answers "what is
+ * in force, what does it do, and when does it lapse" — which is what a
+ * player-facing readout needs. Same precedence as the resolver (general
+ * laws oldest-to-newest, then targeted laws for this faction overriding
+ * them) so the chip in the top bar can never disagree with the economy it
+ * is describing. Rows sitting at the catalog default are dropped: those
+ * are not laws, they are the absence of one.
+ *
+ * Returns [{ slider_id, topic, name, effect, value, until_tick }],
+ * soonest-to-lapse first. Never throws — a senate read must not break a
+ * state fetch.
+ */
+export async function activeLawsFor(env, gameId, currentTick, factionId = null) {
+  let rows = [];
+  try {
+    const res = await env.DB
+      .prepare(
+        `SELECT slider_id, value, target_faction_id, created_at_ms, active_until_tick
+           FROM senate_effects
+          WHERE game_id = ?
+            AND effect_kind = 'slider'
+            AND active_from_tick <= ?
+            AND active_until_tick > ?`,
+      )
+      .bind(gameId, currentTick, currentTick)
+      .all();
+    rows = res.results ?? [];
+  } catch (e) {
+    console.error('activeLawsFor query failed', e);
+    return [];
+  }
+
+  // Oldest first so a later row overwrites an earlier one, exactly as
+  // getSliderResolver does. Keep the WINNING row whole so its expiry
+  // travels with the value the player is being shown.
+  const sorted = rows.slice().sort((a, b) => a.created_at_ms - b.created_at_ms);
+  const winner = new Map();            // sliderId -> row
+  for (const r of sorted) {
+    if (!SLIDER_BY_ID[r.slider_id]) continue;
+    if (r.target_faction_id && r.target_faction_id !== factionId) continue;
+    const prev = winner.get(r.slider_id);
+    // A targeted law beats a general one regardless of age; between two of
+    // the same scope, newer wins (the sort already handles that).
+    if (prev && prev.target_faction_id && !r.target_faction_id) continue;
+    winner.set(r.slider_id, r);
+  }
+
+  const out = [];
+  for (const r of winner.values()) {
+    const d = describeSlider(r.slider_id, r.value);
+    if (!d || d.at_default) continue;
+    out.push({
+      slider_id: d.slider_id,
+      topic: d.topic,
+      name: d.name,
+      effect: d.effect,
+      value: d.value,
+      until_tick: r.active_until_tick,
+    });
+  }
+  out.sort((a, b) => a.until_tick - b.until_tick);
+  return out;
+}
+
 async function listActiveEffectRows(env, gameId, currentTick) {
   const rows = await env.DB
     .prepare(
