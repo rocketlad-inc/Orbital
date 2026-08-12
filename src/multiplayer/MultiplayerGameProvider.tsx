@@ -366,6 +366,16 @@ interface ServerState {
   /** Curated build list (migration 0045) — the caller's ordered loadout
    *  entries. Each is { design_id } or { bare_class }. */
   build_list?: Array<{ design_id?: string; bare_class?: string }>;
+  /** Accepted deals with no hauler of the caller's on them yet. */
+  trades_awaiting_ship?: Array<{
+    agreement_id: string;
+    partner_faction_id: string;
+    my_metal: number;
+    my_fuel: number;
+    my_gold: number;
+    my_science: number;
+    created_at_tick: number;
+  }>;
   /** Active trade routes for the caller's faction. Server names use
    *  metal/gold; the deserializer below maps to ore/credits to match
    *  the client TradeRoute shape. */
@@ -381,6 +391,14 @@ interface ServerState {
     cargo_gold: number;
     cargo_science: number;
     created_at_tick: number;
+    /** Present only on a STANDING trade route to another player. */
+    counterparty_faction_id?: string | null;
+    agreement_id?: string | null;
+    per_run_metal?: number;
+    per_run_fuel?: number;
+    per_run_gold?: number;
+    per_run_science?: number;
+    loops_completed?: number;
   }>;
 }
 
@@ -1740,6 +1758,21 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       science: r.cargo_science,
     },
     createdAtTick: r.created_at_tick,
+    // Set only on a standing trade route to ANOTHER player. Its dest is
+    // the partner's world, so nothing may require a holding there.
+    counterpartyFactionId: r.counterparty_faction_id
+      ? (r.counterparty_faction_id === callerFactionId
+        ? PLAYER_TOKEN
+        : r.counterparty_faction_id)
+      : undefined,
+    agreementId: r.agreement_id ?? undefined,
+    perRun: {
+      metal: r.per_run_metal ?? 0,
+      fuel: r.per_run_fuel ?? 0,
+      credits: r.per_run_gold ?? 0,
+      science: r.per_run_science ?? 0,
+    },
+    loopsCompleted: r.loops_completed ?? 0,
   }));
 
   // Ship-design library (ship designer §2). Server rows → client
@@ -1886,6 +1919,16 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
     settlementClaims: (srv.settlement_claims ?? []).map(c => ({
       bodyId: stripGameId(c.body_id) ?? c.body_id,
       ownedBy: c.owner_faction_id === callerFactionId ? PLAYER_TOKEN : c.owner_faction_id,
+    })),
+    tradesAwaitingShip: (srv.trades_awaiting_ship ?? []).map(t => ({
+      agreementId: t.agreement_id,
+      partnerFactionId: t.partner_faction_id,
+      partnerName: srv.factions.find(f => f.id === t.partner_faction_id)?.name,
+      myGoods: {
+        metal: t.my_metal, fuel: t.my_fuel,
+        credits: t.my_gold, science: t.my_science,
+      },
+      createdAtTick: t.created_at_tick,
     })),
     tradeDeliveries: (srv.me.trade_deliveries ?? []).map(d => ({
       id: d.id, tradeId: d.trade_id,
@@ -2111,7 +2154,9 @@ export function MultiplayerGameProvider({ gameId, children, onGameMissing }: Pro
         void fetchStateRef.current?.();
       }
     }
-  }, [gameId]);
+    // carryStagedPreviews is a useCallback with [] deps, so it's stable
+    // and listing it can't churn the poll.
+  }, [gameId, carryStagedPreviews]);
   // Stable self-reference so the finally block above can re-enter the
   // latest fetchState without making it a dependency of itself.
   const fetchStateRef = useRef<typeof fetchState | null>(null);

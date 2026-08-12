@@ -120,6 +120,7 @@ export type SituationCategory =
   | 'terraform_unstarted' // claimed raw world that never had a route at all
   | 'vote_open'      // MP — senate proposal in voting, not voted on
   | 'incoming_trade' // MP — open trade where caller is responder
+  | 'trade_needs_ship' // MP — accepted deal with no hauler of mine yet
   | 'in_combat'      // shooting RIGHT NOW — your hulls/settlements engaged
   | 'threat'         // body of yours under incoming enemy
   | 'tech_available' // research idle — no project committed
@@ -164,6 +165,9 @@ const TIER_OF: Record<SituationCategory, SituationTier> = {
   arrived:        'decision',
   created:        'decision',
   incoming_trade: 'decision',
+  // A signed deal that ships nothing until you act is the definition of
+  // "waiting on you" — same tier as an open vote or an incoming offer.
+  trade_needs_ship: 'decision',
   vote_open:      'decision',
   idle_shipyard:  'opportunity',
   idle_freighter: 'opportunity',
@@ -248,6 +252,7 @@ export const CATEGORY_LABEL: Record<SituationCategory, string> = {
   arrived:         'Recently arrived',
   created:         'Newly created',
   incoming_trade:  'Incoming trade offers',
+  trade_needs_ship: 'Trades waiting on a freighter',
   vote_open:       'Senate vote open',
   idle_shipyard:   'Planets awaiting construction',
   idle_freighter:  'Idle freighters',
@@ -1459,6 +1464,33 @@ export function useSituationItems(
       }
     } catch { /* defensive */ }
 
+    // ---- Accepted deals still waiting on a freighter of mine ----
+    // Accepting a trade moves NOTHING: both sides have to put a hauler on
+    // it. Nothing on the main screen said so, so a signed deal could sit
+    // dead indefinitely while both players assumed it was running.
+    try {
+      for (const t of (gameState.tradesAwaitingShip ?? [])) {
+        const who = t.partnerName ?? 'a rival';
+        const owed = [
+          t.myGoods.metal ? `${t.myGoods.metal}M` : '',
+          t.myGoods.credits ? `${t.myGoods.credits}C` : '',
+          t.myGoods.fuel ? `${t.myGoods.fuel}F` : '',
+          t.myGoods.science ? `${t.myGoods.science}S` : '',
+        ].filter(Boolean).join(' ');
+        push({
+          id: `trade_needs_ship:${t.agreementId}`,
+          category: 'trade_needs_ship',
+          title: `Trade with ${who} needs a freighter`,
+          subtitle: owed
+            ? `Nothing ships until you assign one — you owe ${owed} per run`
+            : 'Nothing ships until you assign a freighter',
+          focus: { kind: 'panel', panel: 'trades' },
+          severity: 'warn',
+          sortKey: t.createdAtTick,
+        });
+      }
+    } catch { /* defensive */ }
+
     // ---- Trade routes that can no longer run ----
     try {
       for (const r of (gameState.tradeRoutes ?? []) as TradeRoute[]) {
@@ -1470,11 +1502,19 @@ export function useSituationItems(
         // route on the books doing nothing.
         const hasEnd = (bodyId: string) =>
           gameState.settlements.some(s => s.ownedBy === factionId && s.bodyId === bodyId);
+        // A STANDING TRADE ROUTE to another player delivers to THEIR
+        // world — you are never supposed to hold the far end. Judging it
+        // by the self-haul rule reported every healthy cross-player deal
+        // as "Trade route broken — No holding at <their world>", which is
+        // both wrong and alarming: it sits under NEEDS A DECISION and
+        // tells you to clear a route that is working. Only the pickup end
+        // and the hauler are yours to lose.
+        const isPartnerRoute = !!r.counterpartyFactionId;
         const reason = !ship
           ? 'Hauler lost'
           : !hasEnd(r.originBodyId)
             ? `No holding at ${bodyName(r.originBodyId)}`
-            : !hasEnd(r.destBodyId)
+            : (!isPartnerRoute && !hasEnd(r.destBodyId))
               ? `No holding at ${bodyName(r.destBodyId)}`
               : null;
         if (!reason) continue;

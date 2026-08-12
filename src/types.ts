@@ -681,6 +681,17 @@ export interface TradeRoute {
    *  killer's pool if the freighter dies en route. */
   cargo: { fuel: number; ore: number; credits: number; science: number };
   createdAtTick: number;
+  /** STANDING TRADE ROUTE to another player (MP only): the faction on the
+   *  other side of the deal. When set, `destBodyId` is THEIR world — so
+   *  nothing may test it against "do I hold that body". Undefined on a
+   *  self-haul route (logistics / terraform / dyson) and in SP. */
+  counterpartyFactionId?: string;
+  /** The trade agreement this route fulfils, when it's a standing deal. */
+  agreementId?: string;
+  /** Goods handed over per completed loop, on a standing deal. */
+  perRun?: { metal: number; fuel: number; credits: number; science: number };
+  /** How many loops this standing route has delivered. */
+  loopsCompleted?: number;
 }
 
 /**
@@ -801,6 +812,19 @@ export interface GameState {
    *  themselves are outside sensor range. MP only; SP derives the same
    *  facts from its (unfogged) settlements array. */
   settlementClaims?: { bodyId: string; ownedBy: string }[];
+  /** Accepted trade agreements that are waiting on a freighter of MINE
+   *  before anything ships. Accepting a deal moves no goods — each side
+   *  has to assign a hauler — and until this existed there was no signal
+   *  anywhere on the main screen that the ball was in your court. MP
+   *  only; SP has no inter-player trade. */
+  tradesAwaitingShip?: {
+    agreementId: string;
+    partnerFactionId: string;
+    partnerName?: string;
+    /** What MY side owes per completed run. */
+    myGoods: { metal: number; fuel: number; credits: number; science: number };
+    createdAtTick: number;
+  }[];
   /** Active physical trade-delivery legs involving the player (either
    *  direction). MP only; SP has no inter-player trade. Sourced from the
    *  server state payload each poll — never mutated locally. */

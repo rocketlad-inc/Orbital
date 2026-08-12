@@ -962,15 +962,56 @@ const shipDesignsP = env.DB
     .all();
 const tradeRoutesP = env.DB
     .prepare(
+      // counterparty_faction_id marks a STANDING TRADE ROUTE to another
+      // player: the destination is THEIR world, so the client must not
+      // judge it by "do I hold that body" the way a self-haul route is
+      // judged. Without this the situation report cried "Trade route
+      // broken — No holding at <partner's world>" for every healthy
+      // cross-player deal.
       `SELECT id, ship_id, origin_body_id, dest_body_id, status, kind,
               cargo_fuel, cargo_metal, cargo_gold, cargo_science,
-              created_at_tick
+              created_at_tick, counterparty_faction_id, agreement_id,
+              per_run_metal, per_run_fuel, per_run_gold, per_run_science,
+              loops_completed
          FROM game_trade_routes
         WHERE game_id = ? AND owner_faction_id = ?
           AND cancelled_at_tick IS NULL`,
     )
     .bind(gameId, me.id)
     .all();
+  // ---- Accepted trade deals still waiting on MY freighter -------------
+  //
+  // Accepting a deal does NOT move goods: each side has to put a hauler
+  // on it, and until you do, nothing happens and nothing said so. The
+  // agreements themselves live behind /trades/agreements, which the
+  // situation report never reads, so an accepted deal was completely
+  // invisible from the main screen — the reported "I had no way to know".
+  // Surface just enough for a nudge: who it's with and what my side owes
+  // per run. `status='active'` and no un-cancelled route of mine against
+  // the agreement == waiting on me.
+  const awaitingShipP = env.DB
+    .prepare(
+      `SELECT a.id AS agreement_id,
+              CASE WHEN a.faction_a_id = ? THEN a.faction_b_id ELSE a.faction_a_id END AS partner_faction_id,
+              CASE WHEN a.faction_a_id = ? THEN a.a_metal   ELSE a.b_metal   END AS my_metal,
+              CASE WHEN a.faction_a_id = ? THEN a.a_fuel    ELSE a.b_fuel    END AS my_fuel,
+              CASE WHEN a.faction_a_id = ? THEN a.a_gold    ELSE a.b_gold    END AS my_gold,
+              CASE WHEN a.faction_a_id = ? THEN a.a_science ELSE a.b_science END AS my_science,
+              a.created_at_tick
+         FROM trade_agreements a
+        WHERE a.game_id = ? AND a.status = 'active'
+          AND (a.faction_a_id = ? OR a.faction_b_id = ?)
+          AND NOT EXISTS (
+            SELECT 1 FROM game_trade_routes r
+             WHERE r.agreement_id = a.id
+               AND r.owner_faction_id = ?
+               AND r.cancelled_at_tick IS NULL
+          )
+        ORDER BY a.created_at_tick DESC`,
+    )
+    .bind(me.id, me.id, me.id, me.id, me.id, gameId, me.id, me.id, me.id)
+    .all();
+
   const fleets = (await fleetsP).results ?? [];
 
   // --- Effective HP ceiling, computed SERVER-SIDE per ship -----------
@@ -1383,6 +1424,17 @@ const tradeRoutesP = env.DB
     events,
     build_queue: buildQueue,
     trade_routes: tradeRoutes,
+    // Accepted deals with no hauler of mine on them yet. Only the goods
+    // *I* owe per run — the panel owns the full ledger.
+    trades_awaiting_ship: ((await awaitingShipP).results ?? []).map(r => ({
+      agreement_id: r.agreement_id,
+      partner_faction_id: r.partner_faction_id,
+      my_metal: r.my_metal ?? 0,
+      my_fuel: r.my_fuel ?? 0,
+      my_gold: r.my_gold ?? 0,
+      my_science: r.my_science ?? 0,
+      created_at_tick: r.created_at_tick,
+    })),
     ship_designs: shipDesigns,
     // Captains (spec): the caller's full roster, bank + memorial.
     captains,
