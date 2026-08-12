@@ -26,7 +26,8 @@ type BillKind =
   | 'war_authorization'
   | 'production_sanction'
   | 'reparations'
-  | 'chancellor_vote';
+  | 'chancellor_vote'
+  | 'repeal_law';
 
 // Plain-language menu. These were named after their internals — "Slider
 // Law (global multiplier)", "Production Sanction (½ target yield, 14t)"
@@ -39,6 +40,7 @@ const BILL_KIND_LABELS: Record<BillKind, string> = {
   production_sanction: 'Halve one player\'s income (14 ticks)',
   reparations:         'Make one player pay everyone else',
   chancellor_vote:     'Vote someone the winner — this ENDS the game',
+  repeal_law:          'Strike down a law that is currently in force',
 };
 
 /** Bill kinds that need a faction id in their payload. Drives the target
@@ -51,6 +53,8 @@ const NEEDS_TARGET: Record<BillKind, boolean> = {
   production_sanction: true,
   reparations:         true,
   chancellor_vote:     true,
+  // Repeal aims at a LAW, not a faction — it has its own picker.
+  repeal_law:          false,
 };
 
 const STATUS_COLORS: Record<SenateProposal['status'], string> = {
@@ -216,7 +220,13 @@ function SessionCard({ session, factions, myFactionId, tickMs }: {
  * an empty "Laws in force (0)" header would be permanent furniture
  * announcing an absence.
  */
-function LawsCard({ laws, tickMs }: { laws: ActiveLaw[]; tickMs: number | null }) {
+function LawsCard({ laws, tickMs, onRepeal }: {
+  laws: ActiveLaw[];
+  tickMs: number | null;
+  /** Move to strike this law down. Absent = no repeal affordance (the
+   *  chamber gate is closed, or the caller doesn't offer it). */
+  onRepeal?: (law: ActiveLaw) => void;
+}) {
   if (laws.length === 0) return null;
   return (
     <div style={{
@@ -274,6 +284,31 @@ function LawsCard({ laws, tickMs }: { laws: ActiveLaw[]; tickMs: number | null }
             <div style={{ fontSize: 10, color: 'var(--mp-fg-dim)' }}>
               Passed as “{law.proposal_title}”
             </div>
+          )}
+          {/* Line 4: the way out. A law now stands for a full term, so
+              without this the only answer to a bad law was to wait it
+              out. Sits on the law itself because that's where the player
+              forms the opinion. */}
+          {onRepeal && law.proposal_id && (
+            <button
+              onClick={() => onRepeal(law)}
+              title={`Draft a bill to strike down “${law.proposal_title ?? law.law_name}” before its window closes`}
+              style={{
+                marginTop: 3,
+                background: 'transparent',
+                border: '1px solid rgba(255,94,94,0.5)',
+                borderRadius: 3,
+                color: '#ff8080',
+                fontFamily: 'inherit',
+                fontSize: 9,
+                letterSpacing: '0.1em',
+                padding: '2px 7px',
+                cursor: 'pointer',
+              }}
+              data-testid={`law-repeal-${law.proposal_id}`}
+            >
+              ⚖ MOVE TO REPEAL
+            </button>
           )}
         </div>
       ))}
@@ -342,6 +377,11 @@ export function SenatePanel({
   // means "everyone", which is a valid submission. Sharing one field
   // would make an un-chosen sanction and a general law indistinguishable.
   const [sliderTargetId, setSliderTargetId] = useState<string>('');
+  /** Law being moved against, for a repeal bill. Set by the REPEAL button
+   *  on a row of LAW OF THE LAND — you repeal the law you are reading,
+   *  rather than re-finding it in a dropdown. */
+  const [repealTargetId, setRepealTargetId] = useState<string>('');
+  const [repealTargetName, setRepealTargetName] = useState<string>('');
   const [title, setTitle] = useState('');
   const [summary, setSummary] = useState('');
   // Seeded at 1 and raised to the server's six-hour floor as soon as the
@@ -485,6 +525,15 @@ export function SenatePanel({
       // Omitted entirely when empty: the server reads a missing/blank
       // target_faction_id as "general law", which is the default.
       if (sliderTargetId) body.target_faction_id = sliderTargetId;
+    } else if (kind === 'repeal_law') {
+      // Aims at a LAW, not a faction. The id comes from the Repeal button
+      // on the law itself (LawsCard), so an empty one means the player
+      // switched the kind by hand without picking a target.
+      if (!repealTargetId) {
+        setError('Pick the law to repeal — use REPEAL on a law under LAW OF THE LAND.');
+        return;
+      }
+      body.target_proposal_id = repealTargetId;
     } else if (kind === 'chancellor_vote') {
       if (!targetFactionId) { setError('Pick a candidate.'); return; }
       // The chancellor bill is ONE-SHOT per faction: a failed bid burns
@@ -608,7 +657,32 @@ export function SenatePanel({
           affecting your economy right now, while a bill is only a
           proposal — and because the composer above it is where you'd go
           to counter one. Renders nothing when nothing is in force. */}
-      <LawsCard laws={laws} tickMs={tickMs} />
+      <LawsCard
+        laws={laws}
+        tickMs={tickMs}
+        // Chairman only, matching the compose drawer: filing a bill is the
+        // gavel's privilege, and a REPEAL button that opens a form the
+        // player doesn't have would be the same "draft it then eat a 403"
+        // trap the drawer itself was hidden to avoid.
+        onRepeal={session?.is_chairman === true ? (law) => {
+          // Prefill the whole bill. A repeal is a formality — the decision
+          // was "this law must go", not "let me write a title".
+          const name = law.law_name ?? law.label;
+          setKind('repeal_law');
+          setRepealTargetId(law.proposal_id ?? '');
+          setRepealTargetName(name);
+          setTitle(`Repeal: ${name}`.slice(0, 80));
+          setSummary(
+            (`Strike down “${law.proposal_title ?? name}” before its window closes. `
+              + (law.effect_text ? `It currently means: ${law.effect_text}` : '')).trim().slice(0, 500),
+          );
+          setError(null);
+          // The drawer is a <details>; open it and bring it into view, or
+          // the prefilled bill sits collapsed and the click looks inert.
+          const el = document.getElementById('sp-compose') as HTMLDetailsElement | null;
+          if (el) { el.open = true; el.scrollIntoView({ block: 'nearest' }); }
+        } : undefined}
+      />
       {/* ORDER IS THE POINT. A bill you can still vote on outranks the
           standings, the compose form and the integration settings — it is
           the only thing here with a deadline. Discord moves to the foot of
@@ -664,7 +738,7 @@ export function SenatePanel({
           still loading nobody sees the drawer, and the server's
           not_chairman gate stays the real authority. */}
       {session?.is_chairman === true && (
-      <details className="sp-disc">
+      <details className="sp-disc" id="sp-compose">
       <summary>＋ Propose a bill</summary>
       <div className="sp-disc__body">
       <form onSubmit={propose}>
@@ -673,8 +747,12 @@ export function SenatePanel({
           className="mp-select"
           value={kind}
           onChange={(e) => {
-            setKind(e.target.value as BillKind);
+            const next = e.target.value as BillKind;
+            setKind(next);
             setTargetFactionId('');     // reset so a stale target doesn't carry across kinds
+            // Same reasoning for the repeal target: switching kinds by
+            // hand must not leave a bill aimed at a law it no longer is.
+            if (next !== 'repeal_law') { setRepealTargetId(''); setRepealTargetName(''); }
           }}
         >
           {(Object.keys(BILL_KIND_LABELS) as BillKind[]).map(k => (
@@ -790,6 +868,34 @@ export function SenatePanel({
               </>
             )}
           </>
+        )}
+
+        {/* REPEAL: no picker, because the target came from the law itself.
+            Confirm what is being struck down and say plainly that this
+            takes a vote like anything else — a repeal is not a veto. */}
+        {kind === 'repeal_law' && (
+          <div style={{
+            border: '1px solid rgba(255,94,94,0.4)', borderRadius: 4,
+            padding: '7px 9px', marginBottom: 8,
+            background: 'rgba(255,94,94,0.06)', fontSize: 11, lineHeight: 1.5,
+          }}>
+            {repealTargetId ? (
+              <>
+                <div style={{ color: '#ff8080', fontWeight: 700 }}>
+                  Striking down: {repealTargetName || 'a standing law'}
+                </div>
+                <div style={{ color: 'var(--mp-fg-dim)' }}>
+                  Ends its window the moment this passes — the floor still has
+                  to vote for it, and the law keeps running until they do.
+                </div>
+              </>
+            ) : (
+              <div style={{ color: '#ff8080' }}>
+                Pick a law first — use <b>⚖ MOVE TO REPEAL</b> on a row under
+                LAW OF THE LAND above.
+              </div>
+            )}
+          </div>
         )}
 
         {NEEDS_TARGET[kind] && (
@@ -1138,6 +1244,21 @@ function ProposalEffectLine({
       {targetName
         ? <> Hits <strong>{targetName}</strong> alone; everyone else keeps the current rule.</>
         : <> Applies to <strong>everyone</strong>, including whoever proposed it.</>}
+    </>);
+  }
+  // REPEAL aims at a law, so it has no target FACTION to describe — its
+  // payload carries the target bill's own title and effect, captured when
+  // the repeal was filed so the card reads correctly even after the law
+  // it names has gone.
+  if (k === 'repeal_law') {
+    const t = p.payload?.target_title as string | undefined;
+    const e = p.payload?.target_effect as string | undefined;
+    return wrap(<>
+      <strong style={{ color: 'var(--mp-fg)' }}>Repeal</strong>
+      {' — ends '}
+      <strong>{t ?? 'a standing law'}</strong>
+      {' the moment this passes.'}
+      {e ? <> It currently means: {e}</> : null}
     </>);
   }
   if (!targetName) return null;

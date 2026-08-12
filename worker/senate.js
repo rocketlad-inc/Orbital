@@ -324,7 +324,20 @@ export function phraseTableFor(def) {
 // rows fall through to these constants on read.
 const DEBATE_TICKS = 2;
 const VOTE_TICKS = 1;
-const EFFECT_TICKS = 7;
+/** How long a passed slider law stands, in ticks.
+ *
+ *  Was 7, which at an hour per tick meant a law could be proposed,
+ *  passed, and lapse between two logins — it did its work invisibly and
+ *  read as "the law did nothing". 7 also covered under a third of the
+ *  24-tick default term, so most of every term ran with no economic
+ *  policy in force at all.
+ *
+ *  24 matches the default term (senateTerms.TERM_TICKS): the chamber now
+ *  always has an economic policy standing, and each new law on the same
+ *  slider replaces the last rather than filling a vacuum. Laws already
+ *  in flight keep the active_until_tick they were written with — this
+ *  changes what NEW bills grant, never retroactively extends one. */
+const EFFECT_TICKS = 24;
 
 // Per-proposal duration ranges, in TICKS.
 //
@@ -361,9 +374,15 @@ const VOTE_MAX_TICKS   = 24;
 // faction can call this exactly ONCE per game (a failed/withdrawn
 // proposal does not refund the attempt — see ONE_PER_GAME_STATUSES).
 // ============================================================
+// 'repeal_law' aims at a LAW rather than a faction: it ends a standing
+// bill's effect early. It is the counterweight to a 24-tick law — without
+// it a passed bill is simply the rule for a full term no matter how badly
+// it lands, and the only recourse was to wait it out or pass an opposing
+// law on the same slider (which stacks confusingly rather than undoing).
 const BILL_KINDS = new Set([
   'slider_law', 'trade_embargo', 'war_authorization',
   'production_sanction', 'reparations', 'chancellor_vote',
+  'repeal_law',
 ]);
 const TARGETED_BILL_KINDS = new Set([
   'trade_embargo', 'war_authorization',
@@ -632,7 +651,8 @@ export async function activeLawsFor(env, gameId, currentTick, factionId = null) 
   try {
     const res = await env.DB
       .prepare(
-        `SELECT slider_id, value, target_faction_id, created_at_ms, active_until_tick
+        `SELECT slider_id, value, target_faction_id, created_at_ms, active_until_tick,
+                proposal_id
            FROM senate_effects
           WHERE game_id = ?
             AND effect_kind = 'slider'
@@ -673,6 +693,8 @@ export async function activeLawsFor(env, gameId, currentTick, factionId = null) 
       effect: d.effect,
       value: d.value,
       until_tick: r.active_until_tick,
+      // The bill that granted this law — what a repeal bill aims at.
+      proposal_id: r.proposal_id ?? null,
     });
   }
   out.sort((a, b) => a.until_tick - b.until_tick);
@@ -1067,8 +1089,13 @@ async function handleCreateProposal(req, env, { params, session }) {
   // research gate on top of it was rationing twice. Industry 5 stops
   // meaning "may I speak" and starts meaning "may I punish".
   if (await gatingEnabled(env, gameId)) {
+    // repeal_law is ungated for the same reason slider_law is: it is the
+    // UNDO for an ungated bill. Gating it would mean a chamber that can
+    // pass an economic law but not take it back — asymmetric, and on a
+    // 24-tick window that traps a game under a bad law for a full term.
     const needed = kind === 'chancellor_vote' ? 'senate.chancellor'
                  : kind === 'slider_law'      ? null
+                 : kind === 'repeal_law'      ? null
                  : 'senate.propose';
     if (needed) {
       const levels = await factionTechLevels(env, gameId, ctx.faction.id);
@@ -1235,6 +1262,72 @@ async function handleCreateProposal(req, env, { params, session }) {
  * without an extra round-trip.
  */
 async function buildBillPayload(env, gameId, proposerFactionId, kind, body) {
+  // REPEAL: aims at a standing law, not a faction. Validated here so a
+  // bill that could never resolve sensibly is refused at the door rather
+  // than sitting on the floor for a term and then no-opping.
+  if (kind === 'repeal_law') {
+    const targetId = typeof body.target_proposal_id === 'string' ? body.target_proposal_id : '';
+    if (!targetId) return { error: err(400, 'bad_request', 'target_proposal_id required') };
+
+    const game = await env.DB
+      .prepare('SELECT current_tick FROM games WHERE id = ?')
+      .bind(gameId).first();
+    const nowTick = Number(game?.current_tick ?? 0);
+
+    const target = await env.DB
+      .prepare(
+        `SELECT id, title, kind, payload, status, effect_until_tick, repealed_at_tick
+           FROM senate_proposals
+          WHERE id = ? AND game_id = ?`,
+      )
+      .bind(targetId, gameId).first();
+    if (!target) return { error: err(404, 'not_found', 'no such law') };
+    if (target.status !== 'passed') {
+      return { error: err(409, 'not_a_law', 'only a bill that actually passed can be repealed') };
+    }
+    if (target.repealed_at_tick != null) {
+      return { error: err(409, 'already_repealed', 'that law has already been repealed') };
+    }
+    // Must still be standing. A lapsed law needs no repeal, and a
+    // one-shot (reparations, chancellor) has nothing ongoing to undo.
+    if (target.effect_until_tick == null || Number(target.effect_until_tick) <= nowTick) {
+      return { error: err(409, 'not_in_force', 'that law is not in force — nothing to repeal') };
+    }
+    // One live repeal per law. Two bills racing to kill the same law
+    // means the second one resolves against something already dead.
+    const rival = await env.DB
+      .prepare(
+        `SELECT id FROM senate_proposals
+          WHERE game_id = ? AND kind = 'repeal_law'
+            AND status IN ('debating','voting')
+            AND json_extract(payload, '$.target_proposal_id') = ?
+          LIMIT 1`,
+      )
+      .bind(gameId, targetId).first();
+    if (rival) {
+      return { error: err(409, 'repeal_pending', 'a repeal of that law is already on the floor') };
+    }
+
+    // Carry the target's wording so the vote card, the chronicle and the
+    // Discord post can all say what is being struck down without
+    // re-reading the target row.
+    let targetEffect = null;
+    try {
+      const tp = JSON.parse(target.payload || '{}');
+      if (target.kind === 'slider_law' && tp.slider_id) {
+        targetEffect = describeSlider(tp.slider_id, tp.target_value)?.effect ?? null;
+      }
+    } catch { /* optional */ }
+
+    const data = {
+      target_proposal_id: target.id,
+      target_title: target.title,
+      target_kind: target.kind,
+      target_effect: targetEffect,
+    };
+    return { data, broadcast: data };
+  }
+
   if (kind === 'slider_law') {
     const slider = SLIDER_BY_ID[body.slider_id];
     if (!slider) return { error: err(400, 'bad_request', 'unknown slider_id') };
@@ -1516,9 +1609,8 @@ async function handleWithdraw(_req, env, { params, session }) {
 // and trigger senate phase transitions (debating->voting, voting->resolved).
 
 /** How long each bill kind's effect lasts after passing, in ticks.
- *  slider_law uses the legacy EFFECT_TICKS (7) so existing balance
- *  doesn't shift; sanctions bite for longer; one-shot kinds don't
- *  read this. */
+ *  slider_law uses EFFECT_TICKS (24 — a full term); sanctions have their
+ *  own windows; one-shot kinds don't read this. */
 const EFFECT_TICKS_BY_KIND = {
   slider_law:           EFFECT_TICKS,
   trade_embargo:        EMBARGO_EFFECT_TICKS,
@@ -1526,6 +1618,7 @@ const EFFECT_TICKS_BY_KIND = {
   production_sanction:  PROD_SANCTION_EFFECT_TICKS,
   reparations:          0,   // one-shot
   chancellor_vote:      0,   // one-shot, ends the match
+  repeal_law:           0,   // one-shot: it ends someone ELSE's window
 };
 
 /**
@@ -1566,6 +1659,69 @@ async function applyBillEffects(env, gameId, tick, proposal, payload, effectUnti
       .bind(effectId, gameId, payload.slider_id, Number(payload.target_value), aimedAt, proposal.id, tick, effectUntil, tick, now)
       .run();
     return aimedAt ? { target_faction_id: aimedAt } : null;
+  }
+
+  // REPEAL: end the target law's window right now.
+  //
+  // This is the one bill kind that MUTATES another bill, so it is written
+  // in strict order: kill the effect rows first (that is what the economy
+  // reads), then close the target's own window, then stamp
+  // repealed_at_tick, and only then stamp expiry_logged_at_tick to stop
+  // the generic "Lapsed" card also firing for a law the chamber
+  // deliberately struck down. If any step throws, the next tick's expiry
+  // sweep still retires the law correctly — it just narrates it as a
+  // lapse rather than a repeal, which is the safe way to fail.
+  if (kind === 'repeal_law') {
+    const targetId = payload.target_proposal_id;
+    if (!targetId) return null;
+
+    const target = await env.DB
+      .prepare(
+        `SELECT id, title, kind, effect_until_tick, resolved_at_tick
+           FROM senate_proposals
+          WHERE id = ? AND game_id = ? AND status = 'passed'`,
+      )
+      .bind(targetId, gameId).first();
+    // Already gone (lapsed while this bill was debated, or repealed by a
+    // race). Nothing to undo; the chronicle below still records the vote.
+    if (!target || target.effect_until_tick == null
+        || Number(target.effect_until_tick) <= tick) {
+      return { target_title: payload.target_title ?? null, already_gone: true };
+    }
+
+    const ticksLeft = Math.max(0, Number(target.effect_until_tick) - tick);
+
+    // active_until_tick is EXCLUSIVE in every read (`active_until_tick >
+    // currentTick`), so setting it to `tick` makes the law inert from this
+    // tick forward without rewriting history.
+    await env.DB
+      .prepare('UPDATE senate_effects SET active_until_tick = ? WHERE game_id = ? AND proposal_id = ? AND active_until_tick > ?')
+      .bind(tick, gameId, targetId, tick).run();
+    await env.DB
+      .prepare('UPDATE senate_proposals SET effect_until_tick = ?, repealed_at_tick = ?, expiry_logged_at_tick = ? WHERE id = ?')
+      .bind(tick, tick, tick, targetId).run();
+
+    try {
+      const discord = await import('./discord.js');
+      const mover = await env.DB
+        .prepare('SELECT name FROM game_factions WHERE id = ?')
+        .bind(proposal.proposer_faction_id).first();
+      await discord.publishLawRepealed(env, gameId, {
+        title: target.title,
+        effect: payload.target_effect ?? null,
+        movedBy: mover?.name ?? null,
+        ticksLeft,
+      });
+    } catch (e) {
+      console.error('publishLawRepealed failed', e, { targetId });
+    }
+
+    return {
+      target_proposal_id: targetId,
+      target_title: target.title,
+      target_kind: target.kind,
+      ticks_cut_short: ticksLeft,
+    };
   }
 
   if (ONGOING_EFFECT_KINDS.has(kind)) {
@@ -2051,6 +2207,98 @@ export async function resolveSenate(env, gameId, tick) {
     }
   } catch (e) {
     console.error('resolveSenate: law expiry sweep failed', e);
+  }
+
+  // ---- Phase 4: warn before a law lapses (4h, then 1h) ----------------
+  //
+  // Laws stand a full term now, so a lapse is both easy to miss and
+  // expensive to miss: the economy silently reverts, and re-passing costs
+  // debate + vote ticks. The warnings only help if they arrive with
+  // enough runway to actually move a bill, hence two of them.
+  //
+  // WALL CLOCK, not ticks. tick_interval_ms is per-game (an hour here, 30
+  // seconds in a sim room), so "4 hours left" measured in ticks would
+  // mean something different in every lobby. ticksLeft * interval is the
+  // real remaining time.
+  //
+  // Announce-only, like the expiry sweep: writes no game state beyond its
+  // stamp, so a failure here can never extend or shorten a law. Stamped
+  // AFTER a successful post so a failed post retries next tick.
+  try {
+    const g = await env.DB
+      .prepare('SELECT tick_interval_ms FROM games WHERE id = ?')
+      .bind(gameId).first();
+    const intervalMs = Number(g?.tick_interval_ms ?? 0);
+    // No sane interval => no way to convert ticks into hours; skip
+    // rather than guess and post nonsense.
+    if (Number.isFinite(intervalMs) && intervalMs > 0) {
+      const HOUR_MS = 3600 * 1000;
+      // Ordered loudest-last: if a catch-up batch crosses both windows in
+      // one tick, the 4h stamp lands first and the 1h card is the one the
+      // channel sees most recently.
+      const STAGES = [
+        { hours: 4, col: 'warn_4h_logged_at_tick' },
+        { hours: 1, col: 'warn_1h_logged_at_tick' },
+      ];
+      for (const stage of STAGES) {
+        // A threshold shorter than one tick is unreachable: with hour-long
+        // ticks there is no moment "1 hour out" that a tick observes
+        // before the law is already gone. Fire it at the last tick before
+        // expiry instead of never firing it at all.
+        const ticksForStage = Math.max(1, Math.floor((stage.hours * HOUR_MS) / intervalMs));
+        const rows = (await env.DB
+          .prepare(
+            `SELECT id, title, kind, payload, effect_until_tick
+               FROM senate_proposals
+              WHERE game_id = ? AND status = 'passed'
+                AND effect_until_tick IS NOT NULL
+                AND effect_until_tick > ?
+                AND effect_until_tick - ? <= ?
+                AND ${stage.col} IS NULL
+                AND repealed_at_tick IS NULL`,
+          )
+          .bind(gameId, tick, tick, ticksForStage).all()).results ?? [];
+
+        for (const law of rows) {
+          try {
+            // Say what it DOES, not just its name — the same wording the
+            // top bar and the vote card use.
+            let effect = null;
+            try {
+              const payload = JSON.parse(law.payload || '{}');
+              if (law.kind === 'slider_law' && payload.slider_id) {
+                effect = describeSlider(payload.slider_id, payload.target_value)?.effect ?? null;
+              }
+            } catch { /* effect line is optional */ }
+
+            const discord = await import('./discord.js');
+            const out = await discord.publishLawExpiring(env, gameId, {
+              title: law.title,
+              kind: law.kind,
+              effect,
+              hoursLeft: stage.hours,
+              untilTick: Number(law.effect_until_tick),
+            });
+            // Stamp even when the post was SUPPRESSED by policy (cards
+            // off, no Discord audience for this game) — retrying those
+            // every tick forever would be a query storm for a decision
+            // that will not change. Only a transport failure retries.
+            const suppressed = out && out.posted === false
+              && ['no_bot_token', 'disabled', 'no_channel'].includes(out.reason);
+            if (out?.posted || suppressed) {
+              await env.DB
+                .prepare(`UPDATE senate_proposals SET ${stage.col} = ? WHERE id = ?`)
+                .bind(tick, law.id).run();
+            }
+          } catch (e) {
+            console.error('resolveSenate: law-expiring warn failed', e,
+              { proposalId: law.id, hours: stage.hours });
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.error('resolveSenate: law-expiring sweep failed', e);
   }
 
   if (opened > 0 || resolved > 0 || expired > 0) {

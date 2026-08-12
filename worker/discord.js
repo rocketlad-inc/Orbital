@@ -178,6 +178,7 @@ const KIND_LABELS = {
   production_sanction: 'Production Sanction',
   reparations: 'Reparations',
   chancellor_vote: 'Chancellor Vote',
+  repeal_law: 'Repeal',
 };
 
 /** Weight AND headcount. A bare "Yea 18" reads as eighteen voters when
@@ -524,6 +525,88 @@ export async function publishLawExpired(env, gameId, law) {
   });
   if (!res.ok) {
     console.error(`discord law-expiry post failed: ${res.status}`);
+    return { posted: false, reason: `http_${res.status}` };
+  }
+  return { posted: true };
+}
+
+/**
+ * Warn the chamber that a standing law is about to lapse.
+ *
+ * Laws stand for a full term now, which at an hour per tick is a day of
+ * real time — long enough that a lapse is easy to miss and expensive to
+ * miss, since the economy quietly reverts. The point of the warning is
+ * that re-passing a law takes debate + vote ticks, so "it lapses soon"
+ * is only actionable with some notice.
+ *
+ * `hoursLeft` is the THRESHOLD that fired (4 or 1), not a live
+ * measurement — the sweep only fires when the real remaining time is at
+ * or under it, and rounding a true 3h41m to "about 4 hours" reads worse
+ * than naming the bracket.
+ *
+ * Fully isolated by the caller; a Discord outage must never stall a tick.
+ */
+export async function publishLawExpiring(env, gameId, law) {
+  if (!env.DISCORD_BOT_TOKEN) return { posted: false, reason: 'no_bot_token' };
+  if (!(await senateCardsEnabled(env))) return { posted: false, reason: 'disabled' };
+  const channelId = await channelForGame(env, gameId);
+  if (!channelId) return { posted: false, reason: 'no_channel' };
+
+  const urgent = Number(law.hoursLeft) <= 1;
+  const window = urgent ? 'about an hour' : `about ${law.hoursLeft} hours`;
+
+  const res = await botFetch(env, 'POST', `/channels/${channelId}/messages`, {
+    embeds: [{
+      title: `${urgent ? '⏳' : '🕰'}  Lapsing soon — ${law.title}`,
+      description: [
+        `**Bill:** ${KIND_LABELS[law.kind] ?? law.kind}`,
+        law.effect ? `**Doing:** ${law.effect}` : null,
+        `\nThis law lapses in **${window}** (T+${law.untilTick}), and the`
+        + ' economy goes back to normal when it does.',
+        urgent
+          ? '\n_Too late to debate a replacement — but not to plan one._'
+          : '\n_Re-passing it needs debate and a vote, so start now if you want it kept._',
+      ].filter(Boolean).join('\n'),
+      color: POLITICS_COLOR,
+      footer: { text: 'Orbital' },
+    }],
+  });
+  if (!res.ok) {
+    console.error(`discord law-expiring post failed: ${res.status}`);
+    return { posted: false, reason: `http_${res.status}` };
+  }
+  return { posted: true };
+}
+
+/**
+ * A law struck down by the chamber rather than left to lapse.
+ *
+ * Deliberately louder than a lapse: someone spent a bill and a vote to
+ * kill this, which is a political act with an author, and the room should
+ * know who moved it.
+ */
+export async function publishLawRepealed(env, gameId, law) {
+  if (!env.DISCORD_BOT_TOKEN) return { posted: false, reason: 'no_bot_token' };
+  if (!(await senateCardsEnabled(env))) return { posted: false, reason: 'disabled' };
+  const channelId = await channelForGame(env, gameId);
+  if (!channelId) return { posted: false, reason: 'no_channel' };
+
+  const res = await botFetch(env, 'POST', `/channels/${channelId}/messages`, {
+    embeds: [{
+      title: `🗑  Repealed — ${law.title}`,
+      description: [
+        law.effect ? `**Was doing:** ${law.effect}` : null,
+        law.movedBy ? `**Moved by:** ${law.movedBy}` : null,
+        `\nStruck down with **${law.ticksLeft}** ticks still to run.`
+        + ' Whatever it changed is back to normal.',
+        '\n_The chamber may pass it again — or the same knob, the other way._',
+      ].filter(Boolean).join('\n'),
+      color: POLITICS_COLOR,
+      footer: { text: 'Orbital' },
+    }],
+  });
+  if (!res.ok) {
+    console.error(`discord law-repeal post failed: ${res.status}`);
     return { posted: false, reason: `http_${res.status}` };
   }
   return { posted: true };
