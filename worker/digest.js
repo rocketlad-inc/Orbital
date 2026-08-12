@@ -77,6 +77,21 @@ const BATTLE_NARROW_RATIO = 1.5;
  *  already solved for idle freighters. */
 const INDUSTRY_COLLAPSE_THRESHOLD = 5;
 
+/** How far each edition advances its cursor into every phrase bank.
+ *  Set to the largest number of draws a single edition makes from one
+ *  bank, so successive papers read non-overlapping runs. */
+const EDITION_BANK_STRIDE = 4;
+
+/** How many consecutive editions a bank should get through before it is
+ *  allowed to repeat itself. A reader following a match sees them in a
+ *  row, and that is the run over which repetition is noticed. */
+const EDITIONS_BEFORE_REUSE = 10;
+
+/** Ticks per edition, used only to turn a tick into an edition ordinal
+ *  for the live path. The Herald posts about once a game-day; the exact
+ *  figure only has to be stable, since all it does is advance a cursor. */
+const TICKS_PER_EDITION = 24;
+
 /** How many factions get a full industry paragraph before the rest are
  *  swept into a single roundup line. The threshold above only filters
  *  out trivially small producers; in a busy window every surviving
@@ -417,13 +432,75 @@ function strideFor(n, rng) {
  *  AND consecutive papers don't reuse the same openers. Exhausting a
  *  bank restarts the walk from a fresh offset rather than replaying
  *  the order just used. */
+/** Stable hash of a string, so two banks don't march in lockstep. */
+function bankOffset(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (Math.imul(h, 31) + name.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+/** Avalanche mixer — scrambles an integer so that inputs on a regular
+ *  cadence stop producing outputs on a regular cadence. */
+function mix32(x) {
+  let h = (x | 0) + 0x9e3779b9 | 0;
+  h = Math.imul(h ^ (h >>> 16), 0x21f0aaad);
+  h = Math.imul(h ^ (h >>> 15), 0x735a2d97);
+  return Math.abs(h ^ (h >>> 15));
+}
+
+/** Picks a template by a stable property of the SUBJECT rather than by
+ *  edition position.
+ *
+ *  Two captains four editions apart delivered a word-for-word identical
+ *  quote, which a reviewer called the single most damaging repeat in
+ *  the run — it makes every other quote read as machine output. Keying
+ *  a captain's line to their name fixes that and buys something better
+ *  besides: a given officer now always speaks in the same register, so
+ *  Sable Byrne is consistently the flat one and the twenty-four-year-old
+ *  is consistently out of their depth. Same person, same voice, every
+ *  time they appear. */
+function pickTemplateFor(seed, bank) {
+  if (bank.length <= 1) return bank[0];
+  return bank[mix32(bankOffset(String(seed))) % bank.length];
+}
+
 function pickTemplate(bankName, bank, used) {
   if (bank.length === 1) return bank[0];
-  const rng = used.get('__rng') || Math.random;
   let cur = used.get(bankName);
   if (!cur || cur.k >= bank.length) {
+    // The entry point is a MIXED hash of the tick and the bank name,
+    // not the raw tick.
+    //
+    // A plain `(tick + offset) % length` looks like it marches, and
+    // catastrophically does not: editions land on a fixed cadence (44
+    // ticks apart in a real match), so for any bank whose length shares
+    // a factor with that cadence the modulo is constant and every
+    // edition starts on the same template. A 44-entry bank at a 44-tick
+    // cadence starts at index 0 forever. Running the tick through a
+    // proper mixer destroys that arithmetic structure, so bank length
+    // and edition spacing can never resonate.
+    // The cursor is the EDITION ORDINAL — a counter that advances by
+    // one per paper — not the tick. That distinction is the whole fix.
+    //
+    // Keying off the raw tick looks equivalent and is not: editions land
+    // on a fixed cadence, so for any bank whose length shares a factor
+    // with that cadence the modulo is constant and every edition starts
+    // on the same template. A 44-entry bank at a 44-tick cadence starts
+    // at index 0 forever. Hashing the tick removes that resonance but
+    // replaces it with birthday collisions, which is what put a
+    // word-for-word identical captain quote four editions apart.
+    //
+    // An ordinal advancing by EDITION_BANK_STRIDE per paper walks each
+    // bank forward in disjoint runs, so consecutive editions cannot draw
+    // the same template until the whole bank has been spent — eleven
+    // editions for a bank of 44 at four draws. No state is persisted;
+    // the ordinal is derived from the tick by the caller.
+    // A bank only has room to march if it is long enough: advancing a
+    // 12-entry bank by four an edition wraps after three papers and
+    // starts colliding again. Step by as much as the bank can afford.
     const spin = used.get('__spin') || 0;
-    cur = { start: (Math.floor(rng() * bank.length) + spin) % bank.length, stride: strideFor(bank.length, rng), k: 0 };
+    const step = Math.max(1, Math.min(EDITION_BANK_STRIDE, Math.floor(bank.length / EDITIONS_BEFORE_REUSE)));
+    cur = { start: (spin * step + bankOffset(bankName)) % bank.length, stride: 1, k: 0 };
     used.set(bankName, cur);
   }
   const i = (cur.start + cur.k * cur.stride) % bank.length;
@@ -2508,9 +2585,11 @@ function buildVoicePool(rows, used, leaders) {
     const p = safeJson(row.payload);
     if (!p.captain_name || !p.ship_name || !p.body_name) continue;
     if (captainAt.has(p.body_name)) continue;
+    // Keyed to the captain's NAME, not to this edition's walk: one
+    // officer, one voice, for as long as they keep turning up.
     captainAt.set(
       p.body_name,
-      pickTemplate('captain_quote', CAPTAIN_QUOTE, used)(p.captain_name, p.ship_name, ` at **${p.body_name}**`),
+      pickTemplateFor(p.captain_name, CAPTAIN_QUOTE)(p.captain_name, p.ship_name, ` at **${p.body_name}**`),
     );
   }
 
@@ -4562,7 +4641,7 @@ async function fetchLeaders(env, gameId) {
   }
 }
 
-function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, sanctions = [], leaders = new Map(), totals = new Map()) {
+function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, sanctions = [], leaders = new Map(), totals = new Map(), editionOrdinal = Math.floor((tick || 0) / TICKS_PER_EDITION)) {
   // bank-name -> { start, stride, k } walk state, plus the '__rng' the
   // walks are drawn from. Seeded off the edition's tick (and the game
   // name, so two matches publishing the same tick don't print the same
@@ -4573,7 +4652,7 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
     seed = (Math.imul(seed, 31) + String(gameName).charCodeAt(i)) | 0;
   }
   used.set('__rng', makeRng(seed));
-  used.set('__spin', Math.abs(tick | 0));
+  used.set('__spin', Math.abs(editionOrdinal | 0));
 
   const captainFate = buildCaptainFateMap(rows);
   const voices = buildVoicePool(rows, used, leaders);
@@ -4997,7 +5076,12 @@ export async function composeHeraldForTickRange(env, game, fromTick, toTick) {
   const totals = await fetchStandingTotals(env, game.id, toTick);
   const locator = await buildBodyLocator(env, game.id, collectBodyIds(rows));
 
-  let embed = composeEmbed(game.name ?? game.id, toTick, rows, factionNames, 0, locator, [], leaders, totals);
+  // This preview knows its own window width, so it can hand the
+  // compositor an exact edition number instead of the live path's
+  // approximation.
+  const span = Math.max(1, toTick - fromTick);
+  const ordinal = Math.round(fromTick / span);
+  let embed = composeEmbed(game.name ?? game.id, toTick, rows, factionNames, 0, locator, [], leaders, totals, ordinal);
   if (!embed) {
     const used = new Map();
     embed = {
