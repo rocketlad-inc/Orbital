@@ -104,14 +104,22 @@ export const TopBar: React.FC<TopBarProps> = ({
   const income = useMemo(() => {
     const lvl = gameState.factionTech?.player?.levels?.industry ?? 0;
     const yieldMul = 1 + TECH_DEFS.industry.perLevel * lvl;
+    // Senate yield laws are part of what the tick will credit, so the
+    // quoted rate has to include them or a passed law reads as inert.
+    const sl = gameState.activeSliders;
     return computeIncomePerTick(
       'player',
       gameState.settlements,
       gameState.bodies,
       gameState.ships,
       yieldMul,
+      sl && {
+        metal: sl.metalYieldMultiplier,
+        credits: sl.goldYieldMultiplier,
+        science: sl.scienceYieldMultiplier,
+      },
     );
-  }, [gameState.settlements, gameState.bodies, gameState.ships, gameState.factionTech]);
+  }, [gameState.settlements, gameState.bodies, gameState.ships, gameState.factionTech, gameState.activeSliders]);
 
   // The alert-chip derivation that used to live here (recent combat events,
   // ships arriving soon, low-fuel ships) is gone — both the EventLog dock

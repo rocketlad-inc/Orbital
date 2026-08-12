@@ -613,7 +613,17 @@ export function computeIncomePerTick(
   // future use cases like ship-maintenance drain). Currently unused.
   _ships: Ship[],
   yieldMul: number = 1,
+  /** Senate slider laws in force on this faction (MP). The tick applies
+   *  these per-resource multipliers in worker/room.js's harvest pass, so
+   *  a readout that ignores them quotes a rate the server will not
+   *  deliver — which is what made a passed "Research speed x2" law look
+   *  like it did nothing. Defaults to neutral so SP and older callers
+   *  keep their exact previous numbers. */
+  sliders?: { metal?: number; credits?: number; science?: number },
 ): IncomePerTick {
+  const sMetal = sliders?.metal ?? 1;
+  const sCredits = sliders?.credits ?? 1;
+  const sScience = sliders?.science ?? 1;
   const zero = () => ({ fuel: 0, ore: 0, credits: 0, science: 0 });
   const out: IncomePerTick = {
     delivered: zero(), local: zero(), waiting: zero(),
@@ -643,11 +653,13 @@ export function computeIncomePerTick(
     const body = bodies.find(b => b.id === s.bodyId);
     if (!body) continue;
     const y = settlementYield(s, body);
+    // Slider laws multiply the SAME per-resource yields the tick does
+    // (room.js: yield * popMul * tm.X * bldMul * prodMul * indMul * sliderX).
     const yieldFull = {
       fuel:    y.fuel    * yieldMul,
-      ore:     y.ore     * yieldMul,
-      credits: y.credits * yieldMul,
-      science: y.science * yieldMul,
+      ore:     y.ore     * yieldMul * sMetal,
+      credits: y.credits * yieldMul * sCredits,
+      science: y.science * yieldMul * sScience,
     };
     // Per-tick split mirrors tickSettlements + worker/room.js exactly.
     const toPool  = dock ? 1.0 : NO_COLLECTOR_POOL_FRACTION;

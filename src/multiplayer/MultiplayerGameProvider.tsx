@@ -366,6 +366,17 @@ interface ServerState {
   /** Curated build list (migration 0045) — the caller's ordered loadout
    *  entries. Each is { design_id } or { bare_class }. */
   build_list?: Array<{ design_id?: string; bare_class?: string }>;
+  /** Senate slider laws in force on the caller, resolved server-side. */
+  active_sliders?: {
+    metal_yield_multiplier: number;
+    gold_yield_multiplier: number;
+    science_yield_multiplier: number;
+    ship_build_cost_multiplier: number;
+    fleet_upkeep_multiplier: number;
+    combat_damage_multiplier: number;
+    rush_cost_multiplier: number;
+    trade_tariff_pct: number;
+  } | null;
   /** Accepted deals with no hauler of the caller's on them yet. */
   trades_awaiting_ship?: Array<{
     agreement_id: string;
@@ -1920,6 +1931,16 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
       bodyId: stripGameId(c.body_id) ?? c.body_id,
       ownedBy: c.owner_faction_id === callerFactionId ? PLAYER_TOKEN : c.owner_faction_id,
     })),
+    activeSliders: srv.active_sliders ? {
+      metalYieldMultiplier: srv.active_sliders.metal_yield_multiplier,
+      goldYieldMultiplier: srv.active_sliders.gold_yield_multiplier,
+      scienceYieldMultiplier: srv.active_sliders.science_yield_multiplier,
+      shipBuildCostMultiplier: srv.active_sliders.ship_build_cost_multiplier,
+      fleetUpkeepMultiplier: srv.active_sliders.fleet_upkeep_multiplier,
+      combatDamageMultiplier: srv.active_sliders.combat_damage_multiplier,
+      rushCostMultiplier: srv.active_sliders.rush_cost_multiplier,
+      tradeTariffPct: srv.active_sliders.trade_tariff_pct,
+    } : undefined,
     tradesAwaitingShip: (srv.trades_awaiting_ship ?? []).map(t => ({
       agreementId: t.agreement_id,
       partnerFactionId: t.partner_faction_id,

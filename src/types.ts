@@ -812,6 +812,22 @@ export interface GameState {
    *  themselves are outside sensor range. MP only; SP derives the same
    *  facts from its (unfogged) settlements array. */
   settlementClaims?: { bodyId: string; ownedBy: string }[];
+  /** Senate slider laws currently in force ON THE VIEWING FACTION, as
+   *  plain multipliers (tariff is a percent). Sent by /state each poll and
+   *  resolved server-side, because a law can target one faction. MP only;
+   *  undefined in SP, where every reader falls back to neutral. Without
+   *  this the client quoted economy rates the tick then contradicted, and
+   *  passed laws looked inert. */
+  activeSliders?: {
+    metalYieldMultiplier: number;
+    goldYieldMultiplier: number;
+    scienceYieldMultiplier: number;
+    shipBuildCostMultiplier: number;
+    fleetUpkeepMultiplier: number;
+    combatDamageMultiplier: number;
+    rushCostMultiplier: number;
+    tradeTariffPct: number;
+  };
   /** Accepted trade agreements that are waiting on a freighter of MINE
    *  before anything ships. Accepting a deal moves no goods — each side
    *  has to assign a hauler — and until this existed there was no signal

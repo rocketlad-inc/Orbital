@@ -979,6 +979,31 @@ const tradeRoutesP = env.DB
     )
     .bind(gameId, me.id)
     .all();
+  // ---- Senate laws in force ON ME, as numbers the client can apply ----
+  //
+  // The client had NO knowledge of slider laws — zero references anywhere
+  // in src/ — so TopBar's per-tick income was computed from settlements
+  // and industry tech alone. The server duly credited a doubled science
+  // yield while the pill kept quoting the un-doubled rate, which made a
+  // passed law look like it did nothing ("is it really halving our
+  // science costs? doesn't look like it"). Resolved FOR ME, because a law
+  // can target one faction.
+  let activeSliders = null;
+  try {
+    const s = await getActiveSliders(env, gameId, game.current_tick ?? 0, me.id);
+    const num = (v, dflt) => (Number.isFinite(Number(v)) ? Number(v) : dflt);
+    activeSliders = {
+      metal_yield_multiplier: num(s.metal_yield_multiplier, 1),
+      gold_yield_multiplier: num(s.gold_yield_multiplier, 1),
+      science_yield_multiplier: num(s.science_yield_multiplier, 1),
+      ship_build_cost_multiplier: num(s.ship_build_cost_multiplier, 1),
+      fleet_upkeep_multiplier: num(s.fleet_upkeep_multiplier, 1),
+      combat_damage_multiplier: num(s.combat_damage_multiplier, 1),
+      rush_cost_multiplier: num(s.rush_cost_multiplier, 1),
+      trade_tariff_pct: num(s.trade_tariff_pct, 0),
+    };
+  } catch { /* leave null — client falls back to neutral 1x */ }
+
   // ---- Accepted trade deals still waiting on MY freighter -------------
   //
   // Accepting a deal does NOT move goods: each side has to put a hauler
@@ -1423,6 +1448,9 @@ const tradeRoutesP = env.DB
     nodes,
     events,
     build_queue: buildQueue,
+    // Slider laws in force on the caller, so the client can quote rates
+    // that match what the tick will actually credit.
+    active_sliders: activeSliders,
     trade_routes: tradeRoutes,
     // Accepted deals with no hauler of mine on them yet. Only the goods
     // *I* owe per run — the panel owns the full ledger.
