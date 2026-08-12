@@ -1370,6 +1370,7 @@ export const ShipPanel: React.FC = () => {
               bodies={gameState.bodies}
               settlements={gameState.settlements}
               canSupplyDyson={gameState.dysonSphere?.controllerFactionId === 'player'}
+              currentTick={gameState.currentTick}
               onCreate={(originBodyId, destBodyId) => {
                 if (mpActions) {
                   // MP: the SERVER owns the route taxonomy (terraform /
@@ -2603,9 +2604,11 @@ const TradeRouteSection: React.FC<{
   /** True when the player controls the Dyson Sphere — unlocks Sol as a
    *  route destination (the supply line that actually builds it). */
   canSupplyDyson?: boolean;
+  /** Current game tick — turns a transit's arriveTick into an ETA. */
+  currentTick: number;
   onCreate: (originBodyId: string, destBodyId: string) => boolean;
   onCancel: (routeId: string) => void;
-}> = ({ ship, tradeRoutes, bodies, settlements, canSupplyDyson, onCreate, onCancel }) => {
+}> = ({ ship, tradeRoutes, bodies, settlements, canSupplyDyson, currentTick, onCreate, onCancel }) => {
   const route = tradeRoutes.find(r => r.shipId === ship.id);
   const [picking, setPicking] = useState(false);
   const [originId, setOriginId] = useState<string>('');
@@ -2664,6 +2667,28 @@ const TradeRouteSection: React.FC<{
     const kindLabel = route.kind === 'terraform' ? '◌ TERRAFORM SUPPLY'
       : route.kind === 'dyson' ? '☀ DYSON SUPPLY'
       : 'TRADE ROUTE';
+
+    // NEXT ACTION. A supply route only acts on the tick, so between ticks
+    // the freighter genuinely does sit still — and with an hour a tick
+    // that silence read as a broken route ("this freighter aint movin").
+    // Say what it's about to do and when, so an idle hold looks like a
+    // schedule instead of a fault.
+    const here = ship.orbit?.parentBodyId;
+    const wantsToBe = route.status === 'outbound' ? route.destBodyId : route.originBodyId;
+    const wantsBody = bodies.find(b => b.id === wantsToBe);
+    let nextAction: string;
+    if (ship.transit) {
+      const plan = ship.transit.currentTransfer;
+      const to = bodies.find(b => b.id === plan.targetBodyId);
+      const eta = Math.max(0, plan.arriveTick - currentTick);
+      nextAction = `Under way to ${to?.name ?? 'destination'} · arrives in ${Math.round(eta)}t`;
+    } else if (here === route.destBodyId && cargoTotal > 0) {
+      nextAction = `Unloading at ${dest?.name ?? 'destination'} next tick`;
+    } else if (here === route.originBodyId && cargoTotal < 1) {
+      nextAction = `Loading at ${origin?.name ?? 'origin'} next tick`;
+    } else {
+      nextAction = `Departing for ${wantsBody?.name ?? 'the next stop'} next tick`;
+    }
     return (
       <div className="maneuver-section">
         <div className="section-title">{kindLabel}</div>
@@ -2674,6 +2699,9 @@ const TradeRouteSection: React.FC<{
               {route.status === 'outbound' ? '→ delivering' : route.status === 'returning' ? '← picking up' : 'paused'}
               {cargoTotal > 0 ? ` · cargo ${cargoStr}` : ' · empty hold'}
             </div>
+            {route.status !== 'paused' && (
+              <div className="order-details" style={{ color: '#4ecdc4' }}>{nextAction}</div>
+            )}
           </div>
           <button
             className="maneuver-btn"

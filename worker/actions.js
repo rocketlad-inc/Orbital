@@ -2027,7 +2027,29 @@ async function handleCreateTradeRoute(req, env, ctx) {
     .bind(routeId, gameId, me.id, shipId, originBodyId, destBodyId, routeKind, tick)
     .run();
 
-  return json({ ok: true, route: { id: routeId, ship_id: shipId, origin_body_id: originBodyId, dest_body_id: destBodyId, kind: routeKind } });
+  // Dispatch NOW rather than at the next tick. The route pass is what
+  // moves freighters, so a route laid just after a tick left the ship
+  // parked for a full tick — an hour of real time on a default game —
+  // with no indication anything was queued. Players read that as the
+  // route being broken, especially when the freighter happened to be
+  // sitting at the destination already.
+  //
+  // Best-effort: the DO swallows its own errors and the tick pass still
+  // picks the route up, so a failure here costs responsiveness, never
+  // the route itself.
+  let dispatched = false;
+  try {
+    const res = await env.ROOM.get(env.ROOM.idFromName(gameId))
+      .fetch('https://room/dispatch-route', {
+        method: 'POST',
+        body: JSON.stringify({ gameId, routeId }),
+      });
+    dispatched = res.ok;
+  } catch (e) {
+    console.error('route created but immediate dispatch failed', e, { routeId });
+  }
+
+  return json({ ok: true, dispatched, route: { id: routeId, ship_id: shipId, origin_body_id: originBodyId, dest_body_id: destBodyId, kind: routeKind } });
 }
 
 async function handleCancelTradeRoute(req, env, ctx) {

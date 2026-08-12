@@ -199,6 +199,49 @@ export class Room {
       }
       return new Response(null, { status: 204 });
     }
+    // POST /dispatch-route  body: { gameId, routeId }
+    //
+    // Runs the trade auto-pilot for ONE route at the CURRENT tick without
+    // advancing anything. Called the moment a route is created so the
+    // freighter starts moving immediately instead of idling until the
+    // next tick — at an hour a tick, that wait read as a broken route.
+    //
+    // Idempotent by construction: the pass skips any ship that already
+    // has a committed/in_transit node, so a double call plans one leg.
+    if (url.pathname === '/dispatch-route' && req.method === 'POST') {
+      const body = await req.json().catch(() => ({}));
+      const gameId = typeof body?.gameId === 'string' ? body.gameId : null;
+      const routeId = typeof body?.routeId === 'string' ? body.routeId : null;
+      if (!gameId || !routeId) {
+        return new Response(JSON.stringify({ error: 'gameId and routeId required' }), { status: 400 });
+      }
+      try {
+        const g = await this.env.DB
+          .prepare('SELECT current_tick FROM games WHERE id = ?')
+          .bind(gameId).first();
+        const tick = Number(g?.current_tick ?? 0);
+        const CFG = await loadGameConfig(this.env, gameId);
+        // Sanctions still apply — an embargoed faction's new route must
+        // sit exactly as it would at tick time. Cache is per-call.
+        const cache = new Map();
+        const sanctioned = async (factionId, kind) => {
+          if (!factionId) return false;
+          const key = `${factionId}|${kind}`;
+          if (cache.has(key)) return cache.get(key);
+          const v = await hasActiveSanction(this.env, gameId, tick, factionId, kind);
+          cache.set(key, v);
+          return v;
+        };
+        await this.runTradeAutopilot(gameId, tick, CFG, sanctioned, new Map(), routeId);
+        return new Response(JSON.stringify({ ok: true, tick }), { status: 200 });
+      } catch (e) {
+        // Never fail the player's route creation over this — the tick
+        // pass will pick the route up regardless, exactly as before.
+        console.error('dispatch-route failed', e, { gameId, routeId });
+        return new Response(JSON.stringify({ ok: false }), { status: 200 });
+      }
+    }
+
     if (url.pathname === '/tick-now' && req.method === 'POST') {
       // Catch-up endpoint. Called from:
       //   - state.js handleGetState as a self-heal when /state notices
@@ -763,6 +806,983 @@ export class Room {
     }
 
     this.broadcast({ type: 'tick', tick: endTick, next_tick_at: nextAt });
+  }
+
+  // ==================================================================
+  // Trade-route + trade-delivery auto-pilot (tick pass 2c + 2d).
+  //
+  // Extracted from resolveTick so route CREATION can dispatch a brand
+  // new route immediately instead of leaving the freighter parked until
+  // the next tick. At one real hour per tick that wait read as "the
+  // route is broken" — the ship just sat there, and if it happened to be
+  // sitting at the destination it looked doubly wrong.
+  //
+  // The same code runs both ways on purpose. The alternative was
+  // duplicating the load/deliver decisions in the create handler, and
+  // two copies of that would drift.
+  //
+  // onlyRouteId  null = the whole pass (what the tick calls). A route
+  //              id = dispatch just that route and skip 2d.
+  // ==================================================================
+  // scienceIncomeByFaction: the tick's science-income ledger. Delivered
+  // science counts as INCOME, not just bank — the research drain clamps
+  // spend to income, so without this a trade-fed faction banks science
+  // forever and never advances a tech. A single-route dispatch passes a
+  // throwaway Map: no tick is being resolved, so there is no drain to feed.
+  async runTradeAutopilot(gameId, tick, CFG, sanctioned, scienceIncomeByFaction, onlyRouteId = null) {
+    try {
+      // Per-resource cargo cap. Raised 50 -> 500 alongside the
+      // 10%/90% economy rewrite — non-collector stockpiles now grow
+      // fast enough that a 50-unit hold was a thimble. 500 lets one
+      // freighter visit empty a typical settlement stockpile in one
+      // round trip while keeping tonnage a real ship stat (a busy
+      // hub may still need multiple runs).
+      const CARGO_CAP = 500;
+      const routes = (await this.env.DB
+        .prepare(
+          // The agreement columns MUST be selected here: the standing-
+          // route branches gate on r.counterparty_faction_id, and an
+          // unselected column reads as undefined — which is falsy, which
+          // silently turns every agreement leg back into a self-haul
+          // route. sim/tradeRoutes.mjs caught exactly that on its first
+          // run (loops=0 while everything else "worked").
+          `SELECT id, owner_faction_id, ship_id, origin_body_id, dest_body_id, status, kind,
+                  cargo_fuel, cargo_metal, cargo_gold, cargo_science,
+                  counterparty_faction_id, agreement_id, tariff_pct,
+                  per_run_metal, per_run_fuel, per_run_gold, per_run_science,
+                  loops_completed
+             FROM game_trade_routes
+            WHERE game_id = ? AND cancelled_at_tick IS NULL${onlyRouteId ? ' AND id = ?' : ''}`,
+        )
+        .bind(...(onlyRouteId ? [gameId, onlyRouteId] : [gameId]))
+        .all()).results ?? [];
+
+      // Helper: recursive heliocentric body position. Mirrors the
+      // client's bodyPosition in src/physics/orbitalMechanics.ts —
+      // the legacy circular-orbit shortcut. Rogue Kuiper asteroids
+      // with eccentric Kepler elements (orbit_rp/ra/omega/m0) aren't
+      // valid trade-route endpoints in v1, so we don't need the
+      // Kepler propagator here. Cached per-call to avoid re-querying
+      // the same parent body multiple times in one leg lookup.
+      const TWO_PI = 2 * Math.PI;
+      const bodyCache = new Map();
+      const fetchBody = async (id) => {
+        if (bodyCache.has(id)) return bodyCache.get(id);
+        const row = await this.env.DB
+          .prepare(
+            `SELECT id, parent_body_id, orbit_radius, orbit_period, angle0
+               FROM game_bodies WHERE id = ? AND game_id = ?`,
+          )
+          .bind(id, gameId)
+          .first();
+        bodyCache.set(id, row);
+        return row;
+      };
+      const bodyPosAt = async (id, t) => {
+        const b = await fetchBody(id);
+        if (!b || b.parent_body_id == null) return { x: 0, y: 0 };
+        const parent = await bodyPosAt(b.parent_body_id, t);
+        const angle = (b.angle0 ?? 0) + TWO_PI * t / (b.orbit_period || 1);
+        return {
+          x: parent.x + Math.cos(angle) * (b.orbit_radius ?? 0),
+          y: parent.y + Math.sin(angle) * (b.orbit_radius ?? 0),
+        };
+      };
+
+      // Torch trip-time. Mirrors planTorchTransfer in
+      // src/physics/torchTransfer.ts — closed-form brachistochrone
+      // T = 2·√(d/a) for symmetric accel, with a 5-iteration
+      // intercept refinement so target-body motion during the trip
+      // is accounted for. Returns an integer tick count >= 1.
+      //
+      // Previously this used a hard-coded LEG_TICKS = 60. For a short
+      // Jupiter-system moon-hop (Europa↔Ganymede ≈ 30 units, T ≈ 2)
+      // that gave the client a 60-tick window to run the torch
+      // integrator at full thrust both directions — producing the
+      // 23,000-unit overshoot zigzags the player reported.
+      const G_ANCHOR = 4 * 132.6;            // mirror physics/torchTransfer.ts
+      const DEFAULT_ENGINE_G = 0.05;
+      const fromG = (g) => g * G_ANCHOR;
+      const factionAccelCache = new Map();
+      const getFactionAccel = async (factionId) => {
+        if (factionAccelCache.has(factionId)) return factionAccelCache.get(factionId);
+        const f = await this.env.DB
+          .prepare('SELECT engine_g FROM game_factions WHERE id = ?')
+          .bind(factionId)
+          .first();
+        const g = f?.engine_g ?? DEFAULT_ENGINE_G;
+        const accel = fromG(g);
+        factionAccelCache.set(factionId, accel);
+        return accel;
+      };
+      const computeLegTicks = async (factionId, originId, destId, refTick) => {
+        const accel = await getFactionAccel(factionId);
+        const startPos = await bodyPosAt(originId, refTick);
+        let T = 1;
+        for (let i = 0; i < 5; i++) {
+          const destPos = await bodyPosAt(destId, refTick + T);
+          const dx = destPos.x - startPos.x;
+          const dy = destPos.y - startPos.y;
+          const d = Math.sqrt(dx * dx + dy * dy);
+          const Tnew = 2 * Math.sqrt(Math.max(d, 0.01) / accel);
+          if (Math.abs(Tnew - T) < 0.05) { T = Tnew; break; }
+          T = Tnew;
+        }
+        // Clamp to integer ticks >= 1. Aggressively short trips (T<1)
+        // still need at least one tick so the depart→arrive state
+        // machine has room to fire 2a then 2b.
+        return Math.max(1, Math.ceil(T));
+      };
+
+      for (const r of routes) {
+       // Per-route isolation: wrap each route so one bad route (a
+       // throwing sanction check, a missing body in computeLegTicks,
+       // etc.) can't abort the WHOLE loop and freeze every other
+       // player's freighters. The outer try/catch logs; this inner one
+       // keeps the remaining routes moving.
+       try {
+        if (r.status === 'paused') continue;
+        const ship = await this.env.DB
+          .prepare(`SELECT s.id, s.owner_faction_id, s.parent_body_id, s.ship_class, s.status,
+                           c.traits_json AS captain_traits
+                      FROM game_ships s LEFT JOIN game_captains c ON c.id = s.captain_id
+                     WHERE s.id = ?`)
+          .bind(r.ship_id).first();
+        // Dead or missing freighter → cancel the route so we don't keep
+        // scanning it. Piracy step (below) handles cargo capture if the
+        // freighter died this tick.
+        if (!ship || ship.status !== 'active') {
+          // An agreement leg's death ends the WHOLE DEAL, both legs,
+          // with notifications (Lorne: "trade ships killed in conflict"
+          // is one of the two things that break a standing route). A
+          // plain self-haul route just cancels quietly as before.
+          if (r.agreement_id) {
+            try {
+              const ta = await import('./tradeAgreements.js');
+              const ag = await this.env.DB
+                .prepare('SELECT * FROM trade_agreements WHERE id = ?')
+                .bind(r.agreement_id).first();
+              if (ag) {
+                await ta.endAgreement(this.env, gameId, ag, 'ship_lost', tick, {
+                  byFactionId: r.owner_faction_id,
+                  detail: 'The freighter flying one of the legs was destroyed.',
+                });
+                continue;   // endAgreement cancelled every leg already
+              }
+            } catch (e) {
+              console.error('trade route: ship-loss agreement end failed', e, { routeId: r.id });
+            }
+          }
+          await this.env.DB
+            .prepare('UPDATE game_trade_routes SET cancelled_at_tick = ? WHERE id = ?')
+            .bind(tick, r.id).run();
+          continue;
+        }
+        // Senate trade embargo: if this route's owner is under embargo
+        // right now, the freighter sits idle this tick — no pickup, no
+        // delivery, no new leg planned. Resumes the moment the embargo
+        // expires (senate_effects.active_until_tick clears).
+        if (await sanctioned(r.owner_faction_id, 'trade_embargo')) continue;
+        if (ship.ship_class !== 'freighter') continue;
+
+        // Skip if already mid-transit (any committed or in_transit node).
+        const inFlight = await this.env.DB
+          .prepare("SELECT 1 AS x FROM game_ship_nodes WHERE ship_id = ? AND status IN ('committed','in_transit') LIMIT 1")
+          .bind(r.ship_id).first();
+        if (inFlight) continue;
+
+        const here = ship.parent_body_id;
+        const cargoFuel    = Number(r.cargo_fuel    ?? 0);
+        const cargoMetal   = Number(r.cargo_metal   ?? 0);
+        const cargoGold    = Number(r.cargo_gold    ?? 0);
+        const cargoScience = Number(r.cargo_science ?? 0);
+        const cargoTotal = cargoFuel + cargoMetal + cargoGold + cargoScience;
+
+        const planLeg = async (targetBodyId) => {
+          // Insert a committed node toward targetBodyId. 2a will flip
+          // it to in_transit next tick; 2b will arrive it at the
+          // computed arrival tick. Trip time uses real torch math
+          // (computeLegTicks above) so the client's reconstructed
+          // plan agrees on the timing — without that the client's
+          // integrator runs full thrust over an inflated arrival
+          // window and produces zigzag overshoot trajectories.
+          const legTicks = await computeLegTicks(
+            r.owner_faction_id, here, targetBodyId, tick,
+          );
+          const seqRow = await this.env.DB
+            .prepare('SELECT MAX(sequence) AS m FROM game_ship_nodes WHERE ship_id = ?')
+            .bind(r.ship_id).first();
+          const seq = (seqRow?.m ?? -1) + 1;
+          const nodeId = `${r.ship_id}:tr${tick}:n${seq}`;
+          await this.env.DB
+            .prepare(
+              `INSERT INTO game_ship_nodes
+                 (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
+                  scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
+                  status, committed_at_tick)
+               VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, 0, 0, 0, 0, 'committed', ?)`,
+            )
+            .bind(nodeId, gameId, r.ship_id, seq, targetBodyId, tick, tick + legTicks, tick)
+            .run();
+        };
+
+        // TERRAFORM SUPPLY RUN: dest is a raw world being terraformed.
+        // Same physical-logistics shape as the dyson branch below — load
+        // metal+credits from the pool at a terraformed origin, haul,
+        // deliver into the BODY's terraform meter. When the meter fills,
+        // the transformation window opens; tickTerraforming flips the
+        // world when it elapses. The meter living on the body is the
+        // king-of-the-hill rule again: conquer mid-terraform and the
+        // progress is simply yours.
+        if (r.kind === 'terraform') {
+          const tb = await this.env.DB
+            .prepare(
+              `SELECT owner_faction_id, terraformed_at_tick,
+                      terraform_acc_metal, terraform_acc_gold,
+                      terraform_completes_at_tick
+                 FROM game_bodies
+                WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL`,
+            )
+            .bind(r.dest_body_id, gameId)
+            .first();
+          // ESCALATING COST. The Nth terraform costs base x growth^(N-1),
+          // counted on worlds this faction has ALREADY finished. At the
+          // default growth of 1.0 this is exactly flat and the pow() is a
+          // no-op; above 1.0 it is the brake on a runaway leader, who pays
+          // more for their ninth world than a rival pays for their second.
+          //
+          // Counted from finished worlds only, not from in-flight meters:
+          // otherwise two routes opened the same tick would each inflate
+          // the other's price and the pair would deadlock mid-delivery.
+          // The capital is excluded by construction — it starts terraformed
+          // and is counted, so the first PURCHASED world is already N=2 if
+          // you seeded terraformed worlds. See the sweep for what that
+          // does to the curve.
+          const TF_GROWTH = Number(CFG.terraform_cost_growth ?? 1.0);
+          let tfDone = 0;
+          if (TF_GROWTH > 1.0) {
+            const c = await this.env.DB
+              .prepare(
+                `SELECT COUNT(*) n FROM game_bodies
+                  WHERE game_id = ? AND owner_faction_id = ?
+                    AND terraformed_at_tick IS NOT NULL
+                    AND destroyed_at_tick IS NULL`,
+              )
+              .bind(gameId, r.owner_faction_id)
+              .first();
+            tfDone = Math.max(0, Number(c?.n ?? 0));
+          }
+          const tfMul = TF_GROWTH > 1.0 ? Math.pow(TF_GROWTH, tfDone) : 1;
+          const TF_COST_M = Math.round(Number(CFG.terraform_cost_metal ?? 124) * tfMul);
+          const TF_COST_G = Math.round(Number(CFG.terraform_cost_credits ?? 124) * tfMul);
+          // Route retires when its job is gone: body destroyed, already
+          // terraformed, payload delivered (window running), or the
+          // world changed hands. Cargo always goes home, never vanishes.
+          const jobDone = !tb
+            || tb.terraformed_at_tick != null
+            || tb.terraform_completes_at_tick != null
+            || tb.owner_faction_id !== r.owner_faction_id;
+          if (jobDone) {
+            if (cargoTotal > 0) {
+              await this.env.DB
+                .prepare(
+                  `UPDATE game_factions
+                      SET fuel = fuel + ?, metal = metal + ?,
+                          gold = gold + ?, science = science + ?
+                    WHERE id = ?`,
+                )
+                .bind(cargoFuel, cargoMetal, cargoGold, cargoScience, r.owner_faction_id)
+                .run();
+            }
+            await this.env.DB
+              .prepare(`UPDATE game_trade_routes SET cancelled_at_tick = ?, cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0 WHERE id = ?`)
+              .bind(tick, r.id)
+              .run();
+            continue;
+          }
+
+          const needM = Math.max(0, TF_COST_M - (tb.terraform_acc_metal ?? 0));
+          const needG = Math.max(0, TF_COST_G - (tb.terraform_acc_gold ?? 0));
+
+          if (here === r.origin_body_id && cargoTotal < 1) {
+            // LOAD from the pool at the terraformed origin, capped by
+            // hold, balance, and remaining need per component.
+            const pool = await this.env.DB
+              .prepare('SELECT metal, gold FROM game_factions WHERE id = ?')
+              .bind(r.owner_faction_id)
+              .first();
+            const HOLD = Math.round(CARGO_CAP * traitMul(parseTraits(ship.captain_traits), 'cargoMul'));
+            const cm = Math.max(0, Math.min(HOLD, Number(pool?.metal ?? 0), needM));
+            const cg = Math.max(0, Math.min(HOLD, Number(pool?.gold  ?? 0), needG));
+            if (cm + cg > 0) {
+              await this.env.DB
+                .prepare('UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ?')
+                .bind(cm, cg, r.owner_faction_id)
+                .run();
+            }
+            await this.env.DB
+              .prepare(
+                `UPDATE game_trade_routes
+                    SET cargo_fuel = 0, cargo_metal = ?, cargo_gold = ?, cargo_science = 0,
+                        status = 'outbound'
+                  WHERE id = ?`,
+              )
+              .bind(cm, cg, r.id)
+              .run();
+            await planLeg(r.dest_body_id);
+            continue;
+          }
+
+          if (here === r.dest_body_id) {
+            // DELIVER into the meter, clamped; overflow home to pool.
+            const addM = Math.max(0, Math.min(cargoMetal, needM));
+            const addG = Math.max(0, Math.min(cargoGold,  needG));
+            const backM = cargoMetal - addM;
+            const backG = cargoGold  - addG;
+            const accM = (tb.terraform_acc_metal ?? 0) + addM;
+            const accG = (tb.terraform_acc_gold  ?? 0) + addG;
+            const full = accM >= TF_COST_M && accG >= TF_COST_G;
+            const duration = Math.max(1, Number(CFG.terraform_duration_ticks ?? 24));
+            const batch = [
+              this.env.DB
+                .prepare(
+                  `UPDATE game_bodies
+                      SET terraform_acc_metal = ?, terraform_acc_gold = ?,
+                          terraform_completes_at_tick = COALESCE(terraform_completes_at_tick, ?)
+                    WHERE id = ? AND game_id = ?`,
+                )
+                .bind(accM, accG, full ? tick + duration : null, r.dest_body_id, gameId),
+              this.env.DB
+                .prepare(
+                  `UPDATE game_trade_routes
+                      SET cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0,
+                          status = 'returning'
+                    WHERE id = ?`,
+                )
+                .bind(r.id),
+            ];
+            if (cargoFuel + backM + backG + cargoScience > 0) {
+              batch.push(this.env.DB
+                .prepare(
+                  `UPDATE game_factions
+                      SET fuel = fuel + ?, metal = metal + ?,
+                          gold = gold + ?, science = science + ?
+                    WHERE id = ?`,
+                )
+                .bind(cargoFuel, backM, backG, cargoScience, r.owner_faction_id));
+            }
+            await this.env.DB.batch(batch);
+            if (full) {
+              // Payload complete — the transformation window opens.
+              // Public: cranes over a world are visible from orbit.
+              try {
+                const fac = await this.env.DB
+                  .prepare('SELECT name FROM game_factions WHERE id = ?')
+                  .bind(r.owner_faction_id).first();
+                const bodyName = await this.env.DB
+                  .prepare('SELECT name FROM game_bodies WHERE id = ?')
+                  .bind(r.dest_body_id).first();
+                await this.env.DB
+                  .prepare(
+                    `INSERT OR IGNORE INTO chronicle_entries
+                      (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+                     VALUES (?, ?, ?, 'terraform_begun', ?, ?, ?, 'public', ?)`,
+                  )
+                  .bind(`c_tfb_${r.dest_body_id}_${tick}`, gameId, tick, r.owner_faction_id,
+                        r.dest_body_id,
+                        JSON.stringify({ faction_name: fac?.name ?? null, body_name: bodyName?.name ?? null, duration }),
+                        Date.now())
+                  .run();
+              } catch (e) { console.error('terraform_begun chronicle failed', e); }
+            }
+            await planLeg(r.origin_body_id);
+            continue;
+          }
+
+          // Loaded => the site, empty => the origin. Unconditional, same
+          // stuck-state lesson as the dyson branch.
+          await planLeg(cargoTotal > 0 ? r.dest_body_id : r.origin_body_id);
+          continue;
+        }
+
+        // DYSON SUPPLY RUN: dest is Sol itself. These routes feed the
+        // sphere, and they load from the faction POOL rather than the
+        // origin stockpile — collectors put 100% of yield into the pool,
+        // so their stockpiles are permanently empty and a stockpile
+        // pickup would haul nothing forever. The collector is the
+        // loading dock; the pool is what's on the dock.
+        const isDysonRun = r.dest_body_id === `${gameId}:sol`;
+        if (isDysonRun) {
+          const dg = await this.env.DB
+            .prepare(
+              `SELECT dyson_controller_faction_id AS ctrl,
+                      dyson_acc_ore, dyson_acc_credits, dyson_acc_science,
+                      dyson_target_ore, dyson_target_credits, dyson_target_science
+                 FROM games WHERE id = ?`,
+            )
+            .bind(gameId)
+            .first();
+          // The sphere changed hands (or fell) since this route was laid:
+          // its purpose is gone. Dump any cargo home and retire the route
+          // rather than delivering into a rival's wonder.
+          if (dg?.ctrl !== r.owner_faction_id) {
+            if (cargoTotal > 0) {
+              await this.env.DB
+                .prepare(
+                  `UPDATE game_factions
+                      SET fuel = fuel + ?, metal = metal + ?,
+                          gold = gold + ?, science = science + ?
+                    WHERE id = ?`,
+                )
+                .bind(cargoFuel, cargoMetal, cargoGold, cargoScience, r.owner_faction_id)
+                .run();
+            }
+            await this.env.DB
+              .prepare(`UPDATE game_trade_routes SET cancelled_at_tick = ?, cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0 WHERE id = ?`)
+              .bind(tick, r.id)
+              .run();
+            continue;
+          }
+
+          const need = {
+            m:  Math.max(0, (dg.dyson_target_ore     ?? 0) - (dg.dyson_acc_ore     ?? 0)),
+            g:  Math.max(0, (dg.dyson_target_credits ?? 0) - (dg.dyson_acc_credits ?? 0)),
+            sc: Math.max(0, (dg.dyson_target_science ?? 0) - (dg.dyson_acc_science ?? 0)),
+          };
+
+          if (here === r.origin_body_id && cargoTotal < 1) {
+            // LOAD at the collector: draw from the pool, capped by hold,
+            // pool balance, and what the sphere still needs per
+            // component (another freighter may land first — delivery
+            // clamps again and refunds any overflow to the pool).
+            const pool = await this.env.DB
+              .prepare('SELECT metal, gold, science FROM game_factions WHERE id = ?')
+              .bind(r.owner_faction_id)
+              .first();
+            const HOLD = Math.round(CARGO_CAP * traitMul(parseTraits(ship.captain_traits), 'cargoMul'));
+            const cm  = Math.max(0, Math.min(HOLD, Number(pool?.metal   ?? 0), need.m));
+            const cg  = Math.max(0, Math.min(HOLD, Number(pool?.gold    ?? 0), need.g));
+            const csc = Math.max(0, Math.min(HOLD, Number(pool?.science ?? 0), need.sc));
+            if (cm + cg + csc > 0) {
+              await this.env.DB
+                .prepare(
+                  `UPDATE game_factions
+                      SET metal = metal - ?, gold = gold - ?, science = science - ?
+                    WHERE id = ?`,
+                )
+                .bind(cm, cg, csc, r.owner_faction_id)
+                .run();
+            }
+            // Cycle even with an empty pool so the route retries.
+            await this.env.DB
+              .prepare(
+                `UPDATE game_trade_routes
+                    SET cargo_fuel = 0, cargo_metal = ?, cargo_gold = ?, cargo_science = ?,
+                        status = 'outbound'
+                  WHERE id = ?`,
+              )
+              .bind(cm, cg, csc, r.id)
+              .run();
+            await planLeg(r.dest_body_id);
+            continue;
+          }
+
+          if (here === r.dest_body_id) {
+            // DELIVER into the sphere, clamped by remaining need per
+            // component; anything the lattice can't take goes back to
+            // the pool instead of vanishing.
+            const addM  = Math.max(0, Math.min(cargoMetal,   need.m));
+            const addG  = Math.max(0, Math.min(cargoGold,    need.g));
+            const addSc = Math.max(0, Math.min(cargoScience, need.sc));
+            const backM  = cargoMetal   - addM;
+            const backG  = cargoGold    - addG;
+            const backSc = cargoScience - addSc;
+            const batch = [];
+            if (addM + addG + addSc > 0) {
+              batch.push(this.env.DB
+                .prepare(
+                  `UPDATE games
+                      SET dyson_acc_ore     = dyson_acc_ore     + ?,
+                          dyson_acc_credits = dyson_acc_credits + ?,
+                          dyson_acc_science = dyson_acc_science + ?
+                    WHERE id = ?`,
+                )
+                .bind(addM, addG, addSc, gameId));
+            }
+            if (cargoFuel + backM + backG + backSc > 0) {
+              batch.push(this.env.DB
+                .prepare(
+                  `UPDATE game_factions
+                      SET fuel = fuel + ?, metal = metal + ?,
+                          gold = gold + ?, science = science + ?
+                    WHERE id = ?`,
+                )
+                .bind(cargoFuel, backM, backG, backSc, r.owner_faction_id));
+            }
+            batch.push(this.env.DB
+              .prepare(
+                `UPDATE game_trade_routes
+                    SET cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0,
+                        status = 'returning'
+                  WHERE id = ?`,
+              )
+              .bind(r.id));
+            await this.env.DB.batch(batch);
+            await planLeg(r.origin_body_id);
+            continue;
+          }
+
+          // Any other state: nudge toward where the cargo says to go.
+          // Loaded → the sphere, empty → the collector. UNCONDITIONAL,
+          // not gated on being off both endpoints — a freighter sitting
+          // AT ITS ORIGIN with a full hold (player flew it home mid-run,
+          // or a leg got cancelled) matched no branch here and idled
+          // loaded forever: pickup wants an empty hold and the old
+          // off-course check excluded the origin. Verification catch,
+          // 2026-08-09.
+          await planLeg(cargoTotal > 0 ? r.dest_body_id : r.origin_body_id);
+          continue;
+        }
+
+        // ---- CROSS-FACTION PICKUP (standing agreement leg) ----------
+        //
+        // A self-haul route vacuums whatever its settlements happen to
+        // have. An agreement leg ships a CONTRACTED amount, drawn from
+        // the sender's pool — the same place a one-shot delivery draws
+        // from, so a standing deal and a single shipment cost the sender
+        // the same way.
+        //
+        // Cannot cover it? The whole agreement ends, both legs, right
+        // now (Lorne). Not a skipped run: a partner who cannot pay this
+        // cycle is a partner you should stop shipping to, and silently
+        // idling would leave the other side donating cargo indefinitely.
+        if (r.counterparty_faction_id && here === r.origin_body_id && cargoTotal < 1) {
+          const need = {
+            metal:   Number(r.per_run_metal   ?? 0),
+            fuel:    Number(r.per_run_fuel    ?? 0),
+            gold:    Number(r.per_run_gold    ?? 0),
+            science: Number(r.per_run_science ?? 0),
+          };
+          const pool = await this.env.DB
+            .prepare('SELECT metal, fuel, gold, science FROM game_factions WHERE id = ?')
+            .bind(r.owner_faction_id).first();
+          const short = !pool
+            || Number(pool.metal   ?? 0) < need.metal
+            || Number(pool.fuel    ?? 0) < need.fuel
+            || Number(pool.gold    ?? 0) < need.gold
+            || Number(pool.science ?? 0) < need.science;
+          if (short) {
+            try {
+              const ta = await import('./tradeAgreements.js');
+              const ag = await this.env.DB
+                .prepare('SELECT * FROM trade_agreements WHERE id = ?')
+                .bind(r.agreement_id).first();
+              if (ag) {
+                await ta.endAgreement(this.env, gameId, ag, 'starved', tick, {
+                  byFactionId: r.owner_faction_id,
+                  detail: 'A scheduled shipment could not be covered from the sender\'s stores.',
+                });
+              }
+            } catch (e) {
+              console.error('trade route: starve handling failed', e, { routeId: r.id });
+            }
+            continue;
+          }
+          await this.env.DB
+            .prepare(
+              `UPDATE game_factions
+                  SET metal = metal - ?, fuel = fuel - ?, gold = gold - ?, science = science - ?
+                WHERE id = ?`,
+            )
+            .bind(need.metal, need.fuel, need.gold, need.science, r.owner_faction_id)
+            .run();
+          await this.env.DB
+            .prepare(
+              `UPDATE game_trade_routes
+                  SET cargo_metal = ?, cargo_fuel = ?, cargo_gold = ?, cargo_science = ?,
+                      status = 'outbound'
+                WHERE id = ?`,
+            )
+            .bind(need.metal, need.fuel, need.gold, need.science, r.id)
+            .run();
+          await planLeg(r.dest_body_id);
+          continue;
+        }
+
+        if (here === r.origin_body_id && cargoTotal < 1) {
+          // PICKUP: vacuum from settlement stockpiles at origin.
+          const stocks = (await this.env.DB
+            .prepare(
+              `SELECT id, stockpile_fuel, stockpile_metal, stockpile_gold, stockpile_science
+                 FROM game_settlements
+                WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
+                  AND destroyed_at_tick IS NULL`,
+            )
+            .bind(gameId, r.origin_body_id, r.owner_faction_id)
+            .all()).results ?? [];
+          // Quartermaster captain (spec §3): +25% hold on this freighter.
+          const HOLD = Math.round(CARGO_CAP * traitMul(parseTraits(ship.captain_traits), 'cargoMul'));
+          let cf = 0, cm = 0, cg = 0, csci = 0;
+          for (const s of stocks) {
+            const take = {
+              f:  Math.min(HOLD - cf,   Number(s.stockpile_fuel    ?? 0)),
+              m:  Math.min(HOLD - cm,   Number(s.stockpile_metal   ?? 0)),
+              g:  Math.min(HOLD - cg,   Number(s.stockpile_gold    ?? 0)),
+              sc: Math.min(HOLD - csci, Number(s.stockpile_science ?? 0)),
+            };
+            if (take.f + take.m + take.g + take.sc <= 0) continue;
+            cf += take.f; cm += take.m; cg += take.g; csci += take.sc;
+            await this.env.DB
+              .prepare(
+                `UPDATE game_settlements
+                    SET stockpile_fuel    = stockpile_fuel    - ?,
+                        stockpile_metal   = stockpile_metal   - ?,
+                        stockpile_gold    = stockpile_gold    - ?,
+                        stockpile_science = stockpile_science - ?
+                  WHERE id = ?`,
+              )
+              .bind(take.f, take.m, take.g, take.sc, s.id)
+              .run();
+            if (cf >= HOLD && cm >= HOLD && cg >= HOLD && csci >= HOLD) break;
+          }
+          // Always plan the outbound leg — even an empty stockpile
+          // sends the freighter cycling so it'll try again next loop.
+          await this.env.DB
+            .prepare(
+              `UPDATE game_trade_routes
+                  SET cargo_fuel = ?, cargo_metal = ?, cargo_gold = ?, cargo_science = ?,
+                      status = 'outbound'
+                WHERE id = ?`,
+            )
+            .bind(cf, cm, cg, csci, r.id)
+            .run();
+          await planLeg(r.dest_body_id);
+          continue;
+        }
+
+        // ---- CROSS-FACTION DELIVERY (standing agreement leg) --------
+        //
+        // Credits the PARTNER, not the owner, minus the tariff that was
+        // snapshotted when the deal was struck. Then turns around and
+        // does it again — that repetition is the whole feature.
+        if (r.counterparty_faction_id && here === r.dest_body_id) {
+          const skim = Math.max(0, Math.min(100, Number(r.tariff_pct ?? 0))) / 100;
+          const net = {
+            metal:   Math.floor(cargoMetal   * (1 - skim)),
+            fuel:    Math.floor(cargoFuel    * (1 - skim)),
+            gold:    Math.floor(cargoGold    * (1 - skim)),
+            science: Math.floor(cargoScience * (1 - skim)),
+          };
+          const shipped = cargoMetal + cargoFuel + cargoGold + cargoScience;
+          if (shipped > 0) {
+            await this.env.DB
+              .prepare(
+                `UPDATE game_factions
+                    SET metal = metal + ?, fuel = fuel + ?, gold = gold + ?, science = science + ?
+                  WHERE id = ?`,
+              )
+              .bind(net.metal, net.fuel, net.gold, net.science, r.counterparty_faction_id)
+              .run();
+            // Delivered science is INCOME this tick, not just bank —
+            // the research drain clamps spend to income, and without
+            // this a trade-fed faction banks science forever without
+            // advancing a tech. Same fix the self-haul branch carries.
+            if (net.science > 0) {
+              scienceIncomeByFaction.set(
+                r.counterparty_faction_id,
+                (scienceIncomeByFaction.get(r.counterparty_faction_id) ?? 0) + net.science,
+              );
+            }
+          }
+          const loops = Number(r.loops_completed ?? 0) + 1;
+          await this.env.DB
+            .prepare(
+              `UPDATE game_trade_routes
+                  SET cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0,
+                      status = 'returning', loops_completed = ?
+                WHERE id = ?`,
+            )
+            .bind(loops, r.id)
+            .run();
+
+          // A LINE IN THE LOG ON EVERY LOOP (Lorne). The point is that a
+          // standing route is automation, and automation that produces
+          // resources invisibly is indistinguishable from a bug — or
+          // from free money nobody is accounting for. Visible to the two
+          // parties ONLY: who trades with whom, and how much, is exactly
+          // the commercial intelligence the Sensors track exists to sell.
+          try {
+            await this.env.DB
+              .prepare(
+                `INSERT INTO chronicle_entries
+                   (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
+                 VALUES (?, ?, ?, 'trade_route_run', ?, ?, ?, ?)`,
+              )
+              .bind(
+                // Deterministic id (route + tick) — the same convention
+                // as fleet_flag_lost above. crypto.randomUUID would work
+                // too, but a stable id means a retried tick writes the
+                // SAME row id and the second insert fails instead of
+                // logging the loop twice.
+                `c_trr_${r.id.slice(-10)}_${tick}`, gameId, tick, r.owner_faction_id,
+                JSON.stringify({
+                  agreement_id: r.agreement_id,
+                  route_id: r.id,
+                  loop: loops,
+                  sender_faction_id: r.owner_faction_id,
+                  recipient_faction_id: r.counterparty_faction_id,
+                  delivered: net,
+                  tariff_pct: Number(r.tariff_pct ?? 0),
+                  // Gross vs net so the skim is legible rather than
+                  // looking like the numbers simply don't add up.
+                  gross: { metal: cargoMetal, fuel: cargoFuel, gold: cargoGold, science: cargoScience },
+                }),
+                JSON.stringify([r.owner_faction_id, r.counterparty_faction_id]),
+                Date.now(),
+              )
+              .run();
+          } catch (e) {
+            console.error('trade route: run log failed', e, { routeId: r.id });
+          }
+          await planLeg(r.origin_body_id);
+          continue;
+        }
+
+        if (here === r.dest_body_id) {
+          // DELIVERY: dump whatever's in the hold and cycle back home.
+          // Previously this required cargoTotal > 0, but a freighter
+          // that picked up an empty stockpile arrives at dest with
+          // nothing in the hold and got STUCK (DELIVERY didn't fire
+          // and the nudge saw here === target). That's what the
+          // playtester saw as "trade routes aren't repeating".
+          // Only bump trades_completed for cargo-bearing deliveries
+          // so the counter still tracks real runs.
+          const batch = [
+            this.env.DB
+              .prepare(
+                `UPDATE game_factions
+                    SET fuel    = fuel    + ?,
+                        metal   = metal   + ?,
+                        gold    = gold    + ?,
+                        science = science + ?
+                  WHERE id = ?`,
+              )
+              .bind(cargoFuel, cargoMetal, cargoGold, cargoScience, r.owner_faction_id),
+            this.env.DB
+              .prepare(
+                `UPDATE game_trade_routes
+                    SET cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0,
+                        status = 'returning'
+                  WHERE id = ?`,
+              )
+              .bind(r.id),
+          ];
+          // Delivered science counts as INCOME this tick, not just bank.
+          // The research drain clamps spend to income, so without this a
+          // trade-fed faction banked science forever without advancing a
+          // tech (playtest report). Additive — the harvest pass adds its
+          // settlement yield to the same map later in the tick.
+          if (cargoScience > 0) {
+            scienceIncomeByFaction.set(
+              r.owner_faction_id,
+              (scienceIncomeByFaction.get(r.owner_faction_id) ?? 0) + cargoScience,
+            );
+          }
+          if (cargoTotal > 0) {
+            batch.push(
+              this.env.DB
+                .prepare('UPDATE game_ships SET trades_completed = trades_completed + 1 WHERE id = ?')
+                .bind(r.ship_id),
+            );
+          }
+          await this.env.DB.batch(batch);
+          await planLeg(r.origin_body_id);
+          continue;
+        }
+
+        // Otherwise (off-course or at correct endpoint with wrong cargo
+        // phase), nudge the freighter toward whichever endpoint matches
+        // the current status. This recovers from a player manually
+        // flying the ship off-route.
+        const target = r.status === 'outbound' ? r.dest_body_id : r.origin_body_id;
+        if (here !== target) {
+          await planLeg(target);
+        }
+       } catch (routeErr) {
+         // One route blew up — log it and move on to the next so a
+         // single bad route can't freeze everyone else's logistics.
+         console.error('trade route failed for ship', r.ship_id, routeErr);
+       }
+      }
+
+      // A single-route dispatch (the route was just created) has no
+      // business driving everyone else’s trade deliveries — it owes
+      // THIS ship a first leg and nothing more. The tick pass still
+      // runs 2d normally.
+      if (onlyRouteId) return;
+
+      // 2d. Trade DELIVERY auto-pilot — physical inter-player trades.
+      //
+      // Lives inside the same try as 2c so it shares bodyPosAt /
+      // computeLegTicks and their caches. Each accepted trade leg
+      // (trade_deliveries, migration 0041) with an assigned freighter
+      // is driven through: burn to the sender's collector → load
+      // (debit the sender's pool — the FIRST moment the goods exist
+      // anywhere) → burn to the recipient's collector → credit their
+      // pool, minus the tariff snapshotted at accept.
+      //
+      // Movement authority mirrors 2c exactly: skip anything with an
+      // in-flight node, plan at most one leg per tick. A freighter
+      // that ends up somewhere unexpected (retreat, manual detour
+      // before the block in handleCommitTransfer, arrival body lost)
+      // self-heals — every tick it's idle and off-script, we just plan
+      // the leg it should be flying.
+      try {
+        const deliveries = (await this.env.DB
+          .prepare(
+            `SELECT * FROM trade_deliveries
+              WHERE game_id = ? AND resolved_at_tick IS NULL
+                AND ship_id IS NOT NULL
+                AND status IN ('to_pickup', 'outbound')`,
+          )
+          .bind(gameId)
+          .all()).results ?? [];
+
+        for (const d of deliveries) {
+         try {
+          // Embargoed senders can't run shipments — same senate lever
+          // that freezes their trade routes.
+          if (await sanctioned(d.sender_faction_id, 'trade_embargo')) continue;
+
+          const ship = await this.env.DB
+            .prepare("SELECT id, parent_body_id, status FROM game_ships WHERE id = ?")
+            .bind(d.ship_id).first();
+          if (!ship || ship.status !== 'active') {
+            // Freighter died and the piracy block didn't resolve this
+            // row (e.g. destroyed by something with no kill credit).
+            // Loaded cargo goes down with the ship; an unloaded leg
+            // returns to the pool of assignable obligations.
+            if (d.loaded === 1) {
+              await this.env.DB
+                .prepare(`UPDATE trade_deliveries SET status = 'lost', resolved_at_tick = ? WHERE id = ?`)
+                .bind(tick, d.id).run();
+            } else {
+              await this.env.DB
+                .prepare(`UPDATE trade_deliveries SET ship_id = NULL, pickup_body_id = NULL, status = 'unassigned' WHERE id = ?`)
+                .bind(d.id).run();
+            }
+            continue;
+          }
+
+          const inFlight = await this.env.DB
+            .prepare("SELECT 1 AS x FROM game_ship_nodes WHERE ship_id = ? AND status IN ('committed','in_transit') LIMIT 1")
+            .bind(d.ship_id).first();
+          if (inFlight) continue;
+
+          const here = ship.parent_body_id;
+          const planDeliveryLeg = async (targetBodyId) => {
+            const legTicks = await computeLegTicks(
+              d.sender_faction_id, here, targetBodyId, tick,
+            );
+            const seqRow = await this.env.DB
+              .prepare('SELECT MAX(sequence) AS m FROM game_ship_nodes WHERE ship_id = ?')
+              .bind(d.ship_id).first();
+            const seq = (seqRow?.m ?? -1) + 1;
+            const nodeId = `${d.ship_id}:td${tick}:n${seq}`;
+            await this.env.DB
+              .prepare(
+                `INSERT INTO game_ship_nodes
+                   (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
+                    scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
+                    status, committed_at_tick)
+                 VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, 0, 0, 0, 0, 'committed', ?)`,
+              )
+              .bind(nodeId, gameId, d.ship_id, seq, targetBodyId, tick, tick + legTicks, tick)
+              .run();
+          };
+
+          if (d.status === 'to_pickup') {
+            if (here !== d.pickup_body_id) { await planDeliveryLeg(d.pickup_body_id); continue; }
+            // At the collector: load. The debit is guarded — if the
+            // sender's pool can't cover the manifest right now, the
+            // freighter just WAITS here and we retry every tick. The
+            // deal was allowed to out-promise the treasury at accept;
+            // this is where that promise has to be made good.
+            const upd = await this.env.DB
+              .prepare(
+                `UPDATE game_factions
+                    SET metal = metal - ?, fuel = fuel - ?, gold = gold - ?, science = science - ?
+                  WHERE id = ? AND game_id = ?
+                    AND metal >= ? AND fuel >= ? AND gold >= ? AND science >= ?`,
+              )
+              .bind(
+                d.metal, d.fuel, d.gold, d.science,
+                d.sender_faction_id, gameId,
+                d.metal, d.fuel, d.gold, d.science,
+              )
+              .run();
+            if ((upd.meta?.changes ?? 0) === 0) continue;   // awaiting funds
+            await this.env.DB
+              .prepare(`UPDATE trade_deliveries SET loaded = 1, status = 'outbound' WHERE id = ?`)
+              .bind(d.id).run();
+            await planDeliveryLeg(d.dest_body_id);
+          } else if (d.status === 'outbound') {
+            if (here !== d.dest_body_id) { await planDeliveryLeg(d.dest_body_id); continue; }
+            // Arrived. Credit the recipient minus the accept-time
+            // tariff snapshot; floors so the skim can't mint units.
+            const mul = 1 - Math.max(0, Math.min(100, d.tariff_pct ?? 0)) / 100;
+            await this.env.DB
+              .prepare(
+                `UPDATE game_factions
+                    SET metal = metal + ?, fuel = fuel + ?, gold = gold + ?, science = science + ?
+                  WHERE id = ? AND game_id = ?`,
+              )
+              .bind(
+                Math.floor(d.metal * mul), Math.floor(d.fuel * mul),
+                Math.floor(d.gold * mul), Math.floor(d.science * mul),
+                d.recipient_faction_id, gameId,
+              )
+              .run();
+            await this.env.DB
+              .prepare(`UPDATE trade_deliveries SET status = 'delivered', resolved_at_tick = ? WHERE id = ?`)
+              .bind(tick, d.id).run();
+            try {
+              await this.env.DB
+                .prepare(
+                  `INSERT INTO chronicle_entries
+                     (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
+                   VALUES (?, ?, ?, 'trade_delivered', ?, ?, ?, 'public', ?)`,
+                )
+                .bind(
+                  `c_td_${d.id}_${tick}`, gameId, tick,
+                  d.sender_faction_id, d.dest_body_id,
+                  JSON.stringify({
+                    trade_id: d.trade_id,
+                    sender_faction_id: d.sender_faction_id,
+                    recipient_faction_id: d.recipient_faction_id,
+                    ship_id: d.ship_id,
+                    metal: d.metal, fuel: d.fuel, gold: d.gold, science: d.science,
+                    tariff_pct: d.tariff_pct ?? 0,
+                  }),
+                  Date.now(),
+                )
+                .run();
+            } catch (e) {
+              console.error('trade_delivered chronicle insert failed', e);
+            }
+          }
+         } catch (deliveryErr) {
+           // Same isolation contract as routes: one broken shipment
+           // must not strand every other convoy in the game.
+           console.error('trade delivery failed for ship', d.ship_id, deliveryErr);
+         }
+        }
+      } catch (e) {
+        console.error('trade-delivery auto-pilot failed', e);
+      }
+    } catch (e) {
+      console.error('trade-route auto-pilot failed', e);
+    }
   }
 
   async resolveTick(gameId, tick) {
@@ -1680,953 +2700,7 @@ export class Room {
     // existing scheduled_t/arrival_at_tick path in 2a/2b is the single
     // source of truth for "ship is in transit" so we don't need to
     // re-implement the Bezier model.
-    try {
-      // Per-resource cargo cap. Raised 50 -> 500 alongside the
-      // 10%/90% economy rewrite — non-collector stockpiles now grow
-      // fast enough that a 50-unit hold was a thimble. 500 lets one
-      // freighter visit empty a typical settlement stockpile in one
-      // round trip while keeping tonnage a real ship stat (a busy
-      // hub may still need multiple runs).
-      const CARGO_CAP = 500;
-      const routes = (await this.env.DB
-        .prepare(
-          // The agreement columns MUST be selected here: the standing-
-          // route branches gate on r.counterparty_faction_id, and an
-          // unselected column reads as undefined — which is falsy, which
-          // silently turns every agreement leg back into a self-haul
-          // route. sim/tradeRoutes.mjs caught exactly that on its first
-          // run (loops=0 while everything else "worked").
-          `SELECT id, owner_faction_id, ship_id, origin_body_id, dest_body_id, status, kind,
-                  cargo_fuel, cargo_metal, cargo_gold, cargo_science,
-                  counterparty_faction_id, agreement_id, tariff_pct,
-                  per_run_metal, per_run_fuel, per_run_gold, per_run_science,
-                  loops_completed
-             FROM game_trade_routes
-            WHERE game_id = ? AND cancelled_at_tick IS NULL`,
-        )
-        .bind(gameId)
-        .all()).results ?? [];
-
-      // Helper: recursive heliocentric body position. Mirrors the
-      // client's bodyPosition in src/physics/orbitalMechanics.ts —
-      // the legacy circular-orbit shortcut. Rogue Kuiper asteroids
-      // with eccentric Kepler elements (orbit_rp/ra/omega/m0) aren't
-      // valid trade-route endpoints in v1, so we don't need the
-      // Kepler propagator here. Cached per-call to avoid re-querying
-      // the same parent body multiple times in one leg lookup.
-      const TWO_PI = 2 * Math.PI;
-      const bodyCache = new Map();
-      const fetchBody = async (id) => {
-        if (bodyCache.has(id)) return bodyCache.get(id);
-        const row = await this.env.DB
-          .prepare(
-            `SELECT id, parent_body_id, orbit_radius, orbit_period, angle0
-               FROM game_bodies WHERE id = ? AND game_id = ?`,
-          )
-          .bind(id, gameId)
-          .first();
-        bodyCache.set(id, row);
-        return row;
-      };
-      const bodyPosAt = async (id, t) => {
-        const b = await fetchBody(id);
-        if (!b || b.parent_body_id == null) return { x: 0, y: 0 };
-        const parent = await bodyPosAt(b.parent_body_id, t);
-        const angle = (b.angle0 ?? 0) + TWO_PI * t / (b.orbit_period || 1);
-        return {
-          x: parent.x + Math.cos(angle) * (b.orbit_radius ?? 0),
-          y: parent.y + Math.sin(angle) * (b.orbit_radius ?? 0),
-        };
-      };
-
-      // Torch trip-time. Mirrors planTorchTransfer in
-      // src/physics/torchTransfer.ts — closed-form brachistochrone
-      // T = 2·√(d/a) for symmetric accel, with a 5-iteration
-      // intercept refinement so target-body motion during the trip
-      // is accounted for. Returns an integer tick count >= 1.
-      //
-      // Previously this used a hard-coded LEG_TICKS = 60. For a short
-      // Jupiter-system moon-hop (Europa↔Ganymede ≈ 30 units, T ≈ 2)
-      // that gave the client a 60-tick window to run the torch
-      // integrator at full thrust both directions — producing the
-      // 23,000-unit overshoot zigzags the player reported.
-      const G_ANCHOR = 4 * 132.6;            // mirror physics/torchTransfer.ts
-      const DEFAULT_ENGINE_G = 0.05;
-      const fromG = (g) => g * G_ANCHOR;
-      const factionAccelCache = new Map();
-      const getFactionAccel = async (factionId) => {
-        if (factionAccelCache.has(factionId)) return factionAccelCache.get(factionId);
-        const f = await this.env.DB
-          .prepare('SELECT engine_g FROM game_factions WHERE id = ?')
-          .bind(factionId)
-          .first();
-        const g = f?.engine_g ?? DEFAULT_ENGINE_G;
-        const accel = fromG(g);
-        factionAccelCache.set(factionId, accel);
-        return accel;
-      };
-      const computeLegTicks = async (factionId, originId, destId, refTick) => {
-        const accel = await getFactionAccel(factionId);
-        const startPos = await bodyPosAt(originId, refTick);
-        let T = 1;
-        for (let i = 0; i < 5; i++) {
-          const destPos = await bodyPosAt(destId, refTick + T);
-          const dx = destPos.x - startPos.x;
-          const dy = destPos.y - startPos.y;
-          const d = Math.sqrt(dx * dx + dy * dy);
-          const Tnew = 2 * Math.sqrt(Math.max(d, 0.01) / accel);
-          if (Math.abs(Tnew - T) < 0.05) { T = Tnew; break; }
-          T = Tnew;
-        }
-        // Clamp to integer ticks >= 1. Aggressively short trips (T<1)
-        // still need at least one tick so the depart→arrive state
-        // machine has room to fire 2a then 2b.
-        return Math.max(1, Math.ceil(T));
-      };
-
-      for (const r of routes) {
-       // Per-route isolation: wrap each route so one bad route (a
-       // throwing sanction check, a missing body in computeLegTicks,
-       // etc.) can't abort the WHOLE loop and freeze every other
-       // player's freighters. The outer try/catch logs; this inner one
-       // keeps the remaining routes moving.
-       try {
-        if (r.status === 'paused') continue;
-        const ship = await this.env.DB
-          .prepare(`SELECT s.id, s.owner_faction_id, s.parent_body_id, s.ship_class, s.status,
-                           c.traits_json AS captain_traits
-                      FROM game_ships s LEFT JOIN game_captains c ON c.id = s.captain_id
-                     WHERE s.id = ?`)
-          .bind(r.ship_id).first();
-        // Dead or missing freighter → cancel the route so we don't keep
-        // scanning it. Piracy step (below) handles cargo capture if the
-        // freighter died this tick.
-        if (!ship || ship.status !== 'active') {
-          // An agreement leg's death ends the WHOLE DEAL, both legs,
-          // with notifications (Lorne: "trade ships killed in conflict"
-          // is one of the two things that break a standing route). A
-          // plain self-haul route just cancels quietly as before.
-          if (r.agreement_id) {
-            try {
-              const ta = await import('./tradeAgreements.js');
-              const ag = await this.env.DB
-                .prepare('SELECT * FROM trade_agreements WHERE id = ?')
-                .bind(r.agreement_id).first();
-              if (ag) {
-                await ta.endAgreement(this.env, gameId, ag, 'ship_lost', tick, {
-                  byFactionId: r.owner_faction_id,
-                  detail: 'The freighter flying one of the legs was destroyed.',
-                });
-                continue;   // endAgreement cancelled every leg already
-              }
-            } catch (e) {
-              console.error('trade route: ship-loss agreement end failed', e, { routeId: r.id });
-            }
-          }
-          await this.env.DB
-            .prepare('UPDATE game_trade_routes SET cancelled_at_tick = ? WHERE id = ?')
-            .bind(tick, r.id).run();
-          continue;
-        }
-        // Senate trade embargo: if this route's owner is under embargo
-        // right now, the freighter sits idle this tick — no pickup, no
-        // delivery, no new leg planned. Resumes the moment the embargo
-        // expires (senate_effects.active_until_tick clears).
-        if (await sanctioned(r.owner_faction_id, 'trade_embargo')) continue;
-        if (ship.ship_class !== 'freighter') continue;
-
-        // Skip if already mid-transit (any committed or in_transit node).
-        const inFlight = await this.env.DB
-          .prepare("SELECT 1 AS x FROM game_ship_nodes WHERE ship_id = ? AND status IN ('committed','in_transit') LIMIT 1")
-          .bind(r.ship_id).first();
-        if (inFlight) continue;
-
-        const here = ship.parent_body_id;
-        const cargoFuel    = Number(r.cargo_fuel    ?? 0);
-        const cargoMetal   = Number(r.cargo_metal   ?? 0);
-        const cargoGold    = Number(r.cargo_gold    ?? 0);
-        const cargoScience = Number(r.cargo_science ?? 0);
-        const cargoTotal = cargoFuel + cargoMetal + cargoGold + cargoScience;
-
-        const planLeg = async (targetBodyId) => {
-          // Insert a committed node toward targetBodyId. 2a will flip
-          // it to in_transit next tick; 2b will arrive it at the
-          // computed arrival tick. Trip time uses real torch math
-          // (computeLegTicks above) so the client's reconstructed
-          // plan agrees on the timing — without that the client's
-          // integrator runs full thrust over an inflated arrival
-          // window and produces zigzag overshoot trajectories.
-          const legTicks = await computeLegTicks(
-            r.owner_faction_id, here, targetBodyId, tick,
-          );
-          const seqRow = await this.env.DB
-            .prepare('SELECT MAX(sequence) AS m FROM game_ship_nodes WHERE ship_id = ?')
-            .bind(r.ship_id).first();
-          const seq = (seqRow?.m ?? -1) + 1;
-          const nodeId = `${r.ship_id}:tr${tick}:n${seq}`;
-          await this.env.DB
-            .prepare(
-              `INSERT INTO game_ship_nodes
-                 (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
-                  scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
-                  status, committed_at_tick)
-               VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, 0, 0, 0, 0, 'committed', ?)`,
-            )
-            .bind(nodeId, gameId, r.ship_id, seq, targetBodyId, tick, tick + legTicks, tick)
-            .run();
-        };
-
-        // TERRAFORM SUPPLY RUN: dest is a raw world being terraformed.
-        // Same physical-logistics shape as the dyson branch below — load
-        // metal+credits from the pool at a terraformed origin, haul,
-        // deliver into the BODY's terraform meter. When the meter fills,
-        // the transformation window opens; tickTerraforming flips the
-        // world when it elapses. The meter living on the body is the
-        // king-of-the-hill rule again: conquer mid-terraform and the
-        // progress is simply yours.
-        if (r.kind === 'terraform') {
-          const tb = await this.env.DB
-            .prepare(
-              `SELECT owner_faction_id, terraformed_at_tick,
-                      terraform_acc_metal, terraform_acc_gold,
-                      terraform_completes_at_tick
-                 FROM game_bodies
-                WHERE id = ? AND game_id = ? AND destroyed_at_tick IS NULL`,
-            )
-            .bind(r.dest_body_id, gameId)
-            .first();
-          // ESCALATING COST. The Nth terraform costs base x growth^(N-1),
-          // counted on worlds this faction has ALREADY finished. At the
-          // default growth of 1.0 this is exactly flat and the pow() is a
-          // no-op; above 1.0 it is the brake on a runaway leader, who pays
-          // more for their ninth world than a rival pays for their second.
-          //
-          // Counted from finished worlds only, not from in-flight meters:
-          // otherwise two routes opened the same tick would each inflate
-          // the other's price and the pair would deadlock mid-delivery.
-          // The capital is excluded by construction — it starts terraformed
-          // and is counted, so the first PURCHASED world is already N=2 if
-          // you seeded terraformed worlds. See the sweep for what that
-          // does to the curve.
-          const TF_GROWTH = Number(CFG.terraform_cost_growth ?? 1.0);
-          let tfDone = 0;
-          if (TF_GROWTH > 1.0) {
-            const c = await this.env.DB
-              .prepare(
-                `SELECT COUNT(*) n FROM game_bodies
-                  WHERE game_id = ? AND owner_faction_id = ?
-                    AND terraformed_at_tick IS NOT NULL
-                    AND destroyed_at_tick IS NULL`,
-              )
-              .bind(gameId, r.owner_faction_id)
-              .first();
-            tfDone = Math.max(0, Number(c?.n ?? 0));
-          }
-          const tfMul = TF_GROWTH > 1.0 ? Math.pow(TF_GROWTH, tfDone) : 1;
-          const TF_COST_M = Math.round(Number(CFG.terraform_cost_metal ?? 124) * tfMul);
-          const TF_COST_G = Math.round(Number(CFG.terraform_cost_credits ?? 124) * tfMul);
-          // Route retires when its job is gone: body destroyed, already
-          // terraformed, payload delivered (window running), or the
-          // world changed hands. Cargo always goes home, never vanishes.
-          const jobDone = !tb
-            || tb.terraformed_at_tick != null
-            || tb.terraform_completes_at_tick != null
-            || tb.owner_faction_id !== r.owner_faction_id;
-          if (jobDone) {
-            if (cargoTotal > 0) {
-              await this.env.DB
-                .prepare(
-                  `UPDATE game_factions
-                      SET fuel = fuel + ?, metal = metal + ?,
-                          gold = gold + ?, science = science + ?
-                    WHERE id = ?`,
-                )
-                .bind(cargoFuel, cargoMetal, cargoGold, cargoScience, r.owner_faction_id)
-                .run();
-            }
-            await this.env.DB
-              .prepare(`UPDATE game_trade_routes SET cancelled_at_tick = ?, cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0 WHERE id = ?`)
-              .bind(tick, r.id)
-              .run();
-            continue;
-          }
-
-          const needM = Math.max(0, TF_COST_M - (tb.terraform_acc_metal ?? 0));
-          const needG = Math.max(0, TF_COST_G - (tb.terraform_acc_gold ?? 0));
-
-          if (here === r.origin_body_id && cargoTotal < 1) {
-            // LOAD from the pool at the terraformed origin, capped by
-            // hold, balance, and remaining need per component.
-            const pool = await this.env.DB
-              .prepare('SELECT metal, gold FROM game_factions WHERE id = ?')
-              .bind(r.owner_faction_id)
-              .first();
-            const HOLD = Math.round(CARGO_CAP * traitMul(parseTraits(ship.captain_traits), 'cargoMul'));
-            const cm = Math.max(0, Math.min(HOLD, Number(pool?.metal ?? 0), needM));
-            const cg = Math.max(0, Math.min(HOLD, Number(pool?.gold  ?? 0), needG));
-            if (cm + cg > 0) {
-              await this.env.DB
-                .prepare('UPDATE game_factions SET metal = metal - ?, gold = gold - ? WHERE id = ?')
-                .bind(cm, cg, r.owner_faction_id)
-                .run();
-            }
-            await this.env.DB
-              .prepare(
-                `UPDATE game_trade_routes
-                    SET cargo_fuel = 0, cargo_metal = ?, cargo_gold = ?, cargo_science = 0,
-                        status = 'outbound'
-                  WHERE id = ?`,
-              )
-              .bind(cm, cg, r.id)
-              .run();
-            await planLeg(r.dest_body_id);
-            continue;
-          }
-
-          if (here === r.dest_body_id) {
-            // DELIVER into the meter, clamped; overflow home to pool.
-            const addM = Math.max(0, Math.min(cargoMetal, needM));
-            const addG = Math.max(0, Math.min(cargoGold,  needG));
-            const backM = cargoMetal - addM;
-            const backG = cargoGold  - addG;
-            const accM = (tb.terraform_acc_metal ?? 0) + addM;
-            const accG = (tb.terraform_acc_gold  ?? 0) + addG;
-            const full = accM >= TF_COST_M && accG >= TF_COST_G;
-            const duration = Math.max(1, Number(CFG.terraform_duration_ticks ?? 24));
-            const batch = [
-              this.env.DB
-                .prepare(
-                  `UPDATE game_bodies
-                      SET terraform_acc_metal = ?, terraform_acc_gold = ?,
-                          terraform_completes_at_tick = COALESCE(terraform_completes_at_tick, ?)
-                    WHERE id = ? AND game_id = ?`,
-                )
-                .bind(accM, accG, full ? tick + duration : null, r.dest_body_id, gameId),
-              this.env.DB
-                .prepare(
-                  `UPDATE game_trade_routes
-                      SET cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0,
-                          status = 'returning'
-                    WHERE id = ?`,
-                )
-                .bind(r.id),
-            ];
-            if (cargoFuel + backM + backG + cargoScience > 0) {
-              batch.push(this.env.DB
-                .prepare(
-                  `UPDATE game_factions
-                      SET fuel = fuel + ?, metal = metal + ?,
-                          gold = gold + ?, science = science + ?
-                    WHERE id = ?`,
-                )
-                .bind(cargoFuel, backM, backG, cargoScience, r.owner_faction_id));
-            }
-            await this.env.DB.batch(batch);
-            if (full) {
-              // Payload complete — the transformation window opens.
-              // Public: cranes over a world are visible from orbit.
-              try {
-                const fac = await this.env.DB
-                  .prepare('SELECT name FROM game_factions WHERE id = ?')
-                  .bind(r.owner_faction_id).first();
-                const bodyName = await this.env.DB
-                  .prepare('SELECT name FROM game_bodies WHERE id = ?')
-                  .bind(r.dest_body_id).first();
-                await this.env.DB
-                  .prepare(
-                    `INSERT OR IGNORE INTO chronicle_entries
-                      (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
-                     VALUES (?, ?, ?, 'terraform_begun', ?, ?, ?, 'public', ?)`,
-                  )
-                  .bind(`c_tfb_${r.dest_body_id}_${tick}`, gameId, tick, r.owner_faction_id,
-                        r.dest_body_id,
-                        JSON.stringify({ faction_name: fac?.name ?? null, body_name: bodyName?.name ?? null, duration }),
-                        Date.now())
-                  .run();
-              } catch (e) { console.error('terraform_begun chronicle failed', e); }
-            }
-            await planLeg(r.origin_body_id);
-            continue;
-          }
-
-          // Loaded => the site, empty => the origin. Unconditional, same
-          // stuck-state lesson as the dyson branch.
-          await planLeg(cargoTotal > 0 ? r.dest_body_id : r.origin_body_id);
-          continue;
-        }
-
-        // DYSON SUPPLY RUN: dest is Sol itself. These routes feed the
-        // sphere, and they load from the faction POOL rather than the
-        // origin stockpile — collectors put 100% of yield into the pool,
-        // so their stockpiles are permanently empty and a stockpile
-        // pickup would haul nothing forever. The collector is the
-        // loading dock; the pool is what's on the dock.
-        const isDysonRun = r.dest_body_id === `${gameId}:sol`;
-        if (isDysonRun) {
-          const dg = await this.env.DB
-            .prepare(
-              `SELECT dyson_controller_faction_id AS ctrl,
-                      dyson_acc_ore, dyson_acc_credits, dyson_acc_science,
-                      dyson_target_ore, dyson_target_credits, dyson_target_science
-                 FROM games WHERE id = ?`,
-            )
-            .bind(gameId)
-            .first();
-          // The sphere changed hands (or fell) since this route was laid:
-          // its purpose is gone. Dump any cargo home and retire the route
-          // rather than delivering into a rival's wonder.
-          if (dg?.ctrl !== r.owner_faction_id) {
-            if (cargoTotal > 0) {
-              await this.env.DB
-                .prepare(
-                  `UPDATE game_factions
-                      SET fuel = fuel + ?, metal = metal + ?,
-                          gold = gold + ?, science = science + ?
-                    WHERE id = ?`,
-                )
-                .bind(cargoFuel, cargoMetal, cargoGold, cargoScience, r.owner_faction_id)
-                .run();
-            }
-            await this.env.DB
-              .prepare(`UPDATE game_trade_routes SET cancelled_at_tick = ?, cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0 WHERE id = ?`)
-              .bind(tick, r.id)
-              .run();
-            continue;
-          }
-
-          const need = {
-            m:  Math.max(0, (dg.dyson_target_ore     ?? 0) - (dg.dyson_acc_ore     ?? 0)),
-            g:  Math.max(0, (dg.dyson_target_credits ?? 0) - (dg.dyson_acc_credits ?? 0)),
-            sc: Math.max(0, (dg.dyson_target_science ?? 0) - (dg.dyson_acc_science ?? 0)),
-          };
-
-          if (here === r.origin_body_id && cargoTotal < 1) {
-            // LOAD at the collector: draw from the pool, capped by hold,
-            // pool balance, and what the sphere still needs per
-            // component (another freighter may land first — delivery
-            // clamps again and refunds any overflow to the pool).
-            const pool = await this.env.DB
-              .prepare('SELECT metal, gold, science FROM game_factions WHERE id = ?')
-              .bind(r.owner_faction_id)
-              .first();
-            const HOLD = Math.round(CARGO_CAP * traitMul(parseTraits(ship.captain_traits), 'cargoMul'));
-            const cm  = Math.max(0, Math.min(HOLD, Number(pool?.metal   ?? 0), need.m));
-            const cg  = Math.max(0, Math.min(HOLD, Number(pool?.gold    ?? 0), need.g));
-            const csc = Math.max(0, Math.min(HOLD, Number(pool?.science ?? 0), need.sc));
-            if (cm + cg + csc > 0) {
-              await this.env.DB
-                .prepare(
-                  `UPDATE game_factions
-                      SET metal = metal - ?, gold = gold - ?, science = science - ?
-                    WHERE id = ?`,
-                )
-                .bind(cm, cg, csc, r.owner_faction_id)
-                .run();
-            }
-            // Cycle even with an empty pool so the route retries.
-            await this.env.DB
-              .prepare(
-                `UPDATE game_trade_routes
-                    SET cargo_fuel = 0, cargo_metal = ?, cargo_gold = ?, cargo_science = ?,
-                        status = 'outbound'
-                  WHERE id = ?`,
-              )
-              .bind(cm, cg, csc, r.id)
-              .run();
-            await planLeg(r.dest_body_id);
-            continue;
-          }
-
-          if (here === r.dest_body_id) {
-            // DELIVER into the sphere, clamped by remaining need per
-            // component; anything the lattice can't take goes back to
-            // the pool instead of vanishing.
-            const addM  = Math.max(0, Math.min(cargoMetal,   need.m));
-            const addG  = Math.max(0, Math.min(cargoGold,    need.g));
-            const addSc = Math.max(0, Math.min(cargoScience, need.sc));
-            const backM  = cargoMetal   - addM;
-            const backG  = cargoGold    - addG;
-            const backSc = cargoScience - addSc;
-            const batch = [];
-            if (addM + addG + addSc > 0) {
-              batch.push(this.env.DB
-                .prepare(
-                  `UPDATE games
-                      SET dyson_acc_ore     = dyson_acc_ore     + ?,
-                          dyson_acc_credits = dyson_acc_credits + ?,
-                          dyson_acc_science = dyson_acc_science + ?
-                    WHERE id = ?`,
-                )
-                .bind(addM, addG, addSc, gameId));
-            }
-            if (cargoFuel + backM + backG + backSc > 0) {
-              batch.push(this.env.DB
-                .prepare(
-                  `UPDATE game_factions
-                      SET fuel = fuel + ?, metal = metal + ?,
-                          gold = gold + ?, science = science + ?
-                    WHERE id = ?`,
-                )
-                .bind(cargoFuel, backM, backG, backSc, r.owner_faction_id));
-            }
-            batch.push(this.env.DB
-              .prepare(
-                `UPDATE game_trade_routes
-                    SET cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0,
-                        status = 'returning'
-                  WHERE id = ?`,
-              )
-              .bind(r.id));
-            await this.env.DB.batch(batch);
-            await planLeg(r.origin_body_id);
-            continue;
-          }
-
-          // Any other state: nudge toward where the cargo says to go.
-          // Loaded → the sphere, empty → the collector. UNCONDITIONAL,
-          // not gated on being off both endpoints — a freighter sitting
-          // AT ITS ORIGIN with a full hold (player flew it home mid-run,
-          // or a leg got cancelled) matched no branch here and idled
-          // loaded forever: pickup wants an empty hold and the old
-          // off-course check excluded the origin. Verification catch,
-          // 2026-08-09.
-          await planLeg(cargoTotal > 0 ? r.dest_body_id : r.origin_body_id);
-          continue;
-        }
-
-        // ---- CROSS-FACTION PICKUP (standing agreement leg) ----------
-        //
-        // A self-haul route vacuums whatever its settlements happen to
-        // have. An agreement leg ships a CONTRACTED amount, drawn from
-        // the sender's pool — the same place a one-shot delivery draws
-        // from, so a standing deal and a single shipment cost the sender
-        // the same way.
-        //
-        // Cannot cover it? The whole agreement ends, both legs, right
-        // now (Lorne). Not a skipped run: a partner who cannot pay this
-        // cycle is a partner you should stop shipping to, and silently
-        // idling would leave the other side donating cargo indefinitely.
-        if (r.counterparty_faction_id && here === r.origin_body_id && cargoTotal < 1) {
-          const need = {
-            metal:   Number(r.per_run_metal   ?? 0),
-            fuel:    Number(r.per_run_fuel    ?? 0),
-            gold:    Number(r.per_run_gold    ?? 0),
-            science: Number(r.per_run_science ?? 0),
-          };
-          const pool = await this.env.DB
-            .prepare('SELECT metal, fuel, gold, science FROM game_factions WHERE id = ?')
-            .bind(r.owner_faction_id).first();
-          const short = !pool
-            || Number(pool.metal   ?? 0) < need.metal
-            || Number(pool.fuel    ?? 0) < need.fuel
-            || Number(pool.gold    ?? 0) < need.gold
-            || Number(pool.science ?? 0) < need.science;
-          if (short) {
-            try {
-              const ta = await import('./tradeAgreements.js');
-              const ag = await this.env.DB
-                .prepare('SELECT * FROM trade_agreements WHERE id = ?')
-                .bind(r.agreement_id).first();
-              if (ag) {
-                await ta.endAgreement(this.env, gameId, ag, 'starved', tick, {
-                  byFactionId: r.owner_faction_id,
-                  detail: 'A scheduled shipment could not be covered from the sender\'s stores.',
-                });
-              }
-            } catch (e) {
-              console.error('trade route: starve handling failed', e, { routeId: r.id });
-            }
-            continue;
-          }
-          await this.env.DB
-            .prepare(
-              `UPDATE game_factions
-                  SET metal = metal - ?, fuel = fuel - ?, gold = gold - ?, science = science - ?
-                WHERE id = ?`,
-            )
-            .bind(need.metal, need.fuel, need.gold, need.science, r.owner_faction_id)
-            .run();
-          await this.env.DB
-            .prepare(
-              `UPDATE game_trade_routes
-                  SET cargo_metal = ?, cargo_fuel = ?, cargo_gold = ?, cargo_science = ?,
-                      status = 'outbound'
-                WHERE id = ?`,
-            )
-            .bind(need.metal, need.fuel, need.gold, need.science, r.id)
-            .run();
-          await planLeg(r.dest_body_id);
-          continue;
-        }
-
-        if (here === r.origin_body_id && cargoTotal < 1) {
-          // PICKUP: vacuum from settlement stockpiles at origin.
-          const stocks = (await this.env.DB
-            .prepare(
-              `SELECT id, stockpile_fuel, stockpile_metal, stockpile_gold, stockpile_science
-                 FROM game_settlements
-                WHERE game_id = ? AND body_id = ? AND owner_faction_id = ?
-                  AND destroyed_at_tick IS NULL`,
-            )
-            .bind(gameId, r.origin_body_id, r.owner_faction_id)
-            .all()).results ?? [];
-          // Quartermaster captain (spec §3): +25% hold on this freighter.
-          const HOLD = Math.round(CARGO_CAP * traitMul(parseTraits(ship.captain_traits), 'cargoMul'));
-          let cf = 0, cm = 0, cg = 0, csci = 0;
-          for (const s of stocks) {
-            const take = {
-              f:  Math.min(HOLD - cf,   Number(s.stockpile_fuel    ?? 0)),
-              m:  Math.min(HOLD - cm,   Number(s.stockpile_metal   ?? 0)),
-              g:  Math.min(HOLD - cg,   Number(s.stockpile_gold    ?? 0)),
-              sc: Math.min(HOLD - csci, Number(s.stockpile_science ?? 0)),
-            };
-            if (take.f + take.m + take.g + take.sc <= 0) continue;
-            cf += take.f; cm += take.m; cg += take.g; csci += take.sc;
-            await this.env.DB
-              .prepare(
-                `UPDATE game_settlements
-                    SET stockpile_fuel    = stockpile_fuel    - ?,
-                        stockpile_metal   = stockpile_metal   - ?,
-                        stockpile_gold    = stockpile_gold    - ?,
-                        stockpile_science = stockpile_science - ?
-                  WHERE id = ?`,
-              )
-              .bind(take.f, take.m, take.g, take.sc, s.id)
-              .run();
-            if (cf >= HOLD && cm >= HOLD && cg >= HOLD && csci >= HOLD) break;
-          }
-          // Always plan the outbound leg — even an empty stockpile
-          // sends the freighter cycling so it'll try again next loop.
-          await this.env.DB
-            .prepare(
-              `UPDATE game_trade_routes
-                  SET cargo_fuel = ?, cargo_metal = ?, cargo_gold = ?, cargo_science = ?,
-                      status = 'outbound'
-                WHERE id = ?`,
-            )
-            .bind(cf, cm, cg, csci, r.id)
-            .run();
-          await planLeg(r.dest_body_id);
-          continue;
-        }
-
-        // ---- CROSS-FACTION DELIVERY (standing agreement leg) --------
-        //
-        // Credits the PARTNER, not the owner, minus the tariff that was
-        // snapshotted when the deal was struck. Then turns around and
-        // does it again — that repetition is the whole feature.
-        if (r.counterparty_faction_id && here === r.dest_body_id) {
-          const skim = Math.max(0, Math.min(100, Number(r.tariff_pct ?? 0))) / 100;
-          const net = {
-            metal:   Math.floor(cargoMetal   * (1 - skim)),
-            fuel:    Math.floor(cargoFuel    * (1 - skim)),
-            gold:    Math.floor(cargoGold    * (1 - skim)),
-            science: Math.floor(cargoScience * (1 - skim)),
-          };
-          const shipped = cargoMetal + cargoFuel + cargoGold + cargoScience;
-          if (shipped > 0) {
-            await this.env.DB
-              .prepare(
-                `UPDATE game_factions
-                    SET metal = metal + ?, fuel = fuel + ?, gold = gold + ?, science = science + ?
-                  WHERE id = ?`,
-              )
-              .bind(net.metal, net.fuel, net.gold, net.science, r.counterparty_faction_id)
-              .run();
-            // Delivered science is INCOME this tick, not just bank —
-            // the research drain clamps spend to income, and without
-            // this a trade-fed faction banks science forever without
-            // advancing a tech. Same fix the self-haul branch carries.
-            if (net.science > 0) {
-              scienceIncomeByFaction.set(
-                r.counterparty_faction_id,
-                (scienceIncomeByFaction.get(r.counterparty_faction_id) ?? 0) + net.science,
-              );
-            }
-          }
-          const loops = Number(r.loops_completed ?? 0) + 1;
-          await this.env.DB
-            .prepare(
-              `UPDATE game_trade_routes
-                  SET cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0,
-                      status = 'returning', loops_completed = ?
-                WHERE id = ?`,
-            )
-            .bind(loops, r.id)
-            .run();
-
-          // A LINE IN THE LOG ON EVERY LOOP (Lorne). The point is that a
-          // standing route is automation, and automation that produces
-          // resources invisibly is indistinguishable from a bug — or
-          // from free money nobody is accounting for. Visible to the two
-          // parties ONLY: who trades with whom, and how much, is exactly
-          // the commercial intelligence the Sensors track exists to sell.
-          try {
-            await this.env.DB
-              .prepare(
-                `INSERT INTO chronicle_entries
-                   (id, game_id, tick_number, kind, actor_faction_id, payload, visibility, created_at_ms)
-                 VALUES (?, ?, ?, 'trade_route_run', ?, ?, ?, ?)`,
-              )
-              .bind(
-                // Deterministic id (route + tick) — the same convention
-                // as fleet_flag_lost above. crypto.randomUUID would work
-                // too, but a stable id means a retried tick writes the
-                // SAME row id and the second insert fails instead of
-                // logging the loop twice.
-                `c_trr_${r.id.slice(-10)}_${tick}`, gameId, tick, r.owner_faction_id,
-                JSON.stringify({
-                  agreement_id: r.agreement_id,
-                  route_id: r.id,
-                  loop: loops,
-                  sender_faction_id: r.owner_faction_id,
-                  recipient_faction_id: r.counterparty_faction_id,
-                  delivered: net,
-                  tariff_pct: Number(r.tariff_pct ?? 0),
-                  // Gross vs net so the skim is legible rather than
-                  // looking like the numbers simply don't add up.
-                  gross: { metal: cargoMetal, fuel: cargoFuel, gold: cargoGold, science: cargoScience },
-                }),
-                JSON.stringify([r.owner_faction_id, r.counterparty_faction_id]),
-                Date.now(),
-              )
-              .run();
-          } catch (e) {
-            console.error('trade route: run log failed', e, { routeId: r.id });
-          }
-          await planLeg(r.origin_body_id);
-          continue;
-        }
-
-        if (here === r.dest_body_id) {
-          // DELIVERY: dump whatever's in the hold and cycle back home.
-          // Previously this required cargoTotal > 0, but a freighter
-          // that picked up an empty stockpile arrives at dest with
-          // nothing in the hold and got STUCK (DELIVERY didn't fire
-          // and the nudge saw here === target). That's what the
-          // playtester saw as "trade routes aren't repeating".
-          // Only bump trades_completed for cargo-bearing deliveries
-          // so the counter still tracks real runs.
-          const batch = [
-            this.env.DB
-              .prepare(
-                `UPDATE game_factions
-                    SET fuel    = fuel    + ?,
-                        metal   = metal   + ?,
-                        gold    = gold    + ?,
-                        science = science + ?
-                  WHERE id = ?`,
-              )
-              .bind(cargoFuel, cargoMetal, cargoGold, cargoScience, r.owner_faction_id),
-            this.env.DB
-              .prepare(
-                `UPDATE game_trade_routes
-                    SET cargo_fuel = 0, cargo_metal = 0, cargo_gold = 0, cargo_science = 0,
-                        status = 'returning'
-                  WHERE id = ?`,
-              )
-              .bind(r.id),
-          ];
-          // Delivered science counts as INCOME this tick, not just bank.
-          // The research drain clamps spend to income, so without this a
-          // trade-fed faction banked science forever without advancing a
-          // tech (playtest report). Additive — the harvest pass adds its
-          // settlement yield to the same map later in the tick.
-          if (cargoScience > 0) {
-            scienceIncomeByFaction.set(
-              r.owner_faction_id,
-              (scienceIncomeByFaction.get(r.owner_faction_id) ?? 0) + cargoScience,
-            );
-          }
-          if (cargoTotal > 0) {
-            batch.push(
-              this.env.DB
-                .prepare('UPDATE game_ships SET trades_completed = trades_completed + 1 WHERE id = ?')
-                .bind(r.ship_id),
-            );
-          }
-          await this.env.DB.batch(batch);
-          await planLeg(r.origin_body_id);
-          continue;
-        }
-
-        // Otherwise (off-course or at correct endpoint with wrong cargo
-        // phase), nudge the freighter toward whichever endpoint matches
-        // the current status. This recovers from a player manually
-        // flying the ship off-route.
-        const target = r.status === 'outbound' ? r.dest_body_id : r.origin_body_id;
-        if (here !== target) {
-          await planLeg(target);
-        }
-       } catch (routeErr) {
-         // One route blew up — log it and move on to the next so a
-         // single bad route can't freeze everyone else's logistics.
-         console.error('trade route failed for ship', r.ship_id, routeErr);
-       }
-      }
-
-      // 2d. Trade DELIVERY auto-pilot — physical inter-player trades.
-      //
-      // Lives inside the same try as 2c so it shares bodyPosAt /
-      // computeLegTicks and their caches. Each accepted trade leg
-      // (trade_deliveries, migration 0041) with an assigned freighter
-      // is driven through: burn to the sender's collector → load
-      // (debit the sender's pool — the FIRST moment the goods exist
-      // anywhere) → burn to the recipient's collector → credit their
-      // pool, minus the tariff snapshotted at accept.
-      //
-      // Movement authority mirrors 2c exactly: skip anything with an
-      // in-flight node, plan at most one leg per tick. A freighter
-      // that ends up somewhere unexpected (retreat, manual detour
-      // before the block in handleCommitTransfer, arrival body lost)
-      // self-heals — every tick it's idle and off-script, we just plan
-      // the leg it should be flying.
-      try {
-        const deliveries = (await this.env.DB
-          .prepare(
-            `SELECT * FROM trade_deliveries
-              WHERE game_id = ? AND resolved_at_tick IS NULL
-                AND ship_id IS NOT NULL
-                AND status IN ('to_pickup', 'outbound')`,
-          )
-          .bind(gameId)
-          .all()).results ?? [];
-
-        for (const d of deliveries) {
-         try {
-          // Embargoed senders can't run shipments — same senate lever
-          // that freezes their trade routes.
-          if (await sanctioned(d.sender_faction_id, 'trade_embargo')) continue;
-
-          const ship = await this.env.DB
-            .prepare("SELECT id, parent_body_id, status FROM game_ships WHERE id = ?")
-            .bind(d.ship_id).first();
-          if (!ship || ship.status !== 'active') {
-            // Freighter died and the piracy block didn't resolve this
-            // row (e.g. destroyed by something with no kill credit).
-            // Loaded cargo goes down with the ship; an unloaded leg
-            // returns to the pool of assignable obligations.
-            if (d.loaded === 1) {
-              await this.env.DB
-                .prepare(`UPDATE trade_deliveries SET status = 'lost', resolved_at_tick = ? WHERE id = ?`)
-                .bind(tick, d.id).run();
-            } else {
-              await this.env.DB
-                .prepare(`UPDATE trade_deliveries SET ship_id = NULL, pickup_body_id = NULL, status = 'unassigned' WHERE id = ?`)
-                .bind(d.id).run();
-            }
-            continue;
-          }
-
-          const inFlight = await this.env.DB
-            .prepare("SELECT 1 AS x FROM game_ship_nodes WHERE ship_id = ? AND status IN ('committed','in_transit') LIMIT 1")
-            .bind(d.ship_id).first();
-          if (inFlight) continue;
-
-          const here = ship.parent_body_id;
-          const planDeliveryLeg = async (targetBodyId) => {
-            const legTicks = await computeLegTicks(
-              d.sender_faction_id, here, targetBodyId, tick,
-            );
-            const seqRow = await this.env.DB
-              .prepare('SELECT MAX(sequence) AS m FROM game_ship_nodes WHERE ship_id = ?')
-              .bind(d.ship_id).first();
-            const seq = (seqRow?.m ?? -1) + 1;
-            const nodeId = `${d.ship_id}:td${tick}:n${seq}`;
-            await this.env.DB
-              .prepare(
-                `INSERT INTO game_ship_nodes
-                   (id, game_id, ship_id, sequence, anchor_kind, target_body_id,
-                    scheduled_t, arrival_at_tick, dv_prograde, dv_normal, dv_radial, fuel_cost,
-                    status, committed_at_tick)
-                 VALUES (?, ?, ?, ?, 'absolute', ?, ?, ?, 0, 0, 0, 0, 'committed', ?)`,
-              )
-              .bind(nodeId, gameId, d.ship_id, seq, targetBodyId, tick, tick + legTicks, tick)
-              .run();
-          };
-
-          if (d.status === 'to_pickup') {
-            if (here !== d.pickup_body_id) { await planDeliveryLeg(d.pickup_body_id); continue; }
-            // At the collector: load. The debit is guarded — if the
-            // sender's pool can't cover the manifest right now, the
-            // freighter just WAITS here and we retry every tick. The
-            // deal was allowed to out-promise the treasury at accept;
-            // this is where that promise has to be made good.
-            const upd = await this.env.DB
-              .prepare(
-                `UPDATE game_factions
-                    SET metal = metal - ?, fuel = fuel - ?, gold = gold - ?, science = science - ?
-                  WHERE id = ? AND game_id = ?
-                    AND metal >= ? AND fuel >= ? AND gold >= ? AND science >= ?`,
-              )
-              .bind(
-                d.metal, d.fuel, d.gold, d.science,
-                d.sender_faction_id, gameId,
-                d.metal, d.fuel, d.gold, d.science,
-              )
-              .run();
-            if ((upd.meta?.changes ?? 0) === 0) continue;   // awaiting funds
-            await this.env.DB
-              .prepare(`UPDATE trade_deliveries SET loaded = 1, status = 'outbound' WHERE id = ?`)
-              .bind(d.id).run();
-            await planDeliveryLeg(d.dest_body_id);
-          } else if (d.status === 'outbound') {
-            if (here !== d.dest_body_id) { await planDeliveryLeg(d.dest_body_id); continue; }
-            // Arrived. Credit the recipient minus the accept-time
-            // tariff snapshot; floors so the skim can't mint units.
-            const mul = 1 - Math.max(0, Math.min(100, d.tariff_pct ?? 0)) / 100;
-            await this.env.DB
-              .prepare(
-                `UPDATE game_factions
-                    SET metal = metal + ?, fuel = fuel + ?, gold = gold + ?, science = science + ?
-                  WHERE id = ? AND game_id = ?`,
-              )
-              .bind(
-                Math.floor(d.metal * mul), Math.floor(d.fuel * mul),
-                Math.floor(d.gold * mul), Math.floor(d.science * mul),
-                d.recipient_faction_id, gameId,
-              )
-              .run();
-            await this.env.DB
-              .prepare(`UPDATE trade_deliveries SET status = 'delivered', resolved_at_tick = ? WHERE id = ?`)
-              .bind(tick, d.id).run();
-            try {
-              await this.env.DB
-                .prepare(
-                  `INSERT INTO chronicle_entries
-                     (id, game_id, tick_number, kind, actor_faction_id, body_id, payload, visibility, created_at_ms)
-                   VALUES (?, ?, ?, 'trade_delivered', ?, ?, ?, 'public', ?)`,
-                )
-                .bind(
-                  `c_td_${d.id}_${tick}`, gameId, tick,
-                  d.sender_faction_id, d.dest_body_id,
-                  JSON.stringify({
-                    trade_id: d.trade_id,
-                    sender_faction_id: d.sender_faction_id,
-                    recipient_faction_id: d.recipient_faction_id,
-                    ship_id: d.ship_id,
-                    metal: d.metal, fuel: d.fuel, gold: d.gold, science: d.science,
-                    tariff_pct: d.tariff_pct ?? 0,
-                  }),
-                  Date.now(),
-                )
-                .run();
-            } catch (e) {
-              console.error('trade_delivered chronicle insert failed', e);
-            }
-          }
-         } catch (deliveryErr) {
-           // Same isolation contract as routes: one broken shipment
-           // must not strand every other convoy in the game.
-           console.error('trade delivery failed for ship', d.ship_id, deliveryErr);
-         }
-        }
-      } catch (e) {
-        console.error('trade-delivery auto-pilot failed', e);
-      }
-    } catch (e) {
-      console.error('trade-route auto-pilot failed', e);
-    }
+    await this.runTradeAutopilot(gameId, tick, CFG, sanctioned, scienceIncomeByFaction);
 
     // 3. Combat. Find bodies where 2+ factions have ships. Each ship's
     //    damage_per_tick is split evenly across hostile ships at the same
