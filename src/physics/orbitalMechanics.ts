@@ -231,6 +231,24 @@ export function bodyAngleAt(body: Body, t: number): number {
   return body.angle0! + (TWO_PI * t * ORBITAL_SPEED_SCALE / body.orbitPeriod);
 }
 
+/**
+ * Where a ship parks at a body. MIRROR of parkOrbitRadius in
+ * worker/factions.js — KEEP IN SYNC. The client parks optimistically the
+ * moment a burn is committed and the server confirms the same orbit on
+ * arrival; if the two disagree every ship visibly jumps as it lands.
+ *
+ * Proportional (1.45x radius) rather than the old additive `radius + 2`,
+ * which on a map spanning radius 0.6 (Midas) to 20 (Sol) meant "low orbit"
+ * sat at 4.3x the radius of a small moon and 1.1x the radius of the sun.
+ * The +0.35 floor keeps a visible gap over a pebble; the +4 ceiling binds
+ * only above radius ~8.9 — Sol alone — so framing that already reads well
+ * is left where it is.
+ */
+export function parkOrbitRadius(bodyRadius: number): number {
+  const r = bodyRadius > 0 ? bodyRadius : 4;
+  return Math.min(Math.max(r * 1.45 + 0.3, r + 0.35), r + 4);
+}
+
 export function bodyPosition(body: Body, t: number, bodies: Body[]): WorldPosition {
   if (!body.parent) return { x: 0, y: 0 };
   const parent = bodies.find(b => b.id === body.parent);

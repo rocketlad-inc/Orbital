@@ -2599,12 +2599,33 @@ function recordDrawnShipWorldPos(shipId: string, x: number, y: number): void {
   else lastDrawnShipWorldPos.set(shipId, { x, y });
 }
 
-/** Class lane base + deterministic per-hull jitter, in world units. */
+/**
+ * Class lane base + deterministic per-hull jitter, in world units.
+ *
+ * PROPORTIONAL to the ship's own park radius, not a flat offset. The flat
+ * version (+2.2 freighter, +3.4 colony, +0–1.4 jitter) was the bigger half
+ * of "for such a small planet, ships are suppppper far out": on Midas
+ * (radius 0.6, park radius 1.2) a colony ship's 4.8 units of lane put it
+ * FOUR TIMES further out than its own orbit, while the same 4.8 at Sol is a
+ * sixth of the park radius. Same numbers, opposite reading.
+ *
+ * Fractions are tuned so the big bodies barely move (a colony ship at
+ * Saturn goes 2.0x -> 2.3x its radius) while the small ones come home
+ * (Midas colony 12.3x -> 2.9x). Returns world units still, so every
+ * consumer — battle-line standoff, apsis markers, the orbit ring — is
+ * untouched.
+ */
 export function shipLane(ship: Ship): number {
-  const base = ship.class === 'freighter' ? 2.2
-    : ship.class === 'colony' ? 3.4
+  // The park radius IS the ship's own circular orbit; falling back to a
+  // sane default keeps a malformed orbit from collapsing the lane to 0.
+  const rp = ship.orbit?.rp ?? 0;
+  const ra = ship.orbit?.ra ?? 0;
+  const parkR = (rp > 0 && ra > 0) ? (rp + ra) / 2 : 4;
+  const frac = ship.class === 'freighter' ? 0.20
+    : ship.class === 'colony' ? 0.38
     : 0;
-  return base + ((hashStr(ship.id) % 100) / 100) * 1.4;
+  const jitter = ((hashStr(ship.id) % 100) / 100) * 0.12;
+  return parkR * (frac + jitter);
 }
 
 /** Formation entry for a ship alone on its ring — lane only. */

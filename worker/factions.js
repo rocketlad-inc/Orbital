@@ -555,6 +555,32 @@ const STARTER_CITY_HP = 300;
 // because trip time is brachistochrone T = 2*sqrt(d/a), so a linear speed
 // ratio needs a squared accel ratio. Engines raise speed x1/0.85 each,
 // capped at SPEED_CAP for both jobs.
+/**
+ * Where a ship parks when it arrives at (or is built at) a body.
+ *
+ * Was `radius + 2`, and an ADDITIVE term on a map whose bodies span radius
+ * 0.6 (Midas) to 20 (Sol) is wildly out of proportion at the small end: the
+ * same +2 is 1.1x the radius at Sol and 4.3x at Midas. Player report — "for
+ * such a small planet, ships are suppppper far out from the low orbit".
+ *
+ * Proportional-dominant instead, so "low orbit" means the same thing
+ * everywhere:
+ *   - 1.45x radius is the shape of it
+ *   - a +0.35 floor keeps a visible gap over a pebble
+ *   - a +4 ceiling stops the biggest bodies drifting: it binds only above
+ *     radius ~8.9, i.e. Sol alone, which lands at 24 instead of today's 22
+ *     rather than being flung out to 29.3. Framing that already reads well
+ *     is left alone; only the small end is fixed.
+ *
+ * KEEP IN SYNC with the client mirror in src/physics/orbitalMechanics.ts —
+ * the client parks optimistically on launch and the server confirms on
+ * arrival, so a mismatch makes every ship visibly jump when it lands.
+ */
+export function parkOrbitRadius(bodyRadius) {
+  const r = Number(bodyRadius) > 0 ? Number(bodyRadius) : 4;
+  return Math.min(Math.max(r * 1.45 + 0.3, r + 0.35), r + 4);
+}
+
 export const SHIP_COMBAT_STATS = {
   // 3.75 -> 7 (Lorne). Live telemetry put the corvette at 0.70 combat
   // power per credit against the destroyer's 9.44, needing ~79 hulls to

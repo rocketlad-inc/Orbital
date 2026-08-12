@@ -5,7 +5,7 @@ import { GameState, ManeuverNode, CameraState, MapUIState, Ship, Body, BuildOrde
 // seeded by setupSinglePlayer) or an externalState (multiplayer, server-
 // driven). The fallback empty state below is only hit if neither prop is
 // passed, which would be a programming error rather than a play state.
-import { createCircularOrbit, bodyWorldVelocity, orbitWorldPos, orbitWorldVelocity } from '../physics/orbitalMechanics';
+import { createCircularOrbit, bodyWorldVelocity, orbitWorldPos, orbitWorldVelocity, parkOrbitRadius } from '../physics/orbitalMechanics';
 import { releaseFocusPosition } from '../game/cameraFocus';
 import {
   planTorchTransfer, stepTorchShip,
@@ -754,10 +754,10 @@ export function GameContextProvider({
             queuedTransits = queuedTransits.length > 1 ? queuedTransits.slice(1) : undefined;
           } else {
             const target = bodies.find(b => b.id === plan.targetBodyId);
-            // Tight park orbit, matching the server's arrival pass
-            // (worker/room.js: radius + 2) so the optimistic park doesn't
-            // snap outward on the next /state poll.
-            const parkRadius = target ? Math.max(target.radius + 2, 3) : 10;
+            // Tight park orbit, matching the server's arrival pass exactly
+            // (parkOrbitRadius, mirrored from worker/factions.js) so the
+            // optimistic park doesn't snap on the next /state poll.
+            const parkRadius = target ? parkOrbitRadius(target.radius) : 10;
             orbit = createCircularOrbit(plan.targetBodyId, parkRadius, tick, bodies);
             transit = undefined;
           }

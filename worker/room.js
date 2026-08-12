@@ -1,5 +1,5 @@
 import { resolveSenate, getSliderResolver, hasActiveSanction } from './senate.js';
-import { recomputeBodyOwnership, SETTLEMENT_SPEED } from './factions.js';
+import { recomputeBodyOwnership, SETTLEMENT_SPEED, parkOrbitRadius } from './factions.js';
 import { parsePartsJson, computeShipStats, countPart, detonatorDamage,
          shipSpeed, hitChance,
          damageProfile, defenseMitigation, MITIGATION_FLOOR, refitFee } from './shipDesigns.js';
@@ -2053,11 +2053,10 @@ export class Room {
       );
       const hp = stats.hp;
       const dmg = stats.damage_per_tick;
-      // Tight park orbit: just off the surface. Was radius+4, which put
-      // hulls twice the planet's disc away and crowded moon lanes in big
-      // systems (player report). KEEP IN SYNC with the arrival pass below
-      // and the client's optimistic park (gameContext parkRadius).
-      const rp = (body.radius || 4) + 2;
+      // Tight park orbit: just off the surface. Proportional to the body
+      // (parkOrbitRadius in factions.js) — an additive offset put a hull
+      // 4.3x the radius away from a small moon and 1.1x away from Sol.
+      const rp = parkOrbitRadius(body.radius);
       const ra = rp; // circular orbit
       // Collision-proof id: tick + loop index guarantees uniqueness even
       // when many builds finish on the SAME tick (a fleet spammer with
@@ -2441,9 +2440,10 @@ export class Room {
         .bind(n.target_body_id)
         .first();
       if (!target) continue;
-      // Tight park orbit on arrival — keep in sync with the build-spawn
-      // park above and the client's optimistic parkRadius.
-      const rp = (target.radius || 4) + 2;
+      // Tight park orbit on arrival — parkOrbitRadius (factions.js) is the
+      // one definition; the build-spawn pass above and the client's
+      // optimistic park both call it.
+      const rp = parkOrbitRadius(target.radius);
       await this.env.DB.batch([
         this.env.DB
           .prepare(
