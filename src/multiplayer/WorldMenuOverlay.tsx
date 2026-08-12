@@ -238,20 +238,65 @@ export const WorldMenuOverlay: React.FC = () => {
     if (!chromeMounted) return;
     const panelEl = document.querySelector('.wm-top') as HTMLElement | null;
     const fleetEl = document.querySelector('.wm-fleet') as HTMLElement | null;
+    const surfEl = document.querySelector('.wm-mrow-surface') as HTMLElement | null;
+    const orbitEl = document.querySelector('.wm-mrow-orbit') as HTMLElement | null;
     const measure = () => {
       const panelH = panelEl?.offsetHeight ?? 92;
       const fleetH = fleetEl?.offsetHeight ?? 200;
       document.body.style.setProperty('--wm-panel-h', `${panelH}px`);
       document.body.style.setProperty('--wm-fleet-h', `${fleetH}px`);
       setChromeH(prev => (prev.fleet === fleetH && prev.panel === panelH ? prev : { fleet: fleetH, panel: panelH }));
+
+      // MOBILE VERTICAL BUDGET (desktop never reads --wm-top-max; its
+      // panel has no max-height).
+      //
+      // The bottom chrome is authoritative: the build box sits on the
+      // dock rail, and the surface build row sits on the build box.
+      // Whatever height is left between the topbar and the TOP of that
+      // surface row is what the info panel may occupy — beyond that it
+      // scrolls internally instead of growing into the row and burying
+      // the terraform controls. Deliberately NOT circular: the surface
+      // row is positioned off the build box alone and never off the
+      // panel, so capping the panel cannot feed back into this.
+      if (mobile) {
+        // Same element the --wm-topbar-h effect above measures.
+        const topbarH = (document.querySelector('.top-bar') as HTMLElement | null)?.offsetHeight ?? 52;
+        const railH = parseFloat(
+          getComputedStyle(document.body).getPropertyValue('--mobile-rail-height'),
+        ) || 72;
+        // Real measured heights when the rows are on screen; 0 when the
+        // world offers no such build (then the panel may use the room).
+        const surfH = surfEl?.offsetHeight ?? 0;
+        const surfaceReserve = surfH > 0 ? surfH + 6 : 0;
+        // The ORBIT row hangs off the panel's own bottom edge
+        // (top: topbar + panel-h + 22), so shrinking the panel pulls it
+        // up with it. Reserve it here or it just lands on the surface
+        // row instead — trading one collision for another.
+        const orbitH = orbitEl?.offsetHeight ?? 0;
+        const orbitReserve = orbitH > 0 ? orbitH + 22 : 0;
+        const avail = window.innerHeight
+          - (topbarH + 10)          // panel's own top offset
+          - orbitReserve            // the orbit build row, under the panel
+          - surfaceReserve          // the surface build row
+          - (fleetH + railH + 6)    // build box + dock rail
+          - 8;                      // breathing room
+        // Floor so a very short viewport still shows a usable panel; it
+        // scrolls, so a floor costs reachability nothing.
+        document.body.style.setProperty('--wm-top-max', `${Math.max(120, Math.round(avail))}px`);
+      } else {
+        document.body.style.removeProperty('--wm-top-max');
+      }
     };
     measure();
     // Live-track content growth (build queue rows appearing, More/Less).
     const ro = new ResizeObserver(measure);
     if (panelEl) ro.observe(panelEl);
     if (fleetEl) ro.observe(fleetEl);
-    return () => ro.disconnect();
-  }, [chromeMounted, collapsed, openId]);
+    if (surfEl) ro.observe(surfEl);
+    if (orbitEl) ro.observe(orbitEl);
+    window.addEventListener('resize', measure);
+    return () => { ro.disconnect(); window.removeEventListener('resize', measure); };
+  }, [chromeMounted, collapsed, openId, mobile]);
 
   // Wheel/pinch-out past the threshold dismisses (leave the camera
   // wherever the player pulled it — that WAS the dismissal gesture).
@@ -504,17 +549,31 @@ export const WorldMenuOverlay: React.FC = () => {
       : (colonyShipHere ? `Launch a station — consumes ${colonyShipHere.name}`
         : own ? (canAffordStation ? 'Built from orbit: 30M 20C' : 'Need 30M 20C to build from orbit')
         : 'Requires a Colony Ship in orbit, or own a settlement here first');
+    // MOBILE: a CITY button that's disabled purely because the world is
+    // raw is not an action — it's a rule. As a full-height tile it took a
+    // third of the build row and, on a cramped phone, sat directly on the
+    // terraform controls that are the only way to lift the restriction.
+    // Collapse it to a single full-width line: the rule stays visible
+    // (it's the only place that states it outside a tooltip) at ~a third
+    // of the height. Desktop keeps the tile — `mobile` gates this.
+    const rawCityNote = mobile && isCity && raw;
     return (
       <button
         key={type}
-        className="wm-bbtn wm-found"
+        className={`wm-bbtn wm-found${rawCityNote ? ' wm-found--rule' : ''}`}
         disabled={!enabled}
         title={title}
         onClick={() => foundSettlement(type)}
         data-testid={`wm-found-${type}`}
       >
-        <span className="wm-bbtn-nm">{isCity ? '▲ FOUND CITY' : '▲ BUILD STATION'}</span>
-        <span className="wm-bbtn-st">{cityLock && isCity && !raw ? `🔒 ${sub}` : sub}</span>
+        {rawCityNote ? (
+          <span className="wm-bbtn-st">🔒 CITY — terraform this world first</span>
+        ) : (
+          <>
+            <span className="wm-bbtn-nm">{isCity ? '▲ FOUND CITY' : '▲ BUILD STATION'}</span>
+            <span className="wm-bbtn-st">{cityLock && isCity && !raw ? `🔒 ${sub}` : sub}</span>
+          </>
+        )}
       </button>
     );
   };

@@ -345,7 +345,50 @@
    row below. */
 .wm-mobile .wm-top {
   left: 8px; right: 68px; max-width: none;
+  /* BOUNDED, SCROLLABLE SHEET (mobile only).
+     The panel used to grow unbounded downward while .wm-mrow-surface was
+     pushed UP by a tall build box — two absolutely-positioned layers
+     advancing on each other with nothing arbitrating the middle. On a raw
+     world that parked the disabled FOUND CITY button squarely on top of
+     the terraform controls, i.e. on the only way forward on that world.
+     Now the bottom chrome owns the bottom, the panel takes whatever
+     vertical room is left (--wm-top-max, measured in JS) and scrolls
+     inside itself, so no card can ever be buried. Desktop is untouched:
+     it keeps the auto-height panel with no max-height and no overflow,
+     and this whole block is scoped to .wm-mobile. */
+  max-height: var(--wm-top-max, 46vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
+/* MORE/LESS is absolute inside the panel, so it would scroll away with
+   the content. Pin it to the panel's top-right while the body scrolls. */
+.wm-mobile .wm-top .wm-more { position: sticky; float: right; top: 0; }
+/* A stubborn child (a <select> sized to its widest <option>) must never
+   be able to push the sheet wider than the screen. */
+.wm-mobile .wm-top { overflow-x: hidden; }
+
+/* Terraform assign controls STACK on a phone. Side by side they were
+   three shrink-resistant boxes — two selects sized to their longest
+   option plus a button sized to its label — which overflowed the sheet
+   instead of wrapping. Stacked they also get real tap targets. */
+.wm-mobile .wm-terraform-assign {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.wm-mobile .wm-terraform-assign select,
+.wm-mobile .wm-terraform-assign button {
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
+}
+.wm-mobile .wm-terraform-assign select {
+  font-size: 11px;
+  padding: 9px 8px;
+  text-overflow: ellipsis;
+}
+.wm-mobile .wm-terraform-assign button { padding: 10px; font-size: 11px; }
 .wm-mobile .wm-name { font-size: 16px; }
 /* collapsed: a slim header — name + owner + resources only */
 .wm-mobile .wm-top.collapsed {
@@ -381,6 +424,16 @@
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
 }
 .wm-mrow .wm-bbtn { height: 54px; align-items: center; text-align: center; padding: 4px 4px; }
+/* Raw-world CITY rule: one full-width line, not a 54px tile in one of
+   three columns. Spanning every column also stops it reading as "a
+   button you nearly qualify for" sitting next to real actions. */
+.wm-mobile .wm-mrow .wm-bbtn.wm-found--rule {
+  grid-column: 1 / -1;
+  height: auto; min-height: 0;
+  padding: 6px 8px;
+  flex-direction: row; justify-content: center; gap: 6px;
+}
+.wm-mobile .wm-mrow .wm-bbtn.wm-found--rule .wm-bbtn-st { font-size: 9px; }
 .wm-mrow .wm-bbtn-fx { font-size: 7.5px; }
 .wm-mrow .wm-bbtn-nm { font-size: 9px; }
 .wm-mrow .wm-bbtn-st { font-size: 8px; }
@@ -398,6 +451,14 @@
 }
 .wm-mobile .wm-fleet-queue { flex: 0 0 auto; }
 .wm-mobile .wm-fleet-grid { grid-template-columns: 1fr 1fr; }
+/* SHORT PHONES. Stacked top-to-bottom the mobile menu wants
+   topbar + info sheet + orbit row + surface row + build box + dock rail,
+   which over-subscribes a ~640px viewport. The build box is the one that
+   can give: it already scrolls internally, so trimming its cap costs a
+   little scrolling and buys every other layer its space. */
+@media (max-height: 700px) {
+  .wm-mobile .wm-fleet { max-height: 180px; }
+}
 
 /* ===== Dyson Sphere card (Sol top panel) ===== */
 .wm-dyson {
