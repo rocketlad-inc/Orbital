@@ -206,6 +206,66 @@ const BATTLE_NAMES_CLAUSE = [
   n => `, ${n} among the ships lost`,
 ];
 
+// ------------------------------------------------------------
+// Voices: the people the paper can actually talk to
+// ------------------------------------------------------------
+
+/**
+ * Quotes from captains who survived a battle.
+ *
+ * A reviewer reading ten editions noted the paper has no people in it —
+ * one captain named across the whole run, and nobody who speaks. The
+ * chronicle already carries the material: every captain_rescued row
+ * names an officer, their ship, and where it went down. Those are the
+ * only figures the Herald can legitimately put in quotation marks —
+ * they exist in the fiction and the game asserts they survived, so a
+ * correspondent could plausibly have reached them.
+ *
+ * Deliberately NOT quoted anywhere: the human players behind the
+ * factions. Their words are theirs to write.
+ *
+ * `(name, ship, place)` — all pre-formatted; `place` may be empty.
+ */
+const CAPTAIN_QUOTE = [
+  (n, s, p) => ` Captain **${n}**, pulled from the **${s}**${p}: "We held as long as the hull did. After that it stopped being a battle and started being arithmetic."`,
+  (n, s, p) => ` Captain **${n}** of the **${s}**${p} put it flatly: "There was no clever manoeuvre available to us. There rarely is."`,
+  (n, s, p) => ` "I got my people into the pods. That is the whole of what I accomplished today," said Captain **${n}**, late of the **${s}**${p}.`,
+  (n, s, p) => ` Captain **${n}** survived the **${s}**${p} and did not sound grateful about it: "Someone decided that rock was worth a warship. It was not."`,
+  (n, s, p) => ` Speaking from a recovery berth, Captain **${n}** of the **${s}**${p} said only: "The order was to hold. We held. Ask the people who wrote the order what it bought."`,
+  (n, s, p) => ` "We saw them coming and it changed nothing," Captain **${n}** told this paper after losing the **${s}**${p}.`,
+  (n, s, p) => ` Captain **${n}**, who walked away from the **${s}**${p}: "Two minutes either way and you would be interviewing somebody else."`,
+  (n, s, p) => ` Asked whether the **${s}** could have been saved, Captain **${n}**${p} said: "By whom? Everyone who might have was busy dying somewhere else."`,
+  (n, s, p) => ` "The ship did everything I asked. It simply ran out of ship," said Captain **${n}**${p}, whose **${s}** was destroyed in the action.`,
+  (n, s, p) => ` Captain **${n}** of the **${s}**${p} declined to blame the crew: "They were faster than the fire. Not faster than the second one."`,
+  (n, s, p) => ` "You do not think about it at the time. You think about it now," Captain **${n}** said of the loss of the **${s}**${p}.`,
+  (n, s, p) => ` Recovered alive from the **${s}**${p}, Captain **${n}** offered a single sentence: "Write down that the crew did their jobs."`,
+  (n, s, p) => ` Captain **${n}** was blunt about the **${s}**'s final minutes${p}: "We were outranged from the first salvo. Everything after was housekeeping."`,
+  (n, s, p) => ` "I have no complaint about the fighting. I have several about the planning," said Captain **${n}**, formerly of the **${s}**${p}.`,
+  (n, s, p) => ` Captain **${n}**, rescued from the **${s}**${p}, on whether it was worth it: "That is not a question for someone who was in the pod."`,
+  (n, s, p) => ` "They will build another **${s}**. They will not build another crew," Captain **${n}** said${p}.`,
+];
+
+/**
+ * The faction leaders are real people playing the game. The Herald can
+ * report that it tried to reach them; it does not put sentences in
+ * their mouths. Every line here is about the ABSENCE of a comment.
+ * `(leader, faction)` — both pre-formatted.
+ */
+const LEADER_NO_COMMENT = [
+  (l, f) => ` **${l}**, who leads ${f}, was unavailable for comment.`,
+  (l, f) => ` ${f}'s **${l}** did not respond to this paper before deadline.`,
+  (l, f) => ` No statement has come from **${l}**, leader of ${f}.`,
+  (l, f) => ` **${l}** of ${f} declined to be interviewed.`,
+  (l, f) => ` Requests for comment to **${l}**, who commands ${f}, went unanswered.`,
+  (l, f) => ` The office of **${l}**, leader of ${f}, referred our correspondent to a statement that does not exist.`,
+  (l, f) => ` ${f} did not make **${l}** available to answer questions.`,
+  (l, f) => ` **${l}**, who speaks for ${f}, was not reachable at the hour we went to press.`,
+  (l, f) => ` This paper asked **${l}** of ${f} for a word. This paper is still asking.`,
+  (l, f) => ` A spokesman for **${l}** of ${f} said the leader would have nothing to say today, and kept the promise.`,
+  (l, f) => ` **${l}**, leader of ${f}, has said nothing publicly since the engagement.`,
+  (l, f) => ` Our request to **${l}** of ${f} was acknowledged, logged, and ignored.`,
+];
+
 /** Frames the chronicle's bare victory record as a cited fact rather
  *  than leaving it standing alone as the entire story. */
 const VICTORY_DETAIL_CLAUSE = [
@@ -682,7 +742,13 @@ async function buildBodyLocator(env, gameId, bodyIds) {
         clause = (r.orbit_radius ?? 0) > 1000 ? 'in the **Kuiper Belt**' : 'in the asteroid belt';
       }
     }
-    locator.set(id, { name: r.name, full: clause ? `**${r.name}**, ${clause}` : `**${r.name}**` });
+    // Restrictive, not parenthetical: "Ganymede in the Jupiter system",
+    // never "Ganymede, in the Jupiter system". A leading comma opens an
+    // aside that the templates cannot close, because they drop this
+    // string mid-sentence and carry on — "at Vesta, in the asteroid belt
+    // except the final count" appeared a dozen times across ten
+    // editions, and every one of them made a reader back up and re-read.
+    locator.set(id, { name: r.name, full: clause ? `**${r.name}** ${clause}` : `**${r.name}**` });
   }
   return locator;
 }
@@ -2380,6 +2446,67 @@ const SHIP_RETREATED_HEADLINE = [
  *  separately from the ship_destroyed row they belong to (see
  *  worker/room.js resolveCaptainOnDeath), so a battle story that wants
  *  to name a captain's fate has to cross-reference rather than assume. */
+/**
+ * Assembles the edition's quotable voices and rations them.
+ *
+ * Both are strictly budgeted. A captain in every battle report would
+ * be the same tic as the rushed-destroyer joke three editions running —
+ * the point of a quote is that it is the one moment the paper stops
+ * counting hulls and lets somebody talk. Two an edition, one leader
+ * non-comment, and the rest of the page stays in the wire voice.
+ *
+ * @param leaders  Map of faction name -> the human player's display
+ *   name. Used ONLY to report that the leader said nothing; the Herald
+ *   never invents a quote for a real person.
+ */
+function buildVoicePool(rows, used, leaders) {
+  const captainAt = new Map();   // body name -> quote clause
+  for (const row of rows) {
+    // Rescued only. The chronicle also records captains killed, and
+    // the paper is not going to interview them.
+    if (row.kind !== 'captain_rescued') continue;
+    const p = safeJson(row.payload);
+    if (!p.captain_name || !p.ship_name || !p.body_name) continue;
+    if (captainAt.has(p.body_name)) continue;
+    captainAt.set(
+      p.body_name,
+      pickTemplate('captain_quote', CAPTAIN_QUOTE, used)(p.captain_name, p.ship_name, ` at **${p.body_name}**`),
+    );
+  }
+
+  const leaderFor = new Map();   // faction name -> non-comment clause
+  for (const [faction, leader] of (leaders ?? new Map())) {
+    if (!faction || !leader) continue;
+    leaderFor.set(faction, pickTemplate('leader_no_comment', LEADER_NO_COMMENT, used)(leader, b(faction)));
+  }
+
+  return { captainAt, leaderFor, quotaQuotes: 2, quotaLeader: 1 };
+}
+
+/** Draws at most one captain quote and one leader non-comment for a
+ *  given battle, consuming them so they can't be reused. `factions` is
+ *  tried in order, so callers pass the loser first — a leader who has
+ *  just lost a fleet is the one worth failing to reach. */
+function takeVoices(voices, bodyName, factions) {
+  if (!voices) return '';
+  let out = '';
+  if (voices.quotaQuotes > 0 && voices.captainAt.has(bodyName)) {
+    out += voices.captainAt.get(bodyName);
+    voices.captainAt.delete(bodyName);
+    voices.quotaQuotes -= 1;
+  }
+  if (voices.quotaLeader > 0) {
+    for (const f of factions) {
+      if (!f || !voices.leaderFor.has(f)) continue;
+      out += voices.leaderFor.get(f);
+      voices.leaderFor.delete(f);
+      voices.quotaLeader -= 1;
+      break;
+    }
+  }
+  return out;
+}
+
 function buildCaptainFateMap(rows) {
   const fate = new Map();
   for (const row of rows) {
@@ -2392,7 +2519,7 @@ function buildCaptainFateMap(rows) {
   return fate;
 }
 
-function buildBattleStories(rows, used, locator, captainFate) {
+function buildBattleStories(rows, used, locator, captainFate, voices = null) {
   const stories = [];
 
   // --- ship_destroyed + settlement_destroyed, clustered by body ---
@@ -2463,7 +2590,8 @@ function buildBattleStories(rows, used, locator, captainFate) {
           // it" is the difference between a battle and a killing.
           tollClause: ', and not one of them was taken down in return',
         };
-        let gangExtra = settlementLossClause(bucket.settlementNames, bucket.settlementPop, used);
+        let gangExtra = settlementLossClause(bucket.settlementNames, bucket.settlementPop, used)
+          + takeVoices(voices, locBody.name, [owner]);
         stories.push(mkStory(
           BATTLE_BASE_WEIGHT + BATTLE_PER_CASUALTY * bucket.count,
           used, 'battle_gang_up', BATTLE_GANG_UP,
@@ -2488,6 +2616,7 @@ function buildBattleStories(rows, used, locator, captainFate) {
           : ['captain_unknown_clause', CAPTAIN_UNKNOWN_FATE_CLAUSE];
         extra += pickTemplate(bankName, bank, used)(capName);
       }
+      extra += takeVoices(voices, locBody.name, [owner, winner]);
       const weight = BATTLE_BASE_WEIGHT + BATTLE_PER_CASUALTY * bucket.count;
       stories.push(winner
         ? mkStory(weight, used, 'battle_one_sided', BATTLE_ONE_SIDED_KNOWN, 'battle_one_sided_hl', BATTLE_ONE_SIDED_KNOWN_HEADLINE, ctx, extra)
@@ -2513,7 +2642,7 @@ function buildBattleStories(rows, used, locator, captainFate) {
       if (settlementLosers.length > 0) {
         settlementExtra = ' ' + settlementLosers.map(s => {
           const many = s.names.length > 1;
-          const popClause = s.pop > 0 ? ` — home to ${formatPopulation(s.pop)} —` : '';
+          const popClause = s.pop > 0 ? ` (home to ${formatPopulation(s.pop)})` : '';
           return `${b(s.who)} also lost the settlement${many ? 's' : ''} ${nameList(s.names, 2, used)}${popClause} in the fighting.`;
         }).join(' ');
       }
@@ -2531,17 +2660,19 @@ function buildBattleStories(rows, used, locator, captainFate) {
           factionB: fb, countB, namesBClause: namesB ? ` (${namesB})` : '',
           body: locBody.name, bodyLoc: locBody.full,
         };
-        stories.push(mkStory(weight, used, 'battle_mutual', BATTLE_MUTUAL, 'battle_mutual_hl', BATTLE_MUTUAL_HEADLINE, ctx, settlementExtra));
+        stories.push(mkStory(weight, used, 'battle_mutual', BATTLE_MUTUAL, 'battle_mutual_hl', BATTLE_MUTUAL_HEADLINE, ctx,
+          settlementExtra + takeVoices(voices, locBody.name, [fa, fb])));
       } else {
         const winner = countA <= countB ? fa : fb;
         const loser = countA <= countB ? fb : fa;
         const winnerCount = lo;
         const loserCount = hi;
         const ctx = { winner, loser, winnerCount, loserCount, body: locBody.name, bodyLoc: locBody.full };
+        const voiceExtra = settlementExtra + takeVoices(voices, locBody.name, [loser, winner]);
         if (ratio >= BATTLE_DECISIVE_RATIO) {
-          stories.push(mkStory(weight, used, 'battle_decisive', BATTLE_DECISIVE, 'battle_decisive_hl', BATTLE_DECISIVE_HEADLINE, ctx, settlementExtra));
+          stories.push(mkStory(weight, used, 'battle_decisive', BATTLE_DECISIVE, 'battle_decisive_hl', BATTLE_DECISIVE_HEADLINE, ctx, voiceExtra));
         } else {
-          stories.push(mkStory(weight, used, 'battle_narrow', BATTLE_NARROW, 'battle_narrow_hl', BATTLE_NARROW_HEADLINE, ctx, settlementExtra));
+          stories.push(mkStory(weight, used, 'battle_narrow', BATTLE_NARROW, 'battle_narrow_hl', BATTLE_NARROW_HEADLINE, ctx, voiceExtra));
         }
       }
     } else {
@@ -3862,16 +3993,20 @@ function standingsField(rows, factionNames) {
   const lines = rank.slice(0, 6).map((r) => {
     const fleet = r.built - r.lost;
     const ground = r.founded - r.razed;
-    // An arrow the eye can sort on without reading the numbers.
-    const trend = r.net > 2 ? '▲' : r.net < -2 ? '▼' : '▬';
+    // The arrow has to agree with the two numbers printed beside it.
+    // It was keyed off an internal weighting that counts a world as
+    // three hulls, so "+2 fleet" could draw a flat arrow while "+1
+    // fleet" drew an up one, and the table simply looked broken.
+    const move = fleet + ground;
+    const trend = move > 0 ? '▲' : move < 0 ? '▼' : '▬';
     return `${trend} **${r.name}** · fleet ${sign(fleet)} · worlds ${sign(ground)}`;
   });
+  // No legend line. It was word-for-word identical in all ten editions
+  // of a real run — a glossary entry reprinted as news — and the field
+  // title can carry the same information once.
   return {
-    name: '📊  Where things stand',
-    value: clipToSentence(
-      `${lines.join('\n')}\n*Net change this edition — hulls gained less hulls lost, settlements founded less settlements razed.*`,
-      FIELD_VALUE_LIMIT - 4,
-    ),
+    name: '📊  Where things stand · net change this edition',
+    value: clipToSentence(lines.join('\n'), FIELD_VALUE_LIMIT - 4),
   };
 }
 
@@ -4255,7 +4390,29 @@ function buildFleetLifecycleStories(rows, used, factionNames) {
   return stories;
 }
 
-function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, sanctions = []) {
+/** Faction name -> the display name of the human running it.
+ *
+ *  Used only so the Herald can report that a leader had nothing to say.
+ *  The paper quotes captains, who are fictional; it never puts words in
+ *  a player's mouth. A failed lookup just means no such line runs. */
+async function fetchLeaders(env, gameId) {
+  try {
+    const rows = (await env.DB
+      .prepare(
+        `SELECT f.name AS faction, u.display_name AS leader
+           FROM game_factions f
+           JOIN users u ON u.id = f.user_id
+          WHERE f.game_id = ?`,
+      )
+      .bind(gameId)
+      .all()).results ?? [];
+    return new Map(rows.filter(r => r.faction && r.leader).map(r => [r.faction, r.leader]));
+  } catch {
+    return new Map();
+  }
+}
+
+function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, sanctions = [], leaders = new Map()) {
   // bank-name -> { start, stride, k } walk state, plus the '__rng' the
   // walks are drawn from. Seeded off the edition's tick (and the game
   // name, so two matches publishing the same tick don't print the same
@@ -4269,6 +4426,7 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
   used.set('__spin', Math.abs(tick | 0));
 
   const captainFate = buildCaptainFateMap(rows);
+  const voices = buildVoicePool(rows, used, leaders);
   // Terraform beats split across two columns: begun/complete are
   // expansion news, the asteroid kill is a battle-page atrocity.
   const terraform = buildTerraformStories(rows, used, factionNames);
@@ -4284,7 +4442,7 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
     battles:     [
       ...buildDysonBattleStories(rows, used, factionNames),
       ...terraform.battles,
-      ...buildBattleStories(rows, used, locator, captainFate),
+      ...buildBattleStories(rows, used, locator, captainFate, voices),
     ],
     politics:    buildPoliticsStories(rows, used, factionNames),
     discoveries: buildDiscoveryStories(rows, used, locator, factionNames),
@@ -4491,6 +4649,7 @@ export async function runDigestForGame(env, game, { force = false, final = false
     .bind(game.id)
     .all()).results ?? [];
   const factionNames = new Map(factions.map(f => [f.id, f.name]));
+  const leaders = await fetchLeaders(env, game.id);
 
   const locator = await buildBodyLocator(env, game.id, collectBodyIds(rows));
 
@@ -4502,7 +4661,7 @@ export async function runDigestForGame(env, game, { force = false, final = false
   const tradesDelta = Math.max(0, tradesNow - (state?.trades_snapshot ?? tradesNow));
 
   const sanctions = await activeSanctions(env, game.id, game.current_tick ?? 0);
-  let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, tradesDelta, locator, sanctions);
+  let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, tradesDelta, locator, sanctions, leaders);
 
   // Forced editions always publish — a quiet day (no stories, no
   // trades) still gets a headline-styled "all quiet" bulletin so the
@@ -4615,12 +4774,13 @@ export async function composeHeraldForGame(env, game, lookbackMs = 24 * 60 * 60 
     .bind(game.id)
     .all()).results ?? [];
   const factionNames = new Map(factions.map(f => [f.id, f.name]));
+  const leaders = await fetchLeaders(env, game.id);
   const locator = await buildBodyLocator(env, game.id, collectBodyIds(rows));
 
   // No trades-delta bookkeeping here — that snapshot belongs to the
   // Discord edition's incremental state and must not be disturbed.
   const sanctions = await activeSanctions(env, game.id, game.current_tick ?? 0);
-  let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, 0, locator, sanctions);
+  let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, 0, locator, sanctions, leaders);
   if (!embed) {
     const used = new Map();
     embed = {
@@ -4680,9 +4840,10 @@ export async function composeHeraldForTickRange(env, game, fromTick, toTick) {
     .bind(game.id)
     .all()).results ?? [];
   const factionNames = new Map(factions.map(f => [f.id, f.name]));
+  const leaders = await fetchLeaders(env, game.id);
   const locator = await buildBodyLocator(env, game.id, collectBodyIds(rows));
 
-  let embed = composeEmbed(game.name ?? game.id, toTick, rows, factionNames, 0, locator, []);
+  let embed = composeEmbed(game.name ?? game.id, toTick, rows, factionNames, 0, locator, [], leaders);
   if (!embed) {
     const used = new Map();
     embed = {
