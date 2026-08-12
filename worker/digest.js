@@ -80,7 +80,7 @@ const INDUSTRY_COLLAPSE_THRESHOLD = 5;
 /** How far each edition advances its cursor into every phrase bank.
  *  Set to the largest number of draws a single edition makes from one
  *  bank, so successive papers read non-overlapping runs. */
-const EDITION_BANK_STRIDE = 4;
+const EDITION_BANK_STRIDE = 6;
 
 /** How many consecutive editions a bank should get through before it is
  *  allowed to repeat itself. A reader following a match sees them in a
@@ -164,6 +164,11 @@ const TITLE_CASE_MINOR = new Set([
 ]);
 function titleCase(s) {
   if (!s) return s;
+  // Player-typed titles frequently end in their own full stop, and the
+  // banks all close the sentence themselves — producing `"I Am the
+  // Senate.".` Strip trailing sentence punctuation; the quotes and the
+  // bank's own stop carry it.
+  s = String(s).replace(/[.!?]+\s*$/, '');
   const words = s.trim().split(/\s+/);
   return words
     .map((w, i) => {
@@ -1607,10 +1612,12 @@ const INDUSTRY_BUILDINGS_ONLY_HEADLINE = [
 // INDUSTRY_COLLAPSE_THRESHOLD. Deliberately low-key phrasing; this is
 // the digest's equivalent of small print, not a headline.
 const INDUSTRY_COLLAPSED_SOLO = [
-  c => `${b(c.leader)} alone accounted for the rest — ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} finished ${plural(c.totalBuilds, 'project')}.`,
-  c => `Everything else on the board belonged to ${b(c.leader)}: ${numWord(c.totalShips)} ${shipsWord(c.totalShips)}, ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}.`,
-  c => `Only ${b(c.leader)} filed anything further — ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}.`,
-  c => `The remaining entry on the register is ${b(c.leader)}, with ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}.`,
+  c => `${b(c.leader)} added ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} finished ${plural(c.totalBuilds, 'project')}.`,
+  c => `Further down, ${b(c.leader)}: ${numWord(c.totalShips)} ${shipsWord(c.totalShips)}, ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}.`,
+  c => `${b(c.leader)} filed ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')} besides.`,
+  c => `Also on the register: ${b(c.leader)}, with ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}.`,
+  c => `${b(c.leader)} turned in ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}.`,
+  c => `A smaller entry: ${b(c.leader)}, ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}.`,
 ];
 
 const INDUSTRY_COLLAPSED = [
@@ -1661,10 +1668,12 @@ const INDUSTRY_COLLAPSED_HEADLINE = [
  *  thirty ships a "minor power" is just wrong, and the reader can see
  *  the number sitting right there in the sentence. */
 const INDUSTRY_FIELD_SOLO = [
-  c => `${b(c.leader)} alone accounted for the rest — ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} finished ${plural(c.totalBuilds, 'project')}.`,
-  c => `Everything else on the board belonged to ${b(c.leader)}: ${numWord(c.totalShips)} ${shipsWord(c.totalShips)}, ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}.`,
-  c => `Only ${b(c.leader)} filed anything further — ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}.`,
-  c => `The remaining entry on the register is ${b(c.leader)}, with ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}.`,
+  c => `${b(c.leader)} added ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} finished ${plural(c.totalBuilds, 'project')}.`,
+  c => `Further down, ${b(c.leader)}: ${numWord(c.totalShips)} ${shipsWord(c.totalShips)}, ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}.`,
+  c => `${b(c.leader)} filed ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')} besides.`,
+  c => `Also on the register: ${b(c.leader)}, with ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}.`,
+  c => `${b(c.leader)} turned in ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}.`,
+  c => `A smaller entry: ${b(c.leader)}, ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}.`,
 ];
 
 const INDUSTRY_FIELD = [
@@ -3258,7 +3267,11 @@ function buildVictoryStories(rows, used, factionNames) {
       // the whole story read to a cold reader as a truncated string.
       // It is a fine SUPPORTING fact, so frame it as one and let the
       // Herald's own voice carry the announcement.
-      const detail = (typeof p.detail === 'string' ? p.detail.trim().replace(/\.+$/, '') : '');
+      let detail = (typeof p.detail === 'string' ? p.detail.trim().replace(/\.+$/, '') : '');
+      // "Sun Never Sets On The Solar Empire elected Supreme Chancellor"
+      // makes a polity hold a personal office. Attribute it to the
+      // delegation, which is who actually sat in the chamber.
+      detail = detail.replace(/^(.+?) elected /i, "$1's delegation elected ");
       const lead = pickTemplate('victory', VICTORY, used)(ctx);
       const text = detail
         ? `${lead} ${pickTemplate('victory_detail', VICTORY_DETAIL_CLAUSE, used)(detail)}`
@@ -3370,26 +3383,26 @@ const DYSON_MILESTONE_HEADLINE = [
   () => 'A STAR, HALF-CAUGHT',
 ];
 const DYSON_DAMAGED = [
-  (c) => `The **Dyson Sphere** took fire at Sol — **${c.damage}** units of construction burned off the lattice under bombardment. **${c.faction}**'s great work stands at **${c.pct}%** and bleeding.`,
-  (c) => `Battle at the sun: raiders hammered **${c.faction}**'s Dyson foundation, erasing **${c.damage}** of accumulated work. The sphere holds at **${c.pct}%** — for now.`,
-  (c) => `Fire found the lattice. **${c.damage}** units of **${c.faction}**'s **Dyson Sphere** burned off in a single engagement, leaving the structure at **${c.pct}%** and every crew aboard reassigned to repairs.`,
-  (c) => `Smoke over Sol. Attackers stripped **${c.damage}** units from **${c.faction}**'s sun-cage before withdrawing, dropping the sphere to **${c.pct}%** and rattling every hauler still inbound.`,
-  (c) => `**${c.faction}**'s **Dyson Sphere** absorbed a direct strike this cycle — **${c.damage}** units of work gone, the lattice now standing at **${c.pct}%**, scorched but intact.`,
-  (c) => `The sun-cage bled today. Raiders burned **${c.damage}** units off **${c.faction}**'s foundation, and the structure limps forward at **${c.pct}%.**`,
-  (c) => `Sol reports casualties in construction, not just crew. **${c.faction}** lost **${c.damage}** units of the sphere to bombardment, now sitting at **${c.pct}%.**`,
-  (c) => `An assault at the foundation station cost **${c.faction}** dearly — **${c.damage}** units erased from the **Dyson Sphere**, which now stands at **${c.pct}%** under repair crews' watch.`,
-  (c) => `Not enough to collapse it, but enough to hurt: **${c.damage}** units torn from **${c.faction}**'s sphere in the latest raid, the total now **${c.pct}%.**`,
-  (c) => `The lattice groaned but held. **${c.faction}** confirms **${c.damage}** units lost to enemy fire at Sol, leaving the **Dyson Sphere** at **${c.pct}%.**`,
-  (c) => `Hostile fire reached the foundation ring this cycle, stripping **${c.damage}** units from **${c.faction}**'s **Dyson Sphere** and leaving it at **${c.pct}%**, exposed and unrepaired.`,
-  (c) => `Every faction watching the sun took note: **${c.faction}**'s sphere absorbed **${c.damage}** units of damage, now standing at **${c.pct}%**, a reminder that nothing built at Sol is safe from it.`,
-  (c) => `Reports from the foundation confirm the worst rumor first — **${c.faction}** was hit. **${c.damage}** units of the **Dyson Sphere** are gone, the lattice now reading **${c.pct}%.**`,
-  (c) => `A raiding fleet slipped past the picket line and found the lattice exposed. **${c.damage}** units of **${c.faction}**'s work burned, the sphere now at **${c.pct}%.**`,
-  (c) => `The sphere survives, barely richer for the experience. **${c.faction}** logs **${c.damage}** units lost to bombardment, the structure now standing at **${c.pct}%.**`,
-  (c) => `Sol's newest scar belongs to **${c.faction}** — **${c.damage}** units of construction stripped away, the **Dyson Sphere** left at **${c.pct}%** and defended more heavily than ever.`,
-  (c) => `Hulls burned bright against the star as attackers tore **${c.damage}** units off **${c.faction}**'s foundation, dropping the sphere to **${c.pct}%.**`,
-  (c) => `The foundation held, the schedule did not. **${c.faction}** absorbed **${c.damage}** units of losses at Sol, the **Dyson Sphere** now at **${c.pct}%** and behind where it started the week.`,
-  (c) => `Enemy fire reached the lattice this cycle. **${c.faction}** reports **${c.damage}** units erased and the sphere standing at **${c.pct}%**, a wound the whole system can see.`,
-  (c) => `The star burned through the smoke of its own defense. **${c.faction}** lost **${c.damage}** units of the **Dyson Sphere** to the raid, the total now **${c.pct}%.**`,
+  (c) => `The **Dyson Sphere** took fire at Sol — **${c.damage}** tonnes of construction burned off the lattice under bombardment. **${c.faction}**'s great work stands at **${c.pct}%** and bleeding.`,
+  (c) => `Battle at the sun: raiders hammered **${c.faction}**'s Dyson foundation, erasing **${c.damage}** tonnes of accumulated work. The sphere holds at **${c.pct}%** — for now.`,
+  (c) => `Fire found the lattice. **${c.damage}** tonnes of **${c.faction}**'s **Dyson Sphere** burned off in a single engagement, leaving the structure at **${c.pct}%** and every crew aboard reassigned to repairs.`,
+  (c) => `Smoke over Sol. Attackers stripped **${c.damage}** tonnes from **${c.faction}**'s sun-cage before withdrawing, dropping the sphere to **${c.pct}%** and rattling every hauler still inbound.`,
+  (c) => `**${c.faction}**'s **Dyson Sphere** absorbed a direct strike this cycle — **${c.damage}** tonnes of work gone, the lattice now standing at **${c.pct}%**, scorched but intact.`,
+  (c) => `The sun-cage bled today. Raiders burned **${c.damage}** tonnes off **${c.faction}**'s foundation, and the structure limps forward at **${c.pct}%.**`,
+  (c) => `Sol reports casualties in construction, not just crew. **${c.faction}** lost **${c.damage}** tonnes of the sphere to bombardment, now sitting at **${c.pct}%.**`,
+  (c) => `An assault at the foundation station cost **${c.faction}** dearly — **${c.damage}** tonnes erased from the **Dyson Sphere**, which now stands at **${c.pct}%** under repair crews' watch.`,
+  (c) => `Not enough to collapse it, but enough to hurt: **${c.damage}** tonnes torn from **${c.faction}**'s sphere in the latest raid, the total now **${c.pct}%.**`,
+  (c) => `The lattice groaned but held. **${c.faction}** confirms **${c.damage}** tonnes lost to enemy fire at Sol, leaving the **Dyson Sphere** at **${c.pct}%.**`,
+  (c) => `Hostile fire reached the foundation ring this cycle, stripping **${c.damage}** tonnes from **${c.faction}**'s **Dyson Sphere** and leaving it at **${c.pct}%**, exposed and unrepaired.`,
+  (c) => `Every faction watching the sun took note: **${c.faction}**'s sphere absorbed **${c.damage}** tonnes of damage, now standing at **${c.pct}%**, a reminder that nothing built at Sol is safe from it.`,
+  (c) => `Reports from the foundation confirm the worst rumor first — **${c.faction}** was hit. **${c.damage}** tonnes of the **Dyson Sphere** are gone, the lattice now reading **${c.pct}%.**`,
+  (c) => `A raiding fleet slipped past the picket line and found the lattice exposed. **${c.damage}** tonnes of **${c.faction}**'s work burned, the sphere now at **${c.pct}%.**`,
+  (c) => `The sphere survives, barely richer for the experience. **${c.faction}** logs **${c.damage}** tonnes lost to bombardment, the structure now standing at **${c.pct}%.**`,
+  (c) => `Sol's newest scar belongs to **${c.faction}** — **${c.damage}** tonnes of construction stripped away, the **Dyson Sphere** left at **${c.pct}%** and defended more heavily than ever.`,
+  (c) => `Hulls burned bright against the star as attackers tore **${c.damage}** tonnes off **${c.faction}**'s foundation, dropping the sphere to **${c.pct}%.**`,
+  (c) => `The foundation held, the schedule did not. **${c.faction}** absorbed **${c.damage}** tonnes of losses at Sol, the **Dyson Sphere** now at **${c.pct}%** and behind where it started the week.`,
+  (c) => `Enemy fire reached the lattice this cycle. **${c.faction}** reports **${c.damage}** tonnes erased and the sphere standing at **${c.pct}%**, a wound the whole system can see.`,
+  (c) => `The star burned through the smoke of its own defense. **${c.faction}** lost **${c.damage}** tonnes of the **Dyson Sphere** to the raid, the total now **${c.pct}%.**`,
 ];
 const DYSON_DAMAGED_HEADLINE = [
   () => 'THE SPHERE BLEEDS',
@@ -3414,56 +3427,56 @@ const DYSON_DAMAGED_HEADLINE = [
 // to zero) and abandonment (the shell survives, claimable by anyone).
 const DYSON_COLLAPSED = [
   (c) => c.kept > 0
-    ? `The king is off the hill: **${c.faction}** lost the sun-cage ${c.reason === 'foundation destroyed' ? 'when its foundation was destroyed' : 'under sustained attack'}, and a masterless lattice does not keep well — **${c.abandon}%** of the surviving construction sheared away in the days after. **${c.kept}** units still hang there at **${c.pct}%**, and every fleet in the system knows the number.`
-    : `It fell. **${c.faction}**'s sun-cage collapsed ${c.reason === 'foundation destroyed' ? 'when its foundation was destroyed' : 'under sustained attack'} — **${c.lost}** units of the grandest project in history, erased in a single stroke. The Sol slot stands open for whoever dares next.`,
+    ? `The king is off the hill: **${c.faction}** lost the sun-cage ${c.reason === 'foundation destroyed' ? 'when its foundation was destroyed' : 'under sustained attack'}, and a masterless lattice does not keep well — **${c.abandon}%** of the surviving construction sheared away in the days after. **${c.kept}** tonnes still hang there at **${c.pct}%**, and every fleet in the system knows the number.`
+    : `It fell. **${c.faction}**'s sun-cage collapsed ${c.reason === 'foundation destroyed' ? 'when its foundation was destroyed' : 'under sustained attack'} — **${c.lost}** tonnes of the grandest project in history, erased in a single stroke. The Sol slot stands open for whoever dares next.`,
   (c) => c.kept > 0
     ? `**${c.faction}** has been thrown off the **Dyson Sphere.** ${c.reason === 'foundation destroyed' ? 'Their foundation station was blown out of Sol orbit' : 'Bombardment broke their hold'}, and with no hand on the helm **${c.abandon}%** of the remaining work tore loose — scaffolding adrift, crews gone. What is left hangs at **${c.pct}%**, unclaimed. The first faction to lay a new foundation at Sol inherits all of it.`
     : `The **Dyson Sphere is gone.** ${c.reason === 'foundation destroyed' ? 'Its foundation station was blown out of Sol orbit' : 'Sustained bombardment finally broke the lattice'}, and with it **${c.faction}**'s bid to end the war by engineering. Every unit of progress — **${c.lost}** in all — is dust in the solar wind.`,
   (c) => c.kept > 0
-    ? `Sol has a ghost ship now. **${c.faction}** lost control of its **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'when the foundation station went dark' : 'under a bombardment it could not answer'}, and **${c.abandon}%** of the unmanned lattice tore free before crews could stabilize it. **${c.kept}** units remain, sitting at **${c.pct}%**, waiting for a new flag.`
-    : `Nothing remains. **${c.faction}**'s **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'went dark the moment its foundation was destroyed' : 'came apart under bombardment it never withstood'}, taking **${c.lost}** units of work with it. The sun burns unclaimed again.`,
+    ? `Sol has a ghost ship now. **${c.faction}** lost control of its **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'when the foundation station went dark' : 'under a bombardment it could not answer'}, and **${c.abandon}%** of the unmanned lattice tore free before crews could stabilize it. **${c.kept}** tonnes remain, sitting at **${c.pct}%**, waiting for a new flag.`
+    : `Nothing remains. **${c.faction}**'s **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'went dark the moment its foundation was destroyed' : 'came apart under bombardment it never withstood'}, taking **${c.lost}** tonnes of work with it. The sun burns unclaimed again.`,
   (c) => c.kept > 0
-    ? `**${c.faction}**'s hold on the sun broke ${c.reason === 'foundation destroyed' ? 'the instant its foundation was destroyed' : 'under weeks of grinding attack'}. The lattice did not wait for a new owner — **${c.abandon}%** sheared off within days, leaving **${c.kept}** units adrift at **${c.pct}%.** The derelict is real, and it is up for grabs.`
-    : `The greatest structure in the system is a memory. **${c.faction}**'s **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'was wiped out when its foundation was destroyed' : 'was ground down by relentless bombardment'}, and **${c.lost}** units of labor vanished with it.`,
+    ? `**${c.faction}**'s hold on the sun broke ${c.reason === 'foundation destroyed' ? 'the instant its foundation was destroyed' : 'under weeks of grinding attack'}. The lattice did not wait for a new owner — **${c.abandon}%** sheared off within days, leaving **${c.kept}** tonnes adrift at **${c.pct}%.** The derelict is real, and it is up for grabs.`
+    : `The greatest structure in the system is a memory. **${c.faction}**'s **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'was wiped out when its foundation was destroyed' : 'was ground down by relentless bombardment'}, and **${c.lost}** tonnes of labor vanished with it.`,
   (c) => c.kept > 0
-    ? `A derelict now orbits the star. **${c.faction}** lost the **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'to a strike on its foundation station' : 'to attackers it could not repel'}, and **${c.abandon}%** of the unguarded lattice fell away before anyone could hold it together. **${c.kept}** units remain at **${c.pct}%**, and Sol has never been more contested.`
-    : `The sun is bare again. **${c.faction}**'s **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'ended when its foundation was destroyed' : 'ended under sustained enemy fire'}, and **${c.lost}** units of construction — years of hauling, by any measure — are simply gone.`,
+    ? `A derelict now orbits the star. **${c.faction}** lost the **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'to a strike on its foundation station' : 'to attackers it could not repel'}, and **${c.abandon}%** of the unguarded lattice fell away before anyone could hold it together. **${c.kept}** tonnes remain at **${c.pct}%**, and Sol has never been more contested.`
+    : `The sun is bare again. **${c.faction}**'s **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'ended when its foundation was destroyed' : 'ended under sustained enemy fire'}, and **${c.lost}** tonnes of construction — years of hauling, by any measure — are simply gone.`,
   (c) => c.kept > 0
-    ? `**${c.faction}** no longer holds the sphere. ${c.reason === 'foundation destroyed' ? 'Its foundation station was destroyed outright' : 'It was bombed off the project entirely'}, and in the leaderless days that followed, **${c.abandon}%** of the structure broke loose. **${c.kept}** units drift there still, at **${c.pct}%**, an open prize at Sol.`
-    : `Every hauler run, every escort, every unit of construction — gone. **${c.faction}**'s **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'was erased when its foundation was destroyed' : 'was erased by sustained bombardment'}, **${c.lost}** units lost in total.`,
+    ? `**${c.faction}** no longer holds the sphere. ${c.reason === 'foundation destroyed' ? 'Its foundation station was destroyed outright' : 'It was bombed off the project entirely'}, and in the leaderless days that followed, **${c.abandon}%** of the structure broke loose. **${c.kept}** tonnes drift there still, at **${c.pct}%**, an open prize at Sol.`
+    : `Every hauler run, every escort, every unit of construction — gone. **${c.faction}**'s **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'was erased when its foundation was destroyed' : 'was erased by sustained bombardment'}, **${c.lost}** tonnes lost in total.`,
   (c) => c.kept > 0
-    ? `The foundation fell silent. **${c.faction}** ${c.reason === 'foundation destroyed' ? 'watched its foundation station die outright' : 'could not hold the line against sustained attack'}, and the sphere it built has become common property in waiting — **${c.abandon}%** torn loose, **${c.kept}** units surviving at **${c.pct}%.**`
-    : `Sol's would-be cage is scrap and light now. **${c.faction}** ${c.reason === 'foundation destroyed' ? 'saw its foundation destroyed outright' : 'saw its lattice ground apart under bombardment'}, and **${c.lost}** units of the war's most ambitious project are unrecoverable.`,
+    ? `The foundation fell silent. **${c.faction}** ${c.reason === 'foundation destroyed' ? 'watched its foundation station die outright' : 'could not hold the line against sustained attack'}, and the sphere it built has become common property in waiting — **${c.abandon}%** torn loose, **${c.kept}** tonnes surviving at **${c.pct}%.**`
+    : `Sol's would-be cage is scrap and light now. **${c.faction}** ${c.reason === 'foundation destroyed' ? 'saw its foundation destroyed outright' : 'saw its lattice ground apart under bombardment'}, and **${c.lost}** tonnes of the war's most ambitious project are unrecoverable.`,
   (c) => c.kept > 0
-    ? `Command has gone dark on the sun-cage. **${c.faction}**'s claim ended ${c.reason === 'foundation destroyed' ? 'when the foundation station was destroyed' : 'under an attack it never repelled'}, and **${c.abandon}%** of the abandoned structure has since crumbled away. **${c.kept}** units remain at **${c.pct}%** — a derelict, not a ruin.`
-    : `There is a hole where a sun-cage used to be. **${c.faction}**'s **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'was finished off when its foundation was destroyed' : 'was finished off by sustained bombardment'}, **${c.lost}** units erased in the process.`,
+    ? `Command has gone dark on the sun-cage. **${c.faction}**'s claim ended ${c.reason === 'foundation destroyed' ? 'when the foundation station was destroyed' : 'under an attack it never repelled'}, and **${c.abandon}%** of the abandoned structure has since crumbled away. **${c.kept}** tonnes remain at **${c.pct}%** — a derelict, not a ruin.`
+    : `There is a hole where a sun-cage used to be. **${c.faction}**'s **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'was finished off when its foundation was destroyed' : 'was finished off by sustained bombardment'}, **${c.lost}** tonnes erased in the process.`,
   (c) => c.kept > 0
-    ? `**${c.faction}** built for years and lost it in a day. ${c.reason === 'foundation destroyed' ? 'The foundation station was destroyed' : 'The position was overrun'}, and **${c.abandon}%** of what remained fell apart soon after. **${c.kept}** units of derelict lattice now sit at **${c.pct}%**, waiting on whoever moves first.`
-    : `Silence at Sol where there used to be construction traffic. **${c.faction}**'s sphere ${c.reason === 'foundation destroyed' ? 'was wiped clean when its foundation was destroyed' : 'was wiped clean by an unanswered bombardment'}, **${c.lost}** units gone for good.`,
+    ? `**${c.faction}** built for years and lost it in a day. ${c.reason === 'foundation destroyed' ? 'The foundation station was destroyed' : 'The position was overrun'}, and **${c.abandon}%** of what remained fell apart soon after. **${c.kept}** tonnes of derelict lattice now sit at **${c.pct}%**, waiting on whoever moves first.`
+    : `Silence at Sol where there used to be construction traffic. **${c.faction}**'s sphere ${c.reason === 'foundation destroyed' ? 'was wiped clean when its foundation was destroyed' : 'was wiped clean by an unanswered bombardment'}, **${c.lost}** tonnes gone for good.`,
   (c) => c.kept > 0
-    ? `The lattice outlived its builder, if only barely. **${c.faction}** ${c.reason === 'foundation destroyed' ? 'lost the foundation station to a direct strike' : 'was driven off the project by force'}, and **${c.abandon}%** of the leftover structure has since sheared away, leaving **${c.kept}** units at **${c.pct}%** for the taking.`
-    : `A star's worth of ambition, undone in one report. **${c.faction}**'s **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'was destroyed along with its foundation' : 'was destroyed by sustained enemy fire'}, **${c.lost}** units lost with no trace.`,
+    ? `The lattice outlived its builder, if only barely. **${c.faction}** ${c.reason === 'foundation destroyed' ? 'lost the foundation station to a direct strike' : 'was driven off the project by force'}, and **${c.abandon}%** of the leftover structure has since sheared away, leaving **${c.kept}** tonnes at **${c.pct}%** for the taking.`
+    : `A star's worth of ambition, undone in one report. **${c.faction}**'s **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'was destroyed along with its foundation' : 'was destroyed by sustained enemy fire'}, **${c.lost}** tonnes lost with no trace.`,
   (c) => c.kept > 0
-    ? `Sol's newest fixture is a wreck with a price on it. **${c.faction}** lost its grip ${c.reason === 'foundation destroyed' ? 'the moment the foundation station fell' : 'under an assault it could not survive'}, and **${c.abandon}%** of the orphaned lattice broke away in the aftermath. **${c.kept}** units remain, parked at **${c.pct}%.**`
-    : `No derelict, no salvage, no second chance — just absence. **${c.faction}**'s **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'ceased to exist when its foundation was destroyed' : 'ceased to exist under sustained bombardment'}, **${c.lost}** units erased entirely.`,
+    ? `Sol's newest fixture is a wreck with a price on it. **${c.faction}** lost its grip ${c.reason === 'foundation destroyed' ? 'the moment the foundation station fell' : 'under an assault it could not survive'}, and **${c.abandon}%** of the orphaned lattice broke away in the aftermath. **${c.kept}** tonnes remain, parked at **${c.pct}%.**`
+    : `No derelict, no salvage, no second chance — just absence. **${c.faction}**'s **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'ceased to exist when its foundation was destroyed' : 'ceased to exist under sustained bombardment'}, **${c.lost}** tonnes erased entirely.`,
   (c) => c.kept > 0
-    ? `What **${c.faction}** built, it could not keep. ${c.reason === 'foundation destroyed' ? 'The foundation station was blown apart' : 'The site was overwhelmed by force'}, and **${c.abandon}%** of the leaderless structure has since come loose. **${c.kept}** units hang at **${c.pct}%**, unclaimed and unguarded.`
-    : `The sun burns clean of scaffolding once more. **${c.faction}**'s hold ${c.reason === 'foundation destroyed' ? 'ended the moment its foundation was destroyed' : 'ended under bombardment it could not weather'}, **${c.lost}** units gone with it.`,
+    ? `What **${c.faction}** built, it could not keep. ${c.reason === 'foundation destroyed' ? 'The foundation station was blown apart' : 'The site was overwhelmed by force'}, and **${c.abandon}%** of the leaderless structure has since come loose. **${c.kept}** tonnes hang at **${c.pct}%**, unclaimed and unguarded.`
+    : `The sun burns clean of scaffolding once more. **${c.faction}**'s hold ${c.reason === 'foundation destroyed' ? 'ended the moment its foundation was destroyed' : 'ended under bombardment it could not weather'}, **${c.lost}** tonnes gone with it.`,
   (c) => c.kept > 0
-    ? `Analysts are already calling it the shortest reign at Sol on record. **${c.faction}** ${c.reason === 'foundation destroyed' ? 'lost its foundation station to enemy action' : 'lost the position to enemy action'}, and **${c.abandon}%** of the abandoned lattice tore free soon after. **${c.kept}** units remain at **${c.pct}%**, a prize now, not a project.`
-    : `Every gram of that lattice is gone. **${c.faction}**'s **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'was obliterated with its foundation' : 'was obliterated under bombardment'}, **${c.lost}** units lost in the collapse.`,
+    ? `Analysts are already calling it the shortest reign at Sol on record. **${c.faction}** ${c.reason === 'foundation destroyed' ? 'lost its foundation station to enemy action' : 'lost the position to enemy action'}, and **${c.abandon}%** of the abandoned lattice tore free soon after. **${c.kept}** tonnes remain at **${c.pct}%**, a prize now, not a project.`
+    : `Every gram of that lattice is gone. **${c.faction}**'s **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'was obliterated with its foundation' : 'was obliterated under bombardment'}, **${c.lost}** tonnes lost in the collapse.`,
   (c) => c.kept > 0
-    ? `The flag came down at the sun. **${c.faction}** ${c.reason === 'foundation destroyed' ? 'saw its foundation station destroyed' : 'was driven off by force'}, and in the vacuum that followed, **${c.abandon}%** of the structure broke apart. **${c.kept}** units sit at **${c.pct}%**, unowned.`
-    : `Where a **Dyson Sphere** stood, there is now only wreckage and rumor. **${c.faction}** ${c.reason === 'foundation destroyed' ? 'lost everything when its foundation was destroyed' : 'lost everything under relentless bombardment'}, **${c.lost}** units gone.`,
+    ? `The flag came down at the sun. **${c.faction}** ${c.reason === 'foundation destroyed' ? 'saw its foundation station destroyed' : 'was driven off by force'}, and in the vacuum that followed, **${c.abandon}%** of the structure broke apart. **${c.kept}** tonnes sit at **${c.pct}%**, unowned.`
+    : `Where a **Dyson Sphere** stood, there is now only wreckage and rumor. **${c.faction}** ${c.reason === 'foundation destroyed' ? 'lost everything when its foundation was destroyed' : 'lost everything under relentless bombardment'}, **${c.lost}** tonnes gone.`,
   (c) => c.kept > 0
-    ? `Ambition outran defense. **${c.faction}** ${c.reason === 'foundation destroyed' ? 'watched its foundation station go dark for good' : 'was pushed off the project entirely'}, and **${c.abandon}%** of the leftover lattice has since drifted apart. **${c.kept}** units remain at **${c.pct}%**, waiting on a new claimant.`
-    : `The books close on **${c.faction}**'s bid for the sun. Its **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'died with its foundation station' : 'died under sustained bombardment'}, **${c.lost}** units of history erased.`,
+    ? `Ambition outran defense. **${c.faction}** ${c.reason === 'foundation destroyed' ? 'watched its foundation station go dark for good' : 'was pushed off the project entirely'}, and **${c.abandon}%** of the leftover lattice has since drifted apart. **${c.kept}** tonnes remain at **${c.pct}%**, waiting on a new claimant.`
+    : `The books close on **${c.faction}**'s bid for the sun. Its **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'died with its foundation station' : 'died under sustained bombardment'}, **${c.lost}** tonnes of history erased.`,
   (c) => c.kept > 0
-    ? `Not gone, only leaderless. **${c.faction}**'s **Dyson Sphere** slipped its owner ${c.reason === 'foundation destroyed' ? 'when the foundation station was destroyed' : 'under an attack that finally broke through'}, and **${c.abandon}%** of the drifting structure has since fallen away. **${c.kept}** units sit at **${c.pct}%.**`
-    : `Total loss confirmed at Sol. **${c.faction}**'s **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'was annihilated along with its foundation' : 'was annihilated by sustained bombardment'} — **${c.lost}** units, gone without residue.`,
+    ? `Not gone, only leaderless. **${c.faction}**'s **Dyson Sphere** slipped its owner ${c.reason === 'foundation destroyed' ? 'when the foundation station was destroyed' : 'under an attack that finally broke through'}, and **${c.abandon}%** of the drifting structure has since fallen away. **${c.kept}** tonnes sit at **${c.pct}%.**`
+    : `Total loss confirmed at Sol. **${c.faction}**'s **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'was annihilated along with its foundation' : 'was annihilated by sustained bombardment'} — **${c.lost}** tonnes, gone without residue.`,
   (c) => c.kept > 0
-    ? `Loss reports out of Sol confirm **${c.faction}**'s fall from the project ${c.reason === 'foundation destroyed' ? 'after its foundation station was destroyed' : 'after sustained attack broke its hold'}. **${c.abandon}%** of the surviving lattice sheared free soon after, leaving **${c.kept}** units at **${c.pct}%** for whoever claims it next.`
-    : `The star's captors are gone, and so is their cage. **${c.faction}**'s **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'was destroyed with its foundation' : 'was ground to nothing by bombardment'}, **${c.lost}** units unrecoverable.`,
+    ? `Loss reports out of Sol confirm **${c.faction}**'s fall from the project ${c.reason === 'foundation destroyed' ? 'after its foundation station was destroyed' : 'after sustained attack broke its hold'}. **${c.abandon}%** of the surviving lattice sheared free soon after, leaving **${c.kept}** tonnes at **${c.pct}%** for whoever claims it next.`
+    : `The star's captors are gone, and so is their cage. **${c.faction}**'s **Dyson Sphere** ${c.reason === 'foundation destroyed' ? 'was destroyed with its foundation' : 'was ground to nothing by bombardment'}, **${c.lost}** tonnes unrecoverable.`,
 ];
 const DYSON_COLLAPSED_HEADLINE = [
   (c) => c.kept > 0 ? 'THE SPHERE STANDS MASTERLESS' : 'THE SPHERE HAS FALLEN',
