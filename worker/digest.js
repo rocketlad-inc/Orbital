@@ -487,8 +487,22 @@ function applyShortNames(embed, factionNames) {
       // The POSSESSIVE gets no first-mention grace. ":) Smiley Face
       // Friends :)'s" is the exact string a reviewer singled out as
       // unreadable, and a name that already ends in punctuation only
-      // gets worse with an apostrophe-s welded on. Shorten every one.
-      out = replaceAfter(out, `${full}'s`, `${s}'s`, 0);
+      // gets worse with an apostrophe-s welded on. Shorten every one —
+      // including the bolded form, which is how the banks actually
+      // emit it (`**NAME**'s`), and which a plain `NAME's` needle
+      // silently fails to match. A short form already ending in -s
+      // takes the bare apostrophe ("Smiley Face Friends'").
+      const tail = /s$/i.test(s) ? "'" : "'s";
+      const boldPoss = `**${full}**'s`;
+      const plainPoss = `${full}'s`;
+      if (out.includes(boldPoss) || out.includes(plainPoss)) {
+        out = replaceAfter(out, boldPoss, `**${s}**${tail}`, 0);
+        out = replaceAfter(out, plainPoss, `${s}${tail}`, 0);
+        // Count that as the introduction. Otherwise the full name turns
+        // up LATER in the edition than the short one, which reads as
+        // the paper getting more formal as it goes.
+        introduced.add(full);
+      }
       if (!out.includes(full)) { introduced.add(full); continue; }
       const skip = introduced.has(full) ? 0 : 1;
       out = replaceAfter(out, full, s, skip);
