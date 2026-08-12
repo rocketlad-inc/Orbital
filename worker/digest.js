@@ -191,19 +191,28 @@ const WORLD_LIST_VAGUE_TAIL = [
  *  losses, which is the exact opposite of the truth. Every variant here
  *  anchors on a word that can only mean the dead, so the clause stays
  *  correct no matter which faction the sentence mentioned last. */
+/** The casualty list, as its OWN sentence naming whose ships they were.
+ *
+ *  It used to be a trailing appositive glued onto whatever the template
+ *  ended on, and plenty of them end on the winner — "Smiley Face
+ *  Friends left with everything it brought, Barbican, Noether, and 3
+ *  unnamed among the hulls that did not return" reads as a list of the
+ *  winner's dead, which is exactly backwards. Anchoring phrases were
+ *  not enough; the owner has to be named. `(names, loser)` — both
+ *  pre-formatted, `loser` already bolded. */
 const BATTLE_NAMES_CLAUSE = [
-  n => `, ${n} among the lost`,
-  n => `, ${n} among the dead`,
-  n => `, ${n} among the wrecks`,
-  n => `, ${n} on the casualty list`,
-  n => `, ${n} among those destroyed`,
-  n => `, ${n} named among the losses`,
-  n => `, ${n} confirmed lost`,
-  n => `, ${n} among the hulls that did not return`,
-  n => `, ${n} listed among the destroyed`,
-  n => `, ${n} among the casualties`,
-  n => `, ${n} written off`,
-  n => `, ${n} among the ships lost`,
+  (n, l) => ` Lost by ${l}: ${n}.`,
+  (n, l) => ` ${l}'s dead: ${n}.`,
+  (n, l) => ` Among ${l}'s losses: ${n}.`,
+  (n, l) => ` ${l} confirms the loss of ${n}.`,
+  (n, l) => ` The ${l} casualty list opens with ${n}.`,
+  (n, l) => ` Struck from ${l}'s register: ${n}.`,
+  (n, l) => ` ${l} names ${n} among the destroyed.`,
+  (n, l) => ` Gone from ${l}'s fleet: ${n}.`,
+  (n, l) => ` ${l} has posted ${n} as lost.`,
+  (n, l) => ` Written off by ${l}: ${n}.`,
+  (n, l) => ` ${l}'s wrecks include ${n}.`,
+  (n, l) => ` The names ${l} released: ${n}.`,
 ];
 
 // ------------------------------------------------------------
@@ -243,6 +252,23 @@ const CAPTAIN_QUOTE = [
   (n, s, p) => ` "I have no complaint about the fighting. I have several about the planning," said Captain **${n}**, formerly of the **${s}**${p}.`,
   (n, s, p) => ` Captain **${n}**, rescued from the **${s}**${p}, on whether it was worth it: "That is not a question for someone who was in the pod."`,
   (n, s, p) => ` "They will build another **${s}**. They will not build another crew," Captain **${n}** said${p}.`,
+  // The bank above is all one person: terse, weary, aphoristic, second
+  // sentence a bleak reversal. A reviewer reading ten editions said he
+  // stopped reading the quotes by the sixth because every captain was
+  // the same stoic wearing a different name badge — fatal, since these
+  // are the best-written lines in the paper. Below: the angry one, the
+  // one blaming command, the junior officer out of their depth, the
+  // evasive one, the one who will not play along.
+  (n, s, p) => ` Captain **${n}** was less measured about losing the **${s}**${p}: "Ask whoever drew that patrol line why my people are in bags."`,
+  (n, s, p) => ` "Command had the same sensor picture I did," Captain **${n}** said of the **${s}**'s loss${p}. "Command was somewhere else."`,
+  (n, s, p) => ` Captain **${n}**, who is twenty-four and had the **${s}** for six days${p}, said: "I don't — sorry. I don't know what the right answer is. Nobody's told me yet."`,
+  (n, s, p) => ` Asked directly whether the **${s}** was where it had been ordered to be, Captain **${n}**${p} said the question was under review.`,
+  (n, s, p) => ` "I'm not doing this," Captain **${n}** told our correspondent${p}, and walked out. The **${s}** is not coming back either way.`,
+  (n, s, p) => ` Captain **${n}** wants it on the record that the **${s}** was overdue for a refit${p}, that this was known, and that it was raised twice in writing.`,
+  (n, s, p) => ` "We won that engagement," said Captain **${n}**, whose **${s}** was destroyed in it${p}. Pressed on the point, the captain repeated the sentence.`,
+  (n, s, p) => ` Captain **${n}** spent most of the interview${p} on the crew of the **${s}** by name, and would not be moved onto tactics.`,
+  (n, s, p) => ` "You want a lesson out of it. There isn't one. It was a bad afternoon," Captain **${n}** said of the **${s}**${p}.`,
+  (n, s, p) => ` Still in a pressure suit two hours after the **${s}** went down${p}, Captain **${n}** would only ask whether the other pods had been found.`,
 ];
 
 /**
@@ -288,25 +314,25 @@ const VICTORY_DETAIL_CLAUSE = [
  *  clause after it does too ("among those destroyed"), which collided
  *  in a real edition. These never use the word. */
 const NAME_LIST_PLAIN_TAIL = [
-  n => `, and ${n} more`,
-  n => `, plus ${n} more`,
-  n => `, and ${n} ${plural(n, 'other')}`,
-  n => `, with ${n} more besides`,
-  n => `, and ${n} unnamed`,
-  n => `, plus ${n} unnamed`,
-  n => `, and ${n} further ${plural(n, 'hull')}`,
-  n => `, and ${n} besides`,
+  n => `, and ${numWord(n)} more`,
+  n => `, plus ${numWord(n)} more`,
+  n => `, and ${numWord(n)} ${plural(n, 'other')}`,
+  n => `, with ${numWord(n)} more besides`,
+  n => `, and ${numWord(n)} unnamed`,
+  n => `, plus ${numWord(n)} unnamed`,
+  n => `, and ${numWord(n)} further ${plural(n, 'hull')}`,
+  n => `, and ${numWord(n)} besides`,
 ];
 
 const NAME_LIST_MORE_TAIL = [
-  n => `, and ${n} more`,
-  n => `, plus ${n} more`,
-  n => `, and ${n} ${plural(n, 'other')}`,
-  n => `, with ${n} more besides`,
-  n => `, among ${n} more unnamed`,
-  n => ` — and ${n} more after that`,
-  n => `, and ${n} ${plural(n, 'other')} unlisted`,
-  n => `, plus ${n} not named here`,
+  n => `, and ${numWord(n)} more`,
+  n => `, plus ${numWord(n)} more`,
+  n => `, and ${numWord(n)} ${plural(n, 'other')}`,
+  n => `, with ${numWord(n)} more besides`,
+  n => `, among ${numWord(n)} more unnamed`,
+  n => ` — and ${numWord(n)} more after that`,
+  n => `, and ${numWord(n)} ${plural(n, 'other')} unlisted`,
+  n => `, plus ${numWord(n)} not named here`,
 ];
 
 /** Oxford-joined, italicized name list (ships/settlements — kept
@@ -821,7 +847,7 @@ const BATTLE_ONE_SIDED_KNOWN = [
   c => `Not one ${b(c.winner)} crew was posted missing at ${c.bodyLoc}, while ${b(c.loser)} counts ${numWord(c.count)} ${shipsWord(c.count)} gone${c.namesClause}.`,
   c => `Fire-control logs held by ${b(c.winner)} run to a few pages. The cost to ${b(c.loser)} at ${c.bodyLoc} runs to ${numWord(c.count)} ${shipsWord(c.count)}${c.namesClause}.`,
   c => `Rarely is a defeat this tidy: ${numWord(c.count)} ${shipsWord(c.count)} of ${b(c.loser)} destroyed at ${c.bodyLoc}, and ${b(c.winner)} back at its moorings at full strength${c.namesClause}.`,
-  c => `Beacons from ${numWord(c.count)} lost ${shipsWord(c.count)} ${plural(c.count, 'is', 'are')} still transmitting over ${c.bodyLoc}. ${plural(c.count, 'It belongs', 'Every one of them belongs')} to ${b(c.loser)}; ${b(c.winner)} left the field intact${c.namesClause}.`,
+  c => `${plural(c.count, 'A beacon', 'Beacons')} from ${numWord(c.count)} lost ${shipsWord(c.count)} ${plural(c.count, 'is', 'are')} still transmitting over ${c.bodyLoc}. ${plural(c.count, 'It belongs', 'Every one of them belongs')} to ${b(c.loser)}; ${b(c.winner)} left the field intact${c.namesClause}.`,
   c => `Underwriters have opened files on ${numWord(c.count)} ${b(c.loser)} ${shipsWord(c.count)} lost at ${c.bodyLoc}, and none at all for ${b(c.winner)}${c.namesClause}.`,
   c => `Escape pods recovered near ${c.bodyLoc} carried ${b(c.loser)} crews and no others: ${b(c.winner)} lost nothing there, ${b(c.loser)} ${numWord(c.count)} ${shipsWord(c.count)}${c.namesClause}.`,
 ];
@@ -2585,9 +2611,12 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null) {
       // many of the dead we happen to have names for — "six wrecks …
       // including Ricochet, Lynx, plus 2 not named here" adds to four.
       const names = nameList([...bucket.shipNames], 2, used, bucket.count, NAME_LIST_PLAIN_TAIL);
+      const namesSentence = names
+        ? pickTemplate('battle_names', BATTLE_NAMES_CLAUSE, used)(names, b(owner))
+        : '';
       const ctx = {
         loser: owner, winner, body: locBody.name, bodyLoc: locBody.full, count: bucket.count,
-        namesClause: names ? pickTemplate('battle_names', BATTLE_NAMES_CLAUSE, used)(names) : '',
+        namesClause: '',
       };
 
       // TWO OR MORE credited killers, one victim: a gang-up, not a
@@ -2619,7 +2648,7 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null) {
         ));
         continue;
       }
-      let extra = settlementLossClause(bucket.settlementNames, bucket.settlementPop, used);
+      let extra = namesSentence + settlementLossClause(bucket.settlementNames, bucket.settlementPop, used);
       // Only for a single named ship — a multi-ship loss already gets
       // its gravity from the casualty count + ship-name list, and
       // stacking captain names onto that list would clutter rather
@@ -3963,7 +3992,7 @@ function finalReckoningField(rows, factionNames) {
   const toll = [];
   if (hullsLost > 0) toll.push(`**${hullsLost}** ${plural(hullsLost, 'hull', 'hulls')} lost`);
   if (worldsRazed > 0) toll.push(`**${worldsRazed}** ${plural(worldsRazed, 'settlement', 'settlements')} razed`);
-  if (toll.length) lines.push(`In this final period alone: ${toll.join(', ')}.`);
+  if (toll.length) lines.push(`In this final period alone, across every action reported and unreported: ${toll.join(', ')}.`);
   if (eliminated.length) {
     lines.push(`${plural(eliminated.length, 'Faction', 'Factions')} that did not survive the war: ${eliminated.map(n => `**${n}**`).join(', ')}.`);
   }
@@ -4068,10 +4097,18 @@ function standingsField(rows, factionNames, totals = new Map()) {
   }
   if (stat.size < 2) return null;
 
+  // Every faction the war has ever recorded stays on the board, whether
+  // or not it moved this edition. Filtering to "had activity this
+  // window" made the roster churn — six rows, then three, then five,
+  // and a faction appearing for the first time in the FINAL table —
+  // which reads as a data fault rather than an editorial choice. A
+  // standings table whose membership changes is not a standings table.
+  for (const name of totals.keys()) {
+    if (!stat.has(name)) stat.set(name, { built: 0, lost: 0, founded: 0, razed: 0 });
+  }
   const rank = [...stat.entries()]
     .map(([name, s]) => ({ name, ...s, net: (s.built - s.lost) + 3 * (s.founded - s.razed) }))
-    // A power with no activity at all this window is not news.
-    .filter(r => r.built || r.lost || r.founded || r.razed)
+    .filter(r => totals.has(r.name) || r.built || r.lost || r.founded || r.razed)
     .sort((a, z) => z.net - a.net);
   if (rank.length < 2) return null;
 
@@ -4639,7 +4676,8 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
 
   // One sign-off for the whole edition, on the last field, where a
   // footer belongs.
-  if (droppedTotal >= 2 && fields.length > 0) {
+  const kickerRng = used.get('__rng') || Math.random;
+  if (droppedTotal >= 2 && fields.length > 0 && kickerRng() < 0.65) {
     const tail = pickTemplate('more_incidents_tail', MORE_INCIDENTS_TAIL, used)(droppedTotal, droppedTotal === 1 ? '' : 's');
     const last = fields[fields.length - 1];
     if (last.value.length + 2 + tail.length <= FIELD_VALUE_LIMIT) {
