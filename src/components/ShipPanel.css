@@ -918,3 +918,44 @@
   border-color: #2a3d50;
 }
 .sp-target--idle .sp-target__title { color: #7a8a9a; }
+
+/* ============================================================
+   COMMIT stays reachable on mobile.
+
+   Bug (playtest): "when you click transfer and select a planet, the
+   Confirm button is hidden behind the bottom rail."
+
+   What actually happened. Picking a target on the map hides the ship
+   sheet (so the canvas is tappable), then re-mounts it once the plan is
+   staged — and a fresh mount starts scrolled to the top. COMMIT lives at
+   the bottom of a panel taller than the sheet, so it landed ~216px below
+   the fold needing ~284px of scroll. Because the sheet's bottom edge sits
+   flush against the dock rail, "below the fold" and "behind the rail" look
+   identical from the player's side.
+
+   So the sheet was never mis-positioned — it clears the rail correctly.
+   The action was simply off-screen at the exact moment it became the only
+   thing the player wanted. Pinning it to the bottom of the scroll area
+   fixes it regardless of panel length, scroll position or safe-area inset.
+   ============================================================ */
+@media (max-width: 768px) {
+  .bottom-sheet__body .commit-all-btn {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    /* Content scrolls UNDER this now, so it needs a real edge. */
+    box-shadow: 0 -8px 12px -6px rgba(0, 0, 0, 0.75),
+                0 0 12px rgba(255, 184, 77, 0.15),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+  /* The base/hover/active rules all use the `background` SHORTHAND, which
+     resets background-color to transparent — fine when the button sat on
+     the sheet, fatal once text scrolls behind it. Re-assert an opaque base
+     at higher specificity than the pseudo-class rules so the press state
+     can't punch a hole in it either. */
+  .bottom-sheet__body .commit-all-btn,
+  .bottom-sheet__body .commit-all-btn:hover,
+  .bottom-sheet__body .commit-all-btn:active {
+    background-color: #080d15;
+  }
+}
