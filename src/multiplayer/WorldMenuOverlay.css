@@ -423,6 +423,22 @@
   position: absolute; left: 8px; right: 8px;
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
 }
+/* IN-FLOW variant (mobile): the build rows now live inside the info
+   sheet, so they must NOT inherit .wm-mrow's absolute positioning —
+   that is precisely what let them land on each other. */
+.wm-mrow-flow {
+  position: static;
+  left: auto; right: auto; top: auto; bottom: auto;
+}
+.wm-msec { display: flex; flex-direction: column; gap: 4px; }
+.wm-msec-label {
+  font-size: 8.5px;
+  letter-spacing: 0.16em;
+  color: #6b8195;
+  text-transform: uppercase;
+}
+.wm-msec-label b { color: #9fb4c6; font-weight: 700; }
+
 .wm-mrow .wm-bbtn { height: 54px; align-items: center; text-align: center; padding: 4px 4px; }
 /* Raw-world CITY rule: one full-width line, not a 54px tile in one of
    three columns. Spanning every column also stops it reading as "a

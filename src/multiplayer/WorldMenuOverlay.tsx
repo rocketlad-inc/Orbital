@@ -238,8 +238,6 @@ export const WorldMenuOverlay: React.FC = () => {
     if (!chromeMounted) return;
     const panelEl = document.querySelector('.wm-top') as HTMLElement | null;
     const fleetEl = document.querySelector('.wm-fleet') as HTMLElement | null;
-    const surfEl = document.querySelector('.wm-mrow-surface') as HTMLElement | null;
-    const orbitEl = document.querySelector('.wm-mrow-orbit') as HTMLElement | null;
     const measure = () => {
       const panelH = panelEl?.offsetHeight ?? 92;
       const fleetH = fleetEl?.offsetHeight ?? 200;
@@ -264,20 +262,12 @@ export const WorldMenuOverlay: React.FC = () => {
         const railH = parseFloat(
           getComputedStyle(document.body).getPropertyValue('--mobile-rail-height'),
         ) || 72;
-        // Real measured heights when the rows are on screen; 0 when the
-        // world offers no such build (then the panel may use the room).
-        const surfH = surfEl?.offsetHeight ?? 0;
-        const surfaceReserve = surfH > 0 ? surfH + 6 : 0;
-        // The ORBIT row hangs off the panel's own bottom edge
-        // (top: topbar + panel-h + 22), so shrinking the panel pulls it
-        // up with it. Reserve it here or it just lands on the surface
-        // row instead — trading one collision for another.
-        const orbitH = orbitEl?.offsetHeight ?? 0;
-        const orbitReserve = orbitH > 0 ? orbitH + 22 : 0;
+        // The build rows are INSIDE the sheet now (wm-msec / wm-mrow-flow),
+        // so they need no reservation out here — they're already part of
+        // the height being capped, and they scroll with everything else.
+        // Only the bottom chrome competes for space.
         const avail = window.innerHeight
           - (topbarH + 10)          // panel's own top offset
-          - orbitReserve            // the orbit build row, under the panel
-          - surfaceReserve          // the surface build row
           - (fleetH + railH + 6)    // build box + dock rail
           - 8;                      // breathing room
         // Floor so a very short viewport still shows a usable panel; it
@@ -292,8 +282,6 @@ export const WorldMenuOverlay: React.FC = () => {
     const ro = new ResizeObserver(measure);
     if (panelEl) ro.observe(panelEl);
     if (fleetEl) ro.observe(fleetEl);
-    if (surfEl) ro.observe(surfEl);
-    if (orbitEl) ro.observe(orbitEl);
     window.addEventListener('resize', measure);
     return () => { ro.disconnect(); window.removeEventListener('resize', measure); };
   }, [chromeMounted, collapsed, openId, mobile]);
@@ -711,6 +699,32 @@ export const WorldMenuOverlay: React.FC = () => {
             had NO surface in the default world-menu UI; the initiate/
             progress panel lived only in the legacy BodyInspector. */}
         {body.id === 'sol' && <WmDysonCard />}
+
+        {/* ===== MOBILE BUILD ROWS — INSIDE the sheet, in normal flow.
+             They used to float over the map at computed offsets: the
+             orbit row hung off the panel's bottom edge and the surface
+             row rode the top of the build box. Three independent absolute
+             layers converging on the same strip of a phone screen, and
+             they kept landing on each other and on the terraform
+             controls — twice patched by tuning offsets, twice still
+             overlapping (BUILD STATION was the last one standing).
+             In flow they cannot overlap by construction: the sheet is
+             already capped and scrollable, so the rows just take their
+             place in it. The diegetic sky/horizon placement stays on
+             DESKTOP, which has the room for it. ===== */}
+        {mobile && !collapsed && orbitEls.length > 0 && (
+          <div className="wm-msec" data-testid="wm-col-orbit">
+            <div className="wm-msec-label">ORBIT — <b>STATION</b></div>
+            <div className="wm-mrow wm-mrow-flow">{orbitEls}</div>
+          </div>
+        )}
+        {mobile && !collapsed && surfaceEls.length > 0 && (
+          <div className="wm-msec" data-testid="wm-col-surface">
+            <div className="wm-msec-label">SURFACE — <b>CITY</b></div>
+            <div className="wm-mrow wm-mrow-flow">{surfaceEls}</div>
+          </div>
+        )}
+
         {mobile && (
           <button className="wm-more" onClick={() => setCollapsed(c => !c)}>
             {collapsed ? '▾ More' : '▴ Less'}
@@ -844,38 +858,12 @@ export const WorldMenuOverlay: React.FC = () => {
 
       {/* ===== build controls =====
            Desktop: two columns hovering off the limb, leader lines from
-           each surface button to its limb building. Mobile: station row
-           just above the horizon, city row down at the bottom. */}
-      {mobile ? (
-        <>
-          {/* ORBIT — station build options at the top of the sky, ABOVE
-              the station graphic. Nudged down for clearance from the
-              collapsed title strip. */}
-          {orbitEls.length > 0 && (
-            <div
-              className="wm-mrow wm-mrow-orbit" data-testid="wm-col-orbit"
-              // panel sits at topbar+10, so its BOTTOM is topbar+10+panelH;
-              // +12 breathing room below that (the old +14-from-topbar calc
-              // ignored the panel's own 10px offset and overlapped it).
-              style={{ top: 'calc(var(--wm-topbar-h, 52px) + var(--wm-panel-h, 44px) + 22px)' }}
-            >
-              {orbitEls}
-            </div>
-          )}
-          {/* SURFACE — city build options docked snug against the TOP
-              of the ship-build box (which itself clears the dock nav).
-              A live ResizeObserver keeps chromeH.fleet accurate as the
-              build queue grows/shrinks, so this never sits behind it. */}
-          {surfaceEls.length > 0 && (
-            <div
-              className="wm-mrow wm-mrow-surface" data-testid="wm-col-surface"
-              style={{ bottom: `calc(${chromeH.fleet}px + var(--mobile-rail-height, 72px) + 6px)` }}
-            >
-              {surfaceEls}
-            </div>
-          )}
-        </>
-      ) : (
+           each surface button to its limb building.
+           MOBILE: rendered INSIDE the info sheet above (see the wm-msec
+           blocks) so they sit in normal flow and cannot collide. They
+           were floating here at computed offsets and kept overlapping
+           each other and the terraform card. */}
+      {!mobile && (
         <>
           {surfaceEls.length > 0 && (
             <aside
