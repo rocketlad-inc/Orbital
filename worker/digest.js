@@ -223,6 +223,21 @@ const VICTORY_DETAIL_CLAUSE = [
   d => `Written into the archive this hour: ${d}.`,
 ];
 
+/** Tail variants for a list that is followed by a casualty clause.
+ *  The general bank leans on "among" ("among 2 more unnamed"), and the
+ *  clause after it does too ("among those destroyed"), which collided
+ *  in a real edition. These never use the word. */
+const NAME_LIST_PLAIN_TAIL = [
+  n => `, and ${n} more`,
+  n => `, plus ${n} more`,
+  n => `, and ${n} ${plural(n, 'other')}`,
+  n => `, with ${n} more besides`,
+  n => ` and ${n} ${plural(n, 'other')} unnamed`,
+  n => `, and ${n} not listed`,
+  n => `, plus ${n} unnamed`,
+  n => `, and ${n} ${plural(n, 'other')} beside ${plural(n, 'it', 'them')}`,
+];
+
 const NAME_LIST_MORE_TAIL = [
   n => `, and ${n} more`,
   n => `, plus ${n} more`,
@@ -241,7 +256,7 @@ const NAME_LIST_MORE_TAIL = [
  *  cleanly omit the clause. `used` (optional) threads into the same
  *  per-edition "don't repeat a bank" tracking every other phrase bank
  *  uses; omit only for call sites that can't reach it. */
-function nameList(names, max = 2, used = null, total = null) {
+function nameList(names, max = 2, used = null, total = null, tailBank = NAME_LIST_MORE_TAIL) {
   const kept = (names || []).filter(Boolean);
   // De-duplicate for DISPLAY only. Two ships can genuinely carry the
   // same name, and collapsing them used to silently shrink the tail
@@ -262,8 +277,8 @@ function nameList(names, max = 2, used = null, total = null) {
     return `${shown.slice(0, -1).join(', ')}, and ${shown[shown.length - 1]}`;
   }
   const tail = used
-    ? pickTemplate('name_list_tail', NAME_LIST_MORE_TAIL, used)(remaining)
-    : NAME_LIST_MORE_TAIL[0](remaining);
+    ? pickTemplate(tailBank === NAME_LIST_MORE_TAIL ? 'name_list_tail' : 'name_list_plain_tail', tailBank, used)(remaining)
+    : tailBank[0](remaining);
   return `${shown.join(', ')}${tail}`;
 }
 
@@ -531,7 +546,7 @@ const SETTLEMENT_LOSS_CLAUSE = [
   (nameStr, many, popClause) => ` Survivors from ${nameStr}${popClause} are being counted at the nearest depot, though counted is a generous word for it.`,
   (nameStr, many, popClause) => ` The dock district at ${nameStr} burned for two days after the last ship left.`,
   (nameStr, many, popClause) => ` ${nameStr}${popClause} ${many ? 'were' : 'was'} lost with ${many ? 'them' : 'it'} — schools, water plant, the lot.`,
-  (nameStr, many, popClause) => ` No shipyard sat at ${nameStr}. No garrison, no battery, no reason. ${nameStr} is rubble.`,
+  (nameStr, many, popClause) => ` No shipyard sat at ${nameStr}. No garrison, no battery, no reason. ${nameStr} ${many ? 'are' : 'is'} rubble.`,
   (nameStr, many, popClause) => ` This desk notes, without comment, that ${nameStr}${popClause} ${many ? 'were' : 'was'} inhabited.`,
   (nameStr, many, popClause) => ` Add ${nameStr}${popClause} to the column that never gets a headline.`,
   (nameStr, many, popClause) => ` Relief traffic has been diverted toward ${nameStr}${popClause}. It will arrive too late to be relief.`,
@@ -555,10 +570,12 @@ function settlementLossClause(names, totalPop, used) {
   if (!names.length) return '';
   const nameStr = nameList(names, 2, used);
   const many = names.length > 1;
-  // Closed on both sides as a proper parenthetical aside — a dash that
-  // only opens ("New City — home to 600,000 was lost") runs the aside
-  // straight into the verb with no boundary.
-  const popClause = totalPop > 0 ? ` — home to ${formatPopulation(totalPop)} —` : '';
+  // Parenthesised, not dash-delimited. Paired em-dashes close the aside
+  // correctly mid-sentence but strand a dash against the full stop when
+  // the clause ends the sentence ("…toward Kessik City — home to 2.4
+  // million —."), and the bank has 24 shapes now, half of which put the
+  // names last. Parentheses read correctly in every position.
+  const popClause = totalPop > 0 ? ` (home to ${formatPopulation(totalPop)})` : '';
   return pickTemplate('settlement_loss', SETTLEMENT_LOSS_CLAUSE, used)(nameStr, many, popClause);
 }
 
@@ -572,8 +589,19 @@ function settlementLossClause(names, totalPop, used) {
  *  headline templates read the same ctx but only ever touch the
  *  PLAIN fields (faction names, ctx.body) so nothing here needs to
  *  duplicate ctx per bank. */
+/** Capitalises the first letter of a rendered story, skipping any
+ *  leading markdown emphasis. Templates that open on a spelled number
+ *  ("three ships flying Moose colours were destroyed…") are otherwise
+ *  printed lowercase at the head of a paragraph, because numWord()
+ *  has no idea where in a sentence it landed. */
+function capitalizeFirst(s) {
+  const i = s.search(/[A-Za-z]/);
+  if (i === -1) return s;
+  return s.slice(0, i) + s.charAt(i).toUpperCase() + s.slice(i + 1);
+}
+
 function mkStory(baseWeight, used, narrativeBankName, narrativeBank, headlineBankName, headlineBank, ctx, extra = '') {
-  const text = pickTemplate(narrativeBankName, narrativeBank, used)(ctx) + extra;
+  const text = capitalizeFirst(pickTemplate(narrativeBankName, narrativeBank, used)(ctx)) + extra;
   const headline = pickTemplate(headlineBankName, headlineBank, used)(ctx);
   // Jitter off the same seeded stream as template choice, so an
   // edition is reproducible end to end — including which story wins
@@ -1208,7 +1236,7 @@ const UNSCATHED_CLAUSE = [
   (who, n) => ` ${who} ${n === 1 ? 'walked' : 'walked'} away untouched.`,
   (who, n) => ` Not a hull lost on ${who}'s side.`,
   (who, n) => ` ${who} ${plural(n, 'is', 'are')} not on the casualty list at all.`,
-  (who, n) => ` ${who} finished the day with the same fleet ${plural(n, 'it', 'they')} started it with.`,
+  (who, n) => ` ${who} finished the day with the same fleet ${plural(n, 'it', 'they')} started with.`,
   (who, n) => ` ${who} paid nothing for the privilege.`,
   (who, n) => ` The butcher's bill skipped ${who} entirely.`,
   (who, n) => ` ${who} ${plural(n, 'took', 'took')} no losses worth reporting.`,
@@ -1441,7 +1469,7 @@ const INDUSTRY_FIELD = [
   c => `Behind them, ${b(c.leader)} led the rest of the field — ${numWord(c.totalShips)} more ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} further ${plural(c.totalBuilds, 'project')} across ${numWord(c.factionCount)} ${plural(c.factionCount, 'power')}.`,
   c => `The other ${numWord(c.factionCount)} ${plural(c.factionCount, 'power')} were not idle either: ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')} between them, ${b(c.leader)} out front.`,
   c => `Elsewhere on the boards, ${b(c.leader)} paced ${numWord(c.factionCount)} other ${plural(c.factionCount, 'power')} to ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} finished ${plural(c.totalBuilds, 'project')}.`,
-  c => `Add ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')} from the remaining ${numWord(c.factionCount)} ${plural(c.factionCount, 'power')}, with ${b(c.leader)} contributing most of it.`,
+  c => `Add ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')} from the ${plural(c.factionCount, 'one remaining power', numWord(c.factionCount) + ' remaining powers')}, with ${b(c.leader)} contributing most of it.`,
   c => `${b(c.leader)} headed the chasing pack — ${numWord(c.factionCount)} ${plural(c.factionCount, 'power')}, ${numWord(c.totalShips)} ${shipsWord(c.totalShips)}, ${numWord(c.totalBuilds)} completed ${plural(c.totalBuilds, 'project')}.`,
   c => `Further down the register: ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')} spread across ${numWord(c.factionCount)} more ${plural(c.factionCount, 'power')}, ${b(c.leader)} the busiest of them.`,
   c => `The remaining yards logged ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')} — ${b(c.leader)} accounted for the largest share.`,
@@ -2390,7 +2418,7 @@ function buildBattleStories(rows, used, locator, captainFate) {
       // Pin the "…and N more" tail to the real loss count, not to how
       // many of the dead we happen to have names for — "six wrecks …
       // including Ricochet, Lynx, plus 2 not named here" adds to four.
-      const names = nameList([...bucket.shipNames], 2, used, bucket.count);
+      const names = nameList([...bucket.shipNames], 2, used, bucket.count, NAME_LIST_PLAIN_TAIL);
       const ctx = {
         loser: owner, winner, body: locBody.name, bodyLoc: locBody.full, count: bucket.count,
         namesClause: names ? pickTemplate('battle_names', BATTLE_NAMES_CLAUSE, used)(names) : '',
