@@ -232,10 +232,10 @@ const NAME_LIST_PLAIN_TAIL = [
   n => `, plus ${n} more`,
   n => `, and ${n} ${plural(n, 'other')}`,
   n => `, with ${n} more besides`,
-  n => ` and ${n} ${plural(n, 'other')} unnamed`,
-  n => `, and ${n} not listed`,
+  n => `, and ${n} unnamed`,
   n => `, plus ${n} unnamed`,
-  n => `, and ${n} ${plural(n, 'other')} beside ${plural(n, 'it', 'them')}`,
+  n => `, and ${n} further ${plural(n, 'hull')}`,
+  n => `, and ${n} besides`,
 ];
 
 const NAME_LIST_MORE_TAIL = [
@@ -336,7 +336,8 @@ function pickTemplate(bankName, bank, used) {
   const rng = used.get('__rng') || Math.random;
   let cur = used.get(bankName);
   if (!cur || cur.k >= bank.length) {
-    cur = { start: Math.floor(rng() * bank.length), stride: strideFor(bank.length, rng), k: 0 };
+    const spin = used.get('__spin') || 0;
+    cur = { start: (Math.floor(rng() * bank.length) + spin) % bank.length, stride: strideFor(bank.length, rng), k: 0 };
     used.set(bankName, cur);
   }
   const i = (cur.start + cur.k * cur.stride) % bank.length;
@@ -432,6 +433,20 @@ function buildShortNames(fullNames) {
   return shorts;
 }
 
+/** True if the text so far ends on a count ("three ", "15 ") — the
+ *  attributive slot the battle banks build by hand. A full faction name
+ *  there produces "tore through three The Empire of Lorne ships", so it
+ *  forfeits its first-mention grace and gets the short form. */
+const COUNT_WORDS = new Set([
+  'zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine',
+]);
+function precededByCount(soFar) {
+  const m = soFar.match(/(\S+)\s+$/);
+  if (!m) return false;
+  const w = m[1].replace(/[*_]/g, '').toLowerCase();
+  return /^\d+$/.test(w) || COUNT_WORDS.has(w);
+}
+
 /** True if the text so far ends at a sentence boundary — used so a
  *  short form beginning "the " gets a capital when it opens a sentence
  *  ("the Solar Empire held." -> "The Solar Empire held."). Markdown
@@ -453,7 +468,7 @@ function replaceAfter(hay, needle, replacement, skip) {
     const at = hay.indexOf(needle, from);
     if (at === -1) { out += hay.slice(from); return out; }
     out += hay.slice(from, at);
-    if (seen < skip) {
+    if (seen < skip && !precededByCount(out)) {
       out += needle;
     } else {
       out += atSentenceStart(out)
@@ -4247,6 +4262,7 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
     seed = (Math.imul(seed, 31) + String(gameName).charCodeAt(i)) | 0;
   }
   used.set('__rng', makeRng(seed));
+  used.set('__spin', Math.abs(tick | 0));
 
   const captainFate = buildCaptainFateMap(rows);
   // Terraform beats split across two columns: begun/complete are
