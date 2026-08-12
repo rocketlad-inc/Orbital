@@ -1,0 +1,41 @@
+-- ============================================================
+-- 0084 — remember what a build actually cost, and where it came from
+--
+-- Reported exploit: queue a ship on a RAW world and the cost is drawn
+-- local-first (the settlement's banked stockpile), but cancelling refunds
+-- 100% to the FACTION POOL. Queue, cancel, repeat: stranded local
+-- stockpile launders into spendable global credits for free, and a raw
+-- world's whole point is that its yield is stuck on-site.
+--
+-- The same asymmetry hid two more, both reachable right now:
+--
+--   * The queue charges ceil(price x buildCostMult) — host config x the
+--     senate's ship_build_cost_multiplier x the Construction discount —
+--     while the refund paid back the BASE table price. With a "Cheaper
+--     Ships" law at 0.5x in force you paid half and were refunded whole:
+--     queue-and-cancel minted resources out of nothing. With a "Pricier
+--     Ships" law it robbed you instead.
+--   * A rush charges base x mult x rushKnob, but the refund multiplied
+--     the BASE price by (1 + rush_count), so a rushed order refunded a
+--     number unrelated to what was paid.
+--
+-- One cause behind all three: the refund RE-DERIVED the price instead of
+-- remembering it. charge_json records what was actually taken and from
+-- which purse, so cancel can hand back exactly that, to exactly there:
+--
+--   {"pool":{"metal":12,"gold":8},
+--    "local":[{"id":"<settlement id>","metal":40,"gold":20}]}
+--
+-- Rushes accumulate into "pool" (a rush is always charged to the pool).
+--
+-- NULL means a pre-0084 order whose breakdown was never recorded. Those
+-- keep the old approximate refund — there is no honest way to reconstruct
+-- what a historical order paid, and guessing would be a second bug. New
+-- orders all carry a ledger.
+--
+-- Buildings have the same hole and the same fix, but need no column: the
+-- order already lives in game_settlements.building_order_json, so the
+-- charge is recorded inside that blob.
+-- ============================================================
+
+ALTER TABLE game_body_build_queue ADD COLUMN charge_json TEXT;

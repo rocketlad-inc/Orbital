@@ -262,7 +262,8 @@ async function handleCancelBuild(req, env, ctx) {
 
   const order = await env.DB
     .prepare(
-      `SELECT id, faction_id, ship_class, completes_at_tick, cancelled_at_tick, parts_json, rush_count
+      `SELECT id, body_id, faction_id, ship_class, completes_at_tick, cancelled_at_tick,
+              parts_json, rush_count, charge_json
          FROM game_body_build_queue
         WHERE id = ? AND game_id = ?`,
     )
@@ -273,6 +274,32 @@ async function handleCancelBuild(req, env, ctx) {
   if (order.cancelled_at_tick != null) {
     return err(409, 'already_cancelled', 'this build was already cancelled');
   }
+
+  // ---- Refund from the CHARGE LEDGER (migration 0084) ----------------
+  //
+  // The refund used to re-derive a price from the base cost table and pay
+  // all of it into the faction pool. Three ways that was wrong, all live:
+  //
+  //   1. LAUNDERING (the reported exploit). The queue spends local-first
+  //      — a raw world's banked stockpile before the pool — so a build
+  //      queued on a raw world and cancelled moved LOCAL resources into
+  //      the GLOBAL pool. Repeatable at will, and it defeated the whole
+  //      point of a raw world: its yield is meant to be stuck on-site
+  //      until you terraform.
+  //   2. MINTING. The queue charges ceil(price x buildCostMult) — host
+  //      config x senate ship_build_cost_multiplier x Construction
+  //      discount — and the refund ignored the multiplier. With a
+  //      "Cheaper Ships" law at 0.5x you paid half and were refunded
+  //      whole; queue-and-cancel printed resources.
+  //   3. RUSH DRIFT. A rush costs base x mult x rushKnob, but the refund
+  //      paid base x (1 + rush_count).
+  //
+  // All three were the same mistake: guessing instead of remembering.
+  // Hand back exactly what was taken, to exactly the purse it came from.
+  let ledger = null;
+  try {
+    ledger = order.charge_json ? JSON.parse(order.charge_json) : null;
+  } catch { ledger = null; }
 
   // Refund the build cost. (fuel was removed from server-side build
   // cost gating, but we keep the column rounding-trip-safe.)
@@ -306,8 +333,70 @@ async function handleCancelBuild(req, env, ctx) {
   if (!flip.meta?.changes) {
     return err(409, 'already_cancelled', 'this build was already cancelled');
   }
-  // Refund covers hull + the design's parts snapshot (both were charged
-  // at queue time).
+
+  if (ledger) {
+    // Local shares go back to the settlement that paid them. A settlement
+    // that has since been destroyed or changed hands has no stockpile to
+    // credit, so that share falls to the pool — those resources really
+    // were paid, and there is nowhere else to put them. It is not a way
+    // back into the exploit: it needs the settlement to be GONE, which
+    // costs far more than the laundered stockpile was worth.
+    let poolMetal = Number(ledger.pool?.metal ?? 0);
+    let poolGold = Number(ledger.pool?.gold ?? 0);
+    const stmts = [];
+    const backToLocal = [];
+    for (const l of (Array.isArray(ledger.local) ? ledger.local : [])) {
+      const m = Number(l.metal ?? 0);
+      const g = Number(l.gold ?? 0);
+      if (m <= 0 && g <= 0) continue;
+      const alive = await env.DB
+        .prepare(
+          `SELECT id FROM game_settlements
+            WHERE id = ? AND game_id = ? AND owner_faction_id = ?
+              AND destroyed_at_tick IS NULL`,
+        )
+        .bind(l.id, gameId, me.id).first();
+      if (alive) {
+        stmts.push(env.DB
+          .prepare(
+            `UPDATE game_settlements
+                SET stockpile_metal = stockpile_metal + ?,
+                    stockpile_gold  = stockpile_gold  + ?
+              WHERE id = ?`,
+          )
+          .bind(m, g, l.id));
+        backToLocal.push({ settlement_id: l.id, metal: m, gold: g });
+      } else {
+        poolMetal += m;
+        poolGold += g;
+      }
+    }
+    if (poolMetal > 0 || poolGold > 0) {
+      stmts.push(env.DB
+        .prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?')
+        .bind(poolMetal, poolGold, me.id));
+    }
+    if (stmts.length) await env.DB.batch(stmts);
+
+    return json({
+      ok: true,
+      order_id: orderId,
+      // Both purses, so the client can say where the money went instead of
+      // showing a pool number that didn't move.
+      refund: {
+        metal: poolMetal + backToLocal.reduce((a, x) => a + x.metal, 0),
+        gold: poolGold + backToLocal.reduce((a, x) => a + x.gold, 0),
+        pool: { metal: poolMetal, gold: poolGold },
+        local: backToLocal,
+      },
+    });
+  }
+
+  // LEGACY ORDER (queued before 0084): no ledger exists, and there is no
+  // honest way to reconstruct what it paid — the multipliers in force at
+  // queue time aren't recorded anywhere. Keep the old approximate refund
+  // rather than guess a different wrong number. These drain out of the
+  // table as pre-0084 orders finish or are cancelled.
   await env.DB
     .prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?')
     .bind(refundMetal, refundGold, me.id)
@@ -316,7 +405,7 @@ async function handleCancelBuild(req, env, ctx) {
   return json({
     ok: true,
     order_id: orderId,
-    refund: { metal: refundMetal, gold: refundGold },
+    refund: { metal: refundMetal, gold: refundGold, legacy: true },
   });
 }
 
@@ -341,7 +430,7 @@ async function handleRushBuild(req, env, ctx) {
     .prepare(
       `SELECT id, body_id, faction_id, ship_class, ship_name, status,
               completes_at_tick, cancelled_at_tick, parts_json,
-              rush_count, botched
+              rush_count, botched, charge_json
          FROM game_body_build_queue
         WHERE id = ? AND game_id = ?`,
     )
@@ -411,6 +500,37 @@ async function handleRushBuild(req, env, ctx) {
       .bind(rushMetal, rushGold, me.id)
       .run();
     return err(409, 'conflict', 'order changed underfoot — try again');
+  }
+
+  // Add the rush fee to the order's charge ledger (0084). A rush is
+  // always charged to the POOL, so it accumulates there — and a cancel
+  // after N rushes now hands back exactly what those rushes cost instead
+  // of (base price x (1 + rush_count)), a number unrelated to the fees
+  // actually paid once any senate/tech multiplier was in play.
+  //
+  // Guarded on charge_json still holding the value we read, so two racing
+  // rushes cannot both add onto the same baseline and lose a fee. A miss
+  // means the other request already banked its own fee; the order is
+  // still correct, this one's fee is simply not refundable, which is the
+  // safe direction to fail (never refunds more than was paid).
+  try {
+    const prev = order.charge_json ? JSON.parse(order.charge_json) : null;
+    if (prev && prev.pool) {
+      const next = JSON.stringify({
+        ...prev,
+        pool: {
+          metal: Number(prev.pool.metal ?? 0) + rushMetal,
+          gold: Number(prev.pool.gold ?? 0) + rushGold,
+        },
+      });
+      await env.DB
+        .prepare('UPDATE game_body_build_queue SET charge_json = ? WHERE id = ? AND charge_json IS ?')
+        .bind(next, orderId, order.charge_json).run();
+    }
+  } catch (e) {
+    // A ledger that failed to grow under-refunds a later cancel. Loud in
+    // the log, never fatal to the rush the player already paid for.
+    console.error('rush: charge ledger update failed', e, { orderId });
   }
 
   await logSpend(env, {
@@ -736,6 +856,16 @@ async function handleQueueBuild(req, env, ctx) {
   const poolDrawMetal = needMetal;  // remainder
   const poolDrawGold  = needGold;
 
+  // THE CHARGE LEDGER (migration 0084). Cancel refunds from this record
+  // rather than re-deriving a price, which is what let a raw world's
+  // local stockpile launder into the global pool — and what made a
+  // cheaper-ships law mint resources on queue-then-cancel. Written in the
+  // same batch as the debits it describes, so the two cannot disagree.
+  const chargeJson = JSON.stringify({
+    pool: { metal: poolDrawMetal, gold: poolDrawGold },
+    local: settlementDrains.map(d => ({ id: d.id, metal: d.metal, gold: d.gold })),
+  });
+
   const game = await env.DB
     .prepare('SELECT current_tick FROM games WHERE id = ?')
     .bind(gameId)
@@ -753,11 +883,12 @@ async function handleQueueBuild(req, env, ctx) {
       .prepare(
         `INSERT INTO game_body_build_queue
           (id, game_id, body_id, faction_id, ship_class, queued_at_tick, completes_at_tick, icon_variant, ship_name,
-           parts_json, status, build_ticks, started_at_tick)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           parts_json, status, build_ticks, started_at_tick, charge_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(orderId, gameId, bodyId, me.id, shipClass, startTick, completeTick, iconVariant, shipName,
-            designPartsJson, startsNow ? 'building' : 'waiting', cost.build_ticks, startsNow ? startTick : null),
+            designPartsJson, startsNow ? 'building' : 'waiting', cost.build_ticks, startsNow ? startTick : null,
+            chargeJson),
   ];
   for (const d of settlementDrains) {
     batchStmts.push(
@@ -1800,6 +1931,18 @@ async function handleQueueBuilding(req, env, ctx) {
   const takePoolMetal  = cost.metal - takeLocalMetal;
   const takePoolGold   = cost.gold  - takeLocalGold;
 
+  // CHARGE LEDGER, same idea as ships (migration 0084) but stored inside
+  // the order blob since this one already is JSON. A building queued on a
+  // raw world was drawn local-first and refunded wholly to the pool —
+  // the identical laundering hole the ship queue had.
+  const orderWithCharge = {
+    ...order,
+    charge: {
+      local: { metal: takeLocalMetal, gold: takeLocalGold },
+      pool: { metal: takePoolMetal, gold: takePoolGold },
+    },
+  };
+
   const batchStmts = [
     env.DB
       .prepare(
@@ -1809,7 +1952,7 @@ async function handleQueueBuilding(req, env, ctx) {
                 stockpile_gold  = stockpile_gold  - ?
           WHERE id = ?`,
       )
-      .bind(JSON.stringify(order), takeLocalMetal, takeLocalGold, settlementId),
+      .bind(JSON.stringify(orderWithCharge), takeLocalMetal, takeLocalGold, settlementId),
   ];
   if (takePoolMetal > 0 || takePoolGold > 0) {
     batchStmts.push(
@@ -1824,7 +1967,7 @@ async function handleQueueBuilding(req, env, ctx) {
   );
   await env.DB.batch(batchStmts);
 
-  return json({ ok: true, order, cost });
+  return json({ ok: true, order: orderWithCharge, cost });
 }
 
 async function handleCancelBuilding(req, env, ctx) {
@@ -1857,21 +2000,63 @@ async function handleCancelBuilding(req, env, ctx) {
     return json({ ok: true, refund: null });
   }
 
-  // Refund cost-at-queue-time. Guarded flip (building_order_json still
-  // set) + refund-only-if-changed (see handleCancelBuild) so two
-  // concurrent cancels can't both refund.
-  const refund = buildingCostAt(order.kind, Math.max(0, (order.target_level ?? 1) - 1),
+  // Refund from the order's own CHARGE LEDGER (0084) when it has one.
+  // Re-deriving the price and paying it all into the pool laundered a raw
+  // world's local stockpile into spendable global credits, exactly as the
+  // ship queue did, and additionally paid back at TODAY's building cost
+  // multiplier rather than the one charged at queue time.
+  const ledger = order.charge && typeof order.charge === 'object' ? order.charge : null;
+  const legacyRefund = buildingCostAt(order.kind, Math.max(0, (order.target_level ?? 1) - 1),
     await buildingCostMult(env, gameId));
+  // Guarded flip (building_order_json still set) + refund-only-if-changed
+  // (see handleCancelBuild) so two concurrent cancels can't both refund.
   const flip = await env.DB
     .prepare('UPDATE game_settlements SET building_order_json = NULL WHERE id = ? AND building_order_json IS NOT NULL')
     .bind(settlementId)
     .run();
   if (!flip.meta?.changes) return err(409, 'already_cancelled', 'nothing to cancel');
+
+  if (ledger) {
+    const locM = Number(ledger.local?.metal ?? 0);
+    const locG = Number(ledger.local?.gold ?? 0);
+    const poolM = Number(ledger.pool?.metal ?? 0);
+    const poolG = Number(ledger.pool?.gold ?? 0);
+    const stmts = [];
+    // The settlement is loaded and alive (the SELECT above required
+    // destroyed_at_tick IS NULL), so its share always has a home here.
+    if (locM > 0 || locG > 0) {
+      stmts.push(env.DB
+        .prepare(
+          `UPDATE game_settlements
+              SET stockpile_metal = stockpile_metal + ?,
+                  stockpile_gold  = stockpile_gold  + ?
+            WHERE id = ?`,
+        )
+        .bind(locM, locG, settlementId));
+    }
+    if (poolM > 0 || poolG > 0) {
+      stmts.push(env.DB
+        .prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?')
+        .bind(poolM, poolG, me.id));
+    }
+    if (stmts.length) await env.DB.batch(stmts);
+    return json({
+      ok: true,
+      refund: {
+        metal: locM + poolM, gold: locG + poolG,
+        local: { metal: locM, gold: locG },
+        pool: { metal: poolM, gold: poolG },
+      },
+    });
+  }
+
+  // Pre-0084 order: no ledger to honour, so keep the old approximation
+  // rather than invent a different wrong number.
   await env.DB
     .prepare('UPDATE game_factions SET metal = metal + ?, gold = gold + ? WHERE id = ?')
-    .bind(refund?.metal ?? 0, refund?.gold ?? 0, me.id)
+    .bind(legacyRefund?.metal ?? 0, legacyRefund?.gold ?? 0, me.id)
     .run();
-  return json({ ok: true, refund });
+  return json({ ok: true, refund: { ...legacyRefund, legacy: true } });
 }
 // handleBuildCollector was deleted with the terraforming rework —
 // collectors are dead as a concept (terraformed status IS the loading
