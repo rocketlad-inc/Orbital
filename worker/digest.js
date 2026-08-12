@@ -1127,7 +1127,7 @@ const BATTLE_MELEE_ROUT = [
   c => `What started as a ${numWord(c.partyCount)}-way brawl at ${c.bodyLoc} ended as a one-sided slaughter: ${c.sideList}.`,
   c => `By the time the guns fell silent over ${c.bodyLoc}, ${b(c.worst)} alone had lost ${numWord(c.worstCount)} ${shipsWord(c.worstCount)}, against ${numWord(c.othersCount)} shared by the rest.`,
   c => `Losses at ${c.bodyLoc} tell the whole story: ${c.sideList}.`,
-  c => `Numbers from ${c.bodyLoc} don't lie — ${b(c.worst)} absorbed the war while ${numWord(c.partyCount)} other powers barely traded shots: ${c.sideList}.`,
+  c => `Numbers from ${c.bodyLoc} don't lie — ${b(c.worst)} absorbed the war while ${numWord(Math.max(1, c.partyCount - 1))} other ${plural(c.partyCount - 1, 'power')} barely traded shots: ${c.sideList}.`,
   c => `Analysts are calling ${c.bodyLoc} the most lopsided ${numWord(c.partyCount)}-way engagement in memory: ${c.sideList}.`,
   c => `Only ${b(c.worst)} left ${c.bodyLoc} in ruin — ${numWord(c.worstCount)} ${shipsWord(c.worstCount)} against ${numWord(c.othersCount)} spread across everyone else.`,
   c => `That ${c.bodyLoc} drew ${numWord(c.partyCount)} factions hardly mattered once the tally came in: ${b(c.worst)} lost ${numWord(c.worstCount)}, the rest lost ${numWord(c.othersCount)} between them.`,
@@ -1503,6 +1503,13 @@ const INDUSTRY_BUILDINGS_ONLY_HEADLINE = [
 // The below-threshold "everyone else" line — see
 // INDUSTRY_COLLAPSE_THRESHOLD. Deliberately low-key phrasing; this is
 // the digest's equivalent of small print, not a headline.
+const INDUSTRY_COLLAPSED_SOLO = [
+  c => `${b(c.leader)} alone accounted for the rest — ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} finished ${plural(c.totalBuilds, 'project')}.`,
+  c => `Everything else on the board belonged to ${b(c.leader)}: ${numWord(c.totalShips)} ${shipsWord(c.totalShips)}, ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}.`,
+  c => `Only ${b(c.leader)} filed anything further — ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}.`,
+  c => `The remaining entry on the register is ${b(c.leader)}, with ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}.`,
+];
+
 const INDUSTRY_COLLAPSED = [
   c => `Elsewhere in the system, smaller yards stayed busy — ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} upgrade${plural(c.totalBuilds, '')} completed across ${numWord(c.factionCount)} ${plural(c.factionCount, 'faction')}, led by ${b(c.leader)}.`,
   c => `Routine industry across the rest of the system: ${numWord(c.totalShips)} new ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} finished project${plural(c.totalBuilds, '')}, with ${b(c.leader)} out front.`,
@@ -1550,6 +1557,13 @@ const INDUSTRY_COLLAPSED_HEADLINE = [
  *  about genuinely small yards — calling a faction that launched
  *  thirty ships a "minor power" is just wrong, and the reader can see
  *  the number sitting right there in the sentence. */
+const INDUSTRY_FIELD_SOLO = [
+  c => `${b(c.leader)} alone accounted for the rest — ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} finished ${plural(c.totalBuilds, 'project')}.`,
+  c => `Everything else on the board belonged to ${b(c.leader)}: ${numWord(c.totalShips)} ${shipsWord(c.totalShips)}, ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}.`,
+  c => `Only ${b(c.leader)} filed anything further — ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}.`,
+  c => `The remaining entry on the register is ${b(c.leader)}, with ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')}.`,
+];
+
 const INDUSTRY_FIELD = [
   c => `Behind them, ${b(c.leader)} led the rest of the field — ${numWord(c.totalShips)} more ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} further ${plural(c.totalBuilds, 'project')} across ${numWord(c.factionCount)} ${plural(c.factionCount, 'power')}.`,
   c => `The other ${numWord(c.factionCount)} ${plural(c.factionCount, 'power')} were not idle either: ${numWord(c.totalShips)} ${shipsWord(c.totalShips)} and ${numWord(c.totalBuilds)} ${plural(c.totalBuilds, 'project')} between them, ${b(c.leader)} out front.`,
@@ -1589,7 +1603,7 @@ const COLONY_FOUNDED = [
   c => `New territory for ${b(c.faction)}: ${numWord(c.count)} settlement${plural(c.count, '')} founded${c.entriesClause}.`,
   c => `${b(c.faction)}'s colonists made landfall — ${numWord(c.count)} new settlement${plural(c.count, '')}${c.entriesClause}.`,
   c => `${b(c.faction)} put down roots again — ${numWord(c.count)} new settlement${plural(c.count, '')}${c.entriesClause}.`,
-  c => `The frontier shrinks a little more: ${b(c.faction)} founded ${numWord(c.count)} settlement${plural(c.count, '')}${c.entriesClause}.`,
+  c => `The frontier gives a little more ground: ${b(c.faction)} founded ${numWord(c.count)} settlement${plural(c.count, '')}${c.entriesClause}.`,
   c => `${b(c.faction)} claimed new ground today, with ${numWord(c.count)} settlement${plural(c.count, '')}${c.entriesClause}.`,
   c => `Colonists under ${b(c.faction)}'s banner broke ground on ${numWord(c.count)} new site${plural(c.count, '')}${c.entriesClause}.`,
   c => `${b(c.faction)} added ${numWord(c.count)} settlement${plural(c.count, '')} to its holdings${c.entriesClause}.`,
@@ -1624,7 +1638,7 @@ const COLONY_FOUNDED = [
   c => `First shipments of ore are already promised from ${numWord(c.count)} newly founded ${b(c.faction)} ${plural(c.count, 'colony', 'colonies')}${c.entriesClause}.`,
   c => `Nothing dramatic, only ${numWord(c.count)} more ${plural(c.count, 'settlement', 'settlements')} standing to ${b(c.faction)}'s name${c.entriesClause}.`,
   c => `${b(c.faction)} signed off on ${numWord(c.count)} new ${plural(c.count, 'outpost', 'outposts')}${c.entriesClause}.`,
-  c => `Domes, a water plant, a landing strip scraped flat — the usual list, run through ${numWord(c.count)} ${plural(c.count, 'time', 'times')} for ${b(c.faction)}${c.entriesClause}.`,
+  c => `Domes, a water plant, a landing strip scraped flat — ${b(c.faction)} ran the usual list ${c.count === 1 ? 'once' : c.count === 2 ? 'twice' : numWord(c.count) + ' times'}${c.entriesClause}.`,
   c => `The colonial registry closed the period ${numWord(c.count)} ${plural(c.count, 'name', 'names')} longer, all of them ${b(c.faction)}'s${c.entriesClause}.`,
   c => `Settlers went down the ramp under ${b(c.faction)} charter at ${numWord(c.count)} separate ${plural(c.count, 'landing site', 'landing sites')}${c.entriesClause}.`,
 ];
@@ -2857,7 +2871,9 @@ function buildIndustryStories(rows, used) {
       leader: restOfField[0].faction,
       factionCount: restOfField.length,
     };
-    stories.push(mkStory(35, used, 'industry_field', INDUSTRY_FIELD, 'industry_field_hl', INDUSTRY_FIELD_HEADLINE, ctx));
+    const solo = restOfField.length === 1;
+    stories.push(mkStory(35, used, solo ? 'industry_field_solo' : 'industry_field',
+      solo ? INDUSTRY_FIELD_SOLO : INDUSTRY_FIELD, 'industry_field_hl', INDUSTRY_FIELD_HEADLINE, ctx));
   }
 
   // "Filed for the record: zero ships and one completed project among
@@ -2871,7 +2887,9 @@ function buildIndustryStories(rows, used) {
     const leader = collapsed[0];
     const ctx = { totalShips, totalBuilds, leader: leader.faction, factionCount: collapsed.length };
     const weight = 30 + collapsed.length; // stays quiet — this is background noise, not news
-    stories.push(mkStory(weight, used, 'industry_collapsed', INDUSTRY_COLLAPSED, 'industry_collapsed_hl', INDUSTRY_COLLAPSED_HEADLINE, ctx));
+    const solo = collapsed.length === 1;
+    stories.push(mkStory(weight, used, solo ? 'industry_collapsed_solo' : 'industry_collapsed',
+      solo ? INDUSTRY_COLLAPSED_SOLO : INDUSTRY_COLLAPSED, 'industry_collapsed_hl', INDUSTRY_COLLAPSED_HEADLINE, ctx));
   }
 
   return stories;
@@ -3958,7 +3976,50 @@ function pickTemplateStatic(bank, seedish) {
  * standings column; "current totals" would have been a lie half the
  * time it rendered.
  */
-function standingsField(rows, factionNames) {
+/**
+ * Running totals for every faction up to `uptoTick`.
+ *
+ * The standings box started as net-change-only, on the reasoning that a
+ * historical edition must not print today's numbers on a paper dated
+ * six weeks ago. That reasoning was right and the conclusion was wrong:
+ * a reader of ten editions could never answer "who is winning?", which
+ * is a fatal thing to say about a newspaper whose whole subject is a
+ * race. The fix is a cumulative query BOUNDED BY THE EDITION'S OWN
+ * TICK — totals as of press time, which is exactly what a paper would
+ * print and is correct for any edition, live or historical.
+ */
+async function fetchStandingTotals(env, gameId, uptoTick) {
+  try {
+    const rows = (await env.DB
+      .prepare(
+        `SELECT kind,
+                json_extract(payload, '$.owner_faction_name') AS owner,
+                COUNT(*) AS n
+           FROM chronicle_entries
+          WHERE game_id = ? AND tick_number <= ?
+            AND kind IN ('ship_built', 'ship_destroyed', 'settlement_built', 'settlement_destroyed')
+          GROUP BY kind, owner`,
+      )
+      .bind(gameId, uptoTick)
+      .all()).results ?? [];
+    const totals = new Map();
+    for (const r of rows) {
+      if (!r.owner) continue;
+      let t = totals.get(r.owner);
+      if (!t) { t = { fleet: 0, worlds: 0 }; totals.set(r.owner, t); }
+      const n = Number(r.n) || 0;
+      if (r.kind === 'ship_built') t.fleet += n;
+      else if (r.kind === 'ship_destroyed') t.fleet -= n;
+      else if (r.kind === 'settlement_built') t.worlds += n;
+      else if (r.kind === 'settlement_destroyed') t.worlds -= n;
+    }
+    return totals;
+  } catch {
+    return new Map();
+  }
+}
+
+function standingsField(rows, factionNames, totals = new Map()) {
   const stat = new Map();   // faction name -> tallies
   const touch = (name) => {
     if (!name) return null;
@@ -3988,24 +4049,45 @@ function standingsField(rows, factionNames) {
     .sort((a, z) => z.net - a.net);
   if (rank.length < 2) return null;
 
+  // Order by STANDING, not by who had a good week — a scoreboard sorted
+  // by momentum is not a scoreboard.
+  const standingOf = (name) => {
+    const t = totals.get(name);
+    return t ? t.worlds * 3 + t.fleet : null;
+  };
+  if (totals.size > 0) {
+    rank.sort((a, z) => (standingOf(z.name) ?? -1e9) - (standingOf(a.name) ?? -1e9));
+  }
+
   const sign = n => (n > 0 ? `+${n}` : String(n));
-  const lines = rank.slice(0, 6).map((r) => {
+  const lines = rank.slice(0, 6).map((r, i) => {
     const fleet = r.built - r.lost;
     const ground = r.founded - r.razed;
+    const t = totals.get(r.name);
     // The arrow has to agree with the two numbers printed beside it.
     // It was keyed off an internal weighting that counts a world as
     // three hulls, so "+2 fleet" could draw a flat arrow while "+1
     // fleet" drew an up one, and the table simply looked broken.
     const move = fleet + ground;
     const trend = move > 0 ? '▲' : move < 0 ? '▼' : '▬';
-    return `${trend} **${r.name}** · fleet ${sign(fleet)} · worlds ${sign(ground)}`;
+    // Totals first, this edition's movement in parentheses. A delta
+    // alone answers "who had a good week"; the reader wants "who is
+    // winning", and only the running figure answers that.
+    const pos = t
+      ? `${t.worlds} ${plural(t.worlds, 'world')}, ${t.fleet} ${plural(t.fleet, 'hull')} (${sign(ground)} / ${sign(fleet)})`
+      : `fleet ${sign(fleet)} · worlds ${sign(ground)}`;
+    return `${trend} **${i + 1}. ${r.name}** — ${pos}`;
   });
-  // No legend line. It was word-for-word identical in all ten editions
-  // of a real run — a glossary entry reprinted as news — and the field
-  // title can carry the same information once.
+  // The scoreboard and the battle reports are drawn from the same rows,
+  // but the reports are capped at four a section and the totals are
+  // not — so the two legitimately disagree, and a reader who checks
+  // finds the paper wrong. Say so, in the paper's own voice, once.
+  const footer = totals.size > 0
+    ? '\n*Totals to press time; change this edition in brackets. Figures include actions the wire could not print in full.*'
+    : '\n*Change this edition. Figures include actions the wire could not print in full.*';
   return {
-    name: '📊  Where things stand · net change this edition',
-    value: clipToSentence(lines.join('\n'), FIELD_VALUE_LIMIT - 4),
+    name: '📊  Where things stand',
+    value: clipToSentence(lines.join('\n') + footer, FIELD_VALUE_LIMIT - 4),
   };
 }
 
@@ -4411,7 +4493,7 @@ async function fetchLeaders(env, gameId) {
   }
 }
 
-function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, sanctions = [], leaders = new Map()) {
+function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, sanctions = [], leaders = new Map(), totals = new Map()) {
   // bank-name -> { start, stride, k } walk state, plus the '__rng' the
   // walks are drawn from. Seeded off the edition's tick (and the game
   // name, so two matches publishing the same tick don't print the same
@@ -4508,7 +4590,7 @@ function composeEmbed(gameName, tick, rows, factionNames, tradesDelta, locator, 
   // The scoreboard the paper never had. Goes below the news, above the
   // sign-off — a reader who wants the state of the war can jump to it
   // without reading four battle reports to infer it.
-  const standings = standingsField(rows, factionNames);
+  const standings = standingsField(rows, factionNames, totals);
   if (standings) fields.push(standings);
 
   if (tradesDelta > 0) {
@@ -4649,6 +4731,7 @@ export async function runDigestForGame(env, game, { force = false, final = false
     .all()).results ?? [];
   const factionNames = new Map(factions.map(f => [f.id, f.name]));
   const leaders = await fetchLeaders(env, game.id);
+  const totals = await fetchStandingTotals(env, game.id, game.current_tick ?? 0);
 
   const locator = await buildBodyLocator(env, game.id, collectBodyIds(rows));
 
@@ -4660,7 +4743,7 @@ export async function runDigestForGame(env, game, { force = false, final = false
   const tradesDelta = Math.max(0, tradesNow - (state?.trades_snapshot ?? tradesNow));
 
   const sanctions = await activeSanctions(env, game.id, game.current_tick ?? 0);
-  let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, tradesDelta, locator, sanctions, leaders);
+  let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, tradesDelta, locator, sanctions, leaders, totals);
 
   // Forced editions always publish — a quiet day (no stories, no
   // trades) still gets a headline-styled "all quiet" bulletin so the
@@ -4774,12 +4857,13 @@ export async function composeHeraldForGame(env, game, lookbackMs = 24 * 60 * 60 
     .all()).results ?? [];
   const factionNames = new Map(factions.map(f => [f.id, f.name]));
   const leaders = await fetchLeaders(env, game.id);
+  const totals = await fetchStandingTotals(env, game.id, game.current_tick ?? 0);
   const locator = await buildBodyLocator(env, game.id, collectBodyIds(rows));
 
   // No trades-delta bookkeeping here — that snapshot belongs to the
   // Discord edition's incremental state and must not be disturbed.
   const sanctions = await activeSanctions(env, game.id, game.current_tick ?? 0);
-  let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, 0, locator, sanctions, leaders);
+  let embed = composeEmbed(game.name ?? game.id, game.current_tick ?? 0, rows, factionNames, 0, locator, sanctions, leaders, totals);
   if (!embed) {
     const used = new Map();
     embed = {
@@ -4840,9 +4924,10 @@ export async function composeHeraldForTickRange(env, game, fromTick, toTick) {
     .all()).results ?? [];
   const factionNames = new Map(factions.map(f => [f.id, f.name]));
   const leaders = await fetchLeaders(env, game.id);
+  const totals = await fetchStandingTotals(env, game.id, toTick);
   const locator = await buildBodyLocator(env, game.id, collectBodyIds(rows));
 
-  let embed = composeEmbed(game.name ?? game.id, toTick, rows, factionNames, 0, locator, [], leaders);
+  let embed = composeEmbed(game.name ?? game.id, toTick, rows, factionNames, 0, locator, [], leaders, totals);
   if (!embed) {
     const used = new Map();
     embed = {
