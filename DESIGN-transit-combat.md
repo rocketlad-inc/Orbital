@@ -188,6 +188,87 @@ velocity and you get a real fight; refuse to match and neither of you can
 shoot.** That is the tactical decision the mechanic creates, and it is why
 `Δv` and not raw speed is the input.
 
+## Chases: you cannot catch anything by leaving after it
+
+Two ships on the *same* lane, identical burns, pursuer launching `d` ticks
+late. During the shared boost phase the algebra is clean:
+
+```
+Δv         = accel × d                       constant, however long they've burned
+separation = ½ × accel × d × (2τ − d)        τ = leader's burn time so far
+```
+
+Δv depends only on the **launch gap**, not on elapsed time. But separation
+grows with τ — the leader had a head start under the same acceleration, so it
+pulls away. Simulated, Titan→Enceladus (67 u, flip at 1.59, arrival at 3.18),
+pursuer one tick late:
+
+| t | leader (x, v) | pursuer (x, v) | gap | Δv | in range (10)? |
+|---|---|---|---|---|---|
+| 1.00 | 13.3, 26.5 | 0.0, 0.0 | 13.3 | 26.5 | no |
+| 1.50 | 29.8, 39.8 | 3.3, 13.3 | 26.5 | 26.5 | no |
+| 2.00 | 48.6, 31.3 | 13.3, 26.5 | **35.3** | **4.7** | no |
+| 2.50 | 60.9, 18.0 | 29.8, 39.8 | 31.1 | 21.8 | no |
+| 3.18 | **67.0, 0.0** *(arrived)* | 53.8, 26.5 | 13.2 | 26.5 | no |
+| 3.50 | 67.0, 0.0 | 60.9, 18.0 | 6.1 | 18.0 | **YES** |
+| 4.18 | 67.0, 0.0 | 67.0, 0.0 | 0.0 | 0.0 | **YES** |
+
+Four things follow, and none of them had to be designed:
+
+- **A stern chase never gets a shot in flight.** The gap peaks at 35 units —
+  3.5× a destroyer's transit range — and only falls inside range *after the
+  target has already parked*. You don't catch them in the open; you catch them
+  at the door.
+- **The gap is widest at mid-flight and narrowest at both ends**, which is the
+  same shape as the evasion curve. Every part of this model says the same
+  thing: fights happen at the ends of trips.
+- **There is a speed-crossing window in every chase.** At t = 2.00 the leader
+  is braking while the pursuer is still boosting and their speeds nearly match
+  — Δv drops to **4.7**, a 66% shot, for a moment. Here they're 35 units apart
+  so nothing happens. Arrange to be *close* at that moment and it's a kill.
+  That is the skill ceiling of this mechanic.
+- **Escorting works, and the rule is simple: launch on the same tick to the
+  same destination.** Identical burns means Δv = 0 and gap = 0 for the whole
+  flight, so an escort holds formation, stays in range, and shoots any
+  interceptor at exactly the odds it shoots the freighter. No new code.
+
+### The consequence worth deciding on
+
+Matched velocity means neither side can disengage. Two hostile ships that
+launch together on the same lane are locked in a **running fight at full odds
+for the entire flight** — three, five, sixteen ticks of volleys — and neither
+can break off, because a committed torch burn cannot be re-aimed and
+`retreat_hp_pct` has nowhere to send them. Convoy battles become fights to the
+death.
+
+That is good drama and probably good design, but it is a real escalation and
+it should be a choice, not a surprise. Either accept it, or allow a
+mid-flight course change (an abort burn back to the origin) as the transit
+equivalent of retreating.
+
+### The missing order
+
+This mechanic rewards velocity matching, and the order system has no way to
+ask for it. Today a player can only pick a **destination body**. So:
+
+| Intent | Expressible today? |
+|---|---|
+| Escort — fly with my freighter | **Yes.** Same destination, same tick. |
+| Pursue — chase that ship down | **No, and it wouldn't work anyway** (above). |
+| Intercept — meet that ship in space | **No.** You must guess a destination whose trajectory happens to pass near theirs at low Δv, with no tooling. |
+
+Interception is the whole point and it is currently a lottery. The fix is a
+**rendezvous order that targets a ship rather than a body**, solving for a
+burn that arrives at the target's predicted position *with its velocity
+matched* — i.e. deliberately Δv ≈ 0, deliberately a real fight.
+
+`planTorchTransfer` already iterates against a moving target
+(`interceptPos = bodyPosition(target, currentTick + T)` inside a convergence
+loop). Generalising that from "a body's future position" to "a ship's future
+trajectory" is a natural extension of code that already exists, and it shares
+the closest-approach primitive this design needs anyway. **I'd treat it as
+part of stage 1, not a follow-up** — without it, interception is theory.
+
 ## Surface area
 
 **Migration** (one, additive, no backfill needed — nodes without a plan are
