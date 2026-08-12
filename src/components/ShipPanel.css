@@ -945,10 +945,23 @@
    to the sheet is exact and can't drift out of sync with whichever
    breakpoint someone edits next.
    ============================================================ */
+/* Sticky can never escape its PARENT's box, and COMMIT lives inside
+   .maneuver-section — a short box that scrolls away with everything else.
+   So `position: sticky` on its own did nothing at all: measured on prod,
+   the button still sat 260px below the fold. Dropping the section's box
+   (inside the sheet only) promotes its children into the scroll
+   container's flow, making .bottom-sheet__body the button's containing
+   block, which is what sticky actually needs. The desktop panel keeps its
+   normal section box. */
+.bottom-sheet__body .maneuver-section { display: contents; }
+
 .bottom-sheet__body .commit-all-btn {
   position: sticky;
   bottom: 0;
   z-index: 2;
+  /* Replaces the margin-bottom the section box used to contribute, and
+     buys a little breathing room above the dock rail. */
+  margin-bottom: 12px;
   /* Content scrolls UNDER this now, so it needs a real edge. */
   box-shadow: 0 -8px 12px -6px rgba(0, 0, 0, 0.75),
               0 0 12px rgba(255, 184, 77, 0.15),
