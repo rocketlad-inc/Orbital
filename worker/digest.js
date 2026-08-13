@@ -984,6 +984,26 @@ function capitalizeFirst(s) {
   return s.slice(0, i) + s.charAt(i).toUpperCase() + s.slice(i + 1);
 }
 
+/** Words a headline may not use below a real magnitude. "CRUSHES
+ *  FLEET" over three hulls, in a run whose finale reports fifty-
+ *  seven, spends the vocabulary early and leaves the paper nothing
+ *  for the events that earn it. Checked against the story's own
+ *  casualty count, so the bank stays free to be dramatic when the
+ *  number backs it. */
+const HEADLINE_SUPERLATIVES = [
+  [/\bANNIHILAT|\bWIPED OUT|\bNO SURVIVORS|\bMASSACRE|\bERASES?\b|\bDESTROYED\. ALL OF IT/, 10],
+  [/\bCRUSH|\bSLAUGHTER|\bBLOODBATH|\bGUTTED|\bDECIMATED|\bCATASTROPHE/, 7],
+  [/\bROUTED|\bSHATTER|\bWRECKAGE|\bBUTCHER/, 5],
+];
+function headlineOverreaches(h, count) {
+  if (!Number.isFinite(count)) return false;
+  const s = String(h).toUpperCase();
+  for (const [re, floor] of HEADLINE_SUPERLATIVES) {
+    if (re.test(s) && count < floor) return true;
+  }
+  return false;
+}
+
 /** A headline reduced to its FORMULA: punctuation and lowercase are
  *  stripped and only the first few content words survive, so two
  *  headlines built from one template collide even when their place and
@@ -1007,8 +1027,15 @@ function mkStory(baseWeight, used, narrativeBankName, narrativeBank, headlineBan
   // collision.
   const emitted = used.get('__headlines') ?? new Set();
   used.set('__headlines', emitted);
+  // The magnitude this headline is allowed to claim. Battle contexts
+  // carry their casualty count under one of a few names depending on
+  // the branch that built them.
+  const mag = [ctx.count, ctx.loserCount, ctx.worstCount,
+    (Number(ctx.countA) || 0) + (Number(ctx.countB) || 0)]
+    .find(v => Number.isFinite(v) && v > 0);
   let headline = pickTemplate(headlineBankName, headlineBank, used)(ctx);
-  for (let tries = 0; tries < 6 && emitted.has(headlineShape(headline)); tries++) {
+  for (let tries = 0; tries < 8
+    && (emitted.has(headlineShape(headline)) || headlineOverreaches(headline, mag)); tries++) {
     headline = pickTemplate(headlineBankName, headlineBank, used)(ctx);
   }
   emitted.add(headlineShape(headline));
@@ -1578,18 +1605,18 @@ const ASTEROID_IMPACT_HEADLINE = [
 /** What a self-destruct took with it. Lowercase clauses — they follow a
  *  comma or dash inside a SHIP_DETONATED sentence, never a full stop. */
 const DETONATION_TOLL = [
-  n => `taking ${numWord(n)} ${shipsWord(n)} down with it`,
+  n => `taking ${numWord(n)} enemy ${shipsWord(n)} down with it`,
   n => `and ${numWord(n)} enemy ${shipsWord(n)} went with it`,
-  n => `gutting ${numWord(n)} ${shipsWord(n)} that had closed too far to run`,
-  n => `the blast accounting for ${numWord(n)} more ${shipsWord(n)}`,
-  n => `dragging ${numWord(n)} ${shipsWord(n)} into the fireball`,
+  n => `gutting ${numWord(n)} enemy ${shipsWord(n)} that had closed too far to run`,
+  n => `the blast accounting for ${numWord(n)} more of the attackers' ${shipsWord(n)}`,
+  n => `dragging ${numWord(n)} enemy ${shipsWord(n)} into the fireball`,
   n => `and ${numWord(n)} ${shipsWord(n)} alongside did not survive the decision`,
-  n => `killing ${numWord(n)} ${shipsWord(n)} that were too close to matter`,
-  n => `with ${numWord(n)} ${shipsWord(n)} lost inside the blast radius`,
-  n => `and the shockwave finished ${numWord(n)} ${shipsWord(n)} besides`,
+  n => `killing ${numWord(n)} enemy ${shipsWord(n)} that were too close to matter`,
+  n => `with ${numWord(n)} enemy ${shipsWord(n)} lost inside the blast radius`,
+  n => `and the shockwave finished ${numWord(n)} of theirs besides`,
   n => `taking ${numWord(n)} of the boarding party's escorts with it`,
-  n => `${numWord(n)} ${shipsWord(n)} caught in the detonation`,
-  n => `a final ${numWord(n)} ${shipsWord(n)} destroyed in the same instant`,
+  n => `${numWord(n)} enemy ${shipsWord(n)} caught in the detonation`,
+  n => `a final ${numWord(n)} of the enemy's destroyed in the same instant`,
 ];
 
 const DETONATION_NO_TOLL = [
@@ -3248,6 +3275,26 @@ const SEPARATE_ACTION_CLAUSE = [
   (loc, winner, count, loser, ships) => `${winner} was busy at ${loc} as well, where ${loser} is short ${count === 'one' ? 'one more' : `another ${count}`} ${ships}.`,
 ];
 
+/** "The fourth engagement at Mars this season." The paper had no
+ *  memory at all: Mars was contested in five consecutive editions and
+ *  was never once described as recurring, which is what made ten
+ *  issues read like ten first issues. Fires only from the third
+ *  engagement onward, where the ordinal is worth saying. */
+const ENGAGEMENT_ORDINAL_CLAUSE = [
+  (bodyBold, nth) => ` It is the ${ordinal(nth)} time the fleets have fought over ${bodyBold}.`,
+  (bodyBold, nth) => ` ${bodyBold} has now been contested ${numWord(nth)} separate times this war.`,
+  (bodyBold, nth) => ` That is the ${ordinal(nth)} engagement at ${bodyBold}, and the ground has not moved.`,
+  (bodyBold, nth) => ` Our files hold ${numWord(nth)} battles at ${bodyBold} now, this one included.`,
+  (bodyBold, nth) => ` ${bodyBold} returns to these pages for the ${ordinal(nth)} time.`,
+  (bodyBold, nth) => ` The ${ordinal(nth)} action at ${bodyBold}; the ${ordinal(nth)} inconclusive one.`,
+  (bodyBold, nth) => ` Readers keeping count will make this ${numWord(nth)} engagements at ${bodyBold}.`,
+  (bodyBold, nth) => ` ${bodyBold} has been fought over ${numWord(nth)} times, and settled none of them.`,
+  (bodyBold, nth) => ` Add it to the file: the ${ordinal(nth)} battle at ${bodyBold}.`,
+  (bodyBold, nth) => ` For the ${ordinal(nth)} time, the fleets met at ${bodyBold}.`,
+  (bodyBold, nth) => ` ${bodyBold} is on its ${ordinal(nth)} engagement and no closer to a holder.`,
+  (bodyBold, nth) => ` This desk has now filed ${numWord(nth)} times from ${bodyBold}.`,
+];
+
 function buildBattleStories(rows, used, locator, captainFate, voices = null, prevBattles = new Map()) {
   const stories = [];
 
@@ -3633,7 +3680,20 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
       // eligible is not the same as being worth printing; about half
       // the qualifying editions get it, off the seeded stream.
       const contRng = used.get('__rng') || Math.random;
-      if (prevHulls >= 3 && shipsHere >= 3 && prevRankOfBody < 3 && contRng() < 0.5) {
+      // Recurrence outranks continuation: "the fourth engagement at
+      // Mars" is a fact about the war, where "fighting goes on" is a
+      // mood. When both are available, print the fact.
+      const nth = (prevBattles.ordinals?.get(bodyId) ?? 0) + 1;
+      let saidRecurrence = false;
+      if (nth >= 3 && shipsHere >= 2 && stories.length > storiesBefore) {
+        const st = stories[stories.length - 1];
+        st.text += pickTemplate('engagement_ordinal', ENGAGEMENT_ORDINAL_CLAUSE, used)(b(locBody.name), nth);
+        st.weight += 25;
+        saidRecurrence = true;
+      }
+      // One recurrence statement per story. Both clauses say "this keeps
+      // happening"; printing both says it twice in two sentences.
+      if (!saidRecurrence && prevHulls >= 3 && shipsHere >= 3 && prevRankOfBody < 3 && contRng() < 0.5) {
         const st = stories[stories.length - 1];
         st.text += pickTemplate('battle_continues', BATTLE_CONTINUES_CLAUSE, used)(b(locBody.name), shipsHere, prevHulls);
         st.headline = pickTemplate('battle_continues_hl', BATTLE_CONTINUES_HEADLINE, used)({ body: locBody.name, count: shipsHere });
@@ -3692,10 +3752,16 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
     const ctx = {
       actor: p.owner_faction_name ?? 'An unknown faction',
       body: locBody.name, bodyLoc: locBody.full,
-      countText: `${numWord(count)} ${shipsWord(count)}`,
+      // NOT `N ships` — these never launched, and saying so is the
+      // difference between a reader trusting the toll line and
+      // deciding the arithmetic is broken.
+      countText: `${numWord(count)} unfinished ${plural(count, 'hull', 'hulls')}`,
     };
     const weight = 300 + BATTLE_PER_CASUALTY * count;
-    stories.push(mkStory(weight, used, 'builds_destroyed', BUILDS_DESTROYED, 'builds_destroyed_hl', BUILDS_DESTROYED_HEADLINE, ctx));
+    // The stocks are not the fleet. Stated plainly so the figure
+    // cannot be added to the period's hull losses by a careful reader.
+    const stocksNote = ' None had been commissioned, and none appear in the fleet losses above.';
+    stories.push(mkStory(weight, used, 'builds_destroyed', BUILDS_DESTROYED, 'builds_destroyed_hl', BUILDS_DESTROYED_HEADLINE, ctx, stocksNote));
   }
 
   // --- ships retreating from a fight — low-weight status update, not
@@ -5485,6 +5551,9 @@ function standingsField(rows, factionNames, totals = new Map()) {
   const tollParts = [];
   if (periodHulls > 0) tollParts.push(`**${periodHulls}** ${plural(periodHulls, 'hull', 'hulls')} destroyed`);
   if (periodWorlds > 0) tollParts.push(`**${periodWorlds}** ${plural(periodWorlds, 'settlement', 'settlements')} razed`);
+  // Reported-versus-actual, said out loud. A reader who adds up the
+  // battle pages and lands well under the toll line should be told
+  // why, not left to assume the arithmetic is broken.
   const toll = tollParts.length
     // No "more than these pages had room to report" here — the kicker
     // at the foot of the edition already makes that joke, and makes it
@@ -6456,6 +6525,51 @@ async function fetchPrevBattlesByTick(env, gameId, fromTick, toTick) {
   return new Map(rows.map(r => [r.body_id ?? 'unknown', Number(r.n) || 0]));
 }
 
+/** How many earlier editions this location has already been fought
+ *  over, per body.
+ *
+ *  "Mars was fought over in five consecutive editions and the paper
+ *  never once said so" was the largest missed opportunity an outside
+ *  reader found — ten issues that read like ten first issues. The
+ *  count is fully derivable from the chronicle: bucket every prior
+ *  ship_destroyed row by which edition-width window its tick falls in,
+ *  and count the distinct windows per body. No persisted state, so a
+ *  historical preview of T+220 still only knows what T+220's readers
+ *  knew.
+ */
+async function fetchEngagementOrdinals(env, gameId, fromTick, span) {
+  if (fromTick <= 0 || span <= 0) return new Map();
+  const rows = (await env.DB
+    .prepare(
+      `SELECT body_id, tick_number
+         FROM chronicle_entries
+        WHERE game_id = ? AND tick_number <= ?
+          AND visibility = 'public' AND kind = 'ship_destroyed'`,
+    )
+    .bind(gameId, fromTick)
+    .all()).results ?? [];
+  const windows = new Map();   // body -> Map(window index -> hulls)
+  for (const r of rows) {
+    const body = r.body_id ?? 'unknown';
+    const w = Math.floor((Number(r.tick_number) || 0) / span);
+    let m = windows.get(body);
+    if (!m) { m = new Map(); windows.set(body, m); }
+    m.set(w, (m.get(w) ?? 0) + 1);
+  }
+  // Only count a window that carried enough losses to have plausibly
+  // reached print, for the same reason the continuation clause is
+  // gated: the paper should not claim a history the reader never saw.
+  // A single hull lost in a window is a brush, not an engagement the
+  // archive would show.
+  const out = new Map();
+  for (const [body, m] of windows) {
+    let n = 0;
+    for (const hulls of m.values()) if (hulls >= 2) n += 1;
+    if (n > 0) out.set(body, n);
+  }
+  return out;
+}
+
 async function fetchPrevBattlesByMs(env, gameId, fromMs, toMs) {
   if (toMs <= fromMs || fromMs <= 0) return new Map();
   const rows = (await env.DB
@@ -6568,6 +6682,10 @@ export async function composeHeraldForTickRange(env, game, fromTick, toTick) {
   const span = Math.max(1, toTick - fromTick);
   const ordinal = Math.round(fromTick / span);
   const prevBattles = await fetchPrevBattlesByTick(env, game.id, fromTick - span, fromTick);
+  // Ride along on the same map rather than adding a twelfth
+  // parameter to composeEmbed. Documented here because a property
+  // hung off a Map is otherwise easy to miss.
+  prevBattles.ordinals = await fetchEngagementOrdinals(env, game.id, fromTick, span);
   let embed = composeEmbed(game.name ?? game.id, toTick, rows, factionNames, 0, locator, [], leaders, totals, ordinal, prevBattles);
   if (!embed) {
     const used = new Map();
