@@ -4527,6 +4527,20 @@ const DYSON_INITIATED_HEADLINE = [
   () => 'THE CLOCK STARTS AT SOL',
   (c) => `${c.faction.toUpperCase()} STAKES THE STAR`,
 ];
+/** What completing the sphere would actually settle. Printed with the
+ *  percentage so the number means something to a reader who has not
+ *  read the rulebook. */
+const DYSON_STAKE_CLAUSE = [
+  () => ` Completed, it wins the war outright.`,
+  () => ` At one hundred it ends the war by itself.`,
+  () => ` A finished sphere decides the war, fleets or no fleets.`,
+  () => ` One hundred per cent is an ending, not a milestone.`,
+  () => ` Closed, it settles the war without a battle.`,
+  () => ` It is a win condition, not a monument.`,
+  () => ` Finish it and the war is over, in its builder's favour.`,
+  () => ` The number matters because one hundred ends the war.`,
+];
+
 const DYSON_MILESTONE = [
   (c) => `The **Dyson Sphere** stands at **${c.pct}%** — **${c.faction}**'s engineers report the lattice holding. The countdown the whole system pretends not to hear grows louder.`,
   (c) => `**${c.faction}**'s sun-cage reached **${c.pct}%** completion this edition. Diplomats are polite about it. Admirals are not.`,
@@ -4785,7 +4799,11 @@ function buildDysonHistoryStories(rows, used, factionNames) {
     } else if (row.kind === 'dyson_milestone') {
       if (!keptMilestoneRows.has(row)) continue;
       // Later milestones are bigger news — 75% outranks a treaty broken.
-      stories.push(mkStory(250 + (p.pct ?? 0) * 2, used, 'dyson_milestone', DYSON_MILESTONE, 'dyson_milestone_hl', DYSON_MILESTONE_HEADLINE, { faction, pct: p.pct ?? 0 }));
+      // Say what finishing it would mean, once, on the story that
+      // reports the number. A countdown without a clock face is
+      // atmosphere, not reporting.
+      const stake = pickTemplate('dyson_stake', DYSON_STAKE_CLAUSE, used)();
+      stories.push(mkStory(250 + (p.pct ?? 0) * 2, used, 'dyson_milestone', DYSON_MILESTONE, 'dyson_milestone_hl', DYSON_MILESTONE_HEADLINE, { faction, pct: p.pct ?? 0 }, stake));
     }
   }
   return stories;
@@ -6723,7 +6741,7 @@ async function fetchEngagementOrdinals(env, gameId, fromTick, span) {
     .prepare(
       `SELECT body_id, tick_number
          FROM chronicle_entries
-        WHERE game_id = ? AND tick_number <= ?
+        WHERE game_id = ? AND tick_number < ?
           AND visibility = 'public' AND kind = 'ship_destroyed'`,
     )
     .bind(gameId, fromTick)
