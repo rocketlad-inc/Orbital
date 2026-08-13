@@ -881,7 +881,7 @@ const SETTLEMENT_LOSS_CLAUSE = [
   (nameStr, many, popClause) => ` No shipyard sat at ${nameStr}. No garrison, no battery, no reason. ${nameStr} ${many ? 'are' : 'is'} rubble.`,
   (nameStr, many, popClause) => ` This desk notes, without comment, that ${nameStr}${popClause} ${many ? 'were' : 'was'} inhabited.`,
   (nameStr, many, popClause) => ` Add ${nameStr}${popClause} to the column that never gets a headline.`,
-  (nameStr, many, popClause) => ` Relief traffic has been diverted toward ${nameStr}${popClause}. It will arrive too late to be relief.`,
+  (nameStr, many, popClause) => ` Relief traffic has been diverted toward what is left of ${nameStr}${popClause}. It will arrive too late to be relief.`,
   (nameStr, many, popClause) => ` The ${many ? 'settlements' : 'settlement'} at ${nameStr}${popClause} did not survive the engagement.`,
   (nameStr, many, popClause) => ` Ministry language for what happened to ${nameStr}${popClause} is "incidental habitation loss."`,
   (nameStr, many, popClause) => ` ${nameStr} ${many ? 'were' : 'was'} not evacuated. There was no one left in orbit to do the evacuating.`,
@@ -1250,7 +1250,7 @@ const BATTLE_NARROW = [
   c => `The ledger from ${c.bodyLoc} favors ${b(c.winner)} by a slim margin — ${numWord(c.winnerCount)} ${shipsWord(c.winnerCount)} lost against ${numWord(c.loserCount)} of ${b(c.loser)}'s.`,
   c => `Blood was spent freely at ${c.bodyLoc}, and ${b(c.winner)} spent less of it, ${numWord(c.winnerCount)} ${shipsWord(c.winnerCount)} to ${numWord(c.loserCount)}.`,
   c => `Two fleets ground each other down at ${c.bodyLoc} before ${b(c.winner)} came out on top, ${numWord(c.loserCount)} to ${numWord(c.winnerCount)}.`,
-  c => `Numbers favored no one at ${c.bodyLoc}, but ${b(c.winner)} finished with fewer losses — ${numWord(c.winnerCount)} ${shipsWord(c.winnerCount)} to ${numWord(c.loserCount)}.`,
+  c => `Numbers favored no one at ${c.bodyLoc}, but ${b(c.winner)} finished with fewer losses than ${b(c.loser)} — ${numWord(c.winnerCount)} ${shipsWord(c.winnerCount)} to ${numWord(c.loserCount)}.`,
   c => `Close as it gets: ${b(c.winner)} took ${c.bodyLoc}, ${numWord(c.loserCount)} to ${numWord(c.winnerCount)}.`,
   c => `Every ship counted at ${c.bodyLoc}, and ${b(c.winner)} counted just enough to win, losing ${numWord(c.winnerCount)} ${shipsWord(c.winnerCount)} to take ${numWord(c.loserCount)}.`,
   c => `Ships burned on both sides at ${c.bodyLoc} before ${b(c.winner)} pulled ahead, ${numWord(c.loserCount)} to ${numWord(c.winnerCount)}.`,
@@ -2544,13 +2544,8 @@ const QUIET_DAY_BODY = [
  *  to report") — was a single hardcoded string, which meant the exact
  *  same sentence closed out multiple sections in the same edition. */
 const MORE_INCIDENTS_TAIL = [
-  (n, s) => `…and ${n} more incident${s} to report.`,
-  (n, s) => `…plus ${n} additional incident${s} logged by our correspondents.`,
-  (n, s) => `…with ${n} further incident${s} awaiting fuller coverage.`,
   (n, s) => `…and ${n} more incident${s} the wire hasn't room to print.`,
-  (n, s) => `…and ${n} more incident${s} besides.`,
   (n, s) => `…${n} more incident${s} came in too late to make the front page.`,
-  (n, s) => `…${n} more incident${s} logged before deadline, unprinted.`,
   (n, s) => `…another ${n} incident${s} on file, no room to run them.`,
   (n, s) => `…the desk logged ${n} more incident${s} than space allowed.`,
   (n, s) => `…${n} additional incident${s} sit in the queue for next edition.`,
@@ -3059,35 +3054,35 @@ const BOMBARDMENT_HEADLINE = [
 const BATTLE_CONTINUES_CLAUSE = [
   (bodyBold, thisCount, prevCount) => ` The battle of ${bodyBold} continues, claiming ${numWord(thisCount)} more ships; no end is in sight.`,
   (bodyBold, thisCount, prevCount) => ` The front at ${bodyBold} has not moved. It has simply consumed ${numWord(thisCount)} more hulls.`,
-  (bodyBold, thisCount, prevCount) => ` Fighting at ${bodyBold} is now into its second straight period, and the only figure that changes is the count.`,
+  (bodyBold, thisCount, prevCount) => ` Fighting at ${bodyBold} goes on, and the only figure that changes is the count.`,
   (bodyBold, thisCount, prevCount) => ` The grinder at ${bodyBold} took ${numWord(prevCount)} hulls in the period before this one and ${numWord(thisCount)} in this; both commands keep feeding it.`,
   (bodyBold, thisCount, prevCount) => ` Neither side has broken off at ${bodyBold}, and the orbit is filling with wreckage.`,
-  (bodyBold, thisCount, prevCount) => ` Two periods, one orbit: ${bodyBold} has become the war's fixed address.`,
+  (bodyBold, thisCount, prevCount) => ` Period after period, one orbit: ${bodyBold} has become the war's fixed address.`,
   (bodyBold, thisCount, prevCount) => ` The line at ${bodyBold} has settled into something worse than a battle — a routine, and the routine took ${numWord(thisCount)} more ships.`,
   (bodyBold, thisCount, prevCount) => ` Whatever either command hoped to win at ${bodyBold}, what it has bought is a second period of the same.`,
   (bodyBold, thisCount, prevCount) => ` Correspondents filing from ${bodyBold} have not had to move; the fighting came back to them.`,
   (bodyBold, thisCount, prevCount) => ` The engagement at ${bodyBold} is no longer news so much as weather: ${numWord(thisCount)} more ships down, no forecast of a break.`,
   (bodyBold, thisCount, prevCount) => ` ${bodyBold} was contested in the last period and is contested still.`,
   (bodyBold, thisCount, prevCount) => ` Nothing at ${bodyBold} has been decided. Only paid for, again.`,
-  (bodyBold, thisCount, prevCount) => ` A second period of fighting at ${bodyBold} has cost ${numWord(thisCount)} hulls on top of the ${numWord(prevCount)} the last one took.`,
+  (bodyBold, thisCount, prevCount) => ` Another period of fighting at ${bodyBold} has cost ${numWord(thisCount)} hulls on top of the ${numWord(prevCount)} the last one took.`,
   (bodyBold, thisCount, prevCount) => ` The guns at ${bodyBold} did not stop between periods, and the casualty column shows it.`,
   (bodyBold, thisCount, prevCount) => ` Still contested, still costly: ${bodyBold} gave up ${numWord(thisCount)} more hulls without giving up its position.`,
-  (bodyBold, thisCount, prevCount) => ` The dispute over ${bodyBold} has outlasted a second period of shooting.`,
-  (bodyBold, thisCount, prevCount) => ` For the second period running, ${bodyBold} is where the fleets are, and where they are dying.`,
+  (bodyBold, thisCount, prevCount) => ` The dispute over ${bodyBold} has outlasted another period of shooting.`,
+  (bodyBold, thisCount, prevCount) => ` Once again, ${bodyBold} is where the fleets are, and where they are dying.`,
 ];
 
 const BATTLE_CONTINUES_HEADLINE = [
   c => `THE BATTLE OF ${c.body.toUpperCase()} CONTINUES`,
-  c => `${c.body.toUpperCase()} BURNS FOR A SECOND EDITION`,
+  c => `${c.body.toUpperCase()} BURNS ON`,
   c => `NO END IN SIGHT AT ${c.body.toUpperCase()}`,
   c => `THE MEAT GRINDER AT ${c.body.toUpperCase()} TAKES ${numWord(c.count).toUpperCase()} MORE`,
   c => `STILL THEY FIGHT AT ${c.body.toUpperCase()}`,
   c => `${c.body.toUpperCase()} AGAIN`,
-  c => `SECOND EDITION, SAME ORBIT: ${c.body.toUpperCase()}`,
+  c => `ANOTHER EDITION, SAME ORBIT: ${c.body.toUpperCase()}`,
   c => `THE FRONT AT ${c.body.toUpperCase()} DOES NOT MOVE`,
   c => `${numWord(c.count).toUpperCase()} MORE SHIPS FEED THE FIRE AT ${c.body.toUpperCase()}`,
   c => `${c.body.toUpperCase()} WILL NOT BE DECIDED QUICKLY`,
-  c => `THE FIGHTING AT ${c.body.toUpperCase()} ENTERS ITS SECOND EDITION`,
+  c => `THE FIGHTING AT ${c.body.toUpperCase()} DOES NOT STOP`,
   c => `NEITHER SIDE YIELDS AT ${c.body.toUpperCase()}`,
 ];
 
@@ -3172,7 +3167,16 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
   // They were real separate engagements, but the paper should say so:
   // the second folds into the first as a same-pair follow-up clause.
   const pairSeen = new Map();   // 'winner|loser' -> story object
-  for (const [bodyId, cluster] of byBody) {
+  // Largest engagement first. Iterating in row order gave the full
+  // narrative to whichever action happened to chronicle first, so a
+  // three-hull brush led the paper while the eight-hull rout it
+  // belonged with rode along as a clause. Sort by total losses and
+  // the biggest battle is the one the banks speak for.
+  const byBodySorted = [...byBody.entries()].sort((a, z) => {
+    const tot = (cl) => [...cl[1].losses.values()].reduce((s, b2) => s + b2.count + b2.setlCount, 0);
+    return tot(z) - tot(a);
+  });
+  for (const [bodyId, cluster] of byBodySorted) {
     const locBody = locate(locator, bodyId === 'unknown' ? null : bodyId, cluster.body);
     const victims = [...cluster.losses.keys()];
     // Killer(s) credited across all victims at this body (excluding null/unknown).
@@ -3308,7 +3312,7 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
         if (prior) {
           // Same winner, same loser, different orbit, same edition:
           // one campaign, two actions. Fold, don't repeat.
-          prior.text += ` In a separate action at ${locBody.full}, ${b(winner)} destroyed ${numWord(bucket.count)} more ${b(owner)} ${shipsWord(bucket.count)}${extra}`;
+          prior.text += `\n\nIn a separate action at ${locBody.full}, ${b(winner)} destroyed ${numWord(bucket.count)} more ${b(owner)} ${shipsWord(bucket.count)}.${extra}`;
           prior.weight += BATTLE_PER_CASUALTY * (bucket.count + bucket.setlCount);
         } else {
           const st = mkStory(weight, used, bankKey, bank, hlKey, hlBank, ctx, extra);
@@ -3452,12 +3456,19 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
     // this is the same battle, still going.
     if (stories.length > storiesBefore) {
       const prevHulls = prevBattles.get(bodyId) ?? 0;
+      // The previous edition CAPS its battle coverage, so fighting
+      // that happened but ranked sixth never printed — and "still
+      // they fight at Sedna" pointed at a battle no reader had seen.
+      // Only claim continuity for locations that ranked among the
+      // previous window's top battles, which is what actually made
+      // the page.
+      const prevRankOfBody = [...prevBattles.values()].filter(n => n > prevHulls).length;
       // Several of these clauses assert the PAPER covered it last time
       // ("readers will recall", "this paper reported"), not merely that
       // fighting happened. Three hulls is the level at which a location
       // reliably clears the previous edition's four-story battle cap,
       // so the claim is one the archive would actually back up.
-      if (prevHulls >= 3 && shipsHere >= 3) {
+      if (prevHulls >= 3 && shipsHere >= 3 && prevRankOfBody < 3) {
         const st = stories[stories.length - 1];
         st.text += pickTemplate('battle_continues', BATTLE_CONTINUES_CLAUSE, used)(b(locBody.name), shipsHere, prevHulls);
         st.headline = pickTemplate('battle_continues_hl', BATTLE_CONTINUES_HEADLINE, used)({ body: locBody.name, count: shipsHere });
@@ -4013,7 +4024,7 @@ const DYSON_MILESTONE = [
   (c) => `**${c.faction}** crossed **${c.pct}%** on its **Dyson Sphere** this cycle, close enough now that rivals are debating whether interception is still cheaper than surrender.`,
   (c) => `No fireworks accompanied the number, only the number itself: **${c.pct}%** of a **Dyson Sphere**, credited to **${c.faction}**, climbing.`,
   (c) => `The sun-cage tightens. **${c.faction}** reports **${c.pct}%** completion, and every faction with a fleet to spare is quietly asking whether that fleet has better uses.`,
-  (c) => `Construction logs out of Sol put **${c.faction}** at **${c.pct}%.** The megaproject remains unfinished, unarmed at the edges, and increasingly hard to bomb into irrelevance.`,
+  (c) => `Construction logs out of **Sol** put **${c.faction}** at **${c.pct}%.** Unfinished, undefended, and already too large for any rival to ignore.`,
   (c) => `Halfway thoughts arrive early in a project this size. **${c.faction}**'s lattice sits at **${c.pct}%**, and the system is already arguing about what happens if it finishes.`,
   (c) => `Engineers confirm **${c.pct}%** on **${c.faction}**'s **Dyson Sphere.** The remaining work grows smaller. The remaining danger does not.`,
   (c) => `Word from the foundation station: **${c.pct}%.** **${c.faction}** continues its long climb toward a finished star, one shipment at a time.`,
@@ -4932,7 +4943,7 @@ function buildLedgerShiftStories(rows, used, factionNames, totals) {
   for (const row of rows) {
     const p = safeJson(row.payload);
     if (row.kind === 'ship_built') { const d = touch(p.owner_faction_name); if (d) d.fleet++; }
-    else if (row.kind === 'ship_destroyed') { const d = touch(p.owner_faction_name ?? factionNames.get(row.actor_faction_id)); if (d) d.fleet--; }
+    else if (row.kind === 'ship_destroyed') { const d = touch(p.owner_faction_name ?? factionNames.get(row.actor_faction_id)); if (d) { d.fleet--; d.lost = (d.lost ?? 0) + 1; } }
     else if (row.kind === 'settlement_built') { const d = touch(p.owner_faction_name); if (d) d.worlds++; }
     else if (row.kind === 'settlement_destroyed') { const d = touch(p.owner_faction_name ?? factionNames.get(row.target_faction_id)); if (d) d.worlds--; }
   }
@@ -4950,7 +4961,11 @@ function buildLedgerShiftStories(rows, used, factionNames, totals) {
   const stories = [];
   const leaderNow = nowRank[0][0];
   const leaderPrev = prevRank[0][0];
-  if (leaderNow !== leaderPrev) {
+  // At war start every reconstructed 'previous' standing is zero and
+  // the sort order is arbitrary, which printed an overtake story in
+  // an edition where not a shot was fired. No prior race, no lead
+  // change.
+  if (leaderNow !== leaderPrev && standing(prevRank[0][1]) >= 5) {
     stories.push(mkStory(460, used, 'ledger_lead', LEDGER_LEAD_CHANGE, 'ledger_lead_hl', LEDGER_LEAD_CHANGE_HEADLINE,
       { faction: leaderNow, prevLeader: leaderPrev }));
   }
@@ -4965,8 +4980,10 @@ function buildLedgerShiftStories(rows, used, factionNames, totals) {
     const before = (totals.get(worst.name)?.fleet ?? 0) - worst.d.fleet;
     const relative = before > 0 ? -worst.d.fleet / before : 1;
     if (relative >= 0.25 && worst.name !== leaderNow) {
+      // Gross, not net: the headline number must match the battle
+      // pages, which count ships destroyed, not destroyed-minus-built.
       stories.push(mkStory(440, used, 'ledger_collapse', LEDGER_COLLAPSE, 'ledger_collapse_hl', LEDGER_COLLAPSE_HEADLINE,
-        { faction: worst.name, hullsLost: -worst.d.fleet }));
+        { faction: worst.name, hullsLost: worst.d.lost ?? -worst.d.fleet }));
     }
   }
   return stories;
@@ -5549,6 +5566,10 @@ function buildGameStartedStories(rows, used, gameName) {
 
 function buildFleetLifecycleStories(rows, used, factionNames) {
   const stories = [];
+  // "the **Garrus Vakarian's Squadron**" — the templates hardcode an
+  // article, and a player-named fleet that is itself possessive turns
+  // that into article-plus-possessive. Strip the article after render.
+  const deArticle = (t) => t.replace(/\b[Tt]he (\*\*[^*]*['’]s[^*]*\*\*)/g, '$1');
   for (const row of rows) {
     const p = safeJson(row.payload);
     const actor = p.faction_name ?? factionNames.get(row.actor_faction_id) ?? 'A faction';
@@ -5568,6 +5589,10 @@ function buildFleetLifecycleStories(rows, used, factionNames) {
         actor, fleetName: p.fleet_name ?? 'an unnamed fleet',
       }));
     }
+  }
+  for (const st of stories) {
+    st.text = deArticle(st.text);
+    st.headline = st.headline.replace(/\bTHE (\S+['’]S\b)/g, '$1');
   }
   return stories;
 }
