@@ -2096,6 +2096,22 @@ const COLONY_FOUNDED_HEADLINE = [
   c => `THE SURVEY TEAMS HAVE STOPPED MOVING: ${c.faction.toUpperCase()} SETTLES`,
   c => `${c.faction.toUpperCase()} TAKES DELIVERY OF NEW GROUND`,
   c => `PRESSURE DOMES UP BEFORE THE PAPERWORK: ${c.faction.toUpperCase()}`,
+  c => `${c.faction.toUpperCase()} PUTS A NAME ON EMPTY GROUND`,
+  c => `THE FIRST WINTER BEGINS FOR ${c.faction.toUpperCase()}`,
+  c => `${c.faction.toUpperCase()} COMMITS PEOPLE TO A PLACE`,
+  c => `NEW POSTAL CODES IN ${c.faction.toUpperCase()} SPACE`,
+  c => `${c.faction.toUpperCase()} BUILDS WHERE IT ONLY LOOKED BEFORE`,
+  c => `A SECOND SHIFT OF SETTLERS FOR ${c.faction.toUpperCase()}`,
+  c => `${c.faction.toUpperCase()} EXTENDS ITS SUPPLY LINE ON PURPOSE`,
+  c => `GROUND THAT ANSWERS TO ${c.faction.toUpperCase()} NOW`,
+  c => `${c.faction.toUpperCase()} OPENS WHAT IT SURVEYED LAST SEASON`,
+  c => `THE LANDING CRAFT ARE STAYING: ${c.faction.toUpperCase()}`,
+  c => `${c.faction.toUpperCase()} SPENDS HULLS ON HOUSES`,
+  c => `ANOTHER FLAG, ANOTHER ATMOSPHERE: ${c.faction.toUpperCase()}`,
+  c => `${c.faction.toUpperCase()} TURNS A SURVEY INTO AN ADDRESS`,
+  c => `SOMEBODY LIVES THERE NOW: ${c.faction.toUpperCase()} SETTLES`,
+  c => `${c.faction.toUpperCase()} MAKES A CLAIM IT INTENDS TO KEEP`,
+  c => `THE MAPS ARE OUT OF DATE AGAIN: ${c.faction.toUpperCase()}`,
 ];
 
 const FACTION_ARRIVAL = [
