@@ -4889,7 +4889,26 @@ export class Room {
           .bind(gameId)
           .all()).results ?? [];
         const shipyardBodiesByFaction = new Map(); // fid -> Set<bodyId>
+        // FALLBACK TIER: any living station of yours, shipyard or not.
+        //
+        // Requiring a shipyard made the whole setting a silent no-op for
+        // anyone who hadn't built one: the pass bailed at "nowhere to run"
+        // before distance was ever considered, and the hull sat in the
+        // fight and died exactly as if retreat were switched off. That is
+        // how a salvaged destroyer was lost with retreat set to 25% —
+        // its owner had four stations and not one shipyard, and
+        // `ship_retreated` had never fired once in that entire game.
+        //
+        // Shipyards still WIN when you have one, because only they repair.
+        // A plain station is shelter, not a dry dock — you live, you just
+        // don't heal.
+        const stationBodiesByFaction = new Map(); // fid -> Set<bodyId>
         for (const st of stationRows) {
+          if (!stationBodiesByFaction.has(st.owner_faction_id)) {
+            stationBodiesByFaction.set(st.owner_faction_id, new Set());
+          }
+          stationBodiesByFaction.get(st.owner_faction_id).add(st.body_id);
+
           if (!st.buildings_json) continue;
           let lvl = 0;
           try { lvl = Number((JSON.parse(st.buildings_json) ?? {}).shipyard ?? 0) || 0; }
@@ -4959,10 +4978,17 @@ export class Room {
 
         for (const ship of retreaters) {
           try {
+            // Prefer a dry dock; settle for any port in a storm.
             const yards = shipyardBodiesByFaction.get(ship.owner_faction_id);
-            if (!yards || yards.size === 0) continue;   // nowhere to run
-            // Already home? No move to make — station repair takes over.
-            if (yards.has(ship.parent_body_id)) continue;
+            const repairs = !!(yards && yards.size > 0);
+            const havens = repairs
+              ? yards
+              : stationBodiesByFaction.get(ship.owner_faction_id);
+            if (!havens || havens.size === 0) continue;   // genuinely nowhere to run
+            // Already there? No move to make — if it's a shipyard, station
+            // repair takes over; if it's a plain station, sitting still is
+            // the whole of the retreat.
+            if (havens.has(ship.parent_body_id)) continue;
 
             // Once per episode: skip if already retreating / in transit.
             const inFlight = await this.env.DB
@@ -4974,11 +5000,11 @@ export class Room {
               .first();
             if (inFlight) continue;
 
-            // Nearest yard by straight-line distance at the current tick.
+            // Nearest haven by straight-line distance at the current tick.
             const herePos = await bodyPosAt(ship.parent_body_id, tick);
             let bestBodyId = null;
             let bestD2 = Infinity;
-            for (const yardBodyId of yards) {
+            for (const yardBodyId of havens) {
               const p = await bodyPosAt(yardBodyId, tick);
               const dx = p.x - herePos.x;
               const dy = p.y - herePos.y;
@@ -5042,6 +5068,11 @@ export class Room {
                     hp: ship.hp,
                     hp_max: ship.hp_max,
                     retreat_hp_pct: ship.retreat_hp_pct,
+                    // false = ran for a plain station: alive, but no dry
+                    // dock, so it will NOT heal there. The log should be
+                    // able to say which of the two happened rather than
+                    // implying a repair that never comes.
+                    repairs,
                   }),
                   Date.now(),
                 )

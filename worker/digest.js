@@ -2918,7 +2918,7 @@ const BUILDS_DESTROYED_HEADLINE = [
 ];
 
 const SHIP_RETREATED = [
-  c => `${b(c.actor)}'s ${c.shipName} broke off from ${c.fromLoc}${c.hpText}, falling back to ${c.toLoc} for repairs.`,
+  c => `${b(c.actor)}'s ${c.shipName} broke off from ${c.fromLoc}${c.hpText}, falling back to ${c.toLoc}.`,
   c => `Battered but afloat: ${b(c.actor)}'s ${c.shipName} disengaged at ${c.fromLoc}${c.hpText} and is running for ${c.toLoc}.`,
   c => `${c.shipName} pulled out of the fight at ${c.fromLoc}${c.hpText} — ${b(c.actor)} is routing it to ${c.toLoc}.`,
   c => `${b(c.actor)} pulled ${c.shipName} back from ${c.fromLoc}${c.hpText} rather than lose it. Bound for ${c.toLoc}.`,
@@ -2931,9 +2931,9 @@ const SHIP_RETREATED = [
   c => `Under her own power still, ${c.shipName} left ${c.fromLoc}${c.hpText} and set course for ${c.toLoc}.`,
   c => `Living to fight another day, ${c.shipName} pulls clear of ${c.fromLoc}${c.hpText} and steams for ${c.toLoc}.`,
   c => `Rather than risk the hull, ${b(c.actor)} ordered ${c.shipName} clear of ${c.fromLoc}${c.hpText}; she's making for ${c.toLoc}.`,
-  c => `Repair crews at ${c.toLoc} are standing by for ${c.shipName}, pulled out of ${c.fromLoc}${c.hpText} by ${b(c.actor)}.`,
+  c => `Berths at ${c.toLoc} are standing by for ${c.shipName}, pulled out of ${c.fromLoc}${c.hpText} by ${b(c.actor)}.`,
   c => `A cautious call from ${b(c.actor)}: ${c.shipName} disengages at ${c.fromLoc}${c.hpText} and turns for ${c.toLoc}.`,
-  c => `Scorched but salvageable, ${c.shipName} withdrew from ${c.fromLoc}${c.hpText}, ${b(c.actor)} sending her toward ${c.toLoc} for repairs.`,
+  c => `Scorched but salvageable, ${c.shipName} withdrew from ${c.fromLoc}${c.hpText}, ${b(c.actor)} sending her toward ${c.toLoc}.`,
   c => `Strategic withdrawal, says ${b(c.actor)} — ${c.shipName} breaks off from ${c.fromLoc}${c.hpText}, bound for ${c.toLoc}.`,
   c => `Still under thrust, ${c.shipName} pulls back from ${c.fromLoc}${c.hpText} with ${c.toLoc} as her next port of call.`,
   c => `No hero's stand for ${c.shipName} — ${b(c.actor)} orders her clear of ${c.fromLoc}${c.hpText} and toward ${c.toLoc}.`,

@@ -1309,7 +1309,16 @@ function serverToGameState(srv: ServerState, callerFactionId: string): GameState
         const hp = parsed.hp as number | undefined;
         const hpMax = parsed.hp_max as number | undefined;
         const hpBit = hp != null && hpMax != null ? ` (${Math.round(hp)}/${hpMax} hp)` : '';
-        return `${t}  🏳 ${possessive(owner, name)} broke off from ${from}${hpBit} — retreating to ${to} for repairs`;
+        // A ship with no shipyard anywhere now falls back to a plain
+        // station instead of standing there and dying. It survives, but
+        // nothing repairs it — so don't promise repairs it won't get.
+        // Older entries predate the flag; treat them as the shipyard case
+        // they were.
+        const repairs = parsed.repairs !== false;
+        const tail = repairs
+          ? `retreating to ${to} for repairs`
+          : `falling back to ${to} — no shipyard there, so no repairs`;
+        return `${t}  🏳 ${possessive(owner, name)} broke off from ${from}${hpBit} — ${tail}`;
       }
 
       if (ev.kind === 'asteroid_launched') {
