@@ -80,7 +80,7 @@ import { computeVisibility, factionSensorRings, GHOST_LIFETIME_TICKS } from '../
 // World menu (MULTIPLAYER ONLY): every use below is gated on
 // isWorldMenuActive(), which only the MP-mounted overlay ever sets —
 // these imports add zero reachable code paths to single-player.
-import { isWorldMenuActive, setWorldMenuMaxScale, getWorldMenuMaxScale } from '../game/worldMenu/store';
+import { isWorldMenuActive, setWorldMenuMaxScale, getWorldMenuMaxScale, getWorldMenuOpenBodyId } from '../game/worldMenu/store';
 import { menuScaleFor, zOf, furnitureOpacity } from '../game/worldMenu/camera';
 import { drawWorldMenuCloseup } from '../render/worldMenuCloseup';
 import { useCanvasTouchInput } from '../hooks/useCanvasTouchInput';
@@ -493,7 +493,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     const byRadius = (a: GameBody, b: GameBody) => (a.orbitRadius ?? 0) - (b.orbitRadius ?? 0);
     const out: string[] = [];
     const walk = (b: GameBody) => {
-      if (!SKIP.has(b.type)) out.push(b.id);
+      // A revealed warp gate is a door, not a world — the world menu
+      // refuses to open on one (WorldMenuOverlay), so leaving it in the
+      // cycle would strand the menu on the previous world while the
+      // selection had already moved on, and further presses would step
+      // from an index nothing was showing.
+      if (!SKIP.has(b.type) && !isRevealedWarpGate(b)) out.push(b.id);
       const kids = childrenOf.get(b.id);
       if (kids) [...kids].sort(byRadius).forEach(walk);
     };
@@ -508,6 +513,23 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // poll — the same self-defeating pattern that made WASD crawl.
   const focusBodyRef = useRef(focusBody);
   focusBodyRef.current = focusBody;
+  const selectBodyRef = useRef(selectBody);
+  selectBodyRef.current = selectBody;
+
+  // Step to a world. With a world menu OPEN, tab the MENU to the new
+  // world rather than just flying the camera: selecting is what opens a
+  // menu (WorldMenuOverlay watches uiState.selectedBodyId and does its own
+  // fly-in, framing and scale), so going through selectBody gets the menu
+  // to follow you for free — and the overlay keeps the pre-menu camera
+  // snapshot it took on the FIRST open, so closing still returns you to
+  // where you were before any of this, not to the last world you tabbed
+  // through. Outside a menu, plain focus is the right, cheaper move.
+  const goToWorld = (bodyId: string) => {
+    if (getWorldMenuOpenBodyId()) selectBodyRef.current(bodyId);
+    else focusBodyRef.current(bodyId);
+  };
+  const goToWorldRef = useRef(goToWorld);
+  goToWorldRef.current = goToWorld;
 
   useEffect(() => {
     const isTextField = (el: EventTarget | null): boolean => {
@@ -546,7 +568,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         // First press only re-centres on that nearest world; it does not
         // also step. Stepping would skip past the thing you were looking
         // at, which reads as the key overshooting.
-        focusBodyRef.current(cycle[idx]);
+        goToWorldRef.current(cycle[idx]);
         return;
       }
 
@@ -555,7 +577,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       // reads as a bug rather than as navigation.
       const next = k === 'q' ? idx - 1 : idx + 1;
       if (next < 0 || next >= cycle.length) return;
-      focusBodyRef.current(cycle[next]);
+      goToWorldRef.current(cycle[next]);
     };
 
     window.addEventListener('keydown', onKey);
