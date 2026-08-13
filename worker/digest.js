@@ -3059,7 +3059,7 @@ const BATTLE_CONTINUES_CLAUSE = [
   (bodyBold, thisCount, prevCount) => ` Neither side has broken off at ${bodyBold}, and the orbit is filling with wreckage.`,
   (bodyBold, thisCount, prevCount) => ` Period after period, one orbit: ${bodyBold} has become the war's fixed address.`,
   (bodyBold, thisCount, prevCount) => ` The line at ${bodyBold} has settled into something worse than a battle — a routine, and the routine took ${numWord(thisCount)} more ships.`,
-  (bodyBold, thisCount, prevCount) => ` Whatever either command hoped to win at ${bodyBold}, what it has bought is a second period of the same.`,
+  (bodyBold, thisCount, prevCount) => ` Whatever either command hoped to win at ${bodyBold}, what it has bought is more of the same.`,
   (bodyBold, thisCount, prevCount) => ` Correspondents filing from ${bodyBold} have not had to move; the fighting came back to them.`,
   (bodyBold, thisCount, prevCount) => ` The engagement at ${bodyBold} is no longer news so much as weather: ${numWord(thisCount)} more ships down, no forecast of a break.`,
   (bodyBold, thisCount, prevCount) => ` ${bodyBold} was contested in the last period and is contested still.`,
@@ -3121,6 +3121,23 @@ const SETTLEMENT_LOSS_CATASTROPHIC = [
   (nameStr, many, popClause) => ` ${nameStr}${popClause} ${many ? 'have' : 'has'} been removed from the living worlds. Ships that came to trade have stayed to carry survivors, and there are not enough of either.`,
   (nameStr, many, popClause) => ` The evacuation of ${nameStr}${popClause} began too late to matter. The convoys that got away are being counted; everyone else is being estimated.`,
   (nameStr, many, popClause) => ` ${nameStr}${popClause} ${many ? 'join' : 'joins'} the war's dead not as ${many ? 'settlements' : 'a settlement'} but as ${many ? 'populations' : 'a population'}. Flags in the capitals are at half-staff, and the freight lanes are quiet.`,
+];
+
+/** Opener for a same-pair follow-up engagement folded into the lead
+ *  battle story. Was the hardcoded "In a separate action at" ten times
+ *  across a run — the exact verbatim-repeat disease every other
+ *  clause bank exists to prevent. All params come pre-formatted:
+ *  loc is the bolded located place, winner/loser are bolded names,
+ *  count is already a number-word, ships is 'ship'/'ships'. */
+const SEPARATE_ACTION_CLAUSE = [
+  (loc, winner, count, loser, ships) => `In a separate action at ${loc}, ${winner} destroyed ${count} more ${loser} ${ships}.`,
+  (loc, winner, count, loser, ships) => `The same pair met again at ${loc}: ${count} more ${loser} ${ships} destroyed, ${winner} again untouched.`,
+  (loc, winner, count, loser, ships) => `Nor was that the only meeting — at ${loc}, ${winner} took ${count} more ${ships} from ${loser}.`,
+  (loc, winner, count, loser, ships) => `Fighting between the two reached ${loc} as well, where ${loser} gave up ${count} more ${ships}.`,
+  (loc, winner, count, loser, ships) => `A second front at ${loc} cost ${loser} another ${count} ${ships}, with ${winner} pressing there too.`,
+  (loc, winner, count, loser, ships) => `${winner} found ${loser} again at ${loc} and left ${count} more ${ships} burning.`,
+  (loc, winner, count, loser, ships) => `The pursuit ran on to ${loc}, where ${count} more ${loser} ${ships} went down.`,
+  (loc, winner, count, loser, ships) => `At ${loc}, the same guns claimed ${count} more ${loser} ${ships}.`,
 ];
 
 function buildBattleStories(rows, used, locator, captainFate, voices = null, prevBattles = new Map()) {
@@ -3312,7 +3329,7 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
         if (prior) {
           // Same winner, same loser, different orbit, same edition:
           // one campaign, two actions. Fold, don't repeat.
-          prior.text += `\n\nIn a separate action at ${locBody.full}, ${b(winner)} destroyed ${numWord(bucket.count)} more ${b(owner)} ${shipsWord(bucket.count)}.${extra}`;
+          prior.text += '\n\n' + pickTemplate('separate_action', SEPARATE_ACTION_CLAUSE, used)(locBody.full, b(winner), numWord(bucket.count), b(owner), shipsWord(bucket.count)) + extra;
           prior.weight += BATTLE_PER_CASUALTY * (bucket.count + bucket.setlCount);
         } else {
           const st = mkStory(weight, used, bankKey, bank, hlKey, hlBank, ctx, extra);
