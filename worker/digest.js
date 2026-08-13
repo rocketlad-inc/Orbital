@@ -2455,9 +2455,9 @@ const SENATE_FAILED_HEADLINE = [
  *  and the paper's own standings box says so two fields later. */
 const VICTORY_BALLOT = [
   c => `No fleet took the system. A show of hands did — ${b(c.faction)} holds the Supreme Chancellorship, and with it the war.`,
-  c => `${b(c.faction)} has won the war without winning the last battle: the chamber has voted, and the chair is theirs.`,
+  c => `${b(c.faction)} did not need the last battle: the chamber voted, and the chair is theirs.`,
   c => `It ends not in orbit but on the floor of the Senate. ${b(c.faction)} takes the Chancellorship, and the war with it.`,
-  c => `The guns did not decide this. ${b(c.faction)} did, by assembling a majority while everyone else assembled fleets.`,
+  c => `The guns did not decide this. A count of hands did, and ${b(c.faction)} had the hands.`,
   c => `After all of it — the fleets, the burned settlements, the years — the system passes to ${b(c.faction)} on a vote.`,
   c => `${b(c.faction)} is Supreme Chancellor. Rival fleets remain in being, rival flags still fly, and none of it matters now.`,
   c => `The war is over and no one was conquered. ${b(c.faction)} simply won the room.`,
@@ -2478,7 +2478,7 @@ const VICTORY_BALLOT_HEADLINE = [
   c => `THE WAR ENDS ON THE SENATE FLOOR`,
   c => `${c.faction.toUpperCase()} ELECTED SUPREME CHANCELLOR`,
   c => `THE CHAIR, NOT THE FIELD: ${c.faction.toUpperCase()} PREVAILS`,
-  c => `${c.faction.toUpperCase()} ASSEMBLED A MAJORITY, NOT AN ARMADA`,
+  c => `${c.faction.toUpperCase()} WINS IT IN THE CHAMBER, NOT THE FIELD`,
 ];
 
 const VICTORY = [
