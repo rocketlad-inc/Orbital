@@ -890,8 +890,30 @@ function applyShortNames(embed, factionNames) {
     return out;
   };
 
+  // The standings table takes the short form throughout, with no
+  // first-mention grace. In prose, spelling a name out once and
+  // shortening it after is house style; in a RANKED TABLE read across
+  // ten editions it means the same power is "Federation of Atlantis"
+  // in one issue's row and "Atlantis" in the next, purely according to
+  // whether the table happened to be that edition's first mention. A
+  // reader checking the ledger sees two entities.
+  const shortenAll = (text) => {
+    let out = text ?? '';
+    for (const full of fulls) {
+      const s = shorts.get(full);
+      if (!s) continue;
+      out = replaceAfter(out, full, s, 0);
+    }
+    return out;
+  };
+  const isTable = (f) => typeof f?.name === 'string' && f.name.includes('Where things stand');
+
   const description = shorten(embed.description);
-  const fields = (embed.fields ?? []).map(f => ({ ...f, name: shortenCaps(f.name), value: shorten(f.value) }));
+  const fields = (embed.fields ?? []).map(f => ({
+    ...f,
+    name: shortenCaps(f.name),
+    value: isTable(f) ? shortenAll(f.value) : shorten(f.value),
+  }));
   return { ...embed, title, description, fields };
 }
 
