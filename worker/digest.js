@@ -533,7 +533,15 @@ function advanceFor(len) {
   // How many draws per edition this bank must keep clear of, estimated
   // from its size — the big banks are the ones sections draw several
   // templates from; the small ones are headline banks drawn once.
-  const D = Math.max(1, Math.min(4, Math.floor(len / 6)));
+  // How many draws per edition this bank must keep clear of. Derived
+  // from size because the big banks are the ones sections draw several
+  // templates from, but floored at two: a headline bank is drawn once
+  // or twice, and estimating D too HIGH is not the safe direction — it
+  // makes the search reject the tightly-packed stride that would have
+  // tiled the bank perfectly. A twenty-entry bank at D=3 chose advance
+  // 3 and collided twice across ten editions; at D=2 it chooses advance
+  // 2, which walks 10 disjoint pairs through exactly 20 slots.
+  const D = Math.min(4, Math.max(2, Math.floor(len / 10)));
   let best = 1, bestZero = -1, bestFirst = -1, bestDist = -1;
   for (let cand = 1; cand < len; cand++) {
     // No coprimality filter: it excluded advance 12 for a 44-entry
@@ -3586,7 +3594,8 @@ function buildBattleStories(rows, used, locator, captainFate, voices = null, pre
       const soleVictim = othersCount === 0;
       const lopsided = soleVictim
         || worst.count / Math.max(1, othersCount) >= BATTLE_DECISIVE_RATIO;
-      const meleeExtra = cleanClause + meleeSettlementExtra + groundOnlyExtra;
+      const meleeExtra = cleanClause + meleeSettlementExtra + groundOnlyExtra
+        + takeVoices(voices, locBody.name, sides.map(s => s.faction));
       if (soleVictim) {
         stories.push(mkStory(weight, used, 'battle_melee_rout', BATTLE_MELEE_ROUT, 'battle_melee_rout_hl', BATTLE_MELEE_ROUT_HEADLINE, ctx, meleeExtra));
       } else if (lopsided) {
@@ -3793,6 +3802,16 @@ const INDUSTRY_SURGE_HEADLINE = [
   (c) => `A FLEET THAT DID NOT EXIST LAST SEASON`,
   (c) => `ORE QUEUES DEEPEN UNDER ${c.faction.toUpperCase()} ORDERS`,
   (c) => `${c.faction.toUpperCase()} DELIVERS FASTER THAN IT CAN REGISTER`,
+  (c) => `EVERY BERTH IN ${c.faction.toUpperCase()} SPACE IS SPOKEN FOR`,
+  (c) => `${c.faction.toUpperCase()} LAYS DOWN KEELS AS FAST AS IT CLEARS THEM`,
+  (c) => `THE NAMING COMMITTEES CANNOT KEEP UP`,
+  (c) => `${c.faction.toUpperCase()} FITS OUT AT ANCHOR FOR WANT OF DOCKS`,
+  (c) => `WELDING LIGHT VISIBLE FROM THE SHIPPING LANES`,
+  (c) => `${c.faction.toUpperCase()} OUTBUILDS ITS OWN PAPERWORK`,
+  (c) => `THE SHIFT BOARD AT ${c.faction.toUpperCase()} HAS NO GAPS LEFT`,
+  (c) => `${c.faction.toUpperCase()} TURNS A YARD INTO A PRODUCTION LINE`,
+  (c) => `MATERIALS RATIONED TO FEED THE ${c.faction.toUpperCase()} SLIPS`,
+  (c) => `${c.faction.toUpperCase()} COMMISSIONS FASTER THAN IT CAN CREW`,
 ];
 
 const INDUSTRY_STEADY_HEADLINE = [
@@ -3806,6 +3825,16 @@ const INDUSTRY_STEADY_HEADLINE = [
   (c) => `A GARRISON ASSEMBLED QUIETLY IN ${c.faction.toUpperCase()} SPACE`,
   (c) => `SAME NUMBER, SAME YARDS, ${c.faction.toUpperCase()}`,
   (c) => `${c.faction.toUpperCase()} KEEPS PACE WITH ITS OWN PLAN`,
+  (c) => `AN UNEVENTFUL SHIFT AT ${c.faction.toUpperCase()}`,
+  (c) => `${c.faction.toUpperCase()} DELIVERS EXACTLY WHAT IT PROMISED`,
+  (c) => `NO DELAYS WORTH THE INK AT ${c.faction.toUpperCase()}`,
+  (c) => `${c.faction.toUpperCase()} YARDS RUN AT THEIR RATED PACE`,
+  (c) => `THE ${c.faction.toUpperCase()} FIGURES, WITHOUT COMMENT`,
+  (c) => `ROUTINE WORK, ROUTINELY FINISHED: ${c.faction.toUpperCase()}`,
+  (c) => `${c.faction.toUpperCase()} FILLS GAPS AND MAKES NO NEW ONES`,
+  (c) => `A QUIET WEEK IN THE ${c.faction.toUpperCase()} SHEDS`,
+  (c) => `${c.faction.toUpperCase()} BUILDS TO PLAN AND NO FURTHER`,
+  (c) => `NOTHING BROKE, NOTHING SLIPPED: ${c.faction.toUpperCase()}`,
 ];
 
 const INDUSTRY_ATTRITION_HEADLINE = [
@@ -3819,6 +3848,16 @@ const INDUSTRY_ATTRITION_HEADLINE = [
   (c) => `THE ${c.faction.toUpperCase()} REGISTER GETS SHORTER`,
   (c) => `REPAIR WORK CROWDS OUT NEW KEELS AT ${c.faction.toUpperCase()}`,
   (c) => `ARITHMETIC TURNS AGAINST ${c.faction.toUpperCase()}`,
+  (c) => `${c.faction.toUpperCase()} CANNOT REPLACE WHAT IT IS LOSING`,
+  (c) => `THE GAP WIDENS FOR ${c.faction.toUpperCase()}`,
+  (c) => `EVERY NEW HULL IS ALREADY A REPLACEMENT`,
+  (c) => `${c.faction.toUpperCase()} RUNS THE YARDS FLAT OUT AND FALLS BEHIND`,
+  (c) => `CREWS OUTLIVE THEIR SHIPS IN ${c.faction.toUpperCase()} SERVICE`,
+  (c) => `${c.faction.toUpperCase()} BUILDS TOWARD A SMALLER FLEET`,
+  (c) => `THE ${c.faction.toUpperCase()} SLIPWAYS ARE FULL AND THE LINE IS THIN`,
+  (c) => `MORE KEELS, FEWER SHIPS: ${c.faction.toUpperCase()}`,
+  (c) => `${c.faction.toUpperCase()} LOSES GROUND ON ITS OWN LEDGER`,
+  (c) => `NAMES REISSUED FASTER THAN HULLS AT ${c.faction.toUpperCase()}`,
 ];
 
 function buildIndustryStories(rows, used) {
@@ -5396,7 +5435,14 @@ function standingsField(rows, factionNames, totals = new Map()) {
   // editions dropped off the FINAL table when a late entrant
   // outranked it — which reads as the ledger losing a faction on
   // the one page a reader checks hardest.
-  const lines = rank.slice(0, 8).map((r, i) => {
+  // Factions that did nothing at all this period are named once, in a
+  // single line, rather than each taking a row that says so at length.
+  const moved = rank.filter(r => r.built || r.lost || r.founded || r.razed);
+  const still = rank.filter(r => !(r.built || r.lost || r.founded || r.razed));
+  const ranked = (moved.length >= 2 ? moved : rank);
+  const stilled = (moved.length >= 2 ? still : []);
+
+  const lines = ranked.slice(0, 8).map((r, i) => {
     const fleet = r.built - r.lost;
     const ground = r.founded - r.razed;
     const t = totals.get(r.name);
@@ -5435,6 +5481,9 @@ function standingsField(rows, factionNames, totals = new Map()) {
   // than against a sample of battle reports.
   let periodHulls = 0, periodWorlds = 0;
   for (const r of rank) { periodHulls += r.lost; periodWorlds += r.razed; }
+  const stillLine = stilled.length
+    ? `\n*Unchanged this edition: ${stilled.map(r => r.name).join(', ')}.*`
+    : '';
   const tollParts = [];
   if (periodHulls > 0) tollParts.push(`**${periodHulls}** ${plural(periodHulls, 'hull', 'hulls')} destroyed`);
   if (periodWorlds > 0) tollParts.push(`**${periodWorlds}** ${plural(periodWorlds, 'settlement', 'settlements')} razed`);
@@ -5449,7 +5498,7 @@ function standingsField(rows, factionNames, totals = new Map()) {
     : '\n*Change this edition.*') + toll;
   return {
     name: '📊  Where things stand',
-    value: clipToSentence(lines.join('\n') + footer, FIELD_VALUE_LIMIT - 4),
+    value: clipToSentence(lines.join('\n') + stillLine + footer, FIELD_VALUE_LIMIT - 4),
   };
 }
 
