@@ -366,6 +366,11 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
   // ship doesn't keep an undead hitbox. Parked ships hit the regular
   // getShipCanvasPos path; this map only exists for transit ships.
   const transitShipCanvasPosRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  // The same drawn points in WORLD space. Sensor rings and the visibility
+  // pass work in world coords, and they were using ship.transit.pos — the
+  // integration this map exists to route around — so a transiting hull's
+  // fog circle sat ahead of the hull itself.
+  const transitShipWorldPosRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   // Parked-ship hit boxes recorded by the renderer (drawShip) each frame:
   // the exact drawn centre + a radius covering the sprite. The click/hover
   // hit-test reads these so the box is always ON the visible hull, spin,
@@ -513,6 +518,16 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
     // per-frame by the per-ship overlay below. A ship that arrived and
     // dropped out of transit shouldn't keep its old hitbox.
     transitShipCanvasPosRef.current.clear();
+    // NOT cleared wholesale: the sensor/visibility passes above run BEFORE
+    // the draw pass that fills this, so wiping it every frame would hand
+    // them an empty map and put the fog straight back on ship.transit.pos.
+    // Instead carry entries forward and drop only hulls that are no longer
+    // in transit — the ring then trails the sprite by one frame (~16ms),
+    // which is invisible, rather than by a whole leg's worth of drift.
+    for (const id of transitShipWorldPosRef.current.keys()) {
+      const s = gameState.ships.find(sh => sh.id === id);
+      if (!s || !s.transit) transitShipWorldPosRef.current.delete(id);
+    }
     // Label/badge occupancy is per-frame state.
     resetReservations();
     // Parked-ship hit boxes are rebuilt every frame by drawShip. Clear
@@ -616,6 +631,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       gameState.bodies,
       nowTick,
       alliedSet,
+      transitShipWorldPosRef.current,
     );
     const wasInCoverage = (pos: { x: number; y: number }): boolean => {
       for (const r of sensorRingsThisFrame) {
@@ -963,6 +979,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
       renderTick(),
       lastSeenRef.current,
       alliedSet,
+      transitShipWorldPosRef.current,
     );
     lastSeenRef.current = visibility.lastSeen;
     const visibleShipIds = visibility.visibleShipIds;
@@ -1504,6 +1521,10 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
           const lerped = torchPositionFromSamples(samples, renderTick());
           const cp = worldToCanvas(lerped.x, lerped.y, renderContext);
           transitShipCanvasPosRef.current.set(ship.id, cp);
+          // Same point in WORLD space, for the sensor/fog pass. Without
+          // this the fog ring keeps using ship.transit.pos and the lit
+          // circle floats ahead of the hull that owns it.
+          transitShipWorldPosRef.current.set(ship.id, { x: lerped.x, y: lerped.y });
         }
 
         const arrivalBody = gameState.bodies.find(b => b.id === plan.targetBodyId);
@@ -1990,6 +2011,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({
         gameState.bodies,
         renderTick(),
         alliedSet,
+        transitShipWorldPosRef.current,
       );
       // Fade the fog out as the political wash fades in. The fog is a
       // 62%-opaque dark fill over everything outside sensor range, and

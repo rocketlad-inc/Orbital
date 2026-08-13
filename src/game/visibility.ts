@@ -115,7 +115,24 @@ function isOccluded(
  *    1. Torch transit — read ship.transit.pos directly
  *    2. Parked — evaluate ship.orbit around its parent body
  */
-export function shipWorldPosition(ship: Ship, tick: number, bodies: Body[]): { x: number; y: number } {
+export function shipWorldPosition(
+  ship: Ship,
+  tick: number,
+  bodies: Body[],
+  drawnTransitPos?: ReadonlyMap<string, { x: number; y: number }>,
+): { x: number; y: number } {
+  // Prefer the position the RENDERER actually drew this hull at. For a
+  // ship in transit, ship.transit.pos is a separate integration that
+  // drifts away from the polyline the renderer lerps along — MapCanvas
+  // already had to route the click hit-test around it for exactly this
+  // reason (see transitShipCanvasPosRef, "not the diverging
+  // ship.transit.pos integration").
+  //
+  // Sensor rings were still reading the diverging value, so the fog hole
+  // was punched ahead of the hull it belongs to: a lit circle sitting off
+  // in front of the ship, revealing empty space.
+  const drawn = ship.transit ? drawnTransitPos?.get(ship.id) : undefined;
+  if (drawn) return { x: drawn.x, y: drawn.y };
   if (ship.transit) return { x: ship.transit.pos.x, y: ship.transit.pos.y };
   return orbitWorldPos(ship.orbit, tick, bodies);
 }
@@ -146,6 +163,7 @@ function factionSensors(
   bodies: Body[],
   tick: number,
   allies: ReadonlySet<string> = NO_ALLIES,
+  drawnTransitPos?: ReadonlyMap<string, { x: number; y: number }>,
 ): Array<{ pos: { x: number; y: number }; range: number }> {
   const sensors: Array<{ pos: { x: number; y: number }; range: number }> = [];
 
@@ -153,7 +171,7 @@ function factionSensors(
     if (!isFriendly(s.ownedBy, factionId, allies)) continue;
     // Even ships in transit have working sensors.
     const range = SHIP_SENSOR_RANGE[s.class] ?? 25;
-    sensors.push({ pos: shipWorldPosition(s, tick, bodies), range });
+    sensors.push({ pos: shipWorldPosition(s, tick, bodies, drawnTransitPos), range });
   }
 
   for (const st of settlements) {
@@ -196,11 +214,12 @@ export function computeVisibility(
   tick: number,
   previousLastSeen: Map<string, { x: number; y: number; tick: number; shipClass: string; ownedBy: string }>,
   alliedFactionIds: ReadonlySet<string> = NO_ALLIES,
+  drawnTransitPos?: ReadonlyMap<string, { x: number; y: number }>,
 ): VisibilityResult {
   const visibleShipIds = new Set<string>();
   const lastSeen = new Map<string, { x: number; y: number; tick: number; shipClass: string; ownedBy: string }>();
 
-  const sensors = factionSensors(viewerFactionId, ships, settlements, bodies, tick, alliedFactionIds);
+  const sensors = factionSensors(viewerFactionId, ships, settlements, bodies, tick, alliedFactionIds, drawnTransitPos);
 
   for (const ship of ships) {
     // Friendlies (own + allied) always visible
@@ -209,7 +228,7 @@ export function computeVisibility(
       continue;
     }
 
-    const tp = shipWorldPosition(ship, tick, bodies);
+    const tp = shipWorldPosition(ship, tick, bodies, drawnTransitPos);
 
     let seen = false;
     for (const s of sensors) {
@@ -256,13 +275,14 @@ export function factionSensorRings(
   bodies: Body[],
   tick: number,
   allies: ReadonlySet<string> = NO_ALLIES,
+  drawnTransitPos?: ReadonlyMap<string, { x: number; y: number }>,
 ): Array<{ pos: { x: number; y: number }; range: number; sourceType: 'ship' | 'city' | 'station' }> {
   const rings: Array<{ pos: { x: number; y: number }; range: number; sourceType: 'ship' | 'city' | 'station' }> = [];
 
   for (const s of ships) {
     if (!isFriendly(s.ownedBy, factionId, allies)) continue;
     const range = SHIP_SENSOR_RANGE[s.class] ?? 25;
-    rings.push({ pos: shipWorldPosition(s, tick, bodies), range, sourceType: 'ship' });
+    rings.push({ pos: shipWorldPosition(s, tick, bodies, drawnTransitPos), range, sourceType: 'ship' });
   }
 
   for (const st of settlements) {
